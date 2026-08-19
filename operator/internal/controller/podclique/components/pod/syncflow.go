@@ -1,4 +1,3 @@
-// /*
 // Copyright 2025 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,7 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package pod
 
@@ -89,6 +87,7 @@ func (r _resource) prepareSyncFlow(ctx context.Context, logger logr.Logger, pclq
 
 	// initialize the Pod names that are updated in the PodGang resource for this PCLQ.
 	sc.podNamesUpdatedInPCLQPodGangs = r.getPodNamesUpdatedInAssociatedPodGang(existingPodGang, pclq.Name)
+	sc.podNamesUpdatedInPCLQPodGangSet = componentutils.NewSet(sc.podNamesUpdatedInPCLQPodGangs)
 
 	// Get all existing pods for this PCLQ.
 	sc.existingPCLQPods, err = componentutils.GetPCLQPods(ctx, r.client, sc.pcs.Name, pclq)
@@ -204,7 +203,7 @@ func getTerminatingAndNonTerminatingPodUIDs(existingPCLQPods []*corev1.Pod) (ter
 // The deletion of Pods are done in batches of increasing size. This is done to prevent burst of load
 // on the kube-apiserver. It will fail fast in case there is an
 func (r _resource) deleteExcessPods(sc *syncContext, logger logr.Logger, diff int) error {
-	candidatePodsToDelete := selectExcessPodsToDelete(sc, logger)
+	candidatePodsToDelete := r.selectExcessPodsToDelete(sc, logger)
 	numPodsToSelectForDeletion := min(diff, len(candidatePodsToDelete))
 	selectedPodsToDelete := candidatePodsToDelete[:numPodsToSelectForDeletion]
 
@@ -227,19 +226,36 @@ func (r _resource) deleteExcessPods(sc *syncContext, logger logr.Logger, diff in
 	return nil
 }
 
-// selectExcessPodsToDelete identifies excess pods for deletion using DeletionSorter for prioritization
-func selectExcessPodsToDelete(sc *syncContext, logger logr.Logger) []*corev1.Pod {
-	var candidatePodsToDelete []*corev1.Pod
-	if diff := len(sc.existingPCLQPods) - int(sc.pclq.Spec.Replicas); diff > 0 {
-		logger.Info("found excess pods for PodClique", "numExcessPods", diff)
-		sorter := DeletionSorter{
-			Pods: sc.existingPCLQPods,
+// selectExcessPodsToDelete identifies excess pods for deletion using DeletionSorter for prioritization.
+//
+// Pods whose deletion has already been triggered are excluded from the candidate set. GetPCLQPods
+// returns terminating Pods as well, and a Pod stays Running and Ready for the whole of its
+// terminationGracePeriodSeconds, so counting it as excess spends the deletion budget on a Pod that is
+// already on its way out - and, since DeletionSorter cannot tell it apart from a healthy Pod, can
+// select a Pod that is still serving instead. The rolling update path applies the same rule via
+// hasPodDeletionBeenTriggered (see computeUpdateWork in rollingupdate.go).
+//
+// Filtering into a fresh slice also keeps sort.Sort from reordering sc.existingPCLQPods in place,
+// which later steps of the same sync flow still read.
+func (r _resource) selectExcessPodsToDelete(sc *syncContext, logger logr.Logger) []*corev1.Pod {
+	livePods := make([]*corev1.Pod, 0, len(sc.existingPCLQPods))
+	for _, pod := range sc.existingPCLQPods {
+		if r.hasPodDeletionBeenTriggered(sc, pod) {
+			continue
 		}
-		sorter.ExpectedPodTemplateHash = sc.getExpectedPodTemplateHash()
-		sort.Sort(sorter)
-		candidatePodsToDelete = append(candidatePodsToDelete, sorter.Pods[:diff]...)
+		livePods = append(livePods, pod)
 	}
-	return candidatePodsToDelete
+	numExcessPods := len(livePods) - int(sc.pclq.Spec.Replicas)
+	if numExcessPods <= 0 {
+		return nil
+	}
+	logger.Info("found excess pods for PodClique", "numExcessPods", numExcessPods)
+	sorter := DeletionSorter{
+		Pods:                    livePods,
+		ExpectedPodTemplateHash: sc.getExpectedPodTemplateHash(),
+	}
+	sort.Sort(sorter)
+	return sorter.Pods[:numExcessPods]
 }
 
 func (sc *syncContext) getExpectedPodTemplateHash() string {
@@ -268,10 +284,13 @@ func (r _resource) checkAndRemovePodSchedulingGates(sc *syncContext, logger logr
 		)
 	}
 
+	if sc.podNamesUpdatedInPCLQPodGangSet == nil {
+		sc.podNamesUpdatedInPCLQPodGangSet = componentutils.NewSet(sc.podNamesUpdatedInPCLQPodGangs)
+	}
 	for i, p := range sc.existingPCLQPods {
 		if hasPodGangSchedulingGate(p) {
 			podObjectKey := client.ObjectKeyFromObject(p)
-			if !slices.Contains(sc.podNamesUpdatedInPCLQPodGangs, p.Name) {
+			if !sc.podNamesUpdatedInPCLQPodGangSet.Has(p.Name) {
 				logger.Info("Pod has scheduling gate but it has not yet been updated in PodGang", "podObjectKey", podObjectKey)
 				skippedScheduleGatedPods = append(skippedScheduleGatedPods, p.Name)
 				continue
@@ -285,11 +304,16 @@ func (r _resource) checkAndRemovePodSchedulingGates(sc *syncContext, logger logr
 				Name: fmt.Sprintf("RemoveSchedulingGate-%s-%d", p.Name, i),
 				Fn: func(ctx context.Context) error {
 					podClone := p.DeepCopy()
-					p.Spec.SchedulingGates = nil
+					// Remove only the Grove PodGang gate. Other controllers may add their own
+					// scheduling gates on the same Pod; clearing the whole list would wipe those
+					// and let the Pod schedule before those owners have released it.
+					if !removePodGangSchedulingGate(p) {
+						return nil
+					}
 					if err := client.IgnoreNotFound(r.client.Patch(ctx, p, client.MergeFrom(podClone))); err != nil {
 						return err
 					}
-					logger.Info("Removed scheduling gate from pod", "podObjectKey", podObjectKey)
+					logger.Info("Removed Grove PodGang scheduling gate from pod", "podObjectKey", podObjectKey)
 					return nil
 				},
 			}
@@ -406,6 +430,19 @@ func hasPodGangSchedulingGate(pod *corev1.Pod) bool {
 	})
 }
 
+// removePodGangSchedulingGate removes only the Grove PodGang scheduling gate from the Pod,
+// leaving any other scheduling gates untouched. Returns true if the gate was present and removed.
+func removePodGangSchedulingGate(pod *corev1.Pod) bool {
+	idx := slices.IndexFunc(pod.Spec.SchedulingGates, func(schedulingGate corev1.PodSchedulingGate) bool {
+		return podGangSchedulingGate == schedulingGate.Name
+	})
+	if idx < 0 {
+		return false
+	}
+	pod.Spec.SchedulingGates = slices.Delete(pod.Spec.SchedulingGates, idx, idx+1)
+	return true
+}
+
 // createPods creates the specified number of new pods for the PodClique with proper indexing and concurrency control
 func (r _resource) createPods(ctx context.Context, logger logr.Logger, sc *syncContext, numPods int) (int, error) {
 	// Pre-calculate all needed indices to avoid race conditions
@@ -438,14 +475,15 @@ func (r _resource) createPods(ctx context.Context, logger logr.Logger, sc *syncC
 
 // syncContext holds the relevant state required during the sync flow run.
 type syncContext struct {
-	ctx                           context.Context
-	pcs                           *grovecorev1alpha1.PodCliqueSet
-	pclq                          *grovecorev1alpha1.PodClique
-	associatedPodGangName         string
-	existingPCLQPods              []*corev1.Pod
-	podNamesUpdatedInPCLQPodGangs []string
-	pclqExpectationsStoreKey      string
-	expectedPodTemplateHash       string
+	ctx                             context.Context
+	pcs                             *grovecorev1alpha1.PodCliqueSet
+	pclq                            *grovecorev1alpha1.PodClique
+	associatedPodGangName           string
+	existingPCLQPods                []*corev1.Pod
+	podNamesUpdatedInPCLQPodGangs   []string
+	podNamesUpdatedInPCLQPodGangSet componentutils.Set[string]
+	pclqExpectationsStoreKey        string
+	expectedPodTemplateHash         string
 }
 
 // syncFlowResult captures the result of a sync flow run.

@@ -1,6 +1,5 @@
 //go:build e2e
 
-// /*
 // Copyright 2025 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,7 +13,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package update
 
@@ -24,7 +22,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ai-dynamo/grove/operator/e2e/tests"
+	"github.com/ai-dynamo/grove/operator/e2e/testctx"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/watch"
@@ -51,13 +49,13 @@ func newUpdateTracker() *updateTracker {
 }
 
 // start begins watching pod events and blocks until the watcher is ready.
-// Uses tc.Ctx, tc.Clientset, tc.Namespace, and tc.GetLabelSelector() for watch configuration.
-func (t *updateTracker) start(tc tests.TestContext) error {
+// Uses tc.Ctx, tc.Client, tc.Namespace, and tc.Workload.GetLabelSelector() for watch configuration.
+func (t *updateTracker) start(tc *testctx.TestContext) error {
 	watcherCtx, cancel := context.WithCancel(tc.Ctx)
 	t.cancel = cancel
 
-	watcher, err := tc.Clientset.CoreV1().Pods(tc.Namespace).Watch(watcherCtx, metav1.ListOptions{
-		LabelSelector: tc.GetLabelSelector(),
+	watcher, err := tc.Client.WatchPods(watcherCtx, tc.Namespace, metav1.ListOptions{
+		LabelSelector: tc.Workload.GetLabelSelector(),
 	})
 	if err != nil {
 		cancel()

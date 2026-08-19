@@ -1,4 +1,3 @@
-# /*
 # Copyright 2024 The Grove Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,7 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-# */
 
 MODULE_ROOT     := $(shell dirname "$(realpath $(lastword $(MAKEFILE_LIST)))")
 MODULE_HACK_DIR := $(MODULE_ROOT)/hack
@@ -24,9 +22,12 @@ LD_PACKAGE_PATH := "github.com/ai-dynamo/grove/operator/internal"
 OPERATOR_NAME        := "grove-operator"
 INITC_NAME           := "grove-initc"
 INSTALL_CRDS_NAME    := "grove-install-crds"
-K3S_IMAGE       ?= rancher/k3s:v1.34.2-k3s1
+K3S_IMAGE       ?= rancher/k3s:v1.35.5-k3s1
 E2E_REGISTRY_PORT ?= 5001
 E2E_CREATE_FLAGS  ?=
+ifndef DIAG_DIR
+DIAG_DIR := $(if $(GROVE_E2E_DIAG_DIR),$(GROVE_E2E_DIAG_DIR),$(MODULE_ROOT)/e2e-diagnostics)
+endif
 
 # Include tools targets
 include $(REPO_HACK_DIR)/tools.mk
@@ -81,20 +82,20 @@ lint: $(GOLANGCI_LINT)
 # Formats the codebase
 .PHONY: format
 format: $(GOIMPORTS_REVISER)
-	@$(REPO_HACK_DIR)/format.sh ./api/ ./cmd/ ./initc/ ./internal/  ./test/
+	@$(REPO_HACK_DIR)/format.sh ./api/ ./cmd/ ./initc/ ./internal/ ./test/
 
 # Make targets for tests
 # -------------------------------------------------------------
 
 # Run all unit tests
 .PHONY: test-unit
-test-unit:
-	@go test ./...
+test-unit: $(SETUP_ENVTEST)
+	@KUBEBUILDER_ASSETS="$$($(SETUP_ENVTEST) use -p path)" go test ./...
 
 # Run all unit tests with code coverage
 .PHONY: test-cover
-test-cover:
-	@go test ./... -coverprofile=coverage.out
+test-cover: $(SETUP_ENVTEST)
+	@KUBEBUILDER_ASSETS="$$($(SETUP_ENVTEST) use -p path)" go test ./... -coverprofile=coverage.out
 
 # Generate HTML coverage report
 .PHONY: cover-html
@@ -120,18 +121,39 @@ cover-html: test-cover
 run-e2e: export GROVE_E2E_DIAG_DIR = $(DIAG_DIR)
 run-e2e: export GROVE_E2E_DIAG_MODE = $(DIAG_MODE)
 run-e2e:
+	@echo "> Preparing charts (copying CRDs)..."
+	@$(MODULE_HACK_DIR)/prepare-charts.sh
 	@echo "> Running e2e tests (compilation may take a few minutes with no output)..."
-	@cd e2e && go test -count=1 -tags=e2e ./tests/... -v -timeout 45m $(if $(TEST_PATTERN),-run $(TEST_PATTERN))
+	@cd e2e && go test -count=1 -tags=e2e ./tests/... -v -timeout 45m $(if $(TEST_PATTERN),-run '$(TEST_PATTERN)')
+
+# Same as run-e2e but with gotestsum for cleaner pass/fail summaries and colored output
+.PHONY: run-e2e-verbose
+run-e2e-verbose: $(GOTESTSUM)
+	@echo "> Running e2e tests (verbose)..."
+	@cd e2e && $(GOTESTSUM) --format short-verbose -- -count=1 -tags=e2e ./tests/... -timeout 45m $(if $(TEST_PATTERN),-run '$(TEST_PATTERN)')
+
+# Run the standalone upgrade test from the latest published GitHub release to
+# the operator built from the current checkout. The test owns its k3d cluster.
+.PHONY: run-upgrade-e2e
+run-upgrade-e2e: export GROVE_E2E_DIAG_DIR = $(DIAG_DIR)
+run-upgrade-e2e: export GROVE_E2E_DIAG_MODE = $(DIAG_MODE)
+run-upgrade-e2e: $(GOTESTSUM)
+	@echo "> Running e2e upgrade tests (verbose)..."
+	@$(MAKE) e2e-cluster-up E2E_CREATE_FLAGS="$(E2E_CREATE_FLAGS) --set grove.enabled=false --set scheduler.kai.enabled=false"
+	$(GOTESTSUM) --format short-verbose -- -count=1 -tags=e2e,e2eupgrade ./e2e/tests/upgrade/ -timeout 45m $(if $(TEST_PATTERN),-run '$(TEST_PATTERN)') || \
+		(echo "Tests failed, cleaning up cluster..."; $(MAKE) e2e-cluster-down; exit 1)
+	@echo "> Tests passed, cleaning up cluster..."
+	@$(MAKE) e2e-cluster-down
 
 # Create a k3d cluster for e2e testing (with Grove and Kai scheduler deployed)
 # This is optional - tests work with any Kubernetes cluster that has the required components
 .PHONY: e2e-cluster-up
-e2e-cluster-up:
+e2e-cluster-up: $(UV)
 	@$(MODULE_HACK_DIR)/infra-manager.py setup $(E2E_CREATE_FLAGS)
 
 # Delete the k3d e2e test cluster
 .PHONY: e2e-cluster-down
-e2e-cluster-down:
+e2e-cluster-down: $(UV)
 	@$(MODULE_HACK_DIR)/infra-manager.py delete k3d-cluster
 
 # Full e2e test run: create k3d cluster, run tests, then cleanup
@@ -153,6 +175,8 @@ run-e2e-full: e2e-cluster-up
 # with MNNVL-specific env overrides and flags.
 # Usage: make run-e2e-mnnvl-full
 .PHONY: run-e2e-mnnvl-full
+run-e2e-mnnvl-full: export GROVE_E2E_DIAG_DIR = $(DIAG_DIR)
+run-e2e-mnnvl-full: export GROVE_E2E_DIAG_MODE = $(DIAG_MODE)
 run-e2e-mnnvl-full: export E2E_CLUSTER__WORKER_NODES = 2
 run-e2e-mnnvl-full: export E2E_CLUSTER__K3S_IMAGE = $(K3S_IMAGE)
 run-e2e-mnnvl-full: export E2E_CLUSTER__PREPULL_IMAGES = false
@@ -163,7 +187,7 @@ run-e2e-mnnvl-full: e2e-cluster-up
 	@docker tag alpine:latest localhost:$(E2E_REGISTRY_PORT)/alpine:latest
 	@docker push localhost:$(E2E_REGISTRY_PORT)/alpine:latest
 	@echo "> Running autoMNNVL e2e tests (all 4 configurations)..."
-	@python3 $(MODULE_HACK_DIR)/e2e-autoMNNVL/run_autoMNNVL_e2e_all.py || \
+	@$(MODULE_HACK_DIR)/e2e-autoMNNVL/run_autoMNNVL_e2e_all.py || \
 		(echo "Tests failed, cleaning up cluster..."; $(MAKE) e2e-cluster-down; exit 1)
 	@echo "> Tests passed, cleaning up cluster..."
 	@$(MAKE) e2e-cluster-down
@@ -192,6 +216,51 @@ run-e2e-real-full: e2e-cluster-up-real
 	@echo "> Tests passed, cleaning up cluster..."
 	@$(MAKE) e2e-cluster-down
 
+
+# Create a k3d cluster for scale testing (KWOK nodes + Pyroscope)
+# Uses the scale.yaml preset with 100 KWOK virtual nodes.
+# Override defaults: make scale-cluster-up E2E_CREATE_FLAGS="--set kwok.nodes=200"
+.PHONY: scale-cluster-up
+scale-cluster-up: $(UV)
+	@$(MODULE_HACK_DIR)/infra-manager.py setup --config $(MODULE_HACK_DIR)/scale.yaml $(E2E_CREATE_FLAGS)
+
+# Delete the scale test cluster
+.PHONY: scale-cluster-down
+scale-cluster-down: $(UV)
+	@$(MODULE_HACK_DIR)/infra-manager.py delete k3d-cluster
+
+# Run scale tests against an existing cluster
+# Usage: make run-scale-test [TEST_PATTERN=<pattern>] [DIAG_DIR=<path>] [DIAG_MODE=<mode>]
+# Examples:
+#   make run-scale-test                                       # Run all scale tests
+#   make run-scale-test TEST_PATTERN=Test_ScaleUp             # Run all scale-up variants
+#   make run-scale-test TEST_PATTERN=Test_ScaleDown           # Run all scale-down variants
+#   make run-scale-test TEST_PATTERN='Test_Scale(Up|Down)'    # Run both directions
+#   make run-scale-test TEST_PATTERN=Test_ScaleUp_Tiny        # Run the sanity test only
+.PHONY: run-scale-test
+run-scale-test: export GROVE_E2E_DIAG_DIR = $(DIAG_DIR)
+run-scale-test: export GROVE_E2E_DIAG_MODE = $(DIAG_MODE)
+run-scale-test:
+	@echo "> Running scale tests..."
+	@cd e2e && go test -count=1 -tags=e2e ./tests/scale/... -v -timeout 40m $(if $(TEST_PATTERN),-run '$(TEST_PATTERN)')
+
+# Run the soak / churn benchmark against an existing cluster.
+# Gated behind the `soak` build tag so it does NOT run as part of
+# run-e2e or run-scale-test. Long-running (~30 min default).
+#
+# Usage: make run-soak-test [DIAG_DIR=<path>] [DIAG_MODE=<mode>] \
+#                           [SOAK_BASE=<n>] [SOAK_PEAK=<n>] [SOAK_CYCLES=<n>]
+# Examples:
+#   make run-soak-test                                       # Defaults: 25 → 50 PCS, 10 cycles
+#   make run-soak-test SOAK_CYCLES=3                         # Shorter run for quick validation
+#   make run-soak-test DIAG_DIR=/tmp/soak-baseline           # Capture artifacts for later comparison
+.PHONY: run-soak-test
+run-soak-test: export GROVE_E2E_DIAG_DIR = $(DIAG_DIR)
+run-soak-test: export GROVE_E2E_DIAG_MODE = $(DIAG_MODE)
+run-soak-test:
+	@echo "> Running soak / churn benchmark (long-running, on-demand)..."
+	@cd e2e && SOAK_BASE=$(SOAK_BASE) SOAK_PEAK=$(SOAK_PEAK) SOAK_CYCLES=$(SOAK_CYCLES) \
+		go test -count=1 -tags='e2e soak' ./tests/scale/... -v -timeout 60m -run Test_SoakChurn
 
 # Make targets for local development and testing
 # -------------------------------------------------------------
@@ -228,16 +297,19 @@ endif
 # Deploys grove-operator to a k8s cluster using skaffold.
 .PHONY: deploy
 deploy: $(SKAFFOLD)
+	@$(MODULE_HACK_DIR)/prepare-charts.sh
 	@PACKAGE_PATH=${LD_PACKAGE_PATH} PROGRAM_NAME=${OPERATOR_NAME} $(MODULE_HACK_DIR)/deploy.sh run -m grove-operator -n $(NAMESPACE)
 
 # Deploys grove-operator to a k8s cluster using skaffold in dev mode.
 .PHONY: deploy-dev
 deploy-dev: $(SKAFFOLD)
+	@$(MODULE_HACK_DIR)/prepare-charts.sh
 	@PACKAGE_PATH=${LD_PACKAGE_PATH} PROGRAM_NAME=${OPERATOR_NAME} $(MODULE_HACK_DIR)/deploy.sh dev --cleanup=false --keep-running-on-failure -m grove-operator --trigger='manual' -n $(NAMESPACE)
 
 # Deploys grove-operator to a k8s cluster using skaffold in debug mode.
 .PHONY: deploy-debug
 deploy-debug: $(SKAFFOLD)
+	@$(MODULE_HACK_DIR)/prepare-charts.sh
 	@PACKAGE_PATH=${LD_PACKAGE_PATH} PROGRAM_NAME=${OPERATOR_NAME} $(MODULE_HACK_DIR)/deploy.sh debug --cleanup=false -m grove-operator -p debug -n $(NAMESPACE)
 
 # Undeploys grove-operator from a k8s cluster using skaffold.

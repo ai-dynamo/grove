@@ -1,0 +1,29 @@
+apiVersion: grove.io/v1alpha1
+kind: PodCliqueSet
+metadata:
+  name: upgrade-survivor
+spec:
+  replicas: 1
+  template:
+    cliqueStartupType: CliqueStartupTypeExplicit
+    cliques:
+      - name: bootstrap
+        spec:
+          roleName: bootstrap
+          replicas: 1
+          minAvailable: 1
+          podSpec:
+            containers:
+              - name: bootstrap
+                image: registry.k8s.io/pause:3.10
+      - name: worker
+        spec:
+          roleName: worker
+          startsAfter:
+            - bootstrap
+          replicas: 1
+          minAvailable: 1
+          podSpec:
+            containers:
+              - name: worker
+                image: registry.k8s.io/pause:3.10

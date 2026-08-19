@@ -1,4 +1,3 @@
-// /*
 // Copyright 2024 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,7 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package validation
 
@@ -23,6 +21,8 @@ import (
 
 	groveconfigv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	"github.com/ai-dynamo/grove/operator/internal/scheduler"
+	"github.com/ai-dynamo/grove/operator/internal/scheduler/lpx"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/go-logr/logr"
@@ -52,7 +52,7 @@ func TestNewHandler(t *testing.T) {
 		Network:                 getDefaultNetworkConfig(),
 		Scheduler:               groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube)},
 	}
-	handler := NewHandler(mgr, &cfg)
+	handler := NewHandler(mgr, &cfg, testutils.NewDefaultFakeRegistry())
 	require.NotNil(t, handler)
 	assert.NotNil(t, handler.logger)
 }
@@ -94,7 +94,16 @@ func TestValidateCreate(t *testing.T) {
 				Spec: grovecorev1alpha1.PodCliqueSetSpec{
 					Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
 						StartupType: nil,
-						Cliques:     []*grovecorev1alpha1.PodCliqueTemplateSpec{},
+						Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+							{
+								Name: "test-pclq",
+								Spec: grovecorev1alpha1.PodCliqueSpec{
+									RoleName: "test-pclq",
+									PodSpec:  testutils.NewPodWithBuilderWithDefaultSpec("test-pclq-xs345", "default").Build().Spec,
+									Replicas: 1,
+								},
+							},
+						},
 					},
 				},
 			},
@@ -106,6 +115,60 @@ func TestValidateCreate(t *testing.T) {
 			obj:           &corev1.Pod{},
 			expectError:   true,
 			errorContains: "failed to cast object to PodCliqueSet",
+		},
+		{
+			name: "unsupported schedulerName fails validation without panic",
+			obj: testutils.NewPodCliqueSetBuilder("test-pcs", "default", uuid.NewUUID()).
+				WithReplicas(1).
+				WithTerminationDelay(4 * time.Hour).
+				WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder)).
+				WithPodCliqueTemplateSpec(
+					testutils.NewPodCliqueTemplateSpecBuilder("test").
+						WithReplicas(1).
+						WithRoleName("test-role").
+						WithMinAvailable(1).
+						WithPodSpec(testutils.NewPodWithBuilderWithDefaultSpec("test-pod", "default").
+							WithSchedulerName(string(groveconfigv1alpha1.SchedulerNameVolcano)).
+							Build().Spec).
+						Build()).
+				Build(),
+			expectError:   true,
+			errorContains: "schedulerName must be an enabled scheduler backend",
+		},
+		{
+			name: "unknown scheduler name returns error without panic",
+			obj: &grovecorev1alpha1.PodCliqueSet{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-pcs",
+					Namespace: "default",
+				},
+				Spec: grovecorev1alpha1.PodCliqueSetSpec{
+					Replicas: 1,
+					Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
+						TerminationDelay: ptr.To(metav1.Duration{Duration: 4 * time.Hour}),
+						StartupType:      ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder),
+						Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+							{
+								Name: "test-pclq",
+								Spec: grovecorev1alpha1.PodCliqueSpec{
+									RoleName:     "test-role",
+									Replicas:     1,
+									MinAvailable: ptr.To(int32(1)),
+									PodSpec: corev1.PodSpec{
+										SchedulerName: "unknown-scheduler",
+										Containers: []corev1.Container{{
+											Name:  "test",
+											Image: "test",
+										}},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			expectError:   true,
+			errorContains: "schedulerName must be an enabled scheduler backend",
 		},
 	}
 
@@ -121,9 +184,14 @@ func TestValidateCreate(t *testing.T) {
 			cfg := groveconfigv1alpha1.OperatorConfiguration{
 				TopologyAwareScheduling: getDefaultTASConfig(),
 				Network:                 getDefaultNetworkConfig(),
-				Scheduler:               groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube)},
+				Scheduler: groveconfigv1alpha1.SchedulerConfiguration{
+					Profiles: []groveconfigv1alpha1.SchedulerProfile{
+						{Name: groveconfigv1alpha1.SchedulerNameKube},
+					},
+					DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube),
+				},
 			}
-			handler := NewHandler(mgr, &cfg)
+			handler := NewHandler(mgr, &cfg, testutils.NewDefaultFakeRegistry())
 
 			ctx := context.Background()
 			warnings, err := handler.ValidateCreate(ctx, tt.obj)
@@ -139,6 +207,42 @@ func TestValidateCreate(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestValidatePodCliqueSetWithLPXBackend(t *testing.T) {
+	profile := groveconfigv1alpha1.SchedulerProfile{Name: groveconfigv1alpha1.SchedulerNameLPX}
+	registry := &testutils.FakeSchedulerRegistry{
+		Backends: map[string]scheduler.Backend{
+			string(groveconfigv1alpha1.SchedulerNameKube): testutils.NewFakeSchedulerBackend(
+				string(groveconfigv1alpha1.SchedulerNameKube),
+			),
+			string(groveconfigv1alpha1.SchedulerNameLPX): lpx.New(profile),
+		},
+		DefaultBackend: string(groveconfigv1alpha1.SchedulerNameKube),
+	}
+	handler := &Handler{schedRegistry: registry}
+	pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "default", uuid.NewUUID()).
+		WithPodCliqueTemplateSpec(
+			testutils.NewPodCliqueTemplateSpecBuilder("worker").
+				WithRoleName("worker").
+				WithReplicas(1).
+				WithPodSpec(corev1.PodSpec{
+					SchedulerName: string(groveconfigv1alpha1.SchedulerNameLPX),
+					Containers: []corev1.Container{{
+						Name:  "worker",
+						Image: "worker",
+					}},
+				}).
+				Build(),
+		).
+		Build()
+
+	require.NoError(t, handler.validatePodCliqueSetWithBackend(context.Background(), pcs))
+
+	pcs.Spec.Template.TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{}
+	err := handler.validatePodCliqueSetWithBackend(context.Background(), pcs)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "does not support Grove topology constraints")
 }
 
 // TestValidateUpdate tests validation of PodCliqueSet update requests.
@@ -257,9 +361,14 @@ func TestValidateUpdate(t *testing.T) {
 			cfg := groveconfigv1alpha1.OperatorConfiguration{
 				TopologyAwareScheduling: getDefaultTASConfig(),
 				Network:                 getDefaultNetworkConfig(),
-				Scheduler:               groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube)},
+				Scheduler: groveconfigv1alpha1.SchedulerConfiguration{
+					Profiles: []groveconfigv1alpha1.SchedulerProfile{
+						{Name: groveconfigv1alpha1.SchedulerNameKube},
+					},
+					DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube),
+				},
 			}
-			handler := NewHandler(mgr, &cfg)
+			handler := NewHandler(mgr, &cfg, testutils.NewDefaultFakeRegistry())
 
 			ctx := context.Background()
 			warnings, err := handler.ValidateUpdate(ctx, tt.newObj, tt.oldObj)
@@ -291,7 +400,7 @@ func TestValidateDelete(t *testing.T) {
 		Network:                 getDefaultNetworkConfig(),
 		Scheduler:               groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube)},
 	}
-	handler := NewHandler(mgr, &cfg)
+	handler := NewHandler(mgr, &cfg, testutils.NewDefaultFakeRegistry())
 
 	// Deletion validation always succeeds
 	ctx := context.Background()
@@ -407,7 +516,7 @@ func TestLogValidatorFunctionInvocation(t *testing.T) {
 				Network:                 getDefaultNetworkConfig(),
 				Scheduler:               groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube)},
 			}
-			handler := NewHandler(mgr, &cfg)
+			handler := NewHandler(mgr, &cfg, testutils.NewDefaultFakeRegistry())
 
 			// This function doesn't return an error, but we can verify it doesn't panic
 			assert.NotPanics(t, func() {

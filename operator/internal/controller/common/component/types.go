@@ -1,4 +1,3 @@
-// /*
 // Copyright 2025 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,7 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package component
 
@@ -81,6 +79,8 @@ const (
 	KindPodCliqueSetReplica Kind = "PodCliqueSetReplica"
 	// KindComputeDomain indicates that the resource is a ComputeDomain.
 	KindComputeDomain Kind = "ComputeDomain"
+	// KindResourceClaim indicates that the resource is a DRA ResourceClaim.
+	KindResourceClaim Kind = "ResourceClaim"
 )
 
 // OperatorRegistry is a facade that gives access to all components operators.

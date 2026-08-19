@@ -1,6 +1,5 @@
 //go:build e2e
 
-// /*
 // Copyright 2025 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,14 +13,13 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 // Package tests contains end-to-end tests for the Grove operator.
 //
 // These tests are disabled by default due to the 'e2e' build tag above.
 // To run these tests, use:
 //
-//	go test -tags=e2e ./e2e_testing/tests/...
+//	go test -tags=e2e ./e2e/tests/...
 //
 // Without the -tags=e2e flag, these tests will be skipped entirely.
 package tests

@@ -1,4 +1,3 @@
-// /*
 // Copyright 2025 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,7 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package utils
 
@@ -66,6 +64,12 @@ func (b *PodCliqueTemplateSpecBuilder) WithReplicas(replicas int32) *PodCliqueTe
 // WithLabels sets the labels for the PodCliqueTemplateSpec.
 func (b *PodCliqueTemplateSpecBuilder) WithLabels(labels map[string]string) *PodCliqueTemplateSpecBuilder {
 	b.pclqTemplateSpec.Labels = labels
+	return b
+}
+
+// WithAnnotations sets the annotations for the PodCliqueTemplateSpec.
+func (b *PodCliqueTemplateSpecBuilder) WithAnnotations(annotations map[string]string) *PodCliqueTemplateSpecBuilder {
+	b.pclqTemplateSpec.Annotations = annotations
 	return b
 }
 

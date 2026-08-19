@@ -1,4 +1,3 @@
-// /*
 // Copyright 2025 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,7 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package podclique
 
@@ -23,6 +21,7 @@ import (
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	internalconstants "github.com/ai-dynamo/grove/operator/internal/constants"
 	ctrlcommon "github.com/ai-dynamo/grove/operator/internal/controller/common"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
@@ -30,6 +29,7 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/samber/lo"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
@@ -40,6 +40,10 @@ import (
 func (r *Reconciler) reconcileStatus(ctx context.Context, logger logr.Logger, pclq *grovecorev1alpha1.PodClique) ctrlcommon.ReconcileStepResult {
 	pcsName := componentutils.GetPodCliqueSetName(pclq.ObjectMeta)
 	pclqObjectKey := client.ObjectKeyFromObject(pclq)
+	// Snapshot status for both the merge-patch base AND a change check below. When the
+	// status is unchanged — common during steady-state reconciles — we skip the API call
+	// entirely.
+	originalStatus := pclq.Status.DeepCopy()
 	patch := client.MergeFrom(pclq.DeepCopy())
 
 	pcs, err := componentutils.GetPodCliqueSet(ctx, r.client, pclq.ObjectMeta)
@@ -56,14 +60,14 @@ func (r *Reconciler) reconcileStatus(ctx context.Context, logger logr.Logger, pc
 
 	podCategories := k8sutils.CategorizePodsByConditionType(logger, existingPods)
 
+	// mutate PodClique Status Replicas, ReadyReplicas, ScheduleGatedReplicas and UpdatedReplicas.
+	mutateReplicas(pclq, podCategories, len(existingPods))
+	mutateUpdatedReplica(pclq, existingPods)
 	// mutate PodClique.Status.CurrentPodTemplateHash and PodClique.Status.CurrentPodCliqueSetGenerationHash
 	if err = mutateCurrentHashes(logger, pcs, pclq); err != nil {
 		logger.Error(err, "failed to compute PodClique current hashes")
 		return ctrlcommon.ReconcileWithErrors("failed to compute PodClique current hashes", err)
 	}
-	// mutate PodClique Status Replicas, ReadyReplicas, ScheduleGatedReplicas and UpdatedReplicas.
-	mutateReplicas(pclq, podCategories, len(existingPods))
-	mutateUpdatedReplica(pclq, existingPods)
 
 	// mutate the conditions only if the PodClique has been successfully reconciled at least once.
 	// This prevents prematurely setting incorrect conditions.
@@ -72,6 +76,7 @@ func (r *Reconciler) reconcileStatus(ctx context.Context, logger logr.Logger, pc
 		mutateMinAvailableBreachedCondition(pclq,
 			len(podCategories[k8sutils.PodHasAtleastOneContainerWithNonZeroExitCode]),
 			len(podCategories[k8sutils.PodStartedButNotReady]))
+		r.emitAllScheduledReplicasLostIfNeeded(pclq, originalStatus.ScheduledReplicas)
 	}
 
 	// mutate the selector that will be used by an autoscaler.
@@ -80,8 +85,16 @@ func (r *Reconciler) reconcileStatus(ctx context.Context, logger logr.Logger, pc
 		return ctrlcommon.ReconcileWithErrors("failed to set selector for PodClique", err)
 	}
 
-	// mirror UpdateProgress to the deprecated RollingUpdateProgress field for backward compatibility.
-	mirrorUpdateProgressToRollingUpdateProgress(pclq)
+	// Skip the status patch when every mutate* above left status byte-identical to what the
+	// previous reconcile already persisted. The mutators above are the only code that writes
+	// pclq.Status in this path, so equality means there is nothing for the apiserver to
+	// store. Issuing the Patch anyway is not just wasted RPC; it bumps resourceVersion and
+	// fires a watch event that wakes every controller observing PodCliques, which on a quiet
+	// cluster cascades into N spurious reconciles. equality.Semantic is needed (not plain
+	// ==) because the status mixes counters, pointers, conditions, and a label-selector map.
+	if equality.Semantic.DeepEqual(*originalStatus, pclq.Status) {
+		return ctrlcommon.ContinueReconcile()
+	}
 
 	// update the PodClique status.
 	if err := r.client.Status().Patch(ctx, pclq, patch); err != nil {
@@ -102,7 +115,7 @@ func mutateCurrentHashes(logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet
 		if err != nil {
 			return err
 		}
-		if pclq.Status.CurrentPodTemplateHash == nil || *pclq.Status.CurrentPodTemplateHash == expectedPodTemplateHash {
+		if isPodCliqueTemplateHashCurrent(pclq, expectedPodTemplateHash) {
 			pclq.Status.CurrentPodTemplateHash = ptr.To(expectedPodTemplateHash)
 			pclq.Status.CurrentPodCliqueSetGenerationHash = pcs.Status.CurrentGenerationHash
 		}
@@ -112,6 +125,11 @@ func mutateCurrentHashes(logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet
 		pclq.Status.CurrentPodCliqueSetGenerationHash = ptr.To(pclq.Status.UpdateProgress.PodCliqueSetGenerationHash)
 	}
 	return nil
+}
+
+func isPodCliqueTemplateHashCurrent(pclq *grovecorev1alpha1.PodClique, expectedPodTemplateHash string) bool {
+	labelPodTemplateHash, ok := pclq.Labels[apicommon.LabelPodTemplateHash]
+	return ok && labelPodTemplateHash == expectedPodTemplateHash
 }
 
 // mutateReplicas updates the PodClique status with current replica counts based on pod categorization
@@ -131,6 +149,11 @@ func mutateUpdatedReplica(pclq *grovecorev1alpha1.PodClique, existingPods []*cor
 	// This covers both the active update phase and the window after completion before CurrentPodTemplateHash is synced.
 	if pclq.Status.UpdateProgress != nil {
 		expectedPodTemplateHash = pclq.Status.UpdateProgress.PodTemplateHash
+	} else if labelPodTemplateHash := pclq.Labels[apicommon.LabelPodTemplateHash]; labelPodTemplateHash != "" {
+		// The PodClique label is the desired pod template hash propagated by the
+		// owner sync. Prefer it over stale current-status bookkeeping so status can
+		// recover after a replacement pod already converged to the desired hash.
+		expectedPodTemplateHash = labelPodTemplateHash
 	} else if pclq.Status.CurrentPodTemplateHash != nil {
 		// Steady state: no rolling update tracking exists.
 		// Use the stable current hash for pods that have been reconciled.
@@ -150,9 +173,11 @@ func mutateUpdatedReplica(pclq *grovecorev1alpha1.PodClique, existingPods []*cor
 	}
 }
 
-// mutateSelector creates and sets the label selector for autoscaler use when scaling is configured
+// mutateSelector publishes the label selector on the PodClique /scale subresource so HPAs can
+// target the PodClique. PodCliques that belong to a PodCliqueScalingGroup are scaled via the PCSG
+// and must not advertise their own selector.
 func mutateSelector(pcsName string, pclq *grovecorev1alpha1.PodClique) error {
-	if pclq.Spec.ScaleConfig == nil {
+	if _, isPCSGMember := pclq.Labels[apicommon.LabelPodCliqueScalingGroup]; isPCSGMember {
 		return nil
 	}
 	labels := lo.Assign(
@@ -167,6 +192,18 @@ func mutateSelector(pcsName string, pclq *grovecorev1alpha1.PodClique) error {
 	}
 	pclq.Status.Selector = ptr.To(selector.String())
 	return nil
+}
+
+// emitAllScheduledReplicasLostIfNeeded emits a Warning event when ScheduledReplicas drops from
+// non-zero to zero. The MinAvailableBreached condition also flips on this transition, but the
+// event gives operators a discrete, log-visible signal that a previously-running workload is
+// fully down (and that gang termination is now armed and will fire after TerminationDelay).
+func (r *Reconciler) emitAllScheduledReplicasLostIfNeeded(pclq *grovecorev1alpha1.PodClique, originalScheduled int32) {
+	if originalScheduled > 0 && pclq.Status.ScheduledReplicas == 0 {
+		r.eventRecorder.Eventf(pclq, corev1.EventTypeWarning, internalconstants.ReasonAllScheduledReplicasLost,
+			"All scheduled pods lost (was %d). Gang termination will fire after TerminationDelay if the PodClique stays below MinAvailable; investigate node availability or capacity.",
+			originalScheduled)
+	}
 }
 
 // mutateMinAvailableBreachedCondition updates the MinAvailableBreached condition based on pod availability
@@ -193,14 +230,19 @@ func computeMinAvailableBreachedCondition(pclq *grovecorev1alpha1.PodClique, num
 	scheduledReplicas := int(pclq.Status.ScheduledReplicas)
 	now := metav1.Now()
 
-	// If the number of scheduled pods is less than the minimum available, then minAvailable is not considered as breached.
-	// Consider a case where none of the PodCliques have been scheduled yet, then it should not cause the PodGang to be recreated all the time.
+	// scheduledReplicas < MinAvailable always breaches. TerminationDelay (default 4h) is
+	// the natural grace window: during a normal startup the breach flickers True briefly
+	// and resolves before TerminationDelay; a workload that stays below MinAvailable past
+	// TerminationDelay is genuinely stuck and gang-terminating gives the scheduler a fresh
+	// PodGang to retry against the current cluster state. This covers both the partial-
+	// regression case (0 < scheduled < MinAvailable) and the full-regression case
+	// (scheduled == 0 after the workload was once healthy).
 	if scheduledReplicas < minAvailable {
 		return metav1.Condition{
 			Type:               constants.ConditionTypeMinAvailableBreached,
-			Status:             metav1.ConditionFalse,
-			Reason:             constants.ConditionReasonInsufficientScheduledPods,
-			Message:            fmt.Sprintf("Insufficient scheduled pods. expected at least: %d, found: %d", minAvailable, scheduledReplicas),
+			Status:             metav1.ConditionTrue,
+			Reason:             constants.ConditionReasonScheduledReplicasBelowMinAvailable,
+			Message:            fmt.Sprintf("Scheduled replicas (%d) below MinAvailable (%d)", scheduledReplicas, minAvailable),
 			LastTransitionTime: now,
 		}
 	}
@@ -254,28 +296,5 @@ func computePodCliqueScheduledCondition(pclq *grovecorev1alpha1.PodClique) metav
 		Reason:             constants.ConditionReasonSufficientScheduledPods,
 		Message:            fmt.Sprintf("Sufficient scheduled pods found. expected at least: %d, found: %d", *pclq.Spec.MinAvailable, pclq.Status.ScheduledReplicas),
 		LastTransitionTime: now,
-	}
-}
-
-// mirrorUpdateProgressToRollingUpdateProgress mirrors the UpdateProgress field to the deprecated RollingUpdateProgress field
-// for backward compatibility with consumers that still use the old field name.
-func mirrorUpdateProgressToRollingUpdateProgress(pclq *grovecorev1alpha1.PodClique) {
-	if pclq.Status.UpdateProgress == nil {
-		pclq.Status.RollingUpdateProgress = nil
-		return
-	}
-
-	pclq.Status.RollingUpdateProgress = &grovecorev1alpha1.PodCliqueRollingUpdateProgress{
-		UpdateStartedAt:            pclq.Status.UpdateProgress.UpdateStartedAt,
-		UpdateEndedAt:              pclq.Status.UpdateProgress.UpdateEndedAt,
-		PodCliqueSetGenerationHash: pclq.Status.UpdateProgress.PodCliqueSetGenerationHash,
-		PodTemplateHash:            pclq.Status.UpdateProgress.PodTemplateHash,
-	}
-
-	if pclq.Status.UpdateProgress.ReadyPodsSelectedToUpdate != nil {
-		pclq.Status.RollingUpdateProgress.ReadyPodsSelectedToUpdate = &grovecorev1alpha1.PodsSelectedToUpdate{
-			Current:   pclq.Status.UpdateProgress.ReadyPodsSelectedToUpdate.Current,
-			Completed: pclq.Status.UpdateProgress.ReadyPodsSelectedToUpdate.Completed,
-		}
 	}
 }

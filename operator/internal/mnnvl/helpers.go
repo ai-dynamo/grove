@@ -1,4 +1,3 @@
-// /*
 // Copyright 2025 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,49 +11,83 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package mnnvl
 
 import (
 	"fmt"
+	"strings"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/util/validation"
 )
 
-// IsAutoMNNVLEnabled checks if MNNVL is enabled via the grove.io/auto-mnnvl annotation.
-func IsAutoMNNVLEnabled(annotations map[string]string) bool {
-	if annotations == nil {
-		return false
+// groupStatus describes the MNNVL enrollment state derived from annotations.
+type groupStatus int
+
+const (
+	groupAbsent    groupStatus = iota // annotation not present — inherit from parent
+	groupWithdrawn                    // annotation set to "none" — explicitly not enrolled
+	groupEnrolled                     // annotation set to a group name — enrolled
+)
+
+// ValidateMNNVLGroupName validates that the given string is a valid mnnvl-group
+// annotation value. The value must be either "none" (opt-out) or a valid
+// DNS-1123 label, since the group name becomes part of the ComputeDomain
+// resource name.
+func ValidateMNNVLGroupName(name string) error {
+	if name == "" {
+		return fmt.Errorf("mnnvl-group value must not be empty")
 	}
-	return annotations[AnnotationAutoMNNVL] == AnnotationAutoMNNVLEnabled
+	if name == AnnotationMNNVLGroupOptOut {
+		return nil
+	}
+	if errs := validation.IsDNS1123Label(name); len(errs) > 0 {
+		return fmt.Errorf("mnnvl-group value %q is not a valid DNS-1123 label: %s", name, strings.Join(errs, "; "))
+	}
+	return nil
+}
+
+// resolveGroupName extracts the MNNVL group status from a single annotation set.
+//   - groupEnrolled:  mnnvl-group is set to a group name; group contains the name.
+//   - groupWithdrawn: mnnvl-group is "none" — explicit opt-out; group is "".
+//   - groupAbsent:    mnnvl-group is not present — inherit from parent; group is "".
+func resolveGroupName(annotations map[string]string) (group string, status groupStatus) {
+	val, exists := annotations[AnnotationMNNVLGroup]
+	if !exists {
+		return "", groupAbsent
+	}
+	if val == AnnotationMNNVLGroupOptOut {
+		return "", groupWithdrawn
+	}
+	return val, groupEnrolled
+}
+
+// ResolveGroupNameHierarchically resolves the MNNVL group from multiple
+// annotation layers, ordered from most specific to least specific
+// (e.g., PCLQ → PCSG → PCS). The first layer where the annotation is
+// present wins — even if it's "none" (withdrawn), which stops the walk.
+func ResolveGroupNameHierarchically(annotationLayers ...map[string]string) (string, bool) {
+	for _, annotations := range annotationLayers {
+		group, status := resolveGroupName(annotations)
+		if status != groupAbsent {
+			return group, status == groupEnrolled
+		}
+	}
+	return "", false
 }
 
 // GenerateRCTName creates the ResourceClaimTemplate name for a PCS replica.
-// The RCT name matches the ComputeDomain name: {pcs-name}-{replica-index}
-func GenerateRCTName(pcsNameReplica apicommon.ResourceNameReplica) string {
-	return fmt.Sprintf("%s-%d", pcsNameReplica.Name, pcsNameReplica.Replica)
+// Format: {pcs-name}-{replica-index}-{group-name}.
+func GenerateRCTName(pcsNameReplica apicommon.ResourceNameReplica, groupName string) string {
+	return fmt.Sprintf("%s-%d-%s", pcsNameReplica.Name, pcsNameReplica.Replica, groupName)
 }
 
-// hasGPURequirement checks if any container in any clique of the PCS requests nvidia.com/gpu.
-func hasGPURequirement(pcs *grovecorev1alpha1.PodCliqueSet) bool {
-	for _, clique := range pcs.Spec.Template.Cliques {
-		if clique == nil {
-			continue
-		}
-		if hasGPUInPodSpec(&clique.Spec.PodSpec) {
-			return true
-		}
-	}
-	return false
-}
-
-// hasGPUInPodSpec checks if any container in the PodSpec requests GPU resources.
-func hasGPUInPodSpec(podSpec *corev1.PodSpec) bool {
+// HasGPUInPodSpec checks if any container in the PodSpec requests GPU resources.
+func HasGPUInPodSpec(podSpec *corev1.PodSpec) bool {
 	if podSpec == nil {
 		return false
 	}
@@ -79,26 +112,15 @@ func containerHasGPU(container *corev1.Container) bool {
 	if container == nil {
 		return false
 	}
-	// Check limits
 	if quantity, exists := container.Resources.Limits[constants.GPUResourceName]; exists {
 		if !quantity.IsZero() {
 			return true
 		}
 	}
-	// Check requests
 	if quantity, exists := container.Resources.Requests[constants.GPUResourceName]; exists {
 		if !quantity.IsZero() {
 			return true
 		}
 	}
 	return false
-}
-
-// getAnnotationValue safely retrieves an annotation value from a PCS.
-func getAnnotationValue(pcs *grovecorev1alpha1.PodCliqueSet, key string) (string, bool) {
-	if pcs.Annotations == nil {
-		return "", false
-	}
-	value, exists := pcs.Annotations[key]
-	return value, exists
 }

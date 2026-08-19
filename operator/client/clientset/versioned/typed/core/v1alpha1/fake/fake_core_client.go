@@ -28,8 +28,8 @@ type FakeGroveV1alpha1 struct {
 	*testing.Fake
 }
 
-func (c *FakeGroveV1alpha1) ClusterTopologies() v1alpha1.ClusterTopologyInterface {
-	return newFakeClusterTopologies(c)
+func (c *FakeGroveV1alpha1) ClusterTopologyBindings() v1alpha1.ClusterTopologyBindingInterface {
+	return newFakeClusterTopologyBindings(c)
 }
 
 func (c *FakeGroveV1alpha1) PodCliques(namespace string) v1alpha1.PodCliqueInterface {

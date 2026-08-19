@@ -1,4 +1,3 @@
-// /*
 // Copyright 2025 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,7 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package podclique
 
@@ -20,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -62,6 +61,7 @@ const (
 	errCodeUpdateStatus                                  grovecorev1alpha1.ErrorCode = "ERR_UPDATE_STATUS"
 	errCodeComputePendingPodCliqueScalingGroupUpdateWork grovecorev1alpha1.ErrorCode = "ERR_COMPUTE_PENDINGUPDATE_WORK"
 	errCodeCreateOrUpdatePodCliques                      grovecorev1alpha1.ErrorCode = "ERR_CREATE_OR_UPDATE_PODCLIQUES"
+	errCodeSyncPCSGResourceClaim                         grovecorev1alpha1.ErrorCode = "ERR_SYNC_PCSG_RESOURCE_CLAIM"
 )
 
 var (
@@ -303,6 +303,8 @@ func (r _resource) buildResource(logger logr.Logger, pcs *grovecorev1alpha1.PodC
 			fmt.Sprintf("Error setting controller reference for PodClique: %v", client.ObjectKeyFromObject(pclq)),
 		)
 	}
+	// Add finalizer at creation so PCLQ controller does not need a separate PATCH on first reconcile.
+	controllerutil.AddFinalizer(pclq, apiconstants.FinalizerPodClique)
 
 	pcsReplicaIndex, err := getPCSReplicaFromPCSG(pcsg)
 	if err != nil {
@@ -312,7 +314,9 @@ func (r _resource) buildResource(logger logr.Logger, pcs *grovecorev1alpha1.PodC
 	podGangName := apicommon.GeneratePodGangNameForPodCliqueOwnedByPCSG(pcs, pcsReplicaIndex, pcsg, pcsgReplicaIndex)
 
 	pclq.Labels = getLabels(pcs, pcsReplicaIndex, pcsg, pcsgReplicaIndex, pclqObjectKey, pclqTemplateSpec, podGangName)
-	pclq.Annotations = pclqTemplateSpec.Annotations
+	pclq.Annotations = maps.Clone(pclqTemplateSpec.Annotations)
+	// PodGang owns topology selection; do not propagate a template topology annotation to PodClique pods.
+	delete(pclq.Annotations, apiconstants.AnnotationTopologyName)
 	// set PodCliqueSpec
 	// ------------------------------------
 	if pclqExists {
@@ -331,9 +335,12 @@ func (r _resource) buildResource(logger logr.Logger, pcs *grovecorev1alpha1.PodC
 	}
 	pclq.Spec.StartsAfter = dependentPCLQNames
 
-	// Inject MNNVL resourceClaims if enabled on PCSG (propagated from PCS)
-	if mnnvl.IsAutoMNNVLEnabled(pcsg.Annotations) {
-		mnnvl.InjectMNNVLIntoPodSpec(logger, &pclq.Spec.PodSpec, apicommon.ResourceNameReplica{Name: pcs.Name, Replica: pcsReplicaIndex})
+	// Inject MNNVL resourceClaims: resolve group hierarchically (PCLQ → PCSG).
+	// PCS-level annotations are already propagated onto the PCSG by the PCS
+	// controller via propagateMNNVLAnnotations, so a two-layer check suffices.
+	groupName, mnnvlEnabled := mnnvl.ResolveGroupNameHierarchically(pclqTemplateSpec.Annotations, pcsg.Annotations)
+	if mnnvlEnabled {
+		mnnvl.InjectMNNVLIntoPodSpec(logger, &pclq.Spec.PodSpec, apicommon.ResourceNameReplica{Name: pcs.Name, Replica: pcsReplicaIndex}, groupName)
 	}
 
 	return nil
@@ -364,8 +371,8 @@ func (r _resource) addEnvironmentVariablesToPodContainerSpecs(pclq *grovecorev1a
 		},
 	}
 	pclqObjPodSpec := &pclq.Spec.PodSpec
-	componentutils.AddEnvVarsToContainers(pclqObjPodSpec.Containers, pcsgEnvVars)
-	componentutils.AddEnvVarsToContainers(pclqObjPodSpec.InitContainers, pcsgEnvVars)
+	componentutils.PrependEnvVarsToContainers(pclqObjPodSpec.Containers, pcsgEnvVars)
+	componentutils.PrependEnvVarsToContainers(pclqObjPodSpec.InitContainers, pcsgEnvVars)
 }
 
 // getPCSReplicaFromPCSG extracts the PodCliqueSet replica index from PodCliqueScalingGroup labels

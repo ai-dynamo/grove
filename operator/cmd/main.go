@@ -1,4 +1,3 @@
-// /*
 // Copyright 2024 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,7 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package main
 
@@ -31,7 +29,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/controller/cert"
 	grovelogger "github.com/ai-dynamo/grove/operator/internal/logger"
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
-	schedmanager "github.com/ai-dynamo/grove/operator/internal/scheduler/manager"
+	schedulerregistry "github.com/ai-dynamo/grove/operator/internal/scheduler/registry"
 	groveversion "github.com/ai-dynamo/grove/operator/internal/version"
 
 	"github.com/spf13/pflag"
@@ -89,23 +87,21 @@ func main() {
 	}
 
 	// Initialize scheduler backends with the configured schedulers.
-	if err := schedmanager.Initialize(
+	schedRegistry, err := schedulerregistry.New(
 		mgr.GetClient(),
+		cl,
 		mgr.GetScheme(),
 		mgr.GetEventRecorderFor("scheduler-backend"),
 		operatorConfig.Scheduler,
-	); err != nil {
+	)
+	if err != nil {
 		logger.Error(err, "failed to initialize scheduler backend")
 		handleErrorAndExit(err, cli.ExitErrInitializeSchedulerBackend)
 	}
 
-	// TODO: Move this to the proper scheduler backend.
-	// Initialize or clean up ClusterTopology based on operator configuration.
-	// This must be done before starting the controllers that may depend on the ClusterTopology resource.
-	// NOTE: In this version of the operator the synchronization will additionally ensure that the KAI Topology resource
-	// is created based on the ClusterTopology. When we introduce support for pluggable scheduler backends,
-	// handling of scheduler specified resources will be delegated to the backend scheduler controller.
-	if err = clustertopology.SynchronizeTopology(ctx, cl, logger, operatorConfig); err != nil {
+	// Synchronize backend topologies for all existing ClusterTopologyBinding resources.
+	// This must be done before starting the controllers that may depend on the ClusterTopologyBinding resource.
+	if err = clustertopology.SynchronizeTopology(ctx, cl, logger, schedRegistry.AllTopologyAware()); err != nil {
 		logger.Error(err, "failed to synchronize cluster topology")
 		handleErrorAndExit(err, cli.ExitErrSynchronizeTopology)
 	}
@@ -133,7 +129,7 @@ func main() {
 	// Certificates need to be generated before the webhooks are started, which can only happen once the manager is started.
 	// Block while generating the certificates, and then start the webhooks.
 	go func() {
-		if err = grovectrl.RegisterControllersAndWebhooks(mgr, logger, operatorConfig, webhookCertsReadyCh); err != nil {
+		if err = grovectrl.RegisterControllersAndWebhooks(mgr, logger, operatorConfig, webhookCertsReadyCh, schedRegistry); err != nil {
 			logger.Error(err, "failed to initialize grove controller manager")
 			handleErrorAndExit(err, cli.ExitErrInitializeManager)
 		}

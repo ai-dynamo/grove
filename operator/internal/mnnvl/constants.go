@@ -1,4 +1,3 @@
-// /*
 // Copyright 2025 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,7 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 // Package mnnvl provides utilities and constants for Multi-Node NVLink (MNNVL) support.
 package mnnvl
@@ -42,19 +40,20 @@ var ComputeDomainGVK = schema.GroupVersionKind{
 
 // MNNVL annotation, finalizer, and resource claim constants
 const (
-	// AnnotationAutoMNNVL is the annotation key used to indicate whether automatic MNNVL
-	// support should be enabled for a PodCliqueSet. Valid values are AnnotationAutoMNNVLEnabled
-	// and AnnotationAutoMNNVLDisabled.
-	AnnotationAutoMNNVL = "grove.io/auto-mnnvl"
+	// AnnotationMNNVLGroup is the annotation key used to assign a PodClique to a named
+	// MNNVL group. PodCliques with the same group name share a ComputeDomain per replica.
+	// The value must be a valid Kubernetes name component (lowercase alphanumeric or dashes,
+	// starting and ending with alphanumeric, max 63 characters), or the reserved value "none"
+	// to explicitly opt out of MNNVL (overriding a parent layer's setting).
+	AnnotationMNNVLGroup = "grove.io/mnnvl-group"
 
-	// AnnotationAutoMNNVLEnabled is the value for AnnotationAutoMNNVL indicating that
-	// automatic MNNVL support should be enabled. The operator will automatically create
-	// and manage ComputeDomain resources for the workload.
-	AnnotationAutoMNNVLEnabled = "enabled"
+	// AnnotationMNNVLGroupOptOut is the reserved value for AnnotationMNNVLGroup that
+	// explicitly opts out of MNNVL, overriding any parent layer's group assignment.
+	AnnotationMNNVLGroupOptOut = "none"
 
-	// AnnotationAutoMNNVLDisabled is the value for AnnotationAutoMNNVL indicating that
-	// automatic MNNVL support should be disabled.
-	AnnotationAutoMNNVLDisabled = "disabled"
+	// LabelMNNVLGroup is a label applied to ComputeDomain resources to identify which
+	// MNNVL group they belong to. This enables filtering and selection of CDs by group.
+	LabelMNNVLGroup = "grove.io/mnnvl-group"
 
 	// FinalizerComputeDomain is the finalizer added to ComputeDomains to prevent accidental
 	// deletion while workloads are using them. This finalizer is removed by the PCS controller

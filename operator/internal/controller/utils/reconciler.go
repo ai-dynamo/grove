@@ -1,4 +1,3 @@
-// /*
 // Copyright 2025 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,7 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package utils
 
@@ -49,7 +47,7 @@ func GetPodCliqueSet(ctx context.Context, cl client.Client, logger logr.Logger, 
 func GetPodClique(ctx context.Context, cl client.Client, logger logr.Logger, objectKey client.ObjectKey, pclq *v1alpha1.PodClique, ignoreNotFound bool) grovectrl.ReconcileStepResult {
 	if err := cl.Get(ctx, objectKey, pclq); err != nil {
 		if ignoreNotFound && apierrors.IsNotFound(err) {
-			logger.Info("PodClique not found", "objectKey", objectKey)
+			logger.V(1).Info("PodClique not found", "objectKey", objectKey)
 			return grovectrl.DoNotRequeue()
 		}
 		return grovectrl.ReconcileWithErrors("error getting PodClique", err)

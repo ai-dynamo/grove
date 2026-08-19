@@ -1,4 +1,3 @@
-// /*
 // Copyright 2025 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,19 +11,24 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package podclique
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
+	apiconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	groveclientscheme "github.com/ai-dynamo/grove/operator/internal/client"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
+	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
+	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
+	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
@@ -56,6 +60,39 @@ func TestNew(t *testing.T) {
 	assert.Equal(t, client, resource.client)
 	assert.Equal(t, scheme, resource.scheme)
 	assert.Equal(t, eventRecorder, resource.eventRecorder)
+}
+
+func TestMarkRollingUpdateEndReturnsRequeueAfterPatch(t *testing.T) {
+	pcsg := &grovecorev1alpha1.PodCliqueScalingGroup{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-pcsg", Namespace: "test-ns"},
+		Status: grovecorev1alpha1.PodCliqueScalingGroupStatus{
+			UpdateProgress: &grovecorev1alpha1.PodCliqueScalingGroupUpdateProgress{
+				UpdateStartedAt: metav1.Now(),
+				ReadyReplicaIndicesSelectedToUpdate: &grovecorev1alpha1.PodCliqueScalingGroupReplicaUpdateProgress{
+					Current: 1,
+				},
+			},
+		},
+	}
+	cl := testutils.NewTestClientBuilder().
+		WithObjects(pcsg).
+		WithStatusSubresource(&grovecorev1alpha1.PodCliqueScalingGroup{}).
+		Build()
+	r := _resource{client: cl}
+
+	err := r.markRollingUpdateEnd(context.Background(), logr.Discard(), pcsg)
+
+	require.Error(t, err)
+	var groveError *groveerr.GroveError
+	require.True(t, errors.As(err, &groveError))
+	assert.Equal(t, groveerr.ErrCodeContinueReconcileAndRequeue, groveError.Code)
+	assert.Equal(t, component.OperationSync, groveError.Operation)
+
+	var updated grovecorev1alpha1.PodCliqueScalingGroup
+	require.NoError(t, cl.Get(context.Background(), client.ObjectKeyFromObject(pcsg), &updated))
+	require.NotNil(t, updated.Status.UpdateProgress)
+	assert.NotNil(t, updated.Status.UpdateProgress.UpdateEndedAt)
+	assert.Nil(t, updated.Status.UpdateProgress.ReadyReplicaIndicesSelectedToUpdate)
 }
 
 // TestGetPCSGTemplateNumPods tests calculating the number of pods in a PCSG template
@@ -333,6 +370,47 @@ func TestAddEnvironmentVariablesToPodContainerSpecs(t *testing.T) {
 					assert.True(t, hasEnvVar(container.Env, "GROVE_PCSG_TEMPLATE_NUM_PODS"))
 					assert.True(t, hasEnvVar(container.Env, "GROVE_PCSG_INDEX"))
 				}
+			},
+		},
+		{
+			name: "replace_colliding_pcsg_env_var",
+			pclq: &grovecorev1alpha1.PodClique{
+				Spec: grovecorev1alpha1.PodCliqueSpec{
+					PodSpec: corev1.PodSpec{
+						Containers: []corev1.Container{
+							{
+								Name: "container",
+								Env: []corev1.EnvVar{
+									{Name: apiconstants.EnvVarPodCliqueScalingGroupName, Value: "stale"},
+									{Name: "USER_VAR", Value: "user-value"},
+								},
+							},
+						},
+					},
+				},
+			},
+			numPods: 5,
+			validate: func(t *testing.T, pclq *grovecorev1alpha1.PodClique) {
+				assert.Equal(t, []corev1.EnvVar{
+					{
+						Name: apiconstants.EnvVarPodCliqueScalingGroupName,
+						ValueFrom: &corev1.EnvVarSource{
+							FieldRef: &corev1.ObjectFieldSelector{
+								FieldPath: fmt.Sprintf("metadata.labels['%s']", apicommon.LabelPodCliqueScalingGroup),
+							},
+						},
+					},
+					{Name: apiconstants.EnvVarPodCliqueScalingGroupTemplateNumPods, Value: "5"},
+					{
+						Name: apiconstants.EnvVarPodCliqueScalingGroupIndex,
+						ValueFrom: &corev1.EnvVarSource{
+							FieldRef: &corev1.ObjectFieldSelector{
+								FieldPath: fmt.Sprintf("metadata.labels['%s']", apicommon.LabelPodCliqueScalingGroupReplicaIndex),
+							},
+						},
+					},
+					{Name: "USER_VAR", Value: "user-value"},
+				}, pclq.Spec.PodSpec.Containers[0].Env)
 			},
 		},
 	}
@@ -754,6 +832,7 @@ func TestBuildResource_MNNVLInjection(t *testing.T) {
 	tests := []struct {
 		description                         string
 		pcsgAnnotations                     map[string]string
+		cliqueAnnotations                   map[string]string
 		containers                          []corev1.Container
 		initContainers                      []corev1.Container
 		expectedContainersWithClaims        []string
@@ -766,7 +845,7 @@ func TestBuildResource_MNNVLInjection(t *testing.T) {
 		{
 			description: "MNNVL enabled on PCSG with GPU container injects claims",
 			pcsgAnnotations: map[string]string{
-				mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLEnabled,
+				mnnvl.AnnotationMNNVLGroup: "default",
 			},
 			containers: []corev1.Container{
 				{
@@ -781,7 +860,7 @@ func TestBuildResource_MNNVLInjection(t *testing.T) {
 			expectedContainersWithClaims:    []string{"gpu-worker"},
 			expectedContainersWithoutClaims: []string{},
 			expectPodLevelClaim:             true,
-			expectedRCTName:                 "test-pcs-0",
+			expectedRCTName:                 "test-pcs-0-default",
 		},
 		{
 			description:     "MNNVL not enabled on PCSG does not inject claims",
@@ -803,7 +882,7 @@ func TestBuildResource_MNNVLInjection(t *testing.T) {
 		{
 			description: "MNNVL enabled on PCSG but no GPU containers does not inject claims",
 			pcsgAnnotations: map[string]string{
-				mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLEnabled,
+				mnnvl.AnnotationMNNVLGroup: "default",
 			},
 			containers: []corev1.Container{
 				{
@@ -822,7 +901,7 @@ func TestBuildResource_MNNVLInjection(t *testing.T) {
 		{
 			description: "MNNVL enabled on PCSG with mixed GPU and non-GPU containers",
 			pcsgAnnotations: map[string]string{
-				mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLEnabled,
+				mnnvl.AnnotationMNNVLGroup: "default",
 			},
 			containers: []corev1.Container{
 				{
@@ -849,7 +928,7 @@ func TestBuildResource_MNNVLInjection(t *testing.T) {
 		{
 			description: "MNNVL enabled on PCSG with GPU in init container",
 			pcsgAnnotations: map[string]string{
-				mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLEnabled,
+				mnnvl.AnnotationMNNVLGroup: "default",
 			},
 			initContainers: []corev1.Container{
 				{
@@ -873,7 +952,7 @@ func TestBuildResource_MNNVLInjection(t *testing.T) {
 		{
 			description: "MNNVL disabled explicitly on PCSG does not inject claims",
 			pcsgAnnotations: map[string]string{
-				mnnvl.AnnotationAutoMNNVL: mnnvl.AnnotationAutoMNNVLDisabled,
+				mnnvl.AnnotationMNNVLGroup: mnnvl.AnnotationMNNVLGroupOptOut,
 			},
 			containers: []corev1.Container{
 				{
@@ -888,6 +967,69 @@ func TestBuildResource_MNNVLInjection(t *testing.T) {
 			expectedContainersWithClaims:    []string{},
 			expectedContainersWithoutClaims: []string{"gpu-worker"},
 			expectPodLevelClaim:             false,
+		},
+		{
+			description: "mnnvl-group on PCSG — RCT name includes group",
+			pcsgAnnotations: map[string]string{
+				mnnvl.AnnotationMNNVLGroup: "workers",
+			},
+			containers: []corev1.Container{
+				{
+					Name: "gpu-worker",
+					Resources: corev1.ResourceRequirements{
+						Limits: corev1.ResourceList{
+							constants.GPUResourceName: resource.MustParse("8"),
+						},
+					},
+				},
+			},
+			expectedContainersWithClaims:    []string{"gpu-worker"},
+			expectedContainersWithoutClaims: []string{},
+			expectPodLevelClaim:             true,
+			expectedRCTName:                 "test-pcs-0-workers",
+		},
+		{
+			description: "mnnvl-group on clique overrides PCSG auto-mnnvl",
+			pcsgAnnotations: map[string]string{
+				mnnvl.AnnotationMNNVLGroup: "default",
+			},
+			cliqueAnnotations: map[string]string{
+				mnnvl.AnnotationMNNVLGroup: "encoders",
+			},
+			containers: []corev1.Container{
+				{
+					Name: "gpu-worker",
+					Resources: corev1.ResourceRequirements{
+						Limits: corev1.ResourceList{
+							constants.GPUResourceName: resource.MustParse("8"),
+						},
+					},
+				},
+			},
+			expectedContainersWithClaims:    []string{"gpu-worker"},
+			expectedContainersWithoutClaims: []string{},
+			expectPodLevelClaim:             true,
+			expectedRCTName:                 "test-pcs-0-encoders",
+		},
+		{
+			description: "mnnvl-group on clique only — no PCSG annotation",
+			cliqueAnnotations: map[string]string{
+				mnnvl.AnnotationMNNVLGroup: "training",
+			},
+			containers: []corev1.Container{
+				{
+					Name: "gpu-worker",
+					Resources: corev1.ResourceRequirements{
+						Limits: corev1.ResourceList{
+							constants.GPUResourceName: resource.MustParse("8"),
+						},
+					},
+				},
+			},
+			expectedContainersWithClaims:    []string{"gpu-worker"},
+			expectedContainersWithoutClaims: []string{},
+			expectPodLevelClaim:             true,
+			expectedRCTName:                 "test-pcs-0-training",
 		},
 	}
 
@@ -910,7 +1052,8 @@ func TestBuildResource_MNNVLInjection(t *testing.T) {
 						StartupType: ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder),
 						Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
 							{
-								Name: pclqTemplateName,
+								Name:        pclqTemplateName,
+								Annotations: tc.cliqueAnnotations,
 								Spec: grovecorev1alpha1.PodCliqueSpec{
 									Replicas:     1,
 									MinAvailable: ptr.To(int32(1)),
@@ -990,6 +1133,62 @@ func TestBuildResource_MNNVLInjection(t *testing.T) {
 				"init containers without MNNVL claims should match expected")
 		})
 	}
+}
+
+func TestBuildResource_StripsTopologyAnnotation(t *testing.T) {
+	pcs := &grovecorev1alpha1.PodCliqueSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-pcs",
+			Namespace: "default",
+		},
+		Spec: grovecorev1alpha1.PodCliqueSetSpec{
+			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
+				StartupType: ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder),
+				Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+					{
+						Name: "worker",
+						Annotations: map[string]string{
+							apiconstants.AnnotationTopologyName: "my-topology",
+							"example.com/keep":                  "yes",
+						},
+						Spec: grovecorev1alpha1.PodCliqueSpec{
+							Replicas:     1,
+							MinAvailable: ptr.To(int32(1)),
+						},
+					},
+				},
+			},
+		},
+	}
+
+	pcsg := &grovecorev1alpha1.PodCliqueScalingGroup{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-pcs-0-sg",
+			Namespace: "default",
+			Labels: map[string]string{
+				apicommon.LabelPodCliqueSetReplicaIndex: "0",
+			},
+		},
+		Spec: grovecorev1alpha1.PodCliqueScalingGroupSpec{
+			MinAvailable: ptr.To(int32(1)),
+			CliqueNames:  []string{"worker"},
+		},
+	}
+
+	pclq := &grovecorev1alpha1.PodClique{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-pcs-0-sg-0-worker",
+			Namespace: "default",
+		},
+	}
+
+	operator := &_resource{scheme: groveclientscheme.Scheme}
+	err := operator.buildResource(logr.Discard(), pcs, pcsg, 0, pclq, false)
+	require.NoError(t, err)
+	require.NotNil(t, pclq.Annotations)
+	assert.Equal(t, "yes", pclq.Annotations["example.com/keep"])
+	_, hasTopologyAnnotation := pclq.Annotations[apiconstants.AnnotationTopologyName]
+	assert.False(t, hasTopologyAnnotation)
 }
 
 // triageContainersByMNNVLClaim separates containers into those with MNNVL claim and those without.

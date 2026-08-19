@@ -1,0 +1,43 @@
+# Soak / Churn Benchmark workload
+# Boots a small PCS at the soak base (25 replicas × 2 pods/clique = 50 pods).
+# The test then drives repeated scale-up → hold → scale-down → hold cycles.
+# Sized small on purpose: the soak test is about reconcile churn under load,
+# not absolute capacity.
+---
+apiVersion: grove.io/v1alpha1
+kind: PodCliqueSet
+metadata:
+  name: soak-churn
+  labels:
+    app: soak-churn
+spec:
+  replicas: 25
+  template:
+    cliques:
+      - name: expert-worker
+        spec:
+          roleName: expert
+          replicas: 2
+          minAvailable: 2
+          podSpec:
+            schedulerName: default-scheduler
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: type
+                          operator: In
+                          values:
+                            - kwok
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: expert-worker
+                image: registry:5001/nginx:alpine-slim
+                resources:
+                  requests:
+                    memory: 10Mi

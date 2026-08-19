@@ -11,7 +11,9 @@ spec:
   replicas: 1
   template:
     topologyConstraint:
-      packDomain: rack  # All pods must be in same rack
+      topologyName: grove-topology
+      pack:
+        required: rack  # All pods must be in same rack
     cliques:
       - name: worker
         labels:

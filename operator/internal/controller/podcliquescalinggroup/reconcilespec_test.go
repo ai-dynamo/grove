@@ -1,4 +1,3 @@
-// /*
 // Copyright 2025 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,7 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package podcliquescalinggroup
 
@@ -145,6 +143,20 @@ func TestShouldResetOrTriggerUpdatePCSG(t *testing.T) {
 		pcsg     *grovecorev1alpha1.PodCliqueScalingGroup
 		expected bool
 	}{
+		{
+			name: "should_not_trigger_update_until_pcs_current_generation_hash_exists",
+			pcs: &grovecorev1alpha1.PodCliqueSet{
+				Status: grovecorev1alpha1.PodCliqueSetStatus{
+					CurrentGenerationHash: nil,
+				},
+			},
+			pcsg: &grovecorev1alpha1.PodCliqueScalingGroup{
+				Status: grovecorev1alpha1.PodCliqueScalingGroupStatus{
+					UpdateProgress: nil,
+				},
+			},
+			expected: false,
+		},
 		{
 			name: "should_trigger_update_when_no_update_progress",
 			pcs: &grovecorev1alpha1.PodCliqueSet{

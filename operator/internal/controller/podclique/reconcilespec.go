@@ -1,4 +1,3 @@
-// /*
 // Copyright 2025 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,7 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package podclique
 
@@ -86,7 +84,7 @@ func (r *Reconciler) processUpdate(ctx context.Context, logger logr.Logger, pclq
 		return ctrlcommon.ContinueReconcile()
 	}
 
-	if pcsHasNoActiveRollingUpdate(pcs) {
+	if pcs.Status.CurrentGenerationHash == nil {
 		return ctrlcommon.ContinueReconcile()
 	}
 	shouldEvaluatePCLQForUpdates, err := shouldCheckPendingUpdatesForPCLQ(logger, pcs, pclq)
@@ -107,17 +105,23 @@ func (r *Reconciler) processUpdate(ctx context.Context, logger logr.Logger, pclq
 	return ctrlcommon.ContinueReconcile()
 }
 
-// pcsHasNoActiveRollingUpdate checks if the PodCliqueSet has no active rolling update in progress
-func pcsHasNoActiveRollingUpdate(pcs *grovecorev1alpha1.PodCliqueSet) bool {
-	return pcs.Status.CurrentGenerationHash == nil || pcs.Status.UpdateProgress == nil || len(pcs.Status.UpdateProgress.CurrentlyUpdating) == 0
-}
-
 // shouldCheckPendingUpdatesForPCLQ determines if this PodClique should be evaluated for updates based on its owner, and the currently updating PodCliqueSet replica index
 func shouldCheckPendingUpdatesForPCLQ(logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, pclq *grovecorev1alpha1.PodClique) (bool, error) {
 	// Only if PCLQ does not belong to any PCSG should an update be triggered for the PCLQ. For PCLQs that belong to
 	// a PCSG, the PCSG controller will handle the updates by deleting the PCLQ resources instead of updating PCLQ pods
 	// individually.
 	if !slices.Contains(componentutils.GetPodCliqueFQNsForPCSNotInPCSG(pcs), pclq.Name) {
+		return false, nil
+	}
+
+	// If the PCS is not actively rolling, evaluate standalone PCLQs against
+	// their own persisted generation state. This lets status recover when PCLQ
+	// UpdateProgress was missed or cleared.
+	if pcs.Status.UpdateProgress == nil || pcs.Status.UpdateProgress.UpdateEndedAt != nil {
+		return true, nil
+	}
+	if len(pcs.Status.UpdateProgress.CurrentlyUpdating) == 0 {
+		logger.Info("PodCliqueSet update is active but no replica is currently selected for update. Skipping processing update for this PodClique")
 		return false, nil
 	}
 
@@ -137,15 +141,24 @@ func shouldCheckPendingUpdatesForPCLQ(logger logr.Logger, pcs *grovecorev1alpha1
 
 // shouldResetOrTriggerUpdate determines if an update should be started or reset based on generation hash comparison
 func shouldResetOrTriggerUpdate(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grovecorev1alpha1.PodClique) bool {
+	// Wait for the first reconciliation of the PodCliqueSet
+	if pcs.Status.CurrentGenerationHash == nil {
+		return false
+	}
+
+	// PCLQ has no update history and its generation hash is already current.
+	// This happens for PCLQs scaled out after a rolling update: they are created
+	// from the already-updated template, so no rolling update pass is needed.
+	if pclq.Status.UpdateProgress == nil &&
+		pclq.Status.CurrentPodCliqueSetGenerationHash != nil &&
+		*pclq.Status.CurrentPodCliqueSetGenerationHash == *pcs.Status.CurrentGenerationHash {
+		return false
+	}
+
 	// PCLQ has never been updated yet and PCS has a new generation hash.
 	firstEverUpdateRequired := pclq.Status.UpdateProgress == nil && pclq.Status.CurrentPodCliqueSetGenerationHash != nil && *pcs.Status.CurrentGenerationHash != *pclq.Status.CurrentPodCliqueSetGenerationHash
 	if firstEverUpdateRequired {
 		return true
-	}
-
-	// Wait for the first reconciliation of the PodCliqueSet
-	if pcs.Status.CurrentGenerationHash == nil {
-		return false
 	}
 
 	// PCLQ is undergoing an update for a different PCS generation hash
@@ -195,7 +208,7 @@ func (r *Reconciler) syncPCLQResources(ctx context.Context, logger logr.Logger, 
 		}
 		logger.Info("Syncing PodClique resources", "kind", kind)
 		if err = operator.Sync(ctx, logger, pclq); err != nil {
-			if shouldRequeue := ctrlutils.ShouldRequeueAfter(err); shouldRequeue {
+			if shouldRequeue := ctrlutils.ShouldRequeueAfter(err) || ctrlutils.ShouldContinueReconcileAndRequeue(err); shouldRequeue {
 				logger.Info("retrying sync due to components", "kind", kind, "syncRetryInterval", constants.ComponentSyncRetryInterval, "message", err.Error())
 				return ctrlcommon.ReconcileAfter(constants.ComponentSyncRetryInterval, err.Error())
 			}
@@ -233,9 +246,11 @@ func (r *Reconciler) recordIncompleteReconcile(ctx context.Context, logger logr.
 	return *errResult
 }
 
-// getOrderedKindsForSync returns the ordered list of resource kinds to synchronize for PodClique
+// getOrderedKindsForSync returns the ordered list of resource kinds to synchronize for PodClique.
+// ResourceClaims are synced before Pods so that DRA claims exist before pods reference them.
 func getOrderedKindsForSync() []component.Kind {
 	return []component.Kind{
+		component.KindResourceClaim,
 		component.KindPod,
 	}
 }

@@ -1,4 +1,3 @@
-// /*
 // Copyright 2025 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,7 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package common
 
@@ -25,6 +23,11 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
 )
+
+func TestGenerateInitContainerSATokenSecretName(t *testing.T) {
+	assert.Equal(t, "test-pcs-ic-sat", GenerateInitContainerSATokenSecretName("test-pcs"))
+	assert.Equal(t, "test-pcs-initc-sa-token-secret", GenerateLegacyInitContainerSATokenSecretName("test-pcs"))
+}
 
 func TestExtractScalingGroupNameFromPCSGFQN(t *testing.T) {
 	tests := []struct {
@@ -109,7 +112,8 @@ func TestExtractScalingGroupNameFromPCSGFQN(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := ExtractScalingGroupNameFromPCSGFQN(tt.pcsgName, tt.pcsNameReplica)
+			result, err := ExtractScalingGroupNameFromPCSGFQN(tt.pcsgName, tt.pcsNameReplica)
+			assert.NoError(t, err)
 			assert.Equal(t, tt.expected, result)
 		})
 	}
@@ -172,7 +176,8 @@ func TestExtractScalingGroupNameFromPCSGFQN_Consistency(t *testing.T) {
 			generatedPCSGName := GeneratePodCliqueScalingGroupName(tc.pcsNameReplica, tc.scalingGroupName)
 
 			// Extract scaling group name back
-			extractedScalingGroupName := ExtractScalingGroupNameFromPCSGFQN(generatedPCSGName, tc.pcsNameReplica)
+			extractedScalingGroupName, err := ExtractScalingGroupNameFromPCSGFQN(generatedPCSGName, tc.pcsNameReplica)
+			assert.NoError(t, err)
 
 			// They should match
 			assert.Equal(t, tc.scalingGroupName, extractedScalingGroupName)

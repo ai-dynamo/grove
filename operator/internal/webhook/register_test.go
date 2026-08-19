@@ -1,4 +1,3 @@
-// /*
 // Copyright 2024 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,7 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package webhook
 
@@ -97,7 +95,7 @@ func TestRegisterWebhooks_WithoutAuthorizer(t *testing.T) {
 		Network:                 configv1alpha1.NetworkAcceleration{},
 		Scheduler:               configv1alpha1.SchedulerConfiguration{Profiles: []configv1alpha1.SchedulerProfile{{Name: configv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(configv1alpha1.SchedulerNameKube)},
 	}
-	err := Register(mgr, &operatorCfg)
+	err := Register(mgr, &operatorCfg, &testutils.FakeSchedulerRegistry{})
 	require.NoError(t, err)
 }
 
@@ -132,7 +130,7 @@ func TestRegisterWebhooks_WithAuthorizerMissingEnvVar(t *testing.T) {
 		Network:                 configv1alpha1.NetworkAcceleration{},
 		Scheduler:               configv1alpha1.SchedulerConfiguration{Profiles: []configv1alpha1.SchedulerProfile{{Name: configv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(configv1alpha1.SchedulerNameKube)},
 	}
-	err = Register(mgr, &operatorCfg)
+	err = Register(mgr, &operatorCfg, &testutils.FakeSchedulerRegistry{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), constants.EnvVarServiceAccountName)
 }
@@ -167,7 +165,7 @@ func TestRegisterWebhooks_WithAuthorizerMissingNamespaceFile(t *testing.T) {
 		Network:                 configv1alpha1.NetworkAcceleration{},
 		Scheduler:               configv1alpha1.SchedulerConfiguration{Profiles: []configv1alpha1.SchedulerProfile{{Name: configv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(configv1alpha1.SchedulerNameKube)},
 	}
-	err := Register(mgr, &operatorCfg)
+	err := Register(mgr, &operatorCfg, &testutils.FakeSchedulerRegistry{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "error reading namespace file")
 }
@@ -218,7 +216,7 @@ func TestRegisterWebhooks_WithAuthorizerSuccess(t *testing.T) {
 		Network:                 configv1alpha1.NetworkAcceleration{},
 		Scheduler:               configv1alpha1.SchedulerConfiguration{Profiles: []configv1alpha1.SchedulerProfile{{Name: configv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(configv1alpha1.SchedulerNameKube)},
 	}
-	err = Register(mgr, &operatorCfg)
+	err = Register(mgr, &operatorCfg, &testutils.FakeSchedulerRegistry{})
 	// Will error because it tries to read the hardcoded namespace file path
 	require.Error(t, err)
 }

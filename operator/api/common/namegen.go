@@ -1,4 +1,3 @@
-// /*
 // Copyright 2025 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,12 +11,12 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package common
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 )
@@ -63,6 +62,16 @@ func GeneratePodServiceAccountName(pcsName string) string {
 // GenerateInitContainerSATokenSecretName generates a Secret name containing a service account token that will be mounted onto the init container
 // responsible for ensuring start-up order amongst PodCliques.
 func GenerateInitContainerSATokenSecretName(pcsName string) string {
+	return fmt.Sprintf("%s-ic-sat", pcsName)
+}
+
+// GenerateLegacyInitContainerSATokenSecretName generates the legacy init-container service account token
+// Secret name used before the suffix was shortened. Retained as a migration source and delete target.
+//
+// Deprecated: retained for migration after shortening the suffix to "-ic-sat".
+// Expected in v0.1.0-alpha.12; remove three releases later.
+// Track removal in https://github.com/ai-dynamo/grove/issues/658.
+func GenerateLegacyInitContainerSATokenSecretName(pcsName string) string {
 	return fmt.Sprintf("%s-initc-sa-token-secret", pcsName)
 }
 
@@ -116,7 +125,10 @@ func GeneratePodGangNameForPodCliqueOwnedByPCSG(pcs *v1alpha1.PodCliqueSet, pcsR
 
 // ExtractScalingGroupNameFromPCSGFQN extracts the scaling group name from a PodCliqueScalingGroup FQN.
 // For example, "simple1-0-sga" with pcsNameReplica="simple1-0" returns "sga".
-func ExtractScalingGroupNameFromPCSGFQN(pcsgFQN string, pcsNameReplica ResourceNameReplica) string {
+func ExtractScalingGroupNameFromPCSGFQN(pcsgFQN string, pcsNameReplica ResourceNameReplica) (string, error) {
 	prefix := fmt.Sprintf("%s-%d-", pcsNameReplica.Name, pcsNameReplica.Replica)
-	return pcsgFQN[len(prefix):]
+	if !strings.HasPrefix(pcsgFQN, prefix) {
+		return "", fmt.Errorf("FQN %q does not have expected prefix %q", pcsgFQN, prefix)
+	}
+	return pcsgFQN[len(prefix):], nil
 }

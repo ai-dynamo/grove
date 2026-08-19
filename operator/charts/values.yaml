@@ -12,6 +12,11 @@ image:
   # This sets the pull policy for images.
   pullPolicy: IfNotPresent
 
+# imagePullSecrets is an optional list of references to Secrets in the release
+# namespace used to pull the operator (and crd-installer init container) images.
+# Set this when the images are hosted in a private registry.
+imagePullSecrets: []
+
 resources:
   limits:
     memory: 1Gi
@@ -19,6 +24,14 @@ resources:
     cpu: 50m
     memory: 128Mi
     ephemeral-storage: 128Mi
+
+podSecurityContext:
+  seccompProfile:
+    type: RuntimeDefault
+securityContext: {}
+
+# Node selector to constrain the operator pod to nodes with matching labels.
+nodeSelector: {}
 
 # Set of tolerations to apply to the operator deployment.
 tolerations: [ ]
@@ -73,7 +86,9 @@ config:
       #     - Requires Secret to exist before operator starts
       certProvisionMode: auto
     healthProbes:
-      enable: false
+      # Enable liveness and readiness probes for the operator. The readiness
+      # endpoint gates on webhook certificate provisioning and listener startup.
+      enable: true
       port: 9444
     metrics:
       port: 9445
@@ -90,29 +105,19 @@ config:
       concurrentSyncs: 3
   # Scheduler configures which scheduler backends are active. default-scheduler is always available.
   # List profiles to enable backends; set defaultProfileName to the profile that is the default backend.
+  # Optional scheduler backends, such as volcano and lpx-scheduler, must be added explicitly when
+  # their scheduler dependencies are installed in the cluster.
   scheduler:
     profiles:
       - name: default-scheduler
       - name: kai-scheduler
+      # Uncomment optional scheduler profiles only when their dependencies are installed.
+      # - name: volcano
+      # - name: lpx-scheduler
   logLevel: info
   logFormat: json
   topologyAwareScheduling:
     enabled: false
-    #    levels:
-    #      - domain: zone
-    #        key: topology.kubernetes.io/zone
-    #      - domain: datacenter
-    #        key: <provider-specific-datacenter-node-label-key>
-    #      - domain: block
-    #        key: <provider-specific-block-node-label-key>
-    #      - domain: rack
-    #        key: <provider-specific-rack-node-label-key>
-    #      - domain: host
-    #        key: kubernetes.io/hostname
-    #      - domain: region
-    #        key: topology.kubernetes.io/region
-    #      - domain: numa
-    #        key: <provider-specific-numa-node-label-key>
   authorizer:
     enabled: false
     exemptServiceAccountUserNames:
@@ -151,6 +156,22 @@ service:
     app.kubernetes.io/component: operator-service
     app.kubernetes.io/name: grove-operator
     app.kubernetes.io/part-of: grove
+  # -- Annotations to add to the Grove Operator Service resource
+  annotations: {}
+
+metrics:
+  serviceMonitor:
+    # -- Enable the Prometheus ServiceMonitor resource
+    enabled: false
+    # -- Name of the Prometheus ServiceMonitor resource
+    name: grove-operator-monitor
+    # -- Labels for the Prometheus ServiceMonitor resource
+    labels:
+      app.kubernetes.io/component: operator-service-monitor
+      app.kubernetes.io/name: grove-operator
+      app.kubernetes.io/part-of: grove
+      # If the Prometheus Operator requires the 'release' label, set this value:
+      # release: prometheus
 
 clusterRole:
   name: grove:system:grove-operator
@@ -196,6 +217,12 @@ webhooks:
       app.kubernetes.io/name: pcs-defaulting-webhook
       app.kubernetes.io/part-of: grove
     annotations: {}
+  clusterTopologyValidationWebhook:
+    labels:
+      app.kubernetes.io/component: operator-clustertopology-validating-webhook
+      app.kubernetes.io/name: clustertopology-validating-webhook
+      app.kubernetes.io/part-of: grove
+    annotations: {}
   authorizerWebhook:
     labels:
       app.kubernetes.io/component: operator-authorizer-webhook
@@ -222,12 +249,13 @@ priorityClass:
 
 crdInstaller:
   # enabled controls whether the operator automatically installs/upgrades Grove CRDs on startup
-  # via an init container. Set to false to manage CRDs manually from the Grove GitHub release.
-  # WARNING: when disabled, you must apply the correct CRD schemas before upgrading the operator.
-  enabled: true
+  # via an init container. Defaults to false — CRDs are installed by Helm on fresh install via
+  # the crds/ directory, and upgrades are managed manually by the user.
+  # Set to true to opt in to automated CRD upgrades on every helm upgrade.
+  # WARNING: when enabled, the operator ServiceAccount receives apiextensions.k8s.io permissions.
+  enabled: false
   image:
     repository: grove-install-crds
     # Overrides the image tag whose default is the chart appVersion.
     tag: v0.1.0-dev
     pullPolicy: IfNotPresent
-

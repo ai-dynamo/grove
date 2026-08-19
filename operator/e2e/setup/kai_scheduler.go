@@ -1,4 +1,5 @@
-// /*
+//go:build e2e
+
 // Copyright 2025 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,7 +13,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package setup
 
@@ -23,7 +23,8 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/ai-dynamo/grove/operator/e2e/utils"
+	"github.com/ai-dynamo/grove/operator/e2e/k8s/k8sclient"
+	"github.com/ai-dynamo/grove/operator/e2e/k8s/resources"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apiextensionsclientset "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -94,8 +95,13 @@ func CreateDefaultKaiQueues(ctx context.Context, config *HelmInstallConfig) erro
 	_, currentFile, _, _ := runtime.Caller(0)
 	queuesPath := filepath.Join(filepath.Dir(currentFile), "../yaml/queues.yaml")
 
-	// Apply the YAML file using the k8s client
-	appliedResources, err := utils.ApplyYAMLFile(ctx, queuesPath, "", config.RestConfig, config.Logger)
+	// Create K8s client and apply
+	k8sClient, err := k8sclient.New(config.RestConfig)
+	if err != nil {
+		return fmt.Errorf("failed to create K8s client: %w", err)
+	}
+
+	appliedResources, err := resources.NewResourceManager(k8sClient, config.Logger).ApplyYAMLFile(ctx, queuesPath, "")
 	if err != nil {
 		return fmt.Errorf("failed to apply queues YAML: %w", err)
 	}

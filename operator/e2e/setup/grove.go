@@ -1,4 +1,5 @@
-// /*
+//go:build e2e
+
 // Copyright 2025 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,7 +13,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 // Package setup provides internal testing utilities for configuring and managing
 // Grove operator installations during e2e tests. This package is not intended for
@@ -30,7 +30,10 @@ import (
 	"runtime"
 
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
-	"github.com/ai-dynamo/grove/operator/e2e/utils"
+	"github.com/ai-dynamo/grove/operator/e2e/k8s"
+	"github.com/ai-dynamo/grove/operator/e2e/k8s/k8sclient"
+	"github.com/ai-dynamo/grove/operator/e2e/k8s/pods"
+	"github.com/ai-dynamo/grove/operator/e2e/log"
 	"gopkg.in/yaml.v3"
 	"k8s.io/client-go/rest"
 )
@@ -58,7 +61,7 @@ type WebhooksConfig struct {
 }
 
 // helmValues mirrors the Helm values.yaml structure, using configv1alpha1 types
-// for config.server to ensure JSON field names stay synchronized with the API.
+// where the chart configuration matches the operator API.
 type helmValues struct {
 	CRDInstaller helmCRDInstallerValues `json:"crdInstaller"`
 	Config       helmConfigValues       `json:"config"`
@@ -71,13 +74,26 @@ type helmCRDInstallerValues struct {
 }
 
 type helmConfigValues struct {
-	Server configv1alpha1.ServerConfiguration `json:"server"`
+	Server helmServerValues `json:"server"`
+}
+
+type helmServerValues struct {
+	Webhooks     configv1alpha1.WebhookServer `json:"webhooks"`
+	HealthProbes helmHealthProbeValues        `json:"healthProbes"`
+}
+
+// helmHealthProbeValues includes the chart-only enable switch in addition to
+// the operator's health probe server configuration.
+type helmHealthProbeValues struct {
+	Enable bool `json:"enable"`
+	Port   int  `json:"port"`
 }
 
 type helmWebhookValues struct {
-	PodCliqueSetValidationWebhook helmWebhookAnnotations `json:"podCliqueSetValidationWebhook"`
-	PodCliqueSetDefaultingWebhook helmWebhookAnnotations `json:"podCliqueSetDefaultingWebhook"`
-	AuthorizerWebhook             helmWebhookAnnotations `json:"authorizerWebhook"`
+	PodCliqueSetValidationWebhook    helmWebhookAnnotations `json:"podCliqueSetValidationWebhook"`
+	PodCliqueSetDefaultingWebhook    helmWebhookAnnotations `json:"podCliqueSetDefaultingWebhook"`
+	ClusterTopologyValidationWebhook helmWebhookAnnotations `json:"clusterTopologyValidationWebhook"`
+	AuthorizerWebhook                helmWebhookAnnotations `json:"authorizerWebhook"`
 }
 
 type helmWebhookAnnotations struct {
@@ -93,7 +109,7 @@ func (c *GroveConfig) toHelmValues() (map[string]interface{}, error) {
 	hv := helmValues{
 		CRDInstaller: helmCRDInstallerValues{Enabled: c.InstallCRDs},
 		Config: helmConfigValues{
-			Server: configv1alpha1.ServerConfiguration{
+			Server: helmServerValues{
 				Webhooks: configv1alpha1.WebhookServer{
 					Server: configv1alpha1.Server{
 						Port: DefaultWebhookPort,
@@ -102,16 +118,21 @@ func (c *GroveConfig) toHelmValues() (map[string]interface{}, error) {
 					CertProvisionMode: c.Webhooks.CertProvisionMode,
 					SecretName:        c.Webhooks.SecretName,
 				},
+				HealthProbes: helmHealthProbeValues{
+					Enable: true,
+					Port:   DefaultHealthProbePort,
+				},
 			},
 		},
 		Webhooks: helmWebhookValues{
-			PodCliqueSetValidationWebhook: anns,
-			PodCliqueSetDefaultingWebhook: anns,
-			AuthorizerWebhook:             anns,
+			PodCliqueSetValidationWebhook:    anns,
+			PodCliqueSetDefaultingWebhook:    anns,
+			ClusterTopologyValidationWebhook: anns,
+			AuthorizerWebhook:                anns,
 		},
 	}
 
-	return utils.ConvertTypedToUnstructured(hv)
+	return k8s.ConvertTypedToUnstructured(hv)
 }
 
 // UpdateGroveConfiguration updates the Grove operator configuration.
@@ -125,8 +146,8 @@ func (c *GroveConfig) toHelmValues() (map[string]interface{}, error) {
 // Use GetGroveChartDir() to obtain the default chart directory path.
 //
 // This approach avoids wasteful rebuilds while staying compatible with the Skaffold installation.
-func UpdateGroveConfiguration(ctx context.Context, restConfig *rest.Config, chartDir string, config *GroveConfig, logger *utils.Logger) error {
-	chartVersion, err := getChartVersion(chartDir)
+func UpdateGroveConfiguration(ctx context.Context, restConfig *rest.Config, chartDir string, config *GroveConfig, logger *log.Logger) error {
+	chartVersion, err := GetGroveChartVersion(chartDir)
 	if err != nil {
 		return fmt.Errorf("failed to get chart version: %w", err)
 	}
@@ -159,7 +180,12 @@ func UpdateGroveConfiguration(ctx context.Context, restConfig *rest.Config, char
 	}
 
 	// Wait for Grove operator pod to be ready after upgrade
-	if err := utils.WaitForPodsInNamespace(ctx, OperatorNamespace, restConfig, 1, defaultPollTimeout, defaultPollInterval, logger); err != nil {
+	k8sClient, err := k8sclient.New(restConfig)
+	if err != nil {
+		return fmt.Errorf("create k8s client for pod wait: %w", err)
+	}
+	podsManager := pods.NewPodManager(k8sClient, logger)
+	if err := podsManager.WaitForReadyInNamespace(ctx, OperatorNamespace, 1, defaultPollTimeout, defaultPollInterval); err != nil {
 		return fmt.Errorf("grove operator pod not ready after upgrade: %w", err)
 	}
 
@@ -172,12 +198,12 @@ type chartYAML struct {
 	Version string `yaml:"version"`
 }
 
-// getChartVersion reads the version from Chart.yaml in the given chart directory.
+// GetGroveChartVersion reads the version from Chart.yaml in the given chart directory.
 // The chartDir parameter should be the path to a Helm chart directory. Chart.yaml is
 // a required file per the Helm chart specification and will always exist for valid charts.
 // We read from Chart.yaml rather than hardcoding the version to maintain a single source
 // of truth, avoiding configuration drift between the chart definition and the e2e test code.
-func getChartVersion(chartDir string) (string, error) {
+func GetGroveChartVersion(chartDir string) (string, error) {
 	chartFile := filepath.Join(chartDir, "Chart.yaml")
 	data, err := os.ReadFile(chartFile)
 	if err != nil {
@@ -200,12 +226,23 @@ func getChartVersion(chartDir string) (string, error) {
 // It uses runtime.Caller to find the path relative to this source file.
 // This function is exported for use by callers of UpdateGroveConfiguration.
 func GetGroveChartDir() (string, error) {
+	rootDir, err := GetOperatorRootDir()
+	if err != nil {
+		return "", err
+	}
+	// This file is at operator/e2e/setup/grove.go
+	// Chart directory is at operator/charts
+	return filepath.Join(rootDir, "charts"), nil
+}
+
+// GetOperatorRootDir returns the absolute path to the Grove operator directory.
+// It uses runtime.Caller to find the path relative to this source file.
+func GetOperatorRootDir() (string, error) {
 	_, currentFile, _, ok := runtime.Caller(0)
 	if !ok {
 		return "", fmt.Errorf("failed to get current file path")
 	}
 	// This file is at operator/e2e/setup/grove.go
-	// Chart directory is at operator/charts
-	chartDir := filepath.Join(filepath.Dir(currentFile), "../../charts")
-	return filepath.Abs(chartDir)
+	rootDir := filepath.Join(filepath.Dir(currentFile), "../../")
+	return filepath.Abs(rootDir)
 }

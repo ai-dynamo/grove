@@ -1,4 +1,3 @@
-# /*
 # Copyright 2026 The Grove Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,7 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-# */
 
 """Orchestration functions that compose domain modules into workflows."""
 
@@ -46,6 +44,7 @@ from infra_manager.constants import (
     DEPENDENCIES,
     NS_KAI_SCHEDULER,
     OPERATOR_DIR,
+    REL_PREPARE_CHARTS,
     REL_QUEUES_YAML,
     SCRIPT_DIR,
     dep_value,
@@ -73,6 +72,12 @@ def _check_prerequisites(install_kai: bool, install_grove: bool, grove_mode: str
         require_command(cmd)
     console.print("[green]\u2705 All required tools are available[/green]")
 
+    if install_grove:
+        console.print(Panel.fit("Preparing Helm charts", style="bold blue"))
+        prepare_charts = operator_dir / REL_PREPARE_CHARTS
+        if prepare_charts.exists():
+            sh.bash(str(prepare_charts))
+            console.print("[green]\u2705 Charts prepared[/green]")
 
 
 def _run_cluster_creation(cfg: ClusterConfig) -> None:
@@ -136,7 +141,7 @@ def _run_prepull(registry_port: int) -> None:
 
 
 def _run_kai_post_install(operator_dir: Path) -> None:
-    """Wait for Kai pods and create queues.
+    """Wait for Kai deployments and create queues.
 
     Args:
         operator_dir: Root directory of the Grove operator source tree.
@@ -144,8 +149,8 @@ def _run_kai_post_install(operator_dir: Path) -> None:
     Raises:
         RuntimeError: If Kai queue creation fails after retries.
     """
-    console.print("[yellow]\u2139\ufe0f  Waiting for Kai Scheduler pods to be ready...[/yellow]")
-    sh.kubectl("wait", "--for=condition=Ready", "pods", "--all", "-n", NS_KAI_SCHEDULER, "--timeout=5m")
+    console.print("[yellow]\u2139\ufe0f  Waiting for Kai Scheduler deployments to be available...[/yellow]")
+    sh.kubectl("wait", "--for=condition=Available", "deployment", "--all", "-n", NS_KAI_SCHEDULER, "--timeout=5m")
     console.print("[yellow]\u2139\ufe0f  Creating default Kai queues (with retry for webhook readiness)...[/yellow]")
     try:
         apply_kai_queues(operator_dir / REL_QUEUES_YAML)

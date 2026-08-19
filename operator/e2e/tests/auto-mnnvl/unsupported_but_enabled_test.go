@@ -1,6 +1,5 @@
 //go:build e2e
 
-// /*
 // Copyright 2026 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,7 +13,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package automnnvl
 
@@ -23,11 +21,14 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ai-dynamo/grove/operator/e2e/utils"
+	"github.com/ai-dynamo/grove/operator/e2e/setup"
+	"github.com/ai-dynamo/grove/operator/e2e/testctx"
+	"github.com/ai-dynamo/grove/operator/e2e/waiter"
+	kubeutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // Test_AutoMNNVL_UnsupportedButEnabled is the test suite for when Auto-MNNVL feature is enabled
@@ -37,26 +38,23 @@ func Test_AutoMNNVL_UnsupportedButEnabled(t *testing.T) {
 	ctx := context.Background()
 
 	// Prepare cluster and get clients (0 = no specific worker node requirement)
-	clientset, restConfig, dynamicClient, groveClient, cleanup := prepareTestCluster(ctx, t, 0)
+	tc, cleanup := testctx.PrepareTest(ctx, t, 0)
 	defer cleanup()
 
 	// Detect and validate cluster configuration
-	clusterConfig := requireClusterConfig(t, ctx, clientset, restConfig)
+	clusterConfig := requireClusterConfig(t, ctx, tc.Client)
 	clusterConfig.skipUnless(t, crdUnsupported, featureEnabled)
 
-	// Create test context for subtests
-	tc := createTestContext(t, ctx, clientset, restConfig, dynamicClient, groveClient, clusterConfig)
-
 	// Define all subtests
-	tests := []struct {
+	subtests := []struct {
 		description string
-		fn          func(*testing.T, testContext)
+		fn          func(*testing.T, *testctx.TestContext)
 	}{
 		{"operator exits when CD CRD is missing", testOperatorExitsWithoutCDCRD},
 	}
 
 	// Run all subtests
-	for _, tt := range tests {
+	for _, tt := range subtests {
 		t.Run(tt.description, func(t *testing.T) {
 			tt.fn(t, tc)
 		})
@@ -65,8 +63,8 @@ func Test_AutoMNNVL_UnsupportedButEnabled(t *testing.T) {
 
 // testOperatorExitsWithoutCDCRD verifies that the operator fails preflight
 // when MNNVL is enabled but the ComputeDomain CRD is missing.
-func testOperatorExitsWithoutCDCRD(t *testing.T, tc testContext) {
-	pod, err := waitForFailedOperatorPod(tc)
+func testOperatorExitsWithoutCDCRD(t *testing.T, tc *testctx.TestContext) {
+	pod, err := tc.WaitForFailedPod(groveOperatorNamespace, setup.OperatorPodLabelSelector)
 	require.NoError(t, err, "Failed to find grove-operator pod")
 
 	hasTerminated := false
@@ -82,22 +80,27 @@ func testOperatorExitsWithoutCDCRD(t *testing.T, tc testContext) {
 	// Check both current and previous container logs because the operator
 	// crashes on preflight failure and the error message may only appear
 	// in the previous (terminated) container's logs.
-	err = utils.PollForCondition(tc.ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
+	fetchLogs := waiter.FetchFunc[[]byte](func(ctx context.Context) ([]byte, error) {
+		var allLogs []byte
 		for _, previous := range []bool{false, true} {
-			logs, logErr := tc.clientset.CoreV1().Pods(groveOperatorNamespace).GetLogs(pod.Name, &corev1.PodLogOptions{
+			logs, logErr := tc.Client.GetLogs(groveOperatorNamespace, pod.Name, &corev1.PodLogOptions{
 				Previous: previous,
-			}).DoRaw(tc.ctx)
-			if logErr != nil {
-				continue
-			}
-			logText := string(logs)
-			if strings.Contains(logText, "MNNVL preflight check failed") &&
-				strings.Contains(logText, "ComputeDomain CRD") {
-				return true, nil
+			}).DoRaw(ctx)
+			if logErr == nil {
+				allLogs = append(allLogs, logs...)
 			}
 		}
-		return false, nil
+		return allLogs, nil
 	})
+	containsPreflightError := waiter.Predicate[[]byte](func(logs []byte) bool {
+		logText := string(logs)
+		return strings.Contains(logText, "MNNVL preflight check failed") &&
+			strings.Contains(logText, "ComputeDomain CRD")
+	})
+	w := waiter.New[[]byte]().
+		WithTimeout(defaultPollTimeout).
+		WithInterval(defaultPollInterval)
+	err = w.WaitUntil(tc.Ctx, fetchLogs, containsPreflightError)
 	assert.NoError(t, err, "Operator logs should show preflight failure due to missing CRD")
 }
 
@@ -107,39 +110,32 @@ func testOperatorExitsWithoutCDCRD(t *testing.T, tc testContext) {
 // The old pod may have RestartCount > 0 from cert-refresh restarts, so we
 // filter by !Ready to ensure we return the actually-crashing pod whose logs
 // contain the preflight failure.
-func waitForFailedOperatorPod(tc testContext) (*corev1.Pod, error) {
-	var operatorPod *corev1.Pod
-	err := utils.PollForCondition(tc.ctx, defaultPollTimeout, defaultPollInterval, func() (bool, error) {
-		pods, listErr := tc.clientset.CoreV1().Pods(groveOperatorNamespace).List(tc.ctx, metav1.ListOptions{
-			LabelSelector: "app.kubernetes.io/name=grove-operator",
-		})
+func waitForFailedOperatorPod(tc *testctx.TestContext) (*corev1.Pod, error) {
+	w := waiter.New[*corev1.Pod]().
+		WithTimeout(defaultPollTimeout).
+		WithInterval(defaultPollInterval)
+	fetchFailedPod := waiter.FetchFunc[*corev1.Pod](func(ctx context.Context) (*corev1.Pod, error) {
+		var podList corev1.PodList
+		listErr := tc.Client.List(ctx, &podList, client.InNamespace(groveOperatorNamespace), setup.OperatorPodLabels)
+		pods := &podList
 		if listErr != nil || len(pods.Items) == 0 {
-			return false, nil
+			return nil, nil
 		}
 		for i := range pods.Items {
 			pod := &pods.Items[i]
-			if isPodReady(pod) {
+			if kubeutils.IsPodReady(pod) {
 				continue
 			}
 			for _, status := range pod.Status.ContainerStatuses {
 				if status.State.Terminated != nil ||
 					status.LastTerminationState.Terminated != nil ||
 					status.RestartCount > 0 {
-					operatorPod = pod
-					return true, nil
+					return pod, nil
 				}
 			}
 		}
-		return false, nil
+		return nil, nil
 	})
+	operatorPod, err := w.WaitFor(tc.Ctx, fetchFailedPod, waiter.IsNotZero[*corev1.Pod])
 	return operatorPod, err
-}
-
-func isPodReady(pod *corev1.Pod) bool {
-	for _, cond := range pod.Status.Conditions {
-		if cond.Type == corev1.PodReady {
-			return cond.Status == corev1.ConditionTrue
-		}
-	}
-	return false
 }

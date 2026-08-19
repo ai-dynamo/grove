@@ -8,7 +8,6 @@ This directory contains utility scripts for Grove operator development and testi
 hack/
 ├── infra-manager.py          # Primary CLI for cluster infrastructure management
 ├── config-cluster.py         # Declarative cluster configuration (fake GPU, MNNVL)
-├── requirements.txt          # Python dependencies
 ├── infra_manager/            # Python package with modular cluster management
 │   ├── __init__.py
 │   ├── cluster.py            # k3d cluster operations
@@ -24,9 +23,11 @@ hack/
 ├── kind/                     # Kind cluster configuration
 ├── build-operator.sh         # Build operator image
 ├── build-initc.sh            # Build init container image
+├── build-install-crds.sh     # Build grove-install-crds image
 ├── docker-build.sh           # Docker build helper
 ├── deploy.sh                 # Deploy operator
 ├── deploy-addons.sh          # Deploy addon components
+├── prepare-charts.sh         # Prepare Helm charts (copy CRDs to charts/crds/)
 ├── kind-up.sh                # Create Kind cluster
 └── kind-down.sh              # Delete Kind cluster
 ```
@@ -39,11 +40,25 @@ Unified CLI for Grove infrastructure management. Delegates to the `infra_manager
 
 **Installation:**
 
+Python dependencies are declared in `operator/pyproject.toml` and locked in
+`operator/uv.lock`. The Python version is pinned in `operator/.python-version`
+(currently 3.12) — `uv` will download a managed interpreter automatically.
+
 ```bash
-pip3 install -r hack/requirements.txt
+# Install uv (one-time setup, if not already installed)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# From operator/, create .venv and install the locked dependencies. uv reads
+# .python-version and downloads the matching CPython if it isn't already cached.
+cd operator
+uv sync --locked
 ```
 
 **Usage:**
+
+The hack scripts use a `#!/usr/bin/env -S uv run` shebang, so direct invocation
+auto-resolves the project venv. The first invocation will trigger `uv sync` if
+the venv doesn't exist yet.
 
 ```bash
 # Full e2e setup (default preset)
@@ -59,6 +74,37 @@ pip3 install -r hack/requirements.txt
 # Scale test setup with KWOK simulated nodes
 ./hack/infra-manager.py setup --config scale.yaml --set kwok.nodes=1000
 ```
+
+### scale-history.py
+
+Stores a scale-test result in Grove's benchmark history format and copies the
+static dashboard files into the history root.
+
+```bash
+# Local testing; writes history under /tmp/grove-scale-history by default.
+./hack/scale-history.py local \
+  --input e2e/tests/scale/ScaleTest_1000
+
+# CI/history branch mode; fetches, commits, and pushes scale-test-history.
+./hack/scale-history.py branch \
+  --input "$RUNNER_TEMP/grove-scale" \
+  --commit "$GITHUB_SHA" \
+  --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+```
+
+The history contains full `scale-test-results.json` files and one run record per
+line in `index/runs.ndjson`. Profiling artifacts are not copied.
+
+### scale-dashboard
+
+Minimal static dashboard for validating local scale-test history. `scale-history.py`
+copies these files into the history root automatically.
+
+```bash
+python3 -m http.server 8765 --directory /tmp/grove-scale-history
+```
+
+Open http://localhost:8765 to chart `index/runs.ndjson`.
 
 ### config-cluster.py
 
@@ -81,7 +127,7 @@ All configuration can be overridden via `E2E_*` environment variables (used by `
 - `E2E_LB_PORT` - Load balancer port mapping (default: `8090:80`)
 - `E2E_WORKER_NODES` - Number of worker nodes (default: `30`)
 - `E2E_WORKER_MEMORY` - Memory per worker node (default: `150m`)
-- `E2E_K3S_IMAGE` - K3s container image (default: `rancher/k3s:v1.34.2-k3s1`)
+- `E2E_K3S_IMAGE` - K3s container image (default: `rancher/k3s:v1.35.5-k3s1`)
 - `E2E_MAX_RETRIES` - Max retries for cluster operations (default: `3`)
 
 **Components (ComponentConfig):**

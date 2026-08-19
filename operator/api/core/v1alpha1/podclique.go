@@ -1,4 +1,3 @@
-// /*
 // Copyright 2025 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,7 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package v1alpha1
 
@@ -28,6 +26,14 @@ import (
 // +kubebuilder:subresource:status
 // +kubebuilder:subresource:scale:specpath=.spec.replicas,statuspath=.status.replicas,selectorpath=.status.hpaPodSelector
 // +kubebuilder:resource:shortName={pclq}
+// +kubebuilder:printcolumn:name="MinAvail",type=integer,JSONPath=`.spec.minAvailable`
+// +kubebuilder:printcolumn:name="Replicas",type=integer,JSONPath=`.spec.replicas`
+// +kubebuilder:printcolumn:name="Ready",type=integer,JSONPath=`.status.readyReplicas`
+// +kubebuilder:printcolumn:name="Scheduled",type=integer,JSONPath=`.status.scheduledReplicas`
+// +kubebuilder:printcolumn:name="Updated",type=integer,JSONPath=`.status.updatedReplicas`
+// +kubebuilder:printcolumn:name="Gated",type=integer,JSONPath=`.status.scheduleGatedReplicas`,priority=1
+// +kubebuilder:printcolumn:name="MinBreached",type=string,JSONPath=`.status.conditions[?(@.type=="MinAvailableBreached")].status`,priority=1
+// +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
 // PodClique is a set of pods running the same image.
 type PodClique struct {
@@ -135,31 +141,8 @@ type PodCliqueStatus struct {
 	// CurrentPodTemplateHash establishes a correlation to PodClique template hash indicating
 	// that the spec of the PodClique at this template hash is fully realized in the PodClique.
 	CurrentPodTemplateHash *string `json:"currentPodTemplateHash,omitempty"`
-	// RollingUpdateProgress provides details about the ongoing rolling update of the PodClique.
-	// Deprecated: Use UpdateProgress instead. This field is maintained for backward compatibility and will be removed in a future release.
-	RollingUpdateProgress *PodCliqueRollingUpdateProgress `json:"rollingUpdateProgress,omitempty"`
 	// UpdateProgress provides details about the ongoing update of the PodClique.
 	UpdateProgress *PodCliqueUpdateProgress `json:"updateProgress,omitempty"`
-}
-
-// PodCliqueRollingUpdateProgress provides details about the ongoing rolling update of the PodClique.
-// Deprecated: Use PodCliqueUpdateProgress instead. This struct is maintained for backward compatibility.
-type PodCliqueRollingUpdateProgress struct {
-	// UpdateStartedAt is the time at which the rolling update started.
-	UpdateStartedAt metav1.Time `json:"updateStartedAt,omitempty"`
-	// UpdateEndedAt is the time at which the rolling update ended.
-	// It will be set to nil if the rolling update is still in progress.
-	UpdateEndedAt *metav1.Time `json:"updateEndedAt,omitempty"`
-	// PodCliqueSetGenerationHash is the PodCliqueSet generation hash corresponding to the PodCliqueSet spec that is being rolled out.
-	// While the update is in progress PodCliqueStatus.CurrentPodCliqueSetGenerationHash will not match this hash. Once the update is complete the
-	// value of this field will be copied to PodCliqueStatus.CurrentPodCliqueSetGenerationHash.
-	PodCliqueSetGenerationHash string `json:"podCliqueSetGenerationHash"`
-	// PodTemplateHash is the PodClique template hash corresponding to the PodClique spec that is being rolled out.
-	// While the update is in progress PodCliqueStatus.CurrentPodTemplateHash will not match this hash. Once the update is complete the
-	// value of this field will be copied to PodCliqueStatus.CurrentPodTemplateHash.
-	PodTemplateHash string `json:"podTemplateHash"`
-	// ReadyPodsSelectedToUpdate captures the pod names of ready Pods that are either currently being updated or have been previously updated.
-	ReadyPodsSelectedToUpdate *PodsSelectedToUpdate `json:"readyPodsSelectedToUpdate,omitempty"`
 }
 
 // PodCliqueUpdateProgress provides details about the ongoing update of the PodClique.

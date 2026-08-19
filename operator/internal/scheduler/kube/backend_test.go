@@ -1,4 +1,3 @@
-// /*
 // Copyright 2026 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,7 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package kube
 
@@ -23,6 +21,7 @@ import (
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"k8s.io/client-go/tools/record"
 )
 
@@ -34,7 +33,7 @@ func TestBackend_PreparePod(t *testing.T) {
 
 	pod := testutils.NewPodBuilder("test-pod", "default").Build()
 
-	b.PreparePod(pod)
+	require.NoError(t, b.PreparePod(pod))
 
 	assert.Equal(t, string(configv1alpha1.SchedulerNameKube), pod.Spec.SchedulerName)
 }

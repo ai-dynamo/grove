@@ -1,4 +1,3 @@
-// /*
 // Copyright 2024 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,7 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package controller
 
@@ -20,6 +18,8 @@ import (
 	"testing"
 
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
+	groveclientscheme "github.com/ai-dynamo/grove/operator/internal/client"
+	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/stretchr/testify/require"
 	"k8s.io/utils/ptr"
@@ -46,7 +46,7 @@ func TestRegisterControllers(t *testing.T) {
 
 	// Test successful registration with valid configuration
 	t.Run("successful registration", func(t *testing.T) {
-		mgr, err := ctrl.NewManager(cfg, ctrl.Options{})
+		mgr, err := ctrl.NewManager(cfg, ctrl.Options{Scheme: groveclientscheme.Scheme})
 		require.NoError(t, err)
 
 		operatorConfig := configv1alpha1.OperatorConfiguration{
@@ -67,7 +67,7 @@ func TestRegisterControllers(t *testing.T) {
 			},
 		}
 
-		err = RegisterControllers(mgr, &operatorConfig)
+		err = RegisterControllers(mgr, &operatorConfig, &testutils.FakeSchedulerRegistry{})
 		require.NoError(t, err)
 	})
 }

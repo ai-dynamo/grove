@@ -1,4 +1,3 @@
-# /*
 # Copyright 2025 The Grove Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,7 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-# */
 
 SYSTEM_NAME       := $(shell uname -s | tr '[:upper:]' '[:lower:]')
 SYSTEM_ARCH       := $(shell uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
@@ -28,6 +26,8 @@ GO_ADD_LICENSE    := $(TOOLS_BIN_DIR)/addlicense
 SKAFFOLD          := $(TOOLS_BIN_DIR)/skaffold
 CRD_REF_DOCS      := $(TOOLS_BIN_DIR)/crd-ref-docs
 MDTOC			  := $(TOOLS_BIN_DIR)/mdtoc
+GOTESTSUM         := $(TOOLS_BIN_DIR)/gotestsum
+UV                := $(or $(shell command -v uv 2>/dev/null),$(TOOLS_BIN_DIR)/uv)
 
 # default tool versions
 # -------------------------------------------------------------------------
@@ -40,6 +40,7 @@ GO_ADD_LICENSE_VERSION    ?= v1.2.0
 SKAFFOLD_VERSION          ?= v2.16.1
 CRD_REF_DOCS_VERSION      ?= v0.2.0
 MDTOC_VERSION             ?= latest
+GOTESTSUM_VERSION         ?= latest
 
 export PATH := $(abspath $(TOOLS_BIN_DIR)):$(PATH)
 
@@ -49,7 +50,7 @@ $(shell mkdir -p $(TOOLS_BIN_DIR) > /dev/null)
 # Common
 # -------------------------------------------------------------------------
 # Use this function to get the version of a go module from go.mod
-version_gomod = $(shell go list -mod=mod -f '{{ .Version }}' -m $(1))
+version_gomod = $(shell GOWORK=off go list -mod=mod -f '{{ .Version }}' -m $(1))
 
 .PHONY: clean-tools-bin
 clean-tools-bin:
@@ -61,7 +62,7 @@ $(CONTROLLER_GEN):
 	GOBIN=$(abspath $(TOOLS_BIN_DIR)) go install sigs.k8s.io/controller-tools/cmd/controller-gen@$(CONTROLLER_GEN_VERSION)
 
 $(SETUP_ENVTEST):
-	GOBIN=$(abspath $(TOOLS_BIN_DIR)) go install sigs.k8s.io/controller-runtime/tools/setup-envtest
+	GOBIN=$(abspath $(TOOLS_BIN_DIR)) go install sigs.k8s.io/controller-runtime/tools/setup-envtest@latest
 
 $(GOLANGCI_LINT):
 	@# CGO_ENABLED has to be set to 1 in order for golangci-lint to be able to load plugins
@@ -91,3 +92,9 @@ $(CRD_REF_DOCS):
 
 $(MDTOC):
 	GOBIN=$(abspath $(TOOLS_BIN_DIR)) go install sigs.k8s.io/mdtoc@latest
+
+$(GOTESTSUM):
+	GOBIN=$(abspath $(TOOLS_BIN_DIR)) go install gotest.tools/gotestsum@$(GOTESTSUM_VERSION)
+
+$(UV):
+	curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=$(abspath $(TOOLS_BIN_DIR)) UV_NO_MODIFY_PATH=1 sh

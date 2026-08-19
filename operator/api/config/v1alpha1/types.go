@@ -1,4 +1,3 @@
-// /*
 // Copyright 2024 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,13 +11,10 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package v1alpha1
 
 import (
-	corev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
-
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 )
@@ -60,11 +56,20 @@ const (
 	SchedulerNameKai SchedulerName = "kai-scheduler"
 	// SchedulerNameKube is the profile name for the Kubernetes default scheduler in OperatorConfiguration.
 	SchedulerNameKube SchedulerName = "default-scheduler"
+	// SchedulerNameVolcano is the Volcano scheduler backend. It supports gang scheduling via Volcano PodGroup.
+	SchedulerNameVolcano SchedulerName = "volcano"
+	// SchedulerNameLPX is the LPX scheduler backend.
+	SchedulerNameLPX SchedulerName = "lpx-scheduler"
 )
 
 var (
 	// SupportedSchedulerNames is the list of profile names allowed in scheduler.profiles[].name.
-	SupportedSchedulerNames = []SchedulerName{SchedulerNameKai, SchedulerNameKube}
+	SupportedSchedulerNames = []SchedulerName{
+		SchedulerNameKai,
+		SchedulerNameKube,
+		SchedulerNameVolcano,
+		SchedulerNameLPX,
+	}
 )
 
 // SchedulerConfiguration configures scheduler profiles and which is the default.
@@ -72,7 +77,8 @@ type SchedulerConfiguration struct {
 	// Profiles is the list of scheduler profiles. Each profile has a backend name and an optional config.
 	// The default-scheduler backend is always enabled to ensure that the kubernetes default scheduler is always enabled and supported.
 	// Use profile name "default-scheduler" to configure or set it as default.
-	// Valid profile names: "default-scheduler", "kai-scheduler". Use defaultProfileName to designate the default backend.
+	// Valid profile names: "default-scheduler", "kai-scheduler", "volcano", "lpx-scheduler".
+	// Use defaultProfileName to designate the default backend.
 	// +optional
 	Profiles []SchedulerProfile `json:"profiles,omitempty"`
 	// DefaultProfileName is the name of the default scheduler profile. If unset, defaulting sets it to "default-scheduler"
@@ -87,7 +93,7 @@ type SchedulerProfile struct {
 	// For the Kubernetes default scheduler use the standard "default-scheduler".
 	// Ensure that the name chosen is a valid scheduler name. The name will also be directly set in `Pod.Spec.SchedulerName`.
 	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:Enum=kai-scheduler;default-scheduler
+	// +kubebuilder:validation:Enum=kai-scheduler;default-scheduler;volcano;lpx-scheduler
 	Name SchedulerName `json:"name"`
 
 	// Config holds backend-specific options. The operator unmarshals it into the config type for this backend (see backend config types).
@@ -300,10 +306,6 @@ type AuthorizerConfig struct {
 type TopologyAwareSchedulingConfiguration struct {
 	// Enabled indicates whether topology-aware scheduling is enabled.
 	Enabled bool `json:"enabled"`
-	// Levels is an ordered list of topology levels from broadest to narrowest scope.
-	// Used to create/update the TopologyAwareScheduling CR at operator startup.
-	// +optional
-	Levels []corev1alpha1.TopologyLevel `json:"levels,omitempty"`
 }
 
 // NetworkAcceleration defines the configuration for network acceleration features.

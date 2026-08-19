@@ -1,4 +1,3 @@
-// /*
 // Copyright 2025 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,13 +11,13 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package pod
 
 import (
 	"context"
 	"fmt"
+	"maps"
 	"strconv"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
@@ -28,7 +27,8 @@ import (
 	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/expect"
-	schedmanager "github.com/ai-dynamo/grove/operator/internal/scheduler/manager"
+	"github.com/ai-dynamo/grove/operator/internal/resourceclaim"
+	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
@@ -74,15 +74,17 @@ type _resource struct {
 	scheme            *runtime.Scheme
 	eventRecorder     record.EventRecorder
 	expectationsStore *expect.ExpectationsStore
+	schedRegistry     scheduler.Registry
 }
 
 // New creates a new Pod operator for managing Pod resources within PodCliques
-func New(client client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder, expectationsStore *expect.ExpectationsStore) component.Operator[grovecorev1alpha1.PodClique] {
+func New(client client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder, expectationsStore *expect.ExpectationsStore, schedRegistry scheduler.Registry) component.Operator[grovecorev1alpha1.PodClique] {
 	return &_resource{
 		client:            client,
 		scheme:            scheme,
 		eventRecorder:     eventRecorder,
 		expectationsStore: expectationsStore,
+		schedRegistry:     schedRegistry,
 	}
 }
 
@@ -134,7 +136,7 @@ func (r _resource) Sync(ctx context.Context, logger logr.Logger, pclq *grovecore
 
 // buildResource constructs a Pod resource from PodClique specifications, setting up metadata, labels, scheduling gates, and dependencies
 func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grovecorev1alpha1.PodClique, podGangName string, pod *corev1.Pod, podIndex int) error {
-	// Extract PCS replica index from PodClique name for now (will be replaced with direct parameter)
+	// Extract PCS replica index from PodClique FQN
 	pcsName := componentutils.GetPodCliqueSetName(pclq.ObjectMeta)
 	pcsReplicaIndex, err := utils.GetPodCliqueSetReplicaIndexFromPodCliqueFQN(pcsName, pclq.Name)
 	if err != nil {
@@ -150,7 +152,7 @@ func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grov
 		GenerateName: fmt.Sprintf("%s-", pclq.Name),
 		Namespace:    pclq.Namespace,
 		Labels:       labels,
-		Annotations:  pclq.Annotations,
+		Annotations:  maps.Clone(pclq.Annotations),
 	}
 	if err = controllerutil.SetControllerReference(pclq, pod, r.scheme); err != nil {
 		return groveerr.WrapError(err,
@@ -164,8 +166,9 @@ func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grov
 
 	// Resolve scheduler: from template or default backend; then prepare pod (schedulerName, annotations, etc.)
 	schedulerName := pclq.Spec.PodSpec.SchedulerName
-	backend := schedmanager.Get(schedulerName)
+	backend := r.schedRegistry.GetOrDefault(schedulerName)
 	if backend == nil {
+		// Ideally this should never happen.
 		return groveerr.WrapError(
 			fmt.Errorf("scheduler backend not found or not initialized: %q", schedulerName),
 			errCodeBuildPodResource,
@@ -173,17 +176,96 @@ func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grov
 			"failed to prepare pod spec with scheduler backend",
 		)
 	}
-	backend.PreparePod(pod)
+	if err = backend.PreparePod(pod); err != nil {
+		return groveerr.WrapError(
+			err,
+			errCodeBuildPodResource,
+			component.OperationSync,
+			"failed to prepare pod spec with scheduler backend",
+		)
+	}
 
 	// Add GROVE specific Pod environment variables
 	addEnvironmentVariables(pod, pclq, pcsName, pcsReplicaIndex)
 	// Configure hostname and subdomain for service discovery
 	configurePodHostname(pcsName, pcsReplicaIndex, pclq.Name, pod, podIndex)
+	// Inject all ResourceClaim refs (PCS, PCSG, PCLQ) at every scope into the pod
+	if err := injectAllResourceClaimRefs(pcs, pclq, &pod.Spec, pcsReplicaIndex, podIndex); err != nil {
+		return err
+	}
 	// If there is a need to enforce a Startup-Order then configure the init container and add it to the Pod Spec.
 	if len(pclq.Spec.StartsAfter) != 0 {
 		return configurePodInitContainer(pcs, pclq, pod)
 	}
 	return nil
+}
+
+// injectAllResourceClaimRefs is the single consolidated injection point for all
+// ResourceClaim references into a Pod's spec. It injects refs from every level
+// of the hierarchy: PCS, PCSG (if applicable), and PCLQ.
+func injectAllResourceClaimRefs(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grovecorev1alpha1.PodClique, podSpec *corev1.PodSpec, pcsReplicaIndex, podIndex int) error {
+	cliqueName, err := utils.GetPodCliqueNameFromPodCliqueFQN(pclq.ObjectMeta)
+	if err != nil {
+		return fmt.Errorf("failed to get PodClique name: %w", err)
+	}
+	pclqTemplateSpec := componentutils.FindPodCliqueTemplateSpecByName(pcs, cliqueName)
+	if pclqTemplateSpec == nil {
+		return fmt.Errorf("PodClique template %q not found in PCS spec", cliqueName)
+	}
+
+	matchNames := []string{pclqTemplateSpec.Name}
+
+	pcsgName := pclq.Labels[apicommon.LabelPodCliqueScalingGroup]
+	var pcsgConfig *grovecorev1alpha1.PodCliqueScalingGroupConfig
+	var pcsgReplicaIndex int
+	if pcsgName != "" {
+		pcsgConfig = resourceclaim.FindPCSGConfigByName(pcs, pcsgName, pcsReplicaIndex)
+		if pcsgConfig == nil {
+			return fmt.Errorf("PCSG label %q present on PodClique %q but no matching PodCliqueScalingGroupConfig found in PCS %q",
+				pcsgName, pclq.Name, pcs.Name)
+		}
+		matchNames = append(matchNames, pcsgConfig.Name)
+		idxStr, exists := pclq.Labels[apicommon.LabelPodCliqueScalingGroupReplicaIndex]
+		if !exists {
+			return fmt.Errorf("missing PCSG replica index label %q for PodCliqueScalingGroup %q", apicommon.LabelPodCliqueScalingGroupReplicaIndex, pcsgName)
+		}
+		pcsgReplicaIndex, err = strconv.Atoi(idxStr)
+		if err != nil {
+			return fmt.Errorf("invalid PCSG replica index label %q: %w", idxStr, err)
+		}
+	}
+
+	injectPCSResourceClaimRefs(podSpec, pcs, pcsReplicaIndex, matchNames)
+	injectPCSGResourceClaimRefs(podSpec, pcsgConfig, pcsgName, pcsgReplicaIndex, pclqTemplateSpec.Name)
+	injectPCLQResourceClaimRefs(podSpec, pclq.Name, pclqTemplateSpec.ResourceSharing, podIndex)
+	return nil
+}
+
+func injectPCSResourceClaimRefs(podSpec *corev1.PodSpec, pcs *grovecorev1alpha1.PodCliqueSet, replicaIndex int, matchNames []string) {
+	if len(pcs.Spec.Template.ResourceSharing) == 0 {
+		return
+	}
+	resourceSharers := resourceclaim.ResourceSharersFromPCS(pcs.Spec.Template.ResourceSharing)
+	resourceclaim.InjectResourceClaimRefs(podSpec, pcs.Name, resourceSharers, nil, matchNames...)
+	resourceclaim.InjectResourceClaimRefs(podSpec, pcs.Name, resourceSharers, &replicaIndex, matchNames...)
+}
+
+func injectPCSGResourceClaimRefs(podSpec *corev1.PodSpec, pcsgConfig *grovecorev1alpha1.PodCliqueScalingGroupConfig, pcsgName string, replicaIndex int, cliqueName string) {
+	if pcsgConfig == nil || len(pcsgConfig.ResourceSharing) == 0 {
+		return
+	}
+	resourceSharers := resourceclaim.ResourceSharersFromPCSG(pcsgConfig.ResourceSharing)
+	resourceclaim.InjectResourceClaimRefs(podSpec, pcsgName, resourceSharers, nil, cliqueName)
+	resourceclaim.InjectResourceClaimRefs(podSpec, pcsgName, resourceSharers, &replicaIndex, cliqueName)
+}
+
+func injectPCLQResourceClaimRefs(podSpec *corev1.PodSpec, pclqName string, resourceSharing []grovecorev1alpha1.ResourceSharingSpec, podIndex int) {
+	if len(resourceSharing) == 0 {
+		return
+	}
+	resourceSharers := resourceclaim.ResourceSharersFromPCLQ(resourceSharing)
+	resourceclaim.InjectResourceClaimRefs(podSpec, pclqName, resourceSharers, nil)
+	resourceclaim.InjectResourceClaimRefs(podSpec, pclqName, resourceSharers, &podIndex)
 }
 
 // Delete removes all Pods associated with the specified PodClique
@@ -274,8 +356,8 @@ func addEnvironmentVariables(pod *corev1.Pod, pclq *grovecorev1alpha1.PodClique,
 			},
 		},
 	}
-	componentutils.AddEnvVarsToContainers(pod.Spec.Containers, groveEnvVars)
-	componentutils.AddEnvVarsToContainers(pod.Spec.InitContainers, groveEnvVars)
+	componentutils.PrependEnvVarsToContainers(pod.Spec.Containers, groveEnvVars)
+	componentutils.PrependEnvVarsToContainers(pod.Spec.InitContainers, groveEnvVars)
 }
 
 // configurePodHostname sets the pod hostname and subdomain for service discovery

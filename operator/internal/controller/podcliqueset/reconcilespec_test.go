@@ -1,4 +1,3 @@
-// /*
 // Copyright 2025 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,7 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package podcliqueset
 
@@ -22,7 +20,9 @@ import (
 	"testing"
 	"time"
 
+	apiconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	ctrlcommon "github.com/ai-dynamo/grove/operator/internal/controller/common"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
@@ -117,9 +117,11 @@ func TestUpdateObservedGeneration(t *testing.T) {
 	}
 }
 
-// TestGetOrderedKindsForSync tests the getOrderedKindsForSync function
-func TestGetOrderedKindsForSync(t *testing.T) {
-	kinds := getOrderedKindsForSync()
+// TestGetKindSyncGroups tests that every expected component kind appears in exactly one
+// sync group and that the number of groups is at least 1.
+func TestGetKindSyncGroups(t *testing.T) {
+	groups := getKindSyncGroups()
+	assert.NotEmpty(t, groups)
 
 	expectedKinds := []component.Kind{
 		component.KindServiceAccount,
@@ -130,14 +132,20 @@ func TestGetOrderedKindsForSync(t *testing.T) {
 		component.KindHorizontalPodAutoscaler,
 		component.KindPodCliqueSetReplica,
 		component.KindComputeDomain,
+		component.KindResourceClaim,
 		component.KindPodClique,
 		component.KindPodCliqueScalingGroup,
 		component.KindPodGang,
 	}
-
-	assert.Equal(t, len(expectedKinds), len(kinds))
-	for i, expected := range expectedKinds {
-		assert.Equal(t, expected, kinds[i])
+	seen := make(map[component.Kind]bool)
+	for _, group := range groups {
+		for _, k := range group {
+			assert.False(t, seen[k], "kind %s appeared in more than one group", k)
+			seen[k] = true
+		}
+	}
+	for _, k := range expectedKinds {
+		assert.True(t, seen[k], "kind %s should appear in some group", k)
 	}
 }
 
@@ -207,9 +215,11 @@ func TestInitUpdateProgress(t *testing.T) {
 					}).
 					WithPodCliqueSetGenerationHash(ptr.To("old-hash")).
 					WithUpdateProgress(&grovecorev1alpha1.PodCliqueSetUpdateProgress{
-						UpdateStartedAt:               updateStartedAt,
-						UpdatedPodCliqueScalingGroups: []string{"pcsg-1", "pcsg-2"},
-						UpdatedPodCliques:             []string{"pclq-1", "pclq-2", "pclq-3"},
+						UpdateStartedAt:                    updateStartedAt,
+						UpdatedPodCliqueScalingGroupsCount: 2,
+						TotalPodCliqueScalingGroupsCount:   2,
+						UpdatedPodCliquesCount:             3,
+						TotalPodCliquesCount:               3,
 						CurrentlyUpdating: []grovecorev1alpha1.PodCliqueSetReplicaUpdateProgress{
 							{
 								ReplicaIndex:    1,
@@ -236,10 +246,12 @@ func TestInitUpdateProgress(t *testing.T) {
 					}).
 					WithPodCliqueSetGenerationHash(ptr.To("old-hash")).
 					WithUpdateProgress(&grovecorev1alpha1.PodCliqueSetUpdateProgress{
-						UpdateStartedAt:               updateStartedAt,
-						UpdateEndedAt:                 ptr.To(updateStartedAt),
-						UpdatedPodCliqueScalingGroups: []string{"pcsg-1"},
-						UpdatedPodCliques:             []string{"pclq-1", "pclq-2"},
+						UpdateStartedAt:                    updateStartedAt,
+						UpdateEndedAt:                      ptr.To(updateStartedAt),
+						UpdatedPodCliqueScalingGroupsCount: 1,
+						TotalPodCliqueScalingGroupsCount:   1,
+						UpdatedPodCliquesCount:             2,
+						TotalPodCliquesCount:               2,
 					}).
 					Build()
 				pcs.Status.UpdatedReplicas = 1
@@ -281,8 +293,8 @@ func TestInitUpdateProgress(t *testing.T) {
 				assert.Nil(t, updatedPCS.Status.UpdateProgress.UpdateEndedAt, "UpdateEndedAt should be nil for non-OnDelete strategy")
 			}
 
-			assert.Nil(t, updatedPCS.Status.UpdateProgress.UpdatedPodCliqueScalingGroups, "UpdatedPodCliqueScalingGroups should be nil")
-			assert.Nil(t, updatedPCS.Status.UpdateProgress.UpdatedPodCliques, "UpdatedPodCliques should be nil")
+			assert.Equal(t, int32(0), updatedPCS.Status.UpdateProgress.UpdatedPodCliqueScalingGroupsCount, "UpdatedPodCliqueScalingGroupsCount should be reset to 0")
+			assert.Equal(t, int32(0), updatedPCS.Status.UpdateProgress.UpdatedPodCliquesCount, "UpdatedPodCliquesCount should be reset to 0")
 			// Currently updating is not set by the initUpdateProgress function
 			assert.Nil(t, updatedPCS.Status.UpdateProgress.CurrentlyUpdating, "CurrentlyUpdating should be nil")
 			assert.Equal(t, int32(0), updatedPCS.Status.UpdatedReplicas, "UpdatedReplicas should be reset to 0")
@@ -290,4 +302,60 @@ func TestInitUpdateProgress(t *testing.T) {
 			assert.Equal(t, newGenerationHash, *updatedPCS.Status.CurrentGenerationHash)
 		})
 	}
+}
+
+// TestPCSGenerationHashKey verifies the generation-hash expectation key includes the PCS UID so two
+// PodCliqueSets with the same namespace and name but different UIDs do not share a key.
+func TestPCSGenerationHashKey(t *testing.T) {
+	pcs1 := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "uid-1").Build()
+	pcs2 := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "uid-2").Build()
+
+	key1 := pcsGenerationHashKey(pcs1)
+
+	assert.Equal(t, testNamespace+"/"+testPCSName+"/uid-1", key1)
+	assert.NotEqual(t, key1, pcsGenerationHashKey(pcs2))
+}
+
+// TestProcessGenerationHashChangeNotBlockedByStaleSameNameExpectation verifies that an expectation
+// left by a previously deployed PodCliqueSet does not block a newly created
+// PodCliqueSet with a different UID but with the same name as the previously deployed PodCliqueSet.
+func TestProcessGenerationHashChangeNotBlockedByStaleSameNameExpectation(t *testing.T) {
+	newPCS := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "uid-new").
+		WithPodCliqueParameters("worker", 1, nil).
+		Build()
+
+	fakeClient := testutils.SetupFakeClient(newPCS)
+	r := &Reconciler{client: fakeClient, pcsGenerationHashExpectations: sync.Map{}}
+	// A previous incarnation with a different UID left a stale expectation in the map.
+	stalePCS := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "uid-old").Build()
+	r.pcsGenerationHashExpectations.Store(pcsGenerationHashKey(stalePCS), "stale-hash")
+
+	result := r.processGenerationHashChange(context.Background(), logr.Discard(), newPCS)
+
+	require.False(t, result.NeedsRequeue(), "a same-name recreate must not be blocked by a stale expectation")
+	updated := &grovecorev1alpha1.PodCliqueSet{}
+	require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKeyFromObject(newPCS), updated))
+	assert.NotNil(t, updated.Status.CurrentGenerationHash, "generation hash should be set on the new PCS")
+}
+
+// TestTriggerDeletionFlowClearsGenerationHashExpectation verifies the deletion flow removes the PCS
+// generation-hash expectation from the in-memory map.
+func TestTriggerDeletionFlowClearsGenerationHashExpectation(t *testing.T) {
+	pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "uid-del").Build()
+	pcs.Finalizers = []string{apiconstants.FinalizerPodCliqueSet}
+
+	fakeClient := testutils.SetupFakeClient(pcs)
+	r := &Reconciler{
+		client:                        fakeClient,
+		operatorRegistry:              component.NewOperatorRegistry[grovecorev1alpha1.PodCliqueSet](),
+		reconcileStatusRecorder:       ctrlcommon.NewReconcileErrorRecorder(fakeClient),
+		pcsGenerationHashExpectations: sync.Map{},
+	}
+	key := pcsGenerationHashKey(pcs)
+	r.pcsGenerationHashExpectations.Store(key, "some-hash")
+
+	r.triggerDeletionFlow(context.Background(), logr.Discard(), pcs)
+
+	_, present := r.pcsGenerationHashExpectations.Load(key)
+	assert.False(t, present, "generation-hash expectation should be cleared when the PCS is deleted")
 }

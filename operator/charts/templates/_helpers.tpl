@@ -58,13 +58,6 @@ config.yaml: |
   {{- if .Values.config.topologyAwareScheduling }}
   topologyAwareScheduling:
     enabled: {{ .Values.config.topologyAwareScheduling.enabled }}
-    {{- if .Values.config.topologyAwareScheduling.levels }}
-    levels:
-    {{- range .Values.config.topologyAwareScheduling.levels }}
-      - domain: {{ .domain }}
-        key: {{ .key }}
-    {{- end }}
-    {{- end }}
   {{- end }}
   {{- if .Values.config.authorizer.enabled }}
   authorizer:
@@ -95,6 +88,15 @@ chart: "{{ .Chart.Name }}-{{ .Chart.Version }}"
 release: "{{ .Release.Name }}"
 {{- end -}}
 
+{{/* Returns "true" if the named scheduler profile is configured, empty string otherwise. */}}
+{{- define "grove.scheduler.hasProfile" -}}
+{{- $root := index . 0 -}}
+{{- $profile := index . 1 -}}
+{{- range $root.Values.config.scheduler.profiles -}}
+{{- if eq .name $profile -}}true{{- end -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "operator.config.labels" -}}
 {{- include "common.chart.labels" . }}
 {{- range $key, $val := .Values.configMap.labels }}
@@ -120,9 +122,20 @@ release: "{{ .Release.Name }}"
 {{- end }}
 {{- end -}}
 
+{{- define "operator.service.matchLabels" -}}
+{{- range $key, $val := .Values.service.labels }}
+{{ $key }}: {{ $val }}
+{{- end }}
+{{- end -}}
+
 {{- define "operator.service.labels" -}}
 {{- include "common.chart.labels" . }}
-{{- range $key, $val := .Values.service.labels }}
+{{- include "operator.service.matchLabels" . }}
+{{- end -}}
+
+{{- define "operator.servicemonitor.labels" -}}
+{{- include "common.chart.labels" . }}
+{{- range $key, $val := .Values.metrics.serviceMonitor.labels }}
 {{ $key }}: {{ $val }}
 {{- end }}
 {{- end -}}

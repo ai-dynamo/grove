@@ -1,4 +1,3 @@
-// /*
 // Copyright 2025 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,7 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package constants
 
@@ -59,6 +57,9 @@ const (
 	ReasonPodCliqueDeleteSuccessful = "PodCliqueDeleteSuccessful"
 	// ReasonPodCliqueDeleteFailed is an event reason which represents that the deletion of a PodClique failed.
 	ReasonPodCliqueDeleteFailed = "PodCliqueDeleteFailed"
+	// ReasonAllScheduledReplicasLost is an event reason emitted when scheduled replicas drop from non-zero to zero.
+	// Gang termination is suppressed in this state to avoid a churn loop, so the event is the only signal that the workload is fully down.
+	ReasonAllScheduledReplicasLost = "AllScheduledReplicasLost"
 )
 
 // constants for PodCliqueScalingGroup lifecycle events
@@ -97,6 +98,14 @@ const (
 	ReasonPodCliqueSetReplicaDeleteSuccessful = "PodCliqueSetReplicaDeleteSuccessful"
 	// ReasonPodCliqueSetReplicaDeleteFailed is an event reason which represents that the deletion of a PodCliqueSet replica failed.
 	ReasonPodCliqueSetReplicaDeleteFailed = "PodCliqueSetReplicaDeleteFailed"
+)
+
+// constants for ClusterTopologyBinding lifecycle events
+const (
+	// ReasonTopologyInSync is an event reason when all scheduler backend topologies return to in-sync.
+	ReasonTopologyInSync = "TopologyInSync"
+	// ReasonTopologyDriftDetected is an event reason when a scheduler backend topology drift is detected.
+	ReasonTopologyDriftDetected = "TopologyDriftDetected"
 )
 
 // constants for ComputeDomain lifecycle events

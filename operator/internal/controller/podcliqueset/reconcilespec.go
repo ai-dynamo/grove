@@ -1,4 +1,3 @@
-// /*
 // Copyright 2025 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,13 +11,13 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package podcliqueset
 
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	apiconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
@@ -26,13 +25,13 @@ import (
 	ctrlcommon "github.com/ai-dynamo/grove/operator/internal/controller/common"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	ctrlutils "github.com/ai-dynamo/grove/operator/internal/controller/utils"
+	"github.com/ai-dynamo/grove/operator/internal/utils"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
 	"github.com/go-logr/logr"
 	"github.com/samber/lo"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/tools/cache"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -69,21 +68,21 @@ func (r *Reconciler) ensureFinalizer(ctx context.Context, logger logr.Logger, pc
 }
 
 // processGenerationHashChange computes the generation hash given a PodCliqueSet resource and if the generation has
-// changed from the previously persisted pcs.status.generationHash then it resets the pcs.status.rollingUpdateProgress
+// changed from the previously persisted pcs.status.generationHash then it resets the pcs.status.updateProgress
 func (r *Reconciler) processGenerationHashChange(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) ctrlcommon.ReconcileStepResult {
 	pcsObjectKey := client.ObjectKeyFromObject(pcs)
-	pcsObjectName := cache.NamespacedNameAsObjectName(pcsObjectKey).String()
+	pcsGenHashKey := pcsGenerationHashKey(pcs)
 
 	// if the generationHash is not reflected correctly yet, requeue. Allow the informer cache to catch-up.
-	if !r.isGenerationHashExpectationSatisfied(pcsObjectName, pcs.Status.CurrentGenerationHash) {
+	if !r.isGenerationHashExpectationSatisfied(pcsGenHashKey, pcs.Status.CurrentGenerationHash) {
 		return ctrlcommon.ReconcileAfter(constants.ComponentSyncRetryInterval, fmt.Sprintf("CurrentGenerationHash is not up-to-date for PodCliqueSet: %v", pcsObjectKey))
 	}
-	r.pcsGenerationHashExpectations.Delete(pcsObjectName)
+	r.pcsGenerationHashExpectations.Delete(pcsGenHashKey)
 
 	newGenerationHash := computeGenerationHash(pcs)
 	if pcs.Status.CurrentGenerationHash == nil {
 		// update the generation hash and continue reconciliation. No rolling update is required.
-		if err := r.setGenerationHashAndUpdateStatus(ctx, pcs, pcsObjectName, newGenerationHash); err != nil {
+		if err := r.setGenerationHashAndUpdateStatus(ctx, pcs, pcsGenHashKey, newGenerationHash); err != nil {
 			logger.Error(err, "failed to set generation hash on PCS", "newGenerationHash", newGenerationHash)
 			return ctrlcommon.ReconcileWithErrors("error updating generation hash", err)
 		}
@@ -92,7 +91,7 @@ func (r *Reconciler) processGenerationHashChange(ctx context.Context, logger log
 
 	if newGenerationHash != *pcs.Status.CurrentGenerationHash {
 		// trigger rolling update by setting or overriding pcs.Status.UpdateProgress.
-		if err := r.initUpdateProgress(ctx, pcs, pcsObjectName, newGenerationHash); err != nil {
+		if err := r.initUpdateProgress(ctx, pcs, pcsGenHashKey, newGenerationHash); err != nil {
 			return ctrlcommon.ReconcileWithErrors(fmt.Sprintf("could not triggering rolling update for PCS: %v", pcsObjectKey), err)
 		}
 	}
@@ -100,9 +99,18 @@ func (r *Reconciler) processGenerationHashChange(ctx context.Context, logger log
 	return ctrlcommon.ContinueReconcile()
 }
 
+// pcsGenerationHashKey returns the key for the in-memory generation-hash expectation of a PCS.
+// The key scheme is <pcs-namespace>/<pcs-name>/<pcs-UID>. Suffixing a UID ensures that a stale
+// remnant expectation entry for the same <pcs-namespace>/<pcs-name> does not block reconciliation of
+// a new PCS (with a different UID).
+// See https://github.com/ai-dynamo/grove/issues/782 for context.
+func pcsGenerationHashKey(pcs *grovecorev1alpha1.PodCliqueSet) string {
+	return fmt.Sprintf("%s/%s", client.ObjectKeyFromObject(pcs), pcs.UID)
+}
+
 // isGenerationHashExpectationSatisfied checks if the current generation hash matches expectations.
-func (r *Reconciler) isGenerationHashExpectationSatisfied(pcsObjectName string, pcsGenerationHash *string) bool {
-	expectedGenerationHash, ok := r.pcsGenerationHashExpectations.Load(pcsObjectName)
+func (r *Reconciler) isGenerationHashExpectationSatisfied(pcsGenHashKey string, pcsGenerationHash *string) bool {
+	expectedGenerationHash, ok := r.pcsGenerationHashExpectations.Load(pcsGenHashKey)
 	return !ok || (pcsGenerationHash != nil && expectedGenerationHash.(string) == *pcsGenerationHash)
 }
 
@@ -123,17 +131,17 @@ func computeGenerationHash(pcs *grovecorev1alpha1.PodCliqueSet) string {
 }
 
 // setGenerationHashAndUpdateStatus updates the PodCliqueSet status with the new generation hash, stores the expectation, and updates the status subresource.
-func (r *Reconciler) setGenerationHashAndUpdateStatus(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, pcsObjectName, generationHash string) error {
-	pcs.Status.CurrentGenerationHash = &generationHash
+func (r *Reconciler) setGenerationHashAndUpdateStatus(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, pcsGenHashKey, newGenerationHash string) error {
+	pcs.Status.CurrentGenerationHash = &newGenerationHash
 	if err := r.client.Status().Update(ctx, pcs); err != nil {
 		return fmt.Errorf("could not update CurrentGenerationHash for PodCliqueSet: %v: %w", client.ObjectKeyFromObject(pcs), err)
 	}
-	r.pcsGenerationHashExpectations.Store(pcsObjectName, generationHash)
+	r.pcsGenerationHashExpectations.Store(pcsGenHashKey, newGenerationHash)
 	return nil
 }
 
 // initUpdateProgress initializes a new rolling update by resetting progress tracking.
-func (r *Reconciler) initUpdateProgress(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, pcsObjectName, newGenerationHash string) error {
+func (r *Reconciler) initUpdateProgress(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, pcsGenHashKey, newGenerationHash string) error {
 	pcs.Status.UpdateProgress = &grovecorev1alpha1.PodCliqueSetUpdateProgress{
 		UpdateStartedAt: metav1.Now(),
 	}
@@ -143,41 +151,102 @@ func (r *Reconciler) initUpdateProgress(ctx context.Context, pcs *grovecorev1alp
 	}
 	pcs.Status.UpdatedReplicas = 0
 	pcs.Status.CurrentGenerationHash = &newGenerationHash
-	if err := r.setGenerationHashAndUpdateStatus(ctx, pcs, pcsObjectName, newGenerationHash); err != nil {
+	if err := r.setGenerationHashAndUpdateStatus(ctx, pcs, pcsGenHashKey, newGenerationHash); err != nil {
 		return fmt.Errorf("could not set UpdateProgress for PodCliqueSet: %v: %w", client.ObjectKeyFromObject(pcs), err)
 	}
 	return nil
 }
 
-// syncPodCliqueSetResources synchronizes all managed child resources in order.
+// syncPodCliqueSetResources synchronizes all managed child resources. Components are
+// sync'd in dependency-ordered groups; within each group sync runs concurrently.
 func (r *Reconciler) syncPodCliqueSetResources(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) ctrlcommon.ReconcileStepResult {
 	continueReconcileAndRequeueKinds := make([]component.Kind, 0)
-	for _, kind := range getOrderedKindsForSync() {
-		operator, err := r.operatorRegistry.GetOperator(kind)
-		if err != nil {
-			// Skip operators that aren't registered (e.g., ComputeDomain when MNNVL is disabled)
-			logger.V(1).Info("Skipping unregistered operator", "kind", kind)
-			continue
-		}
-		logger.Info("Syncing PodCliqueSet resource", "kind", kind)
-		if err = operator.Sync(ctx, logger, pcs); err != nil {
-			if ctrlutils.ShouldContinueReconcileAndRequeue(err) {
-				logger.Info("components has registered a request to requeue post completion of all components syncs", "kind", kind, "message", err.Error())
-				continueReconcileAndRequeueKinds = append(continueReconcileAndRequeueKinds, kind)
-				continue
-			}
-			if shouldRequeue := ctrlutils.ShouldRequeueAfter(err); shouldRequeue {
-				logger.Info("retrying sync due to components", "kind", kind, "syncRetryInterval", constants.ComponentSyncRetryInterval, "message", err.Error())
-				return ctrlcommon.ReconcileAfter(constants.ComponentSyncRetryInterval, err.Error())
-			}
-			logger.Error(err, "failed to sync PodCliqueSet resources", "kind", kind)
-			return ctrlcommon.ReconcileWithErrors("error syncing managed resources", fmt.Errorf("failed to sync %s: %w", kind, err))
+	for groupIdx, group := range getKindSyncGroups() {
+		result, requeuedKinds := r.syncKindGroup(ctx, logger, pcs, group, groupIdx)
+		continueReconcileAndRequeueKinds = append(continueReconcileAndRequeueKinds, requeuedKinds...)
+		if result != nil {
+			return *result
 		}
 	}
 	if len(continueReconcileAndRequeueKinds) > 0 {
 		return ctrlcommon.ReconcileAfter(constants.ComponentSyncRetryInterval, fmt.Sprintf("requeueing sync due to components(s) %v after %s", continueReconcileAndRequeueKinds, constants.ComponentSyncRetryInterval))
 	}
 	return ctrlcommon.ContinueReconcile()
+}
+
+// syncKindGroup runs the Sync operation for each kind in the group concurrently.
+// Returns a non-nil ReconcileStepResult if reconciliation should stop for this group,
+// plus the list of kinds that returned "continue and requeue" errors.
+func (r *Reconciler) syncKindGroup(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, group []component.Kind, groupIdx int) (*ctrlcommon.ReconcileStepResult, []component.Kind) {
+	var (
+		mu              sync.Mutex
+		requeuedKinds   []component.Kind
+		requeueAfterMsg string
+		hasRequeueAfter bool
+		errsByKind      []error
+	)
+	tasks := make([]utils.Task, 0, len(group))
+	for _, kind := range group {
+		operator, err := r.operatorRegistry.GetOperator(kind)
+		if err != nil {
+			// MNNVL-only components (ComputeDomain) aren't registered when the feature is
+			// off. Not an error; just nothing to sync.
+			logger.V(1).Info("Skipping unregistered operator", "kind", kind)
+			continue
+		}
+		tasks = append(tasks, utils.Task{
+			Name: fmt.Sprintf("SyncKind-%s", kind),
+			Fn: func(ctx context.Context) error {
+				logger.Info("Syncing PodCliqueSet resource", "kind", kind, "group", groupIdx)
+				err := operator.Sync(ctx, logger, pcs)
+
+				// One lock + defer covers all branches below; requeuedKinds /
+				// hasRequeueAfter / errsByKind are read by the aggregator after
+				// RunConcurrently joins, so writes must be serialised here.
+				mu.Lock()
+				defer mu.Unlock()
+
+				if err == nil {
+					return nil
+				}
+				if ctrlutils.ShouldContinueReconcileAndRequeue(err) {
+					// Component is asking the parent to come back later — that signal is
+					// not a sync failure, so we record the kind and return nil. The
+					// caller bubbles requeuedKinds up and schedules one follow-up
+					// reconcile after the whole sync sweep completes.
+					requeuedKinds = append(requeuedKinds, kind)
+					logger.Info("component requested post-sync requeue", "kind", kind, "message", err.Error())
+					return nil
+				}
+				if ctrlutils.ShouldRequeueAfter(err) {
+					// Timed retry — caller will return ReconcileAfter for the whole
+					// group. First setter wins; runs are deterministic enough that the
+					// chosen message is fine.
+					hasRequeueAfter = true
+					requeueAfterMsg = err.Error()
+					return err
+				}
+				// Real failure: surface it as a reconcile error.
+				logger.Error(err, "failed to sync PodCliqueSet resource", "kind", kind)
+				errsByKind = append(errsByKind, fmt.Errorf("failed to sync %s: %w", kind, err))
+				return err
+			},
+		})
+	}
+	if len(tasks) == 0 {
+		return nil, nil
+	}
+	_ = utils.RunConcurrently(ctx, logger, tasks)
+
+	if hasRequeueAfter {
+		result := ctrlcommon.ReconcileAfter(constants.ComponentSyncRetryInterval, requeueAfterMsg)
+		return &result, requeuedKinds
+	}
+	if len(errsByKind) > 0 {
+		result := ctrlcommon.ReconcileWithErrors("error syncing managed resources", errsByKind...)
+		return &result, requeuedKinds
+	}
+	return nil, requeuedKinds
 }
 
 // updateObservedGeneration updates the status to reflect the current observed generation.
@@ -207,19 +276,33 @@ func (r *Reconciler) recordIncompleteReconcile(ctx context.Context, logger logr.
 	return *errResult
 }
 
-// getOrderedKindsForSync returns the ordered list of component kinds to synchronize.
-func getOrderedKindsForSync() []component.Kind {
-	return []component.Kind{
-		component.KindServiceAccount,
-		component.KindRole,
-		component.KindRoleBinding,
-		component.KindServiceAccountTokenSecret,
-		component.KindHeadlessService,
-		component.KindHorizontalPodAutoscaler,
-		component.KindPodCliqueSetReplica,
-		component.KindComputeDomain,
-		component.KindPodClique,
-		component.KindPodCliqueScalingGroup,
-		component.KindPodGang,
+// getKindSyncGroups returns the component kinds grouped by dependency. Kinds within the
+// same group have no dependencies on one another and can be sync'd concurrently; groups
+// are processed in order to respect cross-group dependencies.
+func getKindSyncGroups() [][]component.Kind {
+	return [][]component.Kind{
+		// G1: RBAC + static per-PCS infra (Service, HPA targets by name so no ordering
+		// vs PodClique/PCSG needed, ComputeDomain/ResourceClaim are independent add-ons).
+		{
+			component.KindServiceAccount,
+			component.KindRole,
+			component.KindRoleBinding,
+			component.KindServiceAccountTokenSecret,
+			component.KindHeadlessService,
+			component.KindHorizontalPodAutoscaler,
+			component.KindPodCliqueSetReplica,
+			component.KindComputeDomain,
+			component.KindResourceClaim,
+		},
+		// G2: PodClique must exist before PodGang can reference their pods.
+		{
+			component.KindPodClique,
+		},
+		// G3: PCSG and PodGang run concurrently — PCSG creates its own PodCliques via a
+		// separate reconciler, and PodGang reads existing PodClique/Pod state.
+		{
+			component.KindPodCliqueScalingGroup,
+			component.KindPodGang,
+		},
 	}
 }

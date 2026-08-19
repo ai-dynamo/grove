@@ -1,4 +1,3 @@
-// /*
 // Copyright 2024 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,7 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package validation
 
@@ -47,7 +45,7 @@ func TestRegisterWithManager(t *testing.T) {
 		Network:                 configv1alpha1.NetworkAcceleration{},
 		Scheduler:               configv1alpha1.SchedulerConfiguration{Profiles: []configv1alpha1.SchedulerProfile{{Name: configv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(configv1alpha1.SchedulerNameKube)},
 	}
-	handler := NewHandler(mgr, &cfg)
+	handler := NewHandler(mgr, &cfg, &testutils.FakeSchedulerRegistry{})
 	err := handler.RegisterWithManager(mgr)
 	require.NoError(t, err)
 }

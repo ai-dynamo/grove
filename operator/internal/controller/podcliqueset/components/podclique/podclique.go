@@ -1,4 +1,3 @@
-// /*
 // Copyright 2025 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,18 +11,18 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package podclique
 
 import (
 	"context"
 	"fmt"
-	"slices"
+	"maps"
 	"strconv"
 	"strings"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
+	apiconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
@@ -128,6 +127,7 @@ func (r _resource) triggerDeletionOfExcessPCLQs(ctx context.Context, logger logr
 func (r _resource) createOrUpdatePCLQs(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, existingPCLQFQNs []string) error {
 	expectedPCLQNames, _ := componentutils.GetExpectedPCLQNamesGroupByOwner(pcs)
 	tasks := make([]utils.Task, 0, len(expectedPCLQNames))
+	existingPCLQNameSet := componentutils.NewSet(existingPCLQFQNs)
 
 	for pcsReplica := range pcs.Spec.Replicas {
 		for _, expectedPCLQName := range expectedPCLQNames {
@@ -135,7 +135,7 @@ func (r _resource) createOrUpdatePCLQs(ctx context.Context, logger logr.Logger, 
 				Name:      apicommon.GeneratePodCliqueName(apicommon.ResourceNameReplica{Name: pcs.Name, Replica: int(pcsReplica)}, expectedPCLQName),
 				Namespace: pcs.Namespace,
 			}
-			pclqExists := slices.Contains(existingPCLQFQNs, pclqObjectKey.Name)
+			pclqExists := existingPCLQNameSet.Has(pclqObjectKey.Name)
 			createOrUpdateTask := utils.Task{
 				Name: fmt.Sprintf("CreateOrUpdatePodClique-%s", pclqObjectKey),
 				Fn: func(ctx context.Context) error {
@@ -303,17 +303,24 @@ func (r _resource) buildResource(logger logr.Logger, pclq *grovecorev1alpha1.Pod
 			fmt.Sprintf("Error setting controller reference for PodClique: %v", client.ObjectKeyFromObject(pclq)),
 		)
 	}
+	// Add finalizer at creation so PCLQ controller does not need a separate PATCH on first reconcile.
+	controllerutil.AddFinalizer(pclq, apiconstants.FinalizerPodClique)
 	pclq.Labels = getLabels(pcs, pcsReplica, pclqObjectKey, pclqTemplateSpec, apicommon.GeneratePodGangNameForPodCliqueOwnedByPodCliqueSet(pcs, pcsReplica))
-	pclq.Annotations = pclqTemplateSpec.Annotations
+	pclq.Annotations = maps.Clone(pclqTemplateSpec.Annotations)
+	// PodGang owns topology selection; do not propagate a template topology annotation to PodClique pods.
+	delete(pclq.Annotations, apiconstants.AnnotationTopologyName)
+	if len(pclq.Annotations) == 0 {
+		pclq.Annotations = nil
+	}
 	// set PodCliqueSpec
 	// ------------------------------------
 	if pclqExists {
 		// If an HPA is mutating the number of replicas, then it should not be overwritten by the template spec replicas.
 		currentPCLQReplicas := pclq.Spec.Replicas
-		pclq.Spec = pclqTemplateSpec.Spec
+		pclq.Spec = *pclqTemplateSpec.Spec.DeepCopy()
 		pclq.Spec.Replicas = currentPCLQReplicas
 	} else {
-		pclq.Spec = pclqTemplateSpec.Spec
+		pclq.Spec = *pclqTemplateSpec.Spec.DeepCopy()
 	}
 	var dependentPclqNames []string
 	if dependentPclqNames, err = identifyFullyQualifiedStartupDependencyNames(pcs, pclq, pcsReplica, foundAtIndex); err != nil {
@@ -321,9 +328,10 @@ func (r _resource) buildResource(logger logr.Logger, pclq *grovecorev1alpha1.Pod
 	}
 	pclq.Spec.StartsAfter = dependentPclqNames
 
-	// Inject MNNVL resourceClaims if enabled on PCS
-	if mnnvl.IsAutoMNNVLEnabled(pcs.Annotations) {
-		mnnvl.InjectMNNVLIntoPodSpec(logger, &pclq.Spec.PodSpec, apicommon.ResourceNameReplica{Name: pcs.Name, Replica: pcsReplica})
+	// Inject MNNVL resourceClaims: resolve group hierarchically (PCLQ → PCS).
+	groupName, mnnvlEnabled := mnnvl.ResolveGroupNameHierarchically(pclqTemplateSpec.Annotations, pcs.Annotations)
+	if mnnvlEnabled {
+		mnnvl.InjectMNNVLIntoPodSpec(logger, &pclq.Spec.PodSpec, apicommon.ResourceNameReplica{Name: pcs.Name, Replica: pcsReplica}, groupName)
 	}
 
 	return nil

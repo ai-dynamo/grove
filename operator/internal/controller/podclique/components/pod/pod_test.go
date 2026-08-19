@@ -18,16 +18,106 @@ package pod
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/ai-dynamo/grove/operator/api/common"
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
+	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	"github.com/ai-dynamo/grove/operator/internal/scheduler"
+	"github.com/ai-dynamo/grove/operator/internal/scheduler/lpx"
+	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/ptr"
 )
+
+func TestAddServiceAccountTokenSecretVolumeUsesShortSecretName(t *testing.T) {
+	// 44 is the longest admitted PodCliqueSet name (the webhook caps combined
+	// resource name length at 45). The shortened "-ic-sat" suffix must keep the
+	// generated Secret name within the 63-byte label-value limit even at this bound.
+	pcsName := strings.Repeat("a", 44)
+	pod := &corev1.Pod{}
+
+	addServiceAccountTokenSecretVolume(pcsName, pod)
+
+	assert.Len(t, pod.Spec.Volumes, 1)
+	volume := pod.Spec.Volumes[0]
+	assert.Equal(t, serviceAccountTokenSecretVolumeName, volume.Name)
+	if assert.NotNil(t, volume.Secret) {
+		expectedSecretName := common.GenerateInitContainerSATokenSecretName(pcsName)
+		assert.Equal(t, expectedSecretName, volume.Secret.SecretName)
+		assert.NotEqual(t, common.GenerateLegacyInitContainerSATokenSecretName(pcsName), volume.Secret.SecretName)
+		assert.LessOrEqual(t, len(expectedSecretName), 63)
+	}
+}
+
+func TestBuildResourceWithLPXBackend(t *testing.T) {
+	const (
+		namespace   = "default"
+		pcsName     = "model"
+		cliqueName  = "gpu-worker"
+		podGangName = "model-0"
+		claimName   = "model-gpu-000"
+	)
+
+	uid := types.UID("test-uid")
+	podSpec := corev1.PodSpec{
+		SchedulerName: string(configv1alpha1.SchedulerNameLPX),
+		Containers: []corev1.Container{{
+			Name:  "worker",
+			Image: "worker",
+		}},
+		ResourceClaims: []corev1.PodResourceClaim{{
+			Name:              "gpu",
+			ResourceClaimName: ptr.To(claimName),
+		}},
+	}
+	pcs := testutils.NewPodCliqueSetBuilder(pcsName, namespace, uid).
+		WithPodCliqueTemplateSpec(
+			testutils.NewPodCliqueTemplateSpecBuilder(cliqueName).
+				WithPodSpec(podSpec).
+				Build(),
+		).
+		Build()
+	pclq := testutils.NewPodCliqueBuilder(pcsName, uid, cliqueName, namespace, 0).Build()
+	pclq.Spec.PodSpec = *podSpec.DeepCopy()
+	pclq.Annotations = map[string]string{"example.com/source": "podclique"}
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, grovecorev1alpha1.AddToScheme(scheme))
+	registry := &testutils.FakeSchedulerRegistry{
+		Backends: map[string]scheduler.Backend{
+			string(configv1alpha1.SchedulerNameLPX): lpx.New(
+				configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameLPX},
+			),
+		},
+		DefaultBackend: string(configv1alpha1.SchedulerNameLPX),
+	}
+	resource := &_resource{scheme: scheme, schedRegistry: registry}
+	pod := &corev1.Pod{}
+
+	require.NoError(t, resource.buildResource(pcs, pclq, podGangName, pod, 0))
+
+	assert.Equal(t, string(configv1alpha1.SchedulerNameLPX), pod.Spec.SchedulerName)
+	assert.Equal(t, pclq.Name+"-", pod.GenerateName)
+	assert.Equal(t, podGangName, pod.Labels[common.LabelPodGang])
+	require.Len(t, pod.Spec.SchedulingGates, 1)
+	assert.Equal(t, podGangSchedulingGate, pod.Spec.SchedulingGates[0].Name)
+	require.Len(t, pod.Spec.ResourceClaims, 1)
+	require.NotNil(t, pod.Spec.ResourceClaims[0].ResourceClaimName)
+	assert.Equal(t, claimName, *pod.Spec.ResourceClaims[0].ResourceClaimName)
+	assert.Equal(t, "podclique", pod.Annotations["example.com/source"])
+
+	pod.Annotations["example.com/source"] = "pod"
+	assert.Equal(t, "podclique", pclq.Annotations["example.com/source"])
+}
 
 // TestGetSelectorLabelsForPods_PCSGOwnedPodClique tests that getSelectorLabelsForPods
 // returns the correct selector labels for PCSG-owned PodCliques.
@@ -248,6 +338,15 @@ func TestAddGroveEnvironmentVariables_NoDuplicates(t *testing.T) {
 								},
 							},
 						},
+						InitContainers: []corev1.Container{
+							{
+								Name:  "test-init-container",
+								Image: "test-image",
+								Env: []corev1.EnvVar{
+									{Name: "GROVE_POD_INDEX", Value: "old-pod-index"},
+								},
+							},
+						},
 					},
 				},
 			},
@@ -370,11 +469,29 @@ func TestAddGroveEnvironmentVariables_NoDuplicates(t *testing.T) {
 
 			addEnvironmentVariables(pod, tt.pclq, "test-pcs", 0)
 
-			// Check that all containers have the expected environment variables
-			for _, container := range pod.Spec.Containers {
+			expectedPrefix := []string{
+				constants.EnvVarPodCliqueSetName,
+				constants.EnvVarPodCliqueSetIndex,
+				constants.EnvVarPodCliqueName,
+				constants.EnvVarHeadlessService,
+				constants.EnvVarPodIndex,
+			}
+			assertContainer := func(container corev1.Container) {
 				assertExpectedEnvVars(t, container, tt.expectedEnvVars)
 				assertReplacedEnvVars(t, container, tt.shouldReplace)
 				assertPreservedEnvVars(t, container, tt.shouldPreserve)
+				assertNoDuplicateEnvVars(t, container)
+				require.GreaterOrEqual(t, len(container.Env), len(expectedPrefix))
+				for i, envVarName := range expectedPrefix {
+					assert.Equal(t, envVarName, container.Env[i].Name)
+				}
+				assertEnvVarUsesFieldRef(t, container, constants.EnvVarPodIndex, fmt.Sprintf("metadata.labels['%s']", common.LabelPodCliquePodIndex))
+			}
+			for _, container := range pod.Spec.Containers {
+				assertContainer(container)
+			}
+			for _, container := range pod.Spec.InitContainers {
+				assertContainer(container)
 			}
 		})
 	}

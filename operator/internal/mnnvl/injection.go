@@ -1,4 +1,3 @@
-// /*
 // Copyright 2025 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,7 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package mnnvl
 
@@ -26,13 +24,13 @@ import (
 // InjectMNNVLIntoPodSpec injects MNNVL resourceClaims into the PodSpec if it has GPU requirements.
 // It adds a PodResourceClaim referencing the generated RCT name, and adds claim references to each
 // container that requests GPU resources. The operation is idempotent.
-// Should only be called when MNNVL is enabled (check IsAutoMNNVLEnabled first).
-func InjectMNNVLIntoPodSpec(logger logr.Logger, podSpec *corev1.PodSpec, pcsNameReplica apicommon.ResourceNameReplica) {
+// groupName identifies the MNNVL group; pass "" for the default (ungrouped) CD.
+func InjectMNNVLIntoPodSpec(logger logr.Logger, podSpec *corev1.PodSpec, pcsNameReplica apicommon.ResourceNameReplica, groupName string) {
 	if podSpec == nil {
 		return
 	}
 
-	rctName := GenerateRCTName(pcsNameReplica)
+	rctName := GenerateRCTName(pcsNameReplica, groupName)
 
 	// Check if already injected (idempotent)
 	for _, claim := range podSpec.ResourceClaims {

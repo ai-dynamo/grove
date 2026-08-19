@@ -22,7 +22,7 @@ By default, Grove's built-in cert-controller automatically:
 This mode requires no additional configuration. Simply deploy Grove:
 
 ```bash
-helm upgrade -i grove oci://ghcr.io/ai-dynamo/grove/grove-charts:<tag>
+helm upgrade -i grove oci://ghcr.io/ai-dynamo/grove/grove-charts --version <version>
 ```
 
 ### How It Works
@@ -183,7 +183,7 @@ webhooks:
 #### Step 5: Deploy Grove
 
 ```bash
-helm upgrade -i grove oci://ghcr.io/ai-dynamo/grove/grove-charts:<tag> \
+helm upgrade -i grove oci://ghcr.io/ai-dynamo/grove/grove-charts --version <version> \
   --set config.server.webhooks.certProvisionMode=manual \
   --set webhooks.podCliqueSetValidationWebhook.annotations."cert-manager\.io/inject-ca-from"="<namespace>/grove-webhook-cert" \
   --set webhooks.podCliqueSetDefaultingWebhook.annotations."cert-manager\.io/inject-ca-from"="<namespace>/grove-webhook-cert" \
@@ -193,7 +193,7 @@ helm upgrade -i grove oci://ghcr.io/ai-dynamo/grove/grove-charts:<tag> \
 Or create a `values.yaml` file with the configuration shown above and deploy:
 
 ```bash
-helm upgrade -i grove oci://ghcr.io/ai-dynamo/grove/grove-charts:<tag> -f values.yaml
+helm upgrade -i grove oci://ghcr.io/ai-dynamo/grove/grove-charts --version <version> -f values.yaml
 ```
 
 ### Manual Certificate Management
@@ -253,7 +253,7 @@ kubectl create secret generic grove-webhook-server-cert \
 ```bash
 CA_BUNDLE=$(cat ca.crt | base64 | tr -d '\n')
 
-helm upgrade -i grove oci://ghcr.io/ai-dynamo/grove/grove-charts:<tag> \
+helm upgrade -i grove oci://ghcr.io/ai-dynamo/grove/grove-charts --version <version> \
   --set config.server.webhooks.certProvisionMode=manual \
   --set webhooks.caBundle="${CA_BUNDLE}"
 ```
@@ -267,7 +267,7 @@ helm upgrade -i grove oci://ghcr.io/ai-dynamo/grove/grove-charts:<tag> \
 3. Upgrade the Grove deployment
 
 ```bash
-helm upgrade grove oci://ghcr.io/ai-dynamo/grove/grove-charts:<tag> \
+helm upgrade grove oci://ghcr.io/ai-dynamo/grove/grove-charts --version <version> \
   --set config.server.webhooks.certProvisionMode=manual \
   --set webhooks.caBundle="${CA_BUNDLE}"
 ```
@@ -279,7 +279,7 @@ helm upgrade grove oci://ghcr.io/ai-dynamo/grove/grove-charts:<tag> \
 3. Upgrade the Grove deployment
 
 ```bash
-helm upgrade grove oci://ghcr.io/ai-dynamo/grove/grove-charts:<tag> \
+helm upgrade grove oci://ghcr.io/ai-dynamo/grove/grove-charts --version <version> \
   --set config.server.webhooks.certProvisionMode=auto \
   --set webhooks.caBundle=""
 ```

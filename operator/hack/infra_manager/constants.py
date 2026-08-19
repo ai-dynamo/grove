@@ -1,4 +1,3 @@
-# /*
 # Copyright 2026 The Grove Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,7 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-# */
 
 """Constants, dependency loading, and dep_value helper."""
 
@@ -139,6 +137,7 @@ LABEL_CONTROL_PLANE = "node-role.kubernetes.io/control-plane"
 REL_WORKLOAD_YAML = "e2e/yaml/workload1.yaml"
 REL_QUEUES_YAML = "e2e/yaml/queues.yaml"
 REL_CHARTS_DIR = "charts"
+REL_PREPARE_CHARTS = "hack/prepare-charts.sh"
 
 # -- KWOK --
 KWOK_GITHUB_REPO = "kubernetes-sigs/kwok"
@@ -181,7 +180,7 @@ def parse_memory_mb(mem_str: str) -> int:
     return int(mem_str)
 
 
-DEFAULT_K3S_IMAGE = "rancher/k3s:v1.34.2-k3s1"
+DEFAULT_K3S_IMAGE = "rancher/k3s:v1.35.5-k3s1"
 DEFAULT_CLUSTER_CREATE_MAX_RETRIES = 3
 
 # -- Component defaults --

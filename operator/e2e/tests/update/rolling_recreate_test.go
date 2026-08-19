@@ -1,6 +1,5 @@
 //go:build e2e
 
-// /*
 // Copyright 2025 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,7 +13,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package update
 
@@ -24,8 +22,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ai-dynamo/grove/operator/e2e/testctx"
 	tests "github.com/ai-dynamo/grove/operator/e2e/tests"
-	"github.com/ai-dynamo/grove/operator/e2e/utils"
+	"github.com/ai-dynamo/grove/operator/e2e/waiter"
 	"k8s.io/apimachinery/pkg/watch"
 )
 
@@ -52,9 +51,9 @@ func Test_RU7_RollingUpdatePCSPodClique(t *testing.T) {
 		t.Fatalf("Failed to update PodClique spec: %v", err)
 	}
 
-	tcLongTimeout := tc
+	tcLongTimeout := *tc
 	tcLongTimeout.Timeout = 1 * time.Minute
-	if err := waitForRollingUpdateComplete(tcLongTimeout, 1); err != nil {
+	if err := waitForRollingUpdateComplete(&tcLongTimeout, 1); err != nil {
 		// Diagnostics will be collected automatically by cleanup on test failure
 		t.Fatalf("Failed to wait for rolling update to complete: %v", err)
 	}
@@ -93,9 +92,9 @@ func Test_RU8_RollingUpdatePCSGPodClique(t *testing.T) {
 		t.Fatalf("Failed to update PodClique spec: %v", err)
 	}
 
-	tcLongTimeout := tc
+	tcLongTimeout := *tc
 	tcLongTimeout.Timeout = 1 * time.Minute
-	if err := waitForRollingUpdateComplete(tcLongTimeout, 1); err != nil {
+	if err := waitForRollingUpdateComplete(&tcLongTimeout, 1); err != nil {
 		t.Fatalf("Failed to wait for rolling update to complete: %v", err)
 	}
 
@@ -167,46 +166,36 @@ func Test_RU10_RollingUpdateInsufficientResources(t *testing.T) {
 	ctx := context.Background()
 
 	tests.Logger.Info("1. Initialize a 10-node Grove cluster")
-	clients, cleanup := tests.PrepareTestCluster(ctx, t, 10)
-	defer cleanup()
-
 	tests.Logger.Info("2. Deploy workload WL1, and verify 10 newly created pods")
-	tc := tests.TestContext{
-		T:             t,
-		Ctx:           ctx,
-		Clientset:     clients.Clientset,
-		RestConfig:    clients.RestConfig,
-		DynamicClient: clients.DynamicClient,
-		Namespace:     "default",
-		Timeout:       tests.DefaultPollTimeout,
-		Interval:      tests.DefaultPollInterval,
-		Workload: &tests.WorkloadConfig{
+	tc, cleanup := testctx.PrepareTest(ctx, t, 10,
+		testctx.WithWorkload(&testctx.WorkloadConfig{
 			Name:         "workload1",
 			YAMLPath:     "../../yaml/workload1.yaml",
 			Namespace:    "default",
 			ExpectedPods: 10,
-		},
-	}
+		}),
+	)
+	defer cleanup()
 
-	_, err := tests.DeployAndVerifyWorkload(tc)
+	_, err := tc.DeployAndVerifyWorkload()
 	if err != nil {
 		t.Fatalf("Failed to deploy workload: %v", err)
 	}
 
-	if err := tests.WaitForPods(tc, 10); err != nil {
+	if err := tc.WaitForPods(10); err != nil {
 		t.Fatalf("Failed to wait for pods to be ready: %v", err)
 	}
 
 	tests.Logger.Info("3. Cordon all worker nodes")
-	workerNodes, err := tests.GetWorkerNodes(tc)
+	workerNodes, err := tc.GetWorkerNodes()
 	if err != nil {
 		t.Fatalf("Failed to get agent nodes: %v", err)
 	}
 
-	tests.CordonNodes(tc, workerNodes)
+	tc.CordonNodes(workerNodes)
 
 	// Capture the existing pods before starting the tracker
-	existingPods, err := tests.ListPods(tc)
+	existingPods, err := tc.ListPods()
 	if err != nil {
 		t.Fatalf("Failed to list existing pods: %v", err)
 	}
@@ -232,11 +221,22 @@ func Test_RU10_RollingUpdateInsufficientResources(t *testing.T) {
 	tests.Logger.Info("5. Verify exactly one pod is deleted and a new Pending pod is created (delete-first strategy)")
 
 	// Poll until we see exactly 1 pod deleted and 1 new pod created, verifying delete-first behavior
-	pollErr := utils.PollForCondition(ctx, 2*time.Minute, 2*time.Second, func() (bool, error) {
+	fetchEvents := waiter.FetchFunc[[]podEvent](func(_ context.Context) ([]podEvent, error) {
 		events := tracker.getEvents()
+		deletedCount := 0
+		for _, event := range events {
+			if event.eventType == watch.Deleted && existingPodNames[event.pod.Name] {
+				deletedCount++
+			}
+		}
+		if deletedCount > 1 {
+			return nil, fmt.Errorf("rolling update progressed beyond first deletion - expected 1 pod deleted but got %d (not delete-first strategy)", deletedCount)
+		}
+		return events, nil
+	})
+	isDeleteFirst := waiter.Predicate[[]podEvent](func(events []podEvent) bool {
 		var deletedExistingPods []string
 		var addedPods []string
-
 		for _, event := range events {
 			switch event.eventType {
 			case watch.Deleted:
@@ -251,38 +251,31 @@ func Test_RU10_RollingUpdateInsufficientResources(t *testing.T) {
 				}
 			}
 		}
-
-		// Check if we've reached the expected delete-first state
 		deletedCount := len(deletedExistingPods)
 		addedCount := len(addedPods)
-
-		// If more than 1 pod was deleted, the test should fail (not delete-first)
-		if deletedCount > 1 {
-			return false, fmt.Errorf("rolling update progressed beyond first deletion - expected 1 pod deleted but got %d: %v (not delete-first strategy)", deletedCount, deletedExistingPods)
-		}
-
-		// Success: exactly 1 deleted and 1 new pod created
 		if deletedCount == 1 && addedCount == 1 {
 			tests.Logger.Infof("Delete-first strategy verified: 1 pod deleted (%v), 1 new pod created (%v)", deletedExistingPods, addedPods)
-			return true, nil
+			return true
 		}
-
-		// Still waiting for the condition
 		tests.Logger.Debugf("Waiting for delete-first state: deleted=%d (want 1), added=%d (want 1)", deletedCount, addedCount)
-		return false, nil
+		return false
 	})
+	w := waiter.New[[]podEvent]().
+		WithTimeout(2 * time.Minute).
+		WithInterval(2 * time.Second)
+	pollErr := w.WaitUntil(ctx, fetchEvents, isDeleteFirst)
 
 	if pollErr != nil {
 		t.Fatalf("Failed to verify delete-first strategy: %v", pollErr)
 	}
 
 	tests.Logger.Info("6. Uncordon the nodes, and verify the rolling update completes")
-	tests.UncordonNodes(tc, workerNodes)
+	tc.UncordonNodes(workerNodes)
 
 	// Wait for rolling update to complete after uncordoning
-	tcLongTimeout := tc
+	tcLongTimeout := *tc
 	tcLongTimeout.Timeout = 5 * time.Minute
-	if err := waitForRollingUpdateComplete(tcLongTimeout, 1); err != nil {
+	if err := waitForRollingUpdateComplete(&tcLongTimeout, 1); err != nil {
 		tests.Logger.Info("=== Rolling update timed out - capturing debug info ===")
 		t.Fatalf("Failed to wait for rolling update to complete: %v", err)
 	}
@@ -312,12 +305,12 @@ func Test_RU11_RollingUpdateWithPCSScaleOut(t *testing.T) {
 	defer cleanup()
 
 	tests.Logger.Info("3. Change the specification of pc-a")
-	tcLongTimeout := tc
+	tcLongTimeout := *tc
 	tcLongTimeout.Timeout = 2 * time.Minute
-	updateWait := triggerRollingUpdate(tcLongTimeout, 3, "pc-a")
+	updateWait := triggerRollingUpdate(&tcLongTimeout, 3, "pc-a")
 
 	tests.Logger.Info("4. Scale out the PCS during the rolling update (in parallel)")
-	scaleWait := tests.ScalePCS(tcLongTimeout, "workload1", 3, 30, 0, 100) // 100ms delay so update is "first"
+	scaleWait := tcLongTimeout.ScalePCSAsync("workload1", 3, 30, 0, 100) // 100ms delay so update is "first"
 
 	if err := <-updateWait; err != nil {
 		t.Fatalf("Rolling update failed: %v", err)
@@ -327,7 +320,7 @@ func Test_RU11_RollingUpdateWithPCSScaleOut(t *testing.T) {
 	}
 
 	tests.Logger.Info("5. Verify the scaled out replica is created with the correct specifications")
-	pods, err := tests.ListPods(tc)
+	pods, err := tc.ListPods()
 	if err != nil {
 		t.Fatalf("Failed to list pods: %v", err)
 	}
@@ -374,19 +367,19 @@ func Test_RU12_RollingUpdateWithPCSScaleInDuringUpdate(t *testing.T) {
 	tests.Logger.Info("4. Scale in the PCS while the final ordinal is being updated")
 	// Wait for the final ordinal (ordinal 1 since there's two replicas, indexed from 0) to start updating before scaling in
 	// Rolling updates process ordinals from highest to lowest, so ordinal 1 is updated first
-	tcOrdinalTimeout := tc
+	tcOrdinalTimeout := *tc
 	tcOrdinalTimeout.Timeout = 60 * time.Second
-	if err := waitForOrdinalUpdating(tcOrdinalTimeout, 1); err != nil {
+	if err := waitForOrdinalUpdating(&tcOrdinalTimeout, 1); err != nil {
 		t.Fatalf("Failed to wait for final ordinal to start updating: %v", err)
 	}
 
 	// Scale in parallel with the ongoing rolling update (no delay since we already waited for ordinal)
-	tcLongTimeout := tc
+	tcLongTimeout := *tc
 	tcLongTimeout.Timeout = 2 * time.Minute
-	scaleWait := tests.ScalePCS(tcLongTimeout, "workload1", 1, 10, 0, 0) // No delay since update already in progress
+	scaleWait := tcLongTimeout.ScalePCSAsync("workload1", 1, 10, 0, 0) // No delay since update already in progress
 
 	tests.Logger.Info("5. Verify the update goes through successfully")
-	updateWait := waitForRollingUpdate(tcLongTimeout, 1)
+	updateWait := waitForRollingUpdate(&tcLongTimeout, 1)
 
 	if err := <-updateWait; err != nil {
 		t.Fatalf("Rolling update failed: %v", err)
@@ -395,7 +388,7 @@ func Test_RU12_RollingUpdateWithPCSScaleInDuringUpdate(t *testing.T) {
 		t.Fatalf("Scale operation failed: %v", err)
 	}
 
-	pods, err := tests.ListPods(tc)
+	pods, err := tc.ListPods()
 	if err != nil {
 		t.Fatalf("Failed to list pods: %v", err)
 	}
@@ -437,9 +430,9 @@ func Test_RU13_RollingUpdateWithPCSScaleInAfterFinalOrdinal(t *testing.T) {
 	}
 
 	tests.Logger.Info("4. Wait for rolling update to complete on both replicas")
-	tcLongTimeout := tc
+	tcLongTimeout := *tc
 	tcLongTimeout.Timeout = 2 * time.Minute
-	if err := waitForRollingUpdateComplete(tcLongTimeout, 2); err != nil {
+	if err := waitForRollingUpdateComplete(&tcLongTimeout, 2); err != nil {
 		t.Fatalf("Failed to wait for rolling update to complete: %v", err)
 	}
 
@@ -447,7 +440,7 @@ func Test_RU13_RollingUpdateWithPCSScaleInAfterFinalOrdinal(t *testing.T) {
 	tests.ScalePCSAndWait(tc, "workload1", 1, 10, 0)
 
 	tests.Logger.Info("6. Verify the update goes through successfully")
-	pods, err := tests.ListPods(tc)
+	pods, err := tc.ListPods()
 	if err != nil {
 		t.Fatalf("Failed to list pods: %v", err)
 	}
@@ -483,12 +476,12 @@ func Test_RU14_RollingUpdateWithPCSGScaleOutDuringUpdate(t *testing.T) {
 	defer cleanup()
 
 	tests.Logger.Info("3. Change the specification of pc-a, pc-b and pc-c")
-	tcLongerTimeout := tc
+	tcLongerTimeout := *tc
 	tcLongerTimeout.Timeout = 2 * time.Minute
-	updateWait := triggerRollingUpdate(tcLongerTimeout, 2, "pc-a", "pc-b", "pc-c")
+	updateWait := triggerRollingUpdate(&tcLongerTimeout, 2, "pc-a", "pc-b", "pc-c")
 
 	tests.Logger.Info("4. Scale out the PCSG during its rolling update (in parallel)")
-	scaleWait := tests.ScalePCSGAcrossAllReplicas(tcLongerTimeout, "workload1", "sg-x", 2, 3, 28, 0, 100) // 100ms delay so update is "first"
+	scaleWait := tcLongerTimeout.ScalePCSGAcrossAllReplicasAsync("workload1", "sg-x", 2, 3, 28, 0, 100) // 100ms delay so update is "first"
 
 	tests.Logger.Info("5. Verify the scaled out replica is created with the correct specifications")
 	// sg-x = 4 pods per replica (1 pc-b + 3 pc-c)
@@ -504,7 +497,7 @@ func Test_RU14_RollingUpdateWithPCSGScaleOutDuringUpdate(t *testing.T) {
 		t.Fatalf("Scale operation failed: %v", err)
 	}
 
-	pods, err := tests.ListPods(tc)
+	pods, err := tc.ListPods()
 	if err != nil {
 		t.Fatalf("Failed to list pods: %v", err)
 	}
@@ -543,15 +536,15 @@ func Test_RU15_RollingUpdateWithPCSGScaleOutBeforeUpdate(t *testing.T) {
 	// Scaling PCSG instances directly (workload1-0-sg-x, workload1-1-sg-x) since the PCS controller
 	// only sets replicas during initial PCSG creation to support HPA scaling.
 	// After scaling sg-x to 3 replicas: 2 PCS replicas x (2 pc-a + 3 sg-x x 4 pods) = 2 x 14 = 28 pods
-	tcLongTimeout := tc
+	tcLongTimeout := *tc
 	tcLongTimeout.Timeout = 2 * time.Minute
 	// Scale starts first (no delay)
-	scaleWait := tests.ScalePCSGAcrossAllReplicas(tcLongTimeout, "workload1", "sg-x", 2, 3, 28, 0, 0)
+	scaleWait := tcLongTimeout.ScalePCSGAcrossAllReplicasAsync("workload1", "sg-x", 2, 3, 28, 0, 0)
 
 	tests.Logger.Info("4. Change the specification of pc-a, pc-b and pc-c")
 	// Small delay so scale is clearly "first", then trigger update
 	time.Sleep(100 * time.Millisecond)
-	updateWait := triggerRollingUpdate(tcLongTimeout, 2, "pc-a", "pc-b", "pc-c")
+	updateWait := triggerRollingUpdate(&tcLongTimeout, 2, "pc-a", "pc-b", "pc-c")
 
 	tests.Logger.Info("5. Verify the scaled out replica is created with the correct specifications")
 	tests.Logger.Info("6. Verify it should not be updated again before the rolling update ends")
@@ -563,7 +556,7 @@ func Test_RU15_RollingUpdateWithPCSGScaleOutBeforeUpdate(t *testing.T) {
 		t.Fatalf("Scale operation failed: %v", err)
 	}
 
-	pods, err := tests.ListPods(tc)
+	pods, err := tc.ListPods()
 	if err != nil {
 		t.Fatalf("Failed to list pods: %v", err)
 	}
@@ -602,15 +595,15 @@ func Test_RU16_RollingUpdateWithPCSGScaleInDuringUpdate(t *testing.T) {
 	defer cleanup()
 
 	tests.Logger.Info("4. Change the specification of pc-a, pc-b and pc-c")
-	tcLongTimeout := tc
+	tcLongTimeout := *tc
 	tcLongTimeout.Timeout = 2 * time.Minute
-	updateWait := triggerRollingUpdate(tcLongTimeout, 2, "pc-a", "pc-b", "pc-c")
+	updateWait := triggerRollingUpdate(&tcLongTimeout, 2, "pc-a", "pc-b", "pc-c")
 
 	tests.Logger.Info("5. Scale in the PCSG during its rolling update (in parallel)")
 	// Scaling PCSG instances directly (workload1-0-sg-x, workload1-1-sg-x) since the PCS controller
 	// only sets replicas during initial PCSG creation to support HPA scaling.
 	// After scaling sg-x back to 2 replicas: 2 PCS replicas x (2 pc-a + 2 sg-x x 4 pods) = 2 x 10 = 20 pods
-	scaleWait := tests.ScalePCSGAcrossAllReplicas(tcLongTimeout, "workload1", "sg-x", 2, 2, 20, 0, 100) // 100ms delay so update is "first"
+	scaleWait := tcLongTimeout.ScalePCSGAcrossAllReplicasAsync("workload1", "sg-x", 2, 2, 20, 0, 100) // 100ms delay so update is "first"
 
 	tests.Logger.Info("6. Verify the update goes through successfully")
 
@@ -623,7 +616,7 @@ func Test_RU16_RollingUpdateWithPCSGScaleInDuringUpdate(t *testing.T) {
 
 	// After scaling sg-x back to 2 replicas via PCS template (affects all PCS replicas):
 	// 2 PCS replicas x (2 pc-a + 2 sg-x x 4 pods) = 2 x 10 = 20 pods
-	pods, err := tests.ListPods(tc)
+	pods, err := tc.ListPods()
 	if err != nil {
 		t.Fatalf("Failed to list pods: %v", err)
 	}
@@ -663,9 +656,9 @@ func Test_RU17_RollingUpdateWithPCSGScaleInBeforeUpdate(t *testing.T) {
 
 	tests.Logger.Info("4. Scale in the PCSG before its rolling update starts (in parallel)")
 	// Scale starts first (no delay)
-	tcLongTimeout := tc
+	tcLongTimeout := *tc
 	tcLongTimeout.Timeout = 2 * time.Minute
-	scaleWait := tests.ScalePCSGAcrossAllReplicas(tcLongTimeout, "workload1", "sg-x", 2, 2, 20, 0, 0)
+	scaleWait := tcLongTimeout.ScalePCSGAcrossAllReplicasAsync("workload1", "sg-x", 2, 2, 20, 0, 0)
 
 	tests.Logger.Info("5. Change the specification of pc-a, pc-b and pc-c")
 	// Scaling PCSG instances directly (workload1-0-sg-x, workload1-1-sg-x) since the PCS controller
@@ -676,7 +669,7 @@ func Test_RU17_RollingUpdateWithPCSGScaleInBeforeUpdate(t *testing.T) {
 
 	// Small delay so scale is clearly "first", then trigger update
 	time.Sleep(100 * time.Millisecond)
-	updateWait := triggerRollingUpdate(tcLongTimeout, 2, "pc-a", "pc-b", "pc-c")
+	updateWait := triggerRollingUpdate(&tcLongTimeout, 2, "pc-a", "pc-b", "pc-c")
 
 	if err := <-updateWait; err != nil {
 		t.Fatalf("Rolling update failed: %v", err)
@@ -687,7 +680,7 @@ func Test_RU17_RollingUpdateWithPCSGScaleInBeforeUpdate(t *testing.T) {
 
 	// After scaling sg-x back to 2 replicas via PCS template (affects all PCS replicas):
 	// 2 PCS replicas x (2 pc-a + 2 sg-x x 4 pods) = 2 x 10 = 20 pods
-	pods, err := tests.ListPods(tc)
+	pods, err := tc.ListPods()
 	if err != nil {
 		t.Fatalf("Failed to list pods: %v", err)
 	}
@@ -712,35 +705,25 @@ func Test_RU18_RollingUpdateWithPodCliqueScaleOutDuringUpdate(t *testing.T) {
 	ctx := context.Background()
 
 	tests.Logger.Info("1. Initialize a 24-node Grove cluster")
-	clients, cleanup := tests.PrepareTestCluster(ctx, t, 24)
-	defer cleanup()
-
 	tests.Logger.Info("2. Deploy workload WL1 with 2 replicas, and verify 20 newly created pods")
-	tc := tests.TestContext{
-		T:             t,
-		Ctx:           ctx,
-		Clientset:     clients.Clientset,
-		RestConfig:    clients.RestConfig,
-		DynamicClient: clients.DynamicClient,
-		Namespace:     "default",
-		Timeout:       tests.DefaultPollTimeout,
-		Interval:      tests.DefaultPollInterval,
-		Workload: &tests.WorkloadConfig{
+	tc, cleanup := testctx.PrepareTest(ctx, t, 24,
+		testctx.WithWorkload(&testctx.WorkloadConfig{
 			Name:         "workload1",
 			YAMLPath:     "../../yaml/workload1.yaml",
 			Namespace:    "default",
 			ExpectedPods: 10,
-		},
-	}
+		}),
+	)
+	defer cleanup()
 
-	_, err := tests.DeployAndVerifyWorkload(tc)
+	_, err := tc.DeployAndVerifyWorkload()
 	if err != nil {
 		t.Fatalf("Failed to deploy workload: %v", err)
 	}
 
-	tests.ScalePCSAndWait(tc, "workload1", 2, 20, 0)
+	tc.ScalePCSAndWait("workload1", 2, 20, 0)
 
-	if err := tests.WaitForPods(tc, 20); err != nil {
+	if err := tc.WaitForPods(20); err != nil {
 		t.Fatalf("Failed to wait for pods to be ready: %v", err)
 	}
 
@@ -751,16 +734,16 @@ func Test_RU18_RollingUpdateWithPodCliqueScaleOutDuringUpdate(t *testing.T) {
 	defer tracker.stop()
 
 	tests.Logger.Info("3. Change the specification of pc-a, pc-b and pc-c")
-	tcLongTimeout := tc
+	tcLongTimeout := *tc
 	tcLongTimeout.Timeout = 4 * time.Minute // Extra headroom for rolling update + scale
 
-	updateWait := triggerRollingUpdate(tcLongTimeout, 2, "pc-a", "pc-b", "pc-c")
+	updateWait := triggerRollingUpdate(&tcLongTimeout, 2, "pc-a", "pc-b", "pc-c")
 
 	tests.Logger.Info("4. Scale out the standalone PCLQ (pc-a) during its rolling update (in parallel)")
 
 	tests.Logger.Info("5. Verify the scaled pods are created with the correct specifications")
 	tests.Logger.Info("6. Verify they should not be updated again before the rolling update ends")
-	scaleWait := scalePodClique(tcLongTimeout, "pc-a", 4, 24, 100) // 100ms delay so update is "first"
+	scaleWait := scalePodClique(&tcLongTimeout, "pc-a", 4, 24, 100) // 100ms delay so update is "first"
 
 	if err := <-updateWait; err != nil {
 		// Diagnostics will be collected automatically by cleanup on test failure
@@ -772,7 +755,7 @@ func Test_RU18_RollingUpdateWithPodCliqueScaleOutDuringUpdate(t *testing.T) {
 
 	tracker.stop()
 
-	pods, err := tests.ListPods(tc)
+	pods, err := tc.ListPods()
 	if err != nil {
 		t.Fatalf("Failed to list pods: %v", err)
 	}
@@ -807,14 +790,14 @@ func Test_RU19_RollingUpdateWithPodCliqueScaleOutBeforeUpdate(t *testing.T) {
 
 	tests.Logger.Info("3. Scale out the standalone PCLQ (pc-a) before its rolling update (in parallel)")
 	// Scale starts first (no delay)
-	tcLongTimeout := tc
+	tcLongTimeout := *tc
 	tcLongTimeout.Timeout = 4 * time.Minute // Extra headroom for rolling update + scale
-	scaleWait := scalePodClique(tcLongTimeout, "pc-a", 4, 24, 0)
+	scaleWait := scalePodClique(&tcLongTimeout, "pc-a", 4, 24, 0)
 
 	tests.Logger.Info("4. Change the specification of pc-a, pc-b and pc-c")
 	// Small delay so scale is clearly "first", then trigger update
 	time.Sleep(100 * time.Millisecond)
-	updateWait := triggerRollingUpdate(tcLongTimeout, 2, "pc-a", "pc-b", "pc-c")
+	updateWait := triggerRollingUpdate(&tcLongTimeout, 2, "pc-a", "pc-b", "pc-c")
 
 	tests.Logger.Info("5. Verify the scaled pods are created with the correct specifications")
 	tests.Logger.Info("6. Verify they should not be updated again before the rolling update ends")
@@ -826,7 +809,7 @@ func Test_RU19_RollingUpdateWithPodCliqueScaleOutBeforeUpdate(t *testing.T) {
 		t.Fatalf("Scale operation failed: %v", err)
 	}
 
-	pods, err := tests.ListPods(tc)
+	pods, err := tc.ListPods()
 	if err != nil {
 		t.Fatalf("Failed to list pods: %v", err)
 	}
@@ -867,19 +850,19 @@ func Test_RU20_RollingUpdateWithPodCliqueScaleInDuringUpdate(t *testing.T) {
 		t.Fatalf("Failed to scale out PodClique pc-a: %v", err)
 	}
 
-	if err := tests.WaitForPods(tc, 22); err != nil {
+	if err := tc.WaitForPods(22); err != nil {
 		t.Fatalf("Failed to wait for pods after pc-a scale-out: %v", err)
 	}
 
 	tests.Logger.Info("4. Change the specification of pc-a, pc-b and pc-c")
 	// Scale in from 3 to 2 (stays at minAvailable=2)
-	tcLongTimeout := tc
+	tcLongTimeout := *tc
 	tcLongTimeout.Timeout = 4 * time.Minute // Extra headroom for rolling update + scale
 
-	updateWait := triggerRollingUpdate(tcLongTimeout, 2, "pc-a", "pc-b", "pc-c")
+	updateWait := triggerRollingUpdate(&tcLongTimeout, 2, "pc-a", "pc-b", "pc-c")
 
 	tests.Logger.Info("5. Scale in the standalone PCLQ (pc-a) from 3 to 2 during its rolling update (in parallel)")
-	scaleWait := scalePodClique(tcLongTimeout, "pc-a", 2, 20, 100) // 100ms delay so update is "first"
+	scaleWait := scalePodClique(&tcLongTimeout, "pc-a", 2, 20, 100) // 100ms delay so update is "first"
 
 	tests.Logger.Info("6. Verify the update goes through successfully")
 	if err := <-updateWait; err != nil {
@@ -890,7 +873,7 @@ func Test_RU20_RollingUpdateWithPodCliqueScaleInDuringUpdate(t *testing.T) {
 	}
 
 	// After scale-in from 3 to 2 pc-a: 2 PCS replicas × (2 pc-a + 8 sg-x) = 2 × 10 = 20 pods
-	pods, err := tests.ListPods(tc)
+	pods, err := tc.ListPods()
 	if err != nil {
 		t.Fatalf("Failed to list pods: %v", err)
 	}
@@ -931,20 +914,20 @@ func Test_RU21_RollingUpdateWithPodCliqueScaleInBeforeUpdate(t *testing.T) {
 		t.Fatalf("Failed to scale out PodClique pc-a: %v", err)
 	}
 
-	if err := tests.WaitForPods(tc, 22); err != nil {
+	if err := tc.WaitForPods( 22); err != nil {
 		t.Fatalf("Failed to wait for pods after pc-a scale-out: %v", err)
 	}
 
 	tests.Logger.Info("4. Scale in pc-a from 3 to 2 before its rolling update (in parallel)")
-	tcLongTimeout := tc
+	tcLongTimeout := *tc
 	tcLongTimeout.Timeout = 4 * time.Minute // Extra headroom for rolling update + scale
 	// Scale starts first (no delay) - scaling in from 3 to 2 (stays at minAvailable=2)
-	scaleWait := scalePodClique(tcLongTimeout, "pc-a", 2, 20, 0)
+	scaleWait := scalePodClique(&tcLongTimeout, "pc-a", 2, 20, 0)
 
 	tests.Logger.Info("5. Change the specification of pc-a, pc-b and pc-c")
 	// Small delay so scale is clearly "first", then trigger update
 	time.Sleep(100 * time.Millisecond)
-	updateWait := triggerRollingUpdate(tcLongTimeout, 2, "pc-a", "pc-b", "pc-c")
+	updateWait := triggerRollingUpdate(&tcLongTimeout, 2, "pc-a", "pc-b", "pc-c")
 
 	tests.Logger.Info("6. Verify the update goes through successfully")
 
@@ -956,7 +939,7 @@ func Test_RU21_RollingUpdateWithPodCliqueScaleInBeforeUpdate(t *testing.T) {
 	}
 
 	// After scale-in from 3 to 2 pc-a: 2 PCS replicas × (2 pc-a + 8 sg-x) = 2 × 10 = 20 pods
-	pods, err := tests.ListPods(tc)
+	pods, err := tc.ListPods()
 	if err != nil {
 		t.Fatalf("Failed to list pods: %v", err)
 	}

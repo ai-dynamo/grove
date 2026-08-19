@@ -8,7 +8,7 @@
 - [Without Multiple Topologies](#without-multiple-topologies)
 <!-- /toc -->
 
-This document provides a concrete example for [Story 4: Heterogeneous GPU Clusters](README.md#story-4-heterogeneous-gpu-clusters) in GREP-244. It demonstrates how separate ClusterTopology resources partition a cluster along hardware boundaries, with each topology's node label keys naturally directing workloads to the correct hardware segment.
+This document provides a concrete example for [Story 4: Heterogeneous GPU Clusters](README.md#story-4-heterogeneous-gpu-clusters) in GREP-244. It demonstrates how separate ClusterTopologyBinding resources partition a cluster along hardware boundaries, with each topology's node label keys naturally directing workloads to the correct hardware segment.
 
 ## Cluster Setup
 
@@ -40,15 +40,15 @@ Cluster: us-east-1a
         └── gb200-rack-4 (nvlink-domain: nvl-domain-4):  72 GPUs via NVLink 5.0
 ```
 
-The domain `block` maps to `kubernetes.io/rack` for H100 and `example.com/nvl-block` for GB200. The domain `rack` maps to `example.com/nvlink-domain` for GB200 (no equivalent for H100). A single ClusterTopology cannot represent both.
+The domain `block` maps to `kubernetes.io/rack` for H100 and `example.com/nvl-block` for GB200. The domain `rack` maps to `example.com/nvlink-domain` for GB200 (no equivalent for H100). A single ClusterTopologyBinding cannot represent both.
 
 ## Topology Definitions
 
-The administrator creates two ClusterTopology resources, one per hardware architecture:
+The administrator creates two ClusterTopologyBinding resources, one per hardware architecture:
 
 ```yaml
 apiVersion: grove.io/v1alpha1
-kind: ClusterTopology
+kind: ClusterTopologyBinding
 metadata:
   name: h100-topology     # admin-created, matches DGX H100 nodes
 spec:
@@ -61,7 +61,7 @@ spec:
       key: kubernetes.io/hostname
 ---
 apiVersion: grove.io/v1alpha1
-kind: ClusterTopology
+kind: ClusterTopologyBinding
 metadata:
   name: gb200-topology    # admin-created, matches GB200 NVL72 nodes
 spec:
@@ -74,7 +74,7 @@ spec:
       key: example.com/nvlink-domain
     - domain: host
       key: kubernetes.io/hostname
-  schedulerReferences:
+  schedulerTopologyReferences:
     - schedulerName: kai-scheduler
       reference: gb200-kai-topology
 ```
@@ -169,9 +169,9 @@ Grove looks up `gb200-topology` and resolves `block` to `example.com/nvl-block`,
 
 ## Without Multiple Topologies
 
-Without multiple topologies, the cluster cannot be partitioned by hardware. All workloads resolve topology domains against a single ClusterTopology, regardless of which hardware they target. The GB200 engineer faces two problems:
+Without multiple topologies, the cluster cannot be partitioned by hardware. All workloads resolve topology domains against a single ClusterTopologyBinding, regardless of which hardware they target. The GB200 engineer faces two problems:
 
-1. **Unknown domain `rack`**: The single topology (designed for H100 with levels [zone, block, host]) has no `rack` level. The validating webhook rejects the PCS with a Rule-1 violation (domain existence), and the engineer receives an error indicating that `rack` is not a valid domain in the referenced ClusterTopology. The engineer must either remove the `rack` constraint or wait for a topology that includes it.
+1. **Unknown domain `rack`**: The single topology (designed for H100 with levels [zone, block, host]) has no `rack` level. The validating webhook rejects the PCS with a Rule-1 violation (domain existence), and the engineer receives an error indicating that `rack` is not a valid domain in the referenced ClusterTopologyBinding. The engineer must either remove the `rack` constraint or wait for a topology that includes it.
 2. **Wrong label for `block`**: Even if the engineer removes `rack` to pass validation, Grove resolves `block` to `kubernetes.io/rack` from the H100 topology, but GB200 nodes use `example.com/nvl-block`. The scheduler won't find matching nodes.
 
-Both problems stem from forcing a single topology definition across hardware with fundamentally different interconnect hierarchies. Separate ClusterTopology resources solve this by letting each hardware segment define its own label-to-domain mapping.
+Both problems stem from forcing a single topology definition across hardware with fundamentally different interconnect hierarchies. Separate ClusterTopologyBinding resources solve this by letting each hardware segment define its own label-to-domain mapping.

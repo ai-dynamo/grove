@@ -1,4 +1,3 @@
-// /*
 // Copyright 2025 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,7 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package components
 
@@ -20,15 +18,18 @@ import (
 	"github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podclique/components/pod"
+	pclqresourceclaim "github.com/ai-dynamo/grove/operator/internal/controller/podclique/components/resourceclaim"
 	"github.com/ai-dynamo/grove/operator/internal/expect"
+	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 )
 
 // CreateOperatorRegistry initializes the operator registry for the PodClique reconciler.
-func CreateOperatorRegistry(mgr manager.Manager, eventRecorder record.EventRecorder, expectationsStore *expect.ExpectationsStore) component.OperatorRegistry[v1alpha1.PodClique] {
+func CreateOperatorRegistry(mgr manager.Manager, eventRecorder record.EventRecorder, expectationsStore *expect.ExpectationsStore, schedRegistry scheduler.Registry) component.OperatorRegistry[v1alpha1.PodClique] {
 	reg := component.NewOperatorRegistry[v1alpha1.PodClique]()
-	reg.Register(component.KindPod, pod.New(mgr.GetClient(), mgr.GetScheme(), eventRecorder, expectationsStore))
+	reg.Register(component.KindResourceClaim, pclqresourceclaim.New(mgr.GetClient(), mgr.GetScheme()))
+	reg.Register(component.KindPod, pod.New(mgr.GetClient(), mgr.GetScheme(), eventRecorder, expectationsStore, schedRegistry))
 	return reg
 }

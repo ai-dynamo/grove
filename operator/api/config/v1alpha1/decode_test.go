@@ -1,4 +1,3 @@
-// /*
 // Copyright 2026 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,7 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package v1alpha1
 
@@ -67,11 +65,11 @@ kind: OperatorConfiguration
 				assert.InDelta(t, float32(100), cfg.ClientConnection.QPS, 0.01)
 				assert.Equal(t, 120, cfg.ClientConnection.Burst)
 				require.NotNil(t, cfg.Controllers.PodCliqueSet.ConcurrentSyncs)
-				assert.Equal(t, 1, *cfg.Controllers.PodCliqueSet.ConcurrentSyncs)
+				assert.Equal(t, 10, *cfg.Controllers.PodCliqueSet.ConcurrentSyncs)
 				require.NotNil(t, cfg.Controllers.PodCliqueScalingGroup.ConcurrentSyncs)
-				assert.Equal(t, 1, *cfg.Controllers.PodCliqueScalingGroup.ConcurrentSyncs)
+				assert.Equal(t, 5, *cfg.Controllers.PodCliqueScalingGroup.ConcurrentSyncs)
 				require.NotNil(t, cfg.Controllers.PodClique.ConcurrentSyncs)
-				assert.Equal(t, 1, *cfg.Controllers.PodClique.ConcurrentSyncs)
+				assert.Equal(t, 10, *cfg.Controllers.PodClique.ConcurrentSyncs)
 			},
 		},
 		{

@@ -1,4 +1,3 @@
-# /*
 # Copyright 2025 The Grove Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-# */
+
 REPO_ROOT           := $(shell dirname "$(realpath $(lastword $(MAKEFILE_LIST)))")
 REPO_HACK_DIR       := $(REPO_ROOT)/hack
 
@@ -29,7 +28,7 @@ tidy:
 
 # Checks the entire codebase by linting and formatting the code base, and checking for uncommitted changes
 .PHONY: check
-check: generate add-license-headers format generate-api-docs lint verify-toc
+check: validate
 	@echo "> Checking for uncommitted changes"
 	@if [ -n "$$(git status --porcelain)" ]; then \
 		echo "ERROR: Git tree is dirty after running validation steps."; \
@@ -39,6 +38,10 @@ check: generate add-license-headers format generate-api-docs lint verify-toc
 		exit 1; \
 	fi
 	@echo "> Check complete"
+
+.PHONY: validate
+validate: generate add-license-headers format generate-api-docs lint verify-toc
+	@echo "> Validation complete"
 
 .PHONY: build
 build:
@@ -86,8 +89,22 @@ generate-api-docs: $(CRD_REF_DOCS)
 # Runs unit tests for the entire codebase (all modules)
 .PHONY: test-unit
 test-unit:
+	@echo "> Running tests for operator/api"
+	@cd operator/api && go test ./...
 	@echo "> Running tests for operator"
 	@make --directory=operator test-unit
+	@echo "> Running tests for operator/client"
+	@cd operator/client && go test ./...
+	@echo "> Running tests for scheduler/api"
+	@cd scheduler/api && go test ./...
+	@echo "> Running tests for scheduler/client"
+	@cd scheduler/client && go test ./...
+	@echo "> Running tests for cli-plugin"
+	@if [ -n "$$(cd cli-plugin && go list ./... 2>/dev/null)" ]; then \
+		cd cli-plugin && go test ./...; \
+	else \
+		echo "> Skipping cli-plugin (no Go packages)"; \
+	fi
 
 .PHONY: test-cover
 test-cover:
@@ -106,10 +123,28 @@ run-e2e:
 	@echo "> Running e2e tests for operator"
 	@make --directory=operator run-e2e
 
+# Runs the standalone latest-release-to-current operator upgrade test.
+.PHONY: run-upgrade-e2e
+run-upgrade-e2e:
+	@echo "> Running operator upgrade e2e test"
+	@make --directory=operator run-upgrade-e2e
+
 # Runs all tests
 .PHONY: test
 test: test-unit
 	@echo "> All tests passed"
+
+.PHONY: install-hooks
+install-hooks:
+	@echo "> Configuring local git hooks from .githooks"
+	@git config --local core.hooksPath .githooks
+	@echo "> Git hooks installed"
+
+.PHONY: uninstall-hooks
+uninstall-hooks:
+	@echo "> Removing local git hooks configuration"
+	@git config --local --unset core.hooksPath || true
+	@echo "> Git hooks removed"
 
 # Updates the docs/proposals table of contents
 .PHONY: update-toc

@@ -1,4 +1,3 @@
-// /*
 // Copyright 2025 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,7 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package utils
 
@@ -152,7 +150,7 @@ func GetPCLQsInPCSGPendingUpdate(pcs *grovecorev1alpha1.PodCliqueSet, pcsg *grov
 		existingPodTemplateHash := existingPCLQ.Labels[apicommon.LabelPodTemplateHash]
 		expectedPodTemplateHash := expectedPCLQPodTemplateHashes[existingPCLQ.Name]
 		if existingPodTemplateHash != expectedPodTemplateHash {
-			pclqFQNsPendingUpdate = append(pclqFQNsPendingUpdate, expectedPodTemplateHash)
+			pclqFQNsPendingUpdate = append(pclqFQNsPendingUpdate, existingPCLQ.Name)
 		}
 	}
 	return pclqFQNsPendingUpdate

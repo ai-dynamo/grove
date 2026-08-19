@@ -1,4 +1,3 @@
-// /*
 // Copyright 2025 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,7 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package utils
 
@@ -48,8 +46,11 @@ func GetPodCliqueNameFromPodCliqueFQN(pclqObjectMeta metav1.ObjectMeta) (string,
 		if !replicaIndexLabelFound {
 			return "", fmt.Errorf("missing label %s on PodClique: %v", apicommon.LabelPodCliqueScalingGroupReplicaIndex, pclqObjectKey)
 		}
-		pclqNamePrefix := fmt.Sprintf("%s-%s-", pcsgName, pcsgReplicaIndex)
-		return pclqObjectMeta.Name[len(pclqNamePrefix):], nil
+		pcsgReplicaIndexInt, err := strconv.Atoi(pcsgReplicaIndex)
+		if err != nil {
+			return "", fmt.Errorf("invalid label %s on PodClique: %v: %w", apicommon.LabelPodCliqueScalingGroupReplicaIndex, pclqObjectKey, err)
+		}
+		return apicommon.ExtractScalingGroupNameFromPCSGFQN(pclqObjectMeta.Name, apicommon.ResourceNameReplica{Name: pcsgName, Replica: pcsgReplicaIndexInt})
 	}
 
 	pcsName, ok := pclqObjectMeta.Labels[apicommon.LabelPartOfKey]
@@ -61,6 +62,9 @@ func GetPodCliqueNameFromPodCliqueFQN(pclqObjectMeta metav1.ObjectMeta) (string,
 	if !ok {
 		return "", fmt.Errorf("missing label %s on PodClique: %v", apicommon.LabelPodCliqueSetReplicaIndex, pclqObjectKey)
 	}
-	pclqNamePrefix := fmt.Sprintf("%s-%s-", pcsName, pcsReplicaIndex)
-	return pclqObjectMeta.Name[len(pclqNamePrefix):], nil
+	pcsReplicaIndexInt, err := strconv.Atoi(pcsReplicaIndex)
+	if err != nil {
+		return "", fmt.Errorf("invalid label %s on PodClique: %v: %w", apicommon.LabelPodCliqueSetReplicaIndex, pclqObjectKey, err)
+	}
+	return apicommon.ExtractScalingGroupNameFromPCSGFQN(pclqObjectMeta.Name, apicommon.ResourceNameReplica{Name: pcsName, Replica: pcsReplicaIndexInt})
 }

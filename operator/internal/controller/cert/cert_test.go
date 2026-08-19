@@ -1,4 +1,3 @@
-// /*
 // Copyright 2025 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,7 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package cert
 
@@ -41,23 +39,25 @@ func TestGetWebhooks(t *testing.T) {
 	t.Run("authorizer disabled", func(t *testing.T) {
 		webhooks := getWebhooks(false)
 
-		// Expect 2 webhooks: podcliqueset-defaulting, podcliqueset-validating
-		require.Len(t, webhooks, 2)
+		// Expect 3 webhooks: podcliqueset-defaulting, podcliqueset-validating, clustertopology-validating
+		require.Len(t, webhooks, 3)
 		// Check that defaulting and validating webhooks are present
 		assert.Equal(t, cert.Mutating, webhooks[0].Type)   // podcliqueset-defaulting-webhook
 		assert.Equal(t, cert.Validating, webhooks[1].Type) // podcliqueset-validating-webhook
+		assert.Equal(t, cert.Validating, webhooks[2].Type) // clustertopology-validating-webhook
 	})
 
 	// Test with authorizer enabled
 	t.Run("authorizer enabled", func(t *testing.T) {
 		webhooks := getWebhooks(true)
 
-		// Expect 3 webhooks: the 2 base webhooks plus the authorizer-webhook
-		require.Len(t, webhooks, 3)
-		// Check that all three webhooks are present
+		// Expect 4 webhooks: the 3 base webhooks plus the authorizer-webhook
+		require.Len(t, webhooks, 4)
+		// Check that all four webhooks are present
 		assert.Equal(t, cert.Mutating, webhooks[0].Type)   // podcliqueset-defaulting-webhook
 		assert.Equal(t, cert.Validating, webhooks[1].Type) // podcliqueset-validating-webhook
-		assert.Equal(t, cert.Validating, webhooks[2].Type) // authorizer-webhook
+		assert.Equal(t, cert.Validating, webhooks[2].Type) // clustertopology-validating-webhook
+		assert.Equal(t, cert.Validating, webhooks[3].Type) // authorizer-webhook
 	})
 }
 

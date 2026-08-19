@@ -1,4 +1,3 @@
-// /*
 // Copyright 2025 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,7 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package common
 
@@ -151,7 +149,7 @@ func TestReconcileWithErrors(t *testing.T) {
 	result := ReconcileWithErrors("test description", err1, err2)
 
 	assert.False(t, result.continueReconcile)
-	assert.True(t, result.result.Requeue)
+	assert.True(t, result.result.IsZero())
 	assert.True(t, result.HasErrors())
 	assert.Len(t, result.GetErrors(), 2)
 	assert.Equal(t, "test description", result.GetDescription())

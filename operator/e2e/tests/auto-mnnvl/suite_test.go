@@ -1,6 +1,5 @@
 //go:build e2e
 
-// /*
 // Copyright 2026 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,7 +13,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package automnnvl
 
@@ -24,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/ai-dynamo/grove/operator/e2e/setup"
+	"github.com/ai-dynamo/grove/operator/e2e/testctx"
 )
 
 // TestMain manages the lifecycle of the cluster for all MNNVL tests.
@@ -31,6 +30,7 @@ import (
 // in hack/e2e-autoMNNVL/.
 func TestMain(m *testing.M) {
 	ctx := context.Background()
+	testctx.Logger = logger
 
 	sharedCluster := setup.SharedCluster(logger)
 	if err := sharedCluster.Setup(ctx, nil); err != nil {

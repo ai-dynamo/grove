@@ -1,4 +1,3 @@
-// /*
 // Copyright 2025 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,7 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package utils
 
@@ -85,6 +83,7 @@ func TestGetPCLQPods(t *testing.T) {
 
 		cl := fake.NewClientBuilder().
 			WithScheme(scheme).
+			WithIndex(&corev1.Pod{}, podControllerUIDIndexField, indexPodByControllerUID).
 			WithObjects(ownedPod, notOwnedPod).
 			Build()
 
@@ -107,6 +106,7 @@ func TestGetPCLQPods(t *testing.T) {
 
 		cl := fake.NewClientBuilder().
 			WithScheme(scheme).
+			WithIndex(&corev1.Pod{}, podControllerUIDIndexField, indexPodByControllerUID).
 			Build()
 
 		pods, err := GetPCLQPods(context.Background(), cl, "test-pcs", pclq)
@@ -152,6 +152,7 @@ func TestGetPCLQPods(t *testing.T) {
 
 		cl := fake.NewClientBuilder().
 			WithScheme(scheme).
+			WithIndex(&corev1.Pod{}, podControllerUIDIndexField, indexPodByControllerUID).
 			WithObjects(pods[0], pods[1], pods[2]).
 			Build()
 
@@ -160,10 +161,78 @@ func TestGetPCLQPods(t *testing.T) {
 		require.NoError(t, err)
 		assert.Len(t, result, 3)
 	})
+
+	// Selection is by controller ownership (the indexed owner-reference UID), not by the
+	// grove.io/podclique label. Both Pods carry the managed-by label the manager cache filters
+	// on, so both are cache-eligible; only the controller UID decides membership: a Pod owned
+	// by the PodClique is returned even without the grove.io/podclique label, and a Pod that
+	// carries that label but is controlled by a different owner is not.
+	t.Run("selects by controller ownership not podclique label", func(t *testing.T) {
+		pclq := &grovecorev1alpha1.PodClique{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-pclq",
+				Namespace: "default",
+				UID:       "pclq-uid-123",
+			},
+		}
+
+		// Owned by the PodClique but missing the grove.io/podclique label.
+		ownedNoPodCliqueLabel := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "owned-no-podclique-label",
+				Namespace: "default",
+				Labels: map[string]string{
+					apicommon.LabelManagedByKey: apicommon.LabelManagedByValue,
+				},
+				OwnerReferences: []metav1.OwnerReference{
+					{
+						APIVersion: "grove.ai-dynamo.io/v1alpha1",
+						Kind:       "PodClique",
+						Name:       "test-pclq",
+						UID:        "pclq-uid-123",
+						Controller: ptr.To(true),
+					},
+				},
+			},
+		}
+
+		// Carries the grove.io/podclique label but is controlled by a different owner UID.
+		labelledOtherOwner := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "labelled-other-owner",
+				Namespace: "default",
+				Labels: map[string]string{
+					apicommon.LabelManagedByKey: apicommon.LabelManagedByValue,
+					apicommon.LabelPodClique:    "test-pclq",
+				},
+				OwnerReferences: []metav1.OwnerReference{
+					{
+						APIVersion: "grove.ai-dynamo.io/v1alpha1",
+						Kind:       "PodClique",
+						Name:       "test-pclq",
+						UID:        "some-other-uid",
+						Controller: ptr.To(true),
+					},
+				},
+			},
+		}
+
+		cl := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithIndex(&corev1.Pod{}, podControllerUIDIndexField, indexPodByControllerUID).
+			WithObjects(ownedNoPodCliqueLabel, labelledOtherOwner).
+			Build()
+
+		pods, err := GetPCLQPods(context.Background(), cl, "test-pcs", pclq)
+
+		require.NoError(t, err)
+		assert.Len(t, pods, 1)
+		assert.Equal(t, "owned-no-podclique-label", pods[0].Name)
+	})
 }
 
-// TestAddEnvVarsToContainers tests adding environment variables to containers.
-func TestAddEnvVarsToContainers(t *testing.T) {
+// TestPrependEnvVarsToContainers tests prepending environment variables to containers.
+func TestPrependEnvVarsToContainers(t *testing.T) {
 	// Test adding to empty containers
 	t.Run("add to empty containers", func(t *testing.T) {
 		containers := []corev1.Container{
@@ -176,7 +245,7 @@ func TestAddEnvVarsToContainers(t *testing.T) {
 			{Name: "VAR2", Value: "value2"},
 		}
 
-		AddEnvVarsToContainers(containers, envVars)
+		PrependEnvVarsToContainers(containers, envVars)
 
 		assert.Len(t, containers[0].Env, 2)
 		assert.Len(t, containers[1].Env, 2)
@@ -184,13 +253,14 @@ func TestAddEnvVarsToContainers(t *testing.T) {
 		assert.Equal(t, "value1", containers[0].Env[0].Value)
 	})
 
-	// Test adding to containers with existing env vars
-	t.Run("add to containers with existing env", func(t *testing.T) {
+	// Test prepending to containers with existing env vars
+	t.Run("prepend to containers with existing env", func(t *testing.T) {
 		containers := []corev1.Container{
 			{
 				Name: "container1",
 				Env: []corev1.EnvVar{
 					{Name: "EXISTING", Value: "existing-value"},
+					{Name: "DERIVED", Value: "$(NEW_VAR)-derived"},
 				},
 			},
 		}
@@ -199,11 +269,34 @@ func TestAddEnvVarsToContainers(t *testing.T) {
 			{Name: "NEW_VAR", Value: "new-value"},
 		}
 
-		AddEnvVarsToContainers(containers, newEnvVars)
+		PrependEnvVarsToContainers(containers, newEnvVars)
 
-		assert.Len(t, containers[0].Env, 2)
-		assert.Equal(t, "EXISTING", containers[0].Env[0].Name)
-		assert.Equal(t, "NEW_VAR", containers[0].Env[1].Name)
+		assert.Equal(t, []corev1.EnvVar{
+			{Name: "NEW_VAR", Value: "new-value"},
+			{Name: "EXISTING", Value: "existing-value"},
+			{Name: "DERIVED", Value: "$(NEW_VAR)-derived"},
+		}, containers[0].Env)
+	})
+
+	// Test replacing existing variables with the same name
+	t.Run("replace existing variables", func(t *testing.T) {
+		containers := []corev1.Container{
+			{
+				Name: "container1",
+				Env: []corev1.EnvVar{
+					{Name: "INJECTED", Value: "stale-value"},
+					{Name: "EXISTING", Value: "existing-value"},
+				},
+			},
+		}
+		envVars := []corev1.EnvVar{{Name: "INJECTED", Value: "injected-value"}}
+
+		PrependEnvVarsToContainers(containers, envVars)
+
+		assert.Equal(t, []corev1.EnvVar{
+			{Name: "INJECTED", Value: "injected-value"},
+			{Name: "EXISTING", Value: "existing-value"},
+		}, containers[0].Env)
 	})
 
 	// Test with no env vars to add
@@ -212,7 +305,7 @@ func TestAddEnvVarsToContainers(t *testing.T) {
 			{Name: "container1"},
 		}
 
-		AddEnvVarsToContainers(containers, []corev1.EnvVar{})
+		PrependEnvVarsToContainers(containers, []corev1.EnvVar{})
 
 		assert.Empty(t, containers[0].Env)
 	})
@@ -225,7 +318,7 @@ func TestAddEnvVarsToContainers(t *testing.T) {
 		}
 
 		// Should not panic
-		AddEnvVarsToContainers(containers, envVars)
+		PrependEnvVarsToContainers(containers, envVars)
 	})
 }
 
