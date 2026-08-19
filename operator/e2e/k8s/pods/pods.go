@@ -135,6 +135,22 @@ func (pm *PodManager) WaitForPhases(ctx context.Context, namespace, labelSelecto
 	return err
 }
 
+// WaitForPhaseCounts waits for pods to match exact counts by phase and returns
+// the matching pod list.
+func (pm *PodManager) WaitForPhaseCounts(ctx context.Context, namespace, labelSelector string, expectedByPhase map[v1.PodPhase]int, timeout, interval time.Duration) (*v1.PodList, error) {
+	fetchPods := pm.FetchFunc(ctx, namespace, labelSelector)
+	w := waiter.New[*v1.PodList]().WithTimeout(timeout).WithInterval(interval)
+	podList, err := w.WaitFor(ctx, fetchPods, MatchPhaseCounts(expectedByPhase))
+	if err != nil {
+		lastPods, listErr := pm.List(ctx, namespace, labelSelector)
+		if listErr != nil {
+			return nil, fmt.Errorf("failed to wait for pods by phase %v: %w; also failed to list pods: %v", expectedByPhase, err, listErr)
+		}
+		return nil, fmt.Errorf("failed to wait for pods by phase %v: %w; current pods: %v", expectedByPhase, err, DescribePods(lastPods.Items))
+	}
+	return podList, nil
+}
+
 // WaitForReadyCount waits for a specific number of ready pods.
 func (pm *PodManager) WaitForReadyCount(ctx context.Context, namespace, labelSelector string, expectedReady int, timeout, interval time.Duration) error {
 	fetchPods := pm.FetchFunc(ctx, namespace, labelSelector)
@@ -193,6 +209,15 @@ func CountPodsByPhase(pods *v1.PodList) PodPhaseCount {
 		}
 	}
 	return count
+}
+
+// DescribePods returns compact pod descriptions for failure messages.
+func DescribePods(pods []v1.Pod) []string {
+	descriptions := make([]string, 0, len(pods))
+	for _, pod := range pods {
+		descriptions = append(descriptions, fmt.Sprintf("%s/%s phase=%s uid=%s", pod.Namespace, pod.Name, pod.Status.Phase, pod.UID))
+	}
+	return descriptions
 }
 
 // CountReady counts the number of ready pods (Running + Ready condition).

@@ -81,9 +81,18 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		return r.triggerDeletionFlow(ctx, logger, pclq).Result()
 	}
 
+	wasTerminal := componentutils.IsPCLQTerminal(pclq)
 	reconcileSpecFlowResult := r.reconcileSpec(ctx, logger, pclq)
 	if statusReconcileResult := r.reconcileStatus(ctx, logger, pclq); ctrlcommon.ShortCircuitReconcileFlow(statusReconcileResult) {
 		return statusReconcileResult.Result()
+	}
+
+	if !wasTerminal && componentutils.IsPCLQTerminal(pclq) && !reconcileSpecFlowResult.HasErrors() {
+		logger.Info("PodClique transitioned to terminal phase; requeueing for terminal cleanup",
+			"PodClique", ctrlclient.ObjectKeyFromObject(pclq),
+			"phase", pclq.Status.Phase,
+		)
+		return ctrl.Result{Requeue: true}, nil
 	}
 
 	return reconcileSpecFlowResult.Result()
