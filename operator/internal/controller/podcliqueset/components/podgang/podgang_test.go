@@ -126,7 +126,7 @@ func TestBuildResource(t *testing.T) {
 	// the operator-managed label set from getLabels plus the scheduler name resolved
 	// from the fake registry (testutils.NewDefaultFakeRegistry returns "default-scheduler").
 	expectedDefaultLabels := lo.Assign(
-		getLabels(pcsName),
+		getLabels(pcsName, &podGangInfo{}),
 		map[string]string{apicommon.LabelSchedulerName: defaultSchedulerName},
 	)
 
@@ -137,6 +137,8 @@ func TestBuildResource(t *testing.T) {
 		pcsAnnotations            map[string]string
 		pcsTopologyConstraint     *grovecorev1alpha1.TopologyConstraint
 		pgiTopologyConstraint     *groveschedulerv1alpha1.TopologyConstraint
+		pcsReplicaIndex           int
+		podCliqueScalingGroupName string
 		initialPodGangLabels      map[string]string
 		initialPodGangAnnotations map[string]string
 		expectedLabels            map[string]string
@@ -151,6 +153,27 @@ func TestBuildResource(t *testing.T) {
 			expectedAnnotations: map[string]string{
 				"nvidia.com/kai-scheduler-queue": "worker-queue",
 			},
+		},
+		{
+			name:                      "create path: labels scaled podgang with PCS replica and PCSG",
+			pcsReplicaIndex:           2,
+			podCliqueScalingGroupName: "test-pcs-2-workers",
+			expectedLabels: lo.Assign(
+				getLabels(pcsName, &podGangInfo{
+					pcsReplicaIndex:           2,
+					podCliqueScalingGroupName: "test-pcs-2-workers",
+				}),
+				map[string]string{apicommon.LabelSchedulerName: defaultSchedulerName},
+			),
+			expectedAnnotations: map[string]string{},
+		},
+		{
+			name: "mirror path: removes stale PCSG label from base podgang",
+			initialPodGangLabels: map[string]string{
+				apicommon.LabelPodCliqueScalingGroup: "stale-pcsg",
+			},
+			expectedLabels:      expectedDefaultLabels,
+			expectedAnnotations: map[string]string{},
 		},
 		{
 			name: "create path: mirrors multiple PCS annotations onto empty podgang",
@@ -331,8 +354,10 @@ func TestBuildResource(t *testing.T) {
 			}
 
 			pgi := &podGangInfo{
-				fqn:                "test-pcs-0",
-				topologyConstraint: test.pgiTopologyConstraint,
+				fqn:                       "test-pcs-0",
+				pcsReplicaIndex:           test.pcsReplicaIndex,
+				podCliqueScalingGroupName: test.podCliqueScalingGroupName,
+				topologyConstraint:        test.pgiTopologyConstraint,
 				pclqs: []pclqInfo{
 					{
 						fqn:      "test-clique-0",
