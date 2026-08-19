@@ -71,9 +71,9 @@ kubectl get pods -l app.kubernetes.io/part-of=env-demo-standalone
 
 You should see output similar to:
 ```
-NAME                                 READY   STATUS    RESTARTS   AGE
-env-demo-standalone-0-frontend-abc12   1/1     Running   0          30s
-env-demo-standalone-0-frontend-def34   1/1     Running   0          30s
+NAME                                     READY   STATUS    RESTARTS   AGE
+env-demo-standalone-0-frontend-0-abc7d   1/1     Running   0          30s
+env-demo-standalone-0-frontend-1-def8e   1/1     Running   0          30s
 ```
 
 Now, let's check the logs of one of the pods to see the environment variables:
@@ -96,7 +96,7 @@ GROVE_HEADLESS_SERVICE=env-demo-standalone-0.default.svc.cluster.local
 GROVE_PCLQ_POD_INDEX=0
 
 === Pod Name vs Hostname ===
-Pod Name (random suffix): env-demo-standalone-0-frontend-abc12
+Pod Name (random suffix): env-demo-standalone-0-frontend-0-abc7d
 Hostname (deterministic): env-demo-standalone-0-frontend-0
 
 My FQDN: env-demo-standalone-0-frontend-0.env-demo-standalone-0.default.svc.cluster.local
@@ -105,9 +105,9 @@ Sleeping...
 ```
 
 **Key Observations:**
-- The **pod name** (`env-demo-standalone-0-frontend-abc12`) has a random suffix—this is the Kubernetes resource identifier, not used for DNS
+- The **pod name** (`env-demo-standalone-0-frontend-0-abc7d`) includes the pod index and a random suffix—this is the Kubernetes resource identifier, not used for DNS
 - The **hostname** (constructed as `$GROVE_PCLQ_NAME-$GROVE_PCLQ_POD_INDEX`) is deterministic—this is what you use for pod discovery
-- `GROVE_PCLQ_NAME` contains the fully qualified PodClique name without the random suffix
+- `GROVE_PCLQ_NAME` contains the fully qualified PodClique name without the pod index or random suffix
 - `GROVE_PCLQ_POD_INDEX` tells us this is the first pod (index 0) in the PodClique
 - `GROVE_HEADLESS_SERVICE` provides the headless service domain, which you combine with the hostname to construct the pod's FQDN: `$GROVE_PCLQ_NAME-$GROVE_PCLQ_POD_INDEX.$GROVE_HEADLESS_SERVICE`
 
@@ -222,15 +222,15 @@ kubectl get pods -l app.kubernetes.io/part-of=env-demo-pcsg -o wide
 
 You should see 8 pods (2 PCSG replicas × (1 leader + 3 workers)):
 ```
-NAME                                                READY   STATUS    RESTARTS   AGE
-env-demo-pcsg-0-model-instance-0-leader-abc12       1/1     Running   0          45s
-env-demo-pcsg-0-model-instance-0-worker-def34       1/1     Running   0          45s
-env-demo-pcsg-0-model-instance-0-worker-ghi56       1/1     Running   0          45s
-env-demo-pcsg-0-model-instance-0-worker-jkl78       1/1     Running   0          45s
-env-demo-pcsg-0-model-instance-1-leader-mno90       1/1     Running   0          45s
-env-demo-pcsg-0-model-instance-1-worker-pqr12       1/1     Running   0          45s
-env-demo-pcsg-0-model-instance-1-worker-stu34       1/1     Running   0          45s
-env-demo-pcsg-0-model-instance-1-worker-vwx56       1/1     Running   0          45s
+NAME                                                  READY   STATUS    RESTARTS   AGE
+env-demo-pcsg-0-model-instance-0-leader-0-abc7d       1/1     Running   0          45s
+env-demo-pcsg-0-model-instance-0-worker-0-def8e       1/1     Running   0          45s
+env-demo-pcsg-0-model-instance-0-worker-1-ghi9f       1/1     Running   0          45s
+env-demo-pcsg-0-model-instance-0-worker-2-jkl0g       1/1     Running   0          45s
+env-demo-pcsg-0-model-instance-1-leader-0-mno1h       1/1     Running   0          45s
+env-demo-pcsg-0-model-instance-1-worker-0-pqr2i       1/1     Running   0          45s
+env-demo-pcsg-0-model-instance-1-worker-1-stu3j       1/1     Running   0          45s
+env-demo-pcsg-0-model-instance-1-worker-2-vwx4k       1/1     Running   0          45s
 ```
 
 Let's inspect the leader logs from the first PCSG replica:
@@ -317,4 +317,3 @@ kubectl delete pcs env-demo-pcsg
 ## Next Steps
 
 Now that you've seen the environment variables in action, continue to [Common Patterns and Takeaways](./04_common-patterns-and-takeaways.md) for reusable patterns you can adapt for your applications and a summary of key concepts.
-

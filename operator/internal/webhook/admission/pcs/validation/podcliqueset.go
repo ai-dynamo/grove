@@ -21,12 +21,15 @@ import (
 	"slices"
 	"strings"
 
+	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	groveconfigv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/clustertopology"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
+	"github.com/ai-dynamo/grove/operator/internal/resourceclaim"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
+	scalevalidation "github.com/ai-dynamo/grove/operator/internal/webhook/admission/scale/validation"
 
 	"github.com/samber/lo"
 	admissionv1 "k8s.io/api/admission/v1"
@@ -40,16 +43,13 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-const (
-	maxCombinedResourceNameLength = 45
-)
-
 var allowedStartupTypes = sets.New(grovecorev1alpha1.CliqueStartupTypeInOrder, grovecorev1alpha1.CliqueStartupTypeAnyOrder, grovecorev1alpha1.CliqueStartupTypeExplicit)
 
 // pcsValidator validates PodCliqueSet resources for create and update operations.
 type pcsValidator struct {
 	operation       admissionv1.Operation
 	pcs             *grovecorev1alpha1.PodCliqueSet
+	pcsgs           []grovecorev1alpha1.PodCliqueScalingGroup
 	tasEnabled      bool
 	schedulerConfig groveconfigv1alpha1.SchedulerConfiguration
 	client          client.Client
@@ -59,10 +59,11 @@ type pcsValidator struct {
 // newPCSValidator creates a new PodCliqueSet validator for the given operation.
 // schedulerConfig is the full scheduler configuration; the validator uses it for
 // scheduler-name matching and may use per-scheduler config for future validations.
-func newPCSValidator(pcs *grovecorev1alpha1.PodCliqueSet, operation admissionv1.Operation, tasConfig groveconfigv1alpha1.TopologyAwareSchedulingConfiguration, schedulerConfig groveconfigv1alpha1.SchedulerConfiguration, cl client.Client, schedRegistry scheduler.Registry) *pcsValidator {
+func newPCSValidator(pcs *grovecorev1alpha1.PodCliqueSet, pcsgs []grovecorev1alpha1.PodCliqueScalingGroup, operation admissionv1.Operation, tasConfig groveconfigv1alpha1.TopologyAwareSchedulingConfiguration, schedulerConfig groveconfigv1alpha1.SchedulerConfiguration, cl client.Client, schedRegistry scheduler.Registry) *pcsValidator {
 	return &pcsValidator{
 		operation:       operation,
 		pcs:             pcs,
+		pcsgs:           pcsgs,
 		tasEnabled:      tasConfig.Enabled,
 		schedulerConfig: schedulerConfig,
 		client:          cl,
@@ -91,11 +92,28 @@ func (v *pcsValidator) validate() ([]string, field.ErrorList) {
 func (v *pcsValidator) validatePodCliqueSetSpec(fldPath *field.Path) ([]string, field.ErrorList) {
 	allErrs := field.ErrorList{}
 
-	allErrs = append(allErrs, apivalidation.ValidateNonnegativeField(int64(v.pcs.Spec.Replicas), fldPath.Child("replicas"))...)
+	dependentNames := map[string]string{
+		"role":                  apicommon.GeneratePodRoleName(v.pcs.Name),
+		"rolebinding":           apicommon.GeneratePodRoleBindingName(v.pcs.Name),
+		"serviceaccount secret": apicommon.GenerateInitContainerSATokenSecretName(v.pcs.Name),
+	}
+
+	for typ, name := range dependentNames {
+		if len(name) > k8svalidation.DNS1123LabelMaxLength {
+			allErrs = append(allErrs, field.Invalid(
+				field.NewPath("metadata").Child("name"),
+				v.pcs.Name,
+				fmt.Sprintf("generated %s %q is invalid: %s", typ, name, k8svalidation.MaxLenError(k8svalidation.DNS1123LabelMaxLength)),
+			))
+		}
+	}
+
 	warnings, errs := v.validatePodCliqueSetTemplateSpec(fldPath.Child("template"))
 	if len(errs) != 0 {
 		allErrs = append(allErrs, errs...)
 	}
+
+	allErrs = append(allErrs, scalevalidation.ValidatePodCliqueSetReplicas(v.pcs, v.pcsgs)...)
 
 	return warnings, allErrs
 }
@@ -138,11 +156,7 @@ func (v *pcsValidator) validateResourceClaimTemplates(fldPath *field.Path) field
 // validatePCSResourceSharing validates PCS-level ResourceSharing entries and their filters.
 func (v *pcsValidator) validatePCSResourceSharing(refs []grovecorev1alpha1.PCSResourceSharingSpec, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
-	bases := make([]grovecorev1alpha1.ResourceSharingSpec, len(refs))
-	for i := range refs {
-		bases[i] = refs[i].ResourceSharingSpec
-	}
-	allErrs = append(allErrs, v.validateResourceSharingSpecs(bases, fldPath)...)
+	allErrs = append(allErrs, v.validateResourceSharingSpecs(resourceclaim.ResourceSharersFromPCS(refs), fldPath)...)
 
 	cliqueNames := sets.New[string]()
 	for _, c := range v.pcs.Spec.Template.Cliques {
@@ -178,11 +192,7 @@ func (v *pcsValidator) validatePCSResourceSharing(refs []grovecorev1alpha1.PCSRe
 func (v *pcsValidator) validatePCSGResourceSharing(cfg grovecorev1alpha1.PodCliqueScalingGroupConfig, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 	cliqueNameSet := sets.New(cfg.CliqueNames...)
-	bases := make([]grovecorev1alpha1.ResourceSharingSpec, len(cfg.ResourceSharing))
-	for i := range cfg.ResourceSharing {
-		bases[i] = cfg.ResourceSharing[i].ResourceSharingSpec
-	}
-	allErrs = append(allErrs, v.validateResourceSharingSpecs(bases, fldPath)...)
+	allErrs = append(allErrs, v.validateResourceSharingSpecs(resourceclaim.ResourceSharersFromPCSG(cfg.ResourceSharing), fldPath)...)
 	for i, ref := range cfg.ResourceSharing {
 		if ref.Filter == nil {
 			continue
@@ -201,7 +211,7 @@ func (v *pcsValidator) validatePCSGResourceSharing(cfg grovecorev1alpha1.PodCliq
 }
 
 // validateResourceSharingSpecs validates the common fields (Name, Namespace, Scope) across all levels.
-func (v *pcsValidator) validateResourceSharingSpecs(refs []grovecorev1alpha1.ResourceSharingSpec, fldPath *field.Path) field.ErrorList {
+func (v *pcsValidator) validateResourceSharingSpecs(refs []resourceclaim.ResourceSharer, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 	templateNames := sets.New[string]()
 	for _, rct := range v.pcs.Spec.Template.ResourceClaimTemplates {
@@ -212,7 +222,8 @@ func (v *pcsValidator) validateResourceSharingSpecs(refs []grovecorev1alpha1.Res
 		grovecorev1alpha1.ResourceSharingScopePerReplica,
 	)
 	seenNames := sets.New[string]()
-	for i, ref := range refs {
+	for i, sharer := range refs {
+		ref := sharer.GetBase()
 		refPath := fldPath.Index(i)
 		if ref.Name == "" {
 			allErrs = append(allErrs, field.Required(refPath.Child("name"), "reference name is required"))
@@ -241,14 +252,11 @@ func (v *pcsValidator) validatePodCliqueTemplates(fldPath *field.Path) ([]string
 		allErrs = append(allErrs, field.Required(fldPath, "at least one PodClique must be defined"))
 	}
 
-	// Get all clique names that belong to scaling groups
-	scalingGroupCliqueNames := v.getScalingGroupCliqueNames()
-
 	cliqueNames := make([]string, 0, len(cliqueTemplateSpecs))
 	cliqueRoles := make([]string, 0, len(cliqueTemplateSpecs))
 	schedulerNames := make([]string, 0, len(cliqueTemplateSpecs))
 	for i, cliqueTemplateSpec := range cliqueTemplateSpecs {
-		warns, errs := v.validatePodCliqueTemplateSpec(cliqueTemplateSpec, fldPath.Index(i), scalingGroupCliqueNames)
+		warns, errs := v.validatePodCliqueTemplateSpec(cliqueTemplateSpec, fldPath.Index(i))
 		if len(errs) != 0 {
 			allErrs = append(allErrs, errs...)
 		}
@@ -306,29 +314,12 @@ func (v *pcsValidator) validateSchedulerNames(schedulerNames []string, fldPath *
 	return allErrs
 }
 
-// validatePodCliqueNameConstraints validates that PodClique names meet DNS subdomain requirements and pod naming constraints.
-func (v *pcsValidator) validatePodCliqueNameConstraints(fldPath *field.Path, cliqueTemplateSpec *grovecorev1alpha1.PodCliqueTemplateSpec, scalingGroupCliqueNames sets.Set[string]) field.ErrorList {
+// validatePodCliqueNameConstraints validates that PodClique template names meet DNS subdomain requirements.
+func (v *pcsValidator) validatePodCliqueNameConstraints(fldPath *field.Path, cliqueTemplateSpec *grovecorev1alpha1.PodCliqueTemplateSpec) field.ErrorList {
 	allErrs := field.ErrorList{}
 	if err := apivalidation.NameIsDNSSubdomain(cliqueTemplateSpec.Name, false); err != nil {
 		allErrs = append(allErrs, field.Invalid(fldPath.Child("name"), cliqueTemplateSpec.Name,
 			"invalid PodCliqueTemplateSpec name, must be a valid DNS subdomain"))
-	}
-
-	// Only validate pod name constraints for PodCliques that are NOT part of any scaling group
-	// any pod clique that is part of scaling groups will be checked as part of scaling group pod name constraints.
-	if !scalingGroupCliqueNames.Has(cliqueTemplateSpec.Name) {
-		allErrs = append(allErrs, validateStandalonePodClique(fldPath, v, cliqueTemplateSpec)...)
-	}
-	return allErrs
-}
-
-// validateStandalonePodClique validates pod naming constraints for PodCliques that are not part of any scaling group.
-func validateStandalonePodClique(fldPath *field.Path, v *pcsValidator, cliqueTemplateSpec *grovecorev1alpha1.PodCliqueTemplateSpec) field.ErrorList {
-	allErrs := field.ErrorList{}
-	if err := validatePodNameConstraints(v.pcs.Name, "", cliqueTemplateSpec.Name); err != nil {
-		// add error to each of filed paths that compose the podName in case of a PodCliqueTemplateSpec
-		allErrs = append(allErrs, field.Invalid(fldPath.Child("name"), cliqueTemplateSpec.Name, err.Error()))
-		allErrs = append(allErrs, field.Invalid(field.NewPath("metadata").Child("name"), v.pcs.Name, err.Error()))
 	}
 	return allErrs
 }
@@ -351,8 +342,11 @@ func (v *pcsValidator) validatePodCliqueScalingGroupConfigs(fldPath *field.Path)
 		pclqScalingGroupNames = append(pclqScalingGroupNames, scalingGroupConfig.Name)
 		cliqueNamesAcrossAllScalingGroups = append(cliqueNamesAcrossAllScalingGroups, scalingGroupConfig.CliqueNames...)
 		// validate that scaling groups only contains clique names that are defined in the PodCliqueSet.
-		allErrs = append(allErrs, v.validateScalingGroupPodCliqueNames(scalingGroupConfig.Name, allPodCliqueSetCliqueNames,
-			scalingGroupConfig.CliqueNames, fldPath.Index(i).Child("cliqueNames"), fldPath.Index(i).Child("name"))...)
+		allErrs = append(allErrs, v.validateScalingGroupPodCliqueNames(
+			allPodCliqueSetCliqueNames,
+			scalingGroupConfig.CliqueNames,
+			fldPath.Index(i).Child("cliqueNames"),
+		)...)
 
 		// validate Replicas field
 		if scalingGroupConfig.Replicas != nil {
@@ -433,25 +427,24 @@ func (v *pcsValidator) validateTopologyConstraintsOnCreate(ctx context.Context) 
 func (v *pcsValidator) validatePodCliqueTemplateName(
 	cliqueTemplateSpec *grovecorev1alpha1.PodCliqueTemplateSpec,
 	fldPath *field.Path,
-	scalingGroupCliqueNames sets.Set[string],
 ) field.ErrorList {
 	allErrs := validateNonEmptyStringField(cliqueTemplateSpec.Name, fldPath.Child("name"))
 	if len(allErrs) > 0 {
 		return allErrs
 	}
-	return append(allErrs, v.validatePodCliqueNameConstraints(fldPath, cliqueTemplateSpec, scalingGroupCliqueNames)...)
+	return append(allErrs, v.validatePodCliqueNameConstraints(fldPath, cliqueTemplateSpec)...)
 }
 
 // validatePodCliqueTemplateSpec validates a single PodClique template specification including metadata and spec.
 func (v *pcsValidator) validatePodCliqueTemplateSpec(cliqueTemplateSpec *grovecorev1alpha1.PodCliqueTemplateSpec,
-	fldPath *field.Path, scalingGroupCliqueNames sets.Set[string]) ([]string, field.ErrorList) {
+	fldPath *field.Path) ([]string, field.ErrorList) {
 	allErrs := field.ErrorList{}
 
-	allErrs = append(allErrs, v.validatePodCliqueTemplateName(cliqueTemplateSpec, fldPath, scalingGroupCliqueNames)...)
+	allErrs = append(allErrs, v.validatePodCliqueTemplateName(cliqueTemplateSpec, fldPath)...)
 	allErrs = append(allErrs, metav1validation.ValidateLabels(cliqueTemplateSpec.Labels, fldPath.Child("labels"))...)
 	allErrs = append(allErrs, apivalidation.ValidateAnnotations(cliqueTemplateSpec.Annotations, fldPath.Child("annotations"))...)
 
-	allErrs = append(allErrs, v.validateResourceSharingSpecs(cliqueTemplateSpec.ResourceSharing, fldPath.Child("resourceSharing"))...)
+	allErrs = append(allErrs, v.validateResourceSharingSpecs(resourceclaim.ResourceSharersFromPCLQ(cliqueTemplateSpec.ResourceSharing), fldPath.Child("resourceSharing"))...)
 	warnings, errs := v.validatePodCliqueSpec(cliqueTemplateSpec.Name, cliqueTemplateSpec.Spec, fldPath.Child("spec"))
 	if len(errs) != 0 {
 		allErrs = append(allErrs, errs...)
@@ -486,32 +479,13 @@ func validateCliqueDependencies(cliques []*grovecorev1alpha1.PodCliqueTemplateSp
 	return allErrs
 }
 
-// getScalingGroupCliqueNames returns a set of all clique names that belong to scaling groups.
-func (v *pcsValidator) getScalingGroupCliqueNames() sets.Set[string] {
-	scalingGroupCliqueNames := sets.New[string]()
-	for _, scalingGroupConfig := range v.pcs.Spec.Template.PodCliqueScalingGroupConfigs {
-		scalingGroupCliqueNames.Insert(scalingGroupConfig.CliqueNames...)
-	}
-	return scalingGroupCliqueNames
-}
-
-// validateScalingGroupPodCliqueNames validates that scaling group clique references exist and meet naming constraints.
-func (v *pcsValidator) validateScalingGroupPodCliqueNames(pcsgName string, allPclqNames, pclqNameInScalingGrp []string, fldPath, pcsgNameFieldPath *field.Path) field.ErrorList {
+// validateScalingGroupPodCliqueNames validates that scaling group clique references exist.
+func (v *pcsValidator) validateScalingGroupPodCliqueNames(allPclqNames, pclqNameInScalingGrp []string, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 
 	_, unidentifiedPclqNames := lo.Difference(allPclqNames, lo.Uniq(pclqNameInScalingGrp))
 	if len(unidentifiedPclqNames) > 0 {
 		allErrs = append(allErrs, field.Invalid(fldPath, strings.Join(unidentifiedPclqNames, ","), "unidentified PodClique names found"))
-	}
-
-	// validate scaling group  PodClique pods names are valid.
-	for i, pclqName := range pclqNameInScalingGrp {
-		if err := validatePodNameConstraints(v.pcs.Name, pcsgName, pclqName); err != nil {
-			// add error to each of filed paths that compose the podName
-			allErrs = append(allErrs, field.Invalid(fldPath.Index(i).Child("name"), pclqName, err.Error()))
-			allErrs = append(allErrs, field.Invalid(pcsgNameFieldPath, pclqName, err.Error()))
-			allErrs = append(allErrs, field.Invalid(field.NewPath("metadata").Child("name"), v.pcs.Name, err.Error()))
-		}
 	}
 	return allErrs
 }
@@ -550,7 +524,7 @@ func (v *pcsValidator) validatePodCliqueSpec(name string, cliqueSpec grovecorev1
 	}
 
 	if cliqueSpec.ScaleConfig != nil {
-		allErrs = append(allErrs, validateScaleConfig(cliqueSpec.ScaleConfig, *cliqueSpec.MinAvailable, fldPath.Child("autoScalingConfig"))...)
+		allErrs = append(allErrs, validateScaleConfig(cliqueSpec.ScaleConfig, cliqueSpec.MinAvailable, fldPath.Child("autoScalingConfig"))...)
 		if cliqueSpec.ScaleConfig.MaxReplicas < cliqueSpec.Replicas {
 			allErrs = append(allErrs, field.Invalid(fldPath.Child("autoScalingConfig", "maxReplicas"), cliqueSpec.ScaleConfig.MaxReplicas, "must be greater than or equal to replicas"))
 		}
@@ -570,19 +544,19 @@ func (v *pcsValidator) isStartupTypeExplicit() bool {
 }
 
 // validateScaleConfig validates autoscaling configuration ensuring minReplicas and maxReplicas are properly set relative to minAvailable.
-func validateScaleConfig(scaleConfig *grovecorev1alpha1.AutoScalingConfig, minAvailable int32, fldPath *field.Path) field.ErrorList {
+func validateScaleConfig(scaleConfig *grovecorev1alpha1.AutoScalingConfig, minAvailable *int32, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 	// This should ideally not happen, the defaulting webhook will always set the default value for minReplicas.
 	if scaleConfig.MinReplicas == nil {
 		allErrs = append(allErrs, field.Required(fldPath.Child("minReplicas"), "field is required"))
 	} else {
 		// scaleConfig.MinReplicas should be greater than or equal to minAvailable else it will trigger a PodGang termination.
-		if *scaleConfig.MinReplicas < minAvailable {
+		if minAvailable != nil && *scaleConfig.MinReplicas < *minAvailable {
 			allErrs = append(allErrs, field.Invalid(fldPath.Child("minReplicas"), *scaleConfig.MinReplicas, "must be greater than or equal to podCliqueSpec.minAvailable"))
 		}
-	}
-	if scaleConfig.MaxReplicas < *scaleConfig.MinReplicas {
-		allErrs = append(allErrs, field.Invalid(fldPath.Child("maxReplicas"), scaleConfig.MaxReplicas, "must be greater than or equal to podCliqueSpec.minReplicas"))
+		if scaleConfig.MaxReplicas < *scaleConfig.MinReplicas {
+			allErrs = append(allErrs, field.Invalid(fldPath.Child("maxReplicas"), scaleConfig.MaxReplicas, "must be greater than or equal to podCliqueSpec.minReplicas"))
+		}
 	}
 	return allErrs
 }
@@ -1007,35 +981,4 @@ func (v *pcsValidator) validatePodCliqueUpdate(oldCliques []*grovecorev1alpha1.P
 	}
 
 	return allErrs
-}
-
-// validatePodNameConstraints validates Grove pod name component constraints.
-// This function validates the constraints for component names that will be used
-// to construct pod names.
-//
-// Pod names that belong to a PCSG follow the format:
-// <pcs-name>-<pcs-index>-<pcsg-name>-<pcsg-index>-<pclq-name>-<random>
-//
-// Pod names that do not belong to a PCSG follow the format:
-// <pcs-name>-<pcs-index>-<pclq-name>-<random>
-//
-// Constraints:
-// - Random string + hyphens: 10 chars for PCSG pods, 8 chars for non-PCSG pods
-// - Max sum of all resource name characters: 45 chars
-func validatePodNameConstraints(pcsName, pcsgName, pclqName string) error {
-	// Check resource name constraints
-	resourceNameLength := len(pcsName) + len(pclqName)
-	if pcsgName != "" {
-		resourceNameLength += len(pcsgName)
-	}
-
-	if resourceNameLength > maxCombinedResourceNameLength {
-		if pcsgName != "" {
-			return fmt.Errorf("combined resource name length %d exceeds 45-character limit required for pod naming. Consider shortening: PodCliqueSet '%s', PodCliqueScalingGroup '%s', or PodClique '%s'",
-				resourceNameLength, pcsName, pcsgName, pclqName)
-		}
-		return fmt.Errorf("combined resource name length %d exceeds 45-character limit required for pod naming. Consider shortening: PodCliqueSet '%s' or PodClique '%s'",
-			resourceNameLength, pcsName, pclqName)
-	}
-	return nil
 }

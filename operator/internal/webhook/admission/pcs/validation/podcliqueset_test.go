@@ -23,6 +23,7 @@ import (
 
 	groveconfigv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	"github.com/ai-dynamo/grove/operator/internal/resourceclaim"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler/kai"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
@@ -57,21 +58,6 @@ func TestResourceNamingValidation(t *testing.T) {
 			},
 		},
 		{
-			description: "PodClique template name exceeds character limit",
-			pcsName:     "verylongpodcliquesetnamethatisverylong",
-			cliqueNames: []string{"verylongpodcliquenamethatexceedslimit"},
-			scalingGroups: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
-				createScalingGroupConfig("workers-1", []string{"prefill-1", "decode-1"}),
-				createScalingGroupConfig("verylongpodcliquenamethatexceedslimit-2", []string{"prefill", "decode"}),
-				createScalingGroupConfig("verylongpodcliquenamethatexceedslimit-3", []string{"prefill", "decode"}),
-			},
-			errorMatchers: []testutils.ErrorMatcher{
-				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.cliques[0].name"},
-				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.podCliqueScalingGroups[1].name"},
-				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.podCliqueScalingGroups[2].name"},
-			},
-		},
-		{
 			description: "Empty PodClique template name",
 			pcsName:     "inference",
 			cliqueNames: []string{""},
@@ -88,17 +74,6 @@ func TestResourceNamingValidation(t *testing.T) {
 			},
 		},
 		{
-			description:   "Scaling group with long names",
-			pcsName:       "verylongpodcliquesetname",
-			cliqueNames:   []string{"verylongpodcliquename"},
-			scalingGroups: []grovecorev1alpha1.PodCliqueScalingGroupConfig{createScalingGroupConfig("verylongscalinggroup", []string{"verylongpodcliquename"})},
-			errorMatchers: []testutils.ErrorMatcher{
-				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.podCliqueScalingGroups[0].name"},
-				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.podCliqueScalingGroups[0].cliqueNames[0].name"},
-				{ErrorType: field.ErrorTypeInvalid, Field: "metadata.name"},
-			},
-		},
-		{
 			description:   "Scaling group referencing non-existent PodClique",
 			pcsName:       "inference",
 			cliqueNames:   []string{"prefill"},
@@ -112,6 +87,19 @@ func TestResourceNamingValidation(t *testing.T) {
 			pcsName:       "pcs",
 			cliqueNames:   []string{"cliquename20charssss"},
 			scalingGroups: []grovecorev1alpha1.PodCliqueScalingGroupConfig{createScalingGroupConfig("sg", []string{"cliquename20charssss"})},
+		},
+		{
+			description: "Generated dependent name at length limit",
+			pcsName:     strings.Repeat("a", 50),
+			cliqueNames: []string{"test"},
+		},
+		{
+			description: "Generated dependent name over length limit",
+			pcsName:     strings.Repeat("a", 51),
+			cliqueNames: []string{"test"},
+			errorMatchers: []testutils.ErrorMatcher{
+				{ErrorType: field.ErrorTypeInvalid, Field: "metadata.name"},
+			},
 		},
 	}
 
@@ -139,7 +127,7 @@ func TestResourceNamingValidation(t *testing.T) {
 
 			pcs := pcsBuilder.Build()
 
-			validator := newPCSValidator(pcs, admissionv1.Create, defaultTASConfig(), groveconfigv1alpha1.SchedulerConfiguration{
+			validator := newPCSValidator(pcs, nil, admissionv1.Create, defaultTASConfig(), groveconfigv1alpha1.SchedulerConfiguration{
 				Profiles: []groveconfigv1alpha1.SchedulerProfile{
 					{Name: groveconfigv1alpha1.SchedulerNameKube},
 				},
@@ -154,6 +142,278 @@ func TestResourceNamingValidation(t *testing.T) {
 			}
 
 			assert.Empty(t, warnings, "No warnings expected for these test cases")
+		})
+	}
+}
+
+func TestGeneratedPodNameValidationUsesConfiguredReplicaIndexes(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		pcs     *grovecorev1alpha1.PodCliqueSet
+		wantErr bool
+	}{
+		{
+			name: "allows generated pod name above DNS label limit when hostname is valid",
+			pcs: testutils.NewPodCliqueSetBuilder(strings.Repeat("a", 30), "default", uuid.NewUUID()).
+				WithReplicas(101).
+				WithTerminationDelay(4 * time.Hour).
+				WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder)).
+				WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder(strings.Repeat("b", 26)).
+					WithReplicas(1).
+					WithRoleName("worker").
+					WithMinAvailable(1).
+					Build()).
+				Build(),
+		},
+		{
+			name: "standalone PodClique checks configured PCS replica index for hostname",
+			pcs: testutils.NewPodCliqueSetBuilder(strings.Repeat("a", 30), "default", uuid.NewUUID()).
+				WithReplicas(1001).
+				WithTerminationDelay(4 * time.Hour).
+				WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder)).
+				WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder(strings.Repeat("b", 26)).
+					WithReplicas(1).
+					WithRoleName("worker").
+					WithMinAvailable(1).
+					Build()).
+				Build(),
+			wantErr: true,
+		},
+		{
+			name: "allows generated pod name at length limit",
+			pcs: testutils.NewPodCliqueSetBuilder(strings.Repeat("a", 30), "default", uuid.NewUUID()).
+				WithReplicas(11).
+				WithTerminationDelay(4 * time.Hour).
+				WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder)).
+				WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder(strings.Repeat("b", 23)).
+					WithReplicas(1).
+					WithRoleName("worker").
+					WithMinAvailable(1).
+					Build()).
+				Build(),
+		},
+		{
+			name: "standalone PodClique checks HPA-configured PodClique replica index",
+			pcs: testutils.NewPodCliqueSetBuilder(strings.Repeat("a", 30), "default", uuid.NewUUID()).
+				WithReplicas(1).
+				WithTerminationDelay(4 * time.Hour).
+				WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder)).
+				WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder(strings.Repeat("b", 26)).
+					WithReplicas(1).
+					WithRoleName("worker").
+					WithMinAvailable(1).
+					WithScaleConfig(ptr.To(int32(1)), 1001).
+					Build()).
+				Build(),
+			wantErr: true,
+		},
+		{
+			name: "PCSG PodClique checks HPA-configured PCSG replica index",
+			pcs: testutils.NewPodCliqueSetBuilder(strings.Repeat("a", 20), "default", uuid.NewUUID()).
+				WithReplicas(1).
+				WithTerminationDelay(4 * time.Hour).
+				WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder)).
+				WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder(strings.Repeat("b", 15)).
+					WithReplicas(1).
+					WithRoleName("worker").
+					WithMinAvailable(1).
+					Build()).
+				WithPodCliqueScalingGroupConfig(grovecorev1alpha1.PodCliqueScalingGroupConfig{
+					Name:         strings.Repeat("c", 15),
+					CliqueNames:  []string{strings.Repeat("b", 15)},
+					Replicas:     ptr.To(int32(1)),
+					MinAvailable: ptr.To(int32(1)),
+					ScaleConfig: &grovecorev1alpha1.AutoScalingConfig{
+						MinReplicas: ptr.To(int32(1)),
+						MaxReplicas: 101,
+					},
+				}).
+				Build(),
+		},
+		{
+			name: "PCSG PodClique checks HPA-configured PCSG replica index for hostname",
+			pcs: testutils.NewPodCliqueSetBuilder(strings.Repeat("a", 20), "default", uuid.NewUUID()).
+				WithReplicas(1).
+				WithTerminationDelay(4 * time.Hour).
+				WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder)).
+				WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder(strings.Repeat("b", 19)).
+					WithReplicas(1).
+					WithRoleName("worker").
+					WithMinAvailable(1).
+					Build()).
+				WithPodCliqueScalingGroupConfig(grovecorev1alpha1.PodCliqueScalingGroupConfig{
+					Name:         strings.Repeat("c", 15),
+					CliqueNames:  []string{strings.Repeat("b", 19)},
+					Replicas:     ptr.To(int32(1)),
+					MinAvailable: ptr.To(int32(1)),
+					ScaleConfig: &grovecorev1alpha1.AutoScalingConfig{
+						MinReplicas: ptr.To(int32(1)),
+						MaxReplicas: 101,
+					},
+				}).
+				Build(),
+			wantErr: true,
+		},
+		{
+			name: "rejects generated hostnames with dots",
+			pcs: testutils.NewPodCliqueSetBuilder("workload.name", "default", uuid.NewUUID()).
+				WithReplicas(1).
+				WithTerminationDelay(4 * time.Hour).
+				WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder)).
+				WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("worker").
+					WithReplicas(1).
+					WithRoleName("worker").
+					WithMinAvailable(1).
+					Build()).
+				Build(),
+			wantErr: true,
+		},
+		{
+			name: "allows zero PCS replicas without validating a synthetic negative index",
+			pcs: testutils.NewPodCliqueSetBuilder(strings.Repeat("a", 46), "default", uuid.NewUUID()).
+				WithReplicas(0).
+				WithTerminationDelay(4 * time.Hour).
+				WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder)).
+				WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("worker").
+					WithReplicas(1).
+					WithRoleName(strings.Repeat("c", 30)).
+					WithMinAvailable(1).
+					Build()).
+				Build(),
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			validator := newPCSValidator(tt.pcs, nil, admissionv1.Create, defaultTASConfig(), groveconfigv1alpha1.SchedulerConfiguration{
+				Profiles: []groveconfigv1alpha1.SchedulerProfile{
+					{Name: groveconfigv1alpha1.SchedulerNameKube},
+				},
+				DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube),
+			}, nil, testutils.NewDefaultFakeRegistry())
+
+			_, errs := validator.validate()
+
+			if tt.wantErr {
+				require.Error(t, errs.ToAggregate())
+			} else {
+				require.NoError(t, errs.ToAggregate())
+			}
+		})
+	}
+}
+
+func TestGeneratedPodResourceClaimReferenceNameValidation(t *testing.T) {
+	for _, tt := range []struct {
+		name          string
+		pcs           *grovecorev1alpha1.PodCliqueSet
+		errorMatchers []testutils.ErrorMatcher
+	}{
+		{
+			name: "allows PCLQ resource claim reference name at DNS label limit",
+			pcs: func() *grovecorev1alpha1.PodCliqueSet {
+				pcs := testutils.NewPodCliqueSetBuilder(strings.Repeat("a", 44), "default", uuid.NewUUID()).
+					WithReplicas(1).
+					WithTerminationDelay(4 * time.Hour).
+					WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder)).
+					WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder(strings.Repeat("b", 8)).
+						WithReplicas(1).
+						WithRoleName("worker").
+						WithMinAvailable(1).
+						Build()).
+					Build()
+				pcs.Spec.Template.Cliques[0].ResourceSharing = []grovecorev1alpha1.ResourceSharingSpec{
+					{Name: "gpu", Scope: grovecorev1alpha1.ResourceSharingScopeAllReplicas},
+				}
+				return pcs
+			}(),
+		},
+		{
+			name: "rejects overlong PCS resource claim reference name",
+			pcs: func() *grovecorev1alpha1.PodCliqueSet {
+				pcs := testutils.NewPodCliqueSetBuilder(strings.Repeat("a", 56), "default", uuid.NewUUID()).
+					WithReplicas(1).
+					WithTerminationDelay(4 * time.Hour).
+					WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder)).
+					WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("b").
+						WithReplicas(1).
+						WithRoleName("worker").
+						WithMinAvailable(1).
+						Build()).
+					Build()
+				pcs.Spec.Template.ResourceSharing = []grovecorev1alpha1.PCSResourceSharingSpec{
+					{ResourceSharingSpec: grovecorev1alpha1.ResourceSharingSpec{Name: "gpu", Scope: grovecorev1alpha1.ResourceSharingScopeAllReplicas}},
+				}
+				return pcs
+			}(),
+			errorMatchers: []testutils.ErrorMatcher{
+				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.resourceSharing[0].name"},
+			},
+		},
+		{
+			name: "rejects overlong PCSG resource claim reference name",
+			pcs: func() *grovecorev1alpha1.PodCliqueSet {
+				pcs := testutils.NewPodCliqueSetBuilder(strings.Repeat("a", 45), "default", uuid.NewUUID()).
+					WithReplicas(1).
+					WithTerminationDelay(4 * time.Hour).
+					WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder)).
+					WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("b").
+						WithReplicas(1).
+						WithRoleName("worker").
+						WithMinAvailable(1).
+						Build()).
+					WithPodCliqueScalingGroupConfig(grovecorev1alpha1.PodCliqueScalingGroupConfig{
+						Name:         strings.Repeat("c", 8),
+						CliqueNames:  []string{"b"},
+						Replicas:     ptr.To(int32(1)),
+						MinAvailable: ptr.To(int32(1)),
+						ResourceSharing: []grovecorev1alpha1.PCSGResourceSharingSpec{
+							{ResourceSharingSpec: grovecorev1alpha1.ResourceSharingSpec{Name: "gpu", Scope: grovecorev1alpha1.ResourceSharingScopeAllReplicas}},
+						},
+					}).
+					Build()
+				return pcs
+			}(),
+			errorMatchers: []testutils.ErrorMatcher{
+				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.podCliqueScalingGroups[0].resourceSharing[0].name"},
+			},
+		},
+		{
+			name: "rejects overlong PCLQ resource claim reference name",
+			pcs: func() *grovecorev1alpha1.PodCliqueSet {
+				pcs := testutils.NewPodCliqueSetBuilder(strings.Repeat("a", 50), "default", uuid.NewUUID()).
+					WithReplicas(1).
+					WithTerminationDelay(4 * time.Hour).
+					WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder)).
+					WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder(strings.Repeat("b", 8)).
+						WithReplicas(1).
+						WithRoleName("worker").
+						WithMinAvailable(1).
+						Build()).
+					Build()
+				pcs.Spec.Template.Cliques[0].ResourceSharing = []grovecorev1alpha1.ResourceSharingSpec{
+					{Name: "gpu", Scope: grovecorev1alpha1.ResourceSharingScopeAllReplicas},
+				}
+				return pcs
+			}(),
+			errorMatchers: []testutils.ErrorMatcher{
+				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.cliques[0].resourceSharing[0].name"},
+			},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			validator := newPCSValidator(tt.pcs, nil, admissionv1.Create, defaultTASConfig(), groveconfigv1alpha1.SchedulerConfiguration{
+				Profiles: []groveconfigv1alpha1.SchedulerProfile{
+					{Name: groveconfigv1alpha1.SchedulerNameKube},
+				},
+				DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube),
+			}, nil, testutils.NewDefaultFakeRegistry())
+
+			_, errs := validator.validate()
+
+			if tt.errorMatchers != nil {
+				testutils.AssertErrorMatches(t, errs, tt.errorMatchers)
+			} else {
+				require.NoError(t, errs.ToAggregate())
+			}
 		})
 	}
 }
@@ -310,7 +570,7 @@ func TestValidateSchedulerNames(t *testing.T) {
 			for _, p := range tt.schedulerConfig.Profiles {
 				reg.Backends[string(p.Name)] = testutils.NewFakeSchedulerBackend(string(p.Name))
 			}
-			validator := newPCSValidator(pcs, admissionv1.Create, defaultTASConfig(), tt.schedulerConfig, nil, reg)
+			validator := newPCSValidator(pcs, nil, admissionv1.Create, defaultTASConfig(), tt.schedulerConfig, nil, reg)
 			fldPath := field.NewPath("cliques")
 			errs := validator.validateSchedulerNames(tt.schedulerNames, fldPath)
 
@@ -447,7 +707,7 @@ func TestPodCliqueScalingGroupConfigValidation(t *testing.T) {
 			// Add scaling groups
 			pcs.Spec.Template.PodCliqueScalingGroupConfigs = tc.scalingGroups
 
-			validator := newPCSValidator(pcs, admissionv1.Create, defaultTASConfig(),
+			validator := newPCSValidator(pcs, nil, admissionv1.Create, defaultTASConfig(),
 				groveconfigv1alpha1.SchedulerConfiguration{
 					Profiles: []groveconfigv1alpha1.SchedulerProfile{
 						{Name: groveconfigv1alpha1.SchedulerNameKube},
@@ -576,7 +836,7 @@ func TestPodCliqueUpdateValidation(t *testing.T) {
 			newPCS.Spec.Template.Cliques = tc.newCliques
 
 			// Create validator and validate update
-			validator := newPCSValidator(newPCS, admissionv1.Update, defaultTASConfig(), groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube)}, nil, testutils.NewDefaultFakeRegistry())
+			validator := newPCSValidator(newPCS, nil, admissionv1.Update, defaultTASConfig(), groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube)}, nil, testutils.NewDefaultFakeRegistry())
 			fldPath := field.NewPath("spec").Child("template").Child("cliques")
 			validationErrors := validator.validatePodCliqueUpdate(oldPCS.Spec.Template.Cliques, fldPath)
 
@@ -784,7 +1044,7 @@ func TestImmutableFieldsValidation(t *testing.T) {
 			oldPCS := tc.setupOldPCS()
 			newPCS := tc.setupNewPCS()
 
-			validator := newPCSValidator(newPCS, admissionv1.Update, defaultTASConfig(), groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube)}, nil, testutils.NewDefaultFakeRegistry())
+			validator := newPCSValidator(newPCS, nil, admissionv1.Update, defaultTASConfig(), groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube)}, nil, testutils.NewDefaultFakeRegistry())
 			err := validator.validateUpdate(oldPCS)
 
 			if tc.expectError {
@@ -1003,7 +1263,7 @@ func TestPodCliqueScalingGroupConfigsUpdateValidation(t *testing.T) {
 			newPCS.Spec.Template.PodCliqueScalingGroupConfigs = tc.newConfigs
 
 			// Create validator and validate update
-			validator := newPCSValidator(newPCS, admissionv1.Update, defaultTASConfig(), groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube)}, nil, testutils.NewDefaultFakeRegistry())
+			validator := newPCSValidator(newPCS, nil, admissionv1.Update, defaultTASConfig(), groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube)}, nil, testutils.NewDefaultFakeRegistry())
 			fldPath := field.NewPath("spec", "template", "podCliqueScalingGroupConfigs")
 			validationErrors := validator.validatePodCliqueScalingGroupConfigsUpdate(tc.oldConfigs, fldPath)
 
@@ -1154,7 +1414,7 @@ func TestValidateScaleConfig(t *testing.T) {
 		// scaleConfig is the autoscaling configuration to validate
 		scaleConfig *grovecorev1alpha1.AutoScalingConfig
 		// minAvailable is the minimum available pods
-		minAvailable int32
+		minAvailable *int32
 		// expectError indicates whether validation should fail
 		expectError bool
 		// errorContains is a substring expected in the error message
@@ -1166,7 +1426,7 @@ func TestValidateScaleConfig(t *testing.T) {
 				MinReplicas: ptr.To(int32(2)),
 				MaxReplicas: 5,
 			},
-			minAvailable: 1,
+			minAvailable: ptr.To[int32](1),
 			expectError:  false,
 		},
 		{
@@ -1175,7 +1435,7 @@ func TestValidateScaleConfig(t *testing.T) {
 				MinReplicas: ptr.To(int32(1)),
 				MaxReplicas: 5,
 			},
-			minAvailable:  2,
+			minAvailable:  ptr.To[int32](2),
 			expectError:   true,
 			errorContains: "must be greater than or equal to podCliqueSpec.minAvailable",
 		},
@@ -1185,7 +1445,7 @@ func TestValidateScaleConfig(t *testing.T) {
 				MinReplicas: ptr.To(int32(5)),
 				MaxReplicas: 3,
 			},
-			minAvailable:  1,
+			minAvailable:  ptr.To[int32](1),
 			expectError:   true,
 			errorContains: "must be greater than or equal to podCliqueSpec.minReplicas",
 		},
@@ -1195,8 +1455,16 @@ func TestValidateScaleConfig(t *testing.T) {
 				MinReplicas: ptr.To(int32(5)),
 				MaxReplicas: 5,
 			},
-			minAvailable: 1,
+			minAvailable: ptr.To[int32](1),
 			expectError:  false,
+		},
+		{
+			name: "nil minAvailable",
+			scaleConfig: &grovecorev1alpha1.AutoScalingConfig{
+				MinReplicas: ptr.To(int32(5)),
+				MaxReplicas: 5,
+			},
+			expectError: false,
 		},
 	}
 
@@ -1334,7 +1602,15 @@ func TestEnvVarValidation(t *testing.T) {
 				WithPodCliqueTemplateSpec(clique.Build()).
 				Build()
 
-			validator := newPCSValidator(pcs, admissionv1.Create, defaultTASConfig(), groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube)}, nil, testutils.NewDefaultFakeRegistry())
+			validator := newPCSValidator(
+				pcs,
+				nil,
+				admissionv1.Create,
+				defaultTASConfig(),
+				groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube)},
+				nil,
+				testutils.NewDefaultFakeRegistry(),
+			)
 			_, errs := validator.validate()
 
 			if tc.errorMatchers != nil {
@@ -1399,7 +1675,7 @@ func TestValidateResourceClaimTemplates(t *testing.T) {
 			pcs := createTestPodCliqueSet("my-pcs")
 			pcs.Spec.Template.ResourceClaimTemplates = tc.templates
 
-			validator := newPCSValidator(pcs, admissionv1.Create, defaultTASConfig(), groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube)}, nil, testutils.NewDefaultFakeRegistry())
+			validator := newPCSValidator(pcs, nil, admissionv1.Create, defaultTASConfig(), groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube)}, nil, testutils.NewDefaultFakeRegistry())
 			fldPath := field.NewPath("spec", "template", "resourceClaimTemplates")
 			errs := validator.validateResourceClaimTemplates(fldPath)
 
@@ -1477,9 +1753,9 @@ func TestValidateResourceSharingSpecs(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			pcs := createTestPodCliqueSet("my-pcs")
 			pcs.Spec.Template.ResourceClaimTemplates = tc.templates
-			validator := newPCSValidator(pcs, admissionv1.Create, defaultTASConfig(), groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube)}, nil, testutils.NewDefaultFakeRegistry())
+			validator := newPCSValidator(pcs, nil, admissionv1.Create, defaultTASConfig(), groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube)}, nil, testutils.NewDefaultFakeRegistry())
 			fldPath := field.NewPath("spec", "template", "resourceSharing")
-			errs := validator.validateResourceSharingSpecs(tc.refs, fldPath)
+			errs := validator.validateResourceSharingSpecs(resourceclaim.ResourceSharersFromPCLQ(tc.refs), fldPath)
 
 			if tc.errorMatchers != nil {
 				testutils.AssertErrorMatches(t, errs, tc.errorMatchers)
@@ -1572,7 +1848,7 @@ func TestValidatePCSResourceSharing(t *testing.T) {
 			pcs.Spec.Template.PodCliqueScalingGroupConfigs = tc.groupConfigs
 			pcs.Spec.Template.ResourceSharing = tc.refs
 
-			validator := newPCSValidator(pcs, admissionv1.Create, defaultTASConfig(), groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube)}, nil, testutils.NewDefaultFakeRegistry())
+			validator := newPCSValidator(pcs, nil, admissionv1.Create, defaultTASConfig(), groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube)}, nil, testutils.NewDefaultFakeRegistry())
 			fldPath := field.NewPath("spec", "template", "resourceSharing")
 			errs := validator.validatePCSResourceSharing(tc.refs, fldPath)
 
@@ -1597,6 +1873,7 @@ func TestValidatePCSGResourceSharing(t *testing.T) {
 			cfg: grovecorev1alpha1.PodCliqueScalingGroupConfig{
 				Name:        "sga",
 				CliqueNames: []string{"worker"},
+				Replicas:    ptr.To(int32(1)),
 				ResourceSharing: []grovecorev1alpha1.PCSGResourceSharingSpec{
 					{
 						ResourceSharingSpec: grovecorev1alpha1.ResourceSharingSpec{Name: "gpu-mps", Scope: grovecorev1alpha1.ResourceSharingScopeAllReplicas},
@@ -1611,6 +1888,7 @@ func TestValidatePCSGResourceSharing(t *testing.T) {
 			cfg: grovecorev1alpha1.PodCliqueScalingGroupConfig{
 				Name:        "sga",
 				CliqueNames: []string{"worker"},
+				Replicas:    ptr.To(int32(1)),
 				ResourceSharing: []grovecorev1alpha1.PCSGResourceSharingSpec{
 					{
 						ResourceSharingSpec: grovecorev1alpha1.ResourceSharingSpec{Name: "gpu-mps", Scope: grovecorev1alpha1.ResourceSharingScopeAllReplicas},
@@ -1634,7 +1912,7 @@ func TestValidatePCSGResourceSharing(t *testing.T) {
 				pcs.Spec.Template.Cliques = append(pcs.Spec.Template.Cliques, createDummyPodCliqueTemplate(cn))
 			}
 
-			validator := newPCSValidator(pcs, admissionv1.Create, defaultTASConfig(), groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube)}, nil, testutils.NewDefaultFakeRegistry())
+			validator := newPCSValidator(pcs, nil, admissionv1.Create, defaultTASConfig(), groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube)}, nil, testutils.NewDefaultFakeRegistry())
 			fldPath := field.NewPath("spec", "template", "podCliqueScalingGroups").Index(0).Child("resourceSharing")
 			errs := validator.validatePCSGResourceSharing(tc.cfg, fldPath)
 
@@ -1849,7 +2127,7 @@ func TestValidateTopologyConstraintsPCSTopologyName(t *testing.T) {
 				},
 				DefaultBackend: "default-scheduler",
 			}
-			validator := newPCSValidator(newPCS, tc.operation, tasConfig, schedulerConfig, fakeClient, localRegistry)
+			validator := newPCSValidator(newPCS, nil, tc.operation, tasConfig, schedulerConfig, fakeClient, localRegistry)
 
 			var (
 				err  error
@@ -1918,6 +2196,7 @@ func createScalingGroupConfig(name string, cliqueNames []string) grovecorev1alph
 	return grovecorev1alpha1.PodCliqueScalingGroupConfig{
 		Name:        name,
 		CliqueNames: cliqueNames,
+		Replicas:    ptr.To(int32(1)),
 	}
 }
 
