@@ -203,7 +203,7 @@ func getTerminatingAndNonTerminatingPodUIDs(existingPCLQPods []*corev1.Pod) (ter
 // The deletion of Pods are done in batches of increasing size. This is done to prevent burst of load
 // on the kube-apiserver. It will fail fast in case there is an
 func (r _resource) deleteExcessPods(sc *syncContext, logger logr.Logger, diff int) error {
-	candidatePodsToDelete := selectExcessPodsToDelete(sc, logger)
+	candidatePodsToDelete := r.selectExcessPodsToDelete(sc, logger)
 	numPodsToSelectForDeletion := min(diff, len(candidatePodsToDelete))
 	selectedPodsToDelete := candidatePodsToDelete[:numPodsToSelectForDeletion]
 
@@ -226,19 +226,36 @@ func (r _resource) deleteExcessPods(sc *syncContext, logger logr.Logger, diff in
 	return nil
 }
 
-// selectExcessPodsToDelete identifies excess pods for deletion using DeletionSorter for prioritization
-func selectExcessPodsToDelete(sc *syncContext, logger logr.Logger) []*corev1.Pod {
-	var candidatePodsToDelete []*corev1.Pod
-	if diff := len(sc.existingPCLQPods) - int(sc.pclq.Spec.Replicas); diff > 0 {
-		logger.Info("found excess pods for PodClique", "numExcessPods", diff)
-		sorter := DeletionSorter{
-			Pods: sc.existingPCLQPods,
+// selectExcessPodsToDelete identifies excess pods for deletion using DeletionSorter for prioritization.
+//
+// Pods whose deletion has already been triggered are excluded from the candidate set. GetPCLQPods
+// returns terminating Pods as well, and a Pod stays Running and Ready for the whole of its
+// terminationGracePeriodSeconds, so counting it as excess spends the deletion budget on a Pod that is
+// already on its way out - and, since DeletionSorter cannot tell it apart from a healthy Pod, can
+// select a Pod that is still serving instead. The rolling update path applies the same rule via
+// hasPodDeletionBeenTriggered (see computeUpdateWork in rollingupdate.go).
+//
+// Filtering into a fresh slice also keeps sort.Sort from reordering sc.existingPCLQPods in place,
+// which later steps of the same sync flow still read.
+func (r _resource) selectExcessPodsToDelete(sc *syncContext, logger logr.Logger) []*corev1.Pod {
+	livePods := make([]*corev1.Pod, 0, len(sc.existingPCLQPods))
+	for _, pod := range sc.existingPCLQPods {
+		if r.hasPodDeletionBeenTriggered(sc, pod) {
+			continue
 		}
-		sorter.ExpectedPodTemplateHash = sc.getExpectedPodTemplateHash()
-		sort.Sort(sorter)
-		candidatePodsToDelete = append(candidatePodsToDelete, sorter.Pods[:diff]...)
+		livePods = append(livePods, pod)
 	}
-	return candidatePodsToDelete
+	numExcessPods := len(livePods) - int(sc.pclq.Spec.Replicas)
+	if numExcessPods <= 0 {
+		return nil
+	}
+	logger.Info("found excess pods for PodClique", "numExcessPods", numExcessPods)
+	sorter := DeletionSorter{
+		Pods:                    livePods,
+		ExpectedPodTemplateHash: sc.getExpectedPodTemplateHash(),
+	}
+	sort.Sort(sorter)
+	return sorter.Pods[:numExcessPods]
 }
 
 func (sc *syncContext) getExpectedPodTemplateHash() string {

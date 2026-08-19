@@ -372,6 +372,47 @@ func TestAddEnvironmentVariablesToPodContainerSpecs(t *testing.T) {
 				}
 			},
 		},
+		{
+			name: "replace_colliding_pcsg_env_var",
+			pclq: &grovecorev1alpha1.PodClique{
+				Spec: grovecorev1alpha1.PodCliqueSpec{
+					PodSpec: corev1.PodSpec{
+						Containers: []corev1.Container{
+							{
+								Name: "container",
+								Env: []corev1.EnvVar{
+									{Name: apiconstants.EnvVarPodCliqueScalingGroupName, Value: "stale"},
+									{Name: "USER_VAR", Value: "user-value"},
+								},
+							},
+						},
+					},
+				},
+			},
+			numPods: 5,
+			validate: func(t *testing.T, pclq *grovecorev1alpha1.PodClique) {
+				assert.Equal(t, []corev1.EnvVar{
+					{
+						Name: apiconstants.EnvVarPodCliqueScalingGroupName,
+						ValueFrom: &corev1.EnvVarSource{
+							FieldRef: &corev1.ObjectFieldSelector{
+								FieldPath: fmt.Sprintf("metadata.labels['%s']", apicommon.LabelPodCliqueScalingGroup),
+							},
+						},
+					},
+					{Name: apiconstants.EnvVarPodCliqueScalingGroupTemplateNumPods, Value: "5"},
+					{
+						Name: apiconstants.EnvVarPodCliqueScalingGroupIndex,
+						ValueFrom: &corev1.EnvVarSource{
+							FieldRef: &corev1.ObjectFieldSelector{
+								FieldPath: fmt.Sprintf("metadata.labels['%s']", apicommon.LabelPodCliqueScalingGroupReplicaIndex),
+							},
+						},
+					},
+					{Name: "USER_VAR", Value: "user-value"},
+				}, pclq.Spec.PodSpec.Containers[0].Env)
+			},
+		},
 	}
 
 	for _, tc := range tests {

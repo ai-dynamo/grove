@@ -19,9 +19,11 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	"github.com/ai-dynamo/grove/operator/internal/expect"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	"github.com/go-logr/logr"
@@ -30,6 +32,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -633,5 +636,121 @@ func createTestPodClique(name string, minAvailable, scheduledReplicas int32) *gr
 		Status: grovecorev1alpha1.PodCliqueStatus{
 			ScheduledReplicas: scheduledReplicas,
 		},
+	}
+}
+
+// TestSelectExcessPodsToDelete_ExcludesPodsAlreadyBeingDeleted covers the scale-in path when Pods
+// whose deletion was already triggered are still present in the informer cache. GetPCLQPods returns
+// them, and a Pod stays Running and Ready for the whole of its termination grace period, so without
+// an explicit filter they are counted as excess and can consume the deletion budget that should have
+// spared a Pod that is still serving.
+func TestSelectExcessPodsToDelete_ExcludesPodsAlreadyBeingDeleted(t *testing.T) {
+	createdAt := metav1.NewTime(time.Now())
+	const templateHash = "hash-1"
+
+	newPod := func(name string, terminating bool) *corev1.Pod {
+		pod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:              name,
+				UID:               types.UID("uid-" + name),
+				CreationTimestamp: createdAt,
+				Labels:            map[string]string{common.LabelPodTemplateHash: templateHash},
+			},
+			Spec: corev1.PodSpec{NodeName: "node-a"},
+			Status: corev1.PodStatus{
+				Phase:      corev1.PodRunning,
+				Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}},
+			},
+		}
+		if terminating {
+			pod.DeletionTimestamp = &createdAt
+		}
+		return pod
+	}
+
+	tests := []struct {
+		name string
+		// pods that already carry a deletionTimestamp
+		terminatingPods []string
+		// pods for which a delete expectation was recorded but the cache has not caught up yet
+		deleteExpected []string
+		healthyPods    []string
+		replicas       int32
+		expectedNames  []string
+	}{
+		{
+			name:          "no terminating pods - excess selected normally",
+			healthyPods:   []string{"a", "b", "c"},
+			replicas:      1,
+			expectedNames: []string{"a", "b"},
+		},
+		{
+			name:            "terminating pods are not counted as excess",
+			terminatingPods: []string{"a", "b"},
+			healthyPods:     []string{"c"},
+			replicas:        1,
+			expectedNames:   nil,
+		},
+		{
+			name:            "only the genuinely excess healthy pod is selected",
+			terminatingPods: []string{"a"},
+			healthyPods:     []string{"b", "c"},
+			replicas:        1,
+			expectedNames:   []string{"b"},
+		},
+		{
+			name:           "pods with a recorded delete expectation are not counted as excess",
+			deleteExpected: []string{"a", "b"},
+			healthyPods:    []string{"c"},
+			replicas:       1,
+			expectedNames:  nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := expect.NewExpectationsStore()
+			r := _resource{expectationsStore: store}
+
+			pclq := &grovecorev1alpha1.PodClique{
+				ObjectMeta: metav1.ObjectMeta{Name: "pclq-1", Namespace: "default"},
+				Spec:       grovecorev1alpha1.PodCliqueSpec{Replicas: tt.replicas},
+			}
+			key, err := getPodCliqueExpectationsStoreKey(logr.Discard(), "sync", pclq.ObjectMeta)
+			require.NoError(t, err)
+
+			var pods []*corev1.Pod
+			for _, name := range tt.terminatingPods {
+				pods = append(pods, newPod(name, true))
+			}
+			for _, name := range tt.deleteExpected {
+				pod := newPod(name, false)
+				require.NoError(t, store.ExpectDeletions(logr.Discard(), key, pod.GetUID()))
+				pods = append(pods, pod)
+			}
+			for _, name := range tt.healthyPods {
+				pods = append(pods, newPod(name, false))
+			}
+
+			sc := &syncContext{
+				pclq:                     pclq,
+				existingPCLQPods:         pods,
+				pclqExpectationsStoreKey: key,
+			}
+
+			selected := r.selectExcessPodsToDelete(sc, logr.Discard())
+
+			var gotNames []string
+			for _, pod := range selected {
+				gotNames = append(gotNames, pod.Name)
+			}
+			assert.ElementsMatch(t, tt.expectedNames, gotNames)
+
+			// no selected pod may be one that is already on its way out
+			for _, pod := range selected {
+				assert.Nil(t, pod.DeletionTimestamp, "pod %s is already terminating and must not be selected", pod.Name)
+				assert.False(t, store.HasDeleteExpectation(key, pod.GetUID()), "pod %s already has a delete expectation", pod.Name)
+			}
+		})
 	}
 }

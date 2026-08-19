@@ -16,6 +16,7 @@ package pod
 
 import (
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
+	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
 	corev1 "k8s.io/api/core/v1"
 )
@@ -44,6 +45,19 @@ var podPhaseToOrdinal = map[corev1.PodPhase]int{corev1.PodPending: 0, corev1.Pod
 // Code partially adapted from https://github.com/kubernetes/kubernetes/blob/5a450884b127f7b8e477d48cf3967a2a5eca9126/pkg/controller/controller_utils.go#L702
 // Only 4 conditions have been taken as is and used here.
 func (s DeletionSorter) Less(i, j int) bool {
+	// 0. Already terminating < not terminating
+	//
+	// DEFENSIVE: the scale-in caller (selectExcessPodsToDelete) filters terminating Pods out
+	// before sorting, so in that path this criterion never fires. It is kept because
+	// DeletionSorter is exported along with its Pods field and a future caller may hand it an
+	// unfiltered list. A Pod that has been marked for deletion keeps reporting Running and Ready
+	// until its containers actually stop, so none of the criteria below can distinguish it from a
+	// healthy Pod — without this rule such a caller would spend its deletion budget on a Pod that
+	// is still serving.
+	if isPodTerminating(s.Pods[i]) != isPodTerminating(s.Pods[j]) {
+		return isPodTerminating(s.Pods[i])
+	}
+
 	// 1. Unassigned < assigned
 	// If only one of the pods is unassigned, the unassigned one is smaller
 	if s.Pods[i].Spec.NodeName != s.Pods[j].Spec.NodeName && (len(s.Pods[i].Spec.NodeName) == 0 || len(s.Pods[j].Spec.NodeName) == 0) {
@@ -71,6 +85,11 @@ func (s DeletionSorter) Less(i, j int) bool {
 		return s.Pods[i].CreationTimestamp.IsZero()
 	}
 	return s.Pods[i].CreationTimestamp.After(s.Pods[j].CreationTimestamp.Time)
+}
+
+// isPodTerminating checks if a pod has already been marked for deletion.
+func isPodTerminating(pod *corev1.Pod) bool {
+	return k8sutils.IsResourceTerminating(pod.ObjectMeta)
 }
 
 // isPodReady checks if a pod is ready by looking for the PodReady condition with status True

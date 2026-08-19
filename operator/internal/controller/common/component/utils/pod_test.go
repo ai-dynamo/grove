@@ -231,8 +231,8 @@ func TestGetPCLQPods(t *testing.T) {
 	})
 }
 
-// TestAddEnvVarsToContainers tests adding environment variables to containers.
-func TestAddEnvVarsToContainers(t *testing.T) {
+// TestPrependEnvVarsToContainers tests prepending environment variables to containers.
+func TestPrependEnvVarsToContainers(t *testing.T) {
 	// Test adding to empty containers
 	t.Run("add to empty containers", func(t *testing.T) {
 		containers := []corev1.Container{
@@ -245,7 +245,7 @@ func TestAddEnvVarsToContainers(t *testing.T) {
 			{Name: "VAR2", Value: "value2"},
 		}
 
-		AddEnvVarsToContainers(containers, envVars)
+		PrependEnvVarsToContainers(containers, envVars)
 
 		assert.Len(t, containers[0].Env, 2)
 		assert.Len(t, containers[1].Env, 2)
@@ -253,13 +253,14 @@ func TestAddEnvVarsToContainers(t *testing.T) {
 		assert.Equal(t, "value1", containers[0].Env[0].Value)
 	})
 
-	// Test adding to containers with existing env vars
-	t.Run("add to containers with existing env", func(t *testing.T) {
+	// Test prepending to containers with existing env vars
+	t.Run("prepend to containers with existing env", func(t *testing.T) {
 		containers := []corev1.Container{
 			{
 				Name: "container1",
 				Env: []corev1.EnvVar{
 					{Name: "EXISTING", Value: "existing-value"},
+					{Name: "DERIVED", Value: "$(NEW_VAR)-derived"},
 				},
 			},
 		}
@@ -268,11 +269,34 @@ func TestAddEnvVarsToContainers(t *testing.T) {
 			{Name: "NEW_VAR", Value: "new-value"},
 		}
 
-		AddEnvVarsToContainers(containers, newEnvVars)
+		PrependEnvVarsToContainers(containers, newEnvVars)
 
-		assert.Len(t, containers[0].Env, 2)
-		assert.Equal(t, "EXISTING", containers[0].Env[0].Name)
-		assert.Equal(t, "NEW_VAR", containers[0].Env[1].Name)
+		assert.Equal(t, []corev1.EnvVar{
+			{Name: "NEW_VAR", Value: "new-value"},
+			{Name: "EXISTING", Value: "existing-value"},
+			{Name: "DERIVED", Value: "$(NEW_VAR)-derived"},
+		}, containers[0].Env)
+	})
+
+	// Test replacing existing variables with the same name
+	t.Run("replace existing variables", func(t *testing.T) {
+		containers := []corev1.Container{
+			{
+				Name: "container1",
+				Env: []corev1.EnvVar{
+					{Name: "INJECTED", Value: "stale-value"},
+					{Name: "EXISTING", Value: "existing-value"},
+				},
+			},
+		}
+		envVars := []corev1.EnvVar{{Name: "INJECTED", Value: "injected-value"}}
+
+		PrependEnvVarsToContainers(containers, envVars)
+
+		assert.Equal(t, []corev1.EnvVar{
+			{Name: "INJECTED", Value: "injected-value"},
+			{Name: "EXISTING", Value: "existing-value"},
+		}, containers[0].Env)
 	})
 
 	// Test with no env vars to add
@@ -281,7 +305,7 @@ func TestAddEnvVarsToContainers(t *testing.T) {
 			{Name: "container1"},
 		}
 
-		AddEnvVarsToContainers(containers, []corev1.EnvVar{})
+		PrependEnvVarsToContainers(containers, []corev1.EnvVar{})
 
 		assert.Empty(t, containers[0].Env)
 	})
@@ -294,7 +318,7 @@ func TestAddEnvVarsToContainers(t *testing.T) {
 		}
 
 		// Should not panic
-		AddEnvVarsToContainers(containers, envVars)
+		PrependEnvVarsToContainers(containers, envVars)
 	})
 }
 

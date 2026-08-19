@@ -338,6 +338,15 @@ func TestAddGroveEnvironmentVariables_NoDuplicates(t *testing.T) {
 								},
 							},
 						},
+						InitContainers: []corev1.Container{
+							{
+								Name:  "test-init-container",
+								Image: "test-image",
+								Env: []corev1.EnvVar{
+									{Name: "GROVE_POD_INDEX", Value: "old-pod-index"},
+								},
+							},
+						},
 					},
 				},
 			},
@@ -460,11 +469,29 @@ func TestAddGroveEnvironmentVariables_NoDuplicates(t *testing.T) {
 
 			addEnvironmentVariables(pod, tt.pclq, "test-pcs", 0)
 
-			// Check that all containers have the expected environment variables
-			for _, container := range pod.Spec.Containers {
+			expectedPrefix := []string{
+				constants.EnvVarPodCliqueSetName,
+				constants.EnvVarPodCliqueSetIndex,
+				constants.EnvVarPodCliqueName,
+				constants.EnvVarHeadlessService,
+				constants.EnvVarPodIndex,
+			}
+			assertContainer := func(container corev1.Container) {
 				assertExpectedEnvVars(t, container, tt.expectedEnvVars)
 				assertReplacedEnvVars(t, container, tt.shouldReplace)
 				assertPreservedEnvVars(t, container, tt.shouldPreserve)
+				assertNoDuplicateEnvVars(t, container)
+				require.GreaterOrEqual(t, len(container.Env), len(expectedPrefix))
+				for i, envVarName := range expectedPrefix {
+					assert.Equal(t, envVarName, container.Env[i].Name)
+				}
+				assertEnvVarUsesFieldRef(t, container, constants.EnvVarPodIndex, fmt.Sprintf("metadata.labels['%s']", common.LabelPodCliquePodIndex))
+			}
+			for _, container := range pod.Spec.Containers {
+				assertContainer(container)
+			}
+			for _, container := range pod.Spec.InitContainers {
+				assertContainer(container)
 			}
 		})
 	}
