@@ -145,6 +145,11 @@ const (
 	ConditionReasonSufficientScheduledPods = "SufficientScheduledPods"
 	// ConditionReasonScheduledReplicasBelowMinAvailable indicates that scheduledReplicas is below MinAvailable but greater than zero.
 	ConditionReasonScheduledReplicasBelowMinAvailable = "ScheduledReplicasBelowMinAvailable"
+	// ConditionReasonAwaitingInitialSchedule indicates that no pods have been scheduled yet for a
+	// PodClique still within its InitialScheduleGrace window since creation. Treated as not-breached
+	// even though scheduledReplicas (0) is below MinAvailable, since this is the expected transient
+	// state right after creation and not yet a real regression.
+	ConditionReasonAwaitingInitialSchedule = "AwaitingInitialSchedule"
 	// ConditionReasonInsufficientAvailablePCSGReplicas indicates that the number of ready replicas in the PodCliqueScalingGroup is below the PodCliqueScalingGroupSpec.MinAvailable.
 	ConditionReasonInsufficientAvailablePCSGReplicas = "InsufficientAvailablePodCliqueScalingGroupReplicas"
 	// ConditionReasonSufficientAvailablePCSGReplicas indicates that the number of ready replicas in the PodCliqueScalingGroup is greater than or equal to the PodCliqueScalingGroupSpec.MinAvailable.
