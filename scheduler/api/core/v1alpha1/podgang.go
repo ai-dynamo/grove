@@ -137,24 +137,14 @@ type NamespacedName struct {
 	Name string `json:"name"`
 }
 
-// PodGangPhase defines the current phase of a PodGang.
-type PodGangPhase string
-
-const (
-	// PodGangPhasePending indicates that all the pods in a PodGang have been created and the PodGang is pending scheduling.
-	PodGangPhasePending PodGangPhase = "Pending"
-	// PodGangPhaseStarting indicates that the scheduler has started binding pods in the PodGang to nodes.
-	PodGangPhaseStarting PodGangPhase = "Starting"
-	// PodGangPhaseRunning indicates that all the pods in the PodGang have been scheduled and are running.
-	PodGangPhaseRunning PodGangPhase = "Running"
-)
-
 // PodGangConditionType defines the type of condition for a PodGang.
 type PodGangConditionType string
 
 const (
 	// PodGangConditionTypeScheduled indicates that the PodGang has been scheduled.
 	PodGangConditionTypeScheduled PodGangConditionType = "Scheduled"
+	// PodGangConditionTypeSchedulingBackendReady indicates whether the scheduler backend permits scheduling.
+	PodGangConditionTypeSchedulingBackendReady PodGangConditionType = "SchedulingBackendReady"
 	// PodGangConditionTypeReady indicates that all the constituent PodGroups are Ready.
 	PodGangConditionTypeReady PodGangConditionType = "Ready"
 	// PodGangConditionTypeInitialized indicates that all Pods have been created and PodGang has been populated with pod references.
@@ -176,12 +166,22 @@ const (
 	ConditionReasonPodGangPodsCreationPending = "PodGangPodsCreationPending"
 	// ConditionReasonPodGangPodsCreated indicates that all constituent Pods for a PodGang have been created.
 	ConditionReasonPodGangPodsCreated = "PodGangPodsCreated"
+	// ConditionReasonPodGangNotInitialized indicates that PodGang scheduling cannot be determined until initialization completes.
+	ConditionReasonPodGangNotInitialized = "PodGangNotInitialized"
+	// ConditionReasonInsufficientScheduledPods indicates that a PodGroup has fewer scheduled Pods than required.
+	ConditionReasonInsufficientScheduledPods = "InsufficientScheduledPods"
+	// ConditionReasonSufficientScheduledPods indicates that every PodGroup has enough scheduled Pods.
+	ConditionReasonSufficientScheduledPods = "SufficientScheduledPods"
+	// ConditionReasonSchedulingBackendStatusUnavailable indicates that scheduler backend status could not be obtained.
+	ConditionReasonSchedulingBackendStatusUnavailable = "SchedulingBackendStatusUnavailable"
+	// ConditionReasonInsufficientReadyPods indicates that a PodGroup has fewer ready Pods than required.
+	ConditionReasonInsufficientReadyPods = "InsufficientReadyPods"
+	// ConditionReasonSufficientReadyPods indicates that every PodGroup has enough ready Pods.
+	ConditionReasonSufficientReadyPods = "SufficientReadyPods"
 )
 
 // PodGangStatus defines the status of a PodGang.
 type PodGangStatus struct {
-	// Phase is the current phase of a PodGang.
-	Phase PodGangPhase `json:"phase"`
 	// Conditions is a list of conditions that describe the current state of the PodGang.
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 	// PlacementScore is network optimality score for the PodGang. If the choice that the scheduler has made corresponds to the
