@@ -129,7 +129,22 @@ func (r _resource) processPendingUpdates(logger logr.Logger, sc *syncContext) er
 		)
 	}
 
-	// If the control comes here, then mark the end of update.
+	// Old non-ready pods are deleted eagerly and do not go through the
+	// ready-pod selection flow above. Wait for every desired replacement to
+	// become Ready before closing the update, otherwise UpdateEndedAt can be
+	// set while the new generation is still starting or crash-looping.
+	if int32(len(updateWork.newTemplateHashReadyPods)) < pclq.Spec.Replicas {
+		return groveerr.New(
+			groveerr.ErrCodeContinueReconcileAndRequeue,
+			component.OperationSync,
+			fmt.Sprintf(
+				"waiting for updated pods to become ready before marking update end: %d ready, need %d",
+				len(updateWork.newTemplateHashReadyPods),
+				pclq.Spec.Replicas,
+			),
+		)
+	}
+
 	return r.markRollingUpdateEnd(sc.ctx, logger, pclq)
 }
 
