@@ -28,6 +28,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/constants"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
+	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
 	"github.com/go-logr/logr"
 	"github.com/samber/lo"
@@ -275,18 +276,6 @@ func (r _resource) createPCSReplicaDeleteTask(logger logr.Logger, pcs *grovecore
 // short enough not to starve the reconcile worker pool.
 var flagWriteBackoff = wait.Backoff{Steps: 6, Duration: 25 * time.Millisecond, Factor: 2.0, Jitter: 0.1}
 
-// isRetriableFlagWriteError reports whether a flag write failure is worth retrying inline:
-// optimistic-lock conflicts and transient apiserver errors. Permanent errors (Forbidden,
-// Invalid, ...) surface immediately.
-func isRetriableFlagWriteError(err error) bool {
-	return apierrors.IsConflict(err) ||
-		apierrors.IsServerTimeout(err) ||
-		apierrors.IsTimeout(err) ||
-		apierrors.IsTooManyRequests(err) ||
-		apierrors.IsServiceUnavailable(err) ||
-		apierrors.IsInternalError(err)
-}
-
 // markGangTerminationInProgress sets GangTerminationInProgress=True on the PCSG status.
 // The PCSG status reconciler mutates Status.Conditions concurrently (e.g. updating
 // MinAvailableBreached), so the patch carries an optimistic lock and re-reads the latest
@@ -299,7 +288,7 @@ func isRetriableFlagWriteError(err error) bool {
 // transient failures here keeps that churn confined to genuine outages. A NotFound PCSG was
 // deleted concurrently and needs no suppression, so it counts as success.
 func (r _resource) markGangTerminationInProgress(ctx context.Context, pcsgObjectKey client.ObjectKey, pcsReplicaIndex int) error {
-	return retry.OnError(flagWriteBackoff, isRetriableFlagWriteError, func() error {
+	return retry.OnError(flagWriteBackoff, k8sutils.IsRetriableAPIError, func() error {
 		latest := &grovecorev1alpha1.PodCliqueScalingGroup{}
 		if err := r.client.Get(ctx, pcsgObjectKey, latest); err != nil {
 			if apierrors.IsNotFound(err) {

@@ -22,10 +22,13 @@ import (
 	apiconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
+	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
 	"github.com/go-logr/logr"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -33,6 +36,11 @@ import (
 // PodCliqueSet is being migrated to the epoch-based PodGang scheme. Migration is quick, so a short
 // interval keeps the gated reconcilers responsive once the gate clears.
 const MigrationRequeueInterval = 5 * time.Second
+
+// gateWriteBackoff bounds the inline retries of the migration-gate status write. The gate runs once
+// at startup before the manager starts, so a few quick retries absorb a transient API server blip
+// without forcing a container restart.
+var gateWriteBackoff = wait.Backoff{Steps: 5, Duration: 50 * time.Millisecond, Factor: 2.0, Jitter: 0.1}
 
 // SetMigrationGateForLegacyPodCliqueSets sets the PodGangMigrationInProgress condition on every
 // PodCliqueSet that must still be migrated from the legacy PodGang naming to the epoch-based scheme.
@@ -74,16 +82,23 @@ func SetMigrationGateForLegacyPodCliqueSets(ctx context.Context, cl client.Clien
 			logger.V(4).Info("Skipping PodGang migration gate for already-migrated PodCliqueSet, PodGangMap present", "podCliqueSet", client.ObjectKeyFromObject(pcs))
 			continue
 		}
-		meta.SetStatusCondition(&pcs.Status.Conditions, metav1.Condition{
-			Type:    apiconstants.ConditionTypePodGangMigrationInProgress,
-			Status:  metav1.ConditionTrue,
-			Reason:  "LegacyPodGangsPendingMigration",
-			Message: "PodCliqueSet predates the epoch-based PodGang scheme and is pending migration",
-		})
-		if err := cl.Status().Update(ctx, pcs); err != nil {
-			return fmt.Errorf("failed to set PodGang migration gate on PodCliqueSet %v: %w", client.ObjectKeyFromObject(pcs), err)
+		pcsObjectKey := client.ObjectKeyFromObject(pcs)
+		if err := retry.OnError(gateWriteBackoff, k8sutils.IsRetriableAPIError, func() error {
+			latest := &grovecorev1alpha1.PodCliqueSet{}
+			if err := cl.Get(ctx, pcsObjectKey, latest); err != nil {
+				return err
+			}
+			meta.SetStatusCondition(&latest.Status.Conditions, metav1.Condition{
+				Type:    apiconstants.ConditionTypePodGangMigrationInProgress,
+				Status:  metav1.ConditionTrue,
+				Reason:  "LegacyPodGangsPendingMigration",
+				Message: "PodCliqueSet predates the epoch-based PodGang scheme and is pending migration",
+			})
+			return cl.Status().Update(ctx, latest)
+		}); err != nil {
+			return fmt.Errorf("failed to set PodGang migration gate on PodCliqueSet %v: %w", pcsObjectKey, err)
 		}
-		logger.Info("Set PodGang migration gate on legacy PodCliqueSet", "podCliqueSet", client.ObjectKeyFromObject(pcs))
+		logger.Info("Set PodGang migration gate on legacy PodCliqueSet", "podCliqueSet", pcsObjectKey)
 	}
 	return nil
 }
