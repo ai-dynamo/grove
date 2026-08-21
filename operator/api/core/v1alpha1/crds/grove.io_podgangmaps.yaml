@@ -57,10 +57,10 @@ spec:
                   properties:
                     anchorIndex:
                       description: |-
-                        AnchorIndex is the index of an anchor entry within its generation hash. It is set only on
-                        entries whose Role is Anchor and is 0 for every other entry. The index starts at 0 for each
-                        generation hash and increments for each additional anchor of the same hash. It forms the last
-                        segment of the anchor PodGang name.
+                        AnchorIndex is the index of an anchor entry within its generation hash. It is non-nil only on
+                        entries whose Role is Anchor, and nil otherwise. For an Anchor entry the index starts at 0 for
+                        each generation hash and increments for each additional anchor of the same hash. It forms the
+                        last segment of the anchor PodGang name.
                       format: int32
                       type: integer
                     dependsOn:
@@ -125,6 +125,10 @@ spec:
                   - podCliqueSetGenerationHash
                   - role
                   type: object
+                  x-kubernetes-validations:
+                  - message: anchorIndex must be set for Anchor entries and unset
+                      for all other entries
+                    rule: (self.role == 'Anchor') == has(self.anchorIndex)
                 type: array
                 x-kubernetes-list-map-keys:
                 - epoch

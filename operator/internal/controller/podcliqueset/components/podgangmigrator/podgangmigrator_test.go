@@ -93,8 +93,8 @@ func TestSyncMigratesScaleOutReplica(t *testing.T) {
 	epochs := replicaEpochs{anchor: "1000", scaleOut: "1002"}
 	// PodGangMap with an anchor entry holding PCSG replica 0 and a ScaleOut entry holding PCSG replica 1.
 	pgm := testutils.NewPodGangMapBuilder(testPCSName, testNamespace, types.UID("uid"), 0).WithEntries(
-		testutils.NewPCSGPodGangEntry(testGenHash, epochs.anchor, grovecorev1alpha1.PodGangEntryRoleAnchor, testPCSGName, 0),
-		testutils.NewPCSGPodGangEntry(testGenHash, epochs.scaleOut, grovecorev1alpha1.PodGangEntryRoleScaleOut, testPCSGName, 1),
+		testutils.NewAnchorEntry(testGenHash, epochs.anchor, 0, testPCSGName, 0),
+		testutils.NewScaleOutEntry(testGenHash, epochs.scaleOut, testPCSGName, 1),
 	).Build()
 
 	objs := []client.Object{gatedPCS(1), pgm}
@@ -288,8 +288,8 @@ func legacyReplicaObjects(pcsReplicaIndex int, epochs replicaEpochs) []client.Ob
 // tail entry holding PCSG replica 2.
 func replicaPGM(pcsReplicaIndex int, epochs replicaEpochs) *grovecorev1alpha1.PodGangMap {
 	return testutils.NewPodGangMapBuilder(testPCSName, testNamespace, types.UID("uid"), pcsReplicaIndex).WithEntries(
-		testutils.NewPCSGPodGangEntry(testGenHash, epochs.anchor, grovecorev1alpha1.PodGangEntryRoleAnchor, testPCSGName, 0, 1),
-		testutils.NewPCSGPodGangEntry(testGenHash, epochs.tail, grovecorev1alpha1.PodGangEntryRoleTail, testPCSGName, 2),
+		testutils.NewAnchorEntry(testGenHash, epochs.anchor, 0, testPCSGName, 0, 1),
+		testutils.NewTailEntry(testGenHash, epochs.tail, testPCSGName, 2),
 	).Build()
 }
 

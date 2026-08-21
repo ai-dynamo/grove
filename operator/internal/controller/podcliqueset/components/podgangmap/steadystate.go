@@ -26,6 +26,7 @@ import (
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	"github.com/samber/lo"
 	"k8s.io/utils/clock"
+	"k8s.io/utils/ptr"
 )
 
 // buildBootstrapEntries builds the initial PodGangMap entries for a PCS replica from the PCS spec. It
@@ -97,8 +98,8 @@ func epochOrDefault(epochByRole map[grovecorev1alpha1.PodGangEntryRole]int64, ro
 func buildBootstrapAnchorEntry(pcs *grovecorev1alpha1.PodCliqueSet, epoch string) grovecorev1alpha1.PodGangEntry {
 	entry := newPodGangEntry(epoch, *pcs.Status.CurrentGenerationHash, nil)
 	entry.Role = grovecorev1alpha1.PodGangEntryRoleAnchor
-	// entry.AnchorIndex is defaulted to 0. This is the correct index for the anchor. During bootstrap
-	// there is only going to be a single anchor. Skipping setting this explicitly.
+	// A bootstrap PodGangMap has a single anchor, whose index is 0.
+	entry.AnchorIndex = ptr.To[int32](0)
 	entry.PodCliques = componentutils.GetStandalonePCLQReplicasFromPCSTemplateSpec(pcs)
 
 	pcsgMinAvailable := componentutils.GetPCSGMinAvailableFromPCSTemplateSpec(pcs)
@@ -244,7 +245,7 @@ func drainReplicaIndicesForScaleIn(entries []grovecorev1alpha1.PodGangEntry, pcs
 			return ip < jp
 		}
 		if entries[order[a]].Role == grovecorev1alpha1.PodGangEntryRoleAnchor {
-			return entries[order[a]].AnchorIndex > entries[order[b]].AnchorIndex
+			return *entries[order[a]].AnchorIndex > *entries[order[b]].AnchorIndex
 		}
 		return false
 	})
@@ -278,7 +279,7 @@ func drainPriority(entry grovecorev1alpha1.PodGangEntry) int {
 // generation, or nil when none is present.
 func currentGenerationAnchor(entries []grovecorev1alpha1.PodGangEntry, currentHash string) *grovecorev1alpha1.PodGangEntry {
 	for i := range entries {
-		if entries[i].Role == grovecorev1alpha1.PodGangEntryRoleAnchor && entries[i].PodCliqueSetGenerationHash == currentHash && entries[i].AnchorIndex == 0 {
+		if entries[i].Role == grovecorev1alpha1.PodGangEntryRoleAnchor && entries[i].PodCliqueSetGenerationHash == currentHash && entries[i].AnchorIndex != nil && *entries[i].AnchorIndex == 0 {
 			return &entries[i]
 		}
 	}
@@ -314,7 +315,7 @@ func ensureScaleOutEntry(entries []grovecorev1alpha1.PodGangEntry, pcs *grovecor
 		if entries[i].Role == grovecorev1alpha1.PodGangEntryRoleScaleOut && entries[i].PodCliqueSetGenerationHash == currentHash {
 			return entries
 		}
-		if entries[i].Role == grovecorev1alpha1.PodGangEntryRoleAnchor && entries[i].PodCliqueSetGenerationHash == currentHash && entries[i].AnchorIndex == 0 {
+		if entries[i].Role == grovecorev1alpha1.PodGangEntryRoleAnchor && entries[i].PodCliqueSetGenerationHash == currentHash && entries[i].AnchorIndex != nil && *entries[i].AnchorIndex == 0 {
 			anchorEpoch = entries[i].Epoch
 		}
 	}

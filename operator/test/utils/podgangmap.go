@@ -49,6 +49,12 @@ func (b *PodGangEntryBuilder) WithRole(role grovecorev1alpha1.PodGangEntryRole) 
 	return b
 }
 
+// WithAnchorIndex sets the AnchorIndex on the entry. Set this on Anchor entries.
+func (b *PodGangEntryBuilder) WithAnchorIndex(anchorIndex int32) *PodGangEntryBuilder {
+	b.entry.AnchorIndex = ptr.To(anchorIndex)
+	return b
+}
+
 // WithPodCliques sets the standalone PodClique pod counts on the entry.
 func (b *PodGangEntryBuilder) WithPodCliques(podCliques map[string]int32) *PodGangEntryBuilder {
 	b.entry.PodCliques = podCliques
@@ -72,12 +78,29 @@ func (b *PodGangEntryBuilder) Build() grovecorev1alpha1.PodGangEntry {
 	return b.entry
 }
 
-// NewPCSGPodGangEntry builds a PodGangEntry for a single PodCliqueScalingGroup, the common shape in
-// tests. It sets the epoch, generation hash, role, and the PodCliqueScalingGroup replica indices the
-// entry holds. Use the builder directly when an entry also needs DependsOn or standalone PodCliques.
-func NewPCSGPodGangEntry(pcsGenerationHash, epoch string, role grovecorev1alpha1.PodGangEntryRole, pcsgName string, pcsgReplicaIndices ...int32) grovecorev1alpha1.PodGangEntry {
+// NewAnchorEntry builds an Anchor PodGangEntry carrying a single PodCliqueScalingGroup's replica
+// indices. anchorIndex is the anchor's index within its generation hash. Use the builder directly
+// when an entry also needs DependsOn or standalone PodCliques.
+func NewAnchorEntry(pcsGenerationHash, epoch string, anchorIndex int32, pcsgName string, pcsgReplicaIndices ...int32) grovecorev1alpha1.PodGangEntry {
 	return NewPodGangEntryBuilder(pcsGenerationHash, epoch).
-		WithRole(role).
+		WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).
+		WithAnchorIndex(anchorIndex).
+		WithPCSGReplicaIndices(map[string][]int32{pcsgName: pcsgReplicaIndices}).
+		Build()
+}
+
+// NewTailEntry builds a Tail PodGangEntry carrying a single PodCliqueScalingGroup's replica indices.
+func NewTailEntry(pcsGenerationHash, epoch, pcsgName string, pcsgReplicaIndices ...int32) grovecorev1alpha1.PodGangEntry {
+	return NewPodGangEntryBuilder(pcsGenerationHash, epoch).
+		WithRole(grovecorev1alpha1.PodGangEntryRoleTail).
+		WithPCSGReplicaIndices(map[string][]int32{pcsgName: pcsgReplicaIndices}).
+		Build()
+}
+
+// NewScaleOutEntry builds a ScaleOut PodGangEntry carrying a single PodCliqueScalingGroup's replica indices.
+func NewScaleOutEntry(pcsGenerationHash, epoch, pcsgName string, pcsgReplicaIndices ...int32) grovecorev1alpha1.PodGangEntry {
+	return NewPodGangEntryBuilder(pcsGenerationHash, epoch).
+		WithRole(grovecorev1alpha1.PodGangEntryRoleScaleOut).
 		WithPCSGReplicaIndices(map[string][]int32{pcsgName: pcsgReplicaIndices}).
 		Build()
 }

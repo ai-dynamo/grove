@@ -139,7 +139,7 @@ func podGangEntryForPCSGReplica(pgm *grovecorev1alpha1.PodGangMap, pcsgName stri
 func AnchorPodGangEpoch(pgm *grovecorev1alpha1.PodGangMap) (string, error) {
 	for i := range pgm.Spec.Entries {
 		entry := &pgm.Spec.Entries[i]
-		if entry.Role == grovecorev1alpha1.PodGangEntryRoleAnchor && entry.AnchorIndex == 0 {
+		if entry.Role == grovecorev1alpha1.PodGangEntryRoleAnchor && entry.AnchorIndex != nil && *entry.AnchorIndex == 0 {
 			return entry.Epoch, nil
 		}
 	}

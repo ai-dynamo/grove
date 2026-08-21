@@ -404,6 +404,7 @@ func podGangWithEpochRole(name, epoch string, role grovecorev1alpha1.PodGangEntr
 func anchorEntry(podCliques map[string]int32, pcsgIndices map[string][]int32) grovecorev1alpha1.PodGangEntry {
 	return testutils.NewPodGangEntryBuilder(testGenHash, "100").
 		WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).
+		WithAnchorIndex(0).
 		WithPodCliques(podCliques).
 		WithPCSGReplicaIndices(pcsgIndices).
 		Build()

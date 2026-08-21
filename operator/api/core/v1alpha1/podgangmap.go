@@ -77,6 +77,7 @@ const (
 // PodGangEntry describes one scheduling batch, identified by its epoch, that materializes into one
 // or more PodGangs. An Anchor entry materializes into a single anchor PodGang; a Tail or ScaleOut
 // entry materializes into one PodGang per (PodCliqueScalingGroup, replica index) it carries.
+// +kubebuilder:validation:XValidation:rule="(self.role == 'Anchor') == has(self.anchorIndex)",message="anchorIndex must be set for Anchor entries and unset for all other entries"
 type PodGangEntry struct {
 	// Epoch is the identity of this entry and the group of PodGangs materialized from it. It serves
 	// two purposes. First, identity, it is unique across entries within a PodGangMap and is the
@@ -94,12 +95,12 @@ type PodGangEntry struct {
 	// durable marker that lets the entry structure be reconstructed from the entries alone, so no
 	// separate record needs to be persisted.
 	Role PodGangEntryRole `json:"role"`
-	// AnchorIndex is the index of an anchor entry within its generation hash. It is set only on
-	// entries whose Role is Anchor and is 0 for every other entry. The index starts at 0 for each
-	// generation hash and increments for each additional anchor of the same hash. It forms the last
-	// segment of the anchor PodGang name.
+	// AnchorIndex is the index of an anchor entry within its generation hash. It is non-nil only on
+	// entries whose Role is Anchor, and nil otherwise. For an Anchor entry the index starts at 0 for
+	// each generation hash and increments for each additional anchor of the same hash. It forms the
+	// last segment of the anchor PodGang name.
 	// +optional
-	AnchorIndex int32 `json:"anchorIndex,omitempty"`
+	AnchorIndex *int32 `json:"anchorIndex,omitempty"`
 	// PodCliques maps standalone PodClique name to the number of pods that belong to this PodGang.
 	// Only standalone PodCliques (not owned by a PodCliqueScalingGroup) are listed here.
 	// PodCliques owned by a PodCliqueScalingGroup derive their PodGang association via
