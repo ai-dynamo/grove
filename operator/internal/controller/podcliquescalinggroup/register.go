@@ -25,11 +25,13 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/utils"
 
 	"github.com/samber/lo"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -61,6 +63,14 @@ func (r *Reconciler) RegisterWithManager(mgr manager.Manager) error {
 		Watches(&grovecorev1alpha1.PodClique{},
 			handler.EnqueueRequestsFromMapFunc(mapPCLQToPCSG()),
 			builder.WithPredicates(podCliquePredicate()),
+		).
+		Watches(&grovecorev1alpha1.PodClique{},
+			handler.EnqueueRequestsFromMapFunc(mapComponentToSiblingPCSGs(r.client)),
+			builder.WithPredicates(componentIdleStateChangedPredicate()),
+		).
+		Watches(&grovecorev1alpha1.PodCliqueScalingGroup{},
+			handler.EnqueueRequestsFromMapFunc(mapComponentToSiblingPCSGs(r.client)),
+			builder.WithPredicates(componentIdleStateChangedPredicate()),
 		).
 		Complete(r)
 }
@@ -171,6 +181,75 @@ func mapPCLQToPCSG() handler.MapFunc {
 			return nil
 		}
 		return []reconcile.Request{{NamespacedName: client.ObjectKey{Name: pcsgName, Namespace: pclq.Namespace}}}
+	}
+}
+
+// mapComponentToSiblingPCSGs refreshes derived startsAfter fields when any component
+// in the same PodCliqueSet enters or leaves the intentional idle state.
+func mapComponentToSiblingPCSGs(cl client.Client) handler.MapFunc {
+	return func(ctx context.Context, obj client.Object) []reconcile.Request {
+		pcsName := componentutils.GetPodCliqueSetName(metav1.ObjectMeta{
+			Name:            obj.GetName(),
+			Namespace:       obj.GetNamespace(),
+			Labels:          obj.GetLabels(),
+			OwnerReferences: obj.GetOwnerReferences(),
+		})
+		if pcsName == "" {
+			return nil
+		}
+		pcsgs, err := componentutils.GetPCSGsForPCS(ctx, cl, client.ObjectKey{Name: pcsName, Namespace: obj.GetNamespace()})
+		if err != nil {
+			log.FromContext(ctx).Error(err, "failed to map component change to sibling PodCliqueScalingGroups", "podCliqueSet", pcsName)
+			return nil
+		}
+		return lo.FilterMap(pcsgs, func(pcsg grovecorev1alpha1.PodCliqueScalingGroup, _ int) (reconcile.Request, bool) {
+			owner := metav1.GetControllerOf(&pcsg)
+			isOwnedByPCS := owner != nil && owner.Kind == constants.KindPodCliqueSet && owner.Name == pcsName
+			return reconcile.Request{NamespacedName: client.ObjectKeyFromObject(&pcsg)}, isOwnedByPCS
+		})
+	}
+}
+
+func componentIdleStateChangedPredicate() predicate.Predicate {
+	return predicate.Funcs{
+		CreateFunc: func(_ event.CreateEvent) bool { return false },
+		// Delete is rare but relevant: a deleted scaled child is recreated from its
+		// template, which can change dependency state without an Update event.
+		DeleteFunc: func(deleteEvent event.DeleteEvent) bool {
+			return isManagedStartupDependencyComponent(deleteEvent.Object)
+		},
+		UpdateFunc: func(updateEvent event.UpdateEvent) bool {
+			if updateEvent.ObjectOld == nil || updateEvent.ObjectNew == nil {
+				return false
+			}
+			switch oldObject := updateEvent.ObjectOld.(type) {
+			case *grovecorev1alpha1.PodClique:
+				newObject, ok := updateEvent.ObjectNew.(*grovecorev1alpha1.PodClique)
+				return ok &&
+					isManagedStartupDependencyComponent(oldObject) &&
+					(oldObject.Spec.Replicas == 0) != (newObject.Spec.Replicas == 0)
+			case *grovecorev1alpha1.PodCliqueScalingGroup:
+				newObject, ok := updateEvent.ObjectNew.(*grovecorev1alpha1.PodCliqueScalingGroup)
+				return ok &&
+					isManagedStartupDependencyComponent(oldObject) &&
+					(oldObject.Spec.Replicas == 0) != (newObject.Spec.Replicas == 0)
+			default:
+				return false
+			}
+		},
+		GenericFunc: func(_ event.GenericEvent) bool { return false },
+	}
+}
+
+func isManagedStartupDependencyComponent(obj client.Object) bool {
+	switch typedObject := obj.(type) {
+	case *grovecorev1alpha1.PodClique:
+		return ctrlutils.IsManagedPodClique(typedObject, constants.KindPodCliqueSet, constants.KindPodCliqueScalingGroup)
+	case *grovecorev1alpha1.PodCliqueScalingGroup:
+		return ctrlutils.IsManagedByGrove(typedObject.GetLabels()) &&
+			ctrlutils.HasExpectedOwner(constants.KindPodCliqueSet, typedObject.GetOwnerReferences())
+	default:
+		return false
 	}
 }
 

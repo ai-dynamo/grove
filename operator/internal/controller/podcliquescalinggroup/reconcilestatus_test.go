@@ -148,6 +148,14 @@ func TestComputeMinAvailableBreachedCondition(t *testing.T) {
 		wantReason   string
 	}{
 		{
+			name:         "intentional idle does not breach",
+			replicas:     0,
+			minAvailable: ptr.To(int32(2)),
+			pclqsMap:     map[string][]grovecorev1alpha1.PodClique{},
+			wantStatus:   metav1.ConditionFalse,
+			wantReason:   "SufficientAvailablePodCliqueScalingGroupReplicas",
+		},
+		{
 			name:     "all replicas healthy, none breached",
 			replicas: 3,
 			pclqsMap: map[string][]grovecorev1alpha1.PodClique{
@@ -285,15 +293,17 @@ func TestComputeMinAvailableBreachedCondition(t *testing.T) {
 func TestEmitAllScheduledReplicasLostIfNeeded(t *testing.T) {
 	tests := []struct {
 		name              string
+		desiredReplicas   int32
 		originalScheduled int32
 		nowScheduled      int32
 		wantEvent         bool
 	}{
-		{name: "non-zero to zero emits event", originalScheduled: 3, nowScheduled: 0, wantEvent: true},
-		{name: "zero to zero stays silent (initial startup)", originalScheduled: 0, nowScheduled: 0, wantEvent: false},
-		{name: "non-zero to non-zero stays silent (partial regression handled by breach)", originalScheduled: 3, nowScheduled: 2, wantEvent: false},
-		{name: "zero to non-zero stays silent (recovery)", originalScheduled: 0, nowScheduled: 3, wantEvent: false},
-		{name: "stable non-zero stays silent (steady state)", originalScheduled: 3, nowScheduled: 3, wantEvent: false},
+		{name: "non-zero to zero emits event", desiredReplicas: 3, originalScheduled: 3, nowScheduled: 0, wantEvent: true},
+		{name: "idle transition stays silent", desiredReplicas: 0, originalScheduled: 3, nowScheduled: 0, wantEvent: false},
+		{name: "zero to zero stays silent (initial startup)", desiredReplicas: 3, originalScheduled: 0, nowScheduled: 0, wantEvent: false},
+		{name: "non-zero to non-zero stays silent (partial regression handled by breach)", desiredReplicas: 3, originalScheduled: 3, nowScheduled: 2, wantEvent: false},
+		{name: "zero to non-zero stays silent (recovery)", desiredReplicas: 3, originalScheduled: 0, nowScheduled: 3, wantEvent: false},
+		{name: "stable non-zero stays silent (steady state)", desiredReplicas: 3, originalScheduled: 3, nowScheduled: 3, wantEvent: false},
 	}
 
 	for _, tt := range tests {
@@ -301,6 +311,7 @@ func TestEmitAllScheduledReplicasLostIfNeeded(t *testing.T) {
 			recorder := record.NewFakeRecorder(2)
 			r := &Reconciler{eventRecorder: recorder}
 			pcsg := &grovecorev1alpha1.PodCliqueScalingGroup{
+				Spec:   grovecorev1alpha1.PodCliqueScalingGroupSpec{Replicas: tt.desiredReplicas},
 				Status: grovecorev1alpha1.PodCliqueScalingGroupStatus{ScheduledReplicas: tt.nowScheduled},
 			}
 
@@ -320,6 +331,26 @@ func TestEmitAllScheduledReplicasLostIfNeeded(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestMutateReplicasReportsObservedEffectiveReplicas(t *testing.T) {
+	pcsg := &grovecorev1alpha1.PodCliqueScalingGroup{
+		Spec: grovecorev1alpha1.PodCliqueScalingGroupSpec{
+			Replicas:     1,
+			MinAvailable: ptr.To(int32(2)),
+			CliqueNames:  []string{"worker"},
+		},
+	}
+	pcs := &grovecorev1alpha1.PodCliqueSet{}
+	pclqs := map[string][]grovecorev1alpha1.PodClique{
+		"0": {{ObjectMeta: metav1.ObjectMeta{Name: "workers-0-worker"}}},
+		"1": {{ObjectMeta: metav1.ObjectMeta{Name: "workers-1-worker"}}},
+	}
+
+	mutateReplicas(logr.Discard(), pcs, pcsg, pclqs, countNonTerminatingPCSGReplicas(pclqs))
+
+	assert.Equal(t, int32(2), pcsg.Status.Replicas)
+	assert.Equal(t, int32(1), pcsg.Spec.Replicas)
 }
 
 // TestComputeMinAvailableBreachedConditionUpdateInProgress pins the precedence of the
@@ -726,7 +757,8 @@ func TestPCSGMutateReplicasWritesUpdateProgressCounts(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mutateReplicas(logr.Discard(), pcs, tt.pcsg, tt.pclqsPerReplica(t, tt.pcsg))
+			pclqs := tt.pclqsPerReplica(t, tt.pcsg)
+			mutateReplicas(logr.Discard(), pcs, tt.pcsg, pclqs, countNonTerminatingPCSGReplicas(pclqs))
 
 			if !tt.wantWritten {
 				require.Nil(t, tt.pcsg.Status.UpdateProgress, "UpdateProgress must remain nil")
@@ -859,7 +891,7 @@ func TestHavePCSGPodCliquesConverged(t *testing.T) {
 }
 
 // TestPruneStrayPCSGPCLQs covers the two stray-child cases that would otherwise inflate
-// downstream counters: replica indexes outside [0, Spec.Replicas) (scale-down leftovers) and
+// downstream counters: replica indexes outside the effective range (scale-down leftovers) and
 // PCLQ FQNs that are not produced by Spec.CliqueNames at the kept indexes (post clique-name change).
 func TestPruneStrayPCSGPCLQs(t *testing.T) {
 	pcsg := testutils.NewPodCliqueScalingGroupBuilder("test-pcsg", "test-ns", "test-pcs", 0).
@@ -874,7 +906,7 @@ func TestPruneStrayPCSGPCLQs(t *testing.T) {
 		// expected children for replicas 0 and 1
 		"0": {mkPCLQ("test-pcsg-0-frontend"), mkPCLQ("test-pcsg-0-backend")},
 		"1": {mkPCLQ("test-pcsg-1-frontend"), mkPCLQ("test-pcsg-1-backend")},
-		// stale-index leftover from a prior Spec.Replicas=3 (scale-down case)
+		// stale-index leftover from a prior effective replica count of 3 (scale-down case)
 		"2": {mkPCLQ("test-pcsg-2-frontend"), mkPCLQ("test-pcsg-2-backend")},
 	}
 	// stray name within an expected index (post clique-name change)
@@ -900,7 +932,8 @@ func TestPruneStrayPCSGPCLQs(t *testing.T) {
 
 // TestReconcileStatusBoundedDuringScaleDown is the integration-level guard for the same fix:
 // stale-index children that still live in the cache after a scale-down must not push
-// UpdatedPodCliquesCount past the spec-derived TotalPodCliquesCount, nor inflate replica counters.
+// UpdatedPodCliquesCount past the spec-derived TotalPodCliquesCount. status.replicas
+// still includes them until deletion starts.
 func TestReconcileStatusBoundedDuringScaleDown(t *testing.T) {
 	ctx := context.Background()
 	pcsHash := string(uuid.NewUUID())
@@ -948,7 +981,7 @@ func TestReconcileStatusBoundedDuringScaleDown(t *testing.T) {
 	require.False(t, result.HasErrors())
 
 	require.NoError(t, fakeClient.Get(ctx, client.ObjectKeyFromObject(pcsg), pcsg))
-	assert.Equal(t, int32(2), pcsg.Status.Replicas)
+	assert.Equal(t, int32(3), pcsg.Status.Replicas, "must include non-terminating replicas while scale-down deletion is in flight")
 	assert.Equal(t, int32(2), pcsg.Status.ScheduledReplicas, "must not count stale-index replicas")
 	assert.Equal(t, int32(2), pcsg.Status.AvailableReplicas, "must not count stale-index replicas")
 	assert.Equal(t, int32(2), pcsg.Status.UpdatedReplicas, "must not count stale-index replicas")

@@ -30,6 +30,7 @@ import (
 
 	"github.com/samber/lo"
 	admissionv1 "k8s.io/api/admission/v1"
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apivalidation "k8s.io/apimachinery/pkg/api/validation"
@@ -354,13 +355,6 @@ func (v *pcsValidator) validatePodCliqueScalingGroupConfigs(fldPath *field.Path)
 		allErrs = append(allErrs, v.validateScalingGroupPodCliqueNames(scalingGroupConfig.Name, allPodCliqueSetCliqueNames,
 			scalingGroupConfig.CliqueNames, fldPath.Index(i).Child("cliqueNames"), fldPath.Index(i).Child("name"))...)
 
-		// validate Replicas field
-		if scalingGroupConfig.Replicas != nil {
-			if *scalingGroupConfig.Replicas <= 0 {
-				allErrs = append(allErrs, field.Invalid(fldPath.Index(i).Child("replicas"), *scalingGroupConfig.Replicas, "must be greater than 0"))
-			}
-		}
-
 		// validate MinAvailable field
 		if scalingGroupConfig.MinAvailable != nil {
 			if *scalingGroupConfig.MinAvailable <= 0 {
@@ -370,16 +364,14 @@ func (v *pcsValidator) validatePodCliqueScalingGroupConfigs(fldPath *field.Path)
 
 		// validate MinAvailable <= Replicas
 		if scalingGroupConfig.Replicas != nil && scalingGroupConfig.MinAvailable != nil {
-			if *scalingGroupConfig.MinAvailable > *scalingGroupConfig.Replicas {
+			if *scalingGroupConfig.Replicas > 0 && *scalingGroupConfig.MinAvailable > *scalingGroupConfig.Replicas {
 				allErrs = append(allErrs, field.Invalid(fldPath.Index(i).Child("minAvailable"), *scalingGroupConfig.MinAvailable, "minAvailable must not be greater than replicas"))
 			}
 		}
 
-		// validate ScaleConfig.MinReplicas >= MinAvailable
+		// validate ScaleConfig against MinAvailable
 		if scalingGroupConfig.ScaleConfig != nil && scalingGroupConfig.MinAvailable != nil {
-			if scalingGroupConfig.ScaleConfig.MinReplicas != nil && *scalingGroupConfig.ScaleConfig.MinReplicas < *scalingGroupConfig.MinAvailable {
-				allErrs = append(allErrs, field.Invalid(fldPath.Index(i).Child("scaleConfig", "minReplicas"), *scalingGroupConfig.ScaleConfig.MinReplicas, "scaleConfig.minReplicas must be greater than or equal to minAvailable"))
-			}
+			allErrs = append(allErrs, validateScaleConfig(scalingGroupConfig.ScaleConfig, *scalingGroupConfig.MinAvailable, fldPath.Index(i).Child("scaleConfig"))...)
 		}
 
 		// validate PCSG-level ResourceSharing
@@ -520,10 +512,6 @@ func (v *pcsValidator) validateScalingGroupPodCliqueNames(pcsgName string, allPc
 func (v *pcsValidator) validatePodCliqueSpec(name string, cliqueSpec grovecorev1alpha1.PodCliqueSpec, fldPath *field.Path) ([]string, field.ErrorList) {
 	allErrs := field.ErrorList{}
 
-	if cliqueSpec.Replicas <= 0 {
-		allErrs = append(allErrs, field.Invalid(fldPath.Child("replicas"), cliqueSpec.Replicas, "must be greater than 0"))
-	}
-
 	// Ideally this should never happen, the defaulting webhook will always set the default value for minAvailable.
 	if cliqueSpec.MinAvailable == nil {
 		allErrs = append(allErrs, field.Required(fldPath.Child("minAvailable"), "field is required"))
@@ -532,7 +520,7 @@ func (v *pcsValidator) validatePodCliqueSpec(name string, cliqueSpec grovecorev1
 		if *cliqueSpec.MinAvailable <= 0 {
 			allErrs = append(allErrs, field.Invalid(fldPath.Child("minAvailable"), *cliqueSpec.MinAvailable, "must be greater than 0"))
 		}
-		if *cliqueSpec.MinAvailable > cliqueSpec.Replicas {
+		if cliqueSpec.Replicas > 0 && *cliqueSpec.MinAvailable > cliqueSpec.Replicas {
 			allErrs = append(allErrs, field.Invalid(fldPath.Child("minAvailable"), *cliqueSpec.MinAvailable, "minAvailable must not be greater than replicas"))
 		}
 	}
@@ -576,9 +564,13 @@ func validateScaleConfig(scaleConfig *grovecorev1alpha1.AutoScalingConfig, minAv
 	if scaleConfig.MinReplicas == nil {
 		allErrs = append(allErrs, field.Required(fldPath.Child("minReplicas"), "field is required"))
 	} else {
-		// scaleConfig.MinReplicas should be greater than or equal to minAvailable else it will trigger a PodGang termination.
-		if *scaleConfig.MinReplicas < minAvailable {
-			allErrs = append(allErrs, field.Invalid(fldPath.Child("minReplicas"), *scaleConfig.MinReplicas, "must be greater than or equal to podCliqueSpec.minAvailable"))
+		if *scaleConfig.MinReplicas != 0 && *scaleConfig.MinReplicas < minAvailable {
+			allErrs = append(allErrs, field.Invalid(fldPath.Child("minReplicas"), *scaleConfig.MinReplicas, "must be 0 or greater than or equal to podCliqueSpec.minAvailable"))
+		}
+		if *scaleConfig.MinReplicas == 0 && !slices.ContainsFunc(scaleConfig.Metrics, func(metric autoscalingv2.MetricSpec) bool {
+			return metric.Type == autoscalingv2.ObjectMetricSourceType || metric.Type == autoscalingv2.ExternalMetricSourceType
+		}) {
+			allErrs = append(allErrs, field.Forbidden(fldPath.Child("metrics"), "must specify at least one Object or External metric when minReplicas is 0"))
 		}
 	}
 	if scaleConfig.MaxReplicas < *scaleConfig.MinReplicas {

@@ -134,9 +134,10 @@ func (r _resource) getPodNamesUpdatedInAssociatedPodGang(existingPodGang *groves
 // runSyncFlow executes the main synchronization logic including pod creation, deletion, updates, and scheduling gate management
 func (r _resource) runSyncFlow(logger logr.Logger, sc *syncContext) syncFlowResult {
 	result := syncFlowResult{}
+	effectiveReplicas := componentutils.EffectiveReplicas(sc.pclq.Spec.Replicas, sc.pclq.Spec.MinAvailable)
 	diff := r.syncExpectationsAndComputeDifference(logger, sc)
 	if diff < 0 {
-		logger.Info("found fewer pods than desired", "pclq.spec.replicas", sc.pclq.Spec.Replicas, "delta", diff)
+		logger.Info("found fewer pods than effective replicas", "desiredReplicas", sc.pclq.Spec.Replicas, "effectiveReplicas", effectiveReplicas, "delta", diff)
 		diff *= -1
 		numScheduleGatedPods, err := r.createPods(sc.ctx, logger, sc, diff)
 		if err != nil {
@@ -172,10 +173,12 @@ func (r _resource) syncExpectationsAndComputeDifference(logger logr.Logger, sc *
 	r.expectationsStore.SyncExpectations(sc.pclqExpectationsStoreKey, nonTerminatingPodUIDs, terminatingPodUIDs)
 	createExpectations := r.expectationsStore.GetCreateExpectations(sc.pclqExpectationsStoreKey)
 	deleteExpectations := r.expectationsStore.GetDeleteExpectations(sc.pclqExpectationsStoreKey)
-	diff := len(sc.existingPCLQPods) + len(createExpectations) - int(sc.pclq.Spec.Replicas) - len(deleteExpectations)
+	effectiveReplicas := componentutils.EffectiveReplicas(sc.pclq.Spec.Replicas, sc.pclq.Spec.MinAvailable)
+	diff := len(sc.existingPCLQPods) + len(createExpectations) - int(effectiveReplicas) - len(deleteExpectations)
 
 	logger.V(4).Info("synced expectations",
-		"pclq.spec.replicas", sc.pclq.Spec.Replicas,
+		"desiredReplicas", sc.pclq.Spec.Replicas,
+		"effectiveReplicas", effectiveReplicas,
 		"existingPCLPodNames", lo.Map(sc.existingPCLQPods, func(pod *corev1.Pod, _ int) string { return pod.Name }),
 		"createExpectations", createExpectations,
 		"deleteExpectations", deleteExpectations,
@@ -245,7 +248,7 @@ func (r _resource) selectExcessPodsToDelete(sc *syncContext, logger logr.Logger)
 		}
 		livePods = append(livePods, pod)
 	}
-	numExcessPods := len(livePods) - int(sc.pclq.Spec.Replicas)
+	numExcessPods := len(livePods) - int(componentutils.EffectiveReplicas(sc.pclq.Spec.Replicas, sc.pclq.Spec.MinAvailable))
 	if numExcessPods <= 0 {
 		return nil
 	}

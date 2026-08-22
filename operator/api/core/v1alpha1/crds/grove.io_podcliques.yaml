@@ -554,7 +554,9 @@ spec:
                     description: |-
                       MinReplicas is the lower limit for the number of replicas for the target resource.
                       It will be used by the horizontal pod autoscaler to determine the minimum number of replicas to scale-in to.
+                      Zero requires the Kubernetes HPAScaleToZero feature gate and at least one Object or External metric.
                     format: int32
+                    minimum: 0
                     type: integer
                 required:
                 - maxReplicas
@@ -564,8 +566,8 @@ spec:
                   MinAvailable serves two purposes:
                   1. It defines the minimum number of pods that are guaranteed to be gang scheduled.
                   2. It defines the minimum requirement of available pods in a PodClique. Violation of this threshold will result
-                  in termination of the PodGang that it belongs to. If MinAvailable is not set, then it will default to the template
-                  Replicas.
+                  in termination of the PodGang that it belongs to. If MinAvailable is not set, then it defaults to the greater of
+                  Replicas and 1.
                 format: int32
                 type: integer
               podSpec:
@@ -8994,9 +8996,13 @@ spec:
                 - containers
                 type: object
               replicas:
-                description: Replicas is the number of replicas of the pods in the
-                  clique. It cannot be less than 1.
+                default: 1
+                description: |-
+                  Replicas is the desired number of replicas of the pods in the clique.
+                  If not specified, it defaults to 1.
+                  A positive value below MinAvailable is preserved as desired state while the controller reconciles MinAvailable pods.
                 format: int32
+                minimum: 0
                 type: integer
               roleName:
                 description: RoleName is the name of the role that this PodClique

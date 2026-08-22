@@ -62,13 +62,17 @@ type PodCliqueSpec struct {
 	RoleName string `json:"roleName"`
 	// Spec is the spec of the pods in the clique.
 	PodSpec corev1.PodSpec `json:"podSpec"`
-	// Replicas is the number of replicas of the pods in the clique. It cannot be less than 1.
+	// Replicas is the desired number of replicas of the pods in the clique.
+	// If not specified, it defaults to 1.
+	// A positive value below MinAvailable is preserved as desired state while the controller reconciles MinAvailable pods.
+	// +kubebuilder:default=1
+	// +kubebuilder:validation:Minimum=0
 	Replicas int32 `json:"replicas"`
 	// MinAvailable serves two purposes:
 	// 1. It defines the minimum number of pods that are guaranteed to be gang scheduled.
 	// 2. It defines the minimum requirement of available pods in a PodClique. Violation of this threshold will result
-	// in termination of the PodGang that it belongs to. If MinAvailable is not set, then it will default to the template
-	// Replicas.
+	// in termination of the PodGang that it belongs to. If MinAvailable is not set, then it defaults to the greater of
+	// Replicas and 1.
 	// +optional
 	MinAvailable *int32 `json:"minAvailable,omitempty"`
 	// StartsAfter provides you a way to explicitly define the startup dependencies amongst cliques.
@@ -90,7 +94,9 @@ type PodCliqueSpec struct {
 type AutoScalingConfig struct {
 	// MinReplicas is the lower limit for the number of replicas for the target resource.
 	// It will be used by the horizontal pod autoscaler to determine the minimum number of replicas to scale-in to.
+	// Zero requires the Kubernetes HPAScaleToZero feature gate and at least one Object or External metric.
 	// +optional
+	// +kubebuilder:validation:Minimum=0
 	MinReplicas *int32 `json:"minReplicas,omitempty"`
 	// maxReplicas is the upper limit for the number of replicas to which the autoscaler can scale up.
 	// It cannot be less that minReplicas.

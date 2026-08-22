@@ -231,11 +231,11 @@ func (r _resource) getPCSGTemplateNumPods(pcs *grovecorev1alpha1.PodCliqueSet, p
 }
 
 // doCreate creates or updates a PodClique resource with proper configuration from PCS and PCSG templates
-func (r _resource) doCreate(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, pcsg *grovecorev1alpha1.PodCliqueScalingGroup, pcsgReplicaIndex int, pclqObjectKey client.ObjectKey) error {
+func (r _resource) doCreate(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, pcsg *grovecorev1alpha1.PodCliqueScalingGroup, pcsgReplicaIndex int, pclqObjectKey client.ObjectKey, dependencyState *componentutils.StartupDependencyState) error {
 	logger.Info("Running CreateOrUpdate PodClique", "pclqObjectKey", pclqObjectKey)
 	pclq := emptyPodClique(pclqObjectKey)
 	pcsgObjKey := client.ObjectKeyFromObject(pclq)
-	if err := r.buildResource(logger, pcs, pcsg, pcsgReplicaIndex, pclq, false); err != nil {
+	if err := r.buildResource(logger, pcs, pcsg, pcsgReplicaIndex, pclq, false, dependencyState); err != nil {
 		return err
 	}
 	if err := r.client.Create(ctx, pclq); err != nil {
@@ -257,13 +257,13 @@ func (r _resource) doCreate(ctx context.Context, logger logr.Logger, pcs *grovec
 
 // doCreateOrUpdate creates or updates a PodClique resource using CreateOrPatch.
 // This preserves the existing replicas value to avoid overwriting HPA-managed scaling.
-func (r _resource) doCreateOrUpdate(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, pcsg *grovecorev1alpha1.PodCliqueScalingGroup, pcsgReplicaIndex int, pclqObjectKey client.ObjectKey, pclqExists bool) error {
+func (r _resource) doCreateOrUpdate(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, pcsg *grovecorev1alpha1.PodCliqueScalingGroup, pcsgReplicaIndex int, pclqObjectKey client.ObjectKey, pclqExists bool, dependencyState *componentutils.StartupDependencyState) error {
 	logger.Info("Running CreateOrUpdate PodClique", "pclqObjectKey", pclqObjectKey)
 	pclq := emptyPodClique(pclqObjectKey)
 	pcsgObjKey := client.ObjectKeyFromObject(pcsg)
 
 	opResult, err := controllerutil.CreateOrPatch(ctx, r.client, pclq, func() error {
-		return r.buildResource(logger, pcs, pcsg, pcsgReplicaIndex, pclq, pclqExists)
+		return r.buildResource(logger, pcs, pcsg, pcsgReplicaIndex, pclq, pclqExists, dependencyState)
 	})
 	if err != nil {
 		r.eventRecorder.Eventf(pcsg, corev1.EventTypeWarning, constants.ReasonPodCliqueCreateOrUpdateFailed, "PodClique %v creation or update failed: %v", pclqObjectKey, err)
@@ -281,7 +281,7 @@ func (r _resource) doCreateOrUpdate(ctx context.Context, logger logr.Logger, pcs
 
 // buildResource constructs a PodClique resource from templates, setting up metadata, labels, dependencies and environment variables.
 // When pclqExists is true, the current replicas value is preserved to avoid overwriting HPA-managed scaling.
-func (r _resource) buildResource(logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, pcsg *grovecorev1alpha1.PodCliqueScalingGroup, pcsgReplicaIndex int, pclq *grovecorev1alpha1.PodClique, pclqExists bool) error {
+func (r _resource) buildResource(logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, pcsg *grovecorev1alpha1.PodCliqueScalingGroup, pcsgReplicaIndex int, pclq *grovecorev1alpha1.PodClique, pclqExists bool, dependencyState *componentutils.StartupDependencyState) error {
 	var err error
 	pclqObjectKey, pcsObjectKey := client.ObjectKeyFromObject(pclq), client.ObjectKeyFromObject(pcs)
 	pclqTemplateSpec, foundAtIndex, ok := lo.FindIndexOf(pcs.Spec.Template.Cliques, func(pclqTemplateSpec *grovecorev1alpha1.PodCliqueTemplateSpec) bool {
@@ -329,7 +329,7 @@ func (r _resource) buildResource(logger logr.Logger, pcs *grovecorev1alpha1.PodC
 	}
 	pcsgTemplateNumPods := r.getPCSGTemplateNumPods(pcs, pcsg)
 	r.addEnvironmentVariablesToPodContainerSpecs(pclq, pcsgTemplateNumPods)
-	dependentPCLQNames, err := identifyFullyQualifiedStartupDependencyNames(pcs, pcsReplicaIndex, pcsg, pcsgReplicaIndex, pclq, foundAtIndex)
+	dependentPCLQNames, err := identifyFullyQualifiedStartupDependencyNames(pcs, pcsReplicaIndex, pcsg, pcsgReplicaIndex, pclq, foundAtIndex, dependencyState)
 	if err != nil {
 		return err
 	}
@@ -393,7 +393,7 @@ func getPCSReplicaFromPCSG(pcsg *grovecorev1alpha1.PodCliqueScalingGroup) (int, 
 }
 
 // identifyFullyQualifiedStartupDependencyNames resolves startup dependencies based on PCS startup type configuration
-func identifyFullyQualifiedStartupDependencyNames(pcs *grovecorev1alpha1.PodCliqueSet, pcsReplicaIndex int, pcsg *grovecorev1alpha1.PodCliqueScalingGroup, pcsgReplicaIndex int, pclq *grovecorev1alpha1.PodClique, foundAtIndex int) ([]string, error) {
+func identifyFullyQualifiedStartupDependencyNames(pcs *grovecorev1alpha1.PodCliqueSet, pcsReplicaIndex int, pcsg *grovecorev1alpha1.PodCliqueScalingGroup, pcsgReplicaIndex int, pclq *grovecorev1alpha1.PodClique, foundAtIndex int, dependencyState *componentutils.StartupDependencyState) ([]string, error) {
 	cliqueStartupType := pcs.Spec.Template.StartupType
 	if cliqueStartupType == nil {
 		// Ideally this should never happen as the defaulting webhook should set it v1alpha1.CliqueStartupTypeInOrder as the default value.
@@ -402,54 +402,61 @@ func identifyFullyQualifiedStartupDependencyNames(pcs *grovecorev1alpha1.PodCliq
 	}
 	switch *cliqueStartupType {
 	case grovecorev1alpha1.CliqueStartupTypeInOrder:
-		return getInOrderStartupDependencies(pcs, pcsReplicaIndex, pcsg, pcsgReplicaIndex, foundAtIndex), nil
+		return getInOrderStartupDependencies(pcs, pcsReplicaIndex, pcsg, pcsgReplicaIndex, foundAtIndex, dependencyState), nil
 	case grovecorev1alpha1.CliqueStartupTypeExplicit:
-		return getExplicitStartupDependencies(pcs, pcsReplicaIndex, pcsg, pcsgReplicaIndex, pclq), nil
+		return getExplicitStartupDependencies(pcs, pcsReplicaIndex, pcsg, pcsgReplicaIndex, pcs.Spec.Template.Cliques[foundAtIndex].Spec.StartsAfter, dependencyState), nil
 	default:
 		return nil, nil
 	}
 }
 
 // getInOrderStartupDependencies generates dependencies for in-order startup by including all preceding PodCliques in the same replica
-func getInOrderStartupDependencies(pcs *grovecorev1alpha1.PodCliqueSet, pcsReplicaIndex int, pcsg *grovecorev1alpha1.PodCliqueScalingGroup, pcsgReplicaIndex, foundAtIndex int) []string {
-	if foundAtIndex == 0 {
-		return nil
+func getInOrderStartupDependencies(pcs *grovecorev1alpha1.PodCliqueSet, pcsReplicaIndex int, pcsg *grovecorev1alpha1.PodCliqueScalingGroup, pcsgReplicaIndex, foundAtIndex int, dependencyState *componentutils.StartupDependencyState) []string {
+	// InOrder applies to active components in the same PodGang. Skipping idle
+	// predecessors avoids waiting for a Ready state that cannot exist at replicas=0.
+	for parentIndex := foundAtIndex - 1; parentIndex >= 0; parentIndex-- {
+		parentTemplate := pcs.Spec.Template.Cliques[parentIndex]
+		if pcsgReplicaIndex < int(*pcsg.Spec.MinAvailable) {
+			if dependencies := componentutils.GenerateDependencyNamesForBasePodGang(pcs, pcsReplicaIndex, parentTemplate.Name, dependencyState); len(dependencies) > 0 {
+				return dependencies
+			}
+			continue
+		}
+		if !slices.Contains(pcsg.Spec.CliqueNames, parentTemplate.Name) {
+			continue
+		}
+		parentPCLQName := apicommon.GeneratePodCliqueName(apicommon.ResourceNameReplica{Name: pcsg.Name, Replica: pcsgReplicaIndex}, parentTemplate.Name)
+		if dependencyState.IsPodCliqueDependencyActive(parentPCLQName, parentTemplate.Spec.Replicas) {
+			return []string{parentPCLQName}
+		}
 	}
-	parentCliqueName := pcs.Spec.Template.Cliques[foundAtIndex-1].Name
-
-	// Current pcsgReplicaIndex belongs to the base PodGang
-	if pcsgReplicaIndex < int(*pcsg.Spec.MinAvailable) {
-		return componentutils.GenerateDependencyNamesForBasePodGang(pcs, pcsReplicaIndex, parentCliqueName)
-	}
-
-	// Startup ordering is only enforced within a PodGang.
-	// PodCliques that belong to the base PodGang are not considered for startsAfter in scaled PodGangs.
-	if !slices.Contains(pcsg.Spec.CliqueNames, parentCliqueName) {
-		return nil
-	}
-
-	return []string{
-		apicommon.GeneratePodCliqueName(apicommon.ResourceNameReplica{Name: pcsg.Name, Replica: pcsgReplicaIndex}, parentCliqueName),
-	}
+	return nil
 }
 
 // getExplicitStartupDependencies generates fully qualified names for explicitly defined startup dependencies
-func getExplicitStartupDependencies(pcs *grovecorev1alpha1.PodCliqueSet, pcsReplicaIndex int, pcsg *grovecorev1alpha1.PodCliqueScalingGroup, pcsgReplicaIndex int, pclq *grovecorev1alpha1.PodClique) []string {
-	parentCliqueNames := make([]string, 0, len(pclq.Spec.StartsAfter))
+func getExplicitStartupDependencies(pcs *grovecorev1alpha1.PodCliqueSet, pcsReplicaIndex int, pcsg *grovecorev1alpha1.PodCliqueScalingGroup, pcsgReplicaIndex int, dependencies []string, dependencyState *componentutils.StartupDependencyState) []string {
+	parentCliqueNames := make([]string, 0, len(dependencies))
 	// Current pcsgReplicaIndex belongs to the base PodGang
 	if pcsgReplicaIndex < int(*pcsg.Spec.MinAvailable) {
-		for _, dependency := range pclq.Spec.StartsAfter {
-			parentCliqueNames = append(parentCliqueNames, componentutils.GenerateDependencyNamesForBasePodGang(pcs, pcsReplicaIndex, dependency)...)
+		for _, dependency := range dependencies {
+			parentCliqueNames = append(parentCliqueNames, componentutils.GenerateDependencyNamesForBasePodGang(pcs, pcsReplicaIndex, dependency, dependencyState)...)
 		}
 		return parentCliqueNames
 	}
 
-	for _, dependency := range pclq.Spec.StartsAfter {
+	for _, dependency := range dependencies {
 		// Startup ordering is only enforced within the scaled PodCliqueScalingGroup's corresponding PodGang.
 		if !slices.Contains(pcsg.Spec.CliqueNames, dependency) {
 			continue
 		}
-		parentCliqueNames = append(parentCliqueNames, apicommon.GeneratePodCliqueName(apicommon.ResourceNameReplica{Name: pcsg.Name, Replica: pcsgReplicaIndex}, dependency))
+		parentTemplate := componentutils.FindPodCliqueTemplateSpecByName(pcs, dependency)
+		if parentTemplate == nil {
+			continue
+		}
+		parentPCLQName := apicommon.GeneratePodCliqueName(apicommon.ResourceNameReplica{Name: pcsg.Name, Replica: pcsgReplicaIndex}, dependency)
+		if dependencyState.IsPodCliqueDependencyActive(parentPCLQName, parentTemplate.Spec.Replicas) {
+			parentCliqueNames = append(parentCliqueNames, parentPCLQName)
+		}
 	}
 	return parentCliqueNames
 }

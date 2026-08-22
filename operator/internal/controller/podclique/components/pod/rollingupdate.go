@@ -234,7 +234,10 @@ func isCurrentPodUpdateComplete(sc *syncContext, work *updateWork) bool {
 
 	// Also verify count as a sanity check
 	podsSelectedToUpdate := len(sc.pclq.Status.UpdateProgress.ReadyPodsSelectedToUpdate.Completed) + 1
-	return len(work.newTemplateHashReadyPods) >= podsSelectedToUpdate
+	effectiveReplicas := int(componentutils.EffectiveReplicas(sc.pclq.Spec.Replicas, sc.pclq.Spec.MinAvailable))
+	// A concurrent scale-in can reduce the target below the historical number of
+	// pods selected for update. Only the current effective target must become Ready.
+	return len(work.newTemplateHashReadyPods) >= min(podsSelectedToUpdate, effectiveReplicas)
 }
 
 // updatePCLQStatusWithNextPodToUpdate updates the PodClique status to track the next pod selected for rolling update

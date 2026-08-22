@@ -17,12 +17,63 @@ package utils
 import (
 	"testing"
 
+	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 
 	"github.com/stretchr/testify/assert"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
 )
+
+func TestGenerateDependencyNamesForBasePodGangSkipsIdleComponents(t *testing.T) {
+	pcs := &grovecorev1alpha1.PodCliqueSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-pcs"},
+		Spec: grovecorev1alpha1.PodCliqueSetSpec{
+			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
+				Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+					{Name: "router", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1}},
+					{Name: "worker", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1}},
+				},
+				PodCliqueScalingGroupConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+					{Name: "workers", CliqueNames: []string{"worker"}, Replicas: ptr.To(int32(2)), MinAvailable: ptr.To(int32(2))},
+				},
+			},
+		},
+	}
+	pcsgName := apicommon.GeneratePodCliqueScalingGroupName(apicommon.ResourceNameReplica{Name: pcs.Name, Replica: 0}, "workers")
+	worker0 := apicommon.GeneratePodCliqueName(apicommon.ResourceNameReplica{Name: pcsgName, Replica: 0}, "worker")
+	worker1 := apicommon.GeneratePodCliqueName(apicommon.ResourceNameReplica{Name: pcsgName, Replica: 1}, "worker")
+
+	t.Run("standalone", func(t *testing.T) {
+		state := NewStartupDependencyState([]grovecorev1alpha1.PodClique{{
+			ObjectMeta: metav1.ObjectMeta{Name: "test-pcs-0-router"},
+			Spec:       grovecorev1alpha1.PodCliqueSpec{Replicas: 0},
+		}}, nil)
+		assert.Empty(t, GenerateDependencyNamesForBasePodGang(pcs, 0, "router", state))
+	})
+
+	t.Run("scaling group", func(t *testing.T) {
+		state := NewStartupDependencyState(
+			[]grovecorev1alpha1.PodClique{
+				{ObjectMeta: metav1.ObjectMeta{Name: worker0}, Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 0}},
+				{ObjectMeta: metav1.ObjectMeta{Name: worker1}, Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1}},
+			},
+			[]grovecorev1alpha1.PodCliqueScalingGroup{{
+				ObjectMeta: metav1.ObjectMeta{Name: pcsgName},
+				Spec:       grovecorev1alpha1.PodCliqueScalingGroupSpec{Replicas: 2},
+			}},
+		)
+		assert.Equal(t, []string{worker1}, GenerateDependencyNamesForBasePodGang(pcs, 0, "worker", state))
+	})
+
+	t.Run("idle scaling group", func(t *testing.T) {
+		state := NewStartupDependencyState(nil, []grovecorev1alpha1.PodCliqueScalingGroup{{
+			ObjectMeta: metav1.ObjectMeta{Name: pcsgName},
+			Spec:       grovecorev1alpha1.PodCliqueScalingGroupSpec{Replicas: 0},
+		}})
+		assert.Empty(t, GenerateDependencyNamesForBasePodGang(pcs, 0, "worker", state))
+	})
+}
 
 func TestFindScalingGroupConfigForClique(t *testing.T) {
 	// Create test scaling group configurations

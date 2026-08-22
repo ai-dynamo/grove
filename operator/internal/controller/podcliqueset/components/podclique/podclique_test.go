@@ -24,6 +24,7 @@ import (
 	groveclientscheme "github.com/ai-dynamo/grove/operator/internal/client"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
+	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
@@ -40,6 +41,29 @@ import (
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
+
+func TestStartupDependenciesSkipIdleCliques(t *testing.T) {
+	pcs := &grovecorev1alpha1.PodCliqueSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-pcs"},
+		Spec: grovecorev1alpha1.PodCliqueSetSpec{
+			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
+				Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+					{Name: "router", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1}},
+					{Name: "cache", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1}},
+					{Name: "worker", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1}},
+				},
+			},
+		},
+	}
+	state := componentutils.NewStartupDependencyState([]grovecorev1alpha1.PodClique{
+		{ObjectMeta: metav1.ObjectMeta{Name: "test-pcs-0-router"}, Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1}},
+		{ObjectMeta: metav1.ObjectMeta{Name: "test-pcs-0-cache"}, Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 0}},
+	}, nil)
+
+	assert.Equal(t, []string{"test-pcs-0-router"}, getInOrderStartupDependencies(pcs, 0, 2, state))
+	pclq := &grovecorev1alpha1.PodClique{Spec: grovecorev1alpha1.PodCliqueSpec{StartsAfter: []string{"cache"}}}
+	assert.Empty(t, getExplicitStartupDependencies(pcs, 0, pclq, state))
+}
 
 const (
 	testPCSName      = "coyote"
@@ -456,7 +480,7 @@ func TestBuildResource_MNNVLInjection(t *testing.T) {
 				eventRecorder: record.NewFakeRecorder(10),
 			}
 
-			err := operator.buildResource(logr.Discard(), pclq, pcs, pcsReplica, false)
+			err := operator.buildResource(logr.Discard(), pclq, pcs, pcsReplica, false, nil)
 			require.NoError(t, err)
 
 			// Verify pod-level claims
@@ -510,12 +534,38 @@ func TestBuildResource_StripsTopologyAnnotation(t *testing.T) {
 	}
 
 	operator := &_resource{scheme: groveclientscheme.Scheme}
-	err := operator.buildResource(logr.Discard(), pclq, pcs, 0, false)
+	err := operator.buildResource(logr.Discard(), pclq, pcs, 0, false, nil)
 	require.NoError(t, err)
 	require.NotNil(t, pclq.Annotations)
 	assert.Equal(t, "yes", pclq.Annotations["example.com/keep"])
 	_, hasTopologyAnnotation := pclq.Annotations[apiconstants.AnnotationTopologyName]
 	assert.False(t, hasTopologyAnnotation)
+}
+
+func TestBuildResourcePreservesDesiredReplicas(t *testing.T) {
+	pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testPCSNamespace, uuid.NewUUID()).
+		WithReplicas(1).
+		WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder)).
+		WithPodCliqueTemplateSpec(
+			testutils.NewPodCliqueTemplateSpecBuilder("worker").
+				WithReplicas(0).
+				WithMinAvailable(2).
+				Build(),
+		).
+		Build()
+	pclq := &grovecorev1alpha1.PodClique{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("%s-0-worker", testPCSName),
+			Namespace: testPCSNamespace,
+		},
+		Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1},
+	}
+
+	operator := &_resource{scheme: groveclientscheme.Scheme}
+	require.NoError(t, operator.buildResource(logr.Discard(), pclq, pcs, 0, true, nil))
+
+	assert.Equal(t, int32(1), pclq.Spec.Replicas)
+	assert.Equal(t, int32(2), *pclq.Spec.MinAvailable)
 }
 
 // triageContainersByMNNVLClaim separates containers into those with MNNVL claim and those without.

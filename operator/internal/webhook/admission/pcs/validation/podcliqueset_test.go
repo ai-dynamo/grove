@@ -31,6 +31,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	admissionv1 "k8s.io/api/admission/v1"
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
 	resourcev1 "k8s.io/api/resource/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -353,21 +354,17 @@ func TestPodCliqueScalingGroupConfigValidation(t *testing.T) {
 			cliqueTemplates: []string{"prefill"},
 		},
 		{
-			description: "Invalid Replicas (negative value)",
+			description: "Valid idle scaling group",
 			pcsName:     "inference",
 			scalingGroups: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
 				{
 					Name:         "workers",
 					CliqueNames:  []string{"prefill"},
-					Replicas:     ptr.To(int32(-1)),
-					MinAvailable: ptr.To(int32(1)),
+					Replicas:     ptr.To(int32(0)),
+					MinAvailable: ptr.To(int32(2)),
 				},
 			},
 			cliqueTemplates: []string{"prefill"},
-			errorMatchers: []testutils.ErrorMatcher{
-				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.podCliqueScalingGroups[0].replicas"},
-				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.podCliqueScalingGroups[0].minAvailable"},
-			},
 		},
 		{
 			description: "Invalid MinAvailable (zero value)",
@@ -419,6 +416,46 @@ func TestPodCliqueScalingGroupConfigValidation(t *testing.T) {
 			cliqueTemplates: []string{"prefill"},
 			errorMatchers: []testutils.ErrorMatcher{
 				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.podCliqueScalingGroups[0].scaleConfig.minReplicas"},
+			},
+		},
+		{
+			description: "Valid ScaleConfig.MinReplicas zero",
+			pcsName:     "inference",
+			scalingGroups: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+				{
+					Name:         "workers",
+					CliqueNames:  []string{"prefill"},
+					Replicas:     ptr.To(int32(4)),
+					MinAvailable: ptr.To(int32(3)),
+					ScaleConfig: &grovecorev1alpha1.AutoScalingConfig{
+						MinReplicas: ptr.To(int32(0)),
+						MaxReplicas: 10,
+						Metrics: []autoscalingv2.MetricSpec{
+							{Type: autoscalingv2.ExternalMetricSourceType},
+						},
+					},
+				},
+			},
+			cliqueTemplates: []string{"prefill"},
+		},
+		{
+			description: "Invalid ScaleConfig.MinReplicas zero without scale-to-zero metric",
+			pcsName:     "inference",
+			scalingGroups: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+				{
+					Name:         "workers",
+					CliqueNames:  []string{"prefill"},
+					Replicas:     ptr.To(int32(4)),
+					MinAvailable: ptr.To(int32(3)),
+					ScaleConfig: &grovecorev1alpha1.AutoScalingConfig{
+						MinReplicas: ptr.To(int32(0)),
+						MaxReplicas: 10,
+					},
+				},
+			},
+			cliqueTemplates: []string{"prefill"},
+			errorMatchers: []testutils.ErrorMatcher{
+				{ErrorType: field.ErrorTypeForbidden, Field: "spec.template.podCliqueScalingGroups[0].scaleConfig.metrics"},
 			},
 		},
 		{
@@ -1177,7 +1214,7 @@ func TestValidateScaleConfig(t *testing.T) {
 			},
 			minAvailable:  2,
 			expectError:   true,
-			errorContains: "must be greater than or equal to podCliqueSpec.minAvailable",
+			errorContains: "must be 0 or greater than or equal to podCliqueSpec.minAvailable",
 		},
 		{
 			name: "maxReplicas less than minReplicas returns error",
@@ -1212,6 +1249,35 @@ func TestValidateScaleConfig(t *testing.T) {
 					}
 					assert.Contains(t, errorString, tt.errorContains)
 				}
+			} else {
+				assert.Empty(t, errs)
+			}
+		})
+	}
+}
+
+func TestValidatePodCliqueReplicas(t *testing.T) {
+	tests := []struct {
+		name         string
+		replicas     int32
+		minAvailable int32
+		wantError    bool
+	}{
+		{name: "idle", replicas: 0, minAvailable: 2},
+		{name: "below quorum", replicas: 1, minAvailable: 2, wantError: true},
+		{name: "at quorum", replicas: 2, minAvailable: 2},
+	}
+
+	validator := &pcsValidator{pcs: &grovecorev1alpha1.PodCliqueSet{}}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, errs := validator.validatePodCliqueSpec("worker", grovecorev1alpha1.PodCliqueSpec{
+				Replicas:     tt.replicas,
+				MinAvailable: ptr.To(tt.minAvailable),
+			}, field.NewPath("spec"))
+
+			if tt.wantError {
+				assert.NotEmpty(t, errs)
 			} else {
 				assert.Empty(t, errs)
 			}

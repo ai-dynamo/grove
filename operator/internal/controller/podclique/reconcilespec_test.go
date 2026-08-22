@@ -342,6 +342,26 @@ func TestInitOrResetUpdate(t *testing.T) {
 			expectUpdateEndedAtSet: true,
 		},
 		{
+			name: "idle_on_delete_strategy_sets_update_ended_at_immediately",
+			setupPCS: func(pcsUID types.UID) *grovecorev1alpha1.PodCliqueSet {
+				return testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, pcsUID).
+					WithReplicas(2).
+					WithPodCliqueParameters("worker", 0, nil).
+					WithUpdateStrategy(&grovecorev1alpha1.PodCliqueSetUpdateStrategy{
+						Type: grovecorev1alpha1.OnDeleteStrategy,
+					}).
+					WithPodCliqueSetGenerationHash(ptr.To("current-hash")).
+					Build()
+			},
+			setupPCLQ: func(pcsUID types.UID) *grovecorev1alpha1.PodClique {
+				pclq := testutils.NewPodCliqueBuilder(testPCSName, pcsUID, "worker", testNamespace, 0).Build()
+				pclq.Spec.Replicas = 0
+				pclq.Status.UpdatedReplicas = 2
+				return pclq
+			},
+			expectUpdateEndedAtSet: true,
+		},
+		{
 			name: "existing_rollingrecreate_in_progress_is_reset_when_hash_changes",
 			setupPCS: func(pcsUID types.UID) *grovecorev1alpha1.PodCliqueSet {
 				return testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, pcsUID).

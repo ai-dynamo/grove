@@ -199,7 +199,7 @@ func mutateSelector(pcsName string, pclq *grovecorev1alpha1.PodClique) error {
 // event gives operators a discrete, log-visible signal that a previously-running workload is
 // fully down (and that gang termination is now armed and will fire after TerminationDelay).
 func (r *Reconciler) emitAllScheduledReplicasLostIfNeeded(pclq *grovecorev1alpha1.PodClique, originalScheduled int32) {
-	if originalScheduled > 0 && pclq.Status.ScheduledReplicas == 0 {
+	if pclq.Spec.Replicas > 0 && originalScheduled > 0 && pclq.Status.ScheduledReplicas == 0 {
 		r.eventRecorder.Eventf(pclq, corev1.EventTypeWarning, internalconstants.ReasonAllScheduledReplicasLost,
 			"All scheduled pods lost (was %d). Gang termination will fire after TerminationDelay if the PodClique stays below MinAvailable; investigate node availability or capacity.",
 			originalScheduled)
@@ -222,6 +222,15 @@ func computeMinAvailableBreachedCondition(pclq *grovecorev1alpha1.PodClique, num
 			Status:  metav1.ConditionUnknown,
 			Reason:  constants.ConditionReasonUpdateInProgress,
 			Message: "Update is in progress",
+		}
+	}
+	if pclq.Spec.Replicas == 0 {
+		return metav1.Condition{
+			Type:               constants.ConditionTypeMinAvailableBreached,
+			Status:             metav1.ConditionFalse,
+			Reason:             constants.ConditionReasonSufficientReadyPods,
+			Message:            "PodClique is intentionally idle",
+			LastTransitionTime: metav1.Now(),
 		}
 	}
 	// dereferencing is considered safe as MinAvailable will always be set by the defaulting webhook. If this changes in the future,
@@ -281,6 +290,15 @@ func mutatePodCliqueScheduledCondition(pclq *grovecorev1alpha1.PodClique) {
 // computePodCliqueScheduledCondition calculates the PodCliqueScheduled condition based on minimum availability requirements
 func computePodCliqueScheduledCondition(pclq *grovecorev1alpha1.PodClique) metav1.Condition {
 	now := metav1.Now()
+	if pclq.Spec.Replicas == 0 {
+		return metav1.Condition{
+			Type:               constants.ConditionTypePodCliqueScheduled,
+			Status:             metav1.ConditionTrue,
+			Reason:             constants.ConditionReasonSufficientScheduledPods,
+			Message:            "PodClique is intentionally idle",
+			LastTransitionTime: now,
+		}
+	}
 	if pclq.Status.ScheduledReplicas < *pclq.Spec.MinAvailable {
 		return metav1.Condition{
 			Type:               constants.ConditionTypePodCliqueScheduled,

@@ -346,15 +346,17 @@ func createReadyOwnedPodWithHash(name string, owner *grovecorev1alpha1.PodClique
 func TestEmitAllScheduledReplicasLostIfNeeded(t *testing.T) {
 	tests := []struct {
 		name              string
+		desiredReplicas   int32
 		originalScheduled int32
 		nowScheduled      int32
 		wantEvent         bool
 	}{
-		{name: "non-zero to zero emits event", originalScheduled: 3, nowScheduled: 0, wantEvent: true},
-		{name: "zero to zero stays silent (initial startup)", originalScheduled: 0, nowScheduled: 0, wantEvent: false},
-		{name: "non-zero to non-zero stays silent (partial regression handled by breach)", originalScheduled: 3, nowScheduled: 2, wantEvent: false},
-		{name: "zero to non-zero stays silent (recovery)", originalScheduled: 0, nowScheduled: 3, wantEvent: false},
-		{name: "stable non-zero stays silent (steady state)", originalScheduled: 3, nowScheduled: 3, wantEvent: false},
+		{name: "non-zero to zero emits event", desiredReplicas: 3, originalScheduled: 3, nowScheduled: 0, wantEvent: true},
+		{name: "idle transition stays silent", desiredReplicas: 0, originalScheduled: 3, nowScheduled: 0, wantEvent: false},
+		{name: "zero to zero stays silent (initial startup)", desiredReplicas: 3, originalScheduled: 0, nowScheduled: 0, wantEvent: false},
+		{name: "non-zero to non-zero stays silent (partial regression handled by breach)", desiredReplicas: 3, originalScheduled: 3, nowScheduled: 2, wantEvent: false},
+		{name: "zero to non-zero stays silent (recovery)", desiredReplicas: 3, originalScheduled: 0, nowScheduled: 3, wantEvent: false},
+		{name: "stable non-zero stays silent (steady state)", desiredReplicas: 3, originalScheduled: 3, nowScheduled: 3, wantEvent: false},
 	}
 
 	for _, tt := range tests {
@@ -362,6 +364,7 @@ func TestEmitAllScheduledReplicasLostIfNeeded(t *testing.T) {
 			recorder := record.NewFakeRecorder(2)
 			r := &Reconciler{eventRecorder: recorder}
 			pclq := &grovecorev1alpha1.PodClique{
+				Spec:   grovecorev1alpha1.PodCliqueSpec{Replicas: tt.desiredReplicas},
 				Status: grovecorev1alpha1.PodCliqueStatus{ScheduledReplicas: tt.nowScheduled},
 			}
 
@@ -399,6 +402,17 @@ func TestComputeMinAvailableBreachedConditionPartialScheduleRegression(t *testin
 		wantStatus                                          metav1.ConditionStatus
 		wantReason                                          string
 	}{
+		{
+			name: "intentional idle does not breach",
+			pclq: &grovecorev1alpha1.PodClique{
+				Spec: grovecorev1alpha1.PodCliqueSpec{
+					Replicas:     0,
+					MinAvailable: ptr.To(int32(2)),
+				},
+			},
+			wantStatus: metav1.ConditionFalse,
+			wantReason: constants.ConditionReasonSufficientReadyPods,
+		},
 		{
 			name: "0 < scheduled < MinAvailable breaches",
 			pclq: &grovecorev1alpha1.PodClique{

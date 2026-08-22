@@ -17,17 +17,22 @@ limitations under the License.
 package pod
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
 	"github.com/ai-dynamo/grove/operator/api/common"
+	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/expect"
+	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 const (
@@ -89,6 +94,78 @@ func TestComputeUpdateWork(t *testing.T) {
 					assert.Empty(t, pods, fmt.Sprintf("expected no pods in bucket %s", name))
 				}
 			}
+		})
+	}
+}
+
+func TestIdleRollingRecreateCompletesWithoutReadyPods(t *testing.T) {
+	pclq := &grovecorev1alpha1.PodClique{
+		ObjectMeta: metav1.ObjectMeta{Name: "worker", Namespace: testNS},
+		Spec: grovecorev1alpha1.PodCliqueSpec{
+			Replicas:     0,
+			MinAvailable: ptr.To(int32(2)),
+		},
+		Status: grovecorev1alpha1.PodCliqueStatus{
+			UpdateProgress: &grovecorev1alpha1.PodCliqueUpdateProgress{
+				UpdateStartedAt: metav1.Now(),
+			},
+		},
+	}
+	cl := testutils.NewTestClientBuilder().
+		WithObjects(pclq).
+		WithStatusSubresource(&grovecorev1alpha1.PodClique{}).
+		Build()
+	r := _resource{client: cl, expectationsStore: expect.NewExpectationsStore()}
+
+	err := r.processPendingUpdates(logr.Discard(), &syncContext{
+		ctx:                      context.Background(),
+		pclq:                     pclq,
+		expectedPodTemplateHash:  testNewHash,
+		pclqExpectationsStoreKey: "test-key",
+	})
+
+	require.NoError(t, err)
+	var updated grovecorev1alpha1.PodClique
+	require.NoError(t, cl.Get(context.Background(), client.ObjectKeyFromObject(pclq), &updated))
+	require.NotNil(t, updated.Status.UpdateProgress)
+	assert.NotNil(t, updated.Status.UpdateProgress.UpdateEndedAt)
+}
+
+func TestCurrentPodUpdateCompletesAtEffectiveReplicaTarget(t *testing.T) {
+	tests := []struct {
+		name             string
+		replicas         int32
+		minAvailable     int32
+		newReadyPodCount int
+		want             bool
+	}{
+		{name: "idle target needs no replacement", replicas: 0, minAvailable: 2, want: true},
+		{name: "scale-in uses effective target", replicas: 1, minAvailable: 2, newReadyPodCount: 2, want: true},
+		{name: "scale-in waits for effective target", replicas: 1, minAvailable: 2, newReadyPodCount: 1, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pclq := &grovecorev1alpha1.PodClique{
+				Spec: grovecorev1alpha1.PodCliqueSpec{
+					Replicas:     tt.replicas,
+					MinAvailable: ptr.To(tt.minAvailable),
+				},
+				Status: grovecorev1alpha1.PodCliqueStatus{
+					UpdateProgress: &grovecorev1alpha1.PodCliqueUpdateProgress{
+						ReadyPodsSelectedToUpdate: &grovecorev1alpha1.PodsSelectedToUpdate{
+							Current:   "old-current",
+							Completed: []string{"old-0", "old-1"},
+						},
+					},
+				},
+			}
+			work := &updateWork{}
+			for i := range tt.newReadyPodCount {
+				work.newTemplateHashReadyPods = append(work.newTemplateHashReadyPods, newTestPod(fmt.Sprintf("new-%d", i), testNewHash))
+			}
+
+			assert.Equal(t, tt.want, isCurrentPodUpdateComplete(&syncContext{pclq: pclq}, work))
 		})
 	}
 }
