@@ -16,6 +16,7 @@ package podclique
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -30,10 +31,13 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/ptr"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // TestMutateUpdatedReplica tests the mutateUpdatedReplica function across different PodClique states
@@ -247,6 +251,53 @@ func TestReconcileStatusConvergesWhenReadyPodMatchesDesiredHash(t *testing.T) {
 	assert.Equal(t, int32(1), updatedPCLQ.Status.UpdatedReplicas)
 	assert.Equal(t, templateHash, *updatedPCLQ.Status.CurrentPodTemplateHash)
 	assert.Equal(t, *pcs.Status.CurrentGenerationHash, *updatedPCLQ.Status.CurrentPodCliqueSetGenerationHash)
+}
+
+// TestReconcileStatusRequeuesWithoutPatchWhenStatusUnchanged verifies that when a reconcile
+// recomputes a status identical to what is already persisted, reconcileStatus skips the patch and
+// returns without requesting a requeue. The periodic resync that recovers a stale status is applied
+// by the top-level Reconcile, not by reconcileStatus.
+func TestReconcileStatusRequeuesWithoutPatchWhenStatusUnchanged(t *testing.T) {
+	pcs, pclq, templateHash := newPodCliqueHashConvergenceFixture(t)
+	pclq.Generation = 1
+	pclq.Spec = grovecorev1alpha1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To[int32](1)}
+	pclq.Status = grovecorev1alpha1.PodCliqueStatus{ObservedGeneration: ptr.To[int64](1)}
+	pod := createReadyOwnedPodWithHash("ready-pod", pclq, templateHash)
+
+	cl := testutils.NewTestClientBuilder().
+		WithObjects(pcs, pclq, pod).
+		WithStatusSubresource(pcs, pclq).
+		WithIndex(&corev1.Pod{}, ".metadata.controller.uid", func(obj client.Object) []string {
+			controllerRef := metav1.GetControllerOfNoCopy(obj)
+			if controllerRef == nil {
+				return nil
+			}
+			return []string{string(controllerRef.UID)}
+		}).
+		Build()
+	r := &Reconciler{client: cl, eventRecorder: record.NewFakeRecorder(1)}
+
+	// The first reconcile persists the computed status.
+	first := r.reconcileStatus(context.Background(), logr.Discard(), pclq)
+	require.False(t, first.HasErrors())
+
+	// Re-fetch so the in-memory object matches what is persisted, then reconcile again. The mutators
+	// recompute an identical status, so the equality guard skips the patch.
+	refetched := &grovecorev1alpha1.PodClique{}
+	require.NoError(t, cl.Get(context.Background(), types.NamespacedName{Name: pclq.Name, Namespace: pclq.Namespace}, refetched))
+	rvBefore := refetched.ResourceVersion
+
+	second := r.reconcileStatus(context.Background(), logr.Discard(), refetched)
+
+	require.False(t, second.HasErrors())
+	res, err := second.Result()
+	require.NoError(t, err)
+	assert.Zero(t, res.RequeueAfter, "an unchanged status reconcile should not requeue from reconcileStatus")
+
+	// No patch was issued, so the resourceVersion is unchanged.
+	after := &grovecorev1alpha1.PodClique{}
+	require.NoError(t, cl.Get(context.Background(), types.NamespacedName{Name: pclq.Name, Namespace: pclq.Namespace}, after))
+	assert.Equal(t, rvBefore, after.ResourceVersion, "no status patch should be issued when the status is unchanged")
 }
 
 // TestMutateCurrentHashesDoesNotAdvanceWhenTemplateHashIsStale verifies that
@@ -491,6 +542,47 @@ func TestComputeMinAvailableBreachedConditionPartialScheduleRegression(t *testin
 			assert.Equal(t, tt.wantReason, condition.Reason, "MinAvailableBreached reason mismatch")
 		})
 	}
+}
+
+// TestReconcileStatusRequeuesOnConflict verifies that when the optimistic-locked status patch is
+// rejected with a conflict, reconcileStatus requeues after ComponentSyncRetryInterval instead of
+// surfacing a hard error. A conflict means the PodClique was written by a concurrent reconcile
+// after this reconcile read it, so retrying against a fresher PodClique prevents a stale write
+// from silently winning. See https://github.com/ai-dynamo/grove/issues/775.
+func TestReconcileStatusRequeuesOnConflict(t *testing.T) {
+	pcs, pclq, templateHash := newPodCliqueHashConvergenceFixture(t)
+	pclq.Generation = 1
+	pclq.Spec = grovecorev1alpha1.PodCliqueSpec{
+		Replicas:     1,
+		MinAvailable: ptr.To[int32](1),
+	}
+	pclq.Status = grovecorev1alpha1.PodCliqueStatus{ObservedGeneration: ptr.To[int64](1)}
+	pod := createReadyOwnedPodWithHash("ready-pod", pclq, templateHash)
+
+	conflict := apierrors.NewConflict(
+		schema.GroupResource{Group: grovecorev1alpha1.SchemeGroupVersion.Group, Resource: "podcliques"},
+		pclq.Name, errors.New("object was modified"))
+	cl := testutils.NewTestClientBuilder().
+		WithObjects(pcs, pclq, pod).
+		WithStatusSubresource(pcs, pclq).
+		WithIndex(&corev1.Pod{}, ".metadata.controller.uid", func(obj client.Object) []string {
+			controllerRef := metav1.GetControllerOfNoCopy(obj)
+			if controllerRef == nil {
+				return nil
+			}
+			return []string{string(controllerRef.UID)}
+		}).
+		RecordErrorForObjects(testutils.ClientMethodStatusPatch, conflict, client.ObjectKeyFromObject(pclq)).
+		Build()
+	r := &Reconciler{client: cl, eventRecorder: record.NewFakeRecorder(1)}
+
+	result := r.reconcileStatus(context.Background(), logr.Discard(), pclq)
+
+	require.False(t, result.HasErrors(), "a conflicting status patch must not surface as a reconcile error")
+	res, err := result.Result()
+	require.NoError(t, err)
+	assert.Equal(t, internalconstants.ComponentSyncRetryInterval, res.RequeueAfter,
+		"a conflicting status patch should requeue after ComponentSyncRetryInterval")
 }
 
 // TestMutateSelector verifies the /scale selector is published for standalone PodCliques (with or

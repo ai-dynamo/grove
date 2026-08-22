@@ -16,10 +16,12 @@ package podclique
 
 import (
 	"context"
+	"time"
 
-	"github.com/ai-dynamo/grove/operator/api/common/constants"
+	apicommonconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	"github.com/ai-dynamo/grove/operator/internal/constants"
 	ctrlcommon "github.com/ai-dynamo/grove/operator/internal/controller/common"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
@@ -75,16 +77,40 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	}
 
 	if !pclq.DeletionTimestamp.IsZero() {
-		if !controllerutil.ContainsFinalizer(pclq, constants.FinalizerPodClique) {
+		if !controllerutil.ContainsFinalizer(pclq, apicommonconstants.FinalizerPodClique) {
 			return ctrlcommon.DoNotRequeue().Result()
 		}
 		return r.triggerDeletionFlow(ctx, logger, pclq).Result()
 	}
 
 	reconcileSpecFlowResult := r.reconcileSpec(ctx, logger, pclq)
-	if statusReconcileResult := r.reconcileStatus(ctx, logger, pclq); ctrlcommon.ShortCircuitReconcileFlow(statusReconcileResult) {
-		return statusReconcileResult.Result()
-	}
+	statusReconcileResult := r.reconcileStatus(ctx, logger, pclq)
+	reconcileResult := ctrlcommon.MergeStepResults(reconcileSpecFlowResult, statusReconcileResult)
 
-	return reconcileSpecFlowResult.Result()
+	result, err := reconcileResult.Result()
+	// The spec and status reconciles both succeeded without asking for a requeue. Schedule a periodic
+	// status resync so a stale status is corrected even when no watch event arrives. A lost update can
+	// leave the status wrong with nothing left to trigger a recompute. This is applied here, not in
+	// reconcileStatus, so it cannot mask a shorter requeue from the spec flow that drives
+	// rolling-update progression.
+	// See https://github.com/ai-dynamo/grove/issues/775.
+	if err == nil && result.RequeueAfter == 0 {
+		result.RequeueAfter = r.getStatusResyncInterval(ctx, pclq)
+	}
+	return result, err
+}
+
+// getStatusResyncInterval returns the requeue interval for a successful reconcile. It is the periodic
+// status resync bounded by the owner PodCliqueSet's TerminationDelay. Gang termination is armed off
+// the MinAvailableBreached condition this reconciler writes. A stale condition must be recomputed
+// before the delay expires, else the breach goes undetected past its termination deadline. It falls
+// back to the plain resync interval when the owner PodCliqueSet cannot be read or sets no
+// TerminationDelay.
+func (r *Reconciler) getStatusResyncInterval(ctx context.Context, pclq *grovecorev1alpha1.PodClique) time.Duration {
+	defaultResyncInterval := constants.PodCliqueStatusResyncInterval
+	pcs, err := componentutils.GetPodCliqueSet(ctx, r.client, pclq.ObjectMeta)
+	if err != nil || pcs.Spec.Template.TerminationDelay == nil {
+		return defaultResyncInterval
+	}
+	return min(pcs.Spec.Template.TerminationDelay.Duration, defaultResyncInterval)
 }

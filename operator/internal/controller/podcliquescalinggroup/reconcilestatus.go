@@ -33,6 +33,7 @@ import (
 	"github.com/samber/lo"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
@@ -52,7 +53,7 @@ func (r *Reconciler) reconcileStatus(ctx context.Context, logger logr.Logger, pc
 	}
 
 	originalStatus := pcsg.Status.DeepCopy()
-	patchObj := client.MergeFrom(pcsg.DeepCopy())
+	patchObj := client.MergeFromWithOptions(pcsg.DeepCopy(), client.MergeFromWithOptimisticLock{})
 
 	pcs, err := componentutils.GetPodCliqueSet(ctx, r.client, pcsg.ObjectMeta)
 	if err != nil {
@@ -83,20 +84,17 @@ func (r *Reconciler) reconcileStatus(ctx context.Context, logger logr.Logger, pc
 
 	mutateCurrentPodCliqueSetGenerationHash(logger, pcs, pcsg, lo.Flatten(lo.Values(pclqsPerPCSGReplica)))
 
-	// Skip the status patch when every mutate* above left status byte-identical to what the
-	// previous reconcile already persisted. The mutators are the only code writing
-	// pcsg.Status here, so equality means there is nothing for the apiserver to store.
-	// Issuing the Patch anyway bumps resourceVersion and fires a watch event that wakes the
-	// parent PCS reconciler and any other PCSG observers, cascading into spurious
-	// reconciles. equality.Semantic is required because the status mixes counters,
-	// pointers, conditions, and a label-selector map.
-	if equality.Semantic.DeepEqual(*originalStatus, pcsg.Status) {
-		return ctrlcommon.ContinueReconcile()
-	}
-
-	if err = r.client.Status().Patch(ctx, pcsg, patchObj); err != nil {
-		logger.Error(err, "failed to update PodCliqueScalingGroup status")
-		return ctrlcommon.ReconcileWithErrors("failed to update the status with label selector and replicas", err)
+	// Patch only when the mutators changed the status. The API server no-ops an identical write, but
+	// it still receives, decodes and validates the request. Skipping avoids that cost. equality.Semantic
+	// is used because the status mixes counters, pointers, conditions and a label-selector map.
+	if !equality.Semantic.DeepEqual(*originalStatus, pcsg.Status) {
+		if err = r.client.Status().Patch(ctx, pcsg, patchObj); err != nil {
+			if apierrors.IsConflict(err) {
+				return ctrlcommon.ReconcileAfter(internalconstants.ComponentSyncRetryInterval, fmt.Sprintf("409-conflict when updating PodCliqueScalingGroup status, re-queueing: %v", pcsgObjectKey))
+			}
+			logger.Error(err, "failed to update PodCliqueScalingGroup status")
+			return ctrlcommon.ReconcileWithErrors("failed to update the status with label selector and replicas", err)
+		}
 	}
 
 	return ctrlcommon.ContinueReconcile()

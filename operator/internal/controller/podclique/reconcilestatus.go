@@ -30,6 +30,7 @@ import (
 	"github.com/samber/lo"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
@@ -40,11 +41,12 @@ import (
 func (r *Reconciler) reconcileStatus(ctx context.Context, logger logr.Logger, pclq *grovecorev1alpha1.PodClique) ctrlcommon.ReconcileStepResult {
 	pcsName := componentutils.GetPodCliqueSetName(pclq.ObjectMeta)
 	pclqObjectKey := client.ObjectKeyFromObject(pclq)
-	// Snapshot status for both the merge-patch base AND a change check below. When the
-	// status is unchanged — common during steady-state reconciles — we skip the API call
-	// entirely.
+	// originalStatus captures the scheduled replica count before the mutators run so the
+	// scheduled to zero transition can be detected later. The patch uses an optimistic lock
+	// so a write built from a stale cached PodClique is rejected with a conflict instead of
+	// overwriting a newer status.
 	originalStatus := pclq.Status.DeepCopy()
-	patch := client.MergeFrom(pclq.DeepCopy())
+	patch := client.MergeFromWithOptions(pclq.DeepCopy(), client.MergeFromWithOptimisticLock{})
 
 	pcs, err := componentutils.GetPodCliqueSet(ctx, r.client, pclq.ObjectMeta)
 	if err != nil {
@@ -85,22 +87,20 @@ func (r *Reconciler) reconcileStatus(ctx context.Context, logger logr.Logger, pc
 		return ctrlcommon.ReconcileWithErrors("failed to set selector for PodClique", err)
 	}
 
-	// Skip the status patch when every mutate* above left status byte-identical to what the
-	// previous reconcile already persisted. The mutators above are the only code that writes
-	// pclq.Status in this path, so equality means there is nothing for the apiserver to
-	// store. Issuing the Patch anyway is not just wasted RPC; it bumps resourceVersion and
-	// fires a watch event that wakes every controller observing PodCliques, which on a quiet
-	// cluster cascades into N spurious reconciles. equality.Semantic is needed (not plain
-	// ==) because the status mixes counters, pointers, conditions, and a label-selector map.
-	if equality.Semantic.DeepEqual(*originalStatus, pclq.Status) {
-		return ctrlcommon.ContinueReconcile()
+	// Patch only when the mutators changed the status. The API server no-ops an identical write, but
+	// it still receives, decodes and validates the request. Skipping avoids that cost, which matters
+	// at scale where pod events drive many reconciles. equality.Semantic is used because the status
+	// mixes counters, pointers, conditions and a label-selector map.
+	if !equality.Semantic.DeepEqual(*originalStatus, pclq.Status) {
+		if err := r.client.Status().Patch(ctx, pclq, patch); err != nil {
+			if apierrors.IsConflict(err) {
+				return ctrlcommon.ReconcileAfter(internalconstants.ComponentSyncRetryInterval, fmt.Sprintf("409-conflict when updating PodClique status, re-queueing: %v", pclqObjectKey))
+			}
+			logger.Error(err, "failed to update PodClique status")
+			return ctrlcommon.ReconcileWithErrors("failed to update PodClique status", err)
+		}
 	}
 
-	// update the PodClique status.
-	if err := r.client.Status().Patch(ctx, pclq, patch); err != nil {
-		logger.Error(err, "failed to update PodClique status")
-		return ctrlcommon.ReconcileWithErrors("failed to update PodClique status", err)
-	}
 	return ctrlcommon.ContinueReconcile()
 }
 

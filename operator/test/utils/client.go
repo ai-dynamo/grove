@@ -48,10 +48,10 @@ const (
 	ClientMethodPatch ClientMethod = "Patch"
 	// ClientMethodUpdate is the name of the Update method on client.Client.
 	ClientMethodUpdate ClientMethod = "Update"
-	// ClientMethodStatus is the name of the Status method on client.Client.StatusClient.
-	ClientMethodStatus ClientMethod = "Status"
-	// ClientMethodApply is the name of the Apply method on client.Client.
-	ClientMethodApply ClientMethod = "Apply"
+	// ClientMethodStatusPatch is the name of the Patch method on the status subresource writer.
+	ClientMethodStatusPatch ClientMethod = "StatusPatch"
+	// ClientMethodStatusUpdate is the name of the Update method on the status subresource writer.
+	ClientMethodStatusUpdate ClientMethod = "StatusUpdate"
 )
 
 // TestClientBuilder is a builder for creating a test client.Client which is capable of recording and replaying errors.
@@ -149,6 +149,13 @@ func (b *TestClientBuilder) WithStatusSubresource(objs ...client.Object) *TestCl
 	if len(objs) > 0 {
 		b.delegatingClientBuilder.WithStatusSubresource(objs...)
 	}
+	return b
+}
+
+// WithIndex registers a field index on the delegating fake client so that List calls using a
+// field selector on that field are served.
+func (b *TestClientBuilder) WithIndex(obj client.Object, field string, extractValue client.IndexerFunc) *TestClientBuilder {
+	b.delegatingClientBuilder.WithIndex(obj, field, extractValue)
 	return b
 }
 
@@ -274,7 +281,7 @@ func (c *testClient) Apply(ctx context.Context, applyConfig runtime.ApplyConfigu
 }
 
 func (c *testClient) Status() client.StatusWriter {
-	return c.delegate.Status()
+	return &testStatusWriter{testClient: c, delegate: c.delegate.Status()}
 }
 
 func (c *testClient) SubResource(subResource string) client.SubResourceClient {
@@ -295,6 +302,35 @@ func (c *testClient) GroupVersionKindFor(obj runtime.Object) (schema.GroupVersio
 
 func (c *testClient) IsObjectNamespaced(obj runtime.Object) (bool, error) {
 	return c.delegate.IsObjectNamespaced(obj)
+}
+
+// testStatusWriter wraps the delegate status writer and reacts to errors recorded for the
+// StatusPatch and StatusUpdate methods before delegating to the underlying fake client.
+type testStatusWriter struct {
+	testClient *testClient
+	delegate   client.SubResourceWriter
+}
+
+func (w *testStatusWriter) Create(ctx context.Context, obj client.Object, subResource client.Object, opts ...client.SubResourceCreateOption) error {
+	return w.delegate.Create(ctx, obj, subResource, opts...)
+}
+
+func (w *testStatusWriter) Apply(ctx context.Context, obj runtime.ApplyConfiguration, opts ...client.SubResourceApplyOption) error {
+	return w.delegate.Apply(ctx, obj, opts...)
+}
+
+func (w *testStatusWriter) Update(ctx context.Context, obj client.Object, opts ...client.SubResourceUpdateOption) error {
+	if err := w.testClient.getRecordedObjectError(ClientMethodStatusUpdate, client.ObjectKeyFromObject(obj)); err != nil {
+		return err
+	}
+	return w.delegate.Update(ctx, obj, opts...)
+}
+
+func (w *testStatusWriter) Patch(ctx context.Context, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
+	if err := w.testClient.getRecordedObjectError(ClientMethodStatusPatch, client.ObjectKeyFromObject(obj)); err != nil {
+		return err
+	}
+	return w.delegate.Patch(ctx, obj, patch, opts...)
 }
 
 // ---------------------------------- Helper methods ----------------------------------

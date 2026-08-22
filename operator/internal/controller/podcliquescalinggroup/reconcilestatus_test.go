@@ -16,6 +16,7 @@ package podcliquescalinggroup
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -30,7 +31,9 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/ptr"
@@ -960,6 +963,38 @@ func TestReconcileStatusBoundedDuringScaleDown(t *testing.T) {
 	assert.LessOrEqual(t, pcsg.Status.UpdateProgress.UpdatedPodCliquesCount,
 		pcsg.Status.UpdateProgress.TotalPodCliquesCount,
 		"UpdatedPodCliquesCount must never exceed TotalPodCliquesCount")
+}
+
+// TestReconcileStatusRequeuesOnConflict verifies that when the optimistic-locked status patch is
+// rejected with a conflict, reconcileStatus requeues after ComponentSyncRetryInterval instead of
+// surfacing a hard error. A conflict means the PodCliqueScalingGroup was written by a concurrent
+// reconcile after this reconcile read it, so retrying against a fresher object prevents a stale
+// write from silently winning. See https://github.com/ai-dynamo/grove/issues/775.
+func TestReconcileStatusRequeuesOnConflict(t *testing.T) {
+	ctx := context.Background()
+	pcsg := testutils.NewPodCliqueScalingGroupBuilder("test-pcsg", "test-ns", "test-pcs", 0).
+		WithReplicas(1).
+		Build()
+	pcsg.Status.ObservedGeneration = ptr.To[int64](1)
+	pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "test-ns", uuid.NewUUID()).Build()
+
+	conflict := apierrors.NewConflict(
+		schema.GroupResource{Group: grovecorev1alpha1.SchemeGroupVersion.Group, Resource: "podcliquescalinggroups"},
+		pcsg.Name, errors.New("object was modified"))
+	cl := testutils.NewTestClientBuilder().
+		WithObjects(pcsg, pcs).
+		WithStatusSubresource(&grovecorev1alpha1.PodCliqueScalingGroup{}).
+		RecordErrorForObjects(testutils.ClientMethodStatusPatch, conflict, client.ObjectKeyFromObject(pcsg)).
+		Build()
+	reconciler := &Reconciler{client: cl, eventRecorder: record.NewFakeRecorder(1)}
+
+	result := reconciler.reconcileStatus(ctx, logr.Discard(), client.ObjectKeyFromObject(pcsg))
+
+	require.False(t, result.HasErrors(), "a conflicting status patch must not surface as a reconcile error")
+	res, err := result.Result()
+	require.NoError(t, err)
+	assert.Equal(t, internalconstants.ComponentSyncRetryInterval, res.RequeueAfter,
+		"a conflicting status patch should requeue after ComponentSyncRetryInterval")
 }
 
 func pcsgChildName(pcsgName string, replicaIndex int, cliqueName string) string {
