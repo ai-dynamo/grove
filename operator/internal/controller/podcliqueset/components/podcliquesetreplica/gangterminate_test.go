@@ -56,6 +56,12 @@ func TestGetMinAvailableBreachedPCSGInfoGangTerminationGate(t *testing.T) {
 		Reason:             apiconstants.ConditionReasonGangTerminationActive,
 		LastTransitionTime: pastTransition,
 	}
+	healthyStateObserved := metav1.Condition{
+		Type:               apiconstants.ConditionTypeHealthyStateObserved,
+		Status:             metav1.ConditionTrue,
+		Reason:             apiconstants.ConditionReasonHealthyStateObserved,
+		LastTransitionTime: pastTransition,
+	}
 
 	tests := []struct {
 		name       string
@@ -67,7 +73,7 @@ func TestGetMinAvailableBreachedPCSGInfoGangTerminationGate(t *testing.T) {
 			pcsg: grovecorev1alpha1.PodCliqueScalingGroup{
 				ObjectMeta: metav1.ObjectMeta{Name: "pcsg-fresh-breach"},
 				Status: grovecorev1alpha1.PodCliqueScalingGroupStatus{
-					Conditions: []metav1.Condition{breachedTrue},
+					Conditions: []metav1.Condition{breachedTrue, healthyStateObserved},
 				},
 			},
 			wantInList: true,
@@ -77,7 +83,7 @@ func TestGetMinAvailableBreachedPCSGInfoGangTerminationGate(t *testing.T) {
 			pcsg: grovecorev1alpha1.PodCliqueScalingGroup{
 				ObjectMeta: metav1.ObjectMeta{Name: "pcsg-recycling"},
 				Status: grovecorev1alpha1.PodCliqueScalingGroupStatus{
-					Conditions: []metav1.Condition{breachedTrue, inProgressTrue},
+					Conditions: []metav1.Condition{breachedTrue, healthyStateObserved, inProgressTrue},
 				},
 			},
 			wantInList: false,
