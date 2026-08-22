@@ -663,3 +663,27 @@ func TestBuildResource_MNNVLAnnotationPropagation(t *testing.T) {
 		})
 	}
 }
+
+func TestBuildResourcePreservesDesiredReplicas(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, grovecorev1alpha1.AddToScheme(scheme))
+	pcs := &grovecorev1alpha1.PodCliqueSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-pcs", Namespace: "default", UID: "pcs-uid"},
+	}
+	config := grovecorev1alpha1.PodCliqueScalingGroupConfig{
+		Name:         "workers",
+		Replicas:     ptr.To(int32(0)),
+		MinAvailable: ptr.To(int32(2)),
+		CliqueNames:  []string{"worker"},
+	}
+	pcsg := &grovecorev1alpha1.PodCliqueScalingGroup{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-pcs-0-workers", Namespace: "default"},
+		Spec:       grovecorev1alpha1.PodCliqueScalingGroupSpec{Replicas: 1},
+	}
+
+	r := &_resource{scheme: scheme}
+	require.NoError(t, r.buildResource(pcsg, pcs, 0, config, true))
+
+	assert.Equal(t, int32(1), pcsg.Spec.Replicas)
+	assert.Equal(t, int32(2), *pcsg.Spec.MinAvailable)
+}

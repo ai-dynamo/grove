@@ -48,6 +48,35 @@ func GetPCSGsForPCS(ctx context.Context, cl client.Client, pcsObjKey client.Obje
 	return pcsgList.Items, nil
 }
 
+// StartupDependencyState is a reconcile-local snapshot used to resolve startup dependencies
+// from live desired replicas instead of immutable template replicas.
+type StartupDependencyState struct {
+	pclqsByName map[string]grovecorev1alpha1.PodClique
+	pcsgsByName map[string]grovecorev1alpha1.PodCliqueScalingGroup
+}
+
+// GetStartupDependencyState builds the live component snapshot for a PodCliqueSet.
+func GetStartupDependencyState(ctx context.Context, cl client.Client, pcs *grovecorev1alpha1.PodCliqueSet) (*StartupDependencyState, error) {
+	labels := apicommon.GetDefaultLabelsForPodCliqueSetManagedResources(pcs.Name)
+	pclqs, err := GetPCLQsMatchingLabels(ctx, cl, pcs.Namespace, labels)
+	if err != nil {
+		return nil, err
+	}
+	pcsgs, err := GetPCSGsForPCS(ctx, cl, client.ObjectKeyFromObject(pcs))
+	if err != nil {
+		return nil, err
+	}
+	return NewStartupDependencyState(pclqs, pcsgs), nil
+}
+
+// NewStartupDependencyState creates a startup dependency snapshot from already-listed resources.
+func NewStartupDependencyState(pclqs []grovecorev1alpha1.PodClique, pcsgs []grovecorev1alpha1.PodCliqueScalingGroup) *StartupDependencyState {
+	return &StartupDependencyState{
+		pclqsByName: PodCliqueByName(pclqs),
+		pcsgsByName: PCSGByName(pcsgs),
+	}
+}
+
 // doGetPCSGsForPCS is a helper function that fetches PodCliqueScalingGroups with optional additional label filtering
 func doGetPCSGsForPCS(ctx context.Context, cl client.Client, pcsObjKey client.ObjectKey, matchingLabels map[string]string) (*grovecorev1alpha1.PodCliqueScalingGroupList, error) {
 	pcsgList := &grovecorev1alpha1.PodCliqueScalingGroupList{}
@@ -65,19 +94,64 @@ func doGetPCSGsForPCS(ctx context.Context, cl client.Client, pcsObjKey client.Ob
 }
 
 // GenerateDependencyNamesForBasePodGang generates the FQNs of all PodCliques that would qualify as a dependency.
-func GenerateDependencyNamesForBasePodGang(pcs *grovecorev1alpha1.PodCliqueSet, pcsReplicaIndex int, parentCliqueName string) []string {
+func GenerateDependencyNamesForBasePodGang(pcs *grovecorev1alpha1.PodCliqueSet, pcsReplicaIndex int, parentCliqueName string, state *StartupDependencyState) []string {
 	parentPCLQNames := make([]string, 0)
 	pcsgConfig := FindScalingGroupConfigForClique(pcs.Spec.Template.PodCliqueScalingGroupConfigs, parentCliqueName)
 	if pcsgConfig != nil {
-		// Generate FQNs of minAvailable number of PodCliques that belong to a PodCliueScalingGroup.
 		pcsgFQN := apicommon.GeneratePodCliqueScalingGroupName(apicommon.ResourceNameReplica{Name: pcs.Name, Replica: pcsReplicaIndex}, pcsgConfig.Name)
+		pcsgReplicas := *pcsgConfig.Replicas
+		if state != nil {
+			if pcsg, found := state.pcsgsByName[pcsgFQN]; found {
+				pcsgReplicas = pcsg.Spec.Replicas
+			}
+		}
+		if pcsgReplicas == 0 {
+			return nil
+		}
+		parentTemplate := FindPodCliqueTemplateSpecByName(pcs, parentCliqueName)
+		if parentTemplate == nil {
+			return nil
+		}
 		for pcsgReplicaIndex := range int(*pcsgConfig.MinAvailable) {
-			parentPCLQNames = append(parentPCLQNames, apicommon.GeneratePodCliqueName(apicommon.ResourceNameReplica{Name: pcsgFQN, Replica: pcsgReplicaIndex}, parentCliqueName))
+			parentPCLQName := apicommon.GeneratePodCliqueName(apicommon.ResourceNameReplica{Name: pcsgFQN, Replica: pcsgReplicaIndex}, parentCliqueName)
+			parentReplicas := parentTemplate.Spec.Replicas
+			if state != nil {
+				if pclq, found := state.pclqsByName[parentPCLQName]; found {
+					parentReplicas = pclq.Spec.Replicas
+				}
+			}
+			if parentReplicas == 0 {
+				continue
+			}
+			parentPCLQNames = append(parentPCLQNames, parentPCLQName)
 		}
 	} else {
-		parentPCLQNames = append(parentPCLQNames, apicommon.GeneratePodCliqueName(apicommon.ResourceNameReplica{Name: pcs.Name, Replica: pcsReplicaIndex}, parentCliqueName))
+		parentPCLQName := apicommon.GeneratePodCliqueName(apicommon.ResourceNameReplica{Name: pcs.Name, Replica: pcsReplicaIndex}, parentCliqueName)
+		parentReplicas := int32(1)
+		if parentTemplate := FindPodCliqueTemplateSpecByName(pcs, parentCliqueName); parentTemplate != nil {
+			parentReplicas = parentTemplate.Spec.Replicas
+		}
+		if state != nil {
+			if pclq, found := state.pclqsByName[parentPCLQName]; found {
+				parentReplicas = pclq.Spec.Replicas
+			}
+		}
+		if parentReplicas == 0 {
+			return nil
+		}
+		parentPCLQNames = append(parentPCLQNames, parentPCLQName)
 	}
 	return parentPCLQNames
+}
+
+// IsPodCliqueDependencyActive reports whether a dependency in a scaled PodGang should block startup.
+func (s *StartupDependencyState) IsPodCliqueDependencyActive(pclqName string, templateReplicas int32) bool {
+	if s != nil {
+		if pclq, found := s.pclqsByName[pclqName]; found {
+			return pclq.Spec.Replicas > 0
+		}
+	}
+	return templateReplicas > 0
 }
 
 // GroupPCSGsByPCSReplicaIndex filters PCSGs that have a PodCliqueSetReplicaIndex label and groups them by the PCS replica.
@@ -131,7 +205,7 @@ func GetPCLQTemplateHashes(pcs *grovecorev1alpha1.PodCliqueSet, pcsg *grovecorev
 		pclqTemplateSpecs = append(pclqTemplateSpecs, pclqTemplateSpec)
 	}
 	cliqueTemplateSpecHashes := make(map[string]string, len(pclqTemplateSpecs))
-	for pcsgReplicaIndex := range int(pcsg.Spec.Replicas) {
+	for pcsgReplicaIndex := range int(EffectiveReplicas(pcsg.Spec.Replicas, pcsg.Spec.MinAvailable)) {
 		for _, pclqTemplateSpec := range pclqTemplateSpecs {
 			pclqFQN := apicommon.GeneratePodCliqueName(apicommon.ResourceNameReplica{Name: pcsg.Name, Replica: pcsgReplicaIndex}, pclqTemplateSpec.Name)
 			cliqueTemplateSpecHashes[pclqFQN] = ComputePCLQPodTemplateHash(pclqTemplateSpec, pcs.Spec.Template.PriorityClassName)
@@ -168,8 +242,9 @@ func IsPCSGUpdateComplete(pcsg *grovecorev1alpha1.PodCliqueScalingGroup, pcsGene
 
 // GetPodCliqueFQNsForPCSG generates the PodClique FQNs for all PodCliques that are owned by a PodCliqueScalingGroup.
 func GetPodCliqueFQNsForPCSG(pcsg *grovecorev1alpha1.PodCliqueScalingGroup) []string {
-	pclqFQNsInPCSG := make([]string, 0, len(pcsg.Spec.CliqueNames)*int(pcsg.Spec.Replicas))
-	for replicaIndex := range int(pcsg.Spec.Replicas) {
+	effectiveReplicas := EffectiveReplicas(pcsg.Spec.Replicas, pcsg.Spec.MinAvailable)
+	pclqFQNsInPCSG := make([]string, 0, len(pcsg.Spec.CliqueNames)*int(effectiveReplicas))
+	for replicaIndex := range int(effectiveReplicas) {
 		for _, cliqueName := range pcsg.Spec.CliqueNames {
 			pclqFQNsInPCSG = append(pclqFQNsInPCSG, apicommon.GeneratePodCliqueName(apicommon.ResourceNameReplica{
 				Name:    pcsg.Name,

@@ -160,7 +160,7 @@ func (r _resource) markRollingUpdateEnd(ctx context.Context, logger logr.Logger,
 func computePendingUpdateWork(sc *syncContext) (*updateWork, error) {
 	work := &updateWork{}
 	existingPCLQsByReplicaIndex := componentutils.GroupPCLQsByPCSGReplicaIndex(sc.existingPCLQs)
-	for pcsgReplicaIndex := range int(sc.pcsg.Spec.Replicas) {
+	for pcsgReplicaIndex := range int(componentutils.EffectiveReplicas(sc.pcsg.Spec.Replicas, sc.pcsg.Spec.MinAvailable)) {
 		pcsgReplicaIndexStr := strconv.Itoa(pcsgReplicaIndex)
 		existingPCSGReplicaPCLQs := existingPCLQsByReplicaIndex[pcsgReplicaIndexStr]
 		if isReplicaDeletedOrMarkedForDeletion(sc.pcsg, existingPCSGReplicaPCLQs, pcsgReplicaIndex) {
@@ -223,8 +223,9 @@ func isCurrentReplicaUpdateComplete(sc *syncContext) bool {
 			pclq.Status.CurrentPodTemplateHash != nil && *pclq.Status.CurrentPodTemplateHash == expectedPodTemplateHash &&
 			sc.pcs.Status.CurrentGenerationHash != nil &&
 			pclq.Status.CurrentPodCliqueSetGenerationHash != nil && *pclq.Status.CurrentPodCliqueSetGenerationHash == *sc.pcs.Status.CurrentGenerationHash &&
-			pclq.Status.UpdatedReplicas >= *pclq.Spec.MinAvailable &&
-			pclq.Status.ReadyReplicas >= *pclq.Spec.MinAvailable
+			(pclq.Spec.Replicas == 0 ||
+				(pclq.Status.UpdatedReplicas >= *pclq.Spec.MinAvailable &&
+					pclq.Status.ReadyReplicas >= *pclq.Spec.MinAvailable))
 	})
 }
 
@@ -258,6 +259,9 @@ func isReplicaDeletedOrMarkedForDeletion(pcsg *grovecorev1alpha1.PodCliqueScalin
 // getReplicaState determines the overall state of a PCSG replica based on its constituent PodCliques
 func getReplicaState(pcsgReplicaPCLQs []grovecorev1alpha1.PodClique) replicaState {
 	for _, pclq := range pcsgReplicaPCLQs {
+		if pclq.Spec.Replicas == 0 {
+			continue
+		}
 		if pclq.Status.ScheduledReplicas < *pclq.Spec.MinAvailable {
 			return replicaStatePending
 		}

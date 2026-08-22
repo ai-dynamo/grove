@@ -549,6 +549,7 @@ func TestGetMinAvailableBreachedPCLQInfoFiltersNeverScheduled(t *testing.T) {
 
 	pclqBreachedNeverScheduled := grovecorev1alpha1.PodClique{
 		ObjectMeta: metav1.ObjectMeta{Name: "never-scheduled", CreationTimestamp: created},
+		Spec:       grovecorev1alpha1.PodCliqueSpec{Replicas: 1},
 		Status: grovecorev1alpha1.PodCliqueStatus{Conditions: []metav1.Condition{
 			{
 				Type:               constants.ConditionTypePodCliqueScheduled,
@@ -564,6 +565,7 @@ func TestGetMinAvailableBreachedPCLQInfoFiltersNeverScheduled(t *testing.T) {
 	}
 	pclqBreachedAfterHealthy := grovecorev1alpha1.PodClique{
 		ObjectMeta: metav1.ObjectMeta{Name: "regressed", CreationTimestamp: created},
+		Spec:       grovecorev1alpha1.PodCliqueSpec{Replicas: 1},
 		Status: grovecorev1alpha1.PodCliqueStatus{Conditions: []metav1.Condition{
 			{
 				Type:               constants.ConditionTypePodCliqueScheduled,
@@ -581,4 +583,29 @@ func TestGetMinAvailableBreachedPCLQInfoFiltersNeverScheduled(t *testing.T) {
 	pclqs := []grovecorev1alpha1.PodClique{pclqBreachedNeverScheduled, pclqBreachedAfterHealthy}
 	names, _ := GetMinAvailableBreachedPCLQInfo(pclqs, time.Hour, time.Now())
 	assert.Equal(t, []string{"regressed"}, names, "never-scheduled PCLQ must be filtered out")
+}
+
+func TestGetMinAvailableBreachedPCLQInfoFiltersIdleDesiredState(t *testing.T) {
+	now := time.Now()
+	pclq := grovecorev1alpha1.PodClique{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "worker",
+			CreationTimestamp: metav1.NewTime(now.Add(-2 * time.Hour)),
+		},
+		Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 0},
+		Status: grovecorev1alpha1.PodCliqueStatus{Conditions: []metav1.Condition{{
+			Type:               constants.ConditionTypeMinAvailableBreached,
+			Status:             metav1.ConditionTrue,
+			LastTransitionTime: metav1.NewTime(now.Add(-time.Hour)),
+		}, {
+			Type:               constants.ConditionTypePodCliqueScheduled,
+			Status:             metav1.ConditionFalse,
+			LastTransitionTime: metav1.NewTime(now.Add(-90 * time.Minute)),
+		}}},
+	}
+
+	names, waitFor := GetMinAvailableBreachedPCLQInfo([]grovecorev1alpha1.PodClique{pclq}, time.Minute, now)
+
+	assert.Empty(t, names)
+	assert.Zero(t, waitFor)
 }

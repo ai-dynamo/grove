@@ -97,7 +97,15 @@ func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev
 	if err := r.triggerDeletionOfExcessPCLQs(ctx, logger, pcs, existingPCLQFQNs); err != nil {
 		return err
 	}
-	if err := r.createOrUpdatePCLQs(ctx, logger, pcs, existingPCLQFQNs); err != nil {
+	dependencyState, err := componentutils.GetStartupDependencyState(ctx, r.client, pcs)
+	if err != nil {
+		return groveerr.WrapError(err,
+			errSyncPodClique,
+			component.OperationSync,
+			fmt.Sprintf("Unable to resolve startup dependencies for PodCliqueSet: %v", client.ObjectKeyFromObject(pcs)),
+		)
+	}
+	if err := r.createOrUpdatePCLQs(ctx, logger, pcs, existingPCLQFQNs, dependencyState); err != nil {
 		return err
 	}
 
@@ -124,7 +132,7 @@ func (r _resource) triggerDeletionOfExcessPCLQs(ctx context.Context, logger logr
 }
 
 // createOrUpdatePCLQs creates or updates all expected PodCliques for the PodCliqueSet.
-func (r _resource) createOrUpdatePCLQs(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, existingPCLQFQNs []string) error {
+func (r _resource) createOrUpdatePCLQs(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, existingPCLQFQNs []string, dependencyState *componentutils.StartupDependencyState) error {
 	expectedPCLQNames, _ := componentutils.GetExpectedPCLQNamesGroupByOwner(pcs)
 	tasks := make([]utils.Task, 0, len(expectedPCLQNames))
 	existingPCLQNameSet := componentutils.NewSet(existingPCLQFQNs)
@@ -139,7 +147,7 @@ func (r _resource) createOrUpdatePCLQs(ctx context.Context, logger logr.Logger, 
 			createOrUpdateTask := utils.Task{
 				Name: fmt.Sprintf("CreateOrUpdatePodClique-%s", pclqObjectKey),
 				Fn: func(ctx context.Context) error {
-					return r.doCreateOrUpdate(ctx, logger, pcs, pcsReplica, pclqObjectKey, pclqExists)
+					return r.doCreateOrUpdate(ctx, logger, pcs, pcsReplica, pclqObjectKey, pclqExists, dependencyState)
 				},
 			}
 			tasks = append(tasks, createOrUpdateTask)
@@ -258,13 +266,13 @@ func (r _resource) Delete(ctx context.Context, logger logr.Logger, pcsObjectMeta
 }
 
 // doCreateOrUpdate creates or updates a single PodClique resource.
-func (r _resource) doCreateOrUpdate(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, pcsReplica int32, pclqObjectKey client.ObjectKey, pclqExists bool) error {
+func (r _resource) doCreateOrUpdate(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, pcsReplica int32, pclqObjectKey client.ObjectKey, pclqExists bool, dependencyState *componentutils.StartupDependencyState) error {
 	logger.Info("Running CreateOrUpdate PodClique", "pclqObjectKey", pclqObjectKey)
 	pclq := emptyPodClique(pclqObjectKey)
 	pcsObjKey := client.ObjectKeyFromObject(pcs)
 
 	opResult, err := controllerutil.CreateOrPatch(ctx, r.client, pclq, func() error {
-		return r.buildResource(logger, pclq, pcs, int(pcsReplica), pclqExists)
+		return r.buildResource(logger, pclq, pcs, int(pcsReplica), pclqExists, dependencyState)
 	})
 	if err != nil {
 		r.eventRecorder.Eventf(pcs, corev1.EventTypeWarning, constants.ReasonPodCliqueCreateOrUpdateFailed, "PodClique %v creation or updation failed: %v", pclqObjectKey, err)
@@ -281,7 +289,7 @@ func (r _resource) doCreateOrUpdate(ctx context.Context, logger logr.Logger, pcs
 }
 
 // buildResource configures a PodClique with the desired state from the template.
-func (r _resource) buildResource(logger logr.Logger, pclq *grovecorev1alpha1.PodClique, pcs *grovecorev1alpha1.PodCliqueSet, pcsReplica int, pclqExists bool) error {
+func (r _resource) buildResource(logger logr.Logger, pclq *grovecorev1alpha1.PodClique, pcs *grovecorev1alpha1.PodCliqueSet, pcsReplica int, pclqExists bool, dependencyState *componentutils.StartupDependencyState) error {
 	var err error
 	pclqObjectKey, pcsObjectKey := client.ObjectKeyFromObject(pclq), client.ObjectKeyFromObject(pcs)
 	pclqTemplateSpec, foundAtIndex, ok := lo.FindIndexOf(pcs.Spec.Template.Cliques, func(pclqTemplateSpec *grovecorev1alpha1.PodCliqueTemplateSpec) bool {
@@ -323,7 +331,7 @@ func (r _resource) buildResource(logger logr.Logger, pclq *grovecorev1alpha1.Pod
 		pclq.Spec = *pclqTemplateSpec.Spec.DeepCopy()
 	}
 	var dependentPclqNames []string
-	if dependentPclqNames, err = identifyFullyQualifiedStartupDependencyNames(pcs, pclq, pcsReplica, foundAtIndex); err != nil {
+	if dependentPclqNames, err = identifyFullyQualifiedStartupDependencyNames(pcs, pclq, pcsReplica, foundAtIndex, dependencyState); err != nil {
 		return err
 	}
 	pclq.Spec.StartsAfter = dependentPclqNames
@@ -338,7 +346,7 @@ func (r _resource) buildResource(logger logr.Logger, pclq *grovecorev1alpha1.Pod
 }
 
 // identifyFullyQualifiedStartupDependencyNames determines the PodClique startup dependencies based on StartupType.
-func identifyFullyQualifiedStartupDependencyNames(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grovecorev1alpha1.PodClique, pcsReplicaIndex, foundAtIndex int) ([]string, error) {
+func identifyFullyQualifiedStartupDependencyNames(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grovecorev1alpha1.PodClique, pcsReplicaIndex, foundAtIndex int, dependencyState *componentutils.StartupDependencyState) ([]string, error) {
 	cliqueStartupType := pcs.Spec.Template.StartupType
 	if cliqueStartupType == nil {
 		// Ideally this should never happen as the defaulting webhook should set it v1alpha1.CliqueStartupTypeInOrder as the default value.
@@ -347,28 +355,32 @@ func identifyFullyQualifiedStartupDependencyNames(pcs *grovecorev1alpha1.PodCliq
 	}
 	switch *cliqueStartupType {
 	case grovecorev1alpha1.CliqueStartupTypeInOrder:
-		return getInOrderStartupDependencies(pcs, pcsReplicaIndex, foundAtIndex), nil
+		return getInOrderStartupDependencies(pcs, pcsReplicaIndex, foundAtIndex, dependencyState), nil
 	case grovecorev1alpha1.CliqueStartupTypeExplicit:
-		return getExplicitStartupDependencies(pcs, pcsReplicaIndex, pclq), nil
+		return getExplicitStartupDependencies(pcs, pcsReplicaIndex, pclq, dependencyState), nil
 	default:
 		return nil, nil
 	}
 }
 
 // getInOrderStartupDependencies returns the previous clique as a dependency for in-order startup.
-func getInOrderStartupDependencies(pcs *grovecorev1alpha1.PodCliqueSet, pcsReplicaIndex, foundAtIndex int) []string {
-	if foundAtIndex == 0 {
-		return nil
+func getInOrderStartupDependencies(pcs *grovecorev1alpha1.PodCliqueSet, pcsReplicaIndex, foundAtIndex int, dependencyState *componentutils.StartupDependencyState) []string {
+	// InOrder preserves ordering between active components. An idle predecessor cannot
+	// become Ready, so the nearest earlier active clique becomes the dependency.
+	for parentIndex := foundAtIndex - 1; parentIndex >= 0; parentIndex-- {
+		parentCliqueName := pcs.Spec.Template.Cliques[parentIndex].Name
+		if dependencies := componentutils.GenerateDependencyNamesForBasePodGang(pcs, pcsReplicaIndex, parentCliqueName, dependencyState); len(dependencies) > 0 {
+			return dependencies
+		}
 	}
-	previousCliqueName := pcs.Spec.Template.Cliques[foundAtIndex-1].Name
-	return componentutils.GenerateDependencyNamesForBasePodGang(pcs, pcsReplicaIndex, previousCliqueName)
+	return nil
 }
 
 // getExplicitStartupDependencies resolves explicitly declared startup dependencies.
-func getExplicitStartupDependencies(pcs *grovecorev1alpha1.PodCliqueSet, pcsReplicaIndex int, pclq *grovecorev1alpha1.PodClique) []string {
+func getExplicitStartupDependencies(pcs *grovecorev1alpha1.PodCliqueSet, pcsReplicaIndex int, pclq *grovecorev1alpha1.PodClique, dependencyState *componentutils.StartupDependencyState) []string {
 	dependencies := make([]string, 0, len(pclq.Spec.StartsAfter))
 	for _, dependency := range pclq.Spec.StartsAfter {
-		dependencies = append(dependencies, componentutils.GenerateDependencyNamesForBasePodGang(pcs, pcsReplicaIndex, dependency)...)
+		dependencies = append(dependencies, componentutils.GenerateDependencyNamesForBasePodGang(pcs, pcsReplicaIndex, dependency, dependencyState)...)
 	}
 	return dependencies
 }

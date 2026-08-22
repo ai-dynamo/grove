@@ -65,15 +65,15 @@ func (r *Reconciler) reconcileStatus(ctx context.Context, logger logr.Logger, pc
 		logger.Error(err, "failed to list PodCliques for PodCliqueScalingGroup")
 		return ctrlcommon.ReconcileWithErrors(fmt.Sprintf("failed to list PodCliques for PodCliqueScalingGroup: %q", client.ObjectKeyFromObject(pcsg)), err)
 	}
+	observedReplicas := countNonTerminatingPCSGReplicas(pclqsPerPCSGReplica)
 	// Prune children that no longer belong to the spec — primarily PCLQs whose name is not in
 	// Spec.CliqueNames after a clique-name change. Without this, lingering old-named PCLQs at
 	// valid replica indexes would inflate UpdatedPodCliquesCount past TotalPodCliquesCount
 	// (which is derived purely from the new spec) while the cascade delete is in flight.
-	// Replica-index strays (idx >= Spec.Replicas) are also dropped for hygiene, though
-	// mutateReplicas already ignores them via its [0, Spec.Replicas) loop bounds.
-	pclqsPerPCSGReplica = pruneStrayPCSGPCLQs(pcsg, pclqsPerPCSGReplica)
-	mutateReplicas(logger, pcs, pcsg, pclqsPerPCSGReplica)
-	mutateMinAvailableBreachedCondition(logger, pcsg, pclqsPerPCSGReplica)
+	// Replica-index strays outside the effective range are also dropped for hygiene.
+	boundedPCLQs := pruneStrayPCSGPCLQs(pcsg, pclqsPerPCSGReplica)
+	mutateReplicas(logger, pcs, pcsg, boundedPCLQs, observedReplicas)
+	mutateMinAvailableBreachedCondition(logger, pcsg, boundedPCLQs)
 	r.emitAllScheduledReplicasLostIfNeeded(pcsg, originalStatus.ScheduledReplicas)
 
 	if err = mutateSelector(pcs, pcsg); err != nil {
@@ -81,7 +81,7 @@ func (r *Reconciler) reconcileStatus(ctx context.Context, logger logr.Logger, pc
 		return ctrlcommon.ReconcileWithErrors("failed to update selector for PodCliqueScalingGroup", err)
 	}
 
-	mutateCurrentPodCliqueSetGenerationHash(logger, pcs, pcsg, lo.Flatten(lo.Values(pclqsPerPCSGReplica)))
+	mutateCurrentPodCliqueSetGenerationHash(logger, pcs, pcsg, lo.Flatten(lo.Values(boundedPCLQs)))
 
 	// Skip the status patch when every mutate* above left status byte-identical to what the
 	// previous reconcile already persisted. The mutators are the only code writing
@@ -104,15 +104,18 @@ func (r *Reconciler) reconcileStatus(ctx context.Context, logger logr.Logger, pc
 
 // mutateReplicas updates the PodCliqueScalingGroup status with replica counts based on constituent PodClique states.
 // It also derives child-PCLQ update progress counts when an update is in flight. The iteration is bounded to
-// expected replica indexes [0, Spec.Replicas) — the caller has already pruned stray children — so counters stay
-// consistent with the spec-derived totals during scale-down.
-func mutateReplicas(logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, pcsg *grovecorev1alpha1.PodCliqueScalingGroup, pclqsPerPCSGReplica map[string][]grovecorev1alpha1.PodClique) {
-	pcsg.Status.Replicas = pcsg.Spec.Replicas
+// expected effective replica indexes — the caller has already pruned stray children — so counters stay
+// consistent with the controller target during scale-down.
+func mutateReplicas(logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, pcsg *grovecorev1alpha1.PodCliqueScalingGroup, pclqsPerPCSGReplica map[string][]grovecorev1alpha1.PodClique, observedReplicas int32) {
+	effectiveReplicas := componentutils.EffectiveReplicas(pcsg.Spec.Replicas, pcsg.Spec.MinAvailable)
+	// status.replicas is observed state. It includes non-terminating indexes outside
+	// the effective range while scale-in deletion is still in flight.
+	pcsg.Status.Replicas = observedReplicas
 	var scheduledReplicas, availableReplicas, updatedReplicas, updatedPCLQs, totalPCLQs int32
 	cliqueNamesPerReplica := int32(len(pcsg.Spec.CliqueNames))
 	currentPCSGenerationHash := pcs.Status.CurrentGenerationHash
 	expectedPCLQPodTemplateHashes := componentutils.GetPCLQTemplateHashes(pcs, pcsg)
-	for replicaIndex := 0; replicaIndex < int(pcsg.Spec.Replicas); replicaIndex++ {
+	for replicaIndex := 0; replicaIndex < int(effectiveReplicas); replicaIndex++ {
 		pcsgReplicaIndex := strconv.Itoa(replicaIndex)
 		pclqs := pclqsPerPCSGReplica[pcsgReplicaIndex]
 		isScheduled, isAvailable, isUpdated := computeReplicaStatus(logger, currentPCSGenerationHash, expectedPCLQPodTemplateHashes, pcsgReplicaIndex, len(pcsg.Spec.CliqueNames), pclqs)
@@ -127,7 +130,7 @@ func mutateReplicas(logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, pcs
 		}
 		updatedPCLQs += countPCSGReplicaUpdatedPCLQs(currentPCSGenerationHash, expectedPCLQPodTemplateHashes, pclqs)
 	}
-	totalPCLQs = pcsg.Spec.Replicas * cliqueNamesPerReplica
+	totalPCLQs = effectiveReplicas * cliqueNamesPerReplica
 	logger.Info("Mutating PodCliqueScalingGroup replicas",
 		"pcsg", client.ObjectKeyFromObject(pcsg),
 		"scheduledReplicas", scheduledReplicas, "availableReplicas", availableReplicas, "updatedReplicas", updatedReplicas,
@@ -139,6 +142,18 @@ func mutateReplicas(logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, pcs
 		pcsg.Status.UpdateProgress.UpdatedPodCliquesCount = updatedPCLQs
 		pcsg.Status.UpdateProgress.TotalPodCliquesCount = totalPCLQs
 	}
+}
+
+func countNonTerminatingPCSGReplicas(pclqsPerPCSGReplica map[string][]grovecorev1alpha1.PodClique) int32 {
+	var replicas int32
+	for _, pclqs := range pclqsPerPCSGReplica {
+		if lo.SomeBy(pclqs, func(pclq grovecorev1alpha1.PodClique) bool {
+			return !k8sutils.IsResourceTerminating(pclq.ObjectMeta)
+		}) {
+			replicas++
+		}
+	}
+	return replicas
 }
 
 // countPCSGReplicaUpdatedPCLQs counts non-terminating PCLQs in a PCSG replica whose generation
@@ -178,6 +193,9 @@ func computeReplicaStatus(logger logr.Logger, currentPCSGenerationHash *string, 
 	// A PodClique is considered available if it schedules at least MinAvailable pods.
 	if isScheduled {
 		isAvailable = lo.EveryBy(nonTerminatedPCSGPodCliques, func(pclq grovecorev1alpha1.PodClique) bool {
+			if pclq.Spec.Replicas == 0 {
+				return true
+			}
 			return pclq.Status.ReadyReplicas >= *pclq.Spec.MinAvailable
 		})
 		isAvailable = isAvailable && len(nonTerminatedPCSGPodCliques) == numPCSGCliqueNames
@@ -203,8 +221,9 @@ func isPCSGChildPCLQUpdated(pclq *grovecorev1alpha1.PodClique, expectedPCLQPodTe
 		*pclq.Status.CurrentPodTemplateHash == expectedPodTemplateHash &&
 		pclq.Status.CurrentPodCliqueSetGenerationHash != nil &&
 		*pclq.Status.CurrentPodCliqueSetGenerationHash == *pcsGenerationHash &&
-		pclq.Status.ReadyReplicas >= *pclq.Spec.MinAvailable &&
-		pclq.Status.UpdatedReplicas >= *pclq.Spec.MinAvailable
+		(pclq.Spec.Replicas == 0 ||
+			(pclq.Status.ReadyReplicas >= *pclq.Spec.MinAvailable &&
+				pclq.Status.UpdatedReplicas >= *pclq.Spec.MinAvailable))
 }
 
 // emitAllScheduledReplicasLostIfNeeded emits a Warning event when ScheduledReplicas drops from
@@ -212,7 +231,7 @@ func isPCSGChildPCLQUpdated(pclq *grovecorev1alpha1.PodClique, expectedPCLQPodTe
 // event gives operators a discrete, log-visible signal that a previously-running workload is
 // fully down (and that gang termination is now armed and will fire after TerminationDelay).
 func (r *Reconciler) emitAllScheduledReplicasLostIfNeeded(pcsg *grovecorev1alpha1.PodCliqueScalingGroup, originalScheduled int32) {
-	if originalScheduled > 0 && pcsg.Status.ScheduledReplicas == 0 {
+	if pcsg.Spec.Replicas > 0 && originalScheduled > 0 && pcsg.Status.ScheduledReplicas == 0 {
 		r.eventRecorder.Eventf(pcsg, corev1.EventTypeWarning, internalconstants.ReasonAllScheduledReplicasLost,
 			"All scheduled replicas lost (was %d). Gang termination will fire after TerminationDelay if the PCSG stays below MinAvailable; investigate node availability or capacity.",
 			originalScheduled)
@@ -263,6 +282,14 @@ func computeMinAvailableBreachedCondition(logger logr.Logger, pcsg *grovecorev1a
 			Message: "Update is in progress",
 		}
 	}
+	if pcsg.Spec.Replicas == 0 {
+		return metav1.Condition{
+			Type:    constants.ConditionTypeMinAvailableBreached,
+			Status:  metav1.ConditionFalse,
+			Reason:  constants.ConditionReasonSufficientAvailablePCSGReplicas,
+			Message: "PodCliqueScalingGroup is intentionally idle",
+		}
+	}
 
 	// The apiserver defaults Spec.MinAvailable to 1 (+kubebuilder:default), but objects
 	// persisted under an older CRD schema can still read back nil until their next write —
@@ -302,12 +329,12 @@ func computeMinAvailableBreachedCondition(logger logr.Logger, pcsg *grovecorev1a
 // computeReplicaStatus, which likewise treats a replica as unscheduled/unavailable unless all expected
 // PodCliques exist.
 //
-// Iteration is bounded to expected replica indexes [0, Spec.Replicas) so stale-index children left
+// Iteration is bounded to expected effective replica indexes so stale-index children left
 // behind during scale-down neither inflate nor deflate the count.
 func computeNotInBreachReplicas(logger logr.Logger, pcsg *grovecorev1alpha1.PodCliqueScalingGroup, pclqsPerPCSGReplica map[string][]grovecorev1alpha1.PodClique) int {
 	expectedPCLQsPerReplica := len(pcsg.Spec.CliqueNames)
 	var notInBreachReplicas int
-	for replicaIndex := 0; replicaIndex < int(pcsg.Spec.Replicas); replicaIndex++ {
+	for replicaIndex := 0; replicaIndex < int(componentutils.EffectiveReplicas(pcsg.Spec.Replicas, pcsg.Spec.MinAvailable)); replicaIndex++ {
 		pcsgReplicaIndex := strconv.Itoa(replicaIndex)
 		nonTerminatingPCLQs := lo.Filter(pclqsPerPCSGReplica[pcsgReplicaIndex], func(pclq grovecorev1alpha1.PodClique, _ int) bool {
 			return !k8sutils.IsResourceTerminating(pclq.ObjectMeta)
@@ -409,7 +436,7 @@ func havePCSGPodCliquesConverged(pcs *grovecorev1alpha1.PodCliqueSet, pcsg *grov
 		return false
 	}
 	expectedPCLQPodTemplateHashes := componentutils.GetPCLQTemplateHashes(pcs, pcsg)
-	if len(expectedPCLQPodTemplateHashes) != int(pcsg.Spec.Replicas)*len(pcsg.Spec.CliqueNames) {
+	if len(expectedPCLQPodTemplateHashes) != int(componentutils.EffectiveReplicas(pcsg.Spec.Replicas, pcsg.Spec.MinAvailable))*len(pcsg.Spec.CliqueNames) {
 		return false
 	}
 	existingPCLQsByName := lo.SliceToMap(existingPCLQs, func(pclq grovecorev1alpha1.PodClique) (string, grovecorev1alpha1.PodClique) {
@@ -433,12 +460,12 @@ func havePCSGPodCliquesConverged(pcs *grovecorev1alpha1.PodCliqueSet, pcsg *grov
 	return true
 }
 
-// pruneStrayPCSGPCLQs drops children whose replica index is outside [0, Spec.Replicas) or whose FQN
+// pruneStrayPCSGPCLQs drops children whose replica index is outside the effective range or whose FQN
 // is not produced by Spec.CliqueNames at the kept indexes — strays left behind by scale-down or a
 // clique-name change that would otherwise inflate replica/progress counters past the spec-derived
 // totals. Mutates the input map in place (caller holds the only reference, fresh from grouping).
 func pruneStrayPCSGPCLQs(pcsg *grovecorev1alpha1.PodCliqueScalingGroup, pclqsPerPCSGReplica map[string][]grovecorev1alpha1.PodClique) map[string][]grovecorev1alpha1.PodClique {
-	expectedReplicas := int(pcsg.Spec.Replicas)
+	expectedReplicas := int(componentutils.EffectiveReplicas(pcsg.Spec.Replicas, pcsg.Spec.MinAvailable))
 	expectedFQNs := make(map[string]struct{}, expectedReplicas*len(pcsg.Spec.CliqueNames))
 	for replicaIndex := 0; replicaIndex < expectedReplicas; replicaIndex++ {
 		for _, cliqueName := range pcsg.Spec.CliqueNames {

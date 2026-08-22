@@ -26,6 +26,7 @@ import (
 	groveclientscheme "github.com/ai-dynamo/grove/operator/internal/client"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
+	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
@@ -93,6 +94,146 @@ func TestMarkRollingUpdateEndReturnsRequeueAfterPatch(t *testing.T) {
 	require.NotNil(t, updated.Status.UpdateProgress)
 	assert.NotNil(t, updated.Status.UpdateProgress.UpdateEndedAt)
 	assert.Nil(t, updated.Status.UpdateProgress.ReadyReplicaIndicesSelectedToUpdate)
+}
+
+func TestIdleRollingRecreateCompletesWithoutReadyReplicas(t *testing.T) {
+	pcsg := &grovecorev1alpha1.PodCliqueScalingGroup{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-pcsg", Namespace: "test-ns"},
+		Spec: grovecorev1alpha1.PodCliqueScalingGroupSpec{
+			Replicas:     0,
+			MinAvailable: ptr.To(int32(2)),
+		},
+		Status: grovecorev1alpha1.PodCliqueScalingGroupStatus{
+			UpdateProgress: &grovecorev1alpha1.PodCliqueScalingGroupUpdateProgress{
+				UpdateStartedAt: metav1.Now(),
+			},
+		},
+	}
+	cl := testutils.NewTestClientBuilder().
+		WithObjects(pcsg).
+		WithStatusSubresource(&grovecorev1alpha1.PodCliqueScalingGroup{}).
+		Build()
+	r := _resource{client: cl}
+
+	err := r.processPendingUpdates(logr.Discard(), &syncContext{
+		ctx:                            context.Background(),
+		pcsg:                           pcsg,
+		expectedPCLQFQNsPerPCSGReplica: map[int][]string{},
+		expectedPCLQPodTemplateHashMap: map[string]string{},
+	})
+
+	require.Error(t, err)
+	var groveError *groveerr.GroveError
+	require.True(t, errors.As(err, &groveError))
+	assert.Equal(t, groveerr.ErrCodeContinueReconcileAndRequeue, groveError.Code)
+
+	var updated grovecorev1alpha1.PodCliqueScalingGroup
+	require.NoError(t, cl.Get(context.Background(), client.ObjectKeyFromObject(pcsg), &updated))
+	require.NotNil(t, updated.Status.UpdateProgress)
+	assert.NotNil(t, updated.Status.UpdateProgress.UpdateEndedAt)
+}
+
+func TestRollingRecreateRefreshesStartupDependenciesWhenPredecessorIsIdle(t *testing.T) {
+	const (
+		namespace      = "test-ns"
+		pcsName        = "inference"
+		pcsgName       = "inference-0-grouped"
+		routerName     = "inference-0-router"
+		standaloneName = "inference-0-standalone"
+		groupedName    = "inference-0-grouped-0-grouped"
+	)
+	pcs := &grovecorev1alpha1.PodCliqueSet{
+		ObjectMeta: metav1.ObjectMeta{Name: pcsName, Namespace: namespace},
+		Spec: grovecorev1alpha1.PodCliqueSetSpec{
+			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
+				StartupType: ptr.To(grovecorev1alpha1.CliqueStartupTypeInOrder),
+				Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+					{Name: "router", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1}},
+					{Name: "standalone", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1}},
+					{Name: "grouped", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1}},
+				},
+			},
+		},
+	}
+	pcsg := &grovecorev1alpha1.PodCliqueScalingGroup{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      pcsgName,
+			Namespace: namespace,
+			Labels: map[string]string{
+				apicommon.LabelPodCliqueSetReplicaIndex: "0",
+			},
+		},
+		Spec: grovecorev1alpha1.PodCliqueScalingGroupSpec{
+			Replicas:     1,
+			MinAvailable: ptr.To(int32(1)),
+			CliqueNames:  []string{"grouped"},
+		},
+	}
+	grouped := grovecorev1alpha1.PodClique{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      groupedName,
+			Namespace: namespace,
+			Labels: map[string]string{
+				apicommon.LabelPodCliqueScalingGroupReplicaIndex: "0",
+			},
+		},
+		Spec: grovecorev1alpha1.PodCliqueSpec{
+			Replicas:    1,
+			StartsAfter: []string{standaloneName},
+		},
+	}
+	dependencyState := componentutils.NewStartupDependencyState([]grovecorev1alpha1.PodClique{
+		{ObjectMeta: metav1.ObjectMeta{Name: routerName}, Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1}},
+		{ObjectMeta: metav1.ObjectMeta{Name: standaloneName}, Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 0}},
+		grouped,
+	}, []grovecorev1alpha1.PodCliqueScalingGroup{*pcsg})
+	cl := testutils.NewTestClientBuilder().WithObjects(&grouped).Build()
+	r := _resource{client: cl}
+
+	require.NoError(t, r.syncStartupDependencies(logr.Discard(), &syncContext{
+		ctx:             t.Context(),
+		pcs:             pcs,
+		pcsg:            pcsg,
+		pcsReplicaIndex: 0,
+		existingPCLQs:   []grovecorev1alpha1.PodClique{grouped},
+		dependencyState: dependencyState,
+	}))
+
+	var updated grovecorev1alpha1.PodClique
+	require.NoError(t, cl.Get(t.Context(), client.ObjectKeyFromObject(&grouped), &updated))
+	assert.Equal(t, int32(1), updated.Spec.Replicas)
+	assert.Equal(t, []string{routerName}, updated.Spec.StartsAfter)
+}
+
+func TestExpectedPodCliquesUseEffectiveReplicas(t *testing.T) {
+	tests := []struct {
+		name     string
+		desired  int32
+		expected int
+	}{
+		{name: "idle", desired: 0, expected: 0},
+		{name: "below quorum", desired: 1, expected: 2},
+		{name: "at quorum", desired: 2, expected: 2},
+		{name: "above quorum", desired: 3, expected: 3},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pcsg := &grovecorev1alpha1.PodCliqueScalingGroup{
+				ObjectMeta: metav1.ObjectMeta{Name: "workers"},
+				Spec: grovecorev1alpha1.PodCliqueScalingGroupSpec{
+					Replicas:     tt.desired,
+					MinAvailable: ptr.To(int32(2)),
+					CliqueNames:  []string{"leader", "worker"},
+				},
+			}
+
+			got := getExpectedPodCliqueFQNsByPCSGReplica(pcsg)
+
+			assert.Len(t, got, tt.expected)
+			assert.Equal(t, tt.desired, pcsg.Spec.Replicas)
+		})
+	}
 }
 
 // TestGetPCSGTemplateNumPods tests calculating the number of pods in a PCSG template
@@ -675,8 +816,8 @@ func TestIdentifyFullyQualifiedStartupDependencyNames(t *testing.T) {
 					Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
 						StartupType: ptr.To(grovecorev1alpha1.CliqueStartupTypeInOrder),
 						Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-							{Name: "clique1"},
-							{Name: "clique2"},
+							{Name: "clique1", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1}},
+							{Name: "clique2", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1}},
 						},
 					},
 				},
@@ -708,8 +849,8 @@ func TestIdentifyFullyQualifiedStartupDependencyNames(t *testing.T) {
 					Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
 						StartupType: ptr.To(grovecorev1alpha1.CliqueStartupTypeInOrder),
 						Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-							{Name: "clique1"},
-							{Name: "clique2"},
+							{Name: "clique1", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1}},
+							{Name: "clique2", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1}},
 						},
 					},
 				},
@@ -741,8 +882,11 @@ func TestIdentifyFullyQualifiedStartupDependencyNames(t *testing.T) {
 					Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
 						StartupType: ptr.To(grovecorev1alpha1.CliqueStartupTypeExplicit),
 						Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-							{Name: "clique1"},
-							{Name: "clique2"},
+							{Name: "clique1", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1}},
+							{Name: "clique2", Spec: grovecorev1alpha1.PodCliqueSpec{
+								Replicas:    1,
+								StartsAfter: []string{"clique1"},
+							}},
 						},
 					},
 				},
@@ -760,7 +904,7 @@ func TestIdentifyFullyQualifiedStartupDependencyNames(t *testing.T) {
 			pcsgReplica: 0,
 			pclq: &grovecorev1alpha1.PodClique{
 				Spec: grovecorev1alpha1.PodCliqueSpec{
-					StartsAfter: []string{"clique1"},
+					StartsAfter: []string{"test-pcs-0-clique1"},
 				},
 			},
 			foundAtIndex: 1,
@@ -806,6 +950,7 @@ func TestIdentifyFullyQualifiedStartupDependencyNames(t *testing.T) {
 				tc.pcsgReplica,
 				tc.pclq,
 				tc.foundAtIndex,
+				nil,
 			)
 
 			if tc.expectError {
@@ -816,6 +961,18 @@ func TestIdentifyFullyQualifiedStartupDependencyNames(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestGetExcessPCSGReplicaIndicesUsesActualLabels(t *testing.T) {
+	existingPCLQs := []grovecorev1alpha1.PodClique{
+		{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{apicommon.LabelPodCliqueScalingGroupReplicaIndex: "0"}}},
+		{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{apicommon.LabelPodCliqueScalingGroupReplicaIndex: "2"}}},
+	}
+
+	indices, err := getExcessPCSGReplicaIndices(existingPCLQs, 1)
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"2"}, indices)
 }
 
 // Helper function to check if an env var exists in a slice
@@ -1103,7 +1260,7 @@ func TestBuildResource_MNNVLInjection(t *testing.T) {
 				eventRecorder: &record.FakeRecorder{},
 			}
 
-			err := operator.buildResource(logr.Discard(), pcs, pcsg, pcsgReplicaIndex, pclq, false)
+			err := operator.buildResource(logr.Discard(), pcs, pcsg, pcsgReplicaIndex, pclq, false, nil)
 			require.NoError(t, err)
 
 			// Verify pod-level claims
@@ -1183,7 +1340,7 @@ func TestBuildResource_StripsTopologyAnnotation(t *testing.T) {
 	}
 
 	operator := &_resource{scheme: groveclientscheme.Scheme}
-	err := operator.buildResource(logr.Discard(), pcs, pcsg, 0, pclq, false)
+	err := operator.buildResource(logr.Discard(), pcs, pcsg, 0, pclq, false, nil)
 	require.NoError(t, err)
 	require.NotNil(t, pclq.Annotations)
 	assert.Equal(t, "yes", pclq.Annotations["example.com/keep"])

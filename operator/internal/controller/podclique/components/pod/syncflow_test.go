@@ -754,3 +754,47 @@ func TestSelectExcessPodsToDelete_ExcludesPodsAlreadyBeingDeleted(t *testing.T) 
 		})
 	}
 }
+
+func TestSyncExpectationsUsesEffectiveReplicas(t *testing.T) {
+	tests := []struct {
+		name          string
+		desired       int32
+		existing      int
+		expectedDelta int
+	}{
+		{name: "idle", desired: 0, existing: 2, expectedDelta: 2},
+		{name: "below quorum", desired: 1, existing: 0, expectedDelta: -2},
+		{name: "above quorum", desired: 3, existing: 2, expectedDelta: -1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := expect.NewExpectationsStore()
+			r := _resource{expectationsStore: store}
+			pclq := &grovecorev1alpha1.PodClique{
+				ObjectMeta: metav1.ObjectMeta{Name: "worker", Namespace: "default"},
+				Spec: grovecorev1alpha1.PodCliqueSpec{
+					Replicas:     tt.desired,
+					MinAvailable: ptr.To(int32(2)),
+				},
+			}
+			key, err := getPodCliqueExpectationsStoreKey(logr.Discard(), "sync", pclq.ObjectMeta)
+			require.NoError(t, err)
+			pods := make([]*corev1.Pod, 0, tt.existing)
+			for i := range tt.existing {
+				pods = append(pods, &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
+					Name: fmt.Sprintf("worker-%d", i),
+					UID:  types.UID(fmt.Sprintf("worker-%d", i)),
+				}})
+			}
+			sc := &syncContext{
+				pclq:                     pclq,
+				existingPCLQPods:         pods,
+				pclqExpectationsStoreKey: key,
+			}
+
+			assert.Equal(t, tt.expectedDelta, r.syncExpectationsAndComputeDifference(logr.Discard(), sc))
+			assert.Equal(t, tt.desired, pclq.Spec.Replicas)
+		})
+	}
+}

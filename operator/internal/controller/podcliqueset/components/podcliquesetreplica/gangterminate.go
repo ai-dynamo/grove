@@ -181,6 +181,9 @@ func getMinAvailableBreachedPCSGInfo(pcsgs []grovecorev1alpha1.PodCliqueScalingG
 	pcsgCandidateNames := make([]string, 0, len(pcsgs))
 	waitForDurations := make([]time.Duration, 0, len(pcsgs))
 	for _, pcsg := range pcsgs {
+		if pcsg.Spec.Replicas == 0 {
+			continue
+		}
 		cond := meta.FindStatusCondition(pcsg.Status.Conditions, apiconstants.ConditionTypeMinAvailableBreached)
 		if cond == nil {
 			continue

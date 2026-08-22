@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"slices"
 	"strconv"
 	"time"
 
@@ -45,6 +46,7 @@ type syncContext struct {
 	pcsReplicaIndex                int
 	existingPCLQs                  []grovecorev1alpha1.PodClique
 	existingPCLQNameSet            componentutils.Set[string]
+	dependencyState                *componentutils.StartupDependencyState
 	pcsgIndicesToTerminate         []string
 	pcsgIndicesToRequeue           []string
 	expectedPCLQFQNsPerPCSGReplica map[int][]string
@@ -85,6 +87,14 @@ func (r _resource) prepareSyncContext(ctx context.Context, logger logr.Logger, p
 		return nil, err
 	}
 	syncCtx.existingPCLQNameSet = componentutils.PodCliqueNameSet(syncCtx.existingPCLQs)
+	syncCtx.dependencyState, err = componentutils.GetStartupDependencyState(ctx, r.client, syncCtx.pcs)
+	if err != nil {
+		return nil, groveerr.WrapError(err,
+			errCodeListPodCliquesForPCSG,
+			component.OperationSync,
+			fmt.Sprintf("failed to resolve startup dependencies for PodCliqueScalingGroup %s", client.ObjectKeyFromObject(pcsg)),
+		)
+	}
 
 	// compute the PCSG indices that have their MinAvailableBreached condition set to true. Segregated these into two
 	// pcsgIndicesToTerminate will have the indices for which the TerminationDelay has expired.
@@ -120,6 +130,11 @@ func (r _resource) runSyncFlow(logger logr.Logger, sc *syncContext) error {
 		if err := r.createExpectedPCLQs(logger, sc); err != nil {
 			return err
 		}
+		// startsAfter is controller-derived scheduling metadata, not a pod-template
+		// rollout. Refresh it in place when sibling components enter or leave idle.
+		if err := r.syncStartupDependencies(logger, sc); err != nil {
+			return err
+		}
 	}
 
 	// Only if the rolling update is not in progress, check for a possibility of gang termination and execute it only if
@@ -153,14 +168,15 @@ func (r _resource) runSyncFlow(logger logr.Logger, sc *syncContext) error {
 
 // triggerDeletionOfExcessPCSGReplicas removes PCSG replicas that exceed the desired replica count due to scale-down
 func (r _resource) triggerDeletionOfExcessPCSGReplicas(logger logr.Logger, sc *syncContext) error {
-	existingPCSGReplicas := getExistingNonTerminatingPCSGReplicas(sc.existingPCLQs)
-	// Check if the number of existing PodCliques is greater than expected, if so, we need to delete the extra ones.
-	diff := existingPCSGReplicas - int(sc.pcsg.Spec.Replicas)
-	if diff > 0 {
+	effectiveReplicas := int(componentutils.EffectiveReplicas(sc.pcsg.Spec.Replicas, sc.pcsg.Spec.MinAvailable))
+	replicaIndicesToDelete, err := getExcessPCSGReplicaIndices(sc.existingPCLQs, effectiveReplicas)
+	if err != nil {
+		return err
+	}
+	if len(replicaIndicesToDelete) > 0 {
 		pcsgObjectKey := client.ObjectKeyFromObject(sc.pcsg)
-		logger.Info("Found more PodCliques than expected, triggering deletion of excess PodCliques", "expected", int(sc.pcsg.Spec.Replicas), "existing", existingPCSGReplicas, "diff", diff)
+		logger.Info("Found more PodCliques than expected, triggering deletion of excess PodCliques", "desired", sc.pcsg.Spec.Replicas, "effective", effectiveReplicas, "replicaIndices", replicaIndicesToDelete)
 		reason := "Delete excess PodCliqueScalingGroup replicas"
-		replicaIndicesToDelete := computePCSGReplicasToDelete(existingPCSGReplicas, int(sc.pcsg.Spec.Replicas))
 		deletionTasks := r.createDeleteTasks(logger, sc.pcs, pcsgObjectKey.Name, replicaIndicesToDelete, reason)
 		if err := r.triggerDeletionOfPodCliques(sc.ctx, logger, pcsgObjectKey, deletionTasks); err != nil {
 			return err
@@ -171,29 +187,38 @@ func (r _resource) triggerDeletionOfExcessPCSGReplicas(logger logr.Logger, sc *s
 	return nil
 }
 
-// getExistingNonTerminatingPCSGReplicas counts the number of unique PCSG replica indices from non-terminating PodCliques
-func getExistingNonTerminatingPCSGReplicas(existingPCLQs []grovecorev1alpha1.PodClique) int {
-	existingIndices := make([]string, 0, len(existingPCLQs))
+// getExcessPCSGReplicaIndices returns actual replica indices outside the effective range.
+// Counting replicas is insufficient because manually deleted children can leave sparse indices.
+func getExcessPCSGReplicaIndices(existingPCLQs []grovecorev1alpha1.PodClique, effectiveReplicas int) ([]string, error) {
+	indexSet := make(map[int]struct{})
 	for _, pclq := range existingPCLQs {
 		if k8sutils.IsResourceTerminating(pclq.ObjectMeta) {
 			continue
 		}
-		pcsgReplicaIndex, ok := pclq.Labels[apicommon.LabelPodCliqueScalingGroupReplicaIndex]
+		indexValue, ok := pclq.Labels[apicommon.LabelPodCliqueScalingGroupReplicaIndex]
 		if !ok {
 			continue
 		}
-		existingIndices = append(existingIndices, pcsgReplicaIndex)
+		index, err := strconv.Atoi(indexValue)
+		if err != nil {
+			return nil, groveerr.WrapError(err,
+				errCodeParsePodCliqueScalingGroupReplicaIndex,
+				component.OperationSync,
+				fmt.Sprintf("invalid pcsg replica index label value found on PodClique: %v", client.ObjectKeyFromObject(&pclq)),
+			)
+		}
+		if index >= effectiveReplicas {
+			indexSet[index] = struct{}{}
+		}
 	}
-	return len(lo.Uniq(existingIndices))
-}
-
-// computePCSGReplicasToDelete generates the replica indices that should be deleted when scaling down
-func computePCSGReplicasToDelete(existingReplicas, expectedReplicas int) []string {
-	indices := make([]string, 0, existingReplicas-expectedReplicas)
-	for i := expectedReplicas; i < existingReplicas; i++ {
-		indices = append(indices, strconv.Itoa(i))
+	indices := make([]int, 0, len(indexSet))
+	for index := range indexSet {
+		indices = append(indices, index)
 	}
-	return indices
+	slices.Sort(indices)
+	return lo.Map(indices, func(index int, _ int) string {
+		return strconv.Itoa(index)
+	}), nil
 }
 
 // createExpectedPCLQs creates any missing PodCliques needed to satisfy the desired PCSG replica configuration
@@ -211,7 +236,7 @@ func (r _resource) createExpectedPCLQs(logger logr.Logger, sc *syncContext) erro
 			createTask := utils.Task{
 				Name: fmt.Sprintf("CreatePodClique-%s", pclqObjectKey),
 				Fn: func(ctx context.Context) error {
-					return r.doCreate(ctx, logger, sc.pcs, sc.pcsg, pcsgReplicaIndex, pclqObjectKey)
+					return r.doCreate(ctx, logger, sc.pcs, sc.pcsg, pcsgReplicaIndex, pclqObjectKey, sc.dependencyState)
 				},
 			}
 			tasks = append(tasks, createTask)
@@ -222,6 +247,88 @@ func (r _resource) createExpectedPCLQs(logger logr.Logger, sc *syncContext) erro
 			errCodeCreatePodCliques,
 			component.OperationSync,
 			fmt.Sprintf("Error Create of PodCliques for PodCliqueScalingGroup: %v, run summary: %s", client.ObjectKeyFromObject(sc.pcsg), runResult.GetSummary()),
+		)
+	}
+	return nil
+}
+
+// syncStartupDependencies refreshes derived startsAfter fields without applying other template changes.
+func (r _resource) syncStartupDependencies(logger logr.Logger, sc *syncContext) error {
+	tasks := make([]utils.Task, 0, len(sc.existingPCLQs))
+	for i := range sc.existingPCLQs {
+		pclq := sc.existingPCLQs[i]
+		if k8sutils.IsResourceTerminating(pclq.ObjectMeta) {
+			continue
+		}
+		pcsgReplicaIndexValue, ok := pclq.Labels[apicommon.LabelPodCliqueScalingGroupReplicaIndex]
+		if !ok {
+			continue
+		}
+		pcsgReplicaIndex, err := strconv.Atoi(pcsgReplicaIndexValue)
+		if err != nil {
+			return groveerr.WrapError(err,
+				errCodeParsePodCliqueScalingGroupReplicaIndex,
+				component.OperationSync,
+				fmt.Sprintf("invalid pcsg replica index label value found on PodClique: %v", client.ObjectKeyFromObject(&pclq)),
+			)
+		}
+
+		foundAtIndex := -1
+		for _, cliqueName := range sc.pcsg.Spec.CliqueNames {
+			expectedName := apicommon.GeneratePodCliqueName(apicommon.ResourceNameReplica{
+				Name:    sc.pcsg.Name,
+				Replica: pcsgReplicaIndex,
+			}, cliqueName)
+			if pclq.Name != expectedName {
+				continue
+			}
+			_, foundAtIndex, _ = lo.FindIndexOf(sc.pcs.Spec.Template.Cliques, func(template *grovecorev1alpha1.PodCliqueTemplateSpec) bool {
+				return template.Name == cliqueName
+			})
+			break
+		}
+		if foundAtIndex < 0 {
+			continue
+		}
+
+		startsAfter, err := identifyFullyQualifiedStartupDependencyNames(
+			sc.pcs,
+			sc.pcsReplicaIndex,
+			sc.pcsg,
+			pcsgReplicaIndex,
+			&pclq,
+			foundAtIndex,
+			sc.dependencyState,
+		)
+		if err != nil {
+			return err
+		}
+		if slices.Equal(pclq.Spec.StartsAfter, startsAfter) {
+			continue
+		}
+
+		tasks = append(tasks, utils.Task{
+			Name: "SyncPodCliqueStartupDependencies-" + pclq.Name,
+			Fn: func(ctx context.Context) error {
+				original := pclq.DeepCopy()
+				pclq.Spec.StartsAfter = startsAfter
+				if err := r.client.Patch(ctx, &pclq, client.MergeFrom(original)); err != nil {
+					return groveerr.WrapError(err,
+						errCodeCreateOrUpdatePodCliques,
+						component.OperationSync,
+						fmt.Sprintf("failed to update startup dependencies for PodClique: %v", client.ObjectKeyFromObject(&pclq)),
+					)
+				}
+				logger.Info("Updated PodClique startup dependencies", "pclqObjectKey", client.ObjectKeyFromObject(&pclq), "startsAfter", startsAfter)
+				return nil
+			},
+		})
+	}
+	if runResult := utils.RunConcurrently(sc.ctx, logger, tasks); runResult.HasErrors() {
+		return groveerr.WrapError(runResult.GetAggregatedError(),
+			errCodeCreateOrUpdatePodCliques,
+			component.OperationSync,
+			fmt.Sprintf("failed to update PodClique startup dependencies for PodCliqueScalingGroup: %v", client.ObjectKeyFromObject(sc.pcsg)),
 		)
 	}
 	return nil
@@ -241,7 +348,7 @@ func (r _resource) createOrUpdatePCLQs(logger logr.Logger, sc *syncContext) erro
 			createOrUpdateTask := utils.Task{
 				Name: fmt.Sprintf("CreateOrUpdatePodClique-%s", pclqObjectKey),
 				Fn: func(ctx context.Context) error {
-					return r.doCreateOrUpdate(ctx, logger, sc.pcs, sc.pcsg, pcsgReplicaIndex, pclqObjectKey, pclqExists)
+					return r.doCreateOrUpdate(ctx, logger, sc.pcs, sc.pcsg, pcsgReplicaIndex, pclqObjectKey, pclqExists, sc.dependencyState)
 				},
 			}
 			tasks = append(tasks, createOrUpdateTask)
@@ -259,10 +366,14 @@ func (r _resource) createOrUpdatePCLQs(logger logr.Logger, sc *syncContext) erro
 
 // processMinAvailableBreachedPCSGReplicas handles gang termination of PCSG replicas that have breached minimum availability requirements
 func (r _resource) processMinAvailableBreachedPCSGReplicas(logger logr.Logger, sc *syncContext) error {
+	if sc.pcsg.Spec.Replicas == 0 {
+		return nil
+	}
 	// If pcsg.spec.minAvailable is breached, then delegate the responsibility to the PodCliqueSet reconciler which after
 	// termination delay terminate the PodCliqueSet replica. No further processing is required to be done here.
 	minAvailableBreachedPCSGReplicas := len(sc.pcsgIndicesToTerminate) + len(sc.pcsgIndicesToRequeue)
-	if int(sc.pcsg.Spec.Replicas)-minAvailableBreachedPCSGReplicas < int(*sc.pcsg.Spec.MinAvailable) {
+	effectiveReplicas := int(componentutils.EffectiveReplicas(sc.pcsg.Spec.Replicas, sc.pcsg.Spec.MinAvailable))
+	if effectiveReplicas-minAvailableBreachedPCSGReplicas < int(*sc.pcsg.Spec.MinAvailable) {
 		return errPCCGMinAvailableBreached
 	}
 	// If pcsg.spec.minAvailable is not breached but if there is one more PCSG replica for which there is at least one PCLQ that has
@@ -308,7 +419,7 @@ func getExpectedPodCliqueFQNsByPCSGReplica(pcsg *grovecorev1alpha1.PodCliqueScal
 	var (
 		expectedPCLQFQNs = make(map[int][]string)
 	)
-	for pcsgReplicaIndex := range int(pcsg.Spec.Replicas) {
+	for pcsgReplicaIndex := range int(componentutils.EffectiveReplicas(pcsg.Spec.Replicas, pcsg.Spec.MinAvailable)) {
 		pclqFQNs := lo.Map(pcsg.Spec.CliqueNames, func(cliqueName string, _ int) string {
 			return apicommon.GeneratePodCliqueName(apicommon.ResourceNameReplica{
 				Name:    pcsg.Name,
@@ -343,7 +454,7 @@ func getExpectedPCLQPodTemplateHashMap(pcs *grovecorev1alpha1.PodCliqueSet, pcsg
 			continue
 		}
 		podTemplateHash := componentutils.ComputePCLQPodTemplateHash(pclqTemplateSpec, pcs.Spec.Template.PriorityClassName)
-		for pcsgReplicaIndex := range int(pcsg.Spec.Replicas) {
+		for pcsgReplicaIndex := range int(componentutils.EffectiveReplicas(pcsg.Spec.Replicas, pcsg.Spec.MinAvailable)) {
 			cliqueFQN := apicommon.GeneratePodCliqueName(apicommon.ResourceNameReplica{
 				Name:    pcsg.Name,
 				Replica: pcsgReplicaIndex,
@@ -375,7 +486,7 @@ func (sc *syncContext) refreshExistingPCLQs(pcsg *grovecorev1alpha1.PodCliqueSca
 				fmt.Sprintf("invalid pcsg replica index label value found on PodClique: %v", client.ObjectKeyFromObject(&pclq)),
 			)
 		}
-		if pcsgReplicaIndex < int(pcsg.Spec.Replicas) {
+		if pcsgReplicaIndex < int(componentutils.EffectiveReplicas(pcsg.Spec.Replicas, pcsg.Spec.MinAvailable)) {
 			revisedExistingPCLQs = append(revisedExistingPCLQs, pclq)
 		}
 	}
@@ -404,7 +515,7 @@ func (r _resource) ensurePCSGResourceClaims(sc *syncContext) error {
 	return resourceclaim.CleanupStalePerReplicaRCs(
 		sc.ctx, r.client,
 		sc.pcsg.Namespace, labels,
-		int(sc.pcsg.Spec.Replicas),
+		int(componentutils.EffectiveReplicas(sc.pcsg.Spec.Replicas, sc.pcsg.Spec.MinAvailable)),
 		apicommon.LabelPodCliqueScalingGroupReplicaIndex,
 	)
 }
@@ -429,7 +540,7 @@ func (r _resource) ensurePCSGAllReplicasRCs(sc *syncContext, resourceSharers []r
 }
 
 func (r _resource) ensurePCSGPerReplicaRCs(sc *syncContext, resourceSharers []resourceclaim.ResourceSharer, labels map[string]string) error {
-	for pcsgReplicaIndex := range int(sc.pcsg.Spec.Replicas) {
+	for pcsgReplicaIndex := range int(componentutils.EffectiveReplicas(sc.pcsg.Spec.Replicas, sc.pcsg.Spec.MinAvailable)) {
 		repIdx := pcsgReplicaIndex
 		replicaLabels := maps.Clone(labels)
 		replicaLabels[apicommon.LabelPodCliqueScalingGroupReplicaIndex] = strconv.Itoa(repIdx)

@@ -285,6 +285,28 @@ func TestInitOrResetUpdate(t *testing.T) {
 			expectUpdateEndedAtSet: true,
 		},
 		{
+			name: "idle_on_delete_strategy_sets_update_ended_at_immediately",
+			setupPCS: func(pcsUID types.UID) *grovecorev1alpha1.PodCliqueSet {
+				return testutils.NewPodCliqueSetBuilder(testPCSNamePCSG, testNamespacePCSG, pcsUID).
+					WithReplicas(2).
+					WithScalingGroup(testPCSGName, []string{"worker", "router"}).
+					WithUpdateStrategy(&grovecorev1alpha1.PodCliqueSetUpdateStrategy{
+						Type: grovecorev1alpha1.OnDeleteStrategy,
+					}).
+					WithPodCliqueSetGenerationHash(ptr.To("current-hash")).
+					Build()
+			},
+			setupPCSG: func(pcsUID types.UID) *grovecorev1alpha1.PodCliqueScalingGroup {
+				pcsg := testutils.NewPodCliqueScalingGroupBuilder(testPCSGName, testNamespacePCSG, testPCSNamePCSG, 0).
+					WithReplicas(0).
+					WithOwnerReference("PodCliqueSet", testPCSNamePCSG, string(pcsUID)).
+					Build()
+				pcsg.Status.UpdatedReplicas = 2
+				return pcsg
+			},
+			expectUpdateEndedAtSet: true,
+		},
+		{
 			name: "existing_rollingrecreate_in_progress_is_reset_when_hash_changes",
 			setupPCS: func(pcsUID types.UID) *grovecorev1alpha1.PodCliqueSet {
 				return testutils.NewPodCliqueSetBuilder(testPCSNamePCSG, testNamespacePCSG, pcsUID).

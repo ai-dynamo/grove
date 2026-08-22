@@ -161,7 +161,8 @@ func podCliqueScalingGroupPredicate() predicate.Predicate {
 			if !okOld || !okNew {
 				return false
 			}
-			return hasMinAvailableBreachedConditionChanged(oldPCSG.Status.Conditions, newPCSG.Status.Conditions) ||
+			return hasSpecChanged(updateEvent) ||
+				hasMinAvailableBreachedConditionChanged(oldPCSG.Status.Conditions, newPCSG.Status.Conditions) ||
 				hasPodCliqueScalingGroupStatusChanged(&oldPCSG.Status, &newPCSG.Status)
 		},
 		GenericFunc: func(_ event.TypedGenericEvent[client.Object]) bool { return false },

@@ -66,6 +66,7 @@ func TestGetMinAvailableBreachedPCSGInfoGangTerminationGate(t *testing.T) {
 			name: "breached, no in-progress flag — candidate for fire",
 			pcsg: grovecorev1alpha1.PodCliqueScalingGroup{
 				ObjectMeta: metav1.ObjectMeta{Name: "pcsg-fresh-breach"},
+				Spec:       grovecorev1alpha1.PodCliqueScalingGroupSpec{Replicas: 1},
 				Status: grovecorev1alpha1.PodCliqueScalingGroupStatus{
 					Conditions: []metav1.Condition{breachedTrue},
 				},
@@ -76,8 +77,20 @@ func TestGetMinAvailableBreachedPCSGInfoGangTerminationGate(t *testing.T) {
 			name: "breached AND in-progress flag set — skipped (recycle in flight)",
 			pcsg: grovecorev1alpha1.PodCliqueScalingGroup{
 				ObjectMeta: metav1.ObjectMeta{Name: "pcsg-recycling"},
+				Spec:       grovecorev1alpha1.PodCliqueScalingGroupSpec{Replicas: 1},
 				Status: grovecorev1alpha1.PodCliqueScalingGroupStatus{
 					Conditions: []metav1.Condition{breachedTrue, inProgressTrue},
+				},
+			},
+			wantInList: false,
+		},
+		{
+			name: "stale breach after scale to zero is skipped",
+			pcsg: grovecorev1alpha1.PodCliqueScalingGroup{
+				ObjectMeta: metav1.ObjectMeta{Name: "pcsg-idle"},
+				Spec:       grovecorev1alpha1.PodCliqueScalingGroupSpec{Replicas: 0},
+				Status: grovecorev1alpha1.PodCliqueScalingGroupStatus{
+					Conditions: []metav1.Condition{breachedTrue},
 				},
 			},
 			wantInList: false,

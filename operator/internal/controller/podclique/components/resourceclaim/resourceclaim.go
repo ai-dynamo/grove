@@ -106,7 +106,7 @@ func (r _resource) Sync(ctx context.Context, _ logr.Logger, pclq *grovecorev1alp
 	resourceSharers := resourceclaim.ResourceSharersFromPCLQ(pclqTemplateSpec.ResourceSharing)
 
 	labels := pclqResourceClaimLabels(pclq.ObjectMeta)
-	currentReplicas := int(pclq.Spec.Replicas)
+	currentReplicas := int(componentutils.EffectiveReplicas(pclq.Spec.Replicas, pclq.Spec.MinAvailable))
 
 	if err := r.ensureAllReplicasRCs(ctx, pclq, pcs, resourceSharers, labels); err != nil {
 		return err

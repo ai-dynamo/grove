@@ -368,6 +368,7 @@ type PodCliqueScalingGroupConfig struct {
 	// If not specified, it defaults to 1.
 	// +optional
 	// +kubebuilder:default=1
+	// +kubebuilder:validation:Minimum=0
 	Replicas *int32 `json:"replicas,omitempty"`
 	// MinAvailable serves two purposes:
 	// Gang Scheduling:
@@ -377,8 +378,8 @@ type PodCliqueScalingGroupConfig struct {
 	// Violation of this threshold for a duration beyond TerminationDelay will result in termination of the PodCliqueSet replica that it belongs to.
 	// Default: If not specified, it defaults to 1.
 	// Constraints:
-	// MinAvailable cannot be greater than Replicas.
-	// If ScaleConfig is defined then its MinAvailable should not be less than ScaleConfig.MinReplicas.
+	// Replicas may be 0 for an intentionally idle scaling group. Positive Replicas cannot be less than MinAvailable.
+	// If ScaleConfig is defined, MinReplicas must be 0 or greater than or equal to MinAvailable.
 	// +optional
 	// +kubebuilder:default=1
 	MinAvailable *int32 `json:"minAvailable,omitempty"`
