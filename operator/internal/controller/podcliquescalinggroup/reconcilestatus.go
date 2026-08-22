@@ -233,6 +233,19 @@ func mutateMinAvailableBreachedCondition(logger logr.Logger, pcsg *grovecorev1al
 			"reason", newCondition.Reason)
 		meta.SetStatusCondition(&pcsg.Status.Conditions, newCondition)
 	}
+	minAvailable := int32(1)
+	if pcsg.Spec.MinAvailable != nil {
+		minAvailable = *pcsg.Spec.MinAvailable
+	}
+	if pcsg.Spec.Replicas > 0 &&
+		newCondition.Status == metav1.ConditionFalse &&
+		pcsg.Status.AvailableReplicas >= minAvailable {
+		componentutils.MarkHealthyStateObserved(
+			&pcsg.Status.Conditions,
+			pcsg.Generation,
+			"PodCliqueScalingGroup reached its availability threshold",
+		)
+	}
 	if newCondition.Status == metav1.ConditionFalse &&
 		meta.IsStatusConditionTrue(pcsg.Status.Conditions, constants.ConditionTypeGangTerminationInProgress) {
 		logger.Info("Clearing GangTerminationInProgress condition — PCSG recovered",
