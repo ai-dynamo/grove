@@ -30,6 +30,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
@@ -491,6 +492,58 @@ func TestComputeMinAvailableBreachedConditionPartialScheduleRegression(t *testin
 			assert.Equal(t, tt.wantReason, condition.Reason, "MinAvailableBreached reason mismatch")
 		})
 	}
+}
+
+func TestDelayedInitialFailureDoesNotArmGangTermination(t *testing.T) {
+	minAvailable := int32(2)
+	pclq := &grovecorev1alpha1.PodClique{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "worker",
+			CreationTimestamp: metav1.NewTime(time.Now().Add(-time.Hour)),
+		},
+		Spec: grovecorev1alpha1.PodCliqueSpec{
+			Replicas:     2,
+			MinAvailable: &minAvailable,
+		},
+	}
+
+	mutatePodCliqueScheduledCondition(pclq)
+	mutateMinAvailableBreachedCondition(pclq, 0, 0)
+	assert.False(t, componentutils.WasPCLQEverScheduled(pclq), "an initial failure must not create scheduling history")
+
+	candidates, _ := componentutils.GetMinAvailableBreachedPCLQInfo(
+		[]grovecorev1alpha1.PodClique{*pclq},
+		0,
+		time.Now(),
+	)
+	assert.Empty(t, candidates, "an initial failure must not trigger gang termination")
+
+	pclq.Status.ScheduledReplicas = 2
+	pclq.Status.ReadyReplicas = 2
+	mutatePodCliqueScheduledCondition(pclq)
+	mutateMinAvailableBreachedCondition(pclq, 0, 0)
+	require.True(t, componentutils.WasPCLQEverScheduled(pclq), "genuine scheduling must arm regression handling")
+
+	observed := meta.FindStatusCondition(pclq.Status.Conditions, constants.ConditionTypeHealthyStateObserved)
+	require.NotNil(t, observed)
+	observedTransition := observed.LastTransitionTime
+	mutatePodCliqueScheduledCondition(pclq)
+	assert.Equal(t, observedTransition, meta.FindStatusCondition(
+		pclq.Status.Conditions,
+		constants.ConditionTypeHealthyStateObserved,
+	).LastTransitionTime, "the historical signal must be idempotent")
+
+	pclq.Status.ScheduledReplicas = 0
+	pclq.Status.ReadyReplicas = 0
+	mutatePodCliqueScheduledCondition(pclq)
+	mutateMinAvailableBreachedCondition(pclq, 0, 0)
+
+	candidates, _ = componentutils.GetMinAvailableBreachedPCLQInfo(
+		[]grovecorev1alpha1.PodClique{*pclq},
+		0,
+		time.Now(),
+	)
+	assert.Equal(t, []string{pclq.Name}, candidates, "a genuine regression must remain eligible for gang termination")
 }
 
 // TestMutateSelector verifies the /scale selector is published for standalone PodCliques (with or

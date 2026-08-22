@@ -170,9 +170,9 @@ func (r _resource) getExistingPCLQsByNames(ctx context.Context, namespace string
 //
 // Two gates run on top of the MinAvailableBreached=True check:
 //
-//  1. WasPCSGEverHealthy — a PCSG that has never reached MinAvailableBreached=False since
-//     creation is in initial-startup, not a regression. Gang termination would just churn-loop
-//     Pending pods against a cluster that already cannot schedule them.
+//  1. WasPCSGEverHealthy — a PCSG without durable evidence of genuine availability is in
+//     initial-startup, not a regression. Gang termination would just churn-loop Pending pods
+//     against a cluster that already cannot schedule them.
 //  2. GangTerminationInProgress=True — a previous fire is already in flight; re-firing while
 //     it's still in flight would also churn-loop. The flag is set by createPCSReplicaDeleteTask
 //     after the DeleteAllOf succeeds, and cleared by the PCSG status reconciler once it

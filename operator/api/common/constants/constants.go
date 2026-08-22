@@ -118,6 +118,10 @@ const (
 	// ConditionTypePodCliqueScheduled indicates that the PodClique has been successfully scheduled.
 	// This condition is set to true when number of scheduled pods in the PodClique is greater than or equal to PodCliqueSpec.MinAvailable.
 	ConditionTypePodCliqueScheduled = "PodCliqueScheduled"
+	// ConditionTypeHealthyStateObserved is a monotonic signal set after a component reaches a
+	// genuinely scheduled or available state. Gang termination uses it to distinguish a regression
+	// from initial startup.
+	ConditionTypeHealthyStateObserved = "HealthyStateObserved"
 	// ConditionTypeGangTerminationInProgress indicates that PCS-level gang termination has fired for this
 	// PodCliqueScalingGroup and is still in flight. It is set on the PCSG when the PCS-level handler deletes
 	// the PodCliques of the whole PCS replica, and is cleared when the PCSG's MinAvailableBreached transitions
@@ -149,6 +153,9 @@ const (
 	ConditionReasonInsufficientAvailablePCSGReplicas = "InsufficientAvailablePodCliqueScalingGroupReplicas"
 	// ConditionReasonSufficientAvailablePCSGReplicas indicates that the number of ready replicas in the PodCliqueScalingGroup is greater than or equal to the PodCliqueScalingGroupSpec.MinAvailable.
 	ConditionReasonSufficientAvailablePCSGReplicas = "SufficientAvailablePodCliqueScalingGroupReplicas"
+	// ConditionReasonHealthyStateObserved is used when a component first reaches a genuinely
+	// scheduled or available state.
+	ConditionReasonHealthyStateObserved = "HealthyStateObserved"
 	// ConditionReasonUpdateInProgress indicates that the resource is undergoing rolling update.
 	ConditionReasonUpdateInProgress = "UpdateInProgress"
 	// ConditionReasonGangTerminationActive is the (only) Reason paired with
