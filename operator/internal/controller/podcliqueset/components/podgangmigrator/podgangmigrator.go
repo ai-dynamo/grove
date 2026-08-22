@@ -125,10 +125,13 @@ func (r _resource) migrateReplica(ctx context.Context, pcs *grovecorev1alpha1.Po
 	return nil
 }
 
-// resolveTargetPodGangName returns the epoch-based PodGang name the given PodClique or Pod must carry.
-// A standalone object, one without the grove.io/podcliquescalinggroup label, belongs to the anchor
-// PodGang. A PodCliqueScalingGroup-owned object is resolved through the PodGangMap entry that owns its
-// replica index.
+// resolveTargetPodGangName returns the epoch-based PodGang name the given object must carry. The object
+// is a PodClique or one of its Pods, identified by its ObjectMeta.
+//   - When the object has no grove.io/podcliquescalinggroup label it is standalone and belongs to the
+//     anchor PodGang, whose name is built from the PodGangMap's anchor epoch.
+//   - When the object has a grove.io/podcliquescalinggroup label it is owned by a PodCliqueScalingGroup.
+//     Its grove.io/podcliquescalinggroup-replica-index label selects the PodGangMap entry that owns that
+//     replica index, and that entry's PodGang is the target.
 func resolveTargetPodGangName(pgm *grovecorev1alpha1.PodGangMap, pcsRnr apicommon.ResourceNameReplica, objMeta *metav1.ObjectMeta) (string, error) {
 	pcsgFQN, isPCSGOwned := objMeta.Labels[apicommon.LabelPodCliqueScalingGroup]
 	if !isPCSGOwned {
@@ -187,9 +190,6 @@ func (r _resource) migratePodsOfPodClique(ctx context.Context, namespace, pclqNa
 // It patches only on divergence and touches labels only, never spec, so no Pod is recreated.
 func (r _resource) migratePodGangLabels(ctx context.Context, obj client.Object, targetPodGangName string) error {
 	labels := obj.GetLabels()
-	// The operator is the sole writer of these labels and always stamps the default label set, so an
-	// empty label map is an unexpected internal state that should never happen. Fail loudly rather than
-	// operate on a nil map.
 	if len(labels) == 0 {
 		return groveerr.New(errCodeMissingLabels, component.OperationSync,
 			fmt.Sprintf("%v has no labels, which is an unexpected state for an operator-managed resource", client.ObjectKeyFromObject(obj)))

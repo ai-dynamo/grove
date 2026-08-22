@@ -40,8 +40,7 @@ const (
 	LabelPodCliqueSetGenerationHash = "grove.io/podcliqueset-generation-hash"
 	// LabelEpoch is set on PodGang resources to record the batch in which the PodGang was created.
 	// The value is a monotonic unix-nano integer used as a distinct orderable key. PodGangs created
-	// together share the same epoch. Subsequent batches carry strictly greater values. It is consumed
-	// by the pod-component scheduling-gate-removal logic via the PodGangEntry DependsOn.
+	// together share the same epoch. Subsequent batches carry strictly greater values.
 	LabelEpoch = "grove.io/epoch"
 	// LabelPodGangRole is set on PodGang resources to record the role of the PodGangMap entry the
 	// PodGang was materialized from. The value is one of Anchor, Tail, or ScaleOut. It lets the role

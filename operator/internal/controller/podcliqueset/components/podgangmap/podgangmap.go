@@ -45,6 +45,7 @@ const (
 	errCodeGroupPCSGsByReplica     grovecorev1alpha1.ErrorCode = "ERR_GROUP_PCSGS_BY_REPLICA"
 	errCodeListPodGangs            grovecorev1alpha1.ErrorCode = "ERR_LIST_PODGANGS"
 	errCodeGroupPodGangsByReplica  grovecorev1alpha1.ErrorCode = "ERR_GROUP_PODGANGS_BY_REPLICA"
+	errCodePodGangMapNoEntries     grovecorev1alpha1.ErrorCode = "ERR_PODGANGMAP_NO_ENTRIES"
 )
 
 type _resource struct {

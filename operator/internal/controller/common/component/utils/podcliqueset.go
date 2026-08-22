@@ -189,15 +189,14 @@ func GetPCSGReplicasFromPCSTemplateSpec(pcs *grovecorev1alpha1.PodCliqueSet) map
 	return result
 }
 
-// IsPCSReplicaInCurrentlyUpdating reports whether the given PCS replica index is currently under
+// IsPCSReplicaUpdateInProgress reports whether the given PCS replica index is currently under
 // update, that is it appears in Status.UpdateProgress.CurrentlyUpdating with UpdateEndedAt unset.
-func IsPCSReplicaInCurrentlyUpdating(pcs *grovecorev1alpha1.PodCliqueSet, pcsReplicaIndex int) bool {
+func IsPCSReplicaUpdateInProgress(pcs *grovecorev1alpha1.PodCliqueSet, pcsReplicaIndex int) bool {
 	if pcs.Status.UpdateProgress == nil {
 		return false
 	}
-	for i := range pcs.Status.UpdateProgress.CurrentlyUpdating {
-		p := &pcs.Status.UpdateProgress.CurrentlyUpdating[i]
-		if int(p.ReplicaIndex) == pcsReplicaIndex && p.UpdateEndedAt == nil {
+	for _, currentlyUpdating := range pcs.Status.UpdateProgress.CurrentlyUpdating {
+		if int(currentlyUpdating.ReplicaIndex) == pcsReplicaIndex && currentlyUpdating.UpdateEndedAt == nil {
 			return true
 		}
 	}

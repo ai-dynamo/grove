@@ -654,7 +654,7 @@ func TestIsPCSReplicaInCurrentlyUpdating(t *testing.T) {
 			pcs := &grovecorev1alpha1.PodCliqueSet{
 				Status: grovecorev1alpha1.PodCliqueSetStatus{UpdateProgress: tt.updateProgress},
 			}
-			actual := IsPCSReplicaInCurrentlyUpdating(pcs, tt.pcsReplicaIndex)
+			actual := IsPCSReplicaUpdateInProgress(pcs, tt.pcsReplicaIndex)
 			assert.Equal(t, tt.expected, actual)
 		})
 	}

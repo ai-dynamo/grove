@@ -29,7 +29,7 @@ import (
 type PodGangMap struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
-	// Spec defines the desired PodGang-to-pod-count mapping for this PodCliqueSet replica.
+	// Spec defines the desired PodGang-to-pod-count mapping for a PodCliqueSet replica.
 	Spec PodGangMapSpec `json:"spec,omitempty"`
 }
 
@@ -80,20 +80,21 @@ const (
 // +kubebuilder:validation:XValidation:rule="(self.role == 'Anchor') == has(self.anchorIndex)",message="anchorIndex must be set for Anchor entries and unset for all other entries"
 type PodGangEntry struct {
 	// Epoch is the identity of this entry and the group of PodGangs materialized from it. It serves
-	// two purposes. First, identity, it is unique across entries within a PodGangMap and is the
-	// listMapKey, and every PodGang materialized from this entry carries it as the grove.io/epoch
-	// label so those PodGangs are grouped by it. Second, ordering, DependsOn references epochs, and
-	// comparing epochs orders entries so scheduling dependencies can be expressed and the most recent
-	// anchor found. The value is a monotonic unix-nano integer used only as a distinct, orderable key.
-	// It is not interpreted as a wall-clock time.
+	// two purposes.
+	//   - Identity: it is unique across entries within a PodGangMap and is the listMapKey. Every
+	//     PodGang materialized from this entry carries it as the grove.io/epoch label, so those
+	//     PodGangs are grouped by it.
+	//   - Ordering: DependsOn references epochs, and comparing epochs orders entries so scheduling
+	//     dependencies can be expressed and the most recent anchor found.
+	// The value is a monotonic unix-nano integer used only as a distinct, orderable key. It is not
+	// interpreted as a wall-clock time.
 	Epoch string `json:"epoch"`
 	// PodCliqueSetGenerationHash is the PodCliqueSet generation hash that pods in this PodGang
 	// must match. Used by PodClique and PodCliqueScalingGroup reconcilers to create pods at the
 	// correct spec version and to distinguish old pods from new pods during a coherent update.
 	PodCliqueSetGenerationHash string `json:"podCliqueSetGenerationHash"`
-	// Role classifies this entry. See PodGangEntryRole for the meaning of each value. Role is the
-	// durable marker that lets the entry structure be reconstructed from the entries alone, so no
-	// separate record needs to be persisted.
+	// Role classifies this entry as anchor, tail or scale-out.
+	// See PodGangEntryRole for the meaning of each value.
 	Role PodGangEntryRole `json:"role"`
 	// AnchorIndex is the index of an anchor entry within its generation hash. It is non-nil only on
 	// entries whose Role is Anchor, and nil otherwise. For an Anchor entry the index starts at 0 for

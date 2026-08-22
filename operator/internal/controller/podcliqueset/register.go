@@ -161,10 +161,7 @@ func podCliqueScalingGroupPredicate() predicate.Predicate {
 			if !okOld || !okNew {
 				return false
 			}
-			// A bare Spec change (e.g. an external Replicas bump for scale-out) does not write PCSG
-			// status, so it must be observed via the generation change to enqueue the PodCliqueSet.
 			return hasSpecChanged(updateEvent) ||
-				hasMinAvailableBreachedConditionChanged(oldPCSG.Status.Conditions, newPCSG.Status.Conditions) ||
 				hasPodCliqueScalingGroupStatusChanged(&oldPCSG.Status, &newPCSG.Status)
 		},
 		GenericFunc: func(_ event.TypedGenericEvent[client.Object]) bool { return false },
@@ -172,6 +169,8 @@ func podCliqueScalingGroupPredicate() predicate.Predicate {
 }
 
 // hasSpecChanged checks if the resource generation has changed.
+// This ensures that any scale-in/out done for a PodCliqueScalingGroup creates a reconcile event
+// for the PodCliqueSet reconciler. This allows PodGangMap component to grow or shrink accordingly.
 func hasSpecChanged(updateEvent event.UpdateEvent) bool {
 	return updateEvent.ObjectOld.GetGeneration() != updateEvent.ObjectNew.GetGeneration()
 }
@@ -226,7 +225,8 @@ func hasPodCliqueScalingGroupStatusChanged(oldPCSGStatus, newPCSGStatus *groveco
 	return oldPCSGStatus.AvailableReplicas != newPCSGStatus.AvailableReplicas ||
 		oldPCSGStatus.UpdatedReplicas != newPCSGStatus.UpdatedReplicas ||
 		!stringPointersEqual(oldPCSGStatus.CurrentPodCliqueSetGenerationHash, newPCSGStatus.CurrentPodCliqueSetGenerationHash) ||
-		hasUpdateStatusChanged(oldPCSGStatus.UpdateProgress, newPCSGStatus.UpdateProgress)
+		hasUpdateStatusChanged(oldPCSGStatus.UpdateProgress, newPCSGStatus.UpdateProgress) ||
+		hasMinAvailableBreachedConditionChanged(oldPCSGStatus.Conditions, newPCSGStatus.Conditions)
 }
 
 // hasUpdateStatusChanged reports whether the update progress has changed between the old and new states.

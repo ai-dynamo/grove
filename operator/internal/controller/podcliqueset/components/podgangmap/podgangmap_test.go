@@ -121,21 +121,22 @@ func TestSyncIgnoresLegacyPodGangsWithoutEpochLabelWhenPodGangMapIsMissing(t *te
 	assert.Equal(t, "1000", anchor.Epoch)
 }
 
-func TestSyncRequeuesWhenPodGangMapHasNoEntries(t *testing.T) {
+func TestSyncErrorsWhenPodGangMapHasNoEntries(t *testing.T) {
 	pcs := testutils.NewPodCliqueSetBuilder("pcs", "default", "uid").
 		WithReplicas(1).
 		WithStandaloneCliqueReplicas("clq-a", 1).
 		WithPodCliqueSetGenerationHash(ptr.To("hash1")).
 		Build()
 
-	// A PodGangMap that exists but has no entries is a stale read.
+	// A PodGangMap that exists but has no entries can only come from a coding error, since a live
+	// PodGangMap always has an anchor entry. The sync fails with a hard error.
 	emptyPGM := testutils.NewPodGangMapBuilder("pcs", "default", types.UID("uid"), 0).Build()
 
 	cl := testutils.CreateDefaultFakeClient([]client.Object{pcs, emptyPGM})
 	operator := New(cl, groveclientscheme.Scheme, clocktesting.NewFakeClock(time.Unix(0, 1000)))
 
 	err := operator.Sync(context.Background(), logr.Discard(), pcs)
-	testutils.AssertGroveError(t, &groveerr.GroveError{Code: groveerr.ErrCodeRequeueAfter, Operation: "Sync"}, err)
+	testutils.AssertGroveError(t, &groveerr.GroveError{Code: errCodePodGangMapNoEntries, Operation: "Sync"}, err)
 }
 
 func TestSyncDeletesOrphanedPodGangMaps(t *testing.T) {

@@ -144,8 +144,8 @@ func (r _resource) getExistingPodGangsByReplica(ctx context.Context, pcs *grovec
 		)
 	}
 	podGangsByReplica := make(map[int][]groveschedulerv1alpha1.PodGang)
-	for i := range existingPodGangs {
-		labels := existingPodGangs[i].Labels
+	for _, existingPodGang := range existingPodGangs {
+		labels := existingPodGang.Labels
 		if _, hasEpoch := labels[apicommon.LabelEpoch]; !hasEpoch {
 			continue
 		}
@@ -154,14 +154,14 @@ func (r _resource) getExistingPodGangsByReplica(ctx context.Context, pcs *grovec
 		replicaIndexLabel, ok := labels[apicommon.LabelPodCliqueSetReplicaIndex]
 		if !ok {
 			return nil, groveerr.New(errCodeGroupPodGangsByReplica, component.OperationSync,
-				fmt.Sprintf("PodGang %s has label %s but no %s", existingPodGangs[i].Name, apicommon.LabelEpoch, apicommon.LabelPodCliqueSetReplicaIndex))
+				fmt.Sprintf("PodGang %s has label %s but no %s", existingPodGang.Name, apicommon.LabelEpoch, apicommon.LabelPodCliqueSetReplicaIndex))
 		}
 		pcsReplicaIndex, err := strconv.Atoi(replicaIndexLabel)
 		if err != nil {
 			return nil, groveerr.New(errCodeGroupPodGangsByReplica, component.OperationSync,
-				fmt.Sprintf("%s label on PodGang %s is not a valid integer: %q", apicommon.LabelPodCliqueSetReplicaIndex, existingPodGangs[i].Name, replicaIndexLabel))
+				fmt.Sprintf("%s label on PodGang %s is not a valid integer: %q", apicommon.LabelPodCliqueSetReplicaIndex, existingPodGang.Name, replicaIndexLabel))
 		}
-		podGangsByReplica[pcsReplicaIndex] = append(podGangsByReplica[pcsReplicaIndex], existingPodGangs[i])
+		podGangsByReplica[pcsReplicaIndex] = append(podGangsByReplica[pcsReplicaIndex], existingPodGang)
 	}
 	return podGangsByReplica, nil
 }
@@ -170,8 +170,8 @@ func (r _resource) getExistingPodGangsByReplica(ctx context.Context, pcs *grovec
 // PCS replica scale-in. Each replica is in one of three states.
 //  1. No PodGangMap. Its entries are authored from the PCS spec, reusing the epoch its existing
 //     PodGangs carry so a rebuilt PodGangMap does not strand pods.
-//  2. A PodGangMap with no entries. This is a stale read, since a live PodGangMap always has an
-//     anchor entry. The reconcile requeues.
+//  2. A PodGangMap with no entries. A live PodGangMap always has an anchor entry, so this can only
+//     come from a coding error. The reconcile fails with a hard error.
 //  3. A PodGangMap with entries. reconcileEntries re-authors them, advancing an under-update replica
 //     to the current generation hash first.
 func (r _resource) runSyncFlow(ctx context.Context, syncSnap *syncSnapshot) error {
@@ -180,9 +180,9 @@ func (r _resource) runSyncFlow(ctx context.Context, syncSnap *syncSnapshot) erro
 
 		if pgmExists && len(pgm.Spec.Entries) == 0 {
 			return groveerr.New(
-				groveerr.ErrCodeRequeueAfter,
+				errCodePodGangMapNoEntries,
 				component.OperationSync,
-				fmt.Sprintf("PodGangMap for replica %d of PodCliqueSet %v has no entries, requeuing", pcsReplicaIndex, client.ObjectKeyFromObject(syncSnap.pcs)),
+				fmt.Sprintf("PodGangMap %s for replica %d of PodCliqueSet %v has no entries, this is not expected. A live PodGangMap at least has an anchor entry", pgm.Name, pcsReplicaIndex, client.ObjectKeyFromObject(syncSnap.pcs)),
 			)
 		}
 
@@ -197,7 +197,7 @@ func (r _resource) runSyncFlow(ctx context.Context, syncSnap *syncSnapshot) erro
 			entries = clonePodGangEntries(pgm.Spec.Entries)
 			// A RollingRecreate preserves PodGangs and entries. An under-update replica only needs its
 			// entries advanced to the current generation hash.
-			if componentutils.IsPCSReplicaInCurrentlyUpdating(syncSnap.pcs, pcsReplicaIndex) {
+			if componentutils.IsPCSReplicaUpdateInProgress(syncSnap.pcs, pcsReplicaIndex) {
 				advanceEntriesGenerationHash(entries, *syncSnap.pcs.Status.CurrentGenerationHash)
 			}
 			scaleOutEpoch := strconv.FormatInt(r.clk.Now().UnixNano(), 10)
@@ -210,15 +210,19 @@ func (r _resource) runSyncFlow(ctx context.Context, syncSnap *syncSnapshot) erro
 			}
 		}
 		pgmName := apicommon.GeneratePodGangMapName(apicommon.ResourceNameReplica{Name: syncSnap.pcs.Name, Replica: pcsReplicaIndex})
-		if err = r.createOrPatchPodGangMapSpec(ctx, syncSnap.pcs, pgmName, pcsReplicaIndex, entries); err != nil {
+		if err = r.createOrPatchPodGangMap(ctx, syncSnap.pcs, pgmName, pcsReplicaIndex, entries); err != nil {
 			return err
 		}
 	}
 	return r.deleteOrphanedPodGangMaps(ctx, syncSnap)
 }
 
-// createOrPatchPodGangMapSpec creates or patches the named PodGangMap with the given entries.
-func (r _resource) createOrPatchPodGangMapSpec(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, pgmName string, pcsReplicaIndex int, entries []grovecorev1alpha1.PodGangEntry) error {
+// createOrPatchPodGangMap creates or patches the named PodGangMap with the given entries.
+func (r _resource) createOrPatchPodGangMap(ctx context.Context,
+	pcs *grovecorev1alpha1.PodCliqueSet,
+	pgmName string,
+	pcsReplicaIndex int,
+	entries []grovecorev1alpha1.PodGangEntry) error {
 	pgm := emptyPodGangMap(client.ObjectKey{Namespace: pcs.Namespace, Name: pgmName})
 	if _, err := controllerutil.CreateOrPatch(ctx, r.client, pgm, func() error {
 		return r.buildResource(pgm, pcs, pcsReplicaIndex, entries)
@@ -231,7 +235,7 @@ func (r _resource) createOrPatchPodGangMapSpec(ctx context.Context, pcs *groveco
 
 // deleteOrphanedPodGangMaps deletes PodGangMaps whose replica index is at or beyond the current PCS
 // replica count. PodGangMap is owner-referenced to the PCS, so a PCS replica scale-in does not
-// garbage-collect them; this cleanup is explicit.
+// garbage-collect them. This cleanup is explicit.
 func (r _resource) deleteOrphanedPodGangMaps(ctx context.Context, syncSnap *syncSnapshot) error {
 	for pcsReplicaIndex, pgm := range syncSnap.existingPGMByReplica {
 		if pcsReplicaIndex < int(syncSnap.pcs.Spec.Replicas) {
@@ -244,7 +248,7 @@ func (r _resource) deleteOrphanedPodGangMaps(ctx context.Context, syncSnap *sync
 				fmt.Sprintf("Error deleting orphaned PodGangMap %s for PodCliqueSet: %v", pgm.Name, client.ObjectKeyFromObject(syncSnap.pcs)),
 			)
 		}
-		syncSnap.logger.Info("Deleted orphaned PodGangMap", "name", pgm.Name)
+		syncSnap.logger.Info("Deleted PodGangMap for a scaled-in PCS replica index", "name", pgm.Name, "pcsReplicaIndex", pcsReplicaIndex)
 	}
 	return nil
 }

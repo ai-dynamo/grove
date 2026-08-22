@@ -121,7 +121,7 @@ func buildBootstrapTailEntry(pcs *grovecorev1alpha1.PodCliqueSet, epoch, anchorE
 	for _, pcsgConfig := range pcs.Spec.Template.PodCliqueScalingGroupConfigs {
 		replicas := *pcsgConfig.Replicas
 		minAvailable := *pcsgConfig.MinAvailable
-		if replicas <= minAvailable {
+		if replicas == minAvailable {
 			continue
 		}
 		pcsgReplicaIndices[pcsgConfig.Name] = lo.RangeFrom(minAvailable, int(replicas-minAvailable))
