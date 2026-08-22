@@ -255,6 +255,52 @@ func TestComputeMinAvailableBreachedCondition(t *testing.T) {
 	}
 }
 
+func TestDelayedInitialFailureDoesNotArmPCSGGangTermination(t *testing.T) {
+	minAvailable := int32(1)
+	pcsg := &grovecorev1alpha1.PodCliqueScalingGroup{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "workers",
+			CreationTimestamp: metav1.NewTime(time.Now().Add(-time.Hour)),
+		},
+		Spec: grovecorev1alpha1.PodCliqueScalingGroupSpec{
+			Replicas:     1,
+			MinAvailable: &minAvailable,
+			CliqueNames:  []string{"worker"},
+		},
+	}
+
+	// A complete child set can transiently produce MinAvailableBreached=False before the
+	// child PCLQ has reported status. AvailableReplicas is the positive evidence that keeps
+	// this from being mistaken for historical health.
+	mutateMinAvailableBreachedCondition(logr.Discard(), pcsg, map[string][]grovecorev1alpha1.PodClique{
+		"0": {{}},
+	})
+	assert.False(t, componentutils.WasPCSGEverHealthy(pcsg), "an initial status gap must not create availability history")
+
+	pcsg.Status.AvailableReplicas = 1
+	mutateMinAvailableBreachedCondition(logr.Discard(), pcsg, map[string][]grovecorev1alpha1.PodClique{
+		"0": healthyPCSGReplica(),
+	})
+	require.True(t, componentutils.WasPCSGEverHealthy(pcsg), "genuine availability must arm regression handling")
+
+	observed := meta.FindStatusCondition(pcsg.Status.Conditions, constants.ConditionTypeHealthyStateObserved)
+	require.NotNil(t, observed)
+	observedTransition := observed.LastTransitionTime
+	mutateMinAvailableBreachedCondition(logr.Discard(), pcsg, map[string][]grovecorev1alpha1.PodClique{
+		"0": healthyPCSGReplica(),
+	})
+	assert.Equal(t, observedTransition, meta.FindStatusCondition(
+		pcsg.Status.Conditions,
+		constants.ConditionTypeHealthyStateObserved,
+	).LastTransitionTime, "the historical signal must be idempotent")
+
+	pcsg.Status.AvailableReplicas = 0
+	mutateMinAvailableBreachedCondition(logr.Discard(), pcsg, map[string][]grovecorev1alpha1.PodClique{
+		"0": breachedPCSGReplica(),
+	})
+	assert.True(t, componentutils.WasPCSGEverHealthy(pcsg), "the historical signal must survive regression")
+}
+
 // TestEmitAllScheduledReplicasLostIfNeeded covers the only explicit signal users have when a
 // previously-running PodCliqueScalingGroup loses every scheduled replica. Gang termination is
 // suppressed in that state, so this event must fire on the non-zero → zero transition (and

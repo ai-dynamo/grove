@@ -93,35 +93,31 @@ func GroupPCLQsByPCSReplicaIndex(pclqs []grovecorev1alpha1.PodClique) (map[int][
 	return grouped, nil
 }
 
-// InitialScheduleGrace is the small window after PodCliqueScalingGroup creation in which a flipped
-// status condition is treated as the first-time-set rather than a transition from a different state.
-// WasPCSGEverHealthy uses it to absorb the gap between the apiserver setting CreationTimestamp and
-// the first reconcile that mutates the MinAvailableBreached condition.
-const InitialScheduleGrace = 5 * time.Second
-
-// WasPCLQEverScheduled reports whether the PodClique has ever reached the PodCliqueScheduled=True
-// state. It reads Status.LastScheduled, a durable marker stamped in the same status reconcile that
-// first sets PodCliqueScheduled to True and never reset once set. A nil value means no reconcile has
-// yet observed the PodClique meet its scheduled count.
+// WasPCLQEverScheduled reports whether the PodClique has ever reached the
+// PodCliqueScheduled=True state. The signal is persisted explicitly so an initial negative
+// condition cannot be mistaken for a regression based on its transition timestamp.
 func WasPCLQEverScheduled(pclq *grovecorev1alpha1.PodClique) bool {
-	return pclq.Status.LastScheduled != nil
+	return meta.IsStatusConditionTrue(pclq.Status.Conditions, constants.ConditionTypeHealthyStateObserved)
 }
 
 // WasPCSGEverHealthy reports whether the PodCliqueScalingGroup has ever reached the
-// MinAvailableBreached=False state since creation. Mirrors WasPCLQEverScheduled but reads the
-// PCSG's own MinAvailableBreached condition (PCSGs have no PodCliqueScheduled equivalent).
-// Used to gate gang-termination so an initial-startup PCSG that has not yet stabilized is left
-// alone — only regressions from a previously-healthy state get recycled.
-// Shares the observed-transitions-only limitation documented on WasPCLQEverScheduled.
+// available state. It uses the same explicit signal as WasPCLQEverScheduled.
 func WasPCSGEverHealthy(pcsg *grovecorev1alpha1.PodCliqueScalingGroup) bool {
-	cond := meta.FindStatusCondition(pcsg.Status.Conditions, constants.ConditionTypeMinAvailableBreached)
-	if cond == nil {
-		return false
+	return meta.IsStatusConditionTrue(pcsg.Status.Conditions, constants.ConditionTypeHealthyStateObserved)
+}
+
+// MarkHealthyStateObserved records genuine health once and never clears it.
+func MarkHealthyStateObserved(conditions *[]metav1.Condition, observedGeneration int64, message string) {
+	if meta.IsStatusConditionTrue(*conditions, constants.ConditionTypeHealthyStateObserved) {
+		return
 	}
-	if cond.Status == metav1.ConditionFalse {
-		return true
-	}
-	return cond.LastTransitionTime.After(pcsg.CreationTimestamp.Add(InitialScheduleGrace))
+	meta.SetStatusCondition(conditions, metav1.Condition{
+		Type:               constants.ConditionTypeHealthyStateObserved,
+		Status:             metav1.ConditionTrue,
+		Reason:             constants.ConditionReasonHealthyStateObserved,
+		Message:            message,
+		ObservedGeneration: observedGeneration,
+	})
 }
 
 // GetMinAvailableBreachedPCLQInfo filters PodCliques that have grovecorev1alpha1.ConditionTypeMinAvailableBreached set to true.
