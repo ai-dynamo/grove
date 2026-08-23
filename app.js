@@ -29,14 +29,37 @@ const STACK_COLORS = [
   "#53616f",
 ];
 
+const TEST_COLORS = [
+  "#0f766e",
+  "#dc2626",
+  "#2563eb",
+  "#d97706",
+  "#7c3aed",
+  "#16a34a",
+  "#db2777",
+  "#4b5563",
+  "#0891b2",
+  "#9333ea",
+  "#65a30d",
+  "#ea580c",
+];
+
 const state = {
   runs: [],
   testName: "",
+  startDate: "",
+  endDate: "",
+  hiddenOverviewTests: new Set(),
 };
 
 const els = {
   status: document.getElementById("status"),
   testSelect: document.getElementById("test-select"),
+  startDate: document.getElementById("start-date"),
+  endDate: document.getElementById("end-date"),
+  clearDateRange: document.getElementById("clear-date-range"),
+  overviewChart: document.getElementById("overview-chart"),
+  overviewLegend: document.getElementById("overview-legend"),
   totalChart: document.getElementById("total-chart"),
   phaseChart: document.getElementById("phase-chart"),
   totalSummary: document.getElementById("total-summary"),
@@ -54,6 +77,7 @@ async function init() {
     state.runs = parseNdjson(text);
     if (state.runs.length === 0) {
       setStatus("No runs found.");
+      drawEmpty(els.overviewChart, "No runs found");
       drawEmpty(els.totalChart, "No runs found");
       return;
     }
@@ -63,10 +87,14 @@ async function init() {
       state.testName = els.testSelect.value;
       render();
     });
+    els.startDate.addEventListener("change", () => updateDateRange(els.startDate));
+    els.endDate.addEventListener("change", () => updateDateRange(els.endDate));
+    els.clearDateRange.addEventListener("click", resetDateRange);
     window.addEventListener("resize", render);
     render();
   } catch (err) {
     setStatus(`Failed to load ${RUNS_URL}: ${err.message}`);
+    drawEmpty(els.overviewChart, "Failed to load runs");
     drawEmpty(els.totalChart, "Failed to load runs");
   }
 }
@@ -129,6 +157,7 @@ function populateSelectors() {
   const tests = unique(state.runs.map((run) => run.testName)).sort();
   state.testName = tests[0] || "";
   setOptions(els.testSelect, tests);
+  resetDateRange(false);
 }
 
 function setOptions(select, values) {
@@ -144,21 +173,160 @@ function setOptions(select, values) {
 }
 
 function render() {
-  const runs = selectedRuns();
+  const rangedRuns = runsInDateRange();
+  const runs = selectedRuns(rangedRuns);
   const detail = selectedRunDetail(runs);
   const detailNote = detail.hideMilestoneCharts || detail.hideLatestMilestoneRows ? "; milestone details hidden" : "";
   setStatus(`${runs.length} ${state.testName} runs loaded${detailNote}`);
 
+  drawOverviewChart(rangedRuns);
   drawTotalChart(runs);
   drawPhaseChart(runs);
   renderMilestoneCharts(runs, detail);
   renderLatestTable(runs, detail);
 }
 
-function selectedRuns() {
-  return state.runs
+function drawOverviewChart(runs) {
+  const allRows = runs
+    .map((run) => ({ run, value: run.totalSeconds }))
+    .filter((item) => Number.isFinite(item.value))
+    .sort((a, b) => a.run.date - b.run.date);
+  const testNames = unique(allRows.map((row) => row.run.testName)).sort();
+  const colors = testColorMap(unique(state.runs.map((run) => run.testName)).sort());
+
+  renderOverviewLegend(testNames, colors);
+
+  const svg = els.overviewChart;
+  const dims = prepareChart(svg, { top: 20, right: 28, bottom: 42, left: 58 });
+  if (allRows.length === 0) {
+    drawEmpty(svg, "No total runtime points");
+    return;
+  }
+
+  const rows = allRows.filter((row) => !state.hiddenOverviewTests.has(row.run.testName));
+  if (rows.length === 0) {
+    drawEmpty(svg, "All test series hidden");
+    return;
+  }
+
+  const minX = allRows[0].run.date.getTime();
+  const maxX = allRows[allRows.length - 1].run.date.getTime();
+  const maxY = Math.max(...rows.map((row) => row.value), 0.001);
+  const yTop = maxY * 1.15;
+  const xScale = (value) => {
+    if (minX === maxX) return dims.margin.left + dims.plotW / 2;
+    return dims.margin.left + ((value - minX) / (maxX - minX)) * dims.plotW;
+  };
+  const yScale = (value) => dims.margin.top + dims.plotH - (value / yTop) * dims.plotH;
+
+  drawGrid(svg, dims, yTop);
+
+  for (const testName of testNames.filter((name) => !state.hiddenOverviewTests.has(name))) {
+    const seriesRows = rows.filter((row) => row.run.testName === testName);
+    const color = colors.get(testName);
+    const points = seriesRows.map((row) => [
+      xScale(row.run.date.getTime()),
+      yScale(row.value),
+      row,
+    ]);
+    const path = points
+      .map(([x, y], index) => `${index === 0 ? "M" : "L"} ${x.toFixed(2)} ${y.toFixed(2)}`)
+      .join(" ");
+    const line = addEl(svg, "path", { class: "series overview-series", d: path });
+    line.style.stroke = color;
+
+    for (const [x, y, row] of points) {
+      const marker = addEl(svg, "circle", {
+        class: "point overview-point",
+        cx: x,
+        cy: y,
+        r: 4,
+      });
+      marker.style.stroke = color;
+      const hit = addEl(svg, "circle", {
+        class: "point-hit",
+        cx: x,
+        cy: y,
+        r: 13,
+      });
+      const tooltip = () => tooltipRows(row.run, [
+        ["Test", testName],
+        ["Total", `${formatSeconds(row.value)}s`],
+      ]);
+      hit.addEventListener("mouseenter", (event) => {
+        marker.style.fill = color;
+        showTooltip(event, tooltip());
+      });
+      hit.addEventListener("mousemove", (event) => {
+        showTooltip(event, tooltip());
+      });
+      hit.addEventListener("mouseleave", () => {
+        marker.style.fill = "#ffffff";
+        hideTooltip();
+      });
+    }
+  }
+
+  drawDateLabels(svg, dims, allRows.map((row) => row.run));
+}
+
+function selectedRuns(runs) {
+  return runs
     .filter((run) => run.testName === state.testName)
     .sort((a, b) => a.date - b.date);
+}
+
+function updateDateRange(changedInput) {
+  let startDate = els.startDate.value;
+  let endDate = els.endDate.value;
+
+  if (startDate && endDate && startDate > endDate) {
+    if (changedInput === els.startDate) {
+      endDate = startDate;
+      els.endDate.value = endDate;
+    } else {
+      startDate = endDate;
+      els.startDate.value = startDate;
+    }
+  }
+
+  state.startDate = startDate;
+  state.endDate = endDate;
+  updateDateRangeLimits();
+  render();
+}
+
+function resetDateRange(shouldRender = true) {
+  const { minDate, maxDate } = dateRangeBounds();
+  state.startDate = minDate;
+  state.endDate = maxDate;
+  els.startDate.value = minDate;
+  els.endDate.value = maxDate;
+  updateDateRangeLimits();
+  if (shouldRender) render();
+}
+
+function updateDateRangeLimits() {
+  const { minDate, maxDate } = dateRangeBounds();
+
+  els.startDate.min = minDate;
+  els.startDate.max = state.endDate || maxDate;
+  els.endDate.min = state.startDate || minDate;
+  els.endDate.max = maxDate;
+}
+
+function dateRangeBounds() {
+  const dates = state.runs.map((run) => dateKey(run.date)).sort();
+  const minDate = dates[0] || "";
+  return { minDate, maxDate: dateKey(new Date()) };
+}
+
+function runsInDateRange() {
+  return state.runs.filter((run) => {
+    const date = dateKey(run.date);
+    return (!state.startDate || date >= state.startDate)
+      && (!state.endDate || date <= state.endDate);
+  });
 }
 
 function drawTotalChart(runs) {
@@ -602,6 +770,32 @@ function renderLegend(target, items) {
   );
 }
 
+function renderOverviewLegend(testNames, colors) {
+  els.overviewLegend.replaceChildren(
+    ...testNames.map((testName) => {
+      const visible = !state.hiddenOverviewTests.has(testName);
+      const entry = document.createElement("button");
+      entry.className = "legend-toggle";
+      entry.type = "button";
+      entry.setAttribute("aria-pressed", String(visible));
+      entry.setAttribute("aria-label", `${visible ? "Hide" : "Show"} ${testName} series`);
+
+      const swatch = document.createElement("i");
+      swatch.style.background = colors.get(testName);
+      entry.append(swatch, document.createTextNode(testName));
+      entry.addEventListener("click", () => {
+        if (visible) {
+          state.hiddenOverviewTests.add(testName);
+        } else {
+          state.hiddenOverviewTests.delete(testName);
+        }
+        render();
+      });
+      return entry;
+    }),
+  );
+}
+
 function showTooltip(event, rows) {
   els.tooltip.innerHTML = `
     <dl>
@@ -637,6 +831,40 @@ function colorMap(names) {
     map.set(name, STACK_COLORS[index % STACK_COLORS.length]);
   });
   return map;
+}
+
+function testColorMap(testNames) {
+  const colors = new Map();
+  const usedIndexes = new Set();
+
+  for (const testName of unique(testNames).sort()) {
+    if (usedIndexes.size < TEST_COLORS.length) {
+      let index = hashString(testName) % TEST_COLORS.length;
+      while (usedIndexes.has(index)) {
+        index = (index + 1) % TEST_COLORS.length;
+      }
+      usedIndexes.add(index);
+      colors.set(testName, TEST_COLORS[index]);
+      continue;
+    }
+
+    colors.set(testName, generatedTestColor(testName, colors.size));
+  }
+
+  return colors;
+}
+
+function hashString(value) {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash = Math.imul(hash ^ value.charCodeAt(index), 16777619);
+  }
+  return hash >>> 0;
+}
+
+function generatedTestColor(testName, index) {
+  const hue = (hashString(`${testName}-${index}`) + index * 137) % 360;
+  return `hsl(${hue} 68% 38%)`;
 }
 
 function cell(text) {
@@ -691,6 +919,13 @@ function formatSeconds(value) {
 function formatSignedPercent(value) {
   const sign = value > 0 ? "+" : "";
   return `${sign}${value.toFixed(1)}%`;
+}
+
+function dateKey(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 function formatDate(date) {

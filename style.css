@@ -50,6 +50,11 @@ body {
   margin-bottom: 18px;
 }
 
+.title-area {
+  display: grid;
+  gap: 10px;
+}
+
 h1,
 h2,
 p {
@@ -67,7 +72,7 @@ h2 {
 
 #status {
   color: var(--muted);
-  margin-top: 4px;
+  margin: 0;
 }
 
 .button {
@@ -103,6 +108,47 @@ h2 {
   padding: 14px;
 }
 
+.control {
+  display: grid;
+  gap: 4px;
+}
+
+.date-range {
+  border: 0;
+  display: grid;
+  gap: 8px 12px;
+  grid-template-columns: repeat(2, minmax(150px, 1fr)) auto;
+  margin: 0;
+  padding: 0;
+}
+
+.date-range legend {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  grid-column: 1 / -1;
+  padding: 0;
+  text-transform: uppercase;
+}
+
+.clear-filter {
+  align-self: end;
+  background: #ffffff;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--accent-dark);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+  height: 38px;
+  padding: 0 12px;
+  white-space: nowrap;
+}
+
+.clear-filter:hover {
+  background: #edf7f6;
+}
+
 label {
   color: var(--muted);
   display: grid;
@@ -112,8 +158,8 @@ label {
   text-transform: uppercase;
 }
 
-select {
-  appearance: none;
+select,
+input[type="date"] {
   background: #ffffff;
   border: 1px solid var(--line);
   border-radius: 6px;
@@ -121,6 +167,10 @@ select {
   font: inherit;
   height: 38px;
   padding: 0 10px;
+}
+
+select {
+  appearance: none;
 }
 
 .charts {
@@ -178,6 +228,34 @@ select {
   display: inline-flex;
   gap: 6px;
   white-space: nowrap;
+}
+
+.legend-toggle {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  font: inherit;
+  gap: 6px;
+  padding: 2px 0;
+  white-space: nowrap;
+}
+
+.legend-toggle[aria-pressed="false"] {
+  color: #9aa4b3;
+  text-decoration: line-through;
+}
+
+.legend-toggle[aria-pressed="false"] i {
+  opacity: 0.35;
+}
+
+.legend-toggle:focus-visible {
+  border-radius: 3px;
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .legend i {
@@ -347,6 +425,14 @@ th:nth-child(3) {
 
   .controls {
     grid-template-columns: 1fr;
+  }
+
+  .date-range {
+    grid-template-columns: 1fr;
+  }
+
+  .clear-filter {
+    justify-self: start;
   }
 
   .chart-frame {

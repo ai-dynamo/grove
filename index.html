@@ -22,23 +22,49 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Grove Scale Test</title>
-    <link rel="stylesheet" href="style.css?v=charts-v4">
+    <link rel="stylesheet" href="style.css?v=charts-v8">
   </head>
   <body>
     <main class="page">
       <header class="topbar">
-        <div>
+        <div class="title-area">
           <h1>Grove Scale Test</h1>
-          <p id="status">Loading runs...</p>
+          <fieldset class="date-range">
+            <legend>Date Range</legend>
+            <label>
+              From
+              <input id="start-date" type="date">
+            </label>
+            <label>
+              To
+              <input id="end-date" type="date">
+            </label>
+            <button id="clear-date-range" class="clear-filter" type="button">Clear filter</button>
+          </fieldset>
         </div>
         <a class="button" href="index/runs.ndjson" download>Download Runs as JSON</a>
       </header>
 
+      <section class="charts" aria-label="All scale-test runtime charts">
+        <article class="chart-panel">
+          <header class="chart-panel-header">
+            <h2>All Tests — Total Runtime</h2>
+            <div id="overview-legend" class="legend"></div>
+          </header>
+          <div class="chart-frame">
+            <svg id="overview-chart" class="chart" role="img" aria-label="Total scale-test runtime by test over time"></svg>
+          </div>
+        </article>
+      </section>
+
       <section class="controls" aria-label="Chart controls">
-        <label>
-          Test
-          <select id="test-select"></select>
-        </label>
+        <div class="control">
+          <label>
+            Test
+            <select id="test-select"></select>
+          </label>
+          <p id="status">Loading runs...</p>
+        </div>
       </section>
 
       <section class="charts" aria-label="Runtime charts">
@@ -80,6 +106,6 @@
       </section>
     </main>
     <div id="tooltip" class="tooltip" hidden></div>
-    <script src="app.js?v=charts-v4"></script>
+    <script src="app.js?v=charts-v8"></script>
   </body>
 </html>
