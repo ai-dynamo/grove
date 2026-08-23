@@ -135,6 +135,14 @@ func (pm *PodManager) WaitForPhases(ctx context.Context, namespace, labelSelecto
 	return err
 }
 
+// WaitForAtLeastPhases waits for at least minimumCount pods to enter one of the supplied phases.
+func (pm *PodManager) WaitForAtLeastPhases(ctx context.Context, namespace, labelSelector string, minimumCount int, phases []v1.PodPhase, timeout, interval time.Duration) error {
+	fetchPods := pm.FetchFunc(ctx, namespace, labelSelector)
+	w := waiter.New[*v1.PodList]().WithTimeout(timeout).WithInterval(interval)
+	_, err := w.WaitFor(ctx, fetchPods, AtLeastCountInPhases(minimumCount, phases...))
+	return err
+}
+
 // WaitForReadyCount waits for a specific number of ready pods.
 func (pm *PodManager) WaitForReadyCount(ctx context.Context, namespace, labelSelector string, expectedReady int, timeout, interval time.Duration) error {
 	fetchPods := pm.FetchFunc(ctx, namespace, labelSelector)

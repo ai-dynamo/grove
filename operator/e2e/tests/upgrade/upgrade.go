@@ -41,6 +41,15 @@ type testConfig struct {
 
 	// Required - workload that will be installed before and verified after an upgrade.
 	workload *testctx.WorkloadConfig
+
+	// Optional - number of worker nodes required by the workload. Defaults to one.
+	requiredWorkerNodes int
+
+	// Optional - customizes the Helm values used for both the released and checkout charts.
+	customizeHelmValues func(map[string]any)
+
+	// Optional - prepares dependencies that must exist before the workload is deployed.
+	beforeDeploy func(*testing.T, *testctx.TestContext)
 }
 
 // setupTest initializes an upgrade test with the given configuration.
@@ -67,18 +76,34 @@ func setupTest(t *testing.T, cfg testConfig) *testctx.TestContext {
 		t.Fatalf("TestConfig.Workload is required")
 	}
 
+	requiredWorkerNodes := cfg.requiredWorkerNodes
+	if requiredWorkerNodes == 0 {
+		requiredWorkerNodes = 1
+	}
+
 	testctx.Logger.Infof("preparing test cluster")
 
 	tc, cleanup := testctx.PrepareTest(
 		t.Context(),
 		t,
-		1,
+		requiredWorkerNodes,
 		testctx.WithWorkload(cfg.workload),
 	)
 	t.Cleanup(cleanup)
 
 	testctx.Logger.Infof("testing Grove upgrade from %s to the current checkout", cfg.fromVersion)
 	testctx.Logger.Info("installing released Grove operator")
+
+	values := map[string]any{
+		"config": map[string]any{
+			"server": map[string]any{
+				"healthProbes": map[string]any{"enable": true},
+			},
+		},
+	}
+	if cfg.customizeHelmValues != nil {
+		cfg.customizeHelmValues(values)
+	}
 
 	_, err := setup.InstallHelmChart(&setup.HelmInstallConfig{
 		RestConfig:      tc.Client.RestConfig,
@@ -89,7 +114,7 @@ func setupTest(t *testing.T, cfg testConfig) *testctx.TestContext {
 		CreateNamespace: true,
 		Wait:            true,
 		Timeout:         defaultPollTimeout,
-		Values:          map[string]any{"config": map[string]any{"server": map[string]any{"healthProbes": map[string]any{"enable": true}}}},
+		Values:          values,
 		HelmLoggerFunc:  testctx.Logger.Infof,
 	})
 	require.NoError(t, err, "install released Grove chart")
@@ -98,19 +123,23 @@ func setupTest(t *testing.T, cfg testConfig) *testctx.TestContext {
 	err = podsManager.WaitForReadyInNamespace(t.Context(), "grove-system", 1, defaultPollTimeout, defaultPollInterval)
 	require.NoError(t, err, "waiting for Grove to become ready")
 
+	if cfg.beforeDeploy != nil {
+		cfg.beforeDeploy(t, tc)
+	}
+
 	testctx.Logger.Info("applying workload before upgrade")
 
 	_, err = tc.DeployAndVerifyWorkload()
 	require.NoError(t, err, "applying workload")
 
-	err = podsManager.WaitForReadyInNamespace(t.Context(), cfg.workload.Namespace, 2, defaultPollTimeout, defaultPollInterval)
+	err = podsManager.WaitForReadyInNamespace(t.Context(), cfg.workload.Namespace, cfg.workload.ExpectedPods, defaultPollTimeout, defaultPollInterval)
 	require.NoError(t, err, "waiting for workload to become ready")
 
 	return tc
 }
 
 // upgradeGrove handles the upgrade of Grove to the current codebase.
-func upgradeGrove(t *testing.T, tc *testctx.TestContext) {
+func upgradeGrove(t *testing.T, tc *testctx.TestContext, cfg testConfig) {
 	t.Helper()
 
 	testctx.Logger.Info("building current Grove operator")
@@ -140,36 +169,45 @@ func upgradeGrove(t *testing.T, tc *testctx.TestContext) {
 	require.NoError(t, err, "locate current Grove chart")
 	chartVersion, err := setup.GetGroveChartVersion(chartDir)
 	require.NoError(t, err, "read current Grove chart version")
-	_, err = setup.UpgradeHelmChart(&setup.HelmInstallConfig{
-		RestConfig:   tc.Client.RestConfig,
-		ReleaseName:  "grove",
-		Namespace:    "grove-system",
-		ChartRef:     chartDir,
-		ChartVersion: chartVersion,
-		Wait:         true,
-		Timeout:      defaultPollTimeout,
-		Values: map[string]any{
-			"config": map[string]any{"server": map[string]any{"healthProbes": map[string]any{"enable": true}}},
-			"image": map[string]any{
-				"repository": "registry:5001/grove-operator",
-				"tag":        "latest",
+	values := map[string]any{
+		"config": map[string]any{
+			"server": map[string]any{
+				"healthProbes": map[string]any{"enable": true},
 			},
-			"deployment": map[string]any{
-				"env": []any{
-					map[string]any{
-						"name":  "GROVE_INIT_CONTAINER_IMAGE",
-						"value": "registry:5001/grove-initc",
-					},
-				},
-			},
-			"crdInstaller": map[string]any{
-				"enabled": true,
-				"image": map[string]any{
-					"repository": "registry:5001/grove-install-crds",
-					"tag":        "latest",
+		},
+		"image": map[string]any{
+			"repository": "registry:5001/grove-operator",
+			"tag":        "latest",
+		},
+		"deployment": map[string]any{
+			"env": []any{
+				map[string]any{
+					"name":  "GROVE_INIT_CONTAINER_IMAGE",
+					"value": "registry:5001/grove-initc",
 				},
 			},
 		},
+		"crdInstaller": map[string]any{
+			"enabled": true,
+			"image": map[string]any{
+				"repository": "registry:5001/grove-install-crds",
+				"tag":        "latest",
+			},
+		},
+	}
+	if cfg.customizeHelmValues != nil {
+		cfg.customizeHelmValues(values)
+	}
+
+	_, err = setup.UpgradeHelmChart(&setup.HelmInstallConfig{
+		RestConfig:     tc.Client.RestConfig,
+		ReleaseName:    "grove",
+		Namespace:      "grove-system",
+		ChartRef:       chartDir,
+		ChartVersion:   chartVersion,
+		Wait:           true,
+		Timeout:        defaultPollTimeout,
+		Values:         values,
 		HelmLoggerFunc: testctx.Logger.Infof,
 	})
 	require.NoError(t, err, "upgrade Grove chart to current checkout")

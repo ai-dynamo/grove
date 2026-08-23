@@ -19,6 +19,8 @@ package podgroup
 import (
 	"context"
 	"fmt"
+	"sort"
+	"strconv"
 	"time"
 
 	nameutils "github.com/ai-dynamo/grove/operator/api/common"
@@ -29,10 +31,13 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
+const scaledPodGangsSubGroupName = "scaled-podgangs"
+
 // ExpectedSubGroup defines the expected structure of a KAI PodGroup SubGroup for verification.
 type ExpectedSubGroup struct {
 	Name                   string
 	MinMember              int32
+	MinSubGroup            *int32
 	Parent                 *string
 	RequiredTopologyLevel  string
 	PreferredTopologyLevel string
@@ -40,19 +45,21 @@ type ExpectedSubGroup struct {
 
 // PCSGCliqueConfig defines configuration for a single clique in a PCSG.
 type PCSGCliqueConfig struct {
-	Name       string
-	PodCount   int32
-	Constraint string
+	Name                string
+	PodCount            int32
+	Constraint          string
+	PreferredConstraint string
 }
 
 // ScaledPCSGConfig defines configuration for verifying a scaled PCSG replica.
 type ScaledPCSGConfig struct {
-	Name          string
-	PCSGName      string
-	PCSGReplica   int
-	MinAvailable  int
-	CliqueConfigs []PCSGCliqueConfig
-	Constraint    string
+	Name                string
+	PCSGName            string
+	PCSGReplica         int
+	MinAvailable        int
+	CliqueConfigs       []PCSGCliqueConfig
+	Constraint          string
+	PreferredConstraint string
 }
 
 // PodGroupVerifier provides KAI PodGroup verification using a controller-runtime client.
@@ -66,8 +73,9 @@ func NewPodGroupVerifier(cl client.Client, logger *log.Logger) *PodGroupVerifier
 	return &PodGroupVerifier{cl: cl, logger: logger}
 }
 
-// CreateExpectedStandalonePCLQSubGroup creates an ExpectedSubGroup for a standalone PodClique (not in PCSG).
+// CreateExpectedStandalonePCLQSubGroup creates an ExpectedSubGroup for a standalone PodClique under the base PodGang branch.
 func CreateExpectedStandalonePCLQSubGroup(pcsName string, pcsReplica int, cliqueName string, minMember int32, topologyLevel string) ExpectedSubGroup {
+	baseBranch := nameutils.GenerateBasePodGangName(nameutils.ResourceNameReplica{Name: pcsName, Replica: pcsReplica})
 	name := nameutils.GeneratePodCliqueName(
 		nameutils.ResourceNameReplica{Name: pcsName, Replica: pcsReplica},
 		cliqueName,
@@ -75,13 +83,14 @@ func CreateExpectedStandalonePCLQSubGroup(pcsName string, pcsReplica int, clique
 	return ExpectedSubGroup{
 		Name:                  name,
 		MinMember:             minMember,
-		Parent:                nil,
+		Parent:                &baseBranch,
 		RequiredTopologyLevel: topologyLevel,
 	}
 }
 
-// CreateExpectedPCSGParentSubGroup creates an ExpectedSubGroup for a PCSG parent (scaling group replica).
+// CreateExpectedPCSGParentSubGroup creates an ExpectedSubGroup for a PCSG topology group under the base PodGang branch.
 func CreateExpectedPCSGParentSubGroup(pcsName string, pcsReplica int, sgName string, sgReplica int, topologyLevel string) ExpectedSubGroup {
+	baseBranch := nameutils.GenerateBasePodGangName(nameutils.ResourceNameReplica{Name: pcsName, Replica: pcsReplica})
 	pcsgFQN := nameutils.GeneratePodCliqueScalingGroupName(
 		nameutils.ResourceNameReplica{Name: pcsName, Replica: pcsReplica},
 		sgName,
@@ -90,7 +99,7 @@ func CreateExpectedPCSGParentSubGroup(pcsName string, pcsReplica int, sgName str
 	return ExpectedSubGroup{
 		Name:                  name,
 		MinMember:             0,
-		Parent:                nil,
+		Parent:                &baseBranch,
 		RequiredTopologyLevel: topologyLevel,
 	}
 }
@@ -100,9 +109,13 @@ func CreateExpectedPCLQInPCSGSubGroup(pcsName string, pcsReplica int, sgName str
 	return createExpectedPCLQInPCSGSubGroup(pcsName, pcsReplica, sgName, sgReplica, cliqueName, minMember, topologyLevel, true)
 }
 
-// CreateExpectedPCLQInPCSGSubGroupNoParent creates an ExpectedSubGroup for a PodClique within a PCSG without parent.
-func CreateExpectedPCLQInPCSGSubGroupNoParent(pcsName string, pcsReplica int, sgName string, sgReplica int, cliqueName string, minMember int32, topologyLevel string) ExpectedSubGroup {
-	return createExpectedPCLQInPCSGSubGroup(pcsName, pcsReplica, sgName, sgReplica, cliqueName, minMember, topologyLevel, false)
+// CreateExpectedPCLQInPCSGBaseSubGroup creates an ExpectedSubGroup for a PodClique whose PCSG has no topology group.
+// Such cliques are direct children of the base PodGang branch in the aggregate PodGroup.
+func CreateExpectedPCLQInPCSGBaseSubGroup(pcsName string, pcsReplica int, sgName string, sgReplica int, cliqueName string, minMember int32, topologyLevel string) ExpectedSubGroup {
+	subGroup := createExpectedPCLQInPCSGSubGroup(pcsName, pcsReplica, sgName, sgReplica, cliqueName, minMember, topologyLevel, false)
+	baseBranch := nameutils.GenerateBasePodGangName(nameutils.ResourceNameReplica{Name: pcsName, Replica: pcsReplica})
+	subGroup.Parent = &baseBranch
+	return subGroup
 }
 
 func createExpectedPCLQInPCSGSubGroup(pcsName string, pcsReplica int, sgName string, sgReplica int, cliqueName string,
@@ -161,16 +174,35 @@ func (pv *PodGroupVerifier) WaitForKAIPodGroups(ctx context.Context, namespace, 
 	return podGroups, nil
 }
 
-// FilterPodGroupByOwner filters a list of PodGroups to find the one owned by the specified PodGang.
-func FilterPodGroupByOwner(podGroups []kaischedulingv2alpha2.PodGroup, podGangName string) (*kaischedulingv2alpha2.PodGroup, error) {
+// FilterAggregatePodGroupForPCSReplica selects the aggregate PodGroup by its PCS controller and replica label.
+func FilterAggregatePodGroupForPCSReplica(podGroups []kaischedulingv2alpha2.PodGroup, pcsName string, pcsReplica int) (*kaischedulingv2alpha2.PodGroup, error) {
+	replica := strconv.Itoa(pcsReplica)
+	matches := make([]int, 0, 1)
 	for i := range podGroups {
+		if podGroups[i].Labels[nameutils.LabelPodCliqueSetReplicaIndex] != replica {
+			continue
+		}
 		for _, ref := range podGroups[i].OwnerReferences {
-			if ref.Kind == "PodGang" && ref.Name == podGangName {
-				return &podGroups[i], nil
+			if ref.Kind == "PodCliqueSet" && ref.Name == pcsName && ptr.Deref(ref.Controller, false) {
+				matches = append(matches, i)
+				break
 			}
 		}
 	}
-	return nil, fmt.Errorf("no PodGroup found owned by PodGang %s", podGangName)
+	if len(matches) == 0 {
+		return nil, fmt.Errorf("no aggregate PodGroup found controlled by PodCliqueSet %s with %s=%s",
+			pcsName, nameutils.LabelPodCliqueSetReplicaIndex, replica)
+	}
+	if len(matches) > 1 {
+		names := make([]string, 0, len(matches))
+		for _, i := range matches {
+			names = append(names, podGroups[i].Name)
+		}
+		sort.Strings(names)
+		return nil, fmt.Errorf("found multiple aggregate PodGroups controlled by PodCliqueSet %s with %s=%s: %v",
+			pcsName, nameutils.LabelPodCliqueSetReplicaIndex, replica, names)
+	}
+	return &podGroups[matches[0]], nil
 }
 
 // VerifyTopologyConstraint verifies the top-level TopologyConstraint of a KAI PodGroup.
@@ -221,10 +253,20 @@ func (pv *PodGroupVerifier) VerifySubGroups(podGroup *kaischedulingv2alpha2.PodG
 			return fmt.Errorf("SubGroup %q Parent: got %q, expected %q", expected.Name, *actual.Parent, *expected.Parent)
 		}
 
-		actualMinMember := ptr.Deref(actual.MinMember, 0)
-		if actualMinMember != expected.MinMember {
-			return fmt.Errorf("SubGroup %q MinMember: got %d, expected %d", expected.Name, actualMinMember, expected.MinMember)
+		if expected.MinMember == 0 && actual.MinMember != nil {
+			return fmt.Errorf("SubGroup %q MinMember: got %d, expected nil", expected.Name, *actual.MinMember)
 		}
+		if expected.MinMember != 0 && (actual.MinMember == nil || *actual.MinMember != expected.MinMember) {
+			return fmt.Errorf("SubGroup %q MinMember: got %v, expected %d", expected.Name, actual.MinMember, expected.MinMember)
+		}
+		if expected.MinSubGroup == nil && actual.MinSubGroup != nil {
+			return fmt.Errorf("SubGroup %q MinSubGroup: got %d, expected nil", expected.Name, *actual.MinSubGroup)
+		}
+		if expected.MinSubGroup != nil && (actual.MinSubGroup == nil || *actual.MinSubGroup != *expected.MinSubGroup) {
+			return fmt.Errorf("SubGroup %q MinSubGroup: got %v, expected %d",
+				expected.Name, actual.MinSubGroup, *expected.MinSubGroup)
+		}
+		actualMinMember := ptr.Deref(actual.MinMember, 0)
 
 		actualRequired := ""
 		actualPreferred := ""
@@ -250,20 +292,18 @@ func (pv *PodGroupVerifier) VerifySubGroups(podGroup *kaischedulingv2alpha2.PodG
 	return nil
 }
 
-// GetPodGroupForBasePodGangReplica retrieves the KAI PodGroup for a PodGangSet replica's base PodGang.
-func (pv *PodGroupVerifier) GetPodGroupForBasePodGangReplica(ctx context.Context, namespace, workloadName string, pgsReplica int, timeout, interval time.Duration) (*kaischedulingv2alpha2.PodGroup, error) {
+// GetAggregatePodGroupForPCSReplica retrieves the PCS-owned aggregate KAI PodGroup for one PCS replica.
+func (pv *PodGroupVerifier) GetAggregatePodGroupForPCSReplica(ctx context.Context, namespace, workloadName string, pcsReplica int, timeout, interval time.Duration) (*kaischedulingv2alpha2.PodGroup, error) {
 	podGroups, err := pv.WaitForKAIPodGroups(ctx, namespace, workloadName, timeout, interval)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get KAI PodGroups: %w", err)
 	}
 
-	basePodGangName := nameutils.GenerateBasePodGangName(nameutils.ResourceNameReplica{Name: workloadName, Replica: pgsReplica})
-	basePodGroup, err := FilterPodGroupByOwner(podGroups, basePodGangName)
+	aggregatePodGroup, err := FilterAggregatePodGroupForPCSReplica(podGroups, workloadName, pcsReplica)
 	if err != nil {
-		return nil, fmt.Errorf("failed to find PodGroup for PodGang %s: %w", basePodGangName, err)
+		return nil, err
 	}
-
-	return basePodGroup, nil
+	return aggregatePodGroup, nil
 }
 
 // VerifyPodGroupTopology verifies both top-level topology constraint and SubGroups structure.
@@ -279,35 +319,135 @@ func (pv *PodGroupVerifier) VerifyPodGroupTopology(podGroup *kaischedulingv2alph
 	return nil
 }
 
-// VerifyScaledPCSGReplicaTopology verifies KAI PodGroup for one scaled PCSG replica.
-func (pv *PodGroupVerifier) VerifyScaledPCSGReplicaTopology(ctx context.Context, namespace, pcsName string, pcsReplica int, pcsgConfig ScaledPCSGConfig, pcsConstraint string) error {
-	podGroups, err := pv.GetKAIPodGroupsForPCS(ctx, namespace, pcsName)
-	if err != nil {
-		return fmt.Errorf("failed to get KAI PodGroups: %w", err)
+// VerifyAggregatePodGroupTopology verifies aggregate identity, root thresholds, topology, and the exact subgroup tree.
+func (pv *PodGroupVerifier) VerifyAggregatePodGroupTopology(
+	podGroup *kaischedulingv2alpha2.PodGroup,
+	pcsName string,
+	pcsReplica int,
+	requiredLevel string,
+	preferredLevel string,
+	baseSubGroups []ExpectedSubGroup,
+	scaledPCSGs []ScaledPCSGConfig,
+) error {
+	if _, err := FilterAggregatePodGroupForPCSReplica([]kaischedulingv2alpha2.PodGroup{*podGroup}, pcsName, pcsReplica); err != nil {
+		return fmt.Errorf("aggregate identity verification failed: %w", err)
 	}
-
-	pcsgFQN := nameutils.GeneratePodCliqueScalingGroupName(
-		nameutils.ResourceNameReplica{Name: pcsName, Replica: pcsReplica},
-		pcsgConfig.PCSGName,
+	if podGroup.Spec.MinMember != nil {
+		return fmt.Errorf("aggregate PodGroup %s MinMember: got %d, expected nil", podGroup.Name, *podGroup.Spec.MinMember)
+	}
+	expectedSubGroups, err := createExpectedAggregateSubGroups(
+		pcsName, pcsReplica, requiredLevel, preferredLevel, baseSubGroups, scaledPCSGs,
 	)
-
-	scaledPodGangName := nameutils.CreatePodGangNameFromPCSGFQN(pcsgFQN, pcsgConfig.PCSGReplica-pcsgConfig.MinAvailable)
-
-	scaledPodGroup, err := FilterPodGroupByOwner(podGroups, scaledPodGangName)
 	if err != nil {
-		return fmt.Errorf("failed to find scaled PodGroup for %s: %w", scaledPodGangName, err)
+		return fmt.Errorf("failed to build expected aggregate hierarchy: %w", err)
+	}
+	expectedRootMinSubGroup := int32(1)
+	if len(scaledPCSGs) > 0 {
+		expectedRootMinSubGroup = 2
+	}
+	if podGroup.Spec.MinSubGroup == nil || *podGroup.Spec.MinSubGroup != expectedRootMinSubGroup {
+		return fmt.Errorf("aggregate PodGroup %s MinSubGroup: got %v, expected %d", podGroup.Name, podGroup.Spec.MinSubGroup, expectedRootMinSubGroup)
+	}
+	return pv.VerifyPodGroupTopology(podGroup, requiredLevel, preferredLevel, expectedSubGroups)
+}
+
+func createExpectedAggregateSubGroups(
+	pcsName string,
+	pcsReplica int,
+	rootRequired string,
+	rootPreferred string,
+	baseSubGroups []ExpectedSubGroup,
+	scaledPCSGs []ScaledPCSGConfig,
+) ([]ExpectedSubGroup, error) {
+	baseBranch := nameutils.GenerateBasePodGangName(nameutils.ResourceNameReplica{Name: pcsName, Replica: pcsReplica})
+	baseSubGroups = append([]ExpectedSubGroup(nil), baseSubGroups...)
+	directBaseChildren := int32(0)
+	childCounts := map[string]int32{}
+	usedNames := map[string]struct{}{baseBranch: {}}
+	for i := range baseSubGroups {
+		if _, found := usedNames[baseSubGroups[i].Name]; found {
+			return nil, fmt.Errorf("duplicate expected SubGroup %q", baseSubGroups[i].Name)
+		}
+		usedNames[baseSubGroups[i].Name] = struct{}{}
+		if baseSubGroups[i].Parent != nil {
+			childCounts[*baseSubGroups[i].Parent]++
+			if *baseSubGroups[i].Parent == baseBranch {
+				directBaseChildren++
+			}
+		}
+	}
+	for i := range baseSubGroups {
+		if count := childCounts[baseSubGroups[i].Name]; count > 0 {
+			baseSubGroups[i].MinSubGroup = ptr.To(count)
+		}
 	}
 
-	var expectedSubGroups []ExpectedSubGroup
-	for _, cliqueConfig := range pcsgConfig.CliqueConfigs {
-		expectedSubGroups = append(expectedSubGroups,
-			CreateExpectedPCLQInPCSGSubGroupNoParent(pcsName, pcsReplica, pcsgConfig.PCSGName, pcsgConfig.PCSGReplica, cliqueConfig.Name, cliqueConfig.PodCount, cliqueConfig.Constraint))
+	expected := []ExpectedSubGroup{{Name: baseBranch, MinSubGroup: ptr.To(directBaseChildren)}}
+	expected = append(expected, baseSubGroups...)
+	if _, found := usedNames[scaledPodGangsSubGroupName]; found {
+		return nil, fmt.Errorf("duplicate expected SubGroup %q", scaledPodGangsSubGroupName)
+	}
+	usedNames[scaledPodGangsSubGroupName] = struct{}{}
+	if len(scaledPCSGs) > 0 {
+		expected = append(expected, ExpectedSubGroup{Name: scaledPodGangsSubGroupName, MinSubGroup: ptr.To[int32](0)})
 	}
 
-	scaledTopConstraint := pcsConstraint
-	if pcsgConfig.Constraint != "" {
-		scaledTopConstraint = pcsgConfig.Constraint
+	sort.Slice(scaledPCSGs, func(i, j int) bool {
+		if scaledPCSGs[i].PCSGName == scaledPCSGs[j].PCSGName {
+			return scaledPCSGs[i].PCSGReplica < scaledPCSGs[j].PCSGReplica
+		}
+		return scaledPCSGs[i].PCSGName < scaledPCSGs[j].PCSGName
+	})
+	for _, config := range scaledPCSGs {
+		if config.PCSGReplica < config.MinAvailable {
+			return nil, fmt.Errorf("scaled PCSG %q replica %d is below minAvailable %d", config.PCSGName, config.PCSGReplica, config.MinAvailable)
+		}
+		pcsgFQN := nameutils.GeneratePodCliqueScalingGroupName(
+			nameutils.ResourceNameReplica{Name: pcsName, Replica: pcsReplica}, config.PCSGName,
+		)
+		podGangName := nameutils.CreatePodGangNameFromPCSGFQN(pcsgFQN, config.PCSGReplica-config.MinAvailable)
+		branchName := expectedStructuralName(podGangName, "gang", usedNames)
+		branchRequired := config.Constraint
+		branchPreferred := config.PreferredConstraint
+		if branchRequired == rootRequired && branchPreferred == rootPreferred {
+			branchRequired = ""
+			branchPreferred = ""
+		}
+		expected = append(expected, ExpectedSubGroup{
+			Name:                   branchName,
+			Parent:                 ptr.To(scaledPodGangsSubGroupName),
+			MinSubGroup:            ptr.To(int32(len(config.CliqueConfigs))),
+			RequiredTopologyLevel:  branchRequired,
+			PreferredTopologyLevel: branchPreferred,
+		})
+		for _, clique := range config.CliqueConfigs {
+			leafName := nameutils.GeneratePodCliqueName(
+				nameutils.ResourceNameReplica{Name: pcsgFQN, Replica: config.PCSGReplica}, clique.Name,
+			)
+			if _, found := usedNames[leafName]; found {
+				return nil, fmt.Errorf("duplicate expected SubGroup %q", leafName)
+			}
+			usedNames[leafName] = struct{}{}
+			expected = append(expected, ExpectedSubGroup{
+				Name:                   leafName,
+				Parent:                 ptr.To(branchName),
+				MinMember:              clique.PodCount,
+				RequiredTopologyLevel:  clique.Constraint,
+				PreferredTopologyLevel: clique.PreferredConstraint,
+			})
+		}
 	}
+	return expected, nil
+}
 
-	return pv.VerifyPodGroupTopology(scaledPodGroup, scaledTopConstraint, "", expectedSubGroups)
+// expectedStructuralName mirrors the producer's collision role suffix while names remain in the
+// short, already-valid form generated by Grove's public name helpers, as all topology E2Es do.
+func expectedStructuralName(name, role string, usedNames map[string]struct{}) string {
+	if _, found := usedNames[name]; !found {
+		usedNames[name] = struct{}{}
+		return name
+	}
+	name += "-" + role
+	usedNames[name] = struct{}{}
+	return name
 }

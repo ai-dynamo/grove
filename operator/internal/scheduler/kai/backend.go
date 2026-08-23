@@ -26,7 +26,7 @@ import (
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
-	"github.com/ai-dynamo/grove/operator/internal/utils"
+	operatorutils "github.com/ai-dynamo/grove/operator/internal/utils"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	kaitopologyv1alpha1 "github.com/kai-scheduler/KAI-scheduler/pkg/apis/kai/v1alpha1"
@@ -36,29 +36,30 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
-	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
 
 // schedulerBackend implements the scheduler Backend interface (Backend in scheduler package) for KAI scheduler.
 type schedulerBackend struct {
-	client        client.Client
-	scheme        *runtime.Scheme
-	name          string
-	eventRecorder record.EventRecorder
-	profile       configv1alpha1.SchedulerProfile
+	client         client.Client
+	scheme         *runtime.Scheme
+	name           string
+	eventRecorder  record.EventRecorder
+	profile        configv1alpha1.SchedulerProfile
+	aggregateLocks operatorutils.KeyedMutex[client.ObjectKey]
 }
 
 var _ scheduler.Backend = (*schedulerBackend)(nil)
 
 const (
-	labelKeyQueueName    = "kai.scheduler/queue"
-	labelKeyNodePoolName = "kai.scheduler/node-pool"
-	annotationKeySkipPGR = "kai.scheduler/skip-podgrouper"
-	annotationValSkipPGR = "true"
-	annotationPodGroup   = "pod-group-name"
-	labelSubGroup        = "kai.scheduler/subgroup-name"
+	labelKeyQueueName     = "kai.scheduler/queue"
+	labelKeyNodePoolName  = "kai.scheduler/node-pool"
+	annotationKeySkipPGR  = "kai.scheduler/skip-podgrouper"
+	annotationValSkipPGR  = "true"
+	annotationPodGroup    = "pod-group-name"
+	labelSubGroup         = "kai.scheduler/subgroup-name"
+	eventReasonSyncFailed = "KAIBackendSyncFailed"
 )
 
 // New creates a new KAI backend instance. profile is the scheduler profile for kai-scheduler;
@@ -92,31 +93,44 @@ func (b *schedulerBackend) SyncPodGang(ctx context.Context, podGang *groveschedu
 	if podGang == nil {
 		return fmt.Errorf("podGang is nil")
 	}
-	if err := b.ensurePodGangSkipAnnotation(ctx, podGang); err != nil {
-		return fmt.Errorf("ensure KAI podgrouper skip annotation: %w", err)
-	}
-
-	newPodGroup, err := b.buildPodGroupForPodGang(ctx, podGang)
+	pcs, err := b.getOwningPodCliqueSet(ctx, podGang)
 	if err != nil {
-		b.recordWarning(podGang, "KAIBackendMappingFailed", err)
-		return err
-	}
-
-	oldPodGroup := &kaischedulingv2alpha2.PodGroup{}
-	key := client.ObjectKeyFromObject(newPodGroup)
-	if err = b.client.Get(ctx, key, oldPodGroup); err != nil {
-		if apierrors.IsNotFound(err) {
-			return b.client.Create(ctx, newPodGroup)
+		// The aggregate PodGroup is owned by the PCS, so it is already being garbage-collected
+		// when the owner is gone. Do not strand a deleting PodGang on our finalizer.
+		if apierrors.IsNotFound(err) && !podGang.DeletionTimestamp.IsZero() {
+			if finalizerErr := b.removePodGangFinalizer(ctx, podGang); finalizerErr != nil {
+				b.recordWarning(podGang, finalizerErr)
+				return finalizerErr
+			}
+			return nil
 		}
+		b.recordWarning(podGang, err)
 		return err
 	}
-
-	newPodGroup = b.inheritRuntimeManagedFields(oldPodGroup, newPodGroup)
-	if podGroupsEqual(oldPodGroup, newPodGroup) {
+	if !pcs.DeletionTimestamp.IsZero() {
+		if err = b.removePodGangFinalizer(ctx, podGang); err != nil {
+			b.recordWarning(podGang, err)
+			return err
+		}
 		return nil
 	}
-	updatePodGroup(oldPodGroup, newPodGroup)
-	return b.client.Update(ctx, oldPodGroup)
+	if podGang.DeletionTimestamp.IsZero() {
+		if err = b.ensurePodGangMetadata(ctx, podGang); err != nil {
+			b.recordWarning(podGang, err)
+			return err
+		}
+	}
+	if err = b.syncAggregatePodGroup(ctx, pcs, podGang); err != nil {
+		b.recordWarning(podGang, err)
+		return err
+	}
+	if !podGang.DeletionTimestamp.IsZero() {
+		if err = b.removePodGangFinalizer(ctx, podGang); err != nil {
+			b.recordWarning(podGang, err)
+			return err
+		}
+	}
+	return nil
 }
 
 // PreparePod adds KAI scheduler-specific configuration to the Pod.
@@ -130,6 +144,14 @@ func (b *schedulerBackend) PreparePod(pod *corev1.Pod) error {
 	if subGroupName == "" {
 		return fmt.Errorf("KAI scheduler requires pod label %q", apicommon.LabelPodClique)
 	}
+	pcsName := pod.Labels[apicommon.LabelPartOfKey]
+	if pcsName == "" {
+		return fmt.Errorf("KAI scheduler requires pod label %q", apicommon.LabelPartOfKey)
+	}
+	pcsReplica, err := podCliqueSetReplicaFromObjectMeta(pod.ObjectMeta)
+	if err != nil {
+		return err
+	}
 
 	pod.Spec.SchedulerName = b.Name()
 	if pod.Annotations == nil {
@@ -139,8 +161,8 @@ func (b *schedulerBackend) PreparePod(pod *corev1.Pod) error {
 		pod.Labels = map[string]string{}
 	}
 	pod.Annotations[annotationKeySkipPGR] = annotationValSkipPGR
-	pod.Annotations[annotationPodGroup] = podGangName
-	pod.Labels[labelSubGroup] = subGroupName
+	pod.Annotations[annotationPodGroup] = aggregatePodGroupName(pcsName, pcsReplica)
+	pod.Labels[labelSubGroup] = stableKAIName(subGroupName)
 	return nil
 }
 
@@ -150,84 +172,8 @@ func (b *schedulerBackend) ValidatePodCliqueSet(_ context.Context, pcs *grovecor
 	return err
 }
 
-// buildPodGroupForPodGang translates a Grove PodGang into a KAI PodGroup object.
-func (b *schedulerBackend) buildPodGroupForPodGang(ctx context.Context, podGang *groveschedulerv1alpha1.PodGang) (*kaischedulingv2alpha2.PodGroup, error) {
-	topologyName := getTopologyName(podGang)
-	topologyConstraint, err := toKAITopologyConstraint(podGang.Spec.TopologyConstraint, topologyName)
-	if err != nil {
-		return nil, err
-	}
-	queueName, err := b.resolveQueueName(ctx, podGang)
-	if err != nil {
-		return nil, err
-	}
-
-	parentBySubGroupName := map[string]string{}
-	subGroups := make([]kaischedulingv2alpha2.SubGroup, 0, len(podGang.Spec.TopologyConstraintGroupConfigs)+len(podGang.Spec.PodGroups))
-
-	for _, groupConfig := range podGang.Spec.TopologyConstraintGroupConfigs {
-		if len(groupConfig.PodGroupNames) == 0 {
-			continue
-		}
-		groupTopologyConstraint, groupErr := toKAITopologyConstraint(groupConfig.TopologyConstraint, topologyName)
-		if groupErr != nil {
-			return nil, groupErr
-		}
-		subGroups = append(subGroups, kaischedulingv2alpha2.SubGroup{
-			Name:               groupConfig.Name,
-			MinSubGroup:        ptr.To(int32(len(groupConfig.PodGroupNames))),
-			TopologyConstraint: groupTopologyConstraint,
-		})
-		for _, podGroupName := range groupConfig.PodGroupNames {
-			parentBySubGroupName[podGroupName] = groupConfig.Name
-		}
-	}
-
-	var minMember int32
-	for _, podGroup := range podGang.Spec.PodGroups {
-		subGroupTopologyConstraint, groupErr := toKAITopologyConstraint(podGroup.TopologyConstraint, topologyName)
-		if groupErr != nil {
-			return nil, groupErr
-		}
-		subGroup := kaischedulingv2alpha2.SubGroup{
-			Name:               podGroup.Name,
-			MinMember:          ptr.To(podGroup.MinReplicas),
-			TopologyConstraint: subGroupTopologyConstraint,
-		}
-		// Group configs cover a strict subset of PodGroups. Unmatched PodGroups
-		// intentionally remain root-level KAI SubGroups.
-		if parentName, found := parentBySubGroupName[podGroup.Name]; found {
-			subGroup.Parent = ptr.To(parentName)
-		}
-		subGroups = append(subGroups, subGroup)
-		minMember += podGroup.MinReplicas
-	}
-
-	result := &kaischedulingv2alpha2.PodGroup{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:        podGang.Name,
-			Namespace:   podGang.Namespace,
-			Labels:      maps.Clone(podGang.Labels),
-			Annotations: maps.Clone(podGang.Annotations),
-		},
-		Spec: kaischedulingv2alpha2.PodGroupSpec{
-			MinMember:         ptr.To(minMember),
-			Queue:             queueName,
-			PriorityClassName: podGang.Spec.PriorityClassName,
-			SubGroups:         subGroups,
-		},
-	}
-	if topologyConstraint != nil {
-		result.Spec.TopologyConstraint = *topologyConstraint
-	}
-	if err := controllerutil.SetControllerReference(podGang, result, b.scheme); err != nil {
-		return nil, err
-	}
-	return result, nil
-}
-
-func (b *schedulerBackend) ensurePodGangSkipAnnotation(ctx context.Context, podGang *groveschedulerv1alpha1.PodGang) error {
-	if podGang.Annotations != nil && podGang.Annotations[annotationKeySkipPGR] == annotationValSkipPGR {
+func (b *schedulerBackend) ensurePodGangMetadata(ctx context.Context, podGang *groveschedulerv1alpha1.PodGang) error {
+	if podGang.Annotations != nil && podGang.Annotations[annotationKeySkipPGR] == annotationValSkipPGR && controllerutil.ContainsFinalizer(podGang, podGangFinalizer) {
 		return nil
 	}
 	before := podGang.DeepCopy()
@@ -235,12 +181,22 @@ func (b *schedulerBackend) ensurePodGangSkipAnnotation(ctx context.Context, podG
 		podGang.Annotations = map[string]string{}
 	}
 	podGang.Annotations[annotationKeySkipPGR] = annotationValSkipPGR
+	controllerutil.AddFinalizer(podGang, podGangFinalizer)
 	return b.client.Patch(ctx, podGang, client.MergeFrom(before))
 }
 
-func (b *schedulerBackend) recordWarning(obj runtime.Object, reason string, err error) {
+func (b *schedulerBackend) removePodGangFinalizer(ctx context.Context, podGang *groveschedulerv1alpha1.PodGang) error {
+	if !controllerutil.ContainsFinalizer(podGang, podGangFinalizer) {
+		return nil
+	}
+	before := podGang.DeepCopy()
+	controllerutil.RemoveFinalizer(podGang, podGangFinalizer)
+	return b.client.Patch(ctx, podGang, client.MergeFrom(before))
+}
+
+func (b *schedulerBackend) recordWarning(obj runtime.Object, err error) {
 	if b.eventRecorder != nil && obj != nil && err != nil {
-		b.eventRecorder.Eventf(obj, corev1.EventTypeWarning, reason, "%v", err)
+		b.eventRecorder.Eventf(obj, corev1.EventTypeWarning, eventReasonSyncFailed, "%v", err)
 	}
 }
 
@@ -276,27 +232,22 @@ func toKAITopologyConstraint(topologyConstraint *groveschedulerv1alpha1.Topology
 	return result, nil
 }
 
-// resolveQueueName returns the KAI queue configured by the PodGang's owning PodCliqueSet.
-func (b *schedulerBackend) resolveQueueName(ctx context.Context, podGang *groveschedulerv1alpha1.PodGang) (string, error) {
+func (b *schedulerBackend) getOwningPodCliqueSet(ctx context.Context, podGang *groveschedulerv1alpha1.PodGang) (*grovecorev1alpha1.PodCliqueSet, error) {
 	owner := metav1.GetControllerOf(podGang)
 	if owner == nil {
-		return "", fmt.Errorf("podgang %s/%s has no controlling PodCliqueSet", podGang.Namespace, podGang.Name)
+		return nil, fmt.Errorf("podgang %s/%s has no controlling PodCliqueSet", podGang.Namespace, podGang.Name)
 	}
 	if owner.APIVersion != grovecorev1alpha1.SchemeGroupVersion.String() || owner.Kind != "PodCliqueSet" {
-		return "", fmt.Errorf("podgang %s/%s is controlled by %s %q, expected PodCliqueSet", podGang.Namespace, podGang.Name, owner.APIVersion, owner.Kind)
+		return nil, fmt.Errorf("podgang %s/%s is controlled by %s %q, expected PodCliqueSet", podGang.Namespace, podGang.Name, owner.APIVersion, owner.Kind)
 	}
 
 	pcs := &grovecorev1alpha1.PodCliqueSet{}
 	if err := b.client.Get(ctx, client.ObjectKey{Namespace: podGang.Namespace, Name: owner.Name}, pcs); err != nil {
-		return "", fmt.Errorf("get controlling PodCliqueSet %s/%s: %w", podGang.Namespace, owner.Name, err)
+		return nil, fmt.Errorf("get controlling PodCliqueSet %s/%s: %w", podGang.Namespace, owner.Name, err)
 	}
-
-	return resolveQueueNameForPodCliqueSet(pcs)
+	return pcs, nil
 }
 
-// resolveQueueNameForPodCliqueSet returns the KAI queue configured by a PodCliqueSet.
-// A queue set on the PodCliqueSet establishes the queue for the scheduling unit, so
-// every explicitly configured PodClique template queue must resolve to the same value.
 func resolveQueueNameForPodCliqueSet(pcs *grovecorev1alpha1.PodCliqueSet) (string, error) {
 	if queueName := resolveQueueNameFromMetadata(pcs.Labels, pcs.Annotations); queueName != "" {
 		for _, clique := range pcs.Spec.Template.Cliques {
@@ -372,8 +323,8 @@ func (b *schedulerBackend) inheritRuntimeManagedFields(oldPodGroup, newPodGroup 
 func podGroupsEqual(oldPodGroup, newPodGroup *kaischedulingv2alpha2.PodGroup) bool {
 	return reflect.DeepEqual(oldPodGroup.Spec, newPodGroup.Spec) &&
 		reflect.DeepEqual(oldPodGroup.OwnerReferences, newPodGroup.OwnerReferences) &&
-		utils.MapContainsAll(oldPodGroup.Labels, newPodGroup.Labels) &&
-		utils.MapContainsAll(oldPodGroup.Annotations, newPodGroup.Annotations)
+		operatorutils.MapContainsAll(oldPodGroup.Labels, newPodGroup.Labels) &&
+		operatorutils.MapContainsAll(oldPodGroup.Annotations, newPodGroup.Annotations)
 }
 
 // updatePodGroup copies desired fields from newPodGroup into existing object.

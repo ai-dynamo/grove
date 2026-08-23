@@ -191,7 +191,8 @@ func buildExpectedBasePodGangForPCSReplicas(sc *syncContext) ([]*podGangInfo, er
 func buildExpectedBasePodGangForPCSReplica(sc *syncContext, pcsReplica int) (*podGangInfo, error) {
 	podGangFQN := apicommon.GenerateBasePodGangName(apicommon.ResourceNameReplica{Name: sc.pcs.Name, Replica: pcsReplica})
 	pg := &podGangInfo{
-		fqn: podGangFQN,
+		fqn:             podGangFQN,
+		pcsReplicaIndex: pcsReplica,
 		// TopologyConstraint for the base PodGang comes from the topology constraint defined at the PCS level.
 		topologyConstraint: createTopologyPackConstraint(sc, client.ObjectKeyFromObject(sc.pcs), sc.pcs.Spec.Template.TopologyConstraint),
 	}
@@ -284,7 +285,7 @@ func (r _resource) buildExpectedScaledPodGangsForPCSG(sc *syncContext, pcsReplic
 		minAvailable := int(*pcsgConfig.MinAvailable)
 		scaledReplicas := replicas - minAvailable
 		for podGangIndex, pcsgReplica := 0, minAvailable; podGangIndex < scaledReplicas; podGangIndex, pcsgReplica = podGangIndex+1, pcsgReplica+1 {
-			pg, err := doBuildExpectedScaledPodGangForPCSG(sc, pcsgFQN, pcsgConfig, pcsgReplica, podGangIndex)
+			pg, err := doBuildExpectedScaledPodGangForPCSG(sc, pcsReplica, pcsgFQN, pcsgConfig, pcsgReplica, podGangIndex)
 			if err != nil {
 				return nil, fmt.Errorf("failed to build expected scaled PodGang for PCSG %q replica %d: %w", pcsgFQN, pcsgReplica, err)
 			}
@@ -294,7 +295,7 @@ func (r _resource) buildExpectedScaledPodGangsForPCSG(sc *syncContext, pcsReplic
 	return expectedPodGangs, nil
 }
 
-func doBuildExpectedScaledPodGangForPCSG(sc *syncContext, pcsgFQN string, pcsgConfig grovecorev1alpha1.PodCliqueScalingGroupConfig, pcsgReplica int, podGangIndex int) (*podGangInfo, error) {
+func doBuildExpectedScaledPodGangForPCSG(sc *syncContext, pcsReplica int, pcsgFQN string, pcsgConfig grovecorev1alpha1.PodCliqueScalingGroupConfig, pcsgReplica int, podGangIndex int) (*podGangInfo, error) {
 	var (
 		pclqInfos          = make([]pclqInfo, 0, len(pcsgConfig.CliqueNames))
 		topologyConstraint *groveschedulerv1alpha1.TopologyConstraint
@@ -326,9 +327,11 @@ func doBuildExpectedScaledPodGangForPCSG(sc *syncContext, pcsgFQN string, pcsgCo
 	}
 
 	pg := &podGangInfo{
-		fqn:                apicommon.CreatePodGangNameFromPCSGFQN(pcsgFQN, podGangIndex),
-		topologyConstraint: topologyConstraint,
-		pclqs:              pclqInfos,
+		fqn:                       apicommon.CreatePodGangNameFromPCSGFQN(pcsgFQN, podGangIndex),
+		pcsReplicaIndex:           pcsReplica,
+		podCliqueScalingGroupName: pcsgFQN,
+		topologyConstraint:        topologyConstraint,
+		pclqs:                     pclqInfos,
 	}
 
 	return pg, nil
@@ -780,6 +783,11 @@ func (sfr *syncFlowResult) getAggregatedError() error {
 type podGangInfo struct {
 	// fqn is a fully qualified name of a PodGang.
 	fqn string
+	// pcsReplicaIndex identifies the PodCliqueSet replica containing this PodGang.
+	pcsReplicaIndex int
+	// podCliqueScalingGroupName identifies the PodCliqueScalingGroup containing a scaled PodGang.
+	// It is empty for a base PodGang because a base PodGang can contain multiple PodCliqueScalingGroups.
+	podCliqueScalingGroupName string
 	// pclqs holds the relevant information for all constituent PodCliques for this PodGang.
 	pclqs []pclqInfo
 	// topologyConstraint holds the topology pack constraint applicable at the PodGang level.
