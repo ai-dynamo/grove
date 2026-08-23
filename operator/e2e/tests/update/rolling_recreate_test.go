@@ -357,6 +357,14 @@ func Test_RU12_RollingUpdateWithPCSScaleInDuringUpdate(t *testing.T) {
 	defer cleanup()
 
 	tests.Logger.Info("3. Change the specification of pc-a, pc-b and pc-c")
+	tcOrdinalTimeout := *tc
+	tcOrdinalTimeout.Timeout = 60 * time.Second
+	ordinalObserver, err := newOrdinalUpdateObserver(&tcOrdinalTimeout, 1)
+	if err != nil {
+		t.Fatalf("Failed to watch for final ordinal update: %v", err)
+	}
+	defer ordinalObserver.Stop()
+
 	// Use raw trigger since we need to wait for ordinal before starting the wait
 	for _, cliqueName := range []string{"pc-a", "pc-b", "pc-c"} {
 		if err := triggerPodCliqueUpdate(tc, cliqueName); err != nil {
@@ -366,10 +374,8 @@ func Test_RU12_RollingUpdateWithPCSScaleInDuringUpdate(t *testing.T) {
 
 	tests.Logger.Info("4. Scale in the PCS while the final ordinal is being updated")
 	// Wait for the final ordinal (ordinal 1 since there's two replicas, indexed from 0) to start updating before scaling in
-	// Rolling updates process ordinals from highest to lowest, so ordinal 1 is updated first
-	tcOrdinalTimeout := *tc
-	tcOrdinalTimeout.Timeout = 60 * time.Second
-	if err := waitForOrdinalUpdating(&tcOrdinalTimeout, 1); err != nil {
+	// Rolling updates process healthy replicas in ascending order, so ordinal 1 is updated last
+	if err := ordinalObserver.Wait(); err != nil {
 		t.Fatalf("Failed to wait for final ordinal to start updating: %v", err)
 	}
 
