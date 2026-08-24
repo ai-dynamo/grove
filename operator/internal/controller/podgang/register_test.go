@@ -17,9 +17,15 @@ package podgang
 import (
 	"testing"
 
+	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
+	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 )
 
@@ -35,8 +41,8 @@ type predicateTestCase struct {
 	shouldAllowUpdateEvent  bool
 }
 
-func TestPodGangSpecChangePredicate(t *testing.T) {
-	pred := podGangSpecChangePredicate()
+func TestPodGangChangePredicate(t *testing.T) {
+	pred := podGangChangePredicate()
 
 	tests := []predicateTestCase{
 		{
@@ -130,4 +136,57 @@ func TestPodGangSpecChangePredicate(t *testing.T) {
 			assert.Equal(t, tc.shouldAllowUpdateEvent, pred.Update(event.UpdateEvent{ObjectOld: oldPG, ObjectNew: newPG}), "Update")
 		})
 	}
+}
+
+func TestPodGangChangePredicateAllowsInitialization(t *testing.T) {
+	pred := podGangChangePredicate()
+	oldPodGang := testutils.NewPodGangBuilder("test-pg", "default").
+		WithGeneration(1).
+		WithManaged(true).
+		Build()
+	oldPodGang.Status.Conditions = []metav1.Condition{{
+		Type:   string(groveschedulerv1alpha1.PodGangConditionTypeInitialized),
+		Status: metav1.ConditionFalse,
+	}}
+	newPodGang := oldPodGang.DeepCopy()
+	newPodGang.Status.Conditions[0].Status = metav1.ConditionTrue
+
+	assert.True(t, pred.Update(event.UpdateEvent{ObjectOld: oldPodGang, ObjectNew: newPodGang}))
+}
+
+func TestPodStatusChangePredicate(t *testing.T) {
+	pred := podStatusChangePredicate()
+	oldPod := unscheduledPod("worker-0", "default", "test-podgang")
+	newPod := oldPod.DeepCopy()
+	newPod.Status.Conditions = []corev1.PodCondition{{
+		Type:   corev1.PodScheduled,
+		Status: corev1.ConditionTrue,
+	}}
+
+	assert.True(t, pred.Create(event.CreateEvent{Object: newPod}))
+	assert.True(t, pred.Delete(event.DeleteEvent{Object: newPod}))
+	assert.True(t, pred.Update(event.UpdateEvent{ObjectOld: oldPod, ObjectNew: newPod}))
+	assert.False(t, pred.Generic(event.GenericEvent{Object: newPod}))
+
+	unchangedPod := newPod.DeepCopy()
+	unchangedPod.Status.Conditions[0].Message = "diagnostic changed"
+	assert.False(t, pred.Update(event.UpdateEvent{ObjectOld: newPod, ObjectNew: unchangedPod}))
+
+	readyPod := newPod.DeepCopy()
+	readyPod.Status.Conditions = append(readyPod.Status.Conditions, corev1.PodCondition{
+		Type:   corev1.PodReady,
+		Status: corev1.ConditionTrue,
+	})
+	assert.True(t, pred.Update(event.UpdateEvent{ObjectOld: newPod, ObjectNew: readyPod}))
+}
+
+func TestMapPodToPodGang(t *testing.T) {
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
+		Name:      "worker-0",
+		Namespace: "default",
+		Labels:    map[string]string{apicommon.LabelPodGang: "test-podgang"},
+	}}
+	requests := mapPodToPodGang(t.Context(), pod)
+	require.Len(t, requests, 1)
+	assert.Equal(t, types.NamespacedName{Namespace: "default", Name: "test-podgang"}, requests[0].NamespacedName)
 }

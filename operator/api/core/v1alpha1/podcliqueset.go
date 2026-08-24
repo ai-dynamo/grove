@@ -521,30 +521,9 @@ const (
 type PodGangStatus struct {
 	// Name is the name of the PodGang.
 	Name string `json:"name"`
-	// Phase is the current phase of the PodGang.
-	Phase PodGangPhase `json:"phase"`
 	// Conditions represents the latest available observations of the PodGang by its controller.
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
-
-// PodGangPhase represents the phase of a PodGang.
-// +kubebuilder:validation:Enum={Pending,Starting,Running,Failed,Succeeded}
-type PodGangPhase string
-
-const (
-	// PodGangPending indicates that the pods in a PodGang have not yet been taken up for scheduling.
-	PodGangPending PodGangPhase = "Pending"
-	// PodGangStarting indicates that the pods are bound to nodes by the scheduler and are starting.
-	PodGangStarting PodGangPhase = "Starting"
-	// PodGangRunning indicates that the all the pods in a PodGang are running.
-	PodGangRunning PodGangPhase = "Running"
-	// PodGangFailed indicates that one or more pods in a PodGang have failed.
-	// This is a terminal state and is typically used for batch jobs.
-	PodGangFailed PodGangPhase = "Failed"
-	// PodGangSucceeded indicates that all the pods in a PodGang have succeeded.
-	// This is a terminal state and is typically used for batch jobs.
-	PodGangSucceeded PodGangPhase = "Succeeded"
-)
 
 // LastOperationType is a string alias for the type of the last operation.
 type LastOperationType string
