@@ -101,6 +101,8 @@ canonicalReplicas = max(requestedReplicas, minAvailable) otherwise
 
 `spec.replicas` stores `canonicalReplicas`; the defaulting of `PodClique` `replicas: 0` to `1` is removed.
 
+When Grove clamps an update, the admission response includes a warning with the requested value, `minAvailable`, and the persisted value. The warning gives interactive clients immediate feedback without adding persistent annotations or conditions.
+
 For the `/scale` subresource, `spec.replicas` remains the desired replica count and `status.replicas` reports actual observed replicas. `PodClique`, `PodCliqueScalingGroup`, and `PodCliqueSet` should use that same semantic contract.
 
 Gang logic reads `minAvailable` directly today, so idle needs a derived floor: `effectiveMinAvailable` is `0` while idle and `minAvailable` otherwise. The contributed `PodGroup`, the breach condition, and the rolling-update completion check should all read it, so an idle component contributes no `PodGroup`, never breaches, and counts as updated.
@@ -209,6 +211,7 @@ Prototype coverage should show:
 - an idle component does not stall a rolling update;
 - create rejects `0 < replicas < minAvailable`;
 - resource and `/scale` updates clamp any positive below-quorum request to `minAvailable`, regardless of direction;
+- clamped updates return an admission warning, while valid updates do not;
 - replica writers that repeatedly request a positive below-quorum value converge without a write loop;
 - all three `/scale.status.replicas` implementations report actual observed replicas;
 - KEDA with `idleReplicaCount: 0` and `minReplicaCount: minAvailable` writes only valid values;
