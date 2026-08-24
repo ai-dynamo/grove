@@ -46,6 +46,11 @@ func TestComputeUpdateWork(t *testing.T) {
 		{"old unhealthy (started, not ready)", newTestPod("old-unhealthy-started", testOldHash, withPhase(corev1.PodRunning), withContainerStatus(ptr.To(true), false)), bucketOldUnhealthy},
 		{"old unhealthy (erroneous exit)", newTestPod("old-unhealthy-exit", testOldHash, withPhase(corev1.PodRunning), withErroneousExit()), bucketOldUnhealthy},
 		{"old ready", newTestPod("old-ready", testOldHash, withPhase(corev1.PodRunning), withReadyCondition(), withContainerStatus(ptr.To(true), true)), bucketOldReady},
+		// A Pod that restarted a container at some earlier point keeps a non-zero
+		// LastTerminationState for the rest of its life. While it is Ready it is serving, so it must
+		// go through the ordered one-at-a-time path rather than the immediate-deletion path.
+		{"old ready despite an earlier erroneous exit", newTestPod("old-ready-restarted", testOldHash, withPhase(corev1.PodRunning), withReadyCondition(), withErroneousExit()), bucketOldReady},
+		{"old ready despite an earlier erroneous exit on a started container", newTestPod("old-ready-restarted-started", testOldHash, withPhase(corev1.PodRunning), withReadyCondition(), withContainerStatus(ptr.To(true), true), withErroneousExit()), bucketOldReady},
 		{"old starting (Started=false)", newTestPod("old-starting-false", testOldHash, withPhase(corev1.PodRunning), withContainerStatus(ptr.To(false), false)), bucketOldStarting},
 		{"old starting (Started=nil)", newTestPod("old-starting-nil", testOldHash, withPhase(corev1.PodRunning), withContainerStatus(nil, false)), bucketOldStarting},
 		{"old uncategorized (no containers)", newTestPod("old-uncategorized", testOldHash, withPhase(corev1.PodRunning)), bucketOldUncategorized},
