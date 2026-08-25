@@ -94,30 +94,27 @@ func GroupPCLQsByPCSReplicaIndex(pclqs []grovecorev1alpha1.PodClique) (map[int][
 	return grouped, nil
 }
 
-// WasPCLQEverScheduled reports whether the PodClique has ever reached the
-// PodCliqueScheduled=True state. The signal is persisted explicitly so an initial negative
-// condition cannot be mistaken for a regression based on its transition timestamp.
+// WasPCLQEverScheduled reports whether durable status records PodCliqueScheduled=True.
 func WasPCLQEverScheduled(pclq *grovecorev1alpha1.PodClique) bool {
 	return meta.IsStatusConditionTrue(pclq.Status.Conditions, constants.ConditionTypeHealthyStateObserved)
 }
 
-// WasPCSGEverHealthy reports whether the PodCliqueScalingGroup has ever reached the
-// available state. It uses the same explicit signal as WasPCLQEverScheduled.
+// WasPCSGEverHealthy reports whether durable status records AvailableReplicas >= MinAvailable.
 func WasPCSGEverHealthy(pcsg *grovecorev1alpha1.PodCliqueScalingGroup) bool {
 	return meta.IsStatusConditionTrue(pcsg.Status.Conditions, constants.ConditionTypeHealthyStateObserved)
 }
 
-// MarkHealthyStateObserved records genuine health once and never clears it.
-func MarkHealthyStateObserved(conditions *[]metav1.Condition, observedGeneration int64, message string) {
+// MarkHealthyStateObserved records lifecycle history once. ObservedGeneration is omitted
+// because the signal persists across generations and does not represent current health.
+func MarkHealthyStateObserved(conditions *[]metav1.Condition, message string) {
 	if meta.IsStatusConditionTrue(*conditions, constants.ConditionTypeHealthyStateObserved) {
 		return
 	}
 	meta.SetStatusCondition(conditions, metav1.Condition{
-		Type:               constants.ConditionTypeHealthyStateObserved,
-		Status:             metav1.ConditionTrue,
-		Reason:             constants.ConditionReasonHealthyStateObserved,
-		Message:            message,
-		ObservedGeneration: observedGeneration,
+		Type:    constants.ConditionTypeHealthyStateObserved,
+		Status:  metav1.ConditionTrue,
+		Reason:  constants.ConditionReasonHealthyStateObserved,
+		Message: message,
 	})
 }
 

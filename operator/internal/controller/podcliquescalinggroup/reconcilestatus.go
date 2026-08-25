@@ -219,10 +219,8 @@ func (r *Reconciler) emitAllScheduledReplicasLostIfNeeded(pcsg *grovecorev1alpha
 
 // mutateMinAvailableBreachedCondition updates the MinAvailableBreached condition based on replica availability.
 //
-// Whenever the computed condition is False (the PCSG is healthy) and the GangTerminationInProgress
-// condition is present, the latter is removed. The flag is only ever set while the PCSG is in
-// breach, so the first False observed with the flag still set is the recovery; clearing it
-// re-arms the next breach episode so a fresh regression can be recycled.
+// Clear GangTerminationInProgress only at the availability threshold; a transient non-breach
+// before recreated children report readiness is not recovery.
 func mutateMinAvailableBreachedCondition(logger logr.Logger, pcsg *grovecorev1alpha1.PodCliqueScalingGroup, pclqsPerPCSGReplica map[string][]grovecorev1alpha1.PodClique) {
 	newCondition := computeMinAvailableBreachedCondition(logger, pcsg, pclqsPerPCSGReplica)
 	if k8sutils.HasConditionChanged(pcsg.Status.Conditions, newCondition) {
@@ -233,25 +231,28 @@ func mutateMinAvailableBreachedCondition(logger logr.Logger, pcsg *grovecorev1al
 			"reason", newCondition.Reason)
 		meta.SetStatusCondition(&pcsg.Status.Conditions, newCondition)
 	}
-	minAvailable := int32(1)
-	if pcsg.Spec.MinAvailable != nil {
-		minAvailable = *pcsg.Spec.MinAvailable
-	}
-	if pcsg.Spec.Replicas > 0 &&
+	minAvailable := effectiveMinAvailable(pcsg)
+	hasReachedAvailabilityThreshold := pcsg.Spec.Replicas > 0 &&
 		newCondition.Status == metav1.ConditionFalse &&
-		pcsg.Status.AvailableReplicas >= minAvailable {
+		pcsg.Status.AvailableReplicas >= minAvailable
+	if hasReachedAvailabilityThreshold {
 		componentutils.MarkHealthyStateObserved(
 			&pcsg.Status.Conditions,
-			pcsg.Generation,
 			"PodCliqueScalingGroup reached its availability threshold",
 		)
 	}
-	if newCondition.Status == metav1.ConditionFalse &&
+	if hasReachedAvailabilityThreshold &&
 		meta.IsStatusConditionTrue(pcsg.Status.Conditions, constants.ConditionTypeGangTerminationInProgress) {
-		logger.Info("Clearing GangTerminationInProgress condition — PCSG recovered",
+		logger.Info("Clearing GangTerminationInProgress after PodCliqueScalingGroup recovered",
 			"pcsg", client.ObjectKeyFromObject(pcsg))
 		meta.RemoveStatusCondition(&pcsg.Status.Conditions, constants.ConditionTypeGangTerminationInProgress)
 	}
+}
+
+// effectiveMinAvailable returns the API default for legacy objects persisted before
+// Spec.MinAvailable was defaulted by the CRD schema.
+func effectiveMinAvailable(pcsg *grovecorev1alpha1.PodCliqueScalingGroup) int32 {
+	return ptr.Deref(pcsg.Spec.MinAvailable, 1)
 }
 
 // computeMinAvailableBreachedCondition computes the MinAvailableBreached condition for the
@@ -278,12 +279,10 @@ func computeMinAvailableBreachedCondition(logger logr.Logger, pcsg *grovecorev1a
 	// The apiserver defaults Spec.MinAvailable to 1 (+kubebuilder:default), but objects
 	// persisted under an older CRD schema can still read back nil until their next write —
 	// dereferencing unguarded would crash-loop the operator off a single legacy object.
-	minAvailable := 1
-	if pcsg.Spec.MinAvailable != nil {
-		minAvailable = int(*pcsg.Spec.MinAvailable)
-	} else {
+	if pcsg.Spec.MinAvailable == nil {
 		logger.Info("PCSG has nil Spec.MinAvailable; assuming API default of 1", "pcsg", client.ObjectKeyFromObject(pcsg))
 	}
+	minAvailable := int(effectiveMinAvailable(pcsg))
 	notInBreachReplicas := computeNotInBreachReplicas(logger, pcsg, pclqsPerPCSGReplica)
 	if notInBreachReplicas < minAvailable {
 		return metav1.Condition{
@@ -308,10 +307,8 @@ func computeMinAvailableBreachedCondition(logger logr.Logger, pcsg *grovecorev1a
 //
 // Completeness is required because a partially-created replica (e.g. one whose pc-c was deleted and
 // not yet recreated) has no breached PodClique yet is still not a valid healthy replica. Counting it
-// as not-in-breach would spuriously report the PCSG healthy and would also poison the was-healthy gate,
-// which reads a MinAvailableBreached=False as evidence that the PCSG was once healthy. This mirrors
-// computeReplicaStatus, which likewise treats a replica as unscheduled/unavailable unless all expected
-// PodCliques exist.
+// as not-in-breach would spuriously report the PCSG healthy. This mirrors computeReplicaStatus, which
+// likewise treats a replica as unscheduled/unavailable unless all expected PodCliques exist.
 //
 // Iteration is bounded to expected replica indexes [0, Spec.Replicas) so stale-index children left
 // behind during scale-down neither inflate nor deflate the count.

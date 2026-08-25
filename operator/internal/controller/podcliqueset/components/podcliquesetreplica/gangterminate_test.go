@@ -109,11 +109,11 @@ func TestGetMinAvailableBreachedPCSGInfoGangTerminationGate(t *testing.T) {
 			wantInList: false,
 		},
 		{
-			name: "breached but never healthy (initial startup) — skipped by wasHealthy gate",
+			name: "legacy object already regressed at upgrade is skipped without durable history",
 			pcsg: grovecorev1alpha1.PodCliqueScalingGroup{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:              "pcsg-initial-startup",
-					CreationTimestamp: metav1.NewTime(now.Add(-2 * time.Second)),
+					Name:              "pcsg-upgrade-regression",
+					CreationTimestamp: metav1.NewTime(now.Add(-2 * time.Hour)),
 				},
 				Status: grovecorev1alpha1.PodCliqueScalingGroupStatus{
 					Conditions: []metav1.Condition{
@@ -121,7 +121,7 @@ func TestGetMinAvailableBreachedPCSGInfoGangTerminationGate(t *testing.T) {
 							Type:               apiconstants.ConditionTypeMinAvailableBreached,
 							Status:             metav1.ConditionTrue,
 							Reason:             apiconstants.ConditionReasonScheduledReplicasBelowMinAvailable,
-							LastTransitionTime: metav1.NewTime(now.Add(-1 * time.Second)),
+							LastTransitionTime: metav1.NewTime(now.Add(-time.Hour)),
 						},
 					},
 				},
