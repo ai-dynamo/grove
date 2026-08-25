@@ -118,18 +118,19 @@ const (
 	// ConditionTypePodCliqueScheduled indicates that the PodClique has been successfully scheduled.
 	// This condition is set to true when number of scheduled pods in the PodClique is greater than or equal to PodCliqueSpec.MinAvailable.
 	ConditionTypePodCliqueScheduled = "PodCliqueScheduled"
-	// ConditionTypeHealthyStateObserved is a monotonic signal set after a component reaches a
-	// genuinely scheduled or available state. Gang termination uses it to distinguish a regression
-	// from initial startup.
+	// ConditionTypeHealthyStateObserved records lifecycle history for gang termination,
+	// not current health. Once True, it is never cleared and persists across generations.
+	//
+	// Semantics:
+	//   - PodClique: PodCliqueScheduled was True at least once; readiness is not required.
+	//   - PodCliqueScalingGroup: AvailableReplicas reached MinAvailable at least once,
+	//     based on the readiness of its constituent PodCliques.
 	ConditionTypeHealthyStateObserved = "HealthyStateObserved"
 	// ConditionTypeGangTerminationInProgress indicates that PCS-level gang termination has fired for this
 	// PodCliqueScalingGroup and is still in flight. It is set on the PCSG when the PCS-level handler deletes
-	// the PodCliques of the whole PCS replica, and is cleared when the PCSG's MinAvailableBreached transitions
-	// back to False (recovered). While it is True, further PCS-level gang termination for the PCS replica is
-	// suppressed — at most one fire per breach episode, regardless of how long the workload stays below
-	// MinAvailable. This is a PCS-level-only mechanism: the PCSG-replica-scoped recycle path does not use this
-	// flag and instead breaks its own re-fire loop via WasPCLQEverScheduled, since a freshly recreated
-	// PodClique has never been scheduled and is therefore excluded from the breached set.
+	// the PodCliques of the whole PCS replica, and is cleared only when AvailableReplicas >= MinAvailable.
+	// While True, it suppresses repeated PCS-level firing within the same breach episode. The PCSG-replica
+	// recycle path instead uses WasPCLQEverScheduled, since a recreated PodClique has no scheduling history.
 	// Its only Reason is ConditionReasonGangTerminationActive.
 	ConditionTypeGangTerminationInProgress = "GangTerminationInProgress"
 	// ConditionTopologyLevelsUnavailable indicates that the required topology levels defined on a PodCliqueSet for topology-aware scheduling are no longer available.
@@ -159,8 +160,7 @@ const (
 	ConditionReasonInsufficientAvailablePCSGReplicas = "InsufficientAvailablePodCliqueScalingGroupReplicas"
 	// ConditionReasonSufficientAvailablePCSGReplicas indicates that the number of ready replicas in the PodCliqueScalingGroup is greater than or equal to the PodCliqueScalingGroupSpec.MinAvailable.
 	ConditionReasonSufficientAvailablePCSGReplicas = "SufficientAvailablePodCliqueScalingGroupReplicas"
-	// ConditionReasonHealthyStateObserved is used when a component first reaches a genuinely
-	// scheduled or available state.
+	// ConditionReasonHealthyStateObserved indicates the first observed scheduled or available state.
 	ConditionReasonHealthyStateObserved = "HealthyStateObserved"
 	// ConditionReasonUpdateInProgress indicates that the resource is undergoing rolling update.
 	ConditionReasonUpdateInProgress = "UpdateInProgress"

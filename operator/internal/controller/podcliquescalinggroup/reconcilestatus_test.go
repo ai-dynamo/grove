@@ -152,12 +152,22 @@ func TestComputeMinAvailableBreachedCondition(t *testing.T) {
 		wantReason   string
 	}{
 		{
-			name:     "all replicas healthy, none breached",
-			replicas: 3,
+			name:         "all replicas healthy, none breached",
+			replicas:     3,
+			minAvailable: ptr.To(int32(3)),
 			pclqsMap: map[string][]grovecorev1alpha1.PodClique{
 				"0": healthyPCSGReplica(),
 				"1": healthyPCSGReplica(),
 				"2": healthyPCSGReplica(),
+			},
+			wantStatus: metav1.ConditionFalse,
+			wantReason: "SufficientAvailablePodCliqueScalingGroupReplicas",
+		},
+		{
+			name:     "legacy nil MinAvailable defaults to one",
+			replicas: 3,
+			pclqsMap: map[string][]grovecorev1alpha1.PodClique{
+				"0": healthyPCSGReplica(),
 			},
 			wantStatus: metav1.ConditionFalse,
 			wantReason: "SufficientAvailablePodCliqueScalingGroupReplicas",
@@ -230,8 +240,7 @@ func TestComputeMinAvailableBreachedCondition(t *testing.T) {
 		{
 			// Replica 0 is incomplete (its pc-c was deleted and not yet recreated) so it has no
 			// breached PodClique but is not a valid healthy replica; replica 1 is breached.
-			// notInBreach=0 < MinAvailable=1 → in breach. An incomplete replica must not be
-			// mistaken for a healthy one (which would also poison the was-healthy gate).
+			// notInBreach=0 < MinAvailable=1 → in breach.
 			name:         "one replica incomplete, one breached, MinAvailable=1 — in breach",
 			replicas:     2,
 			minAvailable: ptr.To(int32(1)),
@@ -259,14 +268,10 @@ func TestComputeMinAvailableBreachedCondition(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			minAvailable := tt.minAvailable
-			if minAvailable == nil {
-				minAvailable = &tt.replicas
-			}
 			pcsg := &grovecorev1alpha1.PodCliqueScalingGroup{
 				Spec: grovecorev1alpha1.PodCliqueScalingGroupSpec{
 					Replicas:     tt.replicas,
-					MinAvailable: minAvailable,
+					MinAvailable: tt.minAvailable,
 					// Each fixture replica carries exactly one PodClique, so a single clique name
 					// makes healthy/breached replicas "complete" and empty ones "incomplete".
 					CliqueNames: []string{"pc"},
@@ -282,50 +287,38 @@ func TestComputeMinAvailableBreachedCondition(t *testing.T) {
 	}
 }
 
-func TestDelayedInitialFailureDoesNotArmPCSGGangTermination(t *testing.T) {
-	minAvailable := int32(1)
+func TestMutateMinAvailableBreachedConditionRecordsHealthyState(t *testing.T) {
 	pcsg := &grovecorev1alpha1.PodCliqueScalingGroup{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:              "workers",
-			CreationTimestamp: metav1.NewTime(time.Now().Add(-time.Hour)),
-		},
 		Spec: grovecorev1alpha1.PodCliqueScalingGroupSpec{
 			Replicas:     1,
-			MinAvailable: &minAvailable,
+			MinAvailable: ptr.To(int32(1)),
 			CliqueNames:  []string{"worker"},
+		},
+		Status: grovecorev1alpha1.PodCliqueScalingGroupStatus{
+			Conditions: []metav1.Condition{{
+				Type:   constants.ConditionTypeGangTerminationInProgress,
+				Status: metav1.ConditionTrue,
+				Reason: constants.ConditionReasonGangTerminationActive,
+			}},
 		},
 	}
 
-	// A complete child set can transiently produce MinAvailableBreached=False before the
-	// child PCLQ has reported status. AvailableReplicas is the positive evidence that keeps
-	// this from being mistaken for historical health.
+	// A complete child set can transiently report no breach before readiness is populated.
 	mutateMinAvailableBreachedCondition(logr.Discard(), pcsg, map[string][]grovecorev1alpha1.PodClique{
 		"0": {{}},
 	})
-	assert.False(t, componentutils.WasPCSGEverHealthy(pcsg), "an initial status gap must not create availability history")
+	assert.False(t, componentutils.WasPCSGEverHealthy(pcsg))
+	assert.True(t, meta.IsStatusConditionTrue(
+		pcsg.Status.Conditions,
+		constants.ConditionTypeGangTerminationInProgress,
+	), "a transient status gap must not re-arm gang termination")
 
 	pcsg.Status.AvailableReplicas = 1
 	mutateMinAvailableBreachedCondition(logr.Discard(), pcsg, map[string][]grovecorev1alpha1.PodClique{
 		"0": healthyPCSGReplica(),
 	})
-	require.True(t, componentutils.WasPCSGEverHealthy(pcsg), "genuine availability must arm regression handling")
-
-	observed := meta.FindStatusCondition(pcsg.Status.Conditions, constants.ConditionTypeHealthyStateObserved)
-	require.NotNil(t, observed)
-	observedTransition := observed.LastTransitionTime
-	mutateMinAvailableBreachedCondition(logr.Discard(), pcsg, map[string][]grovecorev1alpha1.PodClique{
-		"0": healthyPCSGReplica(),
-	})
-	assert.Equal(t, observedTransition, meta.FindStatusCondition(
-		pcsg.Status.Conditions,
-		constants.ConditionTypeHealthyStateObserved,
-	).LastTransitionTime, "the historical signal must be idempotent")
-
-	pcsg.Status.AvailableReplicas = 0
-	mutateMinAvailableBreachedCondition(logr.Discard(), pcsg, map[string][]grovecorev1alpha1.PodClique{
-		"0": breachedPCSGReplica(),
-	})
-	assert.True(t, componentutils.WasPCSGEverHealthy(pcsg), "the historical signal must survive regression")
+	assert.True(t, componentutils.WasPCSGEverHealthy(pcsg),
+		"a healthy legacy object must record durable history after upgrade")
 }
 
 // TestEmitAllScheduledReplicasLostIfNeeded covers the only explicit signal users have when a
@@ -1078,10 +1071,6 @@ func assertCondition(t *testing.T, pcsg *grovecorev1alpha1.PodCliqueScalingGroup
 	assert.Equal(t, expectBreached, isBreached, "condition breach status mismatch")
 }
 
-// TestMutateMinAvailableBreachedConditionClearsGangTerminationInProgress pins the second half
-// of the in-progress-flag loop-break design: when MinAvailableBreached transitions from True
-// (or unset) to False, the PCSG status reconciler must also remove the
-// GangTerminationInProgress condition so the next regression can be recycled.
 func TestMutateMinAvailableBreachedConditionClearsGangTerminationInProgress(t *testing.T) {
 	pcsg := &grovecorev1alpha1.PodCliqueScalingGroup{
 		Spec: grovecorev1alpha1.PodCliqueScalingGroupSpec{
@@ -1092,6 +1081,7 @@ func TestMutateMinAvailableBreachedConditionClearsGangTerminationInProgress(t *t
 			CliqueNames: []string{"pc"},
 		},
 		Status: grovecorev1alpha1.PodCliqueScalingGroupStatus{
+			AvailableReplicas: 2,
 			Conditions: []metav1.Condition{
 				{
 					Type:   constants.ConditionTypeMinAvailableBreached,

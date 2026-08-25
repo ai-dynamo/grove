@@ -171,13 +171,12 @@ func (r _resource) getExistingPCLQsByNames(ctx context.Context, namespace string
 //
 // Two gates run on top of the MinAvailableBreached=True check:
 //
-//  1. WasPCSGEverHealthy — a PCSG without durable evidence of genuine availability is in
-//     initial-startup, not a regression. Gang termination would just churn-loop Pending pods
-//     against a cluster that already cannot schedule them.
+//  1. WasPCSGEverHealthy — without durable availability history, treat the PCSG as starting,
+//     not regressed, to avoid recycling Pending pods on an unschedulable cluster.
 //  2. GangTerminationInProgress=True — a previous fire is already in flight; re-firing while
 //     it's still in flight would also churn-loop. The flag is set by createPCSReplicaDeleteTask
 //     after the DeleteAllOf succeeds, and cleared by the PCSG status reconciler once it
-//     observes MinAvailableBreached=False (recovery).
+//     genuinely recovers to AvailableReplicas >= MinAvailable.
 func getMinAvailableBreachedPCSGInfo(pcsgs []grovecorev1alpha1.PodCliqueScalingGroup, terminationDelay time.Duration, since time.Time) ([]string, time.Duration) {
 	pcsgCandidateNames := make([]string, 0, len(pcsgs))
 	waitForDurations := make([]time.Duration, 0, len(pcsgs))
@@ -211,8 +210,7 @@ func getMinAvailableBreachedPCSGInfo(pcsgs []grovecorev1alpha1.PodCliqueScalingG
 // After the DeleteAllOf succeeds we set GangTerminationInProgress=True on every PCSG in the
 // PCS replica, including PCSGs whose own PodCliques weren't the reason for this fire (their
 // PCLQs are collateral damage of the PCS-replica-wide delete and would otherwise re-trigger
-// the breach loop on the next reconcile). The PCSG status reconciler clears this flag once
-// it observes MinAvailableBreached=False, so a successful recycle naturally re-arms the
+// the breach loop on the next reconcile). Genuine recovery clears the flag and re-arms the
 // next breach episode.
 //
 // Ordering is action-first / flag-second: if the controller crashes between the DeleteAllOf
@@ -254,8 +252,7 @@ func (r _resource) createPCSReplicaDeleteTask(logger logr.Logger, pcs *grovecore
 			logger.Info("Deleted PCS replica PodCliques", "pcsReplicaIndex", pcsReplicaIndex, "reason", reason)
 			r.eventRecorder.Eventf(pcs, corev1.EventTypeNormal, constants.ReasonPodCliqueSetReplicaDeleteSuccessful, "PodCliqueSet replica %d deleted", pcsReplicaIndex)
 
-			// Mark every PCSG in this PCS replica as having a recycle in flight. The status
-			// reconciler clears it once it observes MinAvailableBreached=False (recovery).
+			// Mark every PCSG in this PCS replica as having a recycle in flight.
 			// Flag writes are attempted for ALL PCSGs before returning — a failure on one must
 			// not leave the rest unflagged, or the gate would stay inconsistent across PCSGs
 			// until the task is retried.
