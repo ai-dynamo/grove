@@ -227,6 +227,19 @@ Prototype coverage should show:
 
 - Does an autoscaler that repeatedly requests `0 < replicas < minAvailable` create a write loop after Grove persists `minAvailable`? A POC should test HPA with `minReplicas < minAvailable`; scale-to-zero is not required.
 
+  A POC against [PR #788](https://github.com/ai-dynamo/grove/pull/788) at commit `1b0ced6c9abda9b6fec1dd38a2d9bcbe83eba515` tested `minAvailable: 2`, initial `replicas: 3`, and a 35-second observation window after the target reached `spec.replicas: 2` and `status.replicas: 2`. A `WRITE_LOOP` means that the writer issued at least two additional requests for `replicas: 1` during that window; the stored replica count does not need to oscillate.
+
+  | Replica writer | Floor-respecting control (`NO_LOOP`) | Below-quorum treatment (`WRITE_LOOP`) | Scope |
+  | --- | --- | --- | --- |
+  | Native HPA | `minReplicas: 2` | `minReplicas: 1`, recommending `1` | `Value` and `AverageValue`; PCLQ and PCSG |
+  | Grove `scaleConfig` | `minReplicas: 2` | `minReplicas: 0`, recommending `1` | `Value` and `AverageValue`; PCLQ and PCSG; control cannot scale to zero |
+  | KEDA | `idleReplicaCount: 0`, `minReplicaCount: 2` | `idleReplicaCount: 0`, `minReplicaCount: 1` | `Value` and `AverageValue`; PCLQ and PCSG |
+  | Custom controller | Repeatedly requests `2` | Repeatedly requests `1` | PCLQ and PCSG |
+  | Knative KPA | One adapter request produced no repeat | Not tested | Continuous-writer behavior not established |
+  | Dynamo Planner | Not established | Not established | `INCONCLUSIVE`; full Planner metric loop was not driven |
+
+  These columns describe experimental controls and treatments, not recommended scale-to-zero configurations. All 14 floor-respecting controls completed with `NO_LOOP`. All 14 treatments that repeatedly requested `1` completed with `WRITE_LOOP`, each issuing seven post-stabilization requests. The remaining design question is whether Grove should require supported replica writers to enforce the active `minAvailable` floor, provide an adapter for writers that cannot express it, or revise persisted `Clamp`.
+
 ## Remaining Work
 
 - The admission rules for rejecting invalid creates and clamping resource and `/scale` updates.
