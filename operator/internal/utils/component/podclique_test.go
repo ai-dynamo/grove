@@ -415,7 +415,6 @@ func TestIsLastPCLQUpdateCompleted(t *testing.T) {
 	}
 }
 
-// TestWasPCLQEverScheduled covers the durable signal used to gate gang termination.
 func TestWasPCLQEverScheduled(t *testing.T) {
 	tests := []struct {
 		name string
@@ -468,7 +467,6 @@ func TestWasPCLQEverScheduled(t *testing.T) {
 	}
 }
 
-// TestWasPCSGEverHealthy covers the PCSG durable-health signal.
 func TestWasPCSGEverHealthy(t *testing.T) {
 	tests := []struct {
 		name string
@@ -524,10 +522,14 @@ func TestWasPCSGEverHealthy(t *testing.T) {
 // have MinAvailableBreached=True but were never PodCliqueScheduled=True are excluded from the
 // candidate list — gang-termination must not fire on them.
 func TestGetMinAvailableBreachedPCLQInfoFiltersNeverScheduled(t *testing.T) {
-	pastTransition := metav1.NewTime(time.Now().Add(-time.Hour))
-
+	now := time.Now()
+	creationTime := metav1.NewTime(now.Add(-2 * time.Hour))
+	pastTransition := metav1.NewTime(now.Add(-time.Hour))
 	pclqBreachedNeverScheduled := grovecorev1alpha1.PodClique{
-		ObjectMeta: metav1.ObjectMeta{Name: "never-scheduled"},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "never-scheduled",
+			CreationTimestamp: creationTime,
+		},
 		Status: grovecorev1alpha1.PodCliqueStatus{Conditions: []metav1.Condition{
 			{
 				Type:               constants.ConditionTypePodCliqueScheduled,
@@ -562,8 +564,9 @@ func TestGetMinAvailableBreachedPCLQInfoFiltersNeverScheduled(t *testing.T) {
 	}
 
 	pclqs := []grovecorev1alpha1.PodClique{pclqBreachedNeverScheduled, pclqBreachedAfterHealthy}
-	actual, _ := GetMinAvailableBreachedPCLQInfo(pclqs, time.Hour, time.Now())
-	assert.Equal(t, []string{"regressed"}, actual, "never-scheduled PodClique must be filtered out")
+	names, _ := GetMinAvailableBreachedPCLQInfo(pclqs, time.Minute, now)
+	assert.Equal(t, []string{"regressed"}, names,
+		"an upgraded PCLQ without durable health history must be filtered out even when the old timestamp heuristic would pass")
 }
 
 func TestGroupPCLQsByPCSReplicaIndex(t *testing.T) {
