@@ -7,7 +7,7 @@
   - [Non-Goals](#non-goals)
 - [Proposal](#proposal)
   - [Zero Replicas Per Level](#zero-replicas-per-level)
-  - [Below-Quorum Policy](#below-quorum-policy)
+  - [Below-Quorum Behavior](#below-quorum-behavior)
   - [Limitations/Risks &amp; Mitigations](#limitationsrisks--mitigations)
 - [Design Details](#design-details)
   - [Autoscaler Integration](#autoscaler-integration)
@@ -15,6 +15,7 @@
   - [Monitoring](#monitoring)
   - [Test Plan](#test-plan)
   - [Graduation Criteria](#graduation-criteria)
+- [Open Questions](#open-questions)
 - [Remaining Work](#remaining-work)
 - [Alternatives](#alternatives)
 - [Historical Discussion](#historical-discussion)
@@ -44,7 +45,6 @@ External replica writers should target either `0` or a value at least `minAvaila
 ### Non-Goals
 
 - Change `minAvailable` semantics, including allowing `minAvailable: 0` or making it mutable.
-- Define the complete production implementation.
 
 ## Proposal
 
@@ -62,7 +62,7 @@ An idle component should leave the `PodGang` rather than stay in it with a zero 
 | `PodCliqueScalingGroup` | Rejected in the `PodCliqueSet` template; accepted on the object, which has no webhook. | Idle. No `PodGroup` in the base `PodGang` and no scaled `PodGang`. |
 | `PodClique` | `replicas: 0` is accepted on the object, which has no webhook, but is silently defaulted to `1` in the `PodCliqueSet` template. | Idle when standalone, contributing no `PodGroup`. Inside a scaling group, idle is expressed at the group level. |
 
-### Below-Quorum Policy
+### Below-Quorum Behavior
 
 For positive scaling updates below `minAvailable`, Grove uses a fixed, direction-agnostic `Clamp` rule:
 
@@ -86,7 +86,7 @@ A newly submitted `PodClique`, `PodCliqueScalingGroup`, or corresponding `PodCli
 
 The main risk is confusing "idle" with "unavailable." The proposed direction ties idle state to desired replicas, not observed status.
 
-An autoscaler may request `1` and observe `spec.replicas: 3` when `minAvailable` is `3`. Supported autoscalers should avoid this path by expressing separate idle and active floors. KEDA does so with `idleReplicaCount: 0` and `minReplicaCount: minAvailable`; Grove still defines `Clamp` for other writers.
+An autoscaler may request `1` and observe `spec.replicas: 3` when `minAvailable` is `3`; the risk of repeated below-quorum writes is tracked in [Open Questions](#open-questions).
 
 Rolling updates already stall on a zero-replica standalone `PodClique`: completion requires `minAvailable` updated and ready pods, which zero pods never reach. A `PodCliqueScalingGroup` at `replicas: 0` does not stall, because its completion check compares only generation hashes. That asymmetry is why idle needs an explicit definition rather than a per-level accident.
 
@@ -105,11 +105,11 @@ When Grove clamps an update, the admission response includes a warning with the 
 
 For the `/scale` subresource, `spec.replicas` remains the desired replica count and `status.replicas` reports actual observed replicas. `PodClique`, `PodCliqueScalingGroup`, and `PodCliqueSet` should use that same semantic contract.
 
-Gang logic reads `minAvailable` directly today, so idle needs a derived floor: `effectiveMinAvailable` is `0` while idle and `minAvailable` otherwise. The contributed `PodGroup`, the breach condition, and the rolling-update completion check should all read it, so an idle component contributes no `PodGroup`, never breaches, and counts as updated.
+While a component is idle, it contributes no `PodGroup`, does not set `MinAvailableBreached` to `True`, and counts as updated for rolling-update completion.
 
 ### Autoscaler Integration
 
-Grove expects replica writers to emit either `0` or at least `minAvailable`. Future compatibility work should cover Native HPA, KEDA, Knative KPA, Dynamo Planner, custom controllers, and Grove's `scaleConfig`. KEDA can express the contract directly with `idleReplicaCount: 0` and `minReplicaCount: minAvailable`; other writers must either emit valid values or converge under `Clamp` without a write loop.
+Grove expects replica writers to emit either `0` or at least `minAvailable`. KEDA can express this contract with `idleReplicaCount: 0` and `minReplicaCount: minAvailable`. The HPA POC in [Open Questions](#open-questions) tests whether repeated positive below-quorum requests create a write loop. Compatibility work remains for Knative KPA, Dynamo Planner, custom controllers, and Grove's `scaleConfig`; each must either emit valid values or tolerate persisted `Clamp` without a write loop.
 
 ### Example
 
@@ -201,7 +201,7 @@ A `PodClique` produces no error there only because defaulting rewrites `replicas
 
 ### Monitoring
 
-No new metrics or conditions are introduced. Idle is indicated by `spec.replicas: 0`, while `/scale.status.replicas` reports observed replicas.
+No new metrics, conditions, or status fields are introduced. Idle is indicated by `spec.replicas: 0`.
 
 ### Test Plan
 
@@ -212,7 +212,7 @@ Prototype coverage should show:
 - create rejects `0 < replicas < minAvailable`;
 - resource and `/scale` updates clamp any positive below-quorum request to `minAvailable`, regardless of direction;
 - clamped updates return an admission warning, while valid updates do not;
-- replica writers that repeatedly request a positive below-quorum value converge without a write loop;
+- replica writers that repeatedly request a positive below-quorum value converge without a write loop, pending confirmation by the HPA POC in [Open Questions](#open-questions);
 - all three `/scale.status.replicas` implementations report actual observed replicas;
 - KEDA with `idleReplicaCount: 0` and `minReplicaCount: minAvailable` writes only valid values;
 - scaling to `minAvailable` or above re-enters normal gang behavior.
@@ -223,13 +223,15 @@ Prototype coverage should show:
 - Beta: behavior documented and tested.
 - GA: semantics are stable and validated with real scale-to-zero workloads.
 
+## Open Questions
+
+- Does an autoscaler that repeatedly requests `0 < replicas < minAvailable` create a write loop after Grove persists `minAvailable`? A POC should test HPA with `minReplicas < minAvailable`; scale-to-zero is not required.
+
 ## Remaining Work
 
-Accepting the direction above does not finish the GREP. Still to come, in this order:
-
 - The admission rules for rejecting invalid creates and clamping resource and `/scale` updates.
-- Gang behavior in detail: how the `PodGang` reshapes on idle and wake, whether an idle component is absent from the [coherent update](../393-coherent-rolling-updates/README.md) `PodGangMap` or present and empty, whether it joins an MVU, what a scale to zero does to an update in flight, and what that means for gang termination and partial scale.
-- The implementation surface in one place. Neither `PodClique` nor `PodCliqueScalingGroup` has a webhook today, so this GREP implies new ones on both and their `scale` subresources, updating the `PodClique` and `PodCliqueScalingGroup` template validation to allow `replicas: 0` while rejecting positive below-quorum values, dropping the `PodClique` `replicas: 0` defaulting, the `effectiveMinAvailable` readers, observed `status.replicas` at all three levels, and upgrade handling for pre-existing below-quorum objects. Listing them is in scope; designing them is not.
+- Gang behavior in detail: how the `PodGang` reshapes on idle and wake, how idle state propagates through scheduled, available, and updated status at each resource level, how `startsAfter` handles an idle dependency, whether an idle component is absent from the [coherent update](../393-coherent-rolling-updates/README.md) `PodGangMap` or present and empty, whether it joins an MVU, what a scale to zero does to an update in flight, and what that means for gang termination and partial scale.
+- Implementation requires webhooks for `PodClique` and `PodCliqueScalingGroup` resource and `/scale` updates; template validation that allows `replicas: 0` but rejects positive below-quorum creates; removal of the `PodClique` zero-to-one default; updates to gang membership, breach, and rolling-update paths for idle components; observed `status.replicas` at all three levels; and a migration rule that specifies whether pre-existing below-quorum objects are clamped during upgrade or retained until a later replica update brings them into the invariant.
 
 ## Alternatives
 
