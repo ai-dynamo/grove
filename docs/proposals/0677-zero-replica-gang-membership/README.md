@@ -86,7 +86,7 @@ A newly submitted `PodClique`, `PodCliqueScalingGroup`, or corresponding `PodCli
 
 The main risk is confusing "idle" with "unavailable." The proposed direction ties idle state to desired replicas, not observed status.
 
-An autoscaler may request `1` and observe `spec.replicas: 3` when `minAvailable` is `3`; the risk of repeated below-quorum writes is tracked in [Open Questions](#open-questions).
+An HPA may request `1` and observe `spec.replicas: 3` when `minAvailable` is `3`; repeated below-quorum HPA writes are demonstrated in [Open Questions](#open-questions).
 
 Rolling updates already stall on a zero-replica standalone `PodClique`: completion requires `minAvailable` updated and ready pods, which zero pods never reach. A `PodCliqueScalingGroup` at `replicas: 0` does not stall, because its completion check compares only generation hashes. That asymmetry is why idle needs an explicit definition rather than a per-level accident.
 
@@ -103,13 +103,18 @@ canonicalReplicas = max(requestedReplicas, minAvailable) otherwise
 
 When Grove clamps an update, the admission response includes a warning with the requested value, `minAvailable`, and the persisted value. The warning gives interactive clients immediate feedback without adding persistent annotations or conditions.
 
-For the `/scale` subresource, `spec.replicas` remains the desired replica count and `status.replicas` reports actual observed replicas. `PodClique`, `PodCliqueScalingGroup`, and `PodCliqueSet` should use that same semantic contract.
-
 While a component is idle, it contributes no `PodGroup`, does not set `MinAvailableBreached` to `True`, and counts as updated for rolling-update completion.
 
 ### Autoscaler Integration
 
-Grove expects replica writers to emit either `0` or at least `minAvailable`. KEDA can express this contract with `idleReplicaCount: 0` and `minReplicaCount: minAvailable`. The HPA POC in [Open Questions](#open-questions) tests whether repeated positive below-quorum requests create a write loop. Compatibility work remains for Knative KPA, Dynamo Planner, custom controllers, and Grove's `scaleConfig`; each must either emit valid values or tolerate persisted `Clamp` without a write loop.
+Grove-compatible replica writers must converge to `0` while idle and at least `minAvailable` while active without repeatedly writing a positive below-quorum value.
+
+| Model | Behavior | Compatibility |
+| --- | --- | --- |
+| KEDA-like | Separate idle and active floors, such as KEDA `idleReplicaCount: 0` with `minReplicaCount: minAvailable`. | Compatible. |
+| HPA-like | May repeatedly write a positive below-quorum value or prevent scale-to-zero. | Incompatible. |
+
+[KEDA](https://keda.sh/docs/2.20/reference/scaledobject-spec/) emits only `0` or at least `minAvailable`. Native [HPA](https://kubernetes.io/docs/concepts/workloads/autoscaling/horizontal-pod-autoscale/#scaling-to-and-from-zero) is HPA-like. Knative Serving v1.23.0 KPA is also HPA-like because [`autoscaling.knative.dev/activation-scale`](https://knative.dev/docs/serving/autoscaling/scale-bounds/#scale-up-minimum) is not a persistent active floor. Dynamo Planner has not established Grove-compatible scale-to-zero behavior. Grove `scaleConfig` is HPA-like because it generates an HPA. New custom controllers should use KEDA-like semantics to support scale-to-zero.
 
 ### Example
 
@@ -212,9 +217,7 @@ Prototype coverage should show:
 - create rejects `0 < replicas < minAvailable`;
 - resource and `/scale` updates clamp any positive below-quorum request to `minAvailable`, regardless of direction;
 - clamped updates return an admission warning, while valid updates do not;
-- replica writers that repeatedly request a positive below-quorum value converge without a write loop, pending confirmation by the HPA POC in [Open Questions](#open-questions);
-- all three `/scale.status.replicas` implementations report actual observed replicas;
-- KEDA with `idleReplicaCount: 0` and `minReplicaCount: minAvailable` writes only valid values;
+- a KEDA-like integration transitions from `0` directly to `minAvailable` or above without writing a positive below-quorum value;
 - scaling to `minAvailable` or above re-enters normal gang behavior.
 
 ### Graduation Criteria
@@ -225,26 +228,24 @@ Prototype coverage should show:
 
 ## Open Questions
 
-- Does an autoscaler that repeatedly requests `0 < replicas < minAvailable` create a write loop after Grove persists `minAvailable`? A POC should test HPA with `minReplicas < minAvailable`; scale-to-zero is not required.
+**Status: Resolved.**
 
-  A POC against [PR #788](https://github.com/ai-dynamo/grove/pull/788) at commit `1b0ced6c9abda9b6fec1dd38a2d9bcbe83eba515` tested `minAvailable: 2`, initial `replicas: 3`, and a 35-second observation window after the target reached `spec.replicas: 2` and `status.replicas: 2`. A `WRITE_LOOP` means that the writer issued at least two additional requests for `replicas: 1` during that window; the stored replica count does not need to oscillate.
+Does persisted `Clamp` make an HPA-like writer converge after a below-quorum recommendation?
 
-  | Replica writer | Floor-respecting control (`NO_LOOP`) | Below-quorum treatment (`WRITE_LOOP`) | Scope |
-  | --- | --- | --- | --- |
-  | Native HPA | `minReplicas: 2` | `minReplicas: 1`, recommending `1` | `Value` and `AverageValue`; PCLQ and PCSG |
-  | Grove `scaleConfig` | `minReplicas: 2` | `minReplicas: 0`, recommending `1` | `Value` and `AverageValue`; PCLQ and PCSG; control cannot scale to zero |
-  | KEDA | `idleReplicaCount: 0`, `minReplicaCount: 2` | `idleReplicaCount: 0`, `minReplicaCount: 1` | `Value` and `AverageValue`; PCLQ and PCSG |
-  | Custom controller | Repeatedly requests `2` | Repeatedly requests `1` | PCLQ and PCSG |
-  | Knative KPA | One adapter request produced no repeat | Not tested | Continuous-writer behavior not established |
-  | Dynamo Planner | Not established | Not established | `INCONCLUSIVE`; full Planner metric loop was not driven |
+**Experiment.** An HPA POC against [PR #788](https://github.com/ai-dynamo/grove/pull/788) used `minAvailable: 2` and observed each case for 35 seconds after stabilization. Both configurations were tested with `Value` and `AverageValue` metrics against `PodClique` and `PodCliqueScalingGroup`.
 
-  These columns describe experimental controls and treatments, not recommended scale-to-zero configurations. All 14 floor-respecting controls completed with `NO_LOOP`. All 14 treatments that repeatedly requested `1` completed with `WRITE_LOOP`, each issuing seven post-stabilization requests. The remaining design question is whether Grove should require supported replica writers to enforce the active `minAvailable` floor, provide an adapter for writers that cannot express it, or revise persisted `Clamp`.
+| HPA configuration | Result for both metrics and scale targets |
+| --- | --- |
+| `minReplicas: 2` | `0` repeated writes; `NO_LOOP` |
+| `minReplicas: 1`, recommending `1` | `7` repeated writes per case; `WRITE_LOOP` |
+
+Persisted `Clamp` does not make an HPA-like writer converge: HPA keeps requesting `1` while Grove stores `2`. KEDA-like writers avoid this loop by emitting only `0` or at least `minAvailable`.
 
 ## Remaining Work
 
 - The admission rules for rejecting invalid creates and clamping resource and `/scale` updates.
 - Gang behavior in detail: how the `PodGang` reshapes on idle and wake, how idle state propagates through scheduled, available, and updated status at each resource level, how `startsAfter` handles an idle dependency, whether an idle component is absent from the [coherent update](../393-coherent-rolling-updates/README.md) `PodGangMap` or present and empty, whether it joins an MVU, what a scale to zero does to an update in flight, and what that means for gang termination and partial scale.
-- Implementation requires webhooks for `PodClique` and `PodCliqueScalingGroup` resource and `/scale` updates; template validation that allows `replicas: 0` but rejects positive below-quorum creates; removal of the `PodClique` zero-to-one default; updates to gang membership, breach, and rolling-update paths for idle components; observed `status.replicas` at all three levels; and a migration rule that specifies whether pre-existing below-quorum objects are clamped during upgrade or retained until a later replica update brings them into the invariant.
+- Implementation requires webhooks for `PodClique` and `PodCliqueScalingGroup` resource and `/scale` updates; template validation that allows `replicas: 0` but rejects positive below-quorum creates; removal of the `PodClique` zero-to-one default; updates to gang membership, breach, and rolling-update paths for idle components; and a migration rule that specifies whether pre-existing below-quorum objects are clamped during upgrade or retained until a later replica update brings them into the invariant.
 
 ## Alternatives
 
@@ -275,7 +276,7 @@ BelowMinAvailablePolicy *BelowMinAvailablePolicy `json:"belowMinAvailablePolicy,
 
 This preserved existing behavior by default because unconditional clamping is not purely additive: no admission webhook covers `PodClique` or `PodCliqueScalingGroup` today, so a component already at `replicas: 1` with `minAvailable: 2` runs one pod now and would run two under `Clamp`. Opt-in `Clamp` was the escape for generic autoscalers that wake below `minAvailable`, at the cost of an additional API field and behavior that varied by policy.
 
-An intermediate draft left active scale-in into `(0, minAvailable)` open: should it be rejected or clamped? Latest review feedback favored direction-agnostic `Clamp`; with `minAvailable: 3`, a scale-in request from `4` to `2` persists `spec.replicas: 3`, allowing the closest viable scale-in while keeping the service alive. That feedback also favored storing the valid clamped desired count in `spec.replicas` and reporting observed replicas in `/scale.status.replicas`. The normative proposal therefore drops `Block`, `belowMinAvailablePolicy`, the wake-only rule, and the in-memory `effectiveReplicas` split.
+An intermediate draft left active scale-in into `(0, minAvailable)` open: should it be rejected or clamped? Latest review feedback favored direction-agnostic `Clamp`; with `minAvailable: 3`, a scale-in request from `4` to `2` persists `spec.replicas: 3`, allowing the closest viable scale-in while keeping the service alive. The normative proposal therefore stores the valid clamped value in `spec.replicas` and drops `Block`, `belowMinAvailablePolicy`, the wake-only rule, and the in-memory `effectiveReplicas` split.
 
 ## Appendix
 
@@ -291,6 +292,6 @@ An intermediate draft left active scale-in into `(0, minAvailable)` open: should
 
 Outside Grove, none blocking this GREP.
 
-- Kubernetes HPA: allow an active floor above `1` alongside `minReplicas: 0`; without `HPAScaleToZero`, `spec.replicas: 0` disables the HPA today.
-- KEDA: nothing needed; `minReplicaCount` with `idleReplicaCount: 0` already expresses that floor.
-- Dynamo: give the SLA Planner an idle floor separate from `min_endpoint`, so it reaches `0` without passing through `1 .. minAvailable - 1`.
+- [Kubernetes HPA](https://kubernetes.io/docs/concepts/workloads/autoscaling/horizontal-pod-autoscale/#scaling-to-and-from-zero): provide separate idle and active floors. In Kubernetes v1.37, `HPAScaleToZero` is beta and enabled by default for Object and External metrics, but HPA still exposes only one `minReplicas` floor.
+- [KEDA](https://keda.sh/docs/2.20/reference/scaledobject-spec/): nothing needed; `minReplicaCount` with `idleReplicaCount: 0` already expresses that floor.
+- Dynamo Planner: provide separate idle and active floors.
