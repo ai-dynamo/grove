@@ -128,9 +128,9 @@ const (
 	ConditionTypeHealthyStateObserved = "HealthyStateObserved"
 	// ConditionTypeGangTerminationInProgress indicates that PCS-level gang termination has fired for this
 	// PodCliqueScalingGroup and is still in flight. It is set on the PCSG when the PCS-level handler deletes
-	// the PodCliques of the whole PCS replica, and is cleared only when AvailableReplicas >= MinAvailable.
-	// While True, it suppresses repeated PCS-level firing within the same breach episode. The PCSG-replica
-	// recycle path instead uses WasPCLQEverScheduled, since a recreated PodClique has no scheduling history.
+	// the PodCliques of the whole PCS replica, and is cleared when MinAvailableBreached becomes False.
+	// This preserves the existing re-fire behavior for partial allocations. The PCSG-replica recycle path
+	// instead uses WasPCLQEverScheduled, since a recreated PodClique has no scheduling history.
 	// Its only Reason is ConditionReasonGangTerminationActive.
 	ConditionTypeGangTerminationInProgress = "GangTerminationInProgress"
 	// ConditionTopologyLevelsUnavailable indicates that the required topology levels defined on a PodCliqueSet for topology-aware scheduling are no longer available.

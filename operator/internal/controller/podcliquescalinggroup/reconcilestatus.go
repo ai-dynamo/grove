@@ -219,8 +219,9 @@ func (r *Reconciler) emitAllScheduledReplicasLostIfNeeded(pcsg *grovecorev1alpha
 
 // mutateMinAvailableBreachedCondition updates the MinAvailableBreached condition based on replica availability.
 //
-// Clear GangTerminationInProgress only at the availability threshold; a transient non-breach
-// before recreated children report readiness is not recovery.
+// HealthyStateObserved and GangTerminationInProgress intentionally use different signals.
+// Durable health history requires actual availability, while the in-progress flag preserves the
+// existing clear-on-any-False behavior so partial allocations can be retried.
 func mutateMinAvailableBreachedCondition(logger logr.Logger, pcsg *grovecorev1alpha1.PodCliqueScalingGroup, pclqsPerPCSGReplica map[string][]grovecorev1alpha1.PodClique) {
 	newCondition := computeMinAvailableBreachedCondition(logger, pcsg, pclqsPerPCSGReplica)
 	if k8sutils.HasConditionChanged(pcsg.Status.Conditions, newCondition) {
@@ -241,9 +242,9 @@ func mutateMinAvailableBreachedCondition(logger logr.Logger, pcsg *grovecorev1al
 			"PodCliqueScalingGroup reached its availability threshold",
 		)
 	}
-	if hasReachedAvailabilityThreshold &&
+	if newCondition.Status == metav1.ConditionFalse &&
 		meta.IsStatusConditionTrue(pcsg.Status.Conditions, constants.ConditionTypeGangTerminationInProgress) {
-		logger.Info("Clearing GangTerminationInProgress after PodCliqueScalingGroup recovered",
+		logger.Info("Clearing GangTerminationInProgress after MinAvailableBreached became False",
 			"pcsg", client.ObjectKeyFromObject(pcsg))
 		meta.RemoveStatusCondition(&pcsg.Status.Conditions, constants.ConditionTypeGangTerminationInProgress)
 	}
