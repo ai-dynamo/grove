@@ -3,7 +3,6 @@
 #
 # Demonstrates PCSG-specific environment variables and leader-worker communication:
 # - GROVE_PCSG_NAME, GROVE_PCSG_INDEX, GROVE_PCSG_POD_INDEX, GROVE_PCSG_TEMPLATE_NUM_PODS
-# - How an application-specific DYNAMO_RANK can reference GROVE_PCSG_POD_INDEX
 # - How workers construct the leader's FQDN using environment variables
 ---
 apiVersion: grove.io/v1alpha1
@@ -23,9 +22,6 @@ spec:
           containers:
           - name: leader
             image: busybox:latest
-            env:
-            - name: DYNAMO_RANK
-              value: "$(GROVE_PCSG_POD_INDEX)"
             command: ["/bin/sh"]
             args:
             - "-c"
@@ -38,7 +34,6 @@ spec:
               echo "GROVE_PCSG_INDEX=$GROVE_PCSG_INDEX"
               echo "GROVE_PCLQ_POD_INDEX=$GROVE_PCLQ_POD_INDEX"
               echo "GROVE_PCSG_POD_INDEX=$GROVE_PCSG_POD_INDEX"
-              echo "DYNAMO_RANK=$DYNAMO_RANK"
               echo "GROVE_PCSG_TEMPLATE_NUM_PODS=$GROVE_PCSG_TEMPLATE_NUM_PODS"
               echo ""
               echo "My FQDN: $GROVE_PCLQ_NAME-$GROVE_PCLQ_POD_INDEX.$GROVE_HEADLESS_SERVICE"
@@ -57,9 +52,6 @@ spec:
           containers:
           - name: worker
             image: busybox:latest
-            env:
-            - name: DYNAMO_RANK
-              value: "$(GROVE_PCSG_POD_INDEX)"
             command: ["/bin/sh"]
             args:
             - "-c"
@@ -72,7 +64,6 @@ spec:
               echo "GROVE_PCSG_INDEX=$GROVE_PCSG_INDEX"
               echo "GROVE_PCLQ_POD_INDEX=$GROVE_PCLQ_POD_INDEX"
               echo "GROVE_PCSG_POD_INDEX=$GROVE_PCSG_POD_INDEX"
-              echo "DYNAMO_RANK=$DYNAMO_RANK"
               echo "GROVE_PCSG_TEMPLATE_NUM_PODS=$GROVE_PCSG_TEMPLATE_NUM_PODS"
               echo ""
               echo "=== Constructing Leader Address ==="
@@ -94,5 +85,4 @@ spec:
     - name: model-instance
       cliqueNames: [leader, worker]
       replicas: 2
-
 
