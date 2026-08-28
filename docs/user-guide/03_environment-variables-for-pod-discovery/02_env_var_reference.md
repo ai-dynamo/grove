@@ -124,13 +124,7 @@ podCliqueScalingGroups:
       - engine-worker # replicas: 2
 ```
 
-assigns index `0` to the leader pod and indices `1` and `2` to the worker pods. A higher-level API can use the concrete value to define an application-specific rank without shell arithmetic:
-
-```yaml
-env:
-  - name: DYNAMO_RANK
-    value: "$(GROVE_PCSG_POD_INDEX)"
-```
+assigns index `0` to the leader pod and indices `1` and `2` to the worker pods.
 
 The index is scoped to one PodCliqueScalingGroup replica. Grove records each member PodClique's offset when that concrete scaling element is created and retains it for the PodClique's lifetime, so replacing one of its pods does not recalculate ranks from the current PodCliqueSet template. Use the index together with `GROVE_PCSG_NAME` and `GROVE_PCSG_INDEX` when constructing an identity that must be unique across replicas. Standalone PodCliques do not receive `GROVE_PCSG_POD_INDEX`.
 

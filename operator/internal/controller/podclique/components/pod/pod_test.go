@@ -350,12 +350,12 @@ func TestGetPCSGPodIndex(t *testing.T) {
 	})
 }
 
-func TestPCSGPodIndexPrecedesDerivedRank(t *testing.T) {
+func TestPCSGPodIndexPrecedesDerivedEnvironmentVariable(t *testing.T) {
 	pclq := &grovecorev1alpha1.PodClique{Spec: grovecorev1alpha1.PodCliqueSpec{PodSpec: corev1.PodSpec{
 		Containers: []corev1.Container{{
 			Name: "engine",
 			Env: []corev1.EnvVar{{
-				Name:  "DYNAMO_RANK",
+				Name:  "APPLICATION_POD_INDEX",
 				Value: "$(GROVE_PCSG_POD_INDEX)",
 			}},
 		}},
@@ -364,19 +364,19 @@ func TestPCSGPodIndexPrecedesDerivedRank(t *testing.T) {
 
 	addEnvironmentVariables(pod, pclq, "test-pcs", 0, ptr.To(2))
 
-	pcsgPodIndexPosition, dynamoRankPosition := -1, -1
+	pcsgPodIndexPosition, derivedEnvVarPosition := -1, -1
 	for i, envVar := range pod.Spec.Containers[0].Env {
 		switch envVar.Name {
 		case constants.EnvVarPodCliqueScalingGroupPodIndex:
 			pcsgPodIndexPosition = i
-		case "DYNAMO_RANK":
-			dynamoRankPosition = i
+		case "APPLICATION_POD_INDEX":
+			derivedEnvVarPosition = i
 			assert.Equal(t, "$(GROVE_PCSG_POD_INDEX)", envVar.Value)
 		}
 	}
 	require.NotEqual(t, -1, pcsgPodIndexPosition)
-	require.NotEqual(t, -1, dynamoRankPosition)
-	assert.Less(t, pcsgPodIndexPosition, dynamoRankPosition)
+	require.NotEqual(t, -1, derivedEnvVarPosition)
+	assert.Less(t, pcsgPodIndexPosition, derivedEnvVarPosition)
 }
 
 func TestAddGroveEnvironmentVariables_NoDuplicates(t *testing.T) {
