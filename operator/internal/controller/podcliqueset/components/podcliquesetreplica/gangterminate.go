@@ -176,7 +176,7 @@ func (r _resource) getExistingPCLQsByNames(ctx context.Context, namespace string
 //  2. GangTerminationInProgress=True — a previous fire is already in flight; re-firing while
 //     it's still in flight would also churn-loop. The flag is set by createPCSReplicaDeleteTask
 //     after the DeleteAllOf succeeds, and cleared by the PCSG status reconciler once it
-//     genuinely recovers to AvailableReplicas >= MinAvailable.
+//     observes MinAvailableBreached=False.
 func getMinAvailableBreachedPCSGInfo(pcsgs []grovecorev1alpha1.PodCliqueScalingGroup, terminationDelay time.Duration, since time.Time) ([]string, time.Duration) {
 	pcsgCandidateNames := make([]string, 0, len(pcsgs))
 	waitForDurations := make([]time.Duration, 0, len(pcsgs))
@@ -210,8 +210,8 @@ func getMinAvailableBreachedPCSGInfo(pcsgs []grovecorev1alpha1.PodCliqueScalingG
 // After the DeleteAllOf succeeds we set GangTerminationInProgress=True on every PCSG in the
 // PCS replica, including PCSGs whose own PodCliques weren't the reason for this fire (their
 // PCLQs are collateral damage of the PCS-replica-wide delete and would otherwise re-trigger
-// the breach loop on the next reconcile). Genuine recovery clears the flag and re-arms the
-// next breach episode.
+// the breach loop on the next reconcile). A subsequent MinAvailableBreached=False observation
+// clears the flag and preserves the existing re-fire behavior for partial allocations.
 //
 // Ordering is action-first / flag-second: if the controller crashes between the DeleteAllOf
 // and the flag writes, the next reconcile sees the breach still True (new PCLQs Pending) with

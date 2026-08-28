@@ -281,10 +281,10 @@ func TestMutateMinAvailableBreachedConditionRecordsHealthyState(t *testing.T) {
 		"0": {{}},
 	})
 	assert.False(t, componentutils.WasPCSGEverHealthy(pcsg))
-	assert.True(t, meta.IsStatusConditionTrue(
+	assert.False(t, meta.IsStatusConditionTrue(
 		pcsg.Status.Conditions,
 		constants.ConditionTypeGangTerminationInProgress,
-	), "a transient status gap must not re-arm gang termination")
+	), "a transient False must preserve the existing re-fire behavior without recording health")
 
 	pcsg.Status.AvailableReplicas = 1
 	mutateMinAvailableBreachedCondition(logr.Discard(), pcsg, map[string][]grovecorev1alpha1.PodClique{
@@ -989,7 +989,7 @@ func TestReconcileStatusRequeuesOnConflict(t *testing.T) {
 		"a conflicting status patch should requeue after ComponentSyncRetryInterval")
 }
 
-func TestMutateMinAvailableBreachedConditionClearsGangTerminationInProgress(t *testing.T) {
+func TestMutateMinAvailableBreachedConditionClearsGangTerminationInProgressOnAnyFalse(t *testing.T) {
 	pcsg := &grovecorev1alpha1.PodCliqueScalingGroup{
 		Spec: grovecorev1alpha1.PodCliqueScalingGroupSpec{
 			Replicas:     2,
@@ -999,7 +999,6 @@ func TestMutateMinAvailableBreachedConditionClearsGangTerminationInProgress(t *t
 			CliqueNames: []string{"pc"},
 		},
 		Status: grovecorev1alpha1.PodCliqueScalingGroupStatus{
-			AvailableReplicas: 2,
 			Conditions: []metav1.Condition{
 				{
 					Type:   constants.ConditionTypeMinAvailableBreached,
@@ -1021,7 +1020,7 @@ func TestMutateMinAvailableBreachedConditionClearsGangTerminationInProgress(t *t
 
 	mutateMinAvailableBreachedCondition(logr.Discard(), pcsg, pclqsHealthy)
 
-	// MinAvailableBreached must now be False (recovery).
+	// MinAvailableBreached must now be False even though AvailableReplicas has not caught up.
 	breach := pcsg.Status.Conditions
 	var breachStatus metav1.ConditionStatus
 	for _, c := range breach {
@@ -1029,12 +1028,12 @@ func TestMutateMinAvailableBreachedConditionClearsGangTerminationInProgress(t *t
 			breachStatus = c.Status
 		}
 	}
-	assert.Equal(t, metav1.ConditionFalse, breachStatus, "MinAvailableBreached should be False after recovery")
+	assert.Equal(t, metav1.ConditionFalse, breachStatus, "MinAvailableBreached should be False")
 
-	// GangTerminationInProgress must have been cleared.
+	// Preserve the existing re-fire semantics: any False clears GangTerminationInProgress.
 	for _, c := range pcsg.Status.Conditions {
 		if c.Type == constants.ConditionTypeGangTerminationInProgress {
-			t.Fatalf("GangTerminationInProgress condition should have been removed on recovery, still present with status %s", c.Status)
+			t.Fatalf("GangTerminationInProgress condition should have been removed after MinAvailableBreached became False, still present with status %s", c.Status)
 		}
 	}
 }
