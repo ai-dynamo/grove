@@ -74,6 +74,51 @@ func TestSyncBootstrapsPodGangMapForFreshReplica(t *testing.T) {
 	assert.Equal(t, []string{anchor.Epoch}, scaleOut.DependsOn)
 }
 
+func TestSyncReconcilesBootstrapEntriesWithLivePCSG(t *testing.T) {
+	pcs := testutils.NewPodCliqueSetBuilder("pcs", "default", "uid").
+		WithReplicas(1).
+		WithScalingGroupConfig("sg", []string{"c"}, 1, 1).
+		WithPodCliqueSetGenerationHash(ptr.To("hash1")).
+		Build()
+	pcsg := testutils.NewPodCliqueScalingGroupBuilder("pcs-0-sg", "default", "pcs", 0).
+		WithReplicas(2).
+		Build()
+
+	cl := testutils.CreateDefaultFakeClient([]client.Object{pcs, pcsg})
+	operator := New(cl, groveclientscheme.Scheme, clocktesting.NewFakeClock(time.Unix(0, 1000)))
+
+	err := operator.Sync(context.Background(), logr.Discard(), pcs)
+	require.NoError(t, err)
+
+	pgm := getPodGangMap(t, cl, "pcs-0")
+	anchor := testutils.EntryByRole(pgm.Spec.Entries, grovecorev1alpha1.PodGangEntryRoleAnchor)
+	assert.Equal(t, []int32{0}, anchor.PCSGReplicaIndices["sg"])
+
+	scaleOut := testutils.EntryByRole(pgm.Spec.Entries, grovecorev1alpha1.PodGangEntryRoleScaleOut)
+	assert.Equal(t, []int32{1}, scaleOut.PCSGReplicaIndices["sg"])
+}
+
+func TestSyncReconcilesBootstrapEntriesWithLiveStandalonePodClique(t *testing.T) {
+	pcs := testutils.NewPodCliqueSetBuilder("pcs", "default", "uid").
+		WithReplicas(1).
+		WithStandaloneCliqueReplicas("clq-a", 1).
+		WithPodCliqueSetGenerationHash(ptr.To("hash1")).
+		Build()
+	pclq := testutils.NewPodCliqueBuilder("pcs", types.UID("uid"), "clq-a", "default", 0).
+		WithReplicas(4).
+		Build()
+
+	cl := testutils.CreateDefaultFakeClient([]client.Object{pcs, pclq})
+	operator := New(cl, groveclientscheme.Scheme, clocktesting.NewFakeClock(time.Unix(0, 1000)))
+
+	err := operator.Sync(context.Background(), logr.Discard(), pcs)
+	require.NoError(t, err)
+
+	pgm := getPodGangMap(t, cl, "pcs-0")
+	anchor := testutils.EntryByRole(pgm.Spec.Entries, grovecorev1alpha1.PodGangEntryRoleAnchor)
+	assert.Equal(t, int32(4), anchor.PodCliques["clq-a"])
+}
+
 func TestSyncReusesEpochFromExistingPodGangsWhenPodGangMapIsMissing(t *testing.T) {
 	pcs := testutils.NewPodCliqueSetBuilder("pcs", "default", "uid").
 		WithReplicas(1).

@@ -168,8 +168,8 @@ func (r _resource) getExistingPodGangsByReplica(ctx context.Context, pcs *grovec
 
 // runSyncFlow reconciles the PodGangMap for every PCS replica, then deletes PodGangMaps orphaned by a
 // PCS replica scale-in. Each replica is in one of three states.
-//  1. No PodGangMap. Its entries are authored from the PCS spec, reusing the epoch its existing
-//     PodGangs carry so a rebuilt PodGangMap does not strand pods.
+//  1. No PodGangMap. Bootstrap entries are authored from the PCS spec, reusing the epoch its existing
+//     PodGangs carry, then reconciled with live child replicas before the PodGangMap is created.
 //  2. A PodGangMap with no entries. A live PodGangMap always has an anchor entry, so this can only
 //     come from a coding error. The reconcile fails with a hard error.
 //  3. A PodGangMap with entries. reconcileEntries re-authors them, advancing an under-update replica
@@ -198,14 +198,14 @@ func (r _resource) runSyncFlow(ctx context.Context, syncSnap *syncSnapshot) erro
 			if shouldAdvanceEntriesGenerationHash(syncSnap.pcs, entries) {
 				advanceEntriesGenerationHash(entries, *syncSnap.pcs.Status.CurrentGenerationHash)
 			}
-			scaleOutEpoch := strconv.FormatInt(r.clk.Now().UnixNano(), 10)
-			entries, err = reconcileEntries(syncSnap.pcs, entries,
-				syncSnap.existingStandalonePCLQsByReplica[pcsReplicaIndex],
-				syncSnap.existingPCSGsByReplica[pcsReplicaIndex],
-				pcsReplicaIndex, scaleOutEpoch)
-			if err != nil {
-				return err
-			}
+		}
+		scaleOutEpoch := strconv.FormatInt(r.clk.Now().UnixNano(), 10)
+		entries, err = reconcileEntries(syncSnap.pcs, entries,
+			syncSnap.existingStandalonePCLQsByReplica[pcsReplicaIndex],
+			syncSnap.existingPCSGsByReplica[pcsReplicaIndex],
+			pcsReplicaIndex, scaleOutEpoch)
+		if err != nil {
+			return err
 		}
 		pgmName := apicommon.GeneratePodGangMapName(apicommon.ResourceNameReplica{Name: syncSnap.pcs.Name, Replica: pcsReplicaIndex})
 		if err = r.createOrPatchPodGangMap(ctx, syncSnap.pcs, pgmName, pcsReplicaIndex, entries); err != nil {
