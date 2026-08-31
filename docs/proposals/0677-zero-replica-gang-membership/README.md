@@ -10,12 +10,12 @@
   - [Below-Quorum Behavior](#below-quorum-behavior)
   - [Limitations/Risks &amp; Mitigations](#limitationsrisks--mitigations)
 - [Design Details](#design-details)
+  - [Gang Behavior](#gang-behavior)
   - [Autoscaler Integration](#autoscaler-integration)
   - [Example](#example)
   - [Monitoring](#monitoring)
   - [Test Plan](#test-plan)
   - [Graduation Criteria](#graduation-criteria)
-- [Remaining Work](#remaining-work)
 - [Alternatives](#alternatives)
 - [Historical Discussion](#historical-discussion)
 - [Appendix](#appendix)
@@ -93,9 +93,13 @@ Rolling updates already stall on a zero-replica standalone `PodClique`: completi
 
 ## Design Details
 
-Admission rejects any positive requested replica count below `minAvailable` without rewriting `spec.replicas`. The defaulting of `PodClique` `replicas: 0` to `1` is removed.
+For `PodClique`, omitted `replicas` defaults to `1`, while explicit `0` is preserved. Omitted `minAvailable` defaults to `max(1, replicas)`.
 
-While a component is idle, it contributes no `PodGroup`, does not set `MinAvailableBreached` to `True`, and counts as updated for rolling-update completion.
+### Gang Behavior
+
+While a component is idle, it contributes no `PodGroup` and zero observed scheduled, available, and updated replicas. It does not set `MinAvailableBreached` to `True`, counts as updated for rolling-update completion, and does not trigger gang termination.
+
+An idle component is omitted from `PodGangMap` entry membership. If all components are idle, Grove retains an empty current-generation anchor without materializing a `PodGang`. On wake, Grove populates that anchor if no `PodGang` is active; otherwise, it creates a new entry for the waking component without expanding an existing materialized `PodGang`.
 
 ### Autoscaler Integration
 
@@ -198,8 +202,6 @@ spec.template.podCliqueScalingGroups[0].replicas: Invalid value: 0: must be grea
 spec.template.podCliqueScalingGroups[0].minAvailable: Invalid value: 2: minAvailable must not be greater than replicas
 ```
 
-A `PodClique` produces no error there only because defaulting rewrites `replicas: 0` to `1` first.
-
 ### Monitoring
 
 No new metrics, conditions, or status fields are introduced. Idle is indicated by `spec.replicas: 0`.
@@ -209,6 +211,8 @@ No new metrics, conditions, or status fields are introduced. Idle is indicated b
 Prototype coverage should show:
 
 - zero-replica components do not block the base gang;
+- omitted `PodClique` `replicas` defaults to `1`, while explicit `0` is preserved;
+- omitted `minAvailable` defaults to `max(1, replicas)`;
 - an idle component does not stall a rolling update;
 - create requests and updates through the main resource or `/scale` reject `0 < replicas < minAvailable`;
 - rejected updates leave `spec.replicas` unchanged;
@@ -221,12 +225,6 @@ Prototype coverage should show:
 - Alpha: direction accepted and initial implementation exists.
 - Beta: behavior documented and tested.
 - GA: semantics are stable and validated with real scale-to-zero workloads.
-
-## Remaining Work
-
-- The admission rules for rejecting invalid creates and replica updates through the main resource or `/scale`.
-- Gang behavior in detail: how the `PodGang` reshapes on idle and wake, how idle state propagates through scheduled, available, and updated status at each resource level, how `startsAfter` handles an idle dependency, whether an idle component is absent from the [coherent update](../393-coherent-rolling-updates/README.md) `PodGangMap` or present and empty, whether it joins an MVU, what a scale to zero does to an update in flight, and what that means for gang termination and partial scale.
-- Implementation requires webhooks for `PodClique` and `PodCliqueScalingGroup` resource and `/scale` updates; template validation that allows `replicas: 0` for standalone `PodClique` and `PodCliqueScalingGroup` components but rejects it for scaling-group member `PodClique`s; removal of the standalone `PodClique` zero-to-one default; updates to gang membership, breach, and rolling-update paths for idle components; and a migration rule for pre-existing below-quorum objects.
 
 ## Alternatives
 
