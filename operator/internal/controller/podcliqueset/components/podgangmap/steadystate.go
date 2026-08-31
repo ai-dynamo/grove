@@ -135,8 +135,8 @@ func buildBootstrapTailEntry(pcs *grovecorev1alpha1.PodCliqueSet, epoch, anchorE
 	return entry, true
 }
 
-// reconcileEntries re-authors the entries of a PCS replica whose PodGangMap already has entries. It runs
-// in steady state (no update in progress) and while a RollingRecreate is in progress.
+// reconcileEntries authors the desired entries for one PCS replica, bootstrapping them when the
+// PodGangMap does not exist and re-authoring them otherwise.
 //
 // Each entry keeps its identity (epoch, role, DependsOn, anchor index) and its already-placed replica
 // indices. Placement is not recomputed from the template. A template Replicas change does not reach an
@@ -147,17 +147,28 @@ func buildBootstrapTailEntry(pcs *grovecorev1alpha1.PodCliqueSet, epoch, anchorE
 // Spec.Replicas. A scale-out appends new indices to the ScaleOut entry. A scale-in drains indices in
 // role order ScaleOut, Tail, Anchor. Each standalone PodClique pod count on the anchor is set from its
 // live Spec.Replicas. A ScaleOut entry is ensured (even if empty) and empty entries are dropped.
-func reconcileEntries(pcs *grovecorev1alpha1.PodCliqueSet,
-	entries []grovecorev1alpha1.PodGangEntry,
-	standalonePCLQs []grovecorev1alpha1.PodClique,
-	pcsgs []grovecorev1alpha1.PodCliqueScalingGroup,
+func reconcileEntries(clk clock.Clock,
+	pcs *grovecorev1alpha1.PodCliqueSet,
 	pcsReplicaIndex int,
-	scaleOutEpoch string) ([]grovecorev1alpha1.PodGangEntry, error) {
+	pgm grovecorev1alpha1.PodGangMap,
+	existingPodGangs []groveschedulerv1alpha1.PodGang,
+	standalonePCLQs []grovecorev1alpha1.PodClique,
+	pcsgs []grovecorev1alpha1.PodCliqueScalingGroup) ([]grovecorev1alpha1.PodGangEntry, error) {
+	var entries []grovecorev1alpha1.PodGangEntry
+	if len(pgm.Spec.Entries) == 0 {
+		entries = buildBootstrapEntries(pcs, clk, existingPodGangs)
+	} else {
+		entries = clonePodGangEntries(pgm.Spec.Entries)
+		if shouldAdvanceEntriesGenerationHash(pcs, entries) {
+			advanceEntriesGenerationHash(entries, *pcs.Status.CurrentGenerationHash)
+		}
+	}
+
 	refreshStandalonePodCliqueCounts(entries, pcs, standalonePCLQs, pcsReplicaIndex)
 	if err := reconcilePCSGReplicaIndices(entries, pcs, pcsgs, pcsReplicaIndex); err != nil {
 		return nil, err
 	}
-	entries = ensureScaleOutEntry(entries, pcs, scaleOutEpoch, nil)
+	entries = ensureScaleOutEntry(entries, pcs, strconv.FormatInt(clk.Now().UnixNano(), 10), nil)
 	return removeEmptyEntries(entries, *pcs.Status.CurrentGenerationHash), nil
 }
 

@@ -15,7 +15,6 @@
 package podgangmap
 
 import (
-	"strconv"
 	"testing"
 	"time"
 
@@ -287,8 +286,6 @@ func TestEpochByRoleFromPodGangs(t *testing.T) {
 }
 
 func TestSyncEntries(t *testing.T) {
-	scaleOutEpoch := strconv.FormatInt(time.Unix(0, 5000).UnixNano(), 10)
-
 	tests := []struct {
 		name            string
 		pcs             *grovecorev1alpha1.PodCliqueSet
@@ -385,7 +382,9 @@ func TestSyncEntries(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			actual, err := reconcileEntries(tt.pcs, tt.existingEntries, tt.standalonePCLQs, tt.pcsgs, 0, scaleOutEpoch)
+			pgm := grovecorev1alpha1.PodGangMap{Spec: grovecorev1alpha1.PodGangMapSpec{Entries: tt.existingEntries}}
+			actual, err := reconcileEntries(clocktesting.NewFakeClock(time.Unix(0, 5000)),
+				tt.pcs, 0, pgm, nil, tt.standalonePCLQs, tt.pcsgs)
 			require.NoError(t, err)
 			tt.assertResult(t, actual)
 		})

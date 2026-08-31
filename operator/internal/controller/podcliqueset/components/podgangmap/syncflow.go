@@ -186,24 +186,10 @@ func (r _resource) runSyncFlow(ctx context.Context, syncSnap *syncSnapshot) erro
 			)
 		}
 
-		var (
-			entries []grovecorev1alpha1.PodGangEntry
-			err     error
-		)
-		if !pgmExists {
-			entries = buildBootstrapEntries(syncSnap.pcs, r.clk, syncSnap.existingPodGangsByReplica[pcsReplicaIndex])
-		} else {
-			// Deep-copy the existing entries so mutations here do not alias the snapshot's PodGangMap.
-			entries = clonePodGangEntries(pgm.Spec.Entries)
-			if shouldAdvanceEntriesGenerationHash(syncSnap.pcs, entries) {
-				advanceEntriesGenerationHash(entries, *syncSnap.pcs.Status.CurrentGenerationHash)
-			}
-		}
-		scaleOutEpoch := strconv.FormatInt(r.clk.Now().UnixNano(), 10)
-		entries, err = reconcileEntries(syncSnap.pcs, entries,
+		entries, err := reconcileEntries(r.clk, syncSnap.pcs, pcsReplicaIndex, pgm,
+			syncSnap.existingPodGangsByReplica[pcsReplicaIndex],
 			syncSnap.existingStandalonePCLQsByReplica[pcsReplicaIndex],
-			syncSnap.existingPCSGsByReplica[pcsReplicaIndex],
-			pcsReplicaIndex, scaleOutEpoch)
+			syncSnap.existingPCSGsByReplica[pcsReplicaIndex])
 		if err != nil {
 			return err
 		}
