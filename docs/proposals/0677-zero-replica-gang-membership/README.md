@@ -25,7 +25,7 @@
 
 ## Summary
 
-Grove should treat standalone `PodClique` or `PodCliqueScalingGroup` components with `replicas: 0` as an intentional idle state. This GREP leaves existing `minAvailable` semantics unchanged, makes gang logic tolerant of zero-replica members, and rejects any positive replica count below `minAvailable` instead of clamping it.
+Grove should treat standalone `PodClique` or `PodCliqueScalingGroup` components with `replicas: 0` as an intentional idle state. This GREP leaves existing `minAvailable` semantics unchanged, makes gang logic tolerant of zero-replica members, and rejects any positive replica count below `minAvailable`.
 
 ## Motivation
 
@@ -183,16 +183,6 @@ Grove rejects the request because it is below `minAvailable: 2`. The writer must
 kubectl scale podcliquescalinggroup scale-to-zero-deepseek-0-prefill --replicas=2
 ```
 
-Each row is one request on that component:
-
-| Request | Behavior |
-| --- | --- |
-| `0` to `1` | Rejected |
-| `2` to `1` | Rejected |
-| `2` to `3` | Persist `3` |
-| `3` to `2` | Persist `2` |
-| `2` to `0` | Persist `0` |
-
 No positive below-quorum value is stored. The same validation applies to the main resource, its `/scale` subresource, and create requests.
 
 Today neither scale-to-zero write above is rejected: no admission webhook covers `PodClique` or `PodCliqueScalingGroup`. Both are accepted, and the idle member then holds the whole `PodGang` below its member count, leaving the router `SchedulingGated` (#676). Only the `PodCliqueSet` template validates the same shape:
@@ -231,7 +221,7 @@ Prototype coverage should show:
 - Allow `minAvailable: 0`: explicit, but overloads an existing availability contract.
 - Keep idle members in the `PodGang` with `minReplicas: 0`: keeps the gang spec stable across idle transitions, but that value already signals released constraints during a coherent update, and backends map it back to a positive threshold.
 - Make `minAvailable` mutable: follows scale state, but changes the immutability contract.
-- Clamp positive below-quorum requests to `minAvailable`: lets writers without an active floor wake from zero, but silently rewrites caller intent and does not make HPA-like writers converge.
+- [Clamp positive below-quorum requests to `minAvailable`](#historical-discussion): lets writers without an active floor wake from zero, but silently rewrites caller intent and does not make HPA-like writers converge.
 - Preserve the below-quorum request in `spec.replicas` and derive an internal effective replica count: avoids mutating the writer's request, but permanently separates stored desired state from the count the controller actually reconciles.
 - Add `activeMinReplicas` now: useful if active warm capacity can differ from gang quorum, but premature if the active floor is simply `minAvailable`.
 
