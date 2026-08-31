@@ -15,7 +15,6 @@
   - [Monitoring](#monitoring)
   - [Test Plan](#test-plan)
   - [Graduation Criteria](#graduation-criteria)
-- [Open Questions](#open-questions)
 - [Remaining Work](#remaining-work)
 - [Alternatives](#alternatives)
 - [Historical Discussion](#historical-discussion)
@@ -26,7 +25,7 @@
 
 ## Summary
 
-Grove should treat `PodClique` or `PodCliqueScalingGroup` components with `replicas: 0` as an intentional idle state. This GREP leaves existing `minAvailable` semantics unchanged, makes gang logic tolerant of zero-replica members, and rejects any positive replica count below `minAvailable` instead of clamping it.
+Grove should treat standalone `PodClique` or `PodCliqueScalingGroup` components with `replicas: 0` as an intentional idle state. This GREP leaves existing `minAvailable` semantics unchanged, makes gang logic tolerant of zero-replica members, and rejects any positive replica count below `minAvailable` instead of clamping it.
 
 ## Motivation
 
@@ -38,7 +37,7 @@ External replica writers should target either `0` or a value at least `minAvaila
 
 ### Goals
 
-- Treat `replicas: 0` as an intentional idle state without changing `minAvailable`.
+- Treat `replicas: 0` as an intentional idle state for standalone `PodClique` and `PodCliqueScalingGroup` components without changing `minAvailable`.
 - Keep `spec.replicas` valid: it is either `0` or greater than or equal to `minAvailable`.
 - Reject any positive replica count below `minAvailable`.
 
@@ -48,7 +47,7 @@ External replica writers should target either `0` or a value at least `minAvaila
 
 ## Proposal
 
-When a `PodClique` or `PodCliqueScalingGroup` has `replicas: 0`, Grove should not require it as a gang member. When replicas become positive again, its existing `minAvailable` should apply normally.
+When a standalone `PodClique` or `PodCliqueScalingGroup` has `replicas: 0`, Grove should not require it as a gang member. When replicas become positive again, its existing `minAvailable` should apply normally.
 
 An idle component should leave the `PodGang` rather than stay in it with a zero threshold: no `PodGroup` in `PodGang.spec.podGroups`, and no scaled `PodGang` for an idle `PodCliqueScalingGroup`. Shrinking a gang must not disturb the members still running.
 
@@ -60,7 +59,9 @@ An idle component should leave the `PodGang` rather than stay in it with a zero 
 | --- | --- | --- |
 | `PodCliqueSet` | Already allowed. Nothing is created; no `minAvailable` at this level. | Unchanged. |
 | `PodCliqueScalingGroup` | Rejected in the `PodCliqueSet` template; accepted on the object, which has no webhook. | Idle. No `PodGroup` in the base `PodGang` and no scaled `PodGang`. |
-| `PodClique` | `replicas: 0` is accepted on the object, which has no webhook, but is silently defaulted to `1` in the `PodCliqueSet` template. | Idle when standalone, contributing no `PodGroup`. Inside a scaling group, idle is expressed at the group level. |
+| `PodClique` | `replicas: 0` is accepted on the object, which has no webhook, but is silently defaulted to `1` in the `PodCliqueSet` template. | Idle when standalone, contributing no `PodGroup`. A scaling-group member is not an independent scale target and cannot set `replicas: 0`; idle is expressed at the group level. |
+
+A `PodClique` owned by a `PodCliqueScalingGroup` must not be scaled independently, including to zero. To idle its members, set the owning `PodCliqueScalingGroup` to `replicas: 0`.
 
 ### Below-Quorum Behavior
 
@@ -72,7 +73,7 @@ Grove rejects positive replica counts below `minAvailable`:
 | `0 < replicas < minAvailable` | Rejected for create and update requests, including the `/scale` subresource. |
 | `replicas >= minAvailable` | Persisted as requested. Normal Grove gang behavior applies. |
 
-The persisted invariant is:
+For independent scale targets, the persisted invariant is:
 
 ```text
 spec.replicas == 0 || spec.replicas >= minAvailable
@@ -80,7 +81,7 @@ spec.replicas == 0 || spec.replicas >= minAvailable
 
 Reject is independent of the previous replica count. With `minAvailable: 3`, requests from `0` to `1` and from `4` to `2` are both rejected.
 
-A newly submitted `PodClique`, `PodCliqueScalingGroup`, or corresponding `PodCliqueSet` template entry must already satisfy the invariant. Updates through the main resource or its `/scale` subresource that request `0 < replicas < minAvailable` are rejected.
+A newly submitted standalone `PodClique`, `PodCliqueScalingGroup`, or corresponding `PodCliqueSet` template entry must already satisfy the invariant. Updates through the main resource or its `/scale` subresource that request `0 < replicas < minAvailable` are rejected.
 
 ### Limitations/Risks & Mitigations
 
@@ -221,15 +222,11 @@ Prototype coverage should show:
 - Beta: behavior documented and tested.
 - GA: semantics are stable and validated with real scale-to-zero workloads.
 
-## Open Questions
-
-Should a `PodClique` owned by a `PodCliqueScalingGroup` be allowed to set `replicas: 0` independently? The general replica invariant permits it, while [Zero Replicas Per Level](#zero-replicas-per-level) says that idle for a scaling-group member is expressed at the group level. The template, derived object, and admission semantics must align once this is resolved.
-
 ## Remaining Work
 
 - The admission rules for rejecting invalid creates and replica updates through the main resource or `/scale`.
 - Gang behavior in detail: how the `PodGang` reshapes on idle and wake, how idle state propagates through scheduled, available, and updated status at each resource level, how `startsAfter` handles an idle dependency, whether an idle component is absent from the [coherent update](../393-coherent-rolling-updates/README.md) `PodGangMap` or present and empty, whether it joins an MVU, what a scale to zero does to an update in flight, and what that means for gang termination and partial scale.
-- Implementation requires webhooks for `PodClique` and `PodCliqueScalingGroup` resource and `/scale` updates; template validation that allows `replicas: 0` but rejects positive below-quorum creates; removal of the `PodClique` zero-to-one default; updates to gang membership, breach, and rolling-update paths for idle components; and a migration rule for pre-existing below-quorum objects.
+- Implementation requires webhooks for `PodClique` and `PodCliqueScalingGroup` resource and `/scale` updates; template validation that allows `replicas: 0` for standalone `PodClique` and `PodCliqueScalingGroup` components but rejects it for scaling-group member `PodClique`s; removal of the standalone `PodClique` zero-to-one default; updates to gang membership, breach, and rolling-update paths for idle components; and a migration rule for pre-existing below-quorum objects.
 
 ## Alternatives
 
