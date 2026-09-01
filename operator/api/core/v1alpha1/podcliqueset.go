@@ -357,7 +357,7 @@ type PodCliqueScalingGroupConfig struct {
 	Name string `json:"name"`
 	// CliqueNames is the ordered list of PodClique names that are part of the scaling group.
 	// The order determines the group-wide pod indices exposed through the
-	// grove.io/podcliquescalinggroup-pod-index Pod label.
+	// grove.io/podcliquescalinggroup-pod-index Pod label and GROVE_PCSG_POD_INDEX environment variable.
 	CliqueNames []string `json:"cliqueNames"`
 	// Annotations is an unstructured key value map stored with a resource that may be
 	// set by external tools to store and retrieve arbitrary metadata. They are not
