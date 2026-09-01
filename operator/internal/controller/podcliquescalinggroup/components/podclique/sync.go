@@ -171,7 +171,11 @@ func (r _resource) syncPCSGPodIndexOffsets(ctx context.Context, ss *syncSnapshot
 		pclq := &ss.existingPCLQs[i]
 		pcsgReplicaIndexValue, ok := pclq.Labels[apicommon.LabelPodCliqueScalingGroupReplicaIndex]
 		if !ok {
-			continue
+			return groveerr.New(
+				errCodeSyncPCSGPodIndexOffsets,
+				component.OperationSync,
+				fmt.Sprintf("PodClique %v is missing required label %q", client.ObjectKeyFromObject(pclq), apicommon.LabelPodCliqueScalingGroupReplicaIndex),
+			)
 		}
 		pcsgReplicaIndex, err := strconv.Atoi(pcsgReplicaIndexValue)
 		if err != nil {

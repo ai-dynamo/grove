@@ -168,7 +168,7 @@ func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grov
 		)
 	}
 
-	pcsgPodIndex, err := getPCSGPodIndex(pcs, pclq, pcsReplicaIndex, podIndex)
+	pcsgPodIndex, err := getPCSGPodIndex(pclq, podIndex)
 	if err != nil {
 		return groveerr.WrapError(err,
 			errCodeGetPCSGPodIndex,
@@ -234,31 +234,18 @@ func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grov
 
 // getPCSGPodIndex returns the pod's zero-based index within its PodCliqueScalingGroup replica.
 // Standalone PodCliques return nil because they have no group-wide index.
-func getPCSGPodIndex(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grovecorev1alpha1.PodClique, pcsReplicaIndex, podIndex int) (*int, error) {
-	pcsgName := pclq.Labels[apicommon.LabelPodCliqueScalingGroup]
-	if pcsgName == "" {
+func getPCSGPodIndex(pclq *grovecorev1alpha1.PodClique, podIndex int) (*int, error) {
+	if pclq.Labels[apicommon.LabelPodCliqueScalingGroup] == "" {
 		return nil, nil
 	}
 
-	pcsgConfig := resourceclaim.FindPCSGConfigByName(pcs, pcsgName, pcsReplicaIndex)
-	if pcsgConfig == nil {
-		return nil, fmt.Errorf("PodCliqueScalingGroup config for %q not found in PodCliqueSet %q", pcsgName, pcs.Name)
+	offsetValue, ok := pclq.Annotations[constants.AnnotationPodCliqueScalingGroupPodIndexOffset]
+	if !ok {
+		return nil, fmt.Errorf("PodClique is missing required annotation %q", constants.AnnotationPodCliqueScalingGroupPodIndexOffset)
 	}
-	if offsetValue, ok := pclq.Annotations[constants.AnnotationPodCliqueScalingGroupPodIndexOffset]; ok {
-		offset, err := strconv.Atoi(offsetValue)
-		if err != nil || offset < 0 {
-			return nil, fmt.Errorf("PodClique has invalid %s value %q", constants.AnnotationPodCliqueScalingGroupPodIndexOffset, offsetValue)
-		}
-		index := offset + podIndex
-		return &index, nil
-	}
-	cliqueName, err := utils.GetPodCliqueNameFromPodCliqueFQN(pclq.ObjectMeta)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get PodClique name: %w", err)
-	}
-	offset, err := componentutils.GetPCSGTemplatePodIndexOffset(pcs, pcsgConfig.CliqueNames, cliqueName)
-	if err != nil {
-		return nil, err
+	offset, err := strconv.Atoi(offsetValue)
+	if err != nil || offset < 0 {
+		return nil, fmt.Errorf("PodClique has invalid %s value %q", constants.AnnotationPodCliqueScalingGroupPodIndexOffset, offsetValue)
 	}
 	index := offset + podIndex
 	return &index, nil
