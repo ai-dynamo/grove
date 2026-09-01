@@ -18,13 +18,25 @@ package tests
 
 import (
 	"context"
+	"fmt"
+	"slices"
+	"strconv"
 	"testing"
+	"time"
 
+	apicommon "github.com/ai-dynamo/grove/operator/api/common"
+	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/e2e/grove/podgang"
+	"github.com/ai-dynamo/grove/operator/e2e/grove/workload"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
+	autoscalingv1 "k8s.io/api/autoscaling/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/util/retry"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // Test_GS1_GangSchedulingWithFullReplicas tests gang-scheduling behavior with insufficient resources
@@ -98,6 +110,508 @@ func Test_GS1_GangSchedulingWithFullReplicas(t *testing.T) {
 	}
 
 	Logger.Info("🎉 Gang-scheduling With Full Replicas test completed successfully!")
+}
+
+// Test_GS13_SimultaneousWakeWithMixedIdle verifies concurrent standalone and PCSG wake while another
+// standalone clique remains idle. Depending on reconcile timing, the woken components may share the
+// retained base anchor or receive distinct anchors; both paths must preserve membership and ordering.
+func Test_GS13_SimultaneousWakeWithMixedIdle(t *testing.T) {
+	const (
+		pcsName       = "workload-idle-wake"
+		idlePCLQName  = pcsName + "-0-idle"
+		guardedName   = pcsName + "-0-guarded"
+		workerName    = pcsName + "-0-worker"
+		pcsgName      = pcsName + "-0-workers"
+		prefillName   = pcsgName + "-0-prefill"
+		decodeName    = pcsgName + "-0-decode"
+		barrierWindow = 5 * time.Second
+	)
+	ctx := context.Background()
+	tc, cleanup := testctx.PrepareTest(ctx, t, 3,
+		testctx.WithWorkload(&testctx.WorkloadConfig{
+			Name:         pcsName,
+			YAMLPath:     "../yaml/workload-idle-wake.yaml",
+			Namespace:    "default",
+			ExpectedPods: 0,
+		}),
+	)
+	defer cleanup()
+
+	Logger.Info("1. Deploy a PodCliqueSet whose standalone and scaling-group components are idle")
+	if _, err := tc.DeployAndVerifyWorkload(); err != nil {
+		t.Fatalf("Failed to deploy workload: %v", err)
+	}
+	wm := workload.NewWorkloadManager(tc.Client, Logger)
+	if _, err := wm.WaitForPodClique(ctx, tc.Namespace, workerName, tc.Timeout, tc.Interval); err != nil {
+		t.Fatalf("Failed to wait for idle PodClique: %v", err)
+	}
+	if _, err := wm.WaitForPCSG(ctx, tc.Namespace, pcsgName, tc.Timeout, tc.Interval); err != nil {
+		t.Fatalf("Failed to wait for idle PodCliqueScalingGroup: %v", err)
+	}
+	if _, err := wm.WaitForPodClique(ctx, tc.Namespace, guardedName, tc.Timeout, tc.Interval); err != nil {
+		t.Fatalf("Failed to wait for guarded PodClique: %v", err)
+	}
+	waitForNoPodGangs(t, ctx, tc, pcsName)
+	waitForAllIdleBootstrap(t, ctx, tc, pcsName)
+
+	Logger.Info("2. Verify main-resource and scale-subresource below-quorum updates are rejected")
+	assertBelowQuorumRejected(t, ctx, tc, guardedName)
+
+	Logger.Info("3. Wake the standalone PodClique and PodCliqueScalingGroup concurrently")
+	scaleIdleComponents(t, ctx, tc, workerName, pcsgName, 1)
+	if err := tc.WaitForReadyPods(3); err != nil {
+		t.Fatalf("Failed to wait for woken pods: %v", err)
+	}
+	firstWake := waitForWakeState(t, ctx, tc, pcsName, idlePCLQName, workerName, prefillName, decodeName)
+
+	Logger.Info("4. Verify PCSG ownership remains enforced after removing the compatibility label")
+	assertOwnerReferenceBlocksIndependentScale(t, ctx, tc, prefillName)
+
+	Logger.Info("5. Hold old PodGangs and scale both components to zero")
+	heldPodGangs := addPodGangFinalizers(t, ctx, tc, pcsName)
+	pods, err := tc.ListPods()
+	if err != nil {
+		t.Fatalf("Failed to list pods before scale-to-zero: %v", err)
+	}
+	originalUIDs := capturePodUIDs(pods)
+	scaleIdleComponents(t, ctx, tc, workerName, pcsgName, 0)
+	waitForRemovedMembershipAndTerminatingPodGangs(t, ctx, tc, pcsName, heldPodGangs)
+	restartOperator(t, ctx, tc)
+	assertBarrierRetainsWorkload(t, ctx, tc, originalUIDs, []string{workerName, prefillName, decodeName}, barrierWindow)
+
+	Logger.Info("6. Release PodGang finalizers and verify the all-idle state converges")
+	removePodGangFinalizers(t, ctx, tc, heldPodGangs)
+	waitForAllIdle(t, ctx, tc, pcsName, prefillName, decodeName)
+
+	Logger.Info("7. Wake both components again and verify epochs and PodGang names are fresh")
+	scaleIdleComponents(t, ctx, tc, workerName, pcsgName, 1)
+	if err := tc.WaitForReadyPods(3); err != nil {
+		t.Fatalf("Failed to wait for second wake: %v", err)
+	}
+	secondWake := waitForWakeState(t, ctx, tc, pcsName, idlePCLQName, workerName, prefillName, decodeName)
+	for name := range secondWake.podGangNames {
+		if firstWake.podGangNames.Has(name) {
+			t.Fatalf("second wake reused old PodGang name %s", name)
+		}
+	}
+}
+
+type observedWakeState struct {
+	podGangNames stringSet
+}
+
+type stringSet map[string]struct{}
+
+func (s stringSet) Has(value string) bool {
+	_, ok := s[value]
+	return ok
+}
+
+func waitForWakeState(t *testing.T, ctx context.Context, tc *testctx.TestContext, pcsName, idlePCLQName, workerName, prefillName, decodeName string) observedWakeState {
+	t.Helper()
+	var observed observedWakeState
+	if err := wait.PollUntilContextTimeout(ctx, tc.Interval, tc.Timeout, true, func(ctx context.Context) (bool, error) {
+		pgm := &grovecorev1alpha1.PodGangMap{}
+		if err := tc.Client.Get(ctx, client.ObjectKey{Namespace: tc.Namespace, Name: pcsName + "-0"}, pgm); err != nil {
+			return false, client.IgnoreNotFound(err)
+		}
+		var workerAnchor, pcsgAnchor *grovecorev1alpha1.PodGangEntry
+		epochs := stringSet{}
+		for i := range pgm.Spec.Entries {
+			entry := &pgm.Spec.Entries[i]
+			if epochs.Has(entry.Epoch) {
+				return false, nil
+			}
+			epochs[entry.Epoch] = struct{}{}
+			if entry.Role != grovecorev1alpha1.PodGangEntryRoleAnchor {
+				continue
+			}
+			if _, carriesIdle := entry.PodCliques["idle"]; carriesIdle {
+				return false, nil
+			}
+			if entry.PodCliques["worker"] == 1 {
+				workerAnchor = entry
+			}
+			if indices := entry.PCSGReplicaIndices["workers"]; len(indices) == 1 && indices[0] == 0 {
+				pcsgAnchor = entry
+			}
+		}
+		if workerAnchor == nil || pcsgAnchor == nil {
+			return false, nil
+		}
+		if workerAnchor != pcsgAnchor && workerAnchor.Epoch == pcsgAnchor.Epoch {
+			return false, nil
+		}
+		if workerAnchor == pcsgAnchor {
+			if len(workerAnchor.DependsOn) != 0 {
+				return false, nil
+			}
+		} else {
+			first, second := workerAnchor, pcsgAnchor
+			firstEpoch, firstErr := strconv.ParseInt(first.Epoch, 10, 64)
+			secondEpoch, secondErr := strconv.ParseInt(second.Epoch, 10, 64)
+			if firstErr != nil || secondErr != nil {
+				return false, nil
+			}
+			if firstEpoch > secondEpoch {
+				first, second = second, first
+			}
+			if len(first.DependsOn) != 0 || !slices.Equal(second.DependsOn, []string{first.Epoch}) {
+				return false, nil
+			}
+		}
+		rnr := apicommon.ResourceNameReplica{Name: pcsName, Replica: 0}
+		workerPodGangName := apicommon.GenerateAnchorPodGangName(rnr, workerAnchor.Epoch)
+		pcsgPodGangName := apicommon.GenerateAnchorPodGangName(rnr, pcsgAnchor.Epoch)
+		prefillDependencies := []string(nil)
+		if workerAnchor == pcsgAnchor {
+			prefillDependencies = []string{workerName}
+		}
+		expectedPodGangs := map[string]string{
+			workerName:  workerPodGangName,
+			prefillName: pcsgPodGangName,
+			decodeName:  pcsgPodGangName,
+		}
+		expectedDependencies := map[string][]string{
+			workerName:  nil,
+			prefillName: prefillDependencies,
+			decodeName:  {prefillName},
+		}
+		for name, dependencies := range expectedDependencies {
+			pclq := &grovecorev1alpha1.PodClique{}
+			if err := tc.Client.Get(ctx, client.ObjectKey{Namespace: tc.Namespace, Name: name}, pclq); err != nil {
+				return false, client.IgnoreNotFound(err)
+			}
+			if pclq.Labels[apicommon.LabelPodGang] != expectedPodGangs[name] ||
+				!slices.Equal(pclq.Spec.StartsAfter, dependencies) {
+				return false, nil
+			}
+		}
+		idle := &grovecorev1alpha1.PodClique{}
+		if err := tc.Client.Get(ctx, client.ObjectKey{Namespace: tc.Namespace, Name: idlePCLQName}, idle); err != nil {
+			return false, client.IgnoreNotFound(err)
+		}
+		if idle.Spec.Replicas != 0 || len(idle.Spec.StartsAfter) != 0 {
+			return false, nil
+		}
+		podGangs := &groveschedulerv1alpha1.PodGangList{}
+		if err := tc.Client.List(ctx, podGangs,
+			client.InNamespace(tc.Namespace),
+			client.MatchingLabels{apicommon.LabelPartOfKey: pcsName},
+		); err != nil {
+			return false, err
+		}
+		expectedNames := map[string]struct{}{workerPodGangName: {}, pcsgPodGangName: {}}
+		if len(podGangs.Items) != len(expectedNames) {
+			return false, nil
+		}
+		expectedGroups := map[string]int{
+			workerName:  1,
+			prefillName: 1,
+			decodeName:  1,
+		}
+		for i := range podGangs.Items {
+			if _, ok := expectedNames[podGangs.Items[i].Name]; !ok {
+				return false, nil
+			}
+			for _, group := range podGangs.Items[i].Spec.PodGroups {
+				wantRefs, ok := expectedGroups[group.Name]
+				if !ok || len(group.PodReferences) != wantRefs {
+					return false, nil
+				}
+				delete(expectedGroups, group.Name)
+			}
+		}
+		if len(expectedGroups) != 0 {
+			return false, nil
+		}
+		observed.podGangNames = expectedNames
+		return true, nil
+	}); err != nil {
+		t.Fatalf("Wake state did not converge: %v", err)
+	}
+	return observed
+}
+
+func assertBelowQuorumRejected(t *testing.T, ctx context.Context, tc *testctx.TestContext, pclqName string) {
+	t.Helper()
+	pclq := &grovecorev1alpha1.PodClique{ObjectMeta: metav1.ObjectMeta{Name: pclqName, Namespace: tc.Namespace}}
+	err := tc.Client.Patch(ctx, pclq, client.RawPatch(types.MergePatchType, []byte(`{"spec":{"replicas":1}}`)))
+	if !apierrors.IsInvalid(err) {
+		t.Fatalf("main-resource below-quorum update error = %v, want Invalid", err)
+	}
+	assertPCLQReplicas(t, ctx, tc, pclqName, 0)
+
+	scale := &autoscalingv1.Scale{
+		ObjectMeta: metav1.ObjectMeta{Name: pclqName, Namespace: tc.Namespace},
+		Spec:       autoscalingv1.ScaleSpec{Replicas: 1},
+	}
+	err = tc.Client.SubResource("scale").Update(ctx, pclq, client.WithSubResourceBody(scale))
+	if !apierrors.IsInvalid(err) {
+		t.Fatalf("scale-subresource below-quorum update error = %v, want Invalid", err)
+	}
+	assertPCLQReplicas(t, ctx, tc, pclqName, 0)
+}
+
+func assertOwnerReferenceBlocksIndependentScale(t *testing.T, ctx context.Context, tc *testctx.TestContext, pclqName string) {
+	t.Helper()
+	pclq := &grovecorev1alpha1.PodClique{}
+	key := client.ObjectKey{Namespace: tc.Namespace, Name: pclqName}
+	if err := tc.Client.Get(ctx, key, pclq); err != nil {
+		t.Fatalf("Failed to get PCSG-owned PodClique: %v", err)
+	}
+	ownerLabel := pclq.Labels[apicommon.LabelPodCliqueScalingGroup]
+	delete(pclq.Labels, apicommon.LabelPodCliqueScalingGroup)
+	if err := tc.Client.Update(ctx, pclq); err != nil {
+		t.Fatalf("Failed to remove PCSG owner label: %v", err)
+	}
+
+	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		current := &grovecorev1alpha1.PodClique{}
+		if err := tc.Client.Get(ctx, key, current); err != nil {
+			return err
+		}
+		if current.Annotations == nil {
+			current.Annotations = map[string]string{}
+		}
+		current.Annotations["e2e.grove.io/metadata-update"] = "allowed"
+		current.Finalizers = append(current.Finalizers, "e2e.grove.io/metadata-update")
+		return tc.Client.Update(ctx, current)
+	}); err != nil {
+		t.Fatalf("Metadata-only update on PCSG-owned PodClique was rejected: %v", err)
+	}
+	defer func() {
+		if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			current := &grovecorev1alpha1.PodClique{}
+			if err := tc.Client.Get(ctx, key, current); err != nil {
+				return client.IgnoreNotFound(err)
+			}
+			current.Finalizers = slices.DeleteFunc(current.Finalizers, func(value string) bool {
+				return value == "e2e.grove.io/metadata-update"
+			})
+			current.Labels[apicommon.LabelPodCliqueScalingGroup] = ownerLabel
+			return tc.Client.Update(ctx, current)
+		}); err != nil {
+			t.Errorf("Failed to restore PCSG-owned PodClique metadata: %v", err)
+		}
+	}()
+
+	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		current := &grovecorev1alpha1.PodClique{}
+		if err := tc.Client.Get(ctx, key, current); err != nil {
+			return err
+		}
+		return tc.Client.Update(ctx, current)
+	}); err != nil {
+		t.Fatalf("Replicas no-op update on PCSG-owned PodClique was rejected: %v", err)
+	}
+	if err := tc.Client.Get(ctx, key, pclq); err != nil {
+		t.Fatalf("Failed to refresh PCSG-owned PodClique: %v", err)
+	}
+	noOpScale := &autoscalingv1.Scale{
+		ObjectMeta: metav1.ObjectMeta{Name: pclqName, Namespace: tc.Namespace},
+		Spec:       autoscalingv1.ScaleSpec{Replicas: pclq.Spec.Replicas},
+	}
+	if err := tc.Client.SubResource("scale").Update(ctx, pclq, client.WithSubResourceBody(noOpScale)); err != nil {
+		t.Fatalf("Replicas no-op scale on PCSG-owned PodClique was rejected: %v", err)
+	}
+	currentScale := &autoscalingv1.Scale{}
+	if err := tc.Client.SubResource("scale").Get(ctx, pclq, currentScale); err != nil {
+		t.Fatalf("Failed to get scale for PCSG-owned PodClique: %v", err)
+	}
+	if currentScale.Status.Selector != "" {
+		t.Fatalf("PCSG-owned PodClique published autoscaler selector %q", currentScale.Status.Selector)
+	}
+
+	err := retry.OnError(retry.DefaultRetry, apierrors.IsConflict, func() error {
+		current := &grovecorev1alpha1.PodClique{}
+		if err := tc.Client.Get(ctx, key, current); err != nil {
+			return err
+		}
+		current.Spec.Replicas = 0
+		return tc.Client.Update(ctx, current)
+	})
+	if !apierrors.IsForbidden(err) {
+		t.Fatalf("PCSG-owned PodClique main update error = %v, want Forbidden", err)
+	}
+	scale := &autoscalingv1.Scale{
+		ObjectMeta: metav1.ObjectMeta{Name: pclqName, Namespace: tc.Namespace},
+		Spec:       autoscalingv1.ScaleSpec{Replicas: 0},
+	}
+	err = tc.Client.SubResource("scale").Update(ctx, pclq, client.WithSubResourceBody(scale))
+	if !apierrors.IsForbidden(err) {
+		t.Fatalf("PCSG-owned PodClique scale error = %v, want Forbidden", err)
+	}
+	assertPCLQReplicas(t, ctx, tc, pclqName, 1)
+}
+
+func assertPCLQReplicas(t *testing.T, ctx context.Context, tc *testctx.TestContext, name string, expected int32) {
+	t.Helper()
+	pclq := &grovecorev1alpha1.PodClique{}
+	if err := tc.Client.Get(ctx, client.ObjectKey{Namespace: tc.Namespace, Name: name}, pclq); err != nil {
+		t.Fatalf("Failed to get PodClique %s: %v", name, err)
+	}
+	if pclq.Spec.Replicas != expected {
+		t.Fatalf("PodClique %s replicas = %d, want %d", name, pclq.Spec.Replicas, expected)
+	}
+}
+
+func scaleIdleComponents(t *testing.T, ctx context.Context, tc *testctx.TestContext, workerName, pcsgName string, replicas int32) {
+	t.Helper()
+	errCh := make(chan error, 2)
+	go func() {
+		errCh <- tc.Client.Patch(ctx,
+			&grovecorev1alpha1.PodClique{ObjectMeta: metav1.ObjectMeta{Name: workerName, Namespace: tc.Namespace}},
+			client.RawPatch(types.MergePatchType, []byte(fmt.Sprintf(`{"spec":{"replicas":%d}}`, replicas))))
+	}()
+	go func() {
+		errCh <- tc.Client.Patch(ctx,
+			&grovecorev1alpha1.PodCliqueScalingGroup{ObjectMeta: metav1.ObjectMeta{Name: pcsgName, Namespace: tc.Namespace}},
+			client.RawPatch(types.MergePatchType, []byte(fmt.Sprintf(`{"spec":{"replicas":%d}}`, replicas))))
+	}()
+	for range 2 {
+		if err := <-errCh; err != nil {
+			t.Fatalf("Failed to scale idle component to %d: %v", replicas, err)
+		}
+	}
+}
+
+func addPodGangFinalizers(t *testing.T, ctx context.Context, tc *testctx.TestContext, pcsName string) []client.ObjectKey {
+	t.Helper()
+	podGangs := listPodGangs(t, ctx, tc, pcsName)
+	if len(podGangs.Items) == 0 {
+		t.Fatal("no PodGangs available for deletion barrier")
+	}
+	keys := make([]client.ObjectKey, 0, len(podGangs.Items))
+	for i := range podGangs.Items {
+		podGang := &podGangs.Items[i]
+		podGang.Finalizers = append(podGang.Finalizers, "e2e.grove.io/hold")
+		if err := tc.Client.Update(ctx, podGang); err != nil {
+			t.Fatalf("Failed to add finalizer to PodGang %s: %v", podGang.Name, err)
+		}
+		keys = append(keys, client.ObjectKeyFromObject(podGang))
+	}
+	return keys
+}
+
+func waitForRemovedMembershipAndTerminatingPodGangs(t *testing.T, ctx context.Context, tc *testctx.TestContext, pcsName string, podGangKeys []client.ObjectKey) {
+	t.Helper()
+	if err := wait.PollUntilContextTimeout(ctx, tc.Interval, tc.Timeout, true, func(ctx context.Context) (bool, error) {
+		pgm := &grovecorev1alpha1.PodGangMap{}
+		if err := tc.Client.Get(ctx, client.ObjectKey{Namespace: tc.Namespace, Name: pcsName + "-0"}, pgm); err != nil {
+			return false, err
+		}
+		for i := range pgm.Spec.Entries {
+			if pgm.Spec.Entries[i].PodCliques["worker"] > 0 ||
+				len(pgm.Spec.Entries[i].PCSGReplicaIndices["workers"]) > 0 {
+				return false, nil
+			}
+		}
+		for _, key := range podGangKeys {
+			podGang := &groveschedulerv1alpha1.PodGang{}
+			if err := tc.Client.Get(ctx, key, podGang); err != nil {
+				return false, err
+			}
+			if podGang.DeletionTimestamp == nil {
+				return false, nil
+			}
+		}
+		return true, nil
+	}); err != nil {
+		t.Fatalf("Scale-to-zero did not reach deletion barrier: %v", err)
+	}
+}
+
+func assertBarrierRetainsWorkload(t *testing.T, ctx context.Context, tc *testctx.TestContext, originalUIDs map[types.UID]struct{}, pclqNames []string, duration time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(duration)
+	for {
+		pods, err := tc.ListPods()
+		if err != nil {
+			t.Fatalf("Failed to list pods during barrier observation: %v", err)
+		}
+		currentUIDs := capturePodUIDs(pods)
+		for uid := range originalUIDs {
+			if !currentUIDsHas(currentUIDs, uid) {
+				t.Fatalf("Pod UID %s was deleted before old PodGang removal", uid)
+			}
+		}
+		for _, name := range pclqNames {
+			if err := tc.Client.Get(ctx, client.ObjectKey{Namespace: tc.Namespace, Name: name}, &grovecorev1alpha1.PodClique{}); err != nil {
+				t.Fatalf("PodClique %s was deleted before old PodGang removal: %v", name, err)
+			}
+		}
+		if time.Now().After(deadline) {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
+}
+
+func currentUIDsHas(uids map[types.UID]struct{}, uid types.UID) bool {
+	_, ok := uids[uid]
+	return ok
+}
+
+func removePodGangFinalizers(t *testing.T, ctx context.Context, tc *testctx.TestContext, keys []client.ObjectKey) {
+	t.Helper()
+	for _, key := range keys {
+		podGang := &groveschedulerv1alpha1.PodGang{}
+		if err := tc.Client.Get(ctx, key, podGang); err != nil {
+			t.Fatalf("Failed to get held PodGang %s: %v", key.Name, err)
+		}
+		podGang.Finalizers = nil
+		if err := tc.Client.Update(ctx, podGang); err != nil {
+			t.Fatalf("Failed to release PodGang %s: %v", key.Name, err)
+		}
+	}
+}
+
+func waitForAllIdle(t *testing.T, ctx context.Context, tc *testctx.TestContext, pcsName, prefillName, decodeName string) {
+	t.Helper()
+	if err := wait.PollUntilContextTimeout(ctx, tc.Interval, tc.Timeout, true, func(ctx context.Context) (bool, error) {
+		pods, err := tc.ListPods()
+		if err != nil || len(pods.Items) != 0 {
+			return false, err
+		}
+		if len(listPodGangs(t, ctx, tc, pcsName).Items) != 0 {
+			return false, nil
+		}
+		for _, name := range []string{prefillName, decodeName} {
+			err := tc.Client.Get(ctx, client.ObjectKey{Namespace: tc.Namespace, Name: name}, &grovecorev1alpha1.PodClique{})
+			if err == nil || !apierrors.IsNotFound(err) {
+				return false, err
+			}
+		}
+		return true, nil
+	}); err != nil {
+		t.Fatalf("All-idle state did not converge: %v", err)
+	}
+}
+
+func waitForNoPodGangs(t *testing.T, ctx context.Context, tc *testctx.TestContext, pcsName string) {
+	t.Helper()
+	if err := wait.PollUntilContextTimeout(ctx, tc.Interval, tc.Timeout, true, func(ctx context.Context) (bool, error) {
+		return len(listPodGangs(t, ctx, tc, pcsName).Items) == 0, nil
+	}); err != nil {
+		t.Fatalf("PodGangs remained for all-idle workload: %v", err)
+	}
+}
+
+func listPodGangs(t *testing.T, ctx context.Context, tc *testctx.TestContext, pcsName string) *groveschedulerv1alpha1.PodGangList {
+	t.Helper()
+	podGangs := &groveschedulerv1alpha1.PodGangList{}
+	if err := tc.Client.List(ctx, podGangs,
+		client.InNamespace(tc.Namespace),
+		client.MatchingLabels{apicommon.LabelPartOfKey: pcsName},
+	); err != nil {
+		t.Fatalf("Failed to list PodGangs: %v", err)
+	}
+	return podGangs
 }
 
 // Test_GS2_GangSchedulingWithScalingFullReplicas verifies gang-scheduling behavior when scaling a PodCliqueScalingGroup

@@ -74,7 +74,7 @@ func (r *Reconciler) reconcileStatus(ctx context.Context, logger logr.Logger, pc
 	// mutateReplicas already ignores them via its [0, Spec.Replicas) loop bounds.
 	pclqsPerPCSGReplica = pruneStrayPCSGPCLQs(pcsg, pclqsPerPCSGReplica)
 	mutateReplicas(logger, pcs, pcsg, pclqsPerPCSGReplica)
-	mutateMinAvailableBreachedCondition(logger, pcsg, pclqsPerPCSGReplica)
+	mutateMinAvailableBreachedCondition(logger, pcsg)
 	r.emitAllScheduledReplicasLostIfNeeded(pcsg, originalStatus.ScheduledReplicas)
 
 	if err = mutateSelector(pcs, pcsg); err != nil {
@@ -210,6 +210,11 @@ func isPCSGChildPCLQUpdated(pclq *grovecorev1alpha1.PodClique, expectedPCLQPodTe
 // event gives operators a discrete, log-visible signal that a previously-running workload is
 // fully down (and that gang termination is now armed and will fire after TerminationDelay).
 func (r *Reconciler) emitAllScheduledReplicasLostIfNeeded(pcsg *grovecorev1alpha1.PodCliqueScalingGroup, originalScheduled int32) {
+	// GREP-0677: a scale-to-zero transition is intentional, not a loss. Do not emit the warning
+	// (and do not imply gang termination is armed) when the PCSG is idle.
+	if pcsg.Spec.Replicas == 0 {
+		return
+	}
 	if originalScheduled > 0 && pcsg.Status.ScheduledReplicas == 0 {
 		r.eventRecorder.Eventf(pcsg, corev1.EventTypeWarning, internalconstants.ReasonAllScheduledReplicasLost,
 			"All scheduled replicas lost (was %d). Gang termination will fire after TerminationDelay if the PCSG stays below MinAvailable; investigate node availability or capacity.",
@@ -218,114 +223,66 @@ func (r *Reconciler) emitAllScheduledReplicasLostIfNeeded(pcsg *grovecorev1alpha
 }
 
 // mutateMinAvailableBreachedCondition updates the MinAvailableBreached condition based on replica availability.
-//
-// Whenever the computed condition is False (the PCSG is healthy) and the GangTerminationInProgress
-// condition is present, the latter is removed. The flag is only ever set while the PCSG is in
-// breach, so the first False observed with the flag still set is the recovery; clearing it
-// re-arms the next breach episode so a fresh regression can be recycled.
-func mutateMinAvailableBreachedCondition(logger logr.Logger, pcsg *grovecorev1alpha1.PodCliqueScalingGroup, pclqsPerPCSGReplica map[string][]grovecorev1alpha1.PodClique) {
-	newCondition := computeMinAvailableBreachedCondition(logger, pcsg, pclqsPerPCSGReplica)
-	if k8sutils.HasConditionChanged(pcsg.Status.Conditions, newCondition) {
+func mutateMinAvailableBreachedCondition(logger logr.Logger, pcsg *grovecorev1alpha1.PodCliqueScalingGroup) {
+	newCondition := computeMinAvailableBreachedCondition(pcsg)
+	if meta.SetStatusCondition(&pcsg.Status.Conditions, newCondition) {
 		logger.Info("Updating MinAvailableBreached condition for PodCliqueScalingGroup",
 			"pcsg", client.ObjectKeyFromObject(pcsg),
 			"type", newCondition.Type,
 			"status", newCondition.Status,
 			"reason", newCondition.Reason)
-		meta.SetStatusCondition(&pcsg.Status.Conditions, newCondition)
-	}
-	if newCondition.Status == metav1.ConditionFalse &&
-		meta.IsStatusConditionTrue(pcsg.Status.Conditions, constants.ConditionTypeGangTerminationInProgress) {
-		logger.Info("Clearing GangTerminationInProgress condition — PCSG recovered",
-			"pcsg", client.ObjectKeyFromObject(pcsg))
-		meta.RemoveStatusCondition(&pcsg.Status.Conditions, constants.ConditionTypeGangTerminationInProgress)
 	}
 }
 
-// computeMinAvailableBreachedCondition computes the MinAvailableBreached condition for the
-// PodCliqueScalingGroup. Definition:
-//
-//   - A PCSG replica is in breach if at least one of its PodCliques is in breach
-//     (MinAvailableBreached=True on the PCLQ).
-//   - The PCSG itself is in breach when the number of replicas NOT in breach is less than
-//     pcsg.Spec.MinAvailable. Per-replica restart is handled separately by the PCSG sync
-//     flow; the condition computed here is the signal the PCS-level gang-termination
-//     handler reads to decide whether to restart the whole PCS replica.
-//
-// Rolling update short-circuits this to Unknown so gang termination doesn't fire mid-update.
-func computeMinAvailableBreachedCondition(logger logr.Logger, pcsg *grovecorev1alpha1.PodCliqueScalingGroup, pclqsPerPCSGReplica map[string][]grovecorev1alpha1.PodClique) metav1.Condition {
-	if componentutils.IsPCSGUpdateInProgress(pcsg) {
+// computeMinAvailableBreachedCondition uses AvailableReplicas as the durable health signal.
+func computeMinAvailableBreachedCondition(pcsg *grovecorev1alpha1.PodCliqueScalingGroup) metav1.Condition {
+	if pcsg.Spec.Replicas == 0 {
 		return metav1.Condition{
-			Type:    constants.ConditionTypeMinAvailableBreached,
-			Status:  metav1.ConditionUnknown,
-			Reason:  constants.ConditionReasonUpdateInProgress,
-			Message: "Update is in progress",
+			Type:               constants.ConditionTypeMinAvailableBreached,
+			Status:             metav1.ConditionFalse,
+			Reason:             constants.ConditionReasonIdle,
+			Message:            "PodCliqueScalingGroup is idle (spec.replicas == 0); not a required gang member",
+			ObservedGeneration: pcsg.Generation,
 		}
 	}
-
+	if componentutils.IsPCSGUpdateInProgress(pcsg) {
+		return metav1.Condition{
+			Type:               constants.ConditionTypeMinAvailableBreached,
+			Status:             metav1.ConditionUnknown,
+			Reason:             constants.ConditionReasonUpdateInProgress,
+			Message:            "Update is in progress",
+			ObservedGeneration: pcsg.Generation,
+		}
+	}
 	// The apiserver defaults Spec.MinAvailable to 1 (+kubebuilder:default), but objects
 	// persisted under an older CRD schema can still read back nil until their next write —
 	// dereferencing unguarded would crash-loop the operator off a single legacy object.
-	minAvailable := 1
+	minAvailable := int32(1)
 	if pcsg.Spec.MinAvailable != nil {
-		minAvailable = int(*pcsg.Spec.MinAvailable)
-	} else {
-		logger.Info("PCSG has nil Spec.MinAvailable; assuming API default of 1", "pcsg", client.ObjectKeyFromObject(pcsg))
+		minAvailable = *pcsg.Spec.MinAvailable
 	}
-	notInBreachReplicas := computeNotInBreachReplicas(logger, pcsg, pclqsPerPCSGReplica)
-	if notInBreachReplicas < minAvailable {
+	if pcsg.Status.AvailableReplicas >= minAvailable {
 		return metav1.Condition{
-			Type:    constants.ConditionTypeMinAvailableBreached,
-			Status:  metav1.ConditionTrue,
-			Reason:  constants.ConditionReasonInsufficientAvailablePCSGReplicas,
-			Message: fmt.Sprintf("PCSG replicas not in breach (%d) below MinAvailable (%d)", notInBreachReplicas, minAvailable),
+			Type:               constants.ConditionTypeMinAvailableBreached,
+			Status:             metav1.ConditionFalse,
+			Reason:             constants.ConditionReasonSufficientAvailablePCSGReplicas,
+			Message:            fmt.Sprintf("Available replicas (%d) meet MinAvailable (%d)", pcsg.Status.AvailableReplicas, minAvailable),
+			ObservedGeneration: pcsg.Generation,
 		}
+	}
+	reason := constants.ConditionReasonInsufficientAvailablePCSGReplicas
+	message := fmt.Sprintf("Available replicas (%d) below MinAvailable (%d)", pcsg.Status.AvailableReplicas, minAvailable)
+	if !componentutils.IsMinAvailableBreachArmed(pcsg.Status.Conditions, pcsg.Generation) {
+		reason = constants.ConditionReasonInitialScheduling
+		message = fmt.Sprintf("Waiting for at least %d available replicas before enabling gang termination", minAvailable)
 	}
 	return metav1.Condition{
-		Type:    constants.ConditionTypeMinAvailableBreached,
-		Status:  metav1.ConditionFalse,
-		Reason:  constants.ConditionReasonSufficientAvailablePCSGReplicas,
-		Message: fmt.Sprintf("PCSG replicas not in breach (%d) meets MinAvailable (%d)", notInBreachReplicas, minAvailable),
+		Type:               constants.ConditionTypeMinAvailableBreached,
+		Status:             metav1.ConditionTrue,
+		Reason:             reason,
+		Message:            message,
+		ObservedGeneration: pcsg.Generation,
 	}
-}
-
-// computeNotInBreachReplicas counts PCSG replicas that are healthy for the purpose of the PCSG-level
-// MinAvailableBreached signal. A replica counts as not-in-breach only when it is *complete* — all
-// expected PodCliques (len(Spec.CliqueNames)) exist and are non-terminating — AND none of those
-// PodCliques has MinAvailableBreached=True.
-//
-// Completeness is required because a partially-created replica (e.g. one whose pc-c was deleted and
-// not yet recreated) has no breached PodClique yet is still not a valid healthy replica. Counting it
-// as not-in-breach would spuriously report the PCSG healthy and would also poison the was-healthy gate,
-// which reads a MinAvailableBreached=False as evidence that the PCSG was once healthy. This mirrors
-// computeReplicaStatus, which likewise treats a replica as unscheduled/unavailable unless all expected
-// PodCliques exist.
-//
-// Iteration is bounded to expected replica indexes [0, Spec.Replicas) so stale-index children left
-// behind during scale-down neither inflate nor deflate the count.
-func computeNotInBreachReplicas(logger logr.Logger, pcsg *grovecorev1alpha1.PodCliqueScalingGroup, pclqsPerPCSGReplica map[string][]grovecorev1alpha1.PodClique) int {
-	expectedPCLQsPerReplica := len(pcsg.Spec.CliqueNames)
-	var notInBreachReplicas int
-	for replicaIndex := 0; replicaIndex < int(pcsg.Spec.Replicas); replicaIndex++ {
-		pcsgReplicaIndex := strconv.Itoa(replicaIndex)
-		nonTerminatingPCLQs := lo.Filter(pclqsPerPCSGReplica[pcsgReplicaIndex], func(pclq grovecorev1alpha1.PodClique, _ int) bool {
-			return !k8sutils.IsResourceTerminating(pclq.ObjectMeta)
-		})
-		if len(nonTerminatingPCLQs) != expectedPCLQsPerReplica {
-			logger.Info("PodCliqueScalingGroup replica is incomplete; not counting it as not-in-breach",
-				"pcsgReplicaIndex", pcsgReplicaIndex, "expectedPCLQs", expectedPCLQsPerReplica, "actualPCLQs", len(nonTerminatingPCLQs))
-			continue
-		}
-		anyBreached := lo.SomeBy(nonTerminatingPCLQs, func(pclq grovecorev1alpha1.PodClique) bool {
-			return k8sutils.IsConditionTrue(pclq.Status.Conditions, constants.ConditionTypeMinAvailableBreached)
-		})
-		if anyBreached {
-			logger.Info("PodCliqueScalingGroup replica has at least one PodClique with MinAvailableBreached=True",
-				"pcsgReplicaIndex", pcsgReplicaIndex)
-			continue
-		}
-		notInBreachReplicas++
-	}
-	return notInBreachReplicas
 }
 
 // getPodCliquesPerPCSGReplica retrieves and groups PodCliques by their PCSG replica index

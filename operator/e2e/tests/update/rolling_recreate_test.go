@@ -284,6 +284,31 @@ func Test_RU10_RollingUpdateInsufficientResources(t *testing.T) {
 	tests.Logger.Info("Rolling Update with insufficient resources test (RU-10) completed successfully!")
 }
 
+func Test_RU22_IdlePodCliqueDoesNotBlockUpdate(t *testing.T) {
+	tc, cleanup := setupIdleUpdateTest(t)
+	defer cleanup()
+
+	if err := triggerPodCliqueUpdate(tc, "worker"); err != nil {
+		t.Fatalf("Failed to update idle PodClique template: %v", err)
+	}
+	if err := waitForRollingUpdateComplete(tc, 1); err != nil {
+		t.Fatalf("Idle PodClique blocked RollingRecreate completion: %v", err)
+	}
+	if err := scalePodCliqueInPCS(tc, "worker", 1); err != nil {
+		t.Fatalf("Failed to wake updated PodClique: %v", err)
+	}
+	if err := tc.WaitForReadyPods(1); err != nil {
+		t.Fatalf("Updated PodClique did not become ready after wake: %v", err)
+	}
+	pods, err := getPodsForClique(tc, "worker")
+	if err != nil || len(pods) != 1 {
+		t.Fatalf("Failed to find woken worker pod: pods=%v err=%v", pods, err)
+	}
+	if err := verifyPodHasUpdatedSpec(tc, pods[0]); err != nil {
+		t.Fatalf("Woken pod did not use updated template: %v", err)
+	}
+}
+
 // Test_RU11_RollingUpdateWithPCSScaleOut tests rolling update with scale-out on PCS
 // Scenario RU-11:
 // 1. Initialize a 30-node Grove cluster

@@ -62,6 +62,7 @@ func TestSetup(t *testing.T) {
 	require.ElementsMatch(t, []string{
 		"/webhooks/default-podcliqueset",
 		"/webhooks/validate-clustertopology",
+		"/webhooks/validate-podclique",
 		"/webhooks/validate-podcliqueset",
 	}, registeredPaths(server.handlers))
 }

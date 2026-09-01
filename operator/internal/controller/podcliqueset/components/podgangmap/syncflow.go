@@ -198,11 +198,10 @@ func (r _resource) runSyncFlow(ctx context.Context, syncSnap *syncSnapshot) erro
 			if shouldAdvanceEntriesGenerationHash(syncSnap.pcs, entries) {
 				advanceEntriesGenerationHash(entries, *syncSnap.pcs.Status.CurrentGenerationHash)
 			}
-			scaleOutEpoch := strconv.FormatInt(r.clk.Now().UnixNano(), 10)
 			entries, err = reconcileEntries(syncSnap.pcs, entries,
 				syncSnap.existingStandalonePCLQsByReplica[pcsReplicaIndex],
 				syncSnap.existingPCSGsByReplica[pcsReplicaIndex],
-				pcsReplicaIndex, scaleOutEpoch)
+				pcsReplicaIndex, r.clk.Now().UnixNano())
 			if err != nil {
 				return err
 			}

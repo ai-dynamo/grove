@@ -26,10 +26,12 @@ import (
 	groveclientscheme "github.com/ai-dynamo/grove/operator/internal/client"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
+	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
+	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -37,6 +39,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -661,6 +664,8 @@ func TestIdentifyFullyQualifiedStartupDependencyNames(t *testing.T) {
 		foundAtIndex int
 		// expected are the expected dependency names
 		expected []string
+		// active are the PodCliques materialized in the target PodGang
+		active []string
 		// expectError indicates if an error is expected
 		expectError bool
 	}{
@@ -728,6 +733,7 @@ func TestIdentifyFullyQualifiedStartupDependencyNames(t *testing.T) {
 			pclq:         &grovecorev1alpha1.PodClique{},
 			foundAtIndex: 1,
 			expected:     []string{"test-pcs-0-clique1"},
+			active:       []string{"test-pcs-0-clique1", "test-pcsg-1-clique2"},
 			expectError:  false,
 		},
 		{
@@ -765,6 +771,7 @@ func TestIdentifyFullyQualifiedStartupDependencyNames(t *testing.T) {
 			},
 			foundAtIndex: 1,
 			expected:     []string{"test-pcs-0-clique1"},
+			active:       []string{"test-pcs-0-clique1", "test-pcsg-0-clique2"},
 			expectError:  false,
 		},
 		{
@@ -806,6 +813,7 @@ func TestIdentifyFullyQualifiedStartupDependencyNames(t *testing.T) {
 				tc.pcsgReplica,
 				tc.pclq,
 				tc.foundAtIndex,
+				componentutils.NewSet(tc.active),
 			)
 
 			if tc.expectError {
@@ -816,6 +824,54 @@ func TestIdentifyFullyQualifiedStartupDependencyNames(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestStartupDependenciesStayWithinMaterializedPodGang(t *testing.T) {
+	startupType := grovecorev1alpha1.CliqueStartupTypeInOrder
+	pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "default", "uid").
+		WithCliqueStartupType(&startupType).
+		WithStandaloneClique("router").
+		WithStandaloneCliqueReplicas("idle", 0).
+		WithScalingGroupConfig("sg", []string{"prefill", "decode"}, 2, 1).
+		Build()
+	pcsg := testutils.NewPodCliqueScalingGroupBuilder("test-pcs-0-sg", "default", "test-pcs", 0).
+		WithCliqueNames([]string{"prefill", "decode"}).
+		WithMinAvailable(1).
+		Build()
+	pclq := &grovecorev1alpha1.PodClique{}
+
+	t.Run("anchor skips idle predecessor and finds nearest active clique", func(t *testing.T) {
+		active := componentutils.NewSet([]string{
+			"test-pcs-0-router",
+			"test-pcs-0-sg-0-prefill",
+			"test-pcs-0-sg-0-decode",
+		})
+		actual, err := identifyFullyQualifiedStartupDependencyNames(pcs, 0, pcsg, 0, pclq, 2, active)
+		require.NoError(t, err)
+		assert.Equal(t, []string{"test-pcs-0-router"}, actual)
+	})
+
+	t.Run("non-anchor depends only on its own active predecessor", func(t *testing.T) {
+		active := componentutils.NewSet([]string{
+			"test-pcs-0-sg-1-prefill",
+			"test-pcs-0-sg-1-decode",
+		})
+		actual, err := identifyFullyQualifiedStartupDependencyNames(pcs, 0, pcsg, 1, pclq, 3, active)
+		require.NoError(t, err)
+		assert.Equal(t, []string{"test-pcs-0-sg-1-prefill"}, actual)
+	})
+
+	t.Run("explicit drops dependencies outside the target PodGang", func(t *testing.T) {
+		startupType = grovecorev1alpha1.CliqueStartupTypeExplicit
+		pclq.Spec.StartsAfter = []string{"router", "prefill"}
+		active := componentutils.NewSet([]string{
+			"test-pcs-0-sg-1-prefill",
+			"test-pcs-0-sg-1-decode",
+		})
+		actual, err := identifyFullyQualifiedStartupDependencyNames(pcs, 0, pcsg, 1, pclq, 3, active)
+		require.NoError(t, err)
+		assert.Equal(t, []string{"test-pcs-0-sg-1-prefill"}, actual)
+	})
 }
 
 // Helper function to check if an env var exists in a slice
@@ -1050,6 +1106,10 @@ func TestBuildResource_MNNVLInjection(t *testing.T) {
 				Spec: grovecorev1alpha1.PodCliqueSetSpec{
 					Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
 						StartupType: ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder),
+						PodCliqueScalingGroupConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{{
+							Name:        "sg",
+							CliqueNames: []string{pclqTemplateName},
+						}},
 						Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
 							{
 								Name:        pclqTemplateName,
@@ -1153,6 +1213,10 @@ func TestBuildResource_StripsTopologyAnnotation(t *testing.T) {
 		Spec: grovecorev1alpha1.PodCliqueSetSpec{
 			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
 				StartupType: ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder),
+				PodCliqueScalingGroupConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{{
+					Name:        "sg",
+					CliqueNames: []string{"worker"},
+				}},
 				Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
 					{
 						Name: "worker",
@@ -1282,5 +1346,94 @@ func TestResolvePodGangName(t *testing.T) {
 		).Build()
 		_, err := resolvePodGangName(anchorOnly, rnr, pcsg, 5)
 		require.Error(t, err)
+	})
+}
+
+func TestEnsurePCSGScaleInReady(t *testing.T) {
+	const (
+		pcsName        = "test-pcs"
+		namespace      = "default"
+		pcsgConfigName = "sg"
+	)
+	pcsUID := types.UID("pcs-uid")
+	rnr := apicommon.ResourceNameReplica{Name: pcsName, Replica: 0}
+	pcsgName := apicommon.GeneratePodCliqueScalingGroupName(rnr, pcsgConfigName)
+	pcs := &grovecorev1alpha1.PodCliqueSet{
+		ObjectMeta: metav1.ObjectMeta{Name: pcsName, Namespace: namespace, UID: pcsUID},
+	}
+	pcsg := &grovecorev1alpha1.PodCliqueScalingGroup{
+		ObjectMeta: metav1.ObjectMeta{Name: pcsgName, Namespace: namespace},
+		Spec: grovecorev1alpha1.PodCliqueScalingGroupSpec{
+			Replicas:    1,
+			CliqueNames: []string{"leader", "worker"},
+		},
+	}
+	pgm := testutils.NewPodGangMapBuilder(pcsName, namespace, pcsUID, 0).WithEntries(
+		testutils.NewPodGangEntryBuilder("hash", "1000").
+			WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).
+			WithAnchorIndex(0).
+			WithPCSGReplicaIndices(map[string][]int32{pcsgConfigName: {0}}).
+			Build(),
+	).Build()
+	targetPCLQName := apicommon.GeneratePodCliqueName(apicommon.ResourceNameReplica{Name: pcsgName, Replica: 1}, "worker")
+
+	newPodGang := func(name, podGroupName string, ownerUID types.UID) *groveschedulerv1alpha1.PodGang {
+		pg := testutils.NewPodGangBuilder(name, namespace).
+			WithLabels(map[string]string{
+				apicommon.LabelManagedByKey: apicommon.LabelManagedByValue,
+				apicommon.LabelPartOfKey:    pcsName,
+				apicommon.LabelComponentKey: apicommon.LabelComponentNamePodGang,
+			}).
+			WithPodGroup(podGroupName, 1).
+			Build()
+		pg.OwnerReferences = []metav1.OwnerReference{{
+			APIVersion: grovecorev1alpha1.SchemeGroupVersion.String(),
+			Kind:       "PodCliqueSet",
+			Name:       pcsName,
+			UID:        ownerUID,
+			Controller: ptr.To(true),
+		}}
+		return pg
+	}
+	newSnapshot := func(pgm *grovecorev1alpha1.PodGangMap) *syncSnapshot {
+		return &syncSnapshot{pcs: pcs.DeepCopy(), pcsg: pcsg.DeepCopy(), pcsReplicaIndex: 0, pgm: pgm}
+	}
+	run := func(t *testing.T, pgm *grovecorev1alpha1.PodGangMap, podGangs ...*groveschedulerv1alpha1.PodGang) error {
+		objects := make([]client.Object, 0, len(podGangs))
+		for _, podGang := range podGangs {
+			objects = append(objects, podGang)
+		}
+		r := _resource{client: testutils.NewTestClientBuilder().WithObjects(objects...).Build()}
+		return r.ensurePCSGScaleInReady(t.Context(), newSnapshot(pgm), []string{"1"})
+	}
+
+	t.Run("allows deletion after gang membership converges", func(t *testing.T) {
+		require.NoError(t, run(t, pgm.DeepCopy()))
+	})
+
+	t.Run("waits for PodGangMap membership removal", func(t *testing.T) {
+		stalePGM := pgm.DeepCopy()
+		stalePGM.Spec.Entries[0].PCSGReplicaIndices[pcsgConfigName] = []int32{0, 1}
+		testutils.AssertGroveError(t, &groveerr.GroveError{Code: groveerr.ErrCodeRequeueAfter, Operation: component.OperationSync}, run(t, stalePGM))
+	})
+
+	t.Run("waits for owned PodGang references", func(t *testing.T) {
+		stalePodGang := newPodGang("test-pcs-0-1000", targetPCLQName, pcsUID)
+		testutils.AssertGroveError(t, &groveerr.GroveError{Code: groveerr.ErrCodeRequeueAfter, Operation: component.OperationSync}, run(t, pgm.DeepCopy(), stalePodGang))
+	})
+
+	t.Run("ignores PodGroups for retained replica indices", func(t *testing.T) {
+		retainedPCLQName := apicommon.GeneratePodCliqueName(apicommon.ResourceNameReplica{Name: pcsgName, Replica: 0}, "worker")
+		require.NoError(t, run(t, pgm.DeepCopy(), newPodGang("test-pcs-0-1000", retainedPCLQName, pcsUID)))
+	})
+
+	t.Run("ignores PodGangs not owned by the PodCliqueSet", func(t *testing.T) {
+		require.NoError(t, run(t, pgm.DeepCopy(), newPodGang("foreign", targetPCLQName, types.UID("other-uid"))))
+	})
+
+	t.Run("waits for Grove-owned PodGangMap", func(t *testing.T) {
+		foreignPGM := pgm.DeepCopy()
+		delete(foreignPGM.Labels, apicommon.LabelManagedByKey)
+		testutils.AssertGroveError(t, &groveerr.GroveError{Code: groveerr.ErrCodeRequeueAfter, Operation: component.OperationSync}, run(t, foreignPGM))
 	})
 }

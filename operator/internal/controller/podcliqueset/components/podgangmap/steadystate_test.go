@@ -15,6 +15,7 @@
 package podgangmap
 
 import (
+	"os"
 	"strconv"
 	"testing"
 	"time"
@@ -29,6 +30,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	clocktesting "k8s.io/utils/clock/testing"
 	"k8s.io/utils/ptr"
+	"sigs.k8s.io/yaml"
 )
 
 const (
@@ -287,7 +289,7 @@ func TestEpochByRoleFromPodGangs(t *testing.T) {
 }
 
 func TestSyncEntries(t *testing.T) {
-	scaleOutEpoch := strconv.FormatInt(time.Unix(0, 5000).UnixNano(), 10)
+	epochSeed := time.Unix(0, 5000).UnixNano()
 
 	tests := []struct {
 		name            string
@@ -382,14 +384,208 @@ func TestSyncEntries(t *testing.T) {
 				assert.Equal(t, int32(5), anchor.PodCliques["clq-a"])
 			},
 		},
+		{
+			name: "standalone scale to zero removes member and retains base anchor",
+			pcs: testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "uid").
+				WithStandaloneCliqueReplicas("clq-a", 3).
+				WithPodCliqueSetGenerationHash(ptr.To(testGenHash)).Build(),
+			existingEntries: []grovecorev1alpha1.PodGangEntry{
+				anchorEntry(map[string]int32{"clq-a": 3}, nil),
+			},
+			standalonePCLQs: []grovecorev1alpha1.PodClique{standalonePCLQ("clq-a", 0)},
+			assertResult: func(t *testing.T, entries []grovecorev1alpha1.PodGangEntry) {
+				require.Len(t, entries, 1)
+				assert.Empty(t, entries[0].PodCliques)
+				assert.Equal(t, int32(0), *entries[0].AnchorIndex)
+			},
+		},
+		{
+			name: "standalone wake repopulates empty base anchor with fresh epoch",
+			pcs: testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "uid").
+				WithStandaloneCliqueReplicas("clq-a", 3).
+				WithPodCliqueSetGenerationHash(ptr.To(testGenHash)).Build(),
+			existingEntries: []grovecorev1alpha1.PodGangEntry{
+				anchorEntry(nil, nil), // retained empty base anchor, epoch "100"
+			},
+			standalonePCLQs: []grovecorev1alpha1.PodClique{standalonePCLQ("clq-a", 2)},
+			assertResult: func(t *testing.T, entries []grovecorev1alpha1.PodGangEntry) {
+				anchor := testutils.EntryByRole(entries, grovecorev1alpha1.PodGangEntryRoleAnchor)
+				require.Equal(t, grovecorev1alpha1.PodGangEntryRoleAnchor, anchor.Role)
+				assert.Equal(t, int32(2), anchor.PodCliques["clq-a"])
+				assert.Equal(t, strconv.FormatInt(epochSeed, 10), anchor.Epoch, "woken base anchor must take a fresh epoch")
+				assert.Equal(t, int32(0), *anchor.AnchorIndex, "base anchor keeps AnchorIndex 0")
+			},
+		},
+		{
+			name: "standalone wake does not expand a materialized base anchor",
+			pcs: testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "uid").
+				WithStandaloneCliqueReplicas("router", 1).
+				WithStandaloneCliqueReplicas("decode", 0).
+				WithPodCliqueSetGenerationHash(ptr.To(testGenHash)).Build(),
+			existingEntries: []grovecorev1alpha1.PodGangEntry{
+				anchorEntry(map[string]int32{"router": 1}, nil),
+			},
+			standalonePCLQs: []grovecorev1alpha1.PodClique{
+				standalonePCLQ("router", 1),
+				standalonePCLQ("decode", 2),
+			},
+			assertResult: func(t *testing.T, entries []grovecorev1alpha1.PodGangEntry) {
+				base := anchorEntryByIndex(t, entries, 0)
+				assert.Equal(t, map[string]int32{"router": 1}, base.PodCliques)
+				assert.Equal(t, "100", base.Epoch)
+
+				wakeAnchor := anchorEntryByIndex(t, entries, 1)
+				assert.Equal(t, map[string]int32{"decode": 2}, wakeAnchor.PodCliques)
+				assert.Equal(t, strconv.FormatInt(epochSeed, 10), wakeAnchor.Epoch)
+				assert.Equal(t, []string{"100"}, wakeAnchor.DependsOn)
+			},
+		},
+		{
+			name: "standalone and PCSG wake share an empty base anchor",
+			pcs: testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "uid").
+				WithStandaloneCliqueReplicas("router", 0).
+				WithScalingGroupConfig(testPCSGName, []string{"c"}, 0, 2).
+				WithPodCliqueSetGenerationHash(ptr.To(testGenHash)).Build(),
+			existingEntries: []grovecorev1alpha1.PodGangEntry{
+				anchorEntry(nil, nil),
+				scaleOutEntry(nil),
+			},
+			standalonePCLQs: []grovecorev1alpha1.PodClique{standalonePCLQ("router", 1)},
+			pcsgs:           []grovecorev1alpha1.PodCliqueScalingGroup{pcsg(4)},
+			assertResult: func(t *testing.T, entries []grovecorev1alpha1.PodGangEntry) {
+				base := anchorEntryByIndex(t, entries, 0)
+				assert.Equal(t, int32(1), base.PodCliques["router"])
+				assert.Equal(t, []int32{0, 1}, base.PCSGReplicaIndices[testPCSGName])
+				assert.Equal(t, strconv.FormatInt(epochSeed, 10), base.Epoch)
+
+				scaleOut := testutils.EntryByRole(entries, grovecorev1alpha1.PodGangEntryRoleScaleOut)
+				assert.Equal(t, []int32{2, 3}, scaleOut.PCSGReplicaIndices[testPCSGName])
+				assert.Equal(t, []string{base.Epoch}, scaleOut.DependsOn, "base epoch refresh must rewrite dependencies")
+				assertUniqueEpochs(t, entries)
+			},
+		},
+		{
+			name: "multiple PCSG wakes allocate unique anchor epochs",
+			pcs: testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "uid").
+				WithStandaloneCliqueReplicas("router", 1).
+				WithScalingGroupConfig("sg-a", []string{"a"}, 0, 1).
+				WithScalingGroupConfig("sg-b", []string{"b"}, 0, 1).
+				WithPodCliqueSetGenerationHash(ptr.To(testGenHash)).Build(),
+			existingEntries: []grovecorev1alpha1.PodGangEntry{
+				anchorEntry(map[string]int32{"router": 1}, nil),
+				scaleOutEntry(nil),
+			},
+			standalonePCLQs: []grovecorev1alpha1.PodClique{standalonePCLQ("router", 1)},
+			pcsgs: []grovecorev1alpha1.PodCliqueScalingGroup{
+				pcsgNamed("sg-a", 2, 1),
+				pcsgNamed("sg-b", 2, 1),
+			},
+			assertResult: func(t *testing.T, entries []grovecorev1alpha1.PodGangEntry) {
+				assert.Equal(t, "100", anchorEntryByIndex(t, entries, 0).Epoch)
+				assert.Equal(t, strconv.FormatInt(epochSeed, 10), anchorEntryByIndex(t, entries, 1).Epoch)
+				assert.Equal(t, strconv.FormatInt(epochSeed+1, 10), anchorEntryByIndex(t, entries, 2).Epoch)
+				assertUniqueEpochs(t, entries)
+			},
+		},
+		{
+			name: "PCSG scale to zero drains scaleout tail and base anchor",
+			pcs: testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "uid").
+				WithScalingGroupConfig(testPCSGName, []string{"c"}, 4, 2).
+				WithPodCliqueSetGenerationHash(ptr.To(testGenHash)).Build(),
+			existingEntries: []grovecorev1alpha1.PodGangEntry{
+				anchorEntry(nil, map[string][]int32{testPCSGName: {0, 1}}),
+				tailEntry(map[string][]int32{testPCSGName: {2, 3}}),
+				scaleOutEntry(map[string][]int32{testPCSGName: {4, 5}}),
+			},
+			pcsgs: []grovecorev1alpha1.PodCliqueScalingGroup{pcsg(0)},
+			assertResult: func(t *testing.T, entries []grovecorev1alpha1.PodGangEntry) {
+				require.Len(t, entries, 2)
+				anchor := testutils.EntryByRole(entries, grovecorev1alpha1.PodGangEntryRoleAnchor)
+				assert.Empty(t, anchor.PCSGReplicaIndices[testPCSGName])
+				scaleOut := testutils.EntryByRole(entries, grovecorev1alpha1.PodGangEntryRoleScaleOut)
+				assert.Empty(t, scaleOut.PCSGReplicaIndices[testPCSGName])
+			},
+		},
+		{
+			// GREP-0677 PCSG wake: an idle PCSG becoming active places quorum indices in the
+			// base anchor and remaining indices in scale-out.
+			name: "pcsg wake distributes indices across anchor and scaleout",
+			pcs: testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "uid").
+				WithScalingGroupConfig(testPCSGName, []string{"c"}, 4, 2).
+				WithPodCliqueSetGenerationHash(ptr.To(testGenHash)).Build(),
+			existingEntries: []grovecorev1alpha1.PodGangEntry{
+				anchorEntry(nil, nil), // retained empty base anchor
+				scaleOutEntry(nil),
+			},
+			pcsgs: []grovecorev1alpha1.PodCliqueScalingGroup{pcsg(4)},
+			assertResult: func(t *testing.T, entries []grovecorev1alpha1.PodGangEntry) {
+				anchor := testutils.EntryByRole(entries, grovecorev1alpha1.PodGangEntryRoleAnchor)
+				require.Equal(t, grovecorev1alpha1.PodGangEntryRoleAnchor, anchor.Role)
+				assert.Equal(t, []int32{0, 1}, anchor.PCSGReplicaIndices[testPCSGName], "minAvailable indices join the anchor")
+				scaleOut := testutils.EntryByRole(entries, grovecorev1alpha1.PodGangEntryRoleScaleOut)
+				require.Equal(t, grovecorev1alpha1.PodGangEntryRoleScaleOut, scaleOut.Role)
+				assert.Equal(t, []int32{2, 3}, scaleOut.PCSGReplicaIndices[testPCSGName], "above-minAvailable indices go to scale-out")
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			actual, err := reconcileEntries(tt.pcs, tt.existingEntries, tt.standalonePCLQs, tt.pcsgs, 0, scaleOutEpoch)
+			actual, err := reconcileEntries(tt.pcs, tt.existingEntries, tt.standalonePCLQs, tt.pcsgs, 0, epochSeed)
 			require.NoError(t, err)
 			tt.assertResult(t, actual)
 		})
 	}
+}
+
+func TestRewriteDependsOnEpoch(t *testing.T) {
+	entries := []grovecorev1alpha1.PodGangEntry{
+		testutils.NewPodGangEntryBuilder(testGenHash, "101").WithDependsOn("100", "90").Build(),
+		testutils.NewPodGangEntryBuilder("old-hash", "50").WithDependsOn("100").Build(),
+	}
+
+	rewriteDependsOnEpoch(entries, testGenHash, "100", "500")
+
+	assert.Equal(t, []string{"500", "90"}, entries[0].DependsOn)
+	assert.Equal(t, []string{"100"}, entries[1].DependsOn, "old-generation dependency must remain unchanged")
+}
+
+func TestAppendScaleOutReplicaIndicesRequiresCurrentEntry(t *testing.T) {
+	entries := []grovecorev1alpha1.PodGangEntry{scaleOutEntry(nil)}
+	require.Error(t, appendScaleOutReplicaIndices(entries, "other-generation", testPCSGName, []int32{1}))
+}
+
+func TestReconcileEntriesRejectsInvalidEntryLayout(t *testing.T) {
+	pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "uid").
+		WithScalingGroupConfig(testPCSGName, []string{"c"}, 0, 1).
+		WithPodCliqueSetGenerationHash(ptr.To(testGenHash)).
+		Build()
+
+	t.Run("duplicate current ScaleOut entries", func(t *testing.T) {
+		entries := []grovecorev1alpha1.PodGangEntry{anchorEntry(nil, nil), scaleOutEntry(nil), scaleOutEntry(nil)}
+		_, err := reconcileEntries(pcs, entries, nil, nil, 0, 5000)
+		require.Error(t, err)
+	})
+}
+
+func TestReconcileEntriesRejectsInvalidPCSGWake(t *testing.T) {
+	pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "uid").
+		WithScalingGroupConfig(testPCSGName, []string{"c"}, 0, 1).
+		WithPodCliqueSetGenerationHash(ptr.To(testGenHash)).
+		Build()
+	entries := []grovecorev1alpha1.PodGangEntry{anchorEntry(nil, nil), scaleOutEntry(nil)}
+
+	t.Run("nil live minAvailable", func(t *testing.T) {
+		livePCSG := pcsgNamed(testPCSGName, 2, 1)
+		livePCSG.Spec.MinAvailable = nil
+		_, err := reconcileEntries(pcs, entries, nil, []grovecorev1alpha1.PodCliqueScalingGroup{livePCSG}, 0, 5000)
+		require.Error(t, err)
+	})
+
+	t.Run("live minAvailable above replicas", func(t *testing.T) {
+		livePCSG := pcsgNamed(testPCSGName, 1, 2)
+		_, err := reconcileEntries(pcs, entries, nil, []grovecorev1alpha1.PodCliqueScalingGroup{livePCSG}, 0, 5000)
+		require.Error(t, err)
+	})
 }
 
 // podGangWithEpochRole builds a PodGang carrying the grove.io/epoch and grove.io/podgang-role labels.
@@ -426,6 +622,7 @@ func scaleOutEntry(pcsgIndices map[string][]int32) grovecorev1alpha1.PodGangEntr
 		Build()
 }
 
+//nolint:unparam // cliqueName is kept parameterized for readability across scenarios.
 func standalonePCLQ(cliqueName string, replicas int32) grovecorev1alpha1.PodClique {
 	return grovecorev1alpha1.PodClique{
 		ObjectMeta: metav1.ObjectMeta{
@@ -436,10 +633,61 @@ func standalonePCLQ(cliqueName string, replicas int32) grovecorev1alpha1.PodCliq
 }
 
 func pcsg(replicas int32) grovecorev1alpha1.PodCliqueScalingGroup {
+	return pcsgNamed(testPCSGName, replicas, 2)
+}
+
+func pcsgNamed(name string, replicas, minAvailable int32) grovecorev1alpha1.PodCliqueScalingGroup {
 	return grovecorev1alpha1.PodCliqueScalingGroup{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: apicommon.GeneratePodCliqueScalingGroupName(apicommon.ResourceNameReplica{Name: testPCSName, Replica: 0}, testPCSGName),
+			Name: apicommon.GeneratePodCliqueScalingGroupName(apicommon.ResourceNameReplica{Name: testPCSName, Replica: 0}, name),
 		},
-		Spec: grovecorev1alpha1.PodCliqueScalingGroupSpec{Replicas: replicas, MinAvailable: ptr.To(int32(2))},
+		Spec: grovecorev1alpha1.PodCliqueScalingGroupSpec{Replicas: replicas, MinAvailable: ptr.To(minAvailable)},
 	}
+}
+
+func anchorEntryByIndex(t *testing.T, entries []grovecorev1alpha1.PodGangEntry, index int32) grovecorev1alpha1.PodGangEntry {
+	t.Helper()
+	for i := range entries {
+		if entries[i].Role == grovecorev1alpha1.PodGangEntryRoleAnchor &&
+			entries[i].AnchorIndex != nil && *entries[i].AnchorIndex == index {
+			return entries[i]
+		}
+	}
+	require.FailNow(t, "anchor entry not found", "index: %d", index)
+	return grovecorev1alpha1.PodGangEntry{}
+}
+
+func assertUniqueEpochs(t *testing.T, entries []grovecorev1alpha1.PodGangEntry) {
+	t.Helper()
+	epochs := make(map[string]struct{}, len(entries))
+	for i := range entries {
+		assert.NotContains(t, epochs, entries[i].Epoch, "duplicate epoch %s", entries[i].Epoch)
+		epochs[entries[i].Epoch] = struct{}{}
+	}
+}
+
+// TestBuildBootstrapEntriesFromZeroReplicaSample loads the GREP-0677 scale-to-zero sample
+// (router active, decode idle, prefill PCSG idle) and verifies the bootstrap anchor omits the idle
+// standalone PodClique and the idle PodCliqueScalingGroup, so neither materializes a PodGang.
+func TestBuildBootstrapEntriesFromZeroReplicaSample(t *testing.T) {
+	data, err := os.ReadFile("../../../../testdata/zero-replica-gang-membership.yaml")
+	require.NoError(t, err)
+	pcs := &grovecorev1alpha1.PodCliqueSet{}
+	require.NoError(t, yaml.Unmarshal(data, pcs))
+	// Defaulting webhook normally sets MinAvailable; the sample already sets it on every clique/PCSG.
+	pcs.Status.CurrentGenerationHash = ptr.To(testGenHash)
+
+	clk := clocktesting.NewFakeClock(time.Unix(0, 1000))
+	entries := buildBootstrapEntries(pcs, clk, nil)
+
+	anchor := testutils.EntryByRole(entries, grovecorev1alpha1.PodGangEntryRoleAnchor)
+	require.Equal(t, grovecorev1alpha1.PodGangEntryRoleAnchor, anchor.Role)
+	// Active standalone router is present; idle decode is omitted.
+	assert.Contains(t, anchor.PodCliques, "router")
+	assert.NotContains(t, anchor.PodCliques, "decode", "idle standalone PodClique must be omitted")
+	// Idle prefill PCSG contributes no anchor indices.
+	assert.NotContains(t, anchor.PCSGReplicaIndices, "prefill", "idle PCSG must contribute no anchor indices")
+	// No Tail entry (prefill is the only PCSG and it is idle).
+	tail := testutils.EntryByRole(entries, grovecorev1alpha1.PodGangEntryRoleTail)
+	assert.NotEqual(t, grovecorev1alpha1.PodGangEntryRoleTail, tail.Role, "idle PCSG must not produce a Tail entry")
 }

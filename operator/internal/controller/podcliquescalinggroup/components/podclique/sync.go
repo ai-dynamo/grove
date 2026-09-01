@@ -27,6 +27,7 @@ import (
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
+	ctrlutils "github.com/ai-dynamo/grove/operator/internal/controller/utils"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/resourceclaim"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
@@ -34,6 +35,7 @@ import (
 
 	"github.com/go-logr/logr"
 	"github.com/samber/lo"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -172,12 +174,82 @@ func (r _resource) triggerDeletionOfExcessPCSGReplicas(ctx context.Context, logg
 		logger.Info("Found more PodCliques than expected, triggering deletion of excess PodCliques", "expected", int(ss.pcsg.Spec.Replicas), "existing", existingPCSGReplicas, "diff", diff)
 		reason := "Delete excess PodCliqueScalingGroup replicas"
 		replicaIndicesToDelete := computePCSGReplicasToDelete(existingPCSGReplicas, int(ss.pcsg.Spec.Replicas))
+		if err := r.ensurePCSGScaleInReady(ctx, ss, replicaIndicesToDelete); err != nil {
+			return err
+		}
 		deletionTasks := r.createDeleteTasks(logger, ss.pcs, pcsgObjectKey.Name, replicaIndicesToDelete, reason)
 		if err := r.triggerDeletionOfPodCliques(ctx, logger, pcsgObjectKey, deletionTasks); err != nil {
 			return err
 		}
 
 		return ss.refreshExistingPCLQs(ss.pcsg)
+	}
+	return nil
+}
+
+// ensurePCSGScaleInReady prevents member PodCliques from being deleted until their replica indices
+// have left the PodGangMap and all Grove-owned PodGangs have dropped their PodGroups.
+func (r _resource) ensurePCSGScaleInReady(ctx context.Context, ss *syncSnapshot, replicaIndices []string) error {
+	requeue := func(message string) error {
+		return groveerr.New(groveerr.ErrCodeRequeueAfter, component.OperationSync, message)
+	}
+	if !ctrlutils.IsManagedByGrove(ss.pgm.Labels) || !metav1.IsControlledBy(ss.pgm, ss.pcs) {
+		return requeue(fmt.Sprintf("PodGangMap %s has not converged under PodCliqueSet ownership", ss.pgm.Name))
+	}
+
+	rnr := apicommon.ResourceNameReplica{Name: ss.pcs.Name, Replica: ss.pcsReplicaIndex}
+	pcsgConfigName, err := apicommon.ExtractScalingGroupNameFromPCSGFQN(ss.pcsg.Name, rnr)
+	if err != nil {
+		return groveerr.WrapError(err, errCodeParsePodCliqueScalingGroupReplicaIndex, component.OperationSync,
+			fmt.Sprintf("failed to resolve PodCliqueScalingGroup config name for %s", ss.pcsg.Name))
+	}
+	targetIndexSet := componentutils.NewSet(replicaIndices)
+	targetIndices := make([]int32, 0, len(targetIndexSet))
+	for index := range targetIndexSet {
+		replicaIndex, err := strconv.Atoi(index)
+		if err != nil {
+			return groveerr.WrapError(err, errCodeParsePodCliqueScalingGroupReplicaIndex, component.OperationSync,
+				fmt.Sprintf("invalid PodCliqueScalingGroup replica index %q", index))
+		}
+		targetIndices = append(targetIndices, int32(replicaIndex))
+		entry, err := componentutils.FindPodGangEntryForPCSGReplica(ss.pgm.Spec.Entries, "", pcsgConfigName, int32(replicaIndex))
+		if err != nil {
+			return requeue(fmt.Sprintf("PodGangMap %s has invalid membership for PodCliqueScalingGroup %s: %v", ss.pgm.Name, ss.pcsg.Name, err))
+		}
+		if entry != nil {
+			return requeue(fmt.Sprintf("PodGangMap %s still references PodCliqueScalingGroup %s replica index %d", ss.pgm.Name, ss.pcsg.Name, replicaIndex))
+		}
+	}
+
+	targetPCLQNames := componentutils.NewSet([]string{})
+	for _, replicaIndex := range targetIndices {
+		for _, cliqueName := range ss.pcsg.Spec.CliqueNames {
+			targetPCLQNames[apicommon.GeneratePodCliqueName(apicommon.ResourceNameReplica{
+				Name: ss.pcsg.Name, Replica: int(replicaIndex),
+			}, cliqueName)] = struct{}{}
+		}
+	}
+	for i := range ss.existingPCLQs {
+		if targetIndexSet.Has(ss.existingPCLQs[i].Labels[apicommon.LabelPodCliqueScalingGroupReplicaIndex]) {
+			targetPCLQNames[ss.existingPCLQs[i].Name] = struct{}{}
+		}
+	}
+
+	podGangs, err := componentutils.GetExistingPodGangs(ctx, r.client, ss.pcs.ObjectMeta, ss.pcs.Namespace)
+	if err != nil {
+		return groveerr.WrapError(err, errCodeListPodGangs, component.OperationSync,
+			fmt.Sprintf("failed to list PodGangs for PodCliqueSet %s", client.ObjectKeyFromObject(ss.pcs)))
+	}
+	for i := range podGangs {
+		podGang := &podGangs[i]
+		if !ctrlutils.IsManagedPodGang(podGang) || !metav1.IsControlledBy(podGang, ss.pcs) {
+			continue
+		}
+		for _, podGroup := range podGang.Spec.PodGroups {
+			if targetPCLQNames.Has(podGroup.Name) {
+				return requeue(fmt.Sprintf("PodGang %s still references PodClique %s", podGang.Name, podGroup.Name))
+			}
+		}
 	}
 	return nil
 }

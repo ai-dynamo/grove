@@ -366,8 +366,21 @@ func TestPodCliqueScalingGroupConfigValidation(t *testing.T) {
 			cliqueTemplates: []string{"prefill"},
 			errorMatchers: []testutils.ErrorMatcher{
 				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.podCliqueScalingGroups[0].replicas"},
-				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.podCliqueScalingGroups[0].minAvailable"},
 			},
+		},
+		{
+			// GREP-0677: replicas 0 is a valid intentional idle state at the template level.
+			description: "Valid idle PCSG (replicas 0 with positive minAvailable)",
+			pcsName:     "inference",
+			scalingGroups: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+				{
+					Name:         "workers",
+					CliqueNames:  []string{"prefill"},
+					Replicas:     ptr.To(int32(0)),
+					MinAvailable: ptr.To(int32(2)),
+				},
+			},
+			cliqueTemplates: []string{"prefill"},
 		},
 		{
 			description: "Invalid MinAvailable (zero value)",
@@ -1931,5 +1944,72 @@ func createTestClusterTopology() *grovecorev1alpha1.ClusterTopologyBinding {
 				{Domain: grovecorev1alpha1.TopologyDomainHost, Key: "kubernetes.io/hostname"},
 			},
 		},
+	}
+}
+
+// TestStandaloneCliqueZeroReplicaValidation verifies GREP-0677 at the PodCliqueSet template level for
+// standalone PodCliques: replicas 0 with a positive minAvailable is valid (intentional idle), a
+// positive below-quorum replica count is rejected, and a negative replica count is rejected.
+func TestStandaloneCliqueZeroReplicaValidation(t *testing.T) {
+	tests := []struct {
+		name          string
+		replicas      int32
+		minAvailable  int32
+		errorMatchers []testutils.ErrorMatcher
+	}{
+		{
+			name:         "idle: replicas 0 with positive minAvailable is valid",
+			replicas:     0,
+			minAvailable: 2,
+		},
+		{
+			name:         "positive below-quorum replicas is rejected",
+			replicas:     1,
+			minAvailable: 2,
+			errorMatchers: []testutils.ErrorMatcher{
+				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.cliques[0].spec.minAvailable"},
+			},
+		},
+		{
+			name:         "negative replicas is rejected",
+			replicas:     -1,
+			minAvailable: 1,
+			errorMatchers: []testutils.ErrorMatcher{
+				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.cliques[0].spec.replicas"},
+			},
+		},
+		{
+			name:         "replicas at minAvailable is valid",
+			replicas:     2,
+			minAvailable: 2,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			clique := testutils.NewPodCliqueTemplateSpecBuilder("worker").
+				WithReplicas(tt.replicas).
+				WithRoleName("worker-role").
+				WithMinAvailable(tt.minAvailable).
+				Build()
+			pcs := testutils.NewPodCliqueSetBuilder("inference", "default", uuid.NewUUID()).
+				WithReplicas(1).
+				WithTerminationDelay(4 * time.Hour).
+				WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder)).
+				WithPodCliqueTemplateSpec(clique).
+				Build()
+
+			validator := newPCSValidator(pcs, admissionv1.Create, defaultTASConfig(), groveconfigv1alpha1.SchedulerConfiguration{
+				Profiles:           []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube}},
+				DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube),
+			}, nil, testutils.NewDefaultFakeRegistry())
+			_, errs := validator.validate()
+
+			if tt.errorMatchers != nil {
+				testutils.AssertErrorMatches(t, errs, tt.errorMatchers)
+			} else {
+				require.NoError(t, errs.ToAggregate())
+			}
+		})
 	}
 }

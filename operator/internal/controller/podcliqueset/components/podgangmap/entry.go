@@ -17,6 +17,7 @@ package podgangmap
 import (
 	"cmp"
 	"fmt"
+	"math"
 	"slices"
 	"strconv"
 
@@ -60,20 +61,67 @@ func sortEntriesByEpoch(entries []grovecorev1alpha1.PodGangEntry) error {
 	return nil
 }
 
-// isPodGangEntryEmpty reports whether an entry carries no standalone PodClique pods and no
-// PodCliqueScalingGroup replica indices.
-func isPodGangEntryEmpty(entry grovecorev1alpha1.PodGangEntry) bool {
-	for _, count := range entry.PodCliques {
-		if count > 0 {
-			return false
+// findAnchorEntryByIndex returns the current-generation anchor entry with the given AnchorIndex, or
+// nil when absent.
+func findAnchorEntryByIndex(entries []grovecorev1alpha1.PodGangEntry, currentHash string, anchorIndex int32) *grovecorev1alpha1.PodGangEntry {
+	for i := range entries {
+		if entries[i].Role == grovecorev1alpha1.PodGangEntryRoleAnchor &&
+			entries[i].PodCliqueSetGenerationHash == currentHash &&
+			entries[i].AnchorIndex != nil && *entries[i].AnchorIndex == anchorIndex {
+			return &entries[i]
 		}
 	}
-	for _, indices := range entry.PCSGReplicaIndices {
-		if len(indices) > 0 {
-			return false
+	return nil
+}
+
+// nextAnchorIndex returns the smallest non-negative AnchorIndex not already used by a
+// current-generation anchor entry. Bootstrap anchors take index 0; a wake that cannot reuse an
+// existing anchor takes the next free index.
+func nextAnchorIndex(entries []grovecorev1alpha1.PodGangEntry, currentHash string) int32 {
+	used := make(map[int32]struct{})
+	for i := range entries {
+		if entries[i].Role == grovecorev1alpha1.PodGangEntryRoleAnchor &&
+			entries[i].PodCliqueSetGenerationHash == currentHash &&
+			entries[i].AnchorIndex != nil {
+			used[*entries[i].AnchorIndex] = struct{}{}
 		}
 	}
-	return true
+	var idx int32
+	for {
+		if _, taken := used[idx]; !taken {
+			return idx
+		}
+		idx++
+	}
+}
+
+// epochAllocator issues fresh, strictly increasing epoch strings for one PodGangMap reconcile.
+type epochAllocator struct {
+	next int64
+}
+
+// newEpochAllocator starts after both unixNano and every existing epoch.
+func newEpochAllocator(entries []grovecorev1alpha1.PodGangEntry, unixNano int64) (*epochAllocator, error) {
+	next := unixNano
+	for i := range entries {
+		existing, err := strconv.ParseInt(entries[i].Epoch, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("PodGangMap entry has invalid epoch %q: %w", entries[i].Epoch, err)
+		}
+		if existing >= next {
+			if existing == math.MaxInt64 {
+				return nil, fmt.Errorf("PodGangMap entry epoch %q cannot be incremented", entries[i].Epoch)
+			}
+			next = existing + 1
+		}
+	}
+	return &epochAllocator{next: next}, nil
+}
+
+func (a *epochAllocator) allocate() string {
+	epoch := strconv.FormatInt(a.next, 10)
+	a.next++
+	return epoch
 }
 
 // advanceEntriesGenerationHash sets every entry's PodCliqueSetGenerationHash to

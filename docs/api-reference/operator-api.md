@@ -357,6 +357,8 @@ _Appears in:_
 
 
 PodCliqueScalingGroupSpec is the specification of the PodCliqueScalingGroup.
+GREP-0677: replicas must be 0 (intentional idle state) or at least minAvailable; positive
+below-quorum values are rejected. This runs on create, update, and the scale subresource.
 
 
 
@@ -568,6 +570,8 @@ _Appears in:_
 
 
 PodCliqueSpec defines the specification of a PodClique.
+GREP-0677: replicas must be 0 (intentional idle state) or at least minAvailable; positive
+below-quorum values are rejected. This runs on create, update, and the scale subresource.
 
 
 
@@ -579,7 +583,7 @@ _Appears in:_
 | --- | --- | --- | --- |
 | `roleName` _string_ | RoleName is the name of the role that this PodClique will assume. |  |  |
 | `podSpec` _[PodSpec](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#podspec-v1-core)_ | Spec is the spec of the pods in the clique. |  |  |
-| `replicas` _integer_ | Replicas is the number of replicas of the pods in the clique. It cannot be less than 1. |  |  |
+| `replicas` _integer_ | Replicas is the number of replicas of the pods in the clique. GREP-0677: it is either 0<br />(an intentional idle state) or at least MinAvailable. When omitted it defaults to 1; an<br />explicit 0 is preserved. | 1 | Minimum: 0 <br /> |
 | `minAvailable` _integer_ | MinAvailable serves two purposes:<br />1. It defines the minimum number of pods that are guaranteed to be gang scheduled.<br />2. It defines the minimum requirement of available pods in a PodClique. Violation of this threshold will result<br />in termination of the PodGang that it belongs to. If MinAvailable is not set, then it will default to the template<br />Replicas. |  |  |
 | `startsAfter` _string array_ | StartsAfter provides you a way to explicitly define the startup dependencies amongst cliques.<br />If CliqueStartupType in PodGang has been set to 'CliqueStartupTypeExplicit', then to create an ordered start<br />amongst PodClique's StartsAfter can be used. A forest of DAG's can be defined to model any start order dependencies.<br />If there are more than one PodClique's defined and StartsAfter is not set for any of them, then their startup order<br />is random at best and must not be relied upon.<br />Validations:<br />1. If a StartsAfter has been defined and one or more cycles are detected in DAG's then it will be flagged as validation error.<br />2. If StartsAfter is defined and does not identify any PodClique then it will be flagged as a validation error. |  |  |
 | `autoScalingConfig` _[AutoScalingConfig](#autoscalingconfig)_ | ScaleConfig is the horizontal pod autoscaler configuration for a PodClique. |  |  |

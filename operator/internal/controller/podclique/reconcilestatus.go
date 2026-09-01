@@ -199,6 +199,11 @@ func mutateSelector(pcsName string, pclq *grovecorev1alpha1.PodClique) error {
 // event gives operators a discrete, log-visible signal that a previously-running workload is
 // fully down (and that gang termination is now armed and will fire after TerminationDelay).
 func (r *Reconciler) emitAllScheduledReplicasLostIfNeeded(pclq *grovecorev1alpha1.PodClique, originalScheduled int32) {
+	// GREP-0677: a scale-to-zero transition is intentional, not a loss. Do not emit the warning
+	// (and do not imply gang termination is armed) when the PodClique is idle.
+	if pclq.Spec.Replicas == 0 {
+		return
+	}
 	if originalScheduled > 0 && pclq.Status.ScheduledReplicas == 0 {
 		r.eventRecorder.Eventf(pclq, corev1.EventTypeWarning, internalconstants.ReasonAllScheduledReplicasLost,
 			"All scheduled pods lost (was %d). Gang termination will fire after TerminationDelay if the PodClique stays below MinAvailable; investigate node availability or capacity.",
@@ -209,65 +214,79 @@ func (r *Reconciler) emitAllScheduledReplicasLostIfNeeded(pclq *grovecorev1alpha
 // mutateMinAvailableBreachedCondition updates the MinAvailableBreached condition based on pod availability
 func mutateMinAvailableBreachedCondition(pclq *grovecorev1alpha1.PodClique, numNotReadyPodsWithContainersInError, numPodsStartedButNotReady int) {
 	newCondition := computeMinAvailableBreachedCondition(pclq, numNotReadyPodsWithContainersInError, numPodsStartedButNotReady)
-	if k8sutils.HasConditionChanged(pclq.Status.Conditions, newCondition) {
-		meta.SetStatusCondition(&pclq.Status.Conditions, newCondition)
-	}
+	meta.SetStatusCondition(&pclq.Status.Conditions, newCondition)
 }
 
 // computeMinAvailableBreachedCondition calculates the MinAvailableBreached condition status based on pod availability
 func computeMinAvailableBreachedCondition(pclq *grovecorev1alpha1.PodClique, numPodsHavingAtleastOneContainerWithNonZeroExitCode, numPodsStartedButNotReady int) metav1.Condition {
-	if componentutils.IsPCLQAutoUpdateInProgress(pclq) {
+	if pclq.Spec.Replicas == 0 {
 		return metav1.Condition{
-			Type:    constants.ConditionTypeMinAvailableBreached,
-			Status:  metav1.ConditionUnknown,
-			Reason:  constants.ConditionReasonUpdateInProgress,
-			Message: "Update is in progress",
+			Type:               constants.ConditionTypeMinAvailableBreached,
+			Status:             metav1.ConditionFalse,
+			Reason:             constants.ConditionReasonIdle,
+			Message:            "PodClique is idle (spec.replicas == 0); not a required gang member",
+			ObservedGeneration: pclq.Generation,
+			LastTransitionTime: metav1.Now(),
 		}
 	}
-	// dereferencing is considered safe as MinAvailable will always be set by the defaulting webhook. If this changes in the future,
-	// make sure that you check for nil explicitly.
+	if componentutils.IsPCLQAutoUpdateInProgress(pclq) {
+		return metav1.Condition{
+			Type:               constants.ConditionTypeMinAvailableBreached,
+			Status:             metav1.ConditionUnknown,
+			Reason:             constants.ConditionReasonUpdateInProgress,
+			Message:            "Update is in progress",
+			ObservedGeneration: pclq.Generation,
+		}
+	}
+	// MinAvailable is guaranteed by API defaulting.
 	minAvailable := int(*pclq.Spec.MinAvailable)
 	scheduledReplicas := int(pclq.Status.ScheduledReplicas)
 	now := metav1.Now()
+	armed := componentutils.IsMinAvailableBreachArmed(pclq.Status.Conditions, pclq.Generation)
+	if pclq.Status.ReadyReplicas >= *pclq.Spec.MinAvailable {
+		return metav1.Condition{
+			Type:               constants.ConditionTypeMinAvailableBreached,
+			Status:             metav1.ConditionFalse,
+			Reason:             constants.ConditionReasonSufficientReadyPods,
+			Message:            fmt.Sprintf("Sufficient ready pods found. expected at least: %d, found: %d", minAvailable, pclq.Status.ReadyReplicas),
+			ObservedGeneration: pclq.Generation,
+			LastTransitionTime: now,
+		}
+	}
 
-	// scheduledReplicas < MinAvailable always breaches. TerminationDelay (default 4h) is
-	// the natural grace window: during a normal startup the breach flickers True briefly
-	// and resolves before TerminationDelay; a workload that stays below MinAvailable past
-	// TerminationDelay is genuinely stuck and gang-terminating gives the scheduler a fresh
-	// PodGang to retry against the current cluster state. This covers both the partial-
-	// regression case (0 < scheduled < MinAvailable) and the full-regression case
-	// (scheduled == 0 after the workload was once healthy).
+	var condition metav1.Condition
 	if scheduledReplicas < minAvailable {
-		return metav1.Condition{
-			Type:               constants.ConditionTypeMinAvailableBreached,
-			Status:             metav1.ConditionTrue,
-			Reason:             constants.ConditionReasonScheduledReplicasBelowMinAvailable,
-			Message:            fmt.Sprintf("Scheduled replicas (%d) below MinAvailable (%d)", scheduledReplicas, minAvailable),
-			LastTransitionTime: now,
+		condition = metav1.Condition{
+			Type:    constants.ConditionTypeMinAvailableBreached,
+			Status:  metav1.ConditionTrue,
+			Reason:  constants.ConditionReasonScheduledReplicasBelowMinAvailable,
+			Message: fmt.Sprintf("Scheduled replicas (%d) below MinAvailable (%d)", scheduledReplicas, minAvailable),
+		}
+	} else {
+		readyOrStartingPods := scheduledReplicas - numPodsHavingAtleastOneContainerWithNonZeroExitCode - numPodsStartedButNotReady
+		if readyOrStartingPods < minAvailable {
+			condition = metav1.Condition{
+				Type:    constants.ConditionTypeMinAvailableBreached,
+				Status:  metav1.ConditionTrue,
+				Reason:  constants.ConditionReasonInsufficientReadyPods,
+				Message: fmt.Sprintf("Insufficient ready or starting pods. expected at least: %d, found: %d", minAvailable, readyOrStartingPods),
+			}
+		} else {
+			condition = metav1.Condition{
+				Type:    constants.ConditionTypeMinAvailableBreached,
+				Status:  metav1.ConditionFalse,
+				Reason:  constants.ConditionReasonSufficientReadyPods,
+				Message: fmt.Sprintf("Sufficient ready or starting pods found. expected at least: %d, found: %d", minAvailable, readyOrStartingPods),
+			}
 		}
 	}
-
-	readyOrStartingPods := scheduledReplicas - numPodsHavingAtleastOneContainerWithNonZeroExitCode - numPodsStartedButNotReady
-	// pclq.Status.ReadyReplicas do not account for Pods which are not yet ready and are in the process of starting/initializing.
-	// This allows sufficient time specially for pods that have long-running init containers or slow-to-start main containers.
-	// Therefore, we take Pods that are NotReady and at least one of their containers have exited with a non-zero exit code. Kubelet
-	// has attempted to start the containers within the Pod at least once and failed. These pods count towards unavailability.
-	if readyOrStartingPods < minAvailable {
-		return metav1.Condition{
-			Type:               constants.ConditionTypeMinAvailableBreached,
-			Status:             metav1.ConditionTrue,
-			Reason:             constants.ConditionReasonInsufficientReadyPods,
-			Message:            fmt.Sprintf("Insufficient ready or starting pods. expected at least: %d, found: %d", minAvailable, readyOrStartingPods),
-			LastTransitionTime: now,
-		}
+	if !armed {
+		condition.Reason = constants.ConditionReasonInitialScheduling
+		condition.Message = fmt.Sprintf("Waiting for at least %d ready replicas before enabling gang termination", minAvailable)
 	}
-	return metav1.Condition{
-		Type:               constants.ConditionTypeMinAvailableBreached,
-		Status:             metav1.ConditionFalse,
-		Reason:             constants.ConditionReasonSufficientReadyPods,
-		Message:            fmt.Sprintf("Either sufficient ready or starting pods found. expected at least: %d, found: %d", minAvailable, readyOrStartingPods),
-		LastTransitionTime: now,
-	}
+	condition.ObservedGeneration = pclq.Generation
+	condition.LastTransitionTime = now
+	return condition
 }
 
 // mutatePodCliqueScheduledCondition updates the PodCliqueScheduled condition based on scheduled pod counts
@@ -281,12 +300,23 @@ func mutatePodCliqueScheduledCondition(pclq *grovecorev1alpha1.PodClique) {
 // computePodCliqueScheduledCondition calculates the PodCliqueScheduled condition based on minimum availability requirements
 func computePodCliqueScheduledCondition(pclq *grovecorev1alpha1.PodClique) metav1.Condition {
 	now := metav1.Now()
+	if pclq.Spec.Replicas == 0 {
+		return metav1.Condition{
+			Type:               constants.ConditionTypePodCliqueScheduled,
+			Status:             metav1.ConditionTrue,
+			Reason:             constants.ConditionReasonSufficientScheduledPods,
+			Message:            "PodClique is intentionally idle with replicas 0",
+			ObservedGeneration: pclq.Generation,
+			LastTransitionTime: now,
+		}
+	}
 	if pclq.Status.ScheduledReplicas < *pclq.Spec.MinAvailable {
 		return metav1.Condition{
 			Type:               constants.ConditionTypePodCliqueScheduled,
 			Status:             metav1.ConditionFalse,
 			Reason:             constants.ConditionReasonInsufficientScheduledPods,
 			Message:            fmt.Sprintf("Insufficient scheduled pods. expected at least: %d, found: %d", *pclq.Spec.MinAvailable, pclq.Status.ScheduledReplicas),
+			ObservedGeneration: pclq.Generation,
 			LastTransitionTime: now,
 		}
 	}
@@ -295,6 +325,7 @@ func computePodCliqueScheduledCondition(pclq *grovecorev1alpha1.PodClique) metav
 		Status:             metav1.ConditionTrue,
 		Reason:             constants.ConditionReasonSufficientScheduledPods,
 		Message:            fmt.Sprintf("Sufficient scheduled pods found. expected at least: %d, found: %d", *pclq.Spec.MinAvailable, pclq.Status.ScheduledReplicas),
+		ObservedGeneration: pclq.Generation,
 		LastTransitionTime: now,
 	}
 }

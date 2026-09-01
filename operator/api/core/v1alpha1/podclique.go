@@ -57,12 +57,19 @@ type PodCliqueList struct {
 }
 
 // PodCliqueSpec defines the specification of a PodClique.
+// GREP-0677: replicas must be 0 (intentional idle state) or at least minAvailable; positive
+// below-quorum values are rejected. This runs on create, update, and the scale subresource.
+// +kubebuilder:validation:XValidation:rule="self.replicas == 0 || !has(self.minAvailable) || self.replicas >= self.minAvailable",message="spec.replicas must be 0 (idle) or greater than or equal to spec.minAvailable"
 type PodCliqueSpec struct {
 	// RoleName is the name of the role that this PodClique will assume.
 	RoleName string `json:"roleName"`
 	// Spec is the spec of the pods in the clique.
 	PodSpec corev1.PodSpec `json:"podSpec"`
-	// Replicas is the number of replicas of the pods in the clique. It cannot be less than 1.
+	// Replicas is the number of replicas of the pods in the clique. GREP-0677: it is either 0
+	// (an intentional idle state) or at least MinAvailable. When omitted it defaults to 1; an
+	// explicit 0 is preserved.
+	// +kubebuilder:default=1
+	// +kubebuilder:validation:Minimum=0
 	Replicas int32 `json:"replicas"`
 	// MinAvailable serves two purposes:
 	// 1. It defines the minimum number of pods that are guaranteed to be gang scheduled.

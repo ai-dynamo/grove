@@ -63,17 +63,18 @@ func defaultHeadlessServiceConfig(headlessServiceConfig *grovecorev1alpha1.Headl
 	return headlessServiceConfig
 }
 
-// defaultPodCliqueTemplateSpecs applies defaults to each PodClique template including replicas, minAvailable, and autoscaling configuration.
+// defaultPodCliqueTemplateSpecs applies defaults to each PodClique template including minAvailable and
+// autoscaling configuration. GREP-0677: Replicas is no longer rewritten from 0 to 1 here — an omitted
+// value is defaulted to 1 by the schema default, while an explicit 0 is preserved as the intentional
+// idle state. MinAvailable defaults to max(1, replicas) so an idle template (replicas: 0) still gets a
+// positive quorum.
 func defaultPodCliqueTemplateSpecs(cliqueSpecs []*grovecorev1alpha1.PodCliqueTemplateSpec) []*grovecorev1alpha1.PodCliqueTemplateSpec {
 	defaultedCliqueSpecs := make([]*grovecorev1alpha1.PodCliqueTemplateSpec, 0, len(cliqueSpecs))
 	for _, cliqueSpec := range cliqueSpecs {
 		defaultedCliqueSpec := cliqueSpec.DeepCopy()
 		defaultedCliqueSpec.Spec.PodSpec = *defaultPodSpec(&cliqueSpec.Spec.PodSpec)
-		if defaultedCliqueSpec.Spec.Replicas == 0 {
-			defaultedCliqueSpec.Spec.Replicas = 1
-		}
 		if cliqueSpec.Spec.MinAvailable == nil {
-			defaultedCliqueSpec.Spec.MinAvailable = ptr.To(cliqueSpec.Spec.Replicas)
+			defaultedCliqueSpec.Spec.MinAvailable = ptr.To(max(int32(1), cliqueSpec.Spec.Replicas))
 		}
 		if cliqueSpec.Spec.ScaleConfig != nil {
 			if cliqueSpec.Spec.ScaleConfig.MinReplicas == nil {

@@ -190,7 +190,15 @@ func (r _resource) computeExpectedPodGangs(ctx context.Context, ss *syncState) (
 // (PodCliqueScalingGroup, replica index) it carries.
 func (r _resource) buildPodGangInfosFromEntry(ss *syncState, pcsReplicaIndex int, pgEntry grovecorev1alpha1.PodGangEntry) ([]*podGangInfo, error) {
 	if pgEntry.Role == grovecorev1alpha1.PodGangEntryRoleAnchor {
-		rnr := apicommon.ResourceNameReplica{Name: ss.pcs.Name, Replica: pcsReplicaIndex}
+		if componentutils.IsPodGangEntryEmpty(pgEntry) {
+			return nil, nil
+		}
+	}
+	rnr := apicommon.ResourceNameReplica{Name: ss.pcs.Name, Replica: pcsReplicaIndex}
+	if _, err := componentutils.ActivePodCliqueNamesForEntry(ss.pcs, rnr, &pgEntry); err != nil {
+		return nil, err
+	}
+	if pgEntry.Role == grovecorev1alpha1.PodGangEntryRoleAnchor {
 		pg := &podGangInfo{
 			fqn:                apicommon.GenerateAnchorPodGangName(rnr, pgEntry.Epoch),
 			pcsReplicaIndex:    pcsReplicaIndex,
@@ -792,6 +800,15 @@ func (ss *syncState) initializeAssignedAndUnassignedPodsForPCS() {
 				pgi.refreshAssociatedPCLQPods(pclqName, pod.Name)
 			} else {
 				ss.unassignedPodsByPCLQ[pclqName] = append(ss.unassignedPodsByPCLQ[pclqName], pod)
+			}
+		}
+	}
+	for _, podGang := range ss.expectedPodGangs {
+		for i := range podGang.pclqs {
+			pclq := &podGang.pclqs[i]
+			slices.Sort(pclq.associatedPodNames)
+			if len(pclq.associatedPodNames) > int(pclq.replicas) {
+				pclq.associatedPodNames = pclq.associatedPodNames[:pclq.replicas]
 			}
 		}
 	}

@@ -104,6 +104,11 @@ spec:
             - cliqueNames
             - replicas
             type: object
+            x-kubernetes-validations:
+            - message: spec.replicas must be 0 (idle) or greater than or equal to
+                spec.minAvailable
+              rule: self.replicas == 0 || !has(self.minAvailable) || self.replicas
+                >= self.minAvailable
           status:
             description: Status is the status of the PodCliqueScalingGroup.
             properties:

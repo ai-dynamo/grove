@@ -1,0 +1,56 @@
+apiVersion: grove.io/v1alpha1
+kind: PodCliqueSet
+metadata:
+  name: scale-to-zero-deepseek
+  namespace: default
+spec:
+  replicas: 1
+  template:
+    cliqueStartupType: CliqueStartupTypeAnyOrder
+    terminationDelay: 4h
+    cliques:
+    - name: router
+      spec:
+        roleName: router
+        replicas: 1
+        minAvailable: 1
+        podSpec:
+          containers:
+          - name: router
+            image: registry.k8s.io/pause:3.10
+    - name: pleader
+      spec:
+        roleName: pleader
+        replicas: 1
+        minAvailable: 1
+        podSpec:
+          containers:
+          - name: pleader
+            image: registry.k8s.io/pause:3.10
+    - name: pworker
+      spec:
+        roleName: pworker
+        replicas: 1
+        minAvailable: 1
+        podSpec:
+          containers:
+          - name: pworker
+            image: registry.k8s.io/pause:3.10
+    # decode is an intentionally idle standalone PodClique (GREP-0677): replicas 0
+    # with a positive minAvailable. It contributes no PodGroup and does not breach.
+    - name: decode
+      spec:
+        roleName: decode
+        replicas: 0
+        minAvailable: 1
+        podSpec:
+          containers:
+          - name: decode
+            image: registry.k8s.io/pause:3.10
+    podCliqueScalingGroups:
+    # prefill is an intentionally idle PodCliqueScalingGroup (GREP-0677): replicas 0
+    # with a positive minAvailable. It materializes no scaled PodGang while idle.
+    - name: prefill
+      cliqueNames: [pleader, pworker]
+      replicas: 0
+      minAvailable: 1

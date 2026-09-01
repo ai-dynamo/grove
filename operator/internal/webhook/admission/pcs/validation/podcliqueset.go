@@ -354,10 +354,10 @@ func (v *pcsValidator) validatePodCliqueScalingGroupConfigs(fldPath *field.Path)
 		allErrs = append(allErrs, v.validateScalingGroupPodCliqueNames(scalingGroupConfig.Name, allPodCliqueSetCliqueNames,
 			scalingGroupConfig.CliqueNames, fldPath.Index(i).Child("cliqueNames"), fldPath.Index(i).Child("name"))...)
 
-		// validate Replicas field
+		// validate Replicas field. GREP-0677: 0 is a valid intentional idle state.
 		if scalingGroupConfig.Replicas != nil {
-			if *scalingGroupConfig.Replicas <= 0 {
-				allErrs = append(allErrs, field.Invalid(fldPath.Index(i).Child("replicas"), *scalingGroupConfig.Replicas, "must be greater than 0"))
+			if *scalingGroupConfig.Replicas < 0 {
+				allErrs = append(allErrs, field.Invalid(fldPath.Index(i).Child("replicas"), *scalingGroupConfig.Replicas, "must be greater than or equal to 0"))
 			}
 		}
 
@@ -368,9 +368,11 @@ func (v *pcsValidator) validatePodCliqueScalingGroupConfigs(fldPath *field.Path)
 			}
 		}
 
-		// validate MinAvailable <= Replicas
+		// validate MinAvailable <= Replicas. GREP-0677: an idle PCSG (replicas: 0) keeps its
+		// positive MinAvailable; the quorum applies again when it becomes active. Positive
+		// below-quorum replica counts are rejected.
 		if scalingGroupConfig.Replicas != nil && scalingGroupConfig.MinAvailable != nil {
-			if *scalingGroupConfig.MinAvailable > *scalingGroupConfig.Replicas {
+			if *scalingGroupConfig.Replicas > 0 && *scalingGroupConfig.MinAvailable > *scalingGroupConfig.Replicas {
 				allErrs = append(allErrs, field.Invalid(fldPath.Index(i).Child("minAvailable"), *scalingGroupConfig.MinAvailable, "minAvailable must not be greater than replicas"))
 			}
 		}
@@ -520,8 +522,9 @@ func (v *pcsValidator) validateScalingGroupPodCliqueNames(pcsgName string, allPc
 func (v *pcsValidator) validatePodCliqueSpec(name string, cliqueSpec grovecorev1alpha1.PodCliqueSpec, fldPath *field.Path) ([]string, field.ErrorList) {
 	allErrs := field.ErrorList{}
 
-	if cliqueSpec.Replicas <= 0 {
-		allErrs = append(allErrs, field.Invalid(fldPath.Child("replicas"), cliqueSpec.Replicas, "must be greater than 0"))
+	// GREP-0677: 0 replicas is a valid intentional idle state.
+	if cliqueSpec.Replicas < 0 {
+		allErrs = append(allErrs, field.Invalid(fldPath.Child("replicas"), cliqueSpec.Replicas, "must be greater than or equal to 0"))
 	}
 
 	// Ideally this should never happen, the defaulting webhook will always set the default value for minAvailable.
@@ -532,7 +535,9 @@ func (v *pcsValidator) validatePodCliqueSpec(name string, cliqueSpec grovecorev1
 		if *cliqueSpec.MinAvailable <= 0 {
 			allErrs = append(allErrs, field.Invalid(fldPath.Child("minAvailable"), *cliqueSpec.MinAvailable, "must be greater than 0"))
 		}
-		if *cliqueSpec.MinAvailable > cliqueSpec.Replicas {
+		// GREP-0677: an idle PodClique (replicas: 0) keeps its positive MinAvailable; the quorum
+		// applies again when it becomes active. Positive below-quorum replica counts are rejected.
+		if cliqueSpec.Replicas > 0 && *cliqueSpec.MinAvailable > cliqueSpec.Replicas {
 			allErrs = append(allErrs, field.Invalid(fldPath.Child("minAvailable"), *cliqueSpec.MinAvailable, "minAvailable must not be greater than replicas"))
 		}
 	}

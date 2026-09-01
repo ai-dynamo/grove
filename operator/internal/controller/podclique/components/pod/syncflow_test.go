@@ -22,7 +22,11 @@ import (
 
 	"github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
+	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
+	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/expect"
+	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	"github.com/go-logr/logr"
@@ -32,6 +36,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -500,6 +505,7 @@ func TestSelectExcessPodsToDelete_ExcludesPodsAlreadyBeingDeleted(t *testing.T) 
 		terminatingPods []string
 		// pods for which a delete expectation was recorded but the cache has not caught up yet
 		deleteExpected []string
+		podGangRefs    []string
 		healthyPods    []string
 		replicas       int32
 		expectedNames  []string
@@ -531,6 +537,13 @@ func TestSelectExcessPodsToDelete_ExcludesPodsAlreadyBeingDeleted(t *testing.T) 
 			replicas:       1,
 			expectedNames:  nil,
 		},
+		{
+			name:          "pods retained by the PodGang are not selected",
+			podGangRefs:   []string{"a"},
+			healthyPods:   []string{"a", "b", "c"},
+			replicas:      1,
+			expectedNames: []string{"b", "c"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -559,9 +572,10 @@ func TestSelectExcessPodsToDelete_ExcludesPodsAlreadyBeingDeleted(t *testing.T) 
 			}
 
 			sc := &syncSnapshot{
-				pclq:                     pclq,
-				existingPCLQPods:         pods,
-				pclqExpectationsStoreKey: key,
+				pclq:                            pclq,
+				existingPCLQPods:                pods,
+				pclqExpectationsStoreKey:        key,
+				podNamesUpdatedInPCLQPodGangSet: componentutils.NewSet(tt.podGangRefs),
 			}
 
 			selected := r.selectExcessPodsToDelete(sc, logr.Discard())
@@ -579,4 +593,203 @@ func TestSelectExcessPodsToDelete_ExcludesPodsAlreadyBeingDeleted(t *testing.T) 
 			}
 		})
 	}
+}
+
+func TestEnsureStandaloneScaleInReady(t *testing.T) {
+	const (
+		namespace  = "default"
+		pcsName    = "test-pcs"
+		pclqName   = "test-pcs-0-worker"
+		cliqueName = "worker"
+		podGang    = "test-pcs-0-1000"
+	)
+	pcsUID := uuid.NewUUID()
+	pcs := &grovecorev1alpha1.PodCliqueSet{
+		ObjectMeta: metav1.ObjectMeta{Name: pcsName, Namespace: namespace, UID: pcsUID},
+		Status:     grovecorev1alpha1.PodCliqueSetStatus{CurrentGenerationHash: ptr.To("hash")},
+	}
+	pclq := testutils.NewPodCliqueBuilder(pcsName, pcsUID, cliqueName, namespace, 0).
+		WithReplicas(1).
+		WithLabels(map[string]string{common.LabelPodGang: podGang}).
+		Build()
+	pgm := testutils.NewPodGangMapBuilder(pcsName, namespace, pcsUID, 0).WithEntries(
+		testutils.NewPodGangEntryBuilder("hash", "1000").
+			WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).
+			WithAnchorIndex(0).
+			WithPodCliques(map[string]int32{cliqueName: 1}).
+			Build(),
+	).Build()
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "worker-0", Namespace: namespace}}
+	pg := testutils.NewPodGangBuilder(podGang, namespace).
+		WithManaged(true).
+		WithPodGroups([]groveschedulerv1alpha1.PodGroup{{
+			Name:          pclqName,
+			PodReferences: []groveschedulerv1alpha1.NamespacedName{{Namespace: namespace, Name: pod.Name}},
+		}}).
+		Build()
+	pg.OwnerReferences = []metav1.OwnerReference{{
+		APIVersion: grovecorev1alpha1.SchemeGroupVersion.String(),
+		Kind:       "PodCliqueSet",
+		Name:       pcsName,
+		UID:        pcsUID,
+		Controller: ptr.To(true),
+	}}
+
+	newSnapshot := func() *syncSnapshot {
+		return &syncSnapshot{
+			pcs:                   pcs.DeepCopy(),
+			pclq:                  pclq.DeepCopy(),
+			pgm:                   pgm.DeepCopy(),
+			associatedPodGangName: podGang,
+			associatedPodGang:     pg.DeepCopy(),
+			existingPCLQPods:      []*corev1.Pod{pod.DeepCopy()},
+		}
+	}
+	r := _resource{}
+
+	t.Run("allows converged positive scale-in", func(t *testing.T) {
+		require.NoError(t, r.ensureStandaloneScaleInReady(newSnapshot()))
+	})
+
+	t.Run("waits for PodGangMap membership", func(t *testing.T) {
+		ss := newSnapshot()
+		ss.pgm.Spec.Entries[0].PodCliques[cliqueName] = 2
+		testutils.AssertGroveError(t, &groveerr.GroveError{Code: groveerr.ErrCodeRequeueAfter, Operation: component.OperationSync}, r.ensureStandaloneScaleInReady(ss))
+	})
+
+	t.Run("waits for Grove-owned PodGangMap", func(t *testing.T) {
+		ss := newSnapshot()
+		delete(ss.pgm.Labels, common.LabelManagedByKey)
+		testutils.AssertGroveError(t, &groveerr.GroveError{Code: groveerr.ErrCodeRequeueAfter, Operation: component.OperationSync}, r.ensureStandaloneScaleInReady(ss))
+	})
+
+	t.Run("waits for PodGroup references", func(t *testing.T) {
+		ss := newSnapshot()
+		ss.associatedPodGang.Spec.PodGroups[0].PodReferences = append(
+			ss.associatedPodGang.Spec.PodGroups[0].PodReferences,
+			groveschedulerv1alpha1.NamespacedName{Namespace: namespace, Name: "worker-1"},
+		)
+		testutils.AssertGroveError(t, &groveerr.GroveError{Code: groveerr.ErrCodeRequeueAfter, Operation: component.OperationSync}, r.ensureStandaloneScaleInReady(ss))
+	})
+
+	t.Run("waits for Grove-owned PodGang", func(t *testing.T) {
+		ss := newSnapshot()
+		delete(ss.associatedPodGang.Labels, common.LabelManagedByKey)
+		testutils.AssertGroveError(t, &groveerr.GroveError{Code: groveerr.ErrCodeRequeueAfter, Operation: component.OperationSync}, r.ensureStandaloneScaleInReady(ss))
+	})
+
+	t.Run("waits when retained Pod is terminating", func(t *testing.T) {
+		ss := newSnapshot()
+		ss.existingPCLQPods[0].DeletionTimestamp = ptr.To(metav1.Now())
+		testutils.AssertGroveError(t, &groveerr.GroveError{Code: groveerr.ErrCodeRequeueAfter, Operation: component.OperationSync}, r.ensureStandaloneScaleInReady(ss))
+	})
+
+	t.Run("allows scale-to-zero after PodGroup removal", func(t *testing.T) {
+		ss := newSnapshot()
+		ss.pclq.Spec.Replicas = 0
+		delete(ss.pgm.Spec.Entries[0].PodCliques, cliqueName)
+		ss.associatedPodGang.Spec.PodGroups = nil
+		require.NoError(t, r.ensureStandaloneScaleInReady(ss))
+	})
+
+	t.Run("waits for PodGroup removal at zero", func(t *testing.T) {
+		ss := newSnapshot()
+		ss.pclq.Spec.Replicas = 0
+		delete(ss.pgm.Spec.Entries[0].PodCliques, cliqueName)
+		testutils.AssertGroveError(t, &groveerr.GroveError{Code: groveerr.ErrCodeRequeueAfter, Operation: component.OperationSync}, r.ensureStandaloneScaleInReady(ss))
+	})
+
+	t.Run("allows scale-to-zero after PodGang deletion", func(t *testing.T) {
+		ss := newSnapshot()
+		ss.pclq.Spec.Replicas = 0
+		delete(ss.pgm.Spec.Entries[0].PodCliques, cliqueName)
+		ss.associatedPodGang = nil
+		require.NoError(t, r.ensureStandaloneScaleInReady(ss))
+	})
+
+	t.Run("does not gate PCSG-owned PodCliques", func(t *testing.T) {
+		ss := newSnapshot()
+		ss.pclq.Labels[common.LabelPodCliqueScalingGroup] = "test-pcsg"
+		ss.pgm = nil
+		require.NoError(t, r.ensureStandaloneScaleInReady(ss))
+	})
+}
+
+func TestEnsureStandaloneScaleUpReady(t *testing.T) {
+	const (
+		namespace  = "default"
+		pcsName    = "test-pcs"
+		pclqName   = "test-pcs-0-worker"
+		cliqueName = "worker"
+		podGang    = "test-pcs-0-2000"
+	)
+	pcsUID := uuid.NewUUID()
+	pcs := &grovecorev1alpha1.PodCliqueSet{
+		ObjectMeta: metav1.ObjectMeta{Name: pcsName, Namespace: namespace, UID: pcsUID},
+		Status:     grovecorev1alpha1.PodCliqueSetStatus{CurrentGenerationHash: ptr.To("hash")},
+	}
+	pclq := testutils.NewPodCliqueBuilder(pcsName, pcsUID, cliqueName, namespace, 0).
+		WithReplicas(1).
+		WithLabels(map[string]string{common.LabelPodGang: podGang}).
+		Build()
+	pgm := testutils.NewPodGangMapBuilder(pcsName, namespace, pcsUID, 0).WithEntries(
+		testutils.NewPodGangEntryBuilder("hash", "2000").
+			WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).
+			WithAnchorIndex(1).
+			WithPodCliques(map[string]int32{cliqueName: 1}).
+			Build(),
+	).Build()
+	pg := testutils.NewPodGangBuilder(podGang, namespace).
+		WithManaged(true).
+		WithPodGroups([]groveschedulerv1alpha1.PodGroup{{Name: pclqName}}).
+		Build()
+	pg.OwnerReferences = []metav1.OwnerReference{{
+		APIVersion: grovecorev1alpha1.SchemeGroupVersion.String(),
+		Kind:       "PodCliqueSet",
+		Name:       pcsName,
+		UID:        pcsUID,
+		Controller: ptr.To(true),
+	}}
+
+	newSnapshot := func() *syncSnapshot {
+		return &syncSnapshot{
+			pcs:                   pcs.DeepCopy(),
+			pclq:                  pclq.DeepCopy(),
+			pcsReplicaIndex:       0,
+			pgm:                   pgm.DeepCopy(),
+			associatedPodGangName: podGang,
+			associatedPodGang:     pg.DeepCopy(),
+		}
+	}
+	r := _resource{}
+
+	t.Run("allows creation after placement converges", func(t *testing.T) {
+		require.NoError(t, r.ensureStandaloneScaleUpReady(newSnapshot()))
+	})
+
+	t.Run("waits for PodClique label to leave the idle anchor", func(t *testing.T) {
+		ss := newSnapshot()
+		ss.associatedPodGangName = "test-pcs-0-1000"
+		ss.associatedPodGang = nil
+		testutils.AssertGroveError(t, &groveerr.GroveError{Code: groveerr.ErrCodeRequeueAfter, Operation: component.OperationSync}, r.ensureStandaloneScaleUpReady(ss))
+	})
+
+	t.Run("waits for PodGangMap membership", func(t *testing.T) {
+		ss := newSnapshot()
+		delete(ss.pgm.Spec.Entries[0].PodCliques, cliqueName)
+		testutils.AssertGroveError(t, &groveerr.GroveError{Code: groveerr.ErrCodeRequeueAfter, Operation: component.OperationSync}, r.ensureStandaloneScaleUpReady(ss))
+	})
+
+	t.Run("waits for PodGroup materialization", func(t *testing.T) {
+		ss := newSnapshot()
+		ss.associatedPodGang.Spec.PodGroups = nil
+		testutils.AssertGroveError(t, &groveerr.GroveError{Code: groveerr.ErrCodeRequeueAfter, Operation: component.OperationSync}, r.ensureStandaloneScaleUpReady(ss))
+	})
+
+	t.Run("does not gate PCSG-owned PodCliques", func(t *testing.T) {
+		ss := newSnapshot()
+		ss.pclq.Labels[common.LabelPodCliqueScalingGroup] = "test-pcsg"
+		ss.pgm = nil
+		require.NoError(t, r.ensureStandaloneScaleUpReady(ss))
+	})
 }

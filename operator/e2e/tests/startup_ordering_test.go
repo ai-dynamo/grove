@@ -41,9 +41,11 @@ import (
 	"testing"
 	"time"
 
+	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -269,6 +271,37 @@ func Test_SO4_ExplicitStartupOrderWithMinReplicas(t *testing.T) {
 	})
 
 	Logger.Info("Explicit startup order with min replicas test completed successfully!")
+}
+
+func Test_SO5_ExplicitStartupSkipsIdleDependencies(t *testing.T) {
+	const pcsName = "startup-idle-explicit"
+	ctx := context.Background()
+	tc, cleanup := prepareIdleWorkload(t, ctx, 3, pcsName, 1, func(pcs *grovecorev1alpha1.PodCliqueSet) {
+		startupType := grovecorev1alpha1.CliqueStartupTypeExplicit
+		pcs.Spec.Template.StartupType = &startupType
+		idlePCSGConfig(t, pcs).Replicas = ptr.To(int32(1))
+		idleClique(t, pcs, "prefill").Spec.StartsAfter = []string{"idle", "worker"}
+		idleClique(t, pcs, "decode").Spec.StartsAfter = []string{"prefill"}
+	})
+	defer cleanup()
+
+	if err := tc.WaitForReadyPods(3); err != nil {
+		t.Fatalf("Idle-aware explicit startup did not become ready: %v", err)
+	}
+	workerName := pcsName + "-0-worker"
+	prefillName := pcsName + "-0-workers-0-prefill"
+	decodeName := pcsName + "-0-workers-0-decode"
+	expected := map[string][]string{
+		workerName:  nil,
+		prefillName: {workerName},
+		decodeName:  {prefillName},
+	}
+	for name, dependencies := range expected {
+		pclq := waitForPCLQ(t, ctx, tc, name)
+		if !slices.Equal(pclq.Spec.StartsAfter, dependencies) {
+			t.Fatalf("PodClique %s startsAfter = %v, want %v", name, pclq.Spec.StartsAfter, dependencies)
+		}
+	}
 }
 
 // Helper function to get the Ready condition's LastTransitionTime from a pod
