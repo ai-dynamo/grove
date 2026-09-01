@@ -406,6 +406,16 @@ func addEnvironmentVariables(pod *corev1.Pod, pclq *grovecorev1alpha1.PodClique,
 			},
 		},
 	}
+	if pclq.Labels[apicommon.LabelPodCliqueScalingGroup] != "" {
+		groveEnvVars = append(groveEnvVars, corev1.EnvVar{
+			Name: constants.EnvVarPodCliqueScalingGroupPodIndex,
+			ValueFrom: &corev1.EnvVarSource{
+				FieldRef: &corev1.ObjectFieldSelector{
+					FieldPath: fmt.Sprintf("metadata.labels['%s']", apicommon.LabelPodCliqueScalingGroupPodIndex),
+				},
+			},
+		})
+	}
 	componentutils.PrependEnvVarsToContainers(pod.Spec.Containers, groveEnvVars)
 	componentutils.PrependEnvVarsToContainers(pod.Spec.InitContainers, groveEnvVars)
 }
