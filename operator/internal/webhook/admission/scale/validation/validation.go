@@ -16,13 +16,15 @@ package validation
 
 import (
 	"fmt"
+	"maps"
+	"slices"
+	"strconv"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	"github.com/ai-dynamo/grove/operator/internal/resourceclaim"
 
-	"github.com/samber/lo"
 	apivalidation "k8s.io/apimachinery/pkg/api/validation"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/validation/field"
@@ -59,7 +61,26 @@ func ValidatePodCliqueSetReplicas(pcs *grovecorev1alpha1.PodCliqueSet, pcsgs []g
 	}
 
 	groupedCliques := sets.New[string]()
-	groupedPCSGs := componentutils.GroupPCSGsByPCSReplicaIndex(pcsgs)
+	groupedPCSGs := make(map[int]map[string]grovecorev1alpha1.PodCliqueScalingGroup)
+
+	for _, pcsg := range pcsgs {
+		labelValue, exists := pcsg.Labels[apicommon.LabelPodCliqueSetReplicaIndex]
+		if !exists {
+			continue
+		}
+		replica, err := strconv.Atoi(labelValue)
+		if err != nil {
+			continue
+		}
+		if replica >= int(pcs.Spec.Replicas) {
+			continue
+		}
+		if _, ok := groupedPCSGs[replica]; !ok {
+			groupedPCSGs[replica] = make(map[string]grovecorev1alpha1.PodCliqueScalingGroup)
+		}
+		groupedPCSGs[replica][pcsg.Name] = pcsg
+	}
+	pcsgReplicaIndexes := slices.Sorted(maps.Keys(groupedPCSGs))
 
 	for i, config := range pcs.Spec.Template.PodCliqueScalingGroupConfigs {
 		groupedCliques.Insert(config.CliqueNames...)
@@ -75,15 +96,9 @@ func ValidatePodCliqueSetReplicas(pcs *grovecorev1alpha1.PodCliqueSet, pcsgs []g
 			templatePath,
 		)...)
 
-		for replica := range pcs.Spec.Replicas {
-			pcsNameReplica := apicommon.ResourceNameReplica{Name: pcs.Name, Replica: int(replica)}
-
-			pcsg, ok := lo.Find(
-				groupedPCSGs[fmt.Sprintf("%d", replica)],
-				func(pcsg grovecorev1alpha1.PodCliqueScalingGroup) bool {
-					return pcsg.Name == apicommon.GeneratePodCliqueScalingGroupName(pcsNameReplica, config.Name)
-				},
-			)
+		for _, replica := range pcsgReplicaIndexes {
+			pcsNameReplica := apicommon.ResourceNameReplica{Name: pcs.Name, Replica: replica}
+			pcsg, ok := groupedPCSGs[replica][apicommon.GeneratePodCliqueScalingGroupName(pcsNameReplica, config.Name)]
 			if !ok {
 				continue
 			}
