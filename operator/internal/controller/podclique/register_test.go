@@ -18,7 +18,6 @@ import (
 	"testing"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
-	apiconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	"github.com/ai-dynamo/grove/operator/internal/expect"
@@ -283,26 +282,6 @@ func TestPodCliqueScalingGroupPredicateGenerationStatusChanges(t *testing.T) {
 			assert.Equal(t, tt.want, got)
 		})
 	}
-}
-
-func TestPodCliqueSpecOrIndexOffsetPredicate(t *testing.T) {
-	pred, ok := podCliqueSpecOrIndexOffsetPredicate().(predicate.Funcs)
-	require.True(t, ok)
-
-	oldPCLQ := &grovecorev1alpha1.PodClique{ObjectMeta: metav1.ObjectMeta{
-		Generation: 1,
-		Annotations: map[string]string{
-			apiconstants.AnnotationPodCliqueScalingGroupPodIndexOffset: "1",
-		},
-	}}
-	newPCLQ := oldPCLQ.DeepCopy()
-	newPCLQ.Annotations[apiconstants.AnnotationPodCliqueScalingGroupPodIndexOffset] = "2"
-
-	assert.True(t, pred.Update(event.UpdateEvent{ObjectOld: oldPCLQ, ObjectNew: newPCLQ}))
-
-	unchanged := oldPCLQ.DeepCopy()
-	unchanged.Annotations["example.com/unrelated"] = "value"
-	assert.False(t, pred.Update(event.UpdateEvent{ObjectOld: oldPCLQ, ObjectNew: unchanged}))
 }
 
 // Test_isMarkedForDeletion tests if a deletion timestamp is set on the pod

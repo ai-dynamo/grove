@@ -240,7 +240,16 @@ func (r _resource) runSyncFlow(ctx context.Context, logger logr.Logger, ss *sync
 
 // syncPCSGPodIndexLabels backfills and reconciles the group-wide index label on existing PCSG pods.
 func (r _resource) syncPCSGPodIndexLabels(ctx context.Context, ss *syncSnapshot) error {
-	if ss.pclq.Labels[apicommon.LabelPodCliqueScalingGroup] == "" {
+	firstPCSGPodIndex, err := getPCSGPodIndex(ss.pclq, 0)
+	if err != nil {
+		return groveerr.WrapError(
+			err,
+			errCodeUpdatePCSGPodIndexLabel,
+			component.OperationSync,
+			fmt.Sprintf("error computing PodCliqueScalingGroup pod index for PodClique %v", client.ObjectKeyFromObject(ss.pclq)),
+		)
+	}
+	if firstPCSGPodIndex == nil {
 		return nil
 	}
 
@@ -262,16 +271,7 @@ func (r _resource) syncPCSGPodIndexLabels(ctx context.Context, ss *syncSnapshot)
 				fmt.Sprintf("Pod %v has invalid %s value %q", client.ObjectKeyFromObject(pod), apicommon.LabelPodCliquePodIndex, podIndexValue),
 			)
 		}
-		pcsgPodIndex, err := getPCSGPodIndex(ss.pcs, ss.pclq, ss.pcsReplicaIndex, podIndex)
-		if err != nil {
-			return groveerr.WrapError(
-				err,
-				errCodeUpdatePCSGPodIndexLabel,
-				component.OperationSync,
-				fmt.Sprintf("error computing PodCliqueScalingGroup pod index for Pod %v", client.ObjectKeyFromObject(pod)),
-			)
-		}
-		expectedValue := strconv.Itoa(*pcsgPodIndex)
+		expectedValue := strconv.Itoa(*firstPCSGPodIndex + podIndex)
 		if pod.Labels[apicommon.LabelPodCliqueScalingGroupPodIndex] == expectedValue {
 			continue
 		}

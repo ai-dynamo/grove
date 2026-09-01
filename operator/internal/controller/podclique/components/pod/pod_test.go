@@ -316,52 +316,32 @@ func TestAddEnvironmentVariables(t *testing.T) {
 
 func TestGetPCSGPodIndex(t *testing.T) {
 	t.Run("PCSG member", func(t *testing.T) {
-		pcs := &grovecorev1alpha1.PodCliqueSet{
-			ObjectMeta: metav1.ObjectMeta{Name: "test-pcs"},
-			Spec: grovecorev1alpha1.PodCliqueSetSpec{Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
-				Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-					{Name: "leader", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1}},
-					{Name: "worker", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 2}},
-				},
-				PodCliqueScalingGroupConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{{
-					Name: "engine", CliqueNames: []string{"leader", "worker"},
-				}},
-			}},
-		}
 		pclq := &grovecorev1alpha1.PodClique{ObjectMeta: metav1.ObjectMeta{
-			Name: "test-pcs-0-engine-0-worker",
 			Labels: map[string]string{
-				common.LabelPodCliqueScalingGroup:             "test-pcs-0-engine",
-				common.LabelPodCliqueScalingGroupReplicaIndex: "0",
+				common.LabelPodCliqueScalingGroup: "test-pcs-0-engine",
 			},
+			Annotations: map[string]string{constants.AnnotationPodCliqueScalingGroupPodIndexOffset: "2"},
 		}}
 
-		index, err := getPCSGPodIndex(pcs, pclq, 0, 1)
-
-		require.NoError(t, err)
-		require.NotNil(t, index)
-		assert.Equal(t, 2, *index)
-
-		pclq.Annotations = map[string]string{constants.AnnotationPodCliqueScalingGroupPodIndexOffset: "2"}
-		index, err = getPCSGPodIndex(pcs, pclq, 0, 1)
+		index, err := getPCSGPodIndex(pclq, 1)
 		require.NoError(t, err)
 		require.NotNil(t, index)
 		assert.Equal(t, 3, *index)
 	})
 
 	t.Run("standalone PodClique", func(t *testing.T) {
-		index, err := getPCSGPodIndex(&grovecorev1alpha1.PodCliqueSet{}, &grovecorev1alpha1.PodClique{}, 0, 0)
+		index, err := getPCSGPodIndex(&grovecorev1alpha1.PodClique{}, 0)
 
 		require.NoError(t, err)
 		assert.Nil(t, index)
 	})
 
-	t.Run("PCSG member without config", func(t *testing.T) {
+	t.Run("PCSG member without offset", func(t *testing.T) {
 		pclq := &grovecorev1alpha1.PodClique{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{
 			common.LabelPodCliqueScalingGroup: "test-pcs-0-engine",
 		}}}
 
-		index, err := getPCSGPodIndex(&grovecorev1alpha1.PodCliqueSet{}, pclq, 0, 0)
+		index, err := getPCSGPodIndex(pclq, 0)
 
 		assert.Error(t, err)
 		assert.Nil(t, index)

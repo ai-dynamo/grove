@@ -60,7 +60,10 @@ func (r *Reconciler) RegisterWithManager(mgr ctrl.Manager) error {
 			builder.WithPredicates(
 				predicate.And(
 					managedPodCliquePredicate(),
-					podCliqueSpecOrIndexOffsetPredicate(),
+					predicate.Or(
+						predicate.GenerationChangedPredicate{},
+						predicate.AnnotationChangedPredicate{},
+					),
 				),
 			),
 		).
@@ -86,24 +89,6 @@ func (r *Reconciler) RegisterWithManager(mgr ctrl.Manager) error {
 			builder.WithPredicates(podGangMapPredicate()),
 		).
 		Complete(r)
-}
-
-// podCliqueSpecOrIndexOffsetPredicate reconciles spec changes and internal PCSG offset updates.
-func podCliqueSpecOrIndexOffsetPredicate() predicate.Predicate {
-	return predicate.Funcs{
-		CreateFunc: func(_ event.CreateEvent) bool { return true },
-		DeleteFunc: func(_ event.DeleteEvent) bool { return true },
-		UpdateFunc: func(e event.UpdateEvent) bool {
-			oldPCLQ, oldOK := e.ObjectOld.(*grovecorev1alpha1.PodClique)
-			newPCLQ, newOK := e.ObjectNew.(*grovecorev1alpha1.PodClique)
-			if !oldOK || !newOK {
-				return false
-			}
-			return oldPCLQ.Generation != newPCLQ.Generation ||
-				oldPCLQ.Annotations[constants.AnnotationPodCliqueScalingGroupPodIndexOffset] != newPCLQ.Annotations[constants.AnnotationPodCliqueScalingGroupPodIndexOffset]
-		},
-		GenericFunc: func(_ event.GenericEvent) bool { return false },
-	}
 }
 
 // managedPodCliquePredicate filters PodClique events to only process managed PodCliques owned by expected resources

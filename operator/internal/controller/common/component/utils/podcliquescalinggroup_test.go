@@ -109,46 +109,6 @@ func TestFindScalingGroupConfigForClique(t *testing.T) {
 	}
 }
 
-func TestGetPCSGTemplatePodIndexOffset(t *testing.T) {
-	pcs := &grovecorev1alpha1.PodCliqueSet{
-		ObjectMeta: metav1.ObjectMeta{Name: "test-pcs"},
-		Spec: grovecorev1alpha1.PodCliqueSetSpec{
-			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
-				Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-					{Name: "leader", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1}},
-					{Name: "worker", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 2}},
-					{Name: "sidecar", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1}},
-				},
-			},
-		},
-	}
-	cliqueNames := []string{"leader", "worker", "sidecar"}
-
-	tests := []struct {
-		name          string
-		cliqueName    string
-		expectedIndex int
-		expectError   bool
-	}{
-		{name: "leader", cliqueName: "leader", expectedIndex: 0},
-		{name: "worker", cliqueName: "worker", expectedIndex: 1},
-		{name: "sidecar", cliqueName: "sidecar", expectedIndex: 3},
-		{name: "non-member", cliqueName: "other", expectError: true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			actualIndex, err := GetPCSGTemplatePodIndexOffset(pcs, cliqueNames, tt.cliqueName)
-			if tt.expectError {
-				assert.Error(t, err)
-				return
-			}
-			assert.NoError(t, err)
-			assert.Equal(t, tt.expectedIndex, actualIndex)
-		})
-	}
-}
-
 // TestIsPCSGUpdateInProgress tests the IsPCSGUpdateInProgress function
 func TestIsPCSGUpdateInProgress(t *testing.T) {
 	tests := []struct {

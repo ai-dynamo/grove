@@ -21,6 +21,7 @@ import (
 	"time"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
+	"github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	"github.com/ai-dynamo/grove/operator/internal/expect"
@@ -54,18 +55,6 @@ func TestSyncPCSGPodIndexLabels(t *testing.T) {
 	scheme := runtime.NewScheme()
 	require.NoError(t, corev1.AddToScheme(scheme))
 
-	pcs := &grovecorev1alpha1.PodCliqueSet{
-		ObjectMeta: metav1.ObjectMeta{Name: "test-pcs", Namespace: "default"},
-		Spec: grovecorev1alpha1.PodCliqueSetSpec{Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
-			Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-				{Name: "leader", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1}},
-				{Name: "worker", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 2}},
-			},
-			PodCliqueScalingGroupConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{{
-				Name: "engine", CliqueNames: []string{"leader", "worker"},
-			}},
-		}},
-	}
 	pclq := &grovecorev1alpha1.PodClique{ObjectMeta: metav1.ObjectMeta{
 		Name:      "test-pcs-0-engine-0-worker",
 		Namespace: "default",
@@ -73,6 +62,7 @@ func TestSyncPCSGPodIndexLabels(t *testing.T) {
 			apicommon.LabelPodCliqueScalingGroup:             "test-pcs-0-engine",
 			apicommon.LabelPodCliqueScalingGroupReplicaIndex: "0",
 		},
+		Annotations: map[string]string{constants.AnnotationPodCliqueScalingGroupPodIndexOffset: "1"},
 	}}
 	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
 		Name:      "test-pod",
@@ -85,9 +75,7 @@ func TestSyncPCSGPodIndexLabels(t *testing.T) {
 	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod).Build()
 	r := _resource{client: cl}
 	ss := &syncSnapshot{
-		pcs:              pcs,
 		pclq:             pclq,
-		pcsReplicaIndex:  0,
 		existingPCLQPods: []*corev1.Pod{pod},
 	}
 

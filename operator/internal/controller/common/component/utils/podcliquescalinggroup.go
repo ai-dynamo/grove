@@ -42,24 +42,6 @@ func FindScalingGroupConfigForClique(scalingGroupConfigs []grovecorev1alpha1.Pod
 	return &pcsgConfig
 }
 
-// GetPCSGTemplatePodIndexOffset returns a PodClique's zero-based offset from the PodCliqueSet template.
-// Member PodCliques are flattened in cliqueNames order.
-func GetPCSGTemplatePodIndexOffset(pcs *grovecorev1alpha1.PodCliqueSet, cliqueNames []string, cliqueName string) (int, error) {
-	pcsgPodIndexOffset := 0
-	for _, memberCliqueName := range cliqueNames {
-		if memberCliqueName == cliqueName {
-			return pcsgPodIndexOffset, nil
-		}
-
-		pclqTemplateSpec := FindPodCliqueTemplateSpecByName(pcs, memberCliqueName)
-		if pclqTemplateSpec == nil {
-			return 0, fmt.Errorf("PodClique template %q not found in PodCliqueSet %q", memberCliqueName, pcs.Name)
-		}
-		pcsgPodIndexOffset += int(pclqTemplateSpec.Spec.Replicas)
-	}
-	return 0, fmt.Errorf("PodClique %q is not a member of the PodCliqueScalingGroup", cliqueName)
-}
-
 // GetPCSGsForPCS fetches all PodCliqueScalingGroups for a PodCliqueSet.
 func GetPCSGsForPCS(ctx context.Context, cl client.Client, pcsObjMeta metav1.ObjectMeta) ([]grovecorev1alpha1.PodCliqueScalingGroup, error) {
 	pcsgList, err := doGetPCSGsForPCS(ctx, cl, client.ObjectKey{Namespace: pcsObjMeta.Namespace, Name: pcsObjMeta.Name}, nil)
