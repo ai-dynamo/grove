@@ -42,9 +42,9 @@ func FindScalingGroupConfigForClique(scalingGroupConfigs []grovecorev1alpha1.Pod
 	return &pcsgConfig
 }
 
-// GetPCSGPodIndexOffset returns the first zero-based pod index assigned to a PodClique within one
-// PodCliqueScalingGroup replica. Member PodCliques are flattened in cliqueNames order.
-func GetPCSGPodIndexOffset(pcs *grovecorev1alpha1.PodCliqueSet, cliqueNames []string, cliqueName string) (int, error) {
+// GetPCSGTemplatePodIndexOffset returns a PodClique's zero-based offset from the PodCliqueSet template.
+// Member PodCliques are flattened in cliqueNames order.
+func GetPCSGTemplatePodIndexOffset(pcs *grovecorev1alpha1.PodCliqueSet, cliqueNames []string, cliqueName string) (int, error) {
 	pcsgPodIndexOffset := 0
 	for _, memberCliqueName := range cliqueNames {
 		if memberCliqueName == cliqueName {

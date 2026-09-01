@@ -1209,66 +1209,54 @@ func TestBuildResource_StripsTopologyAnnotation(t *testing.T) {
 	assert.False(t, hasTopologyAnnotation)
 }
 
-func TestBuildResource_PersistsPCSGPodIndexOffset(t *testing.T) {
+func TestSyncPCSGPodIndexOffsetsUsesCurrentReplicaCounts(t *testing.T) {
 	pcs := &grovecorev1alpha1.PodCliqueSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-pcs", Namespace: "default"},
-		Spec: grovecorev1alpha1.PodCliqueSetSpec{
-			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
-				StartupType: ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder),
-				Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-					{Name: "leader", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1}},
-					{Name: "worker", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 2}},
-				},
+		Spec: grovecorev1alpha1.PodCliqueSetSpec{Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
+			Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+				{Name: "leader", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1}},
+				{Name: "worker", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 2}},
 			},
-		},
+		}},
 	}
 	pcsg := &grovecorev1alpha1.PodCliqueScalingGroup{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-pcs-0-engine",
-			Namespace: "default",
-			Labels: map[string]string{
-				apicommon.LabelPodCliqueSetReplicaIndex: "0",
-			},
-		},
+		ObjectMeta: metav1.ObjectMeta{Name: "test-pcs-0-engine", Namespace: "default"},
 		Spec: grovecorev1alpha1.PodCliqueScalingGroupSpec{
-			MinAvailable: ptr.To(int32(1)),
-			CliqueNames:  []string{"leader", "worker"},
+			Replicas:    1,
+			CliqueNames: []string{"leader", "worker"},
 		},
 	}
-	operator := &_resource{scheme: groveclientscheme.Scheme}
-	pgm := testutils.NewPodGangMapBuilder("test-pcs", "default", "uid", 0).WithEntries(
-		testutils.NewPodGangEntryBuilder("hash", "1000").
-			WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).
-			WithPCSGReplicaIndices(map[string][]int32{"engine": {0}}).Build(),
-	).Build()
-	ss := &syncSnapshot{pcs: pcs, pcsg: pcsg, pcsReplicaIndex: 0, pgm: pgm}
+	leader := grovecorev1alpha1.PodClique{ObjectMeta: metav1.ObjectMeta{
+		Name:      "test-pcs-0-engine-0-leader",
+		Namespace: "default",
+		Labels: map[string]string{
+			apicommon.LabelPodCliqueScalingGroup:             "test-pcs-0-engine",
+			apicommon.LabelPodCliqueScalingGroupReplicaIndex: "0",
+		},
+	}, Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 2}}
+	worker := grovecorev1alpha1.PodClique{ObjectMeta: metav1.ObjectMeta{
+		Name:      "test-pcs-0-engine-0-worker",
+		Namespace: "default",
+		Labels: map[string]string{
+			apicommon.LabelPodCliqueScalingGroup:             "test-pcs-0-engine",
+			apicommon.LabelPodCliqueScalingGroupReplicaIndex: "0",
+		},
+		Annotations: map[string]string{
+			apiconstants.AnnotationPodCliqueScalingGroupPodIndexOffset: "1",
+		},
+	}, Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 2}}
 
-	t.Run("records offset on creation", func(t *testing.T) {
-		pclq := &grovecorev1alpha1.PodClique{ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-pcs-0-engine-0-worker",
-			Namespace: "default",
-		}}
+	scheme := runtime.NewScheme()
+	require.NoError(t, grovecorev1alpha1.AddToScheme(scheme))
+	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(&leader, &worker).Build()
+	r := _resource{client: cl}
+	ss := &syncSnapshot{pcs: pcs, pcsg: pcsg, existingPCLQs: []grovecorev1alpha1.PodClique{leader, worker}}
 
-		err := operator.buildResource(logr.Discard(), ss, 0, pclq, false)
+	require.NoError(t, r.syncPCSGPodIndexOffsets(context.Background(), ss))
 
-		require.NoError(t, err)
-		assert.Equal(t, "1", pclq.Labels[apicommon.LabelPodCliqueScalingGroupPodIndexOffset])
-	})
-
-	t.Run("retains offset on update", func(t *testing.T) {
-		pclq := &grovecorev1alpha1.PodClique{ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-pcs-0-engine-0-worker",
-			Namespace: "default",
-			Labels: map[string]string{
-				apicommon.LabelPodCliqueScalingGroupPodIndexOffset: "7",
-			},
-		}}
-
-		err := operator.buildResource(logr.Discard(), ss, 0, pclq, true)
-
-		require.NoError(t, err)
-		assert.Equal(t, "7", pclq.Labels[apicommon.LabelPodCliqueScalingGroupPodIndexOffset])
-	})
+	updatedWorker := &grovecorev1alpha1.PodClique{}
+	require.NoError(t, cl.Get(context.Background(), client.ObjectKeyFromObject(&worker), updatedWorker))
+	assert.Equal(t, "2", updatedWorker.Annotations[apiconstants.AnnotationPodCliqueScalingGroupPodIndexOffset])
 }
 
 // triageContainersByMNNVLClaim separates containers into those with MNNVL claim and those without.

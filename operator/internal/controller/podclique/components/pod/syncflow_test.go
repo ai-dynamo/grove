@@ -32,8 +32,10 @@ import (
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
 const (
@@ -47,6 +49,55 @@ const (
 	testTailEpoch     = "1002"
 	testScaleOutEpoch = "1003"
 )
+
+func TestSyncPCSGPodIndexLabels(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
+
+	pcs := &grovecorev1alpha1.PodCliqueSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-pcs", Namespace: "default"},
+		Spec: grovecorev1alpha1.PodCliqueSetSpec{Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
+			Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+				{Name: "leader", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1}},
+				{Name: "worker", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 2}},
+			},
+			PodCliqueScalingGroupConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{{
+				Name: "engine", CliqueNames: []string{"leader", "worker"},
+			}},
+		}},
+	}
+	pclq := &grovecorev1alpha1.PodClique{ObjectMeta: metav1.ObjectMeta{
+		Name:      "test-pcs-0-engine-0-worker",
+		Namespace: "default",
+		Labels: map[string]string{
+			apicommon.LabelPodCliqueScalingGroup:             "test-pcs-0-engine",
+			apicommon.LabelPodCliqueScalingGroupReplicaIndex: "0",
+		},
+	}}
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
+		Name:      "test-pod",
+		Namespace: "default",
+		UID:       types.UID("unchanged-uid"),
+		Labels: map[string]string{
+			apicommon.LabelPodCliquePodIndex: "1",
+		},
+	}}
+	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod).Build()
+	r := _resource{client: cl}
+	ss := &syncSnapshot{
+		pcs:              pcs,
+		pclq:             pclq,
+		pcsReplicaIndex:  0,
+		existingPCLQPods: []*corev1.Pod{pod},
+	}
+
+	require.NoError(t, r.syncPCSGPodIndexLabels(context.Background(), ss))
+
+	updatedPod := &corev1.Pod{}
+	require.NoError(t, cl.Get(context.Background(), client.ObjectKeyFromObject(pod), updatedPod))
+	assert.Equal(t, "2", updatedPod.Labels[apicommon.LabelPodCliqueScalingGroupPodIndex])
+	assert.Equal(t, types.UID("unchanged-uid"), updatedPod.UID)
+}
 
 // TestIsPodInPodReferences verifies isPodInPodReferences reports whether a pod appears in the
 // PodGroup for a given PodClique FQN.

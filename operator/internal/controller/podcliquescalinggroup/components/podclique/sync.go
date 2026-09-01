@@ -120,6 +120,9 @@ func (r _resource) runSyncFlow(ctx context.Context, logger logr.Logger, ss *sync
 	if err := r.triggerDeletionOfExcessPCSGReplicas(ctx, logger, ss); err != nil {
 		return err
 	}
+	if err := r.syncPCSGPodIndexOffsets(ctx, ss); err != nil {
+		return err
+	}
 	// Create or update the expected PodCliques as per the PodCliqueScalingGroup configurations defined in the PodCliqueSet.
 	// For OnDelete update strategy, use createOrUpdatePCLQs which performs in-place updates.
 	// For RollingRecreate (default) update strategy, use createExpectedPCLQs which only creates missing PodCliques.
@@ -160,6 +163,77 @@ func (r _resource) runSyncFlow(ctx context.Context, logger logr.Logger, ss *sync
 		)
 	}
 	return nil
+}
+
+// syncPCSGPodIndexOffsets reconciles internal offsets on existing PodCliques without recreating them.
+func (r _resource) syncPCSGPodIndexOffsets(ctx context.Context, ss *syncSnapshot) error {
+	for i := range ss.existingPCLQs {
+		pclq := &ss.existingPCLQs[i]
+		pcsgReplicaIndexValue, ok := pclq.Labels[apicommon.LabelPodCliqueScalingGroupReplicaIndex]
+		if !ok {
+			continue
+		}
+		pcsgReplicaIndex, err := strconv.Atoi(pcsgReplicaIndexValue)
+		if err != nil {
+			return groveerr.WrapError(
+				err,
+				errCodeSyncPCSGPodIndexOffsets,
+				component.OperationSync,
+				fmt.Sprintf("PodClique %v has invalid %s value %q", client.ObjectKeyFromObject(pclq), apicommon.LabelPodCliqueScalingGroupReplicaIndex, pcsgReplicaIndexValue),
+			)
+		}
+		cliqueName, err := utils.GetPodCliqueNameFromPodCliqueFQN(pclq.ObjectMeta)
+		if err != nil {
+			return groveerr.WrapError(err, errCodeSyncPCSGPodIndexOffsets, component.OperationSync, "failed to get PodClique name")
+		}
+		offset, err := getPCSGPodIndexOffset(ss, pcsgReplicaIndex, cliqueName)
+		if err != nil {
+			return groveerr.WrapError(err, errCodeSyncPCSGPodIndexOffsets, component.OperationSync, "failed to compute PodCliqueScalingGroup pod index offset")
+		}
+		expectedValue := strconv.Itoa(offset)
+		if pclq.Annotations[constants.AnnotationPodCliqueScalingGroupPodIndexOffset] == expectedValue {
+			continue
+		}
+
+		pclqBeforePatch := pclq.DeepCopy()
+		if pclq.Annotations == nil {
+			pclq.Annotations = make(map[string]string)
+		}
+		pclq.Annotations[constants.AnnotationPodCliqueScalingGroupPodIndexOffset] = expectedValue
+		if err = r.client.Patch(ctx, pclq, client.MergeFrom(pclqBeforePatch)); err != nil {
+			return groveerr.WrapError(
+				err,
+				errCodeSyncPCSGPodIndexOffsets,
+				component.OperationSync,
+				fmt.Sprintf("failed to update PodCliqueScalingGroup pod index offset on PodClique %v", client.ObjectKeyFromObject(pclq)),
+			)
+		}
+	}
+	return nil
+}
+
+// getPCSGPodIndexOffset computes a member PodClique's offset from the current sizes in one PCSG replica.
+func getPCSGPodIndexOffset(ss *syncSnapshot, pcsgReplicaIndex int, cliqueName string) (int, error) {
+	offset := 0
+	for _, memberCliqueName := range ss.pcsg.Spec.CliqueNames {
+		if memberCliqueName == cliqueName {
+			return offset, nil
+		}
+
+		replicas := int32(0)
+		pclqName := apicommon.GeneratePodCliqueName(apicommon.ResourceNameReplica{Name: ss.pcsg.Name, Replica: pcsgReplicaIndex}, memberCliqueName)
+		if existingPCLQ, ok := lo.Find(ss.existingPCLQs, func(pclq grovecorev1alpha1.PodClique) bool {
+			return pclq.Name == pclqName
+		}); ok {
+			replicas = existingPCLQ.Spec.Replicas
+		} else if template := componentutils.FindPodCliqueTemplateSpecByName(ss.pcs, memberCliqueName); template != nil {
+			replicas = template.Spec.Replicas
+		} else {
+			return 0, fmt.Errorf("PodClique template %q not found in PodCliqueSet %q", memberCliqueName, ss.pcs.Name)
+		}
+		offset += int(replicas)
+	}
+	return 0, fmt.Errorf("PodClique %q is not a member of PodCliqueScalingGroup %q", cliqueName, ss.pcsg.Name)
 }
 
 // triggerDeletionOfExcessPCSGReplicas removes PCSG replicas that exceed the desired replica count due to scale-down

@@ -109,7 +109,7 @@ func TestFindScalingGroupConfigForClique(t *testing.T) {
 	}
 }
 
-func TestGetPCSGPodIndexOffset(t *testing.T) {
+func TestGetPCSGTemplatePodIndexOffset(t *testing.T) {
 	pcs := &grovecorev1alpha1.PodCliqueSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-pcs"},
 		Spec: grovecorev1alpha1.PodCliqueSetSpec{
@@ -138,7 +138,7 @@ func TestGetPCSGPodIndexOffset(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			actualIndex, err := GetPCSGPodIndexOffset(pcs, cliqueNames, tt.cliqueName)
+			actualIndex, err := GetPCSGTemplatePodIndexOffset(pcs, cliqueNames, tt.cliqueName)
 			if tt.expectError {
 				assert.Error(t, err)
 				return

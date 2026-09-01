@@ -63,6 +63,7 @@ const (
 	errCodeCreateOrUpdatePodCliques                      grovecorev1alpha1.ErrorCode = "ERR_CREATE_OR_UPDATE_PODCLIQUES"
 	errCodeSyncPCSGResourceClaim                         grovecorev1alpha1.ErrorCode = "ERR_SYNC_PCSG_RESOURCE_CLAIM"
 	errCodeGetPodGangMap                                 grovecorev1alpha1.ErrorCode = "ERR_GET_PODGANGMAP"
+	errCodeSyncPCSGPodIndexOffsets                       grovecorev1alpha1.ErrorCode = "ERR_SYNC_PCSG_POD_INDEX_OFFSETS"
 )
 
 var (
@@ -307,7 +308,6 @@ func (r _resource) buildResource(logger logr.Logger, ss *syncSnapshot, pcsgRepli
 	// Add finalizer at creation so PCLQ controller does not need a separate PATCH on first reconcile.
 	controllerutil.AddFinalizer(pclq, apiconstants.FinalizerPodClique)
 
-	currentPCSGPodIndexOffset := pclq.Labels[apicommon.LabelPodCliqueScalingGroupPodIndexOffset]
 	rnr := apicommon.ResourceNameReplica{Name: pcs.Name, Replica: pcsReplicaIndex}
 	podGangName, err := resolvePodGangName(ss.pgm, rnr, pcsg, int32(pcsgReplicaIndex))
 	if err != nil {
@@ -320,6 +320,18 @@ func (r _resource) buildResource(logger logr.Logger, ss *syncSnapshot, pcsgRepli
 
 	pclq.Labels = getLabels(pcs, pcsReplicaIndex, pcsg, pcsgReplicaIndex, pclqObjectKey, pclqTemplateSpec, podGangName)
 	pclq.Annotations = maps.Clone(pclqTemplateSpec.Annotations)
+	if pclq.Annotations == nil {
+		pclq.Annotations = make(map[string]string)
+	}
+	pcsgPodIndexOffset, err := getPCSGPodIndexOffset(ss, pcsgReplicaIndex, pclqTemplateSpec.Name)
+	if err != nil {
+		return groveerr.WrapError(err,
+			errCodeBuildPodClique,
+			component.OperationSync,
+			fmt.Sprintf("Error computing PodCliqueScalingGroup pod index offset for PodClique: %v", pclqObjectKey),
+		)
+	}
+	pclq.Annotations[apiconstants.AnnotationPodCliqueScalingGroupPodIndexOffset] = strconv.Itoa(pcsgPodIndexOffset)
 	// PodGang owns topology selection; do not propagate a template topology annotation to PodClique pods.
 	delete(pclq.Annotations, apiconstants.AnnotationTopologyName)
 	// set PodCliqueSpec
@@ -334,21 +346,6 @@ func (r _resource) buildResource(logger logr.Logger, ss *syncSnapshot, pcsgRepli
 	}
 	pcsgTemplateNumPods := r.getPCSGTemplateNumPods(pcs, pcsg)
 	r.addEnvironmentVariablesToPodContainerSpecs(pclq, pcsgTemplateNumPods)
-	pcsgPodIndexOffset, err := componentutils.GetPCSGPodIndexOffset(pcs, pcsg.Spec.CliqueNames, pclqTemplateSpec.Name)
-	if err != nil {
-		return groveerr.WrapError(err,
-			errCodeBuildPodClique,
-			component.OperationSync,
-			fmt.Sprintf("Error computing PodCliqueScalingGroup pod index offset for PodClique: %v", pclqObjectKey),
-		)
-	}
-	if pclqExists && currentPCSGPodIndexOffset != "" {
-		currentOffset, parseErr := strconv.Atoi(currentPCSGPodIndexOffset)
-		if parseErr == nil && currentOffset >= 0 {
-			pcsgPodIndexOffset = currentOffset
-		}
-	}
-	pclq.Labels[apicommon.LabelPodCliqueScalingGroupPodIndexOffset] = strconv.Itoa(pcsgPodIndexOffset)
 	dependentPCLQNames, err := identifyFullyQualifiedStartupDependencyNames(pcs, pcsReplicaIndex, pcsg, pcsgReplicaIndex, pclq, foundAtIndex)
 	if err != nil {
 		return err

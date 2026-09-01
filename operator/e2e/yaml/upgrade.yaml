@@ -27,3 +27,9 @@ spec:
             containers:
               - name: worker
                 image: registry.k8s.io/pause:3.10
+    podCliqueScalingGroups:
+      - name: upgrade-group
+        cliqueNames:
+          - bootstrap
+          - worker
+        replicas: 1

@@ -29,8 +29,11 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"slices"
+	"sort"
 	"testing"
 
+	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	apiconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/e2e/grove/podgangmap"
@@ -42,6 +45,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 const (
@@ -68,13 +72,19 @@ func (s *podSurvivalUpgrade) deployWorkload(t *testing.T, tc *testctx.TestContex
 	require.NoError(t, err, "listing workload pods")
 }
 
-// verifyPodsSurvive scales the workload, then asserts the pre-upgrade pods were not recreated and the
-// init containers were updated.
+// verifyPodsSurvive verifies the upgrade, churn, and scaling behavior of PCSG pod indices before
+// scaling the workload and checking the init container migration.
 func (s *podSurvivalUpgrade) verifyPodsSurvive(t *testing.T, tc *testctx.TestContext) {
+	waitForPCSGPodIndices(t, tc, 0, 1)
+	verifyPodUIDsUnchanged(t, tc, s.podsBeforeUpgrade)
+
+	deletePodAndVerifyIndexedReplacement(t, tc)
+	scalePCLQAndVerifyIndices(t, tc, "upgrade-survivor-0-upgrade-group-0-bootstrap", 2, 3, []int{0, 1, 2})
+	scalePCLQAndVerifyIndices(t, tc, "upgrade-survivor-0-upgrade-group-0-bootstrap", 1, 2, []int{0, 1})
+
 	tc.ScalePCSAndWait(s.workload.Name, 2, 4, 0)
 	initContainerImage := fmt.Sprintf("ghcr.io/ai-dynamo/grove/grove-initc:%s", s.fromVersion)
 	verifyInitContainerUpdate(t, tc, s.podsBeforeUpgrade, initContainerImage)
-	verifyPodUIDsUnchanged(t, tc, s.podsBeforeUpgrade)
 }
 
 // Test_VUPG1_UpgradeFromLatestGitHubRelease verifies that a workload's pods created with the latest released
@@ -176,6 +186,68 @@ func waitForMigrationComplete(t *testing.T, tc *testctx.TestContext, pcsNsName t
 			return meta.FindStatusCondition(pcs.Status.Conditions, apiconstants.ConditionTypePodGangMigrationInProgress) == nil, nil
 		})
 	require.NoError(t, err, "migration did not complete: PodGangMigrationInProgress condition still present")
+}
+
+func waitForPCSGPodIndices(t *testing.T, tc *testctx.TestContext, expectedIndices ...int) {
+	t.Helper()
+	expected := make([]string, 0, len(expectedIndices))
+	for _, index := range expectedIndices {
+		expected = append(expected, fmt.Sprint(index))
+	}
+	sort.Strings(expected)
+
+	require.Eventually(t, func() bool {
+		podList, err := tc.ListPods()
+		if err != nil || len(podList.Items) != len(expected) {
+			return false
+		}
+		actual := make([]string, 0, len(podList.Items))
+		for _, pod := range podList.Items {
+			index, ok := pod.Labels[apicommon.LabelPodCliqueScalingGroupPodIndex]
+			if !ok {
+				return false
+			}
+			actual = append(actual, index)
+		}
+		sort.Strings(actual)
+		return slices.Equal(actual, expected)
+	}, defaultPollTimeout, defaultPollInterval, "PCSG pod indices did not converge")
+}
+
+func deletePodAndVerifyIndexedReplacement(t *testing.T, tc *testctx.TestContext) {
+	t.Helper()
+	podList, err := tc.ListPods()
+	require.NoError(t, err, "listing pods before churn")
+	require.NotEmpty(t, podList.Items)
+	deletedPod := podList.Items[0]
+	require.NoError(t, tc.Client.Delete(tc.Ctx, &deletedPod), "deleting a pre-upgrade pod")
+
+	require.Eventually(t, func() bool {
+		currentPods, listErr := tc.ListPods()
+		if listErr != nil || len(currentPods.Items) != 2 {
+			return false
+		}
+		for _, pod := range currentPods.Items {
+			if pod.UID == deletedPod.UID {
+				return false
+			}
+			if _, ok := pod.Labels[apicommon.LabelPodCliqueScalingGroupPodIndex]; !ok {
+				return false
+			}
+		}
+		return true
+	}, defaultPollTimeout, defaultPollInterval, "deleted pod was not replaced with an indexed pod")
+}
+
+func scalePCLQAndVerifyIndices(t *testing.T, tc *testctx.TestContext, name string, replicas int32, expectedPods int, expectedIndices []int) {
+	t.Helper()
+	pclq := &grovev1alpha1.PodClique{}
+	key := client.ObjectKey{Namespace: tc.Namespace, Name: name}
+	require.NoError(t, tc.Client.Get(tc.Ctx, key, pclq), "getting PodClique %s", name)
+	pclq.Spec.Replicas = replicas
+	require.NoError(t, tc.Client.Update(tc.Ctx, pclq), "scaling PodClique %s", name)
+	require.NoError(t, tc.WaitForPods(expectedPods), "waiting for scaled PodClique %s", name)
+	waitForPCSGPodIndices(t, tc, expectedIndices...)
 }
 
 // verifyInitContainerUpdate verifies that workload pods receive the new init container images after an upgrade.
