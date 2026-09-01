@@ -217,3 +217,26 @@ func TestInstallCRDs_ReturnsErrorOnInvalidYAML(t *testing.T) {
 	err := crdinstaller.InstallCRDs(ctx, cl, logr.Discard(), []string{"not: valid: yaml: [[["})
 	assert.Error(t, err)
 }
+
+// TestInstallCRDs_ClusterTopologyBindingShortName verifies that the ClusterTopologyBinding CRD
+// has the correct shortName "ctb" and not "ct" (which would conflict with the old ClusterTopology CRD).
+//
+// Flow:
+//  1. Call InstallCRDs with the ClusterTopologyBinding CRD.
+//  2. Fetch the CRD from the cluster.
+//  3. Assert that spec.names.shortNames contains "ctb" and not "ct".
+func TestInstallCRDs_ClusterTopologyBindingShortName(t *testing.T) {
+	cl := buildFakeClient()
+	ctx := context.Background()
+
+	err := crdinstaller.InstallCRDs(ctx, cl, logr.Discard(), []string{operatorcrds.ClusterTopologyCRD()})
+	require.NoError(t, err)
+
+	crd := &apiextensionsv1.CustomResourceDefinition{}
+	err = cl.Get(ctx, client.ObjectKey{Name: "clustertopologybindings.grove.io"}, crd)
+	require.NoError(t, err, "ClusterTopologyBinding CRD should exist")
+
+	shortNames := crd.Spec.Names.ShortNames
+	assert.Contains(t, shortNames, "ctb", "ClusterTopologyBinding should have shortName 'ctb'")
+	assert.NotContains(t, shortNames, "ct", "ClusterTopologyBinding should NOT have shortName 'ct' (conflicts with old ClusterTopology)")
+}
