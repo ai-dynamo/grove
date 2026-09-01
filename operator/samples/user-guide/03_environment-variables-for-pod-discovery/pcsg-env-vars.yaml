@@ -2,7 +2,8 @@
 # Documentation: docs/user-guide/03_environment-variables-for-pod-discovery/03_hands-on-examples.md
 #
 # Demonstrates PCSG-specific environment variables and leader-worker communication:
-# - GROVE_PCSG_NAME, GROVE_PCSG_INDEX, GROVE_PCSG_POD_INDEX, GROVE_PCSG_TEMPLATE_NUM_PODS
+# - GROVE_PCSG_NAME, GROVE_PCSG_INDEX, GROVE_PCSG_TEMPLATE_NUM_PODS
+# - How to project the group-wide Pod index label into an environment variable
 # - How workers construct the leader's FQDN using environment variables
 ---
 apiVersion: grove.io/v1alpha1
@@ -22,6 +23,11 @@ spec:
           containers:
           - name: leader
             image: busybox:latest
+            env:
+            - name: GROUP_POD_INDEX
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.labels['grove.io/podcliquescalinggroup-pod-index']
             command: ["/bin/sh"]
             args:
             - "-c"
@@ -33,7 +39,7 @@ spec:
               echo "GROVE_PCSG_NAME=$GROVE_PCSG_NAME"
               echo "GROVE_PCSG_INDEX=$GROVE_PCSG_INDEX"
               echo "GROVE_PCLQ_POD_INDEX=$GROVE_PCLQ_POD_INDEX"
-              echo "GROVE_PCSG_POD_INDEX=$GROVE_PCSG_POD_INDEX"
+              echo "GROUP_POD_INDEX=$GROUP_POD_INDEX"
               echo "GROVE_PCSG_TEMPLATE_NUM_PODS=$GROVE_PCSG_TEMPLATE_NUM_PODS"
               echo ""
               echo "My FQDN: $GROVE_PCLQ_NAME-$GROVE_PCLQ_POD_INDEX.$GROVE_HEADLESS_SERVICE"
@@ -52,6 +58,11 @@ spec:
           containers:
           - name: worker
             image: busybox:latest
+            env:
+            - name: GROUP_POD_INDEX
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.labels['grove.io/podcliquescalinggroup-pod-index']
             command: ["/bin/sh"]
             args:
             - "-c"
@@ -63,7 +74,7 @@ spec:
               echo "GROVE_PCSG_NAME=$GROVE_PCSG_NAME"
               echo "GROVE_PCSG_INDEX=$GROVE_PCSG_INDEX"
               echo "GROVE_PCLQ_POD_INDEX=$GROVE_PCLQ_POD_INDEX"
-              echo "GROVE_PCSG_POD_INDEX=$GROVE_PCSG_POD_INDEX"
+              echo "GROUP_POD_INDEX=$GROUP_POD_INDEX"
               echo "GROVE_PCSG_TEMPLATE_NUM_PODS=$GROVE_PCSG_TEMPLATE_NUM_PODS"
               echo ""
               echo "=== Constructing Leader Address ==="
@@ -85,4 +96,3 @@ spec:
     - name: model-instance
       cliqueNames: [leader, worker]
       replicas: 2
-

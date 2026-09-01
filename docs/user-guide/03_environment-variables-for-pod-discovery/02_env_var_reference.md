@@ -100,7 +100,6 @@ If a pod belongs to a PodClique that is part of a PodCliqueScalingGroup, these a
 |---------------------|-------------|---------------|
 | `GROVE_PCSG_NAME` | Fully qualified PCSG resource name (see structure below) | `my-service-0-model-instance` |
 | `GROVE_PCSG_INDEX` | Replica index of the PodCliqueScalingGroup (0-based) | `1` |
-| `GROVE_PCSG_POD_INDEX` | Index of this pod within its PodCliqueScalingGroup replica (0-based) | `2` |
 | `GROVE_PCSG_TEMPLATE_NUM_PODS` | Total number of pods in the PCSG template | `4` |
 
 **Understanding `GROVE_PCSG_NAME`:**
@@ -110,9 +109,9 @@ If a pod belongs to a PodClique that is part of a PodCliqueScalingGroup, these a
 
 **Note:** `GROVE_PCSG_TEMPLATE_NUM_PODS` represents the total number of pods defined in the PodCliqueScalingGroup template, calculated as the sum of replicas across all PodCliques in the PCSG. For example, if a PCSG has 1 leader replica and 3 worker replicas, this value would be 4. If you later scale up the number of workers in a PCSG replica (e.g., from 3 to 5), this environment variable will not update in already-running pods—it reflects the value at pod startup time.
 
-### Group-Wide Pod Index
+### Group-Wide Pod Index Label
 
-`GROVE_PCSG_POD_INDEX` provides a concrete pod identity across all PodCliques in one PodCliqueScalingGroup replica. Grove assigns indices by flattening the PodCliques in `cliqueNames` order and preserving each pod's order within its PodClique.
+The `grove.io/podcliquescalinggroup-pod-index` Pod label provides a group-wide position across all PodCliques in one PodCliqueScalingGroup replica. Grove assigns indices by flattening the PodCliques in `cliqueNames` order and preserving each pod's order within its PodClique.
 
 For example, this configuration:
 
@@ -126,7 +125,17 @@ podCliqueScalingGroups:
 
 assigns index `0` to the leader pod and indices `1` and `2` to the worker pods.
 
-The index is scoped to one PodCliqueScalingGroup replica. Grove records each member PodClique's offset when that concrete scaling element is created and retains it for the PodClique's lifetime, so replacing one of its pods does not recalculate ranks from the current PodCliqueSet template. Use the index together with `GROVE_PCSG_NAME` and `GROVE_PCSG_INDEX` when constructing an identity that must be unique across replicas. Standalone PodCliques do not receive `GROVE_PCSG_POD_INDEX`.
+Applications can project the label into an environment variable with the Kubernetes Downward API:
+
+```yaml
+env:
+  - name: GROUP_POD_INDEX
+    valueFrom:
+      fieldRef:
+        fieldPath: metadata.labels['grove.io/podcliquescalinggroup-pod-index']
+```
+
+The index is scoped to one PodCliqueScalingGroup replica. Use it together with `GROVE_PCSG_NAME` and `GROVE_PCSG_INDEX` when constructing an identity that must be unique across replicas. Standalone PodCliques do not receive the label. Scaling a member PodClique can change the indices of pods in later member PodCliques because Grove keeps the indices contiguous in `cliqueNames` order. A Downward API environment variable is resolved when its container starts, so applications that consume the label that way must restart affected containers after such a scale operation.
 
 ## Next Steps
 

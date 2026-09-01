@@ -9478,7 +9478,8 @@ spec:
                         cliqueNames:
                           description: |-
                             CliqueNames is the ordered list of PodClique names that are part of the scaling group.
-                            The order determines the group-wide pod indices exposed through GROVE_PCSG_POD_INDEX.
+                            The order determines the group-wide pod indices exposed through the
+                            grove.io/podcliquescalinggroup-pod-index Pod label.
                           items:
                             type: string
                           type: array
