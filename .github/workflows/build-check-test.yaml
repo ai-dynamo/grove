@@ -137,6 +137,8 @@ jobs:
             test_pattern: "^Test_CRD_Installer"
           - test_name: resource_sharing
             test_pattern: "^Test_RS"
+          - test_name: name_validation
+            test_pattern: "^Test_N"
           - test_name: upgrade_from_latest_release
             make_target: "run-upgrade-e2e"
     name: E2E - ${{ matrix.test_name }}
@@ -207,6 +209,7 @@ jobs:
           - test_name: auto_mnnvl
           - test_name: crd_installer
           - test_name: resource_sharing
+          - test_name: name_validation
           - test_name: upgrade_from_latest_release
     name: E2E - ${{ matrix.test_name }}
     steps:

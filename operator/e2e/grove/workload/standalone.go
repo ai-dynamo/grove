@@ -25,8 +25,11 @@ import (
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/k8sclient"
 	"github.com/ai-dynamo/grove/operator/e2e/waiter"
+	autoscalingv1 "k8s.io/api/autoscaling/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -72,4 +75,20 @@ func WaitForPodCliqueSetDeletion(ctx context.Context, k8sClient *k8sclient.Clien
 		WithTimeout(timeout).
 		WithInterval(interval)
 	return waiter.WaitForResourceDeletion(ctx, w, name, k8sclient.Getter[*grovecorev1alpha1.PodCliqueSet](k8sClient, namespace))
+}
+
+// Scale updates the number of replicas for a given object using the scale sub-resource.
+func Scale(ctx context.Context, k8sClient *k8sclient.Client, obj client.Object, replicas int32, opts ...client.SubResourceUpdateOption) error {
+	return retry.OnError(retry.DefaultBackoff, apierrors.IsConflict, func() error {
+		scale := &autoscalingv1.Scale{}
+		if err := k8sClient.SubResource("scale").Get(ctx, obj, scale); err != nil {
+			return err
+		}
+		scale.Spec.Replicas = replicas
+		return k8sClient.SubResource("scale").Update(
+			ctx,
+			obj,
+			append(opts, client.WithSubResourceBody(scale))...,
+		)
+	})
 }

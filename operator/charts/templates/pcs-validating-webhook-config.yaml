@@ -39,3 +39,42 @@ webhooks:
         scope: "Namespaced"
     sideEffects: None
     timeoutSeconds: 10
+  - admissionReviewVersions:
+      - v1
+    clientConfig:
+      {{- if .Values.webhooks.caBundle }}
+      caBundle: {{ .Values.webhooks.caBundle }}
+      {{- end }}
+      service:
+        name: {{ required ".Values.service.name is required" .Values.service.name }}
+        namespace: {{ .Release.Namespace }}
+        path: /webhooks/validate-scale
+        port: {{ required ".Values.config.server.webhooks.port" .Values.config.server.webhooks.port }}
+    failurePolicy: Fail
+    matchPolicy: Exact
+    name: scale.validating.webhooks.grove.io
+    namespaceSelector: { }
+    rules:
+      - apiGroups:
+          - "grove.io"
+        apiVersions:
+          - "v1alpha1"
+        operations:
+          - UPDATE
+        resources:
+          - podcliques
+          - podcliquescalinggroups
+        scope: "Namespaced"
+      - apiGroups:
+          - "grove.io"
+        apiVersions:
+          - "v1alpha1"
+        operations:
+          - UPDATE
+        resources:
+          - podcliquesets/scale
+          - podcliques/scale
+          - podcliquescalinggroups/scale
+        scope: "Namespaced"
+    sideEffects: None
+    timeoutSeconds: 10
