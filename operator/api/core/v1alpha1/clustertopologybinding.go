@@ -22,7 +22,7 @@ import (
 // +genclient:nonNamespaced
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 // +kubebuilder:object:root=true
-// +kubebuilder:resource:scope=Cluster,shortName=ct
+// +kubebuilder:resource:scope=Cluster,shortName=ctb
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="Domains",type=string,JSONPath=`.spec.levels[*].domain`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
