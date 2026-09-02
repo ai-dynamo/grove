@@ -40,8 +40,8 @@ jobs:
     outputs:
       e2e-relevant: ${{ steps.filter.outputs.e2e-relevant }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dorny/paths-filter@v3
+      - uses: actions/checkout@v6
+      - uses: dorny/paths-filter@v4
         id: filter
         with:
           base: main
@@ -53,9 +53,9 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Set up Go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v6
         with:
           go-version: "1.26.3"
           cache: true
@@ -71,9 +71,9 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Set up Go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v6
         with:
           go-version: "1.26.3"
           cache: true
@@ -85,9 +85,9 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Set up Go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v6
         with:
           go-version: "1.26.3"
           cache: true
@@ -148,7 +148,7 @@ jobs:
           echo "RAM: $(free -h | awk '/^Mem:/ {print $2}')"
 
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Pull registry image from GHCR to avoid Docker Hub rate limits
         run: |
@@ -178,7 +178,7 @@ jobs:
       # Uses 'warn' since this only runs on failure and missing files indicates a problem.
       - name: Upload test logs on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: e2e-test-logs-${{ matrix.test_name }}
           path: operator/e2e-diagnostics/
