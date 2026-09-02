@@ -25,6 +25,7 @@ import (
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
+	ctrlutils "github.com/ai-dynamo/grove/operator/internal/controller/utils"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/expect"
 	"github.com/ai-dynamo/grove/operator/internal/index"
@@ -88,6 +89,7 @@ func (r _resource) prepareSyncFlow(ctx context.Context, logger logr.Logger, pclq
 	// Grove PodGang always carries the epoch label), which gate-removal treats as "dependency not yet
 	// resolvable".
 	if existingPodGang != nil {
+		ss.associatedPodGang = existingPodGang
 		ss.associatedPodGangEpoch = existingPodGang.Labels[apicommon.LabelEpoch]
 	}
 
@@ -162,15 +164,21 @@ func (r _resource) runSyncFlow(ctx context.Context, logger logr.Logger, ss *sync
 	diff := r.syncExpectationsAndComputeDifference(logger, ss)
 	if diff < 0 {
 		logger.Info("found fewer pods than desired", "pclq.spec.replicas", ss.pclq.Spec.Replicas, "delta", diff)
-		diff *= -1
-		numScheduleGatedPods, err := r.createPods(ctx, logger, ss, diff)
-		if err != nil {
-			logger.Error(err, "failed to create pods")
+		if err := r.ensureStandaloneScaleUpReady(ss); err != nil {
 			result.recordError(err)
+		} else {
+			diff *= -1
+			numScheduleGatedPods, err := r.createPods(ctx, logger, ss, diff)
+			if err != nil {
+				logger.Error(err, "failed to create pods")
+				result.recordError(err)
+			}
+			logger.Info("created unassigned and scheduled gated pods", "numberOfCreatedPods", numScheduleGatedPods)
 		}
-		logger.Info("created unassigned and scheduled gated pods", "numberOfCreatedPods", numScheduleGatedPods)
 	} else if diff > 0 {
-		if err := r.deleteExcessPods(ctx, logger, ss, diff); err != nil {
+		if err := r.ensureStandaloneScaleInReady(ss); err != nil {
+			result.recordError(err)
+		} else if err := r.deleteExcessPods(ctx, logger, ss, diff); err != nil {
 			result.recordError(err)
 		}
 	}
@@ -187,6 +195,52 @@ func (r _resource) runSyncFlow(ctx context.Context, logger logr.Logger, ss *sync
 	}
 	result.recordPendingScheduleGatedPods(skippedScheduleGatedPods)
 	return result
+}
+
+// ensureStandaloneScaleUpReady prevents Pods from being created with the stale placeholder PodGang
+// label retained while an idle standalone PodClique is being placed into a new anchor.
+func (r _resource) ensureStandaloneScaleUpReady(ss *syncSnapshot) error {
+	if metav1.HasLabel(ss.pclq.ObjectMeta, apicommon.LabelPodCliqueScalingGroup) {
+		return nil
+	}
+	requeue := func(message string) error {
+		return groveerr.New(groveerr.ErrCodeRequeueAfter, component.OperationSync, message)
+	}
+	if !ctrlutils.IsManagedByGrove(ss.pgm.Labels) || !metav1.IsControlledBy(ss.pgm, ss.pcs) {
+		return requeue(fmt.Sprintf("PodGangMap %s has not converged under PodCliqueSet ownership", ss.pgm.Name))
+	}
+
+	cliqueName, err := utils.GetPodCliqueNameFromPodCliqueFQN(ss.pclq.ObjectMeta)
+	if err != nil {
+		return requeue(fmt.Sprintf("failed to resolve standalone PodClique name: %v", err))
+	}
+	_, pgmReplicas, err := componentutils.StandalonePCLQMembership(ss.pgm.Spec.Entries, "", cliqueName)
+	if err != nil {
+		return requeue(fmt.Sprintf("PodGangMap %s has invalid membership for PodClique %s: %v", ss.pgm.Name, ss.pclq.Name, err))
+	}
+	if pgmReplicas != ss.pclq.Spec.Replicas {
+		return requeue(fmt.Sprintf("PodGangMap %s has not converged to %d replicas for PodClique %s", ss.pgm.Name, ss.pclq.Spec.Replicas, ss.pclq.Name))
+	}
+
+	rnr := apicommon.ResourceNameReplica{Name: ss.pcs.Name, Replica: ss.pcsReplicaIndex}
+	expectedPodGangName, err := componentutils.PodGangNameForStandalonePCLQ(ss.pgm, rnr, *ss.pcs.Status.CurrentGenerationHash, cliqueName)
+	if err != nil {
+		return requeue(fmt.Sprintf("PodGangMap %s has not placed PodClique %s: %v", ss.pgm.Name, ss.pclq.Name, err))
+	}
+	if ss.associatedPodGangName != expectedPodGangName {
+		return requeue(fmt.Sprintf("PodClique %s still references stale PodGang %s instead of %s", ss.pclq.Name, ss.associatedPodGangName, expectedPodGangName))
+	}
+	if ss.associatedPodGang == nil ||
+		!ctrlutils.IsManagedPodGang(ss.associatedPodGang) ||
+		!metav1.IsControlledBy(ss.associatedPodGang, ss.pcs) {
+		return requeue(fmt.Sprintf("PodGang %s has not converged under PodCliqueSet ownership", expectedPodGangName))
+	}
+	if _, found := lo.Find(ss.associatedPodGang.Spec.PodGroups, func(group groveschedulerv1alpha1.PodGroup) bool {
+		return group.Name == ss.pclq.Name
+	}); !found {
+		return requeue(fmt.Sprintf("PodGang %s does not yet include PodClique %s", expectedPodGangName, ss.pclq.Name))
+	}
+	return nil
 }
 
 // syncExpectationsAndComputeDifference reconciles create/delete expectations with actual pod state and computes the replica difference
@@ -251,6 +305,68 @@ func (r _resource) deleteExcessPods(ctx context.Context, logger logr.Logger, ss 
 	return nil
 }
 
+// ensureStandaloneScaleInReady prevents a standalone PodClique from deleting Pods until its
+// PodGangMap and materialized PodGang have stopped scheduling those Pods as gang members.
+func (r _resource) ensureStandaloneScaleInReady(ss *syncSnapshot) error {
+	if metav1.HasLabel(ss.pclq.ObjectMeta, apicommon.LabelPodCliqueScalingGroup) {
+		return nil
+	}
+	requeue := func(message string) error {
+		return groveerr.New(groveerr.ErrCodeRequeueAfter, component.OperationSync, message)
+	}
+	if !ctrlutils.IsManagedByGrove(ss.pgm.Labels) || !metav1.IsControlledBy(ss.pgm, ss.pcs) {
+		return requeue(fmt.Sprintf("PodGangMap %s has not converged under PodCliqueSet ownership", ss.pgm.Name))
+	}
+
+	cliqueName, err := utils.GetPodCliqueNameFromPodCliqueFQN(ss.pclq.ObjectMeta)
+	if err != nil {
+		return requeue(fmt.Sprintf("failed to resolve standalone PodClique name: %v", err))
+	}
+	member, pgmReplicas, err := componentutils.StandalonePCLQMembership(ss.pgm.Spec.Entries, "", cliqueName)
+	if err != nil {
+		return requeue(fmt.Sprintf("PodGangMap %s has invalid membership for PodClique %s: %v", ss.pgm.Name, ss.pclq.Name, err))
+	}
+	if pgmReplicas != ss.pclq.Spec.Replicas || (ss.pclq.Spec.Replicas == 0 && member != nil) {
+		return requeue(fmt.Sprintf("PodGangMap %s has not converged to %d replicas for PodClique %s", ss.pgm.Name, ss.pclq.Spec.Replicas, ss.pclq.Name))
+	}
+
+	if ss.associatedPodGang == nil {
+		if ss.pclq.Spec.Replicas == 0 {
+			return nil
+		}
+		return requeue(fmt.Sprintf("PodGang %s is not available for scale-in verification", ss.associatedPodGangName))
+	}
+	if !ctrlutils.IsManagedPodGang(ss.associatedPodGang) || !metav1.IsControlledBy(ss.associatedPodGang, ss.pcs) {
+		return requeue(fmt.Sprintf("PodGang %s has not converged under PodCliqueSet ownership", ss.associatedPodGang.Name))
+	}
+
+	podGroup, found := lo.Find(ss.associatedPodGang.Spec.PodGroups, func(group groveschedulerv1alpha1.PodGroup) bool {
+		return group.Name == ss.pclq.Name
+	})
+	if ss.pclq.Spec.Replicas == 0 {
+		if found {
+			return requeue(fmt.Sprintf("PodGang %s still references PodClique %s", ss.associatedPodGang.Name, ss.pclq.Name))
+		}
+		return nil
+	}
+	if !found || len(podGroup.PodReferences) != int(ss.pclq.Spec.Replicas) {
+		return requeue(fmt.Sprintf("PodGang %s has not converged to %d Pod references for PodClique %s", ss.associatedPodGang.Name, ss.pclq.Spec.Replicas, ss.pclq.Name))
+	}
+
+	livePods := componentutils.NewSet([]string{})
+	for _, pod := range ss.existingPCLQPods {
+		if !k8sutils.IsResourceTerminating(pod.ObjectMeta) {
+			livePods[pod.Name] = struct{}{}
+		}
+	}
+	for _, ref := range podGroup.PodReferences {
+		if ref.Namespace != ss.pclq.Namespace || !livePods.Has(ref.Name) {
+			return requeue(fmt.Sprintf("PodGang %s references a missing or terminating Pod %s/%s", ss.associatedPodGang.Name, ref.Namespace, ref.Name))
+		}
+	}
+	return nil
+}
+
 // selectExcessPodsToDelete identifies excess pods for deletion using DeletionSorter for prioritization.
 //
 // Pods whose deletion has already been triggered are excluded from the candidate set. GetPCLQPods
@@ -263,24 +379,28 @@ func (r _resource) deleteExcessPods(ctx context.Context, logger logr.Logger, ss 
 // Filtering into a fresh slice also keeps sort.Sort from reordering ss.existingPCLQPods in place,
 // which later steps of the same sync flow still read.
 func (r _resource) selectExcessPodsToDelete(ss *syncSnapshot, logger logr.Logger) []*corev1.Pod {
-	livePods := make([]*corev1.Pod, 0, len(ss.existingPCLQPods))
+	candidatePods := make([]*corev1.Pod, 0, len(ss.existingPCLQPods))
+	numLivePods := 0
 	for _, pod := range ss.existingPCLQPods {
 		if r.hasPodDeletionBeenTriggered(ss, pod) {
 			continue
 		}
-		livePods = append(livePods, pod)
+		numLivePods++
+		if !ss.podNamesUpdatedInPCLQPodGangSet.Has(pod.Name) {
+			candidatePods = append(candidatePods, pod)
+		}
 	}
-	numExcessPods := len(livePods) - int(ss.pclq.Spec.Replicas)
+	numExcessPods := numLivePods - int(ss.pclq.Spec.Replicas)
 	if numExcessPods <= 0 {
 		return nil
 	}
 	logger.Info("found excess pods for PodClique", "numExcessPods", numExcessPods)
 	sorter := DeletionSorter{
-		Pods:                    livePods,
+		Pods:                    candidatePods,
 		ExpectedPodTemplateHash: ss.getExpectedPodTemplateHash(),
 	}
 	sort.Sort(sorter)
-	return sorter.Pods[:numExcessPods]
+	return sorter.Pods[:min(numExcessPods, len(sorter.Pods))]
 }
 
 func (ss *syncSnapshot) getExpectedPodTemplateHash() string {
@@ -524,6 +644,7 @@ type syncSnapshot struct {
 	pcsReplicaIndex                 int
 	pgm                             *grovecorev1alpha1.PodGangMap
 	associatedPodGangName           string
+	associatedPodGang               *groveschedulerv1alpha1.PodGang
 	associatedPodGangEpoch          string
 	existingPCLQPods                []*corev1.Pod
 	podNamesUpdatedInPCLQPodGangs   []string

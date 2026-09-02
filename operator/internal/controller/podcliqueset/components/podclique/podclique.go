@@ -318,17 +318,16 @@ func (r _resource) buildResource(logger logr.Logger, pcs *grovecorev1alpha1.PodC
 	}
 	// Add finalizer at creation so PCLQ controller does not need a separate PATCH on first reconcile.
 	controllerutil.AddFinalizer(pclq, apiconstants.FinalizerPodClique)
-	// A standalone PodClique always belongs to the anchor PodGang, so its PodGang name is derived from
-	// the anchor entry's epoch in the PodGangMap.
-	epoch, err := componentutils.AnchorPodGangEpoch(pgm)
-	if err != nil {
-		return groveerr.WrapError(err,
-			errSyncPodClique,
-			component.OperationSync,
-			fmt.Sprintf("failed to resolve anchor PodGang epoch for PodClique: %v", pclqObjectKey),
-		)
+	rnr := apicommon.ResourceNameReplica{Name: pcs.Name, Replica: pcsReplica}
+	desiredReplicas := pclqTemplateSpec.Spec.Replicas
+	if pclqExists {
+		desiredReplicas = pclq.Spec.Replicas
 	}
-	podGangName := apicommon.GenerateAnchorPodGangName(apicommon.ResourceNameReplica{Name: pcs.Name, Replica: pcsReplica}, epoch)
+	podGangName, err := resolvePodGangName(pgm, rnr, *pcs.Status.CurrentGenerationHash, pclqTemplateSpec.Name, desiredReplicas, pclq.Labels[apicommon.LabelPodGang])
+	if err != nil {
+		return groveerr.WrapError(err, errSyncPodClique, component.OperationSync,
+			fmt.Sprintf("failed to resolve PodGang name for PodClique: %v", pclqObjectKey))
+	}
 	pclq.Labels = getLabels(pcs, pcsReplica, pclqObjectKey, pclqTemplateSpec, podGangName)
 	pclq.Annotations = maps.Clone(pclqTemplateSpec.Annotations)
 	// PodGang owns topology selection; do not propagate a template topology annotation to PodClique pods.
@@ -346,11 +345,19 @@ func (r _resource) buildResource(logger logr.Logger, pcs *grovecorev1alpha1.PodC
 	} else {
 		pclq.Spec = *pclqTemplateSpec.Spec.DeepCopy()
 	}
-	var dependentPclqNames []string
-	if dependentPclqNames, err = identifyFullyQualifiedStartupDependencyNames(pcs, pclq, pcsReplica, foundAtIndex); err != nil {
-		return err
+	if desiredReplicas == 0 {
+		pclq.Spec.StartsAfter = nil
+	} else {
+		activePCLQNames, activeErr := componentutils.ActivePodCliqueNamesForPodGang(pcs, pgm, rnr, podGangName)
+		if activeErr != nil {
+			return groveerr.WrapError(activeErr, errSyncPodClique, component.OperationSync,
+				fmt.Sprintf("failed to resolve active PodCliques for PodClique: %v", pclqObjectKey))
+		}
+		pclq.Spec.StartsAfter, err = identifyFullyQualifiedStartupDependencyNames(pcs, pclq, pcsReplica, foundAtIndex, activePCLQNames)
+		if err != nil {
+			return err
+		}
 	}
-	pclq.Spec.StartsAfter = dependentPclqNames
 
 	// Inject MNNVL resourceClaims: resolve group hierarchically (PCLQ → PCS).
 	groupName, mnnvlEnabled := mnnvl.ResolveGroupNameHierarchically(pclqTemplateSpec.Annotations, pcs.Annotations)
@@ -361,8 +368,22 @@ func (r _resource) buildResource(logger logr.Logger, pcs *grovecorev1alpha1.PodC
 	return nil
 }
 
+func resolvePodGangName(pgm *grovecorev1alpha1.PodGangMap, rnr apicommon.ResourceNameReplica, generationHash, cliqueName string, replicas int32, existingPodGangName string) (string, error) {
+	if replicas > 0 {
+		return componentutils.PodGangNameForStandalonePCLQ(pgm, rnr, generationHash, cliqueName)
+	}
+	if existingPodGangName != "" {
+		return existingPodGangName, nil
+	}
+	epoch, err := componentutils.AnchorPodGangEpoch(pgm)
+	if err != nil {
+		return "", err
+	}
+	return apicommon.GenerateAnchorPodGangName(rnr, epoch), nil
+}
+
 // identifyFullyQualifiedStartupDependencyNames determines the PodClique startup dependencies based on StartupType.
-func identifyFullyQualifiedStartupDependencyNames(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grovecorev1alpha1.PodClique, pcsReplicaIndex, foundAtIndex int) ([]string, error) {
+func identifyFullyQualifiedStartupDependencyNames(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grovecorev1alpha1.PodClique, pcsReplicaIndex, foundAtIndex int, activePCLQNames componentutils.Set[string]) ([]string, error) {
 	cliqueStartupType := pcs.Spec.Template.StartupType
 	if cliqueStartupType == nil {
 		// Ideally this should never happen as the defaulting webhook should set it v1alpha1.CliqueStartupTypeInOrder as the default value.
@@ -371,28 +392,45 @@ func identifyFullyQualifiedStartupDependencyNames(pcs *grovecorev1alpha1.PodCliq
 	}
 	switch *cliqueStartupType {
 	case grovecorev1alpha1.CliqueStartupTypeInOrder:
-		return getInOrderStartupDependencies(pcs, pcsReplicaIndex, foundAtIndex), nil
+		return getInOrderStartupDependencies(pcs, pcsReplicaIndex, foundAtIndex, activePCLQNames), nil
 	case grovecorev1alpha1.CliqueStartupTypeExplicit:
-		return getExplicitStartupDependencies(pcs, pcsReplicaIndex, pclq), nil
+		return getExplicitStartupDependencies(pcs, pcsReplicaIndex, pclq, activePCLQNames), nil
 	default:
 		return nil, nil
 	}
 }
 
-// getInOrderStartupDependencies returns the previous clique as a dependency for in-order startup.
-func getInOrderStartupDependencies(pcs *grovecorev1alpha1.PodCliqueSet, pcsReplicaIndex, foundAtIndex int) []string {
-	if foundAtIndex == 0 {
-		return nil
+// getInOrderStartupDependencies returns the nearest active preceding clique in the same PodGang.
+func getInOrderStartupDependencies(pcs *grovecorev1alpha1.PodCliqueSet, pcsReplicaIndex, foundAtIndex int, activePCLQNames componentutils.Set[string]) []string {
+	for index := foundAtIndex - 1; index >= 0; index-- {
+		dependencies := activeDependencies(
+			componentutils.GenerateDependencyNamesForBasePodGang(pcs, pcsReplicaIndex, pcs.Spec.Template.Cliques[index].Name),
+			activePCLQNames,
+		)
+		if len(dependencies) > 0 {
+			return dependencies
+		}
 	}
-	previousCliqueName := pcs.Spec.Template.Cliques[foundAtIndex-1].Name
-	return componentutils.GenerateDependencyNamesForBasePodGang(pcs, pcsReplicaIndex, previousCliqueName)
+	return nil
 }
 
 // getExplicitStartupDependencies resolves explicitly declared startup dependencies.
-func getExplicitStartupDependencies(pcs *grovecorev1alpha1.PodCliqueSet, pcsReplicaIndex int, pclq *grovecorev1alpha1.PodClique) []string {
+func getExplicitStartupDependencies(pcs *grovecorev1alpha1.PodCliqueSet, pcsReplicaIndex int, pclq *grovecorev1alpha1.PodClique, activePCLQNames componentutils.Set[string]) []string {
 	dependencies := make([]string, 0, len(pclq.Spec.StartsAfter))
 	for _, dependency := range pclq.Spec.StartsAfter {
 		dependencies = append(dependencies, componentutils.GenerateDependencyNamesForBasePodGang(pcs, pcsReplicaIndex, dependency)...)
+	}
+	return activeDependencies(dependencies, activePCLQNames)
+}
+
+func activeDependencies(candidates []string, activePCLQNames componentutils.Set[string]) []string {
+	dependencies := make([]string, 0, len(candidates))
+	seen := make(componentutils.Set[string], len(candidates))
+	for _, candidate := range candidates {
+		if activePCLQNames.Has(candidate) && !seen.Has(candidate) {
+			dependencies = append(dependencies, candidate)
+			seen[candidate] = struct{}{}
+		}
 	}
 	return dependencies
 }

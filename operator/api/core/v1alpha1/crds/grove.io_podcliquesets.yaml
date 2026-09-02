@@ -9342,9 +9342,13 @@ spec:
                               - containers
                               type: object
                             replicas:
-                              description: Replicas is the number of replicas of the
-                                pods in the clique. It cannot be less than 1.
+                              default: 1
+                              description: |-
+                                Replicas is the number of replicas of the pods in the clique. GREP-0677: it is either 0
+                                (an intentional idle state) or at least MinAvailable. When omitted it defaults to 1; an
+                                explicit 0 is preserved.
                               format: int32
+                              minimum: 0
                               type: integer
                             roleName:
                               description: RoleName is the name of the role that this
@@ -9368,6 +9372,11 @@ spec:
                           - replicas
                           - roleName
                           type: object
+                          x-kubernetes-validations:
+                          - message: spec.replicas must be 0 (idle) or greater than
+                              or equal to spec.minAvailable
+                            rule: self.replicas == 0 || !has(self.minAvailable) ||
+                              self.replicas >= self.minAvailable
                         topologyConstraint:
                           description: |-
                             TopologyConstraint defines topology placement requirements for PodClique.

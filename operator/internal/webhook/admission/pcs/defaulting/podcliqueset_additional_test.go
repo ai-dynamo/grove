@@ -36,7 +36,7 @@ func TestDefaultPodCliqueTemplateSpecs(t *testing.T) {
 		verify func(*testing.T, []*grovecorev1alpha1.PodCliqueTemplateSpec)
 	}{
 		{
-			name: "replicas defaults to 1 when 0",
+			name: "explicit replicas 0 is preserved and minAvailable defaults to 1",
 			input: []*grovecorev1alpha1.PodCliqueTemplateSpec{
 				{
 					Name: "clique1",
@@ -49,7 +49,11 @@ func TestDefaultPodCliqueTemplateSpecs(t *testing.T) {
 			},
 			verify: func(t *testing.T, result []*grovecorev1alpha1.PodCliqueTemplateSpec) {
 				require.Len(t, result, 1)
-				assert.Equal(t, int32(1), result[0].Spec.Replicas)
+				// GREP-0677: the webhook no longer rewrites 0 to 1 — the schema default applies to
+				// omitted values, while an explicit 0 is preserved as the idle state.
+				assert.Equal(t, int32(0), result[0].Spec.Replicas)
+				require.NotNil(t, result[0].Spec.MinAvailable)
+				assert.Equal(t, int32(1), *result[0].Spec.MinAvailable, "minAvailable defaults to max(1, replicas)")
 			},
 		},
 		{

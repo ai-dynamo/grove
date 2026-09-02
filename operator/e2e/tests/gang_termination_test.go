@@ -23,11 +23,16 @@ import (
 	"time"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
+	apiconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -219,10 +224,9 @@ func Test_GT4_GangTerminationMinReplicasPCSGOwned(t *testing.T) {
 	Logger.Info("5. Kill 1 ready pod from sg-x-1-pc-c — expect NO PCS-level gang termination (pc-a must survive)")
 	// We assert on pc-a (the standalone PCLQ) rather than on PCSG-0's UIDs: PCSG-0 was already
 	// recycled once by the PCSG-replica-scoped restart in step 4, so its pods no longer carry
-	// their original UIDs. That path does not keep re-firing — WasPCLQEverScheduled excludes the
-	// freshly recreated, never-scheduled PodCliques from the breached set — but the UIDs still
-	// reflect the step-4 recycle, so they are not a useful signal here. pc-a's UIDs change only
-	// under PCS-level gang termination, so pc-a surviving proves no PCS-level termination fired.
+	// their original UIDs. That path does not keep re-firing because initial scheduling is unarmed.
+	// pc-a's UIDs change only under PCS-level gang termination, so pc-a surviving proves no
+	// PCS-level termination fired.
 	pods, err = tc.ListPods()
 	if err != nil {
 		t.Fatalf("Failed to list pods: %v", err)
@@ -366,7 +370,134 @@ func Test_GT6_ScaledPodGangPodDeletion(t *testing.T) {
 	uncordonAndVerifyRecovery(t, tc, []string{scaled.Spec.NodeName}, totalWLPods)
 }
 
+// Test_GT7_FirstWakeArmsTerminationOnlyAfterHealthy verifies that an unschedulable first wake is
+// not treated as a regression. Once the clique reaches MinAvailable, the same loss must recycle it.
+func Test_GT7_FirstWakeArmsTerminationOnlyAfterHealthy(t *testing.T) {
+	const (
+		workloadName = "workload-idle-wake"
+		workerName   = workloadName + "-0-worker"
+	)
+	ctx := context.Background()
+	tc, cleanup := testctx.PrepareTest(ctx, t, 1,
+		testctx.WithWorkload(&testctx.WorkloadConfig{
+			Name:         workloadName,
+			YAMLPath:     "../yaml/workload-idle-wake.yaml",
+			Namespace:    "default",
+			ExpectedPods: 0,
+		}),
+	)
+	defer cleanup()
+
+	cordoned := tc.SetupAndCordonNodes(1)
+	defer tc.UncordonNodes(cordoned)
+	if _, err := tc.DeployAndVerifyWorkload(); err != nil {
+		t.Fatalf("Failed to deploy idle workload: %v", err)
+	}
+
+	worker := waitForPCLQ(t, ctx, tc, workerName)
+	initialUID := worker.UID
+	if err := tc.Client.Patch(ctx,
+		&grovecorev1alpha1.PodClique{ObjectMeta: metav1.ObjectMeta{Name: workerName, Namespace: tc.Namespace}},
+		client.RawPatch(types.MergePatchType, []byte(`{"spec":{"replicas":1}}`))); err != nil {
+		t.Fatalf("Failed to wake PodClique: %v", err)
+	}
+	waitForPCLQConditionReason(t, ctx, tc, workerName, apiconstants.ConditionReasonInitialScheduling)
+	assertPCLQUIDStableFor(t, ctx, tc, workerName, initialUID, terminationDelayInWorkloadYAML+gangTerminationGrace)
+
+	tc.UncordonNodes(cordoned)
+	if err := tc.WaitForReadyPods(1); err != nil {
+		t.Fatalf("First wake did not become ready: %v", err)
+	}
+	waitForPCLQConditionReason(t, ctx, tc, workerName, apiconstants.ConditionReasonSufficientReadyPods)
+
+	pods, err := tc.ListPods()
+	if err != nil {
+		t.Fatalf("Failed to list healthy wake pods: %v", err)
+	}
+	target := findReadyPodFromPodClique(pods, workerName)
+	if target == nil {
+		t.Fatalf("No ready pod found for %s", workerName)
+	}
+	if err := tc.CordonNode(target.Spec.NodeName); err != nil {
+		t.Fatalf("Failed to cordon node %s: %v", target.Spec.NodeName, err)
+	}
+	if err := tc.Client.Delete(ctx, target); err != nil {
+		t.Fatalf("Failed to delete worker pod: %v", err)
+	}
+	waitForPCLQUIDChange(t, ctx, tc, workerName, initialUID)
+	assertPCLQReplicas(t, ctx, tc, workerName, 0)
+}
+
 // ---------- helpers ----------
+
+func waitForPCLQ(t *testing.T, ctx context.Context, tc *testctx.TestContext, name string) *grovecorev1alpha1.PodClique {
+	t.Helper()
+	var result *grovecorev1alpha1.PodClique
+	if err := wait.PollUntilContextTimeout(ctx, tc.Interval, tc.Timeout, true, func(ctx context.Context) (bool, error) {
+		pclq := &grovecorev1alpha1.PodClique{}
+		if err := tc.Client.Get(ctx, client.ObjectKey{Namespace: tc.Namespace, Name: name}, pclq); err != nil {
+			return false, client.IgnoreNotFound(err)
+		}
+		result = pclq
+		return true, nil
+	}); err != nil {
+		t.Fatalf("PodClique %s did not appear: %v", name, err)
+	}
+	return result
+}
+
+func waitForPCLQConditionReason(t *testing.T, ctx context.Context, tc *testctx.TestContext, name, reason string) {
+	t.Helper()
+	if err := wait.PollUntilContextTimeout(ctx, tc.Interval, tc.Timeout, true, func(ctx context.Context) (bool, error) {
+		pclq := &grovecorev1alpha1.PodClique{}
+		if err := tc.Client.Get(ctx, client.ObjectKey{Namespace: tc.Namespace, Name: name}, pclq); err != nil {
+			return false, client.IgnoreNotFound(err)
+		}
+		condition := meta.FindStatusCondition(pclq.Status.Conditions, apiconstants.ConditionTypeMinAvailableBreached)
+		return condition != nil && condition.Reason == reason && condition.ObservedGeneration == pclq.Generation, nil
+	}); err != nil {
+		t.Fatalf("PodClique %s condition did not reach reason %s: %v", name, reason, err)
+	}
+}
+
+func assertPCLQUIDStableFor(t *testing.T, ctx context.Context, tc *testctx.TestContext, name string, uid types.UID, duration time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(duration)
+	for {
+		pclq := &grovecorev1alpha1.PodClique{}
+		if err := tc.Client.Get(ctx, client.ObjectKey{Namespace: tc.Namespace, Name: name}, pclq); err != nil {
+			t.Fatalf("PodClique %s disappeared before gang termination was armed: %v", name, err)
+		}
+		if pclq.UID != uid {
+			t.Fatalf("PodClique %s UID changed before gang termination was armed: %s -> %s", name, uid, pclq.UID)
+		}
+		if time.Now().After(deadline) {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
+}
+
+func waitForPCLQUIDChange(t *testing.T, ctx context.Context, tc *testctx.TestContext, name string, oldUID types.UID) {
+	t.Helper()
+	if err := wait.PollUntilContextTimeout(ctx, tc.Interval, tc.Timeout, true, func(ctx context.Context) (bool, error) {
+		pclq := &grovecorev1alpha1.PodClique{}
+		err := tc.Client.Get(ctx, client.ObjectKey{Namespace: tc.Namespace, Name: name}, pclq)
+		if apierrors.IsNotFound(err) {
+			return false, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		return pclq.UID != oldUID, nil
+	}); err != nil {
+		t.Fatalf("PodClique %s was not recycled after armed availability loss: %v", name, err)
+	}
+}
 
 // findReadyPodFromPodClique returns the first ready pod whose grove.io/podclique
 // label equals cliqueFQN, or nil if none found.

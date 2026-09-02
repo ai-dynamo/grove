@@ -1488,15 +1488,17 @@ func TestInitializeAssignedAndUnassignedPodsForPCS(t *testing.T) {
 		return pod
 	}
 
-	assignedPodGang := &podGangInfo{fqn: "test-pcs-0-1000", pclqs: []pclqInfo{{fqn: pclqName}}}
+	assignedPodGang := &podGangInfo{fqn: "test-pcs-0-1000", pclqs: []pclqInfo{{fqn: pclqName, replicas: 1}}}
 	ss := &syncState{
 		existingPCLQPods: map[string][]v1.Pod{
 			pclqName: {
+				makePod("assigned-1", "test-pcs-0-1000"),
 				makePod("assigned-0", "test-pcs-0-1000"),
 				makePod("unassigned-0", ""),
 				makePod("unknown-0", "test-pcs-0-9999"),
 			},
 		},
+		expectedPodGangs:      []*podGangInfo{assignedPodGang},
 		expectedPodGangByName: map[string]*podGangInfo{assignedPodGang.fqn: assignedPodGang},
 		unassignedPodsByPCLQ:  make(map[string][]v1.Pod),
 	}
@@ -2027,4 +2029,21 @@ func makeClusterTopologyBindingWithLevels(name string, levels []grovecorev1alpha
 		ObjectMeta: metav1.ObjectMeta{Name: name},
 		Spec:       grovecorev1alpha1.ClusterTopologyBindingSpec{Levels: levels},
 	}
+}
+
+// TestBuildPodGangInfosFromEmptyAnchorEntry verifies that an empty anchor entry materializes no
+// PodGang (GREP-0677).
+func TestBuildPodGangInfosFromEmptyAnchorEntry(t *testing.T) {
+	r := &_resource{}
+	ss := &syncState{}
+	emptyAnchor := grovecorev1alpha1.PodGangEntry{
+		Role:        grovecorev1alpha1.PodGangEntryRoleAnchor,
+		Epoch:       "100",
+		AnchorIndex: ptr.To[int32](0),
+	}
+
+	infos, err := r.buildPodGangInfosFromEntry(ss, 0, emptyAnchor)
+
+	require.NoError(t, err)
+	assert.Empty(t, infos, "empty anchor entry must not materialize a PodGang")
 }

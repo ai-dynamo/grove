@@ -26,6 +26,7 @@ import (
 type FakeManager struct {
 	manager.Manager
 	Client        client.Client
+	APIReader     client.Reader
 	Scheme        *runtime.Scheme
 	Logger        logr.Logger
 	WebhookServer webhook.Server
@@ -33,6 +34,14 @@ type FakeManager struct {
 
 // GetClient returns the client registered with the fake manager
 func (f *FakeManager) GetClient() client.Client {
+	return f.Client
+}
+
+// GetAPIReader returns the direct reader registered with the fake manager.
+func (f *FakeManager) GetAPIReader() client.Reader {
+	if f.APIReader != nil {
+		return f.APIReader
+	}
 	return f.Client
 }
 

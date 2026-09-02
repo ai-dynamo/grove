@@ -252,6 +252,11 @@ func (r *Reconciler) computePCLQsStatus(pcs *grovecorev1alpha1.PodCliqueSet, exp
 
 	isAvailable = len(nonTerminatedPCLQs) == expectedStandalonePCLQs &&
 		lo.EveryBy(nonTerminatedPCLQs, func(pclq grovecorev1alpha1.PodClique) bool {
+			// GREP-0677: an idle standalone PodClique (replicas: 0) contributes no required pods, so
+			// it never holds the parent replica back from Available.
+			if pclq.Spec.Replicas == 0 {
+				return true
+			}
 			return pclq.Status.ReadyReplicas >= *pclq.Spec.MinAvailable
 		})
 
@@ -271,11 +276,18 @@ func isStandalonePCLQUpdated(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grovecor
 	if err != nil || expectedPodTemplateHash == "" {
 		return false
 	}
-	return pclq.Labels[apicommon.LabelPodTemplateHash] == expectedPodTemplateHash &&
+	hashesConverged := pclq.Labels[apicommon.LabelPodTemplateHash] == expectedPodTemplateHash &&
 		pclq.Status.CurrentPodTemplateHash != nil &&
 		*pclq.Status.CurrentPodTemplateHash == expectedPodTemplateHash &&
 		pclq.Status.CurrentPodCliqueSetGenerationHash != nil &&
-		*pclq.Status.CurrentPodCliqueSetGenerationHash == *pcs.Status.CurrentGenerationHash &&
+		*pclq.Status.CurrentPodCliqueSetGenerationHash == *pcs.Status.CurrentGenerationHash
+	// GREP-0677: an idle standalone PodClique (replicas: 0) has no pods to roll, so it counts as
+	// updated once its generation and pod-template hashes converge — it never reaches
+	// ReadyReplicas/UpdatedReplicas >= MinAvailable because there are no pods.
+	if pclq.Spec.Replicas == 0 {
+		return hashesConverged
+	}
+	return hashesConverged &&
 		pclq.Status.ReadyReplicas >= *pclq.Spec.MinAvailable &&
 		pclq.Status.UpdatedReplicas >= *pclq.Spec.MinAvailable
 }
@@ -288,6 +300,11 @@ func (r *Reconciler) computePCSGsStatus(pcsGenerationHash *string, expectedPCSGs
 
 	isAvailable = expectedPCSGs == len(nonTerminatedPCSGs) &&
 		lo.EveryBy(nonTerminatedPCSGs, func(pcsg grovecorev1alpha1.PodCliqueScalingGroup) bool {
+			// GREP-0677: an idle PCSG (replicas: 0) contributes no required replicas, so it never
+			// holds the parent replica back from Available.
+			if pcsg.Spec.Replicas == 0 {
+				return true
+			}
 			return pcsg.Status.AvailableReplicas >= *pcsg.Spec.MinAvailable
 		})
 

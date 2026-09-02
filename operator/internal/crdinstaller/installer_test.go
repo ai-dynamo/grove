@@ -16,6 +16,7 @@ package crdinstaller_test
 
 import (
 	"context"
+	"os"
 	"testing"
 
 	operatorcrds "github.com/ai-dynamo/grove/operator/api/core/v1alpha1/crds"
@@ -30,6 +31,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/envtest"
 )
 
 // buildFakeClient creates a fake client with apiextensionsv1 scheme registered.
@@ -100,6 +102,34 @@ func TestInstallCRDs_AllApplied(t *testing.T) {
 		err := cl.Get(ctx, client.ObjectKey{Name: crdName}, obj)
 		assert.NoError(t, err, "CRD %q should exist after InstallCRDs", crdName)
 	}
+}
+
+func TestInstallCRDs_AcceptedByAPIServer(t *testing.T) {
+	if os.Getenv("KUBEBUILDER_ASSETS") == "" {
+		t.Skip("KUBEBUILDER_ASSETS is not set")
+	}
+
+	testEnv := &envtest.Environment{}
+	cfg, err := testEnv.Start()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, testEnv.Stop())
+	}()
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, apiextensionsv1.AddToScheme(scheme))
+	cl, err := client.New(cfg, client.Options{Scheme: scheme})
+	require.NoError(t, err)
+
+	err = crdinstaller.InstallCRDs(t.Context(), cl, logr.Discard(), []string{
+		operatorcrds.PodCliqueCRD(),
+		operatorcrds.PodCliqueSetCRD(),
+		operatorcrds.PodCliqueScalingGroupCRD(),
+		operatorcrds.ClusterTopologyCRD(),
+		operatorcrds.PodGangMapCRD(),
+		schedulercrds.PodGangCRD(),
+	})
+	require.NoError(t, err)
 }
 
 // TestInstallCRDs_CreatesByName verifies that InstallCRDs creates the CRD with

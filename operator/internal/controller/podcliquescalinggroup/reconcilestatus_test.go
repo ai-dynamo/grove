@@ -32,6 +32,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/uuid"
@@ -108,14 +109,6 @@ func TestComputeReplicaStatus(t *testing.T) {
 	}
 }
 
-// healthyPCSGReplica returns a complete PCSG replica entry (one non-terminating, non-breached
-// PCLQ). The tests using this set Spec.CliqueNames to a single name so the replica counts as
-// complete; computeNotInBreachReplicas only counts a replica as not-in-breach when all expected
-// PodCliques exist and none has MinAvailableBreached=True.
-func healthyPCSGReplica() []grovecorev1alpha1.PodClique {
-	return []grovecorev1alpha1.PodClique{{}}
-}
-
 // breachedPCSGReplica returns a complete PCSG replica entry with one breached PCLQ.
 func breachedPCSGReplica() []grovecorev1alpha1.PodClique {
 	return []grovecorev1alpha1.PodClique{{
@@ -128,155 +121,112 @@ func breachedPCSGReplica() []grovecorev1alpha1.PodClique {
 	}}
 }
 
-// incompletePCSGReplica returns a replica entry that is missing PodCliques relative to
-// Spec.CliqueNames (an empty PCLQ list). It has no breached PCLQ but must NOT be counted as
-// not-in-breach, because a partially-created replica is not a valid healthy replica.
-func incompletePCSGReplica() []grovecorev1alpha1.PodClique {
-	return []grovecorev1alpha1.PodClique{}
-}
-
-// TestComputeMinAvailableBreachedCondition exercises the PCSG-level breach formula:
-// the PCSG is in breach when (not-in-breach replicas) < MinAvailable. A replica counts as
-// not-in-breach only when it is complete (all Spec.CliqueNames PodCliques exist and are
-// non-terminating) AND none of them is breached; incomplete replicas are never counted as
-// not-in-breach. Each fixture replica carries one PodClique, so the PCSG sets CliqueNames to a
-// single name.
 func TestComputeMinAvailableBreachedCondition(t *testing.T) {
 	tests := []struct {
-		name         string
-		replicas     int32
-		minAvailable *int32
-		pclqsMap     map[string][]grovecorev1alpha1.PodClique
-		wantStatus   metav1.ConditionStatus
-		wantReason   string
+		name              string
+		generation        int64
+		replicas          int32
+		minAvailable      *int32
+		availableReplicas int32
+		previousReason    string
+		previousObserved  int64
+		wantStatus        metav1.ConditionStatus
+		wantReason        string
 	}{
 		{
-			name:     "all replicas healthy, none breached",
-			replicas: 3,
-			pclqsMap: map[string][]grovecorev1alpha1.PodClique{
-				"0": healthyPCSGReplica(),
-				"1": healthyPCSGReplica(),
-				"2": healthyPCSGReplica(),
-			},
-			wantStatus: metav1.ConditionFalse,
-			wantReason: "SufficientAvailablePodCliqueScalingGroupReplicas",
+			name:              "available replicas meet quorum",
+			generation:        1,
+			replicas:          3,
+			minAvailable:      ptr.To(int32(2)),
+			availableReplicas: 2,
+			wantStatus:        metav1.ConditionFalse,
+			wantReason:        constants.ConditionReasonSufficientAvailablePCSGReplicas,
 		},
 		{
-			name:         "1 of 5 replicas breached, MinAvailable=2 — not in breach",
-			replicas:     5,
-			minAvailable: ptr.To(int32(2)),
-			pclqsMap: map[string][]grovecorev1alpha1.PodClique{
-				"0": breachedPCSGReplica(),
-				"1": healthyPCSGReplica(),
-				"2": healthyPCSGReplica(),
-				"3": healthyPCSGReplica(),
-				"4": healthyPCSGReplica(),
-			},
-			wantStatus: metav1.ConditionFalse,
-			wantReason: "SufficientAvailablePodCliqueScalingGroupReplicas",
-		},
-		{
-			// GT-4 step 4 scenario: WL2 sg-x has 2 replicas, MinAvailable=1.
-			// Killing all pc-c pods of replica 0 breaches that replica; replica 1
-			// stays healthy. notInBreach=1 == MinAvailable=1 → PCSG NOT in breach.
-			// PCS-level handler must NOT delete the whole PCS replica here; only
-			// the PCSG-level scoped restart should fire.
-			name:         "1 of 2 replicas breached, MinAvailable=1 — not in breach (PCSG-scoped restart only)",
-			replicas:     2,
+			name:         "idle PCSG does not breach",
+			generation:   2,
+			replicas:     0,
 			minAvailable: ptr.To(int32(1)),
-			pclqsMap: map[string][]grovecorev1alpha1.PodClique{
-				"0": breachedPCSGReplica(),
-				"1": healthyPCSGReplica(),
-			},
-			wantStatus: metav1.ConditionFalse,
-			wantReason: "SufficientAvailablePodCliqueScalingGroupReplicas",
+			wantStatus:   metav1.ConditionFalse,
+			wantReason:   constants.ConditionReasonIdle,
 		},
 		{
-			// GT-4 step 6: both PCSG replicas breached. notInBreach=0 < 1 → PCSG
-			// in breach. PCS-level handler should restart the whole PCS replica.
-			name:         "both replicas breached, MinAvailable=1 — in breach (escalates to PCS-level)",
-			replicas:     2,
-			minAvailable: ptr.To(int32(1)),
-			pclqsMap: map[string][]grovecorev1alpha1.PodClique{
-				"0": breachedPCSGReplica(),
-				"1": breachedPCSGReplica(),
-			},
-			wantStatus: metav1.ConditionTrue,
-			wantReason: "InsufficientAvailablePodCliqueScalingGroupReplicas",
-		},
-		{
-			name:         "2 of 3 replicas breached, MinAvailable=2 — in breach",
+			name:         "fresh unavailable PCSG is not armed",
+			generation:   1,
 			replicas:     3,
 			minAvailable: ptr.To(int32(2)),
-			pclqsMap: map[string][]grovecorev1alpha1.PodClique{
-				"0": breachedPCSGReplica(),
-				"1": breachedPCSGReplica(),
-				"2": healthyPCSGReplica(),
-			},
-			wantStatus: metav1.ConditionTrue,
-			wantReason: "InsufficientAvailablePodCliqueScalingGroupReplicas",
-		},
-		{
-			// No replicas exist yet (mid-creation / scale-up). notInBreach=0 < min → breach.
-			// TerminationDelay (default 4h) absorbs the startup window before any action fires.
-			name:         "no replicas exist yet — in breach (startup)",
-			replicas:     3,
-			minAvailable: ptr.To(int32(2)),
-			pclqsMap:     map[string][]grovecorev1alpha1.PodClique{},
 			wantStatus:   metav1.ConditionTrue,
-			wantReason:   "InsufficientAvailablePodCliqueScalingGroupReplicas",
+			wantReason:   constants.ConditionReasonInitialScheduling,
 		},
 		{
-			// Replica 0 is incomplete (its pc-c was deleted and not yet recreated) so it has no
-			// breached PodClique but is not a valid healthy replica; replica 1 is breached.
-			// notInBreach=0 < MinAvailable=1 → in breach. An incomplete replica must not be
-			// mistaken for a healthy one (which would also poison the was-healthy gate).
-			name:         "one replica incomplete, one breached, MinAvailable=1 — in breach",
-			replicas:     2,
-			minAvailable: ptr.To(int32(1)),
-			pclqsMap: map[string][]grovecorev1alpha1.PodClique{
-				"0": incompletePCSGReplica(),
-				"1": breachedPCSGReplica(),
-			},
-			wantStatus: metav1.ConditionTrue,
-			wantReason: "InsufficientAvailablePodCliqueScalingGroupReplicas",
+			name:              "previously healthy PCSG regression is actionable",
+			generation:        1,
+			replicas:          3,
+			minAvailable:      ptr.To(int32(2)),
+			availableReplicas: 1,
+			previousReason:    constants.ConditionReasonSufficientAvailablePCSGReplicas,
+			previousObserved:  1,
+			wantStatus:        metav1.ConditionTrue,
+			wantReason:        constants.ConditionReasonInsufficientAvailablePCSGReplicas,
 		},
 		{
-			// Replica 0 is incomplete, replica 1 is complete and healthy. notInBreach=1 ==
-			// MinAvailable=1 → not in breach (the one complete replica satisfies MinAvailable).
-			name:         "one replica incomplete, one healthy, MinAvailable=1 — not in breach",
-			replicas:     2,
-			minAvailable: ptr.To(int32(1)),
-			pclqsMap: map[string][]grovecorev1alpha1.PodClique{
-				"0": incompletePCSGReplica(),
-				"1": healthyPCSGReplica(),
-			},
-			wantStatus: metav1.ConditionFalse,
-			wantReason: "SufficientAvailablePodCliqueScalingGroupReplicas",
+			name:             "initial state survives controller restart",
+			generation:       1,
+			replicas:         2,
+			minAvailable:     ptr.To(int32(1)),
+			previousReason:   constants.ConditionReasonInitialScheduling,
+			previousObserved: 1,
+			wantStatus:       metav1.ConditionTrue,
+			wantReason:       constants.ConditionReasonInitialScheduling,
+		},
+		{
+			name:           "legacy condition without observed generation is reset",
+			generation:     1,
+			replicas:       2,
+			minAvailable:   ptr.To(int32(1)),
+			previousReason: constants.ConditionReasonInsufficientAvailablePCSGReplicas,
+			wantStatus:     metav1.ConditionTrue,
+			wantReason:     constants.ConditionReasonInitialScheduling,
+		},
+		{
+			name:              "legacy nil minAvailable uses API default",
+			generation:        1,
+			replicas:          1,
+			availableReplicas: 1,
+			wantStatus:        metav1.ConditionFalse,
+			wantReason:        constants.ConditionReasonSufficientAvailablePCSGReplicas,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			minAvailable := tt.minAvailable
-			if minAvailable == nil {
-				minAvailable = &tt.replicas
+			var conditions []metav1.Condition
+			if tt.previousReason != "" {
+				conditions = []metav1.Condition{{
+					Type:               constants.ConditionTypeMinAvailableBreached,
+					Status:             metav1.ConditionTrue,
+					Reason:             tt.previousReason,
+					ObservedGeneration: tt.previousObserved,
+				}}
 			}
 			pcsg := &grovecorev1alpha1.PodCliqueScalingGroup{
+				ObjectMeta: metav1.ObjectMeta{Generation: tt.generation},
 				Spec: grovecorev1alpha1.PodCliqueScalingGroupSpec{
 					Replicas:     tt.replicas,
-					MinAvailable: minAvailable,
-					// Each fixture replica carries exactly one PodClique, so a single clique name
-					// makes healthy/breached replicas "complete" and empty ones "incomplete".
-					CliqueNames: []string{"pc"},
+					MinAvailable: tt.minAvailable,
+				},
+				Status: grovecorev1alpha1.PodCliqueScalingGroupStatus{
+					AvailableReplicas: tt.availableReplicas,
+					Conditions:        conditions,
 				},
 			}
 
-			condition := computeMinAvailableBreachedCondition(logr.Discard(), pcsg, tt.pclqsMap)
+			condition := computeMinAvailableBreachedCondition(pcsg)
 
 			assert.Equal(t, "MinAvailableBreached", condition.Type)
 			assert.Equal(t, tt.wantStatus, condition.Status)
 			assert.Equal(t, tt.wantReason, condition.Reason)
+			assert.Equal(t, tt.generation, condition.ObservedGeneration)
 		})
 	}
 }
@@ -288,15 +238,17 @@ func TestComputeMinAvailableBreachedCondition(t *testing.T) {
 func TestEmitAllScheduledReplicasLostIfNeeded(t *testing.T) {
 	tests := []struct {
 		name              string
+		replicas          int32
 		originalScheduled int32
 		nowScheduled      int32
 		wantEvent         bool
 	}{
-		{name: "non-zero to zero emits event", originalScheduled: 3, nowScheduled: 0, wantEvent: true},
-		{name: "zero to zero stays silent (initial startup)", originalScheduled: 0, nowScheduled: 0, wantEvent: false},
-		{name: "non-zero to non-zero stays silent (partial regression handled by breach)", originalScheduled: 3, nowScheduled: 2, wantEvent: false},
-		{name: "zero to non-zero stays silent (recovery)", originalScheduled: 0, nowScheduled: 3, wantEvent: false},
-		{name: "stable non-zero stays silent (steady state)", originalScheduled: 3, nowScheduled: 3, wantEvent: false},
+		{name: "non-zero to zero emits event", replicas: 3, originalScheduled: 3, nowScheduled: 0, wantEvent: true},
+		{name: "zero to zero stays silent (initial startup)", replicas: 3, originalScheduled: 0, nowScheduled: 0, wantEvent: false},
+		{name: "non-zero to non-zero stays silent (partial regression handled by breach)", replicas: 3, originalScheduled: 3, nowScheduled: 2, wantEvent: false},
+		{name: "zero to non-zero stays silent (recovery)", replicas: 3, originalScheduled: 0, nowScheduled: 3, wantEvent: false},
+		{name: "stable non-zero stays silent (steady state)", replicas: 3, originalScheduled: 3, nowScheduled: 3, wantEvent: false},
+		{name: "idle PCSG replicas 0 stays silent (intentional scale-to-zero)", replicas: 0, originalScheduled: 3, nowScheduled: 0, wantEvent: false},
 	}
 
 	for _, tt := range tests {
@@ -304,6 +256,7 @@ func TestEmitAllScheduledReplicasLostIfNeeded(t *testing.T) {
 			recorder := record.NewFakeRecorder(2)
 			r := &Reconciler{eventRecorder: recorder}
 			pcsg := &grovecorev1alpha1.PodCliqueScalingGroup{
+				Spec:   grovecorev1alpha1.PodCliqueScalingGroupSpec{Replicas: tt.replicas},
 				Status: grovecorev1alpha1.PodCliqueScalingGroupStatus{ScheduledReplicas: tt.nowScheduled},
 			}
 
@@ -371,7 +324,7 @@ func TestComputeMinAvailableBreachedConditionUpdateInProgress(t *testing.T) {
 				},
 			}
 
-			condition := computeMinAvailableBreachedCondition(logr.Discard(), pcsg, tt.pclqsMap)
+			condition := computeMinAvailableBreachedCondition(pcsg)
 
 			assert.Equal(t, constants.ConditionTypeMinAvailableBreached, condition.Type)
 			assert.Equal(t, tt.wantStatus, condition.Status, "MinAvailableBreached status mismatch")
@@ -1031,57 +984,57 @@ func assertCondition(t *testing.T, pcsg *grovecorev1alpha1.PodCliqueScalingGroup
 	assert.Equal(t, expectBreached, isBreached, "condition breach status mismatch")
 }
 
-// TestMutateMinAvailableBreachedConditionClearsGangTerminationInProgress pins the second half
-// of the in-progress-flag loop-break design: when MinAvailableBreached transitions from True
-// (or unset) to False, the PCSG status reconciler must also remove the
-// GangTerminationInProgress condition so the next regression can be recycled.
-func TestMutateMinAvailableBreachedConditionClearsGangTerminationInProgress(t *testing.T) {
+func TestMutateMinAvailableBreachedConditionRecordsRecovery(t *testing.T) {
 	pcsg := &grovecorev1alpha1.PodCliqueScalingGroup{
+		ObjectMeta: metav1.ObjectMeta{Generation: 1},
 		Spec: grovecorev1alpha1.PodCliqueScalingGroupSpec{
 			Replicas:     2,
 			MinAvailable: ptr.To(int32(1)),
-			// Each fixture replica carries one PodClique, so a single clique name makes the
-			// recovered replicas count as complete and not-in-breach.
-			CliqueNames: []string{"pc"},
 		},
 		Status: grovecorev1alpha1.PodCliqueScalingGroupStatus{
-			Conditions: []metav1.Condition{
-				{
-					Type:   constants.ConditionTypeMinAvailableBreached,
-					Status: metav1.ConditionTrue,
-					Reason: constants.ConditionReasonScheduledReplicasBelowMinAvailable,
-				},
-				{
-					Type:   constants.ConditionTypeGangTerminationInProgress,
-					Status: metav1.ConditionTrue,
-					Reason: constants.ConditionReasonGangTerminationActive,
-				},
-			},
+			AvailableReplicas: 1,
+			Conditions: []metav1.Condition{{
+				Type:               constants.ConditionTypeMinAvailableBreached,
+				Status:             metav1.ConditionTrue,
+				Reason:             constants.ConditionReasonInitialScheduling,
+				ObservedGeneration: 1,
+			}},
 		},
 	}
-	pclqsHealthy := map[string][]grovecorev1alpha1.PodClique{
-		"0": healthyPCSGReplica(),
-		"1": healthyPCSGReplica(),
+
+	mutateMinAvailableBreachedCondition(logr.Discard(), pcsg)
+
+	condition := meta.FindStatusCondition(pcsg.Status.Conditions, constants.ConditionTypeMinAvailableBreached)
+	require.NotNil(t, condition)
+	assert.Equal(t, metav1.ConditionFalse, condition.Status)
+	assert.Equal(t, constants.ConditionReasonSufficientAvailablePCSGReplicas, condition.Reason)
+	assert.Equal(t, int64(1), condition.ObservedGeneration)
+}
+
+func TestMutateMinAvailableBreachedConditionUpdatesObservedGeneration(t *testing.T) {
+	pcsg := &grovecorev1alpha1.PodCliqueScalingGroup{
+		ObjectMeta: metav1.ObjectMeta{Generation: 2},
+		Spec: grovecorev1alpha1.PodCliqueScalingGroupSpec{
+			Replicas:     1,
+			MinAvailable: ptr.To(int32(1)),
+		},
+		Status: grovecorev1alpha1.PodCliqueScalingGroupStatus{
+			AvailableReplicas: 1,
+			Conditions: []metav1.Condition{{
+				Type:               constants.ConditionTypeMinAvailableBreached,
+				Status:             metav1.ConditionFalse,
+				Reason:             constants.ConditionReasonSufficientAvailablePCSGReplicas,
+				Message:            "Available replicas (1) meet MinAvailable (1)",
+				ObservedGeneration: 1,
+			}},
+		},
 	}
 
-	mutateMinAvailableBreachedCondition(logr.Discard(), pcsg, pclqsHealthy)
+	mutateMinAvailableBreachedCondition(logr.Discard(), pcsg)
 
-	// MinAvailableBreached must now be False (recovery).
-	breach := pcsg.Status.Conditions
-	var breachStatus metav1.ConditionStatus
-	for _, c := range breach {
-		if c.Type == constants.ConditionTypeMinAvailableBreached {
-			breachStatus = c.Status
-		}
-	}
-	assert.Equal(t, metav1.ConditionFalse, breachStatus, "MinAvailableBreached should be False after recovery")
-
-	// GangTerminationInProgress must have been cleared.
-	for _, c := range pcsg.Status.Conditions {
-		if c.Type == constants.ConditionTypeGangTerminationInProgress {
-			t.Fatalf("GangTerminationInProgress condition should have been removed on recovery, still present with status %s", c.Status)
-		}
-	}
+	condition := meta.FindStatusCondition(pcsg.Status.Conditions, constants.ConditionTypeMinAvailableBreached)
+	require.NotNil(t, condition)
+	assert.Equal(t, int64(2), condition.ObservedGeneration)
 }
 
 // TestMutateSelector verifies the /scale selector is published for PCSGs regardless of whether

@@ -151,6 +151,34 @@ func Test_OD2_ManualDeletionCreatesUpdatedPod(t *testing.T) {
 	tests.Logger.Info("OnDelete Update - Manual Deletion Creates Updated Pod test (OD-2) completed successfully!")
 }
 
+func Test_OD12_IdlePodCliqueDoesNotBlockUpdate(t *testing.T) {
+	tc, cleanup := setupIdleUpdateTest(t)
+	defer cleanup()
+
+	if err := updatePCSUpdateStrategy(tc, grovev1alpha1.OnDeleteStrategy); err != nil {
+		t.Fatalf("Failed to select OnDelete strategy: %v", err)
+	}
+	if err := triggerPodCliqueUpdate(tc, "worker"); err != nil {
+		t.Fatalf("Failed to update idle PodClique template: %v", err)
+	}
+	if err := waitForOnDeleteUpdateCompleteWithTimeout(tc, time.Minute); err != nil {
+		t.Fatalf("Idle PodClique blocked OnDelete completion: %v", err)
+	}
+	if err := scalePodCliqueInPCS(tc, "worker", 1); err != nil {
+		t.Fatalf("Failed to wake updated PodClique: %v", err)
+	}
+	if err := tc.WaitForReadyPods(1); err != nil {
+		t.Fatalf("Updated PodClique did not become ready after wake: %v", err)
+	}
+	pods, err := getPodsForClique(tc, "worker")
+	if err != nil || len(pods) != 1 {
+		t.Fatalf("Failed to find woken worker pod: pods=%v err=%v", pods, err)
+	}
+	if err := verifyPodHasUpdatedSpec(tc, pods[0]); err != nil {
+		t.Fatalf("Woken pod did not use updated template: %v", err)
+	}
+}
+
 // Test_OD3_ScaleInPrefersOutdatedPods tests that during scale-in, pods with outdated templates are deleted first.
 // Scenario OD-3 (from proposal Testcase 1):
 // 1. Initialize a 10-node Grove cluster

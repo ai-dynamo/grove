@@ -39,3 +39,31 @@ webhooks:
         scope: "Namespaced"
     sideEffects: None
     timeoutSeconds: 10
+  - admissionReviewVersions:
+      - v1
+    clientConfig:
+      {{- if .Values.webhooks.caBundle }}
+      caBundle: {{ .Values.webhooks.caBundle }}
+      {{- end }}
+      service:
+        name: {{ required ".Values.service.name is required" .Values.service.name }}
+        namespace: {{ .Release.Namespace }}
+        path: /webhooks/validate-podclique
+        port: {{ required ".Values.config.server.webhooks.port" .Values.config.server.webhooks.port }}
+    failurePolicy: Fail
+    matchPolicy: Exact
+    name: pclq.validating.webhooks.grove.io
+    namespaceSelector: { }
+    rules:
+      - apiGroups:
+          - "grove.io"
+        apiVersions:
+          - "v1alpha1"
+        operations:
+          - UPDATE
+        resources:
+          - podcliques
+          - podcliques/scale
+        scope: "Namespaced"
+    sideEffects: None
+    timeoutSeconds: 10

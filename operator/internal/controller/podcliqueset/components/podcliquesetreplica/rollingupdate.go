@@ -281,11 +281,19 @@ func isPCLQUpdateComplete(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grovecorev1
 	if err != nil || expectedPodTemplateHash == "" {
 		return false
 	}
-	return pclq.Labels[apicommon.LabelPodTemplateHash] == expectedPodTemplateHash &&
+	hashesConverged := pclq.Labels[apicommon.LabelPodTemplateHash] == expectedPodTemplateHash &&
 		pclq.Status.CurrentPodTemplateHash != nil &&
 		*pclq.Status.CurrentPodTemplateHash == expectedPodTemplateHash &&
 		pclq.Status.CurrentPodCliqueSetGenerationHash != nil &&
-		*pclq.Status.CurrentPodCliqueSetGenerationHash == *pcs.Status.CurrentGenerationHash &&
+		*pclq.Status.CurrentPodCliqueSetGenerationHash == *pcs.Status.CurrentGenerationHash
+	// GREP-0677: an idle standalone PodClique (replicas: 0) has no pods to roll, so a
+	// RollingRecreate completes for it once its hashes converge. Requiring
+	// UpdatedReplicas/ReadyReplicas >= MinAvailable would stall the update forever (zero pods
+	// can never reach MinAvailable).
+	if pclq.Spec.Replicas == 0 {
+		return hashesConverged
+	}
+	return hashesConverged &&
 		pclq.Status.UpdatedReplicas >= *pclq.Spec.MinAvailable &&
 		pclq.Status.ReadyReplicas >= *pclq.Spec.MinAvailable
 }

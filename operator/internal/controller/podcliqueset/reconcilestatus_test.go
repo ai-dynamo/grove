@@ -132,6 +132,30 @@ func TestComputePCSAvailableReplicas(t *testing.T) {
 			expectedAvailable: 1,
 		},
 		{
+			// GREP-0677: an idle standalone PodClique and an idle PCSG (replicas: 0) contribute no
+			// required members, so the PCS replica stays Available despite them running zero pods.
+			name: "zero-replica standalone and PCSG members are idle - replica still available",
+			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
+				return testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, pcsUID).
+					WithReplicas(1).
+					WithStandaloneCliqueReplicas("worker", 0).
+					WithScalingGroupConfig("compute", []string{"frontend"}, 0, 1).
+					WithPodCliqueSetGenerationHash(&pcsGenerationHash).
+					Build()
+			},
+			childResources: func() []client.Object {
+				return []client.Object{
+					testutils.NewPodCliqueBuilder(testPCSName, uuid.NewUUID(), "worker", testNamespace, 0).
+						WithReplicas(0).
+						WithOptions(testutils.WithPCLQCurrentPCSGenerationHash(pcsGenerationHash)).Build(),
+					testutils.NewPodCliqueScalingGroupBuilder("test-pcs-0-compute", testNamespace, testPCSName, 0).
+						WithReplicas(0).
+						WithOptions(testutils.WithPCSGCurrentPCSGenerationHash(pcsGenerationHash)).Build(),
+				}
+			},
+			expectedAvailable: 1,
+		},
+		{
 			name: "only standalone cliques - all healthy",
 			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
 				return testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, pcsUID).
@@ -890,6 +914,30 @@ func TestCountUpdatedPCLQs(t *testing.T) {
 			assert.Equal(t, tt.want, countUpdatedPCLQs(tt.pcs, tt.in))
 		})
 	}
+}
+
+// TestIsStandalonePCLQUpdatedIdle verifies GREP-0677: an idle standalone PodClique (replicas: 0)
+// counts as updated once its generation and pod-template hashes converge, without requiring
+// ReadyReplicas/UpdatedReplicas >= MinAvailable (there are no pods to reach it).
+func TestIsStandalonePCLQUpdatedIdle(t *testing.T) {
+	hash := "h"
+	pcsUID := uuid.NewUUID()
+	pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, pcsUID).
+		WithStandaloneClique("worker").
+		WithPodCliqueSetGenerationHash(&hash).
+		Build()
+
+	idle := markStandalonePCLQConverged(t, pcs, testutils.NewPodCliqueBuilder(testPCSName, pcsUID, "worker", testNamespace, 0).Build(), hash)
+	idle.Spec.Replicas = 0
+	idle.Status.ReadyReplicas = 0
+	idle.Status.UpdatedReplicas = 0
+
+	assert.True(t, isStandalonePCLQUpdated(pcs, idle), "idle PCLQ with converged hashes must be updated")
+
+	// An idle PCLQ whose hashes have NOT converged is still not updated.
+	stale := idle.DeepCopy()
+	stale.Status.CurrentPodCliqueSetGenerationHash = ptr.To("old")
+	assert.False(t, isStandalonePCLQUpdated(pcs, stale), "idle PCLQ with stale generation hash must not be updated")
 }
 
 func markStandalonePCLQConverged(t testing.TB, pcs *grovecorev1alpha1.PodCliqueSet, pclq *grovecorev1alpha1.PodClique, generationHash string) *grovecorev1alpha1.PodClique {
