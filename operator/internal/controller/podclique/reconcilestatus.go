@@ -276,6 +276,13 @@ func mutatePodCliqueScheduledCondition(pclq *grovecorev1alpha1.PodClique) {
 	if k8sutils.HasConditionChanged(pclq.Status.Conditions, newCondition) {
 		meta.SetStatusCondition(&pclq.Status.Conditions, newCondition)
 	}
+	// The webhook enforces MinAvailable >= 1; Replicas > 0 guards scale-subresource edge paths.
+	if pclq.Spec.Replicas > 0 && newCondition.Status == metav1.ConditionTrue {
+		componentutils.MarkHealthyStateObserved(
+			&pclq.Status.Conditions,
+			"PodClique reached its scheduling threshold",
+		)
+	}
 }
 
 // computePodCliqueScheduledCondition calculates the PodCliqueScheduled condition based on minimum availability requirements

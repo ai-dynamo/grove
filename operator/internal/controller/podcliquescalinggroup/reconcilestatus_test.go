@@ -32,6 +32,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/uuid"
@@ -151,12 +152,22 @@ func TestComputeMinAvailableBreachedCondition(t *testing.T) {
 		wantReason   string
 	}{
 		{
-			name:     "all replicas healthy, none breached",
-			replicas: 3,
+			name:         "all replicas healthy, none breached",
+			replicas:     3,
+			minAvailable: ptr.To(int32(3)),
 			pclqsMap: map[string][]grovecorev1alpha1.PodClique{
 				"0": healthyPCSGReplica(),
 				"1": healthyPCSGReplica(),
 				"2": healthyPCSGReplica(),
+			},
+			wantStatus: metav1.ConditionFalse,
+			wantReason: "SufficientAvailablePodCliqueScalingGroupReplicas",
+		},
+		{
+			name:     "legacy nil MinAvailable defaults to one",
+			replicas: 3,
+			pclqsMap: map[string][]grovecorev1alpha1.PodClique{
+				"0": healthyPCSGReplica(),
 			},
 			wantStatus: metav1.ConditionFalse,
 			wantReason: "SufficientAvailablePodCliqueScalingGroupReplicas",
@@ -229,8 +240,7 @@ func TestComputeMinAvailableBreachedCondition(t *testing.T) {
 		{
 			// Replica 0 is incomplete (its pc-c was deleted and not yet recreated) so it has no
 			// breached PodClique but is not a valid healthy replica; replica 1 is breached.
-			// notInBreach=0 < MinAvailable=1 → in breach. An incomplete replica must not be
-			// mistaken for a healthy one (which would also poison the was-healthy gate).
+			// notInBreach=0 < MinAvailable=1 → in breach.
 			name:         "one replica incomplete, one breached, MinAvailable=1 — in breach",
 			replicas:     2,
 			minAvailable: ptr.To(int32(1)),
@@ -258,14 +268,10 @@ func TestComputeMinAvailableBreachedCondition(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			minAvailable := tt.minAvailable
-			if minAvailable == nil {
-				minAvailable = &tt.replicas
-			}
 			pcsg := &grovecorev1alpha1.PodCliqueScalingGroup{
 				Spec: grovecorev1alpha1.PodCliqueScalingGroupSpec{
 					Replicas:     tt.replicas,
-					MinAvailable: minAvailable,
+					MinAvailable: tt.minAvailable,
 					// Each fixture replica carries exactly one PodClique, so a single clique name
 					// makes healthy/breached replicas "complete" and empty ones "incomplete".
 					CliqueNames: []string{"pc"},
@@ -279,6 +285,40 @@ func TestComputeMinAvailableBreachedCondition(t *testing.T) {
 			assert.Equal(t, tt.wantReason, condition.Reason)
 		})
 	}
+}
+
+func TestMutateMinAvailableBreachedConditionRecordsHealthyState(t *testing.T) {
+	pcsg := &grovecorev1alpha1.PodCliqueScalingGroup{
+		Spec: grovecorev1alpha1.PodCliqueScalingGroupSpec{
+			Replicas:     1,
+			MinAvailable: ptr.To(int32(1)),
+			CliqueNames:  []string{"worker"},
+		},
+		Status: grovecorev1alpha1.PodCliqueScalingGroupStatus{
+			Conditions: []metav1.Condition{{
+				Type:   constants.ConditionTypeGangTerminationInProgress,
+				Status: metav1.ConditionTrue,
+				Reason: constants.ConditionReasonGangTerminationActive,
+			}},
+		},
+	}
+
+	// A complete child set can transiently report no breach before readiness is populated.
+	mutateMinAvailableBreachedCondition(logr.Discard(), pcsg, map[string][]grovecorev1alpha1.PodClique{
+		"0": {{}},
+	})
+	assert.False(t, componentutils.WasPCSGEverHealthy(pcsg))
+	assert.False(t, meta.IsStatusConditionTrue(
+		pcsg.Status.Conditions,
+		constants.ConditionTypeGangTerminationInProgress,
+	), "a transient False must preserve the existing re-fire behavior without recording health")
+
+	pcsg.Status.AvailableReplicas = 1
+	mutateMinAvailableBreachedCondition(logr.Discard(), pcsg, map[string][]grovecorev1alpha1.PodClique{
+		"0": healthyPCSGReplica(),
+	})
+	assert.True(t, componentutils.WasPCSGEverHealthy(pcsg),
+		"a healthy legacy object must record durable history after upgrade")
 }
 
 // TestEmitAllScheduledReplicasLostIfNeeded covers the only explicit signal users have when a
@@ -1031,11 +1071,7 @@ func assertCondition(t *testing.T, pcsg *grovecorev1alpha1.PodCliqueScalingGroup
 	assert.Equal(t, expectBreached, isBreached, "condition breach status mismatch")
 }
 
-// TestMutateMinAvailableBreachedConditionClearsGangTerminationInProgress pins the second half
-// of the in-progress-flag loop-break design: when MinAvailableBreached transitions from True
-// (or unset) to False, the PCSG status reconciler must also remove the
-// GangTerminationInProgress condition so the next regression can be recycled.
-func TestMutateMinAvailableBreachedConditionClearsGangTerminationInProgress(t *testing.T) {
+func TestMutateMinAvailableBreachedConditionClearsGangTerminationInProgressOnAnyFalse(t *testing.T) {
 	pcsg := &grovecorev1alpha1.PodCliqueScalingGroup{
 		Spec: grovecorev1alpha1.PodCliqueScalingGroupSpec{
 			Replicas:     2,
@@ -1066,7 +1102,7 @@ func TestMutateMinAvailableBreachedConditionClearsGangTerminationInProgress(t *t
 
 	mutateMinAvailableBreachedCondition(logr.Discard(), pcsg, pclqsHealthy)
 
-	// MinAvailableBreached must now be False (recovery).
+	// MinAvailableBreached must now be False even though AvailableReplicas has not caught up.
 	breach := pcsg.Status.Conditions
 	var breachStatus metav1.ConditionStatus
 	for _, c := range breach {
@@ -1074,12 +1110,12 @@ func TestMutateMinAvailableBreachedConditionClearsGangTerminationInProgress(t *t
 			breachStatus = c.Status
 		}
 	}
-	assert.Equal(t, metav1.ConditionFalse, breachStatus, "MinAvailableBreached should be False after recovery")
+	assert.Equal(t, metav1.ConditionFalse, breachStatus, "MinAvailableBreached should be False")
 
-	// GangTerminationInProgress must have been cleared.
+	// Preserve the existing re-fire semantics: any False clears GangTerminationInProgress.
 	for _, c := range pcsg.Status.Conditions {
 		if c.Type == constants.ConditionTypeGangTerminationInProgress {
-			t.Fatalf("GangTerminationInProgress condition should have been removed on recovery, still present with status %s", c.Status)
+			t.Fatalf("GangTerminationInProgress condition should have been removed after MinAvailableBreached became False, still present with status %s", c.Status)
 		}
 	}
 }

@@ -585,6 +585,23 @@ func TestReconcileStatusRequeuesOnConflict(t *testing.T) {
 		"a conflicting status patch should requeue after ComponentSyncRetryInterval")
 }
 
+func TestMutatePodCliqueScheduledConditionRecordsHealthyState(t *testing.T) {
+	pclq := &grovecorev1alpha1.PodClique{
+		Spec: grovecorev1alpha1.PodCliqueSpec{
+			Replicas:     2,
+			MinAvailable: ptr.To(int32(2)),
+		},
+		Status: grovecorev1alpha1.PodCliqueStatus{
+			ScheduledReplicas: 2,
+		},
+	}
+
+	mutatePodCliqueScheduledCondition(pclq)
+
+	assert.True(t, componentutils.WasPCLQEverScheduled(pclq),
+		"a healthy legacy object must record durable history after upgrade")
+}
+
 // TestMutateSelector verifies the /scale selector is published for standalone PodCliques (with or
 // without ScaleConfig) and suppressed for PodCliques that belong to a PodCliqueScalingGroup,
 // regardless of whether the PodClique itself has ScaleConfig set.
