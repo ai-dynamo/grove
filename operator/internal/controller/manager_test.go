@@ -33,6 +33,7 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -359,6 +360,7 @@ func TestCreateManagerOptions(t *testing.T) {
 		// Secret is intentionally excluded — the webhook TLS secret may be created
 		// by Helm without the managed-by label.
 		expectedTypes := []client.Object{
+			&appsv1.ControllerRevision{},
 			&corev1.Pod{},
 			&corev1.ServiceAccount{},
 			&corev1.Service{},

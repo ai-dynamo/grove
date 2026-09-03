@@ -754,6 +754,11 @@ func (in *PodCliqueSetStatus) DeepCopyInto(out *PodCliqueSetStatus) {
 		*out = new(string)
 		**out = **in
 	}
+	if in.CurrentRevision != nil {
+		in, out := &in.CurrentRevision, &out.CurrentRevision
+		*out = new(string)
+		**out = **in
+	}
 	if in.UpdateProgress != nil {
 		in, out := &in.UpdateProgress, &out.UpdateProgress
 		*out = new(PodCliqueSetUpdateProgress)

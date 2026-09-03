@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"testing"
 
+	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	apiconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	groveclientscheme "github.com/ai-dynamo/grove/operator/internal/client"
@@ -456,14 +457,16 @@ func TestBuildResource_MNNVLInjection(t *testing.T) {
 				eventRecorder: record.NewFakeRecorder(10),
 			}
 
+			podTemplateHash := testutils.ComputePodCliqueTemplateHashes(pcs)[pclqTemplateName]
 			// A standalone PodClique belongs to the anchor entry, so buildResource resolves its PodGang
 			// name from the anchor entry's epoch.
 			pgm := testutils.NewPodGangMapBuilder(testPCSName, testPCSNamespace, uuid.NewUUID(), pcsReplica).WithEntries(
 				testutils.NewPodGangEntryBuilder("hash", "1000").
 					WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).WithAnchorIndex(0).Build(),
 			).Build()
-			err := operator.buildResource(logr.Discard(), pcs, pcsReplica, false, pgm, pclq)
+			err := operator.buildResource(logr.Discard(), pcs, pcsReplica, false, pgm, pclq, podTemplateHash)
 			require.NoError(t, err)
+			assert.Equal(t, podTemplateHash, pclq.Labels[apicommon.LabelPodTemplateHash])
 
 			// Verify pod-level claims
 			if tc.expectPodLevelClaim {
@@ -522,7 +525,7 @@ func TestBuildResource_StripsTopologyAnnotation(t *testing.T) {
 		testutils.NewPodGangEntryBuilder("hash", "1000").
 			WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).WithAnchorIndex(0).Build(),
 	).Build()
-	err := operator.buildResource(logr.Discard(), pcs, 0, false, pgm, pclq)
+	err := operator.buildResource(logr.Discard(), pcs, 0, false, pgm, pclq, "template-hash")
 	require.NoError(t, err)
 	require.NotNil(t, pclq.Annotations)
 	assert.Equal(t, "yes", pclq.Annotations["example.com/keep"])

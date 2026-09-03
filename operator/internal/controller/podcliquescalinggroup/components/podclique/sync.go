@@ -27,6 +27,7 @@ import (
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
+	commonrevision "github.com/ai-dynamo/grove/operator/internal/controller/common/revision"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/resourceclaim"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
@@ -48,6 +49,7 @@ type syncSnapshot struct {
 	pcsgIndicesToTerminate         []string
 	pcsgIndicesToRequeue           []string
 	expectedPCLQFQNsPerPCSGReplica map[int][]string
+	revision                       *commonrevision.Revision
 	expectedPCLQPodTemplateHashMap map[string]string
 }
 
@@ -103,7 +105,11 @@ func (r _resource) prepareSyncContext(ctx context.Context, logger logr.Logger, p
 	syncSnap.pcsgIndicesToTerminate, syncSnap.pcsgIndicesToRequeue = getMinAvailableBreachedPCSGIndices(logger, syncSnap.existingPCLQs, syncSnap.pcs.Spec.Template.TerminationDelay.Duration)
 
 	// pre-compute expected PodTemplateHash for each PCLQ
-	syncSnap.expectedPCLQPodTemplateHashMap = getExpectedPCLQPodTemplateHashMap(syncSnap.pcs, pcsg)
+	syncSnap.revision, err = componentutils.GetPodCliqueSetRevision(ctx, r.client, syncSnap.pcs)
+	if err != nil {
+		return nil, err
+	}
+	syncSnap.expectedPCLQPodTemplateHashMap = componentutils.GetPCLQTemplateHashes(syncSnap.revision, syncSnap.pcs, pcsg)
 
 	return syncSnap, nil
 }
@@ -342,27 +348,6 @@ func (r _resource) getExistingPCLQs(ctx context.Context, pcsg *grovecorev1alpha1
 		)
 	}
 	return existingPCLQs, nil
-}
-
-// getExpectedPCLQPodTemplateHashMap computes the expected pod template hash for each PodClique in the PCSG
-func getExpectedPCLQPodTemplateHashMap(pcs *grovecorev1alpha1.PodCliqueSet, pcsg *grovecorev1alpha1.PodCliqueScalingGroup) map[string]string {
-	pclqFQNToHash := make(map[string]string)
-	pcsgPCLQNames := pcsg.Spec.CliqueNames
-	for _, pcsgCliqueName := range pcsgPCLQNames {
-		pclqTemplateSpec := componentutils.FindPodCliqueTemplateSpecByName(pcs, pcsgCliqueName)
-		if pclqTemplateSpec == nil {
-			continue
-		}
-		podTemplateHash := componentutils.ComputePCLQPodTemplateHash(pclqTemplateSpec, pcs.Spec.Template.PriorityClassName)
-		for pcsgReplicaIndex := range int(pcsg.Spec.Replicas) {
-			cliqueFQN := apicommon.GeneratePodCliqueName(apicommon.ResourceNameReplica{
-				Name:    pcsg.Name,
-				Replica: pcsgReplicaIndex,
-			}, pcsgCliqueName)
-			pclqFQNToHash[cliqueFQN] = podTemplateHash
-		}
-	}
-	return pclqFQNToHash
 }
 
 // refreshExistingPCLQs removes all the excess PCLQs that belong to any PCSG replica > expectedPCSGReplicas.

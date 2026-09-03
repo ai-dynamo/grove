@@ -1104,6 +1104,9 @@ func TestBuildResource_MNNVLInjection(t *testing.T) {
 				eventRecorder: &record.FakeRecorder{},
 			}
 
+			revision, err := testutils.NewRevision(pcs)
+			require.NoError(t, err)
+
 			// The anchor entry owns PodCliqueScalingGroup replica index 0 (below MinAvailable), so
 			// buildResource resolves the PodGang name from this entry's epoch.
 			pgm := testutils.NewPodGangMapBuilder(pcsName, pcsNamespace, "uid", pcsReplicaIndex).WithEntries(
@@ -1111,9 +1114,10 @@ func TestBuildResource_MNNVLInjection(t *testing.T) {
 					WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).
 					WithPCSGReplicaIndices(map[string][]int32{pcsgConfigName: {int32(pcsgReplicaIndex)}}).Build(),
 			).Build()
-			ss := &syncSnapshot{pcs: pcs, pcsg: pcsg, pcsReplicaIndex: pcsReplicaIndex, pgm: pgm}
-			err := operator.buildResource(logr.Discard(), ss, pcsgReplicaIndex, pclq, false)
+			ss := &syncSnapshot{pcs: pcs, pcsg: pcsg, pcsReplicaIndex: pcsReplicaIndex, pgm: pgm, revision: revision}
+			err = operator.buildResource(logr.Discard(), ss, pcsgReplicaIndex, pclq, false)
 			require.NoError(t, err)
+			assert.Equal(t, testutils.ComputePodCliqueTemplateHashes(pcs)[pclqTemplateName], pclq.Labels[apicommon.LabelPodTemplateHash])
 
 			// Verify pod-level claims
 			if tc.expectPodLevelClaim {
@@ -1200,8 +1204,10 @@ func TestBuildResource_StripsTopologyAnnotation(t *testing.T) {
 	).Build()
 
 	operator := &_resource{scheme: groveclientscheme.Scheme}
-	ss := &syncSnapshot{pcs: pcs, pcsg: pcsg, pcsReplicaIndex: 0, pgm: pgm}
-	err := operator.buildResource(logr.Discard(), ss, 0, pclq, false)
+	revision, err := testutils.NewRevision(pcs)
+	require.NoError(t, err)
+	ss := &syncSnapshot{pcs: pcs, pcsg: pcsg, pcsReplicaIndex: 0, pgm: pgm, revision: revision}
+	err = operator.buildResource(logr.Discard(), ss, 0, pclq, false)
 	require.NoError(t, err)
 	require.NotNil(t, pclq.Annotations)
 	assert.Equal(t, "yes", pclq.Annotations["example.com/keep"])

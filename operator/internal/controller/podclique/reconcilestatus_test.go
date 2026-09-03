@@ -24,7 +24,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	internalconstants "github.com/ai-dynamo/grove/operator/internal/constants"
-	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
+	"github.com/ai-dynamo/grove/operator/internal/utils/podtemplatehash"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/go-logr/logr"
@@ -236,7 +236,10 @@ func TestReconcileStatusConvergesWhenReadyPodMatchesDesiredHash(t *testing.T) {
 	}
 	pod := createReadyOwnedPodWithHash("ready-current-pod", pclq, templateHash)
 
-	cl := testutils.SetupFakeClient(pcs, pclq, pod)
+	revision, err := testutils.NewPodCliqueSetControllerRevision(pcs)
+	require.NoError(t, err)
+
+	cl := testutils.SetupFakeClient(pcs, pclq, pod, revision)
 	r := &Reconciler{
 		client:        cl,
 		eventRecorder: record.NewFakeRecorder(1),
@@ -244,7 +247,7 @@ func TestReconcileStatusConvergesWhenReadyPodMatchesDesiredHash(t *testing.T) {
 
 	result := r.reconcileStatus(context.Background(), logr.Discard(), pclq)
 
-	_, err := result.Result()
+	_, err = result.Result()
 	require.NoError(t, err)
 	updatedPCLQ := &grovecorev1alpha1.PodClique{}
 	require.NoError(t, cl.Get(context.Background(), types.NamespacedName{Name: pclq.Name, Namespace: pclq.Namespace}, updatedPCLQ))
@@ -263,9 +266,11 @@ func TestReconcileStatusRequeuesWithoutPatchWhenStatusUnchanged(t *testing.T) {
 	pclq.Spec = grovecorev1alpha1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To[int32](1)}
 	pclq.Status = grovecorev1alpha1.PodCliqueStatus{ObservedGeneration: ptr.To[int64](1)}
 	pod := createReadyOwnedPodWithHash("ready-pod", pclq, templateHash)
+	revision, err := testutils.NewPodCliqueSetControllerRevision(pcs)
+	require.NoError(t, err)
 
 	cl := testutils.NewTestClientBuilder().
-		WithObjects(pcs, pclq, pod).
+		WithObjects(pcs, pclq, pod, revision).
 		WithStatusSubresource(pcs, pclq).
 		WithIndex(&corev1.Pod{}, ".metadata.controller.uid", func(obj client.Object) []string {
 			controllerRef := metav1.GetControllerOfNoCopy(obj)
@@ -313,7 +318,10 @@ func TestMutateCurrentHashesDoesNotAdvanceWhenTemplateHashIsStale(t *testing.T) 
 	pclq.Status.Replicas = 2
 	pclq.Status.UpdatedReplicas = 2
 
-	err := mutateCurrentHashes(logr.Discard(), pcs, pclq)
+	revision, err := testutils.NewRevision(pcs)
+	require.NoError(t, err)
+
+	err = mutateCurrentHashes(logr.Discard(), revision, pclq)
 
 	require.NoError(t, err)
 	assert.Equal(t, "", *pclq.Status.CurrentPodTemplateHash)
@@ -330,16 +338,12 @@ func newPodCliqueHashConvergenceFixture(t *testing.T) (*grovecorev1alpha1.PodCli
 			},
 		},
 	}
-	generationHash := "current-generation-hash"
 	pcs := &grovecorev1alpha1.PodCliqueSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "pcs", Namespace: "default"},
 		Spec: grovecorev1alpha1.PodCliqueSetSpec{
 			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
 				Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{template},
 			},
-		},
-		Status: grovecorev1alpha1.PodCliqueSetStatus{
-			CurrentGenerationHash: ptr.To(generationHash),
 		},
 	}
 	pclq := &grovecorev1alpha1.PodClique{
@@ -352,8 +356,7 @@ func newPodCliqueHashConvergenceFixture(t *testing.T) (*grovecorev1alpha1.PodCli
 			},
 		},
 	}
-	templateHash, err := componentutils.GetExpectedPCLQPodTemplateHash(pcs, pclq.ObjectMeta)
-	require.NoError(t, err)
+	templateHash := podtemplatehash.Compute(podtemplatehash.PodTemplateSpec(pcs, template))
 	pclq.Labels[apicommon.LabelPodTemplateHash] = templateHash
 	return pcs, pclq, templateHash
 }
@@ -558,12 +561,14 @@ func TestReconcileStatusRequeuesOnConflict(t *testing.T) {
 	}
 	pclq.Status = grovecorev1alpha1.PodCliqueStatus{ObservedGeneration: ptr.To[int64](1)}
 	pod := createReadyOwnedPodWithHash("ready-pod", pclq, templateHash)
+	revision, err := testutils.NewPodCliqueSetControllerRevision(pcs)
+	require.NoError(t, err)
 
 	conflict := apierrors.NewConflict(
 		schema.GroupResource{Group: grovecorev1alpha1.SchemeGroupVersion.Group, Resource: "podcliques"},
 		pclq.Name, errors.New("object was modified"))
 	cl := testutils.NewTestClientBuilder().
-		WithObjects(pcs, pclq, pod).
+		WithObjects(pcs, pclq, pod, revision).
 		WithStatusSubresource(pcs, pclq).
 		WithIndex(&corev1.Pod{}, ".metadata.controller.uid", func(obj client.Object) []string {
 			controllerRef := metav1.GetControllerOfNoCopy(obj)

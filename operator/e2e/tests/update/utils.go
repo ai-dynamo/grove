@@ -364,9 +364,12 @@ func waitForRollingUpdateComplete(tc *testctx.TestContext, expectedReplicas int3
 			pollCount, pcs.Status.UpdatedReplicas, expectedReplicas, endedAt)
 
 		// Check if rolling update is complete:
+		// - ObservedGeneration should match the current spec generation
 		// - UpdatedReplicas should match expected
 		// - UpdateProgress should exist with UpdateEndedAt set (not nil)
-		if pcs.Status.UpdatedReplicas == expectedReplicas &&
+		if pcs.Status.ObservedGeneration != nil &&
+			*pcs.Status.ObservedGeneration == pcs.Generation &&
+			pcs.Status.UpdatedReplicas == expectedReplicas &&
 			pcs.Status.UpdateProgress != nil &&
 			pcs.Status.UpdateProgress.UpdateEndedAt != nil {
 			tests.Logger.Debugf("[waitForRollingUpdateComplete] Rolling update completed after %d polls", pollCount)
@@ -1174,7 +1177,12 @@ func waitForOnDeleteUpdateComplete(tc *testctx.TestContext) error {
 			// A transient cache miss returns a nil object. Keep polling.
 			return false
 		}
-		if workload.IsOnDeleteUpdateComplete(pcs) {
+		// UpdateProgress can still describe the previous revision immediately after a
+		// spec patch. ObservedGeneration advances only after the PCS controller has
+		// synchronized its managed children, so replacements are then safe to create.
+		if workload.IsOnDeleteUpdateComplete(pcs) &&
+			pcs.Status.ObservedGeneration != nil &&
+			*pcs.Status.ObservedGeneration == pcs.Generation {
 			tests.Logger.Debugf("[waitForOnDeleteUpdateComplete] OnDelete update marked complete after %d polls (UpdatedReplicas=%d)",
 				pollCount, pcs.Status.UpdatedReplicas)
 			return true
