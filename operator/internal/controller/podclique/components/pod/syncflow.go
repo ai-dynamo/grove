@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"slices"
 	"sort"
+	"strconv"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
@@ -235,6 +236,58 @@ func (r _resource) runSyncFlow(ctx context.Context, logger logr.Logger, ss *sync
 	}
 	result.recordPendingScheduleGatedPods(skippedScheduleGatedPods)
 	return result
+}
+
+// syncPCSGPodIndexLabels backfills and reconciles the group-wide index label on existing PCSG pods.
+func (r _resource) syncPCSGPodIndexLabels(ctx context.Context, ss *syncSnapshot) error {
+	firstPCSGPodIndex, err := getPCSGPodIndex(ss.pclq, 0)
+	if err != nil {
+		return groveerr.WrapError(
+			err,
+			errCodeUpdatePCSGPodIndexLabel,
+			component.OperationSync,
+			fmt.Sprintf("error computing PodCliqueScalingGroup pod index for PodClique %v", client.ObjectKeyFromObject(ss.pclq)),
+		)
+	}
+	if firstPCSGPodIndex == nil {
+		return nil
+	}
+
+	for _, pod := range ss.existingPCLQPods {
+		podIndexValue, ok := pod.Labels[apicommon.LabelPodCliquePodIndex]
+		if !ok {
+			return groveerr.New(
+				errCodeUpdatePCSGPodIndexLabel,
+				component.OperationSync,
+				fmt.Sprintf("Pod %v is missing required label %q", client.ObjectKeyFromObject(pod), apicommon.LabelPodCliquePodIndex),
+			)
+		}
+		podIndex, err := strconv.Atoi(podIndexValue)
+		if err != nil {
+			return groveerr.WrapError(
+				err,
+				errCodeUpdatePCSGPodIndexLabel,
+				component.OperationSync,
+				fmt.Sprintf("Pod %v has invalid %s value %q", client.ObjectKeyFromObject(pod), apicommon.LabelPodCliquePodIndex, podIndexValue),
+			)
+		}
+		expectedValue := strconv.Itoa(*firstPCSGPodIndex + podIndex)
+		if pod.Labels[apicommon.LabelPodCliqueScalingGroupPodIndex] == expectedValue {
+			continue
+		}
+
+		podBeforePatch := pod.DeepCopy()
+		pod.Labels[apicommon.LabelPodCliqueScalingGroupPodIndex] = expectedValue
+		if err = r.client.Patch(ctx, pod, client.MergeFrom(podBeforePatch)); err != nil {
+			return groveerr.WrapError(
+				err,
+				errCodeUpdatePCSGPodIndexLabel,
+				component.OperationSync,
+				fmt.Sprintf("failed to update PodCliqueScalingGroup pod index label on Pod %v", client.ObjectKeyFromObject(pod)),
+			)
+		}
+	}
+	return nil
 }
 
 // computePodCountDelta returns desired minus the live pod count reconciled with expectations for a

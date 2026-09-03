@@ -1209,6 +1209,56 @@ func TestBuildResource_StripsTopologyAnnotation(t *testing.T) {
 	assert.False(t, hasTopologyAnnotation)
 }
 
+func TestSyncPCSGPodIndexOffsetsUsesCurrentReplicaCounts(t *testing.T) {
+	pcs := &grovecorev1alpha1.PodCliqueSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-pcs", Namespace: "default"},
+		Spec: grovecorev1alpha1.PodCliqueSetSpec{Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
+			Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+				{Name: "leader", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1}},
+				{Name: "worker", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 2}},
+			},
+		}},
+	}
+	pcsg := &grovecorev1alpha1.PodCliqueScalingGroup{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-pcs-0-engine", Namespace: "default"},
+		Spec: grovecorev1alpha1.PodCliqueScalingGroupSpec{
+			Replicas:    1,
+			CliqueNames: []string{"leader", "worker"},
+		},
+	}
+	leader := grovecorev1alpha1.PodClique{ObjectMeta: metav1.ObjectMeta{
+		Name:      "test-pcs-0-engine-0-leader",
+		Namespace: "default",
+		Labels: map[string]string{
+			apicommon.LabelPodCliqueScalingGroup:             "test-pcs-0-engine",
+			apicommon.LabelPodCliqueScalingGroupReplicaIndex: "0",
+		},
+	}, Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 2}}
+	worker := grovecorev1alpha1.PodClique{ObjectMeta: metav1.ObjectMeta{
+		Name:      "test-pcs-0-engine-0-worker",
+		Namespace: "default",
+		Labels: map[string]string{
+			apicommon.LabelPodCliqueScalingGroup:             "test-pcs-0-engine",
+			apicommon.LabelPodCliqueScalingGroupReplicaIndex: "0",
+		},
+		Annotations: map[string]string{
+			apiconstants.AnnotationPodCliqueScalingGroupPodIndexOffset: "1",
+		},
+	}, Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 2}}
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, grovecorev1alpha1.AddToScheme(scheme))
+	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(&leader, &worker).Build()
+	r := _resource{client: cl}
+	ss := &syncSnapshot{pcs: pcs, pcsg: pcsg, existingPCLQs: []grovecorev1alpha1.PodClique{leader, worker}}
+
+	require.NoError(t, r.syncPCSGPodIndexOffsets(context.Background(), ss))
+
+	updatedWorker := &grovecorev1alpha1.PodClique{}
+	require.NoError(t, cl.Get(context.Background(), client.ObjectKeyFromObject(&worker), updatedWorker))
+	assert.Equal(t, "2", updatedWorker.Annotations[apiconstants.AnnotationPodCliqueScalingGroupPodIndexOffset])
+}
+
 // triageContainersByMNNVLClaim separates containers into those with MNNVL claim and those without.
 func triageContainersByMNNVLClaim(containers []corev1.Container) (withClaim, withoutClaim []string) {
 	for _, c := range containers {

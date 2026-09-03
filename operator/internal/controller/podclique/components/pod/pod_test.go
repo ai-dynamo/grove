@@ -88,7 +88,10 @@ func TestBuildResourceWithLPXBackend(t *testing.T) {
 		Build()
 	pclq := testutils.NewPodCliqueBuilder(pcsName, uid, cliqueName, namespace, 0).Build()
 	pclq.Spec.PodSpec = *podSpec.DeepCopy()
-	pclq.Annotations = map[string]string{"example.com/source": "podclique"}
+	pclq.Annotations = map[string]string{
+		"example.com/source": "podclique",
+		constants.AnnotationPodCliqueScalingGroupPodIndexOffset: "0",
+	}
 
 	scheme := runtime.NewScheme()
 	require.NoError(t, grovecorev1alpha1.AddToScheme(scheme))
@@ -114,6 +117,7 @@ func TestBuildResourceWithLPXBackend(t *testing.T) {
 	require.NotNil(t, pod.Spec.ResourceClaims[0].ResourceClaimName)
 	assert.Equal(t, claimName, *pod.Spec.ResourceClaims[0].ResourceClaimName)
 	assert.Equal(t, "podclique", pod.Annotations["example.com/source"])
+	assert.NotContains(t, pod.Annotations, constants.AnnotationPodCliqueScalingGroupPodIndexOffset)
 
 	pod.Annotations["example.com/source"] = "pod"
 	assert.Equal(t, "podclique", pclq.Annotations["example.com/source"])
@@ -246,6 +250,7 @@ func TestAddEnvironmentVariables(t *testing.T) {
 				constants.EnvVarHeadlessService,
 				constants.EnvVarPodIndex,
 			},
+			unexpectedEnvVars: []string{constants.EnvVarPodCliqueScalingGroupPodIndex},
 		},
 		{
 			name: "PCSG member PodClique",
@@ -274,6 +279,7 @@ func TestAddEnvironmentVariables(t *testing.T) {
 				constants.EnvVarPodCliqueName,
 				constants.EnvVarHeadlessService,
 				constants.EnvVarPodIndex,
+				constants.EnvVarPodCliqueScalingGroupPodIndex,
 			},
 		},
 	}
@@ -301,13 +307,57 @@ func TestAddEnvironmentVariables(t *testing.T) {
 					}
 				}
 
-				// Verify Grove environment variables use direct values (except pod index which uses fieldRef)
+				// Verify Grove environment variables use direct values, except pod indices sourced from labels.
 				directValueEnvVars := filterOutEnvVar(tt.expectedEnvVars, constants.EnvVarPodIndex)
+				directValueEnvVars = filterOutEnvVar(directValueEnvVars, constants.EnvVarPodCliqueScalingGroupPodIndex)
 				assertGroveEnvVarsDirectValues(t, container, directValueEnvVars)
 				assertEnvVarUsesFieldRef(t, container, constants.EnvVarPodIndex, fmt.Sprintf("metadata.labels['%s']", common.LabelPodCliquePodIndex))
+				if tt.pclq.Labels[common.LabelPodCliqueScalingGroup] != "" {
+					assertEnvVarUsesFieldRef(t, container, constants.EnvVarPodCliqueScalingGroupPodIndex, fmt.Sprintf("metadata.labels['%s']", common.LabelPodCliqueScalingGroupPodIndex))
+				}
 			}
 		})
 	}
+}
+
+func TestGetPCSGPodIndex(t *testing.T) {
+	t.Run("PCSG member", func(t *testing.T) {
+		pclq := &grovecorev1alpha1.PodClique{ObjectMeta: metav1.ObjectMeta{
+			Labels: map[string]string{
+				common.LabelPodCliqueScalingGroup: "test-pcs-0-engine",
+			},
+			Annotations: map[string]string{constants.AnnotationPodCliqueScalingGroupPodIndexOffset: "2"},
+		}}
+
+		index, err := getPCSGPodIndex(pclq, 1)
+		require.NoError(t, err)
+		require.NotNil(t, index)
+		assert.Equal(t, 3, *index)
+	})
+
+	t.Run("standalone PodClique", func(t *testing.T) {
+		index, err := getPCSGPodIndex(&grovecorev1alpha1.PodClique{}, 0)
+
+		require.NoError(t, err)
+		assert.Nil(t, index)
+	})
+
+	t.Run("PCSG member without offset", func(t *testing.T) {
+		pclq := &grovecorev1alpha1.PodClique{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{
+			common.LabelPodCliqueScalingGroup: "test-pcs-0-engine",
+		}}}
+
+		index, err := getPCSGPodIndex(pclq, 0)
+
+		assert.Error(t, err)
+		assert.Nil(t, index)
+	})
+}
+
+func TestGetLabelsIncludesPCSGPodIndex(t *testing.T) {
+	labels := getLabels(metav1.ObjectMeta{}, "test-pcs", "test-podgang", 0, 1, ptr.To(2))
+
+	assert.Equal(t, "2", labels[common.LabelPodCliqueScalingGroupPodIndex])
 }
 
 func TestAddGroveEnvironmentVariables_NoDuplicates(t *testing.T) {
@@ -443,6 +493,7 @@ func TestAddGroveEnvironmentVariables_NoDuplicates(t *testing.T) {
 								Image: "test-image",
 								Env: []corev1.EnvVar{
 									{Name: "GROVE_PCSG_NAME", Value: "old-pcsg-name"},
+									{Name: constants.EnvVarPodCliqueScalingGroupPodIndex, Value: "stale"},
 									{Name: "USER_VAR", Value: "user-value"},
 								},
 							},
@@ -455,6 +506,7 @@ func TestAddGroveEnvironmentVariables_NoDuplicates(t *testing.T) {
 				constants.EnvVarPodCliqueSetIndex,
 				constants.EnvVarPodCliqueName,
 				constants.EnvVarHeadlessService,
+				constants.EnvVarPodCliqueScalingGroupPodIndex,
 			},
 			shouldReplace:  map[string]string{},
 			shouldPreserve: []string{"USER_VAR"},
@@ -476,6 +528,9 @@ func TestAddGroveEnvironmentVariables_NoDuplicates(t *testing.T) {
 				constants.EnvVarHeadlessService,
 				constants.EnvVarPodIndex,
 			}
+			if tt.pclq.Labels[common.LabelPodCliqueScalingGroup] != "" {
+				expectedPrefix = append(expectedPrefix, constants.EnvVarPodCliqueScalingGroupPodIndex)
+			}
 			assertContainer := func(container corev1.Container) {
 				assertExpectedEnvVars(t, container, tt.expectedEnvVars)
 				assertReplacedEnvVars(t, container, tt.shouldReplace)
@@ -486,6 +541,9 @@ func TestAddGroveEnvironmentVariables_NoDuplicates(t *testing.T) {
 					assert.Equal(t, envVarName, container.Env[i].Name)
 				}
 				assertEnvVarUsesFieldRef(t, container, constants.EnvVarPodIndex, fmt.Sprintf("metadata.labels['%s']", common.LabelPodCliquePodIndex))
+				if tt.pclq.Labels[common.LabelPodCliqueScalingGroup] != "" {
+					assertEnvVarUsesFieldRef(t, container, constants.EnvVarPodCliqueScalingGroupPodIndex, fmt.Sprintf("metadata.labels['%s']", common.LabelPodCliqueScalingGroupPodIndex))
+				}
 			}
 			for _, container := range pod.Spec.Containers {
 				assertContainer(container)

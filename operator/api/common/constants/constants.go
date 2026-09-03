@@ -49,6 +49,9 @@ const (
 	AnnotationReconcileTrigger = "grove.io/reconcile-trigger"
 	// AnnotationTopologyName is an annotation set on PodGang to allow KAI scheduler to discover which topology to use.
 	AnnotationTopologyName = "grove.io/topology-name"
+	// AnnotationPodCliqueScalingGroupPodIndexOffset stores the first group-wide pod index assigned to a PodClique.
+	// It is internal coordination state between Grove reconcilers and is not propagated to Pods.
+	AnnotationPodCliqueScalingGroupPodIndexOffset = "grove.io/podcliquescalinggroup-pod-index-offset"
 )
 
 // Constants for Grove environment variables
@@ -67,6 +70,8 @@ const (
 	EnvVarPodCliqueScalingGroupName = "GROVE_PCSG_NAME"
 	// EnvVarPodCliqueScalingGroupIndex is the environment variable name for PodCliqueScalingGroup replica index
 	EnvVarPodCliqueScalingGroupIndex = "GROVE_PCSG_INDEX"
+	// EnvVarPodCliqueScalingGroupPodIndex is the environment variable name for pod index within a PodCliqueScalingGroup replica
+	EnvVarPodCliqueScalingGroupPodIndex = "GROVE_PCSG_POD_INDEX"
 	// EnvVarPodCliqueScalingGroupTemplateNumPods is the environment variable name for total number of pods in PodCliqueScalingGroup template
 	EnvVarPodCliqueScalingGroupTemplateNumPods = "GROVE_PCSG_TEMPLATE_NUM_PODS"
 )

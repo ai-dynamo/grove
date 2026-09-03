@@ -59,8 +59,11 @@ func (r *Reconciler) RegisterWithManager(mgr ctrl.Manager) error {
 		For(&grovecorev1alpha1.PodClique{},
 			builder.WithPredicates(
 				predicate.And(
-					predicate.GenerationChangedPredicate{},
 					managedPodCliquePredicate(),
+					predicate.Or(
+						predicate.GenerationChangedPredicate{},
+						predicate.AnnotationChangedPredicate{},
+					),
 				),
 			),
 		).
