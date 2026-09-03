@@ -35,6 +35,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -92,6 +93,17 @@ func (b *schedulerBackend) SyncPodGang(ctx context.Context, podGang *groveschedu
 	if podGang == nil {
 		return fmt.Errorf("podGang is nil")
 	}
+
+	if len(podGang.Spec.PodGroups) == 0 {
+		podGroup := &kaischedulingv2alpha2.PodGroup{}
+		err := b.client.Get(ctx, client.ObjectKeyFromObject(podGang), podGroup)
+		if err != nil {
+			return client.IgnoreNotFound(err)
+		}
+
+		return client.IgnoreNotFound(b.client.Delete(ctx, podGroup))
+	}
+
 	if err := b.ensurePodGangSkipAnnotation(ctx, podGang); err != nil {
 		return fmt.Errorf("ensure KAI podgrouper skip annotation: %w", err)
 	}
@@ -230,12 +242,15 @@ func (b *schedulerBackend) ensurePodGangSkipAnnotation(ctx context.Context, podG
 	if podGang.Annotations != nil && podGang.Annotations[annotationKeySkipPGR] == annotationValSkipPGR {
 		return nil
 	}
-	before := podGang.DeepCopy()
-	if podGang.Annotations == nil {
-		podGang.Annotations = map[string]string{}
+	// The LPX backend can pass a partial PodGang spec, so construct the patch against a
+	// new resource so that we don't clobber the podGang spec after the Patch call.
+	updated := &groveschedulerv1alpha1.PodGang{ObjectMeta: podGang.ObjectMeta}
+	patch := fmt.Appendf(nil, `{"metadata":{"annotations":{%q:%q}}}`, annotationKeySkipPGR, annotationValSkipPGR)
+	if err := b.client.Patch(ctx, updated, client.RawPatch(types.MergePatchType, patch)); err != nil {
+		return err
 	}
-	podGang.Annotations[annotationKeySkipPGR] = annotationValSkipPGR
-	return b.client.Patch(ctx, podGang, client.MergeFrom(before))
+	podGang.Annotations = updated.Annotations
+	return nil
 }
 
 func (b *schedulerBackend) recordWarning(obj runtime.Object, reason string, err error) {

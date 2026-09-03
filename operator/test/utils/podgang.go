@@ -18,6 +18,7 @@ import (
 	"time"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
+	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	"github.com/samber/lo"
@@ -104,6 +105,7 @@ func (b *PodGangBuilder) WithDeletionTimestamp() *PodGangBuilder {
 // UID (not just name) can be exercised.
 func (b *PodGangBuilder) WithOwnerReference(kind, name string, uid types.UID) *PodGangBuilder {
 	b.pg.OwnerReferences = append(b.pg.OwnerReferences, metav1.OwnerReference{
+		APIVersion: grovecorev1alpha1.SchemeGroupVersion.String(),
 		Kind:       kind,
 		Name:       name,
 		UID:        uid,

@@ -17,6 +17,7 @@ package registry
 import (
 	"fmt"
 	"maps"
+	"slices"
 
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
@@ -45,7 +46,7 @@ type registry struct {
 func New(cl, directClient client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder, cfg configv1alpha1.SchedulerConfiguration) (scheduler.Registry, error) {
 	reg := &registry{backends: make(map[string]scheduler.Backend)}
 	for _, p := range cfg.Profiles {
-		backend, err := newSchedulerBackend(cl, directClient, scheme, eventRecorder, p)
+		backend, err := newSchedulerBackend(cfg, cl, directClient, scheme, eventRecorder, p)
 		if err != nil {
 			return nil, fmt.Errorf("failed to initialize %s backend: %w", p.Name, err)
 		}
@@ -94,7 +95,7 @@ func (r *registry) AllTopologyAware() map[string]scheduler.TopologyAwareBackend 
 
 // newSchedulerBackend creates and initializes a Backend for the given profile.
 // NOTE: For any newly supported backend, add a case for it in the switch statement.
-func newSchedulerBackend(cl, directClient client.Client, scheme *runtime.Scheme, rec record.EventRecorder, p configv1alpha1.SchedulerProfile) (scheduler.Backend, error) {
+func newSchedulerBackend(cfg configv1alpha1.SchedulerConfiguration, cl, directClient client.Client, scheme *runtime.Scheme, rec record.EventRecorder, p configv1alpha1.SchedulerProfile) (scheduler.Backend, error) {
 	var b scheduler.Backend
 	switch p.Name {
 	case configv1alpha1.SchedulerNameKube:
@@ -104,7 +105,14 @@ func newSchedulerBackend(cl, directClient client.Client, scheme *runtime.Scheme,
 	case configv1alpha1.SchedulerNameVolcano:
 		b = volcano.New(cl, scheme, rec, p)
 	case configv1alpha1.SchedulerNameLPX:
-		b = lpx.New(p)
+		var fallbackBackend scheduler.Backend
+
+		kaiProfileIndex := slices.IndexFunc(cfg.Profiles, func(p configv1alpha1.SchedulerProfile) bool { return p.Name == configv1alpha1.SchedulerNameKai })
+		if kaiProfileIndex != -1 {
+			fallbackBackend = kai.New(cl, scheme, rec, cfg.Profiles[kaiProfileIndex])
+		}
+
+		b = lpx.New(cl, p, fallbackBackend)
 	default:
 		return nil, fmt.Errorf("scheduler profile %q is not supported", p.Name)
 	}
