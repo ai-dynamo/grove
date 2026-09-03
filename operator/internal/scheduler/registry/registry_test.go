@@ -30,35 +30,41 @@ import (
 // TestNewRegistry tests New with different scheduler profiles.
 func TestNewRegistry(t *testing.T) {
 	tests := []struct {
-		name          string
-		schedulerName configv1alpha1.SchedulerName
-		wantErr       bool
-		errContains   string
-		expectedName  string
+		name         string
+		schedulers   []configv1alpha1.SchedulerName
+		wantErr      bool
+		errContains  string
+		expectedName string
 	}{
 		{
-			name:          "kai scheduler initialization",
-			schedulerName: configv1alpha1.SchedulerNameKai,
-			wantErr:       false,
-			expectedName:  "kai-scheduler",
+			name:         "kai scheduler initialization",
+			schedulers:   []configv1alpha1.SchedulerName{configv1alpha1.SchedulerNameKai},
+			wantErr:      false,
+			expectedName: "kai-scheduler",
 		},
 		{
-			name:          "default scheduler initialization",
-			schedulerName: configv1alpha1.SchedulerNameKube,
-			wantErr:       false,
-			expectedName:  "default-scheduler",
+			name:         "default scheduler initialization",
+			schedulers:   []configv1alpha1.SchedulerName{configv1alpha1.SchedulerNameKube},
+			wantErr:      false,
+			expectedName: "default-scheduler",
 		},
 		{
-			name:          "lpx scheduler initialization",
-			schedulerName: configv1alpha1.SchedulerNameLPX,
-			wantErr:       false,
-			expectedName:  "lpx-scheduler",
+			name:         "lpx scheduler initialization with kai fallback",
+			schedulers:   []configv1alpha1.SchedulerName{configv1alpha1.SchedulerNameLPX, configv1alpha1.SchedulerNameKai},
+			wantErr:      false,
+			expectedName: "lpx-scheduler",
 		},
 		{
-			name:          "unsupported scheduler",
-			schedulerName: "unknown-scheduler",
-			wantErr:       true,
-			errContains:   "not supported",
+			name:         "lpx scheduler initialization without fallback",
+			schedulers:   []configv1alpha1.SchedulerName{configv1alpha1.SchedulerNameLPX},
+			wantErr:      false,
+			expectedName: "lpx-scheduler",
+		},
+		{
+			name:        "unsupported scheduler",
+			schedulers:  []configv1alpha1.SchedulerName{"unknown-scheduler"},
+			wantErr:     true,
+			errContains: "not supported",
 		},
 	}
 
@@ -66,12 +72,14 @@ func TestNewRegistry(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			cl := testutils.CreateDefaultFakeClient(nil)
 			recorder := record.NewFakeRecorder(10)
+			profiles := make([]configv1alpha1.SchedulerProfile, 0, len(tt.schedulers))
+			for _, schedulerName := range tt.schedulers {
+				profiles = append(profiles, configv1alpha1.SchedulerProfile{Name: schedulerName})
+			}
 
 			cfg := configv1alpha1.SchedulerConfiguration{
-				Profiles: []configv1alpha1.SchedulerProfile{
-					{Name: tt.schedulerName},
-				},
-				DefaultProfileName: string(tt.schedulerName),
+				Profiles:           profiles,
+				DefaultProfileName: string(tt.schedulers[0]),
 			}
 			reg, err := New(cl, cl, cl.Scheme(), recorder, cfg)
 
