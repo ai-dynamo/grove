@@ -251,6 +251,7 @@ rules:
   - podcliquesets.grove.io
   - podcliques.grove.io
   - podcliquescalinggroups.grove.io
+  - clustertopologies.grove.io
   - clustertopologybindings.grove.io
   - podgangmaps.grove.io
   - podgangs.scheduler.grove.io
@@ -259,4 +260,11 @@ rules:
   - create
   - update
   - patch
+  - delete
+- apiGroups:
+  - grove.io
+  resources:
+  - clustertopologies
+  verbs:
+  - list
 {{- end }}
