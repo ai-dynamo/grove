@@ -954,6 +954,11 @@ collision-free.
 
 The `rctName` is the name of the referenced `ResourceClaimTemplateConfig` or external `ResourceClaimTemplate`.
 
+Generated ResourceClaim names used in `pod.spec.resourceClaims[].name` must be DNS labels of at most
+63 characters. This is validated on create; legacy PodCliqueSets remain updatable, but scaling one
+can make a generated name too long (for example, when a replica index grows from `9` to `10`) and
+block new Pods until it is scaled back or recreated with shorter names.
+
 **Concrete example** — PCS `disagg` (replica 0), PCSG `sgx` (replicas: 2), cliques in PCSG:
 `pca` (replicas: 3), `pcb` (replicas: 2); standalone PCLQ: `metrics` (replicas: 2).
 PCS AllReplicas rctName=res1, PCS PerReplica rctName=res2, PCSG PerReplica rctName=gpu-pool,
