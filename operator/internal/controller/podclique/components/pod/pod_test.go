@@ -32,6 +32,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -73,6 +74,9 @@ func TestBuildResourceWithLPXBackend(t *testing.T) {
 		Containers: []corev1.Container{{
 			Name:  "worker",
 			Image: "worker",
+			Resources: corev1.ResourceRequirements{
+				Requests: corev1.ResourceList{corev1.ResourceName("lpu.nvidia.com/lpu"): resource.MustParse("1")},
+			},
 		}},
 		ResourceClaims: []corev1.PodResourceClaim{{
 			Name:              "gpu",
@@ -95,7 +99,9 @@ func TestBuildResourceWithLPXBackend(t *testing.T) {
 	registry := &testutils.FakeSchedulerRegistry{
 		Backends: map[string]scheduler.Backend{
 			string(configv1alpha1.SchedulerNameLPX): lpx.New(
+				nil,
 				configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameLPX},
+				testutils.NewFakeSchedulerBackend(string(configv1alpha1.SchedulerNameKai)),
 			),
 		},
 		DefaultBackend: string(configv1alpha1.SchedulerNameLPX),
