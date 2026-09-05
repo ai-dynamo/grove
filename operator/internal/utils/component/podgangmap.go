@@ -17,15 +17,24 @@ package component
 import (
 	"context"
 	"fmt"
+	"maps"
+	"slices"
 	"strconv"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 
+	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	"github.com/samber/lo"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
+
+// MaterializedPodGang associates a PodGang with the PodGangMap entry that defines it.
+type MaterializedPodGang struct {
+	PodGang *groveschedulerv1alpha1.PodGang
+	Entry   *grovecorev1alpha1.PodGangEntry
+}
 
 // GetPodGangMap fetches a PodGangMap for a given PCS objectKey and replica index.
 func GetPodGangMap(ctx context.Context, cl client.Client, pcsObjectKey client.ObjectKey, pcsReplicaIndex int) (*grovecorev1alpha1.PodGangMap, error) {
@@ -35,6 +44,103 @@ func GetPodGangMap(ctx context.Context, cl client.Client, pcsObjectKey client.Ob
 		return nil, err
 	}
 	return pgm, nil
+}
+
+// GetOwningPodCliqueSetForPodGang loads and validates a PodGang's controller owner.
+func GetOwningPodCliqueSetForPodGang(ctx context.Context, cl client.Client, podGang *groveschedulerv1alpha1.PodGang) (*grovecorev1alpha1.PodCliqueSet, error) {
+	owner := metav1.GetControllerOf(podGang)
+	if owner == nil {
+		return nil, fmt.Errorf("podgang %s/%s has no controlling PodCliqueSet", podGang.Namespace, podGang.Name)
+	}
+	if owner.APIVersion != grovecorev1alpha1.SchemeGroupVersion.String() || owner.Kind != "PodCliqueSet" {
+		return nil, fmt.Errorf("podgang %s/%s is controlled by %s %q, expected PodCliqueSet", podGang.Namespace, podGang.Name, owner.APIVersion, owner.Kind)
+	}
+
+	pcs := &grovecorev1alpha1.PodCliqueSet{}
+	if err := cl.Get(ctx, client.ObjectKey{Namespace: podGang.Namespace, Name: owner.Name}, pcs); err != nil {
+		return nil, fmt.Errorf("get controlling PodCliqueSet %s/%s: %w", podGang.Namespace, owner.Name, err)
+	}
+	if pcs.UID != owner.UID {
+		return nil, fmt.Errorf("PodGang %s/%s owner UID %q does not match PodCliqueSet UID %q", podGang.Namespace, podGang.Name, owner.UID, pcs.UID)
+	}
+	return pcs, nil
+}
+
+// ExpectedPodGangNamesForEntry returns deterministic names for all PodGangs materialized from an entry.
+func ExpectedPodGangNamesForEntry(pcsRnr apicommon.ResourceNameReplica, entry grovecorev1alpha1.PodGangEntry) []string {
+	if entry.Role == grovecorev1alpha1.PodGangEntryRoleAnchor {
+		return []string{apicommon.GenerateAnchorPodGangName(pcsRnr, entry.Epoch)}
+	}
+
+	pcsgNames := slices.Sorted(maps.Keys(entry.PCSGReplicaIndices))
+	podGangNames := make([]string, 0)
+	for _, pcsgName := range pcsgNames {
+		for _, pcsgReplicaIndex := range slices.Sorted(slices.Values(entry.PCSGReplicaIndices[pcsgName])) {
+			podGangNames = append(podGangNames, apicommon.GenerateNonAnchorPodGangName(pcsRnr, entry.Epoch, pcsgName, pcsgReplicaIndex))
+		}
+	}
+	return podGangNames
+}
+
+// LoadMaterializedPodGangs loads and validates the complete PodGang set described by a PodGangMap.
+func LoadMaterializedPodGangs(ctx context.Context, cl client.Client, pcs *grovecorev1alpha1.PodCliqueSet, pgm *grovecorev1alpha1.PodGangMap, schedulerName string) ([]MaterializedPodGang, error) {
+	if schedulerName == "" {
+		return nil, fmt.Errorf("scheduler name must not be empty")
+	}
+	pcsReplicaIndex := int(pgm.Spec.PodCliqueSetReplicaIndex)
+	if err := validatePodGangMapOwner(pcs, pgm); err != nil {
+		return nil, err
+	}
+
+	pcsRnr := apicommon.ResourceNameReplica{Name: pcs.Name, Replica: pcsReplicaIndex}
+	materialized := make([]MaterializedPodGang, 0)
+	seenNames := make(map[string]struct{})
+	for i := range pgm.Spec.Entries {
+		entry := &pgm.Spec.Entries[i]
+		for _, podGangName := range ExpectedPodGangNamesForEntry(pcsRnr, *entry) {
+			if _, exists := seenNames[podGangName]; exists {
+				return nil, fmt.Errorf("PodGangMap %s/%s materializes duplicate PodGang %q", pgm.Namespace, pgm.Name, podGangName)
+			}
+			seenNames[podGangName] = struct{}{}
+
+			podGang, err := GetPodGang(ctx, cl, podGangName, pcs.Namespace)
+			if err != nil {
+				return nil, fmt.Errorf("failed to get PodGang %s/%s materialized by PodGangMap %s: %w", pcs.Namespace, podGangName, pgm.Name, err)
+			}
+			if err := validateMaterializedPodGang(podGang, pcs, pcsReplicaIndex, entry, schedulerName); err != nil {
+				return nil, err
+			}
+			materialized = append(materialized, MaterializedPodGang{PodGang: podGang, Entry: entry})
+		}
+	}
+	return materialized, nil
+}
+
+func validatePodGangMapOwner(pcs *grovecorev1alpha1.PodCliqueSet, pgm *grovecorev1alpha1.PodGangMap) error {
+	if !metav1.IsControlledBy(pgm, pcs) {
+		return fmt.Errorf("PodGangMap %s/%s is not controlled by PodCliqueSet UID %q", pgm.Namespace, pgm.Name, pcs.UID)
+	}
+	return nil
+}
+
+func validateMaterializedPodGang(podGang *groveschedulerv1alpha1.PodGang, pcs *grovecorev1alpha1.PodCliqueSet, pcsReplicaIndex int, entry *grovecorev1alpha1.PodGangEntry, schedulerName string) error {
+	if !metav1.IsControlledBy(podGang, pcs) {
+		return fmt.Errorf("PodGang %s/%s is not controlled by PodCliqueSet UID %q", podGang.Namespace, podGang.Name, pcs.UID)
+	}
+
+	expectedLabels := map[string]string{
+		apicommon.LabelPodCliqueSetReplicaIndex:   strconv.Itoa(pcsReplicaIndex),
+		apicommon.LabelEpoch:                      entry.Epoch,
+		apicommon.LabelPodGangRole:                string(entry.Role),
+		apicommon.LabelPodCliqueSetGenerationHash: entry.PodCliqueSetGenerationHash,
+		apicommon.LabelSchedulerName:              schedulerName,
+	}
+	for label, expected := range expectedLabels {
+		if actual := podGang.Labels[label]; actual != expected {
+			return fmt.Errorf("PodGang %s/%s label %s is %q, expected %q", podGang.Namespace, podGang.Name, label, actual, expected)
+		}
+	}
+	return nil
 }
 
 // ListPodGangMapsForPCS fetches all PodGangMaps owned by a PodCliqueSet.
@@ -108,9 +214,8 @@ func DependsOnForEpoch(pgm *grovecorev1alpha1.PodGangMap, epoch string) ([]strin
 // pre-created ScaleOut entry, whose epoch every scale-out replica shares. It returns an error when
 // neither an owning entry nor a ScaleOut entry exists, which is a contract violation for a
 // PodCliqueScalingGroup-owned PodClique and must be requeued rather than resolved to an empty name.
-// It does not filter by generation hash: a replica's PodGangMap holds a single generation's entries,
-// and during a rolling update only the under-update replica's entries advance, so a lagging replica
-// is resolved against its own entries.
+// It does not filter by generation hash: Coherent updates retain older entries while their content
+// drains, so a replica must resolve against the entry that owns it, regardless of generation.
 func podGangEntryForPCSGReplica(pgm *grovecorev1alpha1.PodGangMap, pcsgName string, pcsgReplicaIndex int32) (*grovecorev1alpha1.PodGangEntry, error) {
 	var scaleOut *grovecorev1alpha1.PodGangEntry
 	for i := range pgm.Spec.Entries {
@@ -234,23 +339,6 @@ func LatestEntryForGenerationHash(entries []grovecorev1alpha1.PodGangEntry, pcsG
 		}
 	}
 	return latest, nil
-}
-
-// ExpectedPodGangNamesForEntry returns the PodGang names a committed entry materializes into. An anchor
-// entry yields one anchor PodGang. A tail or scale-out entry yields one PodGang per PodCliqueScalingGroup
-// replica index it carries. It mirrors buildPodGangInfosFromEntry in the PodGang component, reusing the
-// same name generators, so the two stay in step.
-func ExpectedPodGangNamesForEntry(rnr apicommon.ResourceNameReplica, entry grovecorev1alpha1.PodGangEntry) []string {
-	if entry.Role == grovecorev1alpha1.PodGangEntryRoleAnchor {
-		return []string{apicommon.GenerateAnchorPodGangName(rnr, entry.Epoch)}
-	}
-	var names []string
-	for pcsgName, replicaIndices := range entry.PCSGReplicaIndices {
-		for _, replicaIndex := range replicaIndices {
-			names = append(names, apicommon.GenerateNonAnchorPodGangName(rnr, entry.Epoch, pcsgName, replicaIndex))
-		}
-	}
-	return names
 }
 
 // IsPodGangMapAtSingleGeneration reports whether every entry carries pcsGenerationHash, so the PodGangMap
