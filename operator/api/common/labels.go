@@ -92,6 +92,8 @@ const (
 	LabelComponentNamePodGang = "podgang"
 	// LabelComponentNamePodGangMap is the label key representing the component name for a PodGangMap resource.
 	LabelComponentNamePodGangMap = "pcs-podgangmap"
+	// LabelComponentNameAggregatePodGroup is the label value for a scheduler backend's aggregate PodGroup.
+	LabelComponentNameAggregatePodGroup = "aggregate-podgroup"
 	// LabelComponentNamePodCliqueSetPodClique is the label key representing the component name for a PodClique
 	// whose owner is PodCliqueSet. These PodCliques do not belong to any PodCliqueScalingGroup.
 	LabelComponentNamePodCliqueSetPodClique = "pcs-podclique"

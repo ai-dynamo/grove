@@ -28,7 +28,7 @@ import (
 // RegisterWithManager registers the backend controller with the manager
 func (r *Reconciler) RegisterWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&groveschedulerv1alpha1.PodGang{}, builder.WithPredicates(podGangSpecChangePredicate())).
+		For(&groveschedulerv1alpha1.PodGang{}, builder.WithPredicates(podGangChangePredicate())).
 		WithOptions(controller.Options{
 			MaxConcurrentReconciles: *r.config.ConcurrentSyncs,
 		}).
@@ -36,9 +36,8 @@ func (r *Reconciler) RegisterWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
-// podGangSpecChangePredicate filters PodGang events to only process spec changes
-// Status-only updates (like Initialized condition) are ignored
-func podGangSpecChangePredicate() predicate.Predicate {
+// podGangChangePredicate filters out status-only updates while retaining changes used by scheduler backends.
+func podGangChangePredicate() predicate.Predicate {
 	return predicate.Funcs{
 		CreateFunc: func(e event.CreateEvent) bool {
 			return grovectrlutils.IsManagedPodGang(e.Object)
