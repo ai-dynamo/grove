@@ -16,6 +16,7 @@ package kai
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
@@ -244,6 +245,96 @@ func TestBackend_SyncPodGangSetsOwnerReferenceAndSkipAnnotation(t *testing.T) {
 	updatedPodGang := &groveschedulerv1alpha1.PodGang{}
 	require.NoError(t, cl.Get(ctx, client.ObjectKeyFromObject(podGang), updatedPodGang))
 	assert.Equal(t, annotationValSkipPGR, updatedPodGang.Annotations[annotationKeySkipPGR])
+	assert.Contains(t, updatedPodGang.Finalizers, podGangFinalizer)
+}
+
+func TestBackend_SyncPodGang_ReparentsHistoricalPodGroupBeforeFinalizerRemoval(t *testing.T) {
+	pcs := newPodCliqueSet("owned-pcs", "team-a")
+	podGang := terminatingPodGang(pcs)
+	cl := testutils.NewTestClientBuilder().WithObjects(pcs, podGang).Build()
+	b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKai})
+	require.NoError(t, b.Init(cl))
+
+	historical := historicalPodGroup(podGang)
+	require.NoError(t, cl.Create(context.Background(), historical))
+	require.NoError(t, b.SyncPodGang(context.Background(), podGang))
+
+	updated := &kaischedulingv2alpha2.PodGroup{}
+	require.NoError(t, cl.Get(context.Background(), client.ObjectKeyFromObject(historical), updated))
+	owner := metav1.GetControllerOf(updated)
+	require.NotNil(t, owner)
+	assert.Equal(t, "PodCliqueSet", owner.Kind)
+	assert.Equal(t, pcs.Name, owner.Name)
+	assert.Equal(t, pcs.UID, owner.UID)
+	assertPodGangFinalizerRemoved(t, cl, podGang)
+}
+
+func TestBackend_SyncPodGang_DoesNotReparentStaleHistoricalPodGroup(t *testing.T) {
+	pcs := newPodCliqueSet("owned-pcs", "team-a")
+	podGang := terminatingPodGang(pcs)
+	cl := testutils.NewTestClientBuilder().WithObjects(pcs, podGang).Build()
+	b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKai})
+	require.NoError(t, b.Init(cl))
+
+	historical := historicalPodGroup(podGang)
+	historical.OwnerReferences[0].UID = "stale-podgang-uid"
+	require.NoError(t, cl.Create(context.Background(), historical))
+	require.NoError(t, b.SyncPodGang(context.Background(), podGang))
+
+	updated := &kaischedulingv2alpha2.PodGroup{}
+	require.NoError(t, cl.Get(context.Background(), client.ObjectKeyFromObject(historical), updated))
+	assert.Equal(t, types.UID("stale-podgang-uid"), metav1.GetControllerOf(updated).UID)
+	assertPodGangFinalizerRemoved(t, cl, podGang)
+}
+
+func TestBackend_SyncPodGang_HoldsFinalizerWhenHistoricalReparentFails(t *testing.T) {
+	pcs := newPodCliqueSet("owned-pcs", "team-a")
+	podGang := terminatingPodGang(pcs)
+	patchErr := apierrors.NewInternalError(errors.New("apiserver unavailable"))
+	cl := testutils.NewTestClientBuilder().
+		WithObjects(pcs, podGang).
+		RecordErrorForObjects(testutils.ClientMethodPatch, patchErr, client.ObjectKeyFromObject(podGang)).
+		Build()
+	b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKai})
+	require.NoError(t, b.Init(cl))
+	require.NoError(t, cl.Create(context.Background(), historicalPodGroup(podGang)))
+
+	require.ErrorContains(t, b.SyncPodGang(context.Background(), podGang), "reparent historical KAI PodGroup")
+	updated := &groveschedulerv1alpha1.PodGang{}
+	require.NoError(t, cl.Get(context.Background(), client.ObjectKeyFromObject(podGang), updated))
+	assert.Contains(t, updated.Finalizers, podGangFinalizer)
+}
+
+func TestBackend_SyncPodGang_ReleasesFinalizerWhenPodCliqueSetIsDeletingOrMissing(t *testing.T) {
+	tests := []struct {
+		name       string
+		includePCS bool
+		deletePCS  bool
+	}{
+		{name: "deleting", includePCS: true, deletePCS: true},
+		{name: "missing"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pcs := newPodCliqueSet("owned-pcs", "team-a")
+			if tt.deletePCS {
+				now := metav1.Now()
+				pcs.DeletionTimestamp = &now
+				pcs.Finalizers = []string{"test.grove.io/hold"}
+			}
+			podGang := terminatingPodGang(pcs)
+			objects := []client.Object{podGang}
+			if tt.includePCS {
+				objects = append(objects, pcs)
+			}
+			cl := testutils.NewTestClientBuilder().WithObjects(objects...).Build()
+			b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKai})
+			require.NoError(t, b.Init(cl))
+
+			require.NoError(t, b.SyncPodGang(context.Background(), podGang))
+			assertPodGangFinalizerRemoved(t, cl, podGang)
+		})
+	}
 }
 
 func TestBackend_SyncPodGang_UsesUniquePodCliqueTemplateQueue(t *testing.T) {
@@ -499,6 +590,10 @@ func podCliqueTemplateWithQueue(name, queue string) *grovecorev1alpha1.PodClique
 }
 
 func setPodCliqueSetControllerOwner(podGang *groveschedulerv1alpha1.PodGang, pcs *grovecorev1alpha1.PodCliqueSet) {
+	if podGang.Labels == nil {
+		podGang.Labels = map[string]string{}
+	}
+	podGang.Labels[apicommon.LabelPodCliqueSetReplicaIndex] = "0"
 	podGang.OwnerReferences = []metav1.OwnerReference{{
 		APIVersion: grovecorev1alpha1.SchemeGroupVersion.String(),
 		Kind:       "PodCliqueSet",
@@ -506,4 +601,41 @@ func setPodCliqueSetControllerOwner(podGang *groveschedulerv1alpha1.PodGang, pcs
 		UID:        pcs.UID,
 		Controller: ptr.To(true),
 	}}
+}
+
+func terminatingPodGang(pcs *grovecorev1alpha1.PodCliqueSet) *groveschedulerv1alpha1.PodGang {
+	const name = "terminating-podgang"
+	podGang := testutils.NewPodGangBuilder(name, pcs.Namespace).
+		WithSchedulerName(string(configv1alpha1.SchedulerNameKai)).
+		WithDeletionTimestamp().
+		Build()
+	podGang.UID = types.UID(name + "-uid")
+	podGang.Finalizers = []string{podGangFinalizer}
+	setPodCliqueSetControllerOwner(podGang, pcs)
+	return podGang
+}
+
+func historicalPodGroup(podGang *groveschedulerv1alpha1.PodGang) *kaischedulingv2alpha2.PodGroup {
+	return &kaischedulingv2alpha2.PodGroup{ObjectMeta: metav1.ObjectMeta{
+		Name:      podGang.Name,
+		Namespace: podGang.Namespace,
+		OwnerReferences: []metav1.OwnerReference{{
+			APIVersion: groveschedulerv1alpha1.SchemeGroupVersion.String(),
+			Kind:       "PodGang",
+			Name:       podGang.Name,
+			UID:        podGang.UID,
+			Controller: ptr.To(true),
+		}},
+	}}
+}
+
+func assertPodGangFinalizerRemoved(t *testing.T, cl client.Client, podGang *groveschedulerv1alpha1.PodGang) {
+	t.Helper()
+	updated := &groveschedulerv1alpha1.PodGang{}
+	err := cl.Get(context.Background(), client.ObjectKeyFromObject(podGang), updated)
+	if apierrors.IsNotFound(err) {
+		return
+	}
+	require.NoError(t, err)
+	assert.NotContains(t, updated.Finalizers, podGangFinalizer)
 }
