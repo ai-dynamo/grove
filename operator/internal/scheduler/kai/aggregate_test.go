@@ -122,7 +122,9 @@ func TestBuildAggregatePlanRoleAwareHierarchy(t *testing.T) {
 	for _, item := range []componentutils.MaterializedPodGang{anchorA, anchorB, tail, scaleOut} {
 		leaf := requireSubGroup(t, aggregate, podGroupLeafName(item.PodGang.Name, "worker"))
 		require.NotNil(t, leaf.MinMember)
-		assert.Equal(t, leaf.Name, plan.podLeaves[item.PodGang.Name]["worker"])
+		podLeaf, err := plan.leafForPod(legacyAggregatePod(pcs, item.PodGang, "worker"))
+		require.NoError(t, err)
+		assert.Equal(t, leaf.Name, podLeaf)
 		leafNames[leaf.Name] = struct{}{}
 	}
 	assert.Len(t, leafNames, 4, "same PodGroup name in different PodGangs must produce unique leaves")

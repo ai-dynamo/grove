@@ -33,6 +33,7 @@ import (
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	kaischedulingv2alpha2 "github.com/kai-scheduler/KAI-scheduler/pkg/apis/scheduling/v2alpha2"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
@@ -45,23 +46,17 @@ const (
 	nonAnchorPodGangsSubGroupName = "0-non-anchor-podgangs"
 )
 
-func (b *schedulerBackend) reconcileAggregatePodGroup(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, replica int) error {
-	pgm, err := componentutils.GetPodGangMap(ctx, b.client, client.ObjectKeyFromObject(pcs), replica)
-	if err != nil {
-		return fmt.Errorf("get PodGangMap for PodCliqueSet %s/%s replica %d: %w", pcs.Namespace, pcs.Name, replica, err)
-	}
-	if int(pgm.Spec.PodCliqueSetReplicaIndex) != replica {
-		return fmt.Errorf("PodGangMap %s/%s has replica index %d, expected %d", pgm.Namespace, pgm.Name, pgm.Spec.PodCliqueSetReplicaIndex, replica)
-	}
-	materialized, err := componentutils.LoadMaterializedPodGangs(ctx, b.client, pcs, pgm, b.Name())
-	if err != nil {
-		return err
-	}
+func (b *schedulerBackend) reconcileAggregateReplica(
+	ctx context.Context,
+	pcs *grovecorev1alpha1.PodCliqueSet,
+	replica int,
+	materialized []componentutils.MaterializedPodGang,
+) error {
 	for _, item := range materialized {
 		if !item.PodGang.DeletionTimestamp.IsZero() {
 			continue
 		}
-		if err = b.ensurePodGangMetadata(ctx, item.PodGang); err != nil {
+		if err := b.ensurePodGangMetadata(ctx, item.PodGang); err != nil {
 			return fmt.Errorf("ensure KAI metadata on PodGang %s/%s: %w", item.PodGang.Namespace, item.PodGang.Name, err)
 		}
 	}
@@ -74,7 +69,11 @@ func (b *schedulerBackend) reconcileAggregatePodGroup(ctx context.Context, pcs *
 	if err != nil {
 		return err
 	}
-	return b.syncAggregatePodGroup(ctx, pcs, plan.podGroup)
+	// Persist the aggregate before any Pod is patched to reference it.
+	if err = b.syncAggregatePodGroup(ctx, pcs, plan.podGroup); err != nil {
+		return err
+	}
+	return b.migratePods(ctx, pcs, replica, plan)
 }
 
 type aggregateInputs struct {
@@ -424,6 +423,107 @@ func (b *schedulerBackend) syncAggregatePodGroup(ctx context.Context, pcs *grove
 	}
 	updatePodGroup(existing, desired)
 	return b.client.Update(ctx, existing)
+}
+
+func (b *schedulerBackend) migratePods(
+	ctx context.Context,
+	pcs *grovecorev1alpha1.PodCliqueSet,
+	replica int,
+	plan *aggregatePlan,
+) error {
+	pods, err := b.listActivePodsForReplica(ctx, pcs, replica)
+	if err != nil {
+		return err
+	}
+	for i := range pods {
+		leaf, err := plan.leafForPod(&pods[i])
+		if err != nil {
+			return err
+		}
+		if err := b.patchPodMembership(ctx, &pods[i], plan.podGroup.Name, leaf); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (p *aggregatePlan) leafForPod(pod *corev1.Pod) (string, error) {
+	podGangName := pod.Labels[apicommon.LabelPodGang]
+	leaves, found := p.podLeaves[podGangName]
+	if !found {
+		return "", fmt.Errorf("pod %s/%s references PodGang %q outside aggregate %q", pod.Namespace, pod.Name, podGangName, p.podGroup.Name)
+	}
+	podGroupName := pod.Labels[apicommon.LabelPodClique]
+	leaf, found := leaves[podGroupName]
+	if !found {
+		return "", fmt.Errorf("pod %s/%s maps to missing KAI subgroup %q", pod.Namespace, pod.Name, podGroupLeafName(podGangName, podGroupName))
+	}
+	return leaf, nil
+}
+
+func (b *schedulerBackend) patchPodMembership(ctx context.Context, pod *corev1.Pod, podGroupName, leaf string) error {
+	if pod.Annotations[annotationPodGroup] == podGroupName && pod.Labels[labelSubGroup] == leaf && pod.Annotations[annotationKeySkipPGR] == annotationValSkipPGR {
+		return nil
+	}
+	before := pod.DeepCopy()
+	if pod.Annotations == nil {
+		pod.Annotations = map[string]string{}
+	}
+	if pod.Labels == nil {
+		pod.Labels = map[string]string{}
+	}
+	pod.Annotations[annotationKeySkipPGR] = annotationValSkipPGR
+	pod.Annotations[annotationPodGroup] = podGroupName
+	pod.Labels[labelSubGroup] = leaf
+	if err := b.client.Patch(ctx, pod, client.MergeFrom(before)); err != nil {
+		return fmt.Errorf("migrate Pod %s/%s to KAI PodGroup %q: %w", pod.Namespace, pod.Name, podGroupName, err)
+	}
+	return nil
+}
+
+func (b *schedulerBackend) listActivePodsForReplica(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, replica int) ([]corev1.Pod, error) {
+	list := &corev1.PodList{}
+	if err := b.client.List(ctx, list,
+		client.InNamespace(pcs.Namespace),
+		client.MatchingLabels(apicommon.GetDefaultLabelsForPodCliqueSetManagedResources(pcs.Name)),
+	); err != nil {
+		return nil, fmt.Errorf("list Pods for PodCliqueSet %s/%s: %w", pcs.Namespace, pcs.Name, err)
+	}
+	result := make([]corev1.Pod, 0, len(list.Items))
+	for i := range list.Items {
+		pod := &list.Items[i]
+		if !pod.DeletionTimestamp.IsZero() {
+			continue
+		}
+		podReplica, err := podCliqueSetReplicaFromObjectMeta(pod.ObjectMeta)
+		if err != nil {
+			return nil, fmt.Errorf("pod %s/%s: %w", pod.Namespace, pod.Name, err)
+		}
+		if podReplica == replica {
+			result = append(result, *pod.DeepCopy())
+		}
+	}
+	return result, nil
+}
+
+func (b *schedulerBackend) deleteScaledInAggregatePodGroup(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, replica int) error {
+	pods, err := b.listActivePodsForReplica(ctx, pcs, replica)
+	if err != nil {
+		return err
+	}
+	if len(pods) > 0 {
+		return fmt.Errorf("waiting for %d Pods in PodCliqueSet %s/%s replica %d to terminate", len(pods), pcs.Namespace, pcs.Name, replica)
+	}
+
+	podGroup := &kaischedulingv2alpha2.PodGroup{}
+	key := aggregatePodGroupKey(pcs, replica)
+	if err = b.client.Get(ctx, key, podGroup); err != nil {
+		return client.IgnoreNotFound(err)
+	}
+	if !metav1.IsControlledBy(podGroup, pcs) {
+		return fmt.Errorf("refusing to delete KAI PodGroup %s not controlled by PodCliqueSet %s", key, pcs.Name)
+	}
+	return client.IgnoreNotFound(b.client.Delete(ctx, podGroup))
 }
 
 func aggregatePodGroupKey(pcs *grovecorev1alpha1.PodCliqueSet, replica int) client.ObjectKey {
