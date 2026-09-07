@@ -28,7 +28,6 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
-	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	kaitopologyv1alpha1 "github.com/kai-scheduler/KAI-scheduler/pkg/apis/kai/v1alpha1"
@@ -38,7 +37,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
-	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
@@ -82,8 +80,7 @@ func (b *schedulerBackend) Name() string {
 	return b.name
 }
 
-// Init registers the KAI API types into b.scheme and must be called before
-// that scheme is used to serialize or deserialize KAI objects.
+// Init registers the KAI API types used by Grove.
 func (b *schedulerBackend) Init(_ client.Client) error {
 	if err := kaitopologyv1alpha1.AddToScheme(b.scheme); err != nil {
 		return err
@@ -109,13 +106,8 @@ func (b *schedulerBackend) SyncPodGang(ctx context.Context, podGang *groveschedu
 		return b.removePodGangFinalizer(ctx, podGang)
 	}
 
-	pcsReplicaIndex, err := k8sutils.GetPodCliqueSetReplicaIndex(podGang.ObjectMeta)
+	pcsReplicaIndex, err := podCliqueSetReplicaFromObjectMeta(podGang.ObjectMeta)
 	if err != nil {
-		b.recordWarning(podGang, "KAIBackendMappingFailed", err)
-		return err
-	}
-	if pcsReplicaIndex < 0 {
-		err = fmt.Errorf("invalid %s value %d on PodGang %s/%s", apicommon.LabelPodCliqueSetReplicaIndex, pcsReplicaIndex, podGang.Namespace, podGang.Name)
 		b.recordWarning(podGang, "KAIBackendMappingFailed", err)
 		return err
 	}
@@ -131,38 +123,26 @@ func (b *schedulerBackend) SyncPodGang(ctx context.Context, podGang *groveschedu
 	}
 
 	if err = b.ensurePodGangMetadata(ctx, podGang); err != nil {
-		return fmt.Errorf("ensure KAI PodGang metadata: %w", err)
+		return fmt.Errorf("ensure KAI metadata on triggering PodGang: %w", err)
 	}
-	return b.syncPodGroupForPodGang(ctx, podGang)
-}
-
-func (b *schedulerBackend) syncPodGroupForPodGang(ctx context.Context, podGang *groveschedulerv1alpha1.PodGang) error {
-	newPodGroup, err := b.buildPodGroupForPodGang(ctx, podGang)
-	if err != nil {
-		b.recordWarning(podGang, "KAIBackendMappingFailed", err)
+	if err = b.reconcileAggregatePodGroup(ctx, pcs, pcsReplicaIndex); err != nil {
+		b.recordWarning(podGang, "KAIBackendSyncFailed", err)
 		return err
 	}
-
-	oldPodGroup := &kaischedulingv2alpha2.PodGroup{}
-	key := client.ObjectKeyFromObject(newPodGroup)
-	if err = b.client.Get(ctx, key, oldPodGroup); err != nil {
-		if apierrors.IsNotFound(err) {
-			return b.client.Create(ctx, newPodGroup)
-		}
-		return err
-	}
-
-	newPodGroup = b.inheritRuntimeManagedFields(oldPodGroup, newPodGroup)
-	if podGroupsEqual(oldPodGroup, newPodGroup) {
-		return nil
-	}
-	updatePodGroup(oldPodGroup, newPodGroup)
-	return b.client.Update(ctx, oldPodGroup)
+	return nil
 }
 
 // PreparePod adds KAI scheduler-specific configuration to the Pod.
 // It sets externally-created PodGroup membership because KAI's podgrouper is skipped.
 func (b *schedulerBackend) PreparePod(pod *corev1.Pod) error {
+	pcsName := pod.Labels[apicommon.LabelPartOfKey]
+	if pcsName == "" {
+		return fmt.Errorf("KAI scheduler requires pod label %q", apicommon.LabelPartOfKey)
+	}
+	pcsReplicaIndex, err := podCliqueSetReplicaFromObjectMeta(pod.ObjectMeta)
+	if err != nil {
+		return fmt.Errorf("KAI scheduler requires valid pod label %q: %w", apicommon.LabelPodCliqueSetReplicaIndex, err)
+	}
 	podGangName := pod.Labels[apicommon.LabelPodGang]
 	if podGangName == "" {
 		return fmt.Errorf("KAI scheduler requires pod label %q", apicommon.LabelPodGang)
@@ -180,8 +160,8 @@ func (b *schedulerBackend) PreparePod(pod *corev1.Pod) error {
 		pod.Labels = map[string]string{}
 	}
 	pod.Annotations[annotationKeySkipPGR] = annotationValSkipPGR
-	pod.Annotations[annotationPodGroup] = podGangName
-	pod.Labels[labelSubGroup] = subGroupName
+	pod.Annotations[annotationPodGroup] = aggregatePodGroupName(pcsName, pcsReplicaIndex)
+	pod.Labels[labelSubGroup] = podGroupLeafName(podGangName, subGroupName)
 	return nil
 }
 
@@ -189,82 +169,6 @@ func (b *schedulerBackend) PreparePod(pod *corev1.Pod) error {
 func (b *schedulerBackend) ValidatePodCliqueSet(_ context.Context, pcs *grovecorev1alpha1.PodCliqueSet) error {
 	_, err := resolveQueueNameForPodCliqueSet(pcs)
 	return err
-}
-
-// buildPodGroupForPodGang translates a Grove PodGang into a KAI PodGroup object.
-func (b *schedulerBackend) buildPodGroupForPodGang(ctx context.Context, podGang *groveschedulerv1alpha1.PodGang) (*kaischedulingv2alpha2.PodGroup, error) {
-	topologyName := getTopologyName(podGang)
-	topologyConstraint, err := toKAITopologyConstraint(podGang.Spec.TopologyConstraint, topologyName)
-	if err != nil {
-		return nil, err
-	}
-	queueName, err := b.resolveQueueName(ctx, podGang)
-	if err != nil {
-		return nil, err
-	}
-
-	parentBySubGroupName := map[string]string{}
-	subGroups := make([]kaischedulingv2alpha2.SubGroup, 0, len(podGang.Spec.TopologyConstraintGroupConfigs)+len(podGang.Spec.PodGroups))
-
-	for _, groupConfig := range podGang.Spec.TopologyConstraintGroupConfigs {
-		if len(groupConfig.PodGroupNames) == 0 {
-			continue
-		}
-		groupTopologyConstraint, groupErr := toKAITopologyConstraint(groupConfig.TopologyConstraint, topologyName)
-		if groupErr != nil {
-			return nil, groupErr
-		}
-		subGroups = append(subGroups, kaischedulingv2alpha2.SubGroup{
-			Name:               groupConfig.Name,
-			MinSubGroup:        ptr.To(int32(len(groupConfig.PodGroupNames))),
-			TopologyConstraint: groupTopologyConstraint,
-		})
-		for _, podGroupName := range groupConfig.PodGroupNames {
-			parentBySubGroupName[podGroupName] = groupConfig.Name
-		}
-	}
-
-	var minMember int32
-	for _, podGroup := range podGang.Spec.PodGroups {
-		subGroupTopologyConstraint, groupErr := toKAITopologyConstraint(podGroup.TopologyConstraint, topologyName)
-		if groupErr != nil {
-			return nil, groupErr
-		}
-		subGroup := kaischedulingv2alpha2.SubGroup{
-			Name:               podGroup.Name,
-			MinMember:          ptr.To(podGroup.MinReplicas),
-			TopologyConstraint: subGroupTopologyConstraint,
-		}
-		// Group configs cover a strict subset of PodGroups. Unmatched PodGroups
-		// intentionally remain root-level KAI SubGroups.
-		if parentName, found := parentBySubGroupName[podGroup.Name]; found {
-			subGroup.Parent = ptr.To(parentName)
-		}
-		subGroups = append(subGroups, subGroup)
-		minMember += podGroup.MinReplicas
-	}
-
-	result := &kaischedulingv2alpha2.PodGroup{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:        podGang.Name,
-			Namespace:   podGang.Namespace,
-			Labels:      maps.Clone(podGang.Labels),
-			Annotations: maps.Clone(podGang.Annotations),
-		},
-		Spec: kaischedulingv2alpha2.PodGroupSpec{
-			MinMember:         ptr.To(minMember),
-			Queue:             queueName,
-			PriorityClassName: podGang.Spec.PriorityClassName,
-			SubGroups:         subGroups,
-		},
-	}
-	if topologyConstraint != nil {
-		result.Spec.TopologyConstraint = *topologyConstraint
-	}
-	if err := controllerutil.SetControllerReference(podGang, result, b.scheme); err != nil {
-		return nil, err
-	}
-	return result, nil
 }
 
 func (b *schedulerBackend) ensurePodGangMetadata(ctx context.Context, podGang *groveschedulerv1alpha1.PodGang) error {
@@ -353,24 +257,6 @@ func toKAITopologyConstraint(topologyConstraint *groveschedulerv1alpha1.Topology
 		result.RequiredTopologyLevel = *topologyConstraint.PackConstraint.Required
 	}
 	return result, nil
-}
-
-// resolveQueueName returns the KAI queue configured by the PodGang's owning PodCliqueSet.
-func (b *schedulerBackend) resolveQueueName(ctx context.Context, podGang *groveschedulerv1alpha1.PodGang) (string, error) {
-	owner := metav1.GetControllerOf(podGang)
-	if owner == nil {
-		return "", fmt.Errorf("podgang %s/%s has no controlling PodCliqueSet", podGang.Namespace, podGang.Name)
-	}
-	if owner.APIVersion != grovecorev1alpha1.SchemeGroupVersion.String() || owner.Kind != "PodCliqueSet" {
-		return "", fmt.Errorf("podgang %s/%s is controlled by %s %q, expected PodCliqueSet", podGang.Namespace, podGang.Name, owner.APIVersion, owner.Kind)
-	}
-
-	pcs := &grovecorev1alpha1.PodCliqueSet{}
-	if err := b.client.Get(ctx, client.ObjectKey{Namespace: podGang.Namespace, Name: owner.Name}, pcs); err != nil {
-		return "", fmt.Errorf("get controlling PodCliqueSet %s/%s: %w", podGang.Namespace, owner.Name, err)
-	}
-
-	return resolveQueueNameForPodCliqueSet(pcs)
 }
 
 // resolveQueueNameForPodCliqueSet returns the KAI queue configured by a PodCliqueSet.

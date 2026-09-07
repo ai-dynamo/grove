@@ -36,12 +36,12 @@ type predicateTestCase struct {
 	shouldAllowUpdateEvent  bool
 }
 
-func TestPodGangSpecChangePredicate(t *testing.T) {
-	pred := podGangSpecChangePredicate()
+func TestPodGangChangePredicate(t *testing.T) {
+	pred := podGangChangePredicate()
 
 	tests := []predicateTestCase{
 		{
-			name:                    "managed PodGang create",
+			name:                    "managed PodGang create or initial-list add",
 			managedOld:              true,
 			managedNew:              true,
 			shouldAllowCreateEvent:  true,
@@ -142,7 +142,6 @@ func TestPodGangSpecChangePredicate(t *testing.T) {
 					WithDeletionTimestamp().
 					Build()
 			}
-
 			assert.Equal(t, tc.shouldAllowCreateEvent, pred.Create(event.CreateEvent{Object: newPG}), "Create")
 			assert.Equal(t, tc.shouldAllowDeleteEvent, pred.Delete(event.DeleteEvent{Object: newPG}), "Delete")
 			assert.Equal(t, tc.shouldAllowGenericEvent, pred.Generic(event.GenericEvent{Object: newPG}), "Generic")
