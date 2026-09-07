@@ -27,6 +27,8 @@ import (
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
+	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
+	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	kaitopologyv1alpha1 "github.com/kai-scheduler/KAI-scheduler/pkg/apis/kai/v1alpha1"
@@ -35,7 +37,6 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -44,11 +45,12 @@ import (
 
 // schedulerBackend implements the scheduler Backend interface (Backend in scheduler package) for KAI scheduler.
 type schedulerBackend struct {
-	client        client.Client
-	scheme        *runtime.Scheme
-	name          string
-	eventRecorder record.EventRecorder
-	profile       configv1alpha1.SchedulerProfile
+	client         client.Client
+	scheme         *runtime.Scheme
+	name           string
+	eventRecorder  record.EventRecorder
+	profile        configv1alpha1.SchedulerProfile
+	aggregateLocks utils.KeyedMutex[client.ObjectKey]
 }
 
 var _ scheduler.Backend = (*schedulerBackend)(nil)
@@ -60,6 +62,7 @@ const (
 	annotationValSkipPGR = "true"
 	annotationPodGroup   = "pod-group-name"
 	labelSubGroup        = "kai.scheduler/subgroup-name"
+	podGangFinalizer     = "kai.scheduler/aggregate-podgroup"
 )
 
 // New creates a new KAI backend instance. profile is the scheduler profile for kai-scheduler;
@@ -94,20 +97,46 @@ func (b *schedulerBackend) SyncPodGang(ctx context.Context, podGang *groveschedu
 		return fmt.Errorf("podGang is nil")
 	}
 
-	if len(podGang.Spec.PodGroups) == 0 {
-		podGroup := &kaischedulingv2alpha2.PodGroup{}
-		err := b.client.Get(ctx, client.ObjectKeyFromObject(podGang), podGroup)
-		if err != nil {
-			return client.IgnoreNotFound(err)
+	pcs, err := componentutils.GetOwningPodCliqueSetForPodGang(ctx, b.client, podGang)
+	if err != nil {
+		if apierrors.IsNotFound(err) && !podGang.DeletionTimestamp.IsZero() {
+			return b.removePodGangFinalizer(ctx, podGang)
 		}
-
-		return client.IgnoreNotFound(b.client.Delete(ctx, podGroup))
+		b.recordWarning(podGang, "KAIBackendMappingFailed", err)
+		return err
+	}
+	if !pcs.DeletionTimestamp.IsZero() {
+		return b.removePodGangFinalizer(ctx, podGang)
 	}
 
-	if err := b.ensurePodGangSkipAnnotation(ctx, podGang); err != nil {
-		return fmt.Errorf("ensure KAI podgrouper skip annotation: %w", err)
+	pcsReplicaIndex, err := k8sutils.GetPodCliqueSetReplicaIndex(podGang.ObjectMeta)
+	if err != nil {
+		b.recordWarning(podGang, "KAIBackendMappingFailed", err)
+		return err
+	}
+	if pcsReplicaIndex < 0 {
+		err = fmt.Errorf("invalid %s value %d on PodGang %s/%s", apicommon.LabelPodCliqueSetReplicaIndex, pcsReplicaIndex, podGang.Namespace, podGang.Name)
+		b.recordWarning(podGang, "KAIBackendMappingFailed", err)
+		return err
+	}
+	unlock := b.aggregateLocks.Lock(aggregatePodGroupKey(pcs, pcsReplicaIndex))
+	defer unlock()
+
+	if !podGang.DeletionTimestamp.IsZero() {
+		if err = b.reparentHistoricalPodGroup(ctx, pcs, podGang); err != nil {
+			b.recordWarning(podGang, "KAIBackendSyncFailed", err)
+			return err
+		}
+		return b.removePodGangFinalizer(ctx, podGang)
 	}
 
+	if err = b.ensurePodGangMetadata(ctx, podGang); err != nil {
+		return fmt.Errorf("ensure KAI PodGang metadata: %w", err)
+	}
+	return b.syncPodGroupForPodGang(ctx, podGang)
+}
+
+func (b *schedulerBackend) syncPodGroupForPodGang(ctx context.Context, podGang *groveschedulerv1alpha1.PodGang) error {
 	newPodGroup, err := b.buildPodGroupForPodGang(ctx, podGang)
 	if err != nil {
 		b.recordWarning(podGang, "KAIBackendMappingFailed", err)
@@ -249,18 +278,60 @@ func (b *schedulerBackend) buildPodGroupForPodGang(ctx context.Context, podGang 
 	return result, nil
 }
 
-func (b *schedulerBackend) ensurePodGangSkipAnnotation(ctx context.Context, podGang *groveschedulerv1alpha1.PodGang) error {
-	if podGang.Annotations != nil && podGang.Annotations[annotationKeySkipPGR] == annotationValSkipPGR {
+func (b *schedulerBackend) ensurePodGangMetadata(ctx context.Context, podGang *groveschedulerv1alpha1.PodGang) error {
+	if podGang.Annotations[annotationKeySkipPGR] == annotationValSkipPGR && controllerutil.ContainsFinalizer(podGang, podGangFinalizer) {
 		return nil
 	}
-	// The LPX backend can pass a partial PodGang spec, so construct the patch against a
-	// new resource so that we don't clobber the podGang spec after the Patch call.
-	updated := &groveschedulerv1alpha1.PodGang{ObjectMeta: podGang.ObjectMeta}
-	patch := fmt.Appendf(nil, `{"metadata":{"annotations":{%q:%q}}}`, annotationKeySkipPGR, annotationValSkipPGR)
-	if err := b.client.Patch(ctx, updated, client.RawPatch(types.MergePatchType, patch)); err != nil {
+	// Patch metadata separately: LPX may pass a projected spec that must not be refreshed.
+	updated := &groveschedulerv1alpha1.PodGang{ObjectMeta: *podGang.ObjectMeta.DeepCopy()}
+	before := updated.DeepCopy()
+	if updated.Annotations == nil {
+		updated.Annotations = map[string]string{}
+	}
+	updated.Annotations[annotationKeySkipPGR] = annotationValSkipPGR
+	controllerutil.AddFinalizer(updated, podGangFinalizer)
+	if err := b.client.Patch(ctx, updated, client.MergeFrom(before)); err != nil {
 		return err
 	}
 	podGang.Annotations = updated.Annotations
+	podGang.Finalizers = updated.Finalizers
+	return nil
+}
+
+func (b *schedulerBackend) removePodGangFinalizer(ctx context.Context, podGang *groveschedulerv1alpha1.PodGang) error {
+	if !controllerutil.ContainsFinalizer(podGang, podGangFinalizer) {
+		return nil
+	}
+	before := podGang.DeepCopy()
+	controllerutil.RemoveFinalizer(podGang, podGangFinalizer)
+	return b.client.Patch(ctx, podGang, client.MergeFrom(before))
+}
+
+func (b *schedulerBackend) reparentHistoricalPodGroup(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, podGang *groveschedulerv1alpha1.PodGang) error {
+	podGroup := &kaischedulingv2alpha2.PodGroup{}
+	key := client.ObjectKeyFromObject(podGang)
+	if err := b.client.Get(ctx, key, podGroup); err != nil {
+		return client.IgnoreNotFound(err)
+	}
+	owner := metav1.GetControllerOf(podGroup)
+	if owner == nil || owner.Kind != "PodGang" || owner.Name != podGang.Name || owner.UID != podGang.UID {
+		return nil
+	}
+
+	before := podGroup.DeepCopy()
+	ownerReferences := podGroup.OwnerReferences[:0]
+	for _, ref := range podGroup.OwnerReferences {
+		if ref.Kind != owner.Kind || ref.Name != owner.Name || ref.UID != owner.UID {
+			ownerReferences = append(ownerReferences, ref)
+		}
+	}
+	podGroup.OwnerReferences = ownerReferences
+	if err := controllerutil.SetControllerReference(pcs, podGroup, b.scheme); err != nil {
+		return fmt.Errorf("set PodCliqueSet owner on historical KAI PodGroup %s: %w", key, err)
+	}
+	if err := b.client.Patch(ctx, podGroup, client.MergeFrom(before)); err != nil {
+		return fmt.Errorf("reparent historical KAI PodGroup %s: %w", key, err)
+	}
 	return nil
 }
 
