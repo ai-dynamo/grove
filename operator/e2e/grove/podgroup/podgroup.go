@@ -19,12 +19,11 @@ package podgroup
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strconv"
-	"strings"
 	"time"
 
 	nameutils "github.com/ai-dynamo/grove/operator/api/common"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/e2e/log"
 	"github.com/ai-dynamo/grove/operator/e2e/waiter"
 	kaischedulingv2alpha2 "github.com/kai-scheduler/KAI-scheduler/pkg/apis/scheduling/v2alpha2"
@@ -43,17 +42,19 @@ type ExpectedSubGroup struct {
 
 // PCSGCliqueConfig defines configuration for a single clique in a PCSG.
 type PCSGCliqueConfig struct {
-	Name       string
-	PodCount   int32
-	Constraint string
+	Name                string
+	PodCount            int32
+	Constraint          string
+	PreferredConstraint string
 }
 
 // ScaledPCSGConfig defines configuration for verifying a scaled PCSG replica.
 type ScaledPCSGConfig struct {
-	PCSGName      string
-	PCSGReplica   int
-	CliqueConfigs []PCSGCliqueConfig
-	Constraint    string
+	PCSGName            string
+	PCSGReplica         int
+	CliqueConfigs       []PCSGCliqueConfig
+	Constraint          string
+	PreferredConstraint string
 }
 
 // PodGroupVerifier provides KAI PodGroup verification using a controller-runtime client.
@@ -76,7 +77,6 @@ func CreateExpectedStandalonePCLQSubGroup(pcsName string, pcsReplica int, clique
 	return ExpectedSubGroup{
 		Name:                  name,
 		MinMember:             minMember,
-		Parent:                nil,
 		RequiredTopologyLevel: topologyLevel,
 	}
 }
@@ -91,7 +91,6 @@ func CreateExpectedPCSGParentSubGroup(pcsName string, pcsReplica int, sgName str
 	return ExpectedSubGroup{
 		Name:                  name,
 		MinMember:             0,
-		Parent:                nil,
 		RequiredTopologyLevel: topologyLevel,
 	}
 }
@@ -128,8 +127,7 @@ func createExpectedPCLQInPCSGSubGroup(pcsName string, pcsReplica int, sgName str
 	}
 }
 
-// GetKAIPodGroupsForPCS retrieves all KAI PodGroups for a given PodCliqueSet by label selector.
-func (pv *PodGroupVerifier) GetKAIPodGroupsForPCS(ctx context.Context, namespace, pcsName string) ([]kaischedulingv2alpha2.PodGroup, error) {
+func (pv *PodGroupVerifier) getKAIPodGroupsForPCS(ctx context.Context, namespace, pcsName string) ([]kaischedulingv2alpha2.PodGroup, error) {
 	var podGroupList kaischedulingv2alpha2.PodGroupList
 	if err := pv.cl.List(ctx, &podGroupList,
 		client.InNamespace(namespace),
@@ -138,66 +136,39 @@ func (pv *PodGroupVerifier) GetKAIPodGroupsForPCS(ctx context.Context, namespace
 		return nil, fmt.Errorf("failed to list KAI PodGroups with label app.kubernetes.io/part-of=%s in namespace %s: %w", pcsName, namespace, err)
 	}
 
-	if len(podGroupList.Items) == 0 {
-		return nil, fmt.Errorf("no KAI PodGroups found for PCS %s in namespace %s", pcsName, namespace)
-	}
-
 	return podGroupList.Items, nil
 }
 
-// WaitForKAIPodGroups waits for KAI PodGroups for the given PCS to exist and returns them.
-func (pv *PodGroupVerifier) WaitForKAIPodGroups(ctx context.Context, namespace, pcsName string, timeout, interval time.Duration) ([]kaischedulingv2alpha2.PodGroup, error) {
-	w := waiter.New[[]kaischedulingv2alpha2.PodGroup]().
-		WithTimeout(timeout).
-		WithInterval(interval).
-		WithRetryOnError().
-		WithLogger(pv.logger)
-	podGroups, err := w.WaitFor(ctx,
-		waiter.ToFetchFunc2(pv.GetKAIPodGroupsForPCS, namespace, pcsName),
-		waiter.AlwaysTrue[[]kaischedulingv2alpha2.PodGroup],
-	)
-	if err != nil {
-		return nil, fmt.Errorf("timed out waiting for KAI PodGroups for PCS %s/%s: %w", namespace, pcsName, err)
-	}
-	return podGroups, nil
-}
-
-// FindAnchorPodGroup finds the KAI PodGroup for the anchor PodGang of a PodCliqueSet replica.
-// The anchor PodGang name embeds a runtime-minted epoch, so it cannot be reconstructed. Instead the
-// PodGroup is matched on the labels cloned from its PodGang: the anchor role and the PodCliqueSet
-// replica index.
-func FindAnchorPodGroup(podGroups []kaischedulingv2alpha2.PodGroup, pcsReplicaIndex int) (*kaischedulingv2alpha2.PodGroup, error) {
+// FilterAggregatePodGroupForPCSReplica selects the aggregate PodGroup by its PCS controller and replica label.
+func FilterAggregatePodGroupForPCSReplica(podGroups []kaischedulingv2alpha2.PodGroup, pcsName string, pcsReplica int) (*kaischedulingv2alpha2.PodGroup, error) {
+	replica := strconv.Itoa(pcsReplica)
+	matches := make([]int, 0, 1)
 	for i := range podGroups {
-		labels := podGroups[i].Labels
-		if labels[nameutils.LabelPodGangRole] == string(grovecorev1alpha1.PodGangEntryRoleAnchor) &&
-			labels[nameutils.LabelPodCliqueSetReplicaIndex] == strconv.Itoa(pcsReplicaIndex) {
-			return &podGroups[i], nil
-		}
-	}
-	return nil, fmt.Errorf("no anchor PodGroup found for PodCliqueSet replica index %d", pcsReplicaIndex)
-}
-
-// FindScaledPodGroup finds the KAI PodGroup for a scaled (Tail or ScaleOut) PodGang of a
-// PodCliqueScalingGroup replica. The scaled PodGang name is
-// <pcs>-<replica>-<epoch>-<pcsgName>-<pcsgReplicaIndex>; only the epoch is runtime-minted. The
-// PodGroup is matched on its cloned PodGang labels (a Tail or ScaleOut role and the PodCliqueSet
-// replica index) plus a name suffix of -<pcsgName>-<pcsgReplicaIndex>.
-func FindScaledPodGroup(podGroups []kaischedulingv2alpha2.PodGroup, pcsReplicaIndex int, pcsgName string, pcsgReplicaIndex int) (*kaischedulingv2alpha2.PodGroup, error) {
-	nameSuffix := fmt.Sprintf("-%s-%d", pcsgName, pcsgReplicaIndex)
-	for i := range podGroups {
-		labels := podGroups[i].Labels
-		role := labels[nameutils.LabelPodGangRole]
-		if role != string(grovecorev1alpha1.PodGangEntryRoleTail) && role != string(grovecorev1alpha1.PodGangEntryRoleScaleOut) {
+		if podGroups[i].Labels[nameutils.LabelPodCliqueSetReplicaIndex] != replica ||
+			podGroups[i].Labels[nameutils.LabelComponentKey] != nameutils.LabelComponentNameAggregatePodGroup {
 			continue
 		}
-		if labels[nameutils.LabelPodCliqueSetReplicaIndex] != strconv.Itoa(pcsReplicaIndex) {
-			continue
-		}
-		if strings.HasSuffix(podGroups[i].Name, nameSuffix) {
-			return &podGroups[i], nil
+		for _, ref := range podGroups[i].OwnerReferences {
+			if ref.Kind == "PodCliqueSet" && ref.Name == pcsName && ptr.Deref(ref.Controller, false) {
+				matches = append(matches, i)
+				break
+			}
 		}
 	}
-	return nil, fmt.Errorf("no scaled PodGroup found for PodCliqueSet replica index %d, PodCliqueScalingGroup %s replica index %d", pcsReplicaIndex, pcsgName, pcsgReplicaIndex)
+	if len(matches) == 0 {
+		return nil, fmt.Errorf("no aggregate PodGroup found controlled by PodCliqueSet %s with %s=%s",
+			pcsName, nameutils.LabelPodCliqueSetReplicaIndex, replica)
+	}
+	if len(matches) > 1 {
+		names := make([]string, 0, len(matches))
+		for _, i := range matches {
+			names = append(names, podGroups[i].Name)
+		}
+		sort.Strings(names)
+		return nil, fmt.Errorf("found multiple aggregate PodGroups controlled by PodCliqueSet %s with %s=%s: %v",
+			pcsName, nameutils.LabelPodCliqueSetReplicaIndex, replica, names)
+	}
+	return &podGroups[matches[0]], nil
 }
 
 // VerifyTopologyConstraint verifies the top-level TopologyConstraint of a KAI PodGroup.
@@ -220,121 +191,249 @@ func (pv *PodGroupVerifier) VerifyTopologyConstraint(podGroup *kaischedulingv2al
 	return nil
 }
 
-// VerifySubGroups verifies the SubGroups of a KAI PodGroup.
-func (pv *PodGroupVerifier) VerifySubGroups(podGroup *kaischedulingv2alpha2.PodGroup, expectedSubGroups []ExpectedSubGroup) error {
-	if len(podGroup.Spec.SubGroups) != len(expectedSubGroups) {
-		return fmt.Errorf("KAI PodGroup %s has %d SubGroups, expected %d",
-			podGroup.Name, len(podGroup.Spec.SubGroups), len(expectedSubGroups))
+// GetAggregatePodGroupForPCSReplica retrieves the PCS-owned aggregate KAI PodGroup for one PCS replica.
+func (pv *PodGroupVerifier) GetAggregatePodGroupForPCSReplica(ctx context.Context, namespace, workloadName string, pcsReplica int, timeout, interval time.Duration) (*kaischedulingv2alpha2.PodGroup, error) {
+	w := waiter.New[*kaischedulingv2alpha2.PodGroup]().
+		WithTimeout(timeout).
+		WithInterval(interval).
+		WithRetryOnError().
+		WithLogger(pv.logger)
+	aggregatePodGroup, err := w.WaitFor(ctx, func(ctx context.Context) (*kaischedulingv2alpha2.PodGroup, error) {
+		podGroups, err := pv.getKAIPodGroupsForPCS(ctx, namespace, workloadName)
+		if err != nil {
+			return nil, err
+		}
+		return FilterAggregatePodGroupForPCSReplica(podGroups, workloadName, pcsReplica)
+	}, waiter.AlwaysTrue[*kaischedulingv2alpha2.PodGroup])
+	if err != nil {
+		return nil, fmt.Errorf("timed out waiting for aggregate KAI PodGroup for PCS %s/%s replica %d: %w", namespace, workloadName, pcsReplica, err)
 	}
-
-	actualSubGroups := make(map[string]kaischedulingv2alpha2.SubGroup)
-	for _, sg := range podGroup.Spec.SubGroups {
-		actualSubGroups[sg.Name] = sg
-	}
-
-	for _, expected := range expectedSubGroups {
-		actual, ok := actualSubGroups[expected.Name]
-		if !ok {
-			return fmt.Errorf("KAI PodGroup %s missing expected SubGroup %q", podGroup.Name, expected.Name)
-		}
-
-		if expected.Parent == nil && actual.Parent != nil {
-			return fmt.Errorf("SubGroup %q Parent: got %q, expected nil", expected.Name, *actual.Parent)
-		}
-		if expected.Parent != nil && actual.Parent == nil {
-			return fmt.Errorf("SubGroup %q Parent: got nil, expected %q", expected.Name, *expected.Parent)
-		}
-		if expected.Parent != nil && actual.Parent != nil && *expected.Parent != *actual.Parent {
-			return fmt.Errorf("SubGroup %q Parent: got %q, expected %q", expected.Name, *actual.Parent, *expected.Parent)
-		}
-
-		actualMinMember := ptr.Deref(actual.MinMember, 0)
-		if actualMinMember != expected.MinMember {
-			return fmt.Errorf("SubGroup %q MinMember: got %d, expected %d", expected.Name, actualMinMember, expected.MinMember)
-		}
-
-		actualRequired := ""
-		actualPreferred := ""
-		if actual.TopologyConstraint != nil {
-			actualRequired = actual.TopologyConstraint.RequiredTopologyLevel
-			actualPreferred = actual.TopologyConstraint.PreferredTopologyLevel
-		}
-
-		if actualRequired != expected.RequiredTopologyLevel {
-			return fmt.Errorf("SubGroup %q RequiredTopologyLevel: got %q, expected %q",
-				expected.Name, actualRequired, expected.RequiredTopologyLevel)
-		}
-		if actualPreferred != expected.PreferredTopologyLevel {
-			return fmt.Errorf("SubGroup %q PreferredTopologyLevel: got %q, expected %q",
-				expected.Name, actualPreferred, expected.PreferredTopologyLevel)
-		}
-
-		pv.logger.Debugf("SubGroup %q verified: parent=%v, minMember=%d, required=%q, preferred=%q",
-			expected.Name, actual.Parent, actualMinMember, actualRequired, actualPreferred)
-	}
-
-	pv.logger.Infof("KAI PodGroup %s verified with %d SubGroups", podGroup.Name, len(expectedSubGroups))
-	return nil
+	return aggregatePodGroup, nil
 }
 
-// GetPodGroupForAnchorPodGang retrieves the KAI PodGroup for a PodCliqueSet replica's anchor PodGang.
-func (pv *PodGroupVerifier) GetPodGroupForAnchorPodGang(ctx context.Context, namespace, pcsName string, pcsReplica int, timeout, interval time.Duration) (*kaischedulingv2alpha2.PodGroup, error) {
-	podGroups, err := pv.WaitForKAIPodGroups(ctx, namespace, pcsName, timeout, interval)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get KAI PodGroups: %w", err)
+// VerifyAggregatePodGroupTopology verifies aggregate identity, root thresholds, topology, and the exact subgroup tree.
+func (pv *PodGroupVerifier) VerifyAggregatePodGroupTopology(
+	podGroup *kaischedulingv2alpha2.PodGroup,
+	pcsName string,
+	pcsReplica int,
+	requiredLevel string,
+	preferredLevel string,
+	baseSubGroups []ExpectedSubGroup,
+	scaledPCSGs []ScaledPCSGConfig,
+) error {
+	if _, err := FilterAggregatePodGroupForPCSReplica([]kaischedulingv2alpha2.PodGroup{*podGroup}, pcsName, pcsReplica); err != nil {
+		return fmt.Errorf("aggregate identity verification failed: %w", err)
 	}
-
-	anchorPodGroup, err := FindAnchorPodGroup(podGroups, pcsReplica)
-	if err != nil {
-		return nil, fmt.Errorf("failed to find anchor PodGroup for PodCliqueSet %s replica %d: %w", pcsName, pcsReplica, err)
+	if podGroup.Spec.MinMember != nil {
+		return fmt.Errorf("aggregate PodGroup %s MinMember: got %d, expected nil", podGroup.Name, *podGroup.Spec.MinMember)
 	}
-
-	return anchorPodGroup, nil
-}
-
-// VerifyPodGroupTopology verifies both top-level topology constraint and SubGroups structure.
-func (pv *PodGroupVerifier) VerifyPodGroupTopology(podGroup *kaischedulingv2alpha2.PodGroup, requiredLevel, preferredLevel string, expectedSubGroups []ExpectedSubGroup) error {
+	expectedRootMinSubGroup := int32(1)
+	if len(scaledPCSGs) > 0 {
+		expectedRootMinSubGroup = 2
+	}
+	if podGroup.Spec.MinSubGroup == nil || *podGroup.Spec.MinSubGroup != expectedRootMinSubGroup {
+		return fmt.Errorf("aggregate PodGroup %s MinSubGroup: got %v, expected %d", podGroup.Name, podGroup.Spec.MinSubGroup, expectedRootMinSubGroup)
+	}
 	if err := pv.VerifyTopologyConstraint(podGroup, requiredLevel, preferredLevel); err != nil {
 		return fmt.Errorf("top-level constraint verification failed: %w", err)
 	}
 
-	if err := pv.VerifySubGroups(podGroup, expectedSubGroups); err != nil {
-		return fmt.Errorf("SubGroups verification failed: %w", err)
+	expectedShapes, err := expectedAggregateSubGroupShapes(pcsName, pcsReplica, baseSubGroups, scaledPCSGs)
+	if err != nil {
+		return fmt.Errorf("build expected aggregate hierarchy: %w", err)
 	}
-
+	actualShapes, err := subGroupShapes(podGroup.Spec.SubGroups)
+	if err != nil {
+		return fmt.Errorf("read aggregate hierarchy: %w", err)
+	}
+	expectedCanonical := canonicalShapes(expectedShapes)
+	actualCanonical := canonicalShapes(actualShapes)
+	if fmt.Sprint(actualCanonical) != fmt.Sprint(expectedCanonical) {
+		return fmt.Errorf("aggregate PodGroup %s subgroup hierarchy:\nactual:   %v\nexpected: %v", podGroup.Name, actualCanonical, expectedCanonical)
+	}
+	pv.logger.Infof("KAI aggregate PodGroup %s verified with %d SubGroups", podGroup.Name, len(podGroup.Spec.SubGroups))
 	return nil
 }
 
-// VerifyScaledPCSGReplicaTopology verifies KAI PodGroup for one scaled PCSG replica.
-func (pv *PodGroupVerifier) VerifyScaledPCSGReplicaTopology(ctx context.Context, namespace, pcsName string, pcsReplica int, pcsgConfig ScaledPCSGConfig, pcsConstraint string) error {
-	podGroups, err := pv.GetKAIPodGroupsForPCS(ctx, namespace, pcsName)
+type subGroupShape struct {
+	minMember              *int32
+	minSubGroup            *int32
+	requiredTopologyLevel  string
+	preferredTopologyLevel string
+	children               []subGroupShape
+}
+
+func expectedAggregateSubGroupShapes(
+	pcsName string,
+	pcsReplica int,
+	baseSubGroups []ExpectedSubGroup,
+	scaledPCSGs []ScaledPCSGConfig,
+) ([]subGroupShape, error) {
+	baseBranch := nameutils.GenerateBasePodGangName(nameutils.ResourceNameReplica{Name: pcsName, Replica: pcsReplica})
+	expectedSubGroups := make([]ExpectedSubGroup, 0, len(baseSubGroups)+1)
+	expectedSubGroups = append(expectedSubGroups, ExpectedSubGroup{Name: baseBranch})
+	for _, subGroup := range baseSubGroups {
+		if subGroup.Parent == nil {
+			subGroup.Parent = ptr.To(baseBranch)
+		}
+		expectedSubGroups = append(expectedSubGroups, subGroup)
+	}
+	baseShapes, err := expectedSubGroupShapes(expectedSubGroups)
 	if err != nil {
-		return fmt.Errorf("failed to get KAI PodGroups: %w", err)
+		return nil, err
+	}
+	if len(baseShapes) != 1 {
+		return nil, fmt.Errorf("expected one Anchor branch, got %d", len(baseShapes))
 	}
 
-	scaledPodGroup, err := FindScaledPodGroup(podGroups, pcsReplica, pcsgConfig.PCSGName, pcsgConfig.PCSGReplica)
-	if err != nil {
-		return fmt.Errorf("failed to find scaled PodGroup: %w", err)
+	expected := baseShapes
+	if len(scaledPCSGs) == 0 {
+		return expected, nil
+	}
+	nonAnchorChildren := make([]subGroupShape, 0, len(scaledPCSGs))
+	for _, config := range scaledPCSGs {
+		if len(config.CliqueConfigs) == 0 {
+			return nil, fmt.Errorf("scaled PCSG %q replica %d has no PodCliques", config.PCSGName, config.PCSGReplica)
+		}
+		leaves := make([]subGroupShape, 0, len(config.CliqueConfigs))
+		for _, clique := range config.CliqueConfigs {
+			leaves = append(leaves, subGroupShape{
+				minMember:              ptr.To(clique.PodCount),
+				requiredTopologyLevel:  clique.Constraint,
+				preferredTopologyLevel: clique.PreferredConstraint,
+			})
+		}
+		branchChildren := leaves
+		if config.Constraint != "" || config.PreferredConstraint != "" {
+			branchChildren = []subGroupShape{{
+				minSubGroup:            ptr.To(int32(len(leaves))),
+				requiredTopologyLevel:  config.Constraint,
+				preferredTopologyLevel: config.PreferredConstraint,
+				children:               leaves,
+			}}
+		}
+		branch := subGroupShape{minSubGroup: ptr.To(int32(len(branchChildren))), children: branchChildren}
+		nonAnchorChildren = append(nonAnchorChildren, subGroupShape{
+			minSubGroup: ptr.To[int32](0),
+			children:    []subGroupShape{branch},
+		})
+	}
+	expected = append(expected, subGroupShape{
+		minSubGroup: ptr.To(int32(len(nonAnchorChildren))),
+		children:    nonAnchorChildren,
+	})
+	return expected, nil
+}
+
+func expectedSubGroupShapes(expected []ExpectedSubGroup) ([]subGroupShape, error) {
+	subGroups := make([]kaischedulingv2alpha2.SubGroup, 0, len(expected))
+	for _, item := range expected {
+		var topologyConstraint *kaischedulingv2alpha2.TopologyConstraint
+		if item.RequiredTopologyLevel != "" || item.PreferredTopologyLevel != "" {
+			topologyConstraint = &kaischedulingv2alpha2.TopologyConstraint{
+				RequiredTopologyLevel:  item.RequiredTopologyLevel,
+				PreferredTopologyLevel: item.PreferredTopologyLevel,
+			}
+		}
+		var minMember *int32
+		if item.MinMember != 0 {
+			minMember = ptr.To(item.MinMember)
+		}
+		subGroups = append(subGroups, kaischedulingv2alpha2.SubGroup{
+			Name:               item.Name,
+			Parent:             item.Parent,
+			MinMember:          minMember,
+			TopologyConstraint: topologyConstraint,
+		})
 	}
 
-	// The scaled PodGang carries the PCS-level constraint at the PodGroup top level. When the PCSG has
-	// its own topology constraint the operator emits a PCSG-parent SubGroup carrying it, with the
-	// PCSG's PodCliques parented under it; without one the PodCliques remain root-level SubGroups.
-	hasPCSGConstraint := pcsgConfig.Constraint != ""
-	var expectedSubGroups []ExpectedSubGroup
-	if hasPCSGConstraint {
-		expectedSubGroups = append(expectedSubGroups,
-			CreateExpectedPCSGParentSubGroup(pcsName, pcsReplica, pcsgConfig.PCSGName, pcsgConfig.PCSGReplica, pcsgConfig.Constraint))
-	}
-	for _, cliqueConfig := range pcsgConfig.CliqueConfigs {
-		if hasPCSGConstraint {
-			expectedSubGroups = append(expectedSubGroups,
-				CreateExpectedPCLQInPCSGSubGroup(pcsName, pcsReplica, pcsgConfig.PCSGName, pcsgConfig.PCSGReplica, cliqueConfig.Name, cliqueConfig.PodCount, cliqueConfig.Constraint))
-		} else {
-			expectedSubGroups = append(expectedSubGroups,
-				CreateExpectedPCLQInPCSGSubGroupNoParent(pcsName, pcsReplica, pcsgConfig.PCSGName, pcsgConfig.PCSGReplica, cliqueConfig.Name, cliqueConfig.PodCount, cliqueConfig.Constraint))
+	childCounts := make(map[string]int32)
+	for _, subGroup := range subGroups {
+		if subGroup.Parent != nil {
+			childCounts[*subGroup.Parent]++
 		}
 	}
+	for i := range subGroups {
+		if count := childCounts[subGroups[i].Name]; count > 0 {
+			subGroups[i].MinSubGroup = ptr.To(count)
+		}
+	}
+	return subGroupShapes(subGroups)
+}
 
-	return pv.VerifyPodGroupTopology(scaledPodGroup, pcsConstraint, "", expectedSubGroups)
+func subGroupShapes(subGroups []kaischedulingv2alpha2.SubGroup) ([]subGroupShape, error) {
+	byName := make(map[string]kaischedulingv2alpha2.SubGroup, len(subGroups))
+	children := make(map[string][]string, len(subGroups))
+	rootNames := make([]string, 0)
+	for _, subGroup := range subGroups {
+		if _, found := byName[subGroup.Name]; found {
+			return nil, fmt.Errorf("duplicate SubGroup %q", subGroup.Name)
+		}
+		byName[subGroup.Name] = subGroup
+	}
+	for _, subGroup := range subGroups {
+		if subGroup.Parent == nil {
+			rootNames = append(rootNames, subGroup.Name)
+			continue
+		}
+		if _, found := byName[*subGroup.Parent]; !found {
+			return nil, fmt.Errorf("SubGroup %q references unknown parent %q", subGroup.Name, *subGroup.Parent)
+		}
+		children[*subGroup.Parent] = append(children[*subGroup.Parent], subGroup.Name)
+	}
+
+	state := make(map[string]uint8, len(subGroups))
+	var buildShape func(string) (subGroupShape, error)
+	buildShape = func(name string) (subGroupShape, error) {
+		if state[name] == 1 {
+			return subGroupShape{}, fmt.Errorf("SubGroup hierarchy contains a cycle at %q", name)
+		}
+		state[name] = 1
+		subGroup := byName[name]
+		shape := subGroupShape{minMember: subGroup.MinMember, minSubGroup: subGroup.MinSubGroup}
+		if subGroup.TopologyConstraint != nil {
+			shape.requiredTopologyLevel = subGroup.TopologyConstraint.RequiredTopologyLevel
+			shape.preferredTopologyLevel = subGroup.TopologyConstraint.PreferredTopologyLevel
+		}
+		for _, childName := range children[name] {
+			child, err := buildShape(childName)
+			if err != nil {
+				return subGroupShape{}, err
+			}
+			shape.children = append(shape.children, child)
+		}
+		state[name] = 2
+		return shape, nil
+	}
+
+	shapes := make([]subGroupShape, 0, len(rootNames))
+	for _, rootName := range rootNames {
+		shape, err := buildShape(rootName)
+		if err != nil {
+			return nil, err
+		}
+		shapes = append(shapes, shape)
+	}
+	if len(state) != len(subGroups) {
+		return nil, fmt.Errorf("SubGroup hierarchy contains nodes that are not reachable from a root")
+	}
+	return shapes, nil
+}
+
+func canonicalShapes(shapes []subGroupShape) []string {
+	result := make([]string, 0, len(shapes))
+	for _, shape := range shapes {
+		children := canonicalShapes(shape.children)
+		result = append(result, fmt.Sprintf("{member:%s subgroups:%s required:%q preferred:%q children:%v}",
+			optionalInt32(shape.minMember), optionalInt32(shape.minSubGroup), shape.requiredTopologyLevel, shape.preferredTopologyLevel, children))
+	}
+	sort.Strings(result)
+	return result
+}
+
+func optionalInt32(value *int32) string {
+	if value == nil {
+		return "nil"
+	}
+	return strconv.FormatInt(int64(*value), 10)
 }
