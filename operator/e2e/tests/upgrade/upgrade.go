@@ -61,6 +61,8 @@ type upgradeTest struct {
 	preUpgrade func(t *testing.T, tc *testctx.TestContext)
 	// postUpgrade runs against the upgraded operator, after the upgrade.
 	postUpgrade func(t *testing.T, tc *testctx.TestContext)
+	// customizeHelmValues adjusts values used for both the released and checkout charts.
+	customizeHelmValues func(map[string]any)
 }
 
 // runUpgradeTest installs the fromVersion Grove operator, runs preUpgrade, upgrades to the operator
@@ -76,7 +78,7 @@ func runUpgradeTest(t *testing.T, cfg upgradeTest) {
 	testctx.Logger.Infof("preparing test cluster")
 	tc, cleanup := testctx.PrepareTest(t.Context(), t, cfg.nodeWorkerCount, cfg.prepareOpts...)
 
-	installReleasedGrove(t, tc, cfg.fromVersion)
+	installReleasedGrove(t, tc, cfg.fromVersion, cfg.customizeHelmValues)
 	// The upgrade tests share one cluster, so uninstall Grove after the test to free the release name
 	// for the next one. This defer is registered before cleanup so it runs last, after cleanup has
 	// deleted the workload while the operator is still up to process finalizers.
@@ -86,7 +88,7 @@ func runUpgradeTest(t *testing.T, cfg upgradeTest) {
 	if cfg.preUpgrade != nil {
 		cfg.preUpgrade(t, tc)
 	}
-	upgradeGrove(t, tc)
+	upgradeGrove(t, tc, cfg.customizeHelmValues)
 	cfg.postUpgrade(t, tc)
 }
 
@@ -106,10 +108,14 @@ func (cfg upgradeTest) validate(t *testing.T) {
 
 // installReleasedGrove installs the given released Grove version from the published OCI chart and waits
 // for the operator to become ready.
-func installReleasedGrove(t *testing.T, tc *testctx.TestContext, version string) {
+func installReleasedGrove(t *testing.T, tc *testctx.TestContext, version string, customizeValues func(map[string]any)) {
 	t.Helper()
 
 	testctx.Logger.Infof("installing released Grove operator %s", version)
+	values := map[string]any{"config": map[string]any{"server": map[string]any{"healthProbes": map[string]any{"enable": true}}}}
+	if customizeValues != nil {
+		customizeValues(values)
+	}
 	_, err := setup.InstallHelmChart(&setup.HelmInstallConfig{
 		RestConfig:      tc.Client.RestConfig,
 		ReleaseName:     groveReleaseName,
@@ -119,7 +125,7 @@ func installReleasedGrove(t *testing.T, tc *testctx.TestContext, version string)
 		CreateNamespace: true,
 		Wait:            true,
 		Timeout:         defaultPollTimeout,
-		Values:          map[string]any{"config": map[string]any{"server": map[string]any{"healthProbes": map[string]any{"enable": true}}}},
+		Values:          values,
 		HelmLoggerFunc:  testctx.Logger.Infof,
 	})
 	require.NoError(t, err, "install released Grove chart")
@@ -142,7 +148,7 @@ func uninstallGrove(t *testing.T, tc *testctx.TestContext) {
 }
 
 // upgradeGrove handles the upgrade of Grove to the current codebase.
-func upgradeGrove(t *testing.T, tc *testctx.TestContext) {
+func upgradeGrove(t *testing.T, tc *testctx.TestContext, customizeValues func(map[string]any)) {
 	t.Helper()
 
 	testctx.Logger.Info("building current Grove operator")
@@ -172,36 +178,40 @@ func upgradeGrove(t *testing.T, tc *testctx.TestContext) {
 	require.NoError(t, err, "locate current Grove chart")
 	chartVersion, err := setup.GetGroveChartVersion(chartDir)
 	require.NoError(t, err, "read current Grove chart version")
-	_, err = setup.UpgradeHelmChart(&setup.HelmInstallConfig{
-		RestConfig:   tc.Client.RestConfig,
-		ReleaseName:  "grove",
-		Namespace:    "grove-system",
-		ChartRef:     chartDir,
-		ChartVersion: chartVersion,
-		Wait:         true,
-		Timeout:      defaultPollTimeout,
-		Values: map[string]any{
-			"config": map[string]any{"server": map[string]any{"healthProbes": map[string]any{"enable": true}}},
-			"image": map[string]any{
-				"repository": "registry:5001/grove-operator",
-				"tag":        "latest",
-			},
-			"deployment": map[string]any{
-				"env": []any{
-					map[string]any{
-						"name":  "GROVE_INIT_CONTAINER_IMAGE",
-						"value": "registry:5001/grove-initc",
-					},
-				},
-			},
-			"crdInstaller": map[string]any{
-				"enabled": true,
-				"image": map[string]any{
-					"repository": "registry:5001/grove-install-crds",
-					"tag":        "latest",
+	values := map[string]any{
+		"config": map[string]any{"server": map[string]any{"healthProbes": map[string]any{"enable": true}}},
+		"image": map[string]any{
+			"repository": "registry:5001/grove-operator",
+			"tag":        "latest",
+		},
+		"deployment": map[string]any{
+			"env": []any{
+				map[string]any{
+					"name":  "GROVE_INIT_CONTAINER_IMAGE",
+					"value": "registry:5001/grove-initc",
 				},
 			},
 		},
+		"crdInstaller": map[string]any{
+			"enabled": true,
+			"image": map[string]any{
+				"repository": "registry:5001/grove-install-crds",
+				"tag":        "latest",
+			},
+		},
+	}
+	if customizeValues != nil {
+		customizeValues(values)
+	}
+	_, err = setup.UpgradeHelmChart(&setup.HelmInstallConfig{
+		RestConfig:     tc.Client.RestConfig,
+		ReleaseName:    "grove",
+		Namespace:      "grove-system",
+		ChartRef:       chartDir,
+		ChartVersion:   chartVersion,
+		Wait:           true,
+		Timeout:        defaultPollTimeout,
+		Values:         values,
 		HelmLoggerFunc: testctx.Logger.Infof,
 	})
 	require.NoError(t, err, "upgrade Grove chart to current checkout")

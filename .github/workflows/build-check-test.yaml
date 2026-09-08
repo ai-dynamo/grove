@@ -140,8 +140,10 @@ jobs:
           - test_name: podgangmap_reconstruct
             test_pattern: "^Test_PGMR"
           - test_name: version_upgrade
-            test_pattern: "^Test_VUPG"
+            test_pattern: "^Test_VUPG[12]_"
             make_target: "run-upgrade-e2e"
+          - test_name: kai_backend_upgrade
+            make_target: "run-kai-backend-upgrade-e2e"
     name: E2E - ${{ matrix.test_name }}
     steps:
       # print runner specs so we have a record in case of failures
@@ -212,6 +214,7 @@ jobs:
           - test_name: resource_sharing
           - test_name: podgangmap_reconstruct
           - test_name: version_upgrade
+          - test_name: kai_backend_upgrade
     name: E2E - ${{ matrix.test_name }}
     steps:
       - name: Skip E2E (no relevant changes)
