@@ -86,9 +86,10 @@ func TestGetExistingResourceNames(t *testing.T) {
 						},
 						OwnerReferences: []metav1.OwnerReference{
 							{
-								Kind: "PodCliqueSet",
-								Name: "test-pcs",
-								UID:  "pcs-uid",
+								Kind:       "PodCliqueSet",
+								Name:       "test-pcs",
+								UID:        "pcs-uid",
+								Controller: new(true),
 							},
 						},
 					},
@@ -104,15 +105,16 @@ func TestGetExistingResourceNames(t *testing.T) {
 						},
 						OwnerReferences: []metav1.OwnerReference{
 							{
-								Kind: "PodCliqueSet",
-								Name: "test-pcs",
-								UID:  "pcs-uid",
+								Kind:       "PodCliqueSet",
+								Name:       "test-pcs",
+								UID:        "pcs-uid",
+								Controller: new(true),
 							},
 						},
 					},
 				},
 			},
-			expectedNames: []string{}, // Fake client doesn't support PartialObjectMetadataList
+			expectedNames: []string{"test-pcs-0-pcsg1", "test-pcs-0-pcsg2"},
 			expectError:   false,
 		},
 		{

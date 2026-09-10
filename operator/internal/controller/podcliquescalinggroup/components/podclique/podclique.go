@@ -95,19 +95,19 @@ func New(client client.Client, scheme *runtime.Scheme, eventRecorder record.Even
 // GetExistingResourceNames returns the names of all existing PodCliques managed by the specified PodCliqueScalingGroup
 func (r _resource) GetExistingResourceNames(ctx context.Context, logger logr.Logger, pcsgObjMeta metav1.ObjectMeta) ([]string, error) {
 	logger.Info("Looking for existing PodCliques managed by PodCliqueScalingGroup")
-	pclqPartialObjMetaList, err := k8sutils.ListExistingPartialObjectMetadata(ctx,
-		r.client,
-		grovecorev1alpha1.SchemeGroupVersion.WithKind("PodClique"),
-		pcsgObjMeta,
-		getPodCliqueSelectorLabels(pcsgObjMeta))
-	if err != nil {
+	pclqList := &grovecorev1alpha1.PodCliqueList{}
+	if err := r.client.List(ctx,
+		pclqList,
+		client.InNamespace(pcsgObjMeta.Namespace),
+		client.MatchingLabels(getPodCliqueSelectorLabels(pcsgObjMeta)),
+	); err != nil {
 		return nil, groveerr.WrapError(err,
 			errCodeListPodClique,
 			component.OperationGetExistingResourceNames,
 			fmt.Sprintf("Error listing PodCliques for PodCliqueScalingGroup: %v", k8sutils.GetObjectKeyFromObjectMeta(pcsgObjMeta)),
 		)
 	}
-	return k8sutils.FilterMapOwnedResourceNames(pcsgObjMeta, pclqPartialObjMetaList), nil
+	return k8sutils.FilterMapOwnedResourceNames(pcsgObjMeta, pclqList.Items), nil
 }
 
 // Sync synchronizes all resources that the PodClique Operator manages.
