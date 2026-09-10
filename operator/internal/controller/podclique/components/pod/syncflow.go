@@ -359,6 +359,7 @@ func (r _resource) selectExcessPodsToDelete(ss *syncSnapshot, logger logr.Logger
 	sorter := DeletionSorter{
 		Pods:                    livePods,
 		ExpectedPodTemplateHash: ss.getExpectedPodTemplateHash(),
+		PreferHighestPodIndex:   ss.pclq.Labels[apicommon.LabelPodCliqueScalingGroup] != "",
 	}
 	sort.Sort(sorter)
 	return sorter.Pods[:numExcessPods]
