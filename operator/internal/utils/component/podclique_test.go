@@ -416,6 +416,7 @@ func TestIsLastPCLQUpdateCompleted(t *testing.T) {
 }
 
 func TestWasPCLQEverScheduled(t *testing.T) {
+	scheduledAt := metav1.Now()
 	tests := []struct {
 		name string
 		pclq *grovecorev1alpha1.PodClique
@@ -436,6 +437,13 @@ func TestWasPCLQEverScheduled(t *testing.T) {
 				}}},
 			},
 			want: false,
+		},
+		{
+			name: "legacy LastScheduled marker",
+			pclq: &grovecorev1alpha1.PodClique{
+				Status: grovecorev1alpha1.PodCliqueStatus{LastScheduled: &scheduledAt},
+			},
+			want: true,
 		},
 		{
 			name: "durable condition false",
@@ -525,6 +533,7 @@ func TestGetMinAvailableBreachedPCLQInfoFiltersNeverScheduled(t *testing.T) {
 	now := time.Now()
 	creationTime := metav1.NewTime(now.Add(-2 * time.Hour))
 	pastTransition := metav1.NewTime(now.Add(-time.Hour))
+	scheduledAt := metav1.NewTime(now.Add(-90 * time.Minute))
 	pclqBreachedNeverScheduled := grovecorev1alpha1.PodClique{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:              "never-scheduled",
@@ -562,11 +571,33 @@ func TestGetMinAvailableBreachedPCLQInfoFiltersNeverScheduled(t *testing.T) {
 			},
 		}},
 	}
+	pclqBreachedWithLegacyHistory := grovecorev1alpha1.PodClique{
+		ObjectMeta: metav1.ObjectMeta{Name: "legacy-regressed"},
+		Status: grovecorev1alpha1.PodCliqueStatus{
+			LastScheduled: &scheduledAt,
+			Conditions: []metav1.Condition{
+				{
+					Type:               constants.ConditionTypePodCliqueScheduled,
+					Status:             metav1.ConditionFalse,
+					LastTransitionTime: pastTransition,
+				},
+				{
+					Type:               constants.ConditionTypeMinAvailableBreached,
+					Status:             metav1.ConditionTrue,
+					LastTransitionTime: pastTransition,
+				},
+			},
+		},
+	}
 
-	pclqs := []grovecorev1alpha1.PodClique{pclqBreachedNeverScheduled, pclqBreachedAfterHealthy}
+	pclqs := []grovecorev1alpha1.PodClique{
+		pclqBreachedNeverScheduled,
+		pclqBreachedAfterHealthy,
+		pclqBreachedWithLegacyHistory,
+	}
 	names, _ := GetMinAvailableBreachedPCLQInfo(pclqs, time.Minute, now)
-	assert.Equal(t, []string{"regressed"}, names,
-		"an upgraded PCLQ without durable health history must be filtered out even when the old timestamp heuristic would pass")
+	assert.Equal(t, []string{"regressed", "legacy-regressed"}, names,
+		"only PCLQs with current or legacy durable health history should be gang-termination candidates")
 }
 
 func TestGroupPCLQsByPCSReplicaIndex(t *testing.T) {

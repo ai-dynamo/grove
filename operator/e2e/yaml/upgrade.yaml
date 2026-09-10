@@ -6,12 +6,6 @@ spec:
   replicas: 1
   template:
     cliqueStartupType: CliqueStartupTypeExplicit
-    podCliqueScalingGroups:
-      - name: workers
-        cliqueNames:
-          - worker
-        replicas: 1
-        minAvailable: 1
     cliques:
       - name: bootstrap
         spec:

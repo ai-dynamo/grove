@@ -94,8 +94,10 @@ func GroupPCLQsByPCSReplicaIndex(pclqs []grovecorev1alpha1.PodClique) (map[int][
 }
 
 // WasPCLQEverScheduled reports whether durable status records PodCliqueScheduled=True.
+// LastScheduled preserves this history for objects created before HealthyStateObserved existed.
 func WasPCLQEverScheduled(pclq *grovecorev1alpha1.PodClique) bool {
-	return meta.IsStatusConditionTrue(pclq.Status.Conditions, constants.ConditionTypeHealthyStateObserved)
+	return meta.IsStatusConditionTrue(pclq.Status.Conditions, constants.ConditionTypeHealthyStateObserved) ||
+		pclq.Status.LastScheduled != nil
 }
 
 // WasPCSGEverHealthy reports whether durable status records AvailableReplicas >= MinAvailable.
