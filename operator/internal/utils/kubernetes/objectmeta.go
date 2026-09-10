@@ -20,11 +20,16 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// FilterMapOwnedResourceNames filters the candidate resources and returns the names of those that are owned by the given owner object meta.
-func FilterMapOwnedResourceNames(ownerObjMeta metav1.ObjectMeta, candidateResources []metav1.PartialObjectMetadata) []string {
-	return lo.FilterMap(candidateResources, func(objMeta metav1.PartialObjectMetadata, _ int) (string, bool) {
-		if metav1.IsControlledBy(&objMeta, &ownerObjMeta) {
-			return objMeta.Name, true
+// FilterMapOwnedResourceNames filters the candidate typed objects and returns the names of those that are controlled by the given owner object meta.
+// The type parameter is constrained so that *T implements client.Object, allowing List results (which are slices of values) to be passed directly.
+func FilterMapOwnedResourceNames[T any, PT interface {
+	*T
+	client.Object
+}](ownerObjMeta metav1.ObjectMeta, candidateResources []T) []string {
+	return lo.FilterMap(candidateResources, func(obj T, _ int) (string, bool) {
+		objPtr := PT(&obj)
+		if metav1.IsControlledBy(objPtr, &ownerObjMeta) {
+			return objPtr.GetName(), true
 		}
 		return "", false
 	})
