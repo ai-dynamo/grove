@@ -281,7 +281,7 @@ func (r _resource) doCreateOrUpdate(ctx context.Context, logger logr.Logger, ss 
 	pclq := emptyPodClique(pclqObjectKey)
 	pcsgObjKey := client.ObjectKeyFromObject(ss.pcsg)
 
-	opResult, err := controllerutil.CreateOrPatch(ctx, r.client, pclq, func() error {
+	opResult, err := componentutils.CreateOrPatchSpec(ctx, r.client, pclq, func() error {
 		return r.buildResource(logger, ss, pcsgReplicaIndex, pclq, pclqExists)
 	})
 	if err != nil {

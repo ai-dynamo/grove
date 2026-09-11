@@ -22,6 +22,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
+	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
 	"github.com/go-logr/logr"
@@ -82,7 +83,7 @@ func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *v1alpha1.P
 	sa := emptyServiceAccount(objectKey)
 
 	logger.Info("Running CreateOrUpdate ServiceAccount", "objectKey", objectKey)
-	opResult, err := controllerutil.CreateOrPatch(ctx, r.client, sa, func() error {
+	opResult, err := componentutils.CreateOrPatchSpec(ctx, r.client, sa, func() error {
 		return r.buildResource(pcs, sa)
 	})
 	if err != nil {
