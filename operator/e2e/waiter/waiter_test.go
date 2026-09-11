@@ -26,6 +26,9 @@ import (
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/watch"
 )
 
 var testPCS = &grovecorev1alpha1.PodCliqueSet{}
@@ -201,6 +204,115 @@ func TestWaitUntil_FetchError_RetryOnError(t *testing.T) {
 		IsNotZero[*grovecorev1alpha1.PodCliqueSet],
 	)
 	require.NoError(t, err)
+}
+
+func TestWaitForWatchEvent(t *testing.T) {
+	t.Run("captures a transient matching event", func(t *testing.T) {
+		events := make(chan watch.Event, 2)
+		target := &grovecorev1alpha1.PodCliqueSet{
+			ObjectMeta: metav1.ObjectMeta{Name: "workload1"},
+		}
+		cleared := target.DeepCopy()
+		cleared.Name = "workload1-complete"
+		events <- watch.Event{Type: watch.Modified, Object: target}
+		events <- watch.Event{Type: watch.Modified, Object: cleared}
+
+		result, err := WaitForWatchEvent(
+			context.Background(),
+			events,
+			func(pcs *grovecorev1alpha1.PodCliqueSet) bool { return pcs.Name == "workload1" },
+		)
+
+		require.NoError(t, err)
+		assert.Same(t, target, result)
+	})
+
+	t.Run("ignores non-matching events", func(t *testing.T) {
+		events := make(chan watch.Event, 2)
+		events <- watch.Event{
+			Type:   watch.Modified,
+			Object: &grovecorev1alpha1.PodCliqueSet{ObjectMeta: metav1.ObjectMeta{Name: "other"}},
+		}
+		target := &grovecorev1alpha1.PodCliqueSet{ObjectMeta: metav1.ObjectMeta{Name: "target"}}
+		events <- watch.Event{Type: watch.Modified, Object: target}
+
+		result, err := WaitForWatchEvent(
+			context.Background(),
+			events,
+			func(pcs *grovecorev1alpha1.PodCliqueSet) bool { return pcs.Name == "target" },
+		)
+
+		require.NoError(t, err)
+		assert.Same(t, target, result)
+	})
+
+	t.Run("returns context cancellation", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		result, err := WaitForWatchEvent(
+			ctx,
+			make(chan watch.Event),
+			AlwaysTrue[*grovecorev1alpha1.PodCliqueSet],
+		)
+
+		require.Error(t, err)
+		assert.ErrorIs(t, err, context.Canceled)
+		assert.Nil(t, result)
+	})
+
+	t.Run("returns an error when the watch closes", func(t *testing.T) {
+		events := make(chan watch.Event)
+		close(events)
+
+		result, err := WaitForWatchEvent(
+			context.Background(),
+			events,
+			AlwaysTrue[*grovecorev1alpha1.PodCliqueSet],
+		)
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "watch closed")
+		assert.Nil(t, result)
+	})
+
+	t.Run("returns a Kubernetes watch error", func(t *testing.T) {
+		events := make(chan watch.Event, 1)
+		events <- watch.Event{
+			Type: watch.Error,
+			Object: &metav1.Status{
+				Status:  metav1.StatusFailure,
+				Message: "watch failed",
+				Reason:  metav1.StatusReasonInternalError,
+				Code:    500,
+			},
+		}
+
+		result, err := WaitForWatchEvent(
+			context.Background(),
+			events,
+			AlwaysTrue[*grovecorev1alpha1.PodCliqueSet],
+		)
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "watch failed")
+		assert.Nil(t, result)
+	})
+
+	t.Run("rejects an unexpected object type", func(t *testing.T) {
+		events := make(chan watch.Event, 1)
+		events <- watch.Event{Type: watch.Added, Object: &corev1.Pod{}}
+
+		result, err := WaitForWatchEvent(
+			context.Background(),
+			events,
+			AlwaysTrue[*grovecorev1alpha1.PodCliqueSet],
+		)
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "unexpected watch object type")
+		assert.Nil(t, result)
+	})
 }
 
 func TestDefaults(t *testing.T) {
