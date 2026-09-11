@@ -19,7 +19,7 @@ import (
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
-	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
+	"github.com/ai-dynamo/grove/operator/internal/controller/podclique/expectations"
 	"github.com/ai-dynamo/grove/operator/internal/expect"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
@@ -49,7 +49,7 @@ func TestPodPredicate_Delete(t *testing.T) {
 	const ns, pclqName, podName, podGangName = "default", "pclq-1", "pclq-1-0", "pclq-1-pg-0"
 	pclqObjMeta := metav1.ObjectMeta{Namespace: ns, Name: pclqName}
 	// The observer records and lowers expectations under the pod's PodGang-scoped key.
-	expectationsKey, err := componentutils.PodGangScopedExpectationsStoreKey(pclqObjMeta, podGangName)
+	expectationsKey, err := expectations.PodGangScopedExpectationsStoreKey(pclqObjMeta, podGangName)
 	require.NoError(t, err)
 
 	t.Run("managed pod with PodClique owner: ObserveDeletions removes UID from create expectations so pod can be recreated", func(t *testing.T) {

@@ -24,7 +24,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	internalconstants "github.com/ai-dynamo/grove/operator/internal/constants"
-	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
+	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/go-logr/logr"
@@ -32,6 +32,7 @@ import (
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
@@ -391,76 +392,6 @@ func TestMutateCurrentHashesDoesNotAdvanceWhenTemplateHashIsStale(t *testing.T) 
 	assert.Equal(t, "old-generation-hash", *pclq.Status.CurrentPodCliqueSetGenerationHash)
 }
 
-func newPodCliqueHashConvergenceFixture(t *testing.T) (*grovecorev1alpha1.PodCliqueSet, *grovecorev1alpha1.PodClique, string) {
-	t.Helper()
-	template := &grovecorev1alpha1.PodCliqueTemplateSpec{
-		Name: "worker",
-		Spec: grovecorev1alpha1.PodCliqueSpec{
-			PodSpec: corev1.PodSpec{
-				Containers: []corev1.Container{{Name: "main", Image: "main:v1"}},
-			},
-		},
-	}
-	generationHash := "current-generation-hash"
-	pcs := &grovecorev1alpha1.PodCliqueSet{
-		ObjectMeta: metav1.ObjectMeta{Name: "pcs", Namespace: "default"},
-		Spec: grovecorev1alpha1.PodCliqueSetSpec{
-			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
-				Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{template},
-			},
-		},
-		Status: grovecorev1alpha1.PodCliqueSetStatus{
-			CurrentGenerationHash: ptr.To(generationHash),
-		},
-	}
-	pclq := &grovecorev1alpha1.PodClique{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "pcs-0-worker",
-			Namespace: "default",
-			Labels: map[string]string{
-				apicommon.LabelPartOfKey:                "pcs",
-				apicommon.LabelPodCliqueSetReplicaIndex: "0",
-			},
-		},
-	}
-	templateHash, err := componentutils.GetExpectedPCLQPodTemplateHash(pcs, pclq.ObjectMeta)
-	require.NoError(t, err)
-	pclq.Labels[apicommon.LabelPodTemplateHash] = templateHash
-	return pcs, pclq, templateHash
-}
-
-// createPodWithHash creates a test pod with the specified template hash label
-func createPodWithHash(name string, templateHash string) *corev1.Pod {
-	return &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: name,
-			Labels: map[string]string{
-				apicommon.LabelPodTemplateHash: templateHash,
-			},
-		},
-	}
-}
-
-func createReadyOwnedPodWithHash(name string, owner *grovecorev1alpha1.PodClique, templateHash string) *corev1.Pod {
-	pod := createPodWithHash(name, templateHash)
-	pod.Namespace = owner.Namespace
-	pod.Labels[apicommon.LabelPodClique] = owner.Name
-	pod.OwnerReferences = []metav1.OwnerReference{
-		*metav1.NewControllerRef(owner, grovecorev1alpha1.SchemeGroupVersion.WithKind("PodClique")),
-	}
-	pod.Status.Conditions = []corev1.PodCondition{
-		{
-			Type:   corev1.PodScheduled,
-			Status: corev1.ConditionTrue,
-		},
-		{
-			Type:   corev1.PodReady,
-			Status: corev1.ConditionTrue,
-		},
-	}
-	return pod
-}
-
 // TestEmitAllScheduledReplicasLostIfNeeded covers the only explicit signal users have when a
 // previously-running PodClique loses every scheduled pod. Gang termination is suppressed in
 // that state, so this event must fire on the non-zero to zero transition (and only on that
@@ -704,4 +635,182 @@ func TestMutateSelector(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestMutateUpdateInProgressCondition(t *testing.T) {
+	minutesAgo := func(m int) *metav1.Time {
+		return ptr.To(metav1.NewTime(time.Now().Add(-time.Duration(m) * time.Minute)))
+	}
+	tests := []struct {
+		description          string
+		updateProgress       *grovecorev1alpha1.PodCliqueUpdateProgress
+		updatedReplicas      int32
+		originalUpdated      int32
+		progressDeadline     *metav1.Duration
+		wantStatus           metav1.ConditionStatus
+		wantReason           string
+		wantLastProgressed   bool // whether LastProgressedAt should be set after the call
+		wantProgressAdvanced bool // whether LastProgressedAt should be more recent than before the call
+	}{
+		{
+			description:        "no update in progress",
+			updateProgress:     nil,
+			wantStatus:         metav1.ConditionFalse,
+			wantReason:         constants.ConditionReasonNoActiveUpdate,
+			wantLastProgressed: false,
+		},
+		{
+			description:        "completed update clears LastProgressedAt",
+			updateProgress:     &grovecorev1alpha1.PodCliqueUpdateProgress{UpdateEndedAt: ptr.To(metav1.Now()), LastProgressedAt: minutesAgo(5)},
+			wantStatus:         metav1.ConditionFalse,
+			wantReason:         constants.ConditionReasonNoActiveUpdate,
+			wantLastProgressed: false,
+		},
+		{
+			description:          "first in-progress reconcile sets LastProgressedAt",
+			updateProgress:       &grovecorev1alpha1.PodCliqueUpdateProgress{UpdateStartedAt: metav1.Now()},
+			wantStatus:           metav1.ConditionTrue,
+			wantReason:           constants.ConditionReasonProgressing,
+			wantLastProgressed:   true,
+			wantProgressAdvanced: true,
+		},
+		{
+			description:          "progress advances LastProgressedAt",
+			updateProgress:       &grovecorev1alpha1.PodCliqueUpdateProgress{LastProgressedAt: minutesAgo(5)},
+			updatedReplicas:      2,
+			originalUpdated:      1,
+			wantStatus:           metav1.ConditionTrue,
+			wantReason:           constants.ConditionReasonProgressing,
+			wantLastProgressed:   true,
+			wantProgressAdvanced: true,
+		},
+		{
+			description:        "no progress within deadline stays Progressing and keeps LastProgressedAt",
+			updateProgress:     &grovecorev1alpha1.PodCliqueUpdateProgress{LastProgressedAt: minutesAgo(1)},
+			updatedReplicas:    1,
+			originalUpdated:    1,
+			progressDeadline:   &metav1.Duration{Duration: 10 * time.Minute},
+			wantStatus:         metav1.ConditionTrue,
+			wantReason:         constants.ConditionReasonProgressing,
+			wantLastProgressed: true,
+		},
+		{
+			description:        "no progress past deadline is Unknown",
+			updateProgress:     &grovecorev1alpha1.PodCliqueUpdateProgress{LastProgressedAt: minutesAgo(10)},
+			updatedReplicas:    1,
+			originalUpdated:    1,
+			progressDeadline:   &metav1.Duration{Duration: time.Minute},
+			wantStatus:         metav1.ConditionUnknown,
+			wantReason:         constants.ConditionReasonProgressDeadlineExceeded,
+			wantLastProgressed: true,
+		},
+		{
+			description:        "no deadline configured never goes Unknown",
+			updateProgress:     &grovecorev1alpha1.PodCliqueUpdateProgress{LastProgressedAt: minutesAgo(60)},
+			updatedReplicas:    1,
+			originalUpdated:    1,
+			wantStatus:         metav1.ConditionTrue,
+			wantReason:         constants.ConditionReasonProgressing,
+			wantLastProgressed: true,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.description, func(t *testing.T) {
+			pclq := &grovecorev1alpha1.PodClique{
+				Status: grovecorev1alpha1.PodCliqueStatus{
+					UpdatedReplicas: tc.updatedReplicas,
+					UpdateProgress:  tc.updateProgress,
+				},
+			}
+			originalStatus := &grovecorev1alpha1.PodCliqueStatus{UpdatedReplicas: tc.originalUpdated}
+			before := metav1.Now()
+
+			mutateUpdateInProgressCondition(pclq, originalStatus, tc.progressDeadline)
+
+			cond := meta.FindStatusCondition(pclq.Status.Conditions, constants.ConditionTypeUpdateInProgress)
+			require.NotNil(t, cond)
+			assert.Equal(t, tc.wantStatus, cond.Status)
+			assert.Equal(t, tc.wantReason, cond.Reason)
+			if tc.updateProgress != nil {
+				if tc.wantLastProgressed {
+					require.NotNil(t, pclq.Status.UpdateProgress.LastProgressedAt)
+					if tc.wantProgressAdvanced {
+						assert.False(t, pclq.Status.UpdateProgress.LastProgressedAt.Before(&before), "LastProgressedAt should be advanced to now")
+					}
+				} else {
+					assert.Nil(t, pclq.Status.UpdateProgress.LastProgressedAt)
+				}
+			}
+		})
+	}
+}
+
+func newPodCliqueHashConvergenceFixture(t *testing.T) (*grovecorev1alpha1.PodCliqueSet, *grovecorev1alpha1.PodClique, string) {
+	t.Helper()
+	template := &grovecorev1alpha1.PodCliqueTemplateSpec{
+		Name: "worker",
+		Spec: grovecorev1alpha1.PodCliqueSpec{
+			PodSpec: corev1.PodSpec{
+				Containers: []corev1.Container{{Name: "main", Image: "main:v1"}},
+			},
+		},
+	}
+	generationHash := "current-generation-hash"
+	pcs := &grovecorev1alpha1.PodCliqueSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "pcs", Namespace: "default"},
+		Spec: grovecorev1alpha1.PodCliqueSetSpec{
+			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
+				Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{template},
+			},
+		},
+		Status: grovecorev1alpha1.PodCliqueSetStatus{
+			CurrentGenerationHash: ptr.To(generationHash),
+		},
+	}
+	pclq := &grovecorev1alpha1.PodClique{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "pcs-0-worker",
+			Namespace: "default",
+			Labels: map[string]string{
+				apicommon.LabelPartOfKey:                "pcs",
+				apicommon.LabelPodCliqueSetReplicaIndex: "0",
+			},
+		},
+	}
+	templateHash, err := componentutils.GetExpectedPCLQPodTemplateHash(pcs, pclq.ObjectMeta)
+	require.NoError(t, err)
+	pclq.Labels[apicommon.LabelPodTemplateHash] = templateHash
+	return pcs, pclq, templateHash
+}
+
+// createPodWithHash creates a test pod with the specified template hash label
+func createPodWithHash(name string, templateHash string) *corev1.Pod {
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: name,
+			Labels: map[string]string{
+				apicommon.LabelPodTemplateHash: templateHash,
+			},
+		},
+	}
+}
+
+func createReadyOwnedPodWithHash(name string, owner *grovecorev1alpha1.PodClique, templateHash string) *corev1.Pod {
+	pod := createPodWithHash(name, templateHash)
+	pod.Namespace = owner.Namespace
+	pod.Labels[apicommon.LabelPodClique] = owner.Name
+	pod.OwnerReferences = []metav1.OwnerReference{
+		*metav1.NewControllerRef(owner, grovecorev1alpha1.SchemeGroupVersion.WithKind("PodClique")),
+	}
+	pod.Status.Conditions = []corev1.PodCondition{
+		{
+			Type:   corev1.PodScheduled,
+			Status: corev1.ConditionTrue,
+		},
+		{
+			Type:   corev1.PodReady,
+			Status: corev1.ConditionTrue,
+		},
+	}
+	return pod
 }

@@ -15,7 +15,6 @@
 package podclique
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"testing"
@@ -27,16 +26,20 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/constants"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
+	"github.com/ai-dynamo/grove/operator/internal/expect"
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
+	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/go-logr/logr"
+	"github.com/samber/lo"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -45,42 +48,30 @@ import (
 
 // TestNew tests creating a new PodClique operator
 func TestNew(t *testing.T) {
-	// Tests creating a new operator instance
-	scheme := runtime.NewScheme()
-	require.NoError(t, grovecorev1alpha1.AddToScheme(scheme))
-
-	client := fake.NewClientBuilder().WithScheme(scheme).Build()
+	scheme := groveclientscheme.Scheme
+	cl := testutils.NewTestClientBuilder().Build()
 	eventRecorder := &record.FakeRecorder{}
 
-	operator := New(client, scheme, eventRecorder)
+	operator := New(cl, scheme, eventRecorder, expect.NewExpectationsStore())
 
 	assert.NotNil(t, operator)
-	resource, ok := operator.(*_resource)
-	assert.True(t, ok)
-	assert.Equal(t, client, resource.client)
-	assert.Equal(t, scheme, resource.scheme)
-	assert.Equal(t, eventRecorder, resource.eventRecorder)
+	r, ok := operator.(*_resource)
+	require.True(t, ok)
+	assert.Equal(t, cl, r.client)
+	assert.Equal(t, scheme, r.scheme)
+	assert.Equal(t, eventRecorder, r.eventRecorder)
 }
 
 func TestMarkRollingUpdateEndReturnsRequeueAfterPatch(t *testing.T) {
-	pcsg := &grovecorev1alpha1.PodCliqueScalingGroup{
-		ObjectMeta: metav1.ObjectMeta{Name: "test-pcsg", Namespace: "test-ns"},
-		Status: grovecorev1alpha1.PodCliqueScalingGroupStatus{
-			UpdateProgress: &grovecorev1alpha1.PodCliqueScalingGroupUpdateProgress{
-				UpdateStartedAt: metav1.Now(),
-				ReadyReplicaIndicesSelectedToUpdate: &grovecorev1alpha1.PodCliqueScalingGroupReplicaUpdateProgress{
-					Current: 1,
-				},
-			},
-		},
-	}
+	pcsg := testutils.NewPodCliqueScalingGroupBuilder("test-pcsg", "test-ns", "test-pcs", 0).Build()
+	pcsg.Status.UpdateProgress = &grovecorev1alpha1.PodCliqueScalingGroupUpdateProgress{UpdateStartedAt: metav1.Now()}
 	cl := testutils.NewTestClientBuilder().
 		WithObjects(pcsg).
 		WithStatusSubresource(&grovecorev1alpha1.PodCliqueScalingGroup{}).
 		Build()
 	r := _resource{client: cl}
 
-	err := r.markRollingUpdateEnd(context.Background(), logr.Discard(), pcsg)
+	err := r.markRollingUpdateEnd(t.Context(), logr.Discard(), pcsg)
 
 	require.Error(t, err)
 	var groveError *groveerr.GroveError
@@ -89,115 +80,47 @@ func TestMarkRollingUpdateEndReturnsRequeueAfterPatch(t *testing.T) {
 	assert.Equal(t, component.OperationSync, groveError.Operation)
 
 	var updated grovecorev1alpha1.PodCliqueScalingGroup
-	require.NoError(t, cl.Get(context.Background(), client.ObjectKeyFromObject(pcsg), &updated))
+	require.NoError(t, cl.Get(t.Context(), client.ObjectKeyFromObject(pcsg), &updated))
 	require.NotNil(t, updated.Status.UpdateProgress)
 	assert.NotNil(t, updated.Status.UpdateProgress.UpdateEndedAt)
-	assert.Nil(t, updated.Status.UpdateProgress.ReadyReplicaIndicesSelectedToUpdate)
 }
 
 // TestGetPCSGTemplateNumPods tests calculating the number of pods in a PCSG template
 func TestGetPCSGTemplateNumPods(t *testing.T) {
 	tests := []struct {
-		name string
-		// pcs is the PodCliqueSet
-		pcs *grovecorev1alpha1.PodCliqueSet
-		// pcsg is the PodCliqueScalingGroup
-		pcsg *grovecorev1alpha1.PodCliqueScalingGroup
-		// expected is the expected total number of pods
+		name     string
+		pcs      *grovecorev1alpha1.PodCliqueSet
+		pcsg     *grovecorev1alpha1.PodCliqueScalingGroup
 		expected int
 	}{
 		{
-			// Tests with all clique names matching
 			name: "all_cliques_match",
-			pcs: &grovecorev1alpha1.PodCliqueSet{
-				Spec: grovecorev1alpha1.PodCliqueSetSpec{
-					Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
-						Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-							{
-								Name: "clique1",
-								Spec: grovecorev1alpha1.PodCliqueSpec{
-									Replicas: 2,
-								},
-							},
-							{
-								Name: "clique2",
-								Spec: grovecorev1alpha1.PodCliqueSpec{
-									Replicas: 3,
-								},
-							},
-						},
-					},
-				},
-			},
-			pcsg: &grovecorev1alpha1.PodCliqueScalingGroup{
-				Spec: grovecorev1alpha1.PodCliqueScalingGroupSpec{
-					CliqueNames: []string{"clique1", "clique2"},
-				},
-			},
+			pcs: testutils.NewPodCliqueSetBuilder("test-pcs", "default", "uid").
+				WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("clique1").WithReplicas(2).Build()).
+				WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("clique2").WithReplicas(3).Build()).
+				Build(),
+			pcsg:     testutils.NewPodCliqueScalingGroupBuilder("test-pcsg", "default", "test-pcs", 0).WithCliqueNames([]string{"clique1", "clique2"}).Build(),
 			expected: 5,
 		},
 		{
-			// Tests with partial clique names matching
 			name: "partial_cliques_match",
-			pcs: &grovecorev1alpha1.PodCliqueSet{
-				Spec: grovecorev1alpha1.PodCliqueSetSpec{
-					Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
-						Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-							{
-								Name: "clique1",
-								Spec: grovecorev1alpha1.PodCliqueSpec{
-									Replicas: 2,
-								},
-							},
-							{
-								Name: "clique2",
-								Spec: grovecorev1alpha1.PodCliqueSpec{
-									Replicas: 3,
-								},
-							},
-							{
-								Name: "clique3",
-								Spec: grovecorev1alpha1.PodCliqueSpec{
-									Replicas: 4,
-								},
-							},
-						},
-					},
-				},
-			},
-			pcsg: &grovecorev1alpha1.PodCliqueScalingGroup{
-				Spec: grovecorev1alpha1.PodCliqueScalingGroupSpec{
-					CliqueNames: []string{"clique1", "clique3"},
-				},
-			},
+			pcs: testutils.NewPodCliqueSetBuilder("test-pcs", "default", "uid").
+				WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("clique1").WithReplicas(2).Build()).
+				WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("clique2").WithReplicas(3).Build()).
+				WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("clique3").WithReplicas(4).Build()).
+				Build(),
+			pcsg:     testutils.NewPodCliqueScalingGroupBuilder("test-pcsg", "default", "test-pcs", 0).WithCliqueNames([]string{"clique1", "clique3"}).Build(),
 			expected: 6,
 		},
 		{
-			// Tests with no matching cliques
 			name: "no_matching_cliques",
-			pcs: &grovecorev1alpha1.PodCliqueSet{
-				Spec: grovecorev1alpha1.PodCliqueSetSpec{
-					Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
-						Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-							{
-								Name: "clique1",
-								Spec: grovecorev1alpha1.PodCliqueSpec{
-									Replicas: 2,
-								},
-							},
-						},
-					},
-				},
-			},
-			pcsg: &grovecorev1alpha1.PodCliqueScalingGroup{
-				Spec: grovecorev1alpha1.PodCliqueScalingGroupSpec{
-					CliqueNames: []string{"clique2", "clique3"},
-				},
-			},
+			pcs: testutils.NewPodCliqueSetBuilder("test-pcs", "default", "uid").
+				WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("clique1").WithReplicas(2).Build()).
+				Build(),
+			pcsg:     testutils.NewPodCliqueScalingGroupBuilder("test-pcsg", "default", "test-pcs", 0).WithCliqueNames([]string{"clique2", "clique3"}).Build(),
 			expected: 0,
 		},
 	}
-
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			r := &_resource{}
@@ -520,7 +443,7 @@ func TestGetExistingResourceNames(t *testing.T) {
 		},
 	}
 
-	ctx := context.Background()
+	ctx := t.Context()
 	logger := logr.Discard()
 
 	for _, tc := range tests {
@@ -610,7 +533,7 @@ func TestDelete(t *testing.T) {
 		},
 	}
 
-	ctx := context.Background()
+	ctx := t.Context()
 	logger := logr.Discard()
 
 	for _, tc := range tests {
@@ -818,16 +741,6 @@ func TestIdentifyFullyQualifiedStartupDependencyNames(t *testing.T) {
 	}
 }
 
-// Helper function to check if an env var exists in a slice
-func hasEnvVar(envVars []corev1.EnvVar, name string) bool {
-	for _, ev := range envVars {
-		if ev.Name == name {
-			return true
-		}
-	}
-	return false
-}
-
 func TestBuildResource_MNNVLInjection(t *testing.T) {
 	tests := []struct {
 		description                         string
@@ -843,366 +756,102 @@ func TestBuildResource_MNNVLInjection(t *testing.T) {
 		expectedRCTName                     string
 	}{
 		{
-			description: "MNNVL enabled on PCSG with GPU container injects claims",
-			pcsgAnnotations: map[string]string{
-				mnnvl.AnnotationMNNVLGroup: "default",
-			},
-			containers: []corev1.Container{
-				{
-					Name: "gpu-worker",
-					Resources: corev1.ResourceRequirements{
-						Limits: corev1.ResourceList{
-							constants.GPUResourceName: resource.MustParse("8"),
-						},
-					},
-				},
-			},
-			expectedContainersWithClaims:    []string{"gpu-worker"},
-			expectedContainersWithoutClaims: []string{},
-			expectPodLevelClaim:             true,
-			expectedRCTName:                 "test-pcs-0-default",
+			description:                  "MNNVL enabled on PCSG with GPU container injects claims",
+			pcsgAnnotations:              map[string]string{mnnvl.AnnotationMNNVLGroup: "default"},
+			containers:                   []corev1.Container{gpuContainer("gpu-worker", 8)},
+			expectedContainersWithClaims: []string{"gpu-worker"},
+			expectPodLevelClaim:          true,
+			expectedRCTName:              "test-pcs-0-default",
 		},
 		{
-			description:     "MNNVL not enabled on PCSG does not inject claims",
-			pcsgAnnotations: nil,
-			containers: []corev1.Container{
-				{
-					Name: "gpu-worker",
-					Resources: corev1.ResourceRequirements{
-						Limits: corev1.ResourceList{
-							constants.GPUResourceName: resource.MustParse("8"),
-						},
-					},
-				},
-			},
-			expectedContainersWithClaims:    []string{},
+			description:                     "MNNVL not enabled on PCSG does not inject claims",
+			containers:                      []corev1.Container{gpuContainer("gpu-worker", 8)},
 			expectedContainersWithoutClaims: []string{"gpu-worker"},
-			expectPodLevelClaim:             false,
 		},
 		{
-			description: "MNNVL enabled on PCSG but no GPU containers does not inject claims",
-			pcsgAnnotations: map[string]string{
-				mnnvl.AnnotationMNNVLGroup: "default",
-			},
-			containers: []corev1.Container{
-				{
-					Name: "cpu-only",
-					Resources: corev1.ResourceRequirements{
-						Limits: corev1.ResourceList{
-							corev1.ResourceCPU: resource.MustParse("1"),
-						},
-					},
-				},
-			},
-			expectedContainersWithClaims:    []string{},
+			description:                     "MNNVL enabled on PCSG but no GPU containers does not inject claims",
+			pcsgAnnotations:                 map[string]string{mnnvl.AnnotationMNNVLGroup: "default"},
+			containers:                      []corev1.Container{cpuContainer("cpu-only", 1)},
 			expectedContainersWithoutClaims: []string{"cpu-only"},
-			expectPodLevelClaim:             false,
 		},
 		{
-			description: "MNNVL enabled on PCSG with mixed GPU and non-GPU containers",
-			pcsgAnnotations: map[string]string{
-				mnnvl.AnnotationMNNVLGroup: "default",
-			},
-			containers: []corev1.Container{
-				{
-					Name: "gpu-worker",
-					Resources: corev1.ResourceRequirements{
-						Limits: corev1.ResourceList{
-							constants.GPUResourceName: resource.MustParse("8"),
-						},
-					},
-				},
-				{
-					Name: "sidecar",
-					Resources: corev1.ResourceRequirements{
-						Limits: corev1.ResourceList{
-							corev1.ResourceCPU: resource.MustParse("1"),
-						},
-					},
-				},
-			},
+			description:                     "MNNVL enabled on PCSG with mixed GPU and non-GPU containers",
+			pcsgAnnotations:                 map[string]string{mnnvl.AnnotationMNNVLGroup: "default"},
+			containers:                      []corev1.Container{gpuContainer("gpu-worker", 8), cpuContainer("sidecar", 1)},
 			expectedContainersWithClaims:    []string{"gpu-worker"},
 			expectedContainersWithoutClaims: []string{"sidecar"},
 			expectPodLevelClaim:             true,
 		},
 		{
-			description: "MNNVL enabled on PCSG with GPU in init container",
-			pcsgAnnotations: map[string]string{
-				mnnvl.AnnotationMNNVLGroup: "default",
-			},
-			initContainers: []corev1.Container{
-				{
-					Name: "init-gpu",
-					Resources: corev1.ResourceRequirements{
-						Limits: corev1.ResourceList{
-							constants.GPUResourceName: resource.MustParse("1"),
-						},
-					},
-				},
-			},
-			containers: []corev1.Container{
-				{Name: "main"},
-			},
-			expectedContainersWithClaims:        []string{},
-			expectedContainersWithoutClaims:     []string{"main"},
-			expectedInitContainersWithClaims:    []string{"init-gpu"},
-			expectedInitContainersWithoutClaims: []string{},
-			expectPodLevelClaim:                 true,
+			description:                      "MNNVL enabled on PCSG with GPU in init container",
+			pcsgAnnotations:                  map[string]string{mnnvl.AnnotationMNNVLGroup: "default"},
+			initContainers:                   []corev1.Container{gpuContainer("init-gpu", 1)},
+			containers:                       []corev1.Container{{Name: "main"}},
+			expectedContainersWithoutClaims:  []string{"main"},
+			expectedInitContainersWithClaims: []string{"init-gpu"},
+			expectPodLevelClaim:              true,
 		},
 		{
-			description: "MNNVL disabled explicitly on PCSG does not inject claims",
-			pcsgAnnotations: map[string]string{
-				mnnvl.AnnotationMNNVLGroup: mnnvl.AnnotationMNNVLGroupOptOut,
-			},
-			containers: []corev1.Container{
-				{
-					Name: "gpu-worker",
-					Resources: corev1.ResourceRequirements{
-						Limits: corev1.ResourceList{
-							constants.GPUResourceName: resource.MustParse("8"),
-						},
-					},
-				},
-			},
-			expectedContainersWithClaims:    []string{},
+			description:                     "MNNVL disabled explicitly on PCSG does not inject claims",
+			pcsgAnnotations:                 map[string]string{mnnvl.AnnotationMNNVLGroup: mnnvl.AnnotationMNNVLGroupOptOut},
+			containers:                      []corev1.Container{gpuContainer("gpu-worker", 8)},
 			expectedContainersWithoutClaims: []string{"gpu-worker"},
-			expectPodLevelClaim:             false,
 		},
 		{
-			description: "mnnvl-group on PCSG — RCT name includes group",
-			pcsgAnnotations: map[string]string{
-				mnnvl.AnnotationMNNVLGroup: "workers",
-			},
-			containers: []corev1.Container{
-				{
-					Name: "gpu-worker",
-					Resources: corev1.ResourceRequirements{
-						Limits: corev1.ResourceList{
-							constants.GPUResourceName: resource.MustParse("8"),
-						},
-					},
-				},
-			},
-			expectedContainersWithClaims:    []string{"gpu-worker"},
-			expectedContainersWithoutClaims: []string{},
-			expectPodLevelClaim:             true,
-			expectedRCTName:                 "test-pcs-0-workers",
+			description:                  "mnnvl-group on PCSG sets the resource claim template name to include the group",
+			pcsgAnnotations:              map[string]string{mnnvl.AnnotationMNNVLGroup: "workers"},
+			containers:                   []corev1.Container{gpuContainer("gpu-worker", 8)},
+			expectedContainersWithClaims: []string{"gpu-worker"},
+			expectPodLevelClaim:          true,
+			expectedRCTName:              "test-pcs-0-workers",
 		},
 		{
-			description: "mnnvl-group on clique overrides PCSG auto-mnnvl",
-			pcsgAnnotations: map[string]string{
-				mnnvl.AnnotationMNNVLGroup: "default",
-			},
-			cliqueAnnotations: map[string]string{
-				mnnvl.AnnotationMNNVLGroup: "encoders",
-			},
-			containers: []corev1.Container{
-				{
-					Name: "gpu-worker",
-					Resources: corev1.ResourceRequirements{
-						Limits: corev1.ResourceList{
-							constants.GPUResourceName: resource.MustParse("8"),
-						},
-					},
-				},
-			},
-			expectedContainersWithClaims:    []string{"gpu-worker"},
-			expectedContainersWithoutClaims: []string{},
-			expectPodLevelClaim:             true,
-			expectedRCTName:                 "test-pcs-0-encoders",
+			description:                  "mnnvl-group on clique overrides the PCSG auto-mnnvl group",
+			pcsgAnnotations:              map[string]string{mnnvl.AnnotationMNNVLGroup: "default"},
+			cliqueAnnotations:            map[string]string{mnnvl.AnnotationMNNVLGroup: "encoders"},
+			containers:                   []corev1.Container{gpuContainer("gpu-worker", 8)},
+			expectedContainersWithClaims: []string{"gpu-worker"},
+			expectPodLevelClaim:          true,
+			expectedRCTName:              "test-pcs-0-encoders",
 		},
 		{
-			description: "mnnvl-group on clique only — no PCSG annotation",
-			cliqueAnnotations: map[string]string{
-				mnnvl.AnnotationMNNVLGroup: "training",
-			},
-			containers: []corev1.Container{
-				{
-					Name: "gpu-worker",
-					Resources: corev1.ResourceRequirements{
-						Limits: corev1.ResourceList{
-							constants.GPUResourceName: resource.MustParse("8"),
-						},
-					},
-				},
-			},
-			expectedContainersWithClaims:    []string{"gpu-worker"},
-			expectedContainersWithoutClaims: []string{},
-			expectPodLevelClaim:             true,
-			expectedRCTName:                 "test-pcs-0-training",
+			description:                  "mnnvl-group on clique only with no PCSG annotation",
+			cliqueAnnotations:            map[string]string{mnnvl.AnnotationMNNVLGroup: "training"},
+			containers:                   []corev1.Container{gpuContainer("gpu-worker", 8)},
+			expectedContainersWithClaims: []string{"gpu-worker"},
+			expectPodLevelClaim:          true,
+			expectedRCTName:              "test-pcs-0-training",
 		},
 	}
 
+	operator := &_resource{scheme: groveclientscheme.Scheme, eventRecorder: &record.FakeRecorder{}}
 	for _, tc := range tests {
 		t.Run(tc.description, func(t *testing.T) {
-			pcsName := "test-pcs"
-			pcsNamespace := "default"
-			pcsReplicaIndex := 0
-			pcsgReplicaIndex := 0
-			pclqTemplateName := "worker"
+			pcs := newBuildResourcePCS("worker", tc.cliqueAnnotations, tc.containers, tc.initContainers)
+			pcsg := newBuildResourcePCSG(tc.pcsgAnnotations)
+			pclq := emptyMemberPodClique("test-pcs-0-sg-0-worker")
+			ss := &syncSnapshot{pcs: pcs, pcsg: pcsg, pcsReplicaIndex: 0, pgm: newAnchorPodGangMap()}
 
-			// Create PCS with the test case's containers
-			pcs := &grovecorev1alpha1.PodCliqueSet{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      pcsName,
-					Namespace: pcsNamespace,
-				},
-				Spec: grovecorev1alpha1.PodCliqueSetSpec{
-					Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
-						StartupType: ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder),
-						Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-							{
-								Name:        pclqTemplateName,
-								Annotations: tc.cliqueAnnotations,
-								Spec: grovecorev1alpha1.PodCliqueSpec{
-									Replicas:     1,
-									MinAvailable: ptr.To(int32(1)),
-									PodSpec: corev1.PodSpec{
-										Containers:     tc.containers,
-										InitContainers: tc.initContainers,
-									},
-								},
-							},
-						},
-					},
-				},
-			}
+			require.NoError(t, operator.buildResource(logr.Discard(), ss, 0, pclq, false))
 
-			// Create PCSG with MNNVL annotations and required label for pcsReplicaIndex
-			pcsgConfigName := "sg"
-			pcsg := &grovecorev1alpha1.PodCliqueScalingGroup{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:        fmt.Sprintf("%s-%d-%s", pcsName, pcsReplicaIndex, pcsgConfigName),
-					Namespace:   pcsNamespace,
-					Annotations: tc.pcsgAnnotations,
-					Labels: map[string]string{
-						apicommon.LabelPodCliqueSetReplicaIndex: fmt.Sprintf("%d", pcsReplicaIndex),
-					},
-				},
-				Spec: grovecorev1alpha1.PodCliqueScalingGroupSpec{
-					MinAvailable: ptr.To(int32(1)),
-					CliqueNames:  []string{pclqTemplateName},
-				},
-			}
-
-			// Create empty PodClique with matching name suffix (must end with template name)
-			pclqName := fmt.Sprintf("%s-%d-%s-%d-%s", pcsName, pcsReplicaIndex, pcsgConfigName, pcsgReplicaIndex, pclqTemplateName)
-			pclq := &grovecorev1alpha1.PodClique{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      pclqName,
-					Namespace: pcsNamespace,
-				},
-			}
-
-			// Create operator and call buildResource
-			scheme := runtime.NewScheme()
-			require.NoError(t, grovecorev1alpha1.AddToScheme(scheme))
-
-			operator := &_resource{
-				client:        nil, // not needed for buildResource
-				scheme:        scheme,
-				eventRecorder: &record.FakeRecorder{},
-			}
-
-			// The anchor entry owns PodCliqueScalingGroup replica index 0 (below MinAvailable), so
-			// buildResource resolves the PodGang name from this entry's epoch.
-			pgm := testutils.NewPodGangMapBuilder(pcsName, pcsNamespace, "uid", pcsReplicaIndex).WithEntries(
-				testutils.NewPodGangEntryBuilder("hash", "1000").
-					WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).
-					WithPCSGReplicaIndices(map[string][]int32{pcsgConfigName: {int32(pcsgReplicaIndex)}}).Build(),
-			).Build()
-			ss := &syncSnapshot{pcs: pcs, pcsg: pcsg, pcsReplicaIndex: pcsReplicaIndex, pgm: pgm}
-			err := operator.buildResource(logr.Discard(), ss, pcsgReplicaIndex, pclq, false)
-			require.NoError(t, err)
-
-			// Verify pod-level claims
-			if tc.expectPodLevelClaim {
-				require.Len(t, pclq.Spec.PodSpec.ResourceClaims, 1, "expected pod-level MNNVL claim")
-				assert.Equal(t, mnnvl.MNNVLClaimName, pclq.Spec.PodSpec.ResourceClaims[0].Name)
-				if tc.expectedRCTName != "" {
-					require.NotNil(t, pclq.Spec.PodSpec.ResourceClaims[0].ResourceClaimTemplateName)
-					assert.Equal(t, tc.expectedRCTName, *pclq.Spec.PodSpec.ResourceClaims[0].ResourceClaimTemplateName)
-				}
-			} else {
-				assert.Empty(t, pclq.Spec.PodSpec.ResourceClaims, "expected no pod-level claims")
-			}
-
-			// Verify container claims
-			withClaims, withoutClaims := triageContainersByMNNVLClaim(pclq.Spec.PodSpec.Containers)
-			assert.ElementsMatch(t, tc.expectedContainersWithClaims, withClaims,
-				"containers with MNNVL claims should match expected")
-			assert.ElementsMatch(t, tc.expectedContainersWithoutClaims, withoutClaims,
-				"containers without MNNVL claims should match expected")
-
-			// Verify init container claims
-			initWithClaims, initWithoutClaims := triageContainersByMNNVLClaim(pclq.Spec.PodSpec.InitContainers)
-			assert.ElementsMatch(t, tc.expectedInitContainersWithClaims, initWithClaims,
-				"init containers with MNNVL claims should match expected")
-			assert.ElementsMatch(t, tc.expectedInitContainersWithoutClaims, initWithoutClaims,
-				"init containers without MNNVL claims should match expected")
+			assertPodLevelMNNVLClaim(t, pclq, tc.expectPodLevelClaim, tc.expectedRCTName)
+			assertContainerMNNVLClaims(t, pclq.Spec.PodSpec.Containers, tc.expectedContainersWithClaims, tc.expectedContainersWithoutClaims)
+			assertContainerMNNVLClaims(t, pclq.Spec.PodSpec.InitContainers, tc.expectedInitContainersWithClaims, tc.expectedInitContainersWithoutClaims)
 		})
 	}
 }
 
 func TestBuildResource_StripsTopologyAnnotation(t *testing.T) {
-	pcs := &grovecorev1alpha1.PodCliqueSet{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-pcs",
-			Namespace: "default",
-		},
-		Spec: grovecorev1alpha1.PodCliqueSetSpec{
-			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
-				StartupType: ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder),
-				Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-					{
-						Name: "worker",
-						Annotations: map[string]string{
-							apiconstants.AnnotationTopologyName: "my-topology",
-							"example.com/keep":                  "yes",
-						},
-						Spec: grovecorev1alpha1.PodCliqueSpec{
-							Replicas:     1,
-							MinAvailable: ptr.To(int32(1)),
-						},
-					},
-				},
-			},
-		},
-	}
-
-	pcsg := &grovecorev1alpha1.PodCliqueScalingGroup{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-pcs-0-sg",
-			Namespace: "default",
-			Labels: map[string]string{
-				apicommon.LabelPodCliqueSetReplicaIndex: "0",
-			},
-		},
-		Spec: grovecorev1alpha1.PodCliqueScalingGroupSpec{
-			MinAvailable: ptr.To(int32(1)),
-			CliqueNames:  []string{"worker"},
-		},
-	}
-
-	pclq := &grovecorev1alpha1.PodClique{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-pcs-0-sg-0-worker",
-			Namespace: "default",
-		},
-	}
-
-	// The anchor entry owns PodCliqueScalingGroup replica index 0 (below MinAvailable), so buildResource
-	// resolves the PodGang name from this entry's epoch.
-	pgm := testutils.NewPodGangMapBuilder("test-pcs", "default", "uid", 0).WithEntries(
-		testutils.NewPodGangEntryBuilder("hash", "1000").
-			WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).
-			WithPCSGReplicaIndices(map[string][]int32{"sg": {0}}).Build(),
-	).Build()
+	pcs := newBuildResourcePCS("worker", map[string]string{
+		apiconstants.AnnotationTopologyName: "my-topology",
+		"example.com/keep":                  "yes",
+	}, nil, nil)
+	pcsg := newBuildResourcePCSG(nil)
+	pclq := emptyMemberPodClique("test-pcs-0-sg-0-worker")
+	ss := &syncSnapshot{pcs: pcs, pcsg: pcsg, pcsReplicaIndex: 0, pgm: newAnchorPodGangMap()}
 
 	operator := &_resource{scheme: groveclientscheme.Scheme}
-	ss := &syncSnapshot{pcs: pcs, pcsg: pcsg, pcsReplicaIndex: 0, pgm: pgm}
-	err := operator.buildResource(logr.Discard(), ss, 0, pclq, false)
-	require.NoError(t, err)
+	require.NoError(t, operator.buildResource(logr.Discard(), ss, 0, pclq, false))
 	require.NotNil(t, pclq.Annotations)
 	assert.Equal(t, "yes", pclq.Annotations["example.com/keep"])
 	_, hasTopologyAnnotation := pclq.Annotations[apiconstants.AnnotationTopologyName]
@@ -1252,30 +901,11 @@ func TestSyncPCSGPodIndexOffsetsUsesCurrentReplicaCounts(t *testing.T) {
 	r := _resource{client: cl}
 	ss := &syncSnapshot{pcs: pcs, pcsg: pcsg, existingPCLQs: []grovecorev1alpha1.PodClique{leader, worker}}
 
-	require.NoError(t, r.syncPCSGPodIndexOffsets(context.Background(), ss))
+	require.NoError(t, r.syncPCSGPodIndexOffsets(t.Context(), ss))
 
 	updatedWorker := &grovecorev1alpha1.PodClique{}
-	require.NoError(t, cl.Get(context.Background(), client.ObjectKeyFromObject(&worker), updatedWorker))
+	require.NoError(t, cl.Get(t.Context(), client.ObjectKeyFromObject(&worker), updatedWorker))
 	assert.Equal(t, "2", updatedWorker.Annotations[apiconstants.AnnotationPodCliqueScalingGroupPodIndexOffset])
-}
-
-// triageContainersByMNNVLClaim separates containers into those with MNNVL claim and those without.
-func triageContainersByMNNVLClaim(containers []corev1.Container) (withClaim, withoutClaim []string) {
-	for _, c := range containers {
-		hasClaim := false
-		for _, claim := range c.Resources.Claims {
-			if claim.Name == mnnvl.MNNVLClaimName {
-				hasClaim = true
-				break
-			}
-		}
-		if hasClaim {
-			withClaim = append(withClaim, c.Name)
-		} else {
-			withoutClaim = append(withoutClaim, c.Name)
-		}
-	}
-	return withClaim, withoutClaim
 }
 
 func TestResolvePodGangName(t *testing.T) {
@@ -1290,10 +920,10 @@ func TestResolvePodGangName(t *testing.T) {
 	rnr := apicommon.ResourceNameReplica{Name: pcsName, Replica: 0}
 	pcsgFQN := apicommon.GeneratePodCliqueScalingGroupName(rnr, pcsgConfig)
 	// MinAvailable 2: anchor owns indices [0,2), tail owns [2,4), ScaleOut is pre-created and empty.
-	pcsg := &grovecorev1alpha1.PodCliqueScalingGroup{
-		ObjectMeta: metav1.ObjectMeta{Name: pcsgFQN, Namespace: namespace},
-		Spec:       grovecorev1alpha1.PodCliqueScalingGroupSpec{MinAvailable: ptr.To(int32(2)), CliqueNames: []string{"worker"}},
-	}
+	pcsg := testutils.NewPodCliqueScalingGroupBuilder(pcsgFQN, namespace, pcsName, 0).
+		WithMinAvailable(2).
+		WithCliqueNames([]string{"worker"}).
+		Build()
 	pgm := testutils.NewPodGangMapBuilder(pcsName, namespace, "uid", 0).WithEntries(
 		testutils.NewPodGangEntryBuilder("hash", anchorEpoch).
 			WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).
@@ -1333,4 +963,329 @@ func TestResolvePodGangName(t *testing.T) {
 		_, err := resolvePodGangName(anchorOnly, rnr, pcsg, 5)
 		require.Error(t, err)
 	})
+}
+
+func TestComputePendingUpdateWork(t *testing.T) {
+	tests := []struct {
+		description         string
+		replicas            int32
+		reps                []testReplica
+		wantOldReady        []int
+		wantOldPending      []int
+		wantOldUnavailable  []int
+		wantNumReady        int
+		wantNumUpdatedReady int
+	}{
+		{"all replicas old and ready", 3, []testReplica{oldReadyReplica(0), oldReadyReplica(1), oldReadyReplica(2)}, []int{0, 1, 2}, nil, nil, 3, 0},
+		{"mixed updated, old ready and old pending", 3, []testReplica{updatedReadyReplica(0), oldReadyReplica(1), oldPendingReplica(2)}, []int{1}, []int{2}, nil, 2, 1},
+		{"terminating replica is skipped", 2, []testReplica{updatedReadyReplica(0), terminatingReplica(1)}, nil, nil, nil, 1, 1},
+		{"old unavailable replica", 1, []testReplica{oldUnavailableReplica(0)}, nil, nil, []int{0}, 0, 0},
+		{"all replicas updated and ready", 2, []testReplica{updatedReadyReplica(0), updatedReadyReplica(1)}, nil, nil, nil, 2, 2},
+	}
+	for _, tt := range tests {
+		t.Run(tt.description, func(t *testing.T) {
+			sc := buildRollingUpdateSnapshot(tt.replicas, 1, 1, tt.reps)
+			r := _resource{expectationsStore: expect.NewExpectationsStore()}
+			uw, err := r.computePendingUpdateWork(sc)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantOldReady, uw.oldReadyReplicaIndices, "oldReadyReplicaIndices")
+			assert.Equal(t, tt.wantOldPending, uw.oldPendingReplicaIndices, "oldPendingReplicaIndices")
+			assert.Equal(t, tt.wantOldUnavailable, uw.oldUnavailableReplicaIndices, "oldUnavailableReplicaIndices")
+			assert.Equal(t, tt.wantNumReady, uw.numReadyReplicas, "numReadyReplicas")
+			assert.Equal(t, tt.wantNumUpdatedReady, uw.numUpdatedReadyReplicas, "numUpdatedReadyReplicas")
+		})
+	}
+}
+
+func TestComputePendingUpdateWorkSkipsReplicaWithDeleteExpectation(t *testing.T) {
+	sc := buildRollingUpdateSnapshot(3, 1, 2, []testReplica{oldReadyReplica(0), oldReadyReplica(1), oldReadyReplica(2)})
+	// Simulate a disruption we already triggered for replica 0 whose deletion the informer cache has not
+	// yet observed, by recording a delete expectation for its member PodCliques.
+	store := expect.NewExpectationsStore()
+	replica0UIDs := lo.Map(componentutils.GroupPCLQsByPCSGReplicaIndex(sc.existingPCLQs)["0"], func(pclq grovecorev1alpha1.PodClique, _ int) types.UID {
+		return pclq.GetUID()
+	})
+	require.NoError(t, store.ExpectDeletions(logr.Discard(), sc.expectationsStoreKey, replica0UIDs...))
+	r := _resource{expectationsStore: store}
+
+	uw, err := r.computePendingUpdateWork(sc)
+	require.NoError(t, err)
+	assert.Equal(t, []int{1, 2}, uw.oldReadyReplicaIndices, "replica 0 with a pending delete expectation must not be a disruption candidate")
+	assert.Equal(t, 2, uw.numReadyReplicas, "replica 0 with a pending delete expectation must not be counted as Ready")
+}
+
+func TestProcessPendingUpdates(t *testing.T) {
+	newResource := func(sc *syncSnapshot) (_resource, client.Client) {
+		objs := []client.Object{sc.pcsg}
+		for i := range sc.existingPCLQs {
+			objs = append(objs, &sc.existingPCLQs[i])
+		}
+		cl := testutils.NewTestClientBuilder().
+			WithObjects(objs...).
+			WithStatusSubresource(&grovecorev1alpha1.PodCliqueScalingGroup{}).
+			Build()
+		return _resource{client: cl, eventRecorder: record.NewFakeRecorder(64), expectationsStore: expect.NewExpectationsStore()}, cl
+	}
+	remainingReplicaIndices := func(t *testing.T, cl client.Client) []string {
+		var list grovecorev1alpha1.PodCliqueList
+		require.NoError(t, cl.List(t.Context(), &list, client.InNamespace(testRollingUpdateNamespace)))
+		indices := make([]string, 0, len(list.Items))
+		for _, pclq := range list.Items {
+			indices = append(indices, pclq.Labels[apicommon.LabelPodCliqueScalingGroupReplicaIndex])
+		}
+		return indices
+	}
+	requeueErr := &groveerr.GroveError{Code: groveerr.ErrCodeContinueReconcileAndRequeue, Operation: component.OperationSync}
+
+	t.Run("completes when all replicas are updated and ready", func(t *testing.T) {
+		sc := buildRollingUpdateSnapshot(2, 1, 1, []testReplica{updatedReadyReplica(0), updatedReadyReplica(1)})
+		r, _ := newResource(sc)
+
+		err := r.processPendingUpdates(t.Context(), logr.Discard(), sc)
+		testutils.AssertGroveError(t, requeueErr, err)
+		assert.NotNil(t, sc.pcsg.Status.UpdateProgress.UpdateEndedAt, "expected UpdateEndedAt to be set")
+	})
+
+	t.Run("disrupts the lowest-index ready old replicas up to the budget", func(t *testing.T) {
+		sc := buildRollingUpdateSnapshot(3, 1, 2, []testReplica{oldReadyReplica(0), oldReadyReplica(1), oldReadyReplica(2)})
+		r, cl := newResource(sc)
+
+		err := r.processPendingUpdates(t.Context(), logr.Discard(), sc)
+		testutils.AssertGroveError(t, requeueErr, err)
+		// Budget of 2 and MinAvailable headroom of 2, so replicas 0 and 1 are deleted and 2 remains.
+		assert.ElementsMatch(t, []string{"2"}, remainingReplicaIndices(t, cl))
+	})
+
+	t.Run("rolls one replica at a time when MinAvailable equals replicas", func(t *testing.T) {
+		sc := buildRollingUpdateSnapshot(3, 3, 1, []testReplica{oldReadyReplica(0), oldReadyReplica(1), oldReadyReplica(2)})
+		r, cl := newResource(sc)
+
+		err := r.processPendingUpdates(t.Context(), logr.Discard(), sc)
+		testutils.AssertGroveError(t, requeueErr, err)
+		assert.Len(t, remainingReplicaIndices(t, cl), 2, "MinAvailable equal to replicas must not block the roll; MaxUnavailable=1 disrupts one replica")
+	})
+
+	t.Run("does not disrupt any replica when the budget is exhausted by unavailable replicas", func(t *testing.T) {
+		// Two of three replicas report not-Ready (which can be a stale status read). numReadyReplicas is 1,
+		// unavailable is 2, MaxUnavailable is 1, so the budget is 0 and nothing must be deleted. This is the
+		// case that previously over-disrupted by unconditionally deleting the not-Ready replicas.
+		sc := buildRollingUpdateSnapshot(3, 1, 1, []testReplica{oldReadyReplica(0), oldUnavailableReplica(1), oldUnavailableReplica(2)})
+		r, cl := newResource(sc)
+
+		err := r.processPendingUpdates(t.Context(), logr.Discard(), sc)
+		testutils.AssertGroveError(t, requeueErr, err)
+		assert.ElementsMatch(t, []string{"0", "1", "2"}, remainingReplicaIndices(t, cl), "no replica may be deleted when the disruption budget is exhausted")
+	})
+
+	t.Run("disrupts worst-off replicas first within the budget", func(t *testing.T) {
+		// Budget is MaxUnavailable(2) - unavailable(1) = 1. The unavailable replica 2 is worst-off and must
+		// be selected before the Ready replicas 0 and 1.
+		sc := buildRollingUpdateSnapshot(3, 1, 2, []testReplica{oldReadyReplica(0), oldReadyReplica(1), oldUnavailableReplica(2)})
+		r, cl := newResource(sc)
+
+		err := r.processPendingUpdates(t.Context(), logr.Discard(), sc)
+		testutils.AssertGroveError(t, requeueErr, err)
+		assert.ElementsMatch(t, []string{"0", "1"}, remainingReplicaIndices(t, cl), "the unavailable replica must be replaced first, leaving the Ready replicas")
+	})
+}
+
+const (
+	testRollingUpdateNamespace = "test-ns"
+	testRollingUpdatePCSName   = "test-pcs"
+	testRollingUpdatePCSGName  = "test-pcsg"
+	testRollingUpdateNewHash   = "new-hash-abc"
+	testRollingUpdateOldHash   = "old-hash-xyz"
+	testRollingUpdateGenHash   = "pcs-gen-1"
+)
+
+// testReplica describes a PCSG replica to synthesize for a rolling-update test.
+type testReplica struct {
+	index       int
+	hash        string
+	scheduled   int32
+	ready       int32
+	updated     int32
+	terminating bool
+}
+
+func oldReadyReplica(index int) testReplica {
+	return testReplica{index: index, hash: testRollingUpdateOldHash, scheduled: 1, ready: 1}
+}
+
+func oldPendingReplica(index int) testReplica {
+	return testReplica{index: index, hash: testRollingUpdateOldHash, scheduled: 0, ready: 0}
+}
+
+func oldUnavailableReplica(index int) testReplica {
+	return testReplica{index: index, hash: testRollingUpdateOldHash, scheduled: 1, ready: 0}
+}
+
+func updatedReadyReplica(index int) testReplica {
+	return testReplica{index: index, hash: testRollingUpdateNewHash, scheduled: 1, ready: 1, updated: 1}
+}
+
+func terminatingReplica(index int) testReplica {
+	return testReplica{index: index, hash: testRollingUpdateOldHash, terminating: true}
+}
+
+// buildRollingUpdateSnapshot builds a syncSnapshot with one member PodClique per replica, wiring the
+// expected hash and FQN maps so the rolling-update logic can classify each replica.
+func buildRollingUpdateSnapshot(replicas, minAvailable, maxUnavailable int32, reps []testReplica) *syncSnapshot {
+	pcs := testutils.NewPodCliqueSetBuilder(testRollingUpdatePCSName, testRollingUpdateNamespace, "uid").Build()
+	pcs.Status.CurrentGenerationHash = ptr.To(testRollingUpdateGenHash)
+	pcsg := testutils.NewPodCliqueScalingGroupBuilder(testRollingUpdatePCSGName, testRollingUpdateNamespace, testRollingUpdatePCSName, 0).
+		WithReplicas(replicas).
+		WithMinAvailable(minAvailable).
+		Build()
+	pcsg.Status.UpdateProgress = &grovecorev1alpha1.PodCliqueScalingGroupUpdateProgress{}
+	members := make([]grovecorev1alpha1.PodClique, 0, len(reps))
+	expectedHashByName := map[string]string{}
+	expectedFQNsByReplica := map[int][]string{}
+	for _, rep := range reps {
+		name := fmt.Sprintf("%s-%d-c", testRollingUpdatePCSGName, rep.index)
+		members = append(members, newRollingUpdateMemberPCLQ(name, rep))
+		expectedHashByName[name] = testRollingUpdateNewHash
+		expectedFQNsByReplica[rep.index] = append(expectedFQNsByReplica[rep.index], name)
+	}
+	return &syncSnapshot{
+		pcs:                            pcs,
+		pcsg:                           pcsg,
+		expectationsStoreKey:           pcsg.Namespace + "/" + pcsg.Name,
+		pcsgConfig:                     &grovecorev1alpha1.PodCliqueScalingGroupConfig{RollingUpdate: &grovecorev1alpha1.RollingUpdateConfiguration{MaxUnavailable: ptr.To(maxUnavailable)}},
+		existingPCLQs:                  members,
+		expectedPCLQPodTemplateHashMap: expectedHashByName,
+		expectedPCLQFQNsPerPCSGReplica: expectedFQNsByReplica,
+	}
+}
+
+func newRollingUpdateMemberPCLQ(name string, rep testReplica) grovecorev1alpha1.PodClique {
+	return *testutils.NewPCSGPodCliqueBuilder(name, testRollingUpdateNamespace, testRollingUpdatePCSName, testRollingUpdatePCSGName, 0, rep.index).
+		WithLabels(map[string]string{apicommon.LabelPodTemplateHash: rep.hash}).
+		WithOptions(func(p *grovecorev1alpha1.PodClique) {
+			p.UID = types.UID(name)
+			p.Status.ScheduledReplicas = rep.scheduled
+			p.Status.ReadyReplicas = rep.ready
+			p.Status.UpdatedReplicas = rep.updated
+			p.Status.CurrentPodTemplateHash = ptr.To(rep.hash)
+			p.Status.CurrentPodCliqueSetGenerationHash = ptr.To(testRollingUpdateGenHash)
+			if rep.terminating {
+				now := metav1.Now()
+				p.DeletionTimestamp = &now
+				p.Finalizers = []string{"fake.finalizer/rollingupdate-test"}
+			}
+		}).
+		Build()
+}
+
+func gpuContainer(name string, gpus int) corev1.Container {
+	return corev1.Container{
+		Name: name,
+		Resources: corev1.ResourceRequirements{
+			Limits: corev1.ResourceList{constants.GPUResourceName: resource.MustParse(fmt.Sprintf("%d", gpus))},
+		},
+	}
+}
+
+func cpuContainer(name string, cpus int) corev1.Container {
+	return corev1.Container{
+		Name: name,
+		Resources: corev1.ResourceRequirements{
+			Limits: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse(fmt.Sprintf("%d", cpus))},
+		},
+	}
+}
+
+// newBuildResourcePCS builds a single-clique PodCliqueSet used by buildResource tests, with the given
+// clique annotations and containers.
+func newBuildResourcePCS(cliqueName string, cliqueAnnotations map[string]string, containers, initContainers []corev1.Container) *grovecorev1alpha1.PodCliqueSet {
+	cliqueBuilder := testutils.NewPodCliqueTemplateSpecBuilder(cliqueName).
+		WithReplicas(1).
+		WithMinAvailable(1).
+		WithPodSpec(corev1.PodSpec{Containers: containers, InitContainers: initContainers})
+	if len(cliqueAnnotations) > 0 {
+		cliqueBuilder = cliqueBuilder.WithAnnotations(cliqueAnnotations)
+	}
+	return testutils.NewPodCliqueSetBuilder("test-pcs", "default", "uid").
+		WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder)).
+		WithPodCliqueTemplateSpec(cliqueBuilder.Build()).
+		Build()
+}
+
+// newBuildResourcePCSG builds the PodCliqueScalingGroup for replica index 0 that owns the worker
+// clique, with the given annotations.
+func newBuildResourcePCSG(pcsgAnnotations map[string]string) *grovecorev1alpha1.PodCliqueScalingGroup {
+	pcsg := testutils.NewPodCliqueScalingGroupBuilder("test-pcs-0-sg", "default", "test-pcs", 0).
+		WithMinAvailable(1).
+		WithCliqueNames([]string{"worker"}).
+		Build()
+	pcsg.Annotations = pcsgAnnotations
+	return pcsg
+}
+
+// newAnchorPodGangMap builds a PodGangMap whose anchor entry owns PodCliqueScalingGroup replica index
+// 0, so buildResource resolves the PodGang name from this entry's epoch.
+func newAnchorPodGangMap() *grovecorev1alpha1.PodGangMap {
+	return testutils.NewPodGangMapBuilder("test-pcs", "default", "uid", 0).WithEntries(
+		testutils.NewPodGangEntryBuilder("hash", "1000").
+			WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).
+			WithPCSGReplicaIndices(map[string][]int32{"sg": {0}}).Build(),
+	).Build()
+}
+
+// emptyMemberPodClique returns a bare PodClique that buildResource fills in.
+func emptyMemberPodClique(name string) *grovecorev1alpha1.PodClique {
+	return &grovecorev1alpha1.PodClique{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"}}
+}
+
+// assertPodLevelMNNVLClaim asserts the pod-level MNNVL resource claim and, when set, its resource
+// claim template name.
+func assertPodLevelMNNVLClaim(t *testing.T, pclq *grovecorev1alpha1.PodClique, expectClaim bool, expectedRCTName string) {
+	t.Helper()
+	if !expectClaim {
+		assert.Empty(t, pclq.Spec.PodSpec.ResourceClaims, "expected no pod-level claims")
+		return
+	}
+	require.Len(t, pclq.Spec.PodSpec.ResourceClaims, 1, "expected pod-level MNNVL claim")
+	assert.Equal(t, mnnvl.MNNVLClaimName, pclq.Spec.PodSpec.ResourceClaims[0].Name)
+	if expectedRCTName != "" {
+		require.NotNil(t, pclq.Spec.PodSpec.ResourceClaims[0].ResourceClaimTemplateName)
+		assert.Equal(t, expectedRCTName, *pclq.Spec.PodSpec.ResourceClaims[0].ResourceClaimTemplateName)
+	}
+}
+
+// assertContainerMNNVLClaims asserts which containers carry the MNNVL claim and which do not.
+func assertContainerMNNVLClaims(t *testing.T, containers []corev1.Container, wantWithClaim, wantWithoutClaim []string) {
+	t.Helper()
+	withClaim, withoutClaim := triageContainersByMNNVLClaim(containers)
+	assert.ElementsMatch(t, wantWithClaim, withClaim, "containers with MNNVL claims should match expected")
+	assert.ElementsMatch(t, wantWithoutClaim, withoutClaim, "containers without MNNVL claims should match expected")
+}
+
+// hasEnvVar reports whether an env var with the given name exists in the slice.
+func hasEnvVar(envVars []corev1.EnvVar, name string) bool {
+	for _, ev := range envVars {
+		if ev.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// triageContainersByMNNVLClaim separates containers into those with the MNNVL claim and those without.
+func triageContainersByMNNVLClaim(containers []corev1.Container) (withClaim, withoutClaim []string) {
+	for _, c := range containers {
+		hasClaim := false
+		for _, claim := range c.Resources.Claims {
+			if claim.Name == mnnvl.MNNVLClaimName {
+				hasClaim = true
+				break
+			}
+		}
+		if hasClaim {
+			withClaim = append(withClaim, c.Name)
+		} else {
+			withoutClaim = append(withoutClaim, c.Name)
+		}
+	}
+	return withClaim, withoutClaim
 }

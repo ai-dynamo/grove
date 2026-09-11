@@ -23,7 +23,7 @@ import (
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	internalconstants "github.com/ai-dynamo/grove/operator/internal/constants"
 	ctrlcommon "github.com/ai-dynamo/grove/operator/internal/controller/common"
-	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
+	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
 	"github.com/go-logr/logr"
@@ -79,6 +79,11 @@ func (r *Reconciler) reconcileStatus(ctx context.Context, logger logr.Logger, pc
 		mutateMinAvailableBreachedCondition(pclq,
 			len(podCategories[k8sutils.PodHasAtleastOneContainerWithNonZeroExitCode]),
 			len(podCategories[k8sutils.PodStartedButNotReady]))
+		progressDeadline, err := progressDeadlineForPCLQ(pcs, pclq)
+		if err != nil {
+			logger.Error(err, "could not resolve ProgressDeadline for PodClique, proceeding without a deadline")
+		}
+		mutateUpdateInProgressCondition(pclq, originalStatus, progressDeadline)
 		r.emitAllScheduledReplicasLostIfNeeded(pclq, originalStatus.ScheduledReplicas)
 	}
 
@@ -311,6 +316,72 @@ func computePodCliqueScheduledCondition(pclq *grovecorev1alpha1.PodClique) metav
 		Status:             metav1.ConditionTrue,
 		Reason:             constants.ConditionReasonSufficientScheduledPods,
 		Message:            fmt.Sprintf("Sufficient scheduled pods found. expected at least: %d, found: %d", *pclq.Spec.MinAvailable, pclq.Status.ScheduledReplicas),
+		LastTransitionTime: now,
+	}
+}
+
+// progressDeadlineForPCLQ resolves the ProgressDeadline for the PodClique from its PodCliqueSet
+// template. It is nil for a PodCliqueScalingGroup member PodClique, whose RollingUpdate lives on the
+// owning PodCliqueScalingGroup, and for a standalone PodClique with no ProgressDeadline configured.
+func progressDeadlineForPCLQ(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grovecorev1alpha1.PodClique) (*metav1.Duration, error) {
+	cliqueName, err := componentutils.GetPodCliqueNameFromPodCliqueFQN(pclq.ObjectMeta)
+	if err != nil {
+		return nil, err
+	}
+	templateSpec := componentutils.FindPodCliqueTemplateSpecByName(pcs, cliqueName)
+	if templateSpec == nil || templateSpec.RollingUpdate == nil {
+		return nil, nil
+	}
+	return templateSpec.RollingUpdate.ProgressDeadline, nil
+}
+
+// mutateUpdateInProgressCondition maintains LastProgressedAt and sets the UpdateInProgress
+// condition. While a rolling update is in progress LastProgressedAt starts on the first reconcile and advances
+// whenever UpdatedReplicas increases, and the condition is True (Progressing) or Unknown
+// (ProgressDeadlineExceeded) when no progress has been made within ProgressDeadline. Otherwise, the
+// LastProgressedAt is cleared and the condition is False (NoActiveUpdate).
+func mutateUpdateInProgressCondition(pclq *grovecorev1alpha1.PodClique, originalStatus *grovecorev1alpha1.PodCliqueStatus, progressDeadline *metav1.Duration) {
+	now := metav1.Now()
+	if componentutils.IsPCLQAutoUpdateInProgress(pclq) {
+		if pclq.Status.UpdateProgress.LastProgressedAt == nil || pclq.Status.UpdatedReplicas > originalStatus.UpdatedReplicas {
+			pclq.Status.UpdateProgress.LastProgressedAt = &now
+		}
+	} else if pclq.Status.UpdateProgress != nil {
+		pclq.Status.UpdateProgress.LastProgressedAt = nil
+	}
+
+	newCondition := computeUpdateInProgressCondition(pclq, progressDeadline, now)
+	if k8sutils.HasConditionChanged(pclq.Status.Conditions, newCondition) {
+		meta.SetStatusCondition(&pclq.Status.Conditions, newCondition)
+	}
+}
+
+// computeUpdateInProgressCondition returns the UpdateInProgress condition for the PodClique based on
+// whether a rolling update is in progress and whether it has progressed within ProgressDeadline.
+func computeUpdateInProgressCondition(pclq *grovecorev1alpha1.PodClique, progressDeadline *metav1.Duration, now metav1.Time) metav1.Condition {
+	if !componentutils.IsPCLQAutoUpdateInProgress(pclq) {
+		return metav1.Condition{
+			Type:               constants.ConditionTypeUpdateInProgress,
+			Status:             metav1.ConditionFalse,
+			Reason:             constants.ConditionReasonNoActiveUpdate,
+			Message:            "No rolling update is in progress",
+			LastTransitionTime: now,
+		}
+	}
+	if progressDeadline != nil && now.Sub(pclq.Status.UpdateProgress.LastProgressedAt.Time) > progressDeadline.Duration {
+		return metav1.Condition{
+			Type:               constants.ConditionTypeUpdateInProgress,
+			Status:             metav1.ConditionUnknown,
+			Reason:             constants.ConditionReasonProgressDeadlineExceeded,
+			Message:            fmt.Sprintf("Rolling update has not progressed within the progress deadline of %s", progressDeadline.Duration),
+			LastTransitionTime: now,
+		}
+	}
+	return metav1.Condition{
+		Type:               constants.ConditionTypeUpdateInProgress,
+		Status:             metav1.ConditionTrue,
+		Reason:             constants.ConditionReasonProgressing,
+		Message:            "Rolling update is in progress",
 		LastTransitionTime: now,
 	}
 }

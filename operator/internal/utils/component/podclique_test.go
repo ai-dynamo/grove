@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package utils
+package component
 
 import (
 	"context"
@@ -579,6 +579,102 @@ func TestGroupPCLQsByPCSReplicaIndex(t *testing.T) {
 			assert.Len(t, actual, len(tt.expectedIndex))
 			for idx, count := range tt.expectedIndex {
 				assert.Len(t, actual[idx], count)
+			}
+		})
+	}
+}
+
+// TestGetPodCliqueNameFromPodCliqueFQN tests extracting unqualified PodClique names from fully qualified names.
+// It covers both PodCliqueScalingGroup and PodCliqueSet scenarios, as well as error cases with missing labels.
+func TestGetPodCliqueNameFromPodCliqueFQN(t *testing.T) {
+	testCases := []struct {
+		name           string
+		pclqObjectMeta metav1.ObjectMeta
+		expectedName   string
+		expectedErr    bool
+	}{
+		{
+			name: "pcsg-valid-labels",
+			pclqObjectMeta: metav1.ObjectMeta{
+				Name:      "my-pcsg-1-worker",
+				Namespace: "default",
+				Labels: map[string]string{
+					apicommon.LabelPodCliqueScalingGroup:             "my-pcsg",
+					apicommon.LabelPodCliqueScalingGroupReplicaIndex: "1",
+				},
+			},
+			expectedName: "worker",
+			expectedErr:  false,
+		},
+		{
+			name: "pcsg-missing-replica-index",
+			pclqObjectMeta: metav1.ObjectMeta{
+				Name:      "my-pcsg-1-worker",
+				Namespace: "default",
+				Labels: map[string]string{
+					apicommon.LabelPodCliqueScalingGroup: "my-pcsg",
+				},
+			},
+			expectedErr: true,
+		},
+		{
+			name: "pcs-valid-labels",
+			pclqObjectMeta: metav1.ObjectMeta{
+				Name:      "my-pcs-2-prefill",
+				Namespace: "default",
+				Labels: map[string]string{
+					apicommon.LabelPartOfKey:                "my-pcs",
+					apicommon.LabelPodCliqueSetReplicaIndex: "2",
+				},
+			},
+			expectedName: "prefill",
+			expectedErr:  false,
+		},
+		{
+			name: "pcs-missing-part-of-label",
+			pclqObjectMeta: metav1.ObjectMeta{
+				Name:      "my-pcs-2-prefill",
+				Namespace: "default",
+				Labels: map[string]string{
+					apicommon.LabelPodCliqueSetReplicaIndex: "2",
+				},
+			},
+			expectedErr: true,
+		},
+		{
+			name: "pcs-missing-replica-index",
+			pclqObjectMeta: metav1.ObjectMeta{
+				Name:      "my-pcs-2-prefill",
+				Namespace: "default",
+				Labels: map[string]string{
+					apicommon.LabelPartOfKey: "my-pcs",
+				},
+			},
+			expectedErr: true,
+		},
+		{
+			name: "pcs-name-with-hyphens",
+			pclqObjectMeta: metav1.ObjectMeta{
+				Name:      "inference-pipeline-0-prefill-worker",
+				Namespace: "default",
+				Labels: map[string]string{
+					apicommon.LabelPartOfKey:                "inference-pipeline",
+					apicommon.LabelPodCliqueSetReplicaIndex: "0",
+				},
+			},
+			expectedName: "prefill-worker",
+			expectedErr:  false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			name, err := GetPodCliqueNameFromPodCliqueFQN(tc.pclqObjectMeta)
+			if tc.expectedErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+				assert.Equal(t, tc.expectedName, name)
 			}
 		})
 	}

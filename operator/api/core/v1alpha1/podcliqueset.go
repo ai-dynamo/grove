@@ -32,6 +32,7 @@ import (
 // +kubebuilder:printcolumn:name="PCLQs-Total",type=integer,JSONPath=`.status.updateProgress.totalPodCliquesCount`
 // +kubebuilder:printcolumn:name="PCSGs-Updated",type=integer,JSONPath=`.status.updateProgress.updatedPodCliqueScalingGroupsCount`
 // +kubebuilder:printcolumn:name="PCSGs-Total",type=integer,JSONPath=`.status.updateProgress.totalPodCliqueScalingGroupsCount`
+// +kubebuilder:printcolumn:name="Update",type=string,JSONPath=`.status.conditions[?(@.type=="UpdateInProgress")].reason`,priority=1
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 // +kubebuilder:validation:XValidation:rule="oldSelf.hasValue() || !has(self.spec.template.topologyConstraint) || !has(self.spec.template.topologyConstraint.packDomain)",message="packDomain is deprecated and cannot be used on new workloads; use pack.required",fieldPath=".spec.template.topologyConstraint.packDomain",optionalOldSelf=true,reason=FieldValueForbidden
 // +kubebuilder:validation:XValidation:rule="oldSelf.hasValue() || !has(self.spec.template.cliques) || self.spec.template.cliques.all(c, !has(c.topologyConstraint) || !has(c.topologyConstraint.packDomain))",message="packDomain is deprecated and cannot be used on new workloads; use pack.required",fieldPath=".spec.template.cliques",optionalOldSelf=true,reason=FieldValueForbidden
@@ -125,11 +126,11 @@ type PodCliqueSetUpdateProgress struct {
 	UpdateStartedAt metav1.Time `json:"updateStartedAt,omitempty"`
 	// UpdateEndedAt is the time at which Grove does not have any work pending to manifest the update according to the
 	// configured update strategy.
-	// For auto update strategies where Grove handles the orchestration, while the update is still in progress it will be
-	// nil, and will be set once the update finishes where all child resources are updated by Grove with the latest
-	// specification.
-	// For the OnDelete strategy, it is set to the same time as UpdateStartedAt, which implies that there is no work
-	// pending on Grove.
+	//  - For rolling update strategies where Grove handles the orchestration, while the update is still in progress
+	//    it will be nil, and will be set once the update finishes where all child resources are updated by Grove with
+	//    the latest specification.
+	//  - For the OnDelete strategy, it is set to the same time as UpdateStartedAt, which implies that there is no work
+	// 	  pending on Grove.
 	// +optional
 	UpdateEndedAt *metav1.Time `json:"updateEndedAt,omitempty"`
 	// UpdatedPodCliquesCount is the number of PodCliques that have been updated to the desired PodCliqueSet
@@ -153,7 +154,7 @@ type PodCliqueSetUpdateProgress struct {
 	// +kubebuilder:default=0
 	TotalPodCliqueScalingGroupsCount int32 `json:"totalPodCliqueScalingGroupsCount,omitempty"`
 	// CurrentlyUpdating captures the progress of the PodCliqueSet replicas that are currently being updated.
-	// This field is only set for auto update strategies where Grove handles the orchestration. It is not set for the
+	// This field is only set for rolling update strategies where Grove handles the orchestration. It is not set for the
 	// OnDelete update strategy.
 	// +optional
 	CurrentlyUpdating []PodCliqueSetReplicaUpdateProgress `json:"currentlyUpdating,omitempty"`
@@ -170,6 +171,39 @@ type PodCliqueSetReplicaUpdateProgress struct {
 	// running the latest specification.
 	// +optional
 	UpdateEndedAt *metav1.Time `json:"updateEndedAt,omitempty"`
+}
+
+// RollingUpdateConfiguration carries per-component knobs for a rolling update. It attaches to each
+// standalone PodCliqueTemplateSpec and to each PodCliqueScalingGroupConfig, keeping the
+// configuration next to the component it governs. These knobs are per-component because components
+// differ in how much disruption they tolerate and how long they take to make progress, so a single
+// PodCliqueSet-wide value cannot express them. The configuration is strategy-agnostic. It governs
+// the RollingRecreate strategy today and is reused by the Coherent strategy. It does not apply to
+// the OnDelete strategy, where the PodCliqueSet validating webhook rejects it if set. Defaulting
+// never clears it, so removing it when switching to OnDelete is left to the consumer.
+type RollingUpdateConfiguration struct {
+	// MaxUnavailable is the maximum number of pods (for a standalone PodClique) or
+	// PodCliqueScalingGroup replicas (for a PCSG) that may be unavailable at any moment during an
+	// update of this component, measured against the component's desired count.
+	//
+	// Defaulting:
+	//   - RollingRecreate: defaults to 1.
+	//   - OnDelete: not defaulted. Defaulting never clears a RollingUpdateConfiguration that is set. The validating
+	//     webhook rejects it instead, so the consumer must remove it when switching to OnDelete.
+	//
+	// Validation:
+	//   - When set, must be greater than 0.
+	//   - OnDelete: RollingUpdate must not be set. The PodCliqueSet validating webhook rejects a
+	//     RollingUpdateConfiguration on any component when the strategy is OnDelete.
+	// +optional
+	MaxUnavailable *int32 `json:"maxUnavailable,omitempty"`
+	// ProgressDeadline tracks the progress of this component's rolling update. If the component,
+	// a PodClique or a PodCliqueScalingGroup, shows no observable progress within this duration, the
+	// breach is reported through the UpdateInProgress condition, whose Status is set to Unknown with
+	// reason ProgressDeadlineExceeded. If nil, this component does not report progress-deadline
+	// breaches and its update can wait indefinitely for progress.
+	// +optional
+	ProgressDeadline *metav1.Duration `json:"progressDeadline,omitempty"`
 }
 
 // PodCliqueSetTemplateSpec defines a template spec for a PodGang.
@@ -258,6 +292,13 @@ type PodCliqueTemplateSpec struct {
 	// PCLQs have no children to filter, so no Filter field is available.
 	// +optional
 	ResourceSharing []ResourceSharingSpec `json:"resourceSharing,omitempty"`
+	// RollingUpdate is the per-component update configuration for this PodClique. It applies only to
+	// a standalone PodClique. Setting it on a PodCliqueTemplateSpec whose Name appears in any
+	// PodCliqueScalingGroupConfig.CliqueNames (a PCSG-owned PodClique) is not allowed and is rejected
+	// by the PodCliqueSet validating webhook. A PCSG-owned PodClique is instead governed by the
+	// owning PodCliqueScalingGroup's RollingUpdate.
+	// +optional
+	RollingUpdate *RollingUpdateConfiguration `json:"rollingUpdate,omitempty"`
 	// Specification of the desired behavior of a PodClique.
 	// More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#spec-and-status
 	Spec PodCliqueSpec `json:"spec"`
@@ -387,6 +428,11 @@ type PodCliqueScalingGroupConfig struct {
 	// ScaleConfig is the horizontal pod autoscaler configuration for the pod clique scaling group.
 	// +optional
 	ScaleConfig *AutoScalingConfig `json:"scaleConfig,omitempty"`
+	// RollingUpdate is the per-component update configuration for this PodCliqueScalingGroup.
+	// It governs the rolling update of every constituent member PodClique. The member
+	// PodCliqueTemplateSpecs must not carry their own RollingUpdate.
+	// +optional
+	RollingUpdate *RollingUpdateConfiguration `json:"rollingUpdate,omitempty"`
 	// ResourceSharing defines shared ResourceClaims at the PCSG level.
 	// Each entry references a template (internal or external) and specifies a Scope:
 	//   - AllReplicas: one RC for the entire PCSG, shared across all replicas
@@ -502,7 +548,7 @@ const (
 	// RollingRecreateStrategy indicates that replicas will be progressively
 	// deleted and recreated one at a time, when templates change. This applies to
 	// both pods (for standalone PodCliques) and replicas of PodCliqueScalingGroups.
-	// RollingRecreateStrategy qualifies as an auto update strategy in Grove since
+	// RollingRecreateStrategy qualifies as a rolling update strategy in Grove since
 	// it handles the orchestration entirely by itself.
 	// This is the default update strategy.
 	RollingRecreateStrategy UpdateStrategyType = "RollingRecreate"

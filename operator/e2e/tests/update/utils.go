@@ -25,7 +25,8 @@ import (
 	"strings"
 	"time"
 
-	common "github.com/ai-dynamo/grove/operator/api/common"
+	"github.com/ai-dynamo/grove/operator/api/common"
+	apiconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/e2e/grove/workload"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/k8sclient"
@@ -34,6 +35,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/e2e/tests"
 	"github.com/ai-dynamo/grove/operator/e2e/waiter"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/watch"
@@ -263,6 +265,18 @@ func updatePCSUpdateStrategy(tc *testctx.TestContext, strategyType grovev1alpha1
 			pcs.Spec.UpdateStrategy = &grovev1alpha1.PodCliqueSetUpdateStrategy{}
 		}
 		pcs.Spec.UpdateStrategy.Type = strategyType
+
+		// Switching to OnDelete requires removing any RollingUpdate configuration: the validating webhook
+		// rejects a RollingUpdate that is set under OnDelete, and defaulting no longer clears it. This
+		// mirrors what a consumer must do when changing the strategy.
+		if strategyType == grovev1alpha1.OnDeleteStrategy {
+			for i := range pcs.Spec.Template.Cliques {
+				pcs.Spec.Template.Cliques[i].RollingUpdate = nil
+			}
+			for i := range pcs.Spec.Template.PodCliqueScalingGroupConfigs {
+				pcs.Spec.Template.PodCliqueScalingGroupConfigs[i].RollingUpdate = nil
+			}
+		}
 
 		return tc.Client.Patch(tc.Ctx, &pcs, client.Apply, client.FieldOwner("e2e-rolling-update-test"), client.ForceOwnership)
 	})
@@ -1360,4 +1374,233 @@ func verifyPodHasNodeAffinityExclusion(tc *testctx.TestContext, podName string, 
 	}
 
 	return fmt.Errorf("pod %s does not have kubernetes.io/hostname NotIn [%s] in its nodeAffinity", podName, excludedNode)
+}
+
+// maxUnavailablePods runs runUpdate (which triggers the rolling update and waits for it to complete)
+// while sampling the workload's pods, and returns the maximum number of pods matching matchFn
+// observed in any single sample. matchFn defines what counts as unavailable. The sample interval is
+// well below the readiness-delay window so that window is observable across samples.
+func maxUnavailablePods(tc *testctx.TestContext, matchFn func(*corev1.Pod) bool, runUpdate func() error) (int, error) {
+	// Sample well below the readiness delay so the not-ready window is caught.
+	const sampleInterval = 500 * time.Millisecond
+	sampler := pods.NewPodCountSampler()
+	sampler.Start(tc.Ctx, sampleInterval, func(context.Context) ([]corev1.Pod, error) {
+		podList, err := tc.ListPods()
+		if err != nil {
+			return nil, err
+		}
+		return podList.Items, nil
+	}, matchFn)
+	err := runUpdate()
+	return sampler.Stop(), err
+}
+
+// podReady reports whether the Pod has a Ready condition set to True.
+func podReady(pod *corev1.Pod) bool {
+	for _, cond := range pod.Status.Conditions {
+		if cond.Type == corev1.PodReady {
+			return cond.Status == corev1.ConditionTrue
+		}
+	}
+	return false
+}
+
+// notReadyPodForClique matches live (non-terminating) not-ready Pods that belong to the given
+// standalone PodClique template name.
+func notReadyPodForClique(cliqueName string) func(*corev1.Pod) bool {
+	return func(pod *corev1.Pod) bool {
+		if pod.DeletionTimestamp != nil {
+			return false
+		}
+		pclq, ok := pod.Labels[common.LabelPodClique]
+		return ok && strings.HasSuffix(pclq, "-"+cliqueName) && !podReady(pod)
+	}
+}
+
+// notReadyPodForPCSG matches live (non-terminating) not-ready Pods that belong to the given
+// PodCliqueScalingGroup.
+func notReadyPodForPCSG(tc *testctx.TestContext, pcsgConfigName string) func(*corev1.Pod) bool {
+	name := pcsgFQN(tc, pcsgConfigName)
+	return func(pod *corev1.Pod) bool {
+		if pod.DeletionTimestamp != nil {
+			return false
+		}
+		return pod.Labels[common.LabelPodCliqueScalingGroup] == name && !podReady(pod)
+	}
+}
+
+// KWOK Stage fixtures used to shape pod lifecycle for rolling update tests.
+const (
+	kwokStageReadyDelayedPath = "../../yaml/kwok/pod-ready-delayed.yaml"
+	kwokStageReadyDelayedName = "pod-ready-delayed"
+	kwokStageCrashloopPath    = "../../yaml/kwok/pod-crashloop.yaml"
+	kwokStageCrashloopName    = "pod-crashloop"
+)
+
+// standaloneCliqueFQN returns the PodClique name for a standalone clique in PCS replica 0.
+func standaloneCliqueFQN(tc *testctx.TestContext, cliqueName string) string {
+	return common.GeneratePodCliqueName(common.ResourceNameReplica{Name: tc.Workload.Name, Replica: 0}, cliqueName)
+}
+
+// pcsgFQN returns the PodCliqueScalingGroup name for a config in PCS replica 0.
+func pcsgFQN(tc *testctx.TestContext, pcsgConfigName string) string {
+	return common.GeneratePodCliqueScalingGroupName(common.ResourceNameReplica{Name: tc.Workload.Name, Replica: 0}, pcsgConfigName)
+}
+
+// updateInProgressConditionMet builds a predicate satisfied when the UpdateInProgress condition read
+// by getConds matches wantStatus and wantReason.
+func updateInProgressConditionMet[T any](getConds func(T) []metav1.Condition, wantStatus metav1.ConditionStatus, wantReason string) waiter.Predicate[T] {
+	return func(obj T) bool {
+		cond := meta.FindStatusCondition(getConds(obj), apiconstants.ConditionTypeUpdateInProgress)
+		return cond != nil && cond.Status == wantStatus && cond.Reason == wantReason
+	}
+}
+
+// waitForPCSUpdateCondition waits for the PodCliqueSet UpdateInProgress condition to match.
+func waitForPCSUpdateCondition(tc *testctx.TestContext, wantStatus metav1.ConditionStatus, wantReason string) error {
+	fetch := waiter.FetchFunc[*grovev1alpha1.PodCliqueSet](func(context.Context) (*grovev1alpha1.PodCliqueSet, error) {
+		return getPCS(tc, tc.Workload.Name)
+	})
+	_, err := waiter.New[*grovev1alpha1.PodCliqueSet]().WithTimeout(tc.Timeout).WithInterval(tc.Interval).WithRetryOnError().
+		WaitFor(tc.Ctx, fetch, updateInProgressConditionMet(func(p *grovev1alpha1.PodCliqueSet) []metav1.Condition { return p.Status.Conditions }, wantStatus, wantReason))
+	if err != nil {
+		return fmt.Errorf("PodCliqueSet UpdateInProgress did not reach status=%s reason=%s: %w", wantStatus, wantReason, err)
+	}
+	return nil
+}
+
+// waitForPodCliqueUpdateCondition waits for a standalone PodClique's UpdateInProgress condition to match.
+func waitForPodCliqueUpdateCondition(tc *testctx.TestContext, cliqueName string, wantStatus metav1.ConditionStatus, wantReason string) error {
+	name := standaloneCliqueFQN(tc, cliqueName)
+	fetch := waiter.FetchFunc[*grovev1alpha1.PodClique](func(ctx context.Context) (*grovev1alpha1.PodClique, error) {
+		var pclq grovev1alpha1.PodClique
+		if err := tc.Client.Get(ctx, types.NamespacedName{Name: name, Namespace: tc.Namespace}, &pclq); err != nil {
+			return nil, err
+		}
+		return &pclq, nil
+	})
+	_, err := waiter.New[*grovev1alpha1.PodClique]().WithTimeout(tc.Timeout).WithInterval(tc.Interval).WithRetryOnError().
+		WaitFor(tc.Ctx, fetch, updateInProgressConditionMet(func(p *grovev1alpha1.PodClique) []metav1.Condition { return p.Status.Conditions }, wantStatus, wantReason))
+	if err != nil {
+		return fmt.Errorf("PodClique %s UpdateInProgress did not reach status=%s reason=%s: %w", name, wantStatus, wantReason, err)
+	}
+	return nil
+}
+
+// waitForPCSGUpdateCondition waits for a PodCliqueScalingGroup's UpdateInProgress condition to match.
+func waitForPCSGUpdateCondition(tc *testctx.TestContext, pcsgConfigName string, wantStatus metav1.ConditionStatus, wantReason string) error {
+	name := pcsgFQN(tc, pcsgConfigName)
+	fetch := waiter.FetchFunc[*grovev1alpha1.PodCliqueScalingGroup](func(ctx context.Context) (*grovev1alpha1.PodCliqueScalingGroup, error) {
+		var pcsg grovev1alpha1.PodCliqueScalingGroup
+		if err := tc.Client.Get(ctx, types.NamespacedName{Name: name, Namespace: tc.Namespace}, &pcsg); err != nil {
+			return nil, err
+		}
+		return &pcsg, nil
+	})
+	_, err := waiter.New[*grovev1alpha1.PodCliqueScalingGroup]().WithTimeout(tc.Timeout).WithInterval(tc.Interval).WithRetryOnError().
+		WaitFor(tc.Ctx, fetch, updateInProgressConditionMet(func(p *grovev1alpha1.PodCliqueScalingGroup) []metav1.Condition { return p.Status.Conditions }, wantStatus, wantReason))
+	if err != nil {
+		return fmt.Errorf("PodCliqueScalingGroup %s UpdateInProgress did not reach status=%s reason=%s: %w", name, wantStatus, wantReason, err)
+	}
+	return nil
+}
+
+// assertUpdateInProgressCleared fails the test unless the PodCliqueSet UpdateInProgress condition has
+// settled to False with reason NoActiveUpdate.
+func assertUpdateInProgressCleared(tc *testctx.TestContext) {
+	tc.T.Helper()
+	if err := waitForPCSUpdateCondition(tc, metav1.ConditionFalse, apiconstants.ConditionReasonNoActiveUpdate); err != nil {
+		tc.T.Fatalf("PodCliqueSet UpdateInProgress condition was not cleared after the rolling update: %v", err)
+	}
+}
+
+// assertGenerationHashConverged fails the test unless every PodClique and PodCliqueScalingGroup of the
+// workload reports CurrentPodCliqueSetGenerationHash equal to the PodCliqueSet's CurrentGenerationHash.
+func assertGenerationHashConverged(tc *testctx.TestContext) {
+	tc.T.Helper()
+	pcs, err := getPCS(tc, tc.Workload.Name)
+	if err != nil {
+		tc.T.Fatalf("failed to get PodCliqueSet: %v", err)
+	}
+	if pcs.Status.CurrentGenerationHash == nil {
+		tc.T.Fatalf("PodCliqueSet %s has no CurrentGenerationHash", pcs.Name)
+	}
+	want := *pcs.Status.CurrentGenerationHash
+	inNamespace := client.InNamespace(tc.Namespace)
+	matchingPCS := client.MatchingLabels{common.LabelPartOfKey: pcs.Name}
+
+	var pclqList grovev1alpha1.PodCliqueList
+	if err := tc.Client.List(tc.Ctx, &pclqList, inNamespace, matchingPCS); err != nil {
+		tc.T.Fatalf("failed to list PodCliques: %v", err)
+	}
+	for i := range pclqList.Items {
+		pclq := &pclqList.Items[i]
+		if pclq.Status.CurrentPodCliqueSetGenerationHash == nil || *pclq.Status.CurrentPodCliqueSetGenerationHash != want {
+			tc.T.Fatalf("PodClique %s did not converge to generation hash %s, got %v", pclq.Name, want, pclq.Status.CurrentPodCliqueSetGenerationHash)
+		}
+	}
+
+	var pcsgList grovev1alpha1.PodCliqueScalingGroupList
+	if err := tc.Client.List(tc.Ctx, &pcsgList, inNamespace, matchingPCS); err != nil {
+		tc.T.Fatalf("failed to list PodCliqueScalingGroups: %v", err)
+	}
+	for i := range pcsgList.Items {
+		pcsg := &pcsgList.Items[i]
+		if pcsg.Status.CurrentPodCliqueSetGenerationHash == nil || *pcsg.Status.CurrentPodCliqueSetGenerationHash != want {
+			tc.T.Fatalf("PodCliqueScalingGroup %s did not converge to generation hash %s, got %v", pcsg.Name, want, pcsg.Status.CurrentPodCliqueSetGenerationHash)
+		}
+	}
+}
+
+// assertPodCliqueUpdateNotComplete fails the test unless the named standalone PodClique has a rolling
+// update still in progress (UpdateProgress set with UpdateEndedAt nil). This guards against premature
+// completion while replacements are not yet Ready (issue #786).
+func assertPodCliqueUpdateNotComplete(tc *testctx.TestContext, cliqueName string) {
+	tc.T.Helper()
+	name := standaloneCliqueFQN(tc, cliqueName)
+	var pclq grovev1alpha1.PodClique
+	if err := tc.Client.Get(tc.Ctx, types.NamespacedName{Name: name, Namespace: tc.Namespace}, &pclq); err != nil {
+		tc.T.Fatalf("failed to get PodClique %s: %v", name, err)
+	}
+	if pclq.Status.UpdateProgress == nil || pclq.Status.UpdateProgress.UpdateEndedAt != nil {
+		tc.T.Fatalf("PodClique %s rolling update was marked complete while stalled, UpdateProgress=%+v", name, pclq.Status.UpdateProgress)
+	}
+}
+
+// assertGangTerminationSuspended fails the test unless the named standalone PodClique's
+// MinAvailableBreached condition is Unknown with reason UpdateInProgress, which is how gang
+// termination stays suspended for a component that is (or is stuck) updating.
+func assertGangTerminationSuspended(tc *testctx.TestContext, cliqueName string) {
+	tc.T.Helper()
+	name := standaloneCliqueFQN(tc, cliqueName)
+	var pclq grovev1alpha1.PodClique
+	if err := tc.Client.Get(tc.Ctx, types.NamespacedName{Name: name, Namespace: tc.Namespace}, &pclq); err != nil {
+		tc.T.Fatalf("failed to get PodClique %s: %v", name, err)
+	}
+	cond := meta.FindStatusCondition(pclq.Status.Conditions, apiconstants.ConditionTypeMinAvailableBreached)
+	if cond == nil || cond.Status != metav1.ConditionUnknown || cond.Reason != apiconstants.ConditionReasonUpdateInProgress {
+		tc.T.Fatalf("expected MinAvailableBreached suspended (Unknown/UpdateInProgress) for %s, got %+v", name, cond)
+	}
+}
+
+// assertDefaultedMaxUnavailable fails the test unless the named clique's RollingUpdate.MaxUnavailable
+// was defaulted to want by the admission webhook.
+func assertDefaultedMaxUnavailable(tc *testctx.TestContext, cliqueName string, want int32) {
+	tc.T.Helper()
+	pcs, err := getPCS(tc, tc.Workload.Name)
+	if err != nil {
+		tc.T.Fatalf("failed to get PodCliqueSet: %v", err)
+	}
+	for _, clique := range pcs.Spec.Template.Cliques {
+		if clique.Name == cliqueName {
+			if clique.RollingUpdate == nil || clique.RollingUpdate.MaxUnavailable == nil {
+				tc.T.Fatalf("clique %s has no defaulted RollingUpdate.MaxUnavailable", cliqueName)
+			}
+			if *clique.RollingUpdate.MaxUnavailable != want {
+				tc.T.Fatalf("defaulted MaxUnavailable for clique %s = %d, want %d", cliqueName, *clique.RollingUpdate.MaxUnavailable, want)
+			}
+			return
+		}
+	}
+	tc.T.Fatalf("clique %s not found in PodCliqueSet %s", cliqueName, tc.Workload.Name)
 }

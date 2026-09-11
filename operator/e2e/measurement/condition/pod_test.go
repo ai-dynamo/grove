@@ -88,8 +88,6 @@ func TestPodsCreatedCondition(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-
 			cl := fake.NewClientBuilder().WithScheme(newPodScheme()).WithRuntimeObjects(tc.pods...).Build()
 			cond := &PodsCreatedCondition{
 				Client:        cl,
@@ -173,8 +171,6 @@ func TestPodsReadyCondition(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-
 			cl := fake.NewClientBuilder().WithScheme(newPodScheme()).WithRuntimeObjects(tc.pods...).Build()
 			cond := &PodsReadyCondition{
 				Client:        cl,

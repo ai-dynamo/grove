@@ -1,0 +1,52 @@
+# KWOK Stage that delays pod readiness so a MaxUnavailable rollout has an observable window.
+# The default pod-ready stage marks every fresh pod Running and Ready immediately, so a rolling
+# update never leaves any replica unavailable long enough to sample. This stage (higher weight)
+# matches a fresh pod before its podIP is assigned and waits before marking it Running and Ready.
+# During a rolling update the new replicas therefore stay not-ready for the delay, and the update
+# controller keeps at most MaxUnavailable replicas unavailable at once. The MaxUnavailable tests
+# (RU22, RU23) sample the not-ready count and assert its peak equals MaxUnavailable.
+apiVersion: kwok.x-k8s.io/v1alpha1
+kind: Stage
+metadata:
+  name: pod-ready-delayed
+spec:
+  resourceRef:
+    apiGroup: v1
+    kind: Pod
+  selector:
+    matchExpressions:
+      - key: .metadata.deletionTimestamp
+        operator: DoesNotExist
+      - key: .status.podIP
+        operator: DoesNotExist
+  weight: 5
+  delay:
+    durationMilliseconds: 8000
+  next:
+    statusSubresource: status
+    statusTemplate: |
+      {{ $now := Now }}
+      conditions:
+      - lastTransitionTime: {{ $now | Quote }}
+        status: "True"
+        type: Initialized
+      - lastTransitionTime: {{ $now | Quote }}
+        status: "True"
+        type: Ready
+      - lastTransitionTime: {{ $now | Quote }}
+        status: "True"
+        type: ContainersReady
+      containerStatuses:
+      {{ range .spec.containers }}
+      - image: {{ .image | Quote }}
+        name: {{ .name | Quote }}
+        ready: true
+        restartCount: 0
+        state:
+          running:
+            startedAt: {{ $now | Quote }}
+      {{ end }}
+      hostIP: {{ NodeIPWith .spec.nodeName | Quote }}
+      podIP: {{ PodIPWith .spec.nodeName ( or .spec.hostNetwork false ) ( or .metadata.uid "" ) ( or .metadata.name "" ) ( or .metadata.namespace "" ) | Quote }}
+      phase: Running
+      startTime: {{ $now | Quote }}

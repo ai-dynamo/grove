@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package utils
+package component
 
 import (
 	"context"
@@ -26,6 +26,7 @@ import (
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
@@ -474,8 +475,8 @@ func TestGetExpectedPCLQNamesGroupByOwner(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			pcsNames, pcsgNames := GetExpectedPCLQNamesGroupByOwner(tc.pcs)
-			assert.ElementsMatch(t, tc.expectedPCLQNamesForPCS, pcsNames)
-			assert.ElementsMatch(t, tc.expectedPCLQNamesForPCSG, pcsgNames)
+			assert.Equal(t, sets.New(tc.expectedPCLQNamesForPCS...), pcsNames)
+			assert.Equal(t, sets.New(tc.expectedPCLQNamesForPCSG...), pcsgNames)
 		})
 	}
 }
@@ -623,6 +624,55 @@ func TestIsStandalonePCLQ(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			actual := IsStandalonePCLQ(pcs, tc.cliqueName)
 			assert.Equal(t, tc.expected, actual)
+		})
+	}
+}
+
+func TestGetPodCliqueSetReplicaIndexFromPodCliqueFQN(t *testing.T) {
+	testCases := []struct {
+		description   string
+		pcsName       string
+		pclqFQNName   string
+		expectedIndex int
+		expectedErr   bool
+	}{
+		{
+			description:   "PodClique and PCS name without hyphen",
+			pcsName:       "inference",
+			pclqFQNName:   "inference-0-prefill",
+			expectedIndex: 0,
+			expectedErr:   false,
+		},
+		{
+			description:   "PodClique name with hyphen and PCS name without hyphen",
+			pcsName:       "inference",
+			pclqFQNName:   "inference-1-prefill-leader",
+			expectedIndex: 1,
+			expectedErr:   false,
+		},
+		{
+			description:   "PodClique name with hyphen and PCS name with hyphen",
+			pcsName:       "pcs-inference",
+			pclqFQNName:   "pcs-inference-2-prefill-worker",
+			expectedIndex: 2,
+			expectedErr:   false,
+		},
+		{
+			description: "Malformed PodClique FQN name",
+			pcsName:     "inference",
+			pclqFQNName: "inference-prefill",
+			expectedErr: true,
+		},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.description, func(t *testing.T) {
+			index, err := GetPodCliqueSetReplicaIndexFromPodCliqueFQN(tc.pcsName, tc.pclqFQNName)
+			if tc.expectedErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+				assert.Equal(t, tc.expectedIndex, index)
+			}
 		})
 	}
 }

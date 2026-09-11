@@ -24,12 +24,12 @@ import (
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
-	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
+	"github.com/ai-dynamo/grove/operator/internal/controller/podclique/expectations"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/expect"
 	"github.com/ai-dynamo/grove/operator/internal/resourceclaim"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
-	"github.com/ai-dynamo/grove/operator/internal/utils"
+	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
 	"github.com/go-logr/logr"
@@ -90,7 +90,7 @@ func New(client client.Client,
 	schedRegistry scheduler.Registry) (component.Operator[grovecorev1alpha1.PodClique], error) {
 	// The pod component groups its create and delete expectations by owning PodClique so it can clear
 	// them per PodClique in one call regardless of how many PodGangs a PodClique's pods span.
-	if err := expectationsStore.AddIndexers(componentutils.PodCliqueExpectationsIndexers()); err != nil {
+	if err := expectationsStore.AddIndexers(expectations.PodCliqueExpectationsIndexers()); err != nil {
 		return nil, groveerr.WrapError(err,
 			errCodeRegisterExpectationsIndexers,
 			component.OperationSync,
@@ -159,7 +159,7 @@ func (r _resource) Sync(ctx context.Context, logger logr.Logger, pclq *grovecore
 func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grovecorev1alpha1.PodClique, podGangName string, pod *corev1.Pod, podIndex int) error {
 	// Extract PCS replica index from PodClique FQN
 	pcsName := componentutils.GetPodCliqueSetName(pclq.ObjectMeta)
-	pcsReplicaIndex, err := utils.GetPodCliqueSetReplicaIndexFromPodCliqueFQN(pcsName, pclq.Name)
+	pcsReplicaIndex, err := componentutils.GetPodCliqueSetReplicaIndexFromPodCliqueFQN(pcsName, pclq.Name)
 	if err != nil {
 		return groveerr.WrapError(err,
 			errCodeGetPodCliqueSetReplicaIndex,
@@ -255,7 +255,7 @@ func getPCSGPodIndex(pclq *grovecorev1alpha1.PodClique, podIndex int) (*int, err
 // ResourceClaim references into a Pod's spec. It injects refs from every level
 // of the hierarchy: PCS, PCSG (if applicable), and PCLQ.
 func injectAllResourceClaimRefs(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grovecorev1alpha1.PodClique, podSpec *corev1.PodSpec, pcsReplicaIndex, podIndex int) error {
-	cliqueName, err := utils.GetPodCliqueNameFromPodCliqueFQN(pclq.ObjectMeta)
+	cliqueName, err := componentutils.GetPodCliqueNameFromPodCliqueFQN(pclq.ObjectMeta)
 	if err != nil {
 		return fmt.Errorf("failed to get PodClique name: %w", err)
 	}
@@ -332,7 +332,7 @@ func (r _resource) Delete(ctx context.Context, logger logr.Logger, pclqObjectMet
 			fmt.Sprintf("failed to delete all pods for PodClique %v", k8sutils.GetObjectKeyFromObjectMeta(pclqObjectMeta)),
 		)
 	}
-	if err := componentutils.ClearPodCliqueExpectations(logger, r.expectationsStore, pclqObjectMeta); err != nil {
+	if err := expectations.ClearPodCliqueExpectations(logger, r.expectationsStore, pclqObjectMeta); err != nil {
 		return groveerr.WrapError(err,
 			errCodeDeletePodCliqueExpectations,
 			component.OperationDelete,

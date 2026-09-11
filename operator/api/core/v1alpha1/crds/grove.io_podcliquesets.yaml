@@ -38,6 +38,10 @@ spec:
     - jsonPath: .status.updateProgress.totalPodCliqueScalingGroupsCount
       name: PCSGs-Total
       type: integer
+    - jsonPath: .status.conditions[?(@.type=="UpdateInProgress")].reason
+      name: Update
+      priority: 1
+      type: string
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
@@ -159,6 +163,40 @@ spec:
                             - scope
                             type: object
                           type: array
+                        rollingUpdate:
+                          description: |-
+                            RollingUpdate is the per-component update configuration for this PodClique. It applies only to
+                            a standalone PodClique. Setting it on a PodCliqueTemplateSpec whose Name appears in any
+                            PodCliqueScalingGroupConfig.CliqueNames (a PCSG-owned PodClique) is not allowed and is rejected
+                            by the PodCliqueSet validating webhook. A PCSG-owned PodClique is instead governed by the
+                            owning PodCliqueScalingGroup's RollingUpdate.
+                          properties:
+                            maxUnavailable:
+                              description: |-
+                                MaxUnavailable is the maximum number of pods (for a standalone PodClique) or
+                                PodCliqueScalingGroup replicas (for a PCSG) that may be unavailable at any moment during an
+                                update of this component, measured against the component's desired count.
+
+                                Defaulting:
+                                  - RollingRecreate: defaults to 1.
+                                  - OnDelete: not defaulted. Defaulting never clears a RollingUpdateConfiguration that is set. The validating
+                                    webhook rejects it instead, so the consumer must remove it when switching to OnDelete.
+
+                                Validation:
+                                  - When set, must be greater than 0.
+                                  - OnDelete: RollingUpdate must not be set. The PodCliqueSet validating webhook rejects a
+                                    RollingUpdateConfiguration on any component when the strategy is OnDelete.
+                              format: int32
+                              type: integer
+                            progressDeadline:
+                              description: |-
+                                ProgressDeadline tracks the progress of this component's rolling update. If the component,
+                                a PodClique or a PodCliqueScalingGroup, shows no observable progress within this duration, the
+                                breach is reported through the UpdateInProgress condition, whose Status is set to Unknown with
+                                reason ProgressDeadlineExceeded. If nil, this component does not report progress-deadline
+                                breaches and its update can wait indefinitely for progress.
+                              type: string
+                          type: object
                         spec:
                           description: |-
                             Specification of the desired behavior of a PodClique.
@@ -9563,6 +9601,38 @@ spec:
                             - scope
                             type: object
                           type: array
+                        rollingUpdate:
+                          description: |-
+                            RollingUpdate is the per-component update configuration for this PodCliqueScalingGroup.
+                            It governs the rolling update of every constituent member PodClique. The member
+                            PodCliqueTemplateSpecs must not carry their own RollingUpdate.
+                          properties:
+                            maxUnavailable:
+                              description: |-
+                                MaxUnavailable is the maximum number of pods (for a standalone PodClique) or
+                                PodCliqueScalingGroup replicas (for a PCSG) that may be unavailable at any moment during an
+                                update of this component, measured against the component's desired count.
+
+                                Defaulting:
+                                  - RollingRecreate: defaults to 1.
+                                  - OnDelete: not defaulted. Defaulting never clears a RollingUpdateConfiguration that is set. The validating
+                                    webhook rejects it instead, so the consumer must remove it when switching to OnDelete.
+
+                                Validation:
+                                  - When set, must be greater than 0.
+                                  - OnDelete: RollingUpdate must not be set. The PodCliqueSet validating webhook rejects a
+                                    RollingUpdateConfiguration on any component when the strategy is OnDelete.
+                              format: int32
+                              type: integer
+                            progressDeadline:
+                              description: |-
+                                ProgressDeadline tracks the progress of this component's rolling update. If the component,
+                                a PodClique or a PodCliqueScalingGroup, shows no observable progress within this duration, the
+                                breach is reported through the UpdateInProgress condition, whose Status is set to Unknown with
+                                reason ProgressDeadlineExceeded. If nil, this component does not report progress-deadline
+                                breaches and its update can wait indefinitely for progress.
+                              type: string
+                          type: object
                         scaleConfig:
                           description: ScaleConfig is the horizontal pod autoscaler
                             configuration for the pod clique scaling group.
@@ -11201,7 +11271,7 @@ spec:
                   currentlyUpdating:
                     description: |-
                       CurrentlyUpdating captures the progress of the PodCliqueSet replicas that are currently being updated.
-                      This field is only set for auto update strategies where Grove handles the orchestration. It is not set for the
+                      This field is only set for rolling update strategies where Grove handles the orchestration. It is not set for the
                       OnDelete update strategy.
                     items:
                       description: PodCliqueSetReplicaUpdateProgress captures the
@@ -11243,14 +11313,15 @@ spec:
                     format: int32
                     type: integer
                   updateEndedAt:
-                    description: |-
-                      UpdateEndedAt is the time at which Grove does not have any work pending to manifest the update according to the
-                      configured update strategy.
-                      For auto update strategies where Grove handles the orchestration, while the update is still in progress it will be
-                      nil, and will be set once the update finishes where all child resources are updated by Grove with the latest
-                      specification.
-                      For the OnDelete strategy, it is set to the same time as UpdateStartedAt, which implies that there is no work
-                      pending on Grove.
+                    description: "UpdateEndedAt is the time at which Grove does not
+                      have any work pending to manifest the update according to the\nconfigured
+                      update strategy.\n - For rolling update strategies where Grove
+                      handles the orchestration, while the update is still in progress\n
+                      \  it will be nil, and will be set once the update finishes
+                      where all child resources are updated by Grove with\n   the
+                      latest specification.\n - For the OnDelete strategy, it is set
+                      to the same time as UpdateStartedAt, which implies that there
+                      is no work\n\t  pending on Grove."
                     format: date-time
                     type: string
                   updateStartedAt:

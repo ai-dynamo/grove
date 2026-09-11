@@ -22,9 +22,10 @@ import (
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
-	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
+	"github.com/ai-dynamo/grove/operator/internal/controller/podclique/expectations"
 	grovectrlutils "github.com/ai-dynamo/grove/operator/internal/controller/utils"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
+	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
@@ -142,7 +143,7 @@ func (r *Reconciler) recordPodDeletionInExpectations(pod *corev1.Pod) {
 		return
 	}
 	pclqObjMeta := metav1.ObjectMeta{Namespace: pod.Namespace, Name: pclqOwnerRef.Name}
-	if err := componentutils.ObservePodDeletion(logger, r.expectationsStore, pclqObjMeta, podGangName, pod.UID); err != nil {
+	if err := expectations.ObservePodDeletion(logger, r.expectationsStore, pclqObjMeta, podGangName, pod.UID); err != nil {
 		logger.Error(err, "cannot observe deletion, unable to build the PodGang-scoped expectations key", "pclqNamespace", pclqObjMeta.Namespace, "pclqName", pclqObjMeta.Name, "podGang", podGangName)
 	}
 }

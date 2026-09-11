@@ -22,10 +22,13 @@ import (
 	"testing"
 	"time"
 
+	apiconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
+	"github.com/ai-dynamo/grove/operator/e2e/k8s/kwok"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
 	tests "github.com/ai-dynamo/grove/operator/e2e/tests"
 	"github.com/ai-dynamo/grove/operator/e2e/waiter"
 	"github.com/stretchr/testify/assert"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/watch"
 )
 
@@ -67,6 +70,10 @@ func Test_RU7_RollingUpdatePCSPodClique(t *testing.T) {
 	tests.Logger.Info("5. Verify that a single PCS replica is updated first before moving to another")
 	verifySinglePCSReplicaUpdatedFirst(tc, events)
 
+	tests.Logger.Info("6. Verify MaxUnavailable defaulted to 1 and UpdateInProgress cleared")
+	assertDefaultedMaxUnavailable(tc, "pc-a", 1)
+	assertUpdateInProgressCleared(tc)
+
 	tests.Logger.Info("Rolling Update on PCS-owned Podclique test (RU-7) completed successfully!")
 }
 
@@ -106,6 +113,8 @@ func Test_RU8_RollingUpdatePCSGPodClique(t *testing.T) {
 
 	tests.Logger.Info("5. Verify that a single PCS replica is updated first before moving to another")
 	verifySinglePCSReplicaUpdatedFirst(tc, events)
+
+	assertUpdateInProgressCleared(tc)
 
 	tests.Logger.Info("Rolling Update on PCSG-owned Podclique test (RU-8) completed successfully!")
 }
@@ -148,6 +157,8 @@ func Test_RU9_RollingUpdateAllPodCliques(t *testing.T) {
 
 	tests.Logger.Info("5. Verify that a single PCS replica is updated first before moving to another")
 	verifySinglePCSReplicaUpdatedFirst(tc, events)
+
+	assertUpdateInProgressCleared(tc)
 
 	tests.Logger.Info("Rolling Update on all Podcliques test (RU-9) completed successfully!")
 }
@@ -357,6 +368,19 @@ func Test_RU12_RollingUpdateWithPCSScaleInDuringUpdate(t *testing.T) {
 	})
 	defer cleanup()
 
+	// Widen the update window so waitForOrdinalUpdating reliably observes the final ordinal. On KWOK the
+	// update completes within a poll interval, so the transient CurrentlyUpdating window can close before
+	// the poll sees it. The readiness-delay stage keeps freshly created pods not-ready long enough for the
+	// window to span more than the poll interval.
+	if err := kwok.ApplyStage(tc.Ctx, tc.Client, kwokStageReadyDelayedPath); err != nil {
+		t.Fatalf("failed to apply readiness-delay KWOK stage: %v", err)
+	}
+	defer func() {
+		if err := kwok.DeleteStage(tc.Ctx, tc.Client, kwokStageReadyDelayedName); err != nil {
+			t.Errorf("failed to delete readiness-delay KWOK stage: %v", err)
+		}
+	}()
+
 	tests.Logger.Info("3. Change the specification of pc-a, pc-b and pc-c")
 	// Use raw trigger since we need to wait for ordinal before starting the wait
 	for _, cliqueName := range []string{"pc-a", "pc-b", "pc-c"} {
@@ -493,6 +517,20 @@ func Test_RU14_RollingUpdateWithPCSGScaleOutDuringUpdate(t *testing.T) {
 	for _, pcsReplicaIndex := range []int{0, 1} {
 		assertReplicaPodGangMap(t, getPodGangMapEntries(t, tc, pcsReplicaIndex), wantPGM)
 	}
+
+	// Widen replica 0's update window so waitForOrdinalUpdating reliably observes it. On KWOK the whole
+	// update completes in seconds, so the transient CurrentlyUpdating=[0] window can close within a single
+	// poll interval. The readiness-delay stage keeps freshly created pods not-ready long enough that the
+	// window spans more than the poll interval, and the scale-out lands while replica 0 is still updating
+	// and replica 1 still carries old-generation entries.
+	if err := kwok.ApplyStage(tc.Ctx, tc.Client, kwokStageReadyDelayedPath); err != nil {
+		t.Fatalf("failed to apply readiness-delay KWOK stage: %v", err)
+	}
+	defer func() {
+		if err := kwok.DeleteStage(tc.Ctx, tc.Client, kwokStageReadyDelayedName); err != nil {
+			t.Errorf("failed to delete readiness-delay KWOK stage: %v", err)
+		}
+	}()
 
 	tests.Logger.Info("4. Roll an update, wait until replica 0 is updating, then scale out sg-x during the update")
 	tcLongerTimeout := *tc
@@ -994,3 +1032,206 @@ func Test_RU21_RollingUpdateWithPodCliqueScaleInBeforeUpdate(t *testing.T) {
 	tests.Logger.Info("Rolling Update with PodClique scale-in before update test (RU-21) completed successfully!")
 }
 */
+
+// Test_RU22_RollingUpdateStandaloneMaxUnavailable verifies that a standalone PodClique with
+// MaxUnavailable=2 keeps at most 2 replicas unavailable at a time (never more) during a rolling update.
+// Scenario RU-22:
+// 1. Deploy workload-maxunavailable (pc-a replicas 4, minAvailable 1, maxUnavailable 2)
+// 2. Apply the readiness-delay KWOK stage so new pods stay not-ready long enough to observe
+// 3. Roll pc-a and sample the number of not-ready pc-a pods
+// 4. Verify the peak is at most 2 (budget respected) and reaches 2 (budget exercised)
+// 5. Verify the UpdateInProgress condition clears after completion
+func Test_RU22_RollingUpdateStandaloneMaxUnavailable(t *testing.T) {
+	tests.Logger.Info("1. Deploy workload-maxunavailable")
+	tc, cleanup, _ := setupTest(t, testConfig{
+		workloadName: "workload-maxunavailable",
+		workloadYAML: "../../yaml/workload-maxunavailable.yaml",
+		workerNodes:  10,
+		expectedPods: 8,
+	})
+	defer cleanup()
+
+	tests.Logger.Info("2. Delay pod readiness so the unavailability window is observable")
+	if err := kwok.ApplyStage(tc.Ctx, tc.Client, kwokStageReadyDelayedPath); err != nil {
+		t.Fatalf("failed to apply readiness-delay KWOK stage: %v", err)
+	}
+	defer func() {
+		if err := kwok.DeleteStage(tc.Ctx, tc.Client, kwokStageReadyDelayedName); err != nil {
+			t.Errorf("failed to delete readiness-delay KWOK stage: %v", err)
+		}
+	}()
+
+	tests.Logger.Info("3. Roll pc-a while sampling not-ready pc-a pods")
+	tcLong := *tc
+	tcLong.Timeout = 2 * time.Minute
+	maxUnavailable, err := maxUnavailablePods(&tcLong, notReadyPodForClique("pc-a"), func() error {
+		if err := triggerPodCliqueUpdate(&tcLong, "pc-a"); err != nil {
+			return err
+		}
+		return waitForRollingUpdateComplete(&tcLong, 1)
+	})
+	if err != nil {
+		t.Fatalf("rolling update of pc-a did not complete: %v", err)
+	}
+
+	tests.Logger.Info("4. Verify the disruption budget was respected and exercised")
+	assert.LessOrEqualf(t, maxUnavailable, 2, "expected at most MaxUnavailable=2 pc-a pods unavailable at once, observed %d", maxUnavailable)
+	assert.Equalf(t, 2, maxUnavailable, "expected the rollout to keep 2 pc-a pods unavailable at once (MaxUnavailable=2), observed peak %d", maxUnavailable)
+
+	tests.Logger.Info("5. Verify UpdateInProgress cleared after completion")
+	assertUpdateInProgressCleared(tc)
+}
+
+// Test_RU23_RollingUpdatePCSGMaxUnavailable verifies that a PodCliqueScalingGroup with
+// MaxUnavailable=2 keeps at most 2 replicas unavailable at a time (never more) during a rolling update.
+// Scenario RU-23:
+// 1. Deploy workload-maxunavailable (sg-x replicas 4, minAvailable 1, maxUnavailable 2)
+// 2. Apply the readiness-delay KWOK stage so new pods stay not-ready long enough to observe
+// 3. Roll the sg-x member pc-b and sample the number of not-ready sg-x pods
+// 4. Verify the peak is at most 2 (budget respected) and reaches 2 (budget exercised)
+func Test_RU23_RollingUpdatePCSGMaxUnavailable(t *testing.T) {
+	tests.Logger.Info("1. Deploy workload-maxunavailable")
+	tc, cleanup, _ := setupTest(t, testConfig{
+		workloadName: "workload-maxunavailable",
+		workloadYAML: "../../yaml/workload-maxunavailable.yaml",
+		workerNodes:  10,
+		expectedPods: 8,
+	})
+	defer cleanup()
+
+	tests.Logger.Info("2. Delay pod readiness so the unavailability window is observable")
+	if err := kwok.ApplyStage(tc.Ctx, tc.Client, kwokStageReadyDelayedPath); err != nil {
+		t.Fatalf("failed to apply readiness-delay KWOK stage: %v", err)
+	}
+	defer func() {
+		if err := kwok.DeleteStage(tc.Ctx, tc.Client, kwokStageReadyDelayedName); err != nil {
+			t.Errorf("failed to delete readiness-delay KWOK stage: %v", err)
+		}
+	}()
+
+	tests.Logger.Info("3. Roll sg-x member pc-b while sampling not-ready sg-x pods")
+	tcLong := *tc
+	tcLong.Timeout = 2 * time.Minute
+	maxUnavailable, err := maxUnavailablePods(&tcLong, notReadyPodForPCSG(&tcLong, "sg-x"), func() error {
+		if err := triggerPodCliqueUpdate(&tcLong, "pc-b"); err != nil {
+			return err
+		}
+		return waitForRollingUpdateComplete(&tcLong, 1)
+	})
+	if err != nil {
+		t.Fatalf("rolling update of sg-x did not complete: %v", err)
+	}
+
+	tests.Logger.Info("4. Verify the disruption budget was respected and exercised")
+	assert.LessOrEqualf(t, maxUnavailable, 2, "expected at most MaxUnavailable=2 sg-x replica pods unavailable at once, observed %d", maxUnavailable)
+	assert.Equalf(t, 2, maxUnavailable, "expected the rollout to keep 2 sg-x replicas unavailable at once (MaxUnavailable=2), observed peak %d", maxUnavailable)
+
+	assertUpdateInProgressCleared(tc)
+}
+
+// Test_RU24_RollingUpdateProgressDeadlineExceeded verifies that a stalled rollout surfaces
+// UpdateInProgress=Unknown, does not prematurely complete, and keeps gang termination suspended.
+// Scenario RU-24:
+// 1. Deploy workload-progressdeadline (pc-a progressDeadline 30s)
+// 2. Apply the crashloop KWOK stage so freshly created pods stay not-ready
+// 3. Trigger a rolling update of pc-a; the new pods will not become Ready
+// 4. Verify pc-a UpdateInProgress goes Unknown/ProgressDeadlineExceeded
+// 5. Verify the PCS aggregate UpdateInProgress goes Unknown/ProgressDeadlineExceeded
+// 6. Verify the update is not marked complete (issue #786) and gang termination stays suspended
+func Test_RU24_RollingUpdateProgressDeadlineExceeded(t *testing.T) {
+	tests.Logger.Info("1. Deploy workload-progressdeadline")
+	tc, cleanup, _ := setupTest(t, testConfig{
+		workloadName: "workload-progressdeadline",
+		workloadYAML: "../../yaml/workload-progressdeadline.yaml",
+		workerNodes:  10,
+		expectedPods: 4,
+	})
+	defer cleanup()
+
+	tests.Logger.Info("2. Make freshly created pods stall in CrashLoopBackOff so the next roll cannot progress")
+	if err := kwok.ApplyStage(tc.Ctx, tc.Client, kwokStageCrashloopPath); err != nil {
+		t.Fatalf("failed to apply crashloop KWOK stage: %v", err)
+	}
+	defer func() {
+		if err := kwok.DeleteStage(tc.Ctx, tc.Client, kwokStageCrashloopName); err != nil {
+			t.Errorf("failed to delete crashloop KWOK stage: %v", err)
+		}
+	}()
+
+	tests.Logger.Info("3. Trigger a rolling update of pc-a; the new pods will not become Ready")
+	if err := triggerPodCliqueUpdate(tc, "pc-a"); err != nil {
+		t.Fatalf("failed to trigger update of pc-a: %v", err)
+	}
+
+	tcLong := *tc
+	tcLong.Timeout = 2 * time.Minute
+	tests.Logger.Info("4. Verify pc-a UpdateInProgress goes Unknown/ProgressDeadlineExceeded")
+	if err := waitForPodCliqueUpdateCondition(&tcLong, "pc-a", metav1.ConditionUnknown, apiconstants.ConditionReasonProgressDeadlineExceeded); err != nil {
+		t.Fatalf("pc-a did not surface ProgressDeadlineExceeded: %v", err)
+	}
+
+	tests.Logger.Info("5. Verify the PCS aggregate UpdateInProgress goes Unknown/ProgressDeadlineExceeded")
+	if err := waitForPCSUpdateCondition(&tcLong, metav1.ConditionUnknown, apiconstants.ConditionReasonProgressDeadlineExceeded); err != nil {
+		t.Fatalf("PodCliqueSet did not aggregate ProgressDeadlineExceeded: %v", err)
+	}
+
+	tests.Logger.Info("6. Verify the stalled update is not marked complete and gang termination stays suspended")
+	assertPodCliqueUpdateNotComplete(tc, "pc-a")
+	assertGangTerminationSuspended(tc, "pc-a")
+}
+
+// Test_RU25_RollingUpdateStuckThenCorrective verifies that a stuck rollout recovers when a corrective
+// spec is applied, and that all components converge to the latest generation hash.
+// Scenario RU-25:
+// 1. Deploy workload-progressdeadline
+// 2. Apply the crashloop KWOK stage so freshly created pods stay not-ready
+// 3. Trigger a rolling update of pc-a and wait until it is stuck (Unknown/ProgressDeadlineExceeded)
+// 4. Remove the crashloop stage and trigger a corrective roll so fresh pods become Ready
+// 5. Verify the update completes, UpdateInProgress clears, and pods become Ready
+// 6. Verify every component converged to the latest PodCliqueSet generation hash
+func Test_RU25_RollingUpdateStuckThenCorrective(t *testing.T) {
+	tests.Logger.Info("1. Deploy workload-progressdeadline")
+	tc, cleanup, _ := setupTest(t, testConfig{
+		workloadName: "workload-progressdeadline",
+		workloadYAML: "../../yaml/workload-progressdeadline.yaml",
+		workerNodes:  10,
+		expectedPods: 4,
+	})
+	defer cleanup()
+
+	tests.Logger.Info("2. Make freshly created pods stall in CrashLoopBackOff")
+	if err := kwok.ApplyStage(tc.Ctx, tc.Client, kwokStageCrashloopPath); err != nil {
+		t.Fatalf("failed to apply crashloop KWOK stage: %v", err)
+	}
+	defer func() { _ = kwok.DeleteStage(tc.Ctx, tc.Client, kwokStageCrashloopName) }()
+
+	tests.Logger.Info("3. Trigger a rolling update of pc-a and wait until it is stuck")
+	if err := triggerPodCliqueUpdate(tc, "pc-a"); err != nil {
+		t.Fatalf("failed to trigger update of pc-a: %v", err)
+	}
+	tcLong := *tc
+	tcLong.Timeout = 2 * time.Minute
+	if err := waitForPodCliqueUpdateCondition(&tcLong, "pc-a", metav1.ConditionUnknown, apiconstants.ConditionReasonProgressDeadlineExceeded); err != nil {
+		t.Fatalf("pc-a did not become stuck: %v", err)
+	}
+
+	tests.Logger.Info("4. Remove the crashloop stage and trigger a corrective roll so fresh pods become Ready")
+	if err := kwok.DeleteStage(tc.Ctx, tc.Client, kwokStageCrashloopName); err != nil {
+		t.Fatalf("failed to delete crashloop KWOK stage: %v", err)
+	}
+	if err := triggerPodCliqueUpdate(tc, "pc-a"); err != nil {
+		t.Fatalf("failed to trigger corrective update of pc-a: %v", err)
+	}
+
+	tests.Logger.Info("5. Verify the update completes, the condition clears, and pods are Ready")
+	if err := waitForRollingUpdateComplete(&tcLong, 1); err != nil {
+		t.Fatalf("corrective rolling update did not complete: %v", err)
+	}
+	assertUpdateInProgressCleared(tc)
+	if err := tc.WaitForPods(4); err != nil {
+		t.Fatalf("pods did not become Ready after the corrective update: %v", err)
+	}
+
+	tests.Logger.Info("6. Verify all components converged to the latest generation hash")
+	assertGenerationHashConverged(tc)
+}

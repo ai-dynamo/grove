@@ -87,6 +87,12 @@ func (b *PodCliqueBuilder) WithReplicas(replicas int32) *PodCliqueBuilder {
 	return b
 }
 
+// WithMinAvailable sets the MinAvailable for the PodClique.
+func (b *PodCliqueBuilder) WithMinAvailable(minAvailable int32) *PodCliqueBuilder {
+	b.pclq.Spec.MinAvailable = ptr.To(minAvailable)
+	return b
+}
+
 // WithStartsAfter sets the StartsAfter field for the PodClique.
 func (b *PodCliqueBuilder) WithStartsAfter(pclqTemplateNames []string) *PodCliqueBuilder {
 	pclqDependencies := lo.Map(pclqTemplateNames, func(pclqTemplateName string, _ int) string {

@@ -12,17 +12,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package utils
+package component
 
 import (
 	"context"
+	"fmt"
 	"slices"
+	"strconv"
+	"strings"
 
 	"github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 
 	"github.com/samber/lo"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -112,7 +116,7 @@ func GetPodCliqueSetName(objectMeta metav1.ObjectMeta) string {
 }
 
 // IsAutoUpdateStrategy returns true when PodCliqueSet update strategy is automatically orchestrated by Grove.
-// Only the OnDelete update strategy is not an auto update strategy.
+// Only the OnDelete update strategy is not a rolling update strategy.
 func IsAutoUpdateStrategy(pcs *grovecorev1alpha1.PodCliqueSet) bool {
 	if pcs == nil {
 		return false
@@ -121,15 +125,17 @@ func IsAutoUpdateStrategy(pcs *grovecorev1alpha1.PodCliqueSet) bool {
 }
 
 // GetExpectedPCLQNamesGroupByOwner returns the expected unqualified PodClique names which are either owned by PodCliqueSet or PodCliqueScalingGroup.
-func GetExpectedPCLQNamesGroupByOwner(pcs *grovecorev1alpha1.PodCliqueSet) (expectedPCLQNamesForPCS []string, expectedPCLQNamesForPCSG []string) {
-	pcsgConfigs := pcs.Spec.Template.PodCliqueScalingGroupConfigs
-	for _, pcsgConfig := range pcsgConfigs {
-		expectedPCLQNamesForPCSG = append(expectedPCLQNamesForPCSG, pcsgConfig.CliqueNames...)
+func GetExpectedPCLQNamesGroupByOwner(pcs *grovecorev1alpha1.PodCliqueSet) (expectedPCLQNamesForPCS sets.Set[string], expectedPCLQNamesForPCSG sets.Set[string]) {
+	expectedPCLQNamesForPCS = sets.New[string]()
+	expectedPCLQNamesForPCSG = sets.New[string]()
+	for _, pcsgConfig := range pcs.Spec.Template.PodCliqueScalingGroupConfigs {
+		expectedPCLQNamesForPCSG.Insert(pcsgConfig.CliqueNames...)
 	}
-	pcsCliqueNames := lo.Map(pcs.Spec.Template.Cliques, func(pclqTemplateSpec *grovecorev1alpha1.PodCliqueTemplateSpec, _ int) string {
-		return pclqTemplateSpec.Name
-	})
-	expectedPCLQNamesForPCS, _ = lo.Difference(pcsCliqueNames, expectedPCLQNamesForPCSG)
+	for _, pclqTemplateSpec := range pcs.Spec.Template.Cliques {
+		if !expectedPCLQNamesForPCSG.Has(pclqTemplateSpec.Name) {
+			expectedPCLQNamesForPCS.Insert(pclqTemplateSpec.Name)
+		}
+	}
 	return
 }
 
@@ -188,4 +194,15 @@ func GetPCSGReplicasFromPCSTemplateSpec(pcs *grovecorev1alpha1.PodCliqueSet) map
 		result[pcsgConfig.Name] = *pcsgConfig.Replicas
 	}
 	return result
+}
+
+// GetPodCliqueSetReplicaIndexFromPodCliqueFQN extracts the PodCliqueSet replica index from a Pod Clique FQN name.
+func GetPodCliqueSetReplicaIndexFromPodCliqueFQN(pcsName, pclqFQNName string) (int, error) {
+	replicaStartIndex := len(pcsName) + 1 // +1 for the hyphen
+	hyphenIndex := strings.Index(pclqFQNName[replicaStartIndex:], "-")
+	if hyphenIndex == -1 {
+		return -1, fmt.Errorf("PodClique FQN is not in the expected format of <pcs-name>-<pcs-replica-index>-<pclq-template-name>: %s", pclqFQNName)
+	}
+	replicaEndIndex := replicaStartIndex + hyphenIndex
+	return strconv.Atoi(pclqFQNName[replicaStartIndex:replicaEndIndex])
 }

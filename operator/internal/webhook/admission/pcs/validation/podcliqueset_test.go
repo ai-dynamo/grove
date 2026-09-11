@@ -301,7 +301,7 @@ func TestValidateSchedulerNames(t *testing.T) {
 				WithTerminationDelay(4 * time.Hour).
 				WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder))
 			for i := 0; i < len(tt.schedulerNames); i++ {
-				clique := createDummyPodCliqueTemplate(fmt.Sprintf("c%d", i))
+				clique := createPodCliqueTemplate(fmt.Sprintf("c%d", i))
 				clique.Spec.PodSpec.SchedulerName = tt.schedulerNames[i]
 				pcsBuilder = pcsBuilder.WithPodCliqueTemplateSpec(clique)
 			}
@@ -441,7 +441,7 @@ func TestPodCliqueScalingGroupConfigValidation(t *testing.T) {
 
 			// Add PodClique templates
 			for _, cliqueName := range tc.cliqueTemplates {
-				pcs.Spec.Template.Cliques = append(pcs.Spec.Template.Cliques, createDummyPodCliqueTemplate(cliqueName))
+				pcs.Spec.Template.Cliques = append(pcs.Spec.Template.Cliques, createPodCliqueTemplate(cliqueName))
 			}
 
 			// Add scaling groups
@@ -479,12 +479,12 @@ func TestPodCliqueUpdateValidation(t *testing.T) {
 			name:        "Valid: same cliques in different order with AnyOrder",
 			startupType: ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder),
 			oldCliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-				createDummyPodCliqueTemplate("prefill"),
-				createDummyPodCliqueTemplate("decode"),
+				createPodCliqueTemplate("prefill"),
+				createPodCliqueTemplate("decode"),
 			},
 			newCliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-				createDummyPodCliqueTemplate("decode"),
-				createDummyPodCliqueTemplate("prefill"),
+				createPodCliqueTemplate("decode"),
+				createPodCliqueTemplate("prefill"),
 			},
 			expectError: false,
 		},
@@ -492,11 +492,11 @@ func TestPodCliqueUpdateValidation(t *testing.T) {
 			name:        "Invalid: adding new clique",
 			startupType: ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder),
 			oldCliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-				createDummyPodCliqueTemplate("prefill"),
+				createPodCliqueTemplate("prefill"),
 			},
 			newCliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-				createDummyPodCliqueTemplate("prefill"),
-				createDummyPodCliqueTemplate("decode"),
+				createPodCliqueTemplate("prefill"),
+				createPodCliqueTemplate("decode"),
 			},
 			expectError:    true,
 			expectedErrMsg: "not allowed to change clique composition",
@@ -505,11 +505,11 @@ func TestPodCliqueUpdateValidation(t *testing.T) {
 			name:        "Invalid: removing clique",
 			startupType: ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder),
 			oldCliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-				createDummyPodCliqueTemplate("prefill"),
-				createDummyPodCliqueTemplate("decode"),
+				createPodCliqueTemplate("prefill"),
+				createPodCliqueTemplate("decode"),
 			},
 			newCliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-				createDummyPodCliqueTemplate("prefill"),
+				createPodCliqueTemplate("prefill"),
 			},
 			expectError:    true,
 			expectedErrMsg: "not allowed to change clique composition",
@@ -518,12 +518,12 @@ func TestPodCliqueUpdateValidation(t *testing.T) {
 			name:        "Invalid: InOrder doesn't allow order change",
 			startupType: ptr.To(grovecorev1alpha1.CliqueStartupTypeInOrder),
 			oldCliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-				createDummyPodCliqueTemplate("prefill"),
-				createDummyPodCliqueTemplate("decode"),
+				createPodCliqueTemplate("prefill"),
+				createPodCliqueTemplate("decode"),
 			},
 			newCliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-				createDummyPodCliqueTemplate("decode"),
-				createDummyPodCliqueTemplate("prefill"),
+				createPodCliqueTemplate("decode"),
+				createPodCliqueTemplate("prefill"),
 			},
 			expectError:    true,
 			expectedErrMsg: "clique order cannot be changed when StartupType is InOrder or Explicit",
@@ -532,12 +532,12 @@ func TestPodCliqueUpdateValidation(t *testing.T) {
 			name:        "Invalid: Explicit doesn't allow order change",
 			startupType: ptr.To(grovecorev1alpha1.CliqueStartupTypeExplicit),
 			oldCliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-				createDummyPodCliqueTemplate("prefill"),
-				createDummyPodCliqueTemplate("decode"),
+				createPodCliqueTemplate("prefill"),
+				createPodCliqueTemplate("decode"),
 			},
 			newCliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-				createDummyPodCliqueTemplate("decode"),
-				createDummyPodCliqueTemplate("prefill"),
+				createPodCliqueTemplate("decode"),
+				createPodCliqueTemplate("prefill"),
 			},
 			expectError:    true,
 			expectedErrMsg: "clique order cannot be changed when StartupType is InOrder or Explicit",
@@ -546,12 +546,12 @@ func TestPodCliqueUpdateValidation(t *testing.T) {
 			name:        "Valid: InOrder allows same order",
 			startupType: ptr.To(grovecorev1alpha1.CliqueStartupTypeInOrder),
 			oldCliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-				createDummyPodCliqueTemplate("prefill"),
-				createDummyPodCliqueTemplate("decode"),
+				createPodCliqueTemplate("prefill"),
+				createPodCliqueTemplate("decode"),
 			},
 			newCliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-				createDummyPodCliqueTemplate("prefill"),
-				createDummyPodCliqueTemplate("decode"),
+				createPodCliqueTemplate("prefill"),
+				createPodCliqueTemplate("decode"),
 			},
 			expectError: false,
 		},
@@ -652,7 +652,7 @@ func TestImmutableFieldsValidation(t *testing.T) {
 			setupOldPCS: func() *grovecorev1alpha1.PodCliqueSet {
 				pcs := createTestPodCliqueSet("test")
 				pcs.Spec.Template.StartupType = ptr.To(grovecorev1alpha1.CliqueStartupTypeExplicit)
-				pcs.Spec.Template.Cliques = append(pcs.Spec.Template.Cliques, createDummyPodCliqueTemplate("clique2"))
+				pcs.Spec.Template.Cliques = append(pcs.Spec.Template.Cliques, createPodCliqueTemplate("clique2"))
 				pcs.Spec.Template.Cliques[0].Spec.StartsAfter = []string{}
 				pcs.Spec.Template.Cliques[1].Spec.StartsAfter = []string{"test"}
 				return pcs
@@ -660,7 +660,7 @@ func TestImmutableFieldsValidation(t *testing.T) {
 			setupNewPCS: func() *grovecorev1alpha1.PodCliqueSet {
 				pcs := createTestPodCliqueSet("test")
 				pcs.Spec.Template.StartupType = ptr.To(grovecorev1alpha1.CliqueStartupTypeExplicit)
-				pcs.Spec.Template.Cliques = append(pcs.Spec.Template.Cliques, createDummyPodCliqueTemplate("clique2"))
+				pcs.Spec.Template.Cliques = append(pcs.Spec.Template.Cliques, createPodCliqueTemplate("clique2"))
 				pcs.Spec.Template.Cliques[0].Spec.StartsAfter = []string{}
 				pcs.Spec.Template.Cliques[1].Spec.StartsAfter = []string{"test", "another"}
 				return pcs
@@ -1567,7 +1567,7 @@ func TestValidatePCSResourceSharing(t *testing.T) {
 			pcs := createTestPodCliqueSet("my-pcs")
 			pcs.Spec.Template.Cliques = nil
 			for _, name := range tc.cliqueNames {
-				pcs.Spec.Template.Cliques = append(pcs.Spec.Template.Cliques, createDummyPodCliqueTemplate(name))
+				pcs.Spec.Template.Cliques = append(pcs.Spec.Template.Cliques, createPodCliqueTemplate(name))
 			}
 			pcs.Spec.Template.PodCliqueScalingGroupConfigs = tc.groupConfigs
 			pcs.Spec.Template.ResourceSharing = tc.refs
@@ -1631,7 +1631,7 @@ func TestValidatePCSGResourceSharing(t *testing.T) {
 			pcs.Spec.Template.ResourceClaimTemplates = tc.templates
 			// Add cliques referenced by the PCSG
 			for _, cn := range tc.cfg.CliqueNames {
-				pcs.Spec.Template.Cliques = append(pcs.Spec.Template.Cliques, createDummyPodCliqueTemplate(cn))
+				pcs.Spec.Template.Cliques = append(pcs.Spec.Template.Cliques, createPodCliqueTemplate(cn))
 			}
 
 			validator := newPCSValidator(pcs, admissionv1.Create, defaultTASConfig(), groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube)}, nil, testutils.NewDefaultFakeRegistry())
@@ -1904,8 +1904,8 @@ func createTestPodCliqueSet(name string) *grovecorev1alpha1.PodCliqueSet {
 		Build()
 }
 
-// createDummyPodCliqueTemplate creates a basic PodCliqueTemplateSpec for testing.
-func createDummyPodCliqueTemplate(name string) *grovecorev1alpha1.PodCliqueTemplateSpec {
+// createPodCliqueTemplate creates a basic PodCliqueTemplateSpec for testing.
+func createPodCliqueTemplate(name string) *grovecorev1alpha1.PodCliqueTemplateSpec {
 	return testutils.NewPodCliqueTemplateSpecBuilder(name).
 		WithReplicas(1).
 		WithRoleName(fmt.Sprintf("dummy-%s-role", name)).
@@ -1932,4 +1932,111 @@ func createTestClusterTopology() *grovecorev1alpha1.ClusterTopologyBinding {
 			},
 		},
 	}
+}
+
+func TestValidateRollingUpdateConfiguration(t *testing.T) {
+	testCases := []struct {
+		description    string
+		updateStrategy grovecorev1alpha1.UpdateStrategyType
+		rollingUpdate  *grovecorev1alpha1.RollingUpdateConfiguration
+		replicas       int32
+		wantErrType    *field.ErrorType
+	}{
+		{
+			description:    "OnDelete rejects RollingUpdate when set",
+			updateStrategy: grovecorev1alpha1.OnDeleteStrategy,
+			rollingUpdate:  &grovecorev1alpha1.RollingUpdateConfiguration{MaxUnavailable: ptr.To[int32](1)},
+			wantErrType:    ptr.To(field.ErrorTypeForbidden),
+		},
+		{
+			description:    "OnDelete accepts nil RollingUpdate",
+			updateStrategy: grovecorev1alpha1.OnDeleteStrategy,
+			rollingUpdate:  nil,
+		},
+		{
+			description:    "nil RollingUpdate accepted under RollingRecreate",
+			updateStrategy: grovecorev1alpha1.RollingRecreateStrategy,
+			rollingUpdate:  nil,
+		},
+		{
+			description:    "MaxUnavailable zero rejected",
+			updateStrategy: grovecorev1alpha1.RollingRecreateStrategy,
+			rollingUpdate:  &grovecorev1alpha1.RollingUpdateConfiguration{MaxUnavailable: ptr.To[int32](0)},
+			wantErrType:    ptr.To(field.ErrorTypeInvalid),
+		},
+		{
+			description:    "MaxUnavailable negative rejected",
+			updateStrategy: grovecorev1alpha1.RollingRecreateStrategy,
+			rollingUpdate:  &grovecorev1alpha1.RollingUpdateConfiguration{MaxUnavailable: ptr.To[int32](-1)},
+			wantErrType:    ptr.To(field.ErrorTypeInvalid),
+		},
+		{
+			description:    "ProgressDeadline zero rejected",
+			updateStrategy: grovecorev1alpha1.RollingRecreateStrategy,
+			rollingUpdate:  &grovecorev1alpha1.RollingUpdateConfiguration{ProgressDeadline: &metav1.Duration{Duration: 0}},
+			wantErrType:    ptr.To(field.ErrorTypeInvalid),
+		},
+		{
+			description:    "ProgressDeadline negative rejected",
+			updateStrategy: grovecorev1alpha1.RollingRecreateStrategy,
+			rollingUpdate:  &grovecorev1alpha1.RollingUpdateConfiguration{ProgressDeadline: &metav1.Duration{Duration: -time.Minute}},
+			wantErrType:    ptr.To(field.ErrorTypeInvalid),
+		},
+		{
+			description:    "valid MaxUnavailable and ProgressDeadline accepted",
+			updateStrategy: grovecorev1alpha1.RollingRecreateStrategy,
+			rollingUpdate:  &grovecorev1alpha1.RollingUpdateConfiguration{MaxUnavailable: ptr.To[int32](2), ProgressDeadline: &metav1.Duration{Duration: 5 * time.Minute}},
+			replicas:       3,
+		},
+		{
+			description:    "MaxUnavailable greater than replicas rejected",
+			updateStrategy: grovecorev1alpha1.RollingRecreateStrategy,
+			rollingUpdate:  &grovecorev1alpha1.RollingUpdateConfiguration{MaxUnavailable: ptr.To[int32](5)},
+			replicas:       3,
+			wantErrType:    ptr.To(field.ErrorTypeInvalid),
+		},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.description, func(t *testing.T) {
+			pcs := &grovecorev1alpha1.PodCliqueSet{
+				Spec: grovecorev1alpha1.PodCliqueSetSpec{
+					UpdateStrategy: &grovecorev1alpha1.PodCliqueSetUpdateStrategy{Type: tc.updateStrategy},
+				},
+			}
+			v := &pcsValidator{pcs: pcs}
+			errs := v.validateRollingUpdateConfiguration(tc.rollingUpdate, tc.replicas, field.NewPath("spec", "template", "cliques").Index(0).Child("rollingUpdate"))
+			if tc.wantErrType == nil {
+				assert.Empty(t, errs)
+				return
+			}
+			require.Len(t, errs, 1)
+			assert.Equal(t, *tc.wantErrType, errs[0].Type)
+		})
+	}
+}
+
+func TestValidateRollingUpdateOnPCSGMemberRejected(t *testing.T) {
+	pcs := createTestPodCliqueSet("inference")
+	member := createPodCliqueTemplate("member")
+	member.RollingUpdate = &grovecorev1alpha1.RollingUpdateConfiguration{MaxUnavailable: ptr.To[int32](1)}
+	pcs.Spec.Template.Cliques = append(pcs.Spec.Template.Cliques, member)
+	pcs.Spec.Template.PodCliqueScalingGroupConfigs = []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+		{Name: "sg", CliqueNames: []string{"member"}, Replicas: ptr.To[int32](1), MinAvailable: ptr.To[int32](1)},
+	}
+
+	validator := newPCSValidator(pcs, admissionv1.Create, defaultTASConfig(),
+		groveconfigv1alpha1.SchedulerConfiguration{
+			Profiles:           []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube}},
+			DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube),
+		}, nil, testutils.NewDefaultFakeRegistry())
+	_, errs := validator.validate()
+
+	found := false
+	for _, err := range errs {
+		if err.Type == field.ErrorTypeForbidden && strings.Contains(err.Field, "rollingUpdate") {
+			found = true
+			break
+		}
+	}
+	assert.True(t, found, "expected a Forbidden error on a PCSG-member clique's rollingUpdate, got: %v", errs)
 }

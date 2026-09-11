@@ -19,13 +19,14 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	apicommonconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/clustertopology"
 	ctrlcommon "github.com/ai-dynamo/grove/operator/internal/controller/common"
-	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
+	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
 	"github.com/go-logr/logr"
@@ -43,11 +44,17 @@ func (r *Reconciler) reconcileStatus(ctx context.Context, logger logr.Logger, pc
 	// Snapshot status before mutations so we can skip the Update call when nothing changes.
 	originalStatus := pcs.Status.DeepCopy()
 
-	// Calculate available replicas using PCSG-inspired approach
-	err := r.mutateReplicas(ctx, logger, pcs)
+	// Calculate available replicas and update-progress stats in a single pass over the children.
+	standalonePCLQs, pcsgs, err := r.listExpectedPCSChildren(ctx, pcs)
 	if err != nil {
-		return ctrlcommon.ReconcileWithErrors("failed to mutate replicas status", err)
+		return ctrlcommon.ReconcileWithErrors("failed to list PodCliqueSet children", err)
 	}
+	stats, err := r.computeAvailableAndUpdatedReplicas(logger, pcs, standalonePCLQs, pcsgs)
+	if err != nil {
+		return ctrlcommon.ReconcileWithErrors("failed to compute PodCliqueSet replica status", err)
+	}
+	mutateReplicas(pcs, stats)
+	mutateUpdateInProgressCondition(pcs, computeUpdateInProgressCounts(standalonePCLQs, pcsgs))
 
 	// Update TopologyLevelsUnavailable condition based on TAS config and ClusterTopologyBinding
 	if err = r.mutateTopologyLevelUnavailableConditions(ctx, logger, pcs); err != nil {
@@ -76,13 +83,8 @@ func (r *Reconciler) reconcileStatus(ctx context.Context, logger logr.Logger, pc
 }
 
 // mutateReplicas updates the PodCliqueSet status replica counts and update-progress counts.
-func (r *Reconciler) mutateReplicas(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) error {
-	// Set basic replica count
+func mutateReplicas(pcs *grovecorev1alpha1.PodCliqueSet, stats pcsReplicaStats) {
 	pcs.Status.Replicas = pcs.Spec.Replicas
-	stats, err := r.computeAvailableAndUpdatedReplicas(ctx, logger, pcs)
-	if err != nil {
-		return fmt.Errorf("could not compute available replicas: %w", err)
-	}
 	pcs.Status.AvailableReplicas = stats.availableReplicas
 	pcs.Status.UpdatedReplicas = stats.updatedReplicas
 	if pcs.Status.UpdateProgress != nil {
@@ -91,7 +93,6 @@ func (r *Reconciler) mutateReplicas(ctx context.Context, logger logr.Logger, pcs
 		pcs.Status.UpdateProgress.UpdatedPodCliqueScalingGroupsCount = stats.updatedPCSGs
 		pcs.Status.UpdateProgress.TotalPodCliqueScalingGroupsCount = stats.totalPCSGs
 	}
-	return nil
 }
 
 // mutateSelector publishes the label selector on the PodCliqueSet /scale subresource so HPAs can
@@ -122,31 +123,29 @@ type pcsReplicaStats struct {
 	totalPCSGs   int32
 }
 
-// computeAvailableAndUpdatedReplicas walks the PCS's standalone PCLQs and PCSGs once and
-// returns aggregate availability and update counts. Replaces the prior O(N²) accumulator that
-// stored fully-qualified child names in status.
-func (r *Reconciler) computeAvailableAndUpdatedReplicas(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) (pcsReplicaStats, error) {
-	var (
-		stats        pcsReplicaStats
-		pcsObjectKey = client.ObjectKeyFromObject(pcs)
-	)
+// updateInProgressCounts holds the number of rolling and stuck children of each kind, derived from
+// their UpdateInProgress conditions. rolling counts children whose condition is True or Unknown, and
+// stuck counts those whose condition is Unknown.
+type updateInProgressCounts struct {
+	rollingPCLQs int32
+	stuckPCLQs   int32
+	rollingPCSGs int32
+	stuckPCSGs   int32
+}
 
-	expectedPCSGFQNsPerPCSReplica := componentutils.GetExpectedPCSGFQNsPerPCSReplica(pcs)
-	expectedStandAlonePCLQFQNsPerPCSReplica := componentutils.GetExpectedStandAlonePCLQFQNsPerPCSReplica(pcs)
+// listExpectedPCSChildren fetches the PodCliqueSet's standalone PodCliques and PodCliqueScalingGroups
+// and drops any strays that are not part of the current spec.
+func (r *Reconciler) listExpectedPCSChildren(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet) ([]grovecorev1alpha1.PodClique, []grovecorev1alpha1.PodCliqueScalingGroup, error) {
+	// Hoist the expected-name lookups out of the filter callbacks so each pass is O(M) with a single
+	// map lookup per element.
+	expectedPCSGNameSet := flattenNamesToSet(componentutils.GetExpectedPCSGFQNsPerPCSReplica(pcs))
+	expectedStandalonePCLQNameSet := flattenNamesToSet(componentutils.GetExpectedStandAlonePCLQFQNsPerPCSReplica(pcs))
 
-	// Hoist the expected-name lookups out of the filter callbacks. Built once each (O(E) work and
-	// space); each filter pass is then O(M) with a single map lookup per element, where M is the
-	// number of live children fetched and E is the number of expected names. Replaces an earlier
-	// O(M*E) pattern that re-flattened the per-replica name map on every element.
-	expectedPCSGNameSet := flattenNamesToSet(expectedPCSGFQNsPerPCSReplica)
-	expectedStandalonePCLQNameSet := flattenNamesToSet(expectedStandAlonePCLQFQNsPerPCSReplica)
-
-	// Fetch all PCSGs for this PCS, then drop any stray PCSGs (not part of the spec) using O(1)
-	// set lookup. slices.DeleteFunc compacts in-place; safe here because the slice came from a
-	// fresh fetch and isn't aliased.
+	// Fetch all PCSGs for this PCS, then drop any stray PCSGs (not part of the spec). slices.DeleteFunc
+	// compacts in-place; safe here because the slice came from a fresh fetch and isn't aliased.
 	pcsgs, err := componentutils.GetPCSGsForPCS(ctx, r.client, pcs.ObjectMeta)
 	if err != nil {
-		return stats, err
+		return nil, nil, err
 	}
 	pcsgs = slices.DeleteFunc(pcsgs, func(pcsg grovecorev1alpha1.PodCliqueScalingGroup) bool {
 		_, expected := expectedPCSGNameSet[pcsg.Name]
@@ -156,14 +155,22 @@ func (r *Reconciler) computeAvailableAndUpdatedReplicas(ctx context.Context, log
 	// Fetch all standalone PodCliques for this PCS and drop strays the same way.
 	standalonePCLQs, err := componentutils.GetPodCliquesWithParentPCS(ctx, r.client, pcs.ObjectMeta)
 	if err != nil {
-		return stats, err
+		return nil, nil, err
 	}
 	standalonePCLQs = slices.DeleteFunc(standalonePCLQs, func(pclq grovecorev1alpha1.PodClique) bool {
 		_, expected := expectedStandalonePCLQNameSet[pclq.Name]
 		return !expected
 	})
+	return standalonePCLQs, pcsgs, nil
+}
 
-	// Group both resources by PCS replica index
+// computeAvailableAndUpdatedReplicas groups the PodCliqueSet's children by replica index and returns
+// aggregate availability and update counts.
+func (r *Reconciler) computeAvailableAndUpdatedReplicas(logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, standalonePCLQs []grovecorev1alpha1.PodClique, pcsgs []grovecorev1alpha1.PodCliqueScalingGroup) (pcsReplicaStats, error) {
+	var stats pcsReplicaStats
+	expectedPCSGFQNsPerPCSReplica := componentutils.GetExpectedPCSGFQNsPerPCSReplica(pcs)
+	expectedStandAlonePCLQFQNsPerPCSReplica := componentutils.GetExpectedStandAlonePCLQFQNsPerPCSReplica(pcs)
+
 	standalonePCLQsByReplica, err := componentutils.GroupPCLQsByPCSReplicaIndex(standalonePCLQs)
 	if err != nil {
 		return stats, err
@@ -195,10 +202,33 @@ func (r *Reconciler) computeAvailableAndUpdatedReplicas(ctx context.Context, log
 	}
 
 	logger.Info(fmt.Sprintf("Calculated PCS replica and update progress stats for %s: available=%d updated=%d PCLQs=%d/%d PCSGs=%d/%d",
-		pcsObjectKey, stats.availableReplicas, stats.updatedReplicas,
+		client.ObjectKeyFromObject(pcs), stats.availableReplicas, stats.updatedReplicas,
 		stats.updatedPCLQs, stats.totalPCLQs,
 		stats.updatedPCSGs, stats.totalPCSGs))
 	return stats, nil
+}
+
+// computeUpdateInProgressCounts counts the rolling and stuck standalone PodCliques and
+// PodCliqueScalingGroups from their UpdateInProgress conditions.
+func computeUpdateInProgressCounts(standalonePCLQs []grovecorev1alpha1.PodClique, pcsgs []grovecorev1alpha1.PodCliqueScalingGroup) updateInProgressCounts {
+	var counts updateInProgressCounts
+	for i := range standalonePCLQs {
+		if rolling, stuck := updateInProgressState(standalonePCLQs[i].Status.Conditions); rolling {
+			counts.rollingPCLQs++
+			if stuck {
+				counts.stuckPCLQs++
+			}
+		}
+	}
+	for i := range pcsgs {
+		if rolling, stuck := updateInProgressState(pcsgs[i].Status.Conditions); rolling {
+			counts.rollingPCSGs++
+			if stuck {
+				counts.stuckPCSGs++
+			}
+		}
+	}
+	return counts
 }
 
 // countUpdatedPCLQs counts non-terminating standalone PCLQs that have fully converged to the PCS hash.
@@ -422,4 +452,69 @@ func flattenNamesToSet(perReplica map[int][]string) map[string]struct{} {
 		}
 	}
 	return set
+}
+
+// updateInProgressState reports whether a child's UpdateInProgress condition marks it as rolling
+// (True or Unknown) and, of those, stuck (Unknown).
+func updateInProgressState(conditions []metav1.Condition) (rolling, stuck bool) {
+	cond := meta.FindStatusCondition(conditions, apicommonconstants.ConditionTypeUpdateInProgress)
+	if cond == nil {
+		return false, false
+	}
+	switch cond.Status {
+	case metav1.ConditionTrue:
+		return true, false
+	case metav1.ConditionUnknown:
+		return true, true
+	default:
+		return false, false
+	}
+}
+
+// mutateUpdateInProgressCondition sets the aggregate UpdateInProgress condition on the PodCliqueSet
+// from the rolling and stuck child counts.
+func mutateUpdateInProgressCondition(pcs *grovecorev1alpha1.PodCliqueSet, counts updateInProgressCounts) {
+	newCondition := computeUpdateInProgressCondition(counts)
+	if k8sutils.HasConditionChanged(pcs.Status.Conditions, newCondition) {
+		meta.SetStatusCondition(&pcs.Status.Conditions, newCondition)
+	}
+}
+
+// computeUpdateInProgressCondition aggregates the child UpdateInProgress conditions. Any stuck child
+// makes the PodCliqueSet Unknown (ProgressDeadlineExceeded) with a per-kind stuck-over-rolling
+// message, any rolling child makes it True (Progressing), and otherwise it is False (NoActiveUpdate).
+func computeUpdateInProgressCondition(counts updateInProgressCounts) metav1.Condition {
+	now := metav1.Now()
+	if counts.stuckPCLQs > 0 || counts.stuckPCSGs > 0 {
+		var parts []string
+		if counts.rollingPCLQs > 0 {
+			parts = append(parts, fmt.Sprintf("%d/%d PodCliques stuck", counts.stuckPCLQs, counts.rollingPCLQs))
+		}
+		if counts.rollingPCSGs > 0 {
+			parts = append(parts, fmt.Sprintf("%d/%d PodCliqueScalingGroups stuck", counts.stuckPCSGs, counts.rollingPCSGs))
+		}
+		return metav1.Condition{
+			Type:               apicommonconstants.ConditionTypeUpdateInProgress,
+			Status:             metav1.ConditionUnknown,
+			Reason:             apicommonconstants.ConditionReasonProgressDeadlineExceeded,
+			Message:            strings.Join(parts, ", "),
+			LastTransitionTime: now,
+		}
+	}
+	if counts.rollingPCLQs > 0 || counts.rollingPCSGs > 0 {
+		return metav1.Condition{
+			Type:               apicommonconstants.ConditionTypeUpdateInProgress,
+			Status:             metav1.ConditionTrue,
+			Reason:             apicommonconstants.ConditionReasonProgressing,
+			Message:            "Rolling update is in progress",
+			LastTransitionTime: now,
+		}
+	}
+	return metav1.Condition{
+		Type:               apicommonconstants.ConditionTypeUpdateInProgress,
+		Status:             metav1.ConditionFalse,
+		Reason:             apicommonconstants.ConditionReasonNoActiveUpdate,
+		Message:            "No rolling update is in progress",
+		LastTransitionTime: now,
+	}
 }

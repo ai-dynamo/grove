@@ -280,6 +280,42 @@ func TestDeleteExpectationsByIndex(t *testing.T) {
 	assert.True(t, existsB0, "ownerB's expectations must be untouched")
 }
 
+// TestConcurrentAccessIsRaceFree exercises the store from multiple goroutines so the race detector
+// observes concurrent access to the same expectation set. Writers raise and lower delete expectations
+// (mutating the set under the lock) while readers query it. Run with -race.
+func TestConcurrentAccessIsRaceFree(t *testing.T) {
+	const (
+		key        = "test-ns/test-resource"
+		goroutines = 8
+		iterations = 500
+	)
+	store := NewExpectationsStore()
+	logger := logr.Discard()
+	uids := []types.UID{"a", "b", "c", "d"}
+	require.NoError(t, store.ExpectDeletions(logger, key, uids...))
+
+	var wg sync.WaitGroup
+	// Writers raise and lower delete expectations, mutating the underlying set.
+	for range goroutines {
+		wg.Go(func() {
+			for range iterations {
+				_ = store.ExpectDeletions(logger, key, uids...)
+				store.ObserveDeletions(logger, key, uids...)
+			}
+		})
+	}
+	// Readers query the same expectation set.
+	for range goroutines {
+		wg.Go(func() {
+			for range iterations {
+				_ = store.HasDeleteExpectation(key, "a")
+				_ = store.GetDeleteExpectations(key)
+			}
+		})
+	}
+	wg.Wait()
+}
+
 func initializeControlleeExpectations(expStore *ExpectationsStore, controlleeKey string, uidsToAdd, uidsToDelete []types.UID) error {
 	return expStore.Add(&ControlleeExpectations{
 		key:          controlleeKey,

@@ -12,13 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package utils
+package component
 
 import (
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	"github.com/samber/lo"
+	"k8s.io/apimachinery/pkg/util/sets"
 )
 
 // Reusable name-keyed views over the common Grove resource slices. Each function builds a
@@ -33,17 +34,12 @@ func PodCliqueByName(pclqs []grovecorev1alpha1.PodClique) map[string]grovecorev1
 }
 
 // PodCliqueNameSet builds a set of PodClique names for O(1) membership checks.
-func PodCliqueNameSet(pclqs []grovecorev1alpha1.PodClique) Set[string] {
-	return NewSetBy(pclqs, func(pclq grovecorev1alpha1.PodClique) string {
-		return pclq.Name
-	})
-}
-
-// PCSGByName builds a name-keyed map for O(1) PodCliqueScalingGroup lookups.
-func PCSGByName(pcsgs []grovecorev1alpha1.PodCliqueScalingGroup) map[string]grovecorev1alpha1.PodCliqueScalingGroup {
-	return lo.SliceToMap(pcsgs, func(pcsg grovecorev1alpha1.PodCliqueScalingGroup) (string, grovecorev1alpha1.PodCliqueScalingGroup) {
-		return pcsg.Name, pcsg
-	})
+func PodCliqueNameSet(pclqs []grovecorev1alpha1.PodClique) sets.Set[string] {
+	names := sets.New[string]()
+	for _, pclq := range pclqs {
+		names.Insert(pclq.Name)
+	}
+	return names
 }
 
 // PodGangByName builds a name-keyed map for O(1) PodGang lookups.
