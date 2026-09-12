@@ -29,18 +29,19 @@ type predicateTestCase struct {
 	managedOld              bool
 	managedNew              bool
 	generationChanged       bool
+	deletionStarted         bool
 	shouldAllowCreateEvent  bool
 	shouldAllowDeleteEvent  bool
 	shouldAllowGenericEvent bool
 	shouldAllowUpdateEvent  bool
 }
 
-func TestPodGangSpecChangePredicate(t *testing.T) {
-	pred := podGangSpecChangePredicate()
+func TestPodGangChangePredicate(t *testing.T) {
+	pred := podGangChangePredicate()
 
 	tests := []predicateTestCase{
 		{
-			name:                    "managed PodGang create",
+			name:                    "managed PodGang create or initial-list add",
 			managedOld:              true,
 			managedNew:              true,
 			shouldAllowCreateEvent:  true,
@@ -76,6 +77,16 @@ func TestPodGangSpecChangePredicate(t *testing.T) {
 			shouldAllowDeleteEvent:  true,
 			shouldAllowGenericEvent: false,
 			shouldAllowUpdateEvent:  false,
+		},
+		{
+			name:                    "managed PodGang update when deletion starts",
+			managedOld:              true,
+			managedNew:              true,
+			deletionStarted:         true,
+			shouldAllowCreateEvent:  true,
+			shouldAllowDeleteEvent:  true,
+			shouldAllowGenericEvent: false,
+			shouldAllowUpdateEvent:  true,
 		},
 		{
 			name:                    "update with old managed and new unmanaged",
@@ -123,7 +134,14 @@ func TestPodGangSpecChangePredicate(t *testing.T) {
 			if tc.generationChanged {
 				newPG.SetGeneration(oldPG.GetGeneration() + 1)
 			}
-
+			if tc.deletionStarted {
+				newPG = testutils.NewPodGangBuilder("test-pg", "default").
+					WithGeneration(oldPG.GetGeneration()).
+					WithManaged(tc.managedNew).
+					WithPodGroup("pg0", 1).
+					WithDeletionTimestamp().
+					Build()
+			}
 			assert.Equal(t, tc.shouldAllowCreateEvent, pred.Create(event.CreateEvent{Object: newPG}), "Create")
 			assert.Equal(t, tc.shouldAllowDeleteEvent, pred.Delete(event.DeleteEvent{Object: newPG}), "Delete")
 			assert.Equal(t, tc.shouldAllowGenericEvent, pred.Generic(event.GenericEvent{Object: newPG}), "Generic")

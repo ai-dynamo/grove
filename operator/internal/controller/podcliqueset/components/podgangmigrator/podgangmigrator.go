@@ -235,7 +235,7 @@ func (r _resource) allEpochBasedPodGangsCreated(ctx context.Context, pcs *grovec
 		}
 		pcsRnr := apicommon.ResourceNameReplica{Name: pcs.Name, Replica: pcsReplicaIndex}
 		for _, entry := range pgm.Spec.Entries {
-			expectedPodGangNames := expectedPodGangNamesForEntry(pcsRnr, entry)
+			expectedPodGangNames := componentutils.ExpectedPodGangNamesForEntry(pcsRnr, entry)
 			for _, expectedPodGangName := range expectedPodGangNames {
 				pgExists, err := r.podGangExists(ctx, pcs.Namespace, expectedPodGangName)
 				if err != nil {
@@ -248,21 +248,6 @@ func (r _resource) allEpochBasedPodGangsCreated(ctx context.Context, pcs *grovec
 		}
 	}
 	return true, nil
-}
-
-// expectedPodGangNamesForEntry computes the expected PodGang names that are associated to the given PodGangEntry.
-// For an anchor entry, there will be just one PodGang and for non-anchor entry there can be one or more PodGangs.
-func expectedPodGangNamesForEntry(pcsRnr apicommon.ResourceNameReplica, entry grovecorev1alpha1.PodGangEntry) []string {
-	if entry.Role == grovecorev1alpha1.PodGangEntryRoleAnchor {
-		return []string{apicommon.GenerateAnchorPodGangName(pcsRnr, entry.Epoch)}
-	}
-	var nonAnchorPodGangNames []string
-	for pcsgName, pcsgReplicaIndices := range entry.PCSGReplicaIndices {
-		for _, pcsgReplicaIndex := range pcsgReplicaIndices {
-			nonAnchorPodGangNames = append(nonAnchorPodGangNames, apicommon.GenerateNonAnchorPodGangName(pcsRnr, entry.Epoch, pcsgName, pcsgReplicaIndex))
-		}
-	}
-	return nonAnchorPodGangNames
 }
 
 // podGangExists reports whether the named PodGang exists in the namespace.

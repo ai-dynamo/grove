@@ -16,17 +16,20 @@ package component
 
 import (
 	"context"
+	"strconv"
 	"testing"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
+	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -286,4 +289,159 @@ func TestIndexPodGangEntriesByEpoch(t *testing.T) {
 		actual := IndexPodGangEntriesByEpoch(nil)
 		assert.Empty(t, actual)
 	})
+}
+
+func TestExpectedPodGangNamesForEntry(t *testing.T) {
+	pcsRnr := apicommon.ResourceNameReplica{Name: "pcs", Replica: 2}
+
+	anchor := testutils.NewPodGangEntryBuilder("hash", "1000").
+		WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).
+		WithAnchorIndex(0).
+		Build()
+	assert.Equal(t,
+		[]string{apicommon.GenerateAnchorPodGangName(pcsRnr, anchor.Epoch)},
+		ExpectedPodGangNamesForEntry(pcsRnr, anchor),
+	)
+
+	tail := testutils.NewPodGangEntryBuilder("hash", "1001").
+		WithRole(grovecorev1alpha1.PodGangEntryRoleTail).
+		WithPCSGReplicaIndices(map[string][]int32{
+			"zeta":  {3, 1},
+			"alpha": {2, 0},
+		}).
+		Build()
+	assert.Equal(t, []string{
+		apicommon.GenerateNonAnchorPodGangName(pcsRnr, tail.Epoch, "alpha", 0),
+		apicommon.GenerateNonAnchorPodGangName(pcsRnr, tail.Epoch, "alpha", 2),
+		apicommon.GenerateNonAnchorPodGangName(pcsRnr, tail.Epoch, "zeta", 1),
+		apicommon.GenerateNonAnchorPodGangName(pcsRnr, tail.Epoch, "zeta", 3),
+	}, ExpectedPodGangNamesForEntry(pcsRnr, tail))
+}
+
+func TestLoadMaterializedPodGangs(t *testing.T) {
+	const (
+		pcsName       = "pcs"
+		namespace     = "default"
+		pcsUID        = types.UID("pcs-uid")
+		replicaIndex  = 1
+		schedulerName = "kai-scheduler"
+	)
+	entries := []grovecorev1alpha1.PodGangEntry{
+		testutils.NewAnchorEntry("hash-1", "1000", 0, "workers", 0),
+		testutils.NewTailEntry("hash-1", "1001", "workers", 1, 2),
+		testutils.NewAnchorEntry("hash-2", "1002", 1, "workers", 3),
+		testutils.NewScaleOutEntry("hash-2", "1003", "workers", 4),
+	}
+	pcs := testutils.NewPodCliqueSetBuilder(pcsName, namespace, pcsUID).WithReplicas(2).Build()
+	pgm := testutils.NewPodGangMapBuilder(pcsName, namespace, pcsUID, replicaIndex).WithEntries(entries...).Build()
+	podGangs := newMaterializedPodGangs(pcs, pgm, schedulerName)
+
+	t.Run("loads complete multiple-epoch set", func(t *testing.T) {
+		cl := newPodGangMapTestClient(pcs, pgm, podGangs...)
+
+		actual, err := LoadMaterializedPodGangs(context.Background(), cl, pcs, pgm, schedulerName)
+		require.NoError(t, err)
+		require.Len(t, actual, 5)
+		assert.Equal(t, []grovecorev1alpha1.PodGangEntryRole{
+			grovecorev1alpha1.PodGangEntryRoleAnchor,
+			grovecorev1alpha1.PodGangEntryRoleTail,
+			grovecorev1alpha1.PodGangEntryRoleTail,
+			grovecorev1alpha1.PodGangEntryRoleAnchor,
+			grovecorev1alpha1.PodGangEntryRoleScaleOut,
+		}, materializedRoles(actual))
+	})
+
+	t.Run("rejects incomplete set", func(t *testing.T) {
+		cl := newPodGangMapTestClient(pcs, pgm, podGangs[:len(podGangs)-1]...)
+
+		_, err := LoadMaterializedPodGangs(context.Background(), cl, pcs, pgm, schedulerName)
+		assert.True(t, apierrors.IsNotFound(err))
+	})
+
+	t.Run("rejects stale owner", func(t *testing.T) {
+		stale := deepCopyPodGangs(podGangs)
+		stale[1].OwnerReferences[0].UID = "stale-pcs-uid"
+		cl := newPodGangMapTestClient(pcs, pgm, stale...)
+
+		_, err := LoadMaterializedPodGangs(context.Background(), cl, pcs, pgm, schedulerName)
+		require.ErrorContains(t, err, "is not controlled")
+	})
+
+	labelTests := []struct {
+		name  string
+		label string
+		value string
+	}{
+		{name: "replica", label: apicommon.LabelPodCliqueSetReplicaIndex, value: "0"},
+		{name: "epoch", label: apicommon.LabelEpoch, value: "old-epoch"},
+		{name: "role", label: apicommon.LabelPodGangRole, value: string(grovecorev1alpha1.PodGangEntryRoleScaleOut)},
+		{name: "generation", label: apicommon.LabelPodCliqueSetGenerationHash, value: "old-hash"},
+		{name: "scheduler", label: apicommon.LabelSchedulerName, value: "other-scheduler"},
+	}
+	for _, tt := range labelTests {
+		t.Run("rejects mismatched "+tt.name, func(t *testing.T) {
+			invalid := deepCopyPodGangs(podGangs)
+			invalid[0].Labels[tt.label] = tt.value
+			cl := newPodGangMapTestClient(pcs, pgm, invalid...)
+
+			_, err := LoadMaterializedPodGangs(context.Background(), cl, pcs, pgm, schedulerName)
+			require.ErrorContains(t, err, tt.label)
+		})
+	}
+}
+
+func newMaterializedPodGangs(pcs *grovecorev1alpha1.PodCliqueSet, pgm *grovecorev1alpha1.PodGangMap, schedulerName string) []*groveschedulerv1alpha1.PodGang {
+	pcsRnr := apicommon.ResourceNameReplica{Name: pcs.Name, Replica: int(pgm.Spec.PodCliqueSetReplicaIndex)}
+	podGangs := make([]*groveschedulerv1alpha1.PodGang, 0)
+	for _, entry := range pgm.Spec.Entries {
+		for _, name := range ExpectedPodGangNamesForEntry(pcsRnr, entry) {
+			podGangs = append(podGangs, newMaterializedPodGang(pcs, pcsRnr.Replica, entry, schedulerName, name))
+		}
+	}
+	return podGangs
+}
+
+func newMaterializedPodGang(pcs *grovecorev1alpha1.PodCliqueSet, replicaIndex int, entry grovecorev1alpha1.PodGangEntry, schedulerName, name string) *groveschedulerv1alpha1.PodGang {
+	return &groveschedulerv1alpha1.PodGang{ObjectMeta: metav1.ObjectMeta{
+		Name:      name,
+		Namespace: pcs.Namespace,
+		Labels: map[string]string{
+			apicommon.LabelPodCliqueSetReplicaIndex:   strconv.Itoa(replicaIndex),
+			apicommon.LabelEpoch:                      entry.Epoch,
+			apicommon.LabelPodGangRole:                string(entry.Role),
+			apicommon.LabelPodCliqueSetGenerationHash: entry.PodCliqueSetGenerationHash,
+			apicommon.LabelSchedulerName:              schedulerName,
+		},
+		OwnerReferences: []metav1.OwnerReference{{
+			APIVersion: grovecorev1alpha1.SchemeGroupVersion.String(),
+			Kind:       "PodCliqueSet",
+			Name:       pcs.Name,
+			UID:        pcs.UID,
+			Controller: ptr.To(true),
+		}},
+	}}
+}
+
+func newPodGangMapTestClient(pcs *grovecorev1alpha1.PodCliqueSet, pgm *grovecorev1alpha1.PodGangMap, podGangs ...*groveschedulerv1alpha1.PodGang) client.Client {
+	objects := []client.Object{pcs, pgm}
+	for _, podGang := range podGangs {
+		objects = append(objects, podGang)
+	}
+	return testutils.CreateDefaultFakeClient(objects)
+}
+
+func deepCopyPodGangs(podGangs []*groveschedulerv1alpha1.PodGang) []*groveschedulerv1alpha1.PodGang {
+	result := make([]*groveschedulerv1alpha1.PodGang, 0, len(podGangs))
+	for _, podGang := range podGangs {
+		result = append(result, podGang.DeepCopy())
+	}
+	return result
+}
+
+func materializedRoles(podGangs []MaterializedPodGang) []grovecorev1alpha1.PodGangEntryRole {
+	roles := make([]grovecorev1alpha1.PodGangEntryRole, 0, len(podGangs))
+	for _, podGang := range podGangs {
+		roles = append(roles, podGang.Entry.Role)
+	}
+	return roles
 }

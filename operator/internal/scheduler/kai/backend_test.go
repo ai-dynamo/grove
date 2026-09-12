@@ -16,7 +16,12 @@ package kai
 
 import (
 	"context"
+	"errors"
+	"maps"
+	"strconv"
+	"sync"
 	"testing"
+	"time"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
@@ -27,6 +32,7 @@ import (
 	kaischedulingv2alpha2 "github.com/kai-scheduler/KAI-scheduler/pkg/apis/scheduling/v2alpha2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -34,6 +40,72 @@ import (
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
+
+func TestBackend_SyncPodGang_AggregateLockScope(t *testing.T) {
+	tests := []struct {
+		name          string
+		secondReplica int
+		wantBlocked   bool
+	}{
+		{name: "serializes sibling PodGangs", secondReplica: 0, wantBlocked: true},
+		{name: "allows another replica concurrently", secondReplica: 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pcs := newPodCliqueSet("lock-scope", "team-a")
+			pcs.Spec.Replicas = 2
+			objects := []client.Object{pcs}
+			podGangsByReplica := make(map[int][]*groveschedulerv1alpha1.PodGang, 2)
+			for replica := range 2 {
+				first := testutils.NewPodGangBuilder("first", pcs.Namespace).WithPodGroup("worker", 1).Build()
+				second := testutils.NewPodGangBuilder("second", pcs.Namespace).WithPodGroup("worker", 1).Build()
+				firstEntry := configureTestAnchorEntry(pcs, first, replica, "1000", 0)
+				secondEntry := configureTestAnchorEntry(pcs, second, replica, "2000", 1)
+				pgm := testutils.NewPodGangMapBuilder(pcs.Name, pcs.Namespace, pcs.UID, replica).
+					WithEntries(firstEntry, secondEntry).
+					Build()
+				objects = append(objects, pgm, first, second)
+				podGangsByReplica[replica] = []*groveschedulerv1alpha1.PodGang{first, second}
+			}
+
+			baseClient := testutils.NewTestClientBuilder().WithObjects(objects...).Build()
+			blockingClient := &blockingPodGangMapGetClient{
+				Client:     baseClient,
+				blockedKey: testPodGangMapKey(pcs, 0),
+				getStarted: make(chan client.ObjectKey, 4),
+				release:    make(chan struct{}),
+			}
+			backend := New(blockingClient, baseClient.Scheme(), record.NewFakeRecorder(10), configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKai})
+			initTestBackend(t, backend, blockingClient)
+
+			firstResult := make(chan error, 1)
+			go func() { firstResult <- backend.SyncPodGang(context.Background(), podGangsByReplica[0][0]) }()
+			require.Equal(t, blockingClient.blockedKey, receiveObjectKey(t, blockingClient.getStarted))
+
+			secondResult := make(chan error, 1)
+			go func() {
+				secondResult <- backend.SyncPodGang(context.Background(), podGangsByReplica[tt.secondReplica][1])
+			}()
+			if tt.wantBlocked {
+				select {
+				case key := <-blockingClient.getStarted:
+					t.Fatalf("second reconciliation reached PodGangMap %s before sibling released aggregate lock", key)
+				case <-time.After(50 * time.Millisecond):
+				}
+			} else {
+				require.Equal(t, testPodGangMapKey(pcs, 1), receiveObjectKey(t, blockingClient.getStarted))
+				require.NoError(t, <-secondResult)
+			}
+
+			close(blockingClient.release)
+			require.NoError(t, <-firstResult)
+			if tt.wantBlocked {
+				require.NoError(t, <-secondResult)
+			}
+		})
+	}
+}
 
 func TestBackend_PreparePod(t *testing.T) {
 	cl := testutils.CreateDefaultFakeClient(nil)
@@ -45,8 +117,10 @@ func TestBackend_PreparePod(t *testing.T) {
 		WithSchedulerName("default-scheduler").
 		Build()
 	pod.Labels = map[string]string{
-		apicommon.LabelPodGang:   "test-podgang",
-		apicommon.LabelPodClique: "test-clique",
+		apicommon.LabelPartOfKey:                "test-pcs",
+		apicommon.LabelPodCliqueSetReplicaIndex: "2",
+		apicommon.LabelPodGang:                  "test-podgang-epoch-1000",
+		apicommon.LabelPodClique:                "test-clique",
 	}
 	pod.Annotations = map[string]string{"keep": "me"}
 
@@ -55,8 +129,8 @@ func TestBackend_PreparePod(t *testing.T) {
 	assert.Equal(t, "kai-scheduler", pod.Spec.SchedulerName)
 	assert.Equal(t, "me", pod.Annotations["keep"])
 	assert.Equal(t, "true", pod.Annotations["kai.scheduler/skip-podgrouper"])
-	assert.Equal(t, "test-podgang", pod.Annotations["pod-group-name"])
-	assert.Equal(t, "test-clique", pod.Labels["kai.scheduler/subgroup-name"])
+	assert.Equal(t, aggregatePodGroupName("test-pcs", 2), pod.Annotations["pod-group-name"])
+	assert.Equal(t, podGroupLeafName("test-podgang-epoch-1000", "test-clique"), pod.Labels["kai.scheduler/subgroup-name"])
 }
 
 func TestBackend_PreparePod_PreservesExistingSkipAnnotation(t *testing.T) {
@@ -68,8 +142,10 @@ func TestBackend_PreparePod_PreservesExistingSkipAnnotation(t *testing.T) {
 	pod := testutils.NewPodBuilder("test-pod", "default").
 		Build()
 	pod.Labels = map[string]string{
-		apicommon.LabelPodGang:   "test-podgang",
-		apicommon.LabelPodClique: "test-clique",
+		apicommon.LabelPartOfKey:                "test-pcs",
+		apicommon.LabelPodCliqueSetReplicaIndex: "0",
+		apicommon.LabelPodGang:                  "test-podgang",
+		apicommon.LabelPodClique:                "test-clique",
 	}
 	pod.Annotations = map[string]string{"kai.scheduler/skip-podgrouper": "custom"}
 
@@ -78,196 +154,285 @@ func TestBackend_PreparePod_PreservesExistingSkipAnnotation(t *testing.T) {
 	assert.Equal(t, "true", pod.Annotations["kai.scheduler/skip-podgrouper"])
 }
 
+func TestBackend_PreparePod_RequiresAggregateIdentity(t *testing.T) {
+	validLabels := map[string]string{
+		apicommon.LabelPartOfKey:                "test-pcs",
+		apicommon.LabelPodCliqueSetReplicaIndex: "0",
+		apicommon.LabelPodGang:                  "test-podgang",
+		apicommon.LabelPodClique:                "test-clique",
+	}
+	tests := []struct {
+		name          string
+		label         string
+		value         string
+		wantErrSubstr string
+	}{
+		{name: "PodCliqueSet name", label: apicommon.LabelPartOfKey, wantErrSubstr: apicommon.LabelPartOfKey},
+		{name: "replica index", label: apicommon.LabelPodCliqueSetReplicaIndex, wantErrSubstr: apicommon.LabelPodCliqueSetReplicaIndex},
+		{name: "invalid replica index", label: apicommon.LabelPodCliqueSetReplicaIndex, value: "invalid", wantErrSubstr: "failed to convert replica index"},
+		{name: "negative replica index", label: apicommon.LabelPodCliqueSetReplicaIndex, value: "-1", wantErrSubstr: "invalid grove.io/podcliqueset-replica-index"},
+		{name: "PodGang name", label: apicommon.LabelPodGang, wantErrSubstr: apicommon.LabelPodGang},
+		{name: "PodClique name", label: apicommon.LabelPodClique, wantErrSubstr: apicommon.LabelPodClique},
+	}
+
+	b := &schedulerBackend{name: string(configv1alpha1.SchedulerNameKai)}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pod := &corev1.Pod{}
+			pod.Labels = maps.Clone(validLabels)
+			if tt.value == "" {
+				delete(pod.Labels, tt.label)
+			} else {
+				pod.Labels[tt.label] = tt.value
+			}
+
+			require.ErrorContains(t, b.PreparePod(pod), tt.wantErrSubstr)
+		})
+	}
+}
+
 func TestBackend_SyncPodGang_CreateAndUpdate(t *testing.T) {
-	pcs := newPodCliqueSet(
-		"test-pcs",
-		"team-a",
-		podCliqueTemplateWithQueue("encoder-template", "team-a"),
-		podCliqueTemplateWithQueue("decoder-template", "team-a"),
-	)
+	pcs := newPodCliqueSet("test-pcs", "team-a", podCliqueTemplateWithQueue("worker-template", "team-a"))
 	podGang := testutils.NewPodGangBuilder("test-podgang", "default").
 		WithSchedulerName(string(configv1alpha1.SchedulerNameKai)).
+		WithPodGroup("worker", 2).
 		Build()
-	setPodCliqueSetControllerOwner(podGang, pcs)
-	podGang.Labels[labelKeyQueueName] = "legacy-queue"
-	podGang.Annotations = map[string]string{"grove.io/topology-name": "cluster-topology"}
-	podGang.Spec.PriorityClassName = "high-priority"
-	podGang.Spec.TopologyConstraint = &groveschedulerv1alpha1.TopologyConstraint{
-		PackConstraint: &groveschedulerv1alpha1.TopologyPackConstraint{
-			Required: ptr.To("zone"),
-		},
-	}
-	podGang.Spec.TopologyConstraintGroupConfigs = []groveschedulerv1alpha1.TopologyConstraintGroupConfig{
-		{
-			Name:          "decoder-group",
-			PodGroupNames: []string{"decoder"},
-			TopologyConstraint: &groveschedulerv1alpha1.TopologyConstraint{
-				PackConstraint: &groveschedulerv1alpha1.TopologyPackConstraint{
-					Preferred: ptr.To("rack"),
-				},
-			},
-		},
-	}
-	podGang.Spec.PodGroups = []groveschedulerv1alpha1.PodGroup{
-		{
-			Name:        "encoder",
-			MinReplicas: 2,
-			TopologyConstraint: &groveschedulerv1alpha1.TopologyConstraint{
-				PackConstraint: &groveschedulerv1alpha1.TopologyPackConstraint{
-					Required: ptr.To("host"),
-				},
-			},
-		},
-		{
-			Name:        "decoder",
-			MinReplicas: 3,
-		},
-	}
-
-	cl := testutils.NewTestClientBuilder().
-		WithObjects(pcs, podGang).
-		Build()
-	recorder := record.NewFakeRecorder(10)
-	profile := configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKai}
-	b := New(cl, cl.Scheme(), recorder, profile)
-	require.NoError(t, b.Init(cl))
-
-	ctx := context.Background()
-	require.NoError(t, b.SyncPodGang(ctx, podGang))
-
-	gotPodGroup := &kaischedulingv2alpha2.PodGroup{}
-	require.NoError(t, cl.Get(ctx, client.ObjectKey{Name: podGang.Name, Namespace: podGang.Namespace}, gotPodGroup))
-
-	require.NotNil(t, gotPodGroup.Spec.MinMember)
-	assert.Equal(t, int32(5), *gotPodGroup.Spec.MinMember)
-	assert.Equal(t, "team-a", gotPodGroup.Spec.Queue)
-	assert.Equal(t, "high-priority", gotPodGroup.Spec.PriorityClassName)
-	assert.Equal(t, "zone", gotPodGroup.Spec.TopologyConstraint.RequiredTopologyLevel)
-
-	require.Len(t, gotPodGroup.Spec.SubGroups, 3)
-	assert.Equal(t, "decoder-group", gotPodGroup.Spec.SubGroups[0].Name)
-	require.NotNil(t, gotPodGroup.Spec.SubGroups[0].MinSubGroup)
-	assert.Equal(t, int32(1), *gotPodGroup.Spec.SubGroups[0].MinSubGroup)
-
-	assert.Equal(t, "encoder", gotPodGroup.Spec.SubGroups[1].Name)
-	require.NotNil(t, gotPodGroup.Spec.SubGroups[1].MinMember)
-	assert.Equal(t, int32(2), *gotPodGroup.Spec.SubGroups[1].MinMember)
-	assert.Nil(t, gotPodGroup.Spec.SubGroups[1].Parent)
-	assert.Equal(t, "host", gotPodGroup.Spec.SubGroups[1].TopologyConstraint.RequiredTopologyLevel)
-
-	assert.Equal(t, "decoder", gotPodGroup.Spec.SubGroups[2].Name)
-	require.NotNil(t, gotPodGroup.Spec.SubGroups[2].Parent)
-	assert.Equal(t, "decoder-group", *gotPodGroup.Spec.SubGroups[2].Parent)
-	require.NotNil(t, gotPodGroup.Spec.SubGroups[2].MinMember)
-	assert.Equal(t, int32(3), *gotPodGroup.Spec.SubGroups[2].MinMember)
-
-	// Update PodGang: change min replicas. Queue remains sourced from the owning PCS.
-	updatedPodGang := podGang.DeepCopy()
-	updatedPodGang.Spec.PodGroups[0].MinReplicas = 4
-	require.NoError(t, cl.Update(ctx, updatedPodGang))
-
-	require.NoError(t, b.SyncPodGang(ctx, updatedPodGang))
-	gotAfterUpdate := &kaischedulingv2alpha2.PodGroup{}
-	require.NoError(t, cl.Get(ctx, client.ObjectKey{Name: podGang.Name, Namespace: podGang.Namespace}, gotAfterUpdate))
-
-	// The owning PCS label supplies the queue, consistently with its templates.
-	assert.Equal(t, "team-a", gotAfterUpdate.Spec.Queue)
-	require.NotNil(t, gotAfterUpdate.Spec.MinMember)
-	assert.Equal(t, int32(7), *gotAfterUpdate.Spec.MinMember)
-	require.NotNil(t, gotAfterUpdate.Spec.SubGroups[1].MinMember)
-	assert.Equal(t, int32(4), *gotAfterUpdate.Spec.SubGroups[1].MinMember)
-}
-
-func TestBackend_SyncPodGang_SkipsEmptyTopologyConstraintGroups(t *testing.T) {
-	pcs := newPodCliqueSet(
-		"empty-group-pcs",
-		"team-a",
-		podCliqueTemplateWithQueue("worker-template", "team-a"),
-	)
-	podGang := testutils.NewPodGangBuilder("empty-group-podgang", "default").
-		WithSchedulerName(string(configv1alpha1.SchedulerNameKai)).
-		Build()
-	setPodCliqueSetControllerOwner(podGang, pcs)
-	podGang.Spec.TopologyConstraintGroupConfigs = []groveschedulerv1alpha1.TopologyConstraintGroupConfig{
-		{
-			Name: "empty-group",
-			TopologyConstraint: &groveschedulerv1alpha1.TopologyConstraint{
-				PackConstraint: &groveschedulerv1alpha1.TopologyPackConstraint{
-					Required: ptr.To("host"),
-				},
-			},
-		},
-	}
-	podGang.Spec.PodGroups = []groveschedulerv1alpha1.PodGroup{
-		{Name: "worker", MinReplicas: 1},
-	}
-
-	cl := testutils.NewTestClientBuilder().WithObjects(pcs, podGang).Build()
+	pgm := configureTestAnchorPodGang(pcs, podGang)
+	cl := testutils.NewTestClientBuilder().WithObjects(pcs, pgm, podGang).Build()
 	b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKai})
-	require.NoError(t, b.Init(cl))
+	initTestBackend(t, b, cl)
 
 	ctx := context.Background()
 	require.NoError(t, b.SyncPodGang(ctx, podGang))
 
-	podGroup := &kaischedulingv2alpha2.PodGroup{}
-	require.NoError(t, cl.Get(ctx, client.ObjectKeyFromObject(podGang), podGroup))
-	require.Len(t, podGroup.Spec.SubGroups, 1)
-	assert.Equal(t, "worker", podGroup.Spec.SubGroups[0].Name)
-	assert.Nil(t, podGroup.Spec.SubGroups[0].Parent)
+	aggregate := &kaischedulingv2alpha2.PodGroup{}
+	require.NoError(t, cl.Get(ctx, aggregatePodGroupKey(pcs, 0), aggregate))
+	assert.True(t, metav1.IsControlledBy(aggregate, pcs))
+	assert.Equal(t, "team-a", aggregate.Spec.Queue)
+	assert.Equal(t, int32(2), *requireSubGroup(t, aggregate, podGroupLeafName(podGang.Name, "worker")).MinMember)
+	current := &groveschedulerv1alpha1.PodGang{}
+	require.NoError(t, cl.Get(ctx, client.ObjectKeyFromObject(podGang), current))
+	assert.Equal(t, annotationValSkipPGR, current.Annotations[annotationKeySkipPGR])
+	assert.Contains(t, current.Finalizers, podGangFinalizer)
+
+	current.Spec.PodGroups[0].MinReplicas = 4
+	require.NoError(t, cl.Update(ctx, current))
+	require.NoError(t, b.SyncPodGang(ctx, current))
+	require.NoError(t, cl.Get(ctx, aggregatePodGroupKey(pcs, 0), aggregate))
+	assert.Equal(t, int32(4), *requireSubGroup(t, aggregate, podGroupLeafName(podGang.Name, "worker")).MinMember)
 }
 
-func TestBackend_SyncPodGangSetsOwnerReferenceAndSkipAnnotation(t *testing.T) {
-	pcs := newPodCliqueSet(
-		"owned-pcs",
-		"team-a",
-		podCliqueTemplateWithQueue("worker-template", "team-a"),
-	)
-	podGang := testutils.NewPodGangBuilder("owned", "default").
+func TestBackend_SyncLegacyPodGangRemovesAggregateFinalizer(t *testing.T) {
+	pcs := newPodCliqueSet("legacy-pcs", "team-a")
+	podGang := testutils.NewPodGangBuilder(apicommon.GenerateBasePodGangName(apicommon.ResourceNameReplica{Name: pcs.Name, Replica: 0}), pcs.Namespace).
 		WithSchedulerName(string(configv1alpha1.SchedulerNameKai)).
 		Build()
-	setPodCliqueSetControllerOwner(podGang, pcs)
+	podGang.OwnerReferences = []metav1.OwnerReference{{
+		APIVersion: grovecorev1alpha1.SchemeGroupVersion.String(),
+		Kind:       "PodCliqueSet",
+		Name:       pcs.Name,
+		UID:        pcs.UID,
+		Controller: ptr.To(true),
+	}}
+	podGang.Finalizers = []string{podGangFinalizer}
+	pgm := testutils.NewPodGangMapBuilder(pcs.Name, pcs.Namespace, pcs.UID, 0).
+		WithEntries(testutils.NewAnchorEntry("test-generation", "1000", 0, "")).
+		Build()
 
-	cl := testutils.NewTestClientBuilder().WithObjects(pcs, podGang).Build()
-	recorder := record.NewFakeRecorder(10)
-	profile := configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKai}
-	b := New(cl, cl.Scheme(), recorder, profile)
-	require.NoError(t, b.Init(cl))
+	cl := testutils.NewTestClientBuilder().WithObjects(pcs, pgm, podGang).Build()
+	b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKai})
+	initTestBackend(t, b, cl)
 
-	ctx := context.Background()
-	require.NoError(t, b.SyncPodGang(ctx, podGang))
+	require.NoError(t, b.SyncPodGang(context.Background(), podGang))
+	updated := &groveschedulerv1alpha1.PodGang{}
+	require.NoError(t, cl.Get(context.Background(), client.ObjectKeyFromObject(podGang), updated))
+	assert.NotContains(t, updated.Annotations, annotationKeySkipPGR)
+	assert.NotContains(t, updated.Finalizers, podGangFinalizer)
+}
 
-	podGroup := &kaischedulingv2alpha2.PodGroup{}
-	require.NoError(t, cl.Get(ctx, client.ObjectKey{Name: podGang.Name, Namespace: podGang.Namespace}, podGroup))
-	require.Len(t, podGroup.OwnerReferences, 1)
-	assert.Equal(t, podGang.Name, podGroup.OwnerReferences[0].Name)
+func TestBackend_SyncStalePodGangDoesNotInstallAggregateFinalizer(t *testing.T) {
+	pcs := newPodCliqueSet("stale-pcs", "team-a")
+	podGang := testutils.NewPodGangBuilder("anchor", pcs.Namespace).
+		WithSchedulerName(string(configv1alpha1.SchedulerNameKai)).
+		Build()
+	pgm := configureTestAnchorPodGang(pcs, podGang)
+	podGang.Labels[apicommon.LabelPodCliqueSetGenerationHash] = "stale-generation"
+
+	cl := testutils.NewTestClientBuilder().WithObjects(pcs, pgm, podGang).Build()
+	b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKai})
+	initTestBackend(t, b, cl)
+
+	require.ErrorContains(t, b.SyncPodGang(context.Background(), podGang), apicommon.LabelPodCliqueSetGenerationHash)
+	updated := &groveschedulerv1alpha1.PodGang{}
+	require.NoError(t, cl.Get(context.Background(), client.ObjectKeyFromObject(podGang), updated))
+	assert.NotContains(t, updated.Finalizers, podGangFinalizer)
+}
+
+func TestBackend_SyncPodGang_IncompletePodGangMapPreservesAggregateWithoutInstallingFinalizer(t *testing.T) {
+	pcs := newPodCliqueSet("incomplete-pcs", "team-a")
+	podGang := testutils.NewPodGangBuilder("anchor", pcs.Namespace).
+		WithSchedulerName(string(configv1alpha1.SchedulerNameKai)).
+		WithPodGroup("worker", 1).
+		Build()
+	pgm := configureTestAnchorPodGang(pcs, podGang)
+	pgm.Spec.Entries = append(pgm.Spec.Entries, testutils.NewTailEntry("test-generation", "2000", "workers", 1))
+	existing := &kaischedulingv2alpha2.PodGroup{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      aggregatePodGroupName(pcs.Name, 0),
+			Namespace: pcs.Namespace,
+			OwnerReferences: []metav1.OwnerReference{{
+				APIVersion: grovecorev1alpha1.SchemeGroupVersion.String(),
+				Kind:       "PodCliqueSet",
+				Name:       pcs.Name,
+				UID:        pcs.UID,
+				Controller: ptr.To(true),
+			}},
+		},
+		Spec: kaischedulingv2alpha2.PodGroupSpec{Queue: "preserve-me"},
+	}
+
+	cl := testutils.NewTestClientBuilder().WithObjects(pcs, pgm, podGang, existing).Build()
+	b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKai})
+	initTestBackend(t, b, cl)
+
+	err := b.SyncPodGang(context.Background(), podGang)
+	assert.True(t, apierrors.IsNotFound(err))
 
 	updatedPodGang := &groveschedulerv1alpha1.PodGang{}
-	require.NoError(t, cl.Get(ctx, client.ObjectKeyFromObject(podGang), updatedPodGang))
-	assert.Equal(t, annotationValSkipPGR, updatedPodGang.Annotations[annotationKeySkipPGR])
+	require.NoError(t, cl.Get(context.Background(), client.ObjectKeyFromObject(podGang), updatedPodGang))
+	assert.NotContains(t, updatedPodGang.Finalizers, podGangFinalizer)
+	assert.NotContains(t, updatedPodGang.Annotations, annotationKeySkipPGR)
+
+	unchanged := &kaischedulingv2alpha2.PodGroup{}
+	require.NoError(t, cl.Get(context.Background(), client.ObjectKeyFromObject(existing), unchanged))
+	assert.Equal(t, "preserve-me", unchanged.Spec.Queue)
 }
 
-func TestBackend_SyncPodGang_UsesUniquePodCliqueTemplateQueue(t *testing.T) {
-	pcs := newPodCliqueSet(
-		"template-queue-pcs",
-		"",
-		podCliqueTemplateWithQueue("worker-a", "team-a"),
-		podCliqueTemplateWithQueue("worker-b", "team-a"),
-	)
-	podGang := testutils.NewPodGangBuilder("template-queue-podgang", "default").
+func TestBackend_SyncPodGang_MigratesPodsIdempotently(t *testing.T) {
+	pcs := newPodCliqueSet("migration-pcs", "team-a")
+	podGang := testutils.NewPodGangBuilder("anchor", pcs.Namespace).
 		WithSchedulerName(string(configv1alpha1.SchedulerNameKai)).
+		WithPodGroup("worker", 2).
 		Build()
-	setPodCliqueSetControllerOwner(podGang, pcs)
+	podGang.UID = "anchor-uid"
+	pgm := configureTestAnchorPodGang(pcs, podGang)
+	pod := legacyAggregatePod(pcs, podGang, "worker")
 
-	cl := testutils.NewTestClientBuilder().WithObjects(pcs, podGang).Build()
+	cl := testutils.NewTestClientBuilder().WithObjects(pcs, pgm, podGang, pod).Build()
 	b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKai})
-	require.NoError(t, b.Init(cl))
+	initTestBackend(t, b, cl)
 
-	ctx := context.Background()
-	require.NoError(t, b.SyncPodGang(ctx, podGang))
+	require.NoError(t, b.SyncPodGang(context.Background(), podGang))
+	aggregate := &kaischedulingv2alpha2.PodGroup{}
+	require.NoError(t, cl.Get(context.Background(), aggregatePodGroupKey(pcs, 0), aggregate))
+	assert.True(t, metav1.IsControlledBy(aggregate, pcs))
 
-	podGroup := &kaischedulingv2alpha2.PodGroup{}
-	require.NoError(t, cl.Get(ctx, client.ObjectKeyFromObject(podGang), podGroup))
-	assert.Equal(t, "team-a", podGroup.Spec.Queue)
+	migrated := &corev1.Pod{}
+	require.NoError(t, cl.Get(context.Background(), client.ObjectKeyFromObject(pod), migrated))
+	assert.Equal(t, aggregate.Name, migrated.Annotations[annotationPodGroup])
+	assert.Equal(t, annotationValSkipPGR, migrated.Annotations[annotationKeySkipPGR])
+	assert.Equal(t, "keep", migrated.Annotations["unrelated"])
+	assert.Equal(t, podGroupLeafName(podGang.Name, "worker"), migrated.Labels[labelSubGroup])
+	podResourceVersion := migrated.ResourceVersion
+	aggregateResourceVersion := aggregate.ResourceVersion
+
+	currentPodGang := &groveschedulerv1alpha1.PodGang{}
+	require.NoError(t, cl.Get(context.Background(), client.ObjectKeyFromObject(podGang), currentPodGang))
+	require.NoError(t, b.SyncPodGang(context.Background(), currentPodGang))
+	require.NoError(t, cl.Get(context.Background(), client.ObjectKeyFromObject(pod), migrated))
+	require.NoError(t, cl.Get(context.Background(), aggregatePodGroupKey(pcs, 0), aggregate))
+	assert.Equal(t, podResourceVersion, migrated.ResourceVersion)
+	assert.Equal(t, aggregateResourceVersion, aggregate.ResourceVersion)
+}
+
+func TestBackend_SyncPodGang_CreatesAggregateBeforePodMigrationFailure(t *testing.T) {
+	pcs := newPodCliqueSet("migration-failure-pcs", "team-a")
+	podGang := testutils.NewPodGangBuilder("anchor", pcs.Namespace).
+		WithSchedulerName(string(configv1alpha1.SchedulerNameKai)).
+		WithPodGroup("worker", 1).
+		Build()
+	pgm := configureTestAnchorPodGang(pcs, podGang)
+	pod := legacyAggregatePod(pcs, podGang, "worker")
+	patchErr := apierrors.NewInternalError(errors.New("pod patch unavailable"))
+	cl := testutils.NewTestClientBuilder().
+		WithObjects(pcs, pgm, podGang, pod).
+		RecordErrorForObjects(testutils.ClientMethodPatch, patchErr, client.ObjectKeyFromObject(pod)).
+		Build()
+	b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKai})
+	initTestBackend(t, b, cl)
+
+	require.ErrorContains(t, b.SyncPodGang(context.Background(), podGang), "migrate Pod")
+	require.NoError(t, cl.Get(context.Background(), aggregatePodGroupKey(pcs, 0), &kaischedulingv2alpha2.PodGroup{}))
+
+	unchanged := &corev1.Pod{}
+	require.NoError(t, cl.Get(context.Background(), client.ObjectKeyFromObject(pod), unchanged))
+	assert.Equal(t, podGang.Name, unchanged.Annotations[annotationPodGroup])
+}
+
+func TestBackend_SyncPodGang_DeletesScaledInAggregateBeforeFinalizerRemoval(t *testing.T) {
+	pcs := newPodCliqueSet("scaled-in-pcs", "team-a")
+	podGang := terminatingPodGang(pcs)
+	podGang.Labels[apicommon.LabelPodCliqueSetReplicaIndex] = "1"
+	aggregate := ownedAggregatePodGroup(pcs, 1)
+	cl := testutils.NewTestClientBuilder().WithObjects(pcs, podGang, aggregate).Build()
+	b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKai})
+	initTestBackend(t, b, cl)
+
+	require.NoError(t, b.SyncPodGang(context.Background(), podGang))
+	assert.True(t, apierrors.IsNotFound(cl.Get(context.Background(), client.ObjectKeyFromObject(aggregate), &kaischedulingv2alpha2.PodGroup{})))
+
+	assertPodGangFinalizerRemoved(t, cl, podGang)
+}
+
+func TestBackend_SyncPodGang_HoldsScaledInAggregateWhileActivePodsRemain(t *testing.T) {
+	pcs := newPodCliqueSet("scaled-in-pcs", "team-a")
+	podGang := terminatingPodGang(pcs)
+	podGang.Labels[apicommon.LabelPodCliqueSetReplicaIndex] = "1"
+	aggregate := ownedAggregatePodGroup(pcs, 1)
+	pod := legacyAggregatePod(pcs, podGang, "worker")
+	pod.Labels[apicommon.LabelPodCliqueSetReplicaIndex] = "1"
+	cl := testutils.NewTestClientBuilder().WithObjects(pcs, podGang, aggregate, pod).Build()
+	b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKai})
+	initTestBackend(t, b, cl)
+
+	require.ErrorContains(t, b.SyncPodGang(context.Background(), podGang), "waiting for 1 Pods")
+	require.NoError(t, cl.Get(context.Background(), client.ObjectKeyFromObject(aggregate), &kaischedulingv2alpha2.PodGroup{}))
+
+	current := &groveschedulerv1alpha1.PodGang{}
+	require.NoError(t, cl.Get(context.Background(), client.ObjectKeyFromObject(podGang), current))
+	assert.Contains(t, current.Finalizers, podGangFinalizer)
+}
+
+func TestBackend_SyncPodGang_ReleasesFinalizerWhenPodCliqueSetIsDeletingOrMissing(t *testing.T) {
+	tests := []struct {
+		name       string
+		includePCS bool
+		deletePCS  bool
+	}{
+		{name: "deleting", includePCS: true, deletePCS: true},
+		{name: "missing"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pcs := newPodCliqueSet("owned-pcs", "team-a")
+			if tt.deletePCS {
+				now := metav1.Now()
+				pcs.DeletionTimestamp = &now
+				pcs.Finalizers = []string{"test.grove.io/hold"}
+			}
+			podGang := terminatingPodGang(pcs)
+			objects := []client.Object{podGang}
+			if tt.includePCS {
+				objects = append(objects, pcs)
+			}
+			cl := testutils.NewTestClientBuilder().WithObjects(objects...).Build()
+			b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKai})
+			initTestBackend(t, b, cl)
+
+			require.NoError(t, b.SyncPodGang(context.Background(), podGang))
+			assertPodGangFinalizerRemoved(t, cl, podGang)
+		})
+	}
 }
 
 func TestBackend_ValidatePodCliqueSetQueues(t *testing.T) {
@@ -370,7 +535,7 @@ func TestBackend_ValidatePodCliqueSetQueues(t *testing.T) {
 	}
 }
 
-func TestBackend_SyncPodGang_QueueResolutionFailuresDoNotCreatePodGroup(t *testing.T) {
+func TestBackend_SyncPodGang_MappingFailuresDoNotCreatePodGroup(t *testing.T) {
 	tests := []struct {
 		name          string
 		pcs           *grovecorev1alpha1.PodCliqueSet
@@ -391,25 +556,6 @@ func TestBackend_SyncPodGang_QueueResolutionFailuresDoNotCreatePodGroup(t *testi
 			omitPCS:       true,
 			wantErrSubstr: "get controlling PodCliqueSet default/absent-pcs",
 		},
-		{
-			name: "missing queue",
-			pcs: newPodCliqueSet(
-				"missing-queue-pcs",
-				"",
-				podCliqueTemplateWithQueue("worker", ""),
-			),
-			wantErrSubstr: "no KAI queue is configured",
-		},
-		{
-			name: "conflicting template queues without PodCliqueSet override",
-			pcs: newPodCliqueSet(
-				"conflicting-queues-pcs",
-				"",
-				podCliqueTemplateWithQueue("worker-a", "team-a"),
-				podCliqueTemplateWithQueue("worker-b", "team-b"),
-			),
-			wantErrSubstr: "conflicting KAI queues",
-		},
 	}
 
 	for _, tt := range tests {
@@ -419,22 +565,22 @@ func TestBackend_SyncPodGang_QueueResolutionFailuresDoNotCreatePodGroup(t *testi
 				Build()
 			objects := []client.Object{podGang}
 			if tt.pcs != nil {
-				setPodCliqueSetControllerOwner(podGang, tt.pcs)
+				pgm := configureTestAnchorPodGang(tt.pcs, podGang)
 				if !tt.omitPCS {
-					objects = append(objects, tt.pcs)
+					objects = append(objects, tt.pcs, pgm)
 				}
 			}
 
 			cl := testutils.NewTestClientBuilder().WithObjects(objects...).Build()
 			b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKai})
-			require.NoError(t, b.Init(cl))
+			initTestBackend(t, b, cl)
 
 			err := b.SyncPodGang(context.Background(), podGang)
 			require.ErrorContains(t, err, tt.wantErrSubstr)
 
-			podGroup := &kaischedulingv2alpha2.PodGroup{}
-			err = cl.Get(context.Background(), client.ObjectKeyFromObject(podGang), podGroup)
-			assert.True(t, apierrors.IsNotFound(err), "PodGroup must not be created when queue resolution fails")
+			podGroups := &kaischedulingv2alpha2.PodGroupList{}
+			require.NoError(t, cl.List(context.Background(), podGroups))
+			assert.Empty(t, podGroups.Items, "PodGroup must not be created when PodGang mapping fails")
 		})
 	}
 }
@@ -499,6 +645,10 @@ func podCliqueTemplateWithQueue(name, queue string) *grovecorev1alpha1.PodClique
 }
 
 func setPodCliqueSetControllerOwner(podGang *groveschedulerv1alpha1.PodGang, pcs *grovecorev1alpha1.PodCliqueSet) {
+	if podGang.Labels == nil {
+		podGang.Labels = map[string]string{}
+	}
+	podGang.Labels[apicommon.LabelPodCliqueSetReplicaIndex] = "0"
 	podGang.OwnerReferences = []metav1.OwnerReference{{
 		APIVersion: grovecorev1alpha1.SchemeGroupVersion.String(),
 		Kind:       "PodCliqueSet",
@@ -506,4 +656,145 @@ func setPodCliqueSetControllerOwner(podGang *groveschedulerv1alpha1.PodGang, pcs
 		UID:        pcs.UID,
 		Controller: ptr.To(true),
 	}}
+}
+
+func configureTestAnchorPodGang(pcs *grovecorev1alpha1.PodCliqueSet, podGang *groveschedulerv1alpha1.PodGang) *grovecorev1alpha1.PodGangMap {
+	entry := configureTestAnchorEntry(pcs, podGang, 0, "1000", 0)
+	return testutils.NewPodGangMapBuilder(pcs.Name, pcs.Namespace, pcs.UID, 0).WithEntries(entry).Build()
+}
+
+func configureTestAnchorEntry(pcs *grovecorev1alpha1.PodCliqueSet, podGang *groveschedulerv1alpha1.PodGang, replica int, epoch string, anchorIndex int32) grovecorev1alpha1.PodGangEntry {
+	const generationHash = "test-generation"
+	entry := testutils.NewPodGangEntryBuilder(generationHash, epoch).
+		WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).
+		WithAnchorIndex(anchorIndex).
+		Build()
+	podGang.Name = apicommon.GenerateAnchorPodGangName(apicommon.ResourceNameReplica{Name: pcs.Name, Replica: replica}, epoch)
+	setPodCliqueSetControllerOwner(podGang, pcs)
+	podGang.Labels[apicommon.LabelPodCliqueSetReplicaIndex] = strconv.Itoa(replica)
+	podGang.Labels[apicommon.LabelEpoch] = epoch
+	podGang.Labels[apicommon.LabelPodGangRole] = string(entry.Role)
+	podGang.Labels[apicommon.LabelPodCliqueSetGenerationHash] = generationHash
+	podGang.Labels[apicommon.LabelSchedulerName] = string(configv1alpha1.SchedulerNameKai)
+	return entry
+}
+
+func legacyAggregatePod(pcs *grovecorev1alpha1.PodCliqueSet, podGang *groveschedulerv1alpha1.PodGang, podCliqueName string) *corev1.Pod {
+	labels := apicommon.GetDefaultLabelsForPodCliqueSetManagedResources(pcs.Name)
+	labels[apicommon.LabelPodCliqueSetReplicaIndex] = podGang.Labels[apicommon.LabelPodCliqueSetReplicaIndex]
+	labels[apicommon.LabelPodGang] = podGang.Name
+	labels[apicommon.LabelPodClique] = podCliqueName
+	return &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
+		Name:        podGang.Name + "-pod",
+		Namespace:   pcs.Namespace,
+		Labels:      labels,
+		Annotations: map[string]string{annotationPodGroup: podGang.Name, "unrelated": "keep"},
+	}}
+}
+
+func ownedAggregatePodGroup(pcs *grovecorev1alpha1.PodCliqueSet, replica int) *kaischedulingv2alpha2.PodGroup {
+	return &kaischedulingv2alpha2.PodGroup{ObjectMeta: metav1.ObjectMeta{
+		Name:      aggregatePodGroupName(pcs.Name, replica),
+		Namespace: pcs.Namespace,
+		OwnerReferences: []metav1.OwnerReference{{
+			APIVersion: grovecorev1alpha1.SchemeGroupVersion.String(),
+			Kind:       "PodCliqueSet",
+			Name:       pcs.Name,
+			UID:        pcs.UID,
+			Controller: ptr.To(true),
+		}},
+	}}
+}
+
+func requireSubGroup(t *testing.T, podGroup *kaischedulingv2alpha2.PodGroup, name string) *kaischedulingv2alpha2.SubGroup {
+	t.Helper()
+	subGroup := findSubGroup(podGroup, name)
+	require.NotNil(t, subGroup, "subgroup %q not found", name)
+	return subGroup
+}
+
+func findSubGroup(podGroup *kaischedulingv2alpha2.PodGroup, name string) *kaischedulingv2alpha2.SubGroup {
+	for i := range podGroup.Spec.SubGroups {
+		if podGroup.Spec.SubGroups[i].Name == name {
+			return &podGroup.Spec.SubGroups[i]
+		}
+	}
+	return nil
+}
+
+func terminatingPodGang(pcs *grovecorev1alpha1.PodCliqueSet) *groveschedulerv1alpha1.PodGang {
+	const name = "terminating-podgang"
+	podGang := testutils.NewPodGangBuilder(name, pcs.Namespace).
+		WithSchedulerName(string(configv1alpha1.SchedulerNameKai)).
+		WithDeletionTimestamp().
+		Build()
+	podGang.UID = types.UID(name + "-uid")
+	podGang.Labels[apicommon.LabelEpoch] = "retired-epoch"
+	podGang.Finalizers = []string{podGangFinalizer}
+	setPodCliqueSetControllerOwner(podGang, pcs)
+	return podGang
+}
+
+func assertPodGangFinalizerRemoved(t *testing.T, cl client.Client, podGang *groveschedulerv1alpha1.PodGang) {
+	t.Helper()
+	updated := &groveschedulerv1alpha1.PodGang{}
+	err := cl.Get(context.Background(), client.ObjectKeyFromObject(podGang), updated)
+	if apierrors.IsNotFound(err) {
+		return
+	}
+	require.NoError(t, err)
+	assert.NotContains(t, updated.Finalizers, podGangFinalizer)
+}
+
+type blockingPodGangMapGetClient struct {
+	client.Client
+	blockedKey client.ObjectKey
+	getStarted chan client.ObjectKey
+	release    chan struct{}
+	once       sync.Once
+}
+
+func (c *blockingPodGangMapGetClient) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+	if _, isPodGangMap := obj.(*grovecorev1alpha1.PodGangMap); isPodGangMap {
+		c.getStarted <- key
+		if key == c.blockedKey {
+			wait := false
+			c.once.Do(func() { wait = true })
+			if wait {
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-c.release:
+				}
+			}
+		}
+	}
+	return c.Client.Get(ctx, key, obj, opts...)
+}
+
+func receiveObjectKey(t *testing.T, keys <-chan client.ObjectKey) client.ObjectKey {
+	t.Helper()
+	select {
+	case key := <-keys:
+		return key
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for PodGangMap read")
+		return client.ObjectKey{}
+	}
+}
+
+func testPodGangMapKey(pcs *grovecorev1alpha1.PodCliqueSet, replica int) client.ObjectKey {
+	return client.ObjectKey{
+		Namespace: pcs.Namespace,
+		Name:      apicommon.GeneratePodGangMapName(apicommon.ResourceNameReplica{Name: pcs.Name, Replica: replica}),
+	}
+}
+
+type kaiBackendInitializer interface {
+	Init(client.Client) error
+}
+
+func initTestBackend(t *testing.T, backend kaiBackendInitializer, cl client.Client) {
+	t.Helper()
+	require.NoError(t, backend.Init(cl))
 }
