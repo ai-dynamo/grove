@@ -99,6 +99,8 @@ For `PodClique`, omitted `replicas` defaults to `1`, while explicit `0` is prese
 
 While a component is idle, it contributes no `PodGroup` and zero observed scheduled, available, and updated replicas. It does not set `MinAvailableBreached` to `True`, counts as updated for rolling-update completion, and does not trigger gang termination.
 
+Recovery must preserve each component's latest accepted replica target, including zero. Template replicas initialize new logical components only, not recovery replacements.
+
 On `N -> 0`, idle components leave `PodGangMap` membership and `A0`'s required groups without disrupting surviving pods or their recreation. Empty current-generation anchor and scale-out entries remain logical slots without materialized `PodGangs`.
 
 On `0 -> N`:
@@ -123,9 +125,9 @@ An empty `ScaleOut` entry gets a fresh epoch, depending on a materialized anchor
 
 An existing `A0` keeps its epoch, but its historical `LastScheduled` alone must not release new SPGs: extras wait for their PCSG's current wake quorum. Backends must enforce the restored `MinReplicas` and subgroup minima without disrupting surviving pods or triggering Grove gang termination.
 
-- **KAI:** Update full subgroup policies and disable stale-gang eviction; Grove handles failures, not pending wakes.
+- **KAI (v0.17.0+):** Update full subgroup policies; set `spec.stalenessGracePeriod: "-1s"` only on Grove-managed PodGroups, not globally.
 - **Volcano:** Update `MinMember` and the complete `SubGroupPolicy` together.
-- **Upstream Kubernetes (roadmap):** Add native hierarchical mapping, pending support for [MinGroupCount mutable for CompositePodGroups](https://github.com/kubernetes/kubernetes/pull/141023).
+- **Kubernetes WAS:** Add native hierarchical mapping, pending support for [MinGroupCount mutable for CompositePodGroups](https://github.com/kubernetes/kubernetes/pull/141023).
 
 ### Autoscaler Integration
 
@@ -230,6 +232,7 @@ Prototype coverage should show:
 - omitted `PodClique` `replicas` defaults to `1`, while explicit `0` is preserved;
 - omitted `minAvailable` defaults to `max(1, replicas)`;
 - an idle component does not stall a rolling update;
+- recovery and controller restarts preserve runtime replica targets that differ from template defaults, including zero and positive values;
 - create requests and updates through the main resource or `/scale` reject `0 < replicas < minAvailable`;
 - rejected updates leave `spec.replicas` unchanged;
 - a KEDA-like integration transitions from `0` directly to `minAvailable` or above without writing a positive below-quorum value;
