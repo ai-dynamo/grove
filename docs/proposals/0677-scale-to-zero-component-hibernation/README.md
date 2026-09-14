@@ -25,7 +25,7 @@
 
 ## Summary
 
-Grove should treat standalone `PodClique` or `PodCliqueScalingGroup` components with `replicas: 0` as an intentional idle state. This GREP makes gang logic tolerant of zero-replica members, rejects any positive replica count below `minAvailable`, and treats a PCSG wake as ordinary scale-out with one scaled `PodGang` per replica.
+Grove should treat standalone `PodClique` or `PodCliqueScalingGroup` components with `replicas: 0` as an intentional idle state. This GREP makes gang logic tolerant of zero-replica members, rejects any positive replica count below `minAvailable`, and restores a waking PCSG's minimum replicas into the existing anchor `PodGang`.
 
 ## Motivation
 
@@ -47,7 +47,7 @@ External replica writers should target either `0` or a value at least `minAvaila
 
 ## Proposal
 
-When a standalone `PodClique` or `PodCliqueScalingGroup` has `replicas: 0`, Grove should not require it as a gang member. When replicas become positive again, `minAvailable` continues to define the component's availability and gang-termination threshold. For a waking `PodCliqueScalingGroup`, it does not require the first `minAvailable` replicas to be scheduled atomically with each other.
+When a standalone `PodClique` or `PodCliqueScalingGroup` has `replicas: 0`, Grove should not require it as a gang member. When replicas become positive again, `minAvailable` continues to define the component's availability and gang-termination threshold. For a waking `PodCliqueScalingGroup`, the first `minAvailable` replicas must be admitted together in the reused anchor.
 
 An idle component should leave the `PodGang` rather than stay in it with a zero threshold: no `PodGroup` in `PodGang.spec.podGroups`, and no scaled `PodGang` for an idle `PodCliqueScalingGroup`. Shrinking a gang must not disturb the members still running.
 
@@ -99,20 +99,19 @@ For `PodClique`, omitted `replicas` defaults to `1`, while explicit `0` is prese
 
 While a component is idle, it contributes no `PodGroup` and zero observed scheduled, available, and updated replicas. It does not set `MinAvailableBreached` to `True`, counts as updated for rolling-update completion, and does not trigger gang termination.
 
-Idle components leave `PodGangMap` membership. Empty current-generation anchor and scale-out entries remain logical slots without materialized `PodGangs`.
+On `N -> 0`, idle components leave `PodGangMap` membership and `A0`'s required groups without disrupting surviving pods or their recreation. Empty current-generation anchor and scale-out entries remain logical slots without materialized `PodGangs`.
 
 On `0 -> N`:
 
-1. **PCSG:** all replica indices enter the current-generation `ScaleOut` entry, creating one SPG per replica. Gang and PCSG topology constraints apply per replica, not across `minAvailable` replicas.
+1. **PCSG:** restore replicas `[0, minAvailable)` into the current-generation anchor for joint admission. Remaining replicas enter the current-generation `ScaleOut` entry, creating one SPG per replica.
 2. **Standalone PodClique:** restore membership and the full `PodGroup` in the current-generation anchor (`A0`, or the highest `AnchorIndex` if several exist), materializing it if needed. No additional anchor is created.
 
 ```text
 PCSG (minAvailable: 2):
-  Initial:  A0 [replica 0 + replica 1] + SPG [replica 2]
-  Wake:     A0, if active
-             +--> SPG [replica 0]
-             +--> SPG [replica 1]
-             +--> SPG [replica 2]
+  Initial:  A0 [Router + replica 0 + replica 1] + SPG [replica 2]
+  Idle:     A0 [Router]
+  Wake:     A0 [Router + replica 0 + replica 1]
+             +--> SPG [replica 2], after this wake's quorum is admitted
 
 Standalone Decode:
   Before idle: A0 [Router + Decode]
@@ -122,9 +121,11 @@ Standalone Decode:
 
 An empty `ScaleOut` entry gets a fresh epoch, depending on a materialized anchor only if one exists. Non-empty entries retain their epoch and dependencies.
 
-Restoring a standalone PodClique's membership does not require it to be scheduled together with running anchor members or waking PCSGs. An already scheduled anchor keeps its epoch and `LastScheduled`, so dependent SPGs do not wait for this PodClique to wake. The restored `PodGroup` uses the PodClique's `minAvailable` as `MinReplicas`; backend tests must verify that this is enforced without disrupting running pods.
+An existing `A0` keeps its epoch, but its historical `LastScheduled` alone must not release new SPGs: extras wait for their PCSG's current wake quorum. Backends must enforce the restored `MinReplicas` and subgroup minima without disrupting surviving pods or triggering Grove gang termination.
 
-With a running router and independent P/D PCSGs (`minAvailable: 1`), each `0 -> 1` wake creates one SPG, without another anchor or joint P/D scheduling.
+- **KAI:** Update full subgroup policies and disable stale-gang eviction; Grove handles failures, not pending wakes.
+- **Volcano:** Update `MinMember` and the complete `SubGroupPolicy` together.
+- **Upstream Kubernetes (roadmap):** Add native hierarchical mapping, pending support for [MinGroupCount mutable for CompositePodGroups](https://github.com/kubernetes/kubernetes/pull/141023).
 
 ### Autoscaler Integration
 
