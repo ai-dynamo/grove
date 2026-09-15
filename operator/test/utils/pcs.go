@@ -164,6 +164,12 @@ func (b *PodCliqueSetBuilder) WithAnnotations(annotations map[string]string) *Po
 	return b
 }
 
+// WithLabels sets the labels for the PodCliqueSet.
+func (b *PodCliqueSetBuilder) WithLabels(labels map[string]string) *PodCliqueSetBuilder {
+	b.pcs.Labels = labels
+	return b
+}
+
 // WithStatusConditions sets the status conditions on the PodCliqueSet.
 func (b *PodCliqueSetBuilder) WithStatusConditions(conditions ...metav1.Condition) *PodCliqueSetBuilder {
 	b.pcs.Status.Conditions = conditions

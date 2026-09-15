@@ -162,11 +162,11 @@ func TestBackend_SyncPodGang_CreateAndUpdate(t *testing.T) {
 	assert.Equal(t, int32(3), *gotPodGroup.Spec.SubGroups[2].MinMember)
 
 	// Update PodGang: change min replicas. Queue remains sourced from the owning PCS.
-	updatedPodGang := podGang.DeepCopy()
-	updatedPodGang.Spec.PodGroups[0].MinReplicas = 4
-	require.NoError(t, cl.Update(ctx, updatedPodGang))
+	require.NoError(t, cl.Get(ctx, client.ObjectKeyFromObject(podGang), podGang))
+	podGang.Spec.PodGroups[0].MinReplicas = 4
+	require.NoError(t, cl.Update(ctx, podGang))
 
-	require.NoError(t, b.SyncPodGang(ctx, updatedPodGang))
+	require.NoError(t, b.SyncPodGang(ctx, podGang))
 	gotAfterUpdate := &kaischedulingv2alpha2.PodGroup{}
 	require.NoError(t, cl.Get(ctx, client.ObjectKey{Name: podGang.Name, Namespace: podGang.Namespace}, gotAfterUpdate))
 
@@ -223,6 +223,7 @@ func TestBackend_SyncPodGangSetsOwnerReferenceAndSkipAnnotation(t *testing.T) {
 		podCliqueTemplateWithQueue("worker-template", "team-a"),
 	)
 	podGang := testutils.NewPodGangBuilder("owned", "default").
+		WithPodGroup("worker-template", 1).
 		WithSchedulerName(string(configv1alpha1.SchedulerNameKai)).
 		Build()
 	setPodCliqueSetControllerOwner(podGang, pcs)
@@ -254,6 +255,8 @@ func TestBackend_SyncPodGang_UsesUniquePodCliqueTemplateQueue(t *testing.T) {
 		podCliqueTemplateWithQueue("worker-b", "team-a"),
 	)
 	podGang := testutils.NewPodGangBuilder("template-queue-podgang", "default").
+		WithPodGroup("worker-a", 1).
+		WithPodGroup("worker-b", 1).
 		WithSchedulerName(string(configv1alpha1.SchedulerNameKai)).
 		Build()
 	setPodCliqueSetControllerOwner(podGang, pcs)
@@ -415,6 +418,7 @@ func TestBackend_SyncPodGang_QueueResolutionFailuresDoNotCreatePodGroup(t *testi
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			podGang := testutils.NewPodGangBuilder("test-podgang", "default").
+				WithPodGroup("worker", 1).
 				WithSchedulerName(string(configv1alpha1.SchedulerNameKai)).
 				Build()
 			objects := []client.Object{podGang}
@@ -437,6 +441,44 @@ func TestBackend_SyncPodGang_QueueResolutionFailuresDoNotCreatePodGroup(t *testi
 			assert.True(t, apierrors.IsNotFound(err), "PodGroup must not be created when queue resolution fails")
 		})
 	}
+}
+
+func TestBackend_SyncPodGang_RemovesPodGroupOnEmptyInput(t *testing.T) {
+	pcs := newPodCliqueSet(
+		"empty-group-pcs",
+		"team-a",
+		podCliqueTemplateWithQueue("worker-template", "team-a"),
+	)
+	podGang := testutils.NewPodGangBuilder("empty-group-podgang", "default").
+		WithSchedulerName(string(configv1alpha1.SchedulerNameKai)).
+		Build()
+	setPodCliqueSetControllerOwner(podGang, pcs)
+	podGang.Spec.PodGroups = []groveschedulerv1alpha1.PodGroup{
+		{Name: "worker", MinReplicas: 1},
+	}
+
+	cl := testutils.NewTestClientBuilder().WithObjects(pcs, podGang).Build()
+	b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKai})
+	require.NoError(t, b.Init(cl))
+
+	require.NoError(t, b.SyncPodGang(t.Context(), podGang))
+
+	podGroup := &kaischedulingv2alpha2.PodGroup{}
+	require.NoError(t, cl.Get(t.Context(), client.ObjectKeyFromObject(podGang), podGroup))
+
+	podGang.Spec.PodGroups = nil
+
+	require.NoError(t, b.SyncPodGang(t.Context(), podGang))
+
+	err := cl.Get(t.Context(), client.ObjectKeyFromObject(podGang), podGroup)
+	require.Error(t, err)
+	require.True(t, apierrors.IsNotFound(err))
+
+	require.NoError(t, b.SyncPodGang(t.Context(), podGang))
+
+	err = cl.Get(t.Context(), client.ObjectKeyFromObject(podGang), podGroup)
+	require.Error(t, err)
+	require.True(t, apierrors.IsNotFound(err))
 }
 
 func TestPodGroupsEqual_AllowsTargetOnlyMetadata(t *testing.T) {
