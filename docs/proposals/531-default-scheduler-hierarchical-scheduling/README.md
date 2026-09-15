@@ -8,12 +8,15 @@
 - [Proposal](#proposal)
   - [Limitations/Risks &amp; Mitigations](#limitationsrisks--mitigations)
 - [Design Details](#design-details)
+  - [Mapping](#mapping)
+  - [Gang Scheduling Configuration](#gang-scheduling-configuration)
   - [Topology-Aware Scheduling](#topology-aware-scheduling)
+  - [Scheduling Flow](#scheduling-flow)
   - [Lifecycle](#lifecycle)
+  - [Status and Observability](#status-and-observability)
   - [Monitoring](#monitoring)
   - [Test Plan](#test-plan)
   - [Graduation Criteria](#graduation-criteria)
-- [Open Questions](#open-questions)
 <!-- /toc -->
 
 ## Summary
@@ -42,13 +45,14 @@ With hierarchical scheduling enabled for the default-scheduler backend, Grove tr
 - Kubernetes [Workload-Aware Scheduling](https://github.com/orgs/kubernetes/projects/251) is still evolving, and Grove must track upstream API changes.
 - `workloadbuilder` is reused where applicable; Grove handles translation, runtime object reconciliation, and Pod membership.
 - WAS requires `minCount >= 1`. An initial `MinReplicas=0` mapping fails closed; when Grove releases it to zero after initial placement, the backend retains the last positive upstream `minCount`.
-- WAS limits each template list to 8 entries and hierarchy depth to 4. `PodGang`s exceeding these limits fail closed before Pods are ungated.
+- WAS limits each template list to 8 entries and hierarchy depth to 4. `PodGang`s exceeding these limits fail closed.
 - WAS supports a single required topology key per generated group. Preferred topology constraints are unsupported and fail closed.
-- The backend requires `GenericWorkload` on kube-apiserver, kube-scheduler, and kube-controller-manager, plus `CompositePodGroup` and `TopologyAwareWorkloadScheduling` on kube-apiserver and kube-scheduler. Kubernetes 1.37 is the first upstream release with the complete hierarchy, and these gates are disabled by default. Missing capabilities or unsupported `PodGang` mappings fail closed; Grove does not fall back to scheduling Pods independently.
 
 ## Design Details
 
-Each Grove `PodGang` maps to:
+### Mapping
+
+Each Grove `PodGang` maps to one `Workload` with the following template tree:
 
 ```text
 Workload template tree
@@ -58,9 +62,21 @@ Workload template tree
    └─ PodGroupTemplate: Grove PodGroup
 ```
 
-Grove maps `MinReplicas` to `minCount` and one required topology key to the corresponding hierarchy level. It creates the runtime `CompositePodGroup` and `PodGroup` objects from these templates and sets their parent links.
+| Grove | WAS |
+| --- | --- |
+| `spec.podgroups[].minReplicas` | Leaf `spec.schedulingPolicy.gang.minCount` |
+| Direct child count | Composite `spec.schedulingPolicy.gang.minGroupCount`; all children required |
+| Required topology key | `spec.schedulingConstraints.topology[0].key` at the corresponding level |
+| `spec.priorityClassName` | Same field on all runtime groups |
 
-The hierarchy does not change the scheduling unit. Each generated `CompositePodGroup` uses gang scheduling with `minGroupCount` set to its number of direct child groups, preserving each Grove `PodGang` as one complete gang.
+### Gang Scheduling Configuration
+
+For `default-scheduler`, `config.gangScheduling` defaults to `false`. Enabling it requires Kubernetes >=1.37 with these feature gates enabled:
+
+- `GenericWorkload` on kube-apiserver, kube-scheduler, and kube-controller-manager.
+- `CompositePodGroup` and `TopologyAwareWorkloadScheduling` on kube-apiserver and kube-scheduler.
+
+Missing prerequisites fail Grove Operator startup without fallback. The user guide must document these requirements and startup failure behavior.
 
 ### Topology-Aware Scheduling
 
@@ -78,13 +94,54 @@ Grove maps `PodGang` constraints to the root `CompositePodGroup`, `PodGroup` con
 
 For base `PodGang`s, each `TopologyConstraintGroupConfig` generated from a PCSG constraint maps to a child `CompositePodGroup`. For scaled `PodGang`s, the PCSG occupies the entire `PodGang`, so its constraint is carried by `PodGang.TopologyConstraint` and maps to the root.
 
+### Scheduling Flow
+
+The diagram summarizes asynchronous reconciliation through the Kubernetes API. The default-scheduler backend runs inside the Grove Operator.
+
+```mermaid
+sequenceDiagram
+    box Grove Operator
+        participant Controller as Grove Controller
+        participant Backend as default-scheduler backend
+    end
+    participant Gang as PodGang
+    participant Workload
+    participant Groups as CompositePodGroup / PodGroup
+    participant Pods
+    participant Scheduler as kube-scheduler
+
+    Controller->>Gang: Create PodGang
+    Controller->>Backend: SyncPodGang()
+    Backend->>Workload: Reconcile templates
+    Backend->>Groups: Reconcile runtime groups and parent links
+    Controller->>Backend: PreparePod()
+    Backend-->>Controller: Pod spec with leaf PodGroup membership
+    Controller->>Pods: Create Pods
+    par Scheduling
+        Scheduler->>Groups: Evaluate gang and topology constraints
+        Scheduler->>Groups: Update conditions (where supported)
+        Scheduler->>Pods: Bind Pods when placement is feasible
+    and Live PodGang status
+        loop PodCliqueSet reconciliation
+            Controller->>Pods: Read current member Pod state
+            Controller->>Gang: Update Initialized, Scheduled, and Ready
+        end
+    end
+```
+
 ### Lifecycle
 
 Pod count changes update existing leaf `PodGroup`s. PCSG scale-out creates new `PodGang` hierarchies, while scale-in deletes the corresponding hierarchies.
 
-`PreparePod()` sets each Pod's immutable `spec.schedulingGroup.podGroupName` to its leaf `PodGroup`. Pods remain gated until the hierarchy for the current `PodGang` generation is ready. Existing Pods cannot be migrated in place and must be recreated through a Grove rollout.
+`PreparePod()` sets each Pod's immutable `spec.schedulingGroup.podGroupName` to its leaf `PodGroup`. Existing Pods cannot be migrated in place and must be recreated through a Grove rollout.
 
 Grove owns the lifecycle and desired state of generated scheduling objects, while kube-scheduler owns their runtime status.
+
+### Status and Observability
+
+This GREP follows the KAI and Volcano integrations: Grove observes scheduling through member Pods instead of mapping upstream group status into `PodGang.status`. The PodCliqueSet reconciler continues to maintain `Initialized`, `Scheduled`, and `Ready` using existing Pod creation, association, and per-clique `MinAvailable` checks.
+
+`Workload` has no `status`. Initial placement results are reported in runtime-group `status.conditions`: `PodGroupInitiallyScheduled` on leaf `PodGroup`s and `CompositePodGroupInitiallyScheduled` on root and child `CompositePodGroup`s ([kubernetes/kubernetes#140670](https://github.com/kubernetes/kubernetes/pull/140670)). Scheduler-specific diagnostics remain on the upstream groups and Pods.
 
 ### Monitoring
 
@@ -98,7 +155,3 @@ No new monitoring is introduced.
 ### Graduation Criteria
 
 Graduation follows upstream Kubernetes Workload-Aware Scheduling maturity and Grove production validation.
-
-## Open Questions
-
-Should hierarchical scheduling remain opt-in while Grove supports Kubernetes >=1.36, or should it raise the default-scheduler backend requirement to Kubernetes >=1.37?
