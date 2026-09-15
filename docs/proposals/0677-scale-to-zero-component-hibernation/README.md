@@ -59,9 +59,9 @@ An idle component should leave the `PodGang` rather than stay in it with a zero 
 | --- | --- | --- |
 | `PodCliqueSet` | Already allowed. Nothing is created; no `minAvailable` at this level. | Unchanged. |
 | `PodCliqueScalingGroup` | Rejected in the `PodCliqueSet` template; accepted on the object, which has no webhook. | Idle. No `PodGroup` in the base `PodGang` and no scaled `PodGang`. |
-| `PodClique` | `replicas: 0` is accepted on the object, which has no webhook, but is silently defaulted to `1` in the `PodCliqueSet` template. | Idle when standalone, contributing no `PodGroup`. A scaling-group member is not an independent scale target and cannot set `replicas: 0`; idle is expressed at the group level. |
+| `PodClique` | `replicas: 0` is accepted on the object, which has no webhook, but is silently defaulted to `1` in the `PodCliqueSet` template. | Idle when standalone, contributing no `PodGroup`. A scaling-group member cannot independently set `replicas: 0`; idle is expressed at the group level. |
 
-A `PodClique` owned by a `PodCliqueScalingGroup` must not be scaled independently, including to zero. To idle its members, set the owning `PodCliqueScalingGroup` to `replicas: 0`.
+A `PodClique` owned by a `PodCliqueScalingGroup` must not be independently scaled to zero; idle it by setting the owning group's `replicas` to `0`. Non-zero scaling remains allowed when `replicas >= minAvailable`.
 
 ### Below-Quorum Behavior
 
@@ -82,6 +82,8 @@ spec.replicas == 0 || spec.replicas >= minAvailable
 Reject is independent of the previous replica count. With `minAvailable: 3`, requests from `0` to `1` and from `4` to `2` are both rejected.
 
 A newly submitted standalone `PodClique`, `PodCliqueScalingGroup`, or corresponding `PodCliqueSet` template entry must already satisfy the invariant. Updates through the main resource or its `/scale` subresource that request `0 < replicas < minAvailable` are rejected.
+
+New invalid replica changes are rejected, but existing below-quorum objects may update other fields without changing `replicas` or `minAvailable`, subject to all other validation rules.
 
 ### Limitations/Risks & Mitigations
 
