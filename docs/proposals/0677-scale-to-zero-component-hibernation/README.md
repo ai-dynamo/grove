@@ -101,8 +101,6 @@ For `PodClique`, omitted `replicas` defaults to `1`, while explicit `0` is prese
 
 While a component is idle, it contributes no `PodGroup` and zero observed scheduled, available, and updated replicas. It does not set `MinAvailableBreached` to `True`, counts as updated for rolling-update completion, and does not trigger gang termination.
 
-Recovery must preserve each component's latest accepted replica target, including zero. Template replicas initialize new logical components only, not recovery replacements.
-
 On `N -> 0`, idle components leave `PodGangMap` membership and `A0`'s required groups without disrupting surviving pods or their recreation. Empty current-generation anchor and scale-out entries remain logical slots without materialized `PodGangs`.
 
 On `0 -> N`:
@@ -192,7 +190,7 @@ spec:
       minAvailable: 2
 ```
 
-Subsequent scale-to-zero happens on the derived objects, not this template: Grove sets `replicas` only at creation, so the replica writer owns it afterwards.
+Subsequent scale-to-zero happens on the derived objects, not this template.
 
 ```bash
 kubectl scale podclique scale-to-zero-deepseek-0-decode --replicas=0
@@ -234,7 +232,6 @@ Prototype coverage should show:
 - omitted `PodClique` `replicas` defaults to `1`, while explicit `0` is preserved;
 - omitted `minAvailable` defaults to `max(1, replicas)`;
 - an idle component does not stall a rolling update;
-- recovery and controller restarts preserve runtime replica targets that differ from template defaults, including zero and positive values;
 - create requests and updates through the main resource or `/scale` reject `0 < replicas < minAvailable`;
 - rejected updates leave `spec.replicas` unchanged;
 - a KEDA-like integration transitions from `0` directly to `minAvailable` or above without writing a positive below-quorum value;
