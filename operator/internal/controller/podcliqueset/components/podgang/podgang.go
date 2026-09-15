@@ -76,10 +76,9 @@ func New(client client.Client, scheme *runtime.Scheme, eventRecorder record.Even
 // GetExistingResourceNames returns the names of existing PodGang resources for the PodCliqueSet.
 func (r _resource) GetExistingResourceNames(ctx context.Context, logger logr.Logger, pcsObjMeta metav1.ObjectMeta) ([]string, error) {
 	logger.Info("Looking for existing PodGang resources created per replica of PodCliqueSet")
-	objMetaList := &metav1.PartialObjectMetadataList{}
-	objMetaList.SetGroupVersionKind(groveschedulerv1alpha1.SchemeGroupVersion.WithKind("PodGang"))
+	podGangList := &groveschedulerv1alpha1.PodGangList{}
 	if err := r.client.List(ctx,
-		objMetaList,
+		podGangList,
 		client.InNamespace(pcsObjMeta.Namespace),
 		client.MatchingLabels(componentutils.GetPodGangSelectorLabels(pcsObjMeta)),
 	); err != nil {
@@ -89,7 +88,7 @@ func (r _resource) GetExistingResourceNames(ctx context.Context, logger logr.Log
 			fmt.Sprintf("Error listing PodGang for PodCliqueSet: %v", k8sutils.GetObjectKeyFromObjectMeta(pcsObjMeta)),
 		)
 	}
-	return k8sutils.FilterMapOwnedResourceNames(pcsObjMeta, objMetaList.Items), nil
+	return k8sutils.FilterMapOwnedResourceNames(pcsObjMeta, podGangList.Items), nil
 }
 
 // Sync creates, updates, or deletes PodGang resources to match the desired state.

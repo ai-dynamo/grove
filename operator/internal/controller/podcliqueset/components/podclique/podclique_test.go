@@ -108,8 +108,9 @@ func TestGetExistingResourceNames(t *testing.T) {
 			pcs := pcsBuilder.Build()
 			// Create existing objects
 			existingObjects := createExistingPodCliquesFromPCS(pcs, tc.podCliqueNamesNotOwnedByPCS)
-			// Create a fake client with PodCliques
-			cl := testutils.CreateFakeClientForObjectsMatchingLabels(nil, tc.listErr, pcs.Namespace, grovecorev1alpha1.SchemeGroupVersion.WithKind("PodClique"), getPodCliqueSelectorLabels(pcs.ObjectMeta), existingObjects...)
+			// Create a fake client with PodCliques. The list-error record is keyed by the list object's
+			// GVK (PodCliqueList), which is what the typed PodCliqueList List call resolves to.
+			cl := testutils.CreateFakeClientForObjectsMatchingLabels(nil, tc.listErr, pcs.Namespace, grovecorev1alpha1.SchemeGroupVersion.WithKind("PodCliqueList"), getPodCliqueSelectorLabels(pcs.ObjectMeta), existingObjects...)
 			operator := New(cl, groveclientscheme.Scheme, record.NewFakeRecorder(10))
 			actualPCLQNames, err := operator.GetExistingResourceNames(context.Background(), logr.Discard(), pcs.ObjectMeta)
 			if tc.expectedErr == nil {
