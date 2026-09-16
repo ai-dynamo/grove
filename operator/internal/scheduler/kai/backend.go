@@ -264,17 +264,16 @@ func getTopologyName(podGang *groveschedulerv1alpha1.PodGang) string {
 // bindingName is the ClusterTopologyBinding's own resource name, as recorded on the PodGang's
 // topology-name annotation. When the binding declares an externally-managed SchedulerTopologyBinding
 // for this backend, that binding's TopologyReference is returned instead, since the externally-managed
-// KAI Topology resource may be named differently from the ClusterTopologyBinding itself. Otherwise, or
-// if the ClusterTopologyBinding cannot be found, bindingName is returned unchanged.
+// KAI Topology resource may be named differently from the ClusterTopologyBinding itself. Otherwise
+// bindingName is returned unchanged. The admission webhook requires the referenced ClusterTopologyBinding
+// to exist, but it could have been deleted since admission; treat that as an error rather than silently
+// scheduling against an unresolved (and possibly wrong) topology name.
 func (b *schedulerBackend) resolveTopologyName(ctx context.Context, bindingName string) (string, error) {
 	if bindingName == "" {
 		return "", nil
 	}
 	ct := &grovecorev1alpha1.ClusterTopologyBinding{}
 	if err := b.client.Get(ctx, client.ObjectKey{Name: bindingName}, ct); err != nil {
-		if apierrors.IsNotFound(err) {
-			return bindingName, nil
-		}
 		return "", fmt.Errorf("get ClusterTopologyBinding %s: %w", bindingName, err)
 	}
 	for _, ref := range ct.Spec.SchedulerTopologyBindings {

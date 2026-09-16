@@ -124,8 +124,12 @@ func TestBackend_SyncPodGang_CreateAndUpdate(t *testing.T) {
 		},
 	}
 
+	ct := &grovecorev1alpha1.ClusterTopologyBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: "cluster-topology"},
+		Spec:       grovecorev1alpha1.ClusterTopologyBindingSpec{Levels: []grovecorev1alpha1.TopologyLevel{{Key: "zone"}}},
+	}
 	cl := testutils.NewTestClientBuilder().
-		WithObjects(pcs, podGang).
+		WithObjects(pcs, ct, podGang).
 		Build()
 	recorder := record.NewFakeRecorder(10)
 	profile := configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKai}
@@ -216,7 +220,6 @@ func TestBackend_ResolveTopologyName(t *testing.T) {
 		{name: "externally-managed binding resolves to TopologyReference", bindingName: "externally-managed-binding", want: "external-kai-topology"},
 		{name: "grove-managed binding falls back to binding name", bindingName: "grove-managed-binding", want: "grove-managed-binding"},
 		{name: "binding without an entry for this scheduler falls back to binding name", bindingName: "other-scheduler-binding", want: "other-scheduler-binding"},
-		{name: "binding not found falls back to binding name", bindingName: "does-not-exist", want: "does-not-exist"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -225,6 +228,45 @@ func TestBackend_ResolveTopologyName(t *testing.T) {
 			assert.Equal(t, tt.want, got)
 		})
 	}
+
+	t.Run("binding not found returns an error", func(t *testing.T) {
+		_, err := b.resolveTopologyName(context.Background(), "does-not-exist")
+		require.ErrorContains(t, err, "does-not-exist")
+	})
+}
+
+func TestBackend_SyncPodGang_MissingClusterTopologyBindingFailsLoudly(t *testing.T) {
+	pcs := newPodCliqueSet(
+		"missing-ct-pcs",
+		"team-a",
+		podCliqueTemplateWithQueue("worker", "team-a"),
+	)
+	podGang := testutils.NewPodGangBuilder("missing-ct-podgang", "default").
+		WithSchedulerName(string(configv1alpha1.SchedulerNameKai)).
+		Build()
+	setPodCliqueSetControllerOwner(podGang, pcs)
+	// No ClusterTopologyBinding named "deleted-binding" exists; normally the admission webhook
+	// would reject this at creation time, but it could have been deleted afterward.
+	podGang.Annotations = map[string]string{"grove.io/topology-name": "deleted-binding"}
+	podGang.Spec.TopologyConstraint = &groveschedulerv1alpha1.TopologyConstraint{
+		PackConstraint: &groveschedulerv1alpha1.TopologyPackConstraint{
+			Required: ptr.To("zone"),
+		},
+	}
+	podGang.Spec.PodGroups = []groveschedulerv1alpha1.PodGroup{
+		{Name: "worker", MinReplicas: 1},
+	}
+
+	cl := testutils.NewTestClientBuilder().WithObjects(pcs, podGang).Build()
+	b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKai})
+	require.NoError(t, b.Init(cl))
+
+	err := b.SyncPodGang(context.Background(), podGang)
+	require.ErrorContains(t, err, "deleted-binding")
+
+	podGroup := &kaischedulingv2alpha2.PodGroup{}
+	err = cl.Get(context.Background(), client.ObjectKeyFromObject(podGang), podGroup)
+	assert.True(t, apierrors.IsNotFound(err), "PodGroup must not be created when the ClusterTopologyBinding cannot be resolved")
 }
 
 func TestBackend_SyncPodGang_ResolvesExternallyManagedTopologyName(t *testing.T) {
