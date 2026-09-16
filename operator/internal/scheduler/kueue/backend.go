@@ -67,7 +67,10 @@ type schedulerBackend struct {
 	config        configv1alpha1.KueueSchedulerConfiguration
 }
 
-var _ scheduler.Backend = (*schedulerBackend)(nil)
+var (
+	_ scheduler.Backend                 = (*schedulerBackend)(nil)
+	_ scheduler.PodCliqueScaleValidator = (*schedulerBackend)(nil)
+)
 
 // New creates a new Kueue backend instance. profile is the scheduler profile for kueue; schedulerBackend
 // uses profile.Name and may unmarshal profile.Config into KueueSchedulerConfiguration.
@@ -339,6 +342,21 @@ func (b *schedulerBackend) podGangTotalPodCount(ctx context.Context, pcs *grovec
 // (minAvailable < replicas) semantics. PodCliqueScalingGroups, and the PodCliques that belong to
 // them, are always all-or-nothing and must not declare minAvailable < replicas.
 func (b *schedulerBackend) ValidatePodCliqueSet(_ context.Context, pcs *grovecorev1alpha1.PodCliqueSet) error {
+	// Grove materializes an HPA per clique declaring autoScalingConfig, which would scale the PodClique
+	// and be denied by ValidatePodCliqueScale on every attempt. Reject it up front instead.
+	var autoScaledCliques []string
+	for _, cliqueTemplate := range pcs.Spec.Template.Cliques {
+		if cliqueTemplate == nil {
+			continue
+		}
+		if cliqueTemplate.Spec.ScaleConfig != nil {
+			autoScaledCliques = append(autoScaledCliques, cliqueTemplate.Name)
+		}
+	}
+	if len(autoScaledCliques) > 0 {
+		return fmt.Errorf("kueue backend does not support autoScalingConfig on a PodClique because scaling a PodClique reshapes an existing PodGang whose Kueue Workload podSets are immutable, but the following declare it: %s; declare autoscaling on a PodCliqueScalingGroup instead", strings.Join(autoScaledCliques, ", "))
+	}
+
 	var partialGangPCSGs []string
 	for _, pcsgConfig := range pcs.Spec.Template.PodCliqueScalingGroupConfigs {
 		// A nil Replicas or MinAvailable defers to the CRD's kubebuilder default; nothing to compare yet.
@@ -394,6 +412,17 @@ func (b *schedulerBackend) ValidatePodCliqueSet(_ context.Context, pcs *grovecor
 		return fmt.Errorf("kueue backend allows at most one standalone PodClique with minAvailable < replicas because Kueue permits minCount on at most one podSet per Workload, but found %d: %s", len(partialGangCliques), strings.Join(partialGangCliques, ", "))
 	}
 	return nil
+}
+
+// ValidatePodCliqueScale rejects any change to a PodClique's replica count. Scaling a PodClique
+// reshapes its PodGang in place, but the prebuilt Workload is created once and never updated (see
+// SyncPodGang), so its podSets would no longer describe the PodGang. Scaling a PodCliqueScalingGroup
+// stays supported: it adds or removes whole PodGangs, each getting its own Workload.
+func (b *schedulerBackend) ValidatePodCliqueScale(_ context.Context, oldReplicas, newReplicas int32) error {
+	if oldReplicas == newReplicas {
+		return nil
+	}
+	return fmt.Errorf("kueue backend does not support scaling a PodClique (%d -> %d) because its Kueue Workload podSets are fixed when the PodGang is created and are never updated; scale the PodCliqueScalingGroup that owns it instead", oldReplicas, newReplicas)
 }
 
 func defaultConfig() configv1alpha1.KueueSchedulerConfiguration {

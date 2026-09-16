@@ -23,6 +23,7 @@ import (
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
@@ -693,4 +694,106 @@ func newPCSGPodClique(namespace, name, pcsgName string) *grovecorev1alpha1.PodCl
 			apicommon.LabelPodCliqueScalingGroupReplicaIndex: "0",
 		},
 	}}
+}
+
+func TestBackend_ValidatePodCliqueScale(t *testing.T) {
+	testCases := []struct {
+		description string
+		oldReplicas int32
+		newReplicas int32
+		wantErr     bool
+	}{
+		{description: "unchanged replica count is allowed", oldReplicas: 4, newReplicas: 4},
+		{description: "scale out is rejected", oldReplicas: 4, newReplicas: 7, wantErr: true},
+		{description: "scale in is rejected", oldReplicas: 4, newReplicas: 2, wantErr: true},
+		{description: "scale to zero is rejected", oldReplicas: 4, newReplicas: 0, wantErr: true},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.description, func(t *testing.T) {
+			cl := testutils.CreateDefaultFakeClient(nil)
+			recorder := record.NewFakeRecorder(10)
+			profile := configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKueue}
+			b := New(cl, cl.Scheme(), recorder, profile)
+			require.NoError(t, b.Init(nil))
+
+			scaleValidator, ok := b.(scheduler.PodCliqueScaleValidator)
+			require.True(t, ok, "kueue backend must implement scheduler.PodCliqueScaleValidator")
+
+			err := scaleValidator.ValidatePodCliqueScale(context.Background(), tc.oldReplicas, tc.newReplicas)
+			if tc.wantErr {
+				require.ErrorContains(t, err, "does not support scaling a PodClique")
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestBackend_ValidatePodCliqueSet_AutoScalingConfig(t *testing.T) {
+	testCases := []struct {
+		description string
+		cliques     []*grovecorev1alpha1.PodCliqueTemplateSpec
+		pcsgConfigs []grovecorev1alpha1.PodCliqueScalingGroupConfig
+		wantErr     bool
+	}{
+		{
+			description: "cliques without autoScalingConfig are valid",
+			cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+				{Name: "worker", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 4, MinAvailable: ptr.To[int32](4)}},
+			},
+		},
+		{
+			description: "clique declaring autoScalingConfig is rejected",
+			cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+				{Name: "worker", Spec: grovecorev1alpha1.PodCliqueSpec{
+					Replicas:     4,
+					MinAvailable: ptr.To[int32](4),
+					ScaleConfig:  &grovecorev1alpha1.AutoScalingConfig{MaxReplicas: 10},
+				}},
+			},
+			wantErr: true,
+		},
+		{
+			description: "autoScalingConfig on a PodCliqueScalingGroup is allowed",
+			cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+				{Name: "leader", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To[int32](1)}},
+				{Name: "worker", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 4, MinAvailable: ptr.To[int32](4)}},
+			},
+			pcsgConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+				{
+					Name:        "decode",
+					CliqueNames: []string{"leader", "worker"},
+					ScaleConfig: &grovecorev1alpha1.AutoScalingConfig{MaxReplicas: 10},
+				},
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.description, func(t *testing.T) {
+			cl := testutils.CreateDefaultFakeClient(nil)
+			recorder := record.NewFakeRecorder(10)
+			profile := configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKueue}
+			b := New(cl, cl.Scheme(), recorder, profile)
+			require.NoError(t, b.Init(nil))
+
+			pcs := &grovecorev1alpha1.PodCliqueSet{
+				ObjectMeta: metav1.ObjectMeta{Name: "demo", Namespace: "default"},
+				Spec: grovecorev1alpha1.PodCliqueSetSpec{
+					Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
+						Cliques:                      tc.cliques,
+						PodCliqueScalingGroupConfigs: tc.pcsgConfigs,
+					},
+				},
+			}
+
+			err := b.ValidatePodCliqueSet(context.Background(), pcs)
+			if tc.wantErr {
+				require.ErrorContains(t, err, "does not support autoScalingConfig on a PodClique")
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
 }
