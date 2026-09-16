@@ -124,8 +124,12 @@ func TestBackend_SyncPodGang_CreateAndUpdate(t *testing.T) {
 		},
 	}
 
+	ct := &grovecorev1alpha1.ClusterTopologyBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: "cluster-topology"},
+		Spec:       grovecorev1alpha1.ClusterTopologyBindingSpec{Levels: []grovecorev1alpha1.TopologyLevel{{Key: "zone"}}},
+	}
 	cl := testutils.NewTestClientBuilder().
-		WithObjects(pcs, podGang).
+		WithObjects(pcs, ct, podGang).
 		Build()
 	recorder := record.NewFakeRecorder(10)
 	profile := configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKai}
@@ -176,6 +180,134 @@ func TestBackend_SyncPodGang_CreateAndUpdate(t *testing.T) {
 	assert.Equal(t, int32(7), *gotAfterUpdate.Spec.MinMember)
 	require.NotNil(t, gotAfterUpdate.Spec.SubGroups[1].MinMember)
 	assert.Equal(t, int32(4), *gotAfterUpdate.Spec.SubGroups[1].MinMember)
+}
+
+func TestBackend_ResolveTopologyName(t *testing.T) {
+	externallyManagedCT := &grovecorev1alpha1.ClusterTopologyBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: "externally-managed-binding"},
+		Spec: grovecorev1alpha1.ClusterTopologyBindingSpec{
+			Levels: []grovecorev1alpha1.TopologyLevel{{Key: "zone"}},
+			SchedulerTopologyBindings: []grovecorev1alpha1.SchedulerTopologyBinding{
+				{SchedulerName: string(configv1alpha1.SchedulerNameKai), TopologyReference: "external-kai-topology"},
+			},
+		},
+	}
+	groveManagedCT := &grovecorev1alpha1.ClusterTopologyBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: "grove-managed-binding"},
+		Spec:       grovecorev1alpha1.ClusterTopologyBindingSpec{Levels: []grovecorev1alpha1.TopologyLevel{{Key: "zone"}}},
+	}
+	otherSchedulerCT := &grovecorev1alpha1.ClusterTopologyBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: "other-scheduler-binding"},
+		Spec: grovecorev1alpha1.ClusterTopologyBindingSpec{
+			Levels: []grovecorev1alpha1.TopologyLevel{{Key: "zone"}},
+			SchedulerTopologyBindings: []grovecorev1alpha1.SchedulerTopologyBinding{
+				{SchedulerName: "some-other-scheduler", TopologyReference: "some-other-topology"},
+			},
+		},
+	}
+
+	cl := testutils.NewTestClientBuilder().
+		WithObjects(externallyManagedCT, groveManagedCT, otherSchedulerCT).
+		Build()
+	b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKai}).(*schedulerBackend)
+
+	tests := []struct {
+		name        string
+		bindingName string
+		want        string
+	}{
+		{name: "empty binding name", bindingName: "", want: ""},
+		{name: "externally-managed binding resolves to TopologyReference", bindingName: "externally-managed-binding", want: "external-kai-topology"},
+		{name: "grove-managed binding falls back to binding name", bindingName: "grove-managed-binding", want: "grove-managed-binding"},
+		{name: "binding without an entry for this scheduler falls back to binding name", bindingName: "other-scheduler-binding", want: "other-scheduler-binding"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := b.resolveTopologyName(context.Background(), tt.bindingName)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+
+	t.Run("binding not found returns an error", func(t *testing.T) {
+		_, err := b.resolveTopologyName(context.Background(), "does-not-exist")
+		require.ErrorContains(t, err, "does-not-exist")
+	})
+}
+
+func TestBackend_SyncPodGang_MissingClusterTopologyBindingFailsLoudly(t *testing.T) {
+	pcs := newPodCliqueSet(
+		"missing-ct-pcs",
+		"team-a",
+		podCliqueTemplateWithQueue("worker", "team-a"),
+	)
+	podGang := testutils.NewPodGangBuilder("missing-ct-podgang", "default").
+		WithSchedulerName(string(configv1alpha1.SchedulerNameKai)).
+		Build()
+	setPodCliqueSetControllerOwner(podGang, pcs)
+	// No ClusterTopologyBinding named "deleted-binding" exists; normally the admission webhook
+	// would reject this at creation time, but it could have been deleted afterward.
+	podGang.Annotations = map[string]string{"grove.io/topology-name": "deleted-binding"}
+	podGang.Spec.TopologyConstraint = &groveschedulerv1alpha1.TopologyConstraint{
+		PackConstraint: &groveschedulerv1alpha1.TopologyPackConstraint{
+			Required: ptr.To("zone"),
+		},
+	}
+	podGang.Spec.PodGroups = []groveschedulerv1alpha1.PodGroup{
+		{Name: "worker", MinReplicas: 1},
+	}
+
+	cl := testutils.NewTestClientBuilder().WithObjects(pcs, podGang).Build()
+	b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKai})
+	require.NoError(t, b.Init(cl))
+
+	err := b.SyncPodGang(context.Background(), podGang)
+	require.ErrorContains(t, err, "deleted-binding")
+
+	podGroup := &kaischedulingv2alpha2.PodGroup{}
+	err = cl.Get(context.Background(), client.ObjectKeyFromObject(podGang), podGroup)
+	assert.True(t, apierrors.IsNotFound(err), "PodGroup must not be created when the ClusterTopologyBinding cannot be resolved")
+}
+
+func TestBackend_SyncPodGang_ResolvesExternallyManagedTopologyName(t *testing.T) {
+	pcs := newPodCliqueSet(
+		"topology-pcs",
+		"team-a",
+		podCliqueTemplateWithQueue("worker", "team-a"),
+	)
+	ct := &grovecorev1alpha1.ClusterTopologyBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: "mnnvl-topology-binding"},
+		Spec: grovecorev1alpha1.ClusterTopologyBindingSpec{
+			Levels: []grovecorev1alpha1.TopologyLevel{{Key: "zone"}},
+			SchedulerTopologyBindings: []grovecorev1alpha1.SchedulerTopologyBinding{
+				{SchedulerName: string(configv1alpha1.SchedulerNameKai), TopologyReference: "mnnvl-topology"},
+			},
+		},
+	}
+	podGang := testutils.NewPodGangBuilder("topology-podgang", "default").
+		WithSchedulerName(string(configv1alpha1.SchedulerNameKai)).
+		Build()
+	setPodCliqueSetControllerOwner(podGang, pcs)
+	podGang.Annotations = map[string]string{"grove.io/topology-name": ct.Name}
+	podGang.Spec.TopologyConstraint = &groveschedulerv1alpha1.TopologyConstraint{
+		PackConstraint: &groveschedulerv1alpha1.TopologyPackConstraint{
+			Required: ptr.To("zone"),
+		},
+	}
+	podGang.Spec.PodGroups = []groveschedulerv1alpha1.PodGroup{
+		{Name: "worker", MinReplicas: 1},
+	}
+
+	cl := testutils.NewTestClientBuilder().WithObjects(pcs, ct, podGang).Build()
+	b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKai})
+	require.NoError(t, b.Init(cl))
+
+	ctx := context.Background()
+	require.NoError(t, b.SyncPodGang(ctx, podGang))
+
+	podGroup := &kaischedulingv2alpha2.PodGroup{}
+	require.NoError(t, cl.Get(ctx, client.ObjectKeyFromObject(podGang), podGroup))
+	assert.Equal(t, "mnnvl-topology", podGroup.Spec.TopologyConstraint.Topology)
 }
 
 func TestBackend_SyncPodGang_SkipsEmptyTopologyConstraintGroups(t *testing.T) {

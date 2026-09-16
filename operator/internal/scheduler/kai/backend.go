@@ -152,7 +152,11 @@ func (b *schedulerBackend) ValidatePodCliqueSet(_ context.Context, pcs *grovecor
 
 // buildPodGroupForPodGang translates a Grove PodGang into a KAI PodGroup object.
 func (b *schedulerBackend) buildPodGroupForPodGang(ctx context.Context, podGang *groveschedulerv1alpha1.PodGang) (*kaischedulingv2alpha2.PodGroup, error) {
-	topologyName := getTopologyName(podGang)
+	bindingName := getTopologyName(podGang)
+	topologyName, err := b.resolveTopologyName(ctx, bindingName)
+	if err != nil {
+		return nil, err
+	}
 	topologyConstraint, err := toKAITopologyConstraint(podGang.Spec.TopologyConstraint, topologyName)
 	if err != nil {
 		return nil, err
@@ -254,6 +258,30 @@ func getTopologyName(podGang *groveschedulerv1alpha1.PodGang) string {
 	}
 	// Backward compatibility with KAI annotation key.
 	return podGang.Annotations["kai.scheduler/topology"]
+}
+
+// resolveTopologyName resolves the KAI-facing topology resource name for a ClusterTopologyBinding.
+// bindingName is the ClusterTopologyBinding's own resource name, as recorded on the PodGang's
+// topology-name annotation. When the binding declares an externally-managed SchedulerTopologyBinding
+// for this backend, that binding's TopologyReference is returned instead, since the externally-managed
+// KAI Topology resource may be named differently from the ClusterTopologyBinding itself. Otherwise
+// bindingName is returned unchanged. The admission webhook requires the referenced ClusterTopologyBinding
+// to exist, but it could have been deleted since admission; treat that as an error rather than silently
+// scheduling against an unresolved (and possibly wrong) topology name.
+func (b *schedulerBackend) resolveTopologyName(ctx context.Context, bindingName string) (string, error) {
+	if bindingName == "" {
+		return "", nil
+	}
+	ct := &grovecorev1alpha1.ClusterTopologyBinding{}
+	if err := b.client.Get(ctx, client.ObjectKey{Name: bindingName}, ct); err != nil {
+		return "", fmt.Errorf("get ClusterTopologyBinding %s: %w", bindingName, err)
+	}
+	for _, ref := range ct.Spec.SchedulerTopologyBindings {
+		if ref.SchedulerName == b.name && ref.TopologyReference != "" {
+			return ref.TopologyReference, nil
+		}
+	}
+	return bindingName, nil
 }
 
 // toKAITopologyConstraint converts Grove topology constraint to KAI topology constraint.
