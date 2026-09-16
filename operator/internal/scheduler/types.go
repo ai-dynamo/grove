@@ -52,6 +52,17 @@ type Backend interface {
 	ValidatePodCliqueSet(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet) error
 }
 
+// PodCliqueScaleValidator is an optional interface that Backend implementations may satisfy to
+// restrict scaling of an individual PodClique. The PodClique validating webhook type-asserts the
+// resolved backend to this interface; backends that do not implement it impose no restriction.
+type PodCliqueScaleValidator interface {
+	// ValidatePodCliqueScale runs scheduler-specific validation on a requested change to a PodClique's
+	// replica count. Both counts are taken from the admission request. The PodClique being scaled is
+	// deliberately not passed: resolving which backend owns it is the webhook's job, and the admission
+	// response is already attributed to that object by the API server.
+	ValidatePodCliqueScale(ctx context.Context, oldReplicas, newReplicas int32) error
+}
+
 // TopologyAwareBackend is an optional interface that Backend
 // implementations may satisfy if they manage a scheduler-specific topology CRD.
 // The ClusterTopologyBinding controller type-asserts each registered backend to this
