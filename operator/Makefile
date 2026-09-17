@@ -22,9 +22,20 @@ LD_PACKAGE_PATH := "github.com/ai-dynamo/grove/operator/internal"
 OPERATOR_NAME        := "grove-operator"
 INITC_NAME           := "grove-initc"
 INSTALL_CRDS_NAME    := "grove-install-crds"
-K3S_IMAGE       ?= rancher/k3s:v1.35.5-k3s1
+K3S_IMAGE := $(or $(K3S_IMAGE),$(E2E_CLUSTER__K3S_IMAGE),rancher/k3s:v1.35.5-k3s1)
+KUBERNETES_SUPPORTED_VERSIONS := 1.34 1.35
+KUBERNETES_CURRENT_VERSION    ?= $(lastword $(KUBERNETES_SUPPORTED_VERSIONS))
+KUBERNETES_VERSION            ?= $(KUBERNETES_CURRENT_VERSION)
+ifeq ($(strip $(KUBERNETES_VERSION)),)
+KUBERNETES_VERSION := $(KUBERNETES_CURRENT_VERSION)
+endif
+K3S_IMAGE_KUBERNETES_1_34     ?= rancher/k3s:v1.34.11-k3s1
+K3S_IMAGE_KUBERNETES_1_35     ?= rancher/k3s:v1.35.8-k3s1
+K3S_IMAGE_FOR_KUBERNETES       = $(K3S_IMAGE_KUBERNETES_$(subst .,_,$(KUBERNETES_VERSION)))
+KUBERNETES_COMPATIBILITY_TEST_PATTERN ?= ^(Test_CascadeDeletePodCliqueSet|Test_(GS|GT|RU|OD|TAS|CM|CRD_Installer|RS|PGMR))
 E2E_REGISTRY_PORT ?= 5001
 E2E_CREATE_FLAGS  ?=
+E2E_GO_TEST_FLAGS ?=
 ifndef DIAG_DIR
 DIAG_DIR := $(if $(GROVE_E2E_DIAG_DIR),$(GROVE_E2E_DIAG_DIR),$(MODULE_ROOT)/e2e-diagnostics)
 endif
@@ -124,7 +135,7 @@ run-e2e:
 	@echo "> Preparing charts (copying CRDs)..."
 	@$(MODULE_HACK_DIR)/prepare-charts.sh
 	@echo "> Running e2e tests (compilation may take a few minutes with no output)..."
-	@cd e2e && go test -count=1 -tags=e2e ./tests/... -v -timeout 45m $(if $(TEST_PATTERN),-run '$(TEST_PATTERN)')
+	@cd e2e && go test -count=1 -tags=e2e $(E2E_GO_TEST_FLAGS) ./tests/... -v -timeout 45m $(if $(TEST_PATTERN),-run '$(TEST_PATTERN)')
 
 # Same as run-e2e but with gotestsum for cleaner pass/fail summaries and colored output
 .PHONY: run-e2e-verbose
@@ -164,10 +175,22 @@ e2e-cluster-down: $(UV)
 .PHONY: run-e2e-full
 run-e2e-full: e2e-cluster-up
 	@echo "> Running e2e tests..."
-	@$(MAKE) run-e2e TEST_PATTERN=$(TEST_PATTERN) || \
+	@$(MAKE) run-e2e TEST_PATTERN='$(TEST_PATTERN)' || \
 		(echo "Tests failed, cleaning up cluster..."; $(MAKE) e2e-cluster-down; exit 1)
 	@echo "> Tests passed, cleaning up cluster..."
 	@$(MAKE) e2e-cluster-down
+
+# Run all standard-cluster suites used by the Kubernetes compatibility matrix.
+# Dedicated scale, AutoMNNVL, startup-ordering, and upgrade suites are excluded.
+.PHONY: run-kubernetes-compatibility-e2e
+run-kubernetes-compatibility-e2e:
+	@test -n "$(K3S_IMAGE_FOR_KUBERNETES)" || \
+		(echo "Unsupported Kubernetes version $(KUBERNETES_VERSION); supported versions: $(KUBERNETES_SUPPORTED_VERSIONS)" && exit 1)
+	@echo "> Running Kubernetes $(KUBERNETES_VERSION) compatibility suite..."
+	@$(MAKE) run-e2e-full \
+		E2E_CLUSTER__K3S_IMAGE=$(K3S_IMAGE_FOR_KUBERNETES) \
+		E2E_GO_TEST_FLAGS='-p 1' \
+		TEST_PATTERN='$(or $(TEST_PATTERN),$(KUBERNETES_COMPATIBILITY_TEST_PATTERN))'
 
 # Run autoMNNVL e2e tests (all 4 configurations: supported/unsupported x enabled/disabled)
 # Creates a lightweight k3d cluster (2 workers, no Kai/topology), runs all configurations

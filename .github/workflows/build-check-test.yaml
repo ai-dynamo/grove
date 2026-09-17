@@ -102,6 +102,7 @@ jobs:
   #   test_name     (required) - name shown in the GitHub Actions UI
   #   test_pattern  (optional) - Go test -run pattern (standard e2e tests)
   #   make_target   (optional) - Makefile target, defaults to run-e2e-full
+  #   kubernetes_version (optional) - Kubernetes version, defaults to the current supported version
   e2e:
     needs: [test, build, check, changes]
     # Run only from copy-pr-bot's trusted branch.
@@ -110,7 +111,7 @@ jobs:
       needs.changes.outputs.e2e-relevant == 'true'
     # use NVIDIA self-hosted runner setting is on Velonix repository
     runs-on: prod-grove-e2e-v1
-    timeout-minutes: 60
+    timeout-minutes: ${{ matrix.timeout_minutes || 60 }}
     strategy:
       fail-fast: false
       matrix:
@@ -142,6 +143,14 @@ jobs:
           - test_name: version_upgrade
             test_pattern: "^Test_VUPG"
             make_target: "run-upgrade-e2e"
+          - test_name: kubernetes_1_34_default
+            make_target: "run-kubernetes-compatibility-e2e"
+            kubernetes_version: "1.34"
+            timeout_minutes: 90
+          - test_name: kubernetes_1_35_default
+            make_target: "run-kubernetes-compatibility-e2e"
+            kubernetes_version: "1.35"
+            timeout_minutes: 90
     name: E2E - ${{ matrix.test_name }}
     steps:
       # print runner specs so we have a record in case of failures
@@ -164,6 +173,7 @@ jobs:
       - name: Run e2e tests - ${{ matrix.test_name }}
         env:
           GITHUB_TOKEN: ${{ matrix.test_name == 'version_upgrade' && secrets.GITHUB_TOKEN || '' }}
+          KUBERNETES_VERSION: ${{ matrix.kubernetes_version || '' }}
         run: |
           make ${{ matrix.make_target || 'run-e2e-full' }} TEST_PATTERN='${{ matrix.test_pattern }}' E2E_CREATE_FLAGS='--dind-memory-mode'
         working-directory: operator
@@ -212,6 +222,8 @@ jobs:
           - test_name: resource_sharing
           - test_name: podgangmap_reconstruct
           - test_name: version_upgrade
+          - test_name: kubernetes_1_34_default
+          - test_name: kubernetes_1_35_default
     name: E2E - ${{ matrix.test_name }}
     steps:
       - name: Skip E2E (no relevant changes)
