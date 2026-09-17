@@ -84,7 +84,7 @@ grove-operator-cm-{{ include "operator.config.data" . | sha256sum | trunc 8 }}
 {{- end -}}
 
 {{- define "common.chart.labels" -}}
-chart: "{{ .Chart.Name }}-{{ .Chart.Version }}"
+chart: "{{- printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimAll "-_." }}"
 release: "{{ .Release.Name }}"
 {{- end -}}
 
