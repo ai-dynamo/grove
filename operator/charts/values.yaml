@@ -223,6 +223,12 @@ webhooks:
       app.kubernetes.io/name: clustertopology-validating-webhook
       app.kubernetes.io/part-of: grove
     annotations: {}
+  podCliqueValidationWebhook:
+    labels:
+      app.kubernetes.io/component: operator-podclique-validating-webhook
+      app.kubernetes.io/name: podclique-validating-webhook
+      app.kubernetes.io/part-of: grove
+    annotations: {}
   authorizerWebhook:
     labels:
       app.kubernetes.io/component: operator-authorizer-webhook
