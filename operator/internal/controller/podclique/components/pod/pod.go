@@ -111,26 +111,19 @@ func New(client client.Client,
 // Pods created for Jobs can reach corev1.PodSucceeded state or corev1.PodFailed state but these are not relevant for us at the moment.
 // In future when these states become relevant then we have to list the pods and filter on their status.Phase.
 func (r _resource) GetExistingResourceNames(ctx context.Context, _ logr.Logger, pclqObjMeta metav1.ObjectMeta) ([]string, error) {
-	var podNames []string
-	objMetaList := &metav1.PartialObjectMetadataList{}
-	objMetaList.SetGroupVersionKind(corev1.SchemeGroupVersion.WithKind("Pod"))
+	podList := &corev1.PodList{}
 	if err := r.client.List(ctx,
-		objMetaList,
+		podList,
 		client.InNamespace(pclqObjMeta.Namespace),
 		client.MatchingLabels(getSelectorLabelsForPods(pclqObjMeta)),
 	); err != nil {
-		return podNames, groveerr.WrapError(err,
+		return nil, groveerr.WrapError(err,
 			errCodeGetPod,
 			component.OperationGetExistingResourceNames,
 			"failed to list pods",
 		)
 	}
-	for _, pod := range objMetaList.Items {
-		if metav1.IsControlledBy(&pod, &pclqObjMeta) {
-			podNames = append(podNames, pod.Name)
-		}
-	}
-	return podNames, nil
+	return k8sutils.FilterMapOwnedResourceNames(pclqObjMeta, podList.Items), nil
 }
 
 // Sync ensures that the desired number of Pods exist for the PodClique with the correct configuration
