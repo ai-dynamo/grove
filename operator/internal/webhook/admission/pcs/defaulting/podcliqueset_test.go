@@ -116,6 +116,33 @@ func TestDefaultPodCliqueTemplateSpecs(t *testing.T) {
 			},
 		},
 		{
+			name: "minAvailable and scaleConfig minReplicas default to the defaulted replicas when replicas is 0",
+			input: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+				{
+					Name: "clique1",
+					Spec: grovecorev1alpha1.PodCliqueSpec{
+						Replicas:     0,
+						RoleName:     "role1",
+						MinAvailable: nil,
+						PodSpec:      corev1.PodSpec{},
+						ScaleConfig: &grovecorev1alpha1.AutoScalingConfig{
+							MinReplicas: nil,
+							MaxReplicas: 10,
+						},
+					},
+				},
+			},
+			verify: func(t *testing.T, result []*grovecorev1alpha1.PodCliqueTemplateSpec) {
+				require.Len(t, result, 1)
+				assert.Equal(t, int32(1), result[0].Spec.Replicas)
+				require.NotNil(t, result[0].Spec.MinAvailable)
+				assert.Equal(t, int32(1), *result[0].Spec.MinAvailable)
+				require.NotNil(t, result[0].Spec.ScaleConfig)
+				require.NotNil(t, result[0].Spec.ScaleConfig.MinReplicas)
+				assert.Equal(t, int32(1), *result[0].Spec.ScaleConfig.MinReplicas)
+			},
+		},
+		{
 			name: "minAvailable defaults to replicas when nil",
 			input: []*grovecorev1alpha1.PodCliqueTemplateSpec{
 				{

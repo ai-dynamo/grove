@@ -92,11 +92,11 @@ func defaultPodCliqueTemplateSpecs(cliqueSpecs []*grovecorev1alpha1.PodCliqueTem
 			defaultedCliqueSpec.Spec.Replicas = defaultReplicas
 		}
 		if cliqueSpec.Spec.MinAvailable == nil {
-			defaultedCliqueSpec.Spec.MinAvailable = ptr.To(cliqueSpec.Spec.Replicas)
+			defaultedCliqueSpec.Spec.MinAvailable = ptr.To(defaultedCliqueSpec.Spec.Replicas)
 		}
 		if cliqueSpec.Spec.ScaleConfig != nil {
 			if cliqueSpec.Spec.ScaleConfig.MinReplicas == nil {
-				defaultedCliqueSpec.Spec.ScaleConfig.MinReplicas = ptr.To(cliqueSpec.Spec.Replicas)
+				defaultedCliqueSpec.Spec.ScaleConfig.MinReplicas = ptr.To(defaultedCliqueSpec.Spec.Replicas)
 			}
 		}
 		// A standalone PodClique carries its own RollingUpdate. A PCSG-owned PodClique is governed by
