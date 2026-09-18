@@ -57,10 +57,9 @@ func New(client client.Client, scheme *runtime.Scheme) component.Operator[grovec
 // GetExistingResourceNames returns the names of PCLQ-level ResourceClaims
 // by selecting on the grove.io/podclique label that Sync stamps on each RC.
 func (r _resource) GetExistingResourceNames(ctx context.Context, _ logr.Logger, pclqObjMeta metav1.ObjectMeta) ([]string, error) {
-	objMetaList := &metav1.PartialObjectMetadataList{}
-	objMetaList.SetGroupVersionKind(resourcev1.SchemeGroupVersion.WithKind("ResourceClaim"))
+	claimList := &resourcev1.ResourceClaimList{}
 	if err := r.client.List(ctx,
-		objMetaList,
+		claimList,
 		client.InNamespace(pclqObjMeta.Namespace),
 		client.MatchingLabels(pclqResourceClaimLabels(pclqObjMeta)),
 	); err != nil {
@@ -73,7 +72,7 @@ func (r _resource) GetExistingResourceNames(ctx context.Context, _ logr.Logger, 
 			fmt.Sprintf("Error listing ResourceClaims for PCLQ %s", pclqObjMeta.Name),
 		)
 	}
-	return k8sutils.FilterMapOwnedResourceNames(pclqObjMeta, objMetaList.Items), nil
+	return k8sutils.FilterMapOwnedResourceNames(pclqObjMeta, claimList.Items), nil
 }
 
 // Sync creates or patches PCLQ-level ResourceClaims (AllReplicas + PerReplica)

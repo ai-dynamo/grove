@@ -59,9 +59,8 @@ func New(client client.Client, scheme *runtime.Scheme) component.Operator[grovec
 func (r _resource) GetExistingResourceNames(ctx context.Context, _ logr.Logger, pcsObjMeta metav1.ObjectMeta) ([]string, error) {
 	roleBindingNames := make([]string, 0, 1)
 	objectKey := getObjectKey(pcsObjMeta)
-	objMeta := &metav1.PartialObjectMetadata{}
-	objMeta.SetGroupVersionKind(rbacv1.SchemeGroupVersion.WithKind("RoleBinding"))
-	if err := r.client.Get(ctx, objectKey, objMeta); err != nil {
+	roleBinding := &rbacv1.RoleBinding{}
+	if err := r.client.Get(ctx, objectKey, roleBinding); err != nil {
 		if errors.IsNotFound(err) {
 			return roleBindingNames, nil
 		}
@@ -71,8 +70,8 @@ func (r _resource) GetExistingResourceNames(ctx context.Context, _ logr.Logger, 
 			fmt.Sprintf("Error getting RoleBinding: %v for PodCliqueSet: %v", objectKey, k8sutils.GetObjectKeyFromObjectMeta(pcsObjMeta)),
 		)
 	}
-	if metav1.IsControlledBy(objMeta, &pcsObjMeta) {
-		roleBindingNames = append(roleBindingNames, objMeta.Name)
+	if metav1.IsControlledBy(roleBinding, &pcsObjMeta) {
+		roleBindingNames = append(roleBindingNames, roleBinding.Name)
 	}
 	return roleBindingNames, nil
 }

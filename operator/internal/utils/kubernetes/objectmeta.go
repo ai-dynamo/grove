@@ -15,24 +15,29 @@
 package kubernetes
 
 import (
-	"github.com/samber/lo"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// FilterMapOwnedResourceNames filters the candidate typed objects and returns the names of those that are controlled by the given owner object meta.
-// The type parameter is constrained so that *T implements client.Object, allowing List results (which are slices of values) to be passed directly.
-func FilterMapOwnedResourceNames[T any, PT interface {
+// ObjectPtr is a constraint for generic helpers that receive a slice of API objects
+// by value (e.g. List().Items) but need to call pointer-receiver methods such as
+// GetName. It requires PT to be *T and for *T to implement client.Object.
+type ObjectPtr[T any] interface {
 	*T
 	client.Object
-}](ownerObjMeta metav1.ObjectMeta, candidateResources []T) []string {
-	return lo.FilterMap(candidateResources, func(obj T, _ int) (string, bool) {
-		objPtr := PT(&obj)
-		if metav1.IsControlledBy(objPtr, &ownerObjMeta) {
-			return objPtr.GetName(), true
+}
+
+// FilterMapOwnedResourceNames filters the candidate typed objects and returns the names of those that are controlled by the given owner object meta.
+// The type parameter is constrained so that *T implements client.Object, allowing List results (which are slices of values) to be passed directly.
+func FilterMapOwnedResourceNames[T any, PT ObjectPtr[T]](ownerObjMeta metav1.ObjectMeta, candidateResources []T) []string {
+	names := make([]string, 0, len(candidateResources))
+	for i := range candidateResources {
+		obj := PT(&candidateResources[i]) // pointer into the slice, no copy
+		if metav1.IsControlledBy(obj, &ownerObjMeta) {
+			names = append(names, obj.GetName())
 		}
-		return "", false
-	})
+	}
+	return names
 }
 
 // GetFirstOwnerName returns the name of the first owner reference of the resource object meta.

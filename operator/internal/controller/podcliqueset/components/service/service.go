@@ -56,10 +56,9 @@ func New(client client.Client, scheme *runtime.Scheme) component.Operator[grovec
 // GetExistingResourceNames returns the names of all the existing resources that the Service Operator manages.
 func (r _resource) GetExistingResourceNames(ctx context.Context, logger logr.Logger, pcsObjMeta metav1.ObjectMeta) ([]string, error) {
 	logger.Info("Looking for existing PodCliqueSet Headless Services", "objectKey", k8sutils.GetObjectKeyFromObjectMeta(pcsObjMeta))
-	objMetaList := &metav1.PartialObjectMetadataList{}
-	objMetaList.SetGroupVersionKind(corev1.SchemeGroupVersion.WithKind("Service"))
+	serviceList := &corev1.ServiceList{}
 	if err := r.client.List(ctx,
-		objMetaList,
+		serviceList,
 		client.InNamespace(pcsObjMeta.Namespace),
 		client.MatchingLabels(getSelectorLabelsForAllHeadlessServices(pcsObjMeta.Name)),
 	); err != nil {
@@ -69,7 +68,7 @@ func (r _resource) GetExistingResourceNames(ctx context.Context, logger logr.Log
 			fmt.Sprintf("Error listing Headless Services for PodCliqueSet: %v", k8sutils.GetObjectKeyFromObjectMeta(pcsObjMeta)),
 		)
 	}
-	return k8sutils.FilterMapOwnedResourceNames(pcsObjMeta, objMetaList.Items), nil
+	return k8sutils.FilterMapOwnedResourceNames(pcsObjMeta, serviceList.Items), nil
 }
 
 // Sync synchronizes all resources that the Service Operator manages.
