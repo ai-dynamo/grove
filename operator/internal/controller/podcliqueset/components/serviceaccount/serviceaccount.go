@@ -82,7 +82,7 @@ func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *v1alpha1.P
 	sa := emptyServiceAccount(objectKey)
 
 	logger.Info("Running CreateOrUpdate ServiceAccount", "objectKey", objectKey)
-	opResult, err := controllerutil.CreateOrPatch(ctx, r.client, sa, func() error {
+	opResult, err := k8sutils.CreateOrPatchSpec(ctx, r.client, sa, func() error {
 		return r.buildResource(pcs, sa)
 	})
 	if err != nil {

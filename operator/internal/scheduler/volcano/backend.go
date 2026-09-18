@@ -22,6 +22,7 @@ import (
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
+	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
@@ -95,7 +96,7 @@ func (b *schedulerBackend) SyncPodGang(ctx context.Context, podGang *groveschedu
 		},
 	}
 
-	_, err := controllerutil.CreateOrPatch(ctx, b.client, podGroup, func() error {
+	_, err := k8sutils.CreateOrPatchSpec(ctx, b.client, podGroup, func() error {
 		if podGroup.Labels == nil {
 			podGroup.Labels = map[string]string{}
 		}

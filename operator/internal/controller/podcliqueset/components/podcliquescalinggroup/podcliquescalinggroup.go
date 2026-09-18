@@ -167,7 +167,7 @@ func (r _resource) doCreateOrUpdate(ctx context.Context, logger logr.Logger, pcs
 	logger.Info("CreateOrUpdate PodCliqueScalingGroup", "objectKey", pcsgObjectKey)
 	pcsg := emptyPodCliqueScalingGroup(pcsgObjectKey)
 
-	if _, err := controllerutil.CreateOrPatch(ctx, r.client, pcsg, func() error {
+	if _, err := k8sutils.CreateOrPatchSpec(ctx, r.client, pcsg, func() error {
 		if err := r.buildResource(pcsg, pcs, pcsReplica, pcsgConfig, pcsgExists); err != nil {
 			return groveerr.WrapError(err,
 				errCodeCreatePodCliqueScalingGroup,
