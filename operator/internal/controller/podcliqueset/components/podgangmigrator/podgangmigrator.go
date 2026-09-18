@@ -25,6 +25,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/podgangmigrator"
+	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
@@ -50,17 +51,19 @@ const (
 )
 
 type _resource struct {
-	client client.Client
-	scheme *runtime.Scheme
+	client        client.Client
+	scheme        *runtime.Scheme
+	schedRegistry scheduler.Registry
 }
 
 // New creates a new PodGang migration operator. It migrates a PodCliqueSet from the legacy PodGang
 // naming to the epoch-based PodGang naming and PodGangMap scheme. It uses the PodGangMap created
 // earlier in the same reconcile as the source of truth for the new names.
-func New(client client.Client, scheme *runtime.Scheme) component.Operator[grovecorev1alpha1.PodCliqueSet] {
+func New(client client.Client, scheme *runtime.Scheme, schedRegistry scheduler.Registry) component.Operator[grovecorev1alpha1.PodCliqueSet] {
 	return &_resource{
-		client: client,
-		scheme: scheme,
+		client:        client,
+		scheme:        scheme,
+		schedRegistry: schedRegistry,
 	}
 }
 
@@ -175,8 +178,36 @@ func resolveTargetPodGangName(pgm *grovecorev1alpha1.PodGangMap, pcsRnr apicommo
 	return podGangName, nil
 }
 
-// migratePodsOfPodClique rewrites grove.io/podgang to targetPodGangName and drops grove.io/base-podgang
-// on every non-terminating Pod owned by the named PodClique.
+// migratePodGangLabels rewrites the PodGang-scheme labels on obj to the new scheme. It does the following:
+//   - Set grove.io/podgang to targetPodGangName.
+//   - Drop the legacy grove.io/base-podgang label.
+//
+// It patches only on divergence and touches labels only, never spec, so no Pod is recreated. Pods
+// carry additional scheduler-backend membership annotations, so they migrate through migratePodLabelsAndAnnotations
+// instead.
+func (r _resource) migratePodGangLabels(ctx context.Context, obj client.Object, targetPodGangName string) error {
+	labels := obj.GetLabels()
+	if len(labels) == 0 {
+		return groveerr.New(errCodeMissingLabels, component.OperationSync,
+			fmt.Sprintf("%v has no labels, which is an unexpected state for an operator-managed resource", client.ObjectKeyFromObject(obj)))
+	}
+	if !podGangLabelsNeedUpdate(labels, targetPodGangName) {
+		return nil
+	}
+	original := obj.DeepCopyObject().(client.Object)
+	rewritePodGangLabels(labels, targetPodGangName)
+	obj.SetLabels(labels)
+	if err := r.client.Patch(ctx, obj, client.MergeFrom(original)); err != nil {
+		return groveerr.WrapError(err, errCodePatchPodGangLabels, component.OperationSync,
+			fmt.Sprintf("failed to migrate PodGang labels on %v", client.ObjectKeyFromObject(obj)))
+	}
+	return nil
+}
+
+// migratePodsOfPodClique migrates every non-terminating Pod owned by the named PodClique to the
+// epoch-based scheme. On each Pod it rewrites grove.io/podgang to targetPodGangName, drops
+// grove.io/base-podgang, and refreshes the scheduler-backend membership annotations so the Pod joins
+// the epoch-based scheduler PodGroup.
 func (r _resource) migratePodsOfPodClique(ctx context.Context, namespace, pclqName, targetPodGangName string) error {
 	podList := &corev1.PodList{}
 	if err := r.client.List(ctx, podList,
@@ -186,41 +217,79 @@ func (r _resource) migratePodsOfPodClique(ctx context.Context, namespace, pclqNa
 		return groveerr.WrapError(err, errCodeListPods, component.OperationSync,
 			fmt.Sprintf("failed to list Pods for PodClique %q in namespace %q", pclqName, namespace))
 	}
-	for _, pod := range podList.Items {
+	for i := range podList.Items {
+		pod := &podList.Items[i]
 		if pod.DeletionTimestamp != nil {
 			continue
 		}
-		if err := r.migratePodGangLabels(ctx, &pod, targetPodGangName); err != nil {
+		if err := r.migratePodLabelsAndAnnotations(ctx, pod, targetPodGangName); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// migratePodGangLabels rewrites the PodGang-scheme labels on obj to the new scheme. It does the following:
-//   - Set grove.io/podgang to targetPodGangName.
-//   - Drop the legacy grove.io/base-podgang label.
-//
-// It patches only on divergence and touches labels only, never spec, so no Pod is recreated.
-func (r _resource) migratePodGangLabels(ctx context.Context, obj client.Object, targetPodGangName string) error {
-	labels := obj.GetLabels()
+// migratePodLabelsAndAnnotations migrates a single Pod to the epoch-based scheme in one patch. It rewrites the PodGang
+// labels and refreshes the scheduler-backend membership annotations for targetPodGangName. It patches
+// only on divergence and touches metadata only, never spec, so the Pod is not recreated.
+func (r _resource) migratePodLabelsAndAnnotations(ctx context.Context, pod *corev1.Pod, targetPodGangName string) error {
+	labels := pod.GetLabels()
 	if len(labels) == 0 {
 		return groveerr.New(errCodeMissingLabels, component.OperationSync,
-			fmt.Sprintf("%v has no labels, which is an unexpected state for an operator-managed resource", client.ObjectKeyFromObject(obj)))
+			fmt.Sprintf("%v has no labels, which is an unexpected state for an operator-managed resource", client.ObjectKeyFromObject(pod)))
 	}
-	_, hasBasePodGang := labels[apicommon.LabelBasePodGang]
-	if labels[apicommon.LabelPodGang] == targetPodGangName && !hasBasePodGang {
+	membership := r.podGangMembershipAnnotations(pod, targetPodGangName)
+	if !podGangLabelsNeedUpdate(labels, targetPodGangName) && !annotationsNeedUpdate(pod.Annotations, membership) {
 		return nil
 	}
-	original := obj.DeepCopyObject().(client.Object)
-	labels[apicommon.LabelPodGang] = targetPodGangName
-	delete(labels, apicommon.LabelBasePodGang)
-	obj.SetLabels(labels)
-	if err := r.client.Patch(ctx, obj, client.MergeFrom(original)); err != nil {
+	original := pod.DeepCopy()
+	rewritePodGangLabels(labels, targetPodGangName)
+	pod.SetLabels(labels)
+	if len(membership) > 0 {
+		pod.Annotations = lo.Assign(pod.Annotations, membership)
+	}
+	if err := r.client.Patch(ctx, pod, client.MergeFrom(original)); err != nil {
 		return groveerr.WrapError(err, errCodePatchPodGangLabels, component.OperationSync,
-			fmt.Sprintf("failed to migrate PodGang labels on %v", client.ObjectKeyFromObject(obj)))
+			fmt.Sprintf("failed to migrate PodGang metadata on %v", client.ObjectKeyFromObject(pod)))
 	}
 	return nil
+}
+
+// podGangLabelsNeedUpdate reports whether the PodGang-scheme labels differ from the epoch-based scheme,
+// i.e. grove.io/podgang is not yet targetPodGangName or the legacy grove.io/base-podgang label is
+// still present.
+func podGangLabelsNeedUpdate(labels map[string]string, targetPodGangName string) bool {
+	_, hasBasePodGang := labels[apicommon.LabelBasePodGang]
+	return labels[apicommon.LabelPodGang] != targetPodGangName || hasBasePodGang
+}
+
+// rewritePodGangLabels rewrites the PodGang-scheme labels in place: it sets grove.io/podgang to
+// targetPodGangName and drops the legacy grove.io/base-podgang label.
+func rewritePodGangLabels(labels map[string]string, targetPodGangName string) {
+	labels[apicommon.LabelPodGang] = targetPodGangName
+	delete(labels, apicommon.LabelBasePodGang)
+}
+
+// podGangMembershipAnnotations returns the scheduler-specific membership annotations the Pod's
+// scheduler backend requires for targetPodGangName, or nil when the backend defines none (for example
+// the plain kube backend). The Pod's spec.schedulerName selects the backend.
+func (r _resource) podGangMembershipAnnotations(pod *corev1.Pod, targetPodGangName string) map[string]string {
+	annotator, ok := r.schedRegistry.GetOrDefault(pod.Spec.SchedulerName).(podgangmigrator.PodGangMembershipAnnotator)
+	if !ok {
+		return nil
+	}
+	return annotator.PodGangMembershipAnnotations(targetPodGangName)
+}
+
+// annotationsNeedUpdate reports whether existing lacks any key of desired or maps it to a different
+// value.
+func annotationsNeedUpdate(existing, desired map[string]string) bool {
+	for k, v := range desired {
+		if existing[k] != v {
+			return true
+		}
+	}
+	return false
 }
 
 // allEpochBasedPodGangsCreated checks if all expected epoch-scheme based PodGangs are created for the PCS.

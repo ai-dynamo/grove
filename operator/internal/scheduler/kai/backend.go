@@ -151,9 +151,16 @@ func (b *schedulerBackend) PreparePod(pod *corev1.Pod) error {
 		pod.Labels = map[string]string{}
 	}
 	pod.Annotations[annotationKeySkipPGR] = annotationValSkipPGR
-	pod.Annotations[annotationPodGroup] = podGangName
+	maps.Copy(pod.Annotations, b.PodGangMembershipAnnotations(podGangName))
 	pod.Labels[labelSubGroup] = subGroupName
 	return nil
+}
+
+// PodGangMembershipAnnotations returns the KAI PodGroup membership annotation that KAI reads to
+// determine gang membership. The subgroup label derives from the PodClique name, which migration does
+// not change, so it is not part of the membership annotations.
+func (b *schedulerBackend) PodGangMembershipAnnotations(newPodGangName string) map[string]string {
+	return map[string]string{annotationPodGroup: newPodGangName}
 }
 
 // ValidatePodCliqueSet runs KAI-specific validations on the PodCliqueSet.
