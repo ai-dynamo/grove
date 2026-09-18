@@ -100,6 +100,8 @@ func (b *schedulerBackend) PreparePod(pod *corev1.Pod) error {
 		return b.secondaryBackend.PreparePod(pod)
 	}
 
+	pod.Spec.SchedulerName = corev1.DefaultSchedulerName
+
 	return nil
 }
 

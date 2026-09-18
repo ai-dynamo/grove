@@ -18,6 +18,7 @@ import (
 	"context"
 	"testing"
 
+	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
@@ -37,23 +38,42 @@ import (
 )
 
 func TestBackendPreparePod(t *testing.T) {
-	backend := New(nil,
-		configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameLPX},
-		testutils.NewFakeSchedulerBackend(string(configv1alpha1.SchedulerNameKai)),
-	)
-	pod := testutils.NewPodWithBuilderWithDefaultSpec("test-pod", "default").
-		WithSchedulerName("default-scheduler").
-		Build()
-	pod.Spec.SchedulingGates = []corev1.PodSchedulingGate{{Name: "grove.io/podgang-pending-creation"}}
-	pod.Spec.Containers[0].Resources = corev1.ResourceRequirements{
-		Requests: corev1.ResourceList{resourcesLPX[0]: resource.MustParse("1")},
-	}
+	t.Run("without secondary backend", func(t *testing.T) {
+		backend := New(nil, configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameLPX}, nil)
 
-	require.NoError(t, backend.PreparePod(pod))
+		pod := testutils.NewPodWithBuilderWithDefaultSpec("test-pod", "default").
+			WithSchedulerName("lpx-scheduler").
+			Build()
 
-	assert.Equal(t, string(configv1alpha1.SchedulerNameLPX), pod.Spec.SchedulerName)
-	require.Len(t, pod.Spec.SchedulingGates, 1)
-	assert.Equal(t, "grove.io/podgang-pending-creation", pod.Spec.SchedulingGates[0].Name)
+		require.NoError(t, backend.PreparePod(pod))
+		assert.Equal(t, string(corev1.DefaultSchedulerName), pod.Spec.SchedulerName)
+	})
+
+	t.Run("with secondary backend", func(t *testing.T) {
+		kaiBackend := kai.New(nil, nil, nil, configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKai})
+		backend := New(nil, configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameLPX}, kaiBackend)
+
+		pod := testutils.NewPodWithBuilderWithDefaultSpec("test-pod", "default").
+			WithSchedulerName("default-scheduler").
+			Build()
+		pod.Spec.Containers[0].Resources = corev1.ResourceRequirements{
+			Requests: corev1.ResourceList{resourcesLPX[0]: resource.MustParse("1")},
+		}
+
+		require.NoError(t, backend.PreparePod(pod))
+		assert.Equal(t, string(configv1alpha1.SchedulerNameLPX), pod.Spec.SchedulerName)
+
+		pod = testutils.NewPodWithBuilderWithDefaultSpec("test-pod", "default").
+			WithSchedulerName("lpx-scheduler").
+			WithLabels(map[string]string{
+				apicommon.LabelPodGang:   "podgang",
+				apicommon.LabelPodClique: "podclique",
+			}).
+			Build()
+
+		require.NoError(t, backend.PreparePod(pod))
+		assert.Equal(t, string(configv1alpha1.SchedulerNameKai), pod.Spec.SchedulerName)
+	})
 }
 
 func TestBackendSyncPodGangLPXOnly(t *testing.T) {
