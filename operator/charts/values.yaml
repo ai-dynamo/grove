@@ -211,6 +211,18 @@ webhooks:
       app.kubernetes.io/name: pcs-validating-webhook
       app.kubernetes.io/part-of: grove
     annotations: {}
+  podCliqueValidationWebhook:
+    labels:
+      app.kubernetes.io/component: operator-pclq-validating-webhook
+      app.kubernetes.io/name: pclq-validating-webhook
+      app.kubernetes.io/part-of: grove
+    annotations: {}
+  podCliqueScalingGroupValidationWebhook:
+    labels:
+      app.kubernetes.io/component: operator-pcsg-validating-webhook
+      app.kubernetes.io/name: pcsg-validating-webhook
+      app.kubernetes.io/part-of: grove
+    annotations: {}
   podCliqueSetDefaultingWebhook:
     labels:
       app.kubernetes.io/component: operator-pcs-defaulting-webhook

@@ -36,7 +36,7 @@ func TestDefaultPodCliqueSet(t *testing.T) {
 		},
 		Spec: grovecorev1alpha1.PodCliqueSetSpec{
 			UpdateStrategy: &grovecorev1alpha1.PodCliqueSetUpdateStrategy{
-				Type: grovecorev1alpha1.RollingRecreateStrategy,
+				Type: grovecorev1alpha1.CoherentStrategy,
 			},
 			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
 				Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{{
@@ -54,7 +54,7 @@ func TestDefaultPodCliqueSet(t *testing.T) {
 						MinAvailable: ptr.To[int32](2),
 					},
 					RollingUpdate: &grovecorev1alpha1.RollingUpdateConfiguration{
-						MaxUnavailable: ptr.To[int32](1),
+						MaxUnavailable: ptr.To[int32](2),
 					},
 				}},
 				PodCliqueScalingGroupConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{},
@@ -426,14 +426,14 @@ func TestDefaultUpdateStrategy(t *testing.T) {
 		wantStrategy grovecorev1alpha1.UpdateStrategyType
 	}{
 		{
-			description:  "nil UpdateStrategy defaults to RollingRecreate",
+			description:  "nil UpdateStrategy defaults to Coherent",
 			input:        nil,
-			wantStrategy: grovecorev1alpha1.RollingRecreateStrategy,
+			wantStrategy: grovecorev1alpha1.CoherentStrategy,
 		},
 		{
-			description:  "empty Type defaults to RollingRecreate",
+			description:  "empty Type defaults to Coherent",
 			input:        &grovecorev1alpha1.PodCliqueSetUpdateStrategy{},
-			wantStrategy: grovecorev1alpha1.RollingRecreateStrategy,
+			wantStrategy: grovecorev1alpha1.CoherentStrategy,
 		},
 		{
 			description:  "existing Type is preserved",
@@ -458,6 +458,7 @@ func TestDefaultRollingUpdateConfiguration(t *testing.T) {
 		description        string
 		existing           *grovecorev1alpha1.RollingUpdateConfiguration
 		updateStrategy     grovecorev1alpha1.UpdateStrategyType
+		minAvailable       int32
 		wantNil            bool
 		wantMaxUnavailable int32
 	}{
@@ -491,10 +492,24 @@ func TestDefaultRollingUpdateConfiguration(t *testing.T) {
 			updateStrategy:     grovecorev1alpha1.RollingRecreateStrategy,
 			wantMaxUnavailable: 1,
 		},
+		{
+			description:        "coherent defaults MaxUnavailable to minAvailable",
+			existing:           nil,
+			updateStrategy:     grovecorev1alpha1.CoherentStrategy,
+			minAvailable:       3,
+			wantMaxUnavailable: 3,
+		},
+		{
+			description:        "coherent preserves an existing MaxUnavailable",
+			existing:           &grovecorev1alpha1.RollingUpdateConfiguration{MaxUnavailable: ptr.To[int32](5)},
+			updateStrategy:     grovecorev1alpha1.CoherentStrategy,
+			minAvailable:       3,
+			wantMaxUnavailable: 5,
+		},
 	}
 	for _, tc := range testCases {
 		t.Run(tc.description, func(t *testing.T) {
-			result := defaultRollingUpdateConfiguration(tc.existing, tc.updateStrategy)
+			result := defaultRollingUpdateConfiguration(tc.existing, tc.updateStrategy, tc.minAvailable)
 			if tc.wantNil {
 				assert.Nil(t, result)
 				return

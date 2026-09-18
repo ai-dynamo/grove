@@ -9201,9 +9201,18 @@ spec:
                     description: UpdateStartedAt is the time at which the update started.
                     format: date-time
                     type: string
+                  updatedReadyReplicas:
+                    description: |-
+                      UpdatedReadyReplicas is the number of Pods at PodTemplateHash (the target hash of this update) that
+                      have a Ready condition. It is maintained only while the update is in progress. The coherent update
+                      engine reads it to confirm that Pods added in the current sub-step are serving before the next
+                      sub-step takes more Pods down. Once UpdateEndedAt is set it carries no further meaning.
+                    format: int32
+                    type: integer
                 required:
                 - podCliqueSetGenerationHash
                 - podTemplateHash
+                - updatedReadyReplicas
                 type: object
               updatedReplicas:
                 default: 0

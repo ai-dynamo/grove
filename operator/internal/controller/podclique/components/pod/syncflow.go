@@ -225,9 +225,18 @@ func (r _resource) runSyncFlow(ctx context.Context, logger logr.Logger, ss *sync
 		}
 	}
 
-	if componentutils.IsAutoUpdateStrategy(ss.pcs) && componentutils.IsPCLQAutoUpdateInProgress(ss.pclq) {
-		if err := r.processPendingUpdates(ctx, logger, ss); err != nil {
-			result.recordError(err)
+	if componentutils.IsPCLQRollingUpdateInProgress(ss.pclq) {
+		if componentutils.IsRollingRecreateUpdateInProgress(ss.pcs) {
+			// RollingRecreate self-paces the roll, deleting old-hash pods within the frozen PodGang.
+			if err := r.processPendingUpdates(ctx, logger, ss); err != nil {
+				result.recordError(err)
+			}
+		} else if ss.isStandalonePCLQ && componentutils.IsCoherentUpdateInProgress(ss.pcs) {
+			// Under Coherent the PodGangMap-driven distribution rolls the pods, so the pod component only
+			// marks the PodClique's update ended once every pod has reached the current revision.
+			if err := r.markCoherentUpdateEndIfConverged(ctx, logger, ss); err != nil {
+				result.recordError(err)
+			}
 		}
 	}
 

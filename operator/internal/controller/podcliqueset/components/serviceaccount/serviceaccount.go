@@ -81,7 +81,7 @@ func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *v1alpha1.P
 	objectKey := getObjectKey(pcs.ObjectMeta)
 	sa := emptyServiceAccount(objectKey)
 
-	logger.Info("Running CreateOrUpdate ServiceAccount", "objectKey", objectKey)
+	logger.V(1).Info("Running CreateOrUpdate ServiceAccount", "objectKey", objectKey)
 	opResult, err := controllerutil.CreateOrPatch(ctx, r.client, sa, func() error {
 		return r.buildResource(pcs, sa)
 	})
@@ -92,7 +92,7 @@ func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *v1alpha1.P
 			fmt.Sprintf("Error syncing ServiceAccount: %v for PodCliqueSet: %v", objectKey, client.ObjectKeyFromObject(pcs)),
 		)
 	}
-	logger.Info("Triggered create or update of ServiceAccount", "objectKey", objectKey, "result", opResult)
+	logger.V(1).Info("Triggered create or update of ServiceAccount", "objectKey", objectKey, "result", opResult)
 	return nil
 }
 

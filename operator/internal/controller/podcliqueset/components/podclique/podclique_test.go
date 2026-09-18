@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"testing"
 
+	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	apiconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	groveclientscheme "github.com/ai-dynamo/grove/operator/internal/client"
@@ -460,7 +461,7 @@ func TestBuildResource_MNNVLInjection(t *testing.T) {
 			// name from the anchor entry's epoch.
 			pgm := testutils.NewPodGangMapBuilder(testPCSName, testPCSNamespace, uuid.NewUUID(), pcsReplica).WithEntries(
 				testutils.NewPodGangEntryBuilder("hash", "1000").
-					WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).WithAnchorIndex(0).Build(),
+					WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).Build(),
 			).Build()
 			err := operator.buildResource(logr.Discard(), pcs, pcsReplica, false, pgm, pclq)
 			require.NoError(t, err)
@@ -520,7 +521,7 @@ func TestBuildResource_StripsTopologyAnnotation(t *testing.T) {
 	// from the anchor entry's epoch.
 	pgm := testutils.NewPodGangMapBuilder(testPCSName, testPCSNamespace, uuid.NewUUID(), 0).WithEntries(
 		testutils.NewPodGangEntryBuilder("hash", "1000").
-			WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).WithAnchorIndex(0).Build(),
+			WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).Build(),
 	).Build()
 	err := operator.buildResource(logr.Discard(), pcs, 0, false, pgm, pclq)
 	require.NoError(t, err)
@@ -528,6 +529,70 @@ func TestBuildResource_StripsTopologyAnnotation(t *testing.T) {
 	assert.Equal(t, "yes", pclq.Annotations["example.com/keep"])
 	_, hasTopologyAnnotation := pclq.Annotations[apiconstants.AnnotationTopologyName]
 	assert.False(t, hasTopologyAnnotation)
+}
+
+// TestBuildResource_PreservesRevisionForReplicaNotUnderCoherentUpdate verifies that during a coherent
+// update the new pod template is applied only to the replica under update, while every other replica keeps
+// its running PodSpec and hash label so a pod recreated on it does not adopt the new revision.
+func TestBuildResource_PreservesRevisionForReplicaNotUnderCoherentUpdate(t *testing.T) {
+	const cliqueName = "worker"
+	testCases := []struct {
+		description     string
+		coherentUpdate  bool
+		pcsReplica      int
+		expectPreserved bool
+	}{
+		{"a coherent update leaves a replica that is not under update on its running revision", true, 1, true},
+		{"a coherent update rolls the replica that is under update to the new revision", true, 0, false},
+		{"no update in progress applies the template to every replica", false, 1, false},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.description, func(t *testing.T) {
+			pcsBuilder := testutils.NewPodCliqueSetBuilder(testPCSName, testPCSNamespace, uuid.NewUUID()).
+				WithReplicas(2).
+				WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder)).
+				WithUpdateStrategy(&grovecorev1alpha1.PodCliqueSetUpdateStrategy{Type: grovecorev1alpha1.CoherentStrategy})
+			template := testutils.NewPodCliqueTemplateSpecBuilder(cliqueName).Build()
+			template.Spec.PodSpec.Containers = []corev1.Container{{Name: "c", Image: "new"}}
+			pcsBuilder.WithPodCliqueTemplateSpec(template)
+			if tc.coherentUpdate {
+				pcsBuilder.WithUpdateProgress(&grovecorev1alpha1.PodCliqueSetUpdateProgress{
+					UpdateStartedAt:   metav1.Now(),
+					CurrentlyUpdating: []grovecorev1alpha1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 0}},
+				})
+			}
+			pcs := pcsBuilder.Build()
+
+			// An existing PodClique on the running (old) revision.
+			pclq := &grovecorev1alpha1.PodClique{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      fmt.Sprintf("%s-%d-%s", testPCSName, tc.pcsReplica, cliqueName),
+					Namespace: testPCSNamespace,
+					Labels:    map[string]string{apicommon.LabelPodTemplateHash: "old-hash"},
+				},
+				Spec: grovecorev1alpha1.PodCliqueSpec{
+					PodSpec: corev1.PodSpec{Containers: []corev1.Container{{Name: "c", Image: "old"}}},
+				},
+			}
+
+			operator := &_resource{scheme: groveclientscheme.Scheme}
+			pgm := testutils.NewPodGangMapBuilder(testPCSName, testPCSNamespace, uuid.NewUUID(), tc.pcsReplica).WithEntries(
+				testutils.NewPodGangEntryBuilder("hash", "1000").
+					WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).Build(),
+			).Build()
+
+			err := operator.buildResource(logr.Discard(), pcs, tc.pcsReplica, true, pgm, pclq)
+			require.NoError(t, err)
+
+			if tc.expectPreserved {
+				assert.Equal(t, "old", pclq.Spec.PodSpec.Containers[0].Image, "PodSpec must keep the running revision")
+				assert.Equal(t, "old-hash", pclq.Labels[apicommon.LabelPodTemplateHash], "hash label must keep the running revision")
+			} else {
+				assert.Equal(t, "new", pclq.Spec.PodSpec.Containers[0].Image, "PodSpec must adopt the new revision")
+				assert.NotEqual(t, "old-hash", pclq.Labels[apicommon.LabelPodTemplateHash], "hash label must adopt the new revision")
+			}
+		})
+	}
 }
 
 // triageContainersByMNNVLClaim separates containers into those with MNNVL claim and those without.

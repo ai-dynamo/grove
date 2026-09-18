@@ -23,9 +23,11 @@ import (
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
 	clustertopologyvalidationwebhook "github.com/ai-dynamo/grove/operator/internal/webhook/admission/clustertopology/validation"
+	pclqvalidationwebhook "github.com/ai-dynamo/grove/operator/internal/webhook/admission/pclq/validation"
 	authorizationwebhook "github.com/ai-dynamo/grove/operator/internal/webhook/admission/pcs/authorization"
 	defaultingwebhook "github.com/ai-dynamo/grove/operator/internal/webhook/admission/pcs/defaulting"
 	validatingwebhook "github.com/ai-dynamo/grove/operator/internal/webhook/admission/pcs/validation"
+	pcsgvalidationwebhook "github.com/ai-dynamo/grove/operator/internal/webhook/admission/pcsg/validation"
 
 	"github.com/go-logr/logr"
 	cert "github.com/open-policy-agent/cert-controller/pkg/rotator"
@@ -128,6 +130,14 @@ func getWebhooks(authorizerEnabled bool) []cert.WebhookInfo {
 		{
 			Type: cert.Validating,
 			Name: clustertopologyvalidationwebhook.Name,
+		},
+		{
+			Type: cert.Validating,
+			Name: pclqvalidationwebhook.Name,
+		},
+		{
+			Type: cert.Validating,
+			Name: pcsgvalidationwebhook.Name,
 		},
 	}
 	if authorizerEnabled {

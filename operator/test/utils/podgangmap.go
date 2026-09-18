@@ -49,12 +49,6 @@ func (b *PodGangEntryBuilder) WithRole(role grovecorev1alpha1.PodGangEntryRole) 
 	return b
 }
 
-// WithAnchorIndex sets the AnchorIndex on the entry. Set this on Anchor entries.
-func (b *PodGangEntryBuilder) WithAnchorIndex(anchorIndex int32) *PodGangEntryBuilder {
-	b.entry.AnchorIndex = ptr.To(anchorIndex)
-	return b
-}
-
 // WithPodCliques sets the standalone PodClique pod counts on the entry.
 func (b *PodGangEntryBuilder) WithPodCliques(podCliques map[string]int32) *PodGangEntryBuilder {
 	b.entry.PodCliques = podCliques
@@ -79,12 +73,10 @@ func (b *PodGangEntryBuilder) Build() grovecorev1alpha1.PodGangEntry {
 }
 
 // NewAnchorEntry builds an Anchor PodGangEntry carrying a single PodCliqueScalingGroup's replica
-// indices. anchorIndex is the anchor's index within its generation hash. Use the builder directly
-// when an entry also needs DependsOn or standalone PodCliques.
-func NewAnchorEntry(pcsGenerationHash, epoch string, anchorIndex int32, pcsgName string, pcsgReplicaIndices ...int32) grovecorev1alpha1.PodGangEntry {
+// indices. Use the builder directly when an entry also needs DependsOn or standalone PodCliques.
+func NewAnchorEntry(pcsGenerationHash, epoch string, pcsgName string, pcsgReplicaIndices ...int32) grovecorev1alpha1.PodGangEntry {
 	return NewPodGangEntryBuilder(pcsGenerationHash, epoch).
 		WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).
-		WithAnchorIndex(anchorIndex).
 		WithPCSGReplicaIndices(map[string][]int32{pcsgName: pcsgReplicaIndices}).
 		Build()
 }

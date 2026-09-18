@@ -17,6 +17,7 @@ package podgangmap
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strconv"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
@@ -40,6 +41,9 @@ type syncSnapshot struct {
 	existingPCSGsByReplica           map[int][]grovecorev1alpha1.PodCliqueScalingGroup
 	existingPGMByReplica             map[int]*grovecorev1alpha1.PodGangMap
 	existingPodGangsByReplica        map[int][]groveschedulerv1alpha1.PodGang
+	// mvuTemplate is the fixed Minimum Updateable Unit composition for a coherent update. It is computed
+	// once while a coherent update is in progress and is nil otherwise.
+	mvuTemplate *mvuTemplate
 }
 
 // takeSnapshot queries the live resources and creates a syncSnapshot.
@@ -63,6 +67,9 @@ func (r _resource) takeSnapshot(ctx context.Context, logger logr.Logger, pcs *gr
 	syncSnap.existingPodGangsByReplica, err = r.getExistingPodGangsByReplica(ctx, pcs)
 	if err != nil {
 		return nil, err
+	}
+	if componentutils.IsCoherentUpdateInProgress(pcs) {
+		syncSnap.mvuTemplate = computeMVUTemplate(pcs)
 	}
 	return syncSnap, nil
 }
@@ -166,6 +173,27 @@ func (r _resource) getExistingPodGangsByReplica(ctx context.Context, pcs *grovec
 	return podGangsByReplica, nil
 }
 
+// mvuTemplate is the composition of one Minimum Updateable Unit PodGang. It holds the MinAvailable pod
+// count of every in-scope standalone PodClique and the MinAvailable replica count of every in-scope
+// PodCliqueScalingGroup, the set a coherent update keeps gang-scheduled while it rolls the remaining
+// pods. It is computed once when the update starts and stays fixed until the update ends.
+type mvuTemplate struct {
+	// standalonePCLQs maps an in-scope standalone PodClique name to its MinAvailable pod count.
+	standalonePCLQs map[string]int32
+	// pcsgs maps an in-scope PodCliqueScalingGroup name to its MinAvailable replica count.
+	pcsgs map[string]int32
+}
+
+// computeMVUTemplate builds the mvuTemplate from the in-scope component set that
+// PCS.Status.UpdateProgress froze when the coherent update started. MinAvailable values are read
+// from the PCS spec, which the validating webhook holds unchanged for the duration of the update.
+func computeMVUTemplate(pcs *grovecorev1alpha1.PodCliqueSet) *mvuTemplate {
+	progress := pcs.Status.UpdateProgress
+	inScopeComponentNames := slices.Concat(progress.InScopeStandalonePodCliques, progress.InScopePodCliqueScalingGroups)
+	standalonePCLQs, pcsgs := componentutils.CoherentMinAvailableByComponent(pcs, inScopeComponentNames)
+	return &mvuTemplate{standalonePCLQs: standalonePCLQs, pcsgs: pcsgs}
+}
+
 // runSyncFlow reconciles the PodGangMap for every PCS replica, then deletes PodGangMaps orphaned by a
 // PCS replica scale-in. Each replica is in one of three states.
 //  1. No PodGangMap. Its entries are authored from the PCS spec, reusing the epoch its existing
@@ -178,12 +206,23 @@ func (r _resource) runSyncFlow(ctx context.Context, syncSnap *syncSnapshot) erro
 	for pcsReplicaIndex := range int(syncSnap.pcs.Spec.Replicas) {
 		pgm := syncSnap.existingPGMByReplica[pcsReplicaIndex]
 
-		entries, err := reconcileEntries(r.clk,
-			syncSnap.pcs, pcsReplicaIndex,
-			pgm,
-			syncSnap.existingPodGangsByReplica[pcsReplicaIndex],
-			syncSnap.existingStandalonePCLQsByReplica[pcsReplicaIndex],
-			syncSnap.existingPCSGsByReplica[pcsReplicaIndex])
+		var (
+			entries []grovecorev1alpha1.PodGangEntry
+			err     error
+		)
+		// A coherent update advances an existing PodGangMap one sub-step per reconcile, and only for the
+		// replica the orchestrator has selected. Every other replica, and any replica whose PodGangMap is
+		// missing or empty, is authored through reconcileEntries so it stays frozen or bootstraps.
+		if componentutils.IsPCSReplicaUnderCoherentUpdate(syncSnap.pcs, pcsReplicaIndex) && pgm != nil && len(pgm.Spec.Entries) > 0 {
+			entries, err = r.buildCoherentUpdateEntries(ctx, syncSnap, pcsReplicaIndex, pgm)
+		} else {
+			entries, err = reconcileEntries(r.clk,
+				syncSnap.pcs, pcsReplicaIndex,
+				pgm,
+				syncSnap.existingPodGangsByReplica[pcsReplicaIndex],
+				syncSnap.existingStandalonePCLQsByReplica[pcsReplicaIndex],
+				syncSnap.existingPCSGsByReplica[pcsReplicaIndex])
+		}
 		if err != nil {
 			return err
 		}

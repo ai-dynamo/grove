@@ -66,6 +66,23 @@ func GetExistingPodGangs(ctx context.Context, cl client.Client, pcsObjectMeta me
 // Scheduled True. It returns false when no PodGang carries the epoch, since an absent gang cannot be
 // a satisfied dependency.
 func AllPodGangsAtEpochEverScheduled(ctx context.Context, cl client.Client, pcsObjectKey client.ObjectKey, pcsReplicaIndex int32, epoch string) (bool, error) {
+	podGangs, err := listPodGangsAtEpoch(ctx, cl, pcsObjectKey, pcsReplicaIndex, epoch)
+	if err != nil {
+		return false, err
+	}
+	if len(podGangs) == 0 {
+		return false, nil
+	}
+	for i := range podGangs {
+		if podGangs[i].Status.LastScheduled == nil {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+// listPodGangsAtEpoch lists the PodGangs belonging to the given PodCliqueSet replica and epoch.
+func listPodGangsAtEpoch(ctx context.Context, cl client.Client, pcsObjectKey client.ObjectKey, pcsReplicaIndex int32, epoch string) ([]groveschedulerv1alpha1.PodGang, error) {
 	podGangs := groveschedulerv1alpha1.PodGangList{}
 	if err := cl.List(ctx, &podGangs,
 		client.InNamespace(pcsObjectKey.Namespace),
@@ -74,13 +91,26 @@ func AllPodGangsAtEpochEverScheduled(ctx context.Context, cl client.Client, pcsO
 			apicommon.LabelPodCliqueSetReplicaIndex: strconv.Itoa(int(pcsReplicaIndex)),
 			apicommon.LabelEpoch:                    epoch,
 		})); err != nil {
+		return nil, err
+	}
+	return podGangs.Items, nil
+}
+
+// AllPodGangsAtEpochEverReady reports whether every PodGang belonging to the given PodCliqueSet
+// replica and epoch has been ready at least once. A PodGang counts as ever-ready when its
+// Status.LastReady is set, a monotonic marker that is never cleared once the gang first reaches
+// Ready True. It returns false when no PodGang carries the epoch, since an absent gang cannot be
+// counted as ready.
+func AllPodGangsAtEpochEverReady(ctx context.Context, cl client.Client, pcsObjectKey client.ObjectKey, pcsReplicaIndex int32, epoch string) (bool, error) {
+	podGangs, err := listPodGangsAtEpoch(ctx, cl, pcsObjectKey, pcsReplicaIndex, epoch)
+	if err != nil {
 		return false, err
 	}
-	if len(podGangs.Items) == 0 {
+	if len(podGangs) == 0 {
 		return false, nil
 	}
-	for i := range podGangs.Items {
-		if podGangs.Items[i].Status.LastScheduled == nil {
+	for i := range podGangs {
+		if podGangs[i].Status.LastReady == nil {
 			return false, nil
 		}
 	}

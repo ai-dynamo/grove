@@ -204,13 +204,55 @@ func TestMutateUpdatedReplica(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Call the function
-			mutateUpdatedReplica(tt.pclq, tt.existingPods)
+			mutateUpdatedReplica(tt.pclq, tt.existingPods, nil)
 
 			// Assert the result
 			assert.Equal(t, tt.expectedUpdatedReplicas, tt.pclq.Status.UpdatedReplicas,
 				"UpdatedReplicas should match expected value")
 		})
 	}
+}
+
+// TestMutateUpdatedReadyReplicas checks that the new-hash Ready Pod count is published on UpdateProgress
+// only while an update is in progress.
+func TestMutateUpdatedReadyReplicas(t *testing.T) {
+	t.Run("counts only new-hash Ready Pods while an update is in progress", func(t *testing.T) {
+		pclq := &grovecorev1alpha1.PodClique{
+			Status: grovecorev1alpha1.PodCliqueStatus{
+				UpdateProgress: &grovecorev1alpha1.PodCliqueUpdateProgress{PodTemplateHash: "new-hash-v2"},
+			},
+		}
+		existingPods := []*corev1.Pod{
+			createPodWithHash("pod-1", "new-hash-v2"),
+			createPodWithHash("pod-2", "new-hash-v2"),
+			createPodWithHash("pod-3", "new-hash-v2"),
+			createPodWithHash("pod-4", "old-hash-v1"),
+		}
+		// Two of the three new-hash Pods are Ready, and an old-hash Ready Pod must not be counted.
+		readyPods := []*corev1.Pod{
+			createPodWithHash("pod-1", "new-hash-v2"),
+			createPodWithHash("pod-2", "new-hash-v2"),
+			createPodWithHash("pod-4", "old-hash-v1"),
+		}
+
+		mutateUpdatedReplica(pclq, existingPods, readyPods)
+
+		assert.Equal(t, int32(3), pclq.Status.UpdatedReplicas)
+		assert.Equal(t, int32(2), pclq.Status.UpdateProgress.UpdatedReadyReplicas)
+	})
+
+	t.Run("leaves UpdatedReadyReplicas unset when no update is in progress", func(t *testing.T) {
+		pclq := &grovecorev1alpha1.PodClique{
+			Status: grovecorev1alpha1.PodCliqueStatus{CurrentPodTemplateHash: ptr.To("stable-hash")},
+		}
+		existingPods := []*corev1.Pod{createPodWithHash("pod-1", "stable-hash")}
+		readyPods := []*corev1.Pod{createPodWithHash("pod-1", "stable-hash")}
+
+		mutateUpdatedReplica(pclq, existingPods, readyPods)
+
+		assert.Equal(t, int32(1), pclq.Status.UpdatedReplicas)
+		assert.Nil(t, pclq.Status.UpdateProgress)
+	})
 }
 
 // TestMutateLastScheduled verifies Status.LastScheduled is stamped on a fresh transition of the

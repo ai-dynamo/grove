@@ -28,16 +28,20 @@ import (
 	"github.com/ai-dynamo/grove/operator/api/common"
 	apiconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	kubeutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 	"github.com/ai-dynamo/grove/operator/e2e/grove/workload"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/k8sclient"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/pods"
+	"github.com/ai-dynamo/grove/operator/e2e/setup"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
 	"github.com/ai-dynamo/grove/operator/e2e/tests"
 	"github.com/ai-dynamo/grove/operator/e2e/waiter"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -1444,7 +1448,12 @@ func standaloneCliqueFQN(tc *testctx.TestContext, cliqueName string) string {
 
 // pcsgFQN returns the PodCliqueScalingGroup name for a config in PCS replica 0.
 func pcsgFQN(tc *testctx.TestContext, pcsgConfigName string) string {
-	return common.GeneratePodCliqueScalingGroupName(common.ResourceNameReplica{Name: tc.Workload.Name, Replica: 0}, pcsgConfigName)
+	return pcsgFQNForReplica(tc, pcsgConfigName, 0)
+}
+
+// pcsgFQNForReplica returns the fully qualified PodCliqueScalingGroup name for the given PCS replica.
+func pcsgFQNForReplica(tc *testctx.TestContext, pcsgConfigName string, pcsReplicaIndex int) string {
+	return common.GeneratePodCliqueScalingGroupName(common.ResourceNameReplica{Name: tc.Workload.Name, Replica: pcsReplicaIndex}, pcsgConfigName)
 }
 
 // updateInProgressConditionMet builds a predicate satisfied when the UpdateInProgress condition read
@@ -1503,6 +1512,39 @@ func waitForPCSGUpdateCondition(tc *testctx.TestContext, pcsgConfigName string, 
 		return fmt.Errorf("PodCliqueScalingGroup %s UpdateInProgress did not reach status=%s reason=%s: %w", name, wantStatus, wantReason, err)
 	}
 	return nil
+}
+
+// restartOperator simulates a Grove operator crash by deleting its pod in the operator namespace and
+// waiting for the Deployment to bring up a fresh Ready replica. It lets a test assert the operator resumes
+// in-flight work from persisted state after a restart.
+func restartOperator(tc *testctx.TestContext) error {
+	pm := pods.NewPodManager(tc.Client, tests.Logger)
+	before, err := pm.List(tc.Ctx, setup.OperatorNamespace, "")
+	if err != nil {
+		return fmt.Errorf("failed to list operator pods in %s: %w", setup.OperatorNamespace, err)
+	}
+	oldPodUIDs := make(map[types.UID]struct{}, len(before.Items))
+	for i := range before.Items {
+		oldPodUIDs[before.Items[i].UID] = struct{}{}
+		if err := tc.Client.Delete(tc.Ctx, &before.Items[i]); err != nil && !apierrors.IsNotFound(err) {
+			return fmt.Errorf("failed to delete operator pod %s: %w", before.Items[i].Name, err)
+		}
+	}
+	// Wait until exactly one operator pod, none of the deleted ones, is Ready.
+	return wait.PollUntilContextTimeout(tc.Ctx, tc.Interval, tc.Timeout, true, func(ctx context.Context) (bool, error) {
+		current, err := pm.List(ctx, setup.OperatorNamespace, "")
+		if err != nil {
+			return false, nil
+		}
+		if len(current.Items) != 1 {
+			return false, nil
+		}
+		pod := &current.Items[0]
+		if _, isOld := oldPodUIDs[pod.UID]; isOld {
+			return false, nil
+		}
+		return kubeutils.IsPodReady(pod), nil
+	})
 }
 
 // assertUpdateInProgressCleared fails the test unless the PodCliqueSet UpdateInProgress condition has

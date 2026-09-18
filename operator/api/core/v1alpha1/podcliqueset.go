@@ -115,8 +115,8 @@ type PodCliqueSetUpdateStrategy struct {
 	// Type indicates the type of update strategy.
 	// This strategy applies uniformly to both standalone PodCliques and
 	// PodCliqueScalingGroups within the PodCliqueSet.
-	// Default is RollingRecreate.
-	// +kubebuilder:default=RollingRecreate
+	// Default is Coherent.
+	// +kubebuilder:default=Coherent
 	Type UpdateStrategyType `json:"type,omitempty"`
 }
 
@@ -158,6 +158,24 @@ type PodCliqueSetUpdateProgress struct {
 	// OnDelete update strategy.
 	// +optional
 	CurrentlyUpdating []PodCliqueSetReplicaUpdateProgress `json:"currentlyUpdating,omitempty"`
+	// InScopeStandalonePodCliques captures the names of standalone PodCliques whose pod template
+	// changed and are therefore in scope for the current coherent update. It names what changed,
+	// not what has finished updating. The set is preserved for the lifetime of the update and is
+	// cleared when UpdateEndedAt is set. If another update lands while this coherent update is still
+	// in progress, and it changes a different set of components, those component names are merged into
+	// this set rather than replacing it, so no in-flight component's update is dropped. Only populated
+	// for the Coherent strategy.
+	// +optional
+	InScopeStandalonePodCliques []string `json:"inScopeStandalonePodCliques,omitempty"`
+	// InScopePodCliqueScalingGroups captures the config names of PodCliqueScalingGroups that had at
+	// least one constituent PodClique whose pod template changed and are therefore in scope for the
+	// current coherent update. It names what changed, not what has finished updating. The set is
+	// preserved for the lifetime of the update and is cleared when UpdateEndedAt is set. If another
+	// update lands while this coherent update is still in progress, and it changes a different set of
+	// components, those config names are merged into this set rather than replacing it, so no
+	// in-flight component's update is dropped. Only populated for the Coherent strategy.
+	// +optional
+	InScopePodCliqueScalingGroups []string `json:"inScopePodCliqueScalingGroups,omitempty"`
 }
 
 // PodCliqueSetReplicaUpdateProgress captures the progress of an update for a specific PodCliqueSet replica.
@@ -171,6 +189,21 @@ type PodCliqueSetReplicaUpdateProgress struct {
 	// running the latest specification.
 	// +optional
 	UpdateEndedAt *metav1.Time `json:"updateEndedAt,omitempty"`
+	// InFlightEpochs are the grove.io/epochs of the PodGangs currently being rolled
+	// (in flight) for this replica's coherent update. The orchestrator waits for the
+	// PodGangs at these epochs to become ready before advancing to the next iteration.
+	// Today a single epoch is in flight at a time; the field is a list so that a future
+	// iteration supporting concurrent in-flight batches needs no API change. It is cleared
+	// once the coherent update for this replica completes.
+	// +optional
+	InFlightEpochs []string `json:"inFlightEpochs,omitempty"`
+	// Message describes the current reason the orchestrator has not advanced
+	// the coherent update this reconcile. Populated whenever any advance
+	// precondition is not met: PodGangs at the current InFlightEpochs not yet
+	// reporting LastReady, subsumed pods still coming up, or an availability
+	// budget preventing further takedown. Cleared once all preconditions hold.
+	// +optional
+	Message *string `json:"message,omitempty"`
 }
 
 // RollingUpdateConfiguration carries per-component knobs for a rolling update. It attaches to each
@@ -534,7 +567,7 @@ type HeadlessServiceConfig struct {
 }
 
 // UpdateStrategyType defines the type of update strategy for PodCliqueSet.
-// +kubebuilder:validation:Enum={RollingRecreate,OnDelete}
+// +kubebuilder:validation:Enum={Coherent,RollingRecreate,OnDelete}
 type UpdateStrategyType string
 
 const (
@@ -542,15 +575,13 @@ const (
 	// MinAvailable replicas of each updated standalone PodClique plus MinAvailable replicas of each
 	// updated PodCliqueScalingGroup — scheduled atomically as a new PodGang. This guarantees
 	// that pods forming a minimum-viable serving unit are always version-compatible.
-	// NOTE: While we have introduced an update strategy type for coherent, this is still not available.
-	// In future releases once this is available this NOTE will be removed.
+	// This is the default update strategy.
 	CoherentStrategy UpdateStrategyType = "Coherent"
 	// RollingRecreateStrategy indicates that replicas will be progressively
 	// deleted and recreated one at a time, when templates change. This applies to
 	// both pods (for standalone PodCliques) and replicas of PodCliqueScalingGroups.
 	// RollingRecreateStrategy qualifies as a rolling update strategy in Grove since
 	// it handles the orchestration entirely by itself.
-	// This is the default update strategy.
 	RollingRecreateStrategy UpdateStrategyType = "RollingRecreate"
 	// OnDeleteStrategy indicates that replicas will only be updated when
 	// they are manually deleted. Changes to templates do not automatically

@@ -136,34 +136,22 @@ func (r _resource) runSyncFlow(ctx context.Context, logger logr.Logger, ss *sync
 		return err
 	}
 	// Create or update the expected PodCliques as per the PodCliqueScalingGroup configurations defined in the PodCliqueSet.
-	// For OnDelete update strategy, use createOrUpdatePCLQs which performs in-place updates.
-	// For RollingRecreate (default) update strategy, use createExpectedPCLQs which only creates missing PodCliques.
-	if !componentutils.IsAutoUpdateStrategy(ss.pcs) {
-		if err := r.createOrUpdatePCLQs(ctx, logger, ss); err != nil {
-			return err
-		}
-	} else {
-		if err := r.createExpectedPCLQs(ctx, logger, ss); err != nil {
-			return err
-		}
+	if err := r.reconcileExpectedPodCliques(ctx, logger, ss); err != nil {
+		return err
 	}
 
-	// Only if the rolling update is not in progress, check for a possibility of gang termination and execute it only if
-	// the pcsg.spec.minAvailable is not breached.
-	if !componentutils.IsPCSGUpdateInProgress(ss.pcsg) {
-		if err := r.processMinAvailableBreachedPCSGReplicas(ctx, logger, ss, pcsgIndicesToTerminate, pcsgIndicesToRequeue); err != nil {
-			if errors.Is(err, errPCCGMinAvailableBreached) {
-				logger.Info("Skipping further reconciliation as MinAvailable for the PCSG has been breached. This can potentially trigger PCS replica deletion.")
-				return nil
-			}
+	// While an update is in progress, drive it per the update strategy. Otherwise check for a possibility
+	// of gang termination and execute it only if the pcsg.spec.minAvailable is not breached.
+	if componentutils.IsPCSGUpdateInProgress(ss.pcsg) {
+		if err := r.reconcileInProgressUpdate(ctx, logger, ss); err != nil {
 			return err
 		}
-	} else {
-		if componentutils.IsAutoUpdateStrategy(ss.pcs) {
-			if err := r.processPendingUpdates(ctx, logger, ss); err != nil {
-				return err
-			}
+	} else if err := r.processMinAvailableBreachedPCSGReplicas(ctx, logger, ss, pcsgIndicesToTerminate, pcsgIndicesToRequeue); err != nil {
+		if errors.Is(err, errPCCGMinAvailableBreached) {
+			logger.Info("Skipping further reconciliation as MinAvailable for the PCSG has been breached. This can potentially trigger PCS replica deletion.")
+			return nil
 		}
+		return err
 	}
 
 	// If there are any PCSG replicas which have minAvailableBreached but the terminationDelay has not yet expired, then
@@ -173,6 +161,36 @@ func (r _resource) runSyncFlow(ctx context.Context, logger logr.Logger, ss *sync
 			component.OperationSync,
 			"Requeuing to re-process PCLQs that have breached MinAvailable but not crossed TerminationDelay",
 		)
+	}
+	return nil
+}
+
+// reconcileExpectedPodCliques materializes the PodCliqueScalingGroup's member PodCliques. OnDelete updates
+// existing PodCliques in place with createOrUpdatePCLQs. RollingRecreate and Coherent only create missing
+// PodCliques with createExpectedPCLQs, since their rolls replace whole replicas rather than mutate a
+// PodClique in place.
+func (r _resource) reconcileExpectedPodCliques(ctx context.Context, logger logr.Logger, ss *syncSnapshot) error {
+	if !componentutils.IsRollingUpdateStrategy(ss.pcs) {
+		return r.createOrUpdatePCLQs(ctx, logger, ss)
+	}
+	return r.createExpectedPCLQs(ctx, logger, ss)
+}
+
+// reconcileInProgressUpdate drives an in-progress update of the PodCliqueScalingGroup per the update
+// strategy. Under Coherent the PodGangMap orchestrates the roll and is the single authority for what moves
+// and when, so this reconciler is a pure executor that realizes the committed placement and marks the
+// update ended once every replica has converged. It never runs the hash driven processPendingUpdates
+// cadence, which would replace replicas on its own schedule disjoint from the PodGangMap. Under
+// RollingRecreate the reconciler paces its own hash driven replacement.
+func (r _resource) reconcileInProgressUpdate(ctx context.Context, logger logr.Logger, ss *syncSnapshot) error {
+	if componentutils.IsCoherentStrategy(ss.pcs) {
+		if err := r.reconcileReplicasToCommittedPodGangs(ctx, logger, ss); err != nil {
+			return err
+		}
+		return r.markCoherentUpdateEndIfConverged(ctx, logger, ss)
+	}
+	if componentutils.IsRollingUpdateStrategy(ss.pcs) {
+		return r.processPendingUpdates(ctx, logger, ss)
 	}
 	return nil
 }

@@ -383,19 +383,19 @@ func TestSyncEntries(t *testing.T) {
 }
 
 // TestReconcileStandaloneCliqueCountAcrossAnchors verifies a standalone clique's counts are driven
-// toward the desired total by adding to the highest-AnchorIndex anchor on scale-out and draining the
-// highest-AnchorIndex anchor first on scale-in, spilling to the next-highest as each empties. It does
+// toward the desired total by adding to the highest-epoch anchor on scale-out and draining the
+// highest-epoch anchor first on scale-in, spilling to the next-highest as each empties. It does
 // not floor at MinAvailable, so a scale-in can drain every anchor to zero.
 func TestReconcileStandaloneCliqueCountAcrossAnchors(t *testing.T) {
 	const clique = "clq-a"
-	// anchorsHighestFirst builds anchor entries ordered by descending AnchorIndex, as
-	// currentGenerationAnchorsByIndexDesc returns them. The i-th count is anchor index len-1-i.
+	// anchorsHighestFirst builds anchor entries ordered by descending epoch, as
+	// currentGenerationAnchorsByEpochDesc returns them. Anchor index i is stamped with epoch 100+i, so
+	// the i-th count is anchor index len-1-i.
 	anchorsHighestFirst := func(countsByIndex ...int32) []*grovecorev1alpha1.PodGangEntry {
 		anchors := make([]*grovecorev1alpha1.PodGangEntry, 0, len(countsByIndex))
 		for i := len(countsByIndex) - 1; i >= 0; i-- {
 			entry := testutils.NewPodGangEntryBuilder(testGenHash, strconv.Itoa(100+i)).
 				WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).
-				WithAnchorIndex(int32(i)).
 				WithPodCliques(map[string]int32{clique: countsByIndex[i]}).
 				Build()
 			anchors = append(anchors, &entry)
@@ -423,12 +423,79 @@ func TestReconcileStandaloneCliqueCountAcrossAnchors(t *testing.T) {
 			reconcileStandaloneCliqueCountAcrossAnchors(anchors, clique, tc.desiredTotal)
 
 			actual := make([]int32, len(tc.expected))
-			for _, anchor := range anchors {
-				actual[*anchor.AnchorIndex] = anchor.PodCliques[clique]
+			for pos, anchor := range anchors {
+				actual[len(anchors)-1-pos] = anchor.PodCliques[clique]
 			}
 			assert.Equal(t, tc.expected, actual)
 		})
 	}
+}
+
+// TestEnsureScaleOutEntry verifies a ScaleOut entry is added only when a current-generation anchor exists
+// to depend it on, and that entries are left unchanged for a replica still frozen at the old generation
+// during a coherent update, where no current-generation anchor is present yet.
+func TestEnsureScaleOutEntry(t *testing.T) {
+	clk := clocktesting.NewFakeClock(time.Now())
+	pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "uid").
+		WithScalingGroupConfig(testPCSGName, []string{"c"}, 2, 2).
+		WithPodCliqueSetGenerationHash(ptr.To(testGenHash)).
+		Build()
+
+	t.Run("adds a ScaleOut depending on the current-generation anchor", func(t *testing.T) {
+		entries := []grovecorev1alpha1.PodGangEntry{
+			{Role: grovecorev1alpha1.PodGangEntryRoleAnchor, Epoch: "100", PodCliqueSetGenerationHash: testGenHash, PCSGReplicaIndices: map[string][]int32{testPCSGName: {0, 1}}},
+		}
+
+		got, err := ensureScaleOutEntry(clk, entries, pcs, "")
+
+		require.NoError(t, err)
+		require.Len(t, got, 2)
+		scaleOut := testutils.EntryByRole(got, grovecorev1alpha1.PodGangEntryRoleScaleOut)
+		assert.Equal(t, testGenHash, scaleOut.PodCliqueSetGenerationHash)
+		assert.Equal(t, []string{"100"}, scaleOut.DependsOn)
+	})
+
+	t.Run("leaves entries unchanged when no current-generation anchor exists yet", func(t *testing.T) {
+		entries := []grovecorev1alpha1.PodGangEntry{
+			{Role: grovecorev1alpha1.PodGangEntryRoleAnchor, Epoch: "100", PodCliqueSetGenerationHash: "old-gen", PCSGReplicaIndices: map[string][]int32{testPCSGName: {0, 1}}},
+		}
+
+		got, err := ensureScaleOutEntry(clk, entries, pcs, "")
+
+		require.NoError(t, err)
+		assert.Equal(t, entries, got)
+	})
+}
+
+// TestReconcileStandaloneCliqueCountWithNilAnchorMap verifies the count reconcile stays nil-map safe when
+// the highest-epoch anchor carries no standalone PodCliques. That happens after a subset coherent update
+// where a PodCliqueScalingGroup anchor sits at the highest epoch and its empty PodCliques map round-trips
+// to nil through the API server.
+func TestReconcileStandaloneCliqueCountWithNilAnchorMap(t *testing.T) {
+	const clique = "frontend"
+	anchorsHighestFirst := func() []*grovecorev1alpha1.PodGangEntry {
+		highest := &grovecorev1alpha1.PodGangEntry{Role: grovecorev1alpha1.PodGangEntryRoleAnchor, Epoch: "200", PCSGReplicaIndices: map[string][]int32{"inference": {1}}}
+		base := &grovecorev1alpha1.PodGangEntry{Role: grovecorev1alpha1.PodGangEntryRoleAnchor, Epoch: "100", PodCliques: map[string]int32{clique: 2}}
+		return []*grovecorev1alpha1.PodGangEntry{highest, base}
+	}
+
+	t.Run("scale-out initializes the nil map on the highest anchor", func(t *testing.T) {
+		anchors := anchorsHighestFirst()
+
+		reconcileStandaloneCliqueCountAcrossAnchors(anchors, clique, 3)
+
+		assert.Equal(t, int32(1), anchors[0].PodCliques[clique])
+		assert.Equal(t, int32(2), anchors[1].PodCliques[clique])
+	})
+
+	t.Run("scale-in skips anchors that do not carry the clique", func(t *testing.T) {
+		anchors := anchorsHighestFirst()
+
+		reconcileStandaloneCliqueCountAcrossAnchors(anchors, clique, 1)
+
+		assert.Nil(t, anchors[0].PodCliques)
+		assert.Equal(t, int32(1), anchors[1].PodCliques[clique])
+	})
 }
 
 // TestRemoveEmptyEntries verifies removeEmptyEntries keeps a current-generation empty ScaleOut entry
@@ -510,7 +577,6 @@ func podGangWithEpochRole(name, epoch string, role grovecorev1alpha1.PodGangEntr
 func anchorEntry(podCliques map[string]int32, pcsgIndices map[string][]int32) grovecorev1alpha1.PodGangEntry {
 	return testutils.NewPodGangEntryBuilder(testGenHash, "100").
 		WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).
-		WithAnchorIndex(0).
 		WithPodCliques(podCliques).
 		WithPCSGReplicaIndices(pcsgIndices).
 		Build()

@@ -457,7 +457,7 @@ func (r _resource) createOrUpdatePodGangs(ctx context.Context, ss *syncState) sy
 		// are reconciled on every pass regardless, so a regression is reflected instead of frozen.
 		allPodsCreatedErr := r.verifyAllPodsCreated(ss, expectedPG)
 		if allPodsCreatedErr != nil {
-			ss.logger.Info("Not all pods are created or associated to the PodGang yet", "PodGangName", expectedPG.fqn)
+			ss.logger.V(1).Info("Not all pods are created or associated to the PodGang yet", "PodGangName", expectedPG.fqn)
 			result.recordError(allPodsCreatedErr)
 		}
 
@@ -639,7 +639,7 @@ func (r _resource) verifyAllPodsCreated(ss *syncState, pgi *podGangInfo) error {
 	pclqs := ss.getPodCliques(pgi)
 	if len(pclqs) != len(pgi.pclqs) {
 		// Not all constituent PCLQs exist yet
-		ss.logger.Info("Not all constituent PCLQs exist yet", "podGang", pgi.fqn, "expected", len(pgi.pclqs), "actual", len(pclqs))
+		ss.logger.V(1).Info("Not all constituent PCLQs exist yet", "podGang", pgi.fqn, "expected", len(pgi.pclqs), "actual", len(pclqs))
 		return groveerr.New(groveerr.ErrCodeRequeueAfter,
 			component.OperationSync,
 			fmt.Sprintf("Waiting for all pods to be created for PodGang %s", pgi.fqn),
@@ -648,7 +648,7 @@ func (r _resource) verifyAllPodsCreated(ss *syncState, pgi *podGangInfo) error {
 	// check the health of each podclique
 	numPendingPods := r.getPodsPendingCreationOrAssociation(ss, pgi)
 	if numPendingPods > 0 {
-		ss.logger.Info("skipping creation of PodGang as all desired replicas have not yet been created or assigned", "podGang", pgi.fqn, "numPendingPodsToCreateOrAssociate", numPendingPods)
+		ss.logger.V(1).Info("skipping creation of PodGang as all desired replicas have not yet been created or assigned", "podGang", pgi.fqn, "numPendingPodsToCreateOrAssociate", numPendingPods)
 		return groveerr.New(groveerr.ErrCodeRequeueAfter,
 			component.OperationSync,
 			fmt.Sprintf("Waiting for all pods to be created or assigned for PodGang %s", pgi.fqn),
@@ -693,8 +693,8 @@ func (r _resource) createOrUpdatePodGang(ctx context.Context, ss *syncState, pgI
 		Name:      pgInfo.fqn,
 	}
 	pg := emptyPodGang(pgObjectKey)
-	ss.logger.Info("CreateOrPatch PodGang", "objectKey", pgObjectKey)
-	_, err := controllerutil.CreateOrPatch(ctx, r.client, pg, func() error {
+	ss.logger.V(1).Info("Running CreateOrPatch for PodGang", "objectKey", pgObjectKey)
+	opResult, err := controllerutil.CreateOrPatch(ctx, r.client, pg, func() error {
 		return r.buildResource(ss.pcs, pgInfo, pg)
 	})
 	if err != nil {
@@ -714,8 +714,10 @@ func (r _resource) createOrUpdatePodGang(ctx context.Context, ss *syncState, pgI
 		}
 	}
 
-	r.eventRecorder.Eventf(ss.pcs, corev1.EventTypeNormal, constants.ReasonPodGangCreateOrUpdateSuccessful, "Created/Updated PodGang %v", pgObjectKey)
-	ss.logger.Info("Triggered CreateOrPatch of PodGang", "objectKey", pgObjectKey)
+	if opResult != controllerutil.OperationResultNone {
+		r.eventRecorder.Eventf(ss.pcs, corev1.EventTypeNormal, constants.ReasonPodGangCreateOrUpdateSuccessful, "Created/Updated PodGang %v", pgObjectKey)
+		ss.logger.Info("Created or updated PodGang", "objectKey", pgObjectKey, "result", opResult)
+	}
 	return nil
 }
 

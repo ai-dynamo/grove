@@ -369,3 +369,48 @@ func TestAllPodGangsAtEpochEverScheduled(t *testing.T) {
 		})
 	}
 }
+
+func TestAllPodGangsAtEpochEverReady(t *testing.T) {
+	const (
+		pcsName   = "test-pcs"
+		namespace = "default"
+		epoch     = "1000"
+	)
+	pcsObjectKey := client.ObjectKey{Namespace: namespace, Name: pcsName}
+
+	podGangAtEpoch := func(name string, ready bool) *groveschedulerv1alpha1.PodGang {
+		builder := testutils.NewPodGangBuilder(name, namespace).
+			WithLabels(map[string]string{
+				apicommon.LabelPartOfKey:                pcsName,
+				apicommon.LabelPodCliqueSetReplicaIndex: "0",
+				apicommon.LabelEpoch:                    epoch,
+			})
+		if ready {
+			builder = builder.WithLastReady()
+		}
+		return builder.Build()
+	}
+
+	tests := []struct {
+		name     string
+		podGangs []*groveschedulerv1alpha1.PodGang
+		expected bool
+	}{
+		{"epoch with no PodGangs is not ready", nil, false},
+		{"epoch is ready when all its PodGangs are ready", []*groveschedulerv1alpha1.PodGang{podGangAtEpoch("pg-0", true), podGangAtEpoch("pg-1", true)}, true},
+		{"epoch is not ready when any of its PodGangs is not ready", []*groveschedulerv1alpha1.PodGang{podGangAtEpoch("pg-0", true), podGangAtEpoch("pg-1", false)}, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			builder := testutils.NewTestClientBuilder()
+			for _, pg := range tc.podGangs {
+				builder = builder.WithObjects(pg)
+			}
+			cl := builder.Build()
+
+			actual, err := AllPodGangsAtEpochEverReady(t.Context(), cl, pcsObjectKey, 0, epoch)
+			require.NoError(t, err)
+			assert.Equal(t, tc.expected, actual)
+		})
+	}
+}
