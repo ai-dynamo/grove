@@ -95,7 +95,7 @@ Rolling updates already stall on a zero-replica standalone `PodClique`: completi
 
 ## Design Details
 
-For `PodClique`, omitted `replicas` defaults to `1`, while explicit `0` is preserved. Omitted `minAvailable` defaults to `max(1, replicas)`.
+For `PodClique`, change `PodCliqueSpec.Replicas` from `int32` to `*int32` with `json:"replicas,omitempty"` to distinguish omission from explicit zero. Omitted `replicas` defaults to `1`, while explicit `0` is preserved. Omitted `minAvailable` defaults to `max(1, replicas)`.
 
 ### Gang Behavior
 
