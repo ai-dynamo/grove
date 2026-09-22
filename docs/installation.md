@@ -1,5 +1,10 @@
 # Installation
 
+## Kubernetes compatibility
+
+The minimum tested Kubernetes version is 1.34. See the
+[compatibility matrix](../README.md#kubernetes-compatibility).
+
 To install Grove, you can choose one of the following options:
 - Install Grove from the published Helm charts under the [GitHub packages section](https://github.com/orgs/ai-dynamo/packages?repo_name=grove).
 - Build from source and install Grove using the `make` targets we provide as a part of the repository.
