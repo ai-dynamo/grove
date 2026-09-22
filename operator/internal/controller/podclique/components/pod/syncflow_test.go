@@ -17,6 +17,7 @@ package pod
 import (
 	"context"
 	"slices"
+	"strconv"
 	"testing"
 	"time"
 
@@ -613,4 +614,39 @@ func scaleOutEntry(epoch, dependsOnEpoch string) grovecorev1alpha1.PodGangEntry 
 		WithRole(grovecorev1alpha1.PodGangEntryRoleScaleOut).
 		WithDependsOn(dependsOnEpoch).
 		Build()
+}
+
+func TestSelectExcessPodsToDelete_PCSGPreservesContiguousIndices(t *testing.T) {
+	for _, count := range []int{3, 12} {
+		t.Run(strconv.Itoa(count), func(t *testing.T) {
+			pclq := &grovecorev1alpha1.PodClique{
+				ObjectMeta: metav1.ObjectMeta{Name: "pclq", Namespace: testNamespace,
+					Labels: map[string]string{apicommon.LabelPodCliqueScalingGroup: "group"}},
+				Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: int32(count - 2)},
+			}
+			pods := make([]*corev1.Pod, count)
+			for i := range pods {
+				pods[i] = &corev1.Pod{
+					ObjectMeta: metav1.ObjectMeta{Name: "pod-" + strconv.Itoa(i), UID: types.UID(strconv.Itoa(i)),
+						Labels:            map[string]string{apicommon.LabelPodCliquePodIndex: strconv.Itoa(i), apicommon.LabelPodGang: "group-0"},
+						CreationTimestamp: metav1.NewTime(time.Unix(int64(count-i), 0))},
+					Spec:   corev1.PodSpec{NodeName: "node"},
+					Status: corev1.PodStatus{Phase: corev1.PodRunning, Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}},
+				}
+			}
+			// A lower ordinal can be newer or unhealthy after a replacement. Neither
+			// should let scale-in leave an ordinal outside the new replica range.
+			pods[0].Spec.NodeName = ""
+			pods[0].Status.Phase = corev1.PodPending
+			pods[0].Status.Conditions = nil
+			r := _resource{expectationsStore: expect.NewExpectationsStore()}
+			selected := r.selectExcessPodsToDelete(&syncSnapshot{pclq: pclq, existingPCLQPods: pods}, logr.Discard())
+			require.Len(t, selected, 2)
+			assert.Equal(t, "pod-"+strconv.Itoa(count-1), selected[0].Name)
+			assert.Equal(t, "pod-"+strconv.Itoa(count-2), selected[1].Name)
+			for i, pod := range pods {
+				assert.Equal(t, "pod-"+strconv.Itoa(i), pod.Name, "snapshot order must remain unchanged")
+			}
+		})
+	}
 }
