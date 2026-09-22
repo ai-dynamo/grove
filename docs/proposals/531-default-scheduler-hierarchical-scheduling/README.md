@@ -25,7 +25,7 @@ Use upstream Kubernetes `Workload`, `CompositePodGroup`, and `PodGroup` APIs to 
 
 ## Motivation
 
-Grove already defines the scheduling intent: `PodGangMap` creates the `PodGang` layout, and each `PodGang` defines its groups, minimums, and topology. This GREP keeps Grove's general Kubernetes >=1.36 baseline. The default-scheduler backend translates that intent into upstream objects and reuses `workloadbuilder` where applicable when the required WAS capabilities are available. No new Grove API or scheduling model is needed.
+Grove already defines the scheduling intent: `PodGangMap` creates the `PodGang` layout, and each `PodGang` defines its groups, minimums, and topology. This GREP keeps Grove's general Kubernetes >=1.36 baseline. The default-scheduler backend translates that intent into upstream objects and reuses the upstream [workloadbuilder library](https://kubernetes.io/docs/concepts/workloads/workload-api/workloadbuilder/#the-workloadbuilder-library) where applicable when the required WAS capabilities are available. No new Grove API or scheduling model is needed.
 
 ### Goals
 
@@ -44,9 +44,9 @@ With hierarchical scheduling enabled for the default-scheduler backend, Grove tr
 
 - Kubernetes [Workload-Aware Scheduling](https://github.com/orgs/kubernetes/projects/251) is still evolving, and Grove must track upstream API changes.
 - `workloadbuilder` is reused where applicable; Grove handles translation, runtime object reconciliation, and Pod membership.
-- WAS requires `minCount >= 1`. An initial `MinReplicas=0` mapping fails closed; when Grove releases it to zero after initial placement, the backend retains the last positive upstream `minCount`.
+- The WAS gang policy requires `minCount >= 1`. Mappings with `MinReplicas=0` are unsupported and fail closed.
 - WAS limits each template list to 8 entries and hierarchy depth to 4. `PodGang`s exceeding these limits fail closed.
-- WAS supports a single required topology key per generated group. Preferred topology constraints are unsupported and fail closed.
+- WAS supports one required topology key per group. Unsupported preferred constraints are ignored with a warning; required constraints remain enforced.
 
 ## Design Details
 
