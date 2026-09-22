@@ -55,9 +55,9 @@ var cascadeDeletedResources = []cascadeResource{
 	{name: "HorizontalPodAutoscalers", gvk: schema.GroupVersionKind{Group: "autoscaling", Version: "v2", Kind: "HorizontalPodAutoscaler"}},
 }
 
-// Test_CascadeDeletePodCliqueSet verifies that deleting a small PodCliqueSet
+// Test_CascadeDelete1_PodCliqueSet verifies that deleting a small PodCliqueSet
 // cascades through the owned Grove resource tree and managed child resources.
-func Test_CascadeDeletePodCliqueSet(t *testing.T) {
+func Test_CascadeDelete1_PodCliqueSet(t *testing.T) {
 	ctx := context.Background()
 
 	const expectedPods = 10
