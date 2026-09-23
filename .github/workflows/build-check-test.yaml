@@ -130,6 +130,8 @@ jobs:
             test_pattern: "^Test_TAS"
           - test_name: cert_management
             test_pattern: "^Test_CM"
+          - test_name: cascade_delete
+            test_pattern: "^Test_CascadeDelete"
           - test_name: auto_mnnvl
             test_pattern: "^Test_AutoMNNVL"
             make_target: "run-e2e-mnnvl-full"
@@ -207,6 +209,7 @@ jobs:
           - test_name: startup_ordering
           - test_name: Topology_Aware_Scheduling
           - test_name: cert_management
+          - test_name: cascade_delete
           - test_name: auto_mnnvl
           - test_name: crd_installer
           - test_name: resource_sharing
