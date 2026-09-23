@@ -27,7 +27,7 @@ jobs:
           echo "RAM: $(free -h | awk '/^Mem:/ {print $2}')"
 
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: E2E setup
         uses: ./.github/actions/e2e-setup
