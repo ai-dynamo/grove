@@ -1952,6 +1952,70 @@ func TestBuildAdditionalLabelsFromPodGangEntry(t *testing.T) {
 	assert.Equal(t, expected, actual)
 }
 
+// TestBuildPCLQInfosAndTopoConstraintsForPCSGReplica verifies that pclqInfo entries
+// for live PCLQs contain the correct number of replicas.
+func TestBuildPCLQInfosAndTopoConstraintsForPCSGReplica(t *testing.T) {
+	const (
+		pcsName   = "test-pcs"
+		namespace = "default"
+	)
+	pcsgConfig := grovecorev1alpha1.PodCliqueScalingGroupConfig{
+		Name:         "scaling-group",
+		Replicas:     ptr.To(int32(2)),
+		MinAvailable: ptr.To(int32(1)),
+		CliqueNames:  []string{"worker"},
+	}
+	pcs := &grovecorev1alpha1.PodCliqueSet{
+		ObjectMeta: metav1.ObjectMeta{Name: pcsName, Namespace: namespace},
+		Spec: grovecorev1alpha1.PodCliqueSetSpec{
+			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
+				Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+					{Name: "worker", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 3, MinAvailable: ptr.To(int32(2))}},
+				},
+				PodCliqueScalingGroupConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{pcsgConfig},
+			},
+		},
+	}
+
+	pcsgFQN := apicommon.GeneratePodCliqueScalingGroupName(apicommon.ResourceNameReplica{Name: pcs.Name, Replica: 0}, pcsgConfig.Name)
+
+	makePCLQ := func(templateName string, replicas int32) grovecorev1alpha1.PodClique {
+		pclqFQN := apicommon.GeneratePodCliqueName(apicommon.ResourceNameReplica{Name: pcsgFQN, Replica: 0}, templateName)
+		return grovecorev1alpha1.PodClique{ObjectMeta: metav1.ObjectMeta{Name: pclqFQN, Namespace: namespace}, Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: replicas}}
+	}
+
+	tests := []struct {
+		name             string
+		existingPCLQs    []grovecorev1alpha1.PodClique
+		expectedReplicas []int32
+	}{
+		{
+			name:             "missing cliques sets replicas from template",
+			expectedReplicas: []int32{3},
+		},
+		{
+			name:             "present clique sets replica",
+			existingPCLQs:    []grovecorev1alpha1.PodClique{makePCLQ("worker", 5)},
+			expectedReplicas: []int32{5},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ss := &syncState{
+				logger:             ctrllogger.FromContext(t.Context()),
+				pcs:                pcs,
+				existingPCLQByName: componentutils.PodCliqueByName(tt.existingPCLQs),
+			}
+
+			actual, _, err := buildPCLQInfosAndTopoConstraintsForPCSGReplica(ss, 0, pcs.Spec.Template.PodCliqueScalingGroupConfigs[0], 0)
+			require.NoError(t, err)
+
+			actualReplicas := lo.Map(actual, func(p pclqInfo, _ int) int32 { return p.replicas })
+			assert.ElementsMatch(t, tt.expectedReplicas, actualReplicas)
+		})
+	}
+}
+
 func podNames(pods []v1.Pod) []string {
 	return lo.Map(pods, func(pod v1.Pod, _ int) string { return pod.Name })
 }

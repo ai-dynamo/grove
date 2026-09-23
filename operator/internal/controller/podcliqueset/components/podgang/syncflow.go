@@ -320,9 +320,13 @@ func buildPCLQInfosAndTopoConstraintsForPCSGReplica(ss *syncState, pcsReplicaInd
 			return nil, nil, fmt.Errorf("PodCliqueScalingGroup %q references a PodClique %q that does not exist in the PodCliqueSet: %v", pcsgFQN, cliqueName, client.ObjectKeyFromObject(ss.pcs))
 		}
 		pclqFQN := apicommon.GeneratePodCliqueName(apicommon.ResourceNameReplica{Name: pcsgFQN, Replica: int(pcsgReplicaIndex)}, cliqueName)
+		replicas := pclqTemplateSpec.Spec.Replicas
+		if pclq, exists := ss.existingPCLQByName[pclqFQN]; exists {
+			replicas = pclq.Spec.Replicas
+		}
 		pi := pclqInfo{
 			fqn:          pclqFQN,
-			replicas:     pclqTemplateSpec.Spec.Replicas,
+			replicas:     replicas,
 			minAvailable: *pclqTemplateSpec.Spec.MinAvailable,
 			isStandalone: false,
 		}

@@ -41,6 +41,44 @@ func TestControllerConstants(t *testing.T) {
 	assert.Equal(t, "podclique-controller", controllerName)
 }
 
+// TestPodPredicate_Create tests the pod predicate's Create path for the scenario:
+// when a PodClique within a PodCliqueScalingGroup is scaled, the creation of the pods
+// should trigger a status change that propagates to the PCS.
+func TestPodPredicate_Create(t *testing.T) {
+	managedLabels := map[string]string{apicommon.LabelManagedByKey: apicommon.LabelManagedByValue}
+	tests := []struct {
+		name string
+		pod  *corev1.Pod
+		want bool
+	}{
+		{
+			name: "managed gated pod with no status conditions",
+			pod: testutils.NewPodBuilder("worker-0", "default").
+				WithOwner("worker").WithLabels(managedLabels).
+				WithSchedulingGate("grove.io/podgang-pending-creation").Build(),
+			want: true,
+		},
+		{
+			name: "PodClique owner without Grove management label",
+			pod:  testutils.NewPodBuilder("worker-0", "default").WithOwner("worker").Build(),
+		},
+		{
+			name: "Grove management label without PodClique owner",
+			pod:  testutils.NewPodBuilder("worker-0", "default").WithLabels(managedLabels).Build(),
+		},
+		{
+			name: "unmanaged pod",
+			pod:  testutils.NewPodBuilder("worker-0", "default").Build(),
+		},
+	}
+	r := &Reconciler{}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, r.podPredicate().Create(event.CreateEvent{Object: tt.pod}))
+		})
+	}
+}
+
 // TestPodPredicate_Delete tests the pod predicate's Delete path for the scenario:
 // when a managed pod (e.g. pending) is manually deleted, the informer sees a Delete event before the next reconcile.
 // The predicate must call ObserveDeletions so the pod's UID is removed from create expectations (uidsToAdd),

@@ -113,7 +113,9 @@ func managedPodCliquePredicate() predicate.Predicate {
 // On Delete for a managed pod it calls ObserveDeletions so the controller can recreate the pod (issue #457).
 func (r *Reconciler) podPredicate() predicate.Predicate {
 	return predicate.Funcs{
-		CreateFunc: func(_ event.CreateEvent) bool { return false },
+		CreateFunc: func(e event.CreateEvent) bool {
+			return isManagedPod(e.Object)
+		},
 		DeleteFunc: func(deleteEvent event.DeleteEvent) bool {
 			deletedPod, ok := deleteEvent.Object.(*corev1.Pod)
 			if !ok || !isManagedPod(deletedPod) {
