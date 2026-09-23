@@ -386,6 +386,14 @@ func Test_RU12_RollingUpdateWithPCSScaleInDuringUpdate(t *testing.T) {
 	}()
 
 	tests.Logger.Info("3. Change the specification of pc-a, pc-b and pc-c")
+	tcOrdinalTimeout := *tc
+	tcOrdinalTimeout.Timeout = 60 * time.Second
+	ordinalObserver, err := newOrdinalUpdateObserver(&tcOrdinalTimeout, 1)
+	if err != nil {
+		t.Fatalf("Failed to watch for final ordinal update: %v", err)
+	}
+	defer ordinalObserver.Stop()
+
 	// Use raw trigger since we need to wait for ordinal before starting the wait
 	for _, cliqueName := range []string{"pc-a", "pc-b", "pc-c"} {
 		if err := triggerPodCliqueUpdate(tc, cliqueName); err != nil {
@@ -395,10 +403,8 @@ func Test_RU12_RollingUpdateWithPCSScaleInDuringUpdate(t *testing.T) {
 
 	tests.Logger.Info("4. Scale in the PCS while the final ordinal is being updated")
 	// Wait for the final ordinal (ordinal 1 since there's two replicas, indexed from 0) to start updating before scaling in
-	// Rolling updates process ordinals from highest to lowest, so ordinal 1 is updated first
-	tcOrdinalTimeout := *tc
-	tcOrdinalTimeout.Timeout = 60 * time.Second
-	if err := waitForOrdinalUpdating(&tcOrdinalTimeout, 1); err != nil {
+	// Rolling updates process healthy replicas in ascending order, so ordinal 1 is updated last
+	if err := ordinalObserver.Wait(); err != nil {
 		t.Fatalf("Failed to wait for final ordinal to start updating: %v", err)
 	}
 
@@ -539,10 +545,17 @@ func Test_RU14_RollingUpdateWithPCSGScaleOutDuringUpdate(t *testing.T) {
 	tests.Logger.Info("4. Roll an update, wait until replica 0 is updating, then scale out sg-x during the update")
 	tcLongerTimeout := *tc
 	tcLongerTimeout.Timeout = 2 * time.Minute
+	// Establish the ordinal watch BEFORE triggering the update so a short-lived
+	// transition through CurrentlyUpdating[0]==0 cannot be missed.
+	ordinalObserver, err := newOrdinalUpdateObserver(&tcLongerTimeout, 0)
+	if err != nil {
+		t.Fatalf("Failed to watch for replica 0 update: %v", err)
+	}
+	defer ordinalObserver.Stop()
 	updateErrCh := triggerRollingUpdate(&tcLongerTimeout, 2, "pc-a", "pc-b", "pc-c")
 	// Wait until replica 0 is actually updating. Replica 1 then still carries old-generation entries,
 	// which is the window where a scale-out could produce a DependsOn on an empty anchor epoch.
-	if err := waitForOrdinalUpdating(&tcLongerTimeout, 0); err != nil {
+	if err := ordinalObserver.Wait(); err != nil {
 		t.Fatalf("Update did not start on replica 0: %v", err)
 	}
 	scaleErrCh := tcLongerTimeout.ScalePCSGAcrossAllReplicasAsync("workload1", "sg-x", 2, 3, 28, 0, 0)
