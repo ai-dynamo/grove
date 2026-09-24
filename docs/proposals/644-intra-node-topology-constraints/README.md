@@ -48,7 +48,7 @@ Scheduler-native NUMA support works one pod at a time. KAI Scheduler's NUMA plug
 
 DRA now has the pieces Grove needs. Kubernetes has [standardized](https://kubernetes.io/docs/reference/node/dra-standard-device-attributes/) the device attributes `resource.kubernetes.io/pcieRoot`, in v1.34, and `resource.kubernetes.io/numaNode`, in v1.37 through [KEP-6072](https://github.com/kubernetes/enhancements/issues/6072). The NVIDIA GPU DRA driver publishes both as of [v0.5.0](https://github.com/kubernetes-sigs/dra-driver-nvidia-gpu/releases/tag/v0.5.0). A `matchAttribute` constraint aligns the devices allocated for one ResourceClaim. Several pods can share one ResourceClaim, and each container can take only its own request from it ([API](https://github.com/kubernetes/kubernetes/blob/v1.37.0/staging/src/k8s.io/api/core/v1/types.go#L3109-L3114)), so a shared claim can align devices that different pods use. What is missing is something that creates one claim per group and wires each pod to its share of it. Grove already creates ComputeDomains and injects claim references into pod specs for [auto-MNNVL](../417-auto-mnnvl/README.md), so it is a natural place to do this.
 
-One ambiguity has to be resolved as well. `pack` applies to "each replica of the resource". At the PodCliqueSet and PodCliqueScalingGroup levels a replica is a group of pods. At the PodClique level a replica is a single pod, yet the implementation packs all pods of the clique together: the operator emits one `PodGroup` per clique, and the KAI backend turns it into a subgroup whose topology constraint covers all of its pods. For node-scoped domains the two readings never differed in practice, because a single pod always fits in one host. For intra-node domains they differ, so the API has to say which one it means.
+One ambiguity has to be resolved as well. `pack` applies to "each replica of the resource". At the PodCliqueSet and PodCliqueScalingGroup levels a replica is a group of pods. At the PodClique level a replica is a single pod, yet the implementation packs all pods of the clique together: the operator emits one `PodGroup` per clique, and the KAI backend turns it into a subgroup whose topology constraint covers all of its pods. For node-scoped domains the two readings never differed in practice, because a single pod always fits in one host. For intra-node domains they differ: packing the clique's pods together (resource-level packing) or packing each pod on its own (replica-level packing). The API has to say which one it means.
 
 ### Goals
 
@@ -74,9 +74,9 @@ One ambiguity has to be resolved as well. `pack` applies to "each replica of the
 The proposal has four parts.
 
 1. **Intra-node levels.** A `ClusterTopologyBinding` gets an optional `intraNodeLevels` list. Each entry names a domain and a `type`, `NUMANode` or `PCIeRoot`, and each type corresponds to a standardized DRA device attribute. Intra-node levels are narrower than every entry in `levels`, so the existing hierarchy rules extend to them.
-2. **PodClique-level `pack`.** `pack` on a PodClique packs all pods of the clique together, which is what Grove does today, and its documentation now says so. In other words, PodClique-level `pack` is resource-level packing: the PodClique as a whole is packed. Replica-level packing, meaning each pod on its own, is expressed in the pod's own ResourceClaimTemplate, as in Story 1.
+2. **PodClique-level `pack`.** `pack` on a PodClique keeps its current meaning, resource-level packing, and its documentation now says so. Replica-level packing is expressed in the pod's own ResourceClaimTemplate, as in Story 1.
 3. **Group claims.** `pack.required` may name an intra-node domain on a PodCliqueScalingGroup or on one of its member PodCliques. For each group of pods such a constraint covers, Grove creates one ResourceClaim holding every pod's device requests, copied from the pods' ResourceClaimTemplates, plus a `matchAttribute` constraint for each intra-node constraint. Each pod references the group claim, and each container takes only its own requests from it.
-4. **Admission.** The PodCliqueSet webhook rejects intra-node constraints that cannot be enforced: `preferred` intra-node domains, constraints outside PodCliqueScalingGroups, pods without claim templates to copy, groups that exceed DRA's per-claim limits, and scheduler backends that do not support shared claims.
+4. **Admission.** The PodCliqueSet webhook rejects intra-node constraints that cannot be enforced: `preferred` intra-node domains, constraints outside PodCliqueScalingGroups, pods without claim templates to copy, pods that already use the claim name Grove reserves, groups that exceed DRA's per-claim limits, and scheduler backends that do not support shared claims.
 
 A binding for 8-GPU nodes with two NUMA nodes each:
 
@@ -156,21 +156,18 @@ podCliqueScalingGroups:
         required: numa
 ```
 
-For each of the two `pd` replicas, Grove creates a claim with three GPU requests and one constraint that they share a NUMA node, as shown in [Enforcement](#enforcement-group-resourceclaims). The two replicas may land on the same NUMA node, on different NUMA nodes, or on different hosts. Each replica is kept together; the replicas are not coordinated with each other.
+For each of the two `pd` replicas, Grove creates a claim with three GPU requests and one constraint that they share a NUMA node, as shown in [Enforcement](#enforcement-group-resourceclaims). The constraint keeps each replica together but does not coordinate the replicas. They end up on different NUMA nodes or different hosts here only because two three-GPU replicas cannot fit in one four-GPU NUMA node.
 
-By contrast, `pack.required: numa` on a PodClique puts all of that clique's pods in one NUMA node. With two prefill pods, that is the slow layout dynamo#10171 reports, which is why PodClique-level `pack` has to be documented as packing the pods together.
+By contrast, `pack.required: numa` on a prefill PodClique with two pods would put both in one NUMA node, the slow layout dynamo#10171 reports.
 
 ### Limitations/Risks & Mitigations
 
 - **Group size is fixed when the claim is allocated.** A claim is allocated as a whole when the first pod that uses it is scheduled, and it cannot grow afterwards. A PodCliqueScalingGroup scales by whole replicas, and its member PodCliques cannot autoscale on their own, so each replica keeps the same pods. Standalone PodCliques and PodCliqueSet replicas can change size, so phase 1 limits intra-node constraints to PodCliqueScalingGroups and their member PodCliques. A standalone clique can get the same behavior by wrapping it in a single-clique PodCliqueScalingGroup.
-- **A group is tied to one node.** GPUs are node-local, so all pods of a group run on the node where the claim is allocated. That is inherent to intra-node packing. A recreated pod returns to that node while the claim is still allocated. The resource claim controller deallocates a claim as soon as its last consumer is gone ([source](https://github.com/kubernetes/kubernetes/blob/v1.37.0/pkg/controller/resourceclaim/controller.go#L1608-L1632)), so once every pod of the group is gone, the recreated group can be placed on another node.
-- **The first pod reserves devices for the whole group.** When the claim is allocated for the first pod, every device in it is reserved, on a node chosen for that pod. If the rest of the group cannot fit on that node for another reason, such as CPU or memory, those pods stay pending while the devices remain reserved. *Mitigation:* backends that schedule the gang as a unit check the whole group before placing any pod of it.
+- **A group is tied to one node.** GPUs are node-local, so all pods of a group run on the node where the claim is allocated. That is inherent to intra-node packing. A pod recreated while the rest of its group still runs returns to that node. A group recreated as a whole cannot reuse its old claim: the resource claim controller only releases a pod that has terminated or was never scheduled ([source](https://github.com/kubernetes/kubernetes/blob/v1.37.0/pkg/controller/resourceclaim/controller.go#L1829-L1834)), so a pod stuck terminating on an unreachable node keeps the claim reserved there. *Mitigation:* each incarnation of a group gets its own claim, as described in [Enforcement](#enforcement-group-resourceclaims).
+- **The first pod reserves devices for the whole group.** When the claim is allocated for the first pod, every device in it is reserved, on a node chosen for that pod. If the rest of the group cannot fit on that node for another reason, such as CPU or memory, those pods stay pending while the devices remain reserved. *Mitigation:* a backend that schedules the gang as a unit checks the whole group before placing any of it. The kube backend does not schedule gangs until WAS support lands, so on kube a group can get stuck this way. The user guide will say so, and beta requires a backend that schedules gangs as a unit.
 - **Devices only.** The group claim aligns devices. CPUs and memory still follow the kubelet's CPU and memory managers. Once CPUs are available as DRA devices, for example through [dra-driver-cpu](https://github.com/kubernetes-sigs/dra-driver-cpu), which publishes `numaNode`, their requests can be copied into the group claim like any other.
 - **Devices without NUMA affinity.** A device whose NUMA node is unknown does not publish `numaNode`, and `matchAttribute` never selects a device that lacks the attribute. A constrained group stays pending on such nodes. *Mitigation:* the pods' pending reason reports the allocation failure, and the user guide calls this out.
 - **Shared claims need support from the scheduler and drivers.** kube-scheduler has allocated shared claims since DRA reached GA in v1.34. Whether other backends honor constraints on claims shared across a gang, and whether each DRA driver prepares a claim that several pods share, has to be validated. *Mitigation:* backends opt in through the interface in [Admission](#admission), and the alpha criteria include validation with the NVIDIA GPU DRA driver.
-- **Smaller domains are harder to satisfy.** A NUMA node holds a fraction of a node's GPUs, so constrained groups stay pending more often than unconstrained ones.
-- **The benefit depends on the data path.** When all GPUs on a node share an NVSwitch fabric, GPU-to-GPU traffic over NVLink does not depend on NUMA placement. Intra-node placement matters most for host-device traffic, GPU-NIC traffic, and GPU-to-GPU transfers that go over PCIe or through host memory.
-
 ## Design Details
 
 ### ClusterTopologyBinding: Intra-Node Levels
@@ -178,17 +175,14 @@ By contrast, `pack.required: numa` on a PodClique puts all of that clique's pods
 ```go
 // ClusterTopologyBindingSpec defines the desired topology hierarchy and backend binding behavior.
 type ClusterTopologyBindingSpec struct {
-	// Levels is unchanged. Every entry is identified by a node label key.
-	Levels []TopologyLevel `json:"levels"`
-
+	...
 	// IntraNodeLevels is an ordered list of topology levels inside a single node,
 	// from broadest to narrowest. Every intra-node level is narrower than every entry
 	// in Levels. Intra-node levels have no node label and are identified by Type.
 	// +optional
+	// +kubebuilder:validation:MaxItems=2
 	IntraNodeLevels []IntraNodeTopologyLevel `json:"intraNodeLevels,omitempty"`
-
-	// SchedulerTopologyBindings is unchanged.
-	SchedulerTopologyBindings []SchedulerTopologyBinding `json:"schedulerTopologyBindings,omitempty"`
+	...
 }
 
 // IntraNodeTopologyLevel defines a topology level inside a single node.
@@ -207,21 +201,14 @@ type IntraNodeTopologyLevel struct {
 type IntraNodeLevelType string
 
 const (
-	// IntraNodeLevelNUMANode is a NUMA node.
+	// IntraNodeLevelNUMANode groups devices by resource.kubernetes.io/numaNode.
 	IntraNodeLevelNUMANode IntraNodeLevelType = "NUMANode"
-	// IntraNodeLevelPCIeRoot is a PCIe root complex.
+	// IntraNodeLevelPCIeRoot groups devices by resource.kubernetes.io/pcieRoot.
 	IntraNodeLevelPCIeRoot IntraNodeLevelType = "PCIeRoot"
 )
 ```
 
-Each type maps to one standardized DRA device attribute:
-
-| Type | DRA device attribute |
-|---|---|
-| `NUMANode` | `resource.kubernetes.io/numaNode` |
-| `PCIeRoot` | `resource.kubernetes.io/pcieRoot` |
-
-With the alpha `DRAListTypeAttributes` gate, `numaNode` can be a list, and `matchAttribute` then succeeds when devices share at least one listed NUMA node. Grove passes the constraint through unchanged, so the cluster's gate settings decide which behavior applies.
+With the alpha `DRAListTypeAttributes` gate, `numaNode` can be a list, and `matchAttribute` then only requires the devices' lists to overlap, so devices on different NUMA nodes of the same socket can match. Grove passes the constraint through unchanged, and the user guide will warn that the gate weakens a required constraint.
 
 The effective hierarchy is `levels` followed by `intraNodeLevels`. The ClusterTopologyBinding webhook adds these checks to the ones GREP-244 defines:
 
@@ -236,10 +223,10 @@ Backends that derive a topology resource from `levels`, as the KAI backend does 
 The `TopologyConstraint` type is unchanged. The `Pack` documentation is corrected:
 
 ```go
-	// Pack specifies topology packing constraints for each replica of the resource.
-	// On a PodCliqueSet or PodCliqueScalingGroup, each replica is packed within one
-	// instance of the domain. On a PodClique, all pods of the clique in a PodGang are
-	// packed together within one instance of the domain.
+	// Pack specifies topology packing constraints. On a PodCliqueSet or
+	// PodCliqueScalingGroup, each replica is packed within one instance of the
+	// domain. On a PodClique, all pods of the clique in a PodGang are packed
+	// together within one instance of the domain.
 	// +optional
 	Pack *TopologyPackConstraint `json:"pack,omitempty"`
 ```
@@ -252,7 +239,7 @@ The PodCliqueSet webhook extends the rules from GREP-244 and [GREP-0368](../0368
 
 ### Enforcement: Group ResourceClaims
 
-A group is the set of pods covered by the outermost intra-node constraint. When a PodCliqueScalingGroup has an intra-node constraint, each of its replicas is a group. Otherwise, each member PodClique with an intra-node constraint forms one group per replica. Pods outside any intra-node constraint keep their own claims. For each group, Grove creates one ResourceClaim in the PodCliqueSet's namespace before creating the group's pods:
+A group is the set of pods covered by the outermost intra-node constraint. When a PodCliqueScalingGroup has an intra-node constraint, each of its replicas is a group. Otherwise, each member PodClique with an intra-node constraint forms one group per replica. Pods outside any intra-node constraint keep their own claims. For each incarnation of a group, Grove creates one ResourceClaim in the PodCliqueSet's namespace before creating the group's pods. A new incarnation starts whenever Grove recreates the group as a whole, for example during gang recovery. The claim:
 
 - **Requests.** For every pod in the group and every request in that pod's ResourceClaimTemplates, the claim gets a copy of the request under a name unique within the claim. The name is derived from the clique name, the pod's index within the group, and the original request name, and is shortened with a hash when needed to fit DRA's name limits.
 - **Constraints.** The templates' own constraints are copied and rewritten to the new request names. Each intra-node constraint then adds one `matchAttribute` constraint on its level's attribute, listing the requests of the pods it covers. A PodCliqueScalingGroup constraint covers every pod of the replica. A member PodClique constraint covers that clique's pods within the replica.
@@ -297,8 +284,9 @@ The scheduler allocates the whole claim when it schedules the first pod of the g
 
 Lifecycle:
 
-- The claim is owned by the PodCliqueScalingGroup. Grove deletes it when the replica it belongs to is removed by scale-in.
-- Scale-out creates a new claim for each new replica.
+- The claim is owned by the PodCliqueScalingGroup, and its name identifies the group and its incarnation. The example above omits the incarnation.
+- When Grove recreates a group as a whole, it creates a claim for the new incarnation instead of reusing the old one, because pods left on an unreachable node keep the old claim reserved on that node. Grove deletes the old claim, and the resource claim controller releases its devices once its last consumer is gone ([source](https://github.com/kubernetes/kubernetes/blob/v1.37.0/pkg/controller/resourceclaim/controller.go#L1608-L1632)).
+- Scale-out creates a claim for each new replica, and scale-in deletes the claims of removed replicas.
 - Claims that Grove injects for auto-MNNVL are left as separate claims and are not copied into the group claim.
 - A pod template change that alters device requests needs a new claim for the whole replica. How this fits the rolling update strategies of [GREP-393](../393-coherent-rolling-updates/README.md) is an open question.
 
@@ -308,36 +296,37 @@ Lifecycle:
 
 ### Admission
 
-A new optional backend interface reports whether a backend can schedule groups that share a claim:
+A new optional backend interface marks backends that can schedule groups that share a claim:
 
 ```go
-// SharedResourceClaimBackend is an optional interface for scheduler backends that can
-// schedule pods sharing a ResourceClaim, which is how Grove enforces intra-node
-// topology constraints.
+// SharedResourceClaimBackend is implemented by scheduler backends that allocate a
+// ResourceClaim referenced by several pods of a gang, honoring the claim's
+// constraints, and place those pods on the node the claim is allocated on.
 type SharedResourceClaimBackend interface {
-	// SupportsSharedResourceClaims reports whether the backend allocates a ResourceClaim
-	// referenced by several pods of a gang, honoring the claim's constraints, and places
-	// those pods on the node the claim is allocated on.
-	SupportsSharedResourceClaims() bool
+	// SchedulesSharedResourceClaims marks the capability. It has no behavior.
+	SchedulesSharedResourceClaims()
 }
 ```
 
 The PodCliqueSet webhook already resolves one scheduler backend per PodCliqueSet. When a PodCliqueSet has an intra-node constraint, the webhook rejects it with an error naming the reason if any of these hold:
 
-- The backend does not implement the interface, or reports no support.
+- The backend does not implement the interface.
 - A pod in a constrained group has no claim from a ResourceClaimTemplate that Grove could copy, for example because it requests its GPUs through a device plugin. Devices that a pod requests through device plugins are never part of a group claim and are not constrained.
+- A pod template already declares a claim named `grove-topology`, which Grove reserves for the group claim.
 - The group's claim would exceed DRA's per-claim limits: 32 requests, 32 constraints, and 32 allocated devices where the templates fix the device count ([API](https://github.com/kubernetes/kubernetes/blob/v1.37.0/staging/src/k8s.io/api/resource/v1/types.go#L1270-L1271)).
 
-ResourceClaimTemplates are separate objects that may not exist yet when a PodCliqueSet is created. The webhook runs template-dependent checks only for templates that already exist. If a template is missing or invalid when Grove builds a group claim, the reconciler reports it through the condition in [Monitoring](#monitoring).
+ResourceClaimTemplates are separate objects that may not exist yet when a PodCliqueSet is created. The webhook runs template-dependent checks only for templates that already exist. If a template is missing or invalid when Grove builds a group claim, the reconciler reports it as described in [Monitoring](#monitoring).
 
 ### Scheduler Backends
 
 | Backend | Shared ResourceClaims |
 |---|---|
-| kube | Supported. kube-scheduler allocates a shared claim with its constraints and places later pods on the claim's node ([source](https://github.com/kubernetes/kubernetes/blob/v1.37.0/pkg/scheduler/framework/plugins/dynamicresources/dynamicresources.go)). |
+| kube | Supported, without gang scheduling until WAS support lands. kube-scheduler allocates a shared claim with its constraints and places later pods on the claim's node ([source](https://github.com/kubernetes/kubernetes/blob/v1.37.0/pkg/scheduler/framework/plugins/dynamicresources/dynamicresources.go)). |
 | KAI | To be confirmed by the backend owner. KAI's NUMA plugin does not cover DRA-backed resources ([KAI-Scheduler#1859](https://github.com/kai-scheduler/KAI-Scheduler/issues/1859)). This path relies on KAI's DRA allocation instead. |
 | Volcano | To be confirmed by the backend owner. |
 | LPX | Not supported. LPX rejects topology constraints. |
+
+The kube backend does not enforce node-scoped `pack` today: its `ValidatePodCliqueSet` accepts it and its `SyncPodGang` is a no-op. A PodCliqueSet that combines a node-scoped and an intra-node constraint therefore gets only the intra-node part on kube. Rejecting node-scoped `pack` on the kube backend is a separate fix.
 
 ### Spread Constraints
 
@@ -360,14 +349,15 @@ These are the decisions to settle in review:
 
 1. Phase 1 scope: PodCliqueScalingGroups and their member PodCliques only, or also standalone PodCliques with a fixed replica count.
 2. Copying device requests out of the pods' ResourceClaimTemplates, versus asking users to declare a group's devices explicitly.
-3. Whether KAI and Volcano can schedule gangs that share claims.
+3. Whether KAI and Volcano can schedule gangs that share claims, and when the kube backend gains gang scheduling.
 4. How group claims interact with template updates that change device requests or a member PodClique's replica count, both of which need a new claim for every replica.
 5. Whether spread gets a follow-up GREP, and whether it should be limited to pods with one device each.
+6. What identifies a group incarnation in claim names: the PodGang epoch, which PodGang names already carry, or a counter Grove keeps.
 
 ### Monitoring
 
 - The `TopologyLevelsUnavailable` condition on PodCliqueSet covers intra-node domains the same way it covers node-scoped domains. If an administrator removes an intra-node level that a deployed PodCliqueSet uses, the condition is set and Grove stops generating group claims for that constraint. Existing pods keep their claims.
-- A new PodCliqueSet condition, `IntraNodeTopologyClaimsReady`, is `False` with a reason such as `ResourceClaimTemplateNotFound` or `ClaimLimitExceeded` when Grove cannot build a group claim, and `True` when every group claim exists.
+- When Grove cannot build a group claim, for example because a template is missing or the claim would exceed DRA's limits, it records an event on the PodCliqueSet and does not create the group's pods. A condition can be added later if events prove insufficient.
 - When allocation fails, the pods' scheduling events report it as for any other DRA claim.
 
 ### Dependencies
@@ -375,28 +365,23 @@ These are the decisions to settle in review:
 - Kubernetes with DRA, GA since v1.34. `numaNode` is standardized as of v1.37.
 - DRA drivers that publish the standardized attributes, such as the NVIDIA GPU DRA driver v0.5.0 or later.
 - A scheduler backend that implements `SharedResourceClaimBackend`.
+- No new RBAC. The operator's ClusterRole already allows creating and deleting ResourceClaims and reading ResourceClaimTemplates.
 
 ### Test Plan
 
-Unit tests:
+Three behaviors matter most. Each gets unit coverage in the webhook and the claim builder, and an e2e test:
 
-- ClusterTopologyBinding webhook: domain uniqueness across `levels` and `intraNodeLevels`, `type` uniqueness, and `NUMANode` ordered before `PCIeRoot`.
-- KAI topology sync and drift detection ignore `intraNodeLevels`.
-- PodCliqueSet webhook: intra-node `pack.required` accepted only on PodCliqueScalingGroups and their member PodCliques, intra-node `pack.preferred` rejected, hierarchy checks over the effective hierarchy, and rejection for missing backend support, pods without claim templates, and groups over the claim limits.
-- Group claim generation: copied and renamed requests, rewritten template constraints, one `matchAttribute` per intra-node constraint listing the right requests, nested constraints in one claim, owner references, and per-container request wiring.
+1. A group whose devices fit in one intra-node domain is placed on one node, with devices that share the level's attribute.
+2. A group that fits in no domain stays pending, and admission rejects constraints that cannot be enforced.
+3. Claims follow the group's lifecycle: one per replica on scale-out, removed on scale-in, and a new claim when the group is recreated as a whole.
 
-E2E tests can run on kind with a test DRA driver that publishes `numaNode` values, so they need no multi-socket hardware. Scenarios:
-
-- A group is placed on one node with devices that share a NUMA node.
-- A group that cannot fit in any NUMA node stays pending.
-- Scale-out creates one claim per new replica, and scale-in deletes the claims of removed replicas.
-- A group is placed on another node after all of its pods are deleted.
+E2E tests run on kind with [dra-example-driver](https://github.com/kubernetes-sigs/dra-example-driver), whose mock GPUs can publish the standard `pcieRoot` attribute from a configured list of roots, so the `PCIeRoot` level needs no hardware. Testing the `NUMANode` level the same way needs a small change to that driver to publish `numaNode` on its mock GPUs.
 
 ### Graduation Criteria
 
 #### Alpha
 
-- `intraNodeLevels` and intra-node `pack.required` on PodCliqueScalingGroups and their member PodCliques, enforced through group claims with the kube backend.
+- `intraNodeLevels` and intra-node `pack.required` on PodCliqueScalingGroups and their member PodCliques, enforced through group claims with the kube backend, which does not schedule gangs yet.
 - Admission rejects intra-node constraints that cannot be enforced.
 - The user guide documents per-pod locality through ResourceClaimTemplates (Story 1).
 - Group claims validated with the NVIDIA GPU DRA driver.
@@ -404,7 +389,7 @@ E2E tests can run on kind with a test DRA driver that publishes `numaNode` value
 #### Beta
 
 - Validated on multi-socket GPU nodes with a real workload, for example the dynamo#10171 layout.
-- At least one more backend supports shared claims, or has documented why it cannot.
+- Group claims enforced on a backend that schedules gangs as a unit.
 - A decision on spread.
 - No breaking API changes since alpha.
 
