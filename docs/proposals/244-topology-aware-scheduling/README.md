@@ -163,6 +163,8 @@ As an AI application developer running disaggregated inference workloads at scal
 
 As a software developer of benchmarking applications, when I request only 2 GPUs from a 8-GPU node, I want the two GPUs to be allocated on the same NUMA node along with all the CPUs. This will optimize communication costs between the host and device resulting in benchmark performance improvements. On GPU generations before NVSwitch, this optimization is also critical to optimize GPU-GPU communication costs over NVLink.
 
+For the single-Pod GPU-locality requirement in this story, use the existing [DRA pattern](../../user-guide/topology-aware-scheduling.md#gpu-numa-locality), which does not configure CPU or memory affinity.
+
 #### Story 4: Heterogeneous GPU Clusters
 
 As a cluster administrator managing a cluster with different GPU architectures, I want to define separate topologies for each architecture to partition the cluster into hardware-specific segments. Each topology captures the interconnect hierarchy of its hardware, and workloads targeting a specific topology are scheduled only on nodes whose labels match that topology's definitions.
