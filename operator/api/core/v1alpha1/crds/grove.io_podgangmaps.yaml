@@ -56,16 +56,6 @@ spec:
                     or more PodGangs. An Anchor entry materializes into a single anchor PodGang; a Tail or ScaleOut
                     entry materializes into one PodGang per (PodCliqueScalingGroup, replica index) it carries.
                   properties:
-                    anchorIndex:
-                      description: |-
-                        AnchorIndex is the index of an anchor entry within its generation hash. It is non-nil only on
-                        entries whose Role is Anchor, and nil otherwise. Index 0 marks the anchor that carries the
-                        MinAvailable replicas. It orders the anchors of a generation hash independently of the global
-                        epoch order, so the MinAvailable anchor stays identifiable as more anchors are added.
-                        NOTE: today a PodCliqueSet replica has a single anchor with index 0. Coherent updates (GREP-393)
-                        introduce additional anchors per hash with higher indices.
-                      format: int32
-                      type: integer
                     dependsOn:
                       description: |-
                         DependsOn lists the epochs whose PodGangs must be scheduled before this entry's PodGang
@@ -129,10 +119,6 @@ spec:
                   - podCliqueSetGenerationHash
                   - role
                   type: object
-                  x-kubernetes-validations:
-                  - message: anchorIndex must be set for Anchor entries and unset
-                      for all other entries
-                    rule: (self.role == 'Anchor') == has(self.anchorIndex)
                 type: array
                 x-kubernetes-list-map-keys:
                 - epoch

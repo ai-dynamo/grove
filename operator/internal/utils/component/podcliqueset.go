@@ -21,7 +21,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/ai-dynamo/grove/operator/api/common"
+	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 
 	"github.com/samber/lo"
@@ -50,7 +50,7 @@ func GetPodCliqueFQNsForPCSReplicaNotInPCSG(pcs *grovecorev1alpha1.PodCliqueSet,
 	pclqNames := make([]string, 0, len(pcs.Spec.Template.Cliques))
 	for _, pclqTemplateSpec := range pcs.Spec.Template.Cliques {
 		if IsStandalonePCLQ(pcs, pclqTemplateSpec.Name) {
-			pclqNames = append(pclqNames, common.GeneratePodCliqueName(common.ResourceNameReplica{Name: pcs.Name, Replica: pcsReplicaIndex}, pclqTemplateSpec.Name))
+			pclqNames = append(pclqNames, apicommon.GeneratePodCliqueName(apicommon.ResourceNameReplica{Name: pcs.Name, Replica: pcsReplicaIndex}, pclqTemplateSpec.Name))
 		}
 	}
 	return pclqNames
@@ -111,17 +111,75 @@ func GetPodCliqueSet(ctx context.Context, cl client.Client, objectMeta metav1.Ob
 // NOTE: It is assumed that all managed objects like PCSG, PCLQ and Pods will always have PCS name as value for grovecorev1alpha1.LabelPartOfKey label.
 // It should be ensured that labels that are set by the operator are never removed.
 func GetPodCliqueSetName(objectMeta metav1.ObjectMeta) string {
-	pcsName := objectMeta.GetLabels()[common.LabelPartOfKey]
+	pcsName := objectMeta.GetLabels()[apicommon.LabelPartOfKey]
 	return pcsName
 }
 
-// IsAutoUpdateStrategy returns true when PodCliqueSet update strategy is automatically orchestrated by Grove.
+// ResolveUpdateStrategyType returns the effective update strategy type for the PodCliqueSet. It
+// tolerates a nil UpdateStrategy or an empty Type by resolving to the Coherent default. This matches
+// the value the defaulting webhook persists, so an object that predates the UpdateStrategy field and
+// reconciles without re-admission resolves to the same strategy as a re-admitted object. Callers must
+// pass a non-nil PodCliqueSet.
+func ResolveUpdateStrategyType(pcs *grovecorev1alpha1.PodCliqueSet) grovecorev1alpha1.UpdateStrategyType {
+	if pcs.Spec.UpdateStrategy == nil || pcs.Spec.UpdateStrategy.Type == "" {
+		return grovecorev1alpha1.CoherentStrategy
+	}
+	return pcs.Spec.UpdateStrategy.Type
+}
+
+// IsRollingUpdateStrategy returns true when PodCliqueSet update strategy is orchestrated by Grove.
 // Only the OnDelete update strategy is not a rolling update strategy.
-func IsAutoUpdateStrategy(pcs *grovecorev1alpha1.PodCliqueSet) bool {
+func IsRollingUpdateStrategy(pcs *grovecorev1alpha1.PodCliqueSet) bool {
 	if pcs == nil {
 		return false
 	}
-	return pcs.Spec.UpdateStrategy == nil || pcs.Spec.UpdateStrategy.Type != grovecorev1alpha1.OnDeleteStrategy
+	return ResolveUpdateStrategyType(pcs) != grovecorev1alpha1.OnDeleteStrategy
+}
+
+// IsRollingUpdateInProgress returns true when the PodCliqueSet uses a rolling update strategy and an
+// update has started but has not yet ended.
+func IsRollingUpdateInProgress(pcs *grovecorev1alpha1.PodCliqueSet) bool {
+	return IsRollingUpdateStrategy(pcs) && updateInProgress(pcs)
+}
+
+// updateInProgress reports whether the PodCliqueSet has an update that has started but not yet ended.
+func updateInProgress(pcs *grovecorev1alpha1.PodCliqueSet) bool {
+	return pcs.Status.UpdateProgress != nil && pcs.Status.UpdateProgress.UpdateEndedAt == nil
+}
+
+// IsCoherentUpdateInProgress returns true when the PodCliqueSet uses the Coherent update strategy
+// and an update has started but has not yet ended.
+func IsCoherentUpdateInProgress(pcs *grovecorev1alpha1.PodCliqueSet) bool {
+	return IsCoherentStrategy(pcs) && updateInProgress(pcs)
+}
+
+// IsRollingRecreateUpdateInProgress returns true when a rolling update is in progress under the
+// RollingRecreate strategy, the default strategy that is neither Coherent nor OnDelete.
+func IsRollingRecreateUpdateInProgress(pcs *grovecorev1alpha1.PodCliqueSet) bool {
+	return IsRollingUpdateInProgress(pcs) && !IsCoherentStrategy(pcs)
+}
+
+// IsCoherentStrategy returns true when the PodCliqueSet uses the Coherent update strategy (the
+// UpdateStrategyType value "Coherent"). A nil or unset strategy resolves to the Coherent default.
+func IsCoherentStrategy(pcs *grovecorev1alpha1.PodCliqueSet) bool {
+	if pcs == nil {
+		return false
+	}
+	return ResolveUpdateStrategyType(pcs) == grovecorev1alpha1.CoherentStrategy
+}
+
+// IsPCSReplicaUnderCoherentUpdate reports whether the given PodCliqueSet replica is the one the
+// orchestrator has selected for a coherent update and has not yet closed out.
+func IsPCSReplicaUnderCoherentUpdate(pcs *grovecorev1alpha1.PodCliqueSet, pcsReplicaIndex int) bool {
+	if !IsCoherentUpdateInProgress(pcs) {
+		return false
+	}
+	for _, replicaProgress := range pcs.Status.UpdateProgress.CurrentlyUpdating {
+		if int(replicaProgress.ReplicaIndex) == pcsReplicaIndex && replicaProgress.UpdateEndedAt == nil {
+			return true
+		}
+	}
+	return false
 }
 
 // GetExpectedPCLQNamesGroupByOwner returns the expected unqualified PodClique names which are either owned by PodCliqueSet or PodCliqueScalingGroup.
@@ -144,7 +202,7 @@ func GetExpectedPCSGFQNsPerPCSReplica(pcs *grovecorev1alpha1.PodCliqueSet) map[i
 	pcsgFQNsByPCSReplica := make(map[int][]string)
 	for pcsReplicaIndex := range int(pcs.Spec.Replicas) {
 		for _, pcsgConfig := range pcs.Spec.Template.PodCliqueScalingGroupConfigs {
-			pcsgName := common.GeneratePodCliqueScalingGroupName(common.ResourceNameReplica{Name: pcs.Name, Replica: pcsReplicaIndex}, pcsgConfig.Name)
+			pcsgName := apicommon.GeneratePodCliqueScalingGroupName(apicommon.ResourceNameReplica{Name: pcs.Name, Replica: pcsReplicaIndex}, pcsgConfig.Name)
 			pcsgFQNsByPCSReplica[pcsReplicaIndex] = append(pcsgFQNsByPCSReplica[pcsReplicaIndex], pcsgName)
 		}
 	}

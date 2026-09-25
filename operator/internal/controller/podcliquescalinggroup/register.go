@@ -100,7 +100,7 @@ func mapPCSToPCSG() handler.MapFunc {
 			return nil
 		}
 		var pcsReplicaIndices []int32
-		if componentutils.IsAutoUpdateStrategy(pcs) &&
+		if componentutils.IsRollingUpdateStrategy(pcs) &&
 			len(pcs.Status.UpdateProgress.CurrentlyUpdating) > 0 {
 			// Rolling recreate needs to have a CurrentlyUpdating which is used to generate an event for the corresponding PCSG
 			pcsReplicaIndices = lo.RangeFrom(pcs.Status.UpdateProgress.CurrentlyUpdating[0].ReplicaIndex, 1)
@@ -161,7 +161,7 @@ func shouldEnqueueOnPCSUpdate(event event.UpdateEvent) bool {
 		}
 	}
 	// Enqueue while using OnDelete since there is no CurrentlyUpdating
-	if newPCS.Status.UpdateProgress != nil && !componentutils.IsAutoUpdateStrategy(newPCS) {
+	if newPCS.Status.UpdateProgress != nil && !componentutils.IsRollingUpdateStrategy(newPCS) {
 		return true
 	}
 	return false

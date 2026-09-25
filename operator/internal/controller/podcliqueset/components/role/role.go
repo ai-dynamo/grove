@@ -86,12 +86,12 @@ func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev
 		)
 	}
 	if len(existingRoleNames) > 0 {
-		logger.Info("Role already exists, skipping creation", "existingRole", existingRoleNames[0])
+		logger.V(1).Info("Role already exists, skipping creation", "existingRole", existingRoleNames[0])
 		return nil
 	}
 	objectKey := getObjectKey(pcs.ObjectMeta)
 	role := emptyRole(objectKey)
-	logger.Info("Running CreateOrUpdate Role", "objectKey", objectKey)
+	logger.V(1).Info("Running CreateOrUpdate Role", "objectKey", objectKey)
 	if err := r.buildResource(pcs, role); err != nil {
 		return groveerr.WrapError(err,
 			errSyncRole,

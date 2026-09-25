@@ -41,6 +41,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
 
 // prepareSyncFlow computes the required state for synchronizing PodGang resources.
@@ -173,8 +174,13 @@ func (r _resource) computeExpectedPodGangs(ctx context.Context, ss *syncState) (
 		if err != nil {
 			return nil, err
 		}
+		minAvailableAnchorEpoch, foundMinAvailableAnchor, err := componentutils.MinAvailableAnchorEpoch(pgm.Spec.Entries, ss.pcs.Status.CurrentGenerationHash)
+		if err != nil {
+			return nil, err
+		}
 		for _, entry := range pgm.Spec.Entries {
-			pgInfos, err := r.buildPodGangInfosFromEntry(ss, pcsReplicaIndex, entry)
+			isMinAvailableAnchor := foundMinAvailableAnchor && entry.Epoch == minAvailableAnchorEpoch
+			pgInfos, err := r.buildPodGangInfosFromEntry(ss, pcsReplicaIndex, entry, isMinAvailableAnchor)
 			if err != nil {
 				return nil, fmt.Errorf("failed to build PodGang info from entry with epoch %q in PodGangMap %s: %w", entry.Epoch, pgm.Name, err)
 			}
@@ -187,8 +193,10 @@ func (r _resource) computeExpectedPodGangs(ctx context.Context, ss *syncState) (
 // buildPodGangInfosFromEntry translates a PodGangMap entry into the PodGangs it materializes into.
 // An Anchor entry yields a single PodGang carrying the standalone PodCliques and the PodCliqueScalingGroup
 // replica indices the entry holds. A non-anchor entry (Tail or ScaleOut) yields one PodGang per
-// (PodCliqueScalingGroup, replica index) it carries.
-func (r _resource) buildPodGangInfosFromEntry(ss *syncState, pcsReplicaIndex int, pgEntry grovecorev1alpha1.PodGangEntry) ([]*podGangInfo, error) {
+// (PodCliqueScalingGroup, replica index) it carries. isMinAvailableAnchor is true only for the
+// MinAvailable anchor entry and controls standalone PodGroup MinReplicas clamping, see
+// buildStandalonePCLQInfosForAnchorEntry.
+func (r _resource) buildPodGangInfosFromEntry(ss *syncState, pcsReplicaIndex int, pgEntry grovecorev1alpha1.PodGangEntry, isMinAvailableAnchor bool) ([]*podGangInfo, error) {
 	if pgEntry.Role == grovecorev1alpha1.PodGangEntryRoleAnchor {
 		rnr := apicommon.ResourceNameReplica{Name: ss.pcs.Name, Replica: pcsReplicaIndex}
 		pg := &podGangInfo{
@@ -197,7 +205,7 @@ func (r _resource) buildPodGangInfosFromEntry(ss *syncState, pcsReplicaIndex int
 			extraLabels:        buildAdditionalLabelsFromPodGangEntry(pgEntry),
 			topologyConstraint: createTopologyPackConstraint(ss, client.ObjectKeyFromObject(ss.pcs), ss.pcs.Spec.Template.TopologyConstraint),
 		}
-		pg.pclqs = buildStandalonePCLQInfosForAnchorEntry(ss, pcsReplicaIndex, pgEntry)
+		pg.pclqs = buildStandalonePCLQInfosForAnchorEntry(ss, pcsReplicaIndex, pgEntry, isMinAvailableAnchor)
 		pcsgPCLQInfos, pcsgTopoConstraints, err := buildPCSGPCLQInfosAndTopoConstraintsFromAnchorEntry(ss, pcsReplicaIndex, pgEntry)
 		if err != nil {
 			return nil, err
@@ -223,8 +231,9 @@ func buildAdditionalLabelsFromPodGangEntry(pgEntry grovecorev1alpha1.PodGangEntr
 
 // buildStandalonePCLQInfosForAnchorEntry builds pclqInfo entries for the standalone PodCliques the
 // anchor entry carries. The pod count comes from the entry, since the PodGangMap is the source of
-// truth. Iterates template cliques in order for deterministic output.
-func buildStandalonePCLQInfosForAnchorEntry(ss *syncState, pcsReplicaIndex int, pgEntry grovecorev1alpha1.PodGangEntry) []pclqInfo {
+// truth. Iterates template cliques in order for deterministic output. isMinAvailableAnchor is true
+// only for the MinAvailable anchor and controls MinReplicas clamping, see the clamp comment below.
+func buildStandalonePCLQInfosForAnchorEntry(ss *syncState, pcsReplicaIndex int, pgEntry grovecorev1alpha1.PodGangEntry, isMinAvailableAnchor bool) []pclqInfo {
 	pclqInfos := make([]pclqInfo, 0, len(ss.pcs.Spec.Template.Cliques))
 	for _, cliqueTemplate := range ss.pcs.Spec.Template.Cliques {
 		desiredPCLQReplicas, ok := pgEntry.PodCliques[cliqueTemplate.Name]
@@ -235,11 +244,23 @@ func buildStandalonePCLQInfosForAnchorEntry(ss *syncState, pcsReplicaIndex int, 
 		if !ok || desiredPCLQReplicas == 0 {
 			continue
 		}
+		minAvailable := *cliqueTemplate.Spec.MinAvailable
+		if !isMinAvailableAnchor {
+			// Clamp MinReplicas to the per-anchor count on a non-MinAvailable anchor. Scale-in drains
+			// higher-epoch anchors first, so such an anchor can carry fewer than the template
+			// MinAvailable while the clique total across anchors is still at or above MinAvailable.
+			// That is not a real availability breach, so MinReplicas must track the per-anchor count.
+			// Otherwise, the gang scheduler sees the count below MinReplicas and gang-terminates this
+			// PodGang, taking its co-located PodCliqueScalingGroup replicas down with it. The
+			// MinAvailable anchor keeps the template MinAvailable so a genuine drop below the floor
+			// still gang-terminates.
+			minAvailable = min(minAvailable, desiredPCLQReplicas)
+		}
 		pclqFQN := apicommon.GeneratePodCliqueName(apicommon.ResourceNameReplica{Name: ss.pcs.Name, Replica: pcsReplicaIndex}, cliqueTemplate.Name)
 		pi := pclqInfo{
 			fqn:          pclqFQN,
 			replicas:     desiredPCLQReplicas,
-			minAvailable: *cliqueTemplate.Spec.MinAvailable,
+			minAvailable: minAvailable,
 			isStandalone: true,
 		}
 		pi.topologyConstraint = createTopologyPackConstraint(ss, types.NamespacedName{Namespace: ss.pcs.Namespace, Name: pclqFQN}, cliqueTemplate.TopologyConstraint)
@@ -456,7 +477,7 @@ func (r _resource) createOrUpdatePodGangs(ctx context.Context, ss *syncState) sy
 		// are reconciled on every pass regardless, so a regression is reflected instead of frozen.
 		allPodsCreatedErr := r.verifyAllPodsCreated(ss, expectedPG)
 		if allPodsCreatedErr != nil {
-			ss.logger.Info("Not all pods are created or associated to the PodGang yet", "PodGangName", expectedPG.fqn)
+			ss.logger.V(1).Info("Not all pods are created or associated to the PodGang yet", "PodGangName", expectedPG.fqn)
 			result.recordError(allPodsCreatedErr)
 		}
 
@@ -638,7 +659,7 @@ func (r _resource) verifyAllPodsCreated(ss *syncState, pgi *podGangInfo) error {
 	pclqs := ss.getPodCliques(pgi)
 	if len(pclqs) != len(pgi.pclqs) {
 		// Not all constituent PCLQs exist yet
-		ss.logger.Info("Not all constituent PCLQs exist yet", "podGang", pgi.fqn, "expected", len(pgi.pclqs), "actual", len(pclqs))
+		ss.logger.V(1).Info("Not all constituent PCLQs exist yet", "podGang", pgi.fqn, "expected", len(pgi.pclqs), "actual", len(pclqs))
 		return groveerr.New(groveerr.ErrCodeRequeueAfter,
 			component.OperationSync,
 			fmt.Sprintf("Waiting for all pods to be created for PodGang %s", pgi.fqn),
@@ -647,7 +668,7 @@ func (r _resource) verifyAllPodsCreated(ss *syncState, pgi *podGangInfo) error {
 	// check the health of each podclique
 	numPendingPods := r.getPodsPendingCreationOrAssociation(ss, pgi)
 	if numPendingPods > 0 {
-		ss.logger.Info("skipping creation of PodGang as all desired replicas have not yet been created or assigned", "podGang", pgi.fqn, "numPendingPodsToCreateOrAssociate", numPendingPods)
+		ss.logger.V(1).Info("skipping creation of PodGang as all desired replicas have not yet been created or assigned", "podGang", pgi.fqn, "numPendingPodsToCreateOrAssociate", numPendingPods)
 		return groveerr.New(groveerr.ErrCodeRequeueAfter,
 			component.OperationSync,
 			fmt.Sprintf("Waiting for all pods to be created or assigned for PodGang %s", pgi.fqn),
@@ -692,8 +713,8 @@ func (r _resource) createOrUpdatePodGang(ctx context.Context, ss *syncState, pgI
 		Name:      pgInfo.fqn,
 	}
 	pg := emptyPodGang(pgObjectKey)
-	ss.logger.Info("CreateOrPatch PodGang", "objectKey", pgObjectKey)
-	_, err := k8sutils.CreateOrPatchSpec(ctx, r.client, pg, func() error {
+	ss.logger.V(1).Info("Running CreateOrPatch for PodGang", "objectKey", pgObjectKey)
+	opResult, err := k8sutils.CreateOrPatchSpec(ctx, r.client, pg, func() error {
 		return r.buildResource(ss.pcs, pgInfo, pg)
 	})
 	if err != nil {
@@ -713,8 +734,10 @@ func (r _resource) createOrUpdatePodGang(ctx context.Context, ss *syncState, pgI
 		}
 	}
 
-	r.eventRecorder.Eventf(ss.pcs, corev1.EventTypeNormal, constants.ReasonPodGangCreateOrUpdateSuccessful, "Created/Updated PodGang %v", pgObjectKey)
-	ss.logger.Info("Triggered CreateOrPatch of PodGang", "objectKey", pgObjectKey)
+	if opResult != controllerutil.OperationResultNone {
+		r.eventRecorder.Eventf(ss.pcs, corev1.EventTypeNormal, constants.ReasonPodGangCreateOrUpdateSuccessful, "Created/Updated PodGang %v", pgObjectKey)
+		ss.logger.Info("Created or updated PodGang", "objectKey", pgObjectKey, "result", opResult)
+	}
 	return nil
 }
 

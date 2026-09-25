@@ -104,7 +104,7 @@ func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev
 		if err = r.cleanupLegacySecret(ctx, logger, pcs); err != nil {
 			return err
 		}
-		logger.Info("Secret already exists, skipping creation", "existingSecret", client.ObjectKeyFromObject(existingSecret))
+		logger.V(1).Info("Secret already exists, skipping creation", "existingSecret", client.ObjectKeyFromObject(existingSecret))
 		return nil
 	}
 

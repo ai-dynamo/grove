@@ -1,0 +1,64 @@
+# KWOK Stage that makes a fresh pod of PCS replica 1 report a container that terminated with a non-zero
+# exit code and stays not-ready, simulating a genuinely crashing workload (an unrelated failure). Scoped to
+# replica 1 by the podcliqueset-replica-index label so it does not affect replica 0's in-flight coherent
+# update. Grove counts such a pod as unavailable (PodHasAtleastOneContainerWithNonZeroExitCode), so the
+# component drops below MinAvailable and, after terminationDelay, the PCS-level gang termination fires.
+# Higher weight than the readiness-delay and default stages so it wins for replica 1's fresh pods.
+apiVersion: kwok.x-k8s.io/v1alpha1
+kind: Stage
+metadata:
+  name: pod-exited-error-r1
+spec:
+  resourceRef:
+    apiGroup: v1
+    kind: Pod
+  selector:
+    matchExpressions:
+      # match newly-created pods that hasn't been advanced yet and isn't being torn down
+      # and whose label associates it to PCS replica 1.
+      - key: .metadata.deletionTimestamp
+        operator: DoesNotExist
+      - key: .status.podIP
+        operator: DoesNotExist
+      - key: '.metadata.labels["grove.io/podcliqueset-replica-index"]'
+        operator: In
+        values:
+          - "1"
+  weight: 20
+  next:
+    statusSubresource: status
+    statusTemplate: |
+      {{ $now := Now }}
+      conditions:
+      - lastTransitionTime: {{ $now | Quote }}
+        status: "True"
+        type: Initialized
+      - lastTransitionTime: {{ $now | Quote }}
+        status: "False"
+        reason: ContainersNotReady
+        type: Ready
+      - lastTransitionTime: {{ $now | Quote }}
+        status: "False"
+        reason: ContainersNotReady
+        type: ContainersReady
+      containerStatuses:
+      {{ range .spec.containers }}
+      - image: {{ .image | Quote }}
+        name: {{ .name | Quote }}
+        ready: false
+        restartCount: 3
+        state:
+          waiting:
+            reason: CrashLoopBackOff
+            message: "simulated crash"
+        lastState:
+          terminated:
+            exitCode: 1
+            reason: Error
+            startedAt: {{ $now | Quote }}
+            finishedAt: {{ $now | Quote }}
+      {{ end }}
+      hostIP: {{ NodeIPWith .spec.nodeName | Quote }}
+      podIP: {{ PodIPWith .spec.nodeName ( or .spec.hostNetwork false ) ( or .metadata.uid "" ) ( or .metadata.name "" ) ( or .metadata.namespace "" ) | Quote }}
+      phase: Running
+      startTime: {{ $now | Quote }}

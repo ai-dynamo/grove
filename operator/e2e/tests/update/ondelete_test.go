@@ -24,7 +24,6 @@ import (
 
 	grovev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/e2e/tests"
-	"github.com/stretchr/testify/assert"
 	"k8s.io/apimachinery/pkg/types"
 )
 
@@ -722,8 +721,6 @@ func Test_OD10_ScaleOutAfterOnDeleteUpdateNoTail(t *testing.T) {
 	assertEntryRoles(t, before, grovev1alpha1.PodGangEntryRoleAnchor, grovev1alpha1.PodGangEntryRoleScaleOut)
 
 	anchorEntry := entryByRole(t, before, grovev1alpha1.PodGangEntryRoleAnchor)
-	assert.NotNil(t, anchorEntry.AnchorIndex)
-	assert.Equal(t, int32(0), *anchorEntry.AnchorIndex)
 	assertStandalonePCLQPodCounts(t, anchorEntry, map[string]int32{"pc-a": 2})
 	assertPodGangEntryPCSGIndices(t, anchorEntry, "sg-x", []int32{0, 1})
 	assertPodGangEntryDependsOn(t, anchorEntry, nil)
@@ -798,8 +795,6 @@ func Test_OD11_ScaleOutAfterOnDeleteUpdateWithTail(t *testing.T) {
 		grovev1alpha1.PodGangEntryRoleScaleOut)
 
 	anchorEntry := entryByRole(t, before, grovev1alpha1.PodGangEntryRoleAnchor)
-	assert.NotNil(t, anchorEntry.AnchorIndex)
-	assert.Equal(t, int32(0), *anchorEntry.AnchorIndex)
 	assertStandalonePCLQPodCounts(t, anchorEntry, map[string]int32{"pc-a": 2})
 	assertPodGangEntryPCSGIndices(t, anchorEntry, "sg-x", []int32{0})
 	assertPodGangEntryDependsOn(t, anchorEntry, nil)

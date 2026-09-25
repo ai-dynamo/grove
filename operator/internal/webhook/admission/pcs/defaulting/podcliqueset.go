@@ -51,13 +51,13 @@ func defaultPodCliqueSetSpec(spec *grovecorev1alpha1.PodCliqueSetSpec, pcsgOwned
 // defaultUpdateStrategy populates Spec.UpdateStrategy when it is unset and fills in its Type. The
 // strategy is behind a pointer, so the kubebuilder default on Type only fires when the pointer is
 // already non-nil. This guarantees a non-nil UpdateStrategy with a concrete Type so that downstream
-// defaulting and validation always observe the active strategy. The default Type is RollingRecreate.
+// defaulting and validation always observe the active strategy. The default Type is Coherent.
 func defaultUpdateStrategy(pcsSpec *grovecorev1alpha1.PodCliqueSetSpec) {
 	if pcsSpec.UpdateStrategy == nil {
 		pcsSpec.UpdateStrategy = &grovecorev1alpha1.PodCliqueSetUpdateStrategy{}
 	}
 	if pcsSpec.UpdateStrategy.Type == "" {
-		pcsSpec.UpdateStrategy.Type = grovecorev1alpha1.RollingRecreateStrategy
+		pcsSpec.UpdateStrategy.Type = grovecorev1alpha1.CoherentStrategy
 	}
 }
 
@@ -91,9 +91,6 @@ func defaultPodCliqueTemplateSpecs(cliqueSpecs []*grovecorev1alpha1.PodCliqueTem
 		if defaultedCliqueSpec.Spec.Replicas == 0 {
 			defaultedCliqueSpec.Spec.Replicas = defaultReplicas
 		}
-		if cliqueSpec.Spec.MinAvailable == nil {
-			defaultedCliqueSpec.Spec.MinAvailable = ptr.To(defaultedCliqueSpec.Spec.Replicas)
-		}
 		if cliqueSpec.Spec.ScaleConfig != nil {
 			if cliqueSpec.Spec.ScaleConfig.MinReplicas == nil {
 				defaultedCliqueSpec.Spec.ScaleConfig.MinReplicas = ptr.To(defaultedCliqueSpec.Spec.Replicas)
@@ -103,7 +100,7 @@ func defaultPodCliqueTemplateSpecs(cliqueSpecs []*grovecorev1alpha1.PodCliqueTem
 		// its PodCliqueScalingGroup, and the validating webhook rejects a RollingUpdate set on it, so
 		// it is skipped here.
 		if !pcsgOwnedCliqueNames.Has(defaultedCliqueSpec.Name) {
-			defaultedCliqueSpec.RollingUpdate = defaultRollingUpdateConfiguration(defaultedCliqueSpec.RollingUpdate, updateStrategy)
+			defaultedCliqueSpec.RollingUpdate = defaultRollingUpdateConfiguration(defaultedCliqueSpec.RollingUpdate, updateStrategy, ptr.Deref(defaultedCliqueSpec.Spec.MinAvailable, defaultedCliqueSpec.Spec.Replicas))
 		}
 		defaultedCliqueSpecs = append(defaultedCliqueSpecs, defaultedCliqueSpec)
 	}
@@ -120,34 +117,36 @@ func defaultPodCliqueScalingGroupConfigs(scalingGroupConfigs []grovecorev1alpha1
 				defaultedScalingGroupConfig.ScaleConfig.MinReplicas = ptr.To(*defaultedScalingGroupConfig.Replicas)
 			}
 		}
-		defaultedScalingGroupConfig.RollingUpdate = defaultRollingUpdateConfiguration(defaultedScalingGroupConfig.RollingUpdate, updateStrategy)
+		defaultedScalingGroupConfig.RollingUpdate = defaultRollingUpdateConfiguration(defaultedScalingGroupConfig.RollingUpdate, updateStrategy, ptr.Deref(defaultedScalingGroupConfig.MinAvailable, 1))
 		defaultedScalingGroupConfigs = append(defaultedScalingGroupConfigs, *defaultedScalingGroupConfig)
 	}
 	return defaultedScalingGroupConfigs
 }
 
-// defaultRollingUpdateConfiguration returns the RollingUpdateConfiguration normalized for the active
-// update strategy. RollingUpdate only applies to RollingRecreate, so it is cleared for any other
-// strategy, which keeps a transition away from RollingRecreate from leaving a stale configuration that
-// the validating webhook would then reject. For RollingRecreate an existing MaxUnavailable is
-// preserved and a missing one is defaulted to 1. ProgressDeadline is never defaulted, a nil value opts
-// out of the deadline.
-func defaultRollingUpdateConfiguration(existing *grovecorev1alpha1.RollingUpdateConfiguration, updateStrategy grovecorev1alpha1.UpdateStrategyType) *grovecorev1alpha1.RollingUpdateConfiguration {
-	// Defaulting only fills a hole for the rolling update strategies. It never clears a
-	// consumer-populated RollingUpdate. For OnDelete the validating webhook rejects a RollingUpdate
-	// that is set, so removing it is left to the consumer rather than silently dropped here.
-	if updateStrategy != grovecorev1alpha1.RollingRecreateStrategy {
-		return existing
-	}
+// defaultRollingUpdateConfiguration fills a missing MaxUnavailable for the rolling update strategies
+// (Coherent, RollingRecreate). It never clears a consumer-populated RollingUpdate. For OnDelete the
+// validating webhook rejects a set RollingUpdate, so removing it is left to the consumer. Coherent
+// defaults MaxUnavailable to minAvailable, since the MVU sub-step takes down MinAvailable of the
+// component at once and that is the smallest internally consistent budget; RollingRecreate defaults
+// it to 1. ProgressDeadline is never defaulted, a nil value opts out of the deadline.
+func defaultRollingUpdateConfiguration(existing *grovecorev1alpha1.RollingUpdateConfiguration, updateStrategy grovecorev1alpha1.UpdateStrategyType, minAvailable int32) *grovecorev1alpha1.RollingUpdateConfiguration {
 	if existing != nil && existing.MaxUnavailable != nil {
 		return existing
 	}
-	defaulted := existing
-	if defaulted == nil {
-		defaulted = &grovecorev1alpha1.RollingUpdateConfiguration{}
+	var maxUnavailable int32
+	switch updateStrategy {
+	case grovecorev1alpha1.CoherentStrategy:
+		maxUnavailable = minAvailable
+	case grovecorev1alpha1.RollingRecreateStrategy:
+		maxUnavailable = componentutils.DefaultRollingRecreateMaxUnavailable
+	default: // OnDelete or unknown, no defaulting
+		return existing
 	}
-	defaulted.MaxUnavailable = ptr.To(componentutils.DefaultRollingRecreateMaxUnavailable)
-	return defaulted
+	if existing == nil {
+		existing = &grovecorev1alpha1.RollingUpdateConfiguration{}
+	}
+	existing.MaxUnavailable = ptr.To(maxUnavailable)
+	return existing
 }
 
 // defaultPodSpec adds defaults to PodSpec.

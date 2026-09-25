@@ -62,7 +62,7 @@ func TestNew(t *testing.T) {
 	assert.Equal(t, eventRecorder, r.eventRecorder)
 }
 
-func TestMarkRollingUpdateEndReturnsRequeueAfterPatch(t *testing.T) {
+func TestMarkUpdateEndReturnsRequeueAfterPatch(t *testing.T) {
 	pcsg := testutils.NewPodCliqueScalingGroupBuilder("test-pcsg", "test-ns", "test-pcs", 0).Build()
 	pcsg.Status.UpdateProgress = &grovecorev1alpha1.PodCliqueScalingGroupUpdateProgress{UpdateStartedAt: metav1.Now()}
 	cl := testutils.NewTestClientBuilder().
@@ -71,7 +71,7 @@ func TestMarkRollingUpdateEndReturnsRequeueAfterPatch(t *testing.T) {
 		Build()
 	r := _resource{client: cl}
 
-	err := r.markRollingUpdateEnd(t.Context(), logr.Discard(), pcsg)
+	err := r.markUpdateEnd(t.Context(), logr.Discard(), pcsg)
 
 	require.Error(t, err)
 	var groveError *groveerr.GroveError
@@ -1177,7 +1177,9 @@ func terminatingReplica(index int) testReplica {
 // buildRollingUpdateSnapshot builds a syncSnapshot with one member PodClique per replica, wiring the
 // expected hash and FQN maps so the rolling-update logic can classify each replica.
 func buildRollingUpdateSnapshot(replicas, minAvailable, maxUnavailable int32, reps []testReplica) *syncSnapshot {
-	pcs := testutils.NewPodCliqueSetBuilder(testRollingUpdatePCSName, testRollingUpdateNamespace, "uid").Build()
+	pcs := testutils.NewPodCliqueSetBuilder(testRollingUpdatePCSName, testRollingUpdateNamespace, "uid").
+		WithUpdateStrategy(&grovecorev1alpha1.PodCliqueSetUpdateStrategy{Type: grovecorev1alpha1.RollingRecreateStrategy}).
+		Build()
 	pcs.Status.CurrentGenerationHash = ptr.To(testRollingUpdateGenHash)
 	pcsg := testutils.NewPodCliqueScalingGroupBuilder(testRollingUpdatePCSGName, testRollingUpdateNamespace, testRollingUpdatePCSName, 0).
 		WithReplicas(replicas).

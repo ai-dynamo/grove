@@ -51,7 +51,7 @@ func (r *Reconciler) reconcileSpec(ctx context.Context, logger logr.Logger, pclq
 			return r.recordIncompleteReconcile(ctx, logger, pclq, &stepResult)
 		}
 	}
-	log.Info("Finished spec reconciliation flow", "PodClique", client.ObjectKeyFromObject(pclq))
+	log.V(1).Info("Finished spec reconciliation flow", "PodClique", client.ObjectKeyFromObject(pclq))
 	return ctrlcommon.ContinueReconcile()
 }
 
@@ -75,7 +75,7 @@ func (r *Reconciler) processUpdate(ctx context.Context, logger logr.Logger, pclq
 	}
 
 	// Handle OnDelete strategy first
-	if !componentutils.IsAutoUpdateStrategy(pcs) {
+	if !componentutils.IsRollingUpdateStrategy(pcs) {
 		if shouldResetOrTriggerUpdate(pcs, pclq) {
 			if err = r.initOrResetUpdate(ctx, pcs, pclq); err != nil {
 				return ctrlcommon.ReconcileWithErrors("could not initialize update for OnDelete", err)
@@ -96,7 +96,7 @@ func (r *Reconciler) processUpdate(ctx context.Context, logger logr.Logger, pclq
 	}
 
 	if shouldResetOrTriggerUpdate(pcs, pclq) {
-		logger.Info("PodCliqueSet has a new generation hash. Initializing or resetting update for PodClique", "PodCliqueSetGenerationHash", *pcs.Status.CurrentGenerationHash, "CurrentPodCliqueSetGenerationHash", pclq.Status.CurrentPodCliqueSetGenerationHash, "isPCLQAutoUpdateInProgress", componentutils.IsPCLQAutoUpdateInProgress(pclq), "isLastPCLQUpdateCompleted", componentutils.IsLastPCLQUpdateCompleted(pclq))
+		logger.Info("PodCliqueSet has a new generation hash. Initializing or resetting update for PodClique", "PodCliqueSetGenerationHash", *pcs.Status.CurrentGenerationHash, "CurrentPodCliqueSetGenerationHash", pclq.Status.CurrentPodCliqueSetGenerationHash, "isPCLQRollingUpdateInProgress", componentutils.IsPCLQRollingUpdateInProgress(pclq), "isLastPCLQUpdateCompleted", componentutils.IsLastPCLQUpdateCompleted(pclq))
 		if err = r.initOrResetUpdate(ctx, pcs, pclq); err != nil {
 			return ctrlcommon.ReconcileWithErrors("could not initialize RollingRecreate update", err)
 		}
@@ -121,7 +121,7 @@ func shouldCheckPendingUpdatesForPCLQ(logger logr.Logger, pcs *grovecorev1alpha1
 		return true, nil
 	}
 	if len(pcs.Status.UpdateProgress.CurrentlyUpdating) == 0 {
-		logger.Info("PodCliqueSet update is active but no replica is currently selected for update. Skipping processing update for this PodClique")
+		logger.V(1).Info("PodCliqueSet update is active but no replica is currently selected for update. Skipping processing update for this PodClique")
 		return false, nil
 	}
 
@@ -132,7 +132,7 @@ func shouldCheckPendingUpdatesForPCLQ(logger logr.Logger, pcs *grovecorev1alpha1
 		return false, fmt.Errorf("could not determine PodCliqueSet index for this PodClique %v. Required label %s is missing", client.ObjectKeyFromObject(pclq), apicommon.LabelPodCliqueSetReplicaIndex)
 	}
 	if pcsReplicaIndexStr != strconv.Itoa(int(pcsReplicaInUpdating)) {
-		logger.Info("PodCliqueSet is currently under update. Skipping processing update for this PodClique as it does not belong to the PodCliqueSet Index currently being updated", "currentlyUpdatingPCSIndex", pcsReplicaInUpdating, "pcsIndexForPCLQ", pcsReplicaIndexStr)
+		logger.V(1).Info("PodCliqueSet is currently under update. Skipping processing update for this PodClique as it does not belong to the PodCliqueSet Index currently being updated", "currentlyUpdatingPCSIndex", pcsReplicaInUpdating, "pcsIndexForPCLQ", pcsReplicaIndexStr)
 		return false, nil
 	}
 
@@ -143,6 +143,14 @@ func shouldCheckPendingUpdatesForPCLQ(logger logr.Logger, pcs *grovecorev1alpha1
 func shouldResetOrTriggerUpdate(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grovecorev1alpha1.PodClique) bool {
 	// Wait for the first reconciliation of the PodCliqueSet
 	if pcs.Status.CurrentGenerationHash == nil {
+		return false
+	}
+
+	// A PodClique with neither an update history nor a recorded generation hash is being bootstrapped,
+	// not updated. Its pods are created directly at the current template, so no update is triggered. The
+	// status path records the current hashes once those pods exist. Requiring both to be nil avoids
+	// swallowing a real in-flight or stale update, which the checks below still evaluate.
+	if pclq.Status.UpdateProgress == nil && pclq.Status.CurrentPodCliqueSetGenerationHash == nil {
 		return false
 	}
 
@@ -164,7 +172,7 @@ func shouldResetOrTriggerUpdate(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grove
 	// PCLQ is undergoing an update for a different PCS generation hash
 	// Irrespective of whether the pod template hash has changed or not, the in-progress update is stale and needs to be
 	// reset in order to set the correct updateProgress.PodCliqueSetGenerationHash
-	inProgressPCLQUpdateNotStale := componentutils.IsPCLQAutoUpdateInProgress(pclq) && pclq.Status.UpdateProgress.PodCliqueSetGenerationHash == *pcs.Status.CurrentGenerationHash
+	inProgressPCLQUpdateNotStale := componentutils.IsPCLQRollingUpdateInProgress(pclq) && pclq.Status.UpdateProgress.PodCliqueSetGenerationHash == *pcs.Status.CurrentGenerationHash
 	// PCLQ had an update in the past but that was for an older PCS generation hash.
 	lastCompletedUpdateIsNotStale := componentutils.IsLastPCLQUpdateCompleted(pclq) && pclq.Status.UpdateProgress.PodCliqueSetGenerationHash == *pcs.Status.CurrentGenerationHash
 	if inProgressPCLQUpdateNotStale || lastCompletedUpdateIsNotStale {
@@ -188,7 +196,7 @@ func (r *Reconciler) initOrResetUpdate(ctx context.Context, pcs *grovecorev1alph
 		PodTemplateHash:            podTemplateHash,
 	}
 	// OnDelete strategy sets UpdateEndedAt too, since we do not know when all the pods will manually be deleted, and gang termination is disabled when an update is in progress
-	if !componentutils.IsAutoUpdateStrategy(pcs) {
+	if !componentutils.IsRollingUpdateStrategy(pcs) {
 		pclq.Status.UpdateProgress.UpdateEndedAt = ptr.To(metav1.Now())
 	}
 	// reset the updated replicas count to 0 so that the update can start afresh.
@@ -206,10 +214,10 @@ func (r *Reconciler) syncPCLQResources(ctx context.Context, logger logr.Logger, 
 		if err != nil {
 			return ctrlcommon.ReconcileWithErrors(fmt.Sprintf("error getting operator for kind: %s", kind), err)
 		}
-		logger.Info("Syncing PodClique resources", "kind", kind)
+		logger.V(1).Info("Syncing PodClique resources", "kind", kind)
 		if err = operator.Sync(ctx, logger, pclq); err != nil {
 			if shouldRequeue := ctrlutils.ShouldRequeueAfter(err) || ctrlutils.ShouldContinueReconcileAndRequeue(err); shouldRequeue {
-				logger.Info("retrying sync due to components", "kind", kind, "syncRetryInterval", constants.ComponentSyncRetryInterval, "message", err.Error())
+				logger.V(1).Info("retrying sync due to components", "kind", kind, "syncRetryInterval", constants.ComponentSyncRetryInterval, "message", err.Error())
 				return ctrlcommon.ReconcileAfter(constants.ComponentSyncRetryInterval, err.Error())
 			}
 			logger.Error(err, "failed to sync PodClique resources", "kind", kind)
@@ -231,7 +239,7 @@ func (r *Reconciler) updateObservedGeneration(ctx context.Context, logger logr.L
 		logger.Error(err, "failed to patch status.ObservedGeneration")
 		return ctrlcommon.ReconcileWithErrors("error updating observed generation", err)
 	}
-	logger.Info("patched status.ObservedGeneration", "ObservedGeneration", pclq.Generation)
+	logger.V(1).Info("patched status.ObservedGeneration", "ObservedGeneration", pclq.Generation)
 	return ctrlcommon.ContinueReconcile()
 }
 

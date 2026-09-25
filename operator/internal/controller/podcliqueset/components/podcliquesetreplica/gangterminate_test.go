@@ -27,6 +27,7 @@ import (
 	"github.com/samber/lo"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -192,4 +193,39 @@ func TestCreatePCSReplicaDeleteTaskIgnoresStaleSiblingFlag(t *testing.T) {
 		require.NoError(t, cl.Get(context.Background(), client.ObjectKey{Name: name, Namespace: "default"}, got))
 		assert.True(t, meta.IsStatusConditionTrue(got.Status.Conditions, apiconstants.ConditionTypeGangTerminationInProgress), "expected %s to carry GangTerminationInProgress", name)
 	}
+}
+
+// TestCreatePCSReplicaDeleteTaskDeletesPodGangMap pins that a full PCS-replica gang termination also
+// deletes the replica's PodGangMap. The replica is recreated as a fresh initial deployment, so its map
+// must bootstrap fresh rather than keep a structure a past coherent update may have left behind.
+func TestCreatePCSReplicaDeleteTaskDeletesPodGangMap(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, grovecorev1alpha1.AddToScheme(scheme))
+
+	pcs := &grovecorev1alpha1.PodCliqueSet{ObjectMeta: metav1.ObjectMeta{Name: "pcs", Namespace: "default"}}
+	replicaLabels := lo.Assign(
+		apicommon.GetDefaultLabelsForPodCliqueSetManagedResources(pcs.Name),
+		map[string]string{apicommon.LabelPodCliqueSetReplicaIndex: "0"},
+	)
+	pclq := &grovecorev1alpha1.PodClique{ObjectMeta: metav1.ObjectMeta{Name: "pcs-0-pc-a", Namespace: "default", Labels: replicaLabels}}
+	pgmName := apicommon.GeneratePodGangMapName(apicommon.ResourceNameReplica{Name: pcs.Name, Replica: 0})
+	pgm := &grovecorev1alpha1.PodGangMap{ObjectMeta: metav1.ObjectMeta{Name: pgmName, Namespace: "default"}}
+
+	cl := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(pcs, pclq, pgm).
+		WithStatusSubresource(&grovecorev1alpha1.PodCliqueScalingGroup{}).
+		Build()
+	r := _resource{client: cl, eventRecorder: record.NewFakeRecorder(10)}
+
+	require.NoError(t, r.createPCSReplicaDeleteTask(logr.Discard(), pcs, 0, "full replica gang termination").Fn(context.Background()))
+
+	// PodCliques of the replica are deleted.
+	pclqList := &grovecorev1alpha1.PodCliqueList{}
+	require.NoError(t, cl.List(context.Background(), pclqList, client.InNamespace("default"), client.MatchingLabels(replicaLabels)))
+	assert.Empty(t, pclqList.Items)
+
+	// The replica's PodGangMap is deleted so the next reconcile bootstraps a fresh one.
+	err := cl.Get(context.Background(), client.ObjectKey{Name: pgmName, Namespace: "default"}, &grovecorev1alpha1.PodGangMap{})
+	assert.True(t, apierrors.IsNotFound(err), "expected PodGangMap to be deleted, got %v", err)
 }

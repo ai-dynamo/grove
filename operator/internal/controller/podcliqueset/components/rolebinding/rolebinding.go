@@ -87,12 +87,12 @@ func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev
 		)
 	}
 	if len(existingRoleBindingNames) > 0 {
-		logger.Info("RoleBinding already exists, skipping creation", "existingRoleBinding", existingRoleBindingNames[0])
+		logger.V(1).Info("RoleBinding already exists, skipping creation", "existingRoleBinding", existingRoleBindingNames[0])
 		return nil
 	}
 	objectKey := getObjectKey(pcs.ObjectMeta)
 	roleBinding := emptyRoleBinding(objectKey)
-	logger.Info("Running CreateOrUpdate RoleBinding", "objectKey", objectKey)
+	logger.V(1).Info("Running CreateOrUpdate RoleBinding", "objectKey", objectKey)
 	if err := r.buildResource(pcs, roleBinding); err != nil {
 		return groveerr.WrapError(err,
 			errSyncRoleBinding,

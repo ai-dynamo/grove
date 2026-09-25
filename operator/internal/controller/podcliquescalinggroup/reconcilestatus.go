@@ -131,7 +131,7 @@ func mutateReplicas(logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, pcs
 		updatedPCLQs += countPCSGReplicaUpdatedPCLQs(currentPCSGenerationHash, expectedPCLQPodTemplateHashes, pclqs)
 	}
 	totalPCLQs = pcsg.Spec.Replicas * cliqueNamesPerReplica
-	logger.Info("Mutating PodCliqueScalingGroup replicas",
+	logger.V(1).Info("Mutating PodCliqueScalingGroup replicas",
 		"pcsg", client.ObjectKeyFromObject(pcsg),
 		"scheduledReplicas", scheduledReplicas, "availableReplicas", availableReplicas, "updatedReplicas", updatedReplicas,
 		"updatedPCLQs", updatedPCLQs, "totalPCLQs", totalPCLQs)
@@ -388,11 +388,11 @@ func mutateSelector(pcs *grovecorev1alpha1.PodCliqueSet, pcsg *grovecorev1alpha1
 func mutateCurrentPodCliqueSetGenerationHash(logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, pcsg *grovecorev1alpha1.PodCliqueScalingGroup, existingPCLQs []grovecorev1alpha1.PodClique) {
 	pclqFQNsPendingUpdate := componentutils.GetPCLQsInPCSGPendingUpdate(pcs, pcsg, existingPCLQs)
 	if len(pclqFQNsPendingUpdate) > 0 {
-		logger.Info("Found PodCliques associated to PodCliqueScalingGroup pending update", "pclqFQNsPendingUpdate", pclqFQNsPendingUpdate)
+		logger.V(1).Info("Found PodCliques associated to PodCliqueScalingGroup pending update", "pclqFQNsPendingUpdate", pclqFQNsPendingUpdate)
 		return
 	}
 	if componentutils.IsPCSGUpdateInProgress(pcsg) {
-		logger.Info("PodCliqueScalingGroup is currently updating, cannot set PodCliqueSet CurrentGenerationHash yet")
+		logger.V(1).Info("PodCliqueScalingGroup is currently updating, cannot set PodCliqueSet CurrentGenerationHash yet")
 		return
 	}
 	if pcs.Status.CurrentGenerationHash == nil {

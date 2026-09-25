@@ -121,6 +121,13 @@ func (b *PodGangBuilder) WithLastScheduled() *PodGangBuilder {
 	return b
 }
 
+// WithLastReady sets Status.LastReady to mark the PodGang as having been ready at least once.
+func (b *PodGangBuilder) WithLastReady() *PodGangBuilder {
+	now := metav1.Now()
+	b.pg.Status.LastReady = &now
+	return b
+}
+
 // WithPodGroupPods adds a PodGroup named name whose PodReferences list the given pods, all in the
 // PodGang's namespace.
 func (b *PodGangBuilder) WithPodGroupPods(name string, podNames ...string) *PodGangBuilder {

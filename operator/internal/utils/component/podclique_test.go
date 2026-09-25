@@ -305,8 +305,8 @@ func TestGroupPCLQsByPodGangName(t *testing.T) {
 	}
 }
 
-// TestIsPCLQAutoUpdateInProgress tests the IsPCLQAutoUpdateInProgress function
-func TestIsPCLQAutoUpdateInProgress(t *testing.T) {
+// TestIsPCLQRollingUpdateInProgress tests the IsPCLQRollingUpdateInProgress function
+func TestIsPCLQRollingUpdateInProgress(t *testing.T) {
 	tests := []struct {
 		// Test case description
 		name string
@@ -354,7 +354,7 @@ func TestIsPCLQAutoUpdateInProgress(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			result := IsPCLQAutoUpdateInProgress(tc.pclq)
+			result := IsPCLQRollingUpdateInProgress(tc.pclq)
 			assert.Equal(t, tc.expected, result)
 		})
 	}

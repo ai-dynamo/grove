@@ -198,7 +198,7 @@ func TestResolveDependencySatisfiedByEpoch(t *testing.T) {
 			name: "multi-anchor chain and scale-out resolved by their direct dependency",
 			entries: []grovecorev1alpha1.PodGangEntry{
 				anchorEntry(),
-				anchorDependentEntry(testAnchor1Epoch, 1, testAnchor0Epoch),
+				anchorDependentEntry(testAnchor1Epoch, testAnchor0Epoch),
 				tailEntry(testTailEpoch, testAnchor1Epoch),
 				scaleOutEntry(testScaleOutEpoch, testAnchor0Epoch),
 			},
@@ -589,14 +589,12 @@ func pgmWithEntries(entries ...grovecorev1alpha1.PodGangEntry) *grovecorev1alpha
 func anchorEntry() grovecorev1alpha1.PodGangEntry {
 	return testutils.NewPodGangEntryBuilder("hash", testAnchor0Epoch).
 		WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).
-		WithAnchorIndex(0).
 		Build()
 }
 
-func anchorDependentEntry(epoch string, anchorIndex int32, dependsOnEpoch string) grovecorev1alpha1.PodGangEntry {
+func anchorDependentEntry(epoch string, dependsOnEpoch string) grovecorev1alpha1.PodGangEntry {
 	return testutils.NewPodGangEntryBuilder("hash", epoch).
 		WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).
-		WithAnchorIndex(anchorIndex).
 		WithDependsOn(dependsOnEpoch).
 		Build()
 }

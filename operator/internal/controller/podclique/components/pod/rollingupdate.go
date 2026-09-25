@@ -95,7 +95,7 @@ func (r _resource) processPendingUpdates(ctx context.Context, logger logr.Logger
 	// Compute the disruption budget against the current desired count. allowedBudget is the MaxUnavailable
 	// headroom for this reconcile.
 	numReadyPods := len(uw.oldTemplateHashReadyPods) + uw.newReadyPodCount
-	effectiveMaxUnavailable := componentutils.EffectiveMaxUnavailable(rollingUpdateConfigForPCLQ(ss))
+	effectiveMaxUnavailable := componentutils.EffectiveMaxUnavailable(rollingUpdateConfigForPCLQ(ss), componentutils.ResolveUpdateStrategyType(ss.pcs), lo.FromPtrOr(ss.pclq.Spec.MinAvailable, 1))
 	allowedBudget := componentutils.ComputeAllowedBudget(desiredNumPods, numReadyPods, effectiveMaxUnavailable)
 	if allowedBudget == 0 {
 		return groveerr.New(

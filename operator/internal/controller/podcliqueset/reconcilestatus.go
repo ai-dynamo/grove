@@ -201,7 +201,7 @@ func (r *Reconciler) computeAvailableAndUpdatedReplicas(logger logr.Logger, pcs 
 		}
 	}
 
-	logger.Info(fmt.Sprintf("Calculated PCS replica and update progress stats for %s: available=%d updated=%d PCLQs=%d/%d PCSGs=%d/%d",
+	logger.V(1).Info(fmt.Sprintf("Calculated PCS replica and update progress stats for %s: available=%d updated=%d PCLQs=%d/%d PCSGs=%d/%d",
 		client.ObjectKeyFromObject(pcs), stats.availableReplicas, stats.updatedReplicas,
 		stats.updatedPCLQs, stats.totalPCLQs,
 		stats.updatedPCSGs, stats.totalPCSGs))
@@ -242,7 +242,7 @@ func countUpdatedPCLQs(pcs *grovecorev1alpha1.PodCliqueSet, pclqs []grovecorev1a
 		if k8sutils.IsResourceTerminating(pclq.ObjectMeta) {
 			continue
 		}
-		if isStandalonePCLQUpdated(pcs, pclq) {
+		if componentutils.IsPCLQUpdateComplete(pcs, pclq) {
 			n++
 		}
 	}
@@ -286,28 +286,10 @@ func (r *Reconciler) computePCLQsStatus(pcs *grovecorev1alpha1.PodCliqueSet, exp
 		})
 
 	isUpdated = isAvailable && lo.EveryBy(nonTerminatedPCLQs, func(pclq grovecorev1alpha1.PodClique) bool {
-		return isStandalonePCLQUpdated(pcs, &pclq)
+		return componentutils.IsPCLQUpdateComplete(pcs, &pclq)
 	})
 
 	return
-}
-
-// isStandalonePCLQUpdated checks if a standalone PodClique is fully updated to the expected pod template and PodCliqueSet generation hashes.
-func isStandalonePCLQUpdated(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grovecorev1alpha1.PodClique) bool {
-	if pcs.Status.CurrentGenerationHash == nil || pclq.Spec.MinAvailable == nil {
-		return false
-	}
-	expectedPodTemplateHash, err := componentutils.GetExpectedPCLQPodTemplateHash(pcs, pclq.ObjectMeta)
-	if err != nil || expectedPodTemplateHash == "" {
-		return false
-	}
-	return pclq.Labels[apicommon.LabelPodTemplateHash] == expectedPodTemplateHash &&
-		pclq.Status.CurrentPodTemplateHash != nil &&
-		*pclq.Status.CurrentPodTemplateHash == expectedPodTemplateHash &&
-		pclq.Status.CurrentPodCliqueSetGenerationHash != nil &&
-		*pclq.Status.CurrentPodCliqueSetGenerationHash == *pcs.Status.CurrentGenerationHash &&
-		pclq.Status.ReadyReplicas >= *pclq.Spec.MinAvailable &&
-		pclq.Status.UpdatedReplicas >= *pclq.Spec.MinAvailable
 }
 
 // computePCSGsStatus checks if PodCliqueScalingGroups are available and updated.

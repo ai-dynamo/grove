@@ -22,10 +22,11 @@ import (
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
-	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/podclique/expectations"
+	pclqexp "github.com/ai-dynamo/grove/operator/internal/controller/podclique/expectations"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/index"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
+	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
 	"github.com/go-logr/logr"
@@ -41,6 +42,18 @@ import (
 // PodGangs the PodGangMap assigns them to. It first repairs any non-terminating pod missing the
 // grove.io/podgang label, then reconciles per PodGang against the PodGangMap counts.
 func (r _resource) reconcileStandalonePCLQDistribution(ctx context.Context, logger logr.Logger, ss *syncSnapshot) error {
+	// During a coherent update the new-generation anchor must be filled with new-revision pods. The
+	// PodGangMap opens that anchor as soon as the sub-step commits, which can precede this controller
+	// observing the PCS controller's PodClique template update. Creating now would build the anchor's pod
+	// from the stale (old) PodClique and land an old-revision pod that never self-heals, since distribution
+	// is count-driven. Wait until this PodClique's own template hash catches up to the expected hash. This
+	// is scoped to the replica under update, so a replica frozen on its old revision is unaffected.
+	if componentutils.IsPCSReplicaUnderCoherentUpdate(ss.pcs, ss.pcsReplicaIndex) &&
+		ss.pclq.Labels[apicommon.LabelPodTemplateHash] != ss.expectedPodTemplateHash {
+		return groveerr.New(groveerr.ErrCodeRequeueAfter, component.OperationSync,
+			fmt.Sprintf("PodClique %v template not yet propagated for its coherent update, re-queueing", client.ObjectKeyFromObject(ss.pclq)))
+	}
+
 	desiredCountByPodGang := buildDesiredCountByPodGang(ss)
 	// An empty desired count means the PodGangMap carries no anchor entry for this PodClique. When the
 	// PodClique still wants replicas this is a transient state, the PodGangMap has not authored or
@@ -202,7 +215,7 @@ func (r _resource) computeCountDeltaByPodGang(ss *syncSnapshot, desiredCountByPo
 // keeps it in the delete expectations, so it is also subtracted. The two contributions cancel, so a
 // terminating pod has no net effect on the count and is not subtracted twice.
 func (r _resource) reconcileLivePodCountWithExpectations(pclqObjMeta metav1.ObjectMeta, podGangName string, group podGangPods) (int32, error) {
-	key, err := componentutils.PodGangScopedExpectationsStoreKey(pclqObjMeta, podGangName)
+	key, err := pclqexp.PodGangScopedExpectationsStoreKey(pclqObjMeta, podGangName)
 	if err != nil {
 		return 0, err
 	}
@@ -270,7 +283,7 @@ func (r _resource) buildPerPodGangCreationTasks(logger logr.Logger, ss *syncSnap
 	tasks := make([]utils.Task, 0, totalToCreate)
 	taskIndex := 0
 	for _, podGangName := range orderedPodGangNames {
-		expectationsKey, err := componentutils.PodGangScopedExpectationsStoreKey(ss.pclq.ObjectMeta, podGangName)
+		expectationsKey, err := pclqexp.PodGangScopedExpectationsStoreKey(ss.pclq.ObjectMeta, podGangName)
 		if err != nil {
 			return nil, err
 		}

@@ -51,6 +51,18 @@ func getPodGangMapEntries(t *testing.T, tc *testctx.TestContext, pcsReplicaIndex
 	return pgm.Spec.Entries
 }
 
+// assertPodGangMapSingleGeneration fails the test unless every entry of the PCS replica 0 PodGangMap is at
+// the PodCliqueSet's current generation hash, proving the coherent update reconverged the map and left no
+// stale intermediate entry behind.
+func assertPodGangMapSingleGeneration(t *testing.T, tc *testctx.TestContext) {
+	t.Helper()
+	currentHash := getPCSGenerationHash(t, tc)
+	for _, entry := range getPodGangMapEntries(t, tc, 0) {
+		assert.Equalf(t, currentHash, entry.PodCliqueSetGenerationHash,
+			"PodGang entry (role %s, epoch %s) is at a stale generation hash", entry.Role, entry.Epoch)
+	}
+}
+
 // entryByRole returns the single entry with the given role, failing if there is not exactly one.
 func entryByRole(t *testing.T, entries []grovev1alpha1.PodGangEntry, role grovev1alpha1.PodGangEntryRole) grovev1alpha1.PodGangEntry {
 	t.Helper()

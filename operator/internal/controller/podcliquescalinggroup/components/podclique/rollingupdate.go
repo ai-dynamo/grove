@@ -87,12 +87,12 @@ func (r _resource) processPendingUpdates(ctx context.Context, logger logr.Logger
 	// Completion is readiness-aware. End the update only when the desired number of replicas are fully
 	// updated and Ready, so a rollout never completes while replacements are not yet available.
 	if uw.numUpdatedReadyReplicas == desiredNumReplicas {
-		return r.markRollingUpdateEnd(ctx, logger, sc.pcsg)
+		return r.markUpdateEnd(ctx, logger, sc.pcsg)
 	}
 
 	// Bound disruption against the live replica count and the minimum that must stay available, not a
 	// readiness delta, so the budget does not collapse to 0 when replicas are already unavailable.
-	effectiveMaxUnavailable := componentutils.EffectiveMaxUnavailable(rollingUpdateConfigForPCSG(sc))
+	effectiveMaxUnavailable := componentutils.EffectiveMaxUnavailable(rollingUpdateConfigForPCSG(sc), componentutils.ResolveUpdateStrategyType(sc.pcs), lo.FromPtrOr(sc.pcsg.Spec.MinAvailable, 1))
 	disruptionBudget := computeDisruptionBudget(uw.existingReplicas, desiredNumReplicas, effectiveMaxUnavailable, uw.newNotReadyReplicas)
 	if disruptionBudget <= 0 {
 		return groveerr.New(
@@ -148,8 +148,8 @@ func computeDisruptionBudget(existing, desired, effectiveMaxUnavailable, newNotR
 	return existing - (desired - effectiveMaxUnavailable) - newNotReady
 }
 
-// markRollingUpdateEnd finalizes the rolling update by setting the end timestamp.
-func (r _resource) markRollingUpdateEnd(ctx context.Context, logger logr.Logger, pcsg *grovecorev1alpha1.PodCliqueScalingGroup) error {
+// markUpdateEnd finalizes the update by setting the end timestamp.
+func (r _resource) markUpdateEnd(ctx context.Context, logger logr.Logger, pcsg *grovecorev1alpha1.PodCliqueScalingGroup) error {
 	patch := client.MergeFrom(pcsg.DeepCopy())
 
 	pcsg.Status.UpdateProgress.UpdateEndedAt = ptr.To(metav1.Now())
@@ -250,6 +250,19 @@ func isReplicaUpdated(sc *syncSnapshot, replicaIndex int, members []grovecorev1a
 			pclq.Status.CurrentPodCliqueSetGenerationHash != nil && *pclq.Status.CurrentPodCliqueSetGenerationHash == *sc.pcs.Status.CurrentGenerationHash &&
 			pclq.Status.UpdatedReplicas >= *pclq.Spec.MinAvailable
 	})
+}
+
+// isReplicaUpdatedAndReady reports whether a PodCliqueScalingGroup replica has fully rolled to the
+// expected configuration and is Ready: every member carries the expected pod template hash, its
+// rollout is confirmed (status hashes and MinAvailable updated Pods), and the replica is Ready. It
+// backs the coherent-update convergence check, which must not end an update while any replica is on a
+// superseded revision or not yet Ready.
+func isReplicaUpdatedAndReady(sc *syncSnapshot, replicaIndex int, members []grovecorev1alpha1.PodClique) bool {
+	labeled, err := isReplicaLabeledWithExpectedHash(sc, members)
+	if err != nil || !labeled {
+		return false
+	}
+	return isReplicaUpdated(sc, replicaIndex, members) && getReplicaState(members) == replicaStateReady
 }
 
 // allPodCliquesTerminating reports whether every member PodClique of a replica is terminating.

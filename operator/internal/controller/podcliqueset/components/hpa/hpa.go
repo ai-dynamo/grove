@@ -58,7 +58,7 @@ func New(client client.Client, scheme *runtime.Scheme) component.Operator[grovec
 
 // GetExistingResourceNames returns the names of all the existing resources that the HPA Operator manages.
 func (r _resource) GetExistingResourceNames(ctx context.Context, logger logr.Logger, pcsObjMeta metav1.ObjectMeta) ([]string, error) {
-	logger.Info("Looking for existing HPA resources")
+	logger.V(1).Info("Looking for existing HPA resources")
 	objMetaList := &metav1.PartialObjectMetadataList{}
 	objMetaList.SetGroupVersionKind(autoscalingv2.SchemeGroupVersion.WithKind("HorizontalPodAutoscaler"))
 	if err := r.client.List(ctx,
@@ -94,7 +94,7 @@ func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev
 			fmt.Sprintf("Error CreateOrUpdate HorizontalPodAutoscalers for PodCliqueSet: %v, run summary: %s", client.ObjectKeyFromObject(pcs), runResult.GetSummary()),
 		)
 	}
-	logger.Info("Successfully synced HorizontalPodAutoscalers for PodCliqueSet")
+	logger.V(1).Info("Successfully synced HorizontalPodAutoscalers for PodCliqueSet")
 	return nil
 }
 
@@ -209,7 +209,7 @@ func (r _resource) deleteExcessHPATasks(logger logr.Logger, pcs *grovecorev1alph
 
 // doCreateOrUpdateHPA creates or updates a single HPA resource.
 func (r _resource) doCreateOrUpdateHPA(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, expectedHPAInfo hpaInfo) error {
-	logger.Info("Running CreateOrUpdate HPA", "targetScaleResourceKind", expectedHPAInfo.targetScaleResourceKind, "targetScaleResourceName", expectedHPAInfo.targetScaleResourceName, "hpaObjectKey", expectedHPAInfo.objectKey)
+	logger.V(1).Info("Running CreateOrUpdate HPA", "targetScaleResourceKind", expectedHPAInfo.targetScaleResourceKind, "targetScaleResourceName", expectedHPAInfo.targetScaleResourceName, "hpaObjectKey", expectedHPAInfo.objectKey)
 	hpa := emptyHPA(expectedHPAInfo.objectKey)
 	opResult, err := k8sutils.CreateOrPatchSpec(ctx, r.client, hpa, func() error {
 		return r.buildResource(pcs, hpa, expectedHPAInfo)
@@ -221,7 +221,7 @@ func (r _resource) doCreateOrUpdateHPA(ctx context.Context, logger logr.Logger, 
 			fmt.Sprintf("Error creating or updating HPA: %v for [Kind: %s, Name: %s]", expectedHPAInfo.objectKey, expectedHPAInfo.targetScaleResourceKind, expectedHPAInfo.targetScaleResourceName),
 		)
 	}
-	logger.Info("Triggered create or update of HPA", "hpaObjectKey", expectedHPAInfo.objectKey, "result", opResult)
+	logger.V(1).Info("Triggered create or update of HPA", "hpaObjectKey", expectedHPAInfo.objectKey, "result", opResult)
 	return nil
 }
 

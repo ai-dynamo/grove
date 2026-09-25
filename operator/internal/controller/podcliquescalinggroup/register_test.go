@@ -41,10 +41,9 @@ func TestPodGangMapPredicate(t *testing.T) {
 	pgmWith := func(entries ...grovecorev1alpha1.PodGangEntry) *grovecorev1alpha1.PodGangMap {
 		return testutils.NewPodGangMapBuilder(pcsName, ns, "pcs-uid", 0).WithEntries(entries...).Build()
 	}
-	anchor := func(epoch string, anchorIndex int32, indices map[string][]int32) grovecorev1alpha1.PodGangEntry {
+	anchor := func(epoch string, indices map[string][]int32) grovecorev1alpha1.PodGangEntry {
 		return testutils.NewPodGangEntryBuilder(hash, epoch).
 			WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).
-			WithAnchorIndex(anchorIndex).
 			WithPCSGReplicaIndices(indices).
 			Build()
 	}
@@ -59,44 +58,44 @@ func TestPodGangMapPredicate(t *testing.T) {
 		{
 			name:     "create always fires",
 			isCreate: true,
-			new:      pgmWith(anchor("100", 0, map[string][]int32{"sga": {0, 1, 2}})),
+			new:      pgmWith(anchor("100", map[string][]int32{"sga": {0, 1, 2}})),
 			want:     true,
 		},
 		{
 			name: "same-total redistribution of replica indices across entries fires",
-			old:  pgmWith(anchor("100", 0, map[string][]int32{"sga": {0, 1, 2}})),
+			old:  pgmWith(anchor("100", map[string][]int32{"sga": {0, 1, 2}})),
 			new: pgmWith(
-				anchor("100", 0, map[string][]int32{"sga": {0}}),
-				anchor("200", 1, map[string][]int32{"sga": {1, 2}}),
+				anchor("100", map[string][]int32{"sga": {0}}),
+				anchor("200", map[string][]int32{"sga": {1, 2}}),
 			),
 			want: true,
 		},
 		{
 			name: "indices carried by an entry change fires",
-			old:  pgmWith(anchor("100", 0, map[string][]int32{"sga": {0, 1, 2}})),
-			new:  pgmWith(anchor("100", 0, map[string][]int32{"sga": {0, 1}})),
+			old:  pgmWith(anchor("100", map[string][]int32{"sga": {0, 1, 2}})),
+			new:  pgmWith(anchor("100", map[string][]int32{"sga": {0, 1}})),
 			want: true,
 		},
 		{
 			name: "a config moving entirely to a new epoch fires",
-			old:  pgmWith(anchor("100", 0, map[string][]int32{"sga": {0, 1}})),
-			new:  pgmWith(anchor("200", 0, map[string][]int32{"sga": {0, 1}})),
+			old:  pgmWith(anchor("100", map[string][]int32{"sga": {0, 1}})),
+			new:  pgmWith(anchor("200", map[string][]int32{"sga": {0, 1}})),
 			want: true,
 		},
 		{
 			name: "unchanged placement does not fire",
-			old:  pgmWith(anchor("100", 0, map[string][]int32{"sga": {0, 1, 2}})),
-			new:  pgmWith(anchor("100", 0, map[string][]int32{"sga": {0, 1, 2}})),
+			old:  pgmWith(anchor("100", map[string][]int32{"sga": {0, 1, 2}})),
+			new:  pgmWith(anchor("100", map[string][]int32{"sga": {0, 1, 2}})),
 			want: false,
 		},
 		{
 			name: "only standalone PodClique counts change does not fire",
 			old: pgmWith(testutils.NewPodGangEntryBuilder(hash, "100").
-				WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).WithAnchorIndex(0).
+				WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).
 				WithPodCliques(map[string]int32{"frontend": 6}).
 				WithPCSGReplicaIndices(map[string][]int32{"sga": {0, 1, 2}}).Build()),
 			new: pgmWith(testutils.NewPodGangEntryBuilder(hash, "100").
-				WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).WithAnchorIndex(0).
+				WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).
 				WithPodCliques(map[string]int32{"frontend": 3}).
 				WithPCSGReplicaIndices(map[string][]int32{"sga": {0, 1, 2}}).Build()),
 			want: false,
@@ -124,7 +123,7 @@ func TestMapPodGangMapToPCSGs(t *testing.T) {
 
 	pgm := testutils.NewPodGangMapBuilder(pcsName, ns, "pcs-uid", 0).WithEntries(
 		testutils.NewPodGangEntryBuilder(hash, "100").
-			WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).WithAnchorIndex(0).
+			WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).
 			WithPCSGReplicaIndices(map[string][]int32{"sga": {0, 1}, "sgb": {0}}).Build(),
 		testutils.NewPodGangEntryBuilder(hash, "200").
 			WithRole(grovecorev1alpha1.PodGangEntryRoleTail).

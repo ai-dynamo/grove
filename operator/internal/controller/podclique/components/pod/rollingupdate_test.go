@@ -136,6 +136,7 @@ func TestSelectOldestPods(t *testing.T) {
 func TestProcessPendingUpdates(t *testing.T) {
 	pcsWithMaxUnavailable := func(maxUnavailable int32) *grovecorev1alpha1.PodCliqueSet {
 		return testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "uid").
+			WithUpdateStrategy(&grovecorev1alpha1.PodCliqueSetUpdateStrategy{Type: grovecorev1alpha1.RollingRecreateStrategy}).
 			WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder(testCliqueName).WithMaxUnavailable(maxUnavailable).Build()).
 			Build()
 	}

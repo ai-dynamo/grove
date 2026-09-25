@@ -68,8 +68,9 @@ type PodCliqueSpec struct {
 	// MinAvailable serves two purposes:
 	// 1. It defines the minimum number of pods that are guaranteed to be gang scheduled.
 	// 2. It defines the minimum requirement of available pods in a PodClique. Violation of this threshold will result
-	// in termination of the PodGang that it belongs to. If MinAvailable is not set, then it will default to the template
-	// Replicas.
+	// in termination of the PodGang that it belongs to.
+	// If MinAvailable is not set, then it defaults to 1.
+	// +kubebuilder:default=1
 	// +optional
 	MinAvailable *int32 `json:"minAvailable,omitempty"`
 	// StartsAfter provides you a way to explicitly define the startup dependencies amongst cliques.
@@ -176,6 +177,12 @@ type PodCliqueUpdateProgress struct {
 	// preferential deletions in rolling update strategies, and in all strategies for scale-ins.
 	// PodCliqueStatus.PodTemplateHash is set to this hash once UpdateEndedAt is set, which marks the end of the update.
 	PodTemplateHash string `json:"podTemplateHash"`
+	// UpdatedScheduledReplicas is the number of Pods at PodTemplateHash (the target hash of this update) that
+	// have been scheduled. It is maintained only while the update is in progress. The coherent update engine
+	// reads it to confirm that Pods subsumed in the current sub-step are placed before the next sub-step takes
+	// more Pods down, since MaxUnavailable rather than readiness bounds availability. Once UpdateEndedAt is
+	// set it carries no further meaning.
+	UpdatedScheduledReplicas int32 `json:"updatedScheduledReplicas"`
 }
 
 // SetLastErrors sets the last errors observed by the controller when reconciling the PodClique.

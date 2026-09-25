@@ -9,6 +9,8 @@ metadata:
     app: workload-maxunavailable
 spec:
   replicas: 1
+  updateStrategy:
+    type: RollingRecreate
   template:
     cliques:
       - name: pc-a

@@ -55,7 +55,7 @@ func New(client client.Client, scheme *runtime.Scheme) component.Operator[grovec
 
 // GetExistingResourceNames returns the names of all the existing resources that the Service Operator manages.
 func (r _resource) GetExistingResourceNames(ctx context.Context, logger logr.Logger, pcsObjMeta metav1.ObjectMeta) ([]string, error) {
-	logger.Info("Looking for existing PodCliqueSet Headless Services", "objectKey", k8sutils.GetObjectKeyFromObjectMeta(pcsObjMeta))
+	logger.V(1).Info("Looking for existing PodCliqueSet Headless Services", "objectKey", k8sutils.GetObjectKeyFromObjectMeta(pcsObjMeta))
 	serviceList := &corev1.ServiceList{}
 	if err := r.client.List(ctx,
 		serviceList,
@@ -91,7 +91,7 @@ func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev
 			fmt.Sprintf("Error creating or updating PodCliqueSet Headless Services for PodCliqueSet: %v, run summary: %s", client.ObjectKeyFromObject(pcs), runResult.GetSummary()),
 		)
 	}
-	logger.Info("Successfully synced Headless Services")
+	logger.V(1).Info("Successfully synced Headless Services")
 	return nil
 }
 
@@ -114,7 +114,7 @@ func (r _resource) Delete(ctx context.Context, logger logr.Logger, pgObjMeta met
 
 // doCreateOrUpdate creates or updates a single headless Service.
 func (r _resource) doCreateOrUpdate(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, pcsReplicaIndex int, svcObjectKey client.ObjectKey) error {
-	logger.Info("Running CreateOrUpdate PodCliqueSet Headless Service", "pcsReplicaIndex", pcsReplicaIndex, "objectKey", svcObjectKey)
+	logger.V(1).Info("Running CreateOrUpdate PodCliqueSet Headless Service", "pcsReplicaIndex", pcsReplicaIndex, "objectKey", svcObjectKey)
 	svc := emptyService(svcObjectKey)
 	opResult, err := k8sutils.CreateOrPatchSpec(ctx, r.client, svc, func() error {
 		return r.buildResource(svc, pcs, pcsReplicaIndex)
@@ -126,7 +126,7 @@ func (r _resource) doCreateOrUpdate(ctx context.Context, logger logr.Logger, pcs
 			fmt.Sprintf("Error syncing Headless Service: %v for PodCliqueSet: %v", svcObjectKey, client.ObjectKeyFromObject(pcs)),
 		)
 	}
-	logger.Info("Triggered create or update of PodGang Headless Service", "svcObjectKey", svcObjectKey, "result", opResult)
+	logger.V(1).Info("Triggered create or update of PodGang Headless Service", "svcObjectKey", svcObjectKey, "result", opResult)
 	return nil
 }
 

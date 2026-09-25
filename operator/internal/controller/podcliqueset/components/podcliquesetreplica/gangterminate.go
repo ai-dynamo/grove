@@ -254,6 +254,23 @@ func (r _resource) createPCSReplicaDeleteTask(logger logr.Logger, pcs *grovecore
 			logger.Info("Deleted PCS replica PodCliques", "pcsReplicaIndex", pcsReplicaIndex, "reason", reason)
 			r.eventRecorder.Eventf(pcs, corev1.EventTypeNormal, constants.ReasonPodCliqueSetReplicaDeleteSuccessful, "PodCliqueSet replica %d deleted", pcsReplicaIndex)
 
+			// Deleting all PodCliques removes every pod of the replica, so it will be recreated as a fresh
+			// initial deployment whose PodGangMap is a single anchor with one tail and one scale-out. A past
+			// coherent update may have left this replica's PodGangMap with several anchor and tail entries, a
+			// structure the steady-state reconcile does not collapse back to the initial shape. Delete the
+			// PodGangMap so the next reconcile bootstraps a fresh map that matches the redeployed replica.
+			pgmToDelete := &grovecorev1alpha1.PodGangMap{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      apicommon.GeneratePodGangMapName(apicommon.ResourceNameReplica{Name: pcs.Name, Replica: pcsReplicaIndex}),
+					Namespace: pcs.Namespace,
+				},
+			}
+			if err := r.client.Delete(ctx, pgmToDelete); err != nil && !apierrors.IsNotFound(err) {
+				logger.Error(err, "failed to delete PodGangMap for gang-terminated PCS replica", "pcsReplicaIndex", pcsReplicaIndex)
+				return err
+			}
+			logger.Info("Deleted PodGangMap for gang-terminated PCS replica so it rebuilds fresh", "pcsReplicaIndex", pcsReplicaIndex)
+
 			// Mark every PCSG in this PCS replica as having a recycle in flight. The status
 			// reconciler clears it once it observes MinAvailableBreached=False (recovery).
 			// Flag writes are attempted for ALL PCSGs before returning — a failure on one must

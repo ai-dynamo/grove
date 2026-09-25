@@ -24,15 +24,24 @@ import (
 )
 
 // newPodGangEntry constructs a fresh PodGangEntry setting epoch, PodCliqueSet generation hash and
-// dependsOn. The caller sets Role, and AnchorIndex on an anchor entry, after this returns. An entry
-// carries no name or labels. The PodGang materializer derives the name and stamps the epoch and role
-// labels.
+// dependsOn. The caller sets Role after this returns. An entry carries no name or labels. The PodGang
+// materializer derives the name and stamps the epoch and role labels.
 func newPodGangEntry(epoch, pcsGenerationHash string, dependsOn []string) grovecorev1alpha1.PodGangEntry {
 	return grovecorev1alpha1.PodGangEntry{
 		Epoch:                      epoch,
 		PodCliqueSetGenerationHash: pcsGenerationHash,
 		DependsOn:                  dependsOn,
 	}
+}
+
+// entryEpochNanos parses the entry epoch as unix nanos. It returns an error when the epoch is not
+// numeric, a contract violation since Grove is the sole writer of epochs.
+func entryEpochNanos(entry grovecorev1alpha1.PodGangEntry) (int64, error) {
+	epochNanos, err := strconv.ParseInt(entry.Epoch, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("PodGangMap %s entry has a non-numeric epoch %q: %w", entry.Role, entry.Epoch, err)
+	}
+	return epochNanos, nil
 }
 
 // sortEntriesByEpoch sorts entries in place by epoch ascending. Epoch is a unix-nano string compared

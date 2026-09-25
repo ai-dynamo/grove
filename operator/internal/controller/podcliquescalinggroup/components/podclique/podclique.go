@@ -68,6 +68,7 @@ const (
 	errCodeGetPodGangMap                                 grovecorev1alpha1.ErrorCode = "ERR_GET_PODGANGMAP"
 	errCodeSyncPCSGPodIndexOffsets                       grovecorev1alpha1.ErrorCode = "ERR_SYNC_PCSG_POD_INDEX_OFFSETS"
 	errCodeCreatePCSGExpectationsStoreKey                grovecorev1alpha1.ErrorCode = "ERR_CREATE_PODCLIQUESCALINGGROUP_EXPECTATIONS_STORE_KEY"
+	errCodeReconcileReplicaPlacement                     grovecorev1alpha1.ErrorCode = "ERR_RECONCILE_PCSG_REPLICA_PLACEMENT"
 )
 
 var (
@@ -94,7 +95,7 @@ func New(client client.Client, scheme *runtime.Scheme, eventRecorder record.Even
 // GetExistingResourceNames returns the names of all the existing resources that the PodClique Operator manages.
 // GetExistingResourceNames returns the names of all existing PodCliques managed by the specified PodCliqueScalingGroup
 func (r _resource) GetExistingResourceNames(ctx context.Context, logger logr.Logger, pcsgObjMeta metav1.ObjectMeta) ([]string, error) {
-	logger.Info("Looking for existing PodCliques managed by PodCliqueScalingGroup")
+	logger.V(1).Info("Looking for existing PodCliques managed by PodCliqueScalingGroup")
 	pclqList := &grovecorev1alpha1.PodCliqueList{}
 	if err := r.client.List(ctx,
 		pclqList,
@@ -117,7 +118,7 @@ func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcsg *grovecore
 	if err != nil {
 		return err
 	}
-	logger.Info("Starting PodCliqueScalingGroup Sync", "pcsgObjectKey", client.ObjectKeyFromObject(syncCtx.pcsg))
+	logger.V(1).Info("Starting PodCliqueScalingGroup Sync", "pcsgObjectKey", client.ObjectKeyFromObject(syncCtx.pcsg))
 	// Run the sync flow
 	if err = r.runSyncFlow(ctx, logger, syncCtx); err != nil {
 		return err
@@ -251,7 +252,7 @@ func (r _resource) getPCSGTemplateNumPods(pcs *grovecorev1alpha1.PodCliqueSet, p
 
 // doCreate creates or updates a PodClique resource with proper configuration from PCS and PCSG templates
 func (r _resource) doCreate(ctx context.Context, logger logr.Logger, ss *syncSnapshot, pcsgReplicaIndex int, pclqObjectKey client.ObjectKey) error {
-	logger.Info("Running CreateOrUpdate PodClique", "pclqObjectKey", pclqObjectKey)
+	logger.V(1).Info("Running CreateOrUpdate PodClique", "pclqObjectKey", pclqObjectKey)
 	pclq := emptyPodClique(pclqObjectKey)
 	pcsgObjKey := client.ObjectKeyFromObject(pclq)
 	if err := r.buildResource(logger, ss, pcsgReplicaIndex, pclq, false); err != nil {
@@ -259,7 +260,7 @@ func (r _resource) doCreate(ctx context.Context, logger logr.Logger, ss *syncSna
 	}
 	if err := r.client.Create(ctx, pclq); err != nil {
 		if apierrors.IsAlreadyExists(err) {
-			logger.Info("PodClique creation failed as it already exists", "pclq", pclqObjectKey)
+			logger.V(1).Info("PodClique creation failed as it already exists", "pclq", pclqObjectKey)
 			return nil
 		}
 		r.eventRecorder.Eventf(ss.pcsg, corev1.EventTypeWarning, constants.ReasonPodCliqueCreateFailed, "PodClique %v creation failed: %v", pclqObjectKey, err)
@@ -277,7 +278,7 @@ func (r _resource) doCreate(ctx context.Context, logger logr.Logger, ss *syncSna
 // doCreateOrUpdate creates or updates a PodClique resource using CreateOrPatch.
 // This preserves the existing replicas value to avoid overwriting HPA-managed scaling.
 func (r _resource) doCreateOrUpdate(ctx context.Context, logger logr.Logger, ss *syncSnapshot, pcsgReplicaIndex int, pclqObjectKey client.ObjectKey, pclqExists bool) error {
-	logger.Info("Running CreateOrUpdate PodClique", "pclqObjectKey", pclqObjectKey)
+	logger.V(1).Info("Running CreateOrUpdate PodClique", "pclqObjectKey", pclqObjectKey)
 	pclq := emptyPodClique(pclqObjectKey)
 	pcsgObjKey := client.ObjectKeyFromObject(ss.pcsg)
 
@@ -294,7 +295,7 @@ func (r _resource) doCreateOrUpdate(ctx context.Context, logger logr.Logger, ss 
 	}
 
 	r.eventRecorder.Eventf(ss.pcsg, corev1.EventTypeNormal, constants.ReasonPodCliqueCreateOrUpdateSuccessful, "PodClique %v created or updated successfully", pclqObjectKey)
-	logger.Info("Triggered create or update of PodClique for PodCliqueScalingGroup", "pcsgObjKey", pcsgObjKey, "pclqObjectKey", pclqObjectKey, "result", opResult)
+	logger.V(1).Info("Triggered create or update of PodClique for PodCliqueScalingGroup", "pcsgObjKey", pcsgObjKey, "pclqObjectKey", pclqObjectKey, "result", opResult)
 	return nil
 }
 

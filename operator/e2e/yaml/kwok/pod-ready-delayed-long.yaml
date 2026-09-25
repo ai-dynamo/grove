@@ -1,0 +1,49 @@
+# KWOK Stage that delays pod readiness by 45s so a coherent update stays in flight long enough for a
+# separate PCS replica to be gang terminated (terminationDelay 10s) while replica 0 is still rolling.
+# Same mechanism as pod-ready-delayed.yaml but with a much longer delay. It matches a fresh pod before
+# its podIP is assigned and waits before marking it Running and Ready.
+apiVersion: kwok.x-k8s.io/v1alpha1
+kind: Stage
+metadata:
+  name: pod-ready-delayed-long
+spec:
+  resourceRef:
+    apiGroup: v1
+    kind: Pod
+  selector:
+    matchExpressions:
+      - key: .metadata.deletionTimestamp
+        operator: DoesNotExist
+      - key: .status.podIP
+        operator: DoesNotExist
+  weight: 5
+  delay:
+    durationMilliseconds: 45000
+  next:
+    statusSubresource: status
+    statusTemplate: |
+      {{ $now := Now }}
+      conditions:
+      - lastTransitionTime: {{ $now | Quote }}
+        status: "True"
+        type: Initialized
+      - lastTransitionTime: {{ $now | Quote }}
+        status: "True"
+        type: Ready
+      - lastTransitionTime: {{ $now | Quote }}
+        status: "True"
+        type: ContainersReady
+      containerStatuses:
+      {{ range .spec.containers }}
+      - image: {{ .image | Quote }}
+        name: {{ .name | Quote }}
+        ready: true
+        restartCount: 0
+        state:
+          running:
+            startedAt: {{ $now | Quote }}
+      {{ end }}
+      hostIP: {{ NodeIPWith .spec.nodeName | Quote }}
+      podIP: {{ PodIPWith .spec.nodeName ( or .spec.hostNetwork false ) ( or .metadata.uid "" ) ( or .metadata.name "" ) ( or .metadata.namespace "" ) | Quote }}
+      phase: Running
+      startTime: {{ $now | Quote }}

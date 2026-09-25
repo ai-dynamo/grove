@@ -140,7 +140,7 @@ func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev
 			fmt.Sprintf("Error creating or updating PodCliqueScalingGroup for PodCliqueSet: %v, run summary: %s", client.ObjectKeyFromObject(pcs), runResult.GetSummary()),
 		)
 	}
-	logger.Info("Successfully synced PodCliqueScalingGroup for PodCliqueSet")
+	logger.V(1).Info("Successfully synced PodCliqueScalingGroup for PodCliqueSet")
 	return nil
 }
 
@@ -163,7 +163,7 @@ func (r _resource) Delete(ctx context.Context, logger logr.Logger, pcsObjMeta me
 
 // doCreateOrUpdate creates or updates a single PCSG resource.
 func (r _resource) doCreateOrUpdate(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, pcsReplica int, pcsgObjectKey client.ObjectKey, pcsgConfig grovecorev1alpha1.PodCliqueScalingGroupConfig, pcsgExists bool) error {
-	logger.Info("CreateOrUpdate PodCliqueScalingGroup", "objectKey", pcsgObjectKey)
+	logger.V(1).Info("CreateOrUpdate PodCliqueScalingGroup", "objectKey", pcsgObjectKey)
 	pcsg := emptyPodCliqueScalingGroup(pcsgObjectKey)
 
 	if _, err := k8sutils.CreateOrPatchSpec(ctx, r.client, pcsg, func() error {
@@ -181,7 +181,7 @@ func (r _resource) doCreateOrUpdate(ctx context.Context, logger logr.Logger, pcs
 	}
 
 	r.eventRecorder.Eventf(pcs, corev1.EventTypeNormal, constants.ReasonPodCliqueScalingGroupCreateSuccessful, "Created PodCliqueScalingGroup %v", pcsgObjectKey)
-	logger.Info("Created or updated PodCliqueScalingGroup", "objectKey", pcsgObjectKey)
+	logger.V(1).Info("Created or updated PodCliqueScalingGroup", "objectKey", pcsgObjectKey)
 	return nil
 }
 

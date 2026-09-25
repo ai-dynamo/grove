@@ -63,6 +63,8 @@ func TestSetup(t *testing.T) {
 		"/webhooks/default-podcliqueset",
 		"/webhooks/validate-clustertopology",
 		"/webhooks/validate-podcliqueset",
+		"/webhooks/validate-podclique",
+		"/webhooks/validate-podcliquescalinggroup",
 	}, registeredPaths(server.handlers))
 }
 
