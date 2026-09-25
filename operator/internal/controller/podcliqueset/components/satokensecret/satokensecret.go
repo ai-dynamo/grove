@@ -60,8 +60,8 @@ func New(client client.Client, scheme *runtime.Scheme) component.Operator[grovec
 func (r _resource) GetExistingResourceNames(ctx context.Context, _ logr.Logger, pcsObjMeta metav1.ObjectMeta) ([]string, error) {
 	secretNames := make([]string, 0, 2)
 	for _, objKey := range getObjectKeys(pcsObjMeta) {
-		partialObjMeta, err := k8sutils.GetExistingPartialObjectMetadata(ctx, r.client, corev1.SchemeGroupVersion.WithKind("Secret"), objKey)
-		if err != nil {
+		secret := &corev1.Secret{}
+		if err := r.client.Get(ctx, objKey, secret); err != nil {
 			if errors.IsNotFound(err) {
 				continue
 			}
@@ -71,8 +71,8 @@ func (r _resource) GetExistingResourceNames(ctx context.Context, _ logr.Logger, 
 				fmt.Sprintf("Error getting Secret: %v for PodCliqueSet: %v", objKey, k8sutils.GetObjectKeyFromObjectMeta(pcsObjMeta)),
 			)
 		}
-		if metav1.IsControlledBy(partialObjMeta, &pcsObjMeta) {
-			secretNames = append(secretNames, partialObjMeta.Name)
+		if metav1.IsControlledBy(secret, &pcsObjMeta) {
+			secretNames = append(secretNames, secret.Name)
 		}
 	}
 	return secretNames, nil

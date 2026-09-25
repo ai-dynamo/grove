@@ -28,10 +28,12 @@ import (
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
-	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
+	pcsgexpectations "github.com/ai-dynamo/grove/operator/internal/controller/podcliquescalinggroup/expectations"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
+	"github.com/ai-dynamo/grove/operator/internal/expect"
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
+	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
 	"github.com/go-logr/logr"
@@ -40,6 +42,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -63,6 +66,8 @@ const (
 	errCodeCreateOrUpdatePodCliques                      grovecorev1alpha1.ErrorCode = "ERR_CREATE_OR_UPDATE_PODCLIQUES"
 	errCodeSyncPCSGResourceClaim                         grovecorev1alpha1.ErrorCode = "ERR_SYNC_PCSG_RESOURCE_CLAIM"
 	errCodeGetPodGangMap                                 grovecorev1alpha1.ErrorCode = "ERR_GET_PODGANGMAP"
+	errCodeSyncPCSGPodIndexOffsets                       grovecorev1alpha1.ErrorCode = "ERR_SYNC_PCSG_POD_INDEX_OFFSETS"
+	errCodeCreatePCSGExpectationsStoreKey                grovecorev1alpha1.ErrorCode = "ERR_CREATE_PODCLIQUESCALINGGROUP_EXPECTATIONS_STORE_KEY"
 )
 
 var (
@@ -70,17 +75,19 @@ var (
 )
 
 type _resource struct {
-	client        client.Client
-	scheme        *runtime.Scheme
-	eventRecorder record.EventRecorder
+	client            client.Client
+	scheme            *runtime.Scheme
+	eventRecorder     record.EventRecorder
+	expectationsStore *expect.ExpectationsStore
 }
 
 // New creates a new PodClique operator for managing PodClique resources within PodCliqueScalingGroups
-func New(client client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder) component.Operator[grovecorev1alpha1.PodCliqueScalingGroup] {
+func New(client client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder, expStore *expect.ExpectationsStore) component.Operator[grovecorev1alpha1.PodCliqueScalingGroup] {
 	return &_resource{
-		client:        client,
-		scheme:        scheme,
-		eventRecorder: eventRecorder,
+		client:            client,
+		scheme:            scheme,
+		eventRecorder:     eventRecorder,
+		expectationsStore: expStore,
 	}
 }
 
@@ -88,25 +95,25 @@ func New(client client.Client, scheme *runtime.Scheme, eventRecorder record.Even
 // GetExistingResourceNames returns the names of all existing PodCliques managed by the specified PodCliqueScalingGroup
 func (r _resource) GetExistingResourceNames(ctx context.Context, logger logr.Logger, pcsgObjMeta metav1.ObjectMeta) ([]string, error) {
 	logger.Info("Looking for existing PodCliques managed by PodCliqueScalingGroup")
-	pclqPartialObjMetaList, err := k8sutils.ListExistingPartialObjectMetadata(ctx,
-		r.client,
-		grovecorev1alpha1.SchemeGroupVersion.WithKind("PodClique"),
-		pcsgObjMeta,
-		getPodCliqueSelectorLabels(pcsgObjMeta))
-	if err != nil {
+	pclqList := &grovecorev1alpha1.PodCliqueList{}
+	if err := r.client.List(ctx,
+		pclqList,
+		client.InNamespace(pcsgObjMeta.Namespace),
+		client.MatchingLabels(getPodCliqueSelectorLabels(pcsgObjMeta)),
+	); err != nil {
 		return nil, groveerr.WrapError(err,
 			errCodeListPodClique,
 			component.OperationGetExistingResourceNames,
 			fmt.Sprintf("Error listing PodCliques for PodCliqueScalingGroup: %v", k8sutils.GetObjectKeyFromObjectMeta(pcsgObjMeta)),
 		)
 	}
-	return k8sutils.FilterMapOwnedResourceNames(pcsgObjMeta, pclqPartialObjMetaList), nil
+	return k8sutils.FilterMapOwnedResourceNames(pcsgObjMeta, pclqList.Items), nil
 }
 
 // Sync synchronizes all resources that the PodClique Operator manages.
 // Sync ensures that the desired PodCliques exist for the PodCliqueScalingGroup with proper scaling and dependencies
 func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcsg *grovecorev1alpha1.PodCliqueScalingGroup) error {
-	syncCtx, err := r.prepareSyncContext(ctx, logger, pcsg)
+	syncCtx, err := r.prepareSyncContext(ctx, pcsg)
 	if err != nil {
 		return err
 	}
@@ -177,8 +184,13 @@ func (r _resource) triggerDeletionOfPodCliques(ctx context.Context, logger logr.
 	return nil
 }
 
-// createDeleteTasks creates deletion tasks for PodCliques belonging to specific PCSG replica indices
-func (r _resource) createDeleteTasks(logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, pcsgName string, pcsgReplicasToDelete []string, reason string) []utils.Task {
+// createDeleteTasks creates deletion tasks for PodCliques belonging to specific PCSG replica indices.
+// Each task records delete expectations for the disrupted replica's member PodCliques so the rolling
+// update budget treats that replica as unavailable immediately, independent of the eventually
+// consistent informer cache.
+func (r _resource) createDeleteTasks(logger logr.Logger, sc *syncSnapshot, pcsgReplicasToDelete []string, reason string) []utils.Task {
+	pcs, pcsgName := sc.pcs, sc.pcsg.Name
+	membersByReplicaIndex := componentutils.GroupPCLQsByPCSGReplicaIndex(sc.existingPCLQs)
 	deletionTasks := make([]utils.Task, 0, len(pcsgReplicasToDelete))
 	for _, pcsgReplicaIndex := range pcsgReplicasToDelete {
 		task := utils.Task{
@@ -191,6 +203,12 @@ func (r _resource) createDeleteTasks(logger logr.Logger, pcs *grovecorev1alpha1.
 					r.eventRecorder.Eventf(pcs, corev1.EventTypeWarning, constants.ReasonPodCliqueScalingGroupReplicaDeleteFailed, "Error deleting PodCliqueScalingGroup %s ReplicaIndex %s : %v", pcsgName, pcsgReplicaIndex, err)
 					logger.Error(err, "failed to delete PodCliques for PCSG replica index", "pcsgReplicaIndex", pcsgReplicaIndex, "reason", reason)
 					return err
+				}
+				// Treat the disrupted replica as unavailable immediately by recording delete expectations for
+				// its member PodCliques. The delete already happened, so a failure here is logged, not fatal;
+				// the expectations sync and the cache reconcile it on a later pass.
+				if err := pcsgexpectations.RecordPCSGReplicaDeleteExpectations(logger, r.expectationsStore, sc.expectationsStoreKey, membersByReplicaIndex[pcsgReplicaIndex]); err != nil {
+					utilruntime.HandleErrorWithLogger(logger, err, "could not record replica delete expectations", "pcsg", client.ObjectKeyFromObject(sc.pcsg), "replicaIndex", pcsgReplicaIndex)
 				}
 				logger.Info("Deleting PodCliqueScalingGroup replica", "pcsgName", pcsgName, "pcsgReplicaIndex", pcsgReplicaIndex)
 				r.eventRecorder.Eventf(pcs, corev1.EventTypeNormal, constants.ReasonPodCliqueScalingGroupReplicaDeleteSuccessful, "Deleted PodCliqueScalingGroup %s replicaIndex: %s", pcsgName, pcsgReplicaIndex)
@@ -263,7 +281,7 @@ func (r _resource) doCreateOrUpdate(ctx context.Context, logger logr.Logger, ss 
 	pclq := emptyPodClique(pclqObjectKey)
 	pcsgObjKey := client.ObjectKeyFromObject(ss.pcsg)
 
-	opResult, err := controllerutil.CreateOrPatch(ctx, r.client, pclq, func() error {
+	opResult, err := k8sutils.CreateOrPatchSpec(ctx, r.client, pclq, func() error {
 		return r.buildResource(logger, ss, pcsgReplicaIndex, pclq, pclqExists)
 	})
 	if err != nil {
@@ -319,6 +337,18 @@ func (r _resource) buildResource(logger logr.Logger, ss *syncSnapshot, pcsgRepli
 
 	pclq.Labels = getLabels(pcs, pcsReplicaIndex, pcsg, pcsgReplicaIndex, pclqObjectKey, pclqTemplateSpec, podGangName)
 	pclq.Annotations = maps.Clone(pclqTemplateSpec.Annotations)
+	if pclq.Annotations == nil {
+		pclq.Annotations = make(map[string]string)
+	}
+	pcsgPodIndexOffset, err := getPCSGPodIndexOffset(ss, pcsgReplicaIndex, pclqTemplateSpec.Name)
+	if err != nil {
+		return groveerr.WrapError(err,
+			errCodeBuildPodClique,
+			component.OperationSync,
+			fmt.Sprintf("Error computing PodCliqueScalingGroup pod index offset for PodClique: %v", pclqObjectKey),
+		)
+	}
+	pclq.Annotations[apiconstants.AnnotationPodCliqueScalingGroupPodIndexOffset] = strconv.Itoa(pcsgPodIndexOffset)
 	// PodGang owns topology selection; do not propagate a template topology annotation to PodClique pods.
 	delete(pclq.Annotations, apiconstants.AnnotationTopologyName)
 	// set PodCliqueSpec

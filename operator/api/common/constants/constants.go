@@ -49,6 +49,9 @@ const (
 	AnnotationReconcileTrigger = "grove.io/reconcile-trigger"
 	// AnnotationTopologyName is an annotation set on PodGang to allow KAI scheduler to discover which topology to use.
 	AnnotationTopologyName = "grove.io/topology-name"
+	// AnnotationPodCliqueScalingGroupPodIndexOffset stores the first group-wide pod index assigned to a PodClique.
+	// It is internal coordination state between Grove reconcilers and is not propagated to Pods.
+	AnnotationPodCliqueScalingGroupPodIndexOffset = "grove.io/podcliquescalinggroup-pod-index-offset"
 )
 
 // Constants for Grove environment variables
@@ -67,6 +70,8 @@ const (
 	EnvVarPodCliqueScalingGroupName = "GROVE_PCSG_NAME"
 	// EnvVarPodCliqueScalingGroupIndex is the environment variable name for PodCliqueScalingGroup replica index
 	EnvVarPodCliqueScalingGroupIndex = "GROVE_PCSG_INDEX"
+	// EnvVarPodCliqueScalingGroupPodIndex is the environment variable name for pod index within a PodCliqueScalingGroup replica
+	EnvVarPodCliqueScalingGroupPodIndex = "GROVE_PCSG_POD_INDEX"
 	// EnvVarPodCliqueScalingGroupTemplateNumPods is the environment variable name for total number of pods in PodCliqueScalingGroup template
 	EnvVarPodCliqueScalingGroupTemplateNumPods = "GROVE_PCSG_TEMPLATE_NUM_PODS"
 )
@@ -137,6 +142,10 @@ const (
 	// and cleared once every replica has migrated. While it is True the PodCliqueScalingGroup and
 	// PodClique reconcilers requeue without acting, so scaling does not interleave with the migration.
 	ConditionTypePodGangMigrationInProgress = "PodGangMigrationInProgress"
+	// ConditionTypeUpdateInProgress indicates whether a rolling update of the component is currently in progress.
+	// True means an update is progressing, False means no update is active, and Unknown means the update has not
+	// made progress within its configured ProgressDeadline and warrants operator inspection.
+	ConditionTypeUpdateInProgress = "UpdateInProgress"
 )
 
 // Constants for Condition Reasons.
@@ -165,6 +174,13 @@ const (
 	ConditionReasonGangTerminationActive = "GangTerminationActive"
 	// ConditionReasonClusterTopologyNotFound indicates that the ClusterTopologyBinding resource required for topology-aware scheduling was not found.
 	ConditionReasonClusterTopologyNotFound = "ClusterTopologyNotFound"
+	// ConditionReasonProgressing indicates that a rolling update of the component is in progress and advancing.
+	ConditionReasonProgressing = "Progressing"
+	// ConditionReasonNoActiveUpdate indicates that no rolling update of the component is currently in progress.
+	ConditionReasonNoActiveUpdate = "NoActiveUpdate"
+	// ConditionReasonProgressDeadlineExceeded indicates that a rolling update has not made progress within its
+	// configured ProgressDeadline.
+	ConditionReasonProgressDeadlineExceeded = "ProgressDeadlineExceeded"
 	// ConditionReasonTopologyLevelsUnavailable indicates that the one or more required topology levels defined on a
 	// PodCliqueSet for topology-aware scheduling are no longer defined in the ClusterTopologyBinding resource.
 	ConditionReasonTopologyLevelsUnavailable = "ClusterTopologyLevelsUnavailable"

@@ -35,6 +35,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/e2e/waiter"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
+	kaitopologyv1alpha1 "github.com/kai-scheduler/KAI-scheduler/pkg/apis/kai/v1alpha1"
 	kaischedulingv2alpha2 "github.com/kai-scheduler/KAI-scheduler/pkg/apis/scheduling/v2alpha2"
 	"github.com/samber/lo"
 	v1 "k8s.io/api/core/v1"
@@ -1972,4 +1973,107 @@ func Test_TAS23_PreferredPackConstraintPropagation(t *testing.T) {
 	}
 
 	Logger.Info("TAS23: Preferred Pack Constraint Propagation test completed successfully!")
+}
+
+// Test_TAS24_ExternallyManagedTopologyNameResolution tests that the KAI backend resolves an
+// externally-managed ClusterTopologyBinding's SchedulerTopologyBindings TopologyReference before
+// sending a topology name to KAI, instead of sending the ClusterTopologyBinding's own name.
+// 1. Create a KAI Topology CR directly (simulating a topology object managed outside Grove) under
+//    a name distinct from the ClusterTopologyBinding that will reference it
+// 2. Create a ClusterTopologyBinding whose schedulerTopologyReferences binds kai-scheduler to that
+//    externally-managed KAI Topology
+// 3. Deploy a workload whose clique topologyConstraint.topologyName is the ClusterTopologyBinding's
+//    own name (not the KAI Topology name)
+// 4. Verify pods schedule successfully and land on the same host: if the KAI backend sent the
+//    ClusterTopologyBinding's own name to KAI instead of resolving TopologyReference, KAI would
+//    reject the PodGroup because no Topology CR exists under that name
+// 5. Verify the KAI PodGroup's SubGroup TopologyConstraint carries the resolved TopologyReference
+func Test_TAS24_ExternallyManagedTopologyNameResolution(t *testing.T) {
+	const ctBindingName = "tas24-ct-binding"
+	const kaiTopologyName = "tas24-ext-kai-topology"
+	ctx := context.Background()
+
+	Logger.Info("1. Initialize a 28-node Grove cluster for topology testing")
+	expectedPods := 2
+	tc, cleanup := testctx.PrepareTest(ctx, t, 28,
+		testctx.WithWorkload(&testctx.WorkloadConfig{
+			Name:         "tas-externally-managed",
+			YAMLPath:     "../yaml/tas-externally-managed.yaml",
+			Namespace:    "default",
+			ExpectedPods: expectedPods,
+		}),
+	)
+	defer cleanup()
+	topologyVerifier := topology.NewTopologyVerifier(tc.Client, Logger)
+	podGroupVerifier := podgroup.NewPodGroupVerifier(tc.Client, Logger)
+
+	Logger.Info("2. Create externally-managed KAI Topology CR")
+	kaiTopology := &kaitopologyv1alpha1.Topology{
+		ObjectMeta: metav1.ObjectMeta{Name: kaiTopologyName},
+		Spec: kaitopologyv1alpha1.TopologySpec{
+			Levels: []kaitopologyv1alpha1.TopologyLevel{{NodeLabel: setup.TopologyLabelHostname}},
+		},
+	}
+	if err := tc.Client.Create(ctx, kaiTopology); err != nil {
+		t.Fatalf("Failed to create externally-managed KAI Topology %s: %v", kaiTopologyName, err)
+	}
+	defer func() {
+		if err := tc.Client.Delete(ctx, kaiTopology); err != nil {
+			Logger.Errorf("Failed to delete KAI Topology %s: %v", kaiTopologyName, err)
+		}
+	}()
+
+	Logger.Info("3. Create ClusterTopologyBinding bound to the externally-managed KAI Topology under a different name")
+	levels := []corev1alpha1.TopologyLevel{
+		{Domain: corev1alpha1.TopologyDomainHost, Key: setup.TopologyLabelHostname},
+	}
+	refs := []corev1alpha1.SchedulerTopologyBinding{
+		{SchedulerName: "kai-scheduler", TopologyReference: kaiTopologyName},
+	}
+	if err := topologyVerifier.CreateClusterTopologyWithSchedulerReferences(ctx, ctBindingName, levels, refs); err != nil {
+		t.Fatalf("Failed to create ClusterTopologyBinding %s: %v", ctBindingName, err)
+	}
+	defer func() {
+		if err := topologyVerifier.DeleteClusterTopology(ctx, ctBindingName); err != nil {
+			Logger.Errorf("Failed to delete %s: %v", ctBindingName, err)
+		}
+	}()
+
+	Logger.Info("4. Wait for SchedulerTopologyDrift = False/InSync (externally-managed KAI Topology exists and matches)")
+	if err := topologyVerifier.WaitForClusterTopologyCondition(ctx, ctBindingName,
+		apicommonconstants.ConditionSchedulerTopologyDrift,
+		string(metav1.ConditionFalse),
+		apicommonconstants.ConditionReasonInSync,
+		tc.Timeout, tc.Interval); err != nil {
+		t.Fatalf("Failed to wait for SchedulerTopologyDrift=False/InSync: %v", err)
+	}
+
+	Logger.Info("5. Deploy workload constrained to the ClusterTopologyBinding (by its own name, not the KAI Topology name)")
+	allPods, err := DeployWorkloadAndGetPods(tc, expectedPods)
+	if err != nil {
+		t.Fatalf("Setup failed: %v", err)
+	}
+
+	Logger.Info("6. Verify all pods on same host (proves KAI accepted the resolved topology name)")
+	if err := topologyVerifier.VerifyPodsInSameTopologyDomain(tc.Ctx, allPods, setup.TopologyLabelHostname); err != nil {
+		t.Fatalf("Failed to verify pods on same host: %v", err)
+	}
+
+	Logger.Info("7. Verify KAI PodGroup's SubGroup carries the resolved TopologyReference, not the ClusterTopologyBinding's own name")
+	podGroup := GetPodGroupOrFail(t, tc, podGroupVerifier, 0)
+	expectedSubGroups := []podgroup.ExpectedSubGroup{
+		podgroup.CreateExpectedStandalonePCLQSubGroup(tc.Workload.Name, 0, "worker", 2, setup.TopologyLabelHostname),
+	}
+	if err := podGroupVerifier.VerifyPodGroupTopology(podGroup, "", "", expectedSubGroups); err != nil {
+		t.Fatalf("Failed to verify KAI PodGroup topology: %v", err)
+	}
+	if len(podGroup.Spec.SubGroups) != 1 || podGroup.Spec.SubGroups[0].TopologyConstraint == nil {
+		t.Fatalf("Expected exactly one SubGroup with a TopologyConstraint")
+	}
+	if got := podGroup.Spec.SubGroups[0].TopologyConstraint.Topology; got != kaiTopologyName {
+		t.Fatalf("Expected SubGroup TopologyConstraint.Topology=%q (resolved TopologyReference), got %q (ClusterTopologyBinding's own name is %q)",
+			kaiTopologyName, got, ctBindingName)
+	}
+
+	Logger.Info("TAS24: Externally-Managed Topology Name Resolution test completed successfully!")
 }

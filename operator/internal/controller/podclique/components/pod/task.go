@@ -18,9 +18,11 @@ import (
 	"context"
 	"fmt"
 
+	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
+	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/podclique/expectations"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
 
@@ -66,16 +68,22 @@ func (r _resource) createPodCreationTask(logger logr.Logger, pcs *grovecorev1alp
 }
 
 // createPodDeletionTask creates a utils.Task which will delete a Pod, capture the delete-expectation and also emit a success/failed event post deletion.
-func (r _resource) createPodDeletionTask(logger logr.Logger, pclq *grovecorev1alpha1.PodClique, podToDelete *corev1.Pod, pclqExpectationsKey string) utils.Task {
+// The delete expectation is recorded under the pod's PodGang-scoped key, read from its grove.io/podgang label.
+func (r _resource) createPodDeletionTask(logger logr.Logger, pclq *grovecorev1alpha1.PodClique, podToDelete *corev1.Pod) utils.Task {
 	podObjKey := client.ObjectKeyFromObject(podToDelete)
 	pclqObjKey := client.ObjectKeyFromObject(pclq)
 	return utils.Task{
 		Name: fmt.Sprintf("DeletePod-%s", podToDelete.Name),
 		Fn: func(ctx context.Context) error {
+			expectationsKey, err := componentutils.PodGangScopedExpectationsStoreKey(pclq.ObjectMeta, podToDelete.Labels[apicommon.LabelPodGang])
+			if err != nil {
+				return groveerr.WrapError(err, errCodeCreatePodCliqueExpectationsStoreKey, component.OperationSync,
+					fmt.Sprintf("failed to build expectations store key for Pod %v of PodClique %v", podObjKey, pclqObjKey))
+			}
 			if err := r.client.Delete(ctx, podToDelete); err != nil {
 				if apierrors.IsNotFound(err) {
 					logger.Info("pod has already been deleted", "pod", podObjKey)
-					r.expectationsStore.ObserveDeletions(logger, pclqExpectationsKey, podToDelete.GetUID())
+					r.expectationsStore.ObserveDeletions(logger, expectationsKey, podToDelete.GetUID())
 					return nil
 				}
 				r.eventRecorder.Eventf(pclq, corev1.EventTypeWarning, constants.ReasonPodDeleteFailed, "Error deleting pod: %v", err)
@@ -87,7 +95,7 @@ func (r _resource) createPodDeletionTask(logger logr.Logger, pclq *grovecorev1al
 			}
 
 			logger.Info("Deleted Pod", "podObjectKey", podObjKey)
-			if err := r.expectationsStore.ExpectDeletions(logger, pclqExpectationsKey, podToDelete.GetUID()); err != nil {
+			if err := r.expectationsStore.ExpectDeletions(logger, expectationsKey, podToDelete.GetUID()); err != nil {
 				utilruntime.HandleErrorWithLogger(logger, err, "could not record delete expectation", "pclq", pclqObjKey, "pod", podObjKey)
 			}
 			r.eventRecorder.Eventf(pclq, corev1.EventTypeNormal, constants.ReasonPodDeleteSuccessful, "Deleted Pod: %s", podToDelete.Name)
@@ -97,10 +105,10 @@ func (r _resource) createPodDeletionTask(logger logr.Logger, pclq *grovecorev1al
 }
 
 // createPodDeletionTasks creates multiple deletion tasks for a batch of pods
-func (r _resource) createPodDeletionTasks(logger logr.Logger, pclq *grovecorev1alpha1.PodClique, podsToDelete []*corev1.Pod, pclqExpectationsKey string) []utils.Task {
+func (r _resource) createPodDeletionTasks(logger logr.Logger, pclq *grovecorev1alpha1.PodClique, podsToDelete []*corev1.Pod) []utils.Task {
 	deletionTasks := make([]utils.Task, 0, len(podsToDelete))
 	for _, podToDelete := range podsToDelete {
-		deletionTasks = append(deletionTasks, r.createPodDeletionTask(logger, pclq, podToDelete, pclqExpectationsKey))
+		deletionTasks = append(deletionTasks, r.createPodDeletionTask(logger, pclq, podToDelete))
 	}
 	return deletionTasks
 }

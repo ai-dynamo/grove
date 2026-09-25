@@ -61,6 +61,15 @@ func (v *Verifier) List(ctx context.Context, pcsNsName types.NamespacedName) ([]
 	return pgList.Items, nil
 }
 
+// Get returns the named PodGang.
+func (v *Verifier) Get(ctx context.Context, namespace, name string) (*groveschedulerv1alpha1.PodGang, error) {
+	pg := &groveschedulerv1alpha1.PodGang{}
+	if err := v.cl.Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, pg); err != nil {
+		return nil, err
+	}
+	return pg, nil
+}
+
 // Verify lists the PodGang(s) for the given PodCliqueSet namespace/name and applies the given
 // check to each of the PodGang. It returns an error if one of the below conditions is met:
 //  1. An error while listing PodGang resources.
@@ -85,6 +94,34 @@ func (v *Verifier) Verify(ctx context.Context, pcsNsName types.NamespacedName, c
 		}
 	}
 	return nil
+}
+
+// VerifyByName gets the named PodGang and applies each check to it. It returns an error if the PodGang
+// cannot be fetched or a check fails (returns on the first failure).
+func (v *Verifier) VerifyByName(ctx context.Context, namespace, name string, check ...Check) error {
+	pg, err := v.Get(ctx, namespace, name)
+	if err != nil {
+		return err
+	}
+	for _, c := range check {
+		if err := c(pg); err != nil {
+			return fmt.Errorf("check failed for PodGang %s/%s: %w", namespace, name, err)
+		}
+	}
+	return nil
+}
+
+// SameUIDCheckFn returns a Check that verifies the PodGang still carries the given UID. A PodGang that
+// was deleted and recreated gets a new UID, so an unchanged UID proves the same object survived.
+// UID comparison is used rather than watching for delete events, because the recreation happens within
+// a very short window and watch events observed over such a short interval are unreliable.
+func SameUIDCheckFn(want types.UID) Check {
+	return func(pg *groveschedulerv1alpha1.PodGang) error {
+		if pg.UID != want {
+			return fmt.Errorf("UID = %s, want %s (PodGang was recreated)", pg.UID, want)
+		}
+		return nil
+	}
 }
 
 // ConditionStatusCheckFn returns a Check that verifies the PodGang has the given condition type set

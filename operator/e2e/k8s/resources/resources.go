@@ -18,14 +18,15 @@ package resources
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"strings"
 
 	"github.com/ai-dynamo/grove/operator/e2e/log"
+	autoscalingv1 "k8s.io/api/autoscaling/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -95,27 +96,21 @@ func (rm *ResourceManager) ApplyYAMLData(ctx context.Context, yamlData []byte, n
 	return appliedResources, nil
 }
 
-// ScaleCRD patches the replicas field of a custom resource identified by GVK.
-func (rm *ResourceManager) ScaleCRD(ctx context.Context, gvk schema.GroupVersionKind, namespace, name string, replicas int) error {
-	scalePatch := map[string]interface{}{
-		"spec": map[string]interface{}{
-			"replicas": replicas,
-		},
-	}
-	patchBytes, err := json.Marshal(scalePatch)
-	if err != nil {
-		return fmt.Errorf("failed to marshal scale patch: %w", err)
-	}
-
+// ScaleResource scales a custom resource identified by GVK through its Scale subresource.
+// This is the same path that any autoscaler like HPA, KEDA etc. will take.
+func (rm *ResourceManager) ScaleResource(ctx context.Context, gvk schema.GroupVersionKind, namespace, name string, replicas int) error {
 	obj := &unstructured.Unstructured{}
 	obj.SetGroupVersionKind(gvk)
 	obj.SetName(name)
 	obj.SetNamespace(namespace)
 
-	if err := rm.cl.Patch(ctx, obj, client.RawPatch(types.MergePatchType, patchBytes)); err != nil {
-		return fmt.Errorf("failed to scale %s %s: %w", gvk.Kind, name, err)
+	scale := &autoscalingv1.Scale{
+		ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: name},
+		Spec:       autoscalingv1.ScaleSpec{Replicas: int32(replicas)},
 	}
-
+	if err := rm.cl.SubResource("scale").Update(ctx, obj, client.WithSubResourceBody(scale)); err != nil {
+		return fmt.Errorf("failed to scale resource %s %s/%s: %w", gvk.Kind, namespace, name, err)
+	}
 	return nil
 }
 

@@ -20,15 +20,16 @@ import (
 	"fmt"
 	"slices"
 	"sort"
+	"strconv"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
-	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
+	"github.com/ai-dynamo/grove/operator/internal/controller/podclique/expectations"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
-	"github.com/ai-dynamo/grove/operator/internal/expect"
 	"github.com/ai-dynamo/grove/operator/internal/index"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
+	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
@@ -37,82 +38,85 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // prepareSyncFlow gathers information in preparation for the sync flow to run.
 func (r _resource) prepareSyncFlow(ctx context.Context, logger logr.Logger, pclq *grovecorev1alpha1.PodClique) (*syncSnapshot, error) {
 	var (
-		ss  = &syncSnapshot{pclq: pclq}
-		err error
+		ss            = &syncSnapshot{pclq: pclq}
+		err           error
+		pclqObjectKey = client.ObjectKeyFromObject(pclq)
 	)
 
 	// Get associated PodCliqueSet for this PodClique.
-	ss.pcs, err = componentutils.GetPodCliqueSet(ctx, r.client, pclq.ObjectMeta)
+	pcs, err := componentutils.GetPodCliqueSet(ctx, r.client, pclq.ObjectMeta)
 	if err != nil {
 		return nil, groveerr.WrapError(err,
 			errCodeGetPodCliqueSet,
 			component.OperationSync,
-			fmt.Sprintf("failed to get owner PodCliqueSet of PodClique: %v", client.ObjectKeyFromObject(pclq)),
+			fmt.Sprintf("failed to get owner PodCliqueSet of PodClique: %v", pclqObjectKey),
 		)
 	}
+	ss.pcs = pcs
+	pcsObjectKey := client.ObjectKeyFromObject(pcs)
 
 	ss.expectedPodTemplateHash, err = componentutils.GetExpectedPCLQPodTemplateHash(ss.pcs, pclq.ObjectMeta)
 	if err != nil {
 		return nil, groveerr.WrapError(err,
 			errCodeGetPodCliqueTemplate,
 			component.OperationSync,
-			fmt.Sprintf("failed to compute pod clique template hash for PodClique: %v in PodCliqueSet", client.ObjectKeyFromObject(pclq)),
+			fmt.Sprintf("failed to compute pod clique template hash for PodClique: %v in PodCliqueSet", pclqObjectKey),
 		)
 	}
 
-	// get the PCLQ expectations key
-	ss.pclqExpectationsStoreKey, err = getPodCliqueExpectationsStoreKey(logger, component.OperationSync, pclq.ObjectMeta)
+	ss.cliqueName, err = componentutils.GetPodCliqueNameFromPodCliqueFQN(pclq.ObjectMeta)
 	if err != nil {
-		return nil, err
+		return nil, groveerr.WrapError(err,
+			errCodeGetPodCliqueTemplate,
+			component.OperationSync,
+			fmt.Sprintf("failed to extract clique name from PodClique: %v", pclqObjectKey),
+		)
 	}
+	ss.isStandalonePCLQ = componentutils.IsStandalonePCLQ(ss.pcs, ss.cliqueName)
 
-	// get the associated PodGang name.
-	ss.associatedPodGangName, err = r.getAssociatedPodGangName(pclq.ObjectMeta)
-	if err != nil {
-		return nil, err
-	}
-
-	// Get the associated PodGang resource.
-	existingPodGang, err := componentutils.GetPodGang(ctx, r.client, ss.associatedPodGangName, pclq.Namespace)
-	if err = lo.Ternary(apierrors.IsNotFound(err), nil, err); err != nil {
-		return nil, err
-	}
-	// Record the associated PodGang's epoch. It is empty when the PodGang is not materialized yet (a
-	// Grove PodGang always carries the epoch label), which gate-removal treats as "dependency not yet
-	// resolvable".
-	if existingPodGang != nil {
-		ss.associatedPodGangEpoch = existingPodGang.Labels[apicommon.LabelEpoch]
-	}
-
-	// The PodGangMap for this PCS replica carries the DependsOn epochs that gate-removal reads. It is
-	// created before any PodClique, so it is expected to exist; a missing PodGangMap is requeued.
 	ss.pcsReplicaIndex, err = k8sutils.GetPodCliqueSetReplicaIndex(pclq.ObjectMeta)
 	if err != nil {
 		return nil, groveerr.WrapError(err,
 			errCodeGetPodGangMap,
 			component.OperationSync,
-			fmt.Sprintf("failed to determine PodCliqueSet replica index for PodClique: %v", client.ObjectKeyFromObject(pclq)),
-		)
-	}
-	ss.pgm, err = componentutils.GetPodGangMap(ctx, r.client, client.ObjectKeyFromObject(ss.pcs), ss.pcsReplicaIndex)
-	if err != nil {
-		return nil, groveerr.WrapError(err,
-			errCodeGetPodGangMap,
-			component.OperationSync,
-			fmt.Sprintf("failed to get PodGangMap for PodCliqueSet: %v, PCS replica index: %d", client.ObjectKeyFromObject(ss.pcs), ss.pcsReplicaIndex),
+			fmt.Sprintf("failed to determine PodCliqueSet replica index for PodClique: %v", pclqObjectKey),
 		)
 	}
 
-	// initialize the Pod names that are updated in the PodGang resource for this PCLQ.
-	ss.podNamesUpdatedInPCLQPodGangs = r.getPodNamesUpdatedInAssociatedPodGang(existingPodGang, pclq.Name)
-	ss.podNamesUpdatedInPCLQPodGangSet = componentutils.NewSet(ss.podNamesUpdatedInPCLQPodGangs)
+	// A PodCliqueScalingGroup-owned PodClique belongs to a single PodGang, named on its
+	// grove.io/podgang label at creation. A standalone PodClique is distributed across anchor
+	// PodGangs and has no single associated PodGang name.
+	if !ss.isStandalonePCLQ {
+		ss.pcsgReplicaPodGangName, err = r.getAssociatedPodGangName(pclq.ObjectMeta)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// The PodGangMap for this PCS replica is the source of truth for PodGang composition and the
+	// DependsOn epochs that gate-removal reads. It is created before any PodClique, so it is expected
+	// to exist; a missing PodGangMap is requeued.
+	ss.pgm, err = componentutils.GetPodGangMap(ctx, r.client, pcsObjectKey, ss.pcsReplicaIndex)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil, groveerr.WrapError(err,
+				errCodePodGangMapNotFound,
+				component.OperationSync,
+				fmt.Sprintf("PodGangMap not found for PodCliqueSet(Name: %v, ReplicaIndex: %d)", pcsObjectKey, ss.pcsReplicaIndex),
+			)
+		}
+		return nil, groveerr.WrapError(err,
+			errCodeGetPodGangMap,
+			component.OperationSync,
+			fmt.Sprintf("failed to get PodGangMap for PodCliqueSet: %v, PCS replica index: %d", pcsObjectKey, ss.pcsReplicaIndex),
+		)
+	}
 
 	// Get all existing pods for this PCLQ.
 	ss.existingPCLQPods, err = componentutils.GetPCLQPods(ctx, r.client, ss.pcs.Name, pclq)
@@ -121,14 +125,16 @@ func (r _resource) prepareSyncFlow(ctx context.Context, logger logr.Logger, pclq
 		return nil, groveerr.WrapError(err,
 			errCodeListPod,
 			component.OperationSync,
-			fmt.Sprintf("failed to list pods that belong to the PodClique %v", client.ObjectKeyFromObject(pclq)),
+			fmt.Sprintf("failed to list pods that belong to the PodClique %v", pclqObjectKey),
 		)
 	}
 
 	return ss, nil
 }
 
-// getAssociatedPodGangName gets the associated PodGang name from PodClique labels. Returns an error if the label is not found.
+// getAssociatedPodGangName gets the associated PodGang name from PodClique labels.
+// Returns an error if the label is not found.
+// NOTE: This is only applicable for PCLQs that are owned by a PCSG. All PCLQs of a PCSG replica share the same PodGang.
 func (r _resource) getAssociatedPodGangName(pclqObjectMeta metav1.ObjectMeta) (string, error) {
 	podGangName, ok := pclqObjectMeta.GetLabels()[apicommon.LabelPodGang]
 	if !ok {
@@ -140,38 +146,82 @@ func (r _resource) getAssociatedPodGangName(pclqObjectMeta metav1.ObjectMeta) (s
 	return podGangName, nil
 }
 
-// getPodNamesUpdatedInAssociatedPodGang gathers all Pod names that are already updated in PodGroups defined in the PodGang resource.
-func (r _resource) getPodNamesUpdatedInAssociatedPodGang(existingPodGang *groveschedulerv1alpha1.PodGang, pclqFQN string) []string {
-	if existingPodGang == nil {
-		return nil
+// relabelPodsToPodGang patches the grove.io/podgang label to podGangName on each pod.
+func (r _resource) relabelPodsToPodGang(ctx context.Context, logger logr.Logger, pods []*corev1.Pod, podGangName string) error {
+	for _, pod := range pods {
+		podClone := pod.DeepCopy()
+		if pod.Labels == nil {
+			pod.Labels = map[string]string{}
+		}
+		pod.Labels[apicommon.LabelPodGang] = podGangName
+		if err := client.IgnoreNotFound(r.client.Patch(ctx, pod, client.MergeFrom(podClone))); err != nil {
+			return groveerr.WrapError(err, errCodeLabelPod, component.OperationSync,
+				fmt.Sprintf("failed to set %s label on pod %v", apicommon.LabelPodGang, client.ObjectKeyFromObject(pod)))
+		}
+		logger.Info("Relabeled pod to PodGang", "podObjectKey", client.ObjectKeyFromObject(pod), "podGang", podGangName)
 	}
-	podGroup, ok := lo.Find(existingPodGang.Spec.PodGroups, func(podGroup groveschedulerv1alpha1.PodGroup) bool {
-		return podGroup.Name == pclqFQN
+	return nil
+}
+
+// reconcilePCSGLabellessPods repairs non-terminating pods of a PodCliqueScalingGroup-owned PodClique
+// that lack the grove.io/podgang label. Such a PodClique maps to a single PodGang, so labelless pods
+// are relabeled to that PodGang. It returns whether any pod was repaired.
+func (r _resource) reconcilePCSGLabellessPods(ctx context.Context, logger logr.Logger, ss *syncSnapshot) (bool, error) {
+	labellessPods := lo.Filter(ss.existingPCLQPods, func(pod *corev1.Pod, _ int) bool {
+		if k8sutils.IsResourceTerminating(pod.ObjectMeta) {
+			return false
+		}
+		_, hasPodGangLabel := pod.Labels[apicommon.LabelPodGang]
+		return !hasPodGangLabel
 	})
-	if !ok {
-		return nil
+	if len(labellessPods) == 0 {
+		return false, nil
 	}
-	return lo.Map(podGroup.PodReferences, func(nsName groveschedulerv1alpha1.NamespacedName, _ int) string {
-		return nsName.Name
-	})
+	if err := r.relabelPodsToPodGang(ctx, logger, labellessPods, ss.pcsgReplicaPodGangName); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // runSyncFlow executes the main synchronization logic including pod creation, deletion, updates, and scheduling gate management
 func (r _resource) runSyncFlow(ctx context.Context, logger logr.Logger, ss *syncSnapshot) syncFlowResult {
 	result := syncFlowResult{}
-	diff := r.syncExpectationsAndComputeDifference(logger, ss)
-	if diff < 0 {
-		logger.Info("found fewer pods than desired", "pclq.spec.replicas", ss.pclq.Spec.Replicas, "delta", diff)
-		diff *= -1
-		numScheduleGatedPods, err := r.createPods(ctx, logger, ss, diff)
-		if err != nil {
-			logger.Error(err, "failed to create pods")
+	if ss.isStandalonePCLQ {
+		// A standalone PodClique's pods are distributed across one or more anchor PodGangs, so its
+		// pods are reconciled per PodGang against the PodGangMap counts.
+		if err := r.reconcileStandalonePCLQDistribution(ctx, logger, ss); err != nil {
 			result.recordError(err)
 		}
-		logger.Info("created unassigned and scheduled gated pods", "numberOfCreatedPods", numScheduleGatedPods)
-	} else if diff > 0 {
-		if err := r.deleteExcessPods(ctx, logger, ss, diff); err != nil {
+	} else {
+		// A PodCliqueScalingGroup-owned PodClique belongs to a single PodGang. Repair any labelless
+		// pod by relabeling it to that PodGang, then requeue so the diff runs on a consistent state.
+		repaired, err := r.reconcilePCSGLabellessPods(ctx, logger, ss)
+		if err != nil {
 			result.recordError(err)
+			return result
+		}
+		if repaired {
+			result.recordError(groveerr.New(groveerr.ErrCodeRequeueAfter, component.OperationSync,
+				fmt.Sprintf("repaired pods missing the %s label for PodCliqueScalingGroup PodClique %v, re-queueing", apicommon.LabelPodGang, client.ObjectKeyFromObject(ss.pclq))))
+			return result
+		}
+
+		// A PodCliqueScalingGroup-owned PodClique belongs to a single PodGang, so a scalar delta drives
+		// creation and deletion. A positive delta creates pods, a negative delta deletes them.
+		delta, err := r.computePodCountDelta(ss)
+		if err != nil {
+			result.recordError(err)
+		} else if delta > 0 {
+			numScheduleGatedPods, err := r.createPods(ctx, logger, ss, delta)
+			if err != nil {
+				logger.Error(err, "failed to create pods")
+				result.recordError(err)
+			}
+			logger.Info("created unassigned and scheduled gated pods", "numberOfCreatedPods", numScheduleGatedPods)
+		} else if delta < 0 {
+			if err := r.deleteExcessPods(ctx, logger, ss, -delta); err != nil {
+				result.recordError(err)
+			}
 		}
 	}
 
@@ -189,38 +239,70 @@ func (r _resource) runSyncFlow(ctx context.Context, logger logr.Logger, ss *sync
 	return result
 }
 
-// syncExpectationsAndComputeDifference reconciles create/delete expectations with actual pod state and computes the replica difference
-// It takes in the existing pods and adjusts the captured create/delete expectations in the ExpectationStore. Post synchronization
-// it computes the difference of pods using => as-is-pods + pods-expecting-creation - desired-pods - pods-expecting-deletion
-func (r _resource) syncExpectationsAndComputeDifference(logger logr.Logger, ss *syncSnapshot) int {
-	terminatingPodUIDs, nonTerminatingPodUIDs := getTerminatingAndNonTerminatingPodUIDs(ss.existingPCLQPods)
-	r.expectationsStore.SyncExpectations(ss.pclqExpectationsStoreKey, nonTerminatingPodUIDs, terminatingPodUIDs)
-	createExpectations := r.expectationsStore.GetCreateExpectations(ss.pclqExpectationsStoreKey)
-	deleteExpectations := r.expectationsStore.GetDeleteExpectations(ss.pclqExpectationsStoreKey)
-	diff := len(ss.existingPCLQPods) + len(createExpectations) - int(ss.pclq.Spec.Replicas) - len(deleteExpectations)
+// syncPCSGPodIndexLabels backfills and reconciles the group-wide index label on existing PCSG pods.
+func (r _resource) syncPCSGPodIndexLabels(ctx context.Context, ss *syncSnapshot) error {
+	firstPCSGPodIndex, err := getPCSGPodIndex(ss.pclq, 0)
+	if err != nil {
+		return groveerr.WrapError(
+			err,
+			errCodeUpdatePCSGPodIndexLabel,
+			component.OperationSync,
+			fmt.Sprintf("error computing PodCliqueScalingGroup pod index for PodClique %v", client.ObjectKeyFromObject(ss.pclq)),
+		)
+	}
+	if firstPCSGPodIndex == nil {
+		return nil
+	}
 
-	logger.V(4).Info("synced expectations",
-		"pclq.spec.replicas", ss.pclq.Spec.Replicas,
-		"existingPCLPodNames", lo.Map(ss.existingPCLQPods, func(pod *corev1.Pod, _ int) string { return pod.Name }),
-		"createExpectations", createExpectations,
-		"deleteExpectations", deleteExpectations,
-		"diff", diff,
-	)
-	return diff
-}
+	for _, pod := range ss.existingPCLQPods {
+		podIndexValue, ok := pod.Labels[apicommon.LabelPodCliquePodIndex]
+		if !ok {
+			return groveerr.New(
+				errCodeUpdatePCSGPodIndexLabel,
+				component.OperationSync,
+				fmt.Sprintf("Pod %v is missing required label %q", client.ObjectKeyFromObject(pod), apicommon.LabelPodCliquePodIndex),
+			)
+		}
+		podIndex, err := strconv.Atoi(podIndexValue)
+		if err != nil {
+			return groveerr.WrapError(
+				err,
+				errCodeUpdatePCSGPodIndexLabel,
+				component.OperationSync,
+				fmt.Sprintf("Pod %v has invalid %s value %q", client.ObjectKeyFromObject(pod), apicommon.LabelPodCliquePodIndex, podIndexValue),
+			)
+		}
+		expectedValue := strconv.Itoa(*firstPCSGPodIndex + podIndex)
+		if pod.Labels[apicommon.LabelPodCliqueScalingGroupPodIndex] == expectedValue {
+			continue
+		}
 
-// getTerminatingAndNonTerminatingPodUIDs categorizes pod UIDs based on termination status
-func getTerminatingAndNonTerminatingPodUIDs(existingPCLQPods []*corev1.Pod) (terminatingUIDs, nonTerminatingUIDs []types.UID) {
-	nonTerminatingUIDs = make([]types.UID, 0, len(existingPCLQPods))
-	terminatingUIDs = make([]types.UID, 0, len(existingPCLQPods))
-	for _, pod := range existingPCLQPods {
-		if k8sutils.IsResourceTerminating(pod.ObjectMeta) {
-			terminatingUIDs = append(terminatingUIDs, pod.GetUID())
-		} else {
-			nonTerminatingUIDs = append(nonTerminatingUIDs, pod.GetUID())
+		podBeforePatch := pod.DeepCopy()
+		pod.Labels[apicommon.LabelPodCliqueScalingGroupPodIndex] = expectedValue
+		if err = r.client.Patch(ctx, pod, client.MergeFrom(podBeforePatch)); err != nil {
+			return groveerr.WrapError(
+				err,
+				errCodeUpdatePCSGPodIndexLabel,
+				component.OperationSync,
+				fmt.Sprintf("failed to update PodCliqueScalingGroup pod index label on Pod %v", client.ObjectKeyFromObject(pod)),
+			)
 		}
 	}
-	return
+	return nil
+}
+
+// computePodCountDelta returns desired minus the live pod count reconciled with expectations for a
+// PodCliqueScalingGroup-owned PodClique, which belongs to a single PodGang. Reconciling with
+// outstanding create and delete expectations keeps an operation from a prior reconcile, not yet
+// reflected in the informer cache, from being repeated. A positive value is pods to create, a
+// negative value is pods to delete.
+func (r _resource) computePodCountDelta(ss *syncSnapshot) (int, error) {
+	podsByPodGang, _ := groupPodsByPodGang(ss.existingPCLQPods)
+	reconciledCount, err := r.reconcileLivePodCountWithExpectations(ss.pclq.ObjectMeta, ss.pcsgReplicaPodGangName, podsByPodGang[ss.pcsgReplicaPodGangName])
+	if err != nil {
+		return 0, err
+	}
+	return int(ss.pclq.Spec.Replicas) - int(reconciledCount), nil
 }
 
 // deleteExcessPods deletes `diff` number of excess Pods from this PodClique concurrently.
@@ -234,7 +316,7 @@ func (r _resource) deleteExcessPods(ctx context.Context, logger logr.Logger, ss 
 
 	deleteTasks := make([]utils.Task, 0, len(selectedPodsToDelete))
 	for _, podToDelete := range selectedPodsToDelete {
-		deleteTasks = append(deleteTasks, r.createPodDeletionTask(logger, ss.pclq, podToDelete, ss.pclqExpectationsStoreKey))
+		deleteTasks = append(deleteTasks, r.createPodDeletionTask(logger, ss.pclq, podToDelete))
 	}
 
 	if runResult := utils.RunConcurrentlyWithSlowStart(ctx, logger, 1, deleteTasks); runResult.HasErrors() {
@@ -292,69 +374,62 @@ func (ss *syncSnapshot) getExpectedPodTemplateHash() string {
 	return ss.pclq.Labels[apicommon.LabelPodTemplateHash]
 }
 
-// checkAndRemovePodSchedulingGates removes scheduling gates from pods when their dependencies are satisfied
+// checkAndRemovePodSchedulingGates removes the Grove PodGang scheduling gate from gated pods whose
+// dependency PodGangs are scheduled. A gated pod's grove.io/podgang label resolves to a PodGangMap
+// entry whose DependsOn epochs must all be scheduled before the gate is lifted. This works whether
+// the PodClique's pods belong to one PodGang or several.
 func (r _resource) checkAndRemovePodSchedulingGates(ctx context.Context, logger logr.Logger, ss *syncSnapshot) ([]string, error) {
-	tasks := make([]utils.Task, 0, len(ss.existingPCLQPods))
 	skippedScheduleGatedPods := make([]string, 0, len(ss.existingPCLQPods))
 
-	// Pre-compute once for all pods in this PodClique whether the PodGang(s) it depends on are
-	// scheduled. All pods in the same PodClique share the same dependency.
-	dependencyScheduled, dependencyPodGangName, err := r.checkDependencyScheduled(ctx, logger, ss)
-	if err != nil {
-		logger.Error(err, "Error checking if the dependency PodGang is scheduled for PodClique - will requeue")
-		return nil, groveerr.WrapError(err,
-			errCodeRemovePodSchedulingGate,
-			component.OperationSync,
-			"failed to check if the dependency PodGang is scheduled for PodClique",
-		)
+	gatedPods := lo.Filter(ss.existingPCLQPods, func(pod *corev1.Pod, _ int) bool {
+		return hasPodGangSchedulingGate(pod)
+	})
+	if len(gatedPods) == 0 {
+		return skippedScheduleGatedPods, nil
 	}
 
-	if ss.podNamesUpdatedInPCLQPodGangSet == nil {
-		ss.podNamesUpdatedInPCLQPodGangSet = componentutils.NewSet(ss.podNamesUpdatedInPCLQPodGangs)
+	podGangByName, err := r.fetchPodGangsForGatedPods(ctx, gatedPods, ss.pclq.Namespace)
+	if err != nil {
+		return nil, err
 	}
-	for i, p := range ss.existingPCLQPods {
-		if hasPodGangSchedulingGate(p) {
-			podObjectKey := client.ObjectKeyFromObject(p)
-			if !ss.podNamesUpdatedInPCLQPodGangSet.Has(p.Name) {
-				logger.Info("Pod has scheduling gate but it has not yet been updated in PodGang", "podObjectKey", podObjectKey)
-				skippedScheduleGatedPods = append(skippedScheduleGatedPods, p.Name)
-				continue
-			}
-			shouldSkip := r.shouldSkipPodSchedulingGateRemoval(logger, p, dependencyScheduled, dependencyPodGangName)
-			if shouldSkip {
-				skippedScheduleGatedPods = append(skippedScheduleGatedPods, p.Name)
-				continue
-			}
-			task := utils.Task{
-				Name: fmt.Sprintf("RemoveSchedulingGate-%s-%d", p.Name, i),
-				Fn: func(ctx context.Context) error {
-					podClone := p.DeepCopy()
-					// Remove only the Grove PodGang gate. Other controllers may add their own
-					// scheduling gates on the same Pod; clearing the whole list would wipe those
-					// and let the Pod schedule before those owners have released it.
-					if !removePodGangSchedulingGate(p) {
-						return nil
-					}
-					if err := client.IgnoreNotFound(r.client.Patch(ctx, p, client.MergeFrom(podClone))); err != nil {
-						return err
-					}
-					logger.Info("Removed Grove PodGang scheduling gate from pod", "podObjectKey", podObjectKey)
-					return nil
-				},
-			}
-			tasks = append(tasks, task)
+	dependencySatisfiedByEpoch, err := r.resolveDependencySatisfiedByEpoch(ctx, ss)
+	if err != nil {
+		return nil, err
+	}
+
+	tasks := make([]utils.Task, 0, len(gatedPods))
+	for i, pod := range gatedPods {
+		if !canRemoveSchedulingGate(logger, pod, ss.pclq.Name, podGangByName, dependencySatisfiedByEpoch) {
+			skippedScheduleGatedPods = append(skippedScheduleGatedPods, pod.Name)
+			continue
 		}
+		tasks = append(tasks, utils.Task{
+			Name: fmt.Sprintf("RemoveSchedulingGate-%s-%d", pod.Name, i),
+			Fn: func(ctx context.Context) error {
+				podClone := pod.DeepCopy()
+				// Remove only the Grove PodGang gate. Other controllers may add their own scheduling
+				// gates on the same Pod; clearing the whole list would wipe those and let the Pod
+				// schedule before those owners have released it.
+				if !removePodGangSchedulingGate(pod) {
+					return nil
+				}
+				if err := client.IgnoreNotFound(r.client.Patch(ctx, pod, client.MergeFrom(podClone))); err != nil {
+					return err
+				}
+				logger.Info("Removed Grove PodGang scheduling gate from pod", "podObjectKey", client.ObjectKeyFromObject(pod))
+				return nil
+			},
+		})
 	}
 
 	if len(tasks) > 0 {
-		pclqObjectKey := client.ObjectKeyFromObject(ss.pclq)
 		if runResult := utils.RunConcurrentlyWithSlowStart(ctx, logger, 1, tasks); runResult.HasErrors() {
 			err := runResult.GetAggregatedError()
 			logger.Error(err, "failed to remove scheduling gates from pods for PCLQ", "runSummary", runResult.GetSummary())
 			return skippedScheduleGatedPods, groveerr.WrapError(err,
 				errCodeRemovePodSchedulingGate,
 				component.OperationSync,
-				fmt.Sprintf("failed to remove scheduling gates from Pods for PodClique %v", pclqObjectKey),
+				fmt.Sprintf("failed to remove scheduling gates from Pods for PodClique %v", client.ObjectKeyFromObject(ss.pclq)),
 			)
 		}
 	}
@@ -362,109 +437,107 @@ func (r _resource) checkAndRemovePodSchedulingGates(ctx context.Context, logger 
 	return skippedScheduleGatedPods, nil
 }
 
-// isPodGangScheduled checks if the PodGang (identified by name) is scheduled, returning errors for API failures.
-// A PodGang is considered "scheduled" when ALL of its constituent PodCliques have achieved
-// their minimum required number of scheduled pods (PodClique.Status.ScheduledReplicas >= PodGroup.MinReplicas).
-func (r _resource) isPodGangScheduled(ctx context.Context, logger logr.Logger, namespace, podGangName string) (bool, error) {
-	// Get the PodGang - treat all errors (including NotFound) as requeue-able
-	podGang, err := componentutils.GetPodGang(ctx, r.client, podGangName, namespace)
-	if err != nil {
-		return false, groveerr.WrapError(err,
-			errCodeGetPodGang,
-			component.OperationSync,
-			fmt.Sprintf("failed to get PodGang %v", client.ObjectKey{Namespace: namespace, Name: podGangName}),
-		)
-	}
-
-	// Check if all PodGroups in the PodGang have sufficient scheduled replicas.
-	// Each PodGroup represents a PodClique within the PodGang and must meet its MinReplicas requirement.
-	for _, podGroup := range podGang.Spec.PodGroups {
-		pclqName := podGroup.Name
-		pclq := &grovecorev1alpha1.PodClique{}
-		pclqKey := client.ObjectKey{Name: pclqName, Namespace: namespace}
-		if err = r.client.Get(ctx, pclqKey, pclq); err != nil {
-			// All errors (including NotFound) should trigger requeue for reliable retry.
-			// This ensures the PodClique exists before we evaluate PodGang readiness.
-			return false, groveerr.WrapError(err,
-				errCodeGetPodClique,
+// fetchPodGangsForGatedPods fetches, once each, the distinct PodGangs the gated pods reference by
+// their grove.io/podgang label. A PodGang that does not exist yet is recorded as nil so its pods are
+// skipped. A pod without the label is skipped as well, since its label is repaired earlier in the
+// sync flow and it is not yet placeable in any PodGang.
+func (r _resource) fetchPodGangsForGatedPods(ctx context.Context, gatedPods []*corev1.Pod, namespace string) (map[string]*groveschedulerv1alpha1.PodGang, error) {
+	podGangByName := make(map[string]*groveschedulerv1alpha1.PodGang)
+	for _, pod := range gatedPods {
+		podGangName, ok := pod.Labels[apicommon.LabelPodGang]
+		if !ok {
+			continue
+		}
+		if _, seen := podGangByName[podGangName]; seen {
+			continue
+		}
+		podGang, err := componentutils.GetPodGang(ctx, r.client, podGangName, namespace)
+		if err != nil {
+			if apierrors.IsNotFound(err) {
+				podGangByName[podGangName] = nil
+				continue
+			}
+			return nil, groveerr.WrapError(err,
+				errCodeGetPodGang,
 				component.OperationSync,
-				fmt.Sprintf("failed to get PodClique %s in namespace %s for PodGang readiness check", pclqName, namespace),
+				fmt.Sprintf("failed to get PodGang %v", client.ObjectKey{Namespace: namespace, Name: podGangName}),
 			)
 		}
-
-		if pclq.Status.ScheduledReplicas < podGroup.MinReplicas {
-			logger.Info("PodGang not scheduled: PodClique has insufficient scheduled replicas",
-				"podGangName", podGangName,
-				"pclqName", pclqName,
-				"scheduledReplicas", pclq.Status.ScheduledReplicas,
-				"minReplicas", podGroup.MinReplicas)
-			return false, nil // Not ready, but no error - legitimate state
-		}
+		podGangByName[podGangName] = podGang
 	}
-
-	logger.Info("PodGang is scheduled - all PodCliques meet MinAvailable requirements", "podGangName", podGangName)
-	return true, nil
+	return podGangByName, nil
 }
 
-// checkDependencyScheduled determines whether the PodGang(s) this PodClique depends on are scheduled.
-// The dependency comes from the PodGangMap: the PodClique's own PodGang epoch resolves to a
-// PodGangMap entry whose DependsOn lists the epochs of the PodGangs that must be scheduled first. When
-// all of those PodGangs are scheduled, this PodClique's pods may have their scheduling gates lifted.
-// An empty DependsOn means no dependency (an anchor or standalone PodClique) and returns an empty
-// name, the same signal the caller used for the legacy no-base-podgang case.
-// NOTE: in this release a PodClique maps to a single PodGang. When coherent updates introduce a 1:N
-// PodClique-to-PodGang relationship this resolution must be revisited.
-func (r _resource) checkDependencyScheduled(ctx context.Context, logger logr.Logger, ss *syncSnapshot) (bool, string, error) {
-	// An empty epoch means the PodClique's PodGang is not materialized yet (a Grove PodGang always
-	// carries the epoch label), so its dependency cannot be resolved. Keep the pods gated; the
-	// reconcile requeues once the PodGang exists.
-	if ss.associatedPodGangEpoch == "" {
-		return false, ss.associatedPodGangName, nil
-	}
-	dependsOnEpochs, err := componentutils.DependsOnForEpoch(ss.pgm, ss.associatedPodGangEpoch)
-	if err != nil {
-		return false, "", err
-	}
-	if len(dependsOnEpochs) == 0 {
-		// No dependency: this PodClique belongs to an anchor PodGang.
-		return true, "", nil
-	}
-	rnr := apicommon.ResourceNameReplica{Name: ss.pcs.Name, Replica: ss.pcsReplicaIndex}
-	for _, epoch := range dependsOnEpochs {
-		dependencyPodGangName := apicommon.GenerateAnchorPodGangName(rnr, epoch)
-		scheduled, err := r.isPodGangScheduled(ctx, logger, ss.pclq.Namespace, dependencyPodGangName)
-		if err != nil {
-			return false, dependencyPodGangName, err
+// resolveDependencySatisfiedByEpoch returns, keyed by each PodGangMap entry's epoch, whether every
+// epoch that entry DependsOn has all its PodGangs scheduled. An entry with no DependsOn is trivially
+// satisfied. Each distinct dependency epoch is resolved with a single List, memoized across entries.
+func (r _resource) resolveDependencySatisfiedByEpoch(ctx context.Context, ss *syncSnapshot) (map[string]bool, error) {
+	epochScheduled := make(map[string]bool)
+	satisfiedByEpoch := make(map[string]bool, len(ss.pgm.Spec.Entries))
+	for _, entry := range ss.pgm.Spec.Entries {
+		satisfied := true
+		for _, dependencyEpoch := range entry.DependsOn {
+			scheduled, ok := epochScheduled[dependencyEpoch]
+			if !ok {
+				var err error
+				scheduled, err = componentutils.AllPodGangsAtEpochEverScheduled(ctx, r.client, client.ObjectKeyFromObject(ss.pcs), int32(ss.pcsReplicaIndex), dependencyEpoch)
+				if err != nil {
+					return nil, err
+				}
+				epochScheduled[dependencyEpoch] = scheduled
+			}
+			if !scheduled {
+				satisfied = false
+				break
+			}
 		}
-		if !scheduled {
-			return false, dependencyPodGangName, nil
-		}
+		satisfiedByEpoch[entry.Epoch] = satisfied
 	}
-	return true, "", nil
+	return satisfiedByEpoch, nil
 }
 
-// shouldSkipPodSchedulingGateRemoval implements the core PodGang scheduling gate logic.
-// It returns true if the pod scheduling gate removal should be skipped, false otherwise.
-func (r _resource) shouldSkipPodSchedulingGateRemoval(logger logr.Logger, pod *corev1.Pod, dependencyScheduled bool, dependencyPodGangName string) bool {
-	if dependencyPodGangName == "" {
-		// NO DEPENDENCY: this PodClique belongs to an anchor PodGang. These pods form the core gang and
-		// get their gates removed immediately once assigned to the PodGang. They represent the minimum
-		// viable cluster (first minAvailable replicas) that must start together.
-		logger.Info("Proceeding with gate removal for anchor PodGang pod",
-			"podObjectKey", client.ObjectKeyFromObject(pod))
+// canRemoveSchedulingGate reports whether pod's Grove PodGang gate can be lifted. Its PodGang must
+// exist, record the pod in its PodReferences, and the dependencies of its PodGang's epoch must be
+// satisfied. It reads only prefetched maps and makes no API calls. A PodGang epoch absent from
+// dependencySatisfiedByEpoch (a transient PodGangMap and PodGang divergence) resolves to false, so
+// the pod is skipped and the reconcile requeues.
+func canRemoveSchedulingGate(logger logr.Logger, pod *corev1.Pod, pclqName string, podGangByName map[string]*groveschedulerv1alpha1.PodGang, dependencySatisfiedByEpoch map[string]bool) bool {
+	podObjectKey := client.ObjectKeyFromObject(pod)
+	podGangName, ok := pod.Labels[apicommon.LabelPodGang]
+	if !ok {
+		logger.Info("Pod has no PodGang label yet, skipping gate removal", "podObjectKey", podObjectKey)
 		return false
 	}
-	// HAS DEPENDENCY: this PodClique's PodGang depends on another PodGang.
-	if dependencyScheduled {
-		logger.Info("Dependency PodGang is scheduled, proceeding with gate removal",
-			"podObjectKey", client.ObjectKeyFromObject(pod),
-			"dependencyPodGangName", dependencyPodGangName)
+
+	podGang := podGangByName[podGangName]
+	if podGang == nil {
+		logger.Info("PodGang not found yet, skipping gate removal", "podObjectKey", podObjectKey, "podGangName", podGangName)
 		return false
 	}
-	logger.Info("Pod has scheduling gate but its dependency PodGang is not scheduled yet, skipping scheduling gate removal",
-		"podObjectKey", client.ObjectKeyFromObject(pod),
-		"dependencyPodGangName", dependencyPodGangName)
+	if !isPodInPodReferences(podGang, pclqName, pod.Name) {
+		logger.Info("Pod not yet recorded in PodGang PodReferences, skipping gate removal", "podObjectKey", podObjectKey, "podGangName", podGangName)
+		return false
+	}
+	if !dependencySatisfiedByEpoch[podGang.Labels[apicommon.LabelEpoch]] {
+		logger.Info("Pod's PodGang epoch dependencies not yet scheduled, skipping gate removal", "podObjectKey", podObjectKey, "podGangName", podGangName)
+		return false
+	}
 	return true
+}
+
+// isPodInPodReferences reports whether podName appears in the PodGroup for pclqFQN in podGang.
+func isPodInPodReferences(podGang *groveschedulerv1alpha1.PodGang, pclqFQN, podName string) bool {
+	for _, podGroup := range podGang.Spec.PodGroups {
+		if podGroup.Name != pclqFQN {
+			continue
+		}
+		for _, ref := range podGroup.PodReferences {
+			if ref.Name == podName {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // hasPodGangSchedulingGate checks if a pod has the PodGang scheduling gate
@@ -498,12 +571,18 @@ func (r _resource) createPods(ctx context.Context, logger logr.Logger, ss *syncS
 			fmt.Sprintf("error getting available indices for Pods in PodClique %v", client.ObjectKeyFromObject(ss.pclq)),
 		)
 	}
+	// A PodCliqueScalingGroup-owned PodClique belongs to a single PodGang, so every created pod
+	// records its create expectation under that PodGang's scoped key.
+	expectationsKey, err := expectations.PodGangScopedExpectationsStoreKey(ss.pclq.ObjectMeta, ss.pcsgReplicaPodGangName)
+	if err != nil {
+		return 0, err
+	}
 	createTasks := make([]utils.Task, 0, numPods)
 	for i := range numPods {
 		// Get the available Pod host name index. This ensures that we fill the holes in the indices if there are any when creating
 		// new pods.
 		podHostNameIndex := availableIndices[i]
-		createTasks = append(createTasks, r.createPodCreationTask(logger, ss.pcs, ss.pclq, ss.associatedPodGangName, ss.pclqExpectationsStoreKey, i, podHostNameIndex))
+		createTasks = append(createTasks, r.createPodCreationTask(logger, ss.pcs, ss.pclq, ss.pcsgReplicaPodGangName, expectationsKey, i, podHostNameIndex))
 	}
 	runResult := utils.RunConcurrentlyWithSlowStart(ctx, logger, 1, createTasks)
 	if runResult.HasErrors() {
@@ -519,17 +598,15 @@ func (r _resource) createPods(ctx context.Context, logger logr.Logger, ss *syncS
 
 // syncSnapshot holds the relevant state required during the sync flow run.
 type syncSnapshot struct {
-	pcs                             *grovecorev1alpha1.PodCliqueSet
-	pclq                            *grovecorev1alpha1.PodClique
-	pcsReplicaIndex                 int
-	pgm                             *grovecorev1alpha1.PodGangMap
-	associatedPodGangName           string
-	associatedPodGangEpoch          string
-	existingPCLQPods                []*corev1.Pod
-	podNamesUpdatedInPCLQPodGangs   []string
-	podNamesUpdatedInPCLQPodGangSet componentutils.Set[string]
-	pclqExpectationsStoreKey        string
-	expectedPodTemplateHash         string
+	pcs                     *grovecorev1alpha1.PodCliqueSet
+	pclq                    *grovecorev1alpha1.PodClique
+	pcsReplicaIndex         int
+	pgm                     *grovecorev1alpha1.PodGangMap
+	isStandalonePCLQ        bool
+	cliqueName              string
+	pcsgReplicaPodGangName  string
+	existingPCLQPods        []*corev1.Pod
+	expectedPodTemplateHash string
 }
 
 // syncFlowResult captures the result of a sync flow run.
@@ -563,19 +640,4 @@ func (sfr *syncFlowResult) recordPendingScheduleGatedPods(podNames []string) {
 // hasErrors returns true if any errors occurred during the sync flow
 func (sfr *syncFlowResult) hasErrors() bool {
 	return len(sfr.errs) > 0
-}
-
-// getPodCliqueExpectationsStoreKey creates the PodClique key against which expectations will be stored in the ExpectationStore.
-func getPodCliqueExpectationsStoreKey(logger logr.Logger, operation string, pclqObjMeta metav1.ObjectMeta) (string, error) {
-	pclqObjKey := k8sutils.GetObjectKeyFromObjectMeta(pclqObjMeta)
-	pclqExpStoreKey, err := expect.ControlleeKeyFunc(&grovecorev1alpha1.PodClique{ObjectMeta: pclqObjMeta})
-	if err != nil {
-		logger.Error(err, "failed to construct expectations store key", "pclq", pclqObjKey)
-		return "", groveerr.WrapError(err,
-			errCodeCreatePodCliqueExpectationsStoreKey,
-			operation,
-			fmt.Sprintf("failed to construct expectations store key for PodClique %v", pclqObjKey),
-		)
-	}
-	return pclqExpStoreKey, nil
 }

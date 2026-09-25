@@ -24,8 +24,10 @@ import (
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	groveclientscheme "github.com/ai-dynamo/grove/operator/internal/client"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
+	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
+	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -42,6 +44,9 @@ const (
 	testPCSGName  = "sg"
 	testGenHash   = "hash-1"
 	podsPerPCLQ   = 2
+	// testMembershipAnnotationKey is the scheduler-membership annotation the fake backend stamps. It
+	// stands in for a real backend key such as Volcano's scheduling.k8s.io/group-name.
+	testMembershipAnnotationKey = "scheduling.test/group-name"
 )
 
 // replicaEpochs holds the epochs of a replica's PodGangMap entries, one per role. Tests give each
@@ -59,7 +64,7 @@ func TestSyncMigratesSingleReplica(t *testing.T) {
 	objs := append([]client.Object{gatedPCS(1)}, legacyReplicaObjects(0, epochs)...)
 	objs = append(objs, epochPodGangsForReplica(0, epochs)...)
 	cl := newMigratorClient(objs...)
-	operator := New(cl, groveclientscheme.Scheme)
+	operator := New(cl, groveclientscheme.Scheme, newFakeRegistry())
 
 	err := operator.Sync(context.Background(), logr.Discard(), getPCS(t, cl))
 	require.NoError(t, err)
@@ -81,7 +86,7 @@ func TestSyncMigratesMultipleReplicas(t *testing.T) {
 		objs = append(objs, epochPodGangsForReplica(replicaIndex, epochs)...)
 	}
 	cl := newMigratorClient(objs...)
-	operator := New(cl, groveclientscheme.Scheme)
+	operator := New(cl, groveclientscheme.Scheme, newFakeRegistry())
 
 	err := operator.Sync(context.Background(), logr.Discard(), getPCS(t, cl))
 	require.NoError(t, err)
@@ -117,7 +122,7 @@ func TestSyncMigratesScaleOutReplica(t *testing.T) {
 	)
 
 	cl := newMigratorClient(objs...)
-	operator := New(cl, groveclientscheme.Scheme)
+	operator := New(cl, groveclientscheme.Scheme, newFakeRegistry())
 
 	err := operator.Sync(context.Background(), logr.Discard(), getPCS(t, cl))
 	require.NoError(t, err)
@@ -144,7 +149,7 @@ func TestSyncMigratesScaleOutReplica(t *testing.T) {
 func TestSyncIsNoOpWhenNotGated(t *testing.T) {
 	epochs := replicaEpochs{anchor: "1000", tail: "1001"}
 	cl := newMigratorClient(legacyReplicaObjects(0, epochs)...)
-	operator := New(cl, groveclientscheme.Scheme)
+	operator := New(cl, groveclientscheme.Scheme, newFakeRegistry())
 
 	// PodCliqueSet without the migration gate condition, so Sync must not act.
 	pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "uid").WithReplicas(1).Build()
@@ -161,7 +166,7 @@ func TestSyncPreservesForeignLabelsAndSpec(t *testing.T) {
 	objs := append([]client.Object{gatedPCS(1)}, legacyReplicaObjects(0, epochs)...)
 	objs = append(objs, epochPodGangsForReplica(0, epochs)...)
 	cl := newMigratorClient(objs...)
-	operator := New(cl, groveclientscheme.Scheme)
+	operator := New(cl, groveclientscheme.Scheme, newFakeRegistry())
 
 	err := operator.Sync(context.Background(), logr.Discard(), getPCS(t, cl))
 	require.NoError(t, err)
@@ -183,7 +188,7 @@ func TestSyncHoldsGateUntilEpochPodGangsExist(t *testing.T) {
 	epochs := replicaEpochs{anchor: "1000", tail: "1001"}
 	// The legacy objects and PodGangMap are present, but the epoch PodGangs are not created yet.
 	cl := newMigratorClient(append([]client.Object{gatedPCS(1)}, legacyReplicaObjects(0, epochs)...)...)
-	operator := New(cl, groveclientscheme.Scheme)
+	operator := New(cl, groveclientscheme.Scheme, newFakeRegistry())
 
 	err := operator.Sync(context.Background(), logr.Discard(), getPCS(t, cl))
 	testutils.AssertGroveError(t, &groveerr.GroveError{Code: groveerr.ErrCodeContinueReconcileAndRequeue, Operation: "Sync"}, err)
@@ -197,21 +202,65 @@ func TestMigratePodGangLabelsMissingLabelsReturnsError(t *testing.T) {
 	// A PodClique with no labels at all is an unexpected internal state. A label-less object cannot be
 	// reached through Sync, since the replica list selector would not match it, so the guard is
 	// exercised directly.
-	r := New(newMigratorClient(), groveclientscheme.Scheme).(*_resource)
+	r := New(newMigratorClient(), groveclientscheme.Scheme, newFakeRegistry()).(*_resource)
 	pclq := &grovecorev1alpha1.PodClique{ObjectMeta: metav1.ObjectMeta{Name: "no-labels", Namespace: testNamespace}}
 
 	err := r.migratePodGangLabels(context.Background(), pclq, "target")
 	testutils.AssertGroveError(t, &groveerr.GroveError{Code: errCodeMissingLabels, Operation: "Sync"}, err)
 }
 
+// TestMigratePodRewritesStaleSchedulerMembershipAnnotation asserts migratePodLabelsAndAnnotations rewrites the
+// scheduler-membership annotation from the legacy PodGang name to the epoch-based name, drops
+// base-podgang, and leaves foreign annotations untouched.
+func TestMigratePodRewritesStaleSchedulerMembershipAnnotation(t *testing.T) {
+	pod := testutils.NewPodBuilder("p0", testNamespace).
+		WithLabels(map[string]string{
+			apicommon.LabelPodGang:     "legacy-podgang",
+			apicommon.LabelBasePodGang: "legacy-podgang",
+			apicommon.LabelPodClique:   "pclq",
+		}).
+		Build()
+	pod.Annotations = map[string]string{testMembershipAnnotationKey: "legacy-podgang", "example.com/keep": "v"}
+	cl := newMigratorClient(pod)
+	r := New(cl, groveclientscheme.Scheme, newFakeRegistry()).(*_resource)
+
+	require.NoError(t, r.migratePodLabelsAndAnnotations(context.Background(), pod, "epoch-podgang"))
+
+	got := getPod(t, cl, pod.Name)
+	assert.Equal(t, "epoch-podgang", got.Labels[apicommon.LabelPodGang])
+	assert.NotContains(t, got.Labels, apicommon.LabelBasePodGang)
+	assert.Equal(t, "epoch-podgang", got.Annotations[testMembershipAnnotationKey], "stale scheduler membership annotation must be rewritten")
+	assert.Equal(t, "v", got.Annotations["example.com/keep"], "foreign annotation must be preserved")
+}
+
+// TestMigratePodSkipsMembershipWhenBackendHasNoAnnotations asserts migratePodLabelsAndAnnotations migrates labels but adds
+// no membership annotation when the Pod's scheduler backend does not implement
+// PodGangMembershipAnnotator (for example the plain kube backend).
+func TestMigratePodSkipsMembershipWhenBackendHasNoAnnotations(t *testing.T) {
+	pod := testutils.NewPodBuilder("p0", testNamespace).
+		WithLabels(map[string]string{
+			apicommon.LabelPodGang:   "legacy-podgang",
+			apicommon.LabelPodClique: "pclq",
+		}).
+		Build()
+	cl := newMigratorClient(pod)
+	r := New(cl, groveclientscheme.Scheme, fakeRegistry{backend: fakeBackend{}}).(*_resource)
+
+	require.NoError(t, r.migratePodLabelsAndAnnotations(context.Background(), pod, "epoch-podgang"))
+
+	got := getPod(t, cl, pod.Name)
+	assert.Equal(t, "epoch-podgang", got.Labels[apicommon.LabelPodGang])
+	assert.NotContains(t, got.Annotations, testMembershipAnnotationKey, "backend without membership annotations must add none")
+}
+
 func TestDeleteIsNoOp(t *testing.T) {
-	operator := New(newMigratorClient(), groveclientscheme.Scheme)
+	operator := New(newMigratorClient(), groveclientscheme.Scheme, newFakeRegistry())
 	err := operator.Delete(context.Background(), logr.Discard(), metav1.ObjectMeta{Name: testPCSName, Namespace: testNamespace})
 	assert.NoError(t, err)
 }
 
 func TestGetExistingResourceNamesReturnsNil(t *testing.T) {
-	operator := New(newMigratorClient(), groveclientscheme.Scheme)
+	operator := New(newMigratorClient(), groveclientscheme.Scheme, newFakeRegistry())
 	names, err := operator.GetExistingResourceNames(context.Background(), logr.Discard(), metav1.ObjectMeta{Name: testPCSName, Namespace: testNamespace})
 	require.NoError(t, err)
 	assert.Nil(t, names)
@@ -231,6 +280,7 @@ func assertReplicaMigrated(t *testing.T, cl client.Client, pcsReplicaIndex int, 
 		for _, pod := range pods {
 			assert.Equal(t, wantPodGang, pod.Labels[apicommon.LabelPodGang], "Pod %s PodGang label", pod.Name)
 			assert.NotContains(t, pod.Labels, apicommon.LabelBasePodGang, "Pod %s must not carry base-podgang", pod.Name)
+			assert.Equal(t, wantPodGang, pod.Annotations[testMembershipAnnotationKey], "Pod %s scheduler membership annotation", pod.Name)
 		}
 	}
 }
@@ -377,6 +427,9 @@ func podsForPCLQ(pcsReplicaIndex int, pclqName, podGangName, basePodGangName str
 			WithOwner(pclqName).
 			WithLabels(labels).
 			Build()
+		// Seed the stale scheduler-membership annotation pointing at the legacy PodGang, so a passing
+		// assertion after migration confirms the migrator rewrote it to the epoch-based name.
+		pod.Annotations = map[string]string{testMembershipAnnotationKey: podGangName}
 		pods = append(pods, pod)
 	}
 	return pods
@@ -420,4 +473,63 @@ func listPodsOfPCLQ(t *testing.T, cl client.Client, pclqName string) []corev1.Po
 		client.InNamespace(testNamespace),
 		client.MatchingLabels(map[string]string{apicommon.LabelPodClique: pclqName})))
 	return podList.Items
+}
+
+func getPod(t *testing.T, cl client.Client, name string) *corev1.Pod {
+	t.Helper()
+	pod := &corev1.Pod{}
+	require.NoError(t, cl.Get(context.Background(), client.ObjectKey{Namespace: testNamespace, Name: name}, pod))
+	return pod
+}
+
+// newFakeRegistry returns a scheduler.Registry whose only backend implements
+// PodGangMembershipAnnotator, so migratePodLabelsAndAnnotations resolves it for every Pod regardless of
+// spec.schedulerName.
+func newFakeRegistry() scheduler.Registry {
+	return fakeRegistry{backend: fakeAnnotatingBackend{}}
+}
+
+// fakeRegistry is a scheduler.Registry that always resolves to a single backend.
+type fakeRegistry struct {
+	backend scheduler.Backend
+}
+
+func (f fakeRegistry) Get(_ string) scheduler.Backend { return f.backend }
+
+func (f fakeRegistry) GetDefault() scheduler.Backend { return f.backend }
+
+func (f fakeRegistry) GetOrDefault(_ string) scheduler.Backend { return f.backend }
+
+func (f fakeRegistry) All() map[string]scheduler.Backend {
+	return map[string]scheduler.Backend{f.backend.Name(): f.backend}
+}
+
+func (f fakeRegistry) AllTopologyAware() map[string]scheduler.TopologyAwareBackend {
+	return nil
+}
+
+// fakeBackend is a no-op scheduler.Backend that carries no PodGang membership annotations, standing in
+// for a backend such as the plain kube backend.
+type fakeBackend struct{}
+
+func (fakeBackend) Name() string { return "fake" }
+
+func (fakeBackend) Init(_ client.Client) error { return nil }
+
+func (fakeBackend) SyncPodGang(_ context.Context, _ *groveschedulerv1alpha1.PodGang) error {
+	return nil
+}
+
+func (fakeBackend) PreparePod(_ *corev1.Pod) error { return nil }
+
+func (fakeBackend) ValidatePodCliqueSet(_ context.Context, _ *grovecorev1alpha1.PodCliqueSet) error {
+	return nil
+}
+
+// fakeAnnotatingBackend is a fakeBackend that also reports a scheduler-membership annotation, standing
+// in for a backend such as Volcano or KAI.
+type fakeAnnotatingBackend struct{ fakeBackend }
+
+func (fakeAnnotatingBackend) PodGangMembershipAnnotations(newPodGangName string) map[string]string {
+	return map[string]string{testMembershipAnnotationKey: newPodGangName}
 }

@@ -22,13 +22,13 @@ import (
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
-	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
+	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
+	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	"github.com/go-logr/logr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
 
 // syncSnapshot captures the state required for reconciling PodGangMap resources for a PodCliqueSet.
@@ -38,7 +38,7 @@ type syncSnapshot struct {
 	pcs                              *grovecorev1alpha1.PodCliqueSet
 	existingStandalonePCLQsByReplica map[int][]grovecorev1alpha1.PodClique
 	existingPCSGsByReplica           map[int][]grovecorev1alpha1.PodCliqueScalingGroup
-	existingPGMByReplica             map[int]grovecorev1alpha1.PodGangMap
+	existingPGMByReplica             map[int]*grovecorev1alpha1.PodGangMap
 	existingPodGangsByReplica        map[int][]groveschedulerv1alpha1.PodGang
 }
 
@@ -69,7 +69,7 @@ func (r _resource) takeSnapshot(ctx context.Context, logger logr.Logger, pcs *gr
 
 // getExistingStandalonePCLQsByReplica fetches all standalone PodCliques for the PCS and groups them by PCS replica index.
 func (r _resource) getExistingStandalonePCLQsByReplica(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet) (map[int][]grovecorev1alpha1.PodClique, error) {
-	existingStandalonePCLQs, err := componentutils.GetPodCliquesWithParentPCS(ctx, r.client, client.ObjectKeyFromObject(pcs))
+	existingStandalonePCLQs, err := componentutils.GetPodCliquesWithParentPCS(ctx, r.client, pcs.ObjectMeta)
 	if err != nil {
 		return nil, groveerr.WrapError(err,
 			errCodeListPCLQs,
@@ -90,7 +90,7 @@ func (r _resource) getExistingStandalonePCLQsByReplica(ctx context.Context, pcs 
 
 // getExistingPCSGsByReplica fetches all PodCliqueScalingGroups for the PCS and groups them by PCS replica index.
 func (r _resource) getExistingPCSGsByReplica(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet) (map[int][]grovecorev1alpha1.PodCliqueScalingGroup, error) {
-	existingPCSGs, err := componentutils.GetPCSGsForPCS(ctx, r.client, client.ObjectKeyFromObject(pcs))
+	existingPCSGs, err := componentutils.GetPCSGsForPCS(ctx, r.client, pcs.ObjectMeta)
 	if err != nil {
 		return nil, groveerr.WrapError(err,
 			errCodeListPCSGs,
@@ -110,8 +110,8 @@ func (r _resource) getExistingPCSGsByReplica(ctx context.Context, pcs *grovecore
 }
 
 // getExistingPGMByReplica fetches all PodGangMaps for the PCS and groups them by PCS replica index.
-func (r _resource) getExistingPGMByReplica(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet) (map[int]grovecorev1alpha1.PodGangMap, error) {
-	existingPGMs, err := componentutils.ListPodGangMapsForPCS(ctx, r.client, client.ObjectKeyFromObject(pcs))
+func (r _resource) getExistingPGMByReplica(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet) (map[int]*grovecorev1alpha1.PodGangMap, error) {
+	existingPGMs, err := componentutils.ListPodGangMapsForPCS(ctx, r.client, pcs.ObjectMeta)
 	if err != nil {
 		return nil, groveerr.WrapError(err,
 			errCodeListPodGangMaps,
@@ -170,43 +170,24 @@ func (r _resource) getExistingPodGangsByReplica(ctx context.Context, pcs *grovec
 // PCS replica scale-in. Each replica is in one of three states.
 //  1. No PodGangMap. Its entries are authored from the PCS spec, reusing the epoch its existing
 //     PodGangs carry so a rebuilt PodGangMap does not strand pods.
-//  2. A PodGangMap with no entries. A live PodGangMap always has an anchor entry, so this can only
-//     come from a coding error. The reconcile fails with a hard error.
+//  2. A PodGangMap with no entries. This happens when every entry drained to empty. It is authored
+//     the same way as a missing PodGangMap so the replica recovers instead of staying empty.
 //  3. A PodGangMap with entries. reconcileEntries re-authors them, advancing an under-update replica
 //     to the current generation hash first.
 func (r _resource) runSyncFlow(ctx context.Context, syncSnap *syncSnapshot) error {
 	for pcsReplicaIndex := range int(syncSnap.pcs.Spec.Replicas) {
-		pgm, pgmExists := syncSnap.existingPGMByReplica[pcsReplicaIndex]
+		pgm := syncSnap.existingPGMByReplica[pcsReplicaIndex]
 
-		if pgmExists && len(pgm.Spec.Entries) == 0 {
-			return groveerr.New(
-				errCodePodGangMapNoEntries,
-				component.OperationSync,
-				fmt.Sprintf("PodGangMap %s for replica %d of PodCliqueSet %v has no entries, this is not expected. A live PodGangMap at least has an anchor entry", pgm.Name, pcsReplicaIndex, client.ObjectKeyFromObject(syncSnap.pcs)),
-			)
+		entries, err := reconcileEntries(r.clk,
+			syncSnap.pcs, pcsReplicaIndex,
+			pgm,
+			syncSnap.existingPodGangsByReplica[pcsReplicaIndex],
+			syncSnap.existingStandalonePCLQsByReplica[pcsReplicaIndex],
+			syncSnap.existingPCSGsByReplica[pcsReplicaIndex])
+		if err != nil {
+			return err
 		}
 
-		var (
-			entries []grovecorev1alpha1.PodGangEntry
-			err     error
-		)
-		if !pgmExists {
-			entries = buildBootstrapEntries(syncSnap.pcs, r.clk, syncSnap.existingPodGangsByReplica[pcsReplicaIndex])
-		} else {
-			// Deep-copy the existing entries so mutations here do not alias the snapshot's PodGangMap.
-			entries = clonePodGangEntries(pgm.Spec.Entries)
-			if shouldAdvanceEntriesGenerationHash(syncSnap.pcs, entries) {
-				advanceEntriesGenerationHash(entries, *syncSnap.pcs.Status.CurrentGenerationHash)
-			}
-			scaleOutEpoch := strconv.FormatInt(r.clk.Now().UnixNano(), 10)
-			entries, err = reconcileEntries(syncSnap.pcs, entries,
-				syncSnap.existingStandalonePCLQsByReplica[pcsReplicaIndex],
-				syncSnap.existingPCSGsByReplica[pcsReplicaIndex],
-				pcsReplicaIndex, scaleOutEpoch)
-			if err != nil {
-				return err
-			}
-		}
 		pgmName := apicommon.GeneratePodGangMapName(apicommon.ResourceNameReplica{Name: syncSnap.pcs.Name, Replica: pcsReplicaIndex})
 		if err = r.createOrPatchPodGangMap(ctx, syncSnap.pcs, pgmName, pcsReplicaIndex, entries); err != nil {
 			return err
@@ -222,7 +203,7 @@ func (r _resource) createOrPatchPodGangMap(ctx context.Context,
 	pcsReplicaIndex int,
 	entries []grovecorev1alpha1.PodGangEntry) error {
 	pgm := emptyPodGangMap(client.ObjectKey{Namespace: pcs.Namespace, Name: pgmName})
-	if _, err := controllerutil.CreateOrPatch(ctx, r.client, pgm, func() error {
+	if _, err := k8sutils.CreateOrPatchSpec(ctx, r.client, pgm, func() error {
 		return r.buildResource(pgm, pcs, pcsReplicaIndex, entries)
 	}); err != nil {
 		return groveerr.WrapError(err, errCodeCreateOrPatchPodGangMap, component.OperationSync,
@@ -239,7 +220,7 @@ func (r _resource) deleteOrphanedPodGangMaps(ctx context.Context, syncSnap *sync
 		if pcsReplicaIndex < int(syncSnap.pcs.Spec.Replicas) {
 			continue
 		}
-		if err := r.client.Delete(ctx, &pgm); err != nil {
+		if err := r.client.Delete(ctx, pgm); err != nil {
 			return groveerr.WrapError(err,
 				errCodeDeletePodGangMaps,
 				component.OperationSync,

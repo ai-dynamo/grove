@@ -18,9 +18,13 @@ import (
 	"time"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
+	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
+	"github.com/samber/lo"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/ptr"
 )
 
 // PodGangBuilder is a builder for PodGang objects (scheduler API).
@@ -93,6 +97,37 @@ func (b *PodGangBuilder) WithLabels(labels map[string]string) *PodGangBuilder {
 func (b *PodGangBuilder) WithDeletionTimestamp() *PodGangBuilder {
 	now := metav1.NewTime(time.Now())
 	b.pg.DeletionTimestamp = &now
+	return b
+}
+
+// WithOwnerReference sets a controller owner reference of the given kind, name and uid on the
+// PodGang. It lets a test model a PodGang owned by a specific controller instance, so ownership by
+// UID (not just name) can be exercised.
+func (b *PodGangBuilder) WithOwnerReference(kind, name string, uid types.UID) *PodGangBuilder {
+	b.pg.OwnerReferences = append(b.pg.OwnerReferences, metav1.OwnerReference{
+		APIVersion: grovecorev1alpha1.SchemeGroupVersion.String(),
+		Kind:       kind,
+		Name:       name,
+		UID:        uid,
+		Controller: ptr.To(true),
+	})
+	return b
+}
+
+// WithLastScheduled sets Status.LastScheduled to mark the PodGang as having been scheduled at least once.
+func (b *PodGangBuilder) WithLastScheduled() *PodGangBuilder {
+	now := metav1.Now()
+	b.pg.Status.LastScheduled = &now
+	return b
+}
+
+// WithPodGroupPods adds a PodGroup named name whose PodReferences list the given pods, all in the
+// PodGang's namespace.
+func (b *PodGangBuilder) WithPodGroupPods(name string, podNames ...string) *PodGangBuilder {
+	refs := lo.Map(podNames, func(podName string, _ int) groveschedulerv1alpha1.NamespacedName {
+		return groveschedulerv1alpha1.NamespacedName{Namespace: b.pg.Namespace, Name: podName}
+	})
+	b.pg.Spec.PodGroups = append(b.pg.Spec.PodGroups, groveschedulerv1alpha1.PodGroup{Name: name, PodReferences: refs})
 	return b
 }
 

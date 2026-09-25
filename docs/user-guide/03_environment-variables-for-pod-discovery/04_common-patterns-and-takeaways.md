@@ -79,13 +79,13 @@ nslookup $GROVE_HEADLESS_SERVICE
    Grove injects a consistent set of environment variables into every pod, giving each container precise runtime context about *where it sits* in the PodCliqueSet hierarchy.
 
 2. **Explicit, Predictable Addressing**  
-   Grove does not hide pod topology. Instead, it provides the building blocks (`GROVE_PCS_NAME`, `GROVE_PCLQ_NAME`, `GROVE_PCSG_NAME`, indices, and the headless service domain) so applications can **explicitly construct the addresses they need**, including those of other PodCliques.
+   Grove does not hide pod topology. Instead, it provides the building blocks (`GROVE_PCS_NAME`, `GROVE_PCLQ_NAME`, `GROVE_PCSG_NAME`, `GROVE_PCSG_POD_INDEX`, and the headless service domain) so applications can **explicitly construct the addresses they need**, including those of other PodCliques.
 
 3. **Stable Pod Identity**  
    `GROVE_PCLQ_POD_INDEX` gives each pod a stable, deterministic identity within its PodClique, making it easy to assign ranks, shard work, or implement leader/worker logic.
 
 4. **Scaling-Group Awareness**  
-   For pods in a PodCliqueScalingGroup, Grove exposes additional variables that identify the PCSG replica and its composition. This allows components to understand which *logical unit (super-pod)* they belong to and how many peers are expected.
+   For pods in a PodCliqueScalingGroup, Grove exposes additional variables that identify the PCSG replica, each pod's group-wide index, and the group's composition. This allows components to understand which *logical unit (super-pod)* they belong to and how many peers are expected.
 
 5. **Designed for Distributed Systems**  
    Grove's environment variables are intentionally low-level and composable. They are meant to support a wide range of distributed system patterns—leader election, sharding, rendezvous, collective communication—without imposing a fixed discovery or coordination model.

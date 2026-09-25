@@ -57,7 +57,7 @@ func TestSetInitializedCondition(t *testing.T) {
 // PCS owns the non-grove.io key namespace exclusively (additions and removals on the PCS propagate);
 // grove.io/-prefixed keys are operator-managed and persist independent of PCS state. The operator
 // also stamps a fixed set of managed labels (managed-by, part-of, component, replica-index,
-// scheduler-name, generation-hash) plus any entry-derived extra labels (epoch, role).
+// scheduler-name) plus any entry-derived extra labels (epoch, role, generation-hash).
 func TestBuildResource(t *testing.T) {
 	const (
 		pcsName              = "test-pcs"
@@ -70,12 +70,11 @@ func TestBuildResource(t *testing.T) {
 	// (not derived from buildLabels) so the test independently pins the expected label set.
 	operatorLabels := func(schedulerName string, replicaIndex string) map[string]string {
 		return map[string]string{
-			apicommon.LabelManagedByKey:               apicommon.LabelManagedByValue,
-			apicommon.LabelPartOfKey:                  pcsName,
-			apicommon.LabelComponentKey:               apicommon.LabelComponentNamePodGang,
-			apicommon.LabelPodCliqueSetReplicaIndex:   replicaIndex,
-			apicommon.LabelSchedulerName:              schedulerName,
-			apicommon.LabelPodCliqueSetGenerationHash: generationHash,
+			apicommon.LabelManagedByKey:             apicommon.LabelManagedByValue,
+			apicommon.LabelPartOfKey:                pcsName,
+			apicommon.LabelComponentKey:             apicommon.LabelComponentNamePodGang,
+			apicommon.LabelPodCliqueSetReplicaIndex: replicaIndex,
+			apicommon.LabelSchedulerName:            schedulerName,
 		}
 	}
 	expectedDefaultLabels := operatorLabels(defaultSchedulerName, "0")
@@ -204,14 +203,36 @@ func TestBuildResource(t *testing.T) {
 			name:            "replica index and entry-derived extra labels are stamped",
 			pgiReplicaIndex: 2,
 			pgiExtraLabels: map[string]string{
-				apicommon.LabelEpoch:       "1000",
-				apicommon.LabelPodGangRole: "Anchor",
+				apicommon.LabelEpoch:                      "1000",
+				apicommon.LabelPodGangRole:                "Anchor",
+				apicommon.LabelPodCliqueSetGenerationHash: generationHash,
 			},
 			expectedLabels: lo.Assign(
 				operatorLabels(defaultSchedulerName, "2"),
 				map[string]string{
-					apicommon.LabelEpoch:       "1000",
-					apicommon.LabelPodGangRole: "Anchor",
+					apicommon.LabelEpoch:                      "1000",
+					apicommon.LabelPodGangRole:                "Anchor",
+					apicommon.LabelPodCliqueSetGenerationHash: generationHash,
+				},
+			),
+			expectedAnnotations: map[string]string{},
+		},
+		{
+			// The PCS is at generationHash, but the entry belongs to an earlier generation. The PodGang
+			// must carry the entry's generation hash, not the current PodCliqueSet generation hash.
+			name:            "generation hash comes from the entry, not the current PodCliqueSet",
+			pgiReplicaIndex: 0,
+			pgiExtraLabels: map[string]string{
+				apicommon.LabelEpoch:                      "1000",
+				apicommon.LabelPodGangRole:                "Anchor",
+				apicommon.LabelPodCliqueSetGenerationHash: "earlier-hash",
+			},
+			expectedLabels: lo.Assign(
+				operatorLabels(defaultSchedulerName, "0"),
+				map[string]string{
+					apicommon.LabelEpoch:                      "1000",
+					apicommon.LabelPodGangRole:                "Anchor",
+					apicommon.LabelPodCliqueSetGenerationHash: "earlier-hash",
 				},
 			),
 			expectedAnnotations: map[string]string{},

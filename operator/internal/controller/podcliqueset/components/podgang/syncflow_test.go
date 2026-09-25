@@ -24,9 +24,9 @@ import (
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	groveclientscheme "github.com/ai-dynamo/grove/operator/internal/client"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
-	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
+	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
@@ -52,71 +52,38 @@ var defaultFakeSchedulerRegistry = &testutils.FakeSchedulerRegistry{
 	DefaultBackend: "default-scheduler",
 }
 
-// TestVerifyAllPodsCreated tests verifyAllPodsCreated with minimal sc + podGangInfo (no PCS/prepareSyncFlow).
-// It covers both the PCLQ existence check and getPodsPendingCreationOrAssociation logic (Replicas and podgang label).
+// TestVerifyAllPodsCreated tests verifyAllPodsCreated with a minimal syncState and podGangInfo (no
+// PCS/prepareSyncFlow). It covers the constituent-PodClique existence check and the requeue-versus-
+// success gate for a single PodGang, whose pod accounting is delegated to
+// getPodsPendingCreationOrAssociation. The 1:N split of a PodClique across multiple PodGangs is
+// covered by TestGetPodsPendingCreation.
 func TestVerifyAllPodsCreated(t *testing.T) {
-	makePod := func(name string, podGangLabel string) v1.Pod {
-		pod := v1.Pod{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"}}
-		if podGangLabel != "" {
-			pod.Labels = map[string]string{apicommon.LabelPodGang: podGangLabel}
-		}
-		return pod
-	}
-	makePCLQ := func(name string, replicas, minAvailable int32) grovecorev1alpha1.PodClique {
-		return grovecorev1alpha1.PodClique{
-			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"},
-			Spec:       grovecorev1alpha1.PodCliqueSpec{Replicas: replicas, MinAvailable: ptr.To(minAvailable)},
-		}
+	makePCLQ := func(name string) grovecorev1alpha1.PodClique {
+		return grovecorev1alpha1.PodClique{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"}}
 	}
 
 	tests := []struct {
 		name          string
-		existingPods  map[string][]v1.Pod
 		existingPCLQs []grovecorev1alpha1.PodClique
 		podGang       *podGangInfo
 		wantRequeue   bool
 	}{
 		{
-			name:          "requeue when not all constituent PCLQs exist yet",
-			existingPods:  map[string][]v1.Pod{"pclq-a": {makePod("a1", "pg-1")}},
-			existingPCLQs: []grovecorev1alpha1.PodClique{makePCLQ("pclq-a", 1, 1)},
-			podGang:       &podGangInfo{fqn: "pg-1", pclqs: []pclqInfo{{fqn: "pclq-a", replicas: 1, minAvailable: 1}, {fqn: "pclq-b", replicas: 1, minAvailable: 1}}},
+			name:          "requeue when not all constituent PodCliques exist yet",
+			existingPCLQs: []grovecorev1alpha1.PodClique{makePCLQ("pclq-a")},
+			podGang:       &podGangInfo{fqn: "pg-1", pclqs: []pclqInfo{{fqn: "pclq-a", replicas: 1, minAvailable: 1, associatedPodNames: []string{"a1"}}, {fqn: "pclq-b", replicas: 1, minAvailable: 1}}},
 			wantRequeue:   true,
 		},
 		{
-			name: "requeue when PCLQ has fewer pods than Replicas (even if >= MinAvailable)",
-			existingPods: map[string][]v1.Pod{
-				"pclq-a": {makePod("a1", "pg-1"), makePod("a2", "pg-1")}, // 2 pods, Replicas=5, MinAvailable=2
-			},
-			existingPCLQs: []grovecorev1alpha1.PodClique{makePCLQ("pclq-a", 5, 2)},
-			podGang:       &podGangInfo{fqn: "pg-1", pclqs: []pclqInfo{{fqn: "pclq-a", replicas: 5, minAvailable: 2}}},
-			wantRequeue:   true, // Still pending: 5-2=3 pods to create
+			name:          "requeue when a PodClique has fewer associated pods than its share",
+			existingPCLQs: []grovecorev1alpha1.PodClique{makePCLQ("pclq-a")},
+			podGang:       &podGangInfo{fqn: "pg-1", pclqs: []pclqInfo{{fqn: "pclq-a", replicas: 5, minAvailable: 2, associatedPodNames: []string{"a1", "a2"}}}},
+			wantRequeue:   true, // 5 share - 2 associated = 3 pending
 		},
 		{
-			name: "requeue when Pod missing podgang label",
-			existingPods: map[string][]v1.Pod{
-				"pclq-a": {makePod("a1", ""), makePod("a2", "pg-1")}, // a1 missing label
-			},
-			existingPCLQs: []grovecorev1alpha1.PodClique{makePCLQ("pclq-a", 2, 1)},
-			podGang:       &podGangInfo{fqn: "pg-1", pclqs: []pclqInfo{{fqn: "pclq-a", replicas: 2, minAvailable: 1}}},
-			wantRequeue:   true, // a1 needs association
-		},
-		{
-			name: "requeue when Pod has wrong podgang label",
-			existingPods: map[string][]v1.Pod{
-				"pclq-a": {makePod("a1", "pg-wrong"), makePod("a2", "pg-1")},
-			},
-			existingPCLQs: []grovecorev1alpha1.PodClique{makePCLQ("pclq-a", 2, 1)},
-			podGang:       &podGangInfo{fqn: "pg-1", pclqs: []pclqInfo{{fqn: "pclq-a", replicas: 2, minAvailable: 1}}},
-			wantRequeue:   true, // a1 has wrong label
-		},
-		{
-			name: "success when all Replicas created and all pods have correct podgang label",
-			existingPods: map[string][]v1.Pod{
-				"pclq-a": {makePod("a1", "pg-1"), makePod("a2", "pg-1"), makePod("a3", "pg-1"), makePod("a4", "pg-1"), makePod("a5", "pg-1")},
-			},
-			existingPCLQs: []grovecorev1alpha1.PodClique{makePCLQ("pclq-a", 5, 2)},
-			podGang:       &podGangInfo{fqn: "pg-1", pclqs: []pclqInfo{{fqn: "pclq-a", replicas: 5, minAvailable: 2}}},
+			name:          "success when every PodClique has its full share associated",
+			existingPCLQs: []grovecorev1alpha1.PodClique{makePCLQ("pclq-a")},
+			podGang:       &podGangInfo{fqn: "pg-1", pclqs: []pclqInfo{{fqn: "pclq-a", replicas: 5, minAvailable: 2, associatedPodNames: []string{"a1", "a2", "a3", "a4", "a5"}}}},
 			wantRequeue:   false,
 		},
 	}
@@ -124,7 +91,6 @@ func TestVerifyAllPodsCreated(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			sc := &syncState{
 				logger:             ctrllogger.FromContext(t.Context()).WithName("test"),
-				existingPCLQPods:   tt.existingPods,
 				existingPCLQByName: componentutils.PodCliqueByName(tt.existingPCLQs),
 			}
 			r := &_resource{schedRegistry: defaultFakeSchedulerRegistry}
@@ -138,87 +104,69 @@ func TestVerifyAllPodsCreated(t *testing.T) {
 	}
 }
 
-// TestGetPodsPendingCreation verifies getPodsPendingCreationOrAssociation, which counts how many pods
-// a PodGang still needs before it is ready: pods from PodCliques that do not exist yet (counted at
-// the expected replica count), plus, for existing PodCliques, the shortfall between desired replicas
-// and live pods, plus any live pods that are not yet labeled for this PodGang (missing or mismatched
-// grove.io/podgang label).
+// TestGetPodsPendingCreation verifies getPodsPendingCreationOrAssociation, which counts how many
+// pods a PodGang still needs before it is ready: the pods from PodCliques that do not exist yet
+// (counted at this PodGang's share), plus, for existing PodCliques, the shortfall between this
+// PodGang's share (pclqInfo.replicas) and the pods already associated to this PodGang
+// (pclqInfo.associatedPodNames).
 func TestGetPodsPendingCreation(t *testing.T) {
-	const podGangName = "test-pcs-0-1000"
-
-	makePCLQ := func(name string, replicas int32) grovecorev1alpha1.PodClique {
-		return grovecorev1alpha1.PodClique{
-			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"},
-			Spec:       grovecorev1alpha1.PodCliqueSpec{Replicas: replicas},
-		}
-	}
-	makePod := func(name, podGangLabel string) v1.Pod {
-		pod := v1.Pod{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"}}
-		if podGangLabel != "" {
-			pod.Labels = map[string]string{apicommon.LabelPodGang: podGangLabel}
-		}
-		return pod
+	makePCLQ := func(name string) grovecorev1alpha1.PodClique {
+		return grovecorev1alpha1.PodClique{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"}}
 	}
 
 	tests := []struct {
 		name            string
-		podGang         *podGangInfo
+		podGangs        []*podGangInfo
 		existingPCLQs   []grovecorev1alpha1.PodClique
-		existingPods    map[string][]v1.Pod
-		expectedPending int
+		expectedPending []int // parallel to podGangs
 	}{
 		{
-			name:            "PodClique does not exist yet counts its expected replicas",
-			podGang:         &podGangInfo{fqn: podGangName, pclqs: []pclqInfo{{fqn: "worker", replicas: 3}}},
-			expectedPending: 3,
+			name:            "PodClique does not exist yet counts its share",
+			podGangs:        []*podGangInfo{{fqn: "pg-0", pclqs: []pclqInfo{{fqn: "worker", replicas: 3}}}},
+			expectedPending: []int{3},
 		},
 		{
-			name:            "existing PodClique with fewer pods than replicas counts the shortfall",
-			podGang:         &podGangInfo{fqn: podGangName, pclqs: []pclqInfo{{fqn: "worker", replicas: 3}}},
-			existingPCLQs:   []grovecorev1alpha1.PodClique{makePCLQ("worker", 3)},
-			existingPods:    map[string][]v1.Pod{"worker": {makePod("worker-0", podGangName)}},
-			expectedPending: 2,
+			// 1:1 - the standalone PodClique's pods all belong to a single PodGang. This is the initial
+			// deployment and RollingRecreate/OnDelete shape.
+			name:            "1:1 existing PodClique with its full share associated has no pending pods",
+			podGangs:        []*podGangInfo{{fqn: "pg-0", pclqs: []pclqInfo{{fqn: "worker", replicas: 3, associatedPodNames: []string{"worker-0", "worker-1", "worker-2"}}}}},
+			existingPCLQs:   []grovecorev1alpha1.PodClique{makePCLQ("worker")},
+			expectedPending: []int{0},
 		},
 		{
-			name:            "existing PodClique with all pods created and labeled has no pending pods",
-			podGang:         &podGangInfo{fqn: podGangName, pclqs: []pclqInfo{{fqn: "worker", replicas: 2}}},
-			existingPCLQs:   []grovecorev1alpha1.PodClique{makePCLQ("worker", 2)},
-			existingPods:    map[string][]v1.Pod{"worker": {makePod("worker-0", podGangName), makePod("worker-1", podGangName)}},
-			expectedPending: 0,
+			name:            "1:1 existing PodClique with fewer associated pods than its share counts the shortfall",
+			podGangs:        []*podGangInfo{{fqn: "pg-0", pclqs: []pclqInfo{{fqn: "worker", replicas: 3, associatedPodNames: []string{"worker-0"}}}}},
+			existingPCLQs:   []grovecorev1alpha1.PodClique{makePCLQ("worker")},
+			expectedPending: []int{2},
 		},
 		{
-			name:            "existing PodClique with more pods than replicas clamps the negative shortfall to zero",
-			podGang:         &podGangInfo{fqn: podGangName, pclqs: []pclqInfo{{fqn: "worker", replicas: 1}}},
-			existingPCLQs:   []grovecorev1alpha1.PodClique{makePCLQ("worker", 1)},
-			existingPods:    map[string][]v1.Pod{"worker": {makePod("worker-0", podGangName), makePod("worker-1", podGangName)}},
-			expectedPending: 0,
+			name:            "existing PodClique with more associated pods than its share clamps the negative shortfall to zero",
+			podGangs:        []*podGangInfo{{fqn: "pg-0", pclqs: []pclqInfo{{fqn: "worker", replicas: 1, associatedPodNames: []string{"worker-0", "worker-1"}}}}},
+			existingPCLQs:   []grovecorev1alpha1.PodClique{makePCLQ("worker")},
+			expectedPending: []int{0},
 		},
 		{
-			name:            "existing pods missing the PodGang label count as pending association",
-			podGang:         &podGangInfo{fqn: podGangName, pclqs: []pclqInfo{{fqn: "worker", replicas: 2}}},
-			existingPCLQs:   []grovecorev1alpha1.PodClique{makePCLQ("worker", 2)},
-			existingPods:    map[string][]v1.Pod{"worker": {makePod("worker-0", ""), makePod("worker-1", podGangName)}},
-			expectedPending: 1,
-		},
-		{
-			name:            "existing pods with a mismatched PodGang label count as pending association",
-			podGang:         &podGangInfo{fqn: podGangName, pclqs: []pclqInfo{{fqn: "worker", replicas: 2}}},
-			existingPCLQs:   []grovecorev1alpha1.PodClique{makePCLQ("worker", 2)},
-			existingPods:    map[string][]v1.Pod{"worker": {makePod("worker-0", "some-other-podgang"), makePod("worker-1", podGangName)}},
-			expectedPending: 1,
-		},
-		{
-			name: "multiple PodCliques sum pending-creation and pending-association counts",
-			podGang: &podGangInfo{fqn: podGangName, pclqs: []pclqInfo{
-				{fqn: "missing", replicas: 4},
-				{fqn: "worker", replicas: 3},
-			}},
-			existingPCLQs: []grovecorev1alpha1.PodClique{makePCLQ("worker", 3)},
-			existingPods: map[string][]v1.Pod{
-				"worker": {makePod("worker-0", podGangName), makePod("worker-1", "")},
+			// 1:N - the standalone PodClique "worker" (6 replicas) is split 3+3 across two anchor
+			// PodGangs post coherent update. Each PodGang counts only the pods associated to it, so a
+			// pod belonging to the sibling PodGang is not counted here. pg-0 has 2 of its 3 associated
+			// (1 pending); pg-1 has all 3 associated (0 pending).
+			name: "1:N standalone PodClique split across two PodGangs counts each share independently",
+			podGangs: []*podGangInfo{
+				{fqn: "pg-0", pclqs: []pclqInfo{{fqn: "worker", replicas: 3, associatedPodNames: []string{"worker-0", "worker-1"}}}},
+				{fqn: "pg-1", pclqs: []pclqInfo{{fqn: "worker", replicas: 3, associatedPodNames: []string{"worker-2", "worker-3", "worker-4"}}}},
 			},
-			// missing PodClique -> 4 (expected replicas); worker -> 1 shortfall (3 desired - 2 pods) + 1 unlabeled pod.
-			expectedPending: 6,
+			existingPCLQs:   []grovecorev1alpha1.PodClique{makePCLQ("worker")},
+			expectedPending: []int{1, 0},
+		},
+		{
+			name: "PodGang with a not-yet-created clique and an under-provisioned clique sums both shortfalls",
+			podGangs: []*podGangInfo{{fqn: "pg-0", pclqs: []pclqInfo{
+				{fqn: "missing", replicas: 4},
+				{fqn: "worker", replicas: 3, associatedPodNames: []string{"worker-0", "worker-1"}},
+			}}},
+			existingPCLQs: []grovecorev1alpha1.PodClique{makePCLQ("worker")},
+			// missing clique does not exist yet -> its full share of 4; worker exists -> 3 share - 2 associated = 1.
+			expectedPending: []int{5},
 		},
 	}
 
@@ -227,12 +175,14 @@ func TestGetPodsPendingCreation(t *testing.T) {
 			ss := &syncState{
 				logger:             ctrllogger.FromContext(t.Context()).WithName("test"),
 				existingPCLQByName: componentutils.PodCliqueByName(test.existingPCLQs),
-				existingPCLQPods:   test.existingPods,
 			}
 			r := &_resource{schedRegistry: defaultFakeSchedulerRegistry}
 
-			actual := r.getPodsPendingCreationOrAssociation(ss, test.podGang)
-			assert.Equal(t, test.expectedPending, actual)
+			require.Len(t, test.expectedPending, len(test.podGangs))
+			for i, pgi := range test.podGangs {
+				actual := r.getPodsPendingCreationOrAssociation(ss, pgi)
+				assert.Equal(t, test.expectedPending[i], actual, "PodGang %s", pgi.fqn)
+			}
 		})
 	}
 }
@@ -299,8 +249,11 @@ func TestCreateOrUpdatePodGangs(t *testing.T) {
 		pods := map[string][]v1.Pod{pclqName: {makePod("worker-0", podGangName), makePod("worker-1", podGangName)}}
 		return []grovecorev1alpha1.PodClique{pclq}, pods
 	}
-	anchorPodGangInfo := func() *podGangInfo {
-		return &podGangInfo{fqn: pgName, pcsReplicaIndex: 0, pclqs: []pclqInfo{{fqn: pclqName, replicas: 2, minAvailable: 1}}}
+	// anchorPodGangInfo builds the anchor PodGang's info. associatedPodNames are the pods already
+	// associated to this PodGang, mirroring what initializeAssignedAndUnassignedPodsForPCS populates
+	// in production. A ready PodGang passes its 2 pod names; a not-ready one passes none.
+	anchorPodGangInfo := func(associatedPodNames ...string) *podGangInfo {
+		return &podGangInfo{fqn: pgName, pcsReplicaIndex: 0, pclqs: []pclqInfo{{fqn: pclqName, replicas: 2, minAvailable: 1, associatedPodNames: associatedPodNames}}}
 	}
 
 	newResource := func(cl client.Client) *_resource {
@@ -353,8 +306,8 @@ func TestCreateOrUpdatePodGangs(t *testing.T) {
 		// have regressed so verifyAllPodsCreated fails, but the live Scheduled and Ready conditions must
 		// still be reconciled to False. LastScheduled and LastReady are never cleared.
 		existingPG := makeExistingPodGang(pgName, true)
-		setScheduledCondition(existingPG, true, metav1.Now())
-		setReadyCondition(existingPG, true, metav1.Now())
+		setScheduledCondition(existingPG, &groveschedulerv1alpha1.PodGangStatus{}, true, metav1.Now())
+		setReadyCondition(existingPG, &groveschedulerv1alpha1.PodGangStatus{}, true, metav1.Now())
 
 		pclq := makePCLQ(pclqName, 2)
 		cl := testutils.NewTestClientBuilder().
@@ -400,7 +353,7 @@ func TestCreateOrUpdatePodGangs(t *testing.T) {
 			WithStatusSubresource(&groveschedulerv1alpha1.PodGang{}).
 			Build()
 		r := newResource(cl)
-		pgi := anchorPodGangInfo()
+		pgi := anchorPodGangInfo("worker-0", "worker-1")
 		ss := &syncState{
 			pcs:                   pcs,
 			logger:                ctrllogger.FromContext(ctx),
@@ -426,7 +379,7 @@ func TestCreateOrUpdatePodGangs(t *testing.T) {
 			WithStatusSubresource(&groveschedulerv1alpha1.PodGang{}).
 			Build()
 		r := newResource(cl)
-		pgi := anchorPodGangInfo()
+		pgi := anchorPodGangInfo("worker-0", "worker-1")
 		ss := &syncState{
 			pcs:                   pcs,
 			logger:                ctrllogger.FromContext(ctx),
@@ -452,7 +405,7 @@ func TestCreateOrUpdatePodGangs(t *testing.T) {
 			WithStatusSubresource(&groveschedulerv1alpha1.PodGang{}).
 			Build()
 		r := newResource(cl)
-		pgi := anchorPodGangInfo()
+		pgi := anchorPodGangInfo("worker-0", "worker-1")
 		ss := &syncState{
 			pcs:                   pcs,
 			logger:                ctrllogger.FromContext(ctx),
@@ -486,7 +439,7 @@ func TestCreateOrUpdatePodGangs(t *testing.T) {
 			secondPCLQName: {makePod("worker-1-0", secondPGName), makePod("worker-1-1", secondPGName)},
 		}
 		firstPGI := &podGangInfo{fqn: firstPGName, pcsReplicaIndex: 0, pclqs: []pclqInfo{{fqn: firstPCLQName, replicas: 2, minAvailable: 1}}}
-		secondPGI := &podGangInfo{fqn: secondPGName, pcsReplicaIndex: 1, pclqs: []pclqInfo{{fqn: secondPCLQName, replicas: 2, minAvailable: 1}}}
+		secondPGI := &podGangInfo{fqn: secondPGName, pcsReplicaIndex: 1, pclqs: []pclqInfo{{fqn: secondPCLQName, replicas: 2, minAvailable: 1, associatedPodNames: []string{"worker-1-0", "worker-1-1"}}}}
 
 		cl := testutils.NewTestClientBuilder().
 			WithObjects(pcs).
@@ -1395,6 +1348,73 @@ func TestComputeExpectedPodGangs(t *testing.T) {
 	}
 }
 
+// TestBuildStandalonePCLQInfosForAnchorEntry verifies the anchor entry's standalone PodClique counts
+// become pclqInfos with the fields sourced from the template, that a clique absent from the entry is
+// skipped, and that a clique carrying a zero count (left by a scale-in on an anchor that survives for
+// its other constituents) is skipped so no PodGroup with zero pods but a positive MinReplicas results.
+func TestBuildStandalonePCLQInfosForAnchorEntry(t *testing.T) {
+	const (
+		pcsName   = "test-pcs"
+		namespace = "default"
+	)
+	pcs := &grovecorev1alpha1.PodCliqueSet{
+		ObjectMeta: metav1.ObjectMeta{Name: pcsName, Namespace: namespace},
+		Spec: grovecorev1alpha1.PodCliqueSetSpec{
+			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
+				Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+					{Name: "worker", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 3, MinAvailable: ptr.To(int32(2))}},
+					{Name: "aux", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To(int32(1))}},
+				},
+			},
+		},
+	}
+	pclqName := func(clique string) string {
+		return apicommon.GeneratePodCliqueName(apicommon.ResourceNameReplica{Name: pcsName, Replica: 0}, clique)
+	}
+
+	tests := []struct {
+		name        string
+		podCliques  map[string]int32
+		expectedFQN []string
+	}{
+		{
+			name:        "present cliques become pclqInfos",
+			podCliques:  map[string]int32{"worker": 3, "aux": 1},
+			expectedFQN: []string{pclqName("worker"), pclqName("aux")},
+		},
+		{
+			name:        "a clique absent from the entry is skipped",
+			podCliques:  map[string]int32{"worker": 3},
+			expectedFQN: []string{pclqName("worker")},
+		},
+		{
+			name:        "a zero-count clique is skipped",
+			podCliques:  map[string]int32{"worker": 3, "aux": 0},
+			expectedFQN: []string{pclqName("worker")},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			ss := &syncState{pcs: pcs, logger: ctrllogger.FromContext(t.Context())}
+			entry := testutils.NewPodGangEntryBuilder("hash", "1000").
+				WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).
+				WithPodCliques(test.podCliques).Build()
+
+			actual := buildStandalonePCLQInfosForAnchorEntry(ss, 0, entry)
+
+			actualFQNs := lo.Map(actual, func(pi pclqInfo, _ int) string { return pi.fqn })
+			assert.ElementsMatch(t, test.expectedFQN, actualFQNs)
+			for _, pi := range actual {
+				assert.True(t, pi.isStandalone, "standalone cliques must be marked standalone")
+				if pi.fqn == pclqName("worker") {
+					assert.Equal(t, int32(3), pi.replicas)
+					assert.Equal(t, int32(2), pi.minAvailable)
+				}
+			}
+		})
+	}
+}
+
 // TestGetExistingPCLQsForPCS verifies that getExistingPCLQsForPCS returns exactly the PodCliques
 // selected by the PodCliqueSet managed-resource labels, regardless of whether the PodClique is owned
 // directly by the PCS (standalone) or by a PodCliqueScalingGroup.
@@ -1615,159 +1635,168 @@ func TestArePodGangMinReplicasReady(t *testing.T) {
 	}
 }
 
-// TestSetPodGangCondition verifies setPodGangCondition sets the condition and reports whether the
-// status changed, treating a nil prior condition and any status flip as a transition and an
-// unchanged status as not a transition.
-func TestSetPodGangCondition(t *testing.T) {
-	const condType = groveschedulerv1alpha1.PodGangConditionTypeScheduled
-	tests := []struct {
-		name        string
-		priorStatus *metav1.ConditionStatus
-		newStatus   metav1.ConditionStatus
-		wantChanged bool
-	}{
-		{
-			name:        "no prior condition is a transition",
-			priorStatus: nil,
-			newStatus:   metav1.ConditionTrue,
-			wantChanged: true,
-		},
-		{
-			name:        "status flip False to True is a transition",
-			priorStatus: ptr.To(metav1.ConditionFalse),
-			newStatus:   metav1.ConditionTrue,
-			wantChanged: true,
-		},
-		{
-			name:        "status flip True to False is a transition",
-			priorStatus: ptr.To(metav1.ConditionTrue),
-			newStatus:   metav1.ConditionFalse,
-			wantChanged: true,
-		},
-		{
-			name:        "same status is not a transition",
-			priorStatus: ptr.To(metav1.ConditionTrue),
-			newStatus:   metav1.ConditionTrue,
-			wantChanged: false,
-		},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			pg := &groveschedulerv1alpha1.PodGang{}
-			if tc.priorStatus != nil {
-				setPodGangCondition(pg, condType, *tc.priorStatus, "PriorReason", "prior")
-			}
-			actualChanged := setPodGangCondition(pg, condType, tc.newStatus, "NewReason", "new")
-			assert.Equal(t, tc.wantChanged, actualChanged)
-			assert.True(t, meta.IsStatusConditionPresentAndEqual(pg.Status.Conditions, string(condType), tc.newStatus))
-		})
-	}
-}
-
-// TestSetScheduledCondition verifies setScheduledCondition sets the Scheduled condition and advances
-// LastScheduled on each fresh transition to True, never clearing it on a transition to False and
-// never re-stamping on an idempotent True.
+// TestSetScheduledCondition verifies setScheduledCondition sets the Scheduled condition from the live
+// scheduled count and stamps LastScheduled on a fresh transition to True, leaves it unchanged while the
+// PodGang stays scheduled, advances it when the PodGang is scheduled again after going unscheduled, and
+// backfills it when the condition is already True but LastScheduled was never set.
 func TestSetScheduledCondition(t *testing.T) {
-	earlier := metav1.NewTime(time.Now())
-	later := metav1.NewTime(earlier.Add(time.Minute))
-	type step struct {
-		scheduled bool
-		now       metav1.Time
+	schedCond := func(status metav1.ConditionStatus) []metav1.Condition {
+		return []metav1.Condition{{Type: string(groveschedulerv1alpha1.PodGangConditionTypeScheduled), Status: status}}
 	}
+	earlier := metav1.NewTime(time.Now().Add(-time.Hour))
+	now := metav1.NewTime(time.Now())
+
 	tests := []struct {
-		name              string
-		steps             []step
-		wantConditionTrue bool
-		wantLastScheduled *metav1.Time
+		name                 string
+		originalStatus       groveschedulerv1alpha1.PodGangStatus
+		currentLastScheduled *metav1.Time
+		minReplicasScheduled bool
+		wantConditionTrue    bool
+		wantSet              bool
+		wantAdvanced         bool
 	}{
 		{
-			name:              "transition to True stamps LastScheduled",
-			steps:             []step{{true, earlier}},
-			wantConditionTrue: true,
-			wantLastScheduled: &earlier,
+			name:                 "not scheduled before or now - stays nil",
+			originalStatus:       groveschedulerv1alpha1.PodGangStatus{Conditions: schedCond(metav1.ConditionFalse)},
+			minReplicasScheduled: false,
+			wantConditionTrue:    false,
+			wantSet:              false,
 		},
 		{
-			name:              "idempotent True does not re-stamp LastScheduled",
-			steps:             []step{{true, earlier}, {true, later}},
-			wantConditionTrue: true,
-			wantLastScheduled: &earlier,
+			name:                 "transitions to scheduled this reconcile - sets LastScheduled",
+			originalStatus:       groveschedulerv1alpha1.PodGangStatus{Conditions: schedCond(metav1.ConditionFalse)},
+			minReplicasScheduled: true,
+			wantConditionTrue:    true,
+			wantSet:              true,
+			wantAdvanced:         true,
 		},
 		{
-			name:              "transition to False does not clear LastScheduled",
-			steps:             []step{{true, earlier}, {false, later}},
-			wantConditionTrue: false,
-			wantLastScheduled: &earlier,
+			name:                 "stays scheduled - does not change existing LastScheduled",
+			originalStatus:       groveschedulerv1alpha1.PodGangStatus{Conditions: schedCond(metav1.ConditionTrue)},
+			currentLastScheduled: &earlier,
+			minReplicasScheduled: true,
+			wantConditionTrue:    true,
+			wantSet:              true,
+			wantAdvanced:         false,
 		},
 		{
-			name:              "re-transition to True advances LastScheduled",
-			steps:             []step{{true, earlier}, {false, earlier}, {true, later}},
-			wantConditionTrue: true,
-			wantLastScheduled: &later,
+			name:                 "scheduled again after previously going unscheduled - advances LastScheduled",
+			originalStatus:       groveschedulerv1alpha1.PodGangStatus{Conditions: schedCond(metav1.ConditionFalse)},
+			currentLastScheduled: &earlier,
+			minReplicasScheduled: true,
+			wantConditionTrue:    true,
+			wantSet:              true,
+			wantAdvanced:         true,
+		},
+		{
+			name:                 "already scheduled with no LastScheduled - backfills on upgrade",
+			originalStatus:       groveschedulerv1alpha1.PodGangStatus{Conditions: schedCond(metav1.ConditionTrue)},
+			minReplicasScheduled: true,
+			wantConditionTrue:    true,
+			wantSet:              true,
+			wantAdvanced:         true,
 		},
 	}
+
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			pg := &groveschedulerv1alpha1.PodGang{}
-			for _, s := range tc.steps {
-				setScheduledCondition(pg, s.scheduled, s.now)
+			pg := &groveschedulerv1alpha1.PodGang{Status: groveschedulerv1alpha1.PodGangStatus{LastScheduled: tc.currentLastScheduled}}
+			setScheduledCondition(pg, &tc.originalStatus, tc.minReplicasScheduled, now)
+			assert.Equal(t, tc.wantConditionTrue, meta.IsStatusConditionTrue(pg.Status.Conditions, string(groveschedulerv1alpha1.PodGangConditionTypeScheduled)))
+			actual := pg.Status.LastScheduled
+			if !tc.wantSet {
+				assert.Nil(t, actual)
+				return
 			}
-			actualConditionTrue := meta.IsStatusConditionTrue(pg.Status.Conditions, string(groveschedulerv1alpha1.PodGangConditionTypeScheduled))
-			assert.Equal(t, tc.wantConditionTrue, actualConditionTrue)
-			assert.Equal(t, tc.wantLastScheduled, pg.Status.LastScheduled)
+			require.NotNil(t, actual)
+			if tc.wantAdvanced {
+				assert.Equal(t, now, *actual, "LastScheduled should advance to now")
+			} else {
+				assert.Equal(t, earlier, *actual, "LastScheduled should be unchanged")
+			}
 		})
 	}
 }
 
-// TestSetReadyCondition verifies setReadyCondition sets the Ready condition and advances LastReady
-// on each fresh transition to True, never clearing it on a transition to False and never
-// re-stamping on an idempotent True.
+// TestSetReadyCondition verifies setReadyCondition sets the Ready condition from the live ready count
+// and stamps LastReady on a fresh transition to True, leaves it unchanged while the PodGang stays
+// ready, advances it when the PodGang is ready again after going not-ready, and backfills it when the
+// condition is already True but LastReady was never set.
 func TestSetReadyCondition(t *testing.T) {
-	earlier := metav1.NewTime(time.Now())
-	later := metav1.NewTime(earlier.Add(time.Minute))
-	type step struct {
-		ready bool
-		now   metav1.Time
+	readyCond := func(status metav1.ConditionStatus) []metav1.Condition {
+		return []metav1.Condition{{Type: string(groveschedulerv1alpha1.PodGangConditionTypeReady), Status: status}}
 	}
+	earlier := metav1.NewTime(time.Now().Add(-time.Hour))
+	now := metav1.NewTime(time.Now())
+
 	tests := []struct {
 		name              string
-		steps             []step
+		originalStatus    groveschedulerv1alpha1.PodGangStatus
+		currentLastReady  *metav1.Time
+		minReplicasReady  bool
 		wantConditionTrue bool
-		wantLastReady     *metav1.Time
+		wantSet           bool
+		wantAdvanced      bool
 	}{
 		{
-			name:              "transition to True stamps LastReady",
-			steps:             []step{{true, earlier}},
-			wantConditionTrue: true,
-			wantLastReady:     &earlier,
-		},
-		{
-			name:              "idempotent True does not re-stamp LastReady",
-			steps:             []step{{true, earlier}, {true, later}},
-			wantConditionTrue: true,
-			wantLastReady:     &earlier,
-		},
-		{
-			name:              "transition to False does not clear LastReady",
-			steps:             []step{{true, earlier}, {false, later}},
+			name:              "not ready before or now - stays nil",
+			originalStatus:    groveschedulerv1alpha1.PodGangStatus{Conditions: readyCond(metav1.ConditionFalse)},
+			minReplicasReady:  false,
 			wantConditionTrue: false,
-			wantLastReady:     &earlier,
+			wantSet:           false,
 		},
 		{
-			name:              "re-transition to True advances LastReady",
-			steps:             []step{{true, earlier}, {false, earlier}, {true, later}},
+			name:              "transitions to ready this reconcile - sets LastReady",
+			originalStatus:    groveschedulerv1alpha1.PodGangStatus{Conditions: readyCond(metav1.ConditionFalse)},
+			minReplicasReady:  true,
 			wantConditionTrue: true,
-			wantLastReady:     &later,
+			wantSet:           true,
+			wantAdvanced:      true,
+		},
+		{
+			name:              "stays ready - does not change existing LastReady",
+			originalStatus:    groveschedulerv1alpha1.PodGangStatus{Conditions: readyCond(metav1.ConditionTrue)},
+			currentLastReady:  &earlier,
+			minReplicasReady:  true,
+			wantConditionTrue: true,
+			wantSet:           true,
+			wantAdvanced:      false,
+		},
+		{
+			name:              "ready again after previously going not-ready - advances LastReady",
+			originalStatus:    groveschedulerv1alpha1.PodGangStatus{Conditions: readyCond(metav1.ConditionFalse)},
+			currentLastReady:  &earlier,
+			minReplicasReady:  true,
+			wantConditionTrue: true,
+			wantSet:           true,
+			wantAdvanced:      true,
+		},
+		{
+			name:              "already ready with no LastReady - backfills on upgrade",
+			originalStatus:    groveschedulerv1alpha1.PodGangStatus{Conditions: readyCond(metav1.ConditionTrue)},
+			minReplicasReady:  true,
+			wantConditionTrue: true,
+			wantSet:           true,
+			wantAdvanced:      true,
 		},
 	}
+
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			pg := &groveschedulerv1alpha1.PodGang{}
-			for _, s := range tc.steps {
-				setReadyCondition(pg, s.ready, s.now)
+			pg := &groveschedulerv1alpha1.PodGang{Status: groveschedulerv1alpha1.PodGangStatus{LastReady: tc.currentLastReady}}
+			setReadyCondition(pg, &tc.originalStatus, tc.minReplicasReady, now)
+			assert.Equal(t, tc.wantConditionTrue, meta.IsStatusConditionTrue(pg.Status.Conditions, string(groveschedulerv1alpha1.PodGangConditionTypeReady)))
+			actual := pg.Status.LastReady
+			if !tc.wantSet {
+				assert.Nil(t, actual)
+				return
 			}
-			actualConditionTrue := meta.IsStatusConditionTrue(pg.Status.Conditions, string(groveschedulerv1alpha1.PodGangConditionTypeReady))
-			assert.Equal(t, tc.wantConditionTrue, actualConditionTrue)
-			assert.Equal(t, tc.wantLastReady, pg.Status.LastReady)
+			require.NotNil(t, actual)
+			if tc.wantAdvanced {
+				assert.Equal(t, now, *actual, "LastReady should advance to now")
+			} else {
+				assert.Equal(t, earlier, *actual, "LastReady should be unchanged")
+			}
 		})
 	}
 }
@@ -1845,8 +1874,8 @@ func TestReconcilePodGangStatus(t *testing.T) {
 		seeded := existingPodGang()
 		setPodGangCondition(seeded, groveschedulerv1alpha1.PodGangConditionTypeInitialized, metav1.ConditionTrue,
 			groveschedulerv1alpha1.ConditionReasonPodGangPodsCreated, "PodGang is fully initialized")
-		setScheduledCondition(seeded, true, metav1.Now())
-		setReadyCondition(seeded, true, metav1.Now())
+		setScheduledCondition(seeded, &groveschedulerv1alpha1.PodGangStatus{}, true, metav1.Now())
+		setReadyCondition(seeded, &groveschedulerv1alpha1.PodGangStatus{}, true, metav1.Now())
 
 		cl := testutils.NewTestClientBuilder().
 			WithObjects(pcs, seeded).
@@ -1902,6 +1931,25 @@ func TestReconcilePodGangStatus(t *testing.T) {
 
 		testutils.AssertGroveError(t, &groveerr.GroveError{Code: errCodeUpdatePodGangStatus, Cause: internalErr, Operation: component.OperationSync}, err)
 	})
+}
+
+// TestBuildAdditionalLabelsFromPodGangEntry pins that a PodGang materialized from an entry carries the
+// entry's generation hash, epoch and role.
+func TestBuildAdditionalLabelsFromPodGangEntry(t *testing.T) {
+	entry := grovecorev1alpha1.PodGangEntry{
+		Epoch:                      "1500",
+		Role:                       grovecorev1alpha1.PodGangEntryRoleAnchor,
+		PodCliqueSetGenerationHash: "hash-1",
+	}
+
+	actual := buildAdditionalLabelsFromPodGangEntry(entry)
+
+	expected := map[string]string{
+		apicommon.LabelEpoch:                      "1500",
+		apicommon.LabelPodGangRole:                string(grovecorev1alpha1.PodGangEntryRoleAnchor),
+		apicommon.LabelPodCliqueSetGenerationHash: "hash-1",
+	}
+	assert.Equal(t, expected, actual)
 }
 
 func podNames(pods []v1.Pod) []string {

@@ -16,13 +16,16 @@ package podcliquescalinggroup
 
 import (
 	"context"
+	"maps"
+	"slices"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
-	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
+	pcsgexpectations "github.com/ai-dynamo/grove/operator/internal/controller/podcliquescalinggroup/expectations"
 	ctrlutils "github.com/ai-dynamo/grove/operator/internal/controller/utils"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
+	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 
 	"github.com/samber/lo"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
@@ -30,6 +33,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
+	ctrllogger "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -60,7 +64,11 @@ func (r *Reconciler) RegisterWithManager(mgr manager.Manager) error {
 		).
 		Watches(&grovecorev1alpha1.PodClique{},
 			handler.EnqueueRequestsFromMapFunc(mapPCLQToPCSG()),
-			builder.WithPredicates(podCliquePredicate()),
+			builder.WithPredicates(r.podCliquePredicate()),
+		).
+		Watches(&grovecorev1alpha1.PodGangMap{},
+			handler.EnqueueRequestsFromMapFunc(mapPodGangMapToPCSGs()),
+			builder.WithPredicates(podGangMapPredicate()),
 		).
 		Complete(r)
 }
@@ -175,14 +183,104 @@ func mapPCLQToPCSG() handler.MapFunc {
 }
 
 // podCliquePredicate filters PodClique events to only process those managed by PodCliqueScalingGroup
-func podCliquePredicate() predicate.Predicate {
+func (r *Reconciler) podCliquePredicate() predicate.Predicate {
 	return predicate.Funcs{
 		CreateFunc: func(_ event.CreateEvent) bool { return false },
 		DeleteFunc: func(deleteEvent event.DeleteEvent) bool {
-			return ctrlutils.IsManagedPodClique(deleteEvent.Object, constants.KindPodCliqueScalingGroup)
+			if !ctrlutils.IsManagedPodClique(deleteEvent.Object, constants.KindPodCliqueScalingGroup) {
+				return false
+			}
+			r.observeMemberPodCliqueDeletion(deleteEvent.Object)
+			return true
 		},
 		UpdateFunc: func(updateEvent event.UpdateEvent) bool {
 			return ctrlutils.IsManagedPodClique(updateEvent.ObjectOld, constants.KindPodCliqueScalingGroup)
 		},
+		GenericFunc: func(_ event.TypedGenericEvent[client.Object]) bool { return false },
 	}
+}
+
+// observeMemberPodCliqueDeletion lowers the PodCliqueScalingGroup's delete expectation for a deleted
+// member PodClique so a disrupted replica stops counting as unavailable once its PodCliques are gone.
+func (r *Reconciler) observeMemberPodCliqueDeletion(obj client.Object) {
+	pclq, ok := obj.(*grovecorev1alpha1.PodClique)
+	if !ok {
+		return
+	}
+	if key, ok := pcsgexpectations.PCSGScopedExpectationsStoreKeyForMemberPodClique(pclq); ok {
+		r.expectationStore.ObserveDeletions(ctrllogger.Log.WithName(controllerName), key, pclq.GetUID())
+	}
+}
+
+// mapPodGangMapToPCSGs maps a PodGangMap to reconcile.Request(s) for the PodCliqueScalingGroups whose
+// per-PodGang replica-index distribution it carries. A coherent-update sub-step can move a
+// PodCliqueScalingGroup replica index from one entry to another without changing the total, which
+// changes the PodGang a PodCliqueScalingGroup-owned PodClique must be stamped with. No
+// PodCliqueScalingGroup, PodClique or PodCliqueSet watch observes that move, so the PodGangMap is the
+// only signal. The requests cover every PodCliqueScalingGroup config named across the entries.
+func mapPodGangMapToPCSGs() handler.MapFunc {
+	return func(_ context.Context, obj client.Object) []reconcile.Request {
+		pgm, ok := obj.(*grovecorev1alpha1.PodGangMap)
+		if !ok {
+			return nil
+		}
+		pcsName := componentutils.GetPodCliqueSetName(pgm.ObjectMeta)
+		rnr := apicommon.ResourceNameReplica{Name: pcsName, Replica: int(pgm.Spec.PodCliqueSetReplicaIndex)}
+		pcsgConfigNames := make(map[string]struct{})
+		for _, entry := range pgm.Spec.Entries {
+			for pcsgConfigName := range entry.PCSGReplicaIndices {
+				pcsgConfigNames[pcsgConfigName] = struct{}{}
+			}
+		}
+		requests := make([]reconcile.Request, 0, len(pcsgConfigNames))
+		for pcsgConfigName := range pcsgConfigNames {
+			requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKey{
+				Namespace: pgm.Namespace,
+				Name:      apicommon.GeneratePodCliqueScalingGroupName(rnr, pcsgConfigName),
+			}})
+		}
+		return requests
+	}
+}
+
+// podGangMapPredicate triggers the PodCliqueScalingGroup controller on a PodGangMap create and on an
+// update that changes the per-entry PodCliqueScalingGroup replica-index placement. It does not fire
+// on other spec churn such as standalone PodClique count moves, which this controller does not
+// consume.
+func podGangMapPredicate() predicate.Predicate {
+	return predicate.Funcs{
+		CreateFunc:  func(_ event.CreateEvent) bool { return true },
+		DeleteFunc:  func(_ event.DeleteEvent) bool { return false },
+		GenericFunc: func(_ event.GenericEvent) bool { return false },
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			oldPGM, okOld := e.ObjectOld.(*grovecorev1alpha1.PodGangMap)
+			newPGM, okNew := e.ObjectNew.(*grovecorev1alpha1.PodGangMap)
+			if !okOld || !okNew {
+				return false
+			}
+			return pcsgPlacementChanged(oldPGM, newPGM)
+		},
+	}
+}
+
+// pcsgPlacementChanged reports whether the PodCliqueScalingGroup replica indices differ between the
+// two PodGangMaps. It compares the maps returned by pcsgPlacement. Because those maps key the indices
+// by both the entry epoch and the PodCliqueScalingGroup config name, moving a replica index from one
+// entry to another with the same total still counts as a change.
+func pcsgPlacementChanged(oldPGM, newPGM *grovecorev1alpha1.PodGangMap) bool {
+	return !maps.EqualFunc(pcsgPlacement(oldPGM), pcsgPlacement(newPGM), slices.Equal[[]int32])
+}
+
+// pcsgPlacement returns the replica indices of every PodCliqueScalingGroup config. The key of each
+// index slice is the entry epoch and the config name joined together, so the same config under two
+// different epochs yields two distinct keys. The indices are written in a stable sorted order by the
+// PodGangMap writer, so the slices are compared directly.
+func pcsgPlacement(pgm *grovecorev1alpha1.PodGangMap) map[string][]int32 {
+	placement := make(map[string][]int32)
+	for _, entry := range pgm.Spec.Entries {
+		for pcsgConfigName, indices := range entry.PCSGReplicaIndices {
+			placement[entry.Epoch+"/"+pcsgConfigName] = indices
+		}
+	}
+	return placement
 }

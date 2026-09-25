@@ -15,13 +15,16 @@
 package expect
 
 import (
+	"strings"
 	"sync"
 	"testing"
 
 	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/client-go/tools/cache"
 )
 
 const controlleeKey = "test-ns/test-resource"
@@ -229,6 +232,88 @@ func TestSyncExpectations(t *testing.T) {
 			assert.ElementsMatch(t, tc.deleteExpectationUIDsPostSync, expStore.GetDeleteExpectations(tc.controlleeKey))
 		})
 	}
+}
+
+func TestControlleeExpectationsKey(t *testing.T) {
+	exp := &ControlleeExpectations{key: controlleeKey}
+	assert.Equal(t, controlleeKey, exp.Key())
+}
+
+// TestDeleteExpectationsByIndex verifies that a consumer-registered indexer groups expectations by a
+// value derived from their key, and that DeleteExpectationsByIndex clears only the targeted group.
+func TestDeleteExpectationsByIndex(t *testing.T) {
+	const (
+		indexName = "byOwner"
+		ownerA    = "test-ns/owner-a"
+		ownerB    = "test-ns/owner-b"
+	)
+	// The consumer groups by the key prefix that precedes the last path segment.
+	indexers := cache.Indexers{
+		indexName: func(obj any) ([]string, error) {
+			exp := obj.(*ControlleeExpectations)
+			key := exp.Key()
+			return []string{key[:strings.LastIndex(key, "/")]}, nil
+		},
+	}
+	expStore := NewExpectationsStore()
+	require.NoError(t, expStore.AddIndexers(indexers))
+
+	// Two expectations belong to ownerA and one to ownerB.
+	require.NoError(t, initializeControlleeExpectations(expStore, ownerA+"/scope-0", []types.UID{"1"}, nil))
+	require.NoError(t, initializeControlleeExpectations(expStore, ownerA+"/scope-1", []types.UID{"2"}, nil))
+	require.NoError(t, initializeControlleeExpectations(expStore, ownerB+"/scope-0", []types.UID{"3"}, nil))
+
+	grouped, err := expStore.ByIndex(indexName, ownerA)
+	require.NoError(t, err)
+	assert.Len(t, grouped, 2, "both of ownerA's expectations must be in the group")
+
+	require.NoError(t, expStore.DeleteExpectationsByIndex(logr.Discard(), indexName, ownerA))
+
+	_, existsA0, err := expStore.GetExpectations(ownerA + "/scope-0")
+	require.NoError(t, err)
+	assert.False(t, existsA0, "ownerA's expectations must be deleted")
+	_, existsA1, err := expStore.GetExpectations(ownerA + "/scope-1")
+	require.NoError(t, err)
+	assert.False(t, existsA1, "ownerA's expectations must be deleted")
+	_, existsB0, err := expStore.GetExpectations(ownerB + "/scope-0")
+	require.NoError(t, err)
+	assert.True(t, existsB0, "ownerB's expectations must be untouched")
+}
+
+// TestConcurrentAccessIsRaceFree exercises the store from multiple goroutines so the race detector
+// observes concurrent access to the same expectation set. Writers raise and lower delete expectations
+// (mutating the set under the lock) while readers query it. Run with -race.
+func TestConcurrentAccessIsRaceFree(t *testing.T) {
+	const (
+		key        = "test-ns/test-resource"
+		goroutines = 8
+		iterations = 500
+	)
+	store := NewExpectationsStore()
+	logger := logr.Discard()
+	uids := []types.UID{"a", "b", "c", "d"}
+	require.NoError(t, store.ExpectDeletions(logger, key, uids...))
+
+	var wg sync.WaitGroup
+	// Writers raise and lower delete expectations, mutating the underlying set.
+	for range goroutines {
+		wg.Go(func() {
+			for range iterations {
+				_ = store.ExpectDeletions(logger, key, uids...)
+				store.ObserveDeletions(logger, key, uids...)
+			}
+		})
+	}
+	// Readers query the same expectation set.
+	for range goroutines {
+		wg.Go(func() {
+			for range iterations {
+				_ = store.HasDeleteExpectation(key, "a")
+				_ = store.GetDeleteExpectations(key)
+			}
+		})
+	}
+	wg.Wait()
 }
 
 func initializeControlleeExpectations(expStore *ExpectationsStore, controlleeKey string, uidsToAdd, uidsToDelete []types.UID) error {

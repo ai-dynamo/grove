@@ -25,8 +25,8 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/clustertopology"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
-	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
+	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
@@ -38,9 +38,9 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
 
 // prepareSyncFlow computes the required state for synchronizing PodGang resources.
@@ -209,12 +209,15 @@ func (r _resource) buildPodGangInfosFromEntry(ss *syncState, pcsReplicaIndex int
 	return r.buildNonAnchorPodGangInfos(ss, pcsReplicaIndex, pgEntry)
 }
 
-// buildAdditionalLabelsFromPodGangEntry returns the epoch and role labels stamped on a PodGang
-// materialized from the given entry.
+// buildAdditionalLabelsFromPodGangEntry returns the epoch, role and generation hash labels stamped on a
+// PodGang materialized from the given entry. The generation hash comes from the entry, so a PodGang
+// carries the generation it belongs to. During a coherent update this can differ from the current
+// PodCliqueSet generation hash.
 func buildAdditionalLabelsFromPodGangEntry(pgEntry grovecorev1alpha1.PodGangEntry) map[string]string {
 	return map[string]string{
-		apicommon.LabelEpoch:       pgEntry.Epoch,
-		apicommon.LabelPodGangRole: string(pgEntry.Role),
+		apicommon.LabelEpoch:                      pgEntry.Epoch,
+		apicommon.LabelPodGangRole:                string(pgEntry.Role),
+		apicommon.LabelPodCliqueSetGenerationHash: pgEntry.PodCliqueSetGenerationHash,
 	}
 }
 
@@ -225,7 +228,11 @@ func buildStandalonePCLQInfosForAnchorEntry(ss *syncState, pcsReplicaIndex int, 
 	pclqInfos := make([]pclqInfo, 0, len(ss.pcs.Spec.Template.Cliques))
 	for _, cliqueTemplate := range ss.pcs.Spec.Template.Cliques {
 		desiredPCLQReplicas, ok := pgEntry.PodCliques[cliqueTemplate.Name]
-		if !ok {
+		// A scale-in can leave a zero count on an anchor entry that survives for its other
+		// constituents. Skip it so this PodGang carries no PodGroup with zero pods but a positive
+		// MinReplicas, which would keep the PodGang from ever becoming Scheduled or Ready. This
+		// mirrors the standalone pod distribution, which also skips zero counts.
+		if !ok || desiredPCLQReplicas == 0 {
 			continue
 		}
 		pclqFQN := apicommon.GeneratePodCliqueName(apicommon.ResourceNameReplica{Name: ss.pcs.Name, Replica: pcsReplicaIndex}, cliqueTemplate.Name)
@@ -233,6 +240,7 @@ func buildStandalonePCLQInfosForAnchorEntry(ss *syncState, pcsReplicaIndex int, 
 			fqn:          pclqFQN,
 			replicas:     desiredPCLQReplicas,
 			minAvailable: *cliqueTemplate.Spec.MinAvailable,
+			isStandalone: true,
 		}
 		pi.topologyConstraint = createTopologyPackConstraint(ss, types.NamespacedName{Namespace: ss.pcs.Namespace, Name: pclqFQN}, cliqueTemplate.TopologyConstraint)
 		pclqInfos = append(pclqInfos, pi)
@@ -312,7 +320,14 @@ func buildPCLQInfosAndTopoConstraintsForPCSGReplica(ss *syncState, pcsReplicaInd
 			return nil, nil, fmt.Errorf("PodCliqueScalingGroup %q references a PodClique %q that does not exist in the PodCliqueSet: %v", pcsgFQN, cliqueName, client.ObjectKeyFromObject(ss.pcs))
 		}
 		pclqFQN := apicommon.GeneratePodCliqueName(apicommon.ResourceNameReplica{Name: pcsgFQN, Replica: int(pcsgReplicaIndex)}, cliqueName)
-		pclqs = append(pclqs, buildPodCliqueInfo(ss, pclqTemplateSpec, pclqFQN, true))
+		pi := pclqInfo{
+			fqn:          pclqFQN,
+			replicas:     pclqTemplateSpec.Spec.Replicas,
+			minAvailable: *pclqTemplateSpec.Spec.MinAvailable,
+			isStandalone: false,
+		}
+		pi.topologyConstraint = createTopologyPackConstraint(ss, types.NamespacedName{Namespace: ss.pcs.Namespace, Name: pclqFQN}, pclqTemplateSpec.TopologyConstraint)
+		pclqs = append(pclqs, pi)
 		pclqFQNs = append(pclqFQNs, pclqFQN)
 	}
 	var topoConstraintGroupConfig *groveschedulerv1alpha1.TopologyConstraintGroupConfig
@@ -325,18 +340,6 @@ func buildPCLQInfosAndTopoConstraintsForPCSGReplica(ss *syncState, pcsReplicaInd
 		}
 	}
 	return pclqs, topoConstraintGroupConfig, nil
-}
-
-// buildPodCliqueInfo creates pclqInfo with appropriate replica counts.
-func buildPodCliqueInfo(ss *syncState, pclqTemplateSpec *grovecorev1alpha1.PodCliqueTemplateSpec, pclqFQN string, belongsToPCSG bool) pclqInfo {
-	replicas := determinePodCliqueReplicas(ss, pclqTemplateSpec, pclqFQN, belongsToPCSG)
-	expectedPCLQ := pclqInfo{
-		fqn:          pclqFQN,
-		replicas:     replicas,
-		minAvailable: *pclqTemplateSpec.Spec.MinAvailable,
-	}
-	expectedPCLQ.topologyConstraint = createTopologyPackConstraint(ss, types.NamespacedName{Namespace: ss.pcs.Namespace, Name: pclqFQN}, pclqTemplateSpec.TopologyConstraint)
-	return expectedPCLQ
 }
 
 // createTopologyPackConstraint creates a TopologyPackConstraint based on the sync context and provided parameters for a resource.
@@ -370,23 +373,6 @@ func topologyLevelKeyForPackDomain(ss *syncState, nsName types.NamespacedName, t
 		return nil
 	}
 	return ptr.To(topologyLevel.Key)
-}
-
-// determinePodCliqueReplicas determines replica count considering HPA mutations.
-func determinePodCliqueReplicas(ss *syncState, pclqTemplateSpec *grovecorev1alpha1.PodCliqueTemplateSpec, pclqFQN string, belongsToPCSG bool) int32 {
-	if belongsToPCSG || pclqTemplateSpec.Spec.ScaleConfig == nil {
-		return pclqTemplateSpec.Spec.Replicas
-	}
-	matchingPCLQ, found := ss.existingPCLQByName[pclqFQN]
-	if !found {
-		// PodClique resource not found - might be during initial creation
-		// Fall back to template replicas but log warning for visibility
-		ss.logger.Info("[WARN]: PodClique resource not found, using template replicas",
-			"podCliqueFQN", pclqFQN,
-			"templateReplicas", pclqTemplateSpec.Spec.Replicas)
-		return pclqTemplateSpec.Spec.Replicas
-	}
-	return matchingPCLQ.Spec.Replicas
 }
 
 // getExistingPodsByPCLQForPCS fetches all non-terminating pods grouped by PodClique.
@@ -509,8 +495,8 @@ func (r _resource) reconcilePodGangStatus(ctx context.Context, ss *syncState, pg
 		setPodGangCondition(pg, groveschedulerv1alpha1.PodGangConditionTypeInitialized, metav1.ConditionTrue,
 			groveschedulerv1alpha1.ConditionReasonPodGangPodsCreated, "PodGang is fully initialized")
 	}
-	setScheduledCondition(pg, minReplicasScheduled, now)
-	setReadyCondition(pg, minReplicasReady, now)
+	setScheduledCondition(pg, originalStatus, minReplicasScheduled, now)
+	setReadyCondition(pg, originalStatus, minReplicasReady, now)
 
 	if equality.Semantic.DeepEqual(*originalStatus, pg.Status) {
 		return nil
@@ -566,12 +552,8 @@ func (r _resource) arePodGangMinReplicasReady(ss *syncState, pgi *podGangInfo) b
 	return true
 }
 
-// setPodGangCondition sets the given condition via meta.SetStatusCondition and returns whether the
-// condition's status changed, that is whether this call was a transition rather than an idempotent
-// re-assertion of the same status. A nil prior condition counts as a transition.
-func setPodGangCondition(pg *groveschedulerv1alpha1.PodGang, condType groveschedulerv1alpha1.PodGangConditionType, status metav1.ConditionStatus, reason, message string) bool {
-	prior := meta.FindStatusCondition(pg.Status.Conditions, string(condType))
-	changed := prior == nil || prior.Status != status
+// setPodGangCondition sets the given condition via meta.SetStatusCondition.
+func setPodGangCondition(pg *groveschedulerv1alpha1.PodGang, condType groveschedulerv1alpha1.PodGangConditionType, status metav1.ConditionStatus, reason, message string) {
 	meta.SetStatusCondition(&pg.Status.Conditions, metav1.Condition{
 		Type:               string(condType),
 		Status:             status,
@@ -579,12 +561,14 @@ func setPodGangCondition(pg *groveschedulerv1alpha1.PodGang, condType grovesched
 		Reason:             reason,
 		Message:            message,
 	})
-	return changed
 }
 
 // setScheduledCondition sets the Scheduled condition from the live scheduled count and advances
-// LastScheduled when the condition transitions to True. LastScheduled is never reset once set.
-func setScheduledCondition(pg *groveschedulerv1alpha1.PodGang, minReplicasScheduled bool, now metav1.Time) {
+// LastScheduled to now. LastScheduled advances when the condition transitions to True in this
+// reconcile, and is backfilled when the condition is already True but LastScheduled is unset, which
+// covers a PodGang whose transition to scheduled was not observed. LastScheduled is never reset to nil
+// once set.
+func setScheduledCondition(pg *groveschedulerv1alpha1.PodGang, originalStatus *groveschedulerv1alpha1.PodGangStatus, minReplicasScheduled bool, now metav1.Time) {
 	status := metav1.ConditionFalse
 	reason := groveschedulerv1alpha1.ConditionReasonPodGangNotReady
 	message := "one or more PodGroups have fewer scheduled pods than MinReplicas"
@@ -593,15 +577,21 @@ func setScheduledCondition(pg *groveschedulerv1alpha1.PodGang, minReplicasSchedu
 		reason = groveschedulerv1alpha1.ConditionReasonPodGangScheduled
 		message = "MinReplicas pods of every PodGroup are scheduled"
 	}
-	mutated := setPodGangCondition(pg, groveschedulerv1alpha1.PodGangConditionTypeScheduled, status, reason, message)
-	if mutated && minReplicasScheduled {
+	setPodGangCondition(pg, groveschedulerv1alpha1.PodGangConditionTypeScheduled, status, reason, message)
+
+	scheduledBefore := meta.IsStatusConditionTrue(originalStatus.Conditions, string(groveschedulerv1alpha1.PodGangConditionTypeScheduled))
+	freshlyScheduled := minReplicasScheduled && !scheduledBefore
+	needsBackfill := minReplicasScheduled && pg.Status.LastScheduled == nil
+	if freshlyScheduled || needsBackfill {
 		pg.Status.LastScheduled = &now
 	}
 }
 
-// setReadyCondition sets the Ready condition from the live ready count and advances LastReady when
-// the condition transitions to True. LastReady is never reset once set.
-func setReadyCondition(pg *groveschedulerv1alpha1.PodGang, minReplicasReady bool, now metav1.Time) {
+// setReadyCondition sets the Ready condition from the live ready count and advances LastReady to now.
+// LastReady advances when the condition transitions to True in this reconcile, and is backfilled when
+// the condition is already True but LastReady is unset, which covers a PodGang whose transition to
+// ready was not observed. LastReady is never reset to nil once set.
+func setReadyCondition(pg *groveschedulerv1alpha1.PodGang, originalStatus *groveschedulerv1alpha1.PodGangStatus, minReplicasReady bool, now metav1.Time) {
 	status := metav1.ConditionFalse
 	reason := groveschedulerv1alpha1.ConditionReasonPodGangNotReady
 	message := "one or more PodGroups have fewer ready pods than MinReplicas"
@@ -610,8 +600,12 @@ func setReadyCondition(pg *groveschedulerv1alpha1.PodGang, minReplicasReady bool
 		reason = groveschedulerv1alpha1.ConditionReasonPodGangReady
 		message = "MinReplicas pods of every PodGroup are ready"
 	}
-	mutated := setPodGangCondition(pg, groveschedulerv1alpha1.PodGangConditionTypeReady, status, reason, message)
-	if mutated && minReplicasReady {
+	setPodGangCondition(pg, groveschedulerv1alpha1.PodGangConditionTypeReady, status, reason, message)
+
+	readyBefore := meta.IsStatusConditionTrue(originalStatus.Conditions, string(groveschedulerv1alpha1.PodGangConditionTypeReady))
+	freshlyReady := minReplicasReady && !readyBefore
+	needsBackfill := minReplicasReady && pg.Status.LastReady == nil
+	if freshlyReady || needsBackfill {
 		pg.Status.LastReady = &now
 	}
 }
@@ -672,34 +666,21 @@ func (r _resource) getPodsForPodCliquesPendingCreation(ss *syncState, podGang *p
 	}, 0)
 }
 
-// getPodsPendingCreationOrAssociation counts pods not yet created or labeled for the PodGang.
-func (r _resource) getPodsPendingCreationOrAssociation(ss *syncState, podGang *podGangInfo) int {
+// getPodsPendingCreationOrAssociation counts pods this PodGang still needs before it is ready. For
+// each constituent PodClique it takes this PodGang's share (pclqInfo.replicas) and subtracts the
+// pods already associated to this PodGang (pclqInfo.associatedPodNames). Only associated pods count
+// towards the share, so a pod not yet associated to this PodGang keeps it pending until labeled.
+func (r _resource) getPodsPendingCreationOrAssociation(ss *syncState, pgi *podGangInfo) int {
 	// Find the number of expected pods from PodCliques that are pending creation
-	numPodsPendingPCLQCreate := r.getPodsForPodCliquesPendingCreation(ss, podGang)
+	numPodsPendingPCLQCreate := r.getPodsForPodCliquesPendingCreation(ss, pgi)
 
-	// Find the number of pods pending creation of existing PodCliques
+	// Find the number of pods pending creation or association for existing PodCliques
 	var numPodsPendingCreateOrAssociate int
-	pclqs := ss.getPodCliques(podGang)
-	for _, pclq := range pclqs {
-		existingPCLQPods := ss.existingPCLQPods[pclq.Name]
-		// If there is a difference between the expected replicas and the existing pods, we need to account for that.
-		// If the difference is positive, it means there are pending pods to create.
-		// If the difference is negative, it means there are more existing pods than expected. In this case, we do not need to create any new pods, therefore we can ignore the negative difference.
-		numPodsPendingCreateOrAssociate += max(0, int(pclq.Spec.Replicas)-len(existingPCLQPods))
-
-		// For all existing pods in the PCLQ, check if they have the PodGang label set. If that is not set then add them to numPodsPendingCreateOrAssociate.
-		for _, existingPod := range existingPCLQPods {
-			podGangLabelValue, ok := existingPod.GetLabels()[apicommon.LabelPodGang]
-			if !ok {
-				ss.logger.Info("Pod does not have a PodGang label yet", "podObjectKey", client.ObjectKeyFromObject(&existingPod), "expectedPodGangName", podGang.fqn)
-				numPodsPendingCreateOrAssociate += 1
-				continue
-			}
-			if podGangLabelValue != podGang.fqn {
-				ss.logger.Error(nil, "PodGang label does not match expected PodGang name. This should ideally never happen and indicates a coding error", "podObjectKey", client.ObjectKeyFromObject(&existingPod), "expectedPodGangName", podGang.fqn, "podGangLabelValue", podGangLabelValue)
-				numPodsPendingCreateOrAssociate += 1
-			}
+	for _, pclq := range pgi.pclqs {
+		if _, ok := ss.existingPCLQByName[pclq.fqn]; !ok {
+			continue
 		}
+		numPodsPendingCreateOrAssociate += max(0, int(pclq.replicas)-len(pclq.associatedPodNames))
 	}
 	return numPodsPendingPCLQCreate + numPodsPendingCreateOrAssociate
 }
@@ -712,7 +693,7 @@ func (r _resource) createOrUpdatePodGang(ctx context.Context, ss *syncState, pgI
 	}
 	pg := emptyPodGang(pgObjectKey)
 	ss.logger.Info("CreateOrPatch PodGang", "objectKey", pgObjectKey)
-	_, err := controllerutil.CreateOrPatch(ctx, r.client, pg, func() error {
+	_, err := k8sutils.CreateOrPatchSpec(ctx, r.client, pg, func() error {
 		return r.buildResource(ss.pcs, pgInfo, pg)
 	})
 	if err != nil {
@@ -755,7 +736,7 @@ type syncState struct {
 	existingPCLQPods       map[string][]corev1.Pod
 	existingPCLQByName     map[string]grovecorev1alpha1.PodClique
 	expectedPodGangByName  map[string]*podGangInfo
-	expectedPodGangNameSet componentutils.Set[string]
+	expectedPodGangNameSet sets.Set[string]
 	unassignedPodsByPCLQ   map[string][]corev1.Pod
 	tasEnabled             bool
 	topologyLevels         []grovecorev1alpha1.TopologyLevel
@@ -819,10 +800,12 @@ func podGangInfoByName(podGangs []*podGangInfo) map[string]*podGangInfo {
 
 // podGangInfoNameSet builds a Set of podGangInfo FQNs. Kept local for the same reason as
 // podGangInfoByName.
-func podGangInfoNameSet(podGangs []*podGangInfo) componentutils.Set[string] {
-	return componentutils.NewSetBy(podGangs, func(podGang *podGangInfo) string {
-		return podGang.fqn
-	})
+func podGangInfoNameSet(podGangs []*podGangInfo) sets.Set[string] {
+	names := sets.New[string]()
+	for _, podGang := range podGangs {
+		names.Insert(podGang.fqn)
+	}
+	return names
 }
 
 // syncFlowResult captures the result of a sync flow run.
@@ -893,6 +876,8 @@ type pclqInfo struct {
 	replicas int32
 	// minAvailable is the minimum number of pods that are required for gang scheduling from this PodClique
 	minAvailable int32
+	// isStandalone is true when this PodClique is not a member of a PodCliqueScalingGroup.
+	isStandalone bool
 	// associatedPodNames are Pod names (having this PodClique as an owner) that have already been associated to this PodGang.
 	// This will be updated as and when pods are either deleted or new pods are associated.
 	associatedPodNames []string

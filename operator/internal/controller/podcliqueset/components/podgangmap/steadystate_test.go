@@ -34,6 +34,7 @@ import (
 const (
 	testNamespace = "default"
 	testPCSName   = "pcs"
+	testPCSUID    = "uid"
 	testGenHash   = "hash1"
 	testPCSGName  = "sg"
 )
@@ -66,17 +67,11 @@ func TestBuildBootstrapEntries(t *testing.T) {
 				WithScalingGroupConfig(testPCSGName, []string{"c"}, 2, 2).
 				WithPodCliqueSetGenerationHash(ptr.To(testGenHash)).
 				Build(),
-			expectedRoles: []grovecorev1alpha1.PodGangEntryRole{
-				grovecorev1alpha1.PodGangEntryRoleAnchor,
-				grovecorev1alpha1.PodGangEntryRoleScaleOut,
-			},
+			expectedRoles: []grovecorev1alpha1.PodGangEntryRole{grovecorev1alpha1.PodGangEntryRoleAnchor},
 			assertEntries: func(t *testing.T, entries []grovecorev1alpha1.PodGangEntry) {
 				anchor := testutils.EntryByRole(entries, grovecorev1alpha1.PodGangEntryRoleAnchor)
 				assert.Empty(t, anchor.PodCliques)
 				assert.Equal(t, []int32{0, 1}, anchor.PCSGReplicaIndices[testPCSGName])
-				scaleOut := testutils.EntryByRole(entries, grovecorev1alpha1.PodGangEntryRoleScaleOut)
-				assert.Empty(t, scaleOut.PCSGReplicaIndices[testPCSGName])
-				assert.Equal(t, []string{anchor.Epoch}, scaleOut.DependsOn)
 			},
 		},
 		{
@@ -88,7 +83,6 @@ func TestBuildBootstrapEntries(t *testing.T) {
 			expectedRoles: []grovecorev1alpha1.PodGangEntryRole{
 				grovecorev1alpha1.PodGangEntryRoleAnchor,
 				grovecorev1alpha1.PodGangEntryRoleTail,
-				grovecorev1alpha1.PodGangEntryRoleScaleOut,
 			},
 			assertEntries: func(t *testing.T, entries []grovecorev1alpha1.PodGangEntry) {
 				anchor := testutils.EntryByRole(entries, grovecorev1alpha1.PodGangEntryRoleAnchor)
@@ -109,7 +103,6 @@ func TestBuildBootstrapEntries(t *testing.T) {
 			expectedRoles: []grovecorev1alpha1.PodGangEntryRole{
 				grovecorev1alpha1.PodGangEntryRoleAnchor,
 				grovecorev1alpha1.PodGangEntryRoleTail,
-				grovecorev1alpha1.PodGangEntryRoleScaleOut,
 			},
 			assertEntries: func(t *testing.T, entries []grovecorev1alpha1.PodGangEntry) {
 				anchor := testutils.EntryByRole(entries, grovecorev1alpha1.PodGangEntryRoleAnchor)
@@ -147,7 +140,6 @@ func TestBuildBootstrapEntries(t *testing.T) {
 			expectedRoles: []grovecorev1alpha1.PodGangEntryRole{
 				grovecorev1alpha1.PodGangEntryRoleAnchor,
 				grovecorev1alpha1.PodGangEntryRoleTail,
-				grovecorev1alpha1.PodGangEntryRoleScaleOut,
 			},
 			assertEntries: func(t *testing.T, entries []grovecorev1alpha1.PodGangEntry) {
 				anchor := testutils.EntryByRole(entries, grovecorev1alpha1.PodGangEntryRoleAnchor)
@@ -168,7 +160,6 @@ func TestBuildBootstrapEntries(t *testing.T) {
 			expectedRoles: []grovecorev1alpha1.PodGangEntryRole{
 				grovecorev1alpha1.PodGangEntryRoleAnchor,
 				grovecorev1alpha1.PodGangEntryRoleTail,
-				grovecorev1alpha1.PodGangEntryRoleScaleOut,
 			},
 			assertEntries: func(t *testing.T, entries []grovecorev1alpha1.PodGangEntry) {
 				anchor := testutils.EntryByRole(entries, grovecorev1alpha1.PodGangEntryRoleAnchor)
@@ -191,11 +182,10 @@ func TestBuildBootstrapEntries(t *testing.T) {
 			expectedRoles: []grovecorev1alpha1.PodGangEntryRole{
 				grovecorev1alpha1.PodGangEntryRoleAnchor,
 				grovecorev1alpha1.PodGangEntryRoleTail,
-				grovecorev1alpha1.PodGangEntryRoleScaleOut,
 			},
 			assertEntries: func(t *testing.T, entries []grovecorev1alpha1.PodGangEntry) {
 				// No anchor PodGang to reuse, so all epochs are assigned from the clock and the orphan
-				// tail epoch is ignored. anchor < tail < scaleOut holds.
+				// tail epoch is ignored. anchor < tail holds.
 				anchor := testutils.EntryByRole(entries, grovecorev1alpha1.PodGangEntryRoleAnchor)
 				tail := testutils.EntryByRole(entries, grovecorev1alpha1.PodGangEntryRoleTail)
 				assert.NotEqual(t, "600", tail.Epoch)
@@ -222,7 +212,7 @@ func TestBuildBootstrapEntries(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			clk := clocktesting.NewFakeClock(time.Unix(0, 1000))
-			actual := buildBootstrapEntries(tt.pcs, clk, tt.existingPodGangs)
+			actual, _ := buildBootstrapEntries(clk, tt.pcs, tt.existingPodGangs)
 			assert.Equal(t, tt.expectedRoles, testutils.RolesOf(actual))
 			tt.assertEntries(t, actual)
 		})
@@ -287,8 +277,6 @@ func TestEpochByRoleFromPodGangs(t *testing.T) {
 }
 
 func TestSyncEntries(t *testing.T) {
-	scaleOutEpoch := strconv.FormatInt(time.Unix(0, 5000).UnixNano(), 10)
-
 	tests := []struct {
 		name            string
 		pcs             *grovecorev1alpha1.PodCliqueSet
@@ -385,9 +373,127 @@ func TestSyncEntries(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			actual, err := reconcileEntries(tt.pcs, tt.existingEntries, tt.standalonePCLQs, tt.pcsgs, 0, scaleOutEpoch)
+			clk := clocktesting.NewFakeClock(time.Unix(0, 5000))
+			pgm := &grovecorev1alpha1.PodGangMap{Spec: grovecorev1alpha1.PodGangMapSpec{Entries: tt.existingEntries}}
+			actual, err := reconcileEntries(clk, tt.pcs, 0, pgm, nil, tt.standalonePCLQs, tt.pcsgs)
 			require.NoError(t, err)
 			tt.assertResult(t, actual)
+		})
+	}
+}
+
+// TestReconcileStandaloneCliqueCountAcrossAnchors verifies a standalone clique's counts are driven
+// toward the desired total by adding to the highest-AnchorIndex anchor on scale-out and draining the
+// highest-AnchorIndex anchor first on scale-in, spilling to the next-highest as each empties. It does
+// not floor at MinAvailable, so a scale-in can drain every anchor to zero.
+func TestReconcileStandaloneCliqueCountAcrossAnchors(t *testing.T) {
+	const clique = "clq-a"
+	// anchorsHighestFirst builds anchor entries ordered by descending AnchorIndex, as
+	// currentGenerationAnchorsByIndexDesc returns them. The i-th count is anchor index len-1-i.
+	anchorsHighestFirst := func(countsByIndex ...int32) []*grovecorev1alpha1.PodGangEntry {
+		anchors := make([]*grovecorev1alpha1.PodGangEntry, 0, len(countsByIndex))
+		for i := len(countsByIndex) - 1; i >= 0; i-- {
+			entry := testutils.NewPodGangEntryBuilder(testGenHash, strconv.Itoa(100+i)).
+				WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).
+				WithAnchorIndex(int32(i)).
+				WithPodCliques(map[string]int32{clique: countsByIndex[i]}).
+				Build()
+			anchors = append(anchors, &entry)
+		}
+		return anchors
+	}
+
+	tests := []struct {
+		name         string
+		counts       []int32 // per anchor index (0..n)
+		desiredTotal int32
+		expected     []int32 // per anchor index (0..n)
+	}{
+		{"single anchor is set to the desired total", []int32{3}, 5, []int32{5}},
+		{"no change when the desired total already matches", []int32{3, 3, 3}, 9, []int32{3, 3, 3}},
+		{"scale-out adds to the highest anchor", []int32{3, 3, 3}, 11, []int32{3, 3, 5}},
+		{"scale-in drains the highest anchor first", []int32{3, 3, 3}, 7, []int32{3, 3, 1}},
+		{"scale-in spills from the highest anchor to the next-highest", []int32{3, 3, 3}, 4, []int32{3, 1, 0}},
+		{"scale-in to zero drains every anchor", []int32{3, 3, 3}, 0, []int32{0, 0, 0}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			anchors := anchorsHighestFirst(tc.counts...)
+
+			reconcileStandaloneCliqueCountAcrossAnchors(anchors, clique, tc.desiredTotal)
+
+			actual := make([]int32, len(tc.expected))
+			for _, anchor := range anchors {
+				actual[*anchor.AnchorIndex] = anchor.PodCliques[clique]
+			}
+			assert.Equal(t, tc.expected, actual)
+		})
+	}
+}
+
+// TestRemoveEmptyEntries verifies removeEmptyEntries keeps a current-generation empty ScaleOut entry
+// only while a current-generation anchor survives, drops the ScaleOut once its anchor drains to empty
+// and is removed, and never keeps an empty ScaleOut of an older generation.
+func TestRemoveEmptyEntries(t *testing.T) {
+	olderGenerationScaleOut := testutils.NewPodGangEntryBuilder("hash0", "099").
+		WithRole(grovecorev1alpha1.PodGangEntryRoleScaleOut).
+		WithDependsOn("098").
+		Build()
+	tests := []struct {
+		name      string
+		entries   []grovecorev1alpha1.PodGangEntry
+		wantRoles []grovecorev1alpha1.PodGangEntryRole
+	}{
+		{
+			name: "non-empty anchor keeps the empty current-generation ScaleOut",
+			entries: []grovecorev1alpha1.PodGangEntry{
+				anchorEntry(nil, map[string][]int32{testPCSGName: {0, 1}}),
+				scaleOutEntry(nil),
+			},
+			wantRoles: []grovecorev1alpha1.PodGangEntryRole{
+				grovecorev1alpha1.PodGangEntryRoleAnchor,
+				grovecorev1alpha1.PodGangEntryRoleScaleOut,
+			},
+		},
+		{
+			name: "empty anchor is removed and its empty ScaleOut is removed with it",
+			entries: []grovecorev1alpha1.PodGangEntry{
+				anchorEntry(nil, map[string][]int32{testPCSGName: {}}),
+				scaleOutEntry(nil),
+			},
+			wantRoles: []grovecorev1alpha1.PodGangEntryRole{},
+		},
+		{
+			name: "empty tail is removed while a non-empty anchor and its ScaleOut remain",
+			entries: []grovecorev1alpha1.PodGangEntry{
+				anchorEntry(nil, map[string][]int32{testPCSGName: {0, 1}}),
+				tailEntry(map[string][]int32{testPCSGName: {}}),
+				scaleOutEntry(nil),
+			},
+			wantRoles: []grovecorev1alpha1.PodGangEntryRole{
+				grovecorev1alpha1.PodGangEntryRoleAnchor,
+				grovecorev1alpha1.PodGangEntryRoleScaleOut,
+			},
+		},
+		{
+			name: "empty ScaleOut of an older generation is removed even when a current anchor survives",
+			entries: []grovecorev1alpha1.PodGangEntry{
+				anchorEntry(nil, map[string][]int32{testPCSGName: {0, 1}}),
+				olderGenerationScaleOut,
+			},
+			wantRoles: []grovecorev1alpha1.PodGangEntryRole{
+				grovecorev1alpha1.PodGangEntryRoleAnchor,
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			retained := removeEmptyEntries(tc.entries, testGenHash)
+			actualRoles := make([]grovecorev1alpha1.PodGangEntryRole, 0, len(retained))
+			for _, entry := range retained {
+				actualRoles = append(actualRoles, entry.Role)
+			}
+			assert.Equal(t, tc.wantRoles, actualRoles)
 		})
 	}
 }

@@ -24,12 +24,12 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/constants"
 	ctrlcommon "github.com/ai-dynamo/grove/operator/internal/controller/common"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
-	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	pclqcomponent "github.com/ai-dynamo/grove/operator/internal/controller/podclique/components"
 	ctrlutils "github.com/ai-dynamo/grove/operator/internal/controller/utils"
 	"github.com/ai-dynamo/grove/operator/internal/expect"
 	"github.com/ai-dynamo/grove/operator/internal/podgangmigrator"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
+	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -49,17 +49,21 @@ type Reconciler struct {
 }
 
 // NewReconciler creates a new instance of the PodClique Reconciler.
-func NewReconciler(mgr ctrl.Manager, controllerCfg configv1alpha1.PodCliqueControllerConfiguration, schedRegistry scheduler.Registry) *Reconciler {
+func NewReconciler(mgr ctrl.Manager, controllerCfg configv1alpha1.PodCliqueControllerConfiguration, schedRegistry scheduler.Registry) (*Reconciler, error) {
 	eventRecorder := mgr.GetEventRecorderFor(controllerName)
 	expectationsStore := expect.NewExpectationsStore()
+	operatorRegistry, err := pclqcomponent.CreateOperatorRegistry(mgr, eventRecorder, expectationsStore, schedRegistry)
+	if err != nil {
+		return nil, err
+	}
 	return &Reconciler{
 		config:                  controllerCfg,
 		client:                  mgr.GetClient(),
 		eventRecorder:           eventRecorder,
 		reconcileStatusRecorder: ctrlcommon.NewReconcileErrorRecorder(mgr.GetClient()),
 		expectationsStore:       expectationsStore,
-		operatorRegistry:        pclqcomponent.CreateOperatorRegistry(mgr, eventRecorder, expectationsStore, schedRegistry),
-	}
+		operatorRegistry:        operatorRegistry,
+	}, nil
 }
 
 // Reconcile reconciles the `PodClique` resource.

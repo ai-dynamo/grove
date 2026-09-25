@@ -1,0 +1,37 @@
+# Workload for the upgrade migration test. It has a single PodCliqueScalingGroup and no standalone
+# PodClique, so scaling the group below MinAvailable drains the anchor entry to empty. It uses the
+# default scheduler and a pullable image, since the upgrade test cluster runs without Kai.
+---
+apiVersion: grove.io/v1alpha1
+kind: PodCliqueSet
+metadata:
+  name: upgrade-pcsg-only
+spec:
+  replicas: 1
+  template:
+    podCliqueScalingGroups:
+      - name: worker
+        replicas: 1
+        minAvailable: 1
+        cliqueNames:
+          - worker-ldr
+          - worker-wkr
+    cliques:
+      - name: worker-ldr
+        spec:
+          roleName: worker-ldr
+          replicas: 1
+          minAvailable: 1
+          podSpec:
+            containers:
+              - name: worker-ldr
+                image: registry.k8s.io/pause:3.10
+      - name: worker-wkr
+        spec:
+          roleName: worker-wkr
+          replicas: 1
+          minAvailable: 1
+          podSpec:
+            containers:
+              - name: worker-wkr
+                image: registry.k8s.io/pause:3.10

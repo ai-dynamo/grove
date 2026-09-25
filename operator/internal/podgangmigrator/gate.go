@@ -21,7 +21,7 @@ import (
 
 	apiconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
-	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
+	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
 	"github.com/go-logr/logr"
@@ -71,7 +71,7 @@ func SetMigrationGateForLegacyPodCliqueSets(ctx context.Context, cl client.Clien
 			logger.V(4).Info("PodGang migration gate already set on PodCliqueSet", "podCliqueSet", client.ObjectKeyFromObject(pcs))
 			continue
 		}
-		pgms, err := componentutils.ListPodGangMapsForPCS(ctx, cl, client.ObjectKeyFromObject(pcs))
+		pgms, err := componentutils.ListPodGangMapsForPCS(ctx, cl, pcs.ObjectMeta)
 		if err != nil {
 			return fmt.Errorf("failed to list PodGangMaps for PodCliqueSet %v: %w", client.ObjectKeyFromObject(pcs), err)
 		}

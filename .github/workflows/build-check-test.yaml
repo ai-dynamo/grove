@@ -57,7 +57,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v4
         with:
-          go-version: "1.26.3"
+          go-version: "1.26.8"
           cache: true
           cache-dependency-path: |
             operator/go.sum
@@ -75,7 +75,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v4
         with:
-          go-version: "1.26.3"
+          go-version: "1.26.8"
           cache: true
           cache-dependency-path: operator/go.sum
       - name: build-operator
@@ -89,7 +89,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v4
         with:
-          go-version: "1.26.3"
+          go-version: "1.26.8"
           cache: true
           cache-dependency-path: operator/go.sum
       - name: check
@@ -137,7 +137,10 @@ jobs:
             test_pattern: "^Test_CRD_Installer"
           - test_name: resource_sharing
             test_pattern: "^Test_RS"
-          - test_name: upgrade_from_latest_release
+          - test_name: podgangmap_reconstruct
+            test_pattern: "^Test_PGMR"
+          - test_name: version_upgrade
+            test_pattern: "^Test_VUPG"
             make_target: "run-upgrade-e2e"
     name: E2E - ${{ matrix.test_name }}
     steps:
@@ -160,7 +163,7 @@ jobs:
 
       - name: Run e2e tests - ${{ matrix.test_name }}
         env:
-          GITHUB_TOKEN: ${{ matrix.test_name == 'upgrade_from_latest_release' && secrets.GITHUB_TOKEN || '' }}
+          GITHUB_TOKEN: ${{ matrix.test_name == 'version_upgrade' && secrets.GITHUB_TOKEN || '' }}
         run: |
           make ${{ matrix.make_target || 'run-e2e-full' }} TEST_PATTERN='${{ matrix.test_pattern }}' E2E_CREATE_FLAGS='--dind-memory-mode'
         working-directory: operator
@@ -207,7 +210,8 @@ jobs:
           - test_name: auto_mnnvl
           - test_name: crd_installer
           - test_name: resource_sharing
-          - test_name: upgrade_from_latest_release
+          - test_name: podgangmap_reconstruct
+          - test_name: version_upgrade
     name: E2E - ${{ matrix.test_name }}
     steps:
       - name: Skip E2E (no relevant changes)

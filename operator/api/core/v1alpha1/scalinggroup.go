@@ -30,6 +30,7 @@ import metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 // +kubebuilder:printcolumn:name="PCLQs-Updated",type=integer,JSONPath=`.status.updateProgress.updatedPodCliquesCount`
 // +kubebuilder:printcolumn:name="PCLQs-Total",type=integer,JSONPath=`.status.updateProgress.totalPodCliquesCount`
 // +kubebuilder:printcolumn:name="MinBreached",type=string,JSONPath=`.status.conditions[?(@.type=="MinAvailableBreached")].status`,priority=1
+// +kubebuilder:printcolumn:name="Update",type=string,JSONPath=`.status.conditions[?(@.type=="UpdateInProgress")].reason`,priority=1
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
 // PodCliqueScalingGroup is the schema to define scaling groups that is used to scale a group of PodClique's.
@@ -114,11 +115,15 @@ type PodCliqueScalingGroupUpdateProgress struct {
 	// UpdateStartedAt is the time at which the update started.
 	UpdateStartedAt metav1.Time `json:"updateStartedAt"`
 	// UpdateEndedAt is the time at which Grove does not have any work pending to manifest the update according to the
-	// configured update strategy. For auto update strategies where Grove handles the orchestration, while the update is
+	// configured update strategy. For rolling update strategies where Grove handles the orchestration, while the update is
 	// still in progress it will be nil, and will be set once the update finishes where all PodCliques are replaced by
 	// Grove with the latest specification. For the OnDelete strategy, it is set to the same time as UpdateStartedAt, which
 	// implies that there is no work pending on Grove.
 	UpdateEndedAt *metav1.Time `json:"updateEndedAt,omitempty"`
+	// LastProgressedAt is the time at which the rolling update last made progress, meaning the number of
+	// updated replicas increased. The ProgressDeadline is measured from it, and it is nil while no update is in
+	// progress.
+	LastProgressedAt *metav1.Time `json:"lastProgressedAt,omitempty"`
 	// PodCliqueSetGenerationHash is the generation hash corresponding to the latest PodCliqueSet spec that this
 	// PodCliqueScalingGroup should converge to. PodCliqueScalingGroupStatus.CurrentPodCliqueSetGenerationHash is set to
 	// this hash once UpdateEndedAt is set, which marks the end of the update.
@@ -133,22 +138,6 @@ type PodCliqueScalingGroupUpdateProgress struct {
 	// +optional
 	// +kubebuilder:default=0
 	TotalPodCliquesCount int32 `json:"totalPodCliquesCount,omitempty"`
-	// ReadyReplicaIndicesSelectedToUpdate provides the update progress of ready replicas of PodCliqueScalingGroup that
-	// have been selected for update. PodCliqueScalingGroup replicas that are either pending or unhealthy will be force
-	// updated and the update will not wait for these replicas to become ready. For all ready replicas, one replica is
-	// chosen at a time to update, once it is updated and becomes ready, the next ready replica is chosen for update.
-	// This field is only set for auto update strategies where Grove orchestrates Pod deletions.
-	// For OnDelete strategy this field is not set, because Pod replacement is initiated by user-driven Pod deletions.
-	ReadyReplicaIndicesSelectedToUpdate *PodCliqueScalingGroupReplicaUpdateProgress `json:"readyReplicaIndicesSelectedToUpdate,omitempty"`
-}
-
-// PodCliqueScalingGroupReplicaUpdateProgress provides details about the update progress of ready replicas of
-// PodCliqueScalingGroup that have been selected for update in a rolling recreate. It is not set in an OnDelete update.
-type PodCliqueScalingGroupReplicaUpdateProgress struct {
-	// Current is the index of the PodCliqueScalingGroup replica that is currently being updated.
-	Current int32 `json:"current"`
-	// Completed is the list of indices of PodCliqueScalingGroup replicas that have been updated to the latest PodCliqueSet spec.
-	Completed []int32 `json:"completed,omitempty"`
 }
 
 // SetLastErrors sets the last errors observed by the controller when reconciling the PodCliqueScalingGroup.

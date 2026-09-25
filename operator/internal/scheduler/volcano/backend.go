@@ -22,8 +22,10 @@ import (
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
+	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
+	"github.com/samber/lo"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -95,7 +97,7 @@ func (b *schedulerBackend) SyncPodGang(ctx context.Context, podGang *groveschedu
 		},
 	}
 
-	_, err := controllerutil.CreateOrPatch(ctx, b.client, podGroup, func() error {
+	_, err := k8sutils.CreateOrPatchSpec(ctx, b.client, podGroup, func() error {
 		if podGroup.Labels == nil {
 			podGroup.Labels = map[string]string{}
 		}
@@ -135,12 +137,17 @@ func (b *schedulerBackend) PreparePod(pod *corev1.Pod) error {
 	if podGangName == "" {
 		return fmt.Errorf("volcano scheduler requires pod label %q", apicommon.LabelPodGang)
 	}
-	if pod.Annotations == nil {
-		pod.Annotations = map[string]string{}
-	}
-	pod.Annotations[volcanov1beta1.VolcanoGroupNameAnnotationKey] = podGangName
-	pod.Annotations[volcanov1beta1.KubeGroupNameAnnotationKey] = podGangName
+	pod.Annotations = lo.Assign(pod.Annotations, b.PodGangMembershipAnnotations(podGangName))
 	return nil
+}
+
+// PodGangMembershipAnnotations returns the Volcano PodGroup membership annotations that Volcano reads
+// to determine gang membership.
+func (b *schedulerBackend) PodGangMembershipAnnotations(newPodGangName string) map[string]string {
+	return map[string]string{
+		volcanov1beta1.VolcanoGroupNameAnnotationKey: newPodGangName,
+		volcanov1beta1.KubeGroupNameAnnotationKey:    newPodGangName,
+	}
 }
 
 func (b *schedulerBackend) ValidatePodCliqueSet(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet) error {

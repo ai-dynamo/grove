@@ -45,7 +45,6 @@ const (
 	errCodeGroupPCSGsByReplica     grovecorev1alpha1.ErrorCode = "ERR_GROUP_PCSGS_BY_REPLICA"
 	errCodeListPodGangs            grovecorev1alpha1.ErrorCode = "ERR_LIST_PODGANGS"
 	errCodeGroupPodGangsByReplica  grovecorev1alpha1.ErrorCode = "ERR_GROUP_PODGANGS_BY_REPLICA"
-	errCodePodGangMapNoEntries     grovecorev1alpha1.ErrorCode = "ERR_PODGANGMAP_NO_ENTRIES"
 )
 
 type _resource struct {
@@ -65,10 +64,9 @@ func New(cl client.Client, scheme *runtime.Scheme, clk clock.Clock) component.Op
 
 // GetExistingResourceNames returns the names of existing PodGangMap resources owned by the PodCliqueSet.
 func (r _resource) GetExistingResourceNames(ctx context.Context, _ logr.Logger, pcsObjMeta metav1.ObjectMeta) ([]string, error) {
-	objMetaList := &metav1.PartialObjectMetadataList{}
-	objMetaList.SetGroupVersionKind(grovecorev1alpha1.SchemeGroupVersion.WithKind("PodGangMap"))
+	podGangMapList := &grovecorev1alpha1.PodGangMapList{}
 	if err := r.client.List(ctx,
-		objMetaList,
+		podGangMapList,
 		client.InNamespace(pcsObjMeta.Namespace),
 		client.MatchingLabels(getSelectorLabels(pcsObjMeta.Name)),
 	); err != nil {
@@ -78,7 +76,7 @@ func (r _resource) GetExistingResourceNames(ctx context.Context, _ logr.Logger, 
 			fmt.Sprintf("Error listing PodGangMap for PodCliqueSet: %v", k8sutils.GetObjectKeyFromObjectMeta(pcsObjMeta)),
 		)
 	}
-	return k8sutils.FilterMapOwnedResourceNames(pcsObjMeta, objMetaList.Items), nil
+	return k8sutils.FilterMapOwnedResourceNames(pcsObjMeta, podGangMapList.Items), nil
 }
 
 // Sync reconciles the PodGangMap for every PCS replica. It takes a snapshot once, authors the

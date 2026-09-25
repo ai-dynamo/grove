@@ -1,0 +1,46 @@
+# Minimal corrective-update regression: one unavailable PCSG replica consumes maxUnavailable=1.
+# The test removes only the impossible selector from the PCS template; the old pod stays Pending.
+apiVersion: grove.io/v1alpha1
+kind: PodCliqueSet
+metadata:
+  name: workload-unavailable-pcsg
+spec:
+  replicas: 1
+  updateStrategy:
+    type: RollingRecreate
+  template:
+    terminationDelay: 1h
+    podCliqueScalingGroups:
+      - name: sg-x
+        replicas: 1
+        minAvailable: 1
+        cliqueNames:
+          - worker
+        rollingUpdate:
+          maxUnavailable: 1
+    cliques:
+      - name: worker
+        labels:
+          kai.scheduler/queue: test
+        spec:
+          roleName: worker
+          replicas: 1
+          minAvailable: 1
+          podSpec:
+            schedulerName: kai-scheduler
+            terminationGracePeriodSeconds: 0
+            nodeSelector:
+              node_role.e2e.grove.nvidia.com: agent
+              e2e.grove.io/unschedulable: "true"
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: worker
+                image: registry:5001/busybox:latest
+                command: ["sleep", "infinity"]
+                resources:
+                  requests:
+                    memory: 80Mi

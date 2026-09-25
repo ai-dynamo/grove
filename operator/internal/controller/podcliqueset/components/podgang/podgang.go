@@ -26,9 +26,9 @@ import (
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
-	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
+	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
@@ -76,10 +76,9 @@ func New(client client.Client, scheme *runtime.Scheme, eventRecorder record.Even
 // GetExistingResourceNames returns the names of existing PodGang resources for the PodCliqueSet.
 func (r _resource) GetExistingResourceNames(ctx context.Context, logger logr.Logger, pcsObjMeta metav1.ObjectMeta) ([]string, error) {
 	logger.Info("Looking for existing PodGang resources created per replica of PodCliqueSet")
-	objMetaList := &metav1.PartialObjectMetadataList{}
-	objMetaList.SetGroupVersionKind(groveschedulerv1alpha1.SchemeGroupVersion.WithKind("PodGang"))
+	podGangList := &groveschedulerv1alpha1.PodGangList{}
 	if err := r.client.List(ctx,
-		objMetaList,
+		podGangList,
 		client.InNamespace(pcsObjMeta.Namespace),
 		client.MatchingLabels(componentutils.GetPodGangSelectorLabels(pcsObjMeta)),
 	); err != nil {
@@ -89,7 +88,7 @@ func (r _resource) GetExistingResourceNames(ctx context.Context, logger logr.Log
 			fmt.Sprintf("Error listing PodGang for PodCliqueSet: %v", k8sutils.GetObjectKeyFromObjectMeta(pcsObjMeta)),
 		)
 	}
-	return k8sutils.FilterMapOwnedResourceNames(pcsObjMeta, objMetaList.Items), nil
+	return k8sutils.FilterMapOwnedResourceNames(pcsObjMeta, podGangList.Items), nil
 }
 
 // Sync creates, updates, or deletes PodGang resources to match the desired state.
@@ -205,10 +204,9 @@ func emptyPodGang(objKey client.ObjectKey) *groveschedulerv1alpha1.PodGang {
 
 func (r _resource) buildLabels(pcs *grovecorev1alpha1.PodCliqueSet, pgi *podGangInfo, schedulerName string) map[string]string {
 	pgLabels := map[string]string{
-		apicommon.LabelComponentKey:               apicommon.LabelComponentNamePodGang,
-		apicommon.LabelPodCliqueSetReplicaIndex:   strconv.Itoa(pgi.pcsReplicaIndex),
-		apicommon.LabelSchedulerName:              schedulerName,
-		apicommon.LabelPodCliqueSetGenerationHash: *pcs.Status.CurrentGenerationHash,
+		apicommon.LabelComponentKey:             apicommon.LabelComponentNamePodGang,
+		apicommon.LabelPodCliqueSetReplicaIndex: strconv.Itoa(pgi.pcsReplicaIndex),
+		apicommon.LabelSchedulerName:            schedulerName,
 	}
 	return lo.Assign(
 		apicommon.GetDefaultLabelsForPodCliqueSetManagedResources(pcs.Name),

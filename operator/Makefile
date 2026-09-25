@@ -90,7 +90,7 @@ format: $(GOIMPORTS_REVISER)
 # Run all unit tests
 .PHONY: test-unit
 test-unit: $(SETUP_ENVTEST)
-	@KUBEBUILDER_ASSETS="$$($(SETUP_ENVTEST) use -p path)" go test ./...
+	@KUBEBUILDER_ASSETS="$$($(SETUP_ENVTEST) use -p path)" go test -race ./...
 
 # Run all unit tests with code coverage
 .PHONY: test-cover

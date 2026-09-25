@@ -32,60 +32,90 @@ const (
 	defaultPollTimeout = 5 * time.Minute
 	// defaultPollInterval is the interval for most polling conditions
 	defaultPollInterval = 5 * time.Second
+	// pgmRecoverTimeout bounds the wait for a PodGangMap to drain to empty and then rebuild its anchor
+	// as a PodCliqueScalingGroup is scaled below MinAvailable and back. Recovery runs on the next
+	// reconcile, so a long wait here signals a real defect.
+	pgmRecoverTimeout = 1 * time.Minute
+
+	// groveReleaseName is the Helm release name used for both the install and the upgrade.
+	groveReleaseName = "grove"
+	// groveNamespace is the namespace the Grove operator runs in.
+	groveNamespace = "grove-system"
+	// groveReleasedChartRef is the OCI reference of the published Grove chart used for the install.
+	groveReleasedChartRef = "oci://ghcr.io/ai-dynamo/grove/grove-charts"
 )
 
-// testConfig holds configuration for upgrade test setup.
-type testConfig struct {
-	// Required - initial version installed
+// upgradeTest describes an upgrade scenario. The harness installs fromVersion, runs preUpgrade,
+// upgrades to the operator built from the current checkout, then runs postUpgrade. preUpgrade owns
+// workload setup and any assertions on the fromVersion operator. postUpgrade holds the assertions on
+// the upgraded operator. preUpgrade may be nil.
+type upgradeTest struct {
+	// fromVersion is the released Grove version to install first. The harness never defaults it, so
+	// each test states the version it exercises.
 	fromVersion string
-
-	// Required - workload that will be installed before and verified after an upgrade.
-	workload *testctx.WorkloadConfig
+	// nodeWorkerCount is the number of worker nodes the cluster is prepared with.
+	nodeWorkerCount int
+	// prepareOpts are passed to PrepareTest, so a test declares its workload with WithWorkload.
+	prepareOpts []testctx.TestOption
+	// preUpgrade runs against the fromVersion operator, before the upgrade. It is optional.
+	preUpgrade func(t *testing.T, tc *testctx.TestContext)
+	// postUpgrade runs against the upgraded operator, after the upgrade.
+	postUpgrade func(t *testing.T, tc *testctx.TestContext)
 }
 
-// setupTest initializes an upgrade test with the given configuration.
-// It handles:
-// 1. Cluster preparation
-// 2. TestContext creation with standard parameters
-// 3. Workload deployment and pod verification
-// 4. Installation of the given version
-//
-// Returns:
-//   - tc: TestContext for the test
-func setupTest(t *testing.T, cfg testConfig) *testctx.TestContext {
+// runUpgradeTest installs the fromVersion Grove operator, runs preUpgrade, upgrades to the operator
+// built from the current checkout, then runs postUpgrade.
+func runUpgradeTest(t *testing.T, cfg upgradeTest) {
 	t.Helper()
 
 	if testing.Short() {
 		t.Skip("upgrade E2E test is disabled by -short")
 	}
-
-	if cfg.fromVersion == "" {
-		t.Fatalf("TestConfig.FromVersion is required")
-	}
-
-	if cfg.workload == nil {
-		t.Fatalf("TestConfig.Workload is required")
-	}
+	cfg.validate(t)
 
 	testctx.Logger.Infof("preparing test cluster")
+	tc, cleanup := testctx.PrepareTest(t.Context(), t, cfg.nodeWorkerCount, cfg.prepareOpts...)
 
-	tc, cleanup := testctx.PrepareTest(
-		t.Context(),
-		t,
-		1,
-		testctx.WithWorkload(cfg.workload),
-	)
-	t.Cleanup(cleanup)
+	installReleasedGrove(t, tc, cfg.fromVersion)
+	// The upgrade tests share one cluster, so uninstall Grove after the test to free the release name
+	// for the next one. This defer is registered before cleanup so it runs last, after cleanup has
+	// deleted the workload while the operator is still up to process finalizers.
+	defer uninstallGrove(t, tc)
+	defer cleanup()
 
-	testctx.Logger.Infof("testing Grove upgrade from %s to the current checkout", cfg.fromVersion)
-	testctx.Logger.Info("installing released Grove operator")
+	if cfg.preUpgrade != nil {
+		cfg.preUpgrade(t, tc)
+	}
+	upgradeGrove(t, tc)
+	cfg.postUpgrade(t, tc)
+}
 
+// validate fails the test when the upgradeTest is not fully specified.
+func (cfg upgradeTest) validate(t *testing.T) {
+	t.Helper()
+	if cfg.fromVersion == "" {
+		t.Fatalf("upgradeTest.fromVersion is required")
+	}
+	if cfg.nodeWorkerCount <= 0 {
+		t.Fatalf("upgradeTest.nodeWorkerCount must be greater than zero")
+	}
+	if cfg.postUpgrade == nil {
+		t.Fatalf("upgradeTest.postUpgrade is required")
+	}
+}
+
+// installReleasedGrove installs the given released Grove version from the published OCI chart and waits
+// for the operator to become ready.
+func installReleasedGrove(t *testing.T, tc *testctx.TestContext, version string) {
+	t.Helper()
+
+	testctx.Logger.Infof("installing released Grove operator %s", version)
 	_, err := setup.InstallHelmChart(&setup.HelmInstallConfig{
 		RestConfig:      tc.Client.RestConfig,
-		ReleaseName:     "grove",
-		Namespace:       "grove-system",
-		ChartRef:        "oci://ghcr.io/ai-dynamo/grove/grove-charts",
-		ChartVersion:    cfg.fromVersion,
+		ReleaseName:     groveReleaseName,
+		Namespace:       groveNamespace,
+		ChartRef:        groveReleasedChartRef,
+		ChartVersion:    version,
 		CreateNamespace: true,
 		Wait:            true,
 		Timeout:         defaultPollTimeout,
@@ -95,18 +125,20 @@ func setupTest(t *testing.T, cfg testConfig) *testctx.TestContext {
 	require.NoError(t, err, "install released Grove chart")
 
 	podsManager := pods.NewPodManager(tc.Client, testctx.Logger)
-	err = podsManager.WaitForReadyInNamespace(t.Context(), "grove-system", 1, defaultPollTimeout, defaultPollInterval)
-	require.NoError(t, err, "waiting for Grove to become ready")
+	require.NoError(t, podsManager.WaitForReadyInNamespace(t.Context(), groveNamespace, 1, defaultPollTimeout, defaultPollInterval),
+		"waiting for Grove to become ready")
+}
 
-	testctx.Logger.Info("applying workload before upgrade")
-
-	_, err = tc.DeployAndVerifyWorkload()
-	require.NoError(t, err, "applying workload")
-
-	err = podsManager.WaitForReadyInNamespace(t.Context(), cfg.workload.Namespace, 2, defaultPollTimeout, defaultPollInterval)
-	require.NoError(t, err, "waiting for workload to become ready")
-
-	return tc
+// uninstallGrove removes the Grove release so the shared cluster is clean for the next upgrade test.
+func uninstallGrove(t *testing.T, tc *testctx.TestContext) {
+	t.Helper()
+	require.NoError(t, setup.UninstallHelmChart(&setup.HelmInstallConfig{
+		RestConfig:     tc.Client.RestConfig,
+		ReleaseName:    groveReleaseName,
+		Namespace:      groveNamespace,
+		Timeout:        defaultPollTimeout,
+		HelmLoggerFunc: testctx.Logger.Infof,
+	}), "uninstall Grove chart")
 }
 
 // upgradeGrove handles the upgrade of Grove to the current codebase.

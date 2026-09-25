@@ -35,6 +35,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -92,6 +93,17 @@ func (b *schedulerBackend) SyncPodGang(ctx context.Context, podGang *groveschedu
 	if podGang == nil {
 		return fmt.Errorf("podGang is nil")
 	}
+
+	if len(podGang.Spec.PodGroups) == 0 {
+		podGroup := &kaischedulingv2alpha2.PodGroup{}
+		err := b.client.Get(ctx, client.ObjectKeyFromObject(podGang), podGroup)
+		if err != nil {
+			return client.IgnoreNotFound(err)
+		}
+
+		return client.IgnoreNotFound(b.client.Delete(ctx, podGroup))
+	}
+
 	if err := b.ensurePodGangSkipAnnotation(ctx, podGang); err != nil {
 		return fmt.Errorf("ensure KAI podgrouper skip annotation: %w", err)
 	}
@@ -139,9 +151,16 @@ func (b *schedulerBackend) PreparePod(pod *corev1.Pod) error {
 		pod.Labels = map[string]string{}
 	}
 	pod.Annotations[annotationKeySkipPGR] = annotationValSkipPGR
-	pod.Annotations[annotationPodGroup] = podGangName
+	maps.Copy(pod.Annotations, b.PodGangMembershipAnnotations(podGangName))
 	pod.Labels[labelSubGroup] = subGroupName
 	return nil
+}
+
+// PodGangMembershipAnnotations returns the KAI PodGroup membership annotation that KAI reads to
+// determine gang membership. The subgroup label derives from the PodClique name, which migration does
+// not change, so it is not part of the membership annotations.
+func (b *schedulerBackend) PodGangMembershipAnnotations(newPodGangName string) map[string]string {
+	return map[string]string{annotationPodGroup: newPodGangName}
 }
 
 // ValidatePodCliqueSet runs KAI-specific validations on the PodCliqueSet.
@@ -152,7 +171,11 @@ func (b *schedulerBackend) ValidatePodCliqueSet(_ context.Context, pcs *grovecor
 
 // buildPodGroupForPodGang translates a Grove PodGang into a KAI PodGroup object.
 func (b *schedulerBackend) buildPodGroupForPodGang(ctx context.Context, podGang *groveschedulerv1alpha1.PodGang) (*kaischedulingv2alpha2.PodGroup, error) {
-	topologyName := getTopologyName(podGang)
+	bindingName := getTopologyName(podGang)
+	topologyName, err := b.resolveTopologyName(ctx, bindingName)
+	if err != nil {
+		return nil, err
+	}
 	topologyConstraint, err := toKAITopologyConstraint(podGang.Spec.TopologyConstraint, topologyName)
 	if err != nil {
 		return nil, err
@@ -230,12 +253,15 @@ func (b *schedulerBackend) ensurePodGangSkipAnnotation(ctx context.Context, podG
 	if podGang.Annotations != nil && podGang.Annotations[annotationKeySkipPGR] == annotationValSkipPGR {
 		return nil
 	}
-	before := podGang.DeepCopy()
-	if podGang.Annotations == nil {
-		podGang.Annotations = map[string]string{}
+	// The LPX backend can pass a partial PodGang spec, so construct the patch against a
+	// new resource so that we don't clobber the podGang spec after the Patch call.
+	updated := &groveschedulerv1alpha1.PodGang{ObjectMeta: podGang.ObjectMeta}
+	patch := fmt.Appendf(nil, `{"metadata":{"annotations":{%q:%q}}}`, annotationKeySkipPGR, annotationValSkipPGR)
+	if err := b.client.Patch(ctx, updated, client.RawPatch(types.MergePatchType, patch)); err != nil {
+		return err
 	}
-	podGang.Annotations[annotationKeySkipPGR] = annotationValSkipPGR
-	return b.client.Patch(ctx, podGang, client.MergeFrom(before))
+	podGang.Annotations = updated.Annotations
+	return nil
 }
 
 func (b *schedulerBackend) recordWarning(obj runtime.Object, reason string, err error) {
@@ -254,6 +280,30 @@ func getTopologyName(podGang *groveschedulerv1alpha1.PodGang) string {
 	}
 	// Backward compatibility with KAI annotation key.
 	return podGang.Annotations["kai.scheduler/topology"]
+}
+
+// resolveTopologyName resolves the KAI-facing topology resource name for a ClusterTopologyBinding.
+// bindingName is the ClusterTopologyBinding's own resource name, as recorded on the PodGang's
+// topology-name annotation. When the binding declares an externally-managed SchedulerTopologyBinding
+// for this backend, that binding's TopologyReference is returned instead, since the externally-managed
+// KAI Topology resource may be named differently from the ClusterTopologyBinding itself. Otherwise
+// bindingName is returned unchanged. The admission webhook requires the referenced ClusterTopologyBinding
+// to exist, but it could have been deleted since admission; treat that as an error rather than silently
+// scheduling against an unresolved (and possibly wrong) topology name.
+func (b *schedulerBackend) resolveTopologyName(ctx context.Context, bindingName string) (string, error) {
+	if bindingName == "" {
+		return "", nil
+	}
+	ct := &grovecorev1alpha1.ClusterTopologyBinding{}
+	if err := b.client.Get(ctx, client.ObjectKey{Name: bindingName}, ct); err != nil {
+		return "", fmt.Errorf("get ClusterTopologyBinding %s: %w", bindingName, err)
+	}
+	for _, ref := range ct.Spec.SchedulerTopologyBindings {
+		if ref.SchedulerName == b.name && ref.TopologyReference != "" {
+			return ref.TopologyReference, nil
+		}
+	}
+	return bindingName, nil
 }
 
 // toKAITopologyConstraint converts Grove topology constraint to KAI topology constraint.
