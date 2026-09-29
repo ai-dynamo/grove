@@ -19,6 +19,7 @@ package tests
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/ai-dynamo/grove/operator/e2e/grove/podgang"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
@@ -1139,4 +1140,41 @@ func Test_GS12_GangSchedulingWithComplexPCSGScaling(t *testing.T) {
 	tc.ListPodsAndAssertDistinctNodes()
 
 	Logger.Info("🎉 Gang-scheduling PCS+PCSG scaling test completed successfully!")
+}
+
+// Test_GS13_GangSchedulingWithPCSGMemberScaling verifies manual scaling of a PCSG-member PCLQ.
+// Scenario GS-13:
+//  1. Deploy one PCSG replica with one leader pod and one worker pod and wait for readiness
+//  2. Scale the worker PCLQ to three pods without changing the PCS template or PCSG replicas
+//  3. Verify all four pods become ready.
+func Test_GS13_GangSchedulingWithPCSGMemberScaling(t *testing.T) {
+	ctx := context.Background()
+
+	Logger.Info("1. Deploy a PCSG with one leader pod and one worker pod and wait for readiness")
+	tc, cleanup := testctx.PrepareTest(ctx, t, 4,
+		testctx.WithWorkload(&testctx.WorkloadConfig{
+			Name:         "workload-pcsg-only",
+			YAMLPath:     "../yaml/workload-pcsg-only.yaml",
+			Namespace:    "default",
+			ExpectedPods: 2,
+		}),
+		testctx.WithTimeout(time.Minute),
+	)
+	defer cleanup()
+
+	if _, err := tc.DeployAndVerifyWorkload(); err != nil {
+		t.Fatalf("Failed to deploy workload: %v", err)
+	}
+
+	Logger.Info("2. Scale the worker PCLQ from one to three pods")
+	if err := tc.ScalePodClique("workload-pcsg-only-0-worker-0-worker-wkr", 3); err != nil {
+		t.Fatalf("Failed to scale PCSG-member PodClique: %v", err)
+	}
+
+	Logger.Info("3. Verify readiness")
+	if err := tc.WaitForReadyPods(4); err != nil {
+		t.Fatalf("Scaled pods did not become ready within one minute: %v", err)
+	}
+
+	Logger.Info("🎉 Gang-scheduling PCSG-member PCLQ scaling test completed successfully!")
 }
