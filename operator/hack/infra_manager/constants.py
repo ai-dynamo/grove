@@ -180,7 +180,7 @@ def parse_memory_mb(mem_str: str) -> int:
     return int(mem_str)
 
 
-DEFAULT_K3S_IMAGE = "rancher/k3s:v1.35.5-k3s1"
+DEFAULT_K3S_IMAGE = "rancher/k3s:v1.36.4-k3s1"
 DEFAULT_CLUSTER_CREATE_MAX_RETRIES = 3
 
 # -- Component defaults --
