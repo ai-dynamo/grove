@@ -1,4 +1,3 @@
-// /*
 // Copyright 2025 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,7 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package components
 
@@ -25,6 +23,8 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/podcliquescalinggroup"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/podcliquesetreplica"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/podgang"
+	"github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/podgangmap"
+	"github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/podgangmigrator"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/resourceclaim"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/role"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/rolebinding"
@@ -35,6 +35,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 
 	"k8s.io/client-go/tools/record"
+	"k8s.io/utils/clock"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 )
 
@@ -52,6 +53,8 @@ func CreateOperatorRegistry(mgr manager.Manager, eventRecorder record.EventRecor
 	reg.Register(component.KindPodCliqueScalingGroup, podcliquescalinggroup.New(cl, mgr.GetScheme(), eventRecorder))
 	reg.Register(component.KindHorizontalPodAutoscaler, hpa.New(cl, mgr.GetScheme()))
 	reg.Register(component.KindPodGang, podgang.New(cl, mgr.GetScheme(), eventRecorder, topologyAwareSchedulingConfig, schedRegistry))
+	reg.Register(component.KindPodGangMap, podgangmap.New(cl, mgr.GetScheme(), clock.RealClock{}))
+	reg.Register(component.KindPodGangMigrator, podgangmigrator.New(cl, mgr.GetScheme(), schedRegistry))
 	reg.Register(component.KindPodCliqueSetReplica, podcliquesetreplica.New(cl, eventRecorder))
 
 	// Only register ComputeDomain operator if MNNVL is enabled

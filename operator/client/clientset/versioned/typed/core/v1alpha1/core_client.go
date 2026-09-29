@@ -28,10 +28,11 @@ import (
 
 type GroveV1alpha1Interface interface {
 	RESTClient() rest.Interface
-	ClusterTopologiesGetter
+	ClusterTopologyBindingsGetter
 	PodCliquesGetter
 	PodCliqueScalingGroupsGetter
 	PodCliqueSetsGetter
+	PodGangMapsGetter
 }
 
 // GroveV1alpha1Client is used to interact with features provided by the grove.io group.
@@ -39,8 +40,8 @@ type GroveV1alpha1Client struct {
 	restClient rest.Interface
 }
 
-func (c *GroveV1alpha1Client) ClusterTopologies() ClusterTopologyInterface {
-	return newClusterTopologies(c)
+func (c *GroveV1alpha1Client) ClusterTopologyBindings() ClusterTopologyBindingInterface {
+	return newClusterTopologyBindings(c)
 }
 
 func (c *GroveV1alpha1Client) PodCliques(namespace string) PodCliqueInterface {
@@ -53,6 +54,10 @@ func (c *GroveV1alpha1Client) PodCliqueScalingGroups(namespace string) PodClique
 
 func (c *GroveV1alpha1Client) PodCliqueSets(namespace string) PodCliqueSetInterface {
 	return newPodCliqueSets(c, namespace)
+}
+
+func (c *GroveV1alpha1Client) PodGangMaps(namespace string) PodGangMapInterface {
+	return newPodGangMaps(c, namespace)
 }
 
 // NewForConfig creates a new GroveV1alpha1Client for the given config.

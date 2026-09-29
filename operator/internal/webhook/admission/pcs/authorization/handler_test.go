@@ -1,4 +1,3 @@
-// /*
 // Copyright 2025 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,7 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package authorization
 
@@ -218,6 +216,26 @@ func TestHandle(t *testing.T) {
 			operation:    admissionv1.Delete,
 			allowed:      true,
 		},
+		{
+			name:         "reconciler serviceaccount can DELETE a PodGangMap",
+			pcsNeeded:    true,
+			pcsName:      "test-pcs-name",
+			pcsNamespace: "test-pcs-namespace",
+			resourceGVK:  podGangMapGVK,
+			username:     reconcilerServiceAccountUserName,
+			operation:    admissionv1.Delete,
+			allowed:      true,
+		},
+		{
+			name:         "other users cannot DELETE a PodGangMap",
+			pcsNeeded:    true,
+			pcsName:      "test-pcs-name",
+			pcsNamespace: "test-pcs-namespace",
+			resourceGVK:  podGangMapGVK,
+			username:     "platinum",
+			operation:    admissionv1.Delete,
+			allowed:      false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -290,7 +308,7 @@ func TestHandleCreateOrUpdate(t *testing.T) {
 		{
 			name: "resource creation/updation by reconciler serviceaccount is allowed",
 			gvks: []schema.GroupVersionKind{
-				pcsgGVK, pclqGVK, podGVK, serviceAccountGVK, serviceGVK, secretGVK, roleGVK, roleBindingGVK, hpaV2GVK, hpaV1GVK, podgangGVK,
+				pcsgGVK, pclqGVK, podGVK, serviceAccountGVK, serviceGVK, secretGVK, roleGVK, roleBindingGVK, hpaV2GVK, hpaV1GVK, podGangGVK, podGangMapGVK,
 			},
 			username: reconcilerServiceAccountUserName,
 			allowed:  true,
@@ -298,7 +316,7 @@ func TestHandleCreateOrUpdate(t *testing.T) {
 		{
 			name: "resource creation/updation by exempt serviceaccount is allowed",
 			gvks: []schema.GroupVersionKind{
-				pcsgGVK, pclqGVK, podGVK, serviceAccountGVK, serviceGVK, secretGVK, roleGVK, roleBindingGVK, hpaV2GVK, hpaV1GVK, podgangGVK,
+				pcsgGVK, pclqGVK, podGVK, serviceAccountGVK, serviceGVK, secretGVK, roleGVK, roleBindingGVK, hpaV2GVK, hpaV1GVK, podGangGVK, podGangMapGVK,
 			},
 			username: exemptServiceAccountUserNames[0],
 			allowed:  true,
@@ -306,7 +324,7 @@ func TestHandleCreateOrUpdate(t *testing.T) {
 		{
 			name: "resource creation/updation by other serviceaccounts is denied",
 			gvks: []schema.GroupVersionKind{
-				pcsgGVK, pclqGVK, podGVK, serviceAccountGVK, serviceGVK, secretGVK, roleGVK, roleBindingGVK, hpaV2GVK, hpaV1GVK, podgangGVK,
+				pcsgGVK, pclqGVK, podGVK, serviceAccountGVK, serviceGVK, secretGVK, roleGVK, roleBindingGVK, hpaV2GVK, hpaV1GVK, podGangGVK, podGangMapGVK,
 			},
 			username: "boingo",
 			allowed:  false,
@@ -371,7 +389,7 @@ func TestHandleDelete(t *testing.T) {
 			name:     "deletion of non-pod resources by reconciler serviceaccount is allowed",
 			username: reconcilerServiceAccountUserName,
 			gvks: []schema.GroupVersionKind{
-				pcsgGVK, pclqGVK, serviceAccountGVK, serviceGVK, secretGVK, roleGVK, roleBindingGVK, hpaV2GVK, hpaV1GVK, podgangGVK,
+				pcsgGVK, pclqGVK, serviceAccountGVK, serviceGVK, secretGVK, roleGVK, roleBindingGVK, hpaV2GVK, hpaV1GVK, podGangGVK,
 			},
 			allowed: true,
 		},
@@ -379,7 +397,7 @@ func TestHandleDelete(t *testing.T) {
 			name:     "deletion of non-pod resources by an exempt serviceaccount is allowed",
 			username: exemptServiceAccountUserNames[1],
 			gvks: []schema.GroupVersionKind{
-				pcsgGVK, pclqGVK, serviceAccountGVK, serviceGVK, secretGVK, roleGVK, roleBindingGVK, hpaV2GVK, hpaV1GVK, podgangGVK,
+				pcsgGVK, pclqGVK, serviceAccountGVK, serviceGVK, secretGVK, roleGVK, roleBindingGVK, hpaV2GVK, hpaV1GVK, podGangGVK,
 			},
 			allowed: true,
 		},
@@ -387,7 +405,7 @@ func TestHandleDelete(t *testing.T) {
 			name:     "deletion of non-pod resources by any other serviceaccounts is denied",
 			username: "dio",
 			gvks: []schema.GroupVersionKind{
-				pcsgGVK, pclqGVK, serviceAccountGVK, serviceGVK, secretGVK, roleGVK, roleBindingGVK, hpaV2GVK, hpaV1GVK, podgangGVK,
+				pcsgGVK, pclqGVK, serviceAccountGVK, serviceGVK, secretGVK, roleGVK, roleBindingGVK, hpaV2GVK, hpaV1GVK, podGangGVK,
 			},
 			allowed: false,
 		},

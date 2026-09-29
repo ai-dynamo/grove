@@ -1,4 +1,3 @@
-// /*
 // Copyright 2025 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,7 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package podcliquesetreplica
 
@@ -26,8 +24,8 @@ import (
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
-	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
+	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 
 	"github.com/go-logr/logr"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -237,17 +235,19 @@ func (w *pendingUpdateWork) getNextReplicaToUpdate(pcs *grovecorev1alpha1.PodCli
 
 // computeUpdateProgress calculates update completion for a PCS replica.
 func (pri *pcsReplicaInfo) computeUpdateProgress(pcs *grovecorev1alpha1.PodCliqueSet) {
-	currentHash := *pcs.Status.CurrentGenerationHash
 	updatedPCLQs := 0
 	for _, pclq := range pri.pclqs {
-		if isPCLQUpdateComplete(&pclq, currentHash) {
+		if isPCLQUpdateComplete(pcs, &pclq) {
 			updatedPCLQs++
 		}
 	}
 	updatedPCSGs := 0
-	for _, pcsg := range pri.pcsgs {
-		if componentutils.IsPCSGUpdateComplete(&pcsg, currentHash) {
-			updatedPCSGs++
+	if pcs.Status.CurrentGenerationHash != nil {
+		currentHash := *pcs.Status.CurrentGenerationHash
+		for _, pcsg := range pri.pcsgs {
+			if componentutils.IsPCSGUpdateComplete(&pcsg, currentHash) {
+				updatedPCSGs++
+			}
 		}
 	}
 	pri.updateProgress = replicaUpdateProgress{
@@ -272,15 +272,22 @@ func (pri *pcsReplicaInfo) getNumScheduledPods(pcs *grovecorev1alpha1.PodCliqueS
 	return noScheduled
 }
 
-// isPCLQUpdateComplete checks if a PodClique has completed its update to the target generation.
-func isPCLQUpdateComplete(pclq *grovecorev1alpha1.PodClique, currentPCSGenerationHash string) bool {
-	if pclq.Status.CurrentPodCliqueSetGenerationHash != nil &&
-		*pclq.Status.CurrentPodCliqueSetGenerationHash == currentPCSGenerationHash &&
-		pclq.Status.UpdatedReplicas >= *pclq.Spec.MinAvailable &&
-		pclq.Status.ReadyReplicas >= *pclq.Spec.MinAvailable {
-		return true
+// isPCLQUpdateComplete checks if a PodClique has completed its update to the target generation and template.
+func isPCLQUpdateComplete(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grovecorev1alpha1.PodClique) bool {
+	if pcs.Status.CurrentGenerationHash == nil || pclq.Spec.MinAvailable == nil {
+		return false
 	}
-	return false
+	expectedPodTemplateHash, err := componentutils.GetExpectedPCLQPodTemplateHash(pcs, pclq.ObjectMeta)
+	if err != nil || expectedPodTemplateHash == "" {
+		return false
+	}
+	return pclq.Labels[apicommon.LabelPodTemplateHash] == expectedPodTemplateHash &&
+		pclq.Status.CurrentPodTemplateHash != nil &&
+		*pclq.Status.CurrentPodTemplateHash == expectedPodTemplateHash &&
+		pclq.Status.CurrentPodCliqueSetGenerationHash != nil &&
+		*pclq.Status.CurrentPodCliqueSetGenerationHash == *pcs.Status.CurrentGenerationHash &&
+		pclq.Status.UpdatedReplicas >= *pclq.Spec.MinAvailable &&
+		pclq.Status.ReadyReplicas >= *pclq.Spec.MinAvailable
 }
 
 // isAutoUpdateInProgress checks if an update is currently in progress.

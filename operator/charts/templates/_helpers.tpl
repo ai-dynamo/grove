@@ -84,8 +84,17 @@ grove-operator-cm-{{ include "operator.config.data" . | sha256sum | trunc 8 }}
 {{- end -}}
 
 {{- define "common.chart.labels" -}}
-chart: "{{ .Chart.Name }}-{{ .Chart.Version }}"
+chart: "{{- printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimAll "-_." }}"
 release: "{{ .Release.Name }}"
+{{- end -}}
+
+{{/* Returns "true" if the named scheduler profile is configured, empty string otherwise. */}}
+{{- define "grove.scheduler.hasProfile" -}}
+{{- $root := index . 0 -}}
+{{- $profile := index . 1 -}}
+{{- range $root.Values.config.scheduler.profiles -}}
+{{- if eq .name $profile -}}true{{- end -}}
+{{- end -}}
 {{- end -}}
 
 {{- define "operator.config.labels" -}}
@@ -113,9 +122,20 @@ release: "{{ .Release.Name }}"
 {{- end }}
 {{- end -}}
 
+{{- define "operator.service.matchLabels" -}}
+{{- range $key, $val := .Values.service.labels }}
+{{ $key }}: {{ $val }}
+{{- end }}
+{{- end -}}
+
 {{- define "operator.service.labels" -}}
 {{- include "common.chart.labels" . }}
-{{- range $key, $val := .Values.service.labels }}
+{{- include "operator.service.matchLabels" . }}
+{{- end -}}
+
+{{- define "operator.servicemonitor.labels" -}}
+{{- include "common.chart.labels" . }}
+{{- range $key, $val := .Values.metrics.serviceMonitor.labels }}
 {{ $key }}: {{ $val }}
 {{- end }}
 {{- end -}}

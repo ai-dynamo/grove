@@ -1,4 +1,3 @@
-// /*
 // Copyright 2025 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,7 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 // grove-install-crds is a standalone binary that applies all Grove CRDs via
 // server-side apply. It is intended to run as the operator Deployment's init
@@ -35,17 +33,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// allCRDs returns all Grove CRD YAML definitions to be applied at startup.
-func allCRDs() []string {
-	return []string{
-		operatorcrds.PodCliqueCRD(),
-		operatorcrds.PodCliqueSetCRD(),
-		operatorcrds.PodCliqueScalingGroupCRD(),
-		operatorcrds.ClusterTopologyCRD(),
-		schedulercrds.PodGangCRD(),
-	}
-}
-
 func main() {
 	log := grovelogger.MustNewLogger(false, configv1alpha1.InfoLevel, configv1alpha1.LogFormatJSON)
 	ctrl.SetLogger(log)
@@ -60,7 +47,7 @@ func main() {
 	}
 
 	scheme := runtime.NewScheme()
-	if err := apiextensionsv1.AddToScheme(scheme); err != nil {
+	if err = apiextensionsv1.AddToScheme(scheme); err != nil {
 		logger.Error(err, "failed to add apiextensionsv1 to scheme")
 		os.Exit(1)
 	}
@@ -72,9 +59,21 @@ func main() {
 	}
 
 	logger.Info("Installing Grove CRDs")
-	if err := crdinstaller.InstallCRDs(ctx, cl, logger, allCRDs()); err != nil {
+	if err = crdinstaller.InstallCRDs(ctx, cl, logger, allCRDs()); err != nil {
 		logger.Error(err, "failed to install CRDs")
 		os.Exit(1)
 	}
 	logger.Info("All Grove CRDs installed successfully")
+}
+
+// allCRDs returns all Grove CRD YAML definitions to be applied at startup.
+func allCRDs() []string {
+	return []string{
+		operatorcrds.PodCliqueCRD(),
+		operatorcrds.PodCliqueSetCRD(),
+		operatorcrds.PodCliqueScalingGroupCRD(),
+		operatorcrds.ClusterTopologyCRD(),
+		operatorcrds.PodGangMapCRD(),
+		schedulercrds.PodGangCRD(),
+	}
 }

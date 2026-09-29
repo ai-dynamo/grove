@@ -23,14 +23,14 @@ import (
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
-	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/resourceclaim"
-	groveutils "github.com/ai-dynamo/grove/operator/internal/utils"
+	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
 	"github.com/go-logr/logr"
 	resourcev1 "k8s.io/api/resource/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -57,20 +57,22 @@ func New(client client.Client, scheme *runtime.Scheme) component.Operator[grovec
 // GetExistingResourceNames returns the names of PCLQ-level ResourceClaims
 // by selecting on the grove.io/podclique label that Sync stamps on each RC.
 func (r _resource) GetExistingResourceNames(ctx context.Context, _ logr.Logger, pclqObjMeta metav1.ObjectMeta) ([]string, error) {
-	objMetaList := &metav1.PartialObjectMetadataList{}
-	objMetaList.SetGroupVersionKind(resourcev1.SchemeGroupVersion.WithKind("ResourceClaim"))
+	claimList := &resourcev1.ResourceClaimList{}
 	if err := r.client.List(ctx,
-		objMetaList,
+		claimList,
 		client.InNamespace(pclqObjMeta.Namespace),
 		client.MatchingLabels(pclqResourceClaimLabels(pclqObjMeta)),
 	); err != nil {
+		if meta.IsNoMatchError(err) {
+			return nil, nil
+		}
 		return nil, groveerr.WrapError(err,
 			errSyncPCLQLevelRC,
 			component.OperationGetExistingResourceNames,
 			fmt.Sprintf("Error listing ResourceClaims for PCLQ %s", pclqObjMeta.Name),
 		)
 	}
-	return k8sutils.FilterMapOwnedResourceNames(pclqObjMeta, objMetaList.Items), nil
+	return k8sutils.FilterMapOwnedResourceNames(pclqObjMeta, claimList.Items), nil
 }
 
 // Sync creates or patches PCLQ-level ResourceClaims (AllReplicas + PerReplica)
@@ -87,7 +89,7 @@ func (r _resource) Sync(ctx context.Context, _ logr.Logger, pclq *grovecorev1alp
 		)
 	}
 
-	cliqueName, err := groveutils.GetPodCliqueNameFromPodCliqueFQN(pclq.ObjectMeta)
+	cliqueName, err := componentutils.GetPodCliqueNameFromPodCliqueFQN(pclq.ObjectMeta)
 	if err != nil {
 		return groveerr.WrapError(err,
 			errSyncPCLQLevelRC,
@@ -188,12 +190,16 @@ func pclqResourceClaimLabels(pclqObjMeta metav1.ObjectMeta) map[string]string {
 // This is required because the PCLQ finalizer's verifyNoResourcesAwaitsCleanup
 // blocks finalizer removal until all owned resources are gone; relying solely on
 // GC would create a deadlock since GC only fires after the PCLQ is fully deleted.
-func (r _resource) Delete(ctx context.Context, _ logr.Logger, pclqObjMeta metav1.ObjectMeta) error {
+func (r _resource) Delete(ctx context.Context, logger logr.Logger, pclqObjMeta metav1.ObjectMeta) error {
 	labels := pclqResourceClaimLabels(pclqObjMeta)
 	if err := r.client.DeleteAllOf(ctx, &resourcev1.ResourceClaim{},
 		client.InNamespace(pclqObjMeta.Namespace),
 		client.MatchingLabels(labels),
 	); err != nil {
+		if meta.IsNoMatchError(err) {
+			logger.V(1).Info("ResourceClaim API not served by cluster, skipping delete", "namespace", pclqObjMeta.Namespace, "podClique", pclqObjMeta.Name, "err", err.Error())
+			return nil
+		}
 		return groveerr.WrapError(err,
 			errDeletePCLQLevelRC,
 			component.OperationDelete,

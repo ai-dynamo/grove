@@ -1,0 +1,45 @@
+# Workload: single standalone PodClique with no PodCliqueScalingGroup.
+# Scaling the sole PodClique below MinAvailable drains the anchor entry to empty, and because there is
+# no PodCliqueScalingGroup there is no ScaleOut entry, so the PodGangMap holds no entries at all.
+---
+apiVersion: grove.io/v1alpha1
+kind: PodCliqueSet
+metadata:
+  name: workload-pclq-only
+  labels:
+    app: workload-pclq-only
+spec:
+  replicas: 1
+  template:
+    cliques:
+      - name: solo
+        labels:
+          kai.scheduler/queue: test
+        spec:
+          roleName: solo
+          replicas: 1
+          minAvailable: 1
+          podSpec:
+            terminationGracePeriodSeconds: 5
+            schedulerName: kai-scheduler
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: node_role.e2e.grove.nvidia.com
+                          operator: In
+                          values:
+                            - agent
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: solo
+                image: registry:5001/busybox:latest
+                command: ["sleep", "infinity"]
+                resources:
+                  requests:
+                    memory: 80Mi

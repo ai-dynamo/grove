@@ -14,7 +14,8 @@ spec:
   template:
     topologyConstraint:
       topologyName: gb200-topology
-      packDomain: block
+      pack:
+        required: block
     cliques:
       - name: worker
         labels:

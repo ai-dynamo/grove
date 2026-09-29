@@ -1,4 +1,3 @@
-# /*
 # Copyright 2025 The Grove Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-# */
+
 REPO_ROOT           := $(shell dirname "$(realpath $(lastword $(MAKEFILE_LIST)))")
 REPO_HACK_DIR       := $(REPO_ROOT)/hack
 
@@ -123,6 +122,12 @@ cover-html:
 run-e2e:
 	@echo "> Running e2e tests for operator"
 	@make --directory=operator run-e2e
+
+# Runs the standalone latest-release-to-current operator upgrade test.
+.PHONY: run-upgrade-e2e
+run-upgrade-e2e:
+	@echo "> Running operator upgrade e2e test"
+	@make --directory=operator run-upgrade-e2e
 
 # Runs all tests
 .PHONY: test

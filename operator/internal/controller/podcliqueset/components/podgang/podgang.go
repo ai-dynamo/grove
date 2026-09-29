@@ -1,4 +1,3 @@
-// /*
 // Copyright 2025 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,7 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package podgang
 
@@ -20,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
@@ -27,15 +26,14 @@ import (
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
-	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
+	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	"github.com/go-logr/logr"
 	"github.com/samber/lo"
-	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
@@ -44,17 +42,16 @@ import (
 )
 
 const (
-	errCodeListPodGangs               grovecorev1alpha1.ErrorCode = "ERR_LIST_PODGANGS"
-	errCodeDeletePodGangs             grovecorev1alpha1.ErrorCode = "ERR_DELETE_PODGANGS"
-	errCodeDeleteExcessPodGang        grovecorev1alpha1.ErrorCode = "ERR_DELETE_EXCESS_PODGANG"
-	errCodeListPods                   grovecorev1alpha1.ErrorCode = "ERR_LIST_PODS_FOR_PODCLIQUESET"
-	errCodeListPodCliques             grovecorev1alpha1.ErrorCode = "ERR_LIST_PODCLIQUES_FOR_PODCLIQUESET"
-	errCodeListPodCliqueScalingGroups grovecorev1alpha1.ErrorCode = "ERR_LIST_PODCLIQUESCALINGGROUPS_FOR_PODCLIQUESET"
-	errCodeComputeExistingPodGangs    grovecorev1alpha1.ErrorCode = "ERR_COMPUTE_EXISTING_PODGANG"
-	errCodeSetControllerReference     grovecorev1alpha1.ErrorCode = "ERR_SET_CONTROLLER_REFERENCE"
-	errCodeCreateOrPatchPodGang       grovecorev1alpha1.ErrorCode = "ERR_CREATE_OR_PATCH_PODGANG"
-	errCodeCreatePodGang              grovecorev1alpha1.ErrorCode = "ERR_CREATE_PODGANG"
-	errCodeGetClusterTopologyLevels   grovecorev1alpha1.ErrorCode = "ERR_GET_CLUSTER_TOPOLOGY_LEVELS"
+	errCodeListPodGangs            grovecorev1alpha1.ErrorCode = "ERR_LIST_PODGANGS"
+	errCodeDeletePodGangs          grovecorev1alpha1.ErrorCode = "ERR_DELETE_PODGANGS"
+	errCodeDeleteExcessPodGang     grovecorev1alpha1.ErrorCode = "ERR_DELETE_EXCESS_PODGANG"
+	errCodeListPods                grovecorev1alpha1.ErrorCode = "ERR_LIST_PODS_FOR_PODCLIQUESET"
+	errCodeListPodCliques          grovecorev1alpha1.ErrorCode = "ERR_LIST_PODCLIQUES_FOR_PODCLIQUESET"
+	errCodeComputeExistingPodGangs grovecorev1alpha1.ErrorCode = "ERR_COMPUTE_EXISTING_PODGANG"
+	errCodeSetControllerReference  grovecorev1alpha1.ErrorCode = "ERR_SET_CONTROLLER_REFERENCE"
+	errCodeCreateOrPatchPodGang    grovecorev1alpha1.ErrorCode = "ERR_CREATE_OR_PATCH_PODGANG"
+	errCodeResolveTopologyLevels   grovecorev1alpha1.ErrorCode = "ERR_RESOLVE_TOPOLOGY_LEVELS"
+	errCodeUpdatePodGangStatus     grovecorev1alpha1.ErrorCode = "ERR_UPDATE_PODGANG_STATUS"
 )
 
 type _resource struct {
@@ -79,10 +76,9 @@ func New(client client.Client, scheme *runtime.Scheme, eventRecorder record.Even
 // GetExistingResourceNames returns the names of existing PodGang resources for the PodCliqueSet.
 func (r _resource) GetExistingResourceNames(ctx context.Context, logger logr.Logger, pcsObjMeta metav1.ObjectMeta) ([]string, error) {
 	logger.Info("Looking for existing PodGang resources created per replica of PodCliqueSet")
-	objMetaList := &metav1.PartialObjectMetadataList{}
-	objMetaList.SetGroupVersionKind(groveschedulerv1alpha1.SchemeGroupVersion.WithKind("PodGang"))
+	podGangList := &groveschedulerv1alpha1.PodGangList{}
 	if err := r.client.List(ctx,
-		objMetaList,
+		podGangList,
 		client.InNamespace(pcsObjMeta.Namespace),
 		client.MatchingLabels(componentutils.GetPodGangSelectorLabels(pcsObjMeta)),
 	); err != nil {
@@ -92,7 +88,7 @@ func (r _resource) GetExistingResourceNames(ctx context.Context, logger logr.Log
 			fmt.Sprintf("Error listing PodGang for PodCliqueSet: %v", k8sutils.GetObjectKeyFromObjectMeta(pcsObjMeta)),
 		)
 	}
-	return k8sutils.FilterMapOwnedResourceNames(pcsObjMeta, objMetaList.Items), nil
+	return k8sutils.FilterMapOwnedResourceNames(pcsObjMeta, podGangList.Items), nil
 }
 
 // Sync creates, updates, or deletes PodGang resources to match the desired state.
@@ -134,17 +130,13 @@ func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, pgi *podGa
 	// propagate. grove.io/-prefixed entries are operator-managed and have a
 	// lifecycle independent of the PCS, so they are preserved across reconciles
 	// and (for PCS keys with that prefix) skipped on mirror.
-	pg.Labels = mirrorPCSMetadata(pg.Labels, pcs.Labels, getLabels(pcs.Name))
-	// Set scheduler name so the podgang controller can resolve the correct backend.
-	// When no scheduler can be resolved, drop any stale label from a previous reconcile.
-	if schedName := r.getSchedulerNameForPCS(pcs); schedName != "" {
-		pg.Labels[apicommon.LabelSchedulerName] = schedName
-	} else {
-		delete(pg.Labels, apicommon.LabelSchedulerName)
-	}
+	pg.Labels = mirrorPCSMetadata(pg.Labels, pcs.Labels, r.buildLabels(pcs, pgi, r.getSchedulerNameForPCS(pcs)))
 	pg.Annotations = mirrorPCSMetadata(pg.Annotations, pcs.Annotations, nil)
 	if r.tasConfig.Enabled && podGangHasTranslatedTopologyConstraints(pgi) {
-		if topologyName, err := componentutils.ResolveTopologyNameForPodCliqueSet(pcs); err == nil && topologyName != "" {
+		if topologyName, err := componentutils.FindExplicitTopologyNameForPodCliqueSet(pcs); err == nil && topologyName != "" {
+			if pg.Annotations == nil {
+				pg.Annotations = make(map[string]string)
+			}
 			pg.Annotations[apicommonconstants.AnnotationTopologyName] = topologyName
 		} else {
 			delete(pg.Annotations, apicommonconstants.AnnotationTopologyName)
@@ -210,13 +202,17 @@ func emptyPodGang(objKey client.ObjectKey) *groveschedulerv1alpha1.PodGang {
 	}
 }
 
-// getLabels constructs labels for a PodGang resource.
-func getLabels(pcsName string) map[string]string {
+func (r _resource) buildLabels(pcs *grovecorev1alpha1.PodCliqueSet, pgi *podGangInfo, schedulerName string) map[string]string {
+	pgLabels := map[string]string{
+		apicommon.LabelComponentKey:             apicommon.LabelComponentNamePodGang,
+		apicommon.LabelPodCliqueSetReplicaIndex: strconv.Itoa(pgi.pcsReplicaIndex),
+		apicommon.LabelSchedulerName:            schedulerName,
+	}
 	return lo.Assign(
-		apicommon.GetDefaultLabelsForPodCliqueSetManagedResources(pcsName),
-		map[string]string{
-			apicommon.LabelComponentKey: apicommon.LabelComponentNamePodGang,
-		})
+		apicommon.GetDefaultLabelsForPodCliqueSetManagedResources(pcs.Name),
+		pgLabels,
+		pgi.extraLabels,
+	)
 }
 
 // mirrorPCSMetadata returns the result of mirroring PCS-owned labels or annotations
@@ -261,17 +257,4 @@ func (r _resource) getSchedulerNameForPCS(pcs *grovecorev1alpha1.PodCliqueSet) s
 		}
 	}
 	return r.schedRegistry.GetDefault().Name()
-}
-
-// setOrUpdateInitializedCondition sets or updates the PodGangInitialized condition on the PodGang status.
-func setOrUpdateInitializedCondition(pg *groveschedulerv1alpha1.PodGang, status metav1.ConditionStatus, reason, message string) {
-	condition := metav1.Condition{
-		Type:               string(groveschedulerv1alpha1.PodGangConditionTypeInitialized),
-		Status:             status,
-		ObservedGeneration: pg.Generation,
-		LastTransitionTime: metav1.Now(),
-		Reason:             reason,
-		Message:            message,
-	}
-	meta.SetStatusCondition(&pg.Status.Conditions, condition)
 }

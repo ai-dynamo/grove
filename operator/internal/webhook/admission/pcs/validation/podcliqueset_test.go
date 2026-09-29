@@ -1,4 +1,3 @@
-// /*
 // Copyright 2025 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,7 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package validation
 
@@ -78,9 +76,7 @@ func TestResourceNamingValidation(t *testing.T) {
 			pcsName:     "inference",
 			cliqueNames: []string{""},
 			errorMatchers: []testutils.ErrorMatcher{
-				// TODO: @unmarshall @renormalize only one should be required here, fix later
 				{ErrorType: field.ErrorTypeRequired, Field: "spec.template.cliques[0].name"},
-				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.cliques[0].name"},
 			},
 		},
 		{
@@ -247,6 +243,18 @@ func TestValidateSchedulerNames(t *testing.T) {
 			expectErrors:   0,
 		},
 		{
+			name: "single lpx-scheduler when enabled",
+			schedulerConfig: groveconfigv1alpha1.SchedulerConfiguration{
+				Profiles: []groveconfigv1alpha1.SchedulerProfile{
+					{Name: groveconfigv1alpha1.SchedulerNameKube},
+					{Name: groveconfigv1alpha1.SchedulerNameLPX},
+				},
+				DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube),
+			},
+			schedulerNames: []string{"lpx-scheduler"},
+			expectErrors:   0,
+		},
+		{
 			name: "single default-scheduler when enabled (kube only)",
 			schedulerConfig: groveconfigv1alpha1.SchedulerConfiguration{
 				Profiles:           []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube}},
@@ -293,7 +301,7 @@ func TestValidateSchedulerNames(t *testing.T) {
 				WithTerminationDelay(4 * time.Hour).
 				WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder))
 			for i := 0; i < len(tt.schedulerNames); i++ {
-				clique := createDummyPodCliqueTemplate(fmt.Sprintf("c%d", i))
+				clique := createPodCliqueTemplate(fmt.Sprintf("c%d", i))
 				clique.Spec.PodSpec.SchedulerName = tt.schedulerNames[i]
 				pcsBuilder = pcsBuilder.WithPodCliqueTemplateSpec(clique)
 			}
@@ -433,7 +441,7 @@ func TestPodCliqueScalingGroupConfigValidation(t *testing.T) {
 
 			// Add PodClique templates
 			for _, cliqueName := range tc.cliqueTemplates {
-				pcs.Spec.Template.Cliques = append(pcs.Spec.Template.Cliques, createDummyPodCliqueTemplate(cliqueName))
+				pcs.Spec.Template.Cliques = append(pcs.Spec.Template.Cliques, createPodCliqueTemplate(cliqueName))
 			}
 
 			// Add scaling groups
@@ -471,12 +479,12 @@ func TestPodCliqueUpdateValidation(t *testing.T) {
 			name:        "Valid: same cliques in different order with AnyOrder",
 			startupType: ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder),
 			oldCliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-				createDummyPodCliqueTemplate("prefill"),
-				createDummyPodCliqueTemplate("decode"),
+				createPodCliqueTemplate("prefill"),
+				createPodCliqueTemplate("decode"),
 			},
 			newCliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-				createDummyPodCliqueTemplate("decode"),
-				createDummyPodCliqueTemplate("prefill"),
+				createPodCliqueTemplate("decode"),
+				createPodCliqueTemplate("prefill"),
 			},
 			expectError: false,
 		},
@@ -484,11 +492,11 @@ func TestPodCliqueUpdateValidation(t *testing.T) {
 			name:        "Invalid: adding new clique",
 			startupType: ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder),
 			oldCliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-				createDummyPodCliqueTemplate("prefill"),
+				createPodCliqueTemplate("prefill"),
 			},
 			newCliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-				createDummyPodCliqueTemplate("prefill"),
-				createDummyPodCliqueTemplate("decode"),
+				createPodCliqueTemplate("prefill"),
+				createPodCliqueTemplate("decode"),
 			},
 			expectError:    true,
 			expectedErrMsg: "not allowed to change clique composition",
@@ -497,11 +505,11 @@ func TestPodCliqueUpdateValidation(t *testing.T) {
 			name:        "Invalid: removing clique",
 			startupType: ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder),
 			oldCliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-				createDummyPodCliqueTemplate("prefill"),
-				createDummyPodCliqueTemplate("decode"),
+				createPodCliqueTemplate("prefill"),
+				createPodCliqueTemplate("decode"),
 			},
 			newCliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-				createDummyPodCliqueTemplate("prefill"),
+				createPodCliqueTemplate("prefill"),
 			},
 			expectError:    true,
 			expectedErrMsg: "not allowed to change clique composition",
@@ -510,12 +518,12 @@ func TestPodCliqueUpdateValidation(t *testing.T) {
 			name:        "Invalid: InOrder doesn't allow order change",
 			startupType: ptr.To(grovecorev1alpha1.CliqueStartupTypeInOrder),
 			oldCliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-				createDummyPodCliqueTemplate("prefill"),
-				createDummyPodCliqueTemplate("decode"),
+				createPodCliqueTemplate("prefill"),
+				createPodCliqueTemplate("decode"),
 			},
 			newCliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-				createDummyPodCliqueTemplate("decode"),
-				createDummyPodCliqueTemplate("prefill"),
+				createPodCliqueTemplate("decode"),
+				createPodCliqueTemplate("prefill"),
 			},
 			expectError:    true,
 			expectedErrMsg: "clique order cannot be changed when StartupType is InOrder or Explicit",
@@ -524,12 +532,12 @@ func TestPodCliqueUpdateValidation(t *testing.T) {
 			name:        "Invalid: Explicit doesn't allow order change",
 			startupType: ptr.To(grovecorev1alpha1.CliqueStartupTypeExplicit),
 			oldCliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-				createDummyPodCliqueTemplate("prefill"),
-				createDummyPodCliqueTemplate("decode"),
+				createPodCliqueTemplate("prefill"),
+				createPodCliqueTemplate("decode"),
 			},
 			newCliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-				createDummyPodCliqueTemplate("decode"),
-				createDummyPodCliqueTemplate("prefill"),
+				createPodCliqueTemplate("decode"),
+				createPodCliqueTemplate("prefill"),
 			},
 			expectError:    true,
 			expectedErrMsg: "clique order cannot be changed when StartupType is InOrder or Explicit",
@@ -538,12 +546,12 @@ func TestPodCliqueUpdateValidation(t *testing.T) {
 			name:        "Valid: InOrder allows same order",
 			startupType: ptr.To(grovecorev1alpha1.CliqueStartupTypeInOrder),
 			oldCliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-				createDummyPodCliqueTemplate("prefill"),
-				createDummyPodCliqueTemplate("decode"),
+				createPodCliqueTemplate("prefill"),
+				createPodCliqueTemplate("decode"),
 			},
 			newCliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-				createDummyPodCliqueTemplate("prefill"),
-				createDummyPodCliqueTemplate("decode"),
+				createPodCliqueTemplate("prefill"),
+				createPodCliqueTemplate("decode"),
 			},
 			expectError: false,
 		},
@@ -644,7 +652,7 @@ func TestImmutableFieldsValidation(t *testing.T) {
 			setupOldPCS: func() *grovecorev1alpha1.PodCliqueSet {
 				pcs := createTestPodCliqueSet("test")
 				pcs.Spec.Template.StartupType = ptr.To(grovecorev1alpha1.CliqueStartupTypeExplicit)
-				pcs.Spec.Template.Cliques = append(pcs.Spec.Template.Cliques, createDummyPodCliqueTemplate("clique2"))
+				pcs.Spec.Template.Cliques = append(pcs.Spec.Template.Cliques, createPodCliqueTemplate("clique2"))
 				pcs.Spec.Template.Cliques[0].Spec.StartsAfter = []string{}
 				pcs.Spec.Template.Cliques[1].Spec.StartsAfter = []string{"test"}
 				return pcs
@@ -652,7 +660,7 @@ func TestImmutableFieldsValidation(t *testing.T) {
 			setupNewPCS: func() *grovecorev1alpha1.PodCliqueSet {
 				pcs := createTestPodCliqueSet("test")
 				pcs.Spec.Template.StartupType = ptr.To(grovecorev1alpha1.CliqueStartupTypeExplicit)
-				pcs.Spec.Template.Cliques = append(pcs.Spec.Template.Cliques, createDummyPodCliqueTemplate("clique2"))
+				pcs.Spec.Template.Cliques = append(pcs.Spec.Template.Cliques, createPodCliqueTemplate("clique2"))
 				pcs.Spec.Template.Cliques[0].Spec.StartsAfter = []string{}
 				pcs.Spec.Template.Cliques[1].Spec.StartsAfter = []string{"test", "another"}
 				return pcs
@@ -1559,7 +1567,7 @@ func TestValidatePCSResourceSharing(t *testing.T) {
 			pcs := createTestPodCliqueSet("my-pcs")
 			pcs.Spec.Template.Cliques = nil
 			for _, name := range tc.cliqueNames {
-				pcs.Spec.Template.Cliques = append(pcs.Spec.Template.Cliques, createDummyPodCliqueTemplate(name))
+				pcs.Spec.Template.Cliques = append(pcs.Spec.Template.Cliques, createPodCliqueTemplate(name))
 			}
 			pcs.Spec.Template.PodCliqueScalingGroupConfigs = tc.groupConfigs
 			pcs.Spec.Template.ResourceSharing = tc.refs
@@ -1623,7 +1631,7 @@ func TestValidatePCSGResourceSharing(t *testing.T) {
 			pcs.Spec.Template.ResourceClaimTemplates = tc.templates
 			// Add cliques referenced by the PCSG
 			for _, cn := range tc.cfg.CliqueNames {
-				pcs.Spec.Template.Cliques = append(pcs.Spec.Template.Cliques, createDummyPodCliqueTemplate(cn))
+				pcs.Spec.Template.Cliques = append(pcs.Spec.Template.Cliques, createPodCliqueTemplate(cn))
 			}
 
 			validator := newPCSValidator(pcs, admissionv1.Create, defaultTASConfig(), groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube)}, nil, testutils.NewDefaultFakeRegistry())
@@ -1661,7 +1669,9 @@ func TestValidateTopologyConstraintsPCSTopologyName(t *testing.T) {
 				pcs := createTestPodCliqueSet("pcs-topology-create")
 				pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
 					TopologyName: "topo-a",
-					PackDomain:   grovecorev1alpha1.TopologyDomainHost,
+					Pack: &grovecorev1alpha1.TopologyPackConstraint{
+						RequiredDomain: grovecorev1alpha1.TopologyDomainHost,
+					},
 				}
 				return pcs
 			},
@@ -1674,11 +1684,15 @@ func TestValidateTopologyConstraintsPCSTopologyName(t *testing.T) {
 				pcs := createTestPodCliqueSet("pcs-child-topology-match")
 				pcs.Spec.Template.TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
 					TopologyName: "topo-a",
-					PackDomain:   grovecorev1alpha1.TopologyDomainZone,
+					Pack: &grovecorev1alpha1.TopologyPackConstraint{
+						RequiredDomain: grovecorev1alpha1.TopologyDomainZone,
+					},
 				}
 				pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
 					TopologyName: "topo-a",
-					PackDomain:   grovecorev1alpha1.TopologyDomainHost,
+					Pack: &grovecorev1alpha1.TopologyPackConstraint{
+						RequiredDomain: grovecorev1alpha1.TopologyDomainHost,
+					},
 				}
 				return pcs
 			},
@@ -1691,11 +1705,15 @@ func TestValidateTopologyConstraintsPCSTopologyName(t *testing.T) {
 				pcs := createTestPodCliqueSet("pcs-child-topology-mismatch")
 				pcs.Spec.Template.TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
 					TopologyName: "topo-a",
-					PackDomain:   grovecorev1alpha1.TopologyDomainZone,
+					Pack: &grovecorev1alpha1.TopologyPackConstraint{
+						RequiredDomain: grovecorev1alpha1.TopologyDomainZone,
+					},
 				}
 				pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
 					TopologyName: "topo-b",
-					PackDomain:   grovecorev1alpha1.TopologyDomainHost,
+					Pack: &grovecorev1alpha1.TopologyPackConstraint{
+						RequiredDomain: grovecorev1alpha1.TopologyDomainHost,
+					},
 				}
 				return pcs
 			},
@@ -1718,6 +1736,32 @@ func TestValidateTopologyConstraintsPCSTopologyName(t *testing.T) {
 				pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
 					TopologyName: "topo-a",
 					PackDomain:   grovecorev1alpha1.TopologyDomainHost,
+				}
+				return pcs
+			},
+			clusterObjs: []client.Object{createTestClusterTopology()},
+		},
+		{
+			name:      "update repairs legacy child topologyName through PCS inheritance",
+			operation: admissionv1.Update,
+			setupOldPCS: func() *grovecorev1alpha1.PodCliqueSet {
+				pcs := createTestPodCliqueSet("pcs-repair-inherited-child")
+				pcs.Spec.Template.TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
+					PackDomain: grovecorev1alpha1.TopologyDomainZone,
+				}
+				pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
+					PackDomain: grovecorev1alpha1.TopologyDomainHost,
+				}
+				return pcs
+			},
+			setupNewPCS: func() *grovecorev1alpha1.PodCliqueSet {
+				pcs := createTestPodCliqueSet("pcs-repair-inherited-child")
+				pcs.Spec.Template.TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
+					TopologyName: "topo-a",
+					PackDomain:   grovecorev1alpha1.TopologyDomainZone,
+				}
+				pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
+					PackDomain: grovecorev1alpha1.TopologyDomainHost,
 				}
 				return pcs
 			},
@@ -1814,7 +1858,8 @@ func TestValidateTopologyConstraintsPCSTopologyName(t *testing.T) {
 			switch tc.operation {
 			case admissionv1.Create:
 				_, errs = validator.validate()
-				errs = append(errs, validator.validateTopologyConstraintsOnCreate(context.Background())...)
+				_, topologyErrs := validator.validateTopologyConstraintsOnCreate(context.Background())
+				errs = append(errs, topologyErrs...)
 				err = errs.ToAggregate()
 			case admissionv1.Update:
 				errs = validator.validatePodCliqueSetTemplateSpecUpdate(tc.setupOldPCS(), field.NewPath("spec").Child("template"))
@@ -1859,8 +1904,8 @@ func createTestPodCliqueSet(name string) *grovecorev1alpha1.PodCliqueSet {
 		Build()
 }
 
-// createDummyPodCliqueTemplate creates a basic PodCliqueTemplateSpec for testing.
-func createDummyPodCliqueTemplate(name string) *grovecorev1alpha1.PodCliqueTemplateSpec {
+// createPodCliqueTemplate creates a basic PodCliqueTemplateSpec for testing.
+func createPodCliqueTemplate(name string) *grovecorev1alpha1.PodCliqueTemplateSpec {
 	return testutils.NewPodCliqueTemplateSpecBuilder(name).
 		WithReplicas(1).
 		WithRoleName(fmt.Sprintf("dummy-%s-role", name)).
@@ -1876,10 +1921,10 @@ func createScalingGroupConfig(name string, cliqueNames []string) grovecorev1alph
 	}
 }
 
-func createTestClusterTopology() *grovecorev1alpha1.ClusterTopology {
-	return &grovecorev1alpha1.ClusterTopology{
+func createTestClusterTopology() *grovecorev1alpha1.ClusterTopologyBinding {
+	return &grovecorev1alpha1.ClusterTopologyBinding{
 		ObjectMeta: metav1.ObjectMeta{Name: "topo-a"},
-		Spec: grovecorev1alpha1.ClusterTopologySpec{
+		Spec: grovecorev1alpha1.ClusterTopologyBindingSpec{
 			Levels: []grovecorev1alpha1.TopologyLevel{
 				{Domain: grovecorev1alpha1.TopologyDomainZone, Key: "topology.kubernetes.io/zone"},
 				{Domain: grovecorev1alpha1.TopologyDomainRack, Key: "topology.grove.io/rack"},
@@ -1887,4 +1932,111 @@ func createTestClusterTopology() *grovecorev1alpha1.ClusterTopology {
 			},
 		},
 	}
+}
+
+func TestValidateRollingUpdateConfiguration(t *testing.T) {
+	testCases := []struct {
+		description    string
+		updateStrategy grovecorev1alpha1.UpdateStrategyType
+		rollingUpdate  *grovecorev1alpha1.RollingUpdateConfiguration
+		replicas       int32
+		wantErrType    *field.ErrorType
+	}{
+		{
+			description:    "OnDelete rejects RollingUpdate when set",
+			updateStrategy: grovecorev1alpha1.OnDeleteStrategy,
+			rollingUpdate:  &grovecorev1alpha1.RollingUpdateConfiguration{MaxUnavailable: ptr.To[int32](1)},
+			wantErrType:    ptr.To(field.ErrorTypeForbidden),
+		},
+		{
+			description:    "OnDelete accepts nil RollingUpdate",
+			updateStrategy: grovecorev1alpha1.OnDeleteStrategy,
+			rollingUpdate:  nil,
+		},
+		{
+			description:    "nil RollingUpdate accepted under RollingRecreate",
+			updateStrategy: grovecorev1alpha1.RollingRecreateStrategy,
+			rollingUpdate:  nil,
+		},
+		{
+			description:    "MaxUnavailable zero rejected",
+			updateStrategy: grovecorev1alpha1.RollingRecreateStrategy,
+			rollingUpdate:  &grovecorev1alpha1.RollingUpdateConfiguration{MaxUnavailable: ptr.To[int32](0)},
+			wantErrType:    ptr.To(field.ErrorTypeInvalid),
+		},
+		{
+			description:    "MaxUnavailable negative rejected",
+			updateStrategy: grovecorev1alpha1.RollingRecreateStrategy,
+			rollingUpdate:  &grovecorev1alpha1.RollingUpdateConfiguration{MaxUnavailable: ptr.To[int32](-1)},
+			wantErrType:    ptr.To(field.ErrorTypeInvalid),
+		},
+		{
+			description:    "ProgressDeadline zero rejected",
+			updateStrategy: grovecorev1alpha1.RollingRecreateStrategy,
+			rollingUpdate:  &grovecorev1alpha1.RollingUpdateConfiguration{ProgressDeadline: &metav1.Duration{Duration: 0}},
+			wantErrType:    ptr.To(field.ErrorTypeInvalid),
+		},
+		{
+			description:    "ProgressDeadline negative rejected",
+			updateStrategy: grovecorev1alpha1.RollingRecreateStrategy,
+			rollingUpdate:  &grovecorev1alpha1.RollingUpdateConfiguration{ProgressDeadline: &metav1.Duration{Duration: -time.Minute}},
+			wantErrType:    ptr.To(field.ErrorTypeInvalid),
+		},
+		{
+			description:    "valid MaxUnavailable and ProgressDeadline accepted",
+			updateStrategy: grovecorev1alpha1.RollingRecreateStrategy,
+			rollingUpdate:  &grovecorev1alpha1.RollingUpdateConfiguration{MaxUnavailable: ptr.To[int32](2), ProgressDeadline: &metav1.Duration{Duration: 5 * time.Minute}},
+			replicas:       3,
+		},
+		{
+			description:    "MaxUnavailable greater than replicas rejected",
+			updateStrategy: grovecorev1alpha1.RollingRecreateStrategy,
+			rollingUpdate:  &grovecorev1alpha1.RollingUpdateConfiguration{MaxUnavailable: ptr.To[int32](5)},
+			replicas:       3,
+			wantErrType:    ptr.To(field.ErrorTypeInvalid),
+		},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.description, func(t *testing.T) {
+			pcs := &grovecorev1alpha1.PodCliqueSet{
+				Spec: grovecorev1alpha1.PodCliqueSetSpec{
+					UpdateStrategy: &grovecorev1alpha1.PodCliqueSetUpdateStrategy{Type: tc.updateStrategy},
+				},
+			}
+			v := &pcsValidator{pcs: pcs}
+			errs := v.validateRollingUpdateConfiguration(tc.rollingUpdate, tc.replicas, field.NewPath("spec", "template", "cliques").Index(0).Child("rollingUpdate"))
+			if tc.wantErrType == nil {
+				assert.Empty(t, errs)
+				return
+			}
+			require.Len(t, errs, 1)
+			assert.Equal(t, *tc.wantErrType, errs[0].Type)
+		})
+	}
+}
+
+func TestValidateRollingUpdateOnPCSGMemberRejected(t *testing.T) {
+	pcs := createTestPodCliqueSet("inference")
+	member := createPodCliqueTemplate("member")
+	member.RollingUpdate = &grovecorev1alpha1.RollingUpdateConfiguration{MaxUnavailable: ptr.To[int32](1)}
+	pcs.Spec.Template.Cliques = append(pcs.Spec.Template.Cliques, member)
+	pcs.Spec.Template.PodCliqueScalingGroupConfigs = []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+		{Name: "sg", CliqueNames: []string{"member"}, Replicas: ptr.To[int32](1), MinAvailable: ptr.To[int32](1)},
+	}
+
+	validator := newPCSValidator(pcs, admissionv1.Create, defaultTASConfig(),
+		groveconfigv1alpha1.SchedulerConfiguration{
+			Profiles:           []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube}},
+			DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube),
+		}, nil, testutils.NewDefaultFakeRegistry())
+	_, errs := validator.validate()
+
+	found := false
+	for _, err := range errs {
+		if err.Type == field.ErrorTypeForbidden && strings.Contains(err.Field, "rollingUpdate") {
+			found = true
+			break
+		}
+	}
+	assert.True(t, found, "expected a Forbidden error on a PCSG-member clique's rollingUpdate, got: %v", errs)
 }

@@ -1,4 +1,3 @@
-// /*
 // Copyright 2025 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,7 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package utils
 
@@ -111,6 +109,12 @@ func (b *PodBuilder) WithCondition(cond corev1.PodCondition) *PodBuilder {
 // WithPhase adds a pod phase to the Pod's status.
 func (b *PodBuilder) WithPhase(phase corev1.PodPhase) *PodBuilder {
 	b.pod.Status.Phase = phase
+	return b
+}
+
+// WithSchedulingGate adds a scheduling gate with the given name to the Pod.
+func (b *PodBuilder) WithSchedulingGate(name string) *PodBuilder {
+	b.pod.Spec.SchedulingGates = append(b.pod.Spec.SchedulingGates, corev1.PodSchedulingGate{Name: name})
 	return b
 }
 

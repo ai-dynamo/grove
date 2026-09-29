@@ -12,7 +12,8 @@ spec:
   template:
     topologyConstraint:
       topologyName: grove-topology
-      packDomain: zone
+      pack:
+        required: zone
     cliques:
       - name: worker
         labels:

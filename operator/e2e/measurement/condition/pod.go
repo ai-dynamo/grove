@@ -1,4 +1,3 @@
-// /*
 // Copyright 2026 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,7 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package condition
 
@@ -134,4 +132,39 @@ func (c *PodsReadyCondition) Met(ctx context.Context) (bool, error) {
 // Progress returns a human-readable progress string.
 func (c *PodsReadyCondition) Progress(_ context.Context) string {
 	return fmt.Sprintf("%d/%d pods ready", c.lastReady, c.ExpectedCount)
+}
+
+// PodsScaledDownToCountCondition fires when the live pod count drops to ExpectedCount or
+// below. Intended for scale-down milestones where PodsCreatedCondition (≥-only)
+// would fire immediately because the starting count already exceeds the target.
+// Using ≤ rather than == makes the condition robust to a transient overshoot
+// during cascade-delete where two consecutive polls might skip the exact target.
+type PodsScaledDownToCountCondition struct {
+	Client        client.Client
+	Namespace     string
+	LabelSelector string
+	ExpectedCount int
+	lastCount     int
+	sel           parsedSelector
+}
+
+// Met returns true once the live pod count is ≤ ExpectedCount.
+func (c *PodsScaledDownToCountCondition) Met(ctx context.Context) (bool, error) {
+	if c.ExpectedCount < 0 {
+		return false, errors.New("expected count cannot be negative")
+	}
+
+	c.sel.init(c.LabelSelector)
+	pods, err := listPods(ctx, c.Client, c.Namespace, &c.sel)
+	if err != nil {
+		return false, err
+	}
+
+	c.lastCount = len(pods)
+	return c.lastCount <= c.ExpectedCount, nil
+}
+
+// Progress returns a human-readable progress string.
+func (c *PodsScaledDownToCountCondition) Progress(_ context.Context) string {
+	return fmt.Sprintf("%d pods (target ≤%d)", c.lastCount, c.ExpectedCount)
 }

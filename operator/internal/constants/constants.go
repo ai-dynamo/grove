@@ -1,4 +1,3 @@
-// /*
 // Copyright 2025 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,7 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package constants
 
@@ -29,6 +27,11 @@ const (
 	OperatorNamespaceFile = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
 	// ComponentSyncRetryInterval is a retry interval with which a reconcile request will be requeued.
 	ComponentSyncRetryInterval = 5 * time.Second
+	// PodCliqueStatusResyncInterval is how often a PodClique is re-reconciled after a successful
+	// status reconcile even without a watch event. A status field left stale by a lost update is
+	// recomputed from a fresh cache and corrected within this interval.
+	// See https://github.com/ai-dynamo/grove/issues/775 for the analysis.
+	PodCliqueStatusResyncInterval = 3 * time.Minute
 	// EnvVarServiceAccountName is the name of the environment variable that stores the serviceAccountName of the operator pod.
 	EnvVarServiceAccountName = "GROVE_OPERATOR_SERVICE_ACCOUNT_NAME"
 )
@@ -102,7 +105,7 @@ const (
 	ReasonPodCliqueSetReplicaDeleteFailed = "PodCliqueSetReplicaDeleteFailed"
 )
 
-// constants for ClusterTopology lifecycle events
+// constants for ClusterTopologyBinding lifecycle events
 const (
 	// ReasonTopologyInSync is an event reason when all scheduler backend topologies return to in-sync.
 	ReasonTopologyInSync = "TopologyInSync"

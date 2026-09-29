@@ -8,7 +8,6 @@ This directory contains utility scripts for Grove operator development and testi
 hack/
 ├── infra-manager.py          # Primary CLI for cluster infrastructure management
 ├── config-cluster.py         # Declarative cluster configuration (fake GPU, MNNVL)
-├── requirements.txt          # Python dependencies
 ├── infra_manager/            # Python package with modular cluster management
 │   ├── __init__.py
 │   ├── cluster.py            # k3d cluster operations
@@ -41,11 +40,25 @@ Unified CLI for Grove infrastructure management. Delegates to the `infra_manager
 
 **Installation:**
 
+Python dependencies are declared in `operator/pyproject.toml` and locked in
+`operator/uv.lock`. The Python version is pinned in `operator/.python-version`
+(currently 3.12) — `uv` will download a managed interpreter automatically.
+
 ```bash
-pip3 install -r hack/requirements.txt
+# Install uv (one-time setup, if not already installed)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# From operator/, create .venv and install the locked dependencies. uv reads
+# .python-version and downloads the matching CPython if it isn't already cached.
+cd operator
+uv sync --locked
 ```
 
 **Usage:**
+
+The hack scripts use a `#!/usr/bin/env -S uv run` shebang, so direct invocation
+auto-resolves the project venv. The first invocation will trigger `uv sync` if
+the venv doesn't exist yet.
 
 ```bash
 # Full e2e setup (default preset)
@@ -114,7 +127,7 @@ All configuration can be overridden via `E2E_*` environment variables (used by `
 - `E2E_LB_PORT` - Load balancer port mapping (default: `8090:80`)
 - `E2E_WORKER_NODES` - Number of worker nodes (default: `30`)
 - `E2E_WORKER_MEMORY` - Memory per worker node (default: `150m`)
-- `E2E_K3S_IMAGE` - K3s container image (default: `rancher/k3s:v1.34.2-k3s1`)
+- `E2E_K3S_IMAGE` - K3s container image (default: `rancher/k3s:v1.35.5-k3s1`)
 - `E2E_MAX_RETRIES` - Max retries for cluster operations (default: `3`)
 
 **Components (ComponentConfig):**

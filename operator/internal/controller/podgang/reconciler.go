@@ -1,4 +1,3 @@
-// /*
 // Copyright 2025 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,7 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package podgang
 
@@ -76,11 +74,6 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 
 	logger := log.FromContext(ctx).WithValues("scheduler", backend.Name(), "podGang", req.NamespacedName)
 	if !podGang.DeletionTimestamp.IsZero() {
-		logger.Info("PodGang is being deleted")
-		if err := backend.OnPodGangDelete(ctx, podGang); err != nil {
-			logger.Error(err, "Failed to delete scheduler backend resources on-delete of PodGang")
-			return ctrl.Result{}, err
-		}
 		return ctrl.Result{}, nil
 	}
 

@@ -1,4 +1,3 @@
-// /*
 // Copyright 2025 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,7 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package podclique
 
@@ -110,15 +108,16 @@ func TestGetExistingResourceNames(t *testing.T) {
 			pcs := pcsBuilder.Build()
 			// Create existing objects
 			existingObjects := createExistingPodCliquesFromPCS(pcs, tc.podCliqueNamesNotOwnedByPCS)
-			// Create a fake client with PodCliques
-			cl := testutils.CreateFakeClientForObjectsMatchingLabels(nil, tc.listErr, pcs.Namespace, grovecorev1alpha1.SchemeGroupVersion.WithKind("PodClique"), getPodCliqueSelectorLabels(pcs.ObjectMeta), existingObjects...)
+			// Create a fake client with PodCliques. The list-error record is keyed by the list object's
+			// GVK (PodCliqueList), which is what the typed PodCliqueList List call resolves to.
+			cl := testutils.CreateFakeClientForObjectsMatchingLabels(nil, tc.listErr, pcs.Namespace, grovecorev1alpha1.SchemeGroupVersion.WithKind("PodCliqueList"), getPodCliqueSelectorLabels(pcs.ObjectMeta), existingObjects...)
 			operator := New(cl, groveclientscheme.Scheme, record.NewFakeRecorder(10))
 			actualPCLQNames, err := operator.GetExistingResourceNames(context.Background(), logr.Discard(), pcs.ObjectMeta)
 			if tc.expectedErr == nil {
 				assert.NoError(t, err)
 				assert.ElementsMatch(t, tc.expectedPodCliqueNames, actualPCLQNames)
 			} else {
-				testutils.CheckGroveError(t, tc.expectedErr, err)
+				testutils.AssertGroveError(t, tc.expectedErr, err)
 			}
 		})
 	}
@@ -168,7 +167,7 @@ func TestDelete(t *testing.T) {
 			operator := New(cl, groveclientscheme.Scheme, record.NewFakeRecorder(10))
 			err := operator.Delete(context.Background(), logr.Discard(), pcsObjMeta)
 			if tc.expectedError != nil {
-				testutils.CheckGroveError(t, tc.expectedError, err)
+				testutils.AssertGroveError(t, tc.expectedError, err)
 			} else {
 				assert.NoError(t, err)
 				podCliquesPostDelete := getExistingPodCliques(t, cl, pcsObjMeta)
@@ -458,7 +457,13 @@ func TestBuildResource_MNNVLInjection(t *testing.T) {
 				eventRecorder: record.NewFakeRecorder(10),
 			}
 
-			err := operator.buildResource(logr.Discard(), pclq, pcs, pcsReplica, false)
+			// A standalone PodClique belongs to the anchor entry, so buildResource resolves its PodGang
+			// name from the anchor entry's epoch.
+			pgm := testutils.NewPodGangMapBuilder(testPCSName, testPCSNamespace, uuid.NewUUID(), pcsReplica).WithEntries(
+				testutils.NewPodGangEntryBuilder("hash", "1000").
+					WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).WithAnchorIndex(0).Build(),
+			).Build()
+			err := operator.buildResource(logr.Discard(), pcs, pcsReplica, false, pgm, pclq)
 			require.NoError(t, err)
 
 			// Verify pod-level claims
@@ -512,7 +517,13 @@ func TestBuildResource_StripsTopologyAnnotation(t *testing.T) {
 	}
 
 	operator := &_resource{scheme: groveclientscheme.Scheme}
-	err := operator.buildResource(logr.Discard(), pclq, pcs, 0, false)
+	// A standalone PodClique belongs to the anchor entry, so buildResource resolves its PodGang name
+	// from the anchor entry's epoch.
+	pgm := testutils.NewPodGangMapBuilder(testPCSName, testPCSNamespace, uuid.NewUUID(), 0).WithEntries(
+		testutils.NewPodGangEntryBuilder("hash", "1000").
+			WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).WithAnchorIndex(0).Build(),
+	).Build()
+	err := operator.buildResource(logr.Discard(), pcs, 0, false, pgm, pclq)
 	require.NoError(t, err)
 	require.NotNil(t, pclq.Annotations)
 	assert.Equal(t, "yes", pclq.Annotations["example.com/keep"])

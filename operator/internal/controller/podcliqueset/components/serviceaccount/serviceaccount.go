@@ -1,4 +1,3 @@
-// /*
 // Copyright 2025 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,7 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package serviceaccount
 
@@ -60,9 +58,8 @@ func New(client client.Client, scheme *runtime.Scheme) component.Operator[v1alph
 func (r _resource) GetExistingResourceNames(ctx context.Context, _ logr.Logger, pcsObjMeta metav1.ObjectMeta) ([]string, error) {
 	saNames := make([]string, 0, 1)
 	objectKey := getObjectKey(pcsObjMeta)
-	objMeta := &metav1.PartialObjectMetadata{}
-	objMeta.SetGroupVersionKind(corev1.SchemeGroupVersion.WithKind("ServiceAccount"))
-	if err := r.client.Get(ctx, objectKey, objMeta); err != nil {
+	sa := &corev1.ServiceAccount{}
+	if err := r.client.Get(ctx, objectKey, sa); err != nil {
 		if errors.IsNotFound(err) {
 			return saNames, nil
 		}
@@ -72,8 +69,8 @@ func (r _resource) GetExistingResourceNames(ctx context.Context, _ logr.Logger, 
 			fmt.Sprintf("Error getting ServiceAccount: %v for PodCliqueSet: %v", objectKey, k8sutils.GetObjectKeyFromObjectMeta(pcsObjMeta)),
 		)
 	}
-	if metav1.IsControlledBy(objMeta, &pcsObjMeta) {
-		saNames = append(saNames, objMeta.Name)
+	if metav1.IsControlledBy(sa, &pcsObjMeta) {
+		saNames = append(saNames, sa.Name)
 	}
 	return saNames, nil
 }
@@ -84,7 +81,7 @@ func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *v1alpha1.P
 	sa := emptyServiceAccount(objectKey)
 
 	logger.Info("Running CreateOrUpdate ServiceAccount", "objectKey", objectKey)
-	opResult, err := controllerutil.CreateOrPatch(ctx, r.client, sa, func() error {
+	opResult, err := k8sutils.CreateOrPatchSpec(ctx, r.client, sa, func() error {
 		return r.buildResource(pcs, sa)
 	})
 	if err != nil {

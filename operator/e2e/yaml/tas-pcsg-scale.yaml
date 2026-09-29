@@ -12,14 +12,16 @@ spec:
   template:
     topologyConstraint:
       topologyName: grove-topology
-      packDomain: block
+      pack:
+        required: block
     podCliqueScalingGroups:
       - name: inference-group
         replicas: 3
         minAvailable: 1
         topologyConstraint:
           topologyName: grove-topology
-          packDomain: rack
+          pack:
+            required: rack
         cliqueNames:
           - worker
     cliques:

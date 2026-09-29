@@ -1,6 +1,5 @@
 //go:build e2e
 
-// /*
 // Copyright 2025 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,7 +13,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package tests
 
@@ -22,7 +20,11 @@ import (
 	"context"
 	"testing"
 
+	"github.com/ai-dynamo/grove/operator/e2e/grove/podgang"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
+	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 )
 
 // Test_GS1_GangSchedulingWithFullReplicas tests gang-scheduling behavior with insufficient resources
@@ -63,12 +65,37 @@ func Test_GS1_GangSchedulingWithFullReplicas(t *testing.T) {
 		t.Fatalf("Failed to verify all pods have Unschedulable events: %v", err)
 	}
 
-	Logger.Info("4. Uncordon the node and verify all pods get scheduled")
+	verifier := podgang.NewVerifier(tc.Client, Logger)
+	pcsNsName := types.NamespacedName{Namespace: tc.Namespace, Name: "workload1"}
+
+	Logger.Info("4. While pods are pending, verify PodGang conditions Initialized=True, Scheduled=False, Ready=False with timestamps unset")
+	if err := podgang.WaitUntilVerified(ctx, verifier, pcsNsName, tc.Timeout, tc.Interval,
+		podgang.ConditionStatusCheckFn(groveschedulerv1alpha1.PodGangConditionTypeInitialized, metav1.ConditionTrue),
+		podgang.ConditionStatusCheckFn(groveschedulerv1alpha1.PodGangConditionTypeScheduled, metav1.ConditionFalse),
+		podgang.ConditionStatusCheckFn(groveschedulerv1alpha1.PodGangConditionTypeReady, metav1.ConditionFalse),
+		podgang.LastScheduledSetCheckFn(false),
+		podgang.LastReadySetCheckFn(false),
+	); err != nil {
+		t.Fatalf("%v", err)
+	}
+
+	Logger.Info("5. Uncordon the node and verify all pods get scheduled")
 	tc.UncordonNodesAndWaitForPods([]string{workerNodeToCordon}, expectedPods)
 
 	// Verify that each pod is scheduled on a unique node, worker nodes have 150m memory
 	// and workload pods requests 80m memory, so only 1 should fit per node
+	Logger.Info("6. Verify that each pod is scheduled on a unique node")
 	tc.ListPodsAndAssertDistinctNodes()
+
+	Logger.Info("7. Once scheduled, verify PodGang conditions Scheduled=True, Ready=True with timestamps set")
+	if err := podgang.WaitUntilVerified(ctx, verifier, pcsNsName, tc.Timeout, tc.Interval,
+		podgang.ConditionStatusCheckFn(groveschedulerv1alpha1.PodGangConditionTypeScheduled, metav1.ConditionTrue),
+		podgang.ConditionStatusCheckFn(groveschedulerv1alpha1.PodGangConditionTypeReady, metav1.ConditionTrue),
+		podgang.LastScheduledSetCheckFn(true),
+		podgang.LastReadySetCheckFn(true),
+	); err != nil {
+		t.Fatalf("%v", err)
+	}
 
 	Logger.Info("🎉 Gang-scheduling With Full Replicas test completed successfully!")
 }

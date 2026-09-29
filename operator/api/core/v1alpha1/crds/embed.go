@@ -1,4 +1,3 @@
-// /*
 // Copyright 2025 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,7 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package crds
 
@@ -23,10 +21,12 @@ var (
 	podCliqueCRD string
 	//go:embed grove.io_podcliquesets.yaml
 	podCliqueSetCRD string
-	//go:embed grove.io_clustertopologies.yaml
+	//go:embed grove.io_clustertopologybindings.yaml
 	clusterTopologyCRD string
 	//go:embed grove.io_podcliquescalinggroups.yaml
 	podCliqueScalingGroupCRD string
+	//go:embed grove.io_podgangmaps.yaml
+	podGangMapCRD string
 )
 
 // PodCliqueCRD returns the PodClique CRD
@@ -39,7 +39,7 @@ func PodCliqueSetCRD() string {
 	return podCliqueSetCRD
 }
 
-// ClusterTopologyCRD returns the ClusterTopology CRD
+// ClusterTopologyCRD returns the ClusterTopologyBinding CRD
 func ClusterTopologyCRD() string {
 	return clusterTopologyCRD
 }
@@ -47,4 +47,9 @@ func ClusterTopologyCRD() string {
 // PodCliqueScalingGroupCRD returns the PodCliqueScalingGroup CRD
 func PodCliqueScalingGroupCRD() string {
 	return podCliqueScalingGroupCRD
+}
+
+// PodGangMapCRD returns the PodGangMap CRD
+func PodGangMapCRD() string {
+	return podGangMapCRD
 }

@@ -1,0 +1,94 @@
+# Workload: Preferred Topology Pack Constraints
+# Test scenario: PCS required+preferred, PCSG preferred-only, standalone PCLQ preferred-only
+---
+apiVersion: grove.io/v1alpha1
+kind: PodCliqueSet
+metadata:
+  name: tas-preferred-pack
+  labels:
+    app: tas-preferred-pack
+spec:
+  replicas: 1
+  template:
+    topologyConstraint:
+      topologyName: grove-topology
+      pack:
+        required: block
+        preferred: rack
+    podCliqueScalingGroups:
+      - name: workers
+        replicas: 2
+        minAvailable: 1
+        topologyConstraint:
+          topologyName: grove-topology
+          pack:
+            preferred: host
+        cliqueNames:
+          - worker
+    cliques:
+      - name: worker
+        labels:
+          kai.scheduler/queue: test
+        spec:
+          roleName: worker
+          replicas: 1
+          minAvailable: 1
+          podSpec:
+            terminationGracePeriodSeconds: 5
+            schedulerName: kai-scheduler
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: node_role.e2e.grove.nvidia.com
+                          operator: In
+                          values:
+                            - agent
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: worker
+                image: registry:5001/busybox:latest
+                command: ["sleep", "infinity"]
+                resources:
+                  requests:
+                    memory: 10Mi
+      - name: router
+        labels:
+          kai.scheduler/queue: test
+        topologyConstraint:
+          topologyName: grove-topology
+          pack:
+            preferred: host
+        spec:
+          roleName: router
+          replicas: 1
+          minAvailable: 1
+          podSpec:
+            terminationGracePeriodSeconds: 5
+            schedulerName: kai-scheduler
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: node_role.e2e.grove.nvidia.com
+                          operator: In
+                          values:
+                            - agent
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: router
+                image: registry:5001/busybox:latest
+                command: ["sleep", "infinity"]
+                resources:
+                  requests:
+                    memory: 10Mi

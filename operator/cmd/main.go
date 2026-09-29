@@ -1,4 +1,3 @@
-// /*
 // Copyright 2024 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,7 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package main
 
@@ -31,6 +29,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/controller/cert"
 	grovelogger "github.com/ai-dynamo/grove/operator/internal/logger"
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
+	"github.com/ai-dynamo/grove/operator/internal/podgangmigrator"
 	schedulerregistry "github.com/ai-dynamo/grove/operator/internal/scheduler/registry"
 	groveversion "github.com/ai-dynamo/grove/operator/internal/version"
 
@@ -90,6 +89,7 @@ func main() {
 
 	// Initialize scheduler backends with the configured schedulers.
 	schedRegistry, err := schedulerregistry.New(
+		mgr.GetClient(),
 		cl,
 		mgr.GetScheme(),
 		mgr.GetEventRecorderFor("scheduler-backend"),
@@ -100,11 +100,18 @@ func main() {
 		handleErrorAndExit(err, cli.ExitErrInitializeSchedulerBackend)
 	}
 
-	// Synchronize backend topologies for all existing ClusterTopology resources.
-	// This must be done before starting the controllers that may depend on the ClusterTopology resource.
+	// Synchronize backend topologies for all existing ClusterTopologyBinding resources.
+	// This must be done before starting the controllers that may depend on the ClusterTopologyBinding resource.
 	if err = clustertopology.SynchronizeTopology(ctx, cl, logger, schedRegistry.AllTopologyAware()); err != nil {
 		logger.Error(err, "failed to synchronize cluster topology")
 		handleErrorAndExit(err, cli.ExitErrSynchronizeTopology)
+	}
+
+	// Close the PodGang migration gate on legacy PodCliqueSets before the controllers start, so that
+	// scaling reconcilers do not race the in-reconcile migration to the epoch-based PodGang scheme.
+	if err = podgangmigrator.SetMigrationGateForLegacyPodCliqueSets(ctx, cl, logger); err != nil {
+		logger.Error(err, "failed to set the PodGang migration gate on legacy PodCliqueSets")
+		handleErrorAndExit(err, cli.ExitErrSetPodGangMigrationGate)
 	}
 
 	webhookCertsReadyCh := make(chan struct{})

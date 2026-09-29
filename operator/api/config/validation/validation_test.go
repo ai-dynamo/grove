@@ -1,4 +1,3 @@
-// /*
 // Copyright 2025 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,7 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package validation
 
@@ -239,8 +237,32 @@ func TestValidateSchedulerConfiguration(t *testing.T) {
 				Profiles: []configv1alpha1.SchedulerProfile{
 					{Name: configv1alpha1.SchedulerNameKube},
 					{Name: configv1alpha1.SchedulerNameKai},
+					{Name: configv1alpha1.SchedulerNameLPX},
 				},
 				DefaultProfileName: string(configv1alpha1.SchedulerNameKube),
+			},
+			expectErrors: 0,
+		},
+		{
+			name: "valid: lpx enabled without kai",
+			scheduler: &configv1alpha1.SchedulerConfiguration{
+				Profiles: []configv1alpha1.SchedulerProfile{
+					{Name: configv1alpha1.SchedulerNameKube},
+					{Name: configv1alpha1.SchedulerNameLPX},
+				},
+				DefaultProfileName: string(configv1alpha1.SchedulerNameLPX),
+			},
+			expectErrors: 0,
+		},
+		{
+			name: "valid: lpx enabled with kai",
+			scheduler: &configv1alpha1.SchedulerConfiguration{
+				Profiles: []configv1alpha1.SchedulerProfile{
+					{Name: configv1alpha1.SchedulerNameKube},
+					{Name: configv1alpha1.SchedulerNameKai},
+					{Name: configv1alpha1.SchedulerNameLPX},
+				},
+				DefaultProfileName: string(configv1alpha1.SchedulerNameKai),
 			},
 			expectErrors: 0,
 		},
@@ -253,6 +275,17 @@ func TestValidateSchedulerConfiguration(t *testing.T) {
 					{Name: configv1alpha1.SchedulerNameKai},
 				},
 				DefaultProfileName: string(configv1alpha1.SchedulerNameKai),
+			},
+			expectErrors: 0,
+		},
+		{
+			name: "valid: volcano and kube profiles with volcano default",
+			scheduler: &configv1alpha1.SchedulerConfiguration{
+				Profiles: []configv1alpha1.SchedulerProfile{
+					{Name: configv1alpha1.SchedulerNameVolcano},
+					{Name: configv1alpha1.SchedulerNameKube},
+				},
+				DefaultProfileName: string(configv1alpha1.SchedulerNameVolcano),
 			},
 			expectErrors: 0,
 		},
@@ -313,13 +346,14 @@ func TestValidateSchedulerConfiguration(t *testing.T) {
 			name: "invalid: unsupported profile name",
 			scheduler: &configv1alpha1.SchedulerConfiguration{
 				Profiles: []configv1alpha1.SchedulerProfile{
-					{Name: configv1alpha1.SchedulerName("volcano")},
+					{Name: configv1alpha1.SchedulerName("unknown-scheduler")},
+					{Name: configv1alpha1.SchedulerNameKube},
 				},
-				DefaultProfileName: "volcano",
+				DefaultProfileName: "unknown-scheduler",
 			},
-			expectErrors:   3,
-			expectedFields: []string{"scheduler.profiles[0].name", "scheduler.profiles", "scheduler.defaultProfileName"},
-			expectedTypes:  []field.ErrorType{field.ErrorTypeNotSupported, field.ErrorTypeRequired, field.ErrorTypeInvalid},
+			expectErrors:   2,
+			expectedFields: []string{"scheduler.profiles[0].name", "scheduler.defaultProfileName"},
+			expectedTypes:  []field.ErrorType{field.ErrorTypeNotSupported, field.ErrorTypeInvalid},
 		},
 		// duplicate profile names
 		{

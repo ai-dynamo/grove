@@ -1,4 +1,3 @@
-// /*
 // Copyright 2025 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,7 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package constants
 
@@ -47,8 +45,13 @@ const (
 	// AnnotationDisableManagedResourceProtection is an annotation set by an operator on a PodCliqueSet to explicitly
 	// disable protection of managed resources for a PodCliqueSet.
 	AnnotationDisableManagedResourceProtection = "grove.io/disable-managed-resource-protection"
+	// AnnotationReconcileTrigger is an annotation set on a PodCliqueSet to explicitly trigger a reconcile without changing its spec.
+	AnnotationReconcileTrigger = "grove.io/reconcile-trigger"
 	// AnnotationTopologyName is an annotation set on PodGang to allow KAI scheduler to discover which topology to use.
 	AnnotationTopologyName = "grove.io/topology-name"
+	// AnnotationPodCliqueScalingGroupPodIndexOffset stores the first group-wide pod index assigned to a PodClique.
+	// It is internal coordination state between Grove reconcilers and is not propagated to Pods.
+	AnnotationPodCliqueScalingGroupPodIndexOffset = "grove.io/podcliquescalinggroup-pod-index-offset"
 )
 
 // Constants for Grove environment variables
@@ -67,6 +70,8 @@ const (
 	EnvVarPodCliqueScalingGroupName = "GROVE_PCSG_NAME"
 	// EnvVarPodCliqueScalingGroupIndex is the environment variable name for PodCliqueScalingGroup replica index
 	EnvVarPodCliqueScalingGroupIndex = "GROVE_PCSG_INDEX"
+	// EnvVarPodCliqueScalingGroupPodIndex is the environment variable name for pod index within a PodCliqueScalingGroup replica
+	EnvVarPodCliqueScalingGroupPodIndex = "GROVE_PCSG_POD_INDEX"
 	// EnvVarPodCliqueScalingGroupTemplateNumPods is the environment variable name for total number of pods in PodCliqueScalingGroup template
 	EnvVarPodCliqueScalingGroupTemplateNumPods = "GROVE_PCSG_TEMPLATE_NUM_PODS"
 )
@@ -86,13 +91,13 @@ const (
 	EventDeleteError = "DeleteError"
 )
 
-// Constants for ClusterTopology Condition Types and Reasons.
+// Constants for ClusterTopologyBinding Condition Types and Reasons.
 const (
-	// ConditionSchedulerTopologyDrift is a condition on ClusterTopology indicating whether
-	// any scheduler backend topology resource has drifted from the ClusterTopology levels.
+	// ConditionSchedulerTopologyDrift is a condition on ClusterTopologyBinding indicating whether
+	// any scheduler backend topology resource has drifted from the ClusterTopologyBinding levels.
 	ConditionSchedulerTopologyDrift = "SchedulerTopologyDrift"
 
-	// ConditionReasonInSync is the reason when all scheduler backend topologies match the ClusterTopology levels.
+	// ConditionReasonInSync is the reason when all scheduler backend topologies match the ClusterTopologyBinding levels.
 	ConditionReasonInSync = "InSync"
 
 	// ConditionReasonDrift is the reason when a scheduler backend topology has drifted.
@@ -103,7 +108,7 @@ const (
 	ConditionReasonTopologyNotFound = "TopologyNotFound"
 
 	// ConditionReasonTopologyNameMissing is the reason when a PodCliqueSet has incomplete
-	// topology constraints or otherwise cannot resolve an explicit topology reference.
+	// topology constraints or otherwise cannot resolve one effective topology reference.
 	ConditionReasonTopologyNameMissing = "TopologyNameMissing"
 
 	// ConditionReasonTopologyAwareSchedulingDisabled is the reason when a PodCliqueSet has topology
@@ -118,9 +123,29 @@ const (
 	// ConditionTypePodCliqueScheduled indicates that the PodClique has been successfully scheduled.
 	// This condition is set to true when number of scheduled pods in the PodClique is greater than or equal to PodCliqueSpec.MinAvailable.
 	ConditionTypePodCliqueScheduled = "PodCliqueScheduled"
+	// ConditionTypeGangTerminationInProgress indicates that PCS-level gang termination has fired for this
+	// PodCliqueScalingGroup and is still in flight. It is set on the PCSG when the PCS-level handler deletes
+	// the PodCliques of the whole PCS replica, and is cleared when the PCSG's MinAvailableBreached transitions
+	// back to False (recovered). While it is True, further PCS-level gang termination for the PCS replica is
+	// suppressed — at most one fire per breach episode, regardless of how long the workload stays below
+	// MinAvailable. This is a PCS-level-only mechanism: the PCSG-replica-scoped recycle path does not use this
+	// flag and instead breaks its own re-fire loop via WasPCLQEverScheduled, since a freshly recreated
+	// PodClique has never been scheduled and is therefore excluded from the breached set.
+	// Its only Reason is ConditionReasonGangTerminationActive.
+	ConditionTypeGangTerminationInProgress = "GangTerminationInProgress"
 	// ConditionTopologyLevelsUnavailable indicates that the required topology levels defined on a PodCliqueSet for topology-aware scheduling are no longer available.
-	// This can happen when the ClusterTopology resource is modified which removes one or more levels required by the PodCliqueSet.
+	// This can happen when the ClusterTopologyBinding resource is modified which removes one or more levels required by the PodCliqueSet.
 	ConditionTopologyLevelsUnavailable = "TopologyLevelsUnavailable"
+	// ConditionTypePodGangMigrationInProgress indicates that a PodCliqueSet created under the legacy
+	// PodGang naming is being migrated to the epoch-based PodGang naming and PodGangMap scheme. It is
+	// set (before the controller manager starts) on every PodCliqueSet that still has legacy PodGangs,
+	// and cleared once every replica has migrated. While it is True the PodCliqueScalingGroup and
+	// PodClique reconcilers requeue without acting, so scaling does not interleave with the migration.
+	ConditionTypePodGangMigrationInProgress = "PodGangMigrationInProgress"
+	// ConditionTypeUpdateInProgress indicates whether a rolling update of the component is currently in progress.
+	// True means an update is progressing, False means no update is active, and Unknown means the update has not
+	// made progress within its configured ProgressDeadline and warrants operator inspection.
+	ConditionTypeUpdateInProgress = "UpdateInProgress"
 )
 
 // Constants for Condition Reasons.
@@ -133,8 +158,6 @@ const (
 	ConditionReasonInsufficientScheduledPods = "InsufficientScheduledPods"
 	// ConditionReasonSufficientScheduledPods indicates that the number of scheduled pods in the PodClique greater or equal to PodCliqueSpec.MinAvailable.
 	ConditionReasonSufficientScheduledPods = "SufficientScheduledPods"
-	// ConditionReasonInsufficientScheduledPCSGReplicas indicates that the number of scheduled replicas in the PodCliqueScalingGroup is below the PodCliqueScalingGroupSpec.MinAvailable.
-	ConditionReasonInsufficientScheduledPCSGReplicas = "InsufficientScheduledPodCliqueScalingGroupReplicas"
 	// ConditionReasonScheduledReplicasBelowMinAvailable indicates that scheduledReplicas is below MinAvailable but greater than zero.
 	ConditionReasonScheduledReplicasBelowMinAvailable = "ScheduledReplicasBelowMinAvailable"
 	// ConditionReasonInsufficientAvailablePCSGReplicas indicates that the number of ready replicas in the PodCliqueScalingGroup is below the PodCliqueScalingGroupSpec.MinAvailable.
@@ -143,13 +166,26 @@ const (
 	ConditionReasonSufficientAvailablePCSGReplicas = "SufficientAvailablePodCliqueScalingGroupReplicas"
 	// ConditionReasonUpdateInProgress indicates that the resource is undergoing rolling update.
 	ConditionReasonUpdateInProgress = "UpdateInProgress"
-	// ConditionReasonClusterTopologyNotFound indicates that the ClusterTopology resource required for topology-aware scheduling was not found.
+	// ConditionReasonGangTerminationActive is the (only) Reason paired with
+	// ConditionTypeGangTerminationInProgress=True. The Kubernetes condition API requires a
+	// non-empty Reason, and the flag has exactly one cause, so this Reason simply restates the
+	// Type in the CamelCase token form callers branch on. If a second cause for the flag is ever
+	// introduced, add a distinct Reason then.
+	ConditionReasonGangTerminationActive = "GangTerminationActive"
+	// ConditionReasonClusterTopologyNotFound indicates that the ClusterTopologyBinding resource required for topology-aware scheduling was not found.
 	ConditionReasonClusterTopologyNotFound = "ClusterTopologyNotFound"
+	// ConditionReasonProgressing indicates that a rolling update of the component is in progress and advancing.
+	ConditionReasonProgressing = "Progressing"
+	// ConditionReasonNoActiveUpdate indicates that no rolling update of the component is currently in progress.
+	ConditionReasonNoActiveUpdate = "NoActiveUpdate"
+	// ConditionReasonProgressDeadlineExceeded indicates that a rolling update has not made progress within its
+	// configured ProgressDeadline.
+	ConditionReasonProgressDeadlineExceeded = "ProgressDeadlineExceeded"
 	// ConditionReasonTopologyLevelsUnavailable indicates that the one or more required topology levels defined on a
-	// PodCliqueSet for topology-aware scheduling are no longer defined in the ClusterTopology resource.
+	// PodCliqueSet for topology-aware scheduling are no longer defined in the ClusterTopologyBinding resource.
 	ConditionReasonTopologyLevelsUnavailable = "ClusterTopologyLevelsUnavailable"
 	// ConditionReasonAllTopologyLevelsAvailable indicates that all required topology levels defined on a
-	// PodCliqueSet for topology-aware scheduling are defined in the ClusterTopology resource.
+	// PodCliqueSet for topology-aware scheduling are defined in the ClusterTopologyBinding resource.
 	ConditionReasonAllTopologyLevelsAvailable = "AllClusterTopologyLevelsAvailable"
 )
 
@@ -160,6 +196,8 @@ const (
 	KindPodClique = "PodClique"
 	// KindPodCliqueScalingGroup is the kind for a PodCliqueScalingGroup resource.
 	KindPodCliqueScalingGroup = "PodCliqueScalingGroup"
-	// KindClusterTopology is the kind for a ClusterTopology resource.
-	KindClusterTopology = "ClusterTopology"
+	// KindPodGangMap is the kind for a PodGangMap resource.
+	KindPodGangMap = "PodGangMap"
+	// KindClusterTopology is the kind for a ClusterTopologyBinding resource.
+	KindClusterTopology = "ClusterTopologyBinding"
 )

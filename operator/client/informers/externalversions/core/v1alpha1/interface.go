@@ -24,14 +24,16 @@ import (
 
 // Interface provides access to all the informers in this group version.
 type Interface interface {
-	// ClusterTopologies returns a ClusterTopologyInformer.
-	ClusterTopologies() ClusterTopologyInformer
+	// ClusterTopologyBindings returns a ClusterTopologyBindingInformer.
+	ClusterTopologyBindings() ClusterTopologyBindingInformer
 	// PodCliques returns a PodCliqueInformer.
 	PodCliques() PodCliqueInformer
 	// PodCliqueScalingGroups returns a PodCliqueScalingGroupInformer.
 	PodCliqueScalingGroups() PodCliqueScalingGroupInformer
 	// PodCliqueSets returns a PodCliqueSetInformer.
 	PodCliqueSets() PodCliqueSetInformer
+	// PodGangMaps returns a PodGangMapInformer.
+	PodGangMaps() PodGangMapInformer
 }
 
 type version struct {
@@ -45,9 +47,9 @@ func New(f internalinterfaces.SharedInformerFactory, namespace string, tweakList
 	return &version{factory: f, namespace: namespace, tweakListOptions: tweakListOptions}
 }
 
-// ClusterTopologies returns a ClusterTopologyInformer.
-func (v *version) ClusterTopologies() ClusterTopologyInformer {
-	return &clusterTopologyInformer{factory: v.factory, tweakListOptions: v.tweakListOptions}
+// ClusterTopologyBindings returns a ClusterTopologyBindingInformer.
+func (v *version) ClusterTopologyBindings() ClusterTopologyBindingInformer {
+	return &clusterTopologyBindingInformer{factory: v.factory, tweakListOptions: v.tweakListOptions}
 }
 
 // PodCliques returns a PodCliqueInformer.
@@ -63,4 +65,9 @@ func (v *version) PodCliqueScalingGroups() PodCliqueScalingGroupInformer {
 // PodCliqueSets returns a PodCliqueSetInformer.
 func (v *version) PodCliqueSets() PodCliqueSetInformer {
 	return &podCliqueSetInformer{factory: v.factory, namespace: v.namespace, tweakListOptions: v.tweakListOptions}
+}
+
+// PodGangMaps returns a PodGangMapInformer.
+func (v *version) PodGangMaps() PodGangMapInformer {
+	return &podGangMapInformer{factory: v.factory, namespace: v.namespace, tweakListOptions: v.tweakListOptions}
 }

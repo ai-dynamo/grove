@@ -1,4 +1,3 @@
-// /*
 // Copyright 2025 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,7 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package utils
 
@@ -163,6 +161,18 @@ func (b *PodCliqueSetBuilder) WithTopologyConstraint(constraint *grovecorev1alph
 // WithAnnotations sets the annotations for the PodCliqueSet.
 func (b *PodCliqueSetBuilder) WithAnnotations(annotations map[string]string) *PodCliqueSetBuilder {
 	b.pcs.Annotations = annotations
+	return b
+}
+
+// WithLabels sets the labels for the PodCliqueSet.
+func (b *PodCliqueSetBuilder) WithLabels(labels map[string]string) *PodCliqueSetBuilder {
+	b.pcs.Labels = labels
+	return b
+}
+
+// WithStatusConditions sets the status conditions on the PodCliqueSet.
+func (b *PodCliqueSetBuilder) WithStatusConditions(conditions ...metav1.Condition) *PodCliqueSetBuilder {
+	b.pcs.Status.Conditions = conditions
 	return b
 }
 

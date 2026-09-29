@@ -1,4 +1,3 @@
-// /*
 // Copyright 2026 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,7 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package validation
 
@@ -29,14 +27,14 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 )
 
-// Handler validates ClusterTopology resources.
+// Handler validates ClusterTopologyBinding resources.
 type Handler struct {
 	logger                logr.Logger
 	enabledBackends       map[string]struct{}
 	topologyAwareBackends map[string]struct{}
 }
 
-// NewHandler creates a new ClusterTopology validation handler.
+// NewHandler creates a new ClusterTopologyBinding validation handler.
 // The set of enabled / topology-aware backends is captured from schedRegistry at construction time,
 // matching the operator's startup-time backend initialization.
 func NewHandler(mgr manager.Manager, schedRegistry scheduler.Registry) *Handler {
@@ -55,7 +53,7 @@ func NewHandler(mgr manager.Manager, schedRegistry scheduler.Registry) *Handler 
 	}
 }
 
-// ValidateCreate validates a ClusterTopology create request.
+// ValidateCreate validates a ClusterTopologyBinding create request.
 func (h *Handler) ValidateCreate(ctx context.Context, obj runtime.Object) (admission.Warnings, error) {
 	h.logValidation(ctx)
 	ct, err := castToClusterTopology(obj)
@@ -66,7 +64,7 @@ func (h *Handler) ValidateCreate(ctx context.Context, obj runtime.Object) (admis
 	return nil, allErrs.ToAggregate()
 }
 
-// ValidateUpdate validates a ClusterTopology update request.
+// ValidateUpdate validates a ClusterTopologyBinding update request.
 // Only the new object's structural validity is checked here. Transition validation
 // (e.g., detecting removed levels referenced by PodCliqueSets) is handled by the
 // PCS reconciler via the TopologyLevelsUnavailable condition, not by this webhook.
@@ -80,16 +78,16 @@ func (h *Handler) ValidateUpdate(ctx context.Context, _, newObj runtime.Object) 
 	return nil, allErrs.ToAggregate()
 }
 
-// ValidateDelete validates a ClusterTopology delete request.
+// ValidateDelete validates a ClusterTopologyBinding delete request.
 func (h *Handler) ValidateDelete(_ context.Context, _ runtime.Object) (admission.Warnings, error) {
 	return nil, nil
 }
 
-// castToClusterTopology attempts to cast a runtime.Object to a ClusterTopology.
-func castToClusterTopology(obj runtime.Object) (*grovecorev1alpha1.ClusterTopology, error) {
-	ct, ok := obj.(*grovecorev1alpha1.ClusterTopology)
+// castToClusterTopology attempts to cast a runtime.Object to a ClusterTopologyBinding.
+func castToClusterTopology(obj runtime.Object) (*grovecorev1alpha1.ClusterTopologyBinding, error) {
+	ct, ok := obj.(*grovecorev1alpha1.ClusterTopologyBinding)
 	if !ok {
-		return nil, fmt.Errorf("expected a ClusterTopology object but got %T", obj)
+		return nil, fmt.Errorf("expected a ClusterTopologyBinding object but got %T", obj)
 	}
 	return ct, nil
 }
@@ -101,5 +99,5 @@ func (h *Handler) logValidation(ctx context.Context) {
 		h.logger.Error(err, "failed to get request from context")
 		return
 	}
-	h.logger.Info("ClusterTopology validation webhook invoked", "name", req.Name, "operation", req.Operation, "user", req.UserInfo.Username)
+	h.logger.Info("ClusterTopologyBinding validation webhook invoked", "name", req.Name, "operation", req.Operation, "user", req.UserInfo.Username)
 }

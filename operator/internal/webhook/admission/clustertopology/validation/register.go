@@ -1,4 +1,3 @@
-// /*
 // Copyright 2026 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,7 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package validation
 
@@ -24,7 +22,7 @@ import (
 )
 
 const (
-	// Name is the name of the validating webhook handler for ClusterTopology.
+	// Name is the name of the validating webhook handler for ClusterTopologyBinding.
 	Name        = "clustertopology-validating-webhook"
 	webhookPath = "/webhooks/validate-clustertopology"
 )
@@ -32,7 +30,7 @@ const (
 // RegisterWithManager registers the webhook with the manager.
 func (h *Handler) RegisterWithManager(mgr manager.Manager) error {
 	webhook := admission.
-		WithCustomValidator(mgr.GetScheme(), &grovecorev1alpha1.ClusterTopology{}, h).
+		WithCustomValidator(mgr.GetScheme(), &grovecorev1alpha1.ClusterTopologyBinding{}, h).
 		WithRecoverPanic(true)
 	mgr.GetWebhookServer().Register(webhookPath, webhook)
 	return nil

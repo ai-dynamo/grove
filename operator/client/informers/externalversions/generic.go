@@ -53,14 +53,16 @@ func (f *genericInformer) Lister() cache.GenericLister {
 func (f *sharedInformerFactory) ForResource(resource schema.GroupVersionResource) (GenericInformer, error) {
 	switch resource {
 	// Group=grove.io, Version=v1alpha1
-	case v1alpha1.SchemeGroupVersion.WithResource("clustertopologies"):
-		return &genericInformer{resource: resource.GroupResource(), informer: f.Grove().V1alpha1().ClusterTopologies().Informer()}, nil
+	case v1alpha1.SchemeGroupVersion.WithResource("clustertopologybindings"):
+		return &genericInformer{resource: resource.GroupResource(), informer: f.Grove().V1alpha1().ClusterTopologyBindings().Informer()}, nil
 	case v1alpha1.SchemeGroupVersion.WithResource("podcliques"):
 		return &genericInformer{resource: resource.GroupResource(), informer: f.Grove().V1alpha1().PodCliques().Informer()}, nil
 	case v1alpha1.SchemeGroupVersion.WithResource("podcliquescalinggroups"):
 		return &genericInformer{resource: resource.GroupResource(), informer: f.Grove().V1alpha1().PodCliqueScalingGroups().Informer()}, nil
 	case v1alpha1.SchemeGroupVersion.WithResource("podcliquesets"):
 		return &genericInformer{resource: resource.GroupResource(), informer: f.Grove().V1alpha1().PodCliqueSets().Informer()}, nil
+	case v1alpha1.SchemeGroupVersion.WithResource("podgangmaps"):
+		return &genericInformer{resource: resource.GroupResource(), informer: f.Grove().V1alpha1().PodGangMaps().Informer()}, nil
 
 	}
 

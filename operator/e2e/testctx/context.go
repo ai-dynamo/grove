@@ -1,6 +1,5 @@
 //go:build e2e
 
-// /*
 // Copyright 2026 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,7 +13,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package testctx
 
@@ -75,6 +73,8 @@ type TestContext struct {
 	Timeout   time.Duration
 	Interval  time.Duration
 	Workload  *WorkloadConfig
+
+	SkipCleanupWait bool
 }
 
 // TestOption configures a TestContext.
@@ -98,6 +98,12 @@ func WithInterval(d time.Duration) TestOption {
 // WithWorkload sets the workload configuration.
 func WithWorkload(wc *WorkloadConfig) TestOption {
 	return func(tc *TestContext) { tc.Workload = wc }
+}
+
+// WithSkipCleanupWait skips the post-test wait for Kubernetes cascade cleanup.
+// Use this only for tests that run in a disposable cluster.
+func WithSkipCleanupWait() TestOption {
+	return func(tc *TestContext) { tc.SkipCleanupWait = true }
 }
 
 // NewTestContext creates a TestContext from a K8s client with optional configuration.
@@ -139,11 +145,13 @@ func PrepareTest(ctx context.Context, t *testing.T, requiredWorkerNodes int, opt
 	diag := diagnostics.NewDiagCollector(k8sClient, tc.Namespace, diagMode, diagDir, Logger)
 
 	cleanup := func() {
+		ctx := context.WithoutCancel(ctx)
+
 		if t.Failed() {
 			diag.CollectAll(ctx, t.Name())
 		}
 
-		if err := sharedCluster.CleanupWorkloads(ctx); err != nil {
+		if err := sharedCluster.CleanupWorkloads(ctx, !tc.SkipCleanupWait); err != nil {
 			if Logger != nil {
 				Logger.Error("================================================================================")
 				Logger.Error("=== CLEANUP FAILURE - COLLECTING DIAGNOSTICS ===")
@@ -269,6 +277,11 @@ func (tc *TestContext) GetWorkerNodes() ([]string, error) {
 // ScalePCS scales a PodCliqueSet to the specified replica count.
 func (tc *TestContext) ScalePCS(name string, replicas int) error {
 	return tc.newWorkloadManager().ScalePCS(tc.Ctx, tc.Namespace, name, replicas)
+}
+
+// ScalePodClique scales a standalone PodClique to the specified replica count.
+func (tc *TestContext) ScalePodClique(name string, replicas int) error {
+	return tc.newWorkloadManager().ScalePodClique(tc.Ctx, tc.Namespace, name, replicas)
 }
 
 // ScalePCSG scales a PodCliqueScalingGroup to the specified replica count.
@@ -398,6 +411,21 @@ func (tc *TestContext) ScalePCSAndWait(pcsName string, replicas int32, expectedT
 	totalPods, runningPods, pendingPods, err := tc.WaitForPodConditions(expectedTotalPods, expectedPending)
 	if err != nil {
 		tc.T.Fatalf("Failed to wait for expected pod conditions after PCS scaling: %v. Final state: total=%d, running=%d, pending=%d (expected: total=%d, pending=%d)",
+			err, totalPods, runningPods, pendingPods, expectedTotalPods, expectedPending)
+	}
+}
+
+// ScalePodCliqueAndWait scales a standalone PodClique and waits for the expected pod conditions.
+func (tc *TestContext) ScalePodCliqueAndWait(pclqName string, replicas int32, expectedTotalPods, expectedPending int) {
+	tc.T.Helper()
+
+	if err := tc.ScalePodClique(pclqName, int(replicas)); err != nil {
+		tc.T.Fatalf("Failed to scale PodClique %s: %v", pclqName, err)
+	}
+
+	totalPods, runningPods, pendingPods, err := tc.WaitForPodConditions(expectedTotalPods, expectedPending)
+	if err != nil {
+		tc.T.Fatalf("Failed to wait for expected pod conditions after PodClique scaling: %v. Final state: total=%d, running=%d, pending=%d (expected: total=%d, pending=%d)",
 			err, totalPods, runningPods, pendingPods, expectedTotalPods, expectedPending)
 	}
 }

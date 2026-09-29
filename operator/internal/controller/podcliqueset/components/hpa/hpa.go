@@ -1,4 +1,3 @@
-// /*
 // Copyright 2025 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,7 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package hpa
 
@@ -213,7 +211,7 @@ func (r _resource) deleteExcessHPATasks(logger logr.Logger, pcs *grovecorev1alph
 func (r _resource) doCreateOrUpdateHPA(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, expectedHPAInfo hpaInfo) error {
 	logger.Info("Running CreateOrUpdate HPA", "targetScaleResourceKind", expectedHPAInfo.targetScaleResourceKind, "targetScaleResourceName", expectedHPAInfo.targetScaleResourceName, "hpaObjectKey", expectedHPAInfo.objectKey)
 	hpa := emptyHPA(expectedHPAInfo.objectKey)
-	opResult, err := controllerutil.CreateOrPatch(ctx, r.client, hpa, func() error {
+	opResult, err := k8sutils.CreateOrPatchSpec(ctx, r.client, hpa, func() error {
 		return r.buildResource(pcs, hpa, expectedHPAInfo)
 	})
 	if err != nil {

@@ -1,4 +1,3 @@
-// /*
 // Copyright 2025 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,7 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package role
 
@@ -60,8 +58,8 @@ func New(client client.Client, scheme *runtime.Scheme) component.Operator[grovec
 func (r _resource) GetExistingResourceNames(ctx context.Context, _ logr.Logger, pcsObjMeta metav1.ObjectMeta) ([]string, error) {
 	roleNames := make([]string, 0, 1)
 	objectKey := getObjectKey(pcsObjMeta)
-	partialObjMeta, err := k8sutils.GetExistingPartialObjectMetadata(ctx, r.client, rbacv1.SchemeGroupVersion.WithKind("Role"), objectKey)
-	if err != nil {
+	role := &rbacv1.Role{}
+	if err := r.client.Get(ctx, objectKey, role); err != nil {
 		if errors.IsNotFound(err) {
 			return roleNames, nil
 		}
@@ -71,8 +69,8 @@ func (r _resource) GetExistingResourceNames(ctx context.Context, _ logr.Logger, 
 			fmt.Sprintf("Error getting Role: %v for PodCliqueSet: %v", objectKey, k8sutils.GetObjectKeyFromObjectMeta(pcsObjMeta)),
 		)
 	}
-	if metav1.IsControlledBy(partialObjMeta, &pcsObjMeta) {
-		roleNames = append(roleNames, partialObjMeta.Name)
+	if metav1.IsControlledBy(role, &pcsObjMeta) {
+		roleNames = append(roleNames, role.Name)
 	}
 	return roleNames, nil
 }

@@ -1,4 +1,3 @@
-// /*
 // Copyright 2025 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,7 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package podcliqueset
 
@@ -34,7 +32,6 @@ import (
 	"github.com/samber/lo"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/tools/cache"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -74,18 +71,18 @@ func (r *Reconciler) ensureFinalizer(ctx context.Context, logger logr.Logger, pc
 // changed from the previously persisted pcs.status.generationHash then it resets the pcs.status.updateProgress
 func (r *Reconciler) processGenerationHashChange(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) ctrlcommon.ReconcileStepResult {
 	pcsObjectKey := client.ObjectKeyFromObject(pcs)
-	pcsObjectName := cache.NamespacedNameAsObjectName(pcsObjectKey).String()
+	pcsGenHashKey := pcsGenerationHashKey(pcs)
 
 	// if the generationHash is not reflected correctly yet, requeue. Allow the informer cache to catch-up.
-	if !r.isGenerationHashExpectationSatisfied(pcsObjectName, pcs.Status.CurrentGenerationHash) {
+	if !r.isGenerationHashExpectationSatisfied(pcsGenHashKey, pcs.Status.CurrentGenerationHash) {
 		return ctrlcommon.ReconcileAfter(constants.ComponentSyncRetryInterval, fmt.Sprintf("CurrentGenerationHash is not up-to-date for PodCliqueSet: %v", pcsObjectKey))
 	}
-	r.pcsGenerationHashExpectations.Delete(pcsObjectName)
+	r.pcsGenerationHashExpectations.Delete(pcsGenHashKey)
 
 	newGenerationHash := computeGenerationHash(pcs)
 	if pcs.Status.CurrentGenerationHash == nil {
 		// update the generation hash and continue reconciliation. No rolling update is required.
-		if err := r.setGenerationHashAndUpdateStatus(ctx, pcs, pcsObjectName, newGenerationHash); err != nil {
+		if err := r.setGenerationHashAndUpdateStatus(ctx, pcs, pcsGenHashKey, newGenerationHash); err != nil {
 			logger.Error(err, "failed to set generation hash on PCS", "newGenerationHash", newGenerationHash)
 			return ctrlcommon.ReconcileWithErrors("error updating generation hash", err)
 		}
@@ -94,7 +91,7 @@ func (r *Reconciler) processGenerationHashChange(ctx context.Context, logger log
 
 	if newGenerationHash != *pcs.Status.CurrentGenerationHash {
 		// trigger rolling update by setting or overriding pcs.Status.UpdateProgress.
-		if err := r.initUpdateProgress(ctx, pcs, pcsObjectName, newGenerationHash); err != nil {
+		if err := r.initUpdateProgress(ctx, pcs, pcsGenHashKey, newGenerationHash); err != nil {
 			return ctrlcommon.ReconcileWithErrors(fmt.Sprintf("could not triggering rolling update for PCS: %v", pcsObjectKey), err)
 		}
 	}
@@ -102,9 +99,18 @@ func (r *Reconciler) processGenerationHashChange(ctx context.Context, logger log
 	return ctrlcommon.ContinueReconcile()
 }
 
+// pcsGenerationHashKey returns the key for the in-memory generation-hash expectation of a PCS.
+// The key scheme is <pcs-namespace>/<pcs-name>/<pcs-UID>. Suffixing a UID ensures that a stale
+// remnant expectation entry for the same <pcs-namespace>/<pcs-name> does not block reconciliation of
+// a new PCS (with a different UID).
+// See https://github.com/ai-dynamo/grove/issues/782 for context.
+func pcsGenerationHashKey(pcs *grovecorev1alpha1.PodCliqueSet) string {
+	return fmt.Sprintf("%s/%s", client.ObjectKeyFromObject(pcs), pcs.UID)
+}
+
 // isGenerationHashExpectationSatisfied checks if the current generation hash matches expectations.
-func (r *Reconciler) isGenerationHashExpectationSatisfied(pcsObjectName string, pcsGenerationHash *string) bool {
-	expectedGenerationHash, ok := r.pcsGenerationHashExpectations.Load(pcsObjectName)
+func (r *Reconciler) isGenerationHashExpectationSatisfied(pcsGenHashKey string, pcsGenerationHash *string) bool {
+	expectedGenerationHash, ok := r.pcsGenerationHashExpectations.Load(pcsGenHashKey)
 	return !ok || (pcsGenerationHash != nil && expectedGenerationHash.(string) == *pcsGenerationHash)
 }
 
@@ -125,17 +131,17 @@ func computeGenerationHash(pcs *grovecorev1alpha1.PodCliqueSet) string {
 }
 
 // setGenerationHashAndUpdateStatus updates the PodCliqueSet status with the new generation hash, stores the expectation, and updates the status subresource.
-func (r *Reconciler) setGenerationHashAndUpdateStatus(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, pcsObjectName, generationHash string) error {
-	pcs.Status.CurrentGenerationHash = &generationHash
+func (r *Reconciler) setGenerationHashAndUpdateStatus(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, pcsGenHashKey, newGenerationHash string) error {
+	pcs.Status.CurrentGenerationHash = &newGenerationHash
 	if err := r.client.Status().Update(ctx, pcs); err != nil {
 		return fmt.Errorf("could not update CurrentGenerationHash for PodCliqueSet: %v: %w", client.ObjectKeyFromObject(pcs), err)
 	}
-	r.pcsGenerationHashExpectations.Store(pcsObjectName, generationHash)
+	r.pcsGenerationHashExpectations.Store(pcsGenHashKey, newGenerationHash)
 	return nil
 }
 
 // initUpdateProgress initializes a new rolling update by resetting progress tracking.
-func (r *Reconciler) initUpdateProgress(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, pcsObjectName, newGenerationHash string) error {
+func (r *Reconciler) initUpdateProgress(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, pcsGenHashKey, newGenerationHash string) error {
 	pcs.Status.UpdateProgress = &grovecorev1alpha1.PodCliqueSetUpdateProgress{
 		UpdateStartedAt: metav1.Now(),
 	}
@@ -145,7 +151,7 @@ func (r *Reconciler) initUpdateProgress(ctx context.Context, pcs *grovecorev1alp
 	}
 	pcs.Status.UpdatedReplicas = 0
 	pcs.Status.CurrentGenerationHash = &newGenerationHash
-	if err := r.setGenerationHashAndUpdateStatus(ctx, pcs, pcsObjectName, newGenerationHash); err != nil {
+	if err := r.setGenerationHashAndUpdateStatus(ctx, pcs, pcsGenHashKey, newGenerationHash); err != nil {
 		return fmt.Errorf("could not set UpdateProgress for PodCliqueSet: %v: %w", client.ObjectKeyFromObject(pcs), err)
 	}
 	return nil
@@ -275,8 +281,18 @@ func (r *Reconciler) recordIncompleteReconcile(ctx context.Context, logger logr.
 // are processed in order to respect cross-group dependencies.
 func getKindSyncGroups() [][]component.Kind {
 	return [][]component.Kind{
-		// G1: RBAC + static per-PCS infra (Service, HPA targets by name so no ordering
+		// G1: PodCliqueSetReplica runs alone and first. It is the only component that writes the
+		// PodCliqueSet status back into the shared object mid-reconcile. Status().Patch decodes the
+		// server response into the same PodCliqueSet the other components read, so running it alongside
+		// any component that reads the PodCliqueSet races that decode. It also produces the update
+		// progress that PodGangMap reads, so it must complete before PodGangMap.
+		{
+			component.KindPodCliqueSetReplica,
+		},
+		// G2: RBAC + static per-PCS infra (Service, HPA targets by name so no ordering
 		// vs PodClique/PCSG needed, ComputeDomain/ResourceClaim are independent add-ons).
+		// PodGangMap is computed here — it has no dependency on any other component in this group, and
+		// must be ready before PodGang (G5) reads it.
 		{
 			component.KindServiceAccount,
 			component.KindRole,
@@ -284,15 +300,20 @@ func getKindSyncGroups() [][]component.Kind {
 			component.KindServiceAccountTokenSecret,
 			component.KindHeadlessService,
 			component.KindHorizontalPodAutoscaler,
-			component.KindPodCliqueSetReplica,
 			component.KindComputeDomain,
 			component.KindResourceClaim,
+			component.KindPodGangMap,
 		},
-		// G2: PodClique must exist before PodGang can reference their pods.
+		// G3: migrate a legacy PodCliqueSet to the epoch-based PodGang scheme, using the PodGangMap from G2.
+		// This runs before PodClique (G4) and PodGang (G5) so those see a consistent new-scheme world.
+		{
+			component.KindPodGangMigrator,
+		},
+		// G4: PodClique must exist before PodGang can reference their pods.
 		{
 			component.KindPodClique,
 		},
-		// G3: PCSG and PodGang run concurrently — PCSG creates its own PodCliques via a
+		// G5: PCSG and PodGang run concurrently — PCSG creates its own PodCliques via a
 		// separate reconciler, and PodGang reads existing PodClique/Pod state.
 		{
 			component.KindPodCliqueScalingGroup,

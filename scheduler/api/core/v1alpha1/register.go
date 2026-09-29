@@ -1,4 +1,3 @@
-// /*
 // Copyright 2025 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,7 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package v1alpha1
 
@@ -22,8 +20,12 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
-// GroupName is the name of the Grove API group.
-const GroupName = "scheduler.grove.io"
+const (
+	// GroupName is the name of the Grove API group.
+	GroupName = "scheduler.grove.io"
+	// KindPodGang is the kind for the PodGang resource.
+	KindPodGang = "PodGang"
+)
 
 var (
 	// SchemeGroupVersion is group version used to register these objects.

@@ -1,6 +1,5 @@
 //go:build e2e
 
-// /*
 // Copyright 2026 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,7 +13,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package workload
 
@@ -23,6 +21,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/e2e/grove/gvk"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/k8sclient"
@@ -54,7 +53,12 @@ func NewWorkloadManager(k8s *k8sclient.Client, logger *log.Logger) *WorkloadMana
 
 // ScalePCS scales a PodCliqueSet to the specified replica count.
 func (wm *WorkloadManager) ScalePCS(ctx context.Context, namespace, name string, replicas int) error {
-	return wm.resources.ScaleCRD(ctx, gvk.PodCliqueSet, namespace, name, replicas)
+	return wm.resources.ScaleResource(ctx, gvk.PodCliqueSet, namespace, name, replicas)
+}
+
+// ScalePodClique scales a standalone PodClique to the specified replica count.
+func (wm *WorkloadManager) ScalePodClique(ctx context.Context, namespace, name string, replicas int) error {
+	return wm.resources.ScaleResource(ctx, gvk.PodClique, namespace, name, replicas)
 }
 
 // ScalePCSG scales a PodCliqueScalingGroup to the specified replica count.
@@ -65,7 +69,7 @@ func (wm *WorkloadManager) ScalePCSG(ctx context.Context, namespace, name string
 		return fmt.Errorf("failed to find PodCliqueScalingGroup %s: %w", name, err)
 	}
 
-	return wm.resources.ScaleCRD(ctx, gvk.PodCliqueScalingGroup, namespace, name, replicas)
+	return wm.resources.ScaleResource(ctx, gvk.PodCliqueScalingGroup, namespace, name, replicas)
 }
 
 // TriggerPCSReconcile bumps a benchmark annotation on a PodCliqueSet without touching its
@@ -79,7 +83,7 @@ func (wm *WorkloadManager) TriggerPCSReconcile(ctx context.Context, namespace, n
 			Namespace: namespace,
 		},
 	}
-	patch := []byte(fmt.Sprintf(`{"metadata":{"annotations":{"grove.io/reconcile-trigger":%q}}}`, triggerID))
+	patch := []byte(fmt.Sprintf(`{"metadata":{"annotations":{%q:%q}}}`, constants.AnnotationReconcileTrigger, triggerID))
 	if err := wm.cl.Patch(ctx, pcs, client.RawPatch(types.MergePatchType, patch)); err != nil {
 		return fmt.Errorf("trigger PCS reconcile %s/%s: %w", namespace, name, err)
 	}

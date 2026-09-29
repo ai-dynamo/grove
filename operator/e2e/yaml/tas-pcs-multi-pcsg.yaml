@@ -12,14 +12,16 @@ spec:
   template:
     topologyConstraint:
       topologyName: grove-topology
-      packDomain: block
+      pack:
+        required: block
     podCliqueScalingGroups:
       - name: decoder
         replicas: 2
         minAvailable: 1
         topologyConstraint:
           topologyName: grove-topology
-          packDomain: rack
+          pack:
+            required: rack
         cliqueNames:
           - dworker
           - dleader
@@ -28,7 +30,8 @@ spec:
         minAvailable: 1
         topologyConstraint:
           topologyName: grove-topology
-          packDomain: rack
+          pack:
+            required: rack
         cliqueNames:
           - pworker
           - pleader

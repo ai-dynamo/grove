@@ -1,4 +1,3 @@
-// /*
 // Copyright 2025 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,7 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package scheduler
 
@@ -40,18 +38,15 @@ type Backend interface {
 
 	// Init provides a hook to initialize/setup one-time scheduler resources,
 	// called at the startup of grove operator.
-	Init() error
+	Init(directClient client.Client) error
 
 	// SyncPodGang synchronizes (creates/updates) scheduler-specific resources for a PodGang
 	// reacting to a creation or update of a PodGang resource.
 	SyncPodGang(ctx context.Context, podGang *groveschedulerv1alpha1.PodGang) error
 
-	// OnPodGangDelete cleans up scheduler-specific resources for the given PodGang.
-	OnPodGangDelete(ctx context.Context, podGang *groveschedulerv1alpha1.PodGang) error
-
 	// PreparePod adds scheduler-backend-specific configuration to the given Pod object
 	// prior to its creation (schedulerName, annotations, etc.).
-	PreparePod(pod *corev1.Pod)
+	PreparePod(pod *corev1.Pod) error
 
 	// ValidatePodCliqueSet runs scheduler-specific validations on the PodCliqueSet (e.g. TAS required but not supported).
 	ValidatePodCliqueSet(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet) error
@@ -59,7 +54,7 @@ type Backend interface {
 
 // TopologyAwareBackend is an optional interface that Backend
 // implementations may satisfy if they manage a scheduler-specific topology CRD.
-// The ClusterTopology controller type-asserts each registered backend to this
+// The ClusterTopologyBinding controller type-asserts each registered backend to this
 // interface at startup and calls these methods during reconciliation.
 type TopologyAwareBackend interface {
 	// TopologyGVR returns the GroupVersionResource of the topology CRD
@@ -68,30 +63,30 @@ type TopologyAwareBackend interface {
 	TopologyGVR() schema.GroupVersionResource
 
 	// TopologyResourceName returns the name of the backend-specific topology resource
-	// that corresponds to the given ClusterTopology. Called for auto-managed backends
+	// that corresponds to the given ClusterTopologyBinding. Called for auto-managed backends
 	// to populate SchedulerTopologyStatus.TopologyReference.
-	TopologyResourceName(ct *grovecorev1alpha1.ClusterTopology) string
+	TopologyResourceName(ct *grovecorev1alpha1.ClusterTopologyBinding) string
 
 	// SyncTopology creates or updates the scheduler-specific topology resource
-	// for the given ClusterTopology. Called for backends not listed in
-	// the ClusterTopology's schedulerTopologyReferences (auto-managed path).
+	// for the given ClusterTopologyBinding. Called for backends not listed in
+	// the ClusterTopologyBinding's schedulerTopologyReferences (auto-managed path).
 	// k8sClient may be a non-cached client for use before the manager cache
 	// is started. If nil, the backend falls back to its own client.
-	SyncTopology(ctx context.Context, k8sClient client.Client, ct *grovecorev1alpha1.ClusterTopology) error
+	SyncTopology(ctx context.Context, k8sClient client.Client, ct *grovecorev1alpha1.ClusterTopologyBinding) error
 
 	// OnTopologyDelete removes the scheduler-specific topology resource for
-	// the given ClusterTopology. Called on CT deletion (auto-managed path only).
+	// the given ClusterTopologyBinding. Called on CT deletion (auto-managed path only).
 	// k8sClient may be nil; if so, the backend falls back to its own client.
-	OnTopologyDelete(ctx context.Context, k8sClient client.Client, ct *grovecorev1alpha1.ClusterTopology) error
+	OnTopologyDelete(ctx context.Context, k8sClient client.Client, ct *grovecorev1alpha1.ClusterTopologyBinding) error
 
 	// CheckTopologyDrift compares the scheduler-specific topology resource named by
-	// ref.TopologyReference against the ClusterTopology's levels.
+	// ref.TopologyReference against the ClusterTopologyBinding's levels.
 	// Returns (inSync bool, message string, observedGeneration int64, error).
 	// Called for backends listed in schedulerTopologyReferences (externally-managed path).
 	CheckTopologyDrift(
 		ctx context.Context,
-		ct *grovecorev1alpha1.ClusterTopology,
-		ref grovecorev1alpha1.SchedulerTopologyReference,
+		ct *grovecorev1alpha1.ClusterTopologyBinding,
+		ref grovecorev1alpha1.SchedulerTopologyBinding,
 	) (bool, string, int64, error)
 }
 

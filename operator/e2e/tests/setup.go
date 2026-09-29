@@ -2,7 +2,6 @@
 
 package tests
 
-// /*
 // Copyright 2025 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,7 +15,6 @@ package tests
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 import (
 	"encoding/json"
@@ -60,7 +58,6 @@ const (
 	scaleTestPollInterval = 2 * time.Second
 	// scaleTestTimeout defines the timeout for scale tests, set to 15 minutes.
 	scaleTestTimeout = 15 * time.Minute
-
 )
 
 // ConvertTypedToUnstructured converts a typed object to an unstructured object

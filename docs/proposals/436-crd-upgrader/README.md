@@ -35,7 +35,7 @@
 
 ## Summary
 
-Grove currently places its CRDs (`PodCliqueSet`, `PodClique`, `PodCliqueScalingGroup`, `PodGang`, `ClusterTopology`) under the Helm `crds/` directory. Helm 3 installs CRDs on `helm install` but silently skips them on `helm upgrade`. This GREP introduces a `crdInstaller` opt-in mechanism: an init container in the grove operator Deployment that applies all CRDs via server-side apply before the operator process starts. The default is `crdInstaller.enabled: false` — fresh installs continue to work via the `crds/` directory unchanged, and users who upgrade manually retain full control. Users who want automated CRD upgrades on every `helm upgrade` set `crdInstaller.enabled: true`.
+Grove currently places its CRDs (`PodCliqueSet`, `PodClique`, `PodCliqueScalingGroup`, `PodGang`, `ClusterTopologyBinding`) under the Helm `crds/` directory. Helm 3 installs CRDs on `helm install` but silently skips them on `helm upgrade`. This GREP introduces a `crdInstaller` opt-in mechanism: an init container in the grove operator Deployment that applies all CRDs via server-side apply before the operator process starts. The default is `crdInstaller.enabled: false` — fresh installs continue to work via the `crds/` directory unchanged, and users who upgrade manually retain full control. Users who want automated CRD upgrades on every `helm upgrade` set `crdInstaller.enabled: true`.
 
 ## Motivation
 
@@ -172,7 +172,7 @@ The CRD management rules in `clusterrole.yaml` are only rendered when `crdInstal
   - podcliquesets.grove.io
   - podcliques.grove.io
   - podcliquescalinggroups.grove.io
-  - clustertopologies.grove.io
+  - clustertopologybindings.grove.io
   - podgangs.scheduler.grove.io
   verbs:
   - get

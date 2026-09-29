@@ -12,14 +12,16 @@ spec:
   template:
     topologyConstraint:
       topologyName: grove-topology
-      packDomain: block  # PCS level - broadest
+      pack:
+        required: block  # PCS level - broadest
     podCliqueScalingGroups:
       - name: inference-group
         replicas: 2
         minAvailable: 2
         topologyConstraint:
           topologyName: grove-topology
-          packDomain: rack  # PCSG level - stricter than parent
+          pack:
+            required: rack  # PCSG level - stricter than parent
         cliqueNames:
           - prefill
           - decode
@@ -29,7 +31,8 @@ spec:
           kai.scheduler/queue: test
         topologyConstraint:
           topologyName: grove-topology
-          packDomain: host  # PCLQ level - strictest
+          pack:
+            required: host  # PCLQ level - strictest
         spec:
           roleName: prefill
           replicas: 2
@@ -63,7 +66,8 @@ spec:
           kai.scheduler/queue: test
         topologyConstraint:
           topologyName: grove-topology
-          packDomain: host  # PCLQ level - strictest
+          pack:
+            required: host  # PCLQ level - strictest
         spec:
           roleName: decode
           replicas: 2

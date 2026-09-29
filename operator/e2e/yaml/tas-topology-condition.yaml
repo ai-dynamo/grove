@@ -1,6 +1,6 @@
 # Workload: PCS TopologyLevelsUnavailable Condition Lifecycle
-# Test scenario: PCS references a ClusterTopology that does not yet exist (tas20-topology).
-# The ClusterTopology is created dynamically by the test after verifying the error condition.
+# Test scenario: PCS references a ClusterTopologyBinding that does not yet exist (tas20-topology).
+# The ClusterTopologyBinding is created dynamically by the test after verifying the error condition.
 ---
 apiVersion: grove.io/v1alpha1
 kind: PodCliqueSet
@@ -13,7 +13,8 @@ spec:
   template:
     topologyConstraint:
       topologyName: tas20-topology
-      packDomain: rack
+      pack:
+        required: rack
     cliques:
       - name: worker
         labels:

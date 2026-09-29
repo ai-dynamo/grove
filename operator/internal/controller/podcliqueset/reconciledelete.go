@@ -1,4 +1,3 @@
-// /*
 // Copyright 2025 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,7 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package podcliqueset
 
@@ -54,6 +52,8 @@ func (r *Reconciler) triggerDeletionFlow(ctx context.Context, logger logr.Logger
 		}
 	}
 	logger.Info("PodCliqueSet finalizer removed; Kubernetes garbage collector will cascade-delete owned resources")
+	// Remove the in-memory generation-hash expectation so the map does not retain an entry for a deleted PodCliqueSet.
+	r.pcsGenerationHashExpectations.Delete(pcsGenerationHashKey(pcs))
 	return ctrlcommon.DoNotRequeue()
 }
 

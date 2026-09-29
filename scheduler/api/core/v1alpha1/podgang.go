@@ -1,4 +1,3 @@
-// /*
 // Copyright 2025 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,7 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package v1alpha1
 
@@ -25,6 +23,8 @@ import (
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:shortName={pg}
+// +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`
+// +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
 // PodGang defines a specification of a group of pods that should be scheduled together.
 type PodGang struct {
@@ -176,6 +176,12 @@ const (
 	ConditionReasonPodGangPodsCreationPending = "PodGangPodsCreationPending"
 	// ConditionReasonPodGangPodsCreated indicates that all constituent Pods for a PodGang have been created.
 	ConditionReasonPodGangPodsCreated = "PodGangPodsCreated"
+	// ConditionReasonPodGangScheduled indicates that MinReplicas pods of every PodGroup have been scheduled.
+	ConditionReasonPodGangScheduled = "PodGangScheduled"
+	// ConditionReasonPodGangReady indicates that MinReplicas pods of every PodGroup are ready.
+	ConditionReasonPodGangReady = "PodGangReady"
+	// ConditionReasonPodGangNotReady indicates that one or more PodGroups have fewer scheduled or ready pods than required.
+	ConditionReasonPodGangNotReady = "PodGangNotReady"
 )
 
 // PodGangStatus defines the status of a PodGang.
@@ -183,8 +189,20 @@ type PodGangStatus struct {
 	// Phase is the current phase of a PodGang.
 	Phase PodGangPhase `json:"phase"`
 	// Conditions is a list of conditions that describe the current state of the PodGang.
+	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+	// LastScheduled is the time at which the Scheduled condition most recently transitioned to True.
+	// It is nil until the PodGang is first scheduled and is never reset to nil once set. On a later
+	// transition of the Scheduled condition back to True after a regression, it advances to the new time.
+	// +optional
+	LastScheduled *metav1.Time `json:"lastScheduled,omitempty"`
+	// LastReady is the time at which the Ready condition most recently transitioned to True. It is nil
+	// until the PodGang is first ready and is never reset to nil once set. On a later transition of the
+	// Ready condition back to True after a regression, it advances to the new time.
+	// +optional
+	LastReady *metav1.Time `json:"lastReady,omitempty"`
 	// PlacementScore is network optimality score for the PodGang. If the choice that the scheduler has made corresponds to the
 	// best possible placement of the pods in the PodGang, then the score will be 1.0. Higher the score, better the placement.
+	// +optional
 	PlacementScore *float64 `json:"placementScore,omitempty"`
 }

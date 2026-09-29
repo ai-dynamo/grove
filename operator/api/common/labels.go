@@ -1,4 +1,3 @@
-// /*
 // Copyright 2025 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,7 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package common
 
@@ -37,10 +35,23 @@ const (
 	LabelBasePodGang = "grove.io/base-podgang"
 	// LabelPodCliqueSetReplicaIndex is a key for a label that sets the replica index of a PodCliqueSet.
 	LabelPodCliqueSetReplicaIndex = "grove.io/podcliqueset-replica-index"
+	// LabelPodCliqueSetGenerationHash is set on PodGang resources to record the PodCliqueSet generation
+	// hash they were created for.
+	LabelPodCliqueSetGenerationHash = "grove.io/podcliqueset-generation-hash"
+	// LabelEpoch is set on PodGang resources to record the batch in which the PodGang was created.
+	// The value is a monotonic unix-nano integer used as a distinct orderable key. PodGangs created
+	// together share the same epoch. Subsequent batches carry strictly greater values.
+	LabelEpoch = "grove.io/epoch"
+	// LabelPodGangRole is set on PodGang resources to record the role of the PodGangMap entry the
+	// PodGang was materialized from. The value is one of Anchor, Tail, or ScaleOut. It lets the role
+	// classification survive on the live PodGang and be selected on.
+	LabelPodGangRole = "grove.io/podgang-role"
 	// LabelPodCliqueScalingGroup is a key for a label that sets the PodCliqueScalingGroup name.
 	LabelPodCliqueScalingGroup = "grove.io/podcliquescalinggroup"
 	// LabelPodCliqueScalingGroupReplicaIndex is a key for a label that sets the replica index of a PodCliqueScalingGroup within PodCliqueSet.
 	LabelPodCliqueScalingGroupReplicaIndex = "grove.io/podcliquescalinggroup-replica-index"
+	// LabelPodCliqueScalingGroupPodIndex is a key for a label that sets the index of a pod within a PodCliqueScalingGroup replica.
+	LabelPodCliqueScalingGroupPodIndex = "grove.io/podcliquescalinggroup-pod-index"
 	// LabelPodCliquePodIndex is a key for a label that sets the index of a pod within its PodClique.
 	LabelPodCliquePodIndex = "grove.io/podclique-pod-index"
 	// LabelPodTemplateHash is a key for a label that sets the hash of the PodSpec. This label will be set on a PodClique and will be shared by all pods in the PodClique.
@@ -79,6 +90,8 @@ const (
 	LabelComponentNameHorizontalPodAutoscaler = "pcs-hpa"
 	// LabelComponentNamePodGang is the label key representing the component name for a PodGang resource.
 	LabelComponentNamePodGang = "podgang"
+	// LabelComponentNamePodGangMap is the label key representing the component name for a PodGangMap resource.
+	LabelComponentNamePodGangMap = "pcs-podgangmap"
 	// LabelComponentNamePodCliqueSetPodClique is the label key representing the component name for a PodClique
 	// whose owner is PodCliqueSet. These PodCliques do not belong to any PodCliqueScalingGroup.
 	LabelComponentNamePodCliqueSetPodClique = "pcs-podclique"

@@ -1,6 +1,5 @@
 //go:build e2e
 
-// /*
 // Copyright 2025 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,7 +13,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 // Package setup provides utilities for connecting to Kubernetes clusters for E2E testing.
 //
@@ -83,7 +81,16 @@ func getRestConfig() (*rest.Config, error) {
 		return nil, fmt.Errorf("had an error reading the kubeconfig at %s:%v", kubeconfigPath, err)
 	}
 
-	return clientcmd.BuildConfigFromFlags("", kubeconfigPath)
+	cfg, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
+	if err != nil {
+		return nil, err
+	}
+	// Raise client-side rate limits above client-go defaults (5 QPS / 10 burst);
+	// e2e polling loops otherwise hit "client rate limiter Wait ... context
+	// deadline exceeded" under rolling/ondelete update tests.
+	cfg.QPS = 50
+	cfg.Burst = 100
+	return cfg, nil
 }
 
 // StartNodeMonitoring starts a goroutine that monitors k3d cluster nodes for not ready status

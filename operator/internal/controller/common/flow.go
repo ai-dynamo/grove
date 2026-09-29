@@ -1,4 +1,3 @@
-// /*
 // Copyright 2025 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,7 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package common
 
@@ -46,7 +44,7 @@ func (r ReconcileStepResult) Result() (ctrl.Result, error) {
 // NeedsRequeue returns true if the reconcile step needs to be requeued.
 // This will happen if there is an error or if the result is marked to be requeued.
 func (r ReconcileStepResult) NeedsRequeue() bool {
-	return len(r.errs) > 0 || r.result.Requeue || r.result.RequeueAfter > 0
+	return len(r.errs) > 0 || r.result.RequeueAfter > 0
 }
 
 // HasErrors returns true if there are errors from the reconcile step.
@@ -68,7 +66,7 @@ func (r ReconcileStepResult) GetDescription() string {
 func DoNotRequeue() ReconcileStepResult {
 	return ReconcileStepResult{
 		continueReconcile: false,
-		result:            ctrl.Result{Requeue: false},
+		result:            ctrl.Result{},
 	}
 }
 
@@ -76,7 +74,7 @@ func DoNotRequeue() ReconcileStepResult {
 func RecordErrorAndDoNotRequeue(description string, errs ...error) ReconcileStepResult {
 	return ReconcileStepResult{
 		continueReconcile: false,
-		result:            ctrl.Result{Requeue: false},
+		result:            ctrl.Result{},
 		errs:              errs,
 		description:       description,
 	}
@@ -92,7 +90,6 @@ func ContinueReconcile() ReconcileStepResult {
 // ReconcileWithErrors returns a ReconcileStepResult that re-queues the reconciliation with the given errors.
 func ReconcileWithErrors(description string, errs ...error) ReconcileStepResult {
 	return ReconcileStepResult{
-		result:            ctrl.Result{Requeue: true},
 		errs:              errs,
 		continueReconcile: false,
 		description:       description,
@@ -113,4 +110,33 @@ func ReconcileAfter(duration time.Duration, description string) ReconcileStepRes
 // ShortCircuitReconcileFlow returns true if the reconcile flow should be short-circuited and not continue.
 func ShortCircuitReconcileFlow(result ReconcileStepResult) bool {
 	return !result.continueReconcile
+}
+
+// MergeStepResults unifies two reconcile step results into one, keeping the most urgent outcome.
+// Errors from either result are retained so the controller retries and no error is masked by a
+// requeue. When neither result has errors, the sooner of the two requeue delays is kept so a slower
+// periodic requeue never delays a faster pending one. The merged result continues the flow only
+// when both results continue.
+func MergeStepResults(first, second ReconcileStepResult) ReconcileStepResult {
+	allErrs := make([]error, 0, len(first.errs)+len(second.errs))
+	allErrs = append(allErrs, first.errs...)
+	allErrs = append(allErrs, second.errs...)
+	return ReconcileStepResult{
+		continueReconcile: first.continueReconcile && second.continueReconcile,
+		errs:              allErrs,
+		result:            ctrl.Result{RequeueAfter: earliestRequeueAfter(first.result.RequeueAfter, second.result.RequeueAfter)},
+	}
+}
+
+// earliestRequeueAfter returns the sooner of two requeue delays. A zero delay means no requeue was
+// requested, so it is ignored unless both are zero.
+func earliestRequeueAfter(a, b time.Duration) time.Duration {
+	switch {
+	case a == 0:
+		return b
+	case b == 0:
+		return a
+	default:
+		return min(a, b)
+	}
 }

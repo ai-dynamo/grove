@@ -1,4 +1,3 @@
-// /*
 // Copyright 2025 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,7 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package podcliquescalinggroup
 
@@ -88,9 +86,10 @@ func TestGetExistingResourceNames(t *testing.T) {
 						},
 						OwnerReferences: []metav1.OwnerReference{
 							{
-								Kind: "PodCliqueSet",
-								Name: "test-pcs",
-								UID:  "pcs-uid",
+								Kind:       "PodCliqueSet",
+								Name:       "test-pcs",
+								UID:        "pcs-uid",
+								Controller: new(true),
 							},
 						},
 					},
@@ -106,15 +105,16 @@ func TestGetExistingResourceNames(t *testing.T) {
 						},
 						OwnerReferences: []metav1.OwnerReference{
 							{
-								Kind: "PodCliqueSet",
-								Name: "test-pcs",
-								UID:  "pcs-uid",
+								Kind:       "PodCliqueSet",
+								Name:       "test-pcs",
+								UID:        "pcs-uid",
+								Controller: new(true),
 							},
 						},
 					},
 				},
 			},
-			expectedNames: []string{}, // Fake client doesn't support PartialObjectMetadataList
+			expectedNames: []string{"test-pcs-0-pcsg1", "test-pcs-0-pcsg2"},
 			expectError:   false,
 		},
 		{

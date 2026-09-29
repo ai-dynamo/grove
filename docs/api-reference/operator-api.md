@@ -9,10 +9,11 @@
 
 
 ### Resource Types
-- [ClusterTopology](#clustertopology)
+- [ClusterTopologyBinding](#clustertopologybinding)
 - [PodClique](#podclique)
 - [PodCliqueScalingGroup](#podcliquescalinggroup)
 - [PodCliqueSet](#podcliqueset)
+- [PodGangMap](#podgangmap)
 
 
 
@@ -54,11 +55,12 @@ _Appears in:_
 | `CliqueStartupTypeExplicit` | CliqueStartupTypeExplicit defines that the cliques should be started after the cliques defined in PodClique.StartsAfter have started.<br /> |
 
 
-#### ClusterTopology
+#### ClusterTopologyBinding
 
 
 
-ClusterTopology defines the topology hierarchy for the cluster.
+ClusterTopologyBinding defines Grove's source-of-truth topology hierarchy and how it
+binds to topology resources used by topology-aware scheduler backends.
 
 
 
@@ -67,45 +69,46 @@ ClusterTopology defines the topology hierarchy for the cluster.
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `apiVersion` _string_ | `grove.io/v1alpha1` | | |
-| `kind` _string_ | `ClusterTopology` | | |
+| `kind` _string_ | `ClusterTopologyBinding` | | |
 | `metadata` _[ObjectMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#objectmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
-| `spec` _[ClusterTopologySpec](#clustertopologyspec)_ | Spec defines the topology hierarchy specification. |  |  |
-| `status` _[ClusterTopologyStatus](#clustertopologystatus)_ | Status defines the observed state of the ClusterTopology. |  |  |
+| `spec` _[ClusterTopologyBindingSpec](#clustertopologybindingspec)_ | Spec defines the source-of-truth topology hierarchy and backend binding configuration. |  |  |
+| `status` _[ClusterTopologyBindingStatus](#clustertopologybindingstatus)_ | Status reports the observed state of backend topology bindings derived from this resource. |  |  |
 
 
-#### ClusterTopologySpec
+#### ClusterTopologyBindingSpec
 
 
 
-ClusterTopologySpec defines the topology hierarchy specification.
+ClusterTopologyBindingSpec defines the desired topology hierarchy and backend binding behavior.
 
 
 
 _Appears in:_
-- [ClusterTopology](#clustertopology)
+- [ClusterTopologyBinding](#clustertopologybinding)
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `levels` _[TopologyLevel](#topologylevel) array_ | Levels is an ordered list of topology levels from broadest to narrowest scope.<br />The order in this list defines the hierarchy (index 0 = broadest level).<br />Uniqueness of domain and key is enforced by the ClusterTopology validating webhook. |  | MinItems: 1 <br /> |
-| `schedulerTopologyReferences` _[SchedulerTopologyReference](#schedulertopologyreference) array_ | SchedulerTopologyReferences controls per-backend topology resource management.<br />For each enabled TopologyAwareSchedBackend, the operator checks whether an entry<br />for that backend exists in this list:<br />- If absent: the operator auto-creates and manages the backend's topology resource.<br />- If present: the named resource is assumed to be externally managed; the operator<br />  compares its levels and reports any mismatch via the SchedulerTopologyDrift condition. |  |  |
+| `levels` _[TopologyLevel](#topologylevel) array_ | Levels is the source-of-truth ordered topology hierarchy, from broadest to<br />narrowest scope, that Grove exposes to workloads and uses when reconciling<br />backend-specific topology resources.<br />Uniqueness of domain and key is enforced by the ClusterTopologyBinding validating webhook. |  | MinItems: 1 <br /> |
+| `schedulerTopologyBindings` _[SchedulerTopologyBinding](#schedulertopologybinding) array_ | SchedulerTopologyBindings declares how this ClusterTopologyBinding maps to<br />each scheduler backend's topology resource.<br />For each enabled TopologyAwareBackend, the operator checks whether an<br />entry for that backend exists in this list:<br />- If absent: the operator creates and manages the backend topology resource from Levels.<br />- If present: the named backend topology resource is treated as externally<br />  managed, and the operator only checks it for drift against Levels. |  |  |
 
 
-#### ClusterTopologyStatus
+#### ClusterTopologyBindingStatus
 
 
 
-ClusterTopologyStatus defines the observed state of ClusterTopology.
+ClusterTopologyBindingStatus defines the observed state of backend topology bindings
+for this ClusterTopologyBinding.
 
 
 
 _Appears in:_
-- [ClusterTopology](#clustertopology)
+- [ClusterTopologyBinding](#clustertopologybinding)
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `observedGeneration` _integer_ | ObservedGeneration is the most recent generation observed by the controller. |  |  |
-| `conditions` _[Condition](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#condition-v1-meta) array_ | Conditions represents the latest available observations of the ClusterTopology. |  |  |
-| `schedulerTopologyStatuses` _[SchedulerTopologyStatus](#schedulertopologystatus) array_ | SchedulerTopologyStatuses reports the sync state between this ClusterTopology<br />and each topology-aware scheduler backend's topology resource. |  |  |
+| `conditions` _[Condition](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#condition-v1-meta) array_ | Conditions represents the latest available observations of the ClusterTopologyBinding. |  |  |
+| `schedulerTopologyStatuses` _[SchedulerTopologyStatus](#schedulertopologystatus) array_ | SchedulerTopologyStatuses reports whether each scheduler backend's topology<br />resource is in sync with this ClusterTopologyBinding. |  |  |
 
 
 #### ErrorCode
@@ -322,31 +325,14 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `name` _string_ | Name is the name of the PodCliqueScalingGroupConfig. This should be unique within the PodCliqueSet.<br />It allows consumers to give a semantic name to a group of PodCliques that needs to be scaled together. |  |  |
-| `cliqueNames` _string array_ | CliqueNames is the list of names of the PodClique's that are part of the scaling group. |  |  |
+| `cliqueNames` _string array_ | CliqueNames is the ordered list of PodClique names that are part of the scaling group.<br />The order determines the group-wide pod indices exposed through the<br />grove.io/podcliquescalinggroup-pod-index Pod label and GROVE_PCSG_POD_INDEX environment variable. |  |  |
 | `annotations` _object (keys:string, values:string)_ | Annotations is an unstructured key value map stored with a resource that may be<br />set by external tools to store and retrieve arbitrary metadata. They are not<br />queryable and should be preserved when modifying objects.<br />More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/annotations |  |  |
 | `replicas` _integer_ | Replicas is the desired number of replicas for the scaling group at template level.<br />This allows one to control the replicas of the scaling group at startup.<br />If not specified, it defaults to 1. | 1 |  |
 | `minAvailable` _integer_ | MinAvailable serves two purposes:<br />Gang Scheduling:<br />It defines the minimum number of replicas that are guaranteed to be gang scheduled.<br />Gang Termination:<br />It defines the minimum requirement of available replicas for a PodCliqueScalingGroup.<br />Violation of this threshold for a duration beyond TerminationDelay will result in termination of the PodCliqueSet replica that it belongs to.<br />Default: If not specified, it defaults to 1.<br />Constraints:<br />MinAvailable cannot be greater than Replicas.<br />If ScaleConfig is defined then its MinAvailable should not be less than ScaleConfig.MinReplicas. | 1 |  |
 | `scaleConfig` _[AutoScalingConfig](#autoscalingconfig)_ | ScaleConfig is the horizontal pod autoscaler configuration for the pod clique scaling group. |  |  |
+| `rollingUpdate` _[RollingUpdateConfiguration](#rollingupdateconfiguration)_ | RollingUpdate is the per-component update configuration for this PodCliqueScalingGroup.<br />It governs the rolling update of every constituent member PodClique. The member<br />PodCliqueTemplateSpecs must not carry their own RollingUpdate. |  |  |
 | `resourceSharing` _[PCSGResourceSharingSpec](#pcsgresourcesharingspec) array_ | ResourceSharing defines shared ResourceClaims at the PCSG level.<br />Each entry references a template (internal or external) and specifies a Scope:<br />  - AllReplicas: one RC for the entire PCSG, shared across all replicas<br />  - PerReplica: one RC per PCSG replica, shared across all PCLQs in that replica<br />The optional Filter field controls which PodCliques receive the claims.<br />At PCSG level, only childCliqueNames filtering is available. |  |  |
 | `topologyConstraint` _[TopologyConstraint](#topologyconstraint)_ | TopologyConstraint defines topology placement requirements for PodCliqueScalingGroup.<br />Must be equal to or stricter than parent PodCliqueSet constraints. |  |  |
-
-
-#### PodCliqueScalingGroupReplicaUpdateProgress
-
-
-
-PodCliqueScalingGroupReplicaUpdateProgress provides details about the update progress of ready replicas of
-PodCliqueScalingGroup that have been selected for update in a rolling recreate. It is not set in an OnDelete update.
-
-
-
-_Appears in:_
-- [PodCliqueScalingGroupUpdateProgress](#podcliquescalinggroupupdateprogress)
-
-| Field | Description | Default | Validation |
-| --- | --- | --- | --- |
-| `current` _integer_ | Current is the index of the PodCliqueScalingGroup replica that is currently being updated. |  |  |
-| `completed` _integer array_ | Completed is the list of indices of PodCliqueScalingGroup replicas that have been updated to the latest PodCliqueSet spec. |  |  |
 
 
 #### PodCliqueScalingGroupSpec
@@ -406,11 +392,11 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `updateStartedAt` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#time-v1-meta)_ | UpdateStartedAt is the time at which the update started. |  |  |
-| `updateEndedAt` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#time-v1-meta)_ | UpdateEndedAt is the time at which Grove does not have any work pending to manifest the update according to the<br />configured update strategy. For auto update strategies where Grove handles the orchestration, while the update is<br />still in progress it will be nil, and will be set once the update finishes where all PodCliques are replaced by<br />Grove with the latest specification. For the OnDelete strategy, it is set to the same time as UpdateStartedAt, which<br />implies that there is no work pending on Grove. |  |  |
+| `updateEndedAt` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#time-v1-meta)_ | UpdateEndedAt is the time at which Grove does not have any work pending to manifest the update according to the<br />configured update strategy. For rolling update strategies where Grove handles the orchestration, while the update is<br />still in progress it will be nil, and will be set once the update finishes where all PodCliques are replaced by<br />Grove with the latest specification. For the OnDelete strategy, it is set to the same time as UpdateStartedAt, which<br />implies that there is no work pending on Grove. |  |  |
+| `lastProgressedAt` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#time-v1-meta)_ | LastProgressedAt is the time at which the rolling update last made progress, meaning the number of<br />updated replicas increased. The ProgressDeadline is measured from it, and it is nil while no update is in<br />progress. |  |  |
 | `podCliqueSetGenerationHash` _string_ | PodCliqueSetGenerationHash is the generation hash corresponding to the latest PodCliqueSet spec that this<br />PodCliqueScalingGroup should converge to. PodCliqueScalingGroupStatus.CurrentPodCliqueSetGenerationHash is set to<br />this hash once UpdateEndedAt is set, which marks the end of the update. |  |  |
 | `updatedPodCliquesCount` _integer_ | UpdatedPodCliquesCount is the number of PodCliques that have been updated to the desired<br />PodCliqueSet generation hash. Recomputed each reconcile from child generation-hash labels. | 0 |  |
 | `totalPodCliquesCount` _integer_ | TotalPodCliquesCount is the total number of PodCliques expected to exist for the PodCliqueScalingGroup<br />at the current spec. | 0 |  |
-| `readyReplicaIndicesSelectedToUpdate` _[PodCliqueScalingGroupReplicaUpdateProgress](#podcliquescalinggroupreplicaupdateprogress)_ | ReadyReplicaIndicesSelectedToUpdate provides the update progress of ready replicas of PodCliqueScalingGroup that<br />have been selected for update. PodCliqueScalingGroup replicas that are either pending or unhealthy will be force<br />updated and the update will not wait for these replicas to become ready. For all ready replicas, one replica is<br />chosen at a time to update, once it is updated and becomes ready, the next ready replica is chosen for update.<br />This field is only set for auto update strategies where Grove orchestrates Pod deletions.<br />For OnDelete strategy this field is not set, because Pod replacement is initiated by user-driven Pod deletions. |  |  |
 
 
 #### PodCliqueSet
@@ -536,12 +522,12 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `updateStartedAt` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#time-v1-meta)_ | UpdateStartedAt is the time at which the update started for the PodCliqueSet. |  |  |
-| `updateEndedAt` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#time-v1-meta)_ | UpdateEndedAt is the time at which Grove does not have any work pending to manifest the update according to the<br />configured update strategy.<br />For auto update strategies where Grove handles the orchestration, while the update is still in progress it will be<br />nil, and will be set once the update finishes where all child resources are updated by Grove with the latest<br />specification.<br />For the OnDelete strategy, it is set to the same time as UpdateStartedAt, which implies that there is no work<br />pending on Grove. |  |  |
+| `updateEndedAt` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#time-v1-meta)_ | UpdateEndedAt is the time at which Grove does not have any work pending to manifest the update according to the<br />configured update strategy.<br /> - For rolling update strategies where Grove handles the orchestration, while the update is still in progress<br />   it will be nil, and will be set once the update finishes where all child resources are updated by Grove with<br />   the latest specification.<br /> - For the OnDelete strategy, it is set to the same time as UpdateStartedAt, which implies that there is no work<br />	  pending on Grove. |  |  |
 | `updatedPodCliquesCount` _integer_ | UpdatedPodCliquesCount is the number of PodCliques that have been updated to the desired PodCliqueSet<br />generation hash. Recomputed each reconcile from child generation-hash labels. | 0 |  |
 | `totalPodCliquesCount` _integer_ | TotalPodCliquesCount is the total number of PodCliques expected to exist for the PodCliqueSet at the<br />current spec. | 0 |  |
 | `updatedPodCliqueScalingGroupsCount` _integer_ | UpdatedPodCliqueScalingGroupsCount is the number of PodCliqueScalingGroups that have been updated to the<br />desired PodCliqueSet generation hash. | 0 |  |
 | `totalPodCliqueScalingGroupsCount` _integer_ | TotalPodCliqueScalingGroupsCount is the total number of PodCliqueScalingGroups expected to exist for the<br />PodCliqueSet at the current spec. | 0 |  |
-| `currentlyUpdating` _[PodCliqueSetReplicaUpdateProgress](#podcliquesetreplicaupdateprogress) array_ | CurrentlyUpdating captures the progress of the PodCliqueSet replicas that are currently being updated.<br />This field is only set for auto update strategies where Grove handles the orchestration. It is not set for the<br />OnDelete update strategy. |  |  |
+| `currentlyUpdating` _[PodCliqueSetReplicaUpdateProgress](#podcliquesetreplicaupdateprogress) array_ | CurrentlyUpdating captures the progress of the PodCliqueSet replicas that are currently being updated.<br />This field is only set for rolling update strategies where Grove handles the orchestration. It is not set for the<br />OnDelete update strategy. |  |  |
 
 
 #### PodCliqueSetUpdateStrategy
@@ -602,6 +588,7 @@ _Appears in:_
 | `updatedReplicas` _integer_ | UpdatedReplicas is the number of Pods that have been updated and are at the desired revision of the PodClique. | 0 |  |
 | `scheduleGatedReplicas` _integer_ | ScheduleGatedReplicas is the number of Pods that have been created with one or more scheduling gate(s) set.<br />Sum of ReadyReplicas and ScheduleGatedReplicas will always be <= Replicas. | 0 |  |
 | `scheduledReplicas` _integer_ | ScheduledReplicas is the number of Pods that have been scheduled by the backend scheduler. | 0 |  |
+| `lastScheduled` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#time-v1-meta)_ | LastScheduled is the time at which the PodCliqueScheduled condition most recently became True.<br />It is nil until the PodClique is first scheduled and is never reset to nil once set. If the<br />PodClique later drops below its scheduled count and is then scheduled again, this advances to<br />the time of that later transition. |  |  |
 | `hpaPodSelector` _string_ | Selector is the label selector that determines which pods are part of the PodClique.<br />PodClique is a unit of scale and this selector is used by HPA to scale the PodClique based on metrics captured<br />for the pods that match this selector. |  |  |
 | `conditions` _[Condition](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#condition-v1-meta) array_ | Conditions represents the latest available observations of the clique by its controller. |  |  |
 | `currentPodCliqueSetGenerationHash` _string_ | CurrentPodCliqueSetGenerationHash establishes a correlation to PodCliqueSet generation hash indicating<br />that the spec of the PodCliqueSet at this generation is fully realized in the PodClique. |  |  |
@@ -627,6 +614,7 @@ _Appears in:_
 | `annotations` _object (keys:string, values:string)_ | Annotations is an unstructured key value map stored with a resource that may be<br />set by external tools to store and retrieve arbitrary metadata. They are not<br />queryable and should be preserved when modifying objects.<br />More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/annotations |  |  |
 | `topologyConstraint` _[TopologyConstraint](#topologyconstraint)_ | TopologyConstraint defines topology placement requirements for PodClique.<br />Must be equal to or stricter than parent resource constraints. |  |  |
 | `resourceSharing` _[ResourceSharingSpec](#resourcesharingspec) array_ | ResourceSharing defines shared ResourceClaims for this PodClique.<br />Each entry references a template (internal or external) and specifies a Scope:<br />  - AllReplicas: one RC per PCLQ, shared by all replica pods<br />  - PerReplica: one RC per PCLQ replica, shared by all pods within that replica<br />This is distinct from adding ResourceClaimTemplate inside<br />Spec.PodSpec.ResourceClaims[x].ResourceClaimTemplateName, which creates a unique<br />ResourceClaim for each pod.<br />PCLQs have no children to filter, so no Filter field is available. |  |  |
+| `rollingUpdate` _[RollingUpdateConfiguration](#rollingupdateconfiguration)_ | RollingUpdate is the per-component update configuration for this PodClique. It applies only to<br />a standalone PodClique. Setting it on a PodCliqueTemplateSpec whose Name appears in any<br />PodCliqueScalingGroupConfig.CliqueNames (a PCSG-owned PodClique) is not allowed and is rejected<br />by the PodCliqueSet validating webhook. A PCSG-owned PodClique is instead governed by the<br />owning PodCliqueScalingGroup's RollingUpdate. |  |  |
 | `spec` _[PodCliqueSpec](#podcliquespec)_ | Specification of the desired behavior of a PodClique.<br />More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#spec-and-status |  |  |
 
 
@@ -644,10 +632,90 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `updateStartedAt` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#time-v1-meta)_ | UpdateStartedAt is the time at which the update started. |  |  |
-| `updateEndedAt` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#time-v1-meta)_ | UpdateEndedAt is the time at which Grove does not have any work pending to manifest the update according to the<br />configured update strategy. For auto update strategies where Grove handles the orchestration, while the update is<br />still in progress it will be nil, and will be set once the update finishes where all Pods are replaced by Grove with<br />the latest specification. For the OnDelete strategy, it is set to the same time as UpdateStartedAt, which implies<br />that there is no work pending on Grove. As can be observed with the OnDelete strategy, UpdateEndedAt being set does<br />not necessarily mean that all Pods are running with the latest specifications. |  |  |
+| `updateEndedAt` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#time-v1-meta)_ | UpdateEndedAt is the time at which Grove does not have any work pending to manifest the update according to the<br />configured update strategy. For rolling update strategies where Grove handles the orchestration, while the update is<br />still in progress it will be nil, and will be set once the update finishes where all Pods are replaced by Grove with<br />the latest specification. For the OnDelete strategy, it is set to the same time as UpdateStartedAt, which implies<br />that there is no work pending on Grove. As can be observed with the OnDelete strategy, UpdateEndedAt being set does<br />not necessarily mean that all Pods are running with the latest specifications. |  |  |
+| `lastProgressedAt` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#time-v1-meta)_ | LastProgressedAt is the time at which the rolling update last made progress, meaning the number of<br />updated replicas increased. The ProgressDeadline is measured from it, and it is nil while no update is in<br />progress. |  |  |
 | `podCliqueSetGenerationHash` _string_ | PodCliqueSetGenerationHash is the generation hash corresponding to the latest PodCliqueSet spec that this<br />PodClique should converge to. PodCliqueStatus.CurrentPodCliqueSetGenerationHash is set to this hash once<br />UpdateEndedAt is set, which marks the end of the update. |  |  |
-| `podTemplateHash` _string_ | PodTemplateHash is the template hash of the PodClique that the Pods of this PodClique should converge to.<br />This hash is used to segregate Pods which are up to date with the specification, and ones which are outdated for<br />preferential deletions in auto update strategies, and in all strategies for scale-ins.<br />PodCliqueStatus.PodTemplateHash is set to this hash once UpdateEndedAt is set, which marks the end of the update. |  |  |
-| `readyPodsSelectedToUpdate` _[PodsSelectedToUpdate](#podsselectedtoupdate)_ | ReadyPodsSelectedToUpdate captures the pod names of ready Pods that are either currently being updated or have<br />been previously updated. This field is only set for auto update strategies where Grove orchestrates Pod deletions.<br />For the OnDelete strategy this field is not set, because Pod replacement is initiated by user-driven Pod deletions. |  |  |
+| `podTemplateHash` _string_ | PodTemplateHash is the template hash of the PodClique that the Pods of this PodClique should converge to.<br />This hash is used to segregate Pods which are up to date with the specification, and ones which are outdated for<br />preferential deletions in rolling update strategies, and in all strategies for scale-ins.<br />PodCliqueStatus.PodTemplateHash is set to this hash once UpdateEndedAt is set, which marks the end of the update. |  |  |
+
+
+#### PodGangEntry
+
+
+
+PodGangEntry describes one scheduling batch, identified by its epoch, that materializes into one
+or more PodGangs. An Anchor entry materializes into a single anchor PodGang; a Tail or ScaleOut
+entry materializes into one PodGang per (PodCliqueScalingGroup, replica index) it carries.
+
+
+
+_Appears in:_
+- [PodGangMapSpec](#podgangmapspec)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `epoch` _string_ | Epoch is the identity of this entry and the group of PodGangs materialized from it. It serves<br />two purposes.<br />  - Identity: it is unique across entries within a PodGangMap and is the listMapKey. Every<br />    PodGang materialized from this entry carries it as the grove.io/epoch label, so those<br />    PodGangs are grouped by it.<br />  - Ordering: DependsOn references epochs, and comparing epochs orders entries so scheduling<br />    dependencies can be expressed and the most recent anchor found.<br />The value is a monotonic unix-nano integer used only as a distinct, orderable key. It is not<br />interpreted as a wall-clock time. |  |  |
+| `podCliqueSetGenerationHash` _string_ | PodCliqueSetGenerationHash is the PodCliqueSet generation hash that pods in this PodGang<br />must match. Used by PodClique and PodCliqueScalingGroup reconcilers to create pods at the<br />correct spec version and to distinguish old pods from new pods during a coherent update. |  |  |
+| `role` _[PodGangEntryRole](#podgangentryrole)_ | Role classifies this entry as anchor, tail or scale-out.<br />See PodGangEntryRole for the meaning of each value. |  | Enum: [Anchor Tail ScaleOut] <br /> |
+| `anchorIndex` _integer_ | AnchorIndex is the index of an anchor entry within its generation hash. It is non-nil only on<br />entries whose Role is Anchor, and nil otherwise. Index 0 marks the anchor that carries the<br />MinAvailable replicas. It orders the anchors of a generation hash independently of the global<br />epoch order, so the MinAvailable anchor stays identifiable as more anchors are added.<br />NOTE: today a PodCliqueSet replica has a single anchor with index 0. Coherent updates (GREP-393)<br />introduce additional anchors per hash with higher indices. |  |  |
+| `podCliques` _object (keys:string, values:integer)_ | PodCliques maps standalone PodClique name to the number of pods that belong to this PodGang.<br />Only standalone PodCliques (not owned by a PodCliqueScalingGroup) are listed here.<br />PodCliques owned by a PodCliqueScalingGroup derive their PodGang association via<br />PCSGReplicaIndices below. |  |  |
+| `pcsgReplicaIndices` _object (keys:string, values:integer array)_ | PCSGReplicaIndices maps a PodCliqueScalingGroup config name to the PCSG replica indices this<br />entry carries. For a non-anchor entry the PodGang materializer expands these into one PodGang<br />per index. Indices are stable identities that survive entry reshuffles, so a PodClique<br />reconciler for a PodCliqueScalingGroup-owned PodClique can find its target PodGang by looking<br />up its replica index here. |  |  |
+| `dependsOn` _string array_ | DependsOn lists the epochs whose PodGangs must be scheduled before this entry's PodGang<br />becomes eligible for scheduling. An empty DependsOn means the entry has no scheduling<br />dependency and its PodGang is eligible for scheduling immediately. |  |  |
+
+
+#### PodGangEntryRole
+
+_Underlying type:_ _string_
+
+PodGangEntryRole classifies the role a PodGangMap entry plays in a PodCliqueSet replica.
+
+_Validation:_
+- Enum: [Anchor Tail ScaleOut]
+
+_Appears in:_
+- [PodGangEntry](#podgangentry)
+
+| Field | Description |
+| --- | --- |
+| `Anchor` | PodGangEntryRoleAnchor marks the entry that carries the MinAvailable replicas.<br />It holds every standalone PodClique and each PodCliqueScalingGroup's MinAvailable replicas.<br />It materializes into a single PodGang.<br /> |
+| `Tail` | PodGangEntryRoleTail marks a non-anchor entry that holds a PodCliqueScalingGroup's replica<br />indices above MinAvailable, as declared by the template. It materializes into one PodGang per<br />replica index.<br /> |
+| `ScaleOut` | PodGangEntryRoleScaleOut marks the entry that holds PodCliqueScalingGroup replicas added by a<br />steady-state scale-out beyond the template. It materializes into one PodGang per replica index.<br />The entry is created for every PodCliqueSet that has a PodCliqueScalingGroup, starting empty, and<br />is kept even when empty for the current generation. It offers a stable scale-out epoch that<br />downstream reconcilers use when independently constructing PodGang names.<br /> |
+
+
+#### PodGangMap
+
+
+
+PodGangMap is the desired-state mapping between PodGangs and their constituent
+PodClique and PodCliqueScalingGroup pod counts for a single PodCliqueSet replica.
+One PodGangMap resource exists per PodCliqueSet replica, named <pcs-name>-<pcs-replica-index>.
+
+
+
+
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `apiVersion` _string_ | `grove.io/v1alpha1` | | |
+| `kind` _string_ | `PodGangMap` | | |
+| `metadata` _[ObjectMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#objectmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
+| `spec` _[PodGangMapSpec](#podgangmapspec)_ | Spec defines the desired PodGang-to-pod-count mapping for a PodCliqueSet replica. |  |  |
+
+
+#### PodGangMapSpec
+
+
+
+PodGangMapSpec defines the desired PodGang composition for a PodCliqueSet replica.
+
+
+
+_Appears in:_
+- [PodGangMap](#podgangmap)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `podCliqueSetReplicaIndex` _integer_ | PodCliqueSetReplicaIndex is the index of the PodCliqueSet replica this map belongs to. |  |  |
+| `entries` _[PodGangEntry](#podgangentry) array_ | Entries is the ordered list of desired PodGang entries for this PodCliqueSet replica. An Anchor<br />entry materializes into one PodGang. A Tail or ScaleOut entry materializes into one PodGang per<br />PodCliqueScalingGroup replica index it carries. |  |  |
 
 
 #### PodGangPhase
@@ -687,24 +755,6 @@ _Appears in:_
 | `name` _string_ | Name is the name of the PodGang. |  |  |
 | `phase` _[PodGangPhase](#podgangphase)_ | Phase is the current phase of the PodGang. |  | Enum: [Pending Starting Running Failed Succeeded] <br /> |
 | `conditions` _[Condition](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#condition-v1-meta) array_ | Conditions represents the latest available observations of the PodGang by its controller. |  |  |
-
-
-#### PodsSelectedToUpdate
-
-
-
-PodsSelectedToUpdate captures the current and previous set of pod names that have been selected for update in a
-rolling recreate. It is not set in an OnDelete update.
-
-
-
-_Appears in:_
-- [PodCliqueUpdateProgress](#podcliqueupdateprogress)
-
-| Field | Description | Default | Validation |
-| --- | --- | --- | --- |
-| `current` _string_ | Current captures the current pod name that is a target for update. |  |  |
-| `completed` _string array_ | Completed captures the pod names that have already been updated. |  |  |
 
 
 #### ResourceClaimTemplateConfig
@@ -767,40 +817,67 @@ _Appears in:_
 | `scope` _[ResourceSharingScope](#resourcesharingscope)_ | Scope determines the sharing granularity for the ResourceClaims created from<br />this template. |  | Enum: [AllReplicas PerReplica] <br /> |
 
 
-#### SchedulerTopologyReference
+#### RollingUpdateConfiguration
 
 
 
-SchedulerTopologyReference maps a ClusterTopology to a scheduler backend's topology resource.
+RollingUpdateConfiguration carries per-component knobs for a rolling update. It attaches to each
+standalone PodCliqueTemplateSpec and to each PodCliqueScalingGroupConfig, keeping the
+configuration next to the component it governs. These knobs are per-component because components
+differ in how much disruption they tolerate and how long they take to make progress, so a single
+PodCliqueSet-wide value cannot express them. The configuration is strategy-agnostic. It governs
+the RollingRecreate strategy today and is reused by the Coherent strategy. It does not apply to
+the OnDelete strategy, where the PodCliqueSet validating webhook rejects it if set. Defaulting
+never clears it, so removing it when switching to OnDelete is left to the consumer.
 
 
 
 _Appears in:_
-- [ClusterTopologySpec](#clustertopologyspec)
+- [PodCliqueScalingGroupConfig](#podcliquescalinggroupconfig)
+- [PodCliqueTemplateSpec](#podcliquetemplatespec)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `maxUnavailable` _integer_ | MaxUnavailable is the maximum number of pods (for a standalone PodClique) or<br />PodCliqueScalingGroup replicas (for a PCSG) that may be unavailable at any moment during an<br />update of this component, measured against the component's desired count.<br />Defaulting:<br />  - RollingRecreate: defaults to 1.<br />  - OnDelete: not defaulted. Defaulting never clears a RollingUpdateConfiguration that is set. The validating<br />    webhook rejects it instead, so the consumer must remove it when switching to OnDelete.<br />Validation:<br />  - When set, must be greater than 0.<br />  - OnDelete: RollingUpdate must not be set. The PodCliqueSet validating webhook rejects a<br />    RollingUpdateConfiguration on any component when the strategy is OnDelete. |  |  |
+| `progressDeadline` _[Duration](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#duration-v1-meta)_ | ProgressDeadline tracks the progress of this component's rolling update. If the component,<br />a PodClique or a PodCliqueScalingGroup, shows no observable progress within this duration, the<br />breach is reported through the UpdateInProgress condition, whose Status is set to Unknown with<br />reason ProgressDeadlineExceeded. If nil, this component does not report progress-deadline<br />breaches and its update can wait indefinitely for progress. |  |  |
+
+
+#### SchedulerTopologyBinding
+
+
+
+SchedulerTopologyBinding identifies the topology resource through which a
+scheduler backend is bound to this ClusterTopologyBinding.
+
+
+
+_Appears in:_
+- [ClusterTopologyBindingSpec](#clustertopologybindingspec)
 - [SchedulerTopologyStatus](#schedulertopologystatus)
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `schedulerName` _string_ | SchedulerName is the name of the scheduler backend (e.g., "kai-scheduler"). |  | Required: \{\} <br /> |
-| `topologyReference` _string_ | TopologyReference is the name of the scheduler backend's topology resource. |  | Required: \{\} <br /> |
+| `topologyReference` _string_ | TopologyReference is the name of the backend-specific topology resource<br />bound to this ClusterTopologyBinding. |  | Required: \{\} <br /> |
 
 
 #### SchedulerTopologyStatus
 
 
 
-SchedulerTopologyStatus reports the sync state of a scheduler backend's topology resource.
+SchedulerTopologyStatus reports whether a scheduler backend's bound topology
+resource matches this ClusterTopologyBinding.
 
 
 
 _Appears in:_
-- [ClusterTopologyStatus](#clustertopologystatus)
+- [ClusterTopologyBindingStatus](#clustertopologybindingstatus)
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `schedulerName` _string_ | SchedulerName is the name of the scheduler backend (e.g., "kai-scheduler"). |  | Required: \{\} <br /> |
-| `topologyReference` _string_ | TopologyReference is the name of the scheduler backend's topology resource. |  | Required: \{\} <br /> |
-| `inSync` _boolean_ | InSync is true when the scheduler backend topology levels match the ClusterTopology levels. |  |  |
+| `topologyReference` _string_ | TopologyReference is the name of the backend-specific topology resource<br />bound to this ClusterTopologyBinding. |  | Required: \{\} <br /> |
+| `inSync` _boolean_ | InSync is true when the scheduler backend topology levels match the ClusterTopologyBinding levels. |  |  |
 | `schedulerBackendTopologyObservedGeneration` _integer_ | SchedulerBackendTopologyObservedGeneration is the generation of the backend topology<br />resource that was last compared. Zero if the resource was not found. |  |  |
 | `message` _string_ | Message provides detail when InSync is false. |  |  |
 
@@ -820,15 +897,17 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `topologyName` _string_ | TopologyName is the name of the ClusterTopology resource to use for topology-aware scheduling.<br />If topologyConstraint is set, topologyName and packDomain must both be specified.<br />Immutable after creation. |  |  |
-| `packDomain` _[TopologyDomain](#topologydomain)_ | PackDomain specifies the topology domain for grouping replicas.<br />Controls placement constraint for EACH individual replica instance.<br />Must reference a domain in the topology levels defined in the ClusterTopology CR name as set in TopologyName<br />Example: "rack" means each replica independently placed within one rack.<br />Note: Does NOT constrain all replicas to the same rack together.<br />Different replicas can be in different topology domains. |  | MaxLength: 63 <br />MinLength: 1 <br />Pattern: `^[a-z][a-z0-9-]*$` <br /> |
+| `topologyName` _string_ | TopologyName is the name of the ClusterTopologyBinding resource to use for topology-aware scheduling.<br />Setting TopologyName may be optional if the name can be inherited from a higher level scope.<br />When TopologyName is specified at a PCS/PCSG/PCLQ resource constraint, it will also be inherited<br />as the default ClusterTopologyBinding name on all sub-resources, unless overridden by another TopologyName<br />at a sub-resource.<br />For example, setting TopologyName at a PCS level makes it optional for child PCSG or PCLQ levels<br />when the sub-resources reuse the same ClusterTopologyBinding.<br />Immutable after creation. |  |  |
+| `pack` _[TopologyPackConstraint](#topologypackconstraint)_ | Pack specifies topology packing constraints for each replica of the resource. |  |  |
+| `packDomain` _[TopologyDomain](#topologydomain)_ | PackDomain specifies the required topology domain using the legacy field name.<br />Controls placement constraint for EACH individual replica instance.<br />Must reference a domain in the topology levels defined in the ClusterTopologyBinding named by TopologyName.<br />Example: "rack" means each replica independently placed within one rack.<br />Note: Does NOT constrain all replicas to the same rack together.<br />Different replicas can be in different topology domains.<br />Deprecated: use Pack.RequiredDomain. |  | MaxLength: 63 <br />MinLength: 1 <br />Pattern: `^[a-z][a-z0-9-]*$` <br /> |
 
 
 #### TopologyDomain
 
 _Underlying type:_ _string_
 
-TopologyDomain represents a level in the cluster topology hierarchy.
+TopologyDomain is the Grove-facing identifier for a topology level in the
+source-of-truth hierarchy.
 
 _Validation:_
 - MaxLength: 63
@@ -838,6 +917,7 @@ _Validation:_
 _Appears in:_
 - [TopologyConstraint](#topologyconstraint)
 - [TopologyLevel](#topologylevel)
+- [TopologyPackConstraint](#topologypackconstraint)
 
 | Field | Description |
 | --- | --- |
@@ -854,19 +934,36 @@ _Appears in:_
 
 
 
-TopologyLevel defines a single level in the topology hierarchy.
-Maps a platform-agnostic domain to a platform-specific node label key,
-allowing workload operators a consistent way to reference topology levels when defining TopologyConstraint's.
+TopologyLevel defines one level in Grove's source-of-truth topology hierarchy.
+Each level maps a Grove topology domain to the node label key that a backend
+topology representation should use for that level.
 
 
 
 _Appears in:_
-- [ClusterTopologySpec](#clustertopologyspec)
+- [ClusterTopologyBindingSpec](#clustertopologybindingspec)
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `domain` _[TopologyDomain](#topologydomain)_ | Domain is a platform provider-agnostic level identifier. |  | MaxLength: 63 <br />MinLength: 1 <br />Pattern: `^[a-z][a-z0-9-]*$` <br />Required: \{\} <br /> |
 | `key` _string_ | Key is the node label key that identifies this topology domain.<br />Must be a valid Kubernetes label key (qualified name).<br />Examples: "topology.kubernetes.io/zone", "kubernetes.io/hostname" |  | MaxLength: 63 <br />MinLength: 1 <br />Pattern: `^(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9]/)?([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9]$` <br />Required: \{\} <br /> |
+
+
+#### TopologyPackConstraint
+
+
+
+TopologyPackConstraint defines topology pack placement requirements.
+
+
+
+_Appears in:_
+- [TopologyConstraint](#topologyconstraint)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `required` _[TopologyDomain](#topologydomain)_ | RequiredDomain specifies the required topology packing constraint of each replica of the resource.<br />The workload will not be scheduled if this constraint cannot be satisfied.<br />Must reference a domain in the topology levels defined in the selected ClusterTopologyBinding. |  | MaxLength: 63 <br />MinLength: 1 <br />Pattern: `^[a-z][a-z0-9-]*$` <br /> |
+| `preferred` _[TopologyDomain](#topologydomain)_ | PreferredDomain specifies a preferred best-effort topology domain.<br />If the constraint cannot be satisfied, the workload is scheduled anyway. |  | MaxLength: 63 <br />MinLength: 1 <br />Pattern: `^[a-z][a-z0-9-]*$` <br /> |
 
 
 #### UpdateStrategyType
@@ -883,7 +980,8 @@ _Appears in:_
 
 | Field | Description |
 | --- | --- |
-| `RollingRecreate` | RollingRecreateStrategy indicates that replicas will be progressively<br />deleted and recreated one at a time, when templates change. This applies to<br />both pods (for standalone PodCliques) and replicas of PodCliqueScalingGroups.<br />RollingRecreateStrategy qualifies as an auto update strategy in Grove since<br />it handles the orchestration entirely by itself.<br />This is the default update strategy.<br /> |
+| `Coherent` | CoherentStrategy indicates that replicas will be updated in Minimal Viable Units —<br />MinAvailable replicas of each updated standalone PodClique plus MinAvailable replicas of each<br />updated PodCliqueScalingGroup — scheduled atomically as a new PodGang. This guarantees<br />that pods forming a minimum-viable serving unit are always version-compatible.<br />NOTE: While we have introduced an update strategy type for coherent, this is still not available.<br />In future releases once this is available this NOTE will be removed.<br /> |
+| `RollingRecreate` | RollingRecreateStrategy indicates that replicas will be progressively<br />deleted and recreated one at a time, when templates change. This applies to<br />both pods (for standalone PodCliques) and replicas of PodCliqueScalingGroups.<br />RollingRecreateStrategy qualifies as a rolling update strategy in Grove since<br />it handles the orchestration entirely by itself.<br />This is the default update strategy.<br /> |
 | `OnDelete` | OnDeleteStrategy indicates that replicas will only be updated when<br />they are manually deleted. Changes to templates do not automatically<br />trigger replica deletions.<br /> |
 
 
@@ -1140,7 +1238,7 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `profiles` _[SchedulerProfile](#schedulerprofile) array_ | Profiles is the list of scheduler profiles. Each profile has a backend name and an optional config.<br />The default-scheduler backend is always enabled to ensure that the kubernetes default scheduler is always enabled and supported.<br />Use profile name "default-scheduler" to configure or set it as default.<br />Valid profile names: "default-scheduler", "kai-scheduler". Use defaultProfileName to designate the default backend. |  |  |
+| `profiles` _[SchedulerProfile](#schedulerprofile) array_ | Profiles is the list of scheduler profiles. Each profile has a backend name and an optional config.<br />The default-scheduler backend is always enabled to ensure that the kubernetes default scheduler is always enabled and supported.<br />Use profile name "default-scheduler" to configure or set it as default.<br />Valid profile names: "default-scheduler", "kai-scheduler", "volcano", "lpx-scheduler".<br />Use defaultProfileName to designate the default backend. |  |  |
 | `defaultProfileName` _string_ | DefaultProfileName is the name of the default scheduler profile. If unset, defaulting sets it to "default-scheduler"<br />which is the kubernetes default scheduler. |  |  |
 
 
@@ -1159,6 +1257,8 @@ _Appears in:_
 | --- | --- |
 | `kai-scheduler` | SchedulerNameKai is the KAI scheduler backend.<br /> |
 | `default-scheduler` | SchedulerNameKube is the profile name for the Kubernetes default scheduler in OperatorConfiguration.<br /> |
+| `volcano` | SchedulerNameVolcano is the Volcano scheduler backend. It supports gang scheduling via Volcano PodGroup.<br /> |
+| `lpx-scheduler` | SchedulerNameLPX is the LPX scheduler backend.<br /> |
 
 
 #### SchedulerProfile
@@ -1174,7 +1274,7 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `name` _[SchedulerName](#schedulername)_ | Name is the scheduler profile name.<br />For the Kubernetes default scheduler use the standard "default-scheduler".<br />Ensure that the name chosen is a valid scheduler name. The name will also be directly set in `Pod.Spec.SchedulerName`. |  | Enum: [kai-scheduler default-scheduler] <br />Required: \{\} <br /> |
+| `name` _[SchedulerName](#schedulername)_ | Name is the scheduler profile name.<br />For the Kubernetes default scheduler use the standard "default-scheduler".<br />Ensure that the name chosen is a valid scheduler name. The name will also be directly set in `Pod.Spec.SchedulerName`. |  | Enum: [kai-scheduler default-scheduler volcano lpx-scheduler] <br />Required: \{\} <br /> |
 | `config` _[RawExtension](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#rawextension-runtime-pkg)_ | Config holds backend-specific options. The operator unmarshals it into the config type for this backend (see backend config types). |  |  |
 
 

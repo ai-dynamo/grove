@@ -1,4 +1,3 @@
-// /*
 // Copyright 2024 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,11 +11,11 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package controller
 
 import (
+	"context"
 	"fmt"
 
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
@@ -26,6 +25,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podgang"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
+	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 
 	ctrl "sigs.k8s.io/controller-runtime"
 )
@@ -35,12 +35,20 @@ func RegisterControllers(mgr ctrl.Manager, config *configv1alpha1.OperatorConfig
 	if config == nil {
 		return fmt.Errorf("operator configuration must not be nil")
 	}
+	// Register shared cache field indexes once, before any controller reconciles. GetPCLQPods
+	// (componentutils) lists a PodClique's Pods through this index.
+	if err := componentutils.RegisterPodControllerUIDIndex(context.Background(), mgr.GetFieldIndexer()); err != nil {
+		return err
+	}
 	pcsReconciler := podcliqueset.NewReconciler(mgr, config.Controllers.PodCliqueSet, config.TopologyAwareScheduling, config.Network, schedRegistry)
 	if err := pcsReconciler.RegisterWithManager(mgr); err != nil {
 		return err
 	}
-	pcReconciler := podclique.NewReconciler(mgr, config.Controllers.PodClique, schedRegistry)
-	if err := pcReconciler.RegisterWithManager(mgr); err != nil {
+	pclqReconciler, err := podclique.NewReconciler(mgr, config.Controllers.PodClique, schedRegistry)
+	if err != nil {
+		return err
+	}
+	if err := pclqReconciler.RegisterWithManager(mgr); err != nil {
 		return err
 	}
 	pcsgReconciler := podcliquescalinggroup.NewReconciler(mgr, config.Controllers.PodCliqueScalingGroup)
@@ -48,8 +56,8 @@ func RegisterControllers(mgr ctrl.Manager, config *configv1alpha1.OperatorConfig
 		return err
 	}
 
-	podgangReconciler := podgang.NewReconciler(mgr, config.Controllers.PodGang, schedRegistry)
-	if err := podgangReconciler.RegisterWithManager(mgr); err != nil {
+	podGangReconciler := podgang.NewReconciler(mgr, config.Controllers.PodGang, schedRegistry)
+	if err := podGangReconciler.RegisterWithManager(mgr); err != nil {
 		return err
 	}
 

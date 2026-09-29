@@ -17,7 +17,7 @@ spec:
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
-    - jsonPath: .status.replicas
+    - jsonPath: .spec.replicas
       name: Replicas
       type: integer
     - jsonPath: .status.availableReplicas
@@ -38,6 +38,13 @@ spec:
     - jsonPath: .status.updateProgress.totalPodCliqueScalingGroupsCount
       name: PCSGs-Total
       type: integer
+    - jsonPath: .status.conditions[?(@.type=="UpdateInProgress")].reason
+      name: Update
+      priority: 1
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
     name: v1alpha1
     schema:
       openAPIV3Schema:
@@ -156,6 +163,40 @@ spec:
                             - scope
                             type: object
                           type: array
+                        rollingUpdate:
+                          description: |-
+                            RollingUpdate is the per-component update configuration for this PodClique. It applies only to
+                            a standalone PodClique. Setting it on a PodCliqueTemplateSpec whose Name appears in any
+                            PodCliqueScalingGroupConfig.CliqueNames (a PCSG-owned PodClique) is not allowed and is rejected
+                            by the PodCliqueSet validating webhook. A PCSG-owned PodClique is instead governed by the
+                            owning PodCliqueScalingGroup's RollingUpdate.
+                          properties:
+                            maxUnavailable:
+                              description: |-
+                                MaxUnavailable is the maximum number of pods (for a standalone PodClique) or
+                                PodCliqueScalingGroup replicas (for a PCSG) that may be unavailable at any moment during an
+                                update of this component, measured against the component's desired count.
+
+                                Defaulting:
+                                  - RollingRecreate: defaults to 1.
+                                  - OnDelete: not defaulted. Defaulting never clears a RollingUpdateConfiguration that is set. The validating
+                                    webhook rejects it instead, so the consumer must remove it when switching to OnDelete.
+
+                                Validation:
+                                  - When set, must be greater than 0.
+                                  - OnDelete: RollingUpdate must not be set. The PodCliqueSet validating webhook rejects a
+                                    RollingUpdateConfiguration on any component when the strategy is OnDelete.
+                              format: int32
+                              type: integer
+                            progressDeadline:
+                              description: |-
+                                ProgressDeadline tracks the progress of this component's rolling update. If the component,
+                                a PodClique or a PodCliqueScalingGroup, shows no observable progress within this duration, the
+                                breach is reported through the UpdateInProgress condition, whose Status is set to Unknown with
+                                reason ProgressDeadlineExceeded. If nil, this component does not report progress-deadline
+                                breaches and its update can wait indefinitely for progress.
+                              type: string
+                          type: object
                         spec:
                           description: |-
                             Specification of the desired behavior of a PodClique.
@@ -2557,8 +2598,9 @@ spec:
                                             type: integer
                                         type: object
                                       resizePolicy:
-                                        description: Resources resize policy for the
-                                          container.
+                                        description: |-
+                                          Resources resize policy for the container.
+                                          This field cannot be set on ephemeral containers.
                                         items:
                                           description: ContainerResizePolicy represents
                                             resource resize policy for the container.
@@ -5862,8 +5904,9 @@ spec:
                                             type: integer
                                         type: object
                                       resizePolicy:
-                                        description: Resources resize policy for the
-                                          container.
+                                        description: |-
+                                          Resources resize policy for the container.
+                                          This field cannot be set on ephemeral containers.
                                         items:
                                           description: ContainerResizePolicy represents
                                             resource resize policy for the container.
@@ -6660,8 +6703,8 @@ spec:
                                     will be made available to those containers which consume them
                                     by name.
 
-                                    This is an alpha field and requires enabling the
-                                    DynamicResourceAllocation feature gate.
+                                    This is a stable field but requires that the
+                                    DynamicResourceAllocation feature gate is enabled.
 
                                     This field is immutable.
                                   items:
@@ -7121,9 +7164,10 @@ spec:
                                       operator:
                                         description: |-
                                           Operator represents a key's relationship to the value.
-                                          Valid operators are Exists and Equal. Defaults to Equal.
+                                          Valid operators are Exists, Equal, Lt, and Gt. Defaults to Equal.
                                           Exists is equivalent to wildcard for value, so that a pod can
                                           tolerate all taints of a particular category.
+                                          Lt and Gt perform numeric comparisons (requires feature gate TaintTolerationComparisonOperators).
                                         type: string
                                       tolerationSeconds:
                                         description: |-
@@ -7931,7 +7975,7 @@ spec:
                                                   resources:
                                                     description: |-
                                                       resources represents the minimum resources the volume should have.
-                                                      If RecoverVolumeExpansionFailure feature is enabled users are allowed to specify resource requirements
+                                                      Users are allowed to specify resource requirements
                                                       that are lower than previous value but must still be higher than capacity recorded in the
                                                       status field of the claim.
                                                       More info: https://kubernetes.io/docs/concepts/storage/persistent-volumes#resources
@@ -8845,6 +8889,24 @@ spec:
                                                         CSRs will be addressed to
                                                         this signer.
                                                       type: string
+                                                    userAnnotations:
+                                                      additionalProperties:
+                                                        type: string
+                                                      description: |-
+                                                        userAnnotations allow pod authors to pass additional information to
+                                                        the signer implementation.  Kubernetes does not restrict or validate this
+                                                        metadata in any way.
+
+                                                        These values are copied verbatim into the `spec.unverifiedUserAnnotations` field of
+                                                        the PodCertificateRequest objects that Kubelet creates.
+
+                                                        Entries are subject to the same validation as object metadata annotations,
+                                                        with the addition that all keys must be domain-prefixed. No restrictions
+                                                        are placed on values, except an overall size limitation on the entire field.
+
+                                                        Signers should document the keys and values they support. Signers should
+                                                        deny requests that contain keys they do not recognize.
+                                                      type: object
                                                   required:
                                                   - keyType
                                                   - signerName
@@ -9278,6 +9340,42 @@ spec:
                                   x-kubernetes-list-map-keys:
                                   - name
                                   x-kubernetes-list-type: map
+                                workloadRef:
+                                  description: |-
+                                    WorkloadRef provides a reference to the Workload object that this Pod belongs to.
+                                    This field is used by the scheduler to identify the PodGroup and apply the
+                                    correct group scheduling policies. The Workload object referenced
+                                    by this field may not exist at the time the Pod is created.
+                                    This field is immutable, but a Workload object with the same name
+                                    may be recreated with different policies. Doing this during pod scheduling
+                                    may result in the placement not conforming to the expected policies.
+                                  properties:
+                                    name:
+                                      description: |-
+                                        Name defines the name of the Workload object this Pod belongs to.
+                                        Workload must be in the same namespace as the Pod.
+                                        If it doesn't match any existing Workload, the Pod will remain unschedulable
+                                        until a Workload object is created and observed by the kube-scheduler.
+                                        It must be a DNS subdomain.
+                                      type: string
+                                    podGroup:
+                                      description: |-
+                                        PodGroup is the name of the PodGroup within the Workload that this Pod
+                                        belongs to. If it doesn't match any existing PodGroup within the Workload,
+                                        the Pod will remain unschedulable until the Workload object is recreated
+                                        and observed by the kube-scheduler. It must be a DNS label.
+                                      type: string
+                                    podGroupReplicaKey:
+                                      description: |-
+                                        PodGroupReplicaKey specifies the replica key of the PodGroup to which this
+                                        Pod belongs. It is used to distinguish pods belonging to different replicas
+                                        of the same pod group. The pod group policy is applied separately to each replica.
+                                        When set, it must be a DNS label.
+                                      type: string
+                                  required:
+                                  - name
+                                  - podGroup
+                                  type: object
                               required:
                               - containers
                               type: object
@@ -9313,28 +9411,68 @@ spec:
                             TopologyConstraint defines topology placement requirements for PodClique.
                             Must be equal to or stricter than parent resource constraints.
                           properties:
+                            pack:
+                              description: Pack specifies topology packing constraints
+                                for each replica of the resource.
+                              properties:
+                                preferred:
+                                  description: |-
+                                    PreferredDomain specifies a preferred best-effort topology domain.
+                                    If the constraint cannot be satisfied, the workload is scheduled anyway.
+                                  maxLength: 63
+                                  minLength: 1
+                                  pattern: ^[a-z][a-z0-9-]*$
+                                  type: string
+                                required:
+                                  description: |-
+                                    RequiredDomain specifies the required topology packing constraint of each replica of the resource.
+                                    The workload will not be scheduled if this constraint cannot be satisfied.
+                                    Must reference a domain in the topology levels defined in the selected ClusterTopologyBinding.
+                                  maxLength: 63
+                                  minLength: 1
+                                  pattern: ^[a-z][a-z0-9-]*$
+                                  type: string
+                              type: object
+                              x-kubernetes-validations:
+                              - message: pack must specify at least one of required
+                                  or preferred
+                                reason: FieldValueRequired
+                                rule: has(self.required) || has(self.preferred)
                             packDomain:
                               description: |-
-                                PackDomain specifies the topology domain for grouping replicas.
+                                PackDomain specifies the required topology domain using the legacy field name.
                                 Controls placement constraint for EACH individual replica instance.
-                                Must reference a domain in the topology levels defined in the ClusterTopology CR name as set in TopologyName
+                                Must reference a domain in the topology levels defined in the ClusterTopologyBinding named by TopologyName.
                                 Example: "rack" means each replica independently placed within one rack.
                                 Note: Does NOT constrain all replicas to the same rack together.
                                 Different replicas can be in different topology domains.
+                                Deprecated: use Pack.RequiredDomain.
                               maxLength: 63
                               minLength: 1
                               pattern: ^[a-z][a-z0-9-]*$
                               type: string
                             topologyName:
                               description: |-
-                                TopologyName is the name of the ClusterTopology resource to use for topology-aware scheduling.
-                                If topologyConstraint is set, topologyName and packDomain must both be specified.
+                                TopologyName is the name of the ClusterTopologyBinding resource to use for topology-aware scheduling.
+                                Setting TopologyName may be optional if the name can be inherited from a higher level scope.
+                                When TopologyName is specified at a PCS/PCSG/PCLQ resource constraint, it will also be inherited
+                                as the default ClusterTopologyBinding name on all sub-resources, unless overridden by another TopologyName
+                                at a sub-resource.
+                                For example, setting TopologyName at a PCS level makes it optional for child PCSG or PCLQ levels
+                                when the sub-resources reuse the same ClusterTopologyBinding.
                                 Immutable after creation.
                               type: string
-                          required:
-                          - packDomain
-                          - topologyName
                           type: object
+                          x-kubernetes-validations:
+                          - fieldPath: .pack
+                            message: topologyConstraint must specify pack or deprecated
+                              packDomain
+                            reason: FieldValueRequired
+                            rule: has(self.pack) || has(self.packDomain)
+                          - fieldPath: .pack.required
+                            message: must not set both pack.required and deprecated
+                              packDomain
+                            rule: '!(has(self.packDomain) && has(self.pack) && has(self.pack.required))'
                       required:
                       - name
                       - spec
@@ -9376,8 +9514,10 @@ spec:
                             More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/annotations
                           type: object
                         cliqueNames:
-                          description: CliqueNames is the list of names of the PodClique's
-                            that are part of the scaling group.
+                          description: |-
+                            CliqueNames is the ordered list of PodClique names that are part of the scaling group.
+                            The order determines the group-wide pod indices exposed through the
+                            grove.io/podcliquescalinggroup-pod-index Pod label and GROVE_PCSG_POD_INDEX environment variable.
                           items:
                             type: string
                           type: array
@@ -9461,6 +9601,38 @@ spec:
                             - scope
                             type: object
                           type: array
+                        rollingUpdate:
+                          description: |-
+                            RollingUpdate is the per-component update configuration for this PodCliqueScalingGroup.
+                            It governs the rolling update of every constituent member PodClique. The member
+                            PodCliqueTemplateSpecs must not carry their own RollingUpdate.
+                          properties:
+                            maxUnavailable:
+                              description: |-
+                                MaxUnavailable is the maximum number of pods (for a standalone PodClique) or
+                                PodCliqueScalingGroup replicas (for a PCSG) that may be unavailable at any moment during an
+                                update of this component, measured against the component's desired count.
+
+                                Defaulting:
+                                  - RollingRecreate: defaults to 1.
+                                  - OnDelete: not defaulted. Defaulting never clears a RollingUpdateConfiguration that is set. The validating
+                                    webhook rejects it instead, so the consumer must remove it when switching to OnDelete.
+
+                                Validation:
+                                  - When set, must be greater than 0.
+                                  - OnDelete: RollingUpdate must not be set. The PodCliqueSet validating webhook rejects a
+                                    RollingUpdateConfiguration on any component when the strategy is OnDelete.
+                              format: int32
+                              type: integer
+                            progressDeadline:
+                              description: |-
+                                ProgressDeadline tracks the progress of this component's rolling update. If the component,
+                                a PodClique or a PodCliqueScalingGroup, shows no observable progress within this duration, the
+                                breach is reported through the UpdateInProgress condition, whose Status is set to Unknown with
+                                reason ProgressDeadlineExceeded. If nil, this component does not report progress-deadline
+                                breaches and its update can wait indefinitely for progress.
+                              type: string
+                          type: object
                         scaleConfig:
                           description: ScaleConfig is the horizontal pod autoscaler
                             configuration for the pod clique scaling group.
@@ -9971,28 +10143,68 @@ spec:
                             TopologyConstraint defines topology placement requirements for PodCliqueScalingGroup.
                             Must be equal to or stricter than parent PodCliqueSet constraints.
                           properties:
+                            pack:
+                              description: Pack specifies topology packing constraints
+                                for each replica of the resource.
+                              properties:
+                                preferred:
+                                  description: |-
+                                    PreferredDomain specifies a preferred best-effort topology domain.
+                                    If the constraint cannot be satisfied, the workload is scheduled anyway.
+                                  maxLength: 63
+                                  minLength: 1
+                                  pattern: ^[a-z][a-z0-9-]*$
+                                  type: string
+                                required:
+                                  description: |-
+                                    RequiredDomain specifies the required topology packing constraint of each replica of the resource.
+                                    The workload will not be scheduled if this constraint cannot be satisfied.
+                                    Must reference a domain in the topology levels defined in the selected ClusterTopologyBinding.
+                                  maxLength: 63
+                                  minLength: 1
+                                  pattern: ^[a-z][a-z0-9-]*$
+                                  type: string
+                              type: object
+                              x-kubernetes-validations:
+                              - message: pack must specify at least one of required
+                                  or preferred
+                                reason: FieldValueRequired
+                                rule: has(self.required) || has(self.preferred)
                             packDomain:
                               description: |-
-                                PackDomain specifies the topology domain for grouping replicas.
+                                PackDomain specifies the required topology domain using the legacy field name.
                                 Controls placement constraint for EACH individual replica instance.
-                                Must reference a domain in the topology levels defined in the ClusterTopology CR name as set in TopologyName
+                                Must reference a domain in the topology levels defined in the ClusterTopologyBinding named by TopologyName.
                                 Example: "rack" means each replica independently placed within one rack.
                                 Note: Does NOT constrain all replicas to the same rack together.
                                 Different replicas can be in different topology domains.
+                                Deprecated: use Pack.RequiredDomain.
                               maxLength: 63
                               minLength: 1
                               pattern: ^[a-z][a-z0-9-]*$
                               type: string
                             topologyName:
                               description: |-
-                                TopologyName is the name of the ClusterTopology resource to use for topology-aware scheduling.
-                                If topologyConstraint is set, topologyName and packDomain must both be specified.
+                                TopologyName is the name of the ClusterTopologyBinding resource to use for topology-aware scheduling.
+                                Setting TopologyName may be optional if the name can be inherited from a higher level scope.
+                                When TopologyName is specified at a PCS/PCSG/PCLQ resource constraint, it will also be inherited
+                                as the default ClusterTopologyBinding name on all sub-resources, unless overridden by another TopologyName
+                                at a sub-resource.
+                                For example, setting TopologyName at a PCS level makes it optional for child PCSG or PCLQ levels
+                                when the sub-resources reuse the same ClusterTopologyBinding.
                                 Immutable after creation.
                               type: string
-                          required:
-                          - packDomain
-                          - topologyName
                           type: object
+                          x-kubernetes-validations:
+                          - fieldPath: .pack
+                            message: topologyConstraint must specify pack or deprecated
+                              packDomain
+                            reason: FieldValueRequired
+                            rule: has(self.pack) || has(self.packDomain)
+                          - fieldPath: .pack.required
+                            message: must not set both pack.required and deprecated
+                              packDomain
+                            rule: '!(has(self.packDomain) && has(self.pack) && has(self.pack.required))'
                       required:
                       - cliqueNames
                       - name
@@ -10061,7 +10273,7 @@ spec:
                                                   to decide whether it needs to validate them.
 
                                                   Must be a DNS subdomain and should end with a DNS domain owned by the
-                                                  vendor of the driver.
+                                                  vendor of the driver. It should use only lower case characters.
                                                 type: string
                                               parameters:
                                                 description: |-
@@ -10767,28 +10979,66 @@ spec:
                     description: TopologyConstraint defines topology placement requirements
                       for PodCliqueSet.
                     properties:
+                      pack:
+                        description: Pack specifies topology packing constraints for
+                          each replica of the resource.
+                        properties:
+                          preferred:
+                            description: |-
+                              PreferredDomain specifies a preferred best-effort topology domain.
+                              If the constraint cannot be satisfied, the workload is scheduled anyway.
+                            maxLength: 63
+                            minLength: 1
+                            pattern: ^[a-z][a-z0-9-]*$
+                            type: string
+                          required:
+                            description: |-
+                              RequiredDomain specifies the required topology packing constraint of each replica of the resource.
+                              The workload will not be scheduled if this constraint cannot be satisfied.
+                              Must reference a domain in the topology levels defined in the selected ClusterTopologyBinding.
+                            maxLength: 63
+                            minLength: 1
+                            pattern: ^[a-z][a-z0-9-]*$
+                            type: string
+                        type: object
+                        x-kubernetes-validations:
+                        - message: pack must specify at least one of required or preferred
+                          reason: FieldValueRequired
+                          rule: has(self.required) || has(self.preferred)
                       packDomain:
                         description: |-
-                          PackDomain specifies the topology domain for grouping replicas.
+                          PackDomain specifies the required topology domain using the legacy field name.
                           Controls placement constraint for EACH individual replica instance.
-                          Must reference a domain in the topology levels defined in the ClusterTopology CR name as set in TopologyName
+                          Must reference a domain in the topology levels defined in the ClusterTopologyBinding named by TopologyName.
                           Example: "rack" means each replica independently placed within one rack.
                           Note: Does NOT constrain all replicas to the same rack together.
                           Different replicas can be in different topology domains.
+                          Deprecated: use Pack.RequiredDomain.
                         maxLength: 63
                         minLength: 1
                         pattern: ^[a-z][a-z0-9-]*$
                         type: string
                       topologyName:
                         description: |-
-                          TopologyName is the name of the ClusterTopology resource to use for topology-aware scheduling.
-                          If topologyConstraint is set, topologyName and packDomain must both be specified.
+                          TopologyName is the name of the ClusterTopologyBinding resource to use for topology-aware scheduling.
+                          Setting TopologyName may be optional if the name can be inherited from a higher level scope.
+                          When TopologyName is specified at a PCS/PCSG/PCLQ resource constraint, it will also be inherited
+                          as the default ClusterTopologyBinding name on all sub-resources, unless overridden by another TopologyName
+                          at a sub-resource.
+                          For example, setting TopologyName at a PCS level makes it optional for child PCSG or PCLQ levels
+                          when the sub-resources reuse the same ClusterTopologyBinding.
                           Immutable after creation.
                         type: string
-                    required:
-                    - packDomain
-                    - topologyName
                     type: object
+                    x-kubernetes-validations:
+                    - fieldPath: .pack
+                      message: topologyConstraint must specify pack or deprecated
+                        packDomain
+                      reason: FieldValueRequired
+                      rule: has(self.pack) || has(self.packDomain)
+                    - fieldPath: .pack.required
+                      message: must not set both pack.required and deprecated packDomain
+                      rule: '!(has(self.packDomain) && has(self.pack) && has(self.pack.required))'
                 required:
                 - cliques
                 type: object
@@ -11021,7 +11271,7 @@ spec:
                   currentlyUpdating:
                     description: |-
                       CurrentlyUpdating captures the progress of the PodCliqueSet replicas that are currently being updated.
-                      This field is only set for auto update strategies where Grove handles the orchestration. It is not set for the
+                      This field is only set for rolling update strategies where Grove handles the orchestration. It is not set for the
                       OnDelete update strategy.
                     items:
                       description: PodCliqueSetReplicaUpdateProgress captures the
@@ -11063,14 +11313,15 @@ spec:
                     format: int32
                     type: integer
                   updateEndedAt:
-                    description: |-
-                      UpdateEndedAt is the time at which Grove does not have any work pending to manifest the update according to the
-                      configured update strategy.
-                      For auto update strategies where Grove handles the orchestration, while the update is still in progress it will be
-                      nil, and will be set once the update finishes where all child resources are updated by Grove with the latest
-                      specification.
-                      For the OnDelete strategy, it is set to the same time as UpdateStartedAt, which implies that there is no work
-                      pending on Grove.
+                    description: "UpdateEndedAt is the time at which Grove does not
+                      have any work pending to manifest the update according to the\nconfigured
+                      update strategy.\n - For rolling update strategies where Grove
+                      handles the orchestration, while the update is still in progress\n
+                      \  it will be nil, and will be set once the update finishes
+                      where all child resources are updated by Grove with\n   the
+                      latest specification.\n - For the OnDelete strategy, it is set
+                      to the same time as UpdateStartedAt, which implies that there
+                      is no work\n\t  pending on Grove."
                     format: date-time
                     type: string
                   updateStartedAt:
@@ -11106,6 +11357,29 @@ spec:
         required:
         - spec
         type: object
+        x-kubernetes-validations:
+        - fieldPath: .spec.template.topologyConstraint.packDomain
+          message: packDomain is deprecated and cannot be used on new workloads; use
+            pack.required
+          optionalOldSelf: true
+          reason: FieldValueForbidden
+          rule: oldSelf.hasValue() || !has(self.spec.template.topologyConstraint)
+            || !has(self.spec.template.topologyConstraint.packDomain)
+        - fieldPath: .spec.template.cliques
+          message: packDomain is deprecated and cannot be used on new workloads; use
+            pack.required
+          optionalOldSelf: true
+          reason: FieldValueForbidden
+          rule: oldSelf.hasValue() || !has(self.spec.template.cliques) || self.spec.template.cliques.all(c,
+            !has(c.topologyConstraint) || !has(c.topologyConstraint.packDomain))
+        - fieldPath: .spec.template.podCliqueScalingGroups
+          message: packDomain is deprecated and cannot be used on new workloads; use
+            pack.required
+          optionalOldSelf: true
+          reason: FieldValueForbidden
+          rule: oldSelf.hasValue() || !has(self.spec.template.podCliqueScalingGroups)
+            || self.spec.template.podCliqueScalingGroups.all(g, !has(g.topologyConstraint)
+            || !has(g.topologyConstraint.packDomain))
     served: true
     storage: true
     subresources:

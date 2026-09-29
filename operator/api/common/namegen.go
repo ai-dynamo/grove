@@ -1,4 +1,3 @@
-// /*
 // Copyright 2025 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,12 +11,12 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package common
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 )
@@ -63,6 +62,16 @@ func GeneratePodServiceAccountName(pcsName string) string {
 // GenerateInitContainerSATokenSecretName generates a Secret name containing a service account token that will be mounted onto the init container
 // responsible for ensuring start-up order amongst PodCliques.
 func GenerateInitContainerSATokenSecretName(pcsName string) string {
+	return fmt.Sprintf("%s-ic-sat", pcsName)
+}
+
+// GenerateLegacyInitContainerSATokenSecretName generates the legacy init-container service account token
+// Secret name used before the suffix was shortened. Retained as a migration source and delete target.
+//
+// Deprecated: retained for migration after shortening the suffix to "-ic-sat".
+// Expected in v0.1.0-alpha.12; remove three releases later.
+// Track removal in https://github.com/ai-dynamo/grove/issues/658.
+func GenerateLegacyInitContainerSATokenSecretName(pcsName string) string {
 	return fmt.Sprintf("%s-initc-sa-token-secret", pcsName)
 }
 
@@ -83,10 +92,35 @@ func GenerateBasePodGangName(pcsNameReplica ResourceNameReplica) string {
 	return fmt.Sprintf("%s-%d", pcsNameReplica.Name, pcsNameReplica.Replica)
 }
 
-// CreatePodGangNameFromPCSGFQN generates the PodGang name for a replica of a PodCliqueScalingGroup
-// when the PCSG name is already fully qualified.
+// CreatePodGangNameFromPCSGFQN generates a legacy scaled PodGang name (shape: `<pcsg-fqn>-<index>`)
+// for each replica of PodCliqueScalingGroup above the minAvailable. It is a recognizer for PodGangs
+// created before the epoch-based naming scheme. Migration converts these to the new scheme. New
+// PodGangs use GenerateNonAnchorPodGangName.
 func CreatePodGangNameFromPCSGFQN(pcsgFQN string, scaledPodGangIndex int) string {
 	return fmt.Sprintf("%s-%d", pcsgFQN, scaledPodGangIndex)
+}
+
+// GenerateAnchorPodGangName generates the name of an anchor PodGang.
+// Format: <pcs-name>-<pcs-replica-index>-<epoch>.
+// The PodGangMap writer authors the anchor name once. Every other reconciler reads it and never
+// recomputes it.
+func GenerateAnchorPodGangName(pcsNameReplica ResourceNameReplica, epoch string) string {
+	return fmt.Sprintf("%s-%d-%s", pcsNameReplica.Name, pcsNameReplica.Replica, epoch)
+}
+
+// GenerateNonAnchorPodGangName generates the name of a non-anchor PodGang.
+// Format: <pcs-name>-<pcs-replica-index>-<epoch>-<pcsg-name>-<pcsg-replica-index>.
+// One non-anchor PodGang exists per PodCliqueScalingGroup replica index within an epoch. The pcsgName
+// segment keeps replica indices of different PodCliqueScalingGroups from colliding. Each
+// PodCliqueScalingGroup numbers its replicas from 0.
+func GenerateNonAnchorPodGangName(pcsNameReplica ResourceNameReplica, epoch, pcsgName string, pcsgReplicaIndex int32) string {
+	return fmt.Sprintf("%s-%d-%s-%s-%d", pcsNameReplica.Name, pcsNameReplica.Replica, epoch, pcsgName, pcsgReplicaIndex)
+}
+
+// GeneratePodGangMapName generates a PodGangMap resource name for a PodCliqueSet replica.
+// One PodGangMap exists per PodCliqueSet replica, named <pcs-name>-<pcs-replica-index>.
+func GeneratePodGangMapName(pcsNameReplica ResourceNameReplica) string {
+	return fmt.Sprintf("%s-%d", pcsNameReplica.Name, pcsNameReplica.Replica)
 }
 
 // GeneratePodGangNameForPodCliqueOwnedByPodCliqueSet generates the PodGang name for a PodClique
@@ -116,7 +150,18 @@ func GeneratePodGangNameForPodCliqueOwnedByPCSG(pcs *v1alpha1.PodCliqueSet, pcsR
 
 // ExtractScalingGroupNameFromPCSGFQN extracts the scaling group name from a PodCliqueScalingGroup FQN.
 // For example, "simple1-0-sga" with pcsNameReplica="simple1-0" returns "sga".
-func ExtractScalingGroupNameFromPCSGFQN(pcsgFQN string, pcsNameReplica ResourceNameReplica) string {
+func ExtractScalingGroupNameFromPCSGFQN(pcsgFQN string, pcsNameReplica ResourceNameReplica) (string, error) {
 	prefix := fmt.Sprintf("%s-%d-", pcsNameReplica.Name, pcsNameReplica.Replica)
-	return pcsgFQN[len(prefix):]
+	if !strings.HasPrefix(pcsgFQN, prefix) {
+		return "", fmt.Errorf("FQN %q does not have expected prefix %q", pcsgFQN, prefix)
+	}
+	return pcsgFQN[len(prefix):], nil
+}
+
+// ExtractPodCliqueNameFromStandalonePCLQFQN extracts the unqualified PodClique template name from a
+// standalone PodClique FQN. For example, "simple1-0-frontend" with pcsNameReplica="simple1-0"
+// returns "frontend". The caller must pass a standalone PodClique FQN.
+func ExtractPodCliqueNameFromStandalonePCLQFQN(pclqFQN string, pcsNameReplica ResourceNameReplica) string {
+	prefix := fmt.Sprintf("%s-%d-", pcsNameReplica.Name, pcsNameReplica.Replica)
+	return pclqFQN[len(prefix):]
 }

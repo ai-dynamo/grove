@@ -1,6 +1,5 @@
 //go:build e2e
 
-// /*
 // Copyright 2025 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,7 +13,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package setup
 
@@ -50,6 +48,9 @@ const (
 
 	// cleanupPollInterval is the interval between checks during cleanup polling
 	cleanupPollInterval = 1 * time.Second
+
+	// cleanupMaxListedItems limits noisy cleanup progress logs for large scale tests.
+	cleanupMaxListedItems = 10
 
 	// Default registry port for local development clusters (e.g., k3d with local registry)
 	defaultRegistryPort = "5001"
@@ -268,8 +269,8 @@ func (scm *SharedClusterManager) PrepareForTest(ctx context.Context, requiredWor
 	return nil
 }
 
-// CleanupWorkloads removes all test workloads from the cluster
-func (scm *SharedClusterManager) CleanupWorkloads(ctx context.Context) error {
+// CleanupWorkloads removes all test workloads from the cluster.
+func (scm *SharedClusterManager) CleanupWorkloads(ctx context.Context, waitForCascade bool) error {
 	if !scm.isSetup {
 		return nil
 	}
@@ -279,6 +280,14 @@ func (scm *SharedClusterManager) CleanupWorkloads(ctx context.Context) error {
 	// Step 1: Delete PodCliqueSets first (should cascade delete other resources)
 	if err := scm.deleteAllResources(ctx, pcsResourceType); err != nil {
 		scm.logger.Warnf("failed to delete PodCliqueSets: %v", err)
+	}
+
+	if !waitForCascade {
+		scm.logger.Info("⏭️ Skipping cascade deletion wait; caller is responsible for disposing or recreating the cluster before the next run")
+		if err := scm.resetNodeStates(ctx); err != nil {
+			scm.logger.Warnf("failed to reset node states: %v", err)
+		}
+		return nil
 	}
 
 	// Step 2: Poll for all resources and pods to be cleaned up
@@ -360,7 +369,7 @@ func (scm *SharedClusterManager) listRemainingPods(ctx context.Context, namespac
 	}
 
 	if len(nonSystemPods) > 0 {
-		scm.logger.Errorf("Remaining non-system pods: %v", nonSystemPods)
+		scm.logger.Errorf("Remaining non-system pods: %s", formatLimitedItems(nonSystemPods, cleanupMaxListedItems, len(nonSystemPods)))
 	}
 }
 
@@ -410,6 +419,9 @@ func (scm *SharedClusterManager) waitForAllGroveManagedResourcesAndPodsDeleted(c
 			if len(resourceList.Items) > 0 {
 				totalRemaining += len(resourceList.Items)
 				for _, item := range resourceList.Items {
+					if len(resourceDetails) >= cleanupMaxListedItems {
+						continue
+					}
 					deletionTS := item.GetDeletionTimestamp()
 					if deletionTS != nil {
 						resourceDetails = append(resourceDetails, fmt.Sprintf("%s/%s (deleting since %v)", item.GetNamespace(), item.GetName(), time.Since(deletionTS.Time).Round(time.Second)))
@@ -440,7 +452,8 @@ func (scm *SharedClusterManager) waitForAllGroveManagedResourcesAndPodsDeleted(c
 			if now.Sub(lastLogTime) >= logInterval {
 				lastLogTime = now
 				elapsed := now.Sub(startTime).Round(time.Second)
-				scm.logger.Infof("⏳ [%v elapsed] Waiting for %d resources and %d pods. Details: %v", elapsed, totalRemaining-nonSystemPods, nonSystemPods, resourceDetails)
+				remainingResources := totalRemaining - nonSystemPods
+				scm.logger.Infof("⏳ [%v elapsed] Waiting for %d resources and %d pods. Details: %s", elapsed, remainingResources, nonSystemPods, formatLimitedItems(resourceDetails, cleanupMaxListedItems, remainingResources))
 			}
 		}
 
@@ -475,9 +488,25 @@ func (scm *SharedClusterManager) listRemainingGroveManagedResources(ctx context.
 			for _, item := range resourceList.Items {
 				resourceNames = append(resourceNames, fmt.Sprintf("%s/%s", item.GetNamespace(), item.GetName()))
 			}
-			scm.logger.Errorf("Remaining %s: %v", rt.name, resourceNames)
+			scm.logger.Errorf("Remaining %s: %s", rt.name, formatLimitedItems(resourceNames, cleanupMaxListedItems, len(resourceNames)))
 		}
 	}
+}
+
+func formatLimitedItems(items []string, limit, total int) string {
+	if len(items) == 0 {
+		return "[]"
+	}
+	if total <= 0 {
+		total = len(items)
+	}
+	if limit <= 0 || total <= limit {
+		return fmt.Sprintf("%v", items)
+	}
+	if len(items) < limit {
+		limit = len(items)
+	}
+	return fmt.Sprintf("%v (showing first %d of %d)", items[:limit], limit, total)
 }
 
 // GetClient returns the unified K8s client struct
@@ -546,17 +575,19 @@ func SetupRegistryTestImages(registryPort string, images []string) error {
 	for _, imageName := range images {
 		registryImage := fmt.Sprintf("localhost:%s/%s", registryPort, imageName)
 
-		// Step 1: Pull the image
-		pullReader, err := cli.ImagePull(ctx, imageName, image.PullOptions{})
-		if err != nil {
-			return fmt.Errorf("failed to pull %s: %w", imageName, err)
-		}
-
-		// Consume the pull output to avoid blocking
-		_, err = io.Copy(io.Discard, pullReader)
-		ioutil.CloseQuietly(pullReader)
-		if err != nil {
-			return fmt.Errorf("failed to read pull output for %s: %w", imageName, err)
+		// Step 1: Pull the image only if it is not already in the local Docker cache.
+		// Skipping the pull when the image is cached avoids Docker Hub rate limits
+		// (HTTP 429) during repeated local runs such as stress tests.
+		if _, _, err := cli.ImageInspectWithRaw(ctx, imageName); err != nil {
+			pullReader, err := cli.ImagePull(ctx, imageName, image.PullOptions{})
+			if err != nil {
+				return fmt.Errorf("failed to pull %s: %w", imageName, err)
+			}
+			_, err = io.Copy(io.Discard, pullReader)
+			ioutil.CloseQuietly(pullReader)
+			if err != nil {
+				return fmt.Errorf("failed to read pull output for %s: %w", imageName, err)
+			}
 		}
 
 		// Step 2: Tag the image for the local registry

@@ -1,4 +1,3 @@
-// /*
 // Copyright 2025 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,7 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package podclique
 
@@ -28,10 +26,10 @@ import (
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
-	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
+	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
 	"github.com/go-logr/logr"
@@ -39,6 +37,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -50,6 +49,7 @@ const (
 	errDeletePodClique             grovecorev1alpha1.ErrorCode = "ERR_DELETE_PODCLIQUE"
 	errCodeListPodCliques          grovecorev1alpha1.ErrorCode = "ERR_LIST_PODCLIQUES"
 	errCodeCreateOrUpdatePodClique grovecorev1alpha1.ErrorCode = "ERR_CREATE_OR_UPDATE_PODCLIQUE"
+	errCodeGetPodGangMap           grovecorev1alpha1.ErrorCode = "ERR_GET_PODGANGMAP"
 )
 
 type _resource struct {
@@ -70,19 +70,19 @@ func New(client client.Client, scheme *runtime.Scheme, eventRecorder record.Even
 // GetExistingResourceNames returns the names of all the existing resources that the PodClique Operator manages.
 func (r _resource) GetExistingResourceNames(ctx context.Context, logger logr.Logger, pcsObjMeta metav1.ObjectMeta) ([]string, error) {
 	logger.Info("Looking for existing PodCliques")
-	pclqPartialObjMetaList, err := k8sutils.ListExistingPartialObjectMetadata(ctx,
-		r.client,
-		grovecorev1alpha1.SchemeGroupVersion.WithKind("PodClique"),
-		pcsObjMeta,
-		getPodCliqueSelectorLabels(pcsObjMeta))
-	if err != nil {
+	pclqList := &grovecorev1alpha1.PodCliqueList{}
+	if err := r.client.List(ctx,
+		pclqList,
+		client.InNamespace(pcsObjMeta.Namespace),
+		client.MatchingLabels(getPodCliqueSelectorLabels(pcsObjMeta)),
+	); err != nil {
 		return nil, groveerr.WrapError(err,
 			errCodeListPodCliques,
 			component.OperationGetExistingResourceNames,
 			fmt.Sprintf("Error listing PodCliques for PodCliqueSet: %v", k8sutils.GetObjectKeyFromObjectMeta(pcsObjMeta)),
 		)
 	}
-	return k8sutils.FilterMapOwnedResourceNames(pcsObjMeta, pclqPartialObjMetaList), nil
+	return k8sutils.FilterMapOwnedResourceNames(pcsObjMeta, pclqList.Items), nil
 }
 
 // Sync synchronizes all resources that the PodClique Operator manages.
@@ -129,19 +129,31 @@ func (r _resource) triggerDeletionOfExcessPCLQs(ctx context.Context, logger logr
 func (r _resource) createOrUpdatePCLQs(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, existingPCLQFQNs []string) error {
 	expectedPCLQNames, _ := componentutils.GetExpectedPCLQNamesGroupByOwner(pcs)
 	tasks := make([]utils.Task, 0, len(expectedPCLQNames))
-	existingPCLQNameSet := componentutils.NewSet(existingPCLQFQNs)
+	existingPCLQNameSet := sets.New(existingPCLQFQNs...)
 
-	for pcsReplica := range pcs.Spec.Replicas {
-		for _, expectedPCLQName := range expectedPCLQNames {
+	for pcsReplicaIndex := range pcs.Spec.Replicas {
+		// The PodGangMap for this PCS replica is the authority for the PodGang name. It is created by
+		// the PodGangMap component earlier in the same PodCliqueSet reconcile, so it is expected to
+		// exist; a missing PodGangMap is requeued rather than resolved to a legacy name.
+		pgm, err := componentutils.GetPodGangMap(ctx, r.client, client.ObjectKeyFromObject(pcs), int(pcsReplicaIndex))
+		if err != nil {
+			return groveerr.WrapError(err,
+				errCodeGetPodGangMap,
+				component.OperationSync,
+				fmt.Sprintf("failed to get PodGangMap for PodCliqueSet: %v, PCS replica index: %d", client.ObjectKeyFromObject(pcs), pcsReplicaIndex),
+			)
+		}
+
+		for expectedPCLQName := range expectedPCLQNames {
 			pclqObjectKey := client.ObjectKey{
-				Name:      apicommon.GeneratePodCliqueName(apicommon.ResourceNameReplica{Name: pcs.Name, Replica: int(pcsReplica)}, expectedPCLQName),
+				Name:      apicommon.GeneratePodCliqueName(apicommon.ResourceNameReplica{Name: pcs.Name, Replica: int(pcsReplicaIndex)}, expectedPCLQName),
 				Namespace: pcs.Namespace,
 			}
 			pclqExists := existingPCLQNameSet.Has(pclqObjectKey.Name)
 			createOrUpdateTask := utils.Task{
 				Name: fmt.Sprintf("CreateOrUpdatePodClique-%s", pclqObjectKey),
 				Fn: func(ctx context.Context) error {
-					return r.doCreateOrUpdate(ctx, logger, pcs, pcsReplica, pclqObjectKey, pclqExists)
+					return r.doCreateOrUpdate(ctx, logger, pcs, pcsReplicaIndex, pgm, pclqObjectKey, pclqExists)
 				},
 			}
 			tasks = append(tasks, createOrUpdateTask)
@@ -204,7 +216,7 @@ func (r _resource) createDeleteTasks(logger logr.Logger, pcs *grovecorev1alpha1.
 func getPodCliqueNamesToDelete(pcsName string, pcsReplicas int, existingPCLQNames []string) ([]string, error) {
 	pclqsToDelete := make([]string, 0, len(existingPCLQNames))
 	for _, pclqName := range existingPCLQNames {
-		extractedPCSReplica, err := utils.GetPodCliqueSetReplicaIndexFromPodCliqueFQN(pcsName, pclqName)
+		extractedPCSReplica, err := componentutils.GetPodCliqueSetReplicaIndexFromPodCliqueFQN(pcsName, pclqName)
 		if err != nil {
 			return nil, groveerr.WrapError(err,
 				errSyncPodClique,
@@ -260,13 +272,13 @@ func (r _resource) Delete(ctx context.Context, logger logr.Logger, pcsObjectMeta
 }
 
 // doCreateOrUpdate creates or updates a single PodClique resource.
-func (r _resource) doCreateOrUpdate(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, pcsReplica int32, pclqObjectKey client.ObjectKey, pclqExists bool) error {
+func (r _resource) doCreateOrUpdate(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, pcsReplica int32, pgm *grovecorev1alpha1.PodGangMap, pclqObjectKey client.ObjectKey, pclqExists bool) error {
 	logger.Info("Running CreateOrUpdate PodClique", "pclqObjectKey", pclqObjectKey)
 	pclq := emptyPodClique(pclqObjectKey)
 	pcsObjKey := client.ObjectKeyFromObject(pcs)
 
-	opResult, err := controllerutil.CreateOrPatch(ctx, r.client, pclq, func() error {
-		return r.buildResource(logger, pclq, pcs, int(pcsReplica), pclqExists)
+	opResult, err := k8sutils.CreateOrPatchSpec(ctx, r.client, pclq, func() error {
+		return r.buildResource(logger, pcs, int(pcsReplica), pclqExists, pgm, pclq)
 	})
 	if err != nil {
 		r.eventRecorder.Eventf(pcs, corev1.EventTypeWarning, constants.ReasonPodCliqueCreateOrUpdateFailed, "PodClique %v creation or updation failed: %v", pclqObjectKey, err)
@@ -283,7 +295,7 @@ func (r _resource) doCreateOrUpdate(ctx context.Context, logger logr.Logger, pcs
 }
 
 // buildResource configures a PodClique with the desired state from the template.
-func (r _resource) buildResource(logger logr.Logger, pclq *grovecorev1alpha1.PodClique, pcs *grovecorev1alpha1.PodCliqueSet, pcsReplica int, pclqExists bool) error {
+func (r _resource) buildResource(logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, pcsReplica int, pclqExists bool, pgm *grovecorev1alpha1.PodGangMap, pclq *grovecorev1alpha1.PodClique) error {
 	var err error
 	pclqObjectKey, pcsObjectKey := client.ObjectKeyFromObject(pclq), client.ObjectKeyFromObject(pcs)
 	pclqTemplateSpec, foundAtIndex, ok := lo.FindIndexOf(pcs.Spec.Template.Cliques, func(pclqTemplateSpec *grovecorev1alpha1.PodCliqueTemplateSpec) bool {
@@ -307,9 +319,24 @@ func (r _resource) buildResource(logger logr.Logger, pclq *grovecorev1alpha1.Pod
 	}
 	// Add finalizer at creation so PCLQ controller does not need a separate PATCH on first reconcile.
 	controllerutil.AddFinalizer(pclq, apiconstants.FinalizerPodClique)
-	pclq.Labels = getLabels(pcs, pcsReplica, pclqObjectKey, pclqTemplateSpec, apicommon.GeneratePodGangNameForPodCliqueOwnedByPodCliqueSet(pcs, pcsReplica))
+	// A standalone PodClique always belongs to the anchor PodGang, so its PodGang name is derived from
+	// the anchor entry's epoch in the PodGangMap.
+	epoch, err := componentutils.AnchorPodGangEpoch(pgm)
+	if err != nil {
+		return groveerr.WrapError(err,
+			errSyncPodClique,
+			component.OperationSync,
+			fmt.Sprintf("failed to resolve anchor PodGang epoch for PodClique: %v", pclqObjectKey),
+		)
+	}
+	podGangName := apicommon.GenerateAnchorPodGangName(apicommon.ResourceNameReplica{Name: pcs.Name, Replica: pcsReplica}, epoch)
+	pclq.Labels = getLabels(pcs, pcsReplica, pclqObjectKey, pclqTemplateSpec, podGangName)
 	pclq.Annotations = maps.Clone(pclqTemplateSpec.Annotations)
+	// PodGang owns topology selection; do not propagate a template topology annotation to PodClique pods.
 	delete(pclq.Annotations, apiconstants.AnnotationTopologyName)
+	if len(pclq.Annotations) == 0 {
+		pclq.Annotations = nil
+	}
 	// set PodCliqueSpec
 	// ------------------------------------
 	if pclqExists {

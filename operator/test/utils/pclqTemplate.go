@@ -1,4 +1,3 @@
-// /*
 // Copyright 2025 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,7 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package utils
 
@@ -84,6 +82,15 @@ func (b *PodCliqueTemplateSpecBuilder) WithStartsAfter(startsAfter []string) *Po
 // WithMinAvailable sets the MinAvailable field for the PodCliqueTemplateSpec.
 func (b *PodCliqueTemplateSpecBuilder) WithMinAvailable(minAvailable int32) *PodCliqueTemplateSpecBuilder {
 	b.pclqTemplateSpec.Spec.MinAvailable = &minAvailable
+	return b
+}
+
+// WithMaxUnavailable sets the RollingUpdate MaxUnavailable for the PodCliqueTemplateSpec.
+func (b *PodCliqueTemplateSpecBuilder) WithMaxUnavailable(maxUnavailable int32) *PodCliqueTemplateSpecBuilder {
+	if b.pclqTemplateSpec.RollingUpdate == nil {
+		b.pclqTemplateSpec.RollingUpdate = &grovecorev1alpha1.RollingUpdateConfiguration{}
+	}
+	b.pclqTemplateSpec.RollingUpdate.MaxUnavailable = &maxUnavailable
 	return b
 }
 

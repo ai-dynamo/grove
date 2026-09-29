@@ -1,4 +1,3 @@
-// /*
 // Copyright 2026 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,7 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package computedomain
 
@@ -159,7 +157,7 @@ func (r _resource) doCreate(ctx context.Context, logger logr.Logger, pcs *grovec
 	cd := emptyComputeDomain(cdObjKey)
 	pcsObjKey := client.ObjectKeyFromObject(pcs)
 
-	opResult, err := controllerutil.CreateOrPatch(ctx, r.client, cd, func() error {
+	opResult, err := k8sutils.CreateOrPatchSpec(ctx, r.client, cd, func() error {
 		return r.buildResource(cd, pcs, cdInfo)
 	})
 	if err != nil {

@@ -1,6 +1,5 @@
 //go:build e2e
 
-// /*
 // Copyright 2025 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,7 +13,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package setup
 
@@ -41,6 +39,10 @@ const (
 	// DefaultWebhookPort is the default port for the webhook server.
 	// NOTE: If you change this, also update config.server.webhooks.port in operator/charts/values.yaml
 	DefaultWebhookPort = 9443
+
+	// DefaultHealthProbePort is the default port for health and readiness probes.
+	// NOTE: If you change this, also update config.server.healthProbes.port in operator/charts/values.yaml
+	DefaultHealthProbePort = 9444
 
 	// DefaultWebhookServerCertDir is the default directory for webhook certificates.
 	// NOTE: If you change this, also update config.server.webhooks.serverCertDir in operator/charts/values.yaml

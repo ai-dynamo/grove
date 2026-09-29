@@ -1,6 +1,5 @@
 //go:build e2e
 
-// /*
 // Copyright 2026 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,7 +13,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package diagnostics
 
@@ -483,6 +481,9 @@ func createDiagnosticsFile(testName, diagDir string) (*os.File, string, error) {
 
 	if diagDir != "" {
 		filename := filepath.Join(diagDir, baseFilename)
+		if err := os.MkdirAll(diagDir, 0755); err != nil {
+			return nil, "", fmt.Errorf("failed to create diagnostics directory %s: %w", diagDir, err)
+		}
 		file, err := os.Create(filename)
 		if err != nil {
 			return nil, "", fmt.Errorf("failed to create diagnostics file in %s: %w", diagDir, err)

@@ -1,4 +1,3 @@
-// /*
 // Copyright 2025 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,7 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package utils
 
@@ -89,6 +87,12 @@ func (b *PodCliqueBuilder) WithReplicas(replicas int32) *PodCliqueBuilder {
 	return b
 }
 
+// WithMinAvailable sets the MinAvailable for the PodClique.
+func (b *PodCliqueBuilder) WithMinAvailable(minAvailable int32) *PodCliqueBuilder {
+	b.pclq.Spec.MinAvailable = ptr.To(minAvailable)
+	return b
+}
+
 // WithStartsAfter sets the StartsAfter field for the PodClique.
 func (b *PodCliqueBuilder) WithStartsAfter(pclqTemplateNames []string) *PodCliqueBuilder {
 	pclqDependencies := lo.Map(pclqTemplateNames, func(pclqTemplateName string, _ int) string {
@@ -106,12 +110,13 @@ func (b *PodCliqueBuilder) WithAutoScaleMaxReplicas(maximum int32) *PodCliqueBui
 	return b
 }
 
-// WithOwnerReference sets the owner reference for the PodClique from individual values.
+// WithOwnerReference sets a controller owner reference for the PodClique from individual values.
 func (b *PodCliqueBuilder) WithOwnerReference(kind, name string, uid types.UID) *PodCliqueBuilder {
 	ownerRef := metav1.OwnerReference{
-		Kind: kind,
-		Name: name,
-		UID:  types.UID("test-uid"),
+		Kind:       kind,
+		Name:       name,
+		UID:        types.UID("test-uid"),
+		Controller: ptr.To(true),
 	}
 	if uid != "" {
 		ownerRef.UID = uid

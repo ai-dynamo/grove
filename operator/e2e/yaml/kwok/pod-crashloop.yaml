@@ -1,0 +1,54 @@
+# KWOK Stage that holds freshly created pods in a not-ready CrashLoopBackOff state.
+# The default pod-ready stage marks every pod Running and Ready regardless of its image, so a
+# rollout to a broken image always succeeds under KWOK. This stage (higher weight) matches a
+# fresh pod before its podIP is assigned and instead sets phase Running with Ready=False and a
+# CrashLoopBackOff container status, then assigns a podIP so the default pod-ready stage cannot
+# re-fire and recover it. Applying it after a workload is already Ready and before triggering an
+# update makes the new pods stall, so the ProgressDeadline tests (RU24, RU25) can exercise the
+# UpdateInProgress=Unknown path. Removing it lets subsequent fresh pods become Ready again.
+apiVersion: kwok.x-k8s.io/v1alpha1
+kind: Stage
+metadata:
+  name: pod-crashloop
+spec:
+  resourceRef:
+    apiGroup: v1
+    kind: Pod
+  selector:
+    matchExpressions:
+      - key: .metadata.deletionTimestamp
+        operator: DoesNotExist
+      - key: .status.podIP
+        operator: DoesNotExist
+  weight: 10
+  next:
+    statusSubresource: status
+    statusTemplate: |
+      {{ $now := Now }}
+      conditions:
+      - lastTransitionTime: {{ $now | Quote }}
+        status: "True"
+        type: Initialized
+      - lastTransitionTime: {{ $now | Quote }}
+        status: "False"
+        reason: ContainersNotReady
+        type: Ready
+      - lastTransitionTime: {{ $now | Quote }}
+        status: "False"
+        reason: ContainersNotReady
+        type: ContainersReady
+      containerStatuses:
+      {{ range .spec.containers }}
+      - image: {{ .image | Quote }}
+        name: {{ .name | Quote }}
+        ready: false
+        restartCount: 3
+        state:
+          waiting:
+            reason: CrashLoopBackOff
+            message: "simulated crash loop"
+      {{ end }}
+      hostIP: {{ NodeIPWith .spec.nodeName | Quote }}
+      podIP: {{ PodIPWith .spec.nodeName ( or .spec.hostNetwork false ) ( or .metadata.uid "" ) ( or .metadata.name "" ) ( or .metadata.namespace "" ) | Quote }}
+      phase: Running
+      startTime: {{ $now | Quote }}

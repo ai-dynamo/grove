@@ -7,6 +7,8 @@ apiVersion: grove.io/v1alpha1
 kind: PodCliqueSet
 metadata:
   name: mnnvl-comprehensive-bare
+  labels:
+    kai.scheduler/queue: test
 spec:
   replicas: 1
   template:

@@ -152,6 +152,7 @@ spec:
               echo "GROVE_PCSG_NAME=$GROVE_PCSG_NAME"
               echo "GROVE_PCSG_INDEX=$GROVE_PCSG_INDEX"
               echo "GROVE_PCLQ_POD_INDEX=$GROVE_PCLQ_POD_INDEX"
+              echo "GROVE_PCSG_POD_INDEX=$GROVE_PCSG_POD_INDEX"
               echo "GROVE_PCSG_TEMPLATE_NUM_PODS=$GROVE_PCSG_TEMPLATE_NUM_PODS"
               echo ""
               echo "My FQDN: $GROVE_PCLQ_NAME-$GROVE_PCLQ_POD_INDEX.$GROVE_HEADLESS_SERVICE"
@@ -181,6 +182,7 @@ spec:
               echo "GROVE_PCSG_NAME=$GROVE_PCSG_NAME"
               echo "GROVE_PCSG_INDEX=$GROVE_PCSG_INDEX"
               echo "GROVE_PCLQ_POD_INDEX=$GROVE_PCLQ_POD_INDEX"
+              echo "GROVE_PCSG_POD_INDEX=$GROVE_PCSG_POD_INDEX"
               echo "GROVE_PCSG_TEMPLATE_NUM_PODS=$GROVE_PCSG_TEMPLATE_NUM_PODS"
               echo ""
               echo "=== Constructing Leader Address ==="
@@ -251,6 +253,7 @@ GROVE_PCLQ_NAME=env-demo-pcsg-0-model-instance-0-leader
 GROVE_PCSG_NAME=env-demo-pcsg-0-model-instance
 GROVE_PCSG_INDEX=0
 GROVE_PCLQ_POD_INDEX=0
+GROVE_PCSG_POD_INDEX=0
 GROVE_PCSG_TEMPLATE_NUM_PODS=4
 
 My FQDN: env-demo-pcsg-0-model-instance-0-leader-0.env-demo-pcsg-0.default.svc.cluster.local
@@ -276,6 +279,7 @@ GROVE_PCLQ_NAME=env-demo-pcsg-0-model-instance-0-worker
 GROVE_PCSG_NAME=env-demo-pcsg-0-model-instance
 GROVE_PCSG_INDEX=0
 GROVE_PCLQ_POD_INDEX=0
+GROVE_PCSG_POD_INDEX=1
 GROVE_PCSG_TEMPLATE_NUM_PODS=4
 
 === Constructing Leader Address ===
@@ -286,6 +290,7 @@ Sleeping...
 
 **Key Observations:**
 - Both the leader and worker share the same `GROVE_PCSG_NAME` (`env-demo-pcsg-0-model-instance`) and `GROVE_PCSG_INDEX` (`0`), confirming they belong to the same PCSG replica
+- `GROVE_PCSG_POD_INDEX`, injected from the `grove.io/podcliquescalinggroup-pod-index` Pod label, flattens the leader and worker PodCliques into indices `0` through `3`
 - The worker successfully constructed the leader's FQDN using environment variables:
   - Leader PodClique name: `$GROVE_PCSG_NAME-$GROVE_PCSG_INDEX-leader`
   - Leader pod index: `0` (since there's only 1 leader replica)
@@ -317,4 +322,3 @@ kubectl delete pcs env-demo-pcsg
 ## Next Steps
 
 Now that you've seen the environment variables in action, continue to [Common Patterns and Takeaways](./04_common-patterns-and-takeaways.md) for reusable patterns you can adapt for your applications and a summary of key concepts.
-

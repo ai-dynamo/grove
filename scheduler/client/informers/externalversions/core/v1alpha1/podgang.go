@@ -57,7 +57,7 @@ func NewPodGangInformer(client versioned.Interface, namespace string, resyncPeri
 // one. This reduces memory footprint and number of connections to the server.
 func NewFilteredPodGangInformer(client versioned.Interface, namespace string, resyncPeriod time.Duration, indexers cache.Indexers, tweakListOptions internalinterfaces.TweakListOptionsFunc) cache.SharedIndexInformer {
 	return cache.NewSharedIndexInformer(
-		&cache.ListWatch{
+		cache.ToListWatcherWithWatchListSemantics(&cache.ListWatch{
 			ListFunc: func(options v1.ListOptions) (runtime.Object, error) {
 				if tweakListOptions != nil {
 					tweakListOptions(&options)
@@ -82,7 +82,7 @@ func NewFilteredPodGangInformer(client versioned.Interface, namespace string, re
 				}
 				return client.SchedulerV1alpha1().PodGangs(namespace).Watch(ctx, options)
 			},
-		},
+		}, client),
 		&apicorev1alpha1.PodGang{},
 		resyncPeriod,
 		indexers,

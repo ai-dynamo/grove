@@ -1,4 +1,3 @@
-# /*
 # Copyright 2025 The Grove Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,7 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-# */
 
 SYSTEM_NAME       := $(shell uname -s | tr '[:upper:]' '[:lower:]')
 SYSTEM_ARCH       := $(shell uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
@@ -29,6 +27,7 @@ SKAFFOLD          := $(TOOLS_BIN_DIR)/skaffold
 CRD_REF_DOCS      := $(TOOLS_BIN_DIR)/crd-ref-docs
 MDTOC			  := $(TOOLS_BIN_DIR)/mdtoc
 GOTESTSUM         := $(TOOLS_BIN_DIR)/gotestsum
+UV                := $(or $(shell command -v uv 2>/dev/null),$(TOOLS_BIN_DIR)/uv)
 
 # default tool versions
 # -------------------------------------------------------------------------
@@ -51,7 +50,7 @@ $(shell mkdir -p $(TOOLS_BIN_DIR) > /dev/null)
 # Common
 # -------------------------------------------------------------------------
 # Use this function to get the version of a go module from go.mod
-version_gomod = $(shell go list -mod=mod -f '{{ .Version }}' -m $(1))
+version_gomod = $(shell GOWORK=off go list -mod=mod -f '{{ .Version }}' -m $(1))
 
 .PHONY: clean-tools-bin
 clean-tools-bin:
@@ -96,3 +95,6 @@ $(MDTOC):
 
 $(GOTESTSUM):
 	GOBIN=$(abspath $(TOOLS_BIN_DIR)) go install gotest.tools/gotestsum@$(GOTESTSUM_VERSION)
+
+$(UV):
+	curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=$(abspath $(TOOLS_BIN_DIR)) UV_NO_MODIFY_PATH=1 sh

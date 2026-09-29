@@ -1,4 +1,3 @@
-// /*
 // Copyright 2024 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,7 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package validation
 
@@ -76,8 +74,10 @@ func (h *Handler) ValidateCreate(ctx context.Context, obj runtime.Object) (admis
 
 	v := newPCSValidator(pcs, admissionv1.Create, h.tasConfig, h.schedulerConfig, h.client, h.schedRegistry)
 	var allErrs field.ErrorList
-	allErrs = append(allErrs, v.validateTopologyConstraintsOnCreate(ctx)...)
+	topologyWarnings, topologyErrs := v.validateTopologyConstraintsOnCreate(ctx)
+	allErrs = append(allErrs, topologyErrs...)
 	warnings, errs := v.validate()
+	warnings = append(warnings, topologyWarnings...)
 	allErrs = append(allErrs, errs...)
 
 	// Validate MNNVL annotations on PCS metadata and spec (clique templates)
@@ -117,6 +117,8 @@ func (h *Handler) ValidateUpdate(ctx context.Context, oldObj, newObj runtime.Obj
 	if len(errs) > 0 {
 		return warnings, errs.ToAggregate()
 	}
+	updateWarnings := newTopologyConstraintsValidator(newPCS, h.tasConfig.Enabled, nil).updateWarnings()
+	warnings = append(warnings, updateWarnings...)
 	return warnings, v.validateUpdate(oldPCS)
 }
 
@@ -135,7 +137,10 @@ func (h *Handler) validatePodCliqueSetWithBackend(ctx context.Context, pcs *v1al
 
 	backend := h.schedRegistry.GetOrDefault(schedulerName)
 	if backend == nil {
-		return fmt.Errorf("schedulerName %q is not a supported backend", schedulerName)
+		if schedulerName == "" {
+			return fmt.Errorf("default scheduler backend is not configured")
+		}
+		return fmt.Errorf("schedulerName %q is not enabled in OperatorConfiguration", schedulerName)
 	}
 	return backend.ValidatePodCliqueSet(ctx, pcs)
 }

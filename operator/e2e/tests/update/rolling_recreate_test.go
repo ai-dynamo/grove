@@ -1,6 +1,5 @@
 //go:build e2e
 
-// /*
 // Copyright 2025 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,7 +13,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package update
 
@@ -24,10 +22,18 @@ import (
 	"testing"
 	"time"
 
+	apiconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
+	grovev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	"github.com/ai-dynamo/grove/operator/e2e/k8s/kwok"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
-	tests "github.com/ai-dynamo/grove/operator/e2e/tests"
+	"github.com/ai-dynamo/grove/operator/e2e/tests"
 	"github.com/ai-dynamo/grove/operator/e2e/waiter"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/watch"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // Test_RU7_RollingUpdatePCSPodClique tests rolling update when PCS-owned Podclique spec is updated
@@ -68,6 +74,10 @@ func Test_RU7_RollingUpdatePCSPodClique(t *testing.T) {
 	tests.Logger.Info("5. Verify that a single PCS replica is updated first before moving to another")
 	verifySinglePCSReplicaUpdatedFirst(tc, events)
 
+	tests.Logger.Info("6. Verify MaxUnavailable defaulted to 1 and UpdateInProgress cleared")
+	assertDefaultedMaxUnavailable(tc, "pc-a", 1)
+	assertUpdateInProgressCleared(tc)
+
 	tests.Logger.Info("Rolling Update on PCS-owned Podclique test (RU-7) completed successfully!")
 }
 
@@ -107,6 +117,8 @@ func Test_RU8_RollingUpdatePCSGPodClique(t *testing.T) {
 
 	tests.Logger.Info("5. Verify that a single PCS replica is updated first before moving to another")
 	verifySinglePCSReplicaUpdatedFirst(tc, events)
+
+	assertUpdateInProgressCleared(tc)
 
 	tests.Logger.Info("Rolling Update on PCSG-owned Podclique test (RU-8) completed successfully!")
 }
@@ -149,6 +161,8 @@ func Test_RU9_RollingUpdateAllPodCliques(t *testing.T) {
 
 	tests.Logger.Info("5. Verify that a single PCS replica is updated first before moving to another")
 	verifySinglePCSReplicaUpdatedFirst(tc, events)
+
+	assertUpdateInProgressCleared(tc)
 
 	tests.Logger.Info("Rolling Update on all Podcliques test (RU-9) completed successfully!")
 }
@@ -358,6 +372,19 @@ func Test_RU12_RollingUpdateWithPCSScaleInDuringUpdate(t *testing.T) {
 	})
 	defer cleanup()
 
+	// Widen the update window so waitForOrdinalUpdating reliably observes the final ordinal. On KWOK the
+	// update completes within a poll interval, so the transient CurrentlyUpdating window can close before
+	// the poll sees it. The readiness-delay stage keeps freshly created pods not-ready long enough for the
+	// window to span more than the poll interval.
+	if err := kwok.ApplyStage(tc.Ctx, tc.Client, kwokStageReadyDelayedPath); err != nil {
+		t.Fatalf("failed to apply readiness-delay KWOK stage: %v", err)
+	}
+	defer func() {
+		if err := kwok.DeleteStage(tc.Ctx, tc.Client, kwokStageReadyDelayedName); err != nil {
+			t.Errorf("failed to delete readiness-delay KWOK stage: %v", err)
+		}
+	}()
+
 	tests.Logger.Info("3. Change the specification of pc-a, pc-b and pc-c")
 	// Use raw trigger since we need to wait for ordinal before starting the wait
 	for _, cliqueName := range []string{"pc-a", "pc-b", "pc-c"} {
@@ -455,121 +482,177 @@ func Test_RU13_RollingUpdateWithPCSScaleInAfterFinalOrdinal(t *testing.T) {
 }
 */
 
-/* This test is flaky. It sometimes fails with rolling_updates_test.go:454: Rolling update failed: condition not met within timeout
-// Test_RU14_RollingUpdateWithPCSGScaleOutDuringUpdate tests rolling update with scale-out on PCSG being updated
+// Test_RU14_RollingUpdateWithPCSGScaleOutDuringUpdate tests a PodCliqueScalingGroup scale-out that runs
+// concurrently with a RollingRecreate update on a multi-replica PodCliqueSet. The PodCliqueSet generation
+// hash advances globally while replicas roll one at a time, so a replica not yet selected still carries
+// old-generation PodGangMap entries when the scale-out reconciles. Every replica's scale-out entry must
+// resolve its DependsOn to that replica's anchor epoch, never an empty epoch, so the scaled-out pods are
+// not left scheduling-gated.
 // Scenario RU-14:
 // 1. Initialize a 28-node Grove cluster
-// 2. Deploy workload WL1 with 2 replicas, and verify 20 newly created pods
-// 3. Change the specification of pc-a, pc-b and pc-c
-// 4. Scale out the PCSG during its rolling update
-// 5. Verify the scaled out replica is created with the correct specifications
-// 6. Verify it should not be updated again before the rolling update ends
+// 2. Deploy workload WL1 with 2 replicas, verify 20 pods
+// 3. Assert each replica's PodGangMap starts with an anchor and a scale-out entry
+// 4. Roll an update, wait until replica 0 is updating, then scale out sg-x from 2 to 3 during the update
+// 5. Verify all 28 pods run, none stranded scheduling-gated
+// 6. Assert each replica's entries advanced to the new hash and the scale-out entry holds the new index
 func Test_RU14_RollingUpdateWithPCSGScaleOutDuringUpdate(t *testing.T) {
 	tests.Logger.Info("1. Initialize a 28-node Grove cluster")
-	tests.Logger.Info("2. Deploy workload WL1 with 2 replicas, and verify 20 newly created pods")
-	tc, cleanup, tracker := SetupTest(t, TestConfig{
-		WorkloadName:       "workload1",
-		WorkloadYAML:       "../../yaml/workload1.yaml",
-		WorkerNodes:        28,
-		ExpectedPods:       10,
-		InitialPCSReplicas: 2,
-		PostScalePods:      20,
+	tests.Logger.Info("2. Deploy workload WL1 with 2 replicas, verify 20 pods")
+	tc, cleanup, tracker := setupTest(t, testConfig{
+		workloadName:       "workload1",
+		workloadYAML:       "../../yaml/workload1.yaml",
+		workerNodes:        28,
+		expectedPods:       10,
+		initialPCSReplicas: 2,
+		postScalePods:      20,
 	})
 	defer cleanup()
 
-	tests.Logger.Info("3. Change the specification of pc-a, pc-b and pc-c")
+	tests.Logger.Info("3. Assert each replica's PodGangMap starts with an anchor and a scale-out entry")
+	oldHash := getPCSGenerationHash(t, tc)
+	// Each replica has its own PodGangMap, but they share this expected shape since the workload template
+	// is uniform across replicas. Only the epochs differ per replica, which assertReplicaPodGangMap reads
+	// from each replica's own entries.
+	wantPGM := expectedReplicaPodGangMap{
+		standalonePodCounts: map[string]int32{"pc-a": 2},
+		pcsgName:            "sg-x",
+		anchorIndices:       []int32{0, 1},
+	}
+	for _, pcsReplicaIndex := range []int{0, 1} {
+		assertReplicaPodGangMap(t, getPodGangMapEntries(t, tc, pcsReplicaIndex), wantPGM)
+	}
+
+	// Widen replica 0's update window so waitForOrdinalUpdating reliably observes it. On KWOK the whole
+	// update completes in seconds, so the transient CurrentlyUpdating=[0] window can close within a single
+	// poll interval. The readiness-delay stage keeps freshly created pods not-ready long enough that the
+	// window spans more than the poll interval, and the scale-out lands while replica 0 is still updating
+	// and replica 1 still carries old-generation entries.
+	if err := kwok.ApplyStage(tc.Ctx, tc.Client, kwokStageReadyDelayedPath); err != nil {
+		t.Fatalf("failed to apply readiness-delay KWOK stage: %v", err)
+	}
+	defer func() {
+		if err := kwok.DeleteStage(tc.Ctx, tc.Client, kwokStageReadyDelayedName); err != nil {
+			t.Errorf("failed to delete readiness-delay KWOK stage: %v", err)
+		}
+	}()
+
+	tests.Logger.Info("4. Roll an update, wait until replica 0 is updating, then scale out sg-x during the update")
 	tcLongerTimeout := *tc
 	tcLongerTimeout.Timeout = 2 * time.Minute
-	updateWait := triggerRollingUpdate(&tcLongerTimeout, 2, "pc-a", "pc-b", "pc-c")
+	updateErrCh := triggerRollingUpdate(&tcLongerTimeout, 2, "pc-a", "pc-b", "pc-c")
+	// Wait until replica 0 is actually updating. Replica 1 then still carries old-generation entries,
+	// which is the window where a scale-out could produce a DependsOn on an empty anchor epoch.
+	if err := waitForOrdinalUpdating(&tcLongerTimeout, 0); err != nil {
+		t.Fatalf("Update did not start on replica 0: %v", err)
+	}
+	scaleErrCh := tcLongerTimeout.ScalePCSGAcrossAllReplicasAsync("workload1", "sg-x", 2, 3, 28, 0, 0)
 
-	tests.Logger.Info("4. Scale out the PCSG during its rolling update (in parallel)")
-	scaleWait := tcLongerTimeout.ScalePCSGAcrossAllReplicasAsync("workload1", "sg-x", 2, 3, 28, 0, 100) // 100ms delay so update is "first"
-
-	tests.Logger.Info("5. Verify the scaled out replica is created with the correct specifications")
-	// sg-x = 4 pods per replica (1 pc-b + 3 pc-c)
-	// Scaling PCSG instances directly (workload1-0-sg-x, workload1-1-sg-x) since the PCS controller
-	// only sets replicas during initial PCSG creation to support HPA scaling.
-	// After scaling sg-x to 3 replicas: 2 PCS replicas x (2 pc-a + 3 sg-x x 4 pods) = 2 x 14 = 28 pods
-
-	tests.Logger.Info("6. Verify it should not be updated again before the rolling update ends")
-	if err := <-updateWait; err != nil {
+	if err := <-updateErrCh; err != nil {
 		t.Fatalf("Rolling update failed: %v", err)
 	}
-	if err := <-scaleWait; err != nil {
+	if err := <-scaleErrCh; err != nil {
 		t.Fatalf("Scale operation failed: %v", err)
 	}
+	tracker.stop()
 
-	pods, err := tc.ListPods()
-	if err != nil {
-		t.Fatalf("Failed to list pods: %v", err)
+	tests.Logger.Info("5. Verify all 28 pods run, none stranded scheduling-gated")
+	// sg-x holds 4 pods per replica (1 pc-b + 3 pc-c). At 3 PCSG replicas each PCS replica has
+	// 2 pc-a + 3*4 = 14 pods, so 2 PCS replicas total 28.
+	if err := tc.WaitForRunningPods(28); err != nil {
+		t.Fatalf("Pods did not all become running after scale-out during a rolling update; they may be stranded scheduling-gated: %v", err)
 	}
-	if len(pods.Items) != 28 {
-		t.Fatalf("Expected 28 pods, got %d", len(pods.Items))
+
+	tests.Logger.Info("6. Assert each replica's entries advanced to the new hash and the scale-out entry holds the new index")
+	newHash := getPCSGenerationHash(t, tc)
+	if newHash == oldHash {
+		t.Fatalf("PodCliqueSet generation hash did not change after the update: %s", newHash)
 	}
-	tracker.Stop()
+	wantPGM.scaleOutIndices = []int32{2}
+	for _, pcsReplicaIndex := range []int{0, 1} {
+		entries := getPodGangMapEntries(t, tc, pcsReplicaIndex)
+		assertReplicaPodGangMap(t, entries, wantPGM)
+		for _, entry := range entries {
+			assert.Equal(t, newHash, entry.PodCliqueSetGenerationHash, "entry %s must carry the new generation hash", entry.Epoch)
+		}
+	}
 
 	tests.Logger.Info("Rolling Update with PCSG scale-out during update test (RU-14) completed successfully!")
 }
-*/
 
-/* This test is flaky. It sometimes fails with "rolling_updates_test.go:516: Expected 28 pods, got 30"
-// Test_RU15_RollingUpdateWithPCSGScaleOutBeforeUpdate tests rolling update with scale-out on PCSG before it is updated
+// Test_RU15_RollingUpdateWithPCSGScaleOutBeforeUpdate tests a PodCliqueScalingGroup scale-out that
+// completes before a RollingRecreate update on a multi-replica PodCliqueSet. The scale-out entry gains
+// its new index while all replicas share the current generation hash, then the update advances the hash
+// across replicas. Every replica's scale-out entry must keep its index and depend on its anchor epoch, so
+// the scaled-out pods are not left scheduling-gated.
 // Scenario RU-15:
 // 1. Initialize a 28-node Grove cluster
-// 2. Deploy workload WL1 with 2 replicas, and verify 20 newly created pods
-// 3. Change the specification of pc-a, pc-b and pc-c
-// 4. Scale out the PCSG before its rolling update starts
-// 5. Verify the scaled out replica is created with the correct specifications
-// 6. Verify it should not be updated again before the rolling update ends
+// 2. Deploy workload WL1 with 2 replicas, verify 20 pods
+// 3. Assert each replica's PodGangMap starts with an anchor and a scale-out entry
+// 4. Scale out sg-x from 2 to 3 across all replicas and wait for it to complete
+// 5. Roll an update of pc-a, pc-b and pc-c and wait for it to complete
+// 6. Verify all 28 pods run, none stranded scheduling-gated
+// 7. Assert each replica's entries advanced to the new hash and the scale-out entry holds the new index
 func Test_RU15_RollingUpdateWithPCSGScaleOutBeforeUpdate(t *testing.T) {
 	tests.Logger.Info("1. Initialize a 28-node Grove cluster")
-	tests.Logger.Info("2. Deploy workload WL1 with 2 replicas, and verify 20 newly created pods")
-	tc, cleanup, tracker := SetupTest(t, TestConfig{
-		WorkloadName:       "workload1",
-		WorkloadYAML:       "../../yaml/workload1.yaml",
-		WorkerNodes:        28,
-		ExpectedPods:       10,
-		InitialPCSReplicas: 2,
-		PostScalePods:      20,
+	tests.Logger.Info("2. Deploy workload WL1 with 2 replicas, verify 20 pods")
+	tc, cleanup, tracker := setupTest(t, testConfig{
+		workloadName:       "workload1",
+		workloadYAML:       "../../yaml/workload1.yaml",
+		workerNodes:        28,
+		expectedPods:       10,
+		initialPCSReplicas: 2,
+		postScalePods:      20,
 	})
 	defer cleanup()
 
-	tests.Logger.Info("3. Scale out the PCSG before its rolling update starts (in parallel)")
-	// Scaling PCSG instances directly (workload1-0-sg-x, workload1-1-sg-x) since the PCS controller
-	// only sets replicas during initial PCSG creation to support HPA scaling.
-	// After scaling sg-x to 3 replicas: 2 PCS replicas x (2 pc-a + 3 sg-x x 4 pods) = 2 x 14 = 28 pods
+	tests.Logger.Info("3. Assert each replica's PodGangMap starts with an anchor and a scale-out entry")
+	oldHash := getPCSGenerationHash(t, tc)
+	// Each replica has its own PodGangMap, but they share this expected shape since the workload template
+	// is uniform across replicas. Only the epochs differ per replica, which assertReplicaPodGangMap reads
+	// from each replica's own entries.
+	wantPGM := expectedReplicaPodGangMap{
+		standalonePodCounts: map[string]int32{"pc-a": 2},
+		pcsgName:            "sg-x",
+		anchorIndices:       []int32{0, 1},
+	}
+	for _, pcsReplicaIndex := range []int{0, 1} {
+		assertReplicaPodGangMap(t, getPodGangMapEntries(t, tc, pcsReplicaIndex), wantPGM)
+	}
+
+	tests.Logger.Info("4. Scale out sg-x from 2 to 3 across all replicas and wait for it to complete")
+	// sg-x holds 4 pods per replica (1 pc-b + 3 pc-c). At 3 PCSG replicas each PCS replica has
+	// 2 pc-a + 3*4 = 14 pods, so 2 PCS replicas total 28.
+	tc.ScalePCSGAcrossAllReplicasAndWait("workload1", "sg-x", 2, 3, 28, 0)
+
+	tests.Logger.Info("5. Roll an update of pc-a, pc-b and pc-c and wait for it to complete")
 	tcLongTimeout := *tc
 	tcLongTimeout.Timeout = 2 * time.Minute
-	// Scale starts first (no delay)
-	scaleWait := tcLongTimeout.ScalePCSGAcrossAllReplicasAsync("workload1", "sg-x", 2, 3, 28, 0, 0)
-
-	tests.Logger.Info("4. Change the specification of pc-a, pc-b and pc-c")
-	// Small delay so scale is clearly "first", then trigger update
-	time.Sleep(100 * time.Millisecond)
-	updateWait := triggerRollingUpdate(&tcLongTimeout, 2, "pc-a", "pc-b", "pc-c")
-
-	tests.Logger.Info("5. Verify the scaled out replica is created with the correct specifications")
-	tests.Logger.Info("6. Verify it should not be updated again before the rolling update ends")
-
-	if err := <-updateWait; err != nil {
+	if err := <-triggerRollingUpdate(&tcLongTimeout, 2, "pc-a", "pc-b", "pc-c"); err != nil {
 		t.Fatalf("Rolling update failed: %v", err)
 	}
-	if err := <-scaleWait; err != nil {
-		t.Fatalf("Scale operation failed: %v", err)
+	tracker.stop()
+
+	tests.Logger.Info("6. Verify all 28 pods run, none stranded scheduling-gated")
+	if err := tc.WaitForRunningPods(28); err != nil {
+		t.Fatalf("Pods did not all become running after a scale-out then rolling update; they may be stranded scheduling-gated: %v", err)
 	}
 
-	pods, err := tc.ListPods()
-	if err != nil {
-		t.Fatalf("Failed to list pods: %v", err)
+	tests.Logger.Info("7. Assert each replica's entries advanced to the new hash and the scale-out entry holds the new index")
+	newHash := getPCSGenerationHash(t, tc)
+	if newHash == oldHash {
+		t.Fatalf("PodCliqueSet generation hash did not change after the update: %s", newHash)
 	}
-	if len(pods.Items) != 28 {
-		t.Fatalf("Expected 28 pods, got %d", len(pods.Items))
+	wantPGM.scaleOutIndices = []int32{2}
+	for _, pcsReplicaIndex := range []int{0, 1} {
+		entries := getPodGangMapEntries(t, tc, pcsReplicaIndex)
+		assertReplicaPodGangMap(t, entries, wantPGM)
+		for _, entry := range entries {
+			assert.Equal(t, newHash, entry.PodCliqueSetGenerationHash, "entry %s must carry the new generation hash", entry.Epoch)
+		}
 	}
-	tracker.Stop()
 
 	tests.Logger.Info("Rolling Update with PCSG scale-out before update test (RU-15) completed successfully!")
 }
-*/
 
 // Test_RU16_RollingUpdateWithPCSGScaleInDuringUpdate tests rolling update with scale-in on PCSG being updated
 // Scenario RU-16:
@@ -953,3 +1036,323 @@ func Test_RU21_RollingUpdateWithPodCliqueScaleInBeforeUpdate(t *testing.T) {
 	tests.Logger.Info("Rolling Update with PodClique scale-in before update test (RU-21) completed successfully!")
 }
 */
+
+// Test_RU22_RollingUpdateStandaloneMaxUnavailable verifies that a standalone PodClique with
+// MaxUnavailable=2 keeps at most 2 replicas unavailable at a time (never more) during a rolling update.
+// Scenario RU-22:
+// 1. Deploy workload-maxunavailable (pc-a replicas 4, minAvailable 1, maxUnavailable 2)
+// 2. Apply the readiness-delay KWOK stage so new pods stay not-ready long enough to observe
+// 3. Roll pc-a and sample the number of not-ready pc-a pods
+// 4. Verify the peak is at most 2 (budget respected) and reaches 2 (budget exercised)
+// 5. Verify the UpdateInProgress condition clears after completion
+func Test_RU22_RollingUpdateStandaloneMaxUnavailable(t *testing.T) {
+	tests.Logger.Info("1. Deploy workload-maxunavailable")
+	tc, cleanup, _ := setupTest(t, testConfig{
+		workloadName: "workload-maxunavailable",
+		workloadYAML: "../../yaml/workload-maxunavailable.yaml",
+		workerNodes:  10,
+		expectedPods: 8,
+	})
+	defer cleanup()
+
+	tests.Logger.Info("2. Delay pod readiness so the unavailability window is observable")
+	if err := kwok.ApplyStage(tc.Ctx, tc.Client, kwokStageReadyDelayedPath); err != nil {
+		t.Fatalf("failed to apply readiness-delay KWOK stage: %v", err)
+	}
+	defer func() {
+		if err := kwok.DeleteStage(tc.Ctx, tc.Client, kwokStageReadyDelayedName); err != nil {
+			t.Errorf("failed to delete readiness-delay KWOK stage: %v", err)
+		}
+	}()
+
+	tests.Logger.Info("3. Roll pc-a while sampling not-ready pc-a pods")
+	tcLong := *tc
+	tcLong.Timeout = 2 * time.Minute
+	maxUnavailable, err := maxUnavailablePods(&tcLong, notReadyPodForClique("pc-a"), func() error {
+		if err := triggerPodCliqueUpdate(&tcLong, "pc-a"); err != nil {
+			return err
+		}
+		return waitForRollingUpdateComplete(&tcLong, 1)
+	})
+	if err != nil {
+		t.Fatalf("rolling update of pc-a did not complete: %v", err)
+	}
+
+	tests.Logger.Info("4. Verify the disruption budget was respected and exercised")
+	assert.LessOrEqualf(t, maxUnavailable, 2, "expected at most MaxUnavailable=2 pc-a pods unavailable at once, observed %d", maxUnavailable)
+	assert.Equalf(t, 2, maxUnavailable, "expected the rollout to keep 2 pc-a pods unavailable at once (MaxUnavailable=2), observed peak %d", maxUnavailable)
+
+	tests.Logger.Info("5. Verify UpdateInProgress cleared after completion")
+	assertUpdateInProgressCleared(tc)
+}
+
+// Test_RU23_RollingUpdatePCSGMaxUnavailable verifies that a PodCliqueScalingGroup with
+// MaxUnavailable=2 keeps at most 2 replicas unavailable at a time (never more) during a rolling update.
+// Scenario RU-23:
+// 1. Deploy workload-maxunavailable (sg-x replicas 4, minAvailable 1, maxUnavailable 2)
+// 2. Apply the readiness-delay KWOK stage so new pods stay not-ready long enough to observe
+// 3. Roll the sg-x member pc-b and sample the number of not-ready sg-x pods
+// 4. Verify the peak is at most 2 (budget respected) and reaches 2 (budget exercised)
+func Test_RU23_RollingUpdatePCSGMaxUnavailable(t *testing.T) {
+	tests.Logger.Info("1. Deploy workload-maxunavailable")
+	tc, cleanup, _ := setupTest(t, testConfig{
+		workloadName: "workload-maxunavailable",
+		workloadYAML: "../../yaml/workload-maxunavailable.yaml",
+		workerNodes:  10,
+		expectedPods: 8,
+	})
+	defer cleanup()
+
+	tests.Logger.Info("2. Delay pod readiness so the unavailability window is observable")
+	if err := kwok.ApplyStage(tc.Ctx, tc.Client, kwokStageReadyDelayedPath); err != nil {
+		t.Fatalf("failed to apply readiness-delay KWOK stage: %v", err)
+	}
+	defer func() {
+		if err := kwok.DeleteStage(tc.Ctx, tc.Client, kwokStageReadyDelayedName); err != nil {
+			t.Errorf("failed to delete readiness-delay KWOK stage: %v", err)
+		}
+	}()
+
+	tests.Logger.Info("3. Roll sg-x member pc-b while sampling not-ready sg-x pods")
+	tcLong := *tc
+	tcLong.Timeout = 2 * time.Minute
+	maxUnavailable, err := maxUnavailablePods(&tcLong, notReadyPodForPCSG(&tcLong, "sg-x"), func() error {
+		if err := triggerPodCliqueUpdate(&tcLong, "pc-b"); err != nil {
+			return err
+		}
+		return waitForRollingUpdateComplete(&tcLong, 1)
+	})
+	if err != nil {
+		t.Fatalf("rolling update of sg-x did not complete: %v", err)
+	}
+
+	tests.Logger.Info("4. Verify the disruption budget was respected and exercised")
+	assert.LessOrEqualf(t, maxUnavailable, 2, "expected at most MaxUnavailable=2 sg-x replica pods unavailable at once, observed %d", maxUnavailable)
+	assert.Equalf(t, 2, maxUnavailable, "expected the rollout to keep 2 sg-x replicas unavailable at once (MaxUnavailable=2), observed peak %d", maxUnavailable)
+
+	assertUpdateInProgressCleared(tc)
+}
+
+// Test_RU24_RollingUpdateProgressDeadlineExceeded verifies that a stalled rollout surfaces
+// UpdateInProgress=Unknown, does not prematurely complete, and keeps gang termination suspended.
+// Scenario RU-24:
+// 1. Deploy workload-progressdeadline (pc-a progressDeadline 30s)
+// 2. Apply the crashloop KWOK stage so freshly created pods stay not-ready
+// 3. Trigger a rolling update of pc-a; the new pods will not become Ready
+// 4. Verify pc-a UpdateInProgress goes Unknown/ProgressDeadlineExceeded
+// 5. Verify the PCS aggregate UpdateInProgress goes Unknown/ProgressDeadlineExceeded
+// 6. Verify the update is not marked complete (issue #786) and gang termination stays suspended
+func Test_RU24_RollingUpdateProgressDeadlineExceeded(t *testing.T) {
+	tests.Logger.Info("1. Deploy workload-progressdeadline")
+	tc, cleanup, _ := setupTest(t, testConfig{
+		workloadName: "workload-progressdeadline",
+		workloadYAML: "../../yaml/workload-progressdeadline.yaml",
+		workerNodes:  10,
+		expectedPods: 4,
+	})
+	defer cleanup()
+
+	tests.Logger.Info("2. Make freshly created pods stall in CrashLoopBackOff so the next roll cannot progress")
+	if err := kwok.ApplyStage(tc.Ctx, tc.Client, kwokStageCrashloopPath); err != nil {
+		t.Fatalf("failed to apply crashloop KWOK stage: %v", err)
+	}
+	defer func() {
+		if err := kwok.DeleteStage(tc.Ctx, tc.Client, kwokStageCrashloopName); err != nil {
+			t.Errorf("failed to delete crashloop KWOK stage: %v", err)
+		}
+	}()
+
+	tests.Logger.Info("3. Trigger a rolling update of pc-a; the new pods will not become Ready")
+	if err := triggerPodCliqueUpdate(tc, "pc-a"); err != nil {
+		t.Fatalf("failed to trigger update of pc-a: %v", err)
+	}
+
+	tcLong := *tc
+	tcLong.Timeout = 2 * time.Minute
+	tests.Logger.Info("4. Verify pc-a UpdateInProgress goes Unknown/ProgressDeadlineExceeded")
+	if err := waitForPodCliqueUpdateCondition(&tcLong, "pc-a", metav1.ConditionUnknown, apiconstants.ConditionReasonProgressDeadlineExceeded); err != nil {
+		t.Fatalf("pc-a did not surface ProgressDeadlineExceeded: %v", err)
+	}
+
+	tests.Logger.Info("5. Verify the PCS aggregate UpdateInProgress goes Unknown/ProgressDeadlineExceeded")
+	if err := waitForPCSUpdateCondition(&tcLong, metav1.ConditionUnknown, apiconstants.ConditionReasonProgressDeadlineExceeded); err != nil {
+		t.Fatalf("PodCliqueSet did not aggregate ProgressDeadlineExceeded: %v", err)
+	}
+
+	tests.Logger.Info("6. Verify the stalled update is not marked complete and gang termination stays suspended")
+	assertPodCliqueUpdateNotComplete(tc, "pc-a")
+	assertGangTerminationSuspended(tc, "pc-a")
+}
+
+// Test_RU25_RollingUpdateStuckThenCorrective verifies that a stuck rollout recovers when a corrective
+// spec is applied, and that all components converge to the latest generation hash.
+// Scenario RU-25:
+// 1. Deploy workload-progressdeadline
+// 2. Apply the crashloop KWOK stage so freshly created pods stay not-ready
+// 3. Trigger a rolling update of pc-a and wait until it is stuck (Unknown/ProgressDeadlineExceeded)
+// 4. Remove the crashloop stage and trigger a corrective roll so fresh pods become Ready
+// 5. Verify the update completes, UpdateInProgress clears, and pods become Ready
+// 6. Verify every component converged to the latest PodCliqueSet generation hash
+func Test_RU25_RollingUpdateStuckThenCorrective(t *testing.T) {
+	tests.Logger.Info("1. Deploy workload-progressdeadline")
+	tc, cleanup, _ := setupTest(t, testConfig{
+		workloadName: "workload-progressdeadline",
+		workloadYAML: "../../yaml/workload-progressdeadline.yaml",
+		workerNodes:  10,
+		expectedPods: 4,
+	})
+	defer cleanup()
+
+	tests.Logger.Info("2. Make freshly created pods stall in CrashLoopBackOff")
+	if err := kwok.ApplyStage(tc.Ctx, tc.Client, kwokStageCrashloopPath); err != nil {
+		t.Fatalf("failed to apply crashloop KWOK stage: %v", err)
+	}
+	defer func() { _ = kwok.DeleteStage(tc.Ctx, tc.Client, kwokStageCrashloopName) }()
+
+	tests.Logger.Info("3. Trigger a rolling update of pc-a and wait until it is stuck")
+	if err := triggerPodCliqueUpdate(tc, "pc-a"); err != nil {
+		t.Fatalf("failed to trigger update of pc-a: %v", err)
+	}
+	tcLong := *tc
+	tcLong.Timeout = 2 * time.Minute
+	if err := waitForPodCliqueUpdateCondition(&tcLong, "pc-a", metav1.ConditionUnknown, apiconstants.ConditionReasonProgressDeadlineExceeded); err != nil {
+		t.Fatalf("pc-a did not become stuck: %v", err)
+	}
+
+	tests.Logger.Info("4. Remove the crashloop stage and trigger a corrective roll so fresh pods become Ready")
+	if err := kwok.DeleteStage(tc.Ctx, tc.Client, kwokStageCrashloopName); err != nil {
+		t.Fatalf("failed to delete crashloop KWOK stage: %v", err)
+	}
+	if err := triggerPodCliqueUpdate(tc, "pc-a"); err != nil {
+		t.Fatalf("failed to trigger corrective update of pc-a: %v", err)
+	}
+
+	tests.Logger.Info("5. Verify the update completes, the condition clears, and pods are Ready")
+	if err := waitForRollingUpdateComplete(&tcLong, 1); err != nil {
+		t.Fatalf("corrective rolling update did not complete: %v", err)
+	}
+	assertUpdateInProgressCleared(tc)
+	if err := tc.WaitForPods(4); err != nil {
+		t.Fatalf("pods did not become Ready after the corrective update: %v", err)
+	}
+
+	tests.Logger.Info("6. Verify all components converged to the latest generation hash")
+	assertGenerationHashConverged(tc)
+}
+
+// Test_RU26_CorrectiveUpdateReplacesUnschedulablePods verifies that a RollingRecreate still makes
+// progress when a component is already unavailable and its unavailability has exhausted MaxUnavailable:
+// the corrective update must replace the unschedulable pods and complete rather than deadlock. It covers
+// a single PodCliqueScalingGroup replica (the #840 count-anchored-budget case) and a standalone
+// PodClique whose MaxUnavailable is below MinAvailable, where a per-pod budget can never bring
+// MinAvailable pods up together to admit the PodClique's PodGang.
+//
+// Scenario RU-26 (per case):
+//  1. Deploy a workload whose pods are all Pending because the PCS template pins an impossible node
+//     selector, so the component is unavailable.
+//  2. Wait for the initial generation to reconcile (so the correction is a rolling update, not initial
+//     creation) and confirm the workload reports no available pods.
+//  3. Remove the impossible node selector from the PCS template, changing the generation hash.
+//  4. Verify Grove replaces every unschedulable pod, the rolling update completes without the selector,
+//     and the generation hash converges.
+func Test_RU26_CorrectiveUpdateReplacesUnschedulablePods(t *testing.T) {
+	cases := []struct {
+		name                       string
+		workloadName               string
+		workloadYAML               string
+		expectedPods               int
+		assertInitiallyUnavailable func(c *assert.CollectT, tc *testctx.TestContext)
+	}{
+		{
+			name:         "PCSG replica exhausts MaxUnavailable",
+			workloadName: "workload-unavailable-pcsg",
+			workloadYAML: "../../yaml/workload-unavailable-pcsg.yaml",
+			expectedPods: 1,
+			assertInitiallyUnavailable: func(c *assert.CollectT, tc *testctx.TestContext) {
+				var pcsg grovev1alpha1.PodCliqueScalingGroup
+				require.NoError(c, tc.Client.Get(tc.Ctx, types.NamespacedName{
+					Namespace: tc.Namespace, Name: pcsgFQN(tc, "sg-x"),
+				}, &pcsg))
+				assert.EqualValues(c, 1, pcsg.Status.Replicas)
+				assert.Zero(c, pcsg.Status.AvailableReplicas)
+			},
+		},
+		{
+			name:         "standalone PodClique, MaxUnavailable below MinAvailable",
+			workloadName: "workload-unavailable-standalone-gang",
+			workloadYAML: "../../yaml/workload-unavailable-standalone-gang.yaml",
+			expectedPods: 2,
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			tc, cleanup := testctx.PrepareTest(context.Background(), t, 1,
+				testctx.WithWorkload(&testctx.WorkloadConfig{
+					Name:         tt.workloadName,
+					YAMLPath:     tt.workloadYAML,
+					Namespace:    "default",
+					ExpectedPods: tt.expectedPods,
+				}),
+				testctx.WithTimeout(time.Minute),
+				testctx.WithInterval(time.Second),
+			)
+			defer cleanup()
+
+			tests.Logger.Info("1. Create a workload whose pods cannot be scheduled")
+			pods, err := tc.DeployAndVerifyWorkload()
+			require.NoError(t, err)
+			require.Len(t, pods.Items, tt.expectedPods)
+			oldUIDs := make(map[types.UID]bool, len(pods.Items))
+			for _, p := range pods.Items {
+				oldUIDs[p.UID] = true
+			}
+
+			// Let the first generation fully reconcile before editing the template. If we patch too
+			// early, removing the selector can be folded into the initial pod creation instead of
+			// triggering a rolling update, which is the path under test. Also confirm the workload is
+			// unavailable first.
+			require.EventuallyWithT(t, func(c *assert.CollectT) {
+				pcs, err := getPCS(tc, tc.Workload.Name)
+				require.NoError(c, err)
+				require.NotNil(c, pcs.Status.ObservedGeneration)
+				assert.Equal(c, pcs.Generation, *pcs.Status.ObservedGeneration)
+				assert.Zero(c, pcs.Status.AvailableReplicas)
+				if tt.assertInitiallyUnavailable != nil {
+					tt.assertInitiallyUnavailable(c, tc)
+				}
+			}, tc.Timeout, tc.Interval, "initial generation must reconcile with the workload unavailable")
+
+			tests.Logger.Info("2. Remove the impossible node selector from the PCS template")
+			pcs, err := getPCS(tc, tc.Workload.Name)
+			require.NoError(t, err)
+			original := pcs.DeepCopy()
+			delete(pcs.Spec.Template.Cliques[0].Spec.PodSpec.NodeSelector, "e2e.grove.io/unschedulable")
+			require.NoError(t, tc.Client.Patch(tc.Ctx, pcs, client.MergeFrom(original)))
+			require.Greater(t, pcs.Generation, original.Generation)
+
+			tests.Logger.Info("3. Verify Grove replaces the unschedulable pods and completes the corrective update")
+			// The corrective update must proceed even though MaxUnavailable is already breached;
+			// otherwise the unschedulable pods are never replaced and this wait times out.
+			require.NoError(t, waitForRollingUpdateComplete(tc, 1),
+				"corrective update must replace the unschedulable pods and complete")
+			require.NoError(t, tc.WaitForPods(tt.expectedPods))
+
+			pods, err = tc.ListPods()
+			require.NoError(t, err)
+			require.Len(t, pods.Items, tt.expectedPods)
+			for _, p := range pods.Items {
+				assert.False(t, oldUIDs[p.UID], "every unschedulable pod must be replaced")
+				assert.NotContains(t, p.Spec.NodeSelector, "e2e.grove.io/unschedulable")
+			}
+			assertUpdateInProgressCleared(tc)
+			assertGenerationHashConverged(tc)
+			require.EventuallyWithT(t, func(c *assert.CollectT) {
+				current, err := getPCS(tc, tc.Workload.Name)
+				require.NoError(c, err)
+				require.NotNil(c, current.Status.ObservedGeneration)
+				assert.Equal(c, pcs.Generation, *current.Status.ObservedGeneration)
+			}, tc.Timeout, tc.Interval, "observedGeneration must catch up after the corrective update")
+		})
+	}
+}

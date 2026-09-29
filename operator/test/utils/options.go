@@ -1,4 +1,3 @@
-// /*
 // Copyright 2025 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,7 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package utils
 
@@ -130,7 +128,9 @@ func WithPCLQMinAvailableBreached() PCLQOption {
 	}
 }
 
-// WithPCLQNotScheduled sets the PodClique to be not scheduled.
+// WithPCLQNotScheduled sets the PodClique to be not scheduled. A PodClique that is not
+// scheduled also has scheduledReplicas < minAvailable, so under the always-breach rule the
+// MinAvailableBreached condition is True as well — this helper sets both.
 func WithPCLQNotScheduled() PCLQOption {
 	return func(pclq *grovecorev1alpha1.PodClique) {
 		pclq.Status.Conditions = []metav1.Condition{
@@ -138,6 +138,11 @@ func WithPCLQNotScheduled() PCLQOption {
 				Type:   constants.ConditionTypePodCliqueScheduled,
 				Status: metav1.ConditionFalse,
 				Reason: "SchedulingFailed",
+			},
+			{
+				Type:   constants.ConditionTypeMinAvailableBreached,
+				Status: metav1.ConditionTrue,
+				Reason: constants.ConditionReasonScheduledReplicasBelowMinAvailable,
 			},
 		}
 	}

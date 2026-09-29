@@ -1,4 +1,3 @@
-// /*
 // Copyright 2025 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,7 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// */
 
 package authorization
 
@@ -40,9 +38,6 @@ import (
 )
 
 var (
-	pcsGVK            = grovecorev1alpha1.SchemeGroupVersion.WithKind(constants.KindPodCliqueSet)
-	pcsgGVK           = grovecorev1alpha1.SchemeGroupVersion.WithKind(constants.KindPodCliqueScalingGroup)
-	pclqGVK           = grovecorev1alpha1.SchemeGroupVersion.WithKind(constants.KindPodClique)
 	podGVK            = corev1.SchemeGroupVersion.WithKind("Pod")
 	secretGVK         = corev1.SchemeGroupVersion.WithKind("Secret")
 	roleGVK           = rbacv1.SchemeGroupVersion.WithKind("Role")
@@ -51,7 +46,11 @@ var (
 	serviceAccountGVK = corev1.SchemeGroupVersion.WithKind("ServiceAccount")
 	hpaV2GVK          = autoscalingv2.SchemeGroupVersion.WithKind("HorizontalPodAutoscaler")
 	hpaV1GVK          = autoscalingv1.SchemeGroupVersion.WithKind("HorizontalPodAutoscaler")
-	podgangGVK        = groveschedulerv1alpha1.SchemeGroupVersion.WithKind("PodGang")
+	pcsGVK            = grovecorev1alpha1.SchemeGroupVersion.WithKind(constants.KindPodCliqueSet)
+	pcsgGVK           = grovecorev1alpha1.SchemeGroupVersion.WithKind(constants.KindPodCliqueScalingGroup)
+	pclqGVK           = grovecorev1alpha1.SchemeGroupVersion.WithKind(constants.KindPodClique)
+	podGangGVK        = groveschedulerv1alpha1.SchemeGroupVersion.WithKind(groveschedulerv1alpha1.KindPodGang)
+	podGangMapGVK     = grovecorev1alpha1.SchemeGroupVersion.WithKind(constants.KindPodGangMap)
 
 	errDecodeRequestObject  = errors.New("failed to decode request")
 	errUnsupportedOperation = errors.New("unsupported operation")
@@ -78,8 +77,7 @@ func (d *requestDecoder) decode(logger logr.Logger, req admission.Request) (*met
 	}
 	switch reqGVK {
 	case pcsgGVK, pclqGVK, podGVK, serviceAccountGVK, serviceGVK, secretGVK, roleGVK, roleBindingGVK,
-		hpaV2GVK, hpaV1GVK,
-		podgangGVK:
+		hpaV2GVK, hpaV1GVK, podGangMapGVK, podGangGVK:
 		return d.decodeAsPartialObjectMetadata(req)
 	default:
 		logger.Info("Skipping decoding, unknown GVK", "GVK", reqGVK)
