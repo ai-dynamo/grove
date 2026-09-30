@@ -50,6 +50,8 @@ const (
 	upgradePCSGWorkloadName = "upgrade-pcsg-only"
 	// upgradePCSGWorkloadNamespace is the namespace of that workload.
 	upgradePCSGWorkloadNamespace = "default"
+	// upgradePCSGName is the PodCliqueScalingGroup checked after migration.
+	upgradePCSGName = "upgrade-pcsg-only-0-worker"
 )
 
 // podSurvivalUpgrade holds the state shared between the pre-upgrade and post-upgrade steps of the pod
@@ -127,6 +129,19 @@ func Test_VUPG2_RecoverPodGangMapAfterScaleBelowMinAvailable(t *testing.T) {
 	})
 }
 
+func waitForHealthyStateObserved(t *testing.T, tc *testctx.TestContext, pcsgName string) {
+	t.Helper()
+	err := wait.PollUntilContextTimeout(t.Context(), defaultPollInterval, defaultPollTimeout, true,
+		func(ctx context.Context) (bool, error) {
+			pcsg := &grovev1alpha1.PodCliqueScalingGroup{}
+			if err := tc.Client.Get(ctx, types.NamespacedName{Namespace: tc.Namespace, Name: pcsgName}, pcsg); err != nil {
+				return false, err
+			}
+			return meta.IsStatusConditionTrue(pcsg.Status.Conditions, apiconstants.ConditionTypeHealthyStateObserved), nil
+		})
+	require.NoError(t, err, "PodCliqueScalingGroup %s did not record healthy state after upgrade", pcsgName)
+}
+
 // deployWorkloadOnFromVersion deploys the configured workload on the fromVersion operator.
 func deployWorkloadOnFromVersion(t *testing.T, tc *testctx.TestContext) {
 	_, err := tc.DeployAndVerifyWorkload()
@@ -142,6 +157,7 @@ func verifyPodGangMapRecoversAfterScaleBelowMinAvailable(t *testing.T, tc *testc
 
 	testctx.Logger.Info("waiting for the legacy workload to finish migrating to the epoch-based scheme")
 	waitForMigrationComplete(t, tc, pcsNsName)
+	waitForHealthyStateObserved(t, tc, upgradePCSGName)
 
 	testctx.Logger.Info("verifying the migrated PodGangMap has an anchor holding worker index 0")
 	require.NoError(t, podgangmap.WaitUntilVerified(t.Context(), verifier, pcsNsName, 0, pgmRecoverTimeout, defaultPollInterval,
