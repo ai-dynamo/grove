@@ -21,14 +21,17 @@ import (
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	ctrlconstants "github.com/ai-dynamo/grove/operator/internal/constants"
 	ctrlcommon "github.com/ai-dynamo/grove/operator/internal/controller/common"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
+	commonrevision "github.com/ai-dynamo/grove/operator/internal/controller/common/revision"
 	pcscomponent "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components"
 	ctrlutils "github.com/ai-dynamo/grove/operator/internal/controller/utils"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 
 	"github.com/go-logr/logr"
+	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -77,7 +80,20 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		return result.Result()
 	}
 
+	if value, ok := r.pcsRevisionExpectations.Load(pcs.UID); ok {
+		revision := value.(*commonrevision.Revision)
+		// A successful write can precede both the PCS and ControllerRevision informer events.
+		if ptr.Deref(pcs.Status.CurrentRevision, "") != revision.Name() || ptr.Deref(pcs.Status.CurrentGenerationHash, "") != revision.GenerationHash() {
+			return ctrlcommon.ReconcileAfter(ctrlconstants.ComponentSyncRetryInterval, "waiting for revision status to be observed").Result()
+		}
+		componentutils.CachePodCliqueSetRevision(ctx, pcs, revision)
+	}
+
 	reconcileSpecFlowResult := r.reconcileSpec(ctx, logger, pcs)
+	// A failed status write can leave an unpersisted revision selected in memory.
+	if reconcileSpecFlowResult.HasErrors() {
+		return reconcileSpecFlowResult.Result()
+	}
 	if statusReconcileResult := r.reconcileStatus(ctx, logger, pcs); ctrlcommon.ShortCircuitReconcileFlow(statusReconcileResult) {
 		return statusReconcileResult.Result()
 	}

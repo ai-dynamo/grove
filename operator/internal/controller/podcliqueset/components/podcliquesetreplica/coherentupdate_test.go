@@ -16,10 +16,13 @@ package podcliquesetreplica
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"testing"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	commonrevision "github.com/ai-dynamo/grove/operator/internal/controller/common/revision"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/go-logr/logr"
@@ -214,6 +217,35 @@ func TestIsUpdateComplete(t *testing.T) {
 		ri.pcsgs = []grovecorev1alpha1.PodCliqueScalingGroup{pcsgAtGenerationHash(pcs, "decode", nil)} // stale generation
 		assert.False(t, ri.isUpdateComplete(pcs, revision))
 	})
+}
+
+func TestIsUpdateCompleteUsesPersistedTemplateIdentity(t *testing.T) {
+	pcs := coherentTestPCS([]string{"frontend"}, nil)
+	controllerRevision, err := testutils.NewPodCliqueSetControllerRevision(pcs)
+	require.NoError(t, err)
+	data := commonrevision.Data{}
+	require.NoError(t, json.Unmarshal(controllerRevision.Data.Raw, &data))
+	data.Cliques[0].Hash = "legacy-frontend"
+	controllerRevision.Data.Raw, err = json.Marshal(data)
+	require.NoError(t, err)
+	revision, err := commonrevision.DecodeRevision(controllerRevision)
+	require.NoError(t, err)
+
+	for _, replicas := range []int32{1, 0} {
+		t.Run(fmt.Sprintf("replicas=%d", replicas), func(t *testing.T) {
+			pclq := standalonePCLQAtHash(pcs, "frontend", "legacy-frontend")
+			pclq.Spec.Replicas = replicas
+			pclq.Status.ReadyReplicas = replicas
+			pclq.Status.UpdatedReplicas = replicas
+			info := pcsReplicaInfo{pclqs: []grovecorev1alpha1.PodClique{pclq}}
+			assert.True(t, info.isUpdateComplete(pcs, revision))
+			assert.Nil(t, coherentProgressMessage(pcs, revision, info))
+
+			info.pclqs[0].Status.CurrentPodTemplateHash = new("stale-hash")
+			assert.False(t, info.isUpdateComplete(pcs, revision))
+			assert.NotNil(t, coherentProgressMessage(pcs, revision, info))
+		})
+	}
 }
 
 // coherentTestPCS builds a PodCliqueSet with the given standalone and PodCliqueScalingGroup component

@@ -17,11 +17,15 @@ package podcliqueset
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"sync"
 	"testing"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
+	apiconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	ctrlcommon "github.com/ai-dynamo/grove/operator/internal/controller/common"
+	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	commonrevision "github.com/ai-dynamo/grove/operator/internal/controller/common/revision"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
@@ -34,7 +38,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/utils/ptr"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
 func TestProcessRevisionWithoutCurrentRevision(t *testing.T) {
@@ -49,17 +55,21 @@ func TestProcessRevisionWithoutCurrentRevision(t *testing.T) {
 		wantUpdatedReplicas int32
 	}{
 		{
-			name:                "new PodCliqueSet starts an update",
-			wantUpdate:          true,
+			name:                "new PodCliqueSet initializes without an update",
 			wantUpdatedReplicas: 0,
 		},
 		{
-			name: "new PodCliqueSet with OnDelete records the update as complete",
+			name: "new PodCliqueSet with OnDelete initializes without an update",
 			strategy: &grovecorev1alpha1.PodCliqueSetUpdateStrategy{
 				Type: grovecorev1alpha1.OnDeleteStrategy,
 			},
-			wantUpdate:          true,
-			wantUpdateCompleted: true,
+			wantUpdatedReplicas: 0,
+		},
+		{
+			name: "new PodCliqueSet with Coherent initializes without an update",
+			strategy: &grovecorev1alpha1.PodCliqueSetUpdateStrategy{
+				Type: grovecorev1alpha1.CoherentStrategy,
+			},
 			wantUpdatedReplicas: 0,
 		},
 		{
@@ -346,6 +356,239 @@ func TestProcessRevisionWithCurrentRevision(t *testing.T) {
 				assert.Equal(t, wantData.Cliques[i].Hash, selectedData.Cliques[i].Hash)
 				assert.JSONEq(t, string(wantData.Cliques[i].Template), string(selectedData.Cliques[i].Template))
 			}
+		})
+	}
+}
+
+func TestTruncateRevisionHistory(t *testing.T) {
+	ctx := context.Background()
+	pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "test-namespace", uuid.NewUUID()).Build()
+	current, err := testutils.NewPodCliqueSetControllerRevision(pcs)
+	require.NoError(t, err)
+
+	obsolete := current.DeepCopy()
+	obsolete.Name = "obsolete-revision"
+
+	previousOwner := current.DeepCopy()
+	previousOwner.Name = "previous-owner-revision"
+	previousOwner.OwnerReferences[0].UID = uuid.NewUUID()
+
+	unowned := current.DeepCopy()
+	unowned.Name = "unowned-revision"
+	unowned.OwnerReferences = nil
+
+	nonControllerOwner := current.DeepCopy()
+	nonControllerOwner.Name = "non-controller-owner-revision"
+	nonControllerOwner.OwnerReferences[0].Controller = ptr.To(false)
+
+	fakeClient := testutils.SetupFakeClient(pcs, current, obsolete, previousOwner, unowned, nonControllerOwner)
+	reconciler := &Reconciler{client: fakeClient}
+
+	result := reconciler.truncateRevisionHistory(ctx, logr.Discard(), pcs)
+	require.False(t, result.HasErrors(), "%v", result.GetErrors())
+	assert.False(t, result.NeedsRequeue())
+
+	err = fakeClient.Get(ctx, client.ObjectKeyFromObject(obsolete), &appsv1.ControllerRevision{})
+	assert.True(t, apierrors.IsNotFound(err), "owned obsolete revision should be deleted: %v", err)
+
+	for _, revision := range []*appsv1.ControllerRevision{current, previousOwner, unowned, nonControllerOwner} {
+		err := fakeClient.Get(ctx, client.ObjectKeyFromObject(revision), &appsv1.ControllerRevision{})
+		assert.NoError(t, err, "revision %s should be retained", revision.Name)
+	}
+}
+
+func TestReconcileRevisionStatusConflict(t *testing.T) {
+	for _, tt := range []struct {
+		name           string
+		recordConflict bool
+	}{
+		{name: "error recorded"},
+		{name: "error recording also conflicts", recordConflict: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := t.Context()
+			// At zero replicas, status reconciliation can be a no-op. If both the selection
+			// Update and the error-recording Patch fail, only memory refers to the new revision.
+			pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "test-namespace", uuid.NewUUID()).
+				WithReplicas(0).
+				WithPodCliqueParameters("worker", 1, nil).
+				Build()
+			pcs.Finalizers = []string{apiconstants.FinalizerPodCliqueSet}
+			pcs.Generation = 1
+			pcs.Spec.Template.Cliques[0].Spec.PodSpec.Containers = []corev1.Container{{Name: "worker", Image: "worker:v1"}}
+			current, err := testutils.NewPodCliqueSetControllerRevision(pcs)
+			require.NoError(t, err)
+			require.NoError(t, mutateSelector(pcs))
+			mutateUpdateInProgressCondition(pcs, updateInProgressCounts{})
+			pcs.Generation++
+			pcs.Spec.Template.Cliques[0].Spec.PodSpec.Containers[0].Image = "worker:v2"
+
+			storage := testutils.SetupFakeClient(pcs, current)
+			conflict := apierrors.NewConflict(grovecorev1alpha1.Resource("podcliquesets"), pcs.Name, errors.New("concurrent status write"))
+			failWrites := true
+			updateAttempts, patchAttempts, deleteAttempts := 0, 0, 0
+			cl := interceptor.NewClient(storage, interceptor.Funcs{
+				SubResourceUpdate: func(ctx context.Context, cl client.Client, subresource string, obj client.Object, opts ...client.SubResourceUpdateOption) error {
+					updateAttempts++
+					if failWrites {
+						return conflict
+					}
+					return cl.SubResource(subresource).Update(ctx, obj, opts...)
+				},
+				SubResourcePatch: func(ctx context.Context, cl client.Client, subresource string, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
+					patchAttempts++
+					if failWrites && tt.recordConflict {
+						return conflict
+					}
+					return cl.SubResource(subresource).Patch(ctx, obj, patch, opts...)
+				},
+				Delete: func(ctx context.Context, cl client.WithWatch, obj client.Object, opts ...client.DeleteOption) error {
+					deleteAttempts++
+					return cl.Delete(ctx, obj, opts...)
+				},
+			})
+			r := &Reconciler{
+				client: cl, apiReader: storage,
+				reconcileStatusRecorder: ctrlcommon.NewReconcileErrorRecorder(cl),
+				operatorRegistry:        component.NewOperatorRegistry[grovecorev1alpha1.PodCliqueSet](),
+			}
+			request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(pcs)}
+
+			_, err = r.Reconcile(ctx, request)
+			require.Error(t, err)
+			assert.True(t, apierrors.IsConflict(err), "%v", err)
+			assert.Equal(t, 1, updateAttempts)
+			assert.Equal(t, 1, patchAttempts)
+			assert.Zero(t, deleteAttempts, "failed spec reconciliation must not truncate history")
+			persisted := &grovecorev1alpha1.PodCliqueSet{}
+			require.NoError(t, storage.Get(ctx, request.NamespacedName, persisted))
+			assert.Equal(t, current.Name, ptr.Deref(persisted.Status.CurrentRevision, ""))
+			require.NoError(t, storage.Get(ctx, client.ObjectKeyFromObject(current), &appsv1.ControllerRevision{}),
+				"the persisted selection must remain readable")
+
+			failWrites = false
+			// Restart without any in-memory expectations after the failed status writes.
+			r = &Reconciler{
+				client: cl, apiReader: storage,
+				reconcileStatusRecorder: ctrlcommon.NewReconcileErrorRecorder(cl),
+				operatorRegistry:        component.NewOperatorRegistry[grovecorev1alpha1.PodCliqueSet](),
+			}
+			result, err := r.Reconcile(ctx, request)
+			require.NoError(t, err)
+			assert.Positive(t, result.RequeueAfter)
+			require.NoError(t, storage.Get(ctx, request.NamespacedName, persisted))
+			require.NotEqual(t, current.Name, ptr.Deref(persisted.Status.CurrentRevision, ""))
+			selected := *persisted.Status.CurrentRevision
+			result, err = r.Reconcile(ctx, request)
+			require.NoError(t, err)
+			assert.Zero(t, result.RequeueAfter)
+			require.NoError(t, storage.Get(ctx, request.NamespacedName, persisted))
+			assert.Equal(t, selected, *persisted.Status.CurrentRevision)
+			assert.Equal(t, pcs.Generation, ptr.Deref(persisted.Status.ObservedGeneration, 0))
+			require.NoError(t, storage.Get(ctx, client.ObjectKey{Namespace: pcs.Namespace, Name: selected}, &appsv1.ControllerRevision{}))
+			assert.True(t, apierrors.IsNotFound(storage.Get(ctx, client.ObjectKeyFromObject(current), &appsv1.ControllerRevision{})),
+				"the old revision can be removed after the new selection is persisted")
+		})
+	}
+}
+
+func TestReconcileRevisionCacheLag(t *testing.T) {
+	for _, tt := range []struct {
+		name             string
+		existingRevision bool
+	}{
+		{name: "initial revision"},
+		{name: "template update", existingRevision: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := t.Context()
+			pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "test-namespace", uuid.NewUUID()).
+				WithReplicas(0).
+				WithPodCliqueParameters("worker", 1, nil).
+				Build()
+			pcs.Finalizers = []string{apiconstants.FinalizerPodCliqueSet}
+			pcs.Generation = 1
+			pcs.Spec.Template.Cliques[0].Spec.PodSpec.Containers = []corev1.Container{{Name: "worker", Image: "worker:v1"}}
+			objects := []client.Object{pcs}
+			if tt.existingRevision {
+				revision, err := testutils.NewPodCliqueSetControllerRevision(pcs)
+				require.NoError(t, err)
+				objects = append(objects, revision)
+				pcs.Generation++
+				pcs.Spec.Template.Cliques[0].Spec.PodSpec.Containers[0].Image = "worker:v2"
+			}
+			stalePCS := pcs.DeepCopy()
+			storage := testutils.SetupFakeClient(objects...)
+			revisionVisible, staleStatus := false, false
+			createdRevision := ""
+			revisionWrites := 0
+			cl := interceptor.NewClient(storage, interceptor.Funcs{
+				Create: func(ctx context.Context, cl client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+					if _, ok := obj.(*appsv1.ControllerRevision); ok {
+						createdRevision = obj.GetName()
+						revisionWrites++
+					}
+					return cl.Create(ctx, obj, opts...)
+				},
+				Get: func(ctx context.Context, cl client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+					if cachedPCS, ok := obj.(*grovecorev1alpha1.PodCliqueSet); ok && staleStatus {
+						stalePCS.DeepCopyInto(cachedPCS)
+						return nil
+					}
+					if _, ok := obj.(*appsv1.ControllerRevision); ok && key.Name == createdRevision && !revisionVisible {
+						return apierrors.NewNotFound(appsv1.Resource("controllerrevisions"), key.Name)
+					}
+					return cl.Get(ctx, key, obj, opts...)
+				},
+			})
+			r := &Reconciler{
+				client: cl, apiReader: storage,
+				reconcileStatusRecorder: ctrlcommon.NewReconcileErrorRecorder(cl),
+				operatorRegistry:        component.NewOperatorRegistry[grovecorev1alpha1.PodCliqueSet](),
+			}
+			request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(pcs)}
+
+			result, err := r.Reconcile(ctx, request)
+			require.NoError(t, err, "a newly created revision need not be visible in the informer yet")
+			assert.Positive(t, result.RequeueAfter)
+			persisted := &grovecorev1alpha1.PodCliqueSet{}
+			require.NoError(t, storage.Get(ctx, request.NamespacedName, persisted))
+			require.NotEmpty(t, createdRevision)
+			require.Equal(t, createdRevision, ptr.Deref(persisted.Status.CurrentRevision, ""))
+			progress := persisted.Status.UpdateProgress.DeepCopy()
+
+			staleStatus = true
+			result, err = r.Reconcile(ctx, request)
+			require.NoError(t, err, "stale PCS status must wait for the successful revision write")
+			assert.Positive(t, result.RequeueAfter)
+			assert.Equal(t, 1, revisionWrites, "cache lag must not reinitialize the revision")
+			_, pending := r.pcsRevisionExpectations.Load(pcs.UID)
+			assert.True(t, pending)
+			require.NoError(t, storage.Get(ctx, request.NamespacedName, persisted))
+			assert.Equal(t, progress, persisted.Status.UpdateProgress)
+			assert.Empty(t, persisted.Status.LastErrors)
+
+			stalePCS.Status.CurrentRevision = persisted.Status.CurrentRevision
+			result, err = r.Reconcile(ctx, request)
+			require.NoError(t, err, "a mismatched generation hash must also preserve the expectation")
+			assert.Positive(t, result.RequeueAfter)
+			assert.Equal(t, 1, revisionWrites)
+
+			staleStatus = false
+			_, err = r.Reconcile(ctx, request)
+			require.NoError(t, err, "observing PCS status may precede observing its revision")
+			assert.Equal(t, 1, revisionWrites)
+
+			revisionVisible = true
+			r.pcsRevisionExpectations.Clear()
+			result, err = r.Reconcile(ctx, request)
+			require.NoError(t, err, "reconciliation must also converge after an operator restart")
+			assert.Zero(t, result.RequeueAfter)
+			require.NoError(t, storage.Get(ctx, request.NamespacedName, persisted))
+			assert.Equal(t, createdRevision, *persisted.Status.CurrentRevision)
+			assert.Equal(t, pcs.Generation, ptr.Deref(persisted.Status.ObservedGeneration, 0))
+			assert.Equal(t, progress, persisted.Status.UpdateProgress)
+			assert.Equal(t, 1, revisionWrites)
 		})
 	}
 }
