@@ -33,6 +33,7 @@ from infra_manager.constants import (
     HELM_KEY_PPROF_BIND_PORT,
     HELM_KEY_PROFILING,
     HELM_KEY_QPS,
+    HELM_KEY_SCHEDULER_PROFILES_WITH_KUEUE,
     KWOK_GITHUB_REPO,
 )
 
@@ -64,7 +65,7 @@ def resolve_registry_repos(port: int) -> tuple[str, str]:
     return f"localhost:{port}", f"registry:{port}"
 
 
-def collect_grove_helm_overrides(cfg: GroveConfig) -> list[tuple[str, str]]:
+def collect_grove_helm_overrides(cfg: GroveConfig, kueue_enabled: bool = False) -> list[tuple[str, str]]:
     """Build helm override tuples from grove tuning options.
 
     Each tuple is ``(helm_flag, "key=value")`` where ``helm_flag`` is either
@@ -72,6 +73,10 @@ def collect_grove_helm_overrides(cfg: GroveConfig) -> list[tuple[str, str]]:
 
     Args:
         cfg: Grove configuration with profiling and sync settings.
+        kueue_enabled: Whether to register the "kueue" scheduler profile. Unlike
+            kai-scheduler (always on in charts/values.yaml), kueue is opt-in. Since helm --set
+            on a list index replaces the whole array rather than merging it, every existing
+            profile entry is re-set alongside kueue's, not just the new one.
 
     Returns:
         List of ``(helm_flag, "key=value")`` tuples.
@@ -90,6 +95,8 @@ def collect_grove_helm_overrides(cfg: GroveConfig) -> list[tuple[str, str]]:
         (cfg.burst is not None, HELM_KEY_BURST, str(cfg.burst)),
     ]
     result: list[tuple[str, str]] = [("--set", f"{key}={value}") for enabled, key, value in overrides if enabled]
+    if kueue_enabled:
+        result.extend(("--set", kv) for kv in HELM_KEY_SCHEDULER_PROFILES_WITH_KUEUE)
     if cfg.profiling:
         result.extend(_pyroscope_annotation_overrides())
     return result

@@ -120,16 +120,35 @@ class KaiConfig(BaseModel):
     version: str = Field(default=dep_value("kai_scheduler", "version", default="v0.0.0"), pattern=r"^v[\d.]+(-[\w.]+)?$")
 
 
+class KueueConfig(BaseModel):
+    """Kueue settings.
+
+    Attributes:
+        enabled: Install Kueue. Unlike Kai, Kueue is opt-in: the kueue scheduler backend is a POC
+            and is not part of every e2e run.
+        version: Kueue Helm chart version. Defaults to the sigs.k8s.io/kueue version vendored in
+            operator/go.mod so the installed controller matches the API types Grove's kueue
+            scheduler backend was built against.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    version: str = Field(default=dep_value("kueue", "version", default="0.0.0"), pattern=r"^[\d.]+(-[\w.]+)?$")
+
+
 class SchedulerConfig(BaseModel):
     """Extensible scheduler backend group.
 
     Attributes:
         kai: Kai Scheduler settings.
+        kueue: Kueue settings.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     kai: KaiConfig = KaiConfig()
+    kueue: KueueConfig = KueueConfig()
 
 
 class GroveConfig(BaseModel):
@@ -209,6 +228,8 @@ class SetupConfig(BaseSettings):
       E2E_GROVE__LOCAL__SKAFFOLD_PROFILE=my-profile
       E2E_GROVE__NAMESPACE=grove-system
       E2E_SCHEDULER__KAI__VERSION=v1.2.3
+      E2E_SCHEDULER__KUEUE__ENABLED=true
+      E2E_SCHEDULER__KUEUE__VERSION=0.17.8
       E2E_KWOK__NODES=500
       E2E_KWOK__BATCH_SIZE=100
       E2E_KWOK__NODE_CPU=64
@@ -221,7 +242,7 @@ class SetupConfig(BaseSettings):
 
     Attributes:
         cluster: k3d cluster creation, registry/prepull, and sizing config.
-        scheduler: Scheduler backend group (kai).
+        scheduler: Scheduler backend group (kai, kueue).
         grove: Grove operator behavior and deployment config.
         kwok: KWOK simulated nodes config.
         pyroscope: Pyroscope profiler options.
