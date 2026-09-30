@@ -26,7 +26,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 )
 
-func TestSelectedRevisionMatchesOrderedCliques(t *testing.T) {
+func TestSelectedRevisionMatchesAndRetainsCliques(t *testing.T) {
 	raw, err := json.Marshal(Data{
 		UID: types.UID("test-uid"),
 		Cliques: []CliqueData{
@@ -49,6 +49,7 @@ func TestSelectedRevisionMatchesOrderedCliques(t *testing.T) {
 		name    string
 		cliques []CliqueData
 		want    bool
+		hashes  []string
 	}{
 		{
 			name: "matches names order and templates while ignoring hashes",
@@ -56,7 +57,8 @@ func TestSelectedRevisionMatchesOrderedCliques(t *testing.T) {
 				{Name: "worker", Template: json.RawMessage(`{"metadata":{"labels":{"role":"worker"}}}`)},
 				{Name: "sidecar", Template: json.RawMessage(`{"metadata":{"labels":{"role":"sidecar"}}}`)},
 			},
-			want: true,
+			want:   true,
+			hashes: []string{"worker-template", "sidecar-template"},
 		},
 		{
 			name: "different order",
@@ -64,17 +66,25 @@ func TestSelectedRevisionMatchesOrderedCliques(t *testing.T) {
 				{Name: "sidecar", Template: json.RawMessage(`{"metadata":{"labels":{"role":"sidecar"}}}`)},
 				{Name: "worker", Template: json.RawMessage(`{"metadata":{"labels":{"role":"worker"}}}`)},
 			},
+			hashes: []string{"sidecar-template", "worker-template"},
 		},
 		{
 			name: "different template",
 			cliques: []CliqueData{
-				{Name: "worker", Template: json.RawMessage(`{"metadata":{"labels":{"role":"changed"}}}`)},
-				{Name: "sidecar", Template: json.RawMessage(`{"metadata":{"labels":{"role":"sidecar"}}}`)},
+				{Name: "worker", Template: json.RawMessage(`{"metadata":{"labels":{"role":"changed"}}}`), Hash: "new-worker"},
+				{Name: "sidecar", Template: json.RawMessage(`{"metadata":{"labels":{"role":"sidecar"},"creationTimestamp":null}}`), Hash: "new-sidecar"},
 			},
+			hashes: []string{"new-worker", "sidecar-template"},
 		},
 		{
 			name:    "different count",
 			cliques: []CliqueData{{Name: "worker", Template: json.RawMessage(`{"metadata":{"labels":{"role":"worker"}}}`)}},
+			hashes:  []string{"worker-template"},
+		},
+		{
+			name:    "replacement clique",
+			cliques: []CliqueData{{Name: "replacement", Template: json.RawMessage(`{"metadata":{"labels":{"role":"sidecar"}}}`), Hash: "new-replacement"}},
+			hashes:  []string{"new-replacement"},
 		},
 	}
 
@@ -83,15 +93,24 @@ func TestSelectedRevisionMatchesOrderedCliques(t *testing.T) {
 			equal, err := selected.MatchesOrderedCliques(tt.cliques)
 			require.NoError(t, err)
 			assert.Equal(t, tt.want, equal)
+			require.NoError(t, selected.RetainCliqueHashes(tt.cliques))
+			for i, hash := range tt.hashes {
+				assert.Equal(t, hash, tt.cliques[i].Hash)
+			}
+			hash, err := selected.CliqueHash("worker")
+			require.NoError(t, err)
+			assert.Equal(t, "worker-template", hash, "the selected revision must remain immutable")
 		})
 	}
 
-	equal, err := selected.MatchesOrderedCliques([]CliqueData{
+	invalid := []CliqueData{
 		{Name: "worker", Template: json.RawMessage(`{`)},
 		{Name: "sidecar", Template: json.RawMessage(`{}`)},
-	})
+	}
+	equal, err := selected.MatchesOrderedCliques(invalid)
 	assert.False(t, equal)
 	require.Error(t, err)
+	require.Error(t, selected.RetainCliqueHashes(invalid))
 }
 
 func TestSemanticallyEqualPodTemplate(t *testing.T) {
