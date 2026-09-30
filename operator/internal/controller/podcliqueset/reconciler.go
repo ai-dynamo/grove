@@ -40,6 +40,7 @@ type Reconciler struct {
 	config                  configv1alpha1.PodCliqueSetControllerConfiguration
 	tasConfig               configv1alpha1.TopologyAwareSchedulingConfiguration
 	client                  ctrlclient.Client
+	apiReader               ctrlclient.Reader
 	reconcileStatusRecorder ctrlcommon.ReconcileErrorRecorder
 	operatorRegistry        component.OperatorRegistry[grovecorev1alpha1.PodCliqueSet]
 	pcsRevisionExpectations sync.Map
@@ -53,6 +54,7 @@ func NewReconciler(mgr ctrl.Manager, controllerCfg configv1alpha1.PodCliqueSetCo
 		config:                  controllerCfg,
 		tasConfig:               topologyAwareSchedulingConfig,
 		client:                  client,
+		apiReader:               mgr.GetAPIReader(),
 		reconcileStatusRecorder: ctrlcommon.NewReconcileErrorRecorder(client),
 		operatorRegistry:        pcscomponent.CreateOperatorRegistry(mgr, eventRecorder, topologyAwareSchedulingConfig, networkConfig, schedRegistry),
 		pcsRevisionExpectations: sync.Map{},

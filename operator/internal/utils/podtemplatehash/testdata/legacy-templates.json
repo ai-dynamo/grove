@@ -1,0 +1,53 @@
+[
+  {
+    "metadata": {},
+    "spec": {
+      "schedulerName": "default-scheduler",
+      "terminationGracePeriodSeconds": 1,
+      "containers": [
+        {
+          "name": "busybox",
+          "image": "busybox:1.36",
+          "imagePullPolicy": "IfNotPresent",
+          "command": ["sh", "-c", "sleep 3600"],
+          "resources": {"requests": {"cpu": "1m", "memory": "1Mi"}}
+        }
+      ]
+    }
+  },
+  {
+    "metadata": {
+      "labels": {"app": "inference", "version": "one"},
+      "annotations": {"example.com/config": "WorkloadRef:(*v1.WorkloadReference)<nil>"}
+    },
+    "spec": {
+      "priorityClassName": "inference",
+      "automountServiceAccountToken": false,
+      "containers": [
+        {
+          "name": "worker",
+          "image": "worker:v1",
+          "env": [{"name": "FIRST", "value": "a"}, {"name": "SECOND", "value": "$(FIRST)"}],
+          "resources": {"requests": {"cpu": "100m", "memory": "1Gi"}, "limits": {"nvidia.com/gpu": "1"}}
+        }
+      ],
+      "volumes": [
+        {
+          "name": "certificate",
+          "projected": {
+            "defaultMode": 256,
+            "sources": [
+              {
+                "podCertificate": {
+                  "signerName": "example.com/signer",
+                  "keyType": "ED25519",
+                  "credentialBundlePath": "identity.pem"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  }
+]
