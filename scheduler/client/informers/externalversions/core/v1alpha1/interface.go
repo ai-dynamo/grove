@@ -25,7 +25,7 @@ import (
 // Interface provides access to all the informers in this group version.
 type Interface interface {
 	// PodGangs returns a PodGangInformer.
-	PodGangs() PodGangInformer
+	PodGangs() TypedPodGangInformer
 }
 
 type version struct {
@@ -39,7 +39,7 @@ func New(f internalinterfaces.SharedInformerFactory, namespace string, tweakList
 	return &version{factory: f, namespace: namespace, tweakListOptions: tweakListOptions}
 }
 
-// PodGangs returns a PodGangInformer.
-func (v *version) PodGangs() PodGangInformer {
+// PodGangs returns a TypedPodGangInformer.
+func (v *version) PodGangs() TypedPodGangInformer {
 	return &podGangInformer{factory: v.factory, namespace: v.namespace, tweakListOptions: v.tweakListOptions}
 }

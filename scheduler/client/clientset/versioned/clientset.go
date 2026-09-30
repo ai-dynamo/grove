@@ -29,7 +29,7 @@ import (
 )
 
 type Interface interface {
-	Discovery() discovery.DiscoveryInterface
+	Discovery() discovery.DiscoveryInterfaces
 	SchedulerV1alpha1() schedulerv1alpha1.SchedulerV1alpha1Interface
 }
 
@@ -45,7 +45,7 @@ func (c *Clientset) SchedulerV1alpha1() schedulerv1alpha1.SchedulerV1alpha1Inter
 }
 
 // Discovery retrieves the DiscoveryClient
-func (c *Clientset) Discovery() discovery.DiscoveryInterface {
+func (c *Clientset) Discovery() discovery.DiscoveryInterfaces {
 	if c == nil {
 		return nil
 	}

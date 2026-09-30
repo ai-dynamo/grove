@@ -34,11 +34,39 @@ import (
 )
 
 // PodGangMapInformer provides access to a shared informer and lister for
-// PodGangMaps.
+// PodGangMaps. Prefer using the type-safe variant (see [TypedPodGangMapInformer]).
 type PodGangMapInformer interface {
 	Informer() cache.SharedIndexInformer
 	Lister() corev1alpha1.PodGangMapLister
 }
+
+// TypedPodGangMapInformer provides access to a shared informer and lister for
+// PodGangMaps, including the type-safe TypedInformer variant.
+// It is a superset of PodGangMapInformer.
+type TypedPodGangMapInformer interface {
+	Informer() cache.SharedIndexInformer
+	TypedInformer() PodGangMapIndexInformer
+	Lister() corev1alpha1.PodGangMapLister
+}
+
+// PodGangMapIndexInformer is a wrapper around the underlying [cache.SharedIndexInformer]
+// with type-safe variants of several methods.
+type PodGangMapIndexInformer cache.TypedSharedIndexInformer[*apicorev1alpha1.PodGangMap]
+
+// PodGangMapHandlerFuncs is a specialization of [cache.TypedResourceEventHandlerFuncs] for PodGangMap.
+type PodGangMapHandlerFuncs = cache.TypedResourceEventHandlerFuncs[*apicorev1alpha1.PodGangMap]
+
+// PodGangMapDetailedHandlerFuncs is a specialization of [cache.TypedResourceEventHandlerDetailedFuncs] for PodGangMap.
+type PodGangMapDetailedHandlerFuncs = cache.TypedResourceEventHandlerDetailedFuncs[*apicorev1alpha1.PodGangMap]
+
+// PodGangMapFilteringHandler is a specialization of [cache.TypedFilteringResourceEventHandler] for PodGangMap.
+type PodGangMapFilteringHandler = cache.TypedFilteringResourceEventHandler[*apicorev1alpha1.PodGangMap]
+
+// PodGangMapIndexers is a specialization of [cache.TypedIndexers] for PodGangMap.
+type PodGangMapIndexers = cache.TypedIndexers[*apicorev1alpha1.PodGangMap]
+
+// DeletedPodGangMap is a specialization of [cache.DeletedObject] for PodGangMap.
+type DeletedPodGangMap = cache.DeletedObject[*apicorev1alpha1.PodGangMap]
 
 type podGangMapInformer struct {
 	factory          internalinterfaces.SharedInformerFactory
@@ -49,25 +77,49 @@ type podGangMapInformer struct {
 // NewPodGangMapInformer constructs a new informer for PodGangMap type.
 // Always prefer using an informer factory to get a shared informer instead of getting an independent
 // one. This reduces memory footprint and number of connections to the server.
+// If you really need an independent one, prefer using the type-safe variant (see [NewTypedPodGangMapInformer]).
 func NewPodGangMapInformer(client versioned.Interface, namespace string, resyncPeriod time.Duration, indexers cache.Indexers) cache.SharedIndexInformer {
 	return NewPodGangMapInformerWithOptions(client, namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: indexers})
+}
+
+// NewTypedPodGangMapInformer constructs a new informer for PodGangMap type.
+// Always prefer using an informer factory to get a shared informer instead of getting an independent
+// one. This reduces memory footprint and number of connections to the server.
+func NewTypedPodGangMapInformer(client versioned.Interface, namespace string, resyncPeriod time.Duration, indexers PodGangMapIndexers) PodGangMapIndexInformer {
+	return NewTypedPodGangMapInformerWithOptions(client, namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: cache.TypedIndexersToIndexers(indexers)})
 }
 
 // NewFilteredPodGangMapInformer constructs a new informer for PodGangMap type.
 // Always prefer using an informer factory to get a shared informer instead of getting an independent
 // one. This reduces memory footprint and number of connections to the server.
+// If you really need an independent one, prefer using the type-safe variant (see [NewTypedFilteredPodGangMapInformer]).
 func NewFilteredPodGangMapInformer(client versioned.Interface, namespace string, resyncPeriod time.Duration, indexers cache.Indexers, tweakListOptions internalinterfaces.TweakListOptionsFunc) cache.SharedIndexInformer {
-	return NewPodGangMapInformerWithOptions(client, namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: indexers, TweakListOptions: tweakListOptions})
+	return NewTypedPodGangMapInformerWithOptions(client, namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: indexers, TweakListOptions: tweakListOptions})
+}
+
+// NewTypedFilteredPodGangMapInformer constructs a new informer for PodGangMap type.
+// Always prefer using an informer factory to get a shared informer instead of getting an independent
+// one. This reduces memory footprint and number of connections to the server.
+func NewTypedFilteredPodGangMapInformer(client versioned.Interface, namespace string, resyncPeriod time.Duration, indexers PodGangMapIndexers, tweakListOptions internalinterfaces.TweakListOptionsFunc) PodGangMapIndexInformer {
+	return NewTypedPodGangMapInformerWithOptions(client, namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: cache.TypedIndexersToIndexers(indexers), TweakListOptions: tweakListOptions})
 }
 
 // NewPodGangMapInformerWithOptions constructs a new informer for PodGangMap type with additional options.
 // Always prefer using an informer factory to get a shared informer instead of getting an independent
 // one. This reduces memory footprint and number of connections to the server.
+// If you really need an independent one, prefer using the type-safe variant (see [NewTypedPodGangMapInformerWithOptions]).
 func NewPodGangMapInformerWithOptions(client versioned.Interface, namespace string, options internalinterfaces.InformerOptions) cache.SharedIndexInformer {
+	return NewTypedPodGangMapInformerWithOptions(client, namespace, options)
+}
+
+// NewTypedPodGangMapInformerWithOptions constructs a new informer for PodGangMap type with additional options.
+// Always prefer using an informer factory to get a shared informer instead of getting an independent
+// one. This reduces memory footprint and number of connections to the server.
+func NewTypedPodGangMapInformerWithOptions(client versioned.Interface, namespace string, options internalinterfaces.InformerOptions) PodGangMapIndexInformer {
 	gvr := schema.GroupVersionResource{Group: "grove.io", Version: "v1alpha1", Resource: "podgangmaps"}
 	identifier := options.InformerName.WithResource(gvr)
 	tweakListOptions := options.TweakListOptions
-	return cache.NewSharedIndexInformerWithOptions(
+	return cache.NewTypedSharedIndexInformer[*apicorev1alpha1.PodGangMap](cache.NewSharedIndexInformerWithOptions(
 		cache.ToListWatcherWithWatchListSemantics(&cache.ListWatch{
 			ListFunc: func(opts v1.ListOptions) (runtime.Object, error) {
 				if tweakListOptions != nil {
@@ -100,17 +152,57 @@ func NewPodGangMapInformerWithOptions(client versioned.Interface, namespace stri
 			Indexers:     options.Indexers,
 			Identifier:   identifier,
 		},
-	)
+	))
 }
 
 func (f *podGangMapInformer) defaultInformer(client versioned.Interface, resyncPeriod time.Duration) cache.SharedIndexInformer {
-	return NewPodGangMapInformerWithOptions(client, f.namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc}, InformerName: f.factory.InformerName(), TweakListOptions: f.tweakListOptions})
+	return NewTypedPodGangMapInformerWithOptions(client, f.namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc}, InformerName: f.factory.InformerName(), TweakListOptions: f.tweakListOptions})
 }
 
 func (f *podGangMapInformer) Informer() cache.SharedIndexInformer {
-	return f.factory.InformerFor(&apicorev1alpha1.PodGangMap{}, f.defaultInformer)
+	return f.TypedInformer()
+}
+
+func (f *podGangMapInformer) TypedInformer() PodGangMapIndexInformer {
+	return cache.NewTypedSharedIndexInformer[*apicorev1alpha1.PodGangMap](f.factory.InformerFor(&apicorev1alpha1.PodGangMap{}, f.defaultInformer))
 }
 
 func (f *podGangMapInformer) Lister() corev1alpha1.PodGangMapLister {
 	return corev1alpha1.NewPodGangMapLister(f.Informer().GetIndexer())
+}
+
+// ToTypedPodGangMapInformer converts an untyped informer into a TypedPodGangMapInformer.
+//
+// WARNING: this conversion is only safe if the informer handles objects of type
+// *PodGangMap. If that is not the case, calling type-safe methods of the returned
+// TypedPodGangMapInformer leads to runtime panics. A safer alternative is to pass
+// around a TypedPodGangMapInformer instances that was obtained from a
+// SharedInformerFactory.
+func ToTypedPodGangMapInformer(informer PodGangMapInformer) TypedPodGangMapInformer {
+	if informer, ok := informer.(TypedPodGangMapInformer); ok {
+		return informer
+	}
+	return &podGangMapTypedInformerAdapter{informer}
+}
+
+type podGangMapTypedInformerAdapter struct {
+	PodGangMapInformer
+}
+
+func (a *podGangMapTypedInformerAdapter) TypedInformer() PodGangMapIndexInformer {
+	return cache.NewTypedSharedIndexInformer[*apicorev1alpha1.PodGangMap](a.Informer())
+}
+
+// ToPodGangMapIndexInformer converts an untyped informer into a PodGangMapIndexInformer.
+//
+// WARNING: this conversion is only safe if the informer handles objects of type
+// *PodGangMap. If that is not the case, calling type-safe methods of the returned
+// PodGangMapIndexInformer leads to runtime panics. A safer alternative is to pass
+// around a PodGangMapIndexInformer instances that was obtained from a
+// SharedInformerFactory.
+func ToPodGangMapIndexInformer(informer cache.SharedIndexInformer) PodGangMapIndexInformer {
+	if informer, ok := informer.(PodGangMapIndexInformer); ok {
+		return informer
+	}
+	return cache.NewTypedSharedIndexInformer[*apicorev1alpha1.PodGangMap](informer)
 }
