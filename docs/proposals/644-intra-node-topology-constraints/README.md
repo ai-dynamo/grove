@@ -168,7 +168,7 @@ By contrast, `pack.required: numa` on a prefill PodClique with two pods would pu
 
 ### Limitations/Risks & Mitigations
 
-- **Group size is fixed when the claim is allocated.** A claim is allocated as a whole when the first pod that uses it is scheduled, and it cannot grow afterwards. A PodCliqueScalingGroup scales by whole replicas, and its member PodCliques cannot autoscale on their own, so each replica keeps the same pods. Standalone PodCliques and PodCliqueSet replicas can change size, so phase 1 limits `PerPod` entries and intra-node constraints to PodCliqueScalingGroups and their member PodCliques. A standalone clique can get the same behavior by wrapping it in a single-clique PodCliqueScalingGroup.
+- **Group size is fixed when the claim is allocated.** A claim is allocated as a whole when the first pod that uses it is scheduled, and it cannot grow afterwards. A PodCliqueScalingGroup scales by whole replicas, each with its own claim, but a member PodClique can still be resized, which `PerPod` has to rule out, as described under Lifecycle in [Enforcement](#enforcement-per-pod-devices-in-resourcesharing-claims). Standalone PodCliques and PodCliqueSet replicas change size routinely, so phase 1 limits `PerPod` entries and intra-node constraints to PodCliqueScalingGroups and their member PodCliques. A standalone clique can get the same behavior by wrapping it in a single-clique PodCliqueScalingGroup.
 - **A group is tied to one node.** GPUs are node-local, so all pods of a group run on the node where the claim is allocated. That is inherent to intra-node packing. The claim keeps its name when a pod is recreated, as every resourceSharing claim does today, so a recreated pod returns to that node while the claim is allocated. The resource claim controller keeps a pod's reservation until the pod object is gone ([source](https://github.com/kubernetes/kubernetes/blob/v1.37.0/pkg/controller/resourceclaim/controller.go#L1511-L1535)), so a pod stuck terminating on an unreachable node keeps the claim on that node. This is the standard lost-node case, and it clears the standard way: an `out-of-service` taint on the node, or deleting the Node, lets PodGC delete the stuck pods ([source](https://github.com/kubernetes/kubernetes/blob/v1.37.0/pkg/controller/podgc/gc_controller.go#L148-L186)), and the claim is released once its last consumer is gone. *Mitigation:* the user guide describes this recovery path. Faster failover, if it is ever needed, belongs in resourceSharing as a whole.
 - **The first pod reserves devices for the whole group.** When the claim is allocated for the first pod, every device in it is reserved, on a node chosen for that pod. If the rest of the group cannot fit on that node for another reason, such as CPU or memory, those pods stay pending while the devices remain reserved. *Mitigation:* a backend that schedules the gang as a unit checks the whole group before placing any of it. The kube backend does not schedule gangs until WAS support lands, so on kube a group can get stuck this way. The user guide will say so, and beta requires a backend that schedules gangs as a unit.
 - **Devices only.** The claim aligns devices. CPUs and memory still follow the kubelet's CPU and memory managers. Once CPUs are available as DRA devices, for example through [dra-driver-cpu](https://github.com/kubernetes-sigs/dra-driver-cpu), which publishes `numaNode`, the resourceSharing template can request them alongside the GPUs.
@@ -321,7 +321,17 @@ spec:
 
 The scheduler allocates the whole claim when it schedules the first pod of the group, choosing devices on one node that satisfy every constraint, and places the rest of the group on that node. Nothing in the scheduler needs to know about Grove: from its point of view, the group is a set of pods sharing a claim.
 
-**Lifecycle.** Creating, naming, owning, and cleaning up the claim work as resourceSharing does them today. A PodCliqueScalingGroup gets one claim per replica, owned by the PodCliqueScalingGroup, with a name that stays the same when pods are recreated. Scale-in deletes the claims of removed replicas. Also as today, a claim's spec never changes after it is created, so a template change that alters device requests, or a change to a member PodClique's replica count, only takes effect in a new claim.
+**Lifecycle.** Creating, naming, owning, and cleaning up the claim work as resourceSharing does them today. A PodCliqueScalingGroup gets one claim per replica, owned by the PodCliqueScalingGroup, with a name that stays the same when pods are recreated. Scale-in deletes the claims of removed replicas.
+
+A claim's spec never changes after it is created. Its device requests cannot go stale, because resourceSharing entries and templates are immutable on update. Its per-pod copies can. A claim holds one copy per pod that existed when it was built, and a member PodClique's `replicas` can change afterwards in two ways:
+
+- A PodCliqueSet update changes the template. The PodCliqueScalingGroup controller keeps the replica count of member PodCliques that already exist, so the change reaches only member PodCliques created later, for example by gang recovery, whose replica may still hold the old claim.
+- Scaling a member PodClique through its scale subresource changes a live PodClique, and the controller keeps that count.
+
+A pod with no copy in the claim would reference a request that does not exist and never start. `Shared` entries do not have this problem, because an extra pod shares the whole claim. For member PodCliques covered by a `PerPod` entry:
+
+- The PodCliqueSet webhook rejects updates that change `replicas`.
+- Grove does not validate PodClique updates, so it cannot reject a direct scale at admission. Instead, Grove does not create a pod that would have no copy in the claim, and records an event. After a direct scale-down, the removed pods' copies stay allocated until the replica is recreated.
 
 The `PodGang` API is unchanged. The scheduler learns about the constraint through the claim, so it needs no new information in the gang.
 
@@ -382,13 +392,13 @@ These are the decisions to settle in review:
 1. Phase 1 scope: PodCliqueScalingGroups and their member PodCliques only, or also standalone PodCliques with a fixed replica count.
 2. Whether an intra-node constraint should align devices from several resourceSharing entries of the same group. DRA constraints cannot span claims, so phase 1 requires one `PerPod` entry that holds every device to align.
 3. Whether KAI and Volcano can schedule gangs that share claims, and when the kube backend gains gang scheduling.
-4. How `PerPod` claims should follow template updates that change device requests or a member PodClique's replica count. A claim never changes after creation, which already holds for every resourceSharing claim.
+4. Whether a later phase should let a member PodClique covered by a `PerPod` entry change size, for example for engine-coordinated resizes ([#793](https://github.com/ai-dynamo/grove/issues/793)), by replacing the replica's claim, and whether a PodClique webhook should reject direct resizes at admission instead of Grove catching them in the reconciler.
 5. Whether spread gets a follow-up GREP, and whether it should be limited to pods with one device each.
 
 ### Monitoring
 
 - The `TopologyLevelsUnavailable` condition counts intra-node domains as available, as described in [ClusterTopologyBinding: Intra-Node Levels](#clustertopologybinding-intra-node-levels). If an administrator removes an intra-node level that a deployed PodCliqueSet uses, the condition is set and Grove stops adding that domain's `matchAttribute` to new claims. Existing claims keep theirs.
-- When Grove cannot build a `PerPod` claim, for example because an external template is missing or the claim would exceed DRA's limits, it records an event on the PodCliqueSet and does not create the group's pods. A condition can be added later if events prove insufficient.
+- When Grove cannot build a `PerPod` claim, for example because an external template is missing or the claim would exceed DRA's limits, it records an event on the PodCliqueSet and does not create the group's pods. It does the same when a member PodClique has more pods than its claim has copies, and skips only the pods without one. A condition can be added later if events prove insufficient.
 - When allocation fails, the pods' scheduling events report it as for any other DRA claim.
 
 ### Dependencies
@@ -404,7 +414,7 @@ Three behaviors matter most. Each gets unit coverage in the webhook and the clai
 
 1. A group whose devices fit in one intra-node domain is placed on one node, each pod gets only its own copies, and the devices share the level's attribute.
 2. A group that fits in no domain stays pending, and admission rejects constraints that cannot be enforced.
-3. `PerPod` claims follow resourceSharing's lifecycle: one per replica on scale-out, deleted on scale-in, and the same claim used again when a pod is recreated.
+3. `PerPod` claims follow resourceSharing's lifecycle: one per replica on scale-out, deleted on scale-in, and the same claim used again when a pod is recreated. A covered member PodClique cannot outgrow its claim: the webhook rejects replica changes, and a direct scale-up creates no pod without a copy.
 
 E2E tests run on kind with [dra-example-driver](https://github.com/kubernetes-sigs/dra-example-driver), whose mock GPUs can publish the standard `pcieRoot` attribute from a configured list of roots, so the `PCIeRoot` level needs no hardware. Testing the `NUMANode` level the same way needs a small change to that driver to publish `numaNode` on its mock GPUs.
 
