@@ -22,7 +22,7 @@ LD_PACKAGE_PATH := "github.com/ai-dynamo/grove/operator/internal"
 OPERATOR_NAME        := "grove-operator"
 INITC_NAME           := "grove-initc"
 INSTALL_CRDS_NAME    := "grove-install-crds"
-K3S_IMAGE       ?= rancher/k3s:v1.36.4-k3s1
+K3S_IMAGE       ?= rancher/k3s:v1.37.0-k3s1
 E2E_REGISTRY_PORT ?= 5001
 E2E_CREATE_FLAGS  ?=
 ifndef DIAG_DIR
