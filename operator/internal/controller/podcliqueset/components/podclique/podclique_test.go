@@ -462,6 +462,7 @@ func TestBuildResource_MNNVLInjection(t *testing.T) {
 			err := operator.buildResource(logr.Discard(), pcs, pcsReplica, false, pclq, podTemplateHash)
 			require.NoError(t, err)
 			assert.Equal(t, podTemplateHash, pclq.Labels[apicommon.LabelPodTemplateHash])
+			assert.NotContains(t, pclq.Labels, apicommon.LabelPodGang)
 
 			// Verify pod-level claims
 			if tc.expectPodLevelClaim {

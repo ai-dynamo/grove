@@ -19,7 +19,10 @@ import (
 	"fmt"
 	"hash/fnv"
 
+	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/dump"
 	"k8s.io/apimachinery/pkg/util/rand"
 )
@@ -31,4 +34,24 @@ func Compute(podTemplateSpecs ...*corev1.PodTemplateSpec) string {
 		_, _ = fmt.Fprintf(hasher, "%v", dump.ForHash(podTemplateSpec))
 	}
 	return rand.SafeEncodeString(fmt.Sprint(hasher.Sum64()))
+}
+
+// PodTemplateSpec constructs a corev1.PodTemplateSpec for the given PodCliqueTemplateSpec.
+// Its primary purpose is for constructing the intended hash for rolling updates.
+func PodTemplateSpec(pcs *grovecorev1alpha1.PodCliqueSet, podTemplateSpec *grovecorev1alpha1.PodCliqueTemplateSpec) *corev1.PodTemplateSpec {
+	template := &corev1.PodTemplateSpec{
+		ObjectMeta: metav1.ObjectMeta{
+			Labels:      podTemplateSpec.Labels,
+			Annotations: podTemplateSpec.Annotations,
+		},
+		Spec: podTemplateSpec.Spec.PodSpec,
+	}
+
+	// If priorityClassName is unset, fallback to the PCS priorityClassName
+	// so that any changes cause pods to be updated.
+	if template.Spec.PriorityClassName == "" {
+		template.Spec.PriorityClassName = pcs.Spec.Template.PriorityClassName
+	}
+
+	return template
 }

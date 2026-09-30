@@ -39,6 +39,13 @@ func WithPodCliqueSetRevisionCache(ctx context.Context) context.Context {
 	return context.WithValue(ctx, revisionCacheKey{}, &revisionCache{byKey: make(map[string]*commonrevision.Revision, 1)})
 }
 
+// CachePodCliqueSetRevision makes a successfully selected revision available before the informer observes it.
+func CachePodCliqueSetRevision(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, revision *commonrevision.Revision) {
+	if cache, ok := ctx.Value(revisionCacheKey{}).(*revisionCache); ok {
+		cache.byKey[pcs.Namespace+"/"+revision.Name()] = revision
+	}
+}
+
 // GetPodCliqueSetRevision gets the current Revision object for a given PodCliqueSet.
 // When the context carries a cache from WithPodCliqueSetRevisionCache, the first lookup populates it and subsequent calls skip the Get.
 func GetPodCliqueSetRevision(ctx context.Context, cl client.Client, pcs *grovecorev1alpha1.PodCliqueSet) (*commonrevision.Revision, error) {
@@ -65,9 +72,7 @@ func GetPodCliqueSetRevision(ctx context.Context, cl client.Client, pcs *groveco
 		return nil, fmt.Errorf("ControllerRevision %v has invalid revision data: %w", client.ObjectKeyFromObject(controllerRevision), err)
 	}
 
-	if cache != nil {
-		cache.byKey[key] = revision
-	}
+	CachePodCliqueSetRevision(ctx, pcs, revision)
 
 	return revision, nil
 }
