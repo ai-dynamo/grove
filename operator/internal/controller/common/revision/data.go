@@ -87,6 +87,26 @@ func (r *Revision) MatchesOrderedCliques(cliques []CliqueData) (bool, error) {
 	return true, nil
 }
 
+// RetainCliqueHashes preserves the selected identity of each unchanged template,
+// even when another clique changed or the cliques were reordered.
+func (r *Revision) RetainCliqueHashes(cliques []CliqueData) error {
+	for i := range cliques {
+		index, ok := r.cliqueIndexes[cliques[i].Name]
+		if !ok {
+			continue
+		}
+		selected := r.cliques[index]
+		equal, err := semanticallyEqualPodTemplate(selected.Template, cliques[i].Template)
+		if err != nil {
+			return fmt.Errorf("could not compare template for clique %s: %w", cliques[i].Name, err)
+		}
+		if equal {
+			cliques[i].Hash = selected.Hash
+		}
+	}
+	return nil
+}
+
 // Name returns the persisted controller revision name.
 func (r *Revision) Name() string {
 	return r.name
