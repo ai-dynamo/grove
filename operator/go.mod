@@ -156,6 +156,7 @@ require (
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	k8s.io/apiserver v0.36.5 // indirect
 	k8s.io/component-base v0.36.5 // indirect
+	k8s.io/kube-aggregator v0.36.5 // indirect
 	k8s.io/kube-openapi v0.0.0-20260427204847-8949caaa1199 // indirect
 	k8s.io/kubectl v0.36.5 // indirect
 	k8s.io/streaming v0.36.5 // indirect
