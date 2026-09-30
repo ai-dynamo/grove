@@ -28,16 +28,45 @@ import (
 	corev1alpha1 "github.com/ai-dynamo/grove/operator/client/listers/core/v1alpha1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
+	schema "k8s.io/apimachinery/pkg/runtime/schema"
 	watch "k8s.io/apimachinery/pkg/watch"
 	cache "k8s.io/client-go/tools/cache"
 )
 
 // PodCliqueScalingGroupInformer provides access to a shared informer and lister for
-// PodCliqueScalingGroups.
+// PodCliqueScalingGroups. Prefer using the type-safe variant (see [TypedPodCliqueScalingGroupInformer]).
 type PodCliqueScalingGroupInformer interface {
 	Informer() cache.SharedIndexInformer
 	Lister() corev1alpha1.PodCliqueScalingGroupLister
 }
+
+// TypedPodCliqueScalingGroupInformer provides access to a shared informer and lister for
+// PodCliqueScalingGroups, including the type-safe TypedInformer variant.
+// It is a superset of PodCliqueScalingGroupInformer.
+type TypedPodCliqueScalingGroupInformer interface {
+	Informer() cache.SharedIndexInformer
+	TypedInformer() PodCliqueScalingGroupIndexInformer
+	Lister() corev1alpha1.PodCliqueScalingGroupLister
+}
+
+// PodCliqueScalingGroupIndexInformer is a wrapper around the underlying [cache.SharedIndexInformer]
+// with type-safe variants of several methods.
+type PodCliqueScalingGroupIndexInformer cache.TypedSharedIndexInformer[*apicorev1alpha1.PodCliqueScalingGroup]
+
+// PodCliqueScalingGroupHandlerFuncs is a specialization of [cache.TypedResourceEventHandlerFuncs] for PodCliqueScalingGroup.
+type PodCliqueScalingGroupHandlerFuncs = cache.TypedResourceEventHandlerFuncs[*apicorev1alpha1.PodCliqueScalingGroup]
+
+// PodCliqueScalingGroupDetailedHandlerFuncs is a specialization of [cache.TypedResourceEventHandlerDetailedFuncs] for PodCliqueScalingGroup.
+type PodCliqueScalingGroupDetailedHandlerFuncs = cache.TypedResourceEventHandlerDetailedFuncs[*apicorev1alpha1.PodCliqueScalingGroup]
+
+// PodCliqueScalingGroupFilteringHandler is a specialization of [cache.TypedFilteringResourceEventHandler] for PodCliqueScalingGroup.
+type PodCliqueScalingGroupFilteringHandler = cache.TypedFilteringResourceEventHandler[*apicorev1alpha1.PodCliqueScalingGroup]
+
+// PodCliqueScalingGroupIndexers is a specialization of [cache.TypedIndexers] for PodCliqueScalingGroup.
+type PodCliqueScalingGroupIndexers = cache.TypedIndexers[*apicorev1alpha1.PodCliqueScalingGroup]
+
+// DeletedPodCliqueScalingGroup is a specialization of [cache.DeletedObject] for PodCliqueScalingGroup.
+type DeletedPodCliqueScalingGroup = cache.DeletedObject[*apicorev1alpha1.PodCliqueScalingGroup]
 
 type podCliqueScalingGroupInformer struct {
 	factory          internalinterfaces.SharedInformerFactory
@@ -48,55 +77,132 @@ type podCliqueScalingGroupInformer struct {
 // NewPodCliqueScalingGroupInformer constructs a new informer for PodCliqueScalingGroup type.
 // Always prefer using an informer factory to get a shared informer instead of getting an independent
 // one. This reduces memory footprint and number of connections to the server.
+// If you really need an independent one, prefer using the type-safe variant (see [NewTypedPodCliqueScalingGroupInformer]).
 func NewPodCliqueScalingGroupInformer(client versioned.Interface, namespace string, resyncPeriod time.Duration, indexers cache.Indexers) cache.SharedIndexInformer {
-	return NewFilteredPodCliqueScalingGroupInformer(client, namespace, resyncPeriod, indexers, nil)
+	return NewPodCliqueScalingGroupInformerWithOptions(client, namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: indexers})
+}
+
+// NewTypedPodCliqueScalingGroupInformer constructs a new informer for PodCliqueScalingGroup type.
+// Always prefer using an informer factory to get a shared informer instead of getting an independent
+// one. This reduces memory footprint and number of connections to the server.
+func NewTypedPodCliqueScalingGroupInformer(client versioned.Interface, namespace string, resyncPeriod time.Duration, indexers PodCliqueScalingGroupIndexers) PodCliqueScalingGroupIndexInformer {
+	return NewTypedPodCliqueScalingGroupInformerWithOptions(client, namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: cache.TypedIndexersToIndexers(indexers)})
 }
 
 // NewFilteredPodCliqueScalingGroupInformer constructs a new informer for PodCliqueScalingGroup type.
 // Always prefer using an informer factory to get a shared informer instead of getting an independent
 // one. This reduces memory footprint and number of connections to the server.
+// If you really need an independent one, prefer using the type-safe variant (see [NewTypedFilteredPodCliqueScalingGroupInformer]).
 func NewFilteredPodCliqueScalingGroupInformer(client versioned.Interface, namespace string, resyncPeriod time.Duration, indexers cache.Indexers, tweakListOptions internalinterfaces.TweakListOptionsFunc) cache.SharedIndexInformer {
-	return cache.NewSharedIndexInformer(
+	return NewTypedPodCliqueScalingGroupInformerWithOptions(client, namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: indexers, TweakListOptions: tweakListOptions})
+}
+
+// NewTypedFilteredPodCliqueScalingGroupInformer constructs a new informer for PodCliqueScalingGroup type.
+// Always prefer using an informer factory to get a shared informer instead of getting an independent
+// one. This reduces memory footprint and number of connections to the server.
+func NewTypedFilteredPodCliqueScalingGroupInformer(client versioned.Interface, namespace string, resyncPeriod time.Duration, indexers PodCliqueScalingGroupIndexers, tweakListOptions internalinterfaces.TweakListOptionsFunc) PodCliqueScalingGroupIndexInformer {
+	return NewTypedPodCliqueScalingGroupInformerWithOptions(client, namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: cache.TypedIndexersToIndexers(indexers), TweakListOptions: tweakListOptions})
+}
+
+// NewPodCliqueScalingGroupInformerWithOptions constructs a new informer for PodCliqueScalingGroup type with additional options.
+// Always prefer using an informer factory to get a shared informer instead of getting an independent
+// one. This reduces memory footprint and number of connections to the server.
+// If you really need an independent one, prefer using the type-safe variant (see [NewTypedPodCliqueScalingGroupInformerWithOptions]).
+func NewPodCliqueScalingGroupInformerWithOptions(client versioned.Interface, namespace string, options internalinterfaces.InformerOptions) cache.SharedIndexInformer {
+	return NewTypedPodCliqueScalingGroupInformerWithOptions(client, namespace, options)
+}
+
+// NewTypedPodCliqueScalingGroupInformerWithOptions constructs a new informer for PodCliqueScalingGroup type with additional options.
+// Always prefer using an informer factory to get a shared informer instead of getting an independent
+// one. This reduces memory footprint and number of connections to the server.
+func NewTypedPodCliqueScalingGroupInformerWithOptions(client versioned.Interface, namespace string, options internalinterfaces.InformerOptions) PodCliqueScalingGroupIndexInformer {
+	gvr := schema.GroupVersionResource{Group: "grove.io", Version: "v1alpha1", Resource: "podcliquescalinggroups"}
+	identifier := options.InformerName.WithResource(gvr)
+	tweakListOptions := options.TweakListOptions
+	return cache.NewTypedSharedIndexInformer[*apicorev1alpha1.PodCliqueScalingGroup](cache.NewSharedIndexInformerWithOptions(
 		cache.ToListWatcherWithWatchListSemantics(&cache.ListWatch{
-			ListFunc: func(options v1.ListOptions) (runtime.Object, error) {
+			ListFunc: func(opts v1.ListOptions) (runtime.Object, error) {
 				if tweakListOptions != nil {
-					tweakListOptions(&options)
+					tweakListOptions(&opts)
 				}
-				return client.GroveV1alpha1().PodCliqueScalingGroups(namespace).List(context.Background(), options)
+				return client.GroveV1alpha1().PodCliqueScalingGroups(namespace).List(context.Background(), opts)
 			},
-			WatchFunc: func(options v1.ListOptions) (watch.Interface, error) {
+			WatchFunc: func(opts v1.ListOptions) (watch.Interface, error) {
 				if tweakListOptions != nil {
-					tweakListOptions(&options)
+					tweakListOptions(&opts)
 				}
-				return client.GroveV1alpha1().PodCliqueScalingGroups(namespace).Watch(context.Background(), options)
+				return client.GroveV1alpha1().PodCliqueScalingGroups(namespace).Watch(context.Background(), opts)
 			},
-			ListWithContextFunc: func(ctx context.Context, options v1.ListOptions) (runtime.Object, error) {
+			ListWithContextFunc: func(ctx context.Context, opts v1.ListOptions) (runtime.Object, error) {
 				if tweakListOptions != nil {
-					tweakListOptions(&options)
+					tweakListOptions(&opts)
 				}
-				return client.GroveV1alpha1().PodCliqueScalingGroups(namespace).List(ctx, options)
+				return client.GroveV1alpha1().PodCliqueScalingGroups(namespace).List(ctx, opts)
 			},
-			WatchFuncWithContext: func(ctx context.Context, options v1.ListOptions) (watch.Interface, error) {
+			WatchFuncWithContext: func(ctx context.Context, opts v1.ListOptions) (watch.Interface, error) {
 				if tweakListOptions != nil {
-					tweakListOptions(&options)
+					tweakListOptions(&opts)
 				}
-				return client.GroveV1alpha1().PodCliqueScalingGroups(namespace).Watch(ctx, options)
+				return client.GroveV1alpha1().PodCliqueScalingGroups(namespace).Watch(ctx, opts)
 			},
 		}, client),
 		&apicorev1alpha1.PodCliqueScalingGroup{},
-		resyncPeriod,
-		indexers,
-	)
+		cache.SharedIndexInformerOptions{
+			ResyncPeriod: options.ResyncPeriod,
+			Indexers:     options.Indexers,
+			Identifier:   identifier,
+		},
+	))
 }
 
 func (f *podCliqueScalingGroupInformer) defaultInformer(client versioned.Interface, resyncPeriod time.Duration) cache.SharedIndexInformer {
-	return NewFilteredPodCliqueScalingGroupInformer(client, f.namespace, resyncPeriod, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc}, f.tweakListOptions)
+	return NewTypedPodCliqueScalingGroupInformerWithOptions(client, f.namespace, internalinterfaces.InformerOptions{ResyncPeriod: resyncPeriod, Indexers: cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc}, InformerName: f.factory.InformerName(), TweakListOptions: f.tweakListOptions})
 }
 
 func (f *podCliqueScalingGroupInformer) Informer() cache.SharedIndexInformer {
-	return f.factory.InformerFor(&apicorev1alpha1.PodCliqueScalingGroup{}, f.defaultInformer)
+	return f.TypedInformer()
+}
+
+func (f *podCliqueScalingGroupInformer) TypedInformer() PodCliqueScalingGroupIndexInformer {
+	return cache.NewTypedSharedIndexInformer[*apicorev1alpha1.PodCliqueScalingGroup](f.factory.InformerFor(&apicorev1alpha1.PodCliqueScalingGroup{}, f.defaultInformer))
 }
 
 func (f *podCliqueScalingGroupInformer) Lister() corev1alpha1.PodCliqueScalingGroupLister {
 	return corev1alpha1.NewPodCliqueScalingGroupLister(f.Informer().GetIndexer())
+}
+
+// ToTypedPodCliqueScalingGroupInformer converts an untyped informer into a TypedPodCliqueScalingGroupInformer.
+//
+// WARNING: this conversion is only safe if the informer handles objects of type
+// *PodCliqueScalingGroup. If that is not the case, calling type-safe methods of the returned
+// TypedPodCliqueScalingGroupInformer leads to runtime panics. A safer alternative is to pass
+// around a TypedPodCliqueScalingGroupInformer instances that was obtained from a
+// SharedInformerFactory.
+func ToTypedPodCliqueScalingGroupInformer(informer PodCliqueScalingGroupInformer) TypedPodCliqueScalingGroupInformer {
+	if informer, ok := informer.(TypedPodCliqueScalingGroupInformer); ok {
+		return informer
+	}
+	return &podCliqueScalingGroupTypedInformerAdapter{informer}
+}
+
+type podCliqueScalingGroupTypedInformerAdapter struct {
+	PodCliqueScalingGroupInformer
+}
+
+func (a *podCliqueScalingGroupTypedInformerAdapter) TypedInformer() PodCliqueScalingGroupIndexInformer {
+	return cache.NewTypedSharedIndexInformer[*apicorev1alpha1.PodCliqueScalingGroup](a.Informer())
+}
+
+// ToPodCliqueScalingGroupIndexInformer converts an untyped informer into a PodCliqueScalingGroupIndexInformer.
+//
+// WARNING: this conversion is only safe if the informer handles objects of type
+// *PodCliqueScalingGroup. If that is not the case, calling type-safe methods of the returned
+// PodCliqueScalingGroupIndexInformer leads to runtime panics. A safer alternative is to pass
+// around a PodCliqueScalingGroupIndexInformer instances that was obtained from a
+// SharedInformerFactory.
+func ToPodCliqueScalingGroupIndexInformer(informer cache.SharedIndexInformer) PodCliqueScalingGroupIndexInformer {
+	if informer, ok := informer.(PodCliqueScalingGroupIndexInformer); ok {
+		return informer
+	}
+	return cache.NewTypedSharedIndexInformer[*apicorev1alpha1.PodCliqueScalingGroup](informer)
 }
