@@ -24,6 +24,8 @@ import (
 	"github.com/ai-dynamo/grove/operator/e2e/log"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/watch"
 )
 
 const (
@@ -151,6 +153,34 @@ func (w *Waiter[T]) WaitFor(ctx context.Context, fetchFn FetchFunc[T], predicate
 func (w *Waiter[T]) WaitUntil(ctx context.Context, fetchFn FetchFunc[T], predicate Predicate[T]) error {
 	_, err := w.WaitFor(ctx, fetchFn, predicate)
 	return err
+}
+
+// WaitForWatchEvent consumes Kubernetes watch events until predicate matches.
+// Unlike polling, it preserves short-lived state transitions between observations.
+func WaitForWatchEvent[T runtime.Object](ctx context.Context, events <-chan watch.Event, predicate Predicate[T]) (T, error) {
+	var zero T
+
+	for {
+		select {
+		case <-ctx.Done():
+			return zero, fmt.Errorf("watch condition not met: %w", ctx.Err())
+		case event, ok := <-events:
+			if !ok {
+				return zero, fmt.Errorf("watch closed before condition was met")
+			}
+			if event.Type == watch.Error {
+				return zero, fmt.Errorf("watch error: %w", errors.FromObject(event.Object))
+			}
+
+			result, ok := event.Object.(T)
+			if !ok {
+				return zero, fmt.Errorf("unexpected watch object type %T", event.Object)
+			}
+			if predicate(result) {
+				return result, nil
+			}
+		}
+	}
 }
 
 // FetchByName returns a FetchFunc that gets a resource by name.
