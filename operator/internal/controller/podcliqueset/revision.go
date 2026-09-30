@@ -247,7 +247,7 @@ func (r *Reconciler) initUpdateProgress(ctx context.Context, pcs *grovecorev1alp
 		pcs.Status.UpdatedReplicas = 0
 
 		// OnDelete strategy sets UpdateEndedAt too, since we do not know when all the pods will manually be deleted, and gang termination is disabled when an update is in progress
-		if pcs.Spec.UpdateStrategy != nil && pcs.Spec.UpdateStrategy.Type == grovecorev1alpha1.OnDeleteStrategy {
+		if !componentutils.IsAutoUpdateStrategy(pcs) {
 			pcs.Status.UpdateProgress.UpdateEndedAt = ptr.To(metav1.Now())
 		}
 	}
@@ -257,11 +257,12 @@ func (r *Reconciler) initUpdateProgress(ctx context.Context, pcs *grovecorev1alp
 	}
 
 	r.pcsRevisionExpectations.Store(pcs.UID, revision)
+	componentutils.CachePodCliqueSetRevision(ctx, pcs, revision)
 
 	return nil
 }
 
-// truncateRevisionHistory will retain only the current controller revision, deleting all past data.
+// truncateRevisionHistory deletes non-current revisions controlled by the PodCliqueSet.
 func (r *Reconciler) truncateRevisionHistory(ctx context.Context, _ logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) ctrlcommon.ReconcileStepResult {
 	if pcs.Status.CurrentRevision == nil {
 		return ctrlcommon.ContinueReconcile()
@@ -274,7 +275,7 @@ func (r *Reconciler) truncateRevisionHistory(ctx context.Context, _ logr.Logger,
 	}
 
 	for _, revision := range revisions.Items {
-		if revision.Name == *pcs.Status.CurrentRevision {
+		if revision.Name == *pcs.Status.CurrentRevision || !metav1.IsControlledBy(&revision, pcs) {
 			continue
 		}
 
