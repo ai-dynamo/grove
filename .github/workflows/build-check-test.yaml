@@ -144,6 +144,9 @@ jobs:
           - test_name: version_upgrade
             test_pattern: "^Test_VUPG"
             make_target: "run-upgrade-e2e"
+          - test_name: kueue
+            test_pattern: "^Test_Kueue"
+            make_target: "run-e2e-kueue-full"
     name: E2E - ${{ matrix.test_name }}
     steps:
       # print runner specs so we have a record in case of failures
@@ -207,6 +210,7 @@ jobs:
           - test_name: gang_termination
           - test_name: rolling_updates
           - test_name: coherent_updates
+          - test_name: ondelete_updates
           - test_name: startup_ordering
           - test_name: Topology_Aware_Scheduling
           - test_name: cert_management
@@ -215,6 +219,7 @@ jobs:
           - test_name: resource_sharing
           - test_name: podgangmap_reconstruct
           - test_name: version_upgrade
+          - test_name: kueue
     name: E2E - ${{ matrix.test_name }}
     steps:
       - name: Skip E2E (no relevant changes)
