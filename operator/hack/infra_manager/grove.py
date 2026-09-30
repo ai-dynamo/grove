@@ -197,6 +197,7 @@ def deploy_grove_operator(
     grove_cfg: GroveConfig,
     cluster_cfg: ClusterConfig,
     operator_dir: Path,
+    kueue_enabled: bool = False,
 ) -> None:
     """Deploy Grove operator using Skaffold.
 
@@ -208,6 +209,7 @@ def deploy_grove_operator(
         grove_cfg: Grove operator configuration with namespace, mode, and profiling settings.
         cluster_cfg: Cluster configuration for registry resolution.
         operator_dir: Root directory of the Grove operator source tree.
+        kueue_enabled: Whether to register the "kueue" scheduler profile via a helm override.
 
     Raises:
         NotImplementedError: If grove_cfg.mode is not "local".
@@ -245,11 +247,15 @@ def deploy_grove_operator(
 
     _deploy_grove_charts(grove_cfg.local.skaffold_profile, grove_cfg.namespace, operator_dir, images, pull_repo)
 
-    helm_overrides = collect_grove_helm_overrides(grove_cfg)
+    helm_overrides = collect_grove_helm_overrides(grove_cfg, kueue_enabled)
+    _apply_grove_helm_overrides(operator_dir, helm_overrides, grove_cfg.namespace)
+
+    # Helm overrides (e.g. registering the kueue scheduler profile) change the Deployment spec via
+    # --reuse-values, which restarts the operator pod. Waiting for rollout here, after the override
+    # and before the webhook check, covers that restart -- waiting only after the skaffold deploy
+    # (before the override) would let the webhook check race a pod that's about to restart again.
     console.print("[yellow]\u2139\ufe0f  Waiting for Grove deployment rollout...[/yellow]")
     sh.kubectl("rollout", "status", "deployment", "-n", grove_cfg.namespace, "--timeout=5m")
-
-    _apply_grove_helm_overrides(operator_dir, helm_overrides, grove_cfg.namespace)
 
     _wait_grove_webhook(operator_dir)
 
