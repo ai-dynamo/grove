@@ -75,8 +75,8 @@ func (s *podSurvivalUpgrade) deployWorkload(t *testing.T, tc *testctx.TestContex
 // verifyPodsSurvive scales the workload, then asserts the pre-upgrade pods were not recreated and the
 // init containers were updated.
 func (s *podSurvivalUpgrade) verifyPodsSurvive(t *testing.T, tc *testctx.TestContext) {
-	waitForRevisionAdoption(t, tc)
 	tc.ScalePCSAndWait(s.workload.Name, 2, 4, 0)
+	waitForRevisionAdoption(t, tc)
 	initContainerImage := fmt.Sprintf("ghcr.io/ai-dynamo/grove/grove-initc:%s", s.fromVersion)
 	verifyInitContainerUpdate(t, tc, s.podsBeforeUpgrade, initContainerImage)
 	verifyPodUIDsUnchanged(t, tc, s.podsBeforeUpgrade)
@@ -184,7 +184,6 @@ func waitForMigrationComplete(t *testing.T, tc *testctx.TestContext, pcsNsName t
 }
 
 // waitForRevisionAdoption waits for an existing workload to transition to the new controller revision state tracking.
-// If a workload is updated prior to this occurring, the reconciler will not be able to continue.
 func waitForRevisionAdoption(t *testing.T, tc *testctx.TestContext) {
 	t.Helper()
 

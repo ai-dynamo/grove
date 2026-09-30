@@ -118,7 +118,7 @@ func TestProcessRevisionWithoutCurrentRevision(t *testing.T) {
 					"worker",
 				)
 				pclq := testutils.NewPCSGPodCliqueBuilder(pclqName, pcs.Namespace, pcs.Name, pcsgName, 0, 0).
-					WithLabels(map[string]string{apicommon.LabelPodTemplateHash: "legacy-worker-hash"}).
+					WithLabels(map[string]string{apicommon.LabelPodTemplateHash: initialData.Cliques[0].Hash}).
 					Build()
 				pclq.OwnerReferences = []metav1.OwnerReference{*metav1.NewControllerRef(pcsg, grovecorev1alpha1.SchemeGroupVersion.WithKind("PodCliqueScalingGroup"))}
 				objects = append(objects, pcsg, pclq)
@@ -131,7 +131,7 @@ func TestProcessRevisionWithoutCurrentRevision(t *testing.T) {
 			require.NoError(t, err)
 
 			fakeClient := testutils.SetupFakeClient(objects...)
-			reconciler := &Reconciler{client: fakeClient, pcsRevisionExpectations: sync.Map{}}
+			reconciler := &Reconciler{client: fakeClient, apiReader: fakeClient, pcsRevisionExpectations: sync.Map{}}
 
 			result := reconciler.processRevision(ctx, logr.Discard(), pcs)
 			require.False(t, result.HasErrors())
@@ -156,7 +156,7 @@ func TestProcessRevisionWithoutCurrentRevision(t *testing.T) {
 			assert.Equal(t, "worker", storedData.Cliques[0].Name)
 			if tt.wantLegacyData {
 				assert.Equal(t, initialData.GenerationHash, storedData.GenerationHash)
-				assert.Equal(t, "legacy-worker-hash", storedData.Cliques[0].Hash)
+				assert.Equal(t, initialData.Cliques[0].Hash, storedData.Cliques[0].Hash)
 			} else {
 				assert.Equal(t, desiredData.GenerationHash, storedData.GenerationHash)
 				assert.Equal(t, desiredData.Cliques[0].Hash, storedData.Cliques[0].Hash)

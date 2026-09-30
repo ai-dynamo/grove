@@ -19,6 +19,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
@@ -27,12 +28,15 @@ import (
 	ctrlcommon "github.com/ai-dynamo/grove/operator/internal/controller/common"
 	commonrevision "github.com/ai-dynamo/grove/operator/internal/controller/common/revision"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
+	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
+	"github.com/ai-dynamo/grove/operator/internal/utils/podtemplatehash"
 
 	"github.com/go-logr/logr"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/utils/ptr"
@@ -41,7 +45,7 @@ import (
 
 // processRevision will load, initialize, and compare controller revisions for the given PodCliqueSet.
 // If there are differences, it will initiate an upgrade.
-func (r *Reconciler) processRevision(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) ctrlcommon.ReconcileStepResult {
+func (r *Reconciler) processRevision(ctx context.Context, _ logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) ctrlcommon.ReconcileStepResult {
 	currentRevision, err := r.loadCurrentRevision(ctx, pcs)
 	if err != nil {
 		return ctrlcommon.ReconcileWithErrors("error loading current revision", err)
@@ -55,12 +59,9 @@ func (r *Reconciler) processRevision(ctx context.Context, logger logr.Logger, pc
 	startUpdate := true
 
 	if currentRevision == nil {
-		if ptr.Deref(pcs.Status.ObservedGeneration, 0) == pcs.Generation {
-			if err := r.updateInitialRevision(ctx, logger, pcs, &desiredData); err != nil {
-				return ctrlcommon.ReconcileWithErrors("error creating initial revision", err)
-			}
-
-			startUpdate = false
+		startUpdate, err = r.updateInitialRevision(ctx, pcs, &desiredData)
+		if err != nil {
+			return ctrlcommon.ReconcileWithErrors("error creating initial revision", err)
 		}
 	} else {
 		equal, err := currentRevision.MatchesOrderedCliques(desiredData.Cliques)
@@ -70,6 +71,9 @@ func (r *Reconciler) processRevision(ctx context.Context, logger logr.Logger, pc
 
 		if equal {
 			return ctrlcommon.ContinueReconcile()
+		}
+		if err := currentRevision.RetainCliqueHashes(desiredData.Cliques); err != nil {
+			return ctrlcommon.ReconcileWithErrors("error retaining unchanged clique identities", err)
 		}
 	}
 
@@ -110,59 +114,92 @@ func (r *Reconciler) loadCurrentRevision(ctx context.Context, pcs *grovecorev1al
 	return revision, nil
 }
 
-// updateInitialRevision is the handover point from a Grove operator that didn't use controller revisions to one that does.
-// It tries to initialize the revision with the existing PodClique data to avoid unnecessary rolling upgrades if the
-// calculated pod template hash changes in the future.
-func (r *Reconciler) updateInitialRevision(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, data *commonrevision.Data) error {
-	if generationHash := pcs.Status.CurrentGenerationHash; generationHash != nil {
-		data.GenerationHash = *generationHash
+// updateInitialRevision verifies legacy identities before binding them to the
+// desired templates. It returns whether a new update must be started.
+func (r *Reconciler) updateInitialRevision(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, data *commonrevision.Data) (bool, error) {
+	generationHash := ptr.Deref(pcs.Status.CurrentGenerationHash, "")
+	if generationHash == "" {
+		return true, nil
 	}
-
-	pclqs, err := componentutils.ListPCLQsMatchingLabels(
-		ctx,
-		r.client,
-		pcs.Namespace,
-		apicommon.GetDefaultLabelsForPodCliqueSetManagedResources(pcs.Name),
-	)
-	if err != nil {
-		return fmt.Errorf("error getting pod cliques: %w", err)
-	}
-
-	podTemplateHashes := make(map[string]string, len(pclqs))
-	for _, clique := range pclqs {
-		cliqueName, err := componentutils.GetPodCliqueNameFromPodCliqueFQN(clique.ObjectMeta)
-		if err != nil {
-			return fmt.Errorf("error reading pod clique names: %w", err)
-		}
-		podTemplateHashes[cliqueName] = clique.Labels[apicommon.LabelPodTemplateHash]
-	}
-
+	templates := make([]*corev1.PodTemplateSpec, len(pcs.Spec.Template.Cliques))
 	for i, clique := range pcs.Spec.Template.Cliques {
-		if podTemplateHashes[clique.Name] == "" {
+		templates[i] = podtemplatehash.PodTemplateSpec(pcs, clique)
+		// Legacy hashing always used PCS priority, even for an explicit Pod
+		// priority. Do not overwrite the actual template stored in the revision.
+		templates[i].Spec.PriorityClassName = pcs.Spec.Template.PriorityClassName
+	}
+	version := slices.Index(podtemplatehash.LegacyHashes(templates...), generationHash)
+	if version >= 0 {
+		// This also works before scale-only generations are observed, with no
+		// children, and while PCSG children still carry an older template.
+		data.GenerationHash = generationHash
+		for i, template := range templates {
+			data.Cliques[i].Hash = podtemplatehash.LegacyHashes(template)[version]
+		}
+		return false, nil
+	}
+	if pcs.Status.ObservedGeneration == nil || *pcs.Status.ObservedGeneration == pcs.Generation {
+		return false, fmt.Errorf("cannot verify legacy generation hash %q for PodCliqueSet %v", generationHash, client.ObjectKeyFromObject(pcs))
+	}
+
+	// A pending template edit can leave unchanged cliques at legacy identities.
+	// Only retain hashes computed from the desired input, never an arbitrary
+	// child's hash. Live specs contain injected fields and are not hash inputs.
+	existingHashes, err := r.existingPodTemplateHashes(ctx, pcs)
+	if err != nil {
+		return false, err
+	}
+	for i, template := range templates {
+		matches := existingHashes.Intersection(sets.New(podtemplatehash.LegacyHashes(template)...))
+		if matches.Len() > 1 {
+			return false, fmt.Errorf("multiple legacy identities for clique %s: %v", data.Cliques[i].Name, sets.List(matches))
+		}
+		for hash := range matches {
+			data.Cliques[i].Hash = hash
+		}
+	}
+	return true, nil
+}
+
+func (r *Reconciler) existingPodTemplateHashes(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet) (sets.Set[string], error) {
+	pcsgs := &grovecorev1alpha1.PodCliqueScalingGroupList{}
+	pclqs := &grovecorev1alpha1.PodCliqueList{}
+	pods := &corev1.PodList{}
+	options := []client.ListOption{
+		client.InNamespace(pcs.Namespace),
+		client.MatchingLabels(apicommon.GetDefaultLabelsForPodCliqueSetManagedResources(pcs.Name)),
+	}
+	// Cache omissions during this one-time migration must not become persisted
+	// evidence that an unchanged component has no legacy identity.
+	for _, list := range []client.ObjectList{pcsgs, pclqs, pods} {
+		if err := r.apiReader.List(ctx, list, options...); err != nil {
+			return nil, fmt.Errorf("could not list legacy resources for PodCliqueSet %v: %w", client.ObjectKeyFromObject(pcs), err)
+		}
+	}
+	pcsgNames := sets.New(k8sutils.FilterMapOwnedResourceNames(pcs.ObjectMeta, pcsgs.Items)...)
+	owners := sets.New[types.UID](pcs.UID)
+	for _, pcsg := range pcsgs.Items {
+		if pcsgNames.Has(pcsg.Name) {
+			owners.Insert(pcsg.UID)
+		}
+	}
+	hashes, pclqUIDs := sets.New[string](), sets.New[types.UID]()
+	for _, pclq := range pclqs.Items {
+		owner := metav1.GetControllerOf(&pclq)
+		if owner == nil || !owners.Has(owner.UID) {
 			continue
 		}
-
-		// This is a copy of the pod template spec conversion code from prior to the controller revision changes were made.
-		podTemplate := &corev1.PodTemplateSpec{
-			ObjectMeta: metav1.ObjectMeta{
-				Labels:      clique.Labels,
-				Annotations: clique.Annotations,
-			},
-			Spec: clique.Spec.PodSpec,
-		}
-		podTemplate.Spec.PriorityClassName = pcs.Spec.Template.PriorityClassName
-
-		podTemplateData, err := json.Marshal(podTemplate)
-		if err != nil {
-			logger.Error(err, "error marshaling JSON pod template for legacy revision", "cliqueName", clique.Name)
-			podTemplateData = []byte(`{}`)
-		}
-
-		data.Cliques[i].Template = podTemplateData
-		data.Cliques[i].Hash = podTemplateHashes[clique.Name]
+		pclqUIDs.Insert(pclq.UID)
+		hashes.Insert(pclq.Labels[apicommon.LabelPodTemplateHash])
 	}
-
-	return nil
+	for _, pod := range pods.Items {
+		owner := metav1.GetControllerOf(&pod)
+		if owner != nil && pclqUIDs.Has(owner.UID) {
+			hashes.Insert(pod.Labels[apicommon.LabelPodTemplateHash])
+		}
+	}
+	hashes.Delete("")
+	return hashes, nil
 }
 
 // ensureControllerRevision will create a ControllerRevision object for the given PodCliqueSet and Data.
