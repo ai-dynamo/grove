@@ -11,6 +11,7 @@
   - [User Stories](#user-stories)
     - [Draining a degraded member](#draining-a-degraded-member)
     - [Surviving a crash mid-transaction](#surviving-a-crash-mid-transaction)
+    - [Replacing a failed member](#replacing-a-failed-member)
   - [Limitations/Risks &amp; Mitigations](#limitationsrisks--mitigations)
 - [Design Details](#design-details)
   - [Stable group-wide slot index](#stable-group-wide-slot-index)
@@ -33,7 +34,7 @@
 
 Grove's scale surface carries *cardinality* but not *identity*. `PodClique.spec.replicas` says how many pods a component should have; it cannot say which durable slot a pod occupies, and the `/scale` subresource cannot say which pod a scale-in should remove. For ordinary stateless components that is the right level of abstraction. For a live distributed engine it is not: an external controller that has drained a specific rank must be able to release exactly that rank's capacity, and no other.
 
-This GREP proposes two additive contracts that close that gap. **Capacity slots** give every pod a durable logical position that survives replacement, formalizing the pod-index labels Grove already assigns and fixing a case where those indices are silently rewritten. **Authorized release** lets an external controller nominate the exact pods a scale-in may delete, bound to immutable pod UIDs, with Grove refusing stale or incomplete authorizations rather than falling back to heuristic victim selection.
+This GREP proposes two additive contracts that close that gap. **Capacity slots** give every pod a durable logical position that never changes while the pod runs, formalizing the pod-index labels Grove already assigns, stating one deterministic rule for where a new or replacement pod lands, and fixing a case where those indices are silently rewritten. **Authorized release** lets an external controller nominate the exact pods a scale-in may delete, bound to immutable pod UIDs, with Grove refusing stale or incomplete authorizations rather than falling back to heuristic victim selection.
 
 `Authorized` release is opt-in per PodClique and defaults to today's behavior. The slot contract is not opt-in: it changes how an existing label's value is derived for every PCSG member clique. Together they answer the identity half of [#793](https://github.com/ai-dynamo/grove/issues/793) while leaving Grove engine-neutral: Grove never learns what a rank is, only that a particular pod may or may not be released.
 
@@ -72,11 +73,13 @@ This matters because #793 nominates the PCSG-wide pod index as "a promising basi
 
 ### Goals
 
-- Define a **capacity slot**: a durable logical position within a PodClique or PCSG replica, stable across pod replacement, retry, and live inner resize of sibling cliques.
+- Define a **capacity slot**: a durable logical position within a PodClique or PCSG replica that never changes for a running pod, including across retry and live inner resize of sibling cliques.
+- State **one slot-assignment rule** for every new pod, whether it comes from a scale-out or from a replacement: it takes the lowest free index. The rule is deterministic, so an external controller can predict where a pod will land before acting, and observable, so it can confirm where it did. It holds however the controller handles a failed member: run degraded with the pod in place, scale down and stay narrower, or **replace** the member, either by scaling down and back up or by deleting the pod at constant cardinality. Which one to use is the controller's decision. The availability policy each one also needs is tracked in [#836](https://github.com/ai-dynamo/grove/issues/836) and [#858](https://github.com/ai-dynamo/grove/issues/858) (see [Dependencies](#dependencies)).
 - Make the PCSG-wide pod index stable under live inner resize, so it can serve as that slot identity.
 - Expose a **slot to pod UID mapping** in status, so an external controller can resolve a logical slot to the concrete pod instance currently occupying it, and back.
 - Allow an external controller to **authorize the exact pods** a scale-in may delete, bound to immutable UIDs, an operation ID, and an observed generation.
 - Make Grove **refuse stale authorization** and **wait rather than substitute** a different victim when no valid authorization covers a requested scale-in.
+- Keep **`PerReplica` ResourceClaims correct when occupied indices are sparse**: no live pod may lose its claim, and a pod that fills a released slot gets a fresh claim. See [PerReplica ResourceClaims and sparse indices](#perreplica-resourceclaims-and-sparse-indices).
 - Keep heuristic scale-in the default. `Authorized` release is opt-in per PodClique through `spec.releasePolicy`; a PodClique that does not set it behaves exactly as today.
 - Accept that the index-stability fix is **not** opt-in. `grove.io/podcliquescalinggroup-pod-index` is set on every pod of a PCSG member clique unconditionally and re-patched in place on running pods, so changing how the offset is derived changes an existing label's value. This is a deliberate behavior change, called out under [Limitations](#limitationsrisks--mitigations) and intended for release notes.
 
@@ -84,8 +87,9 @@ This matters because #793 nominates the PCSG-wide pod index as "a promising basi
 
 This GREP deliberately covers the identity and release half of #793. The remaining semantics are separable and each deserves its own proposal; listing them here bounds the discussion rather than dismissing them.
 
-- **Separating initial admission from runtime minimum.** #793 asks for a distinction between the capacity required for atomic initial admission and the minimum supported live capacity. That is a change to `minAvailable` semantics affecting gang scheduling and gang termination for every Grove user, and it interacts with [GREP-0677](https://github.com/ai-dynamo/grove/pull/686). It should not ride along with an additive identity contract.
-- **Survivor-preserving failure policy.** Suppressing whole-gang termination during a bounded external recovery attempt is a gang-lifecycle policy question, related to [#789](https://github.com/ai-dynamo/grove/issues/789).
+- **Separating initial admission from runtime minimum.** [#793](https://github.com/ai-dynamo/grove/issues/793) asks for a distinction between the capacity required for atomic initial admission and the minimum supported live capacity. That is a change to `minAvailable` semantics affecting gang scheduling and gang termination for every Grove user, and it interacts with [GREP-0677](https://github.com/ai-dynamo/grove/pull/686). It should not ride along with an additive identity contract, and is tracked in [#836](https://github.com/ai-dynamo/grove/issues/836).
+- **Survivor-preserving failure policy.** Suppressing whole-gang termination during a bounded external recovery attempt is a gang-lifecycle policy question, related to [#789](https://github.com/ai-dynamo/grove/issues/789). The bounded, operation-scoped lifecycle hold that keeps survivors stable while an external controller coordinates a scale-down or a replacement is tracked in [#858](https://github.com/ai-dynamo/grove/issues/858). This GREP defines where a replacement lands; [#858](https://github.com/ai-dynamo/grove/issues/858) defines what Grove must not disrupt while it happens. [#858](https://github.com/ai-dynamo/grove/issues/858) currently describes the refilled pod as "a new UID in the same logical slot"; under this GREP's slot-assignment rule that holds only when no lower slot is free, so a hold scoped to exact slots should also cover the lowest open hole.
+- **Naming the target slot of a replacement.** Removal and addition are not symmetric: `Authorized` release names exactly which pod to remove, but a scale-up is a bare count, and every new pod takes the lowest free index. A controller that must get one specific slot back while other holes are open would need an explicit target-slot request, which is new slot-assignment API and future work. Such a request would be additive: the lowest-free rule stays the default for any pod created without one, so this GREP's contract would not change. See [Alternatives](#alternatives).
 - **Staged fleet operations.** Ordering a fleet-wide reshape across PCSG replicas with a disruption budget is a rollout concern, related to the Coherent Updates epic [#776](https://github.com/ai-dynamo/grove/issues/776).
 - **Topology-local joining capacity.** Placing a scale-up delta relative to the already-running world overlaps [#648](https://github.com/ai-dynamo/grove/issues/648).
 - Grove understanding ranks, engine membership, or engine topology. Engine-active membership stays out of Grove state, as #793 specifies.
@@ -95,7 +99,7 @@ This GREP deliberately covers the identity and release half of #793. The remaini
 
 ### Capacity slots
 
-A **slot** is a durable logical position. Grove already has the raw material: pods carry `grove.io/podclique-pod-index` within their clique and `grove.io/podcliquescalinggroup-pod-index` within their PCSG replica, and indices are allocated hole-filling from zero so a replacement reuses the index its predecessor freed.
+A **slot** is a durable logical position. Grove already has the raw material: pods carry `grove.io/podclique-pod-index` within their clique and `grove.io/podcliquescalinggroup-pod-index` within their PCSG replica, and indices are allocated hole-filling from zero, so a new pod takes the lowest free index.
 
 This proposal changes three things about that arrangement and formalizes the rest.
 
@@ -103,7 +107,9 @@ This proposal changes three things about that arrangement and formalizes the res
 
 **Slot occupancy becomes observable.** A slot is a name; the pod occupying it is an instance. The two must be separately visible, because the whole point of UID binding is that a slot can outlive its occupant. Grove publishes the current mapping in `PodClique.status`.
 
-**Slot reuse becomes explicit.** Hole-filling is retained — it is what makes a replacement recover the same identity — but it is now a stated contract rather than an implementation detail of hostname parsing. A pod that reuses a freed index is a *new occupant of the same slot*, with a different UID. That distinction is what makes stale-authorization refusal possible.
+**Slot assignment becomes explicit.** Hole-filling is retained, but it is now a stated contract rather than an implementation detail of hostname parsing: every new pod, whether from a scale-out or from a replacement at constant cardinality, takes the lowest free index. Because the rule is deterministic, an external controller can predict where a pod will land before it acts. A replacement therefore returns to its predecessor's slot exactly when no lower slot is free; otherwise it fills the lowest hole (see [Replacing a failed member](#replacing-a-failed-member)). A pod that takes a freed index is a *new occupant of that slot*, with a different UID. That distinction is what makes stale-authorization refusal possible.
+
+A pod stops occupying its slot as soon as its deletion starts, because index allocation counts only active pods. A replacement can therefore run alongside its terminating predecessor under the same index and hostname (and, with the default `publishNotReadyAddresses: true`, the same DNS name) until the predecessor is gone, and `status.slots` reports the replacement. In the scale-down-then-up form the controller can avoid this overlap by waiting for the predecessor to be gone before scaling up; at constant cardinality it cannot. Either way, the controller identifies the new pod by UID, not by index or hostname.
 
 ### Authorized release
 
@@ -111,8 +117,8 @@ A PodClique may opt into `Authorized` release policy. Under that policy:
 
 - A scale-in is a two-party operation. The external controller writes an authorization naming the exact pod UIDs it has drained; the desired replica count is then reduced through the ordinary `/scale` subresource.
 - Grove deletes only authorized UIDs. `DeletionSorter` is not consulted.
-- If the desired count is lower than the current count but no valid authorization covers the difference, Grove **waits**. It does not select a substitute victim, and it does not replace the shortfall.
-- An authorization naming a UID that no longer exists is refused as stale, including the case where a replacement pod has reused the same slot index and name. This is the ABA case: same slot, same hostname, different instance.
+- If the desired count is lower than the current count but no valid authorization covers the difference, Grove **waits**. It does not select a substitute victim for any part of the difference. A pod that disappears on its own in the meantime is not refilled; it counts toward the scale-in (see [Reconciliation](#reconciliation)).
+- An authorization naming a UID that no longer exists is refused as stale, including the case where a replacement pod has reused the same slot index and hostname (the hostname repeats; the pod name carries a random `generateName` suffix and differs). This is the ABA case: same slot, same hostname, different instance.
 - Authorization is fail-closed with respect to ordering. Writing an authorization does not by itself delete anything, and reducing the replica count without one does not either.
 
 Under the default `Heuristic` policy nothing changes: `DeletionSorter` continues to choose, exactly as today.
@@ -126,6 +132,34 @@ As an operator of a live MoE engine, I have telemetry showing GPU Xid errors on 
 #### Surviving a crash mid-transaction
 
 As the author of the external controller, my controller restarts after writing an authorization but before reducing the replica count. On restart I read the authorization back from the API, see it is still valid and which operation ID it belongs to, and resume. Had my controller instead crashed after a pod was replaced, the authorization would name a UID that no longer exists, Grove would refuse it, and I would recompute rather than delete a healthy member.
+
+#### Replacing a failed member
+
+As the author of the external controller, I detect that the pod in slot 6 of an 8-replica engine clique has failed. I choose one of three responses, based on what my engine supports and on spare capacity:
+
+| Response | What I do | What happens to the slot |
+|---|---|---|
+| Run degraded | Keep the pod in place; the engine masks the failed ranks. | Nothing; it stays occupied. |
+| Scale down and stay narrower | Authorize release of the pod's UID and lower `spec.replicas`, as in [Draining a degraded member](#draining-a-degraded-member). | Grove deletes exactly that pod; the slot becomes a hole. |
+| Replace | Release the pod and then scale back up. In future, once the engine supports it, delete the pod and leave `spec.replicas` unchanged. | Grove creates one new pod, with a new UID, at the lowest free index. No other member is deleted, restarted, or relabelled. |
+
+The table shows what happens to slots. With the default `minAvailable == replicas`, Grove's gang-termination rules still apply to each response, so running degraded with a NotReady pod, or staying narrower, does not yet last beyond `terminationDelay`; see [Dependencies](#dependencies).
+
+The one-step form of replacement, deleting the pod at constant cardinality, is not possible with today's engine integrations (for example vLLM) and is future work on the engine side. Grove's behavior for it is defined here regardless, because Grove already refills a deleted pod at constant cardinality today.
+
+When I replace and no lower slot is free, the new pod lands in slot 6 and takes slot 6's identity. If an earlier response left a lower hole open, it lands there instead:
+
+1. Slot 3 failed earlier. I scaled down and stayed at 7 replicas, so the occupied slots are `{0,1,2,4,5,6,7}`.
+2. Slot 6 fails and I replace it. When Grove creates the new pod, the open holes are `{3,6}`.
+3. The new pod lands in slot 3, not slot 6.
+
+Because the slot-assignment rule is deterministic, I can predict this before acting and choose: refill slot 3 first, accept slot 3 if my engine can bring the new member up at any vacated position, or keep slot 6 running degraded. Then, for every replacement:
+
+1. I find the new pod by UID and read its slot from its `grove.io/podclique-pod-index` label, which is set at creation, or from `status.slots` once that reports the new UID.
+2. I admit it into the engine only if that is the slot I planned for. Grove has no dormant state of its own: the pod schedules and counts toward availability normally, so holding it out of the engine is my responsibility.
+3. The old pod's release authorization does not carry over; it is bound to the old UID.
+
+Keeping the survivors stable while I do this is the lifecycle hold in [#858](https://github.com/ai-dynamo/grove/issues/858), not part of this GREP.
 
 ### Limitations/Risks & Mitigations
 
@@ -141,18 +175,20 @@ For the motivating case — an 8-replica engine clique authorized down to 7 — 
 
 | | `/scale` to 7 | Outcome |
 |---|---|---|
-| **Today** (no admission webhook covers `PodClique`) | accepted | `scheduledReplicas (7) < minAvailable (8)` sets `MinAvailableBreached=True`; after `terminationDelay` the PCSG controller gang-terminates the **entire PCSG replica** — every member clique of that engine world, not just the released pod. The authorized scale-in destroys the world it was protecting. |
+| **Today** (no admission webhook covers `PodClique`) | accepted | `scheduledReplicas (7) < minAvailable (8)` sets `MinAvailableBreached=True`; after `terminationDelay` the PCSG controller gang-terminates **at least the entire PCSG replica** — every member clique of that engine world, not just the released pod. The authorized scale-in destroys the world it was protecting. |
 | **Under GREP-0677** (rejects `0 < replicas < minAvailable`, including via `/scale`) | **rejected** | The engine has already drained the rank and issued the authorization; the API then refuses to release the pod. Nothing is destroyed, but the release is unreachable and the drained capacity is stranded. |
 
 The second is the better failure — fast, loud, and non-destructive — but both leave the motivating case unserviceable.
 
 Two mitigations, neither free. The workload can pre-set `minAvailable` to the lowest size it ever intends to run at, which gives up full-width atomic admission — precisely the distinction #793 raises and this GREP lists as a Non-Goal. Or `minAvailable` gains the initial-admission/runtime-minimum split that #793 asks for, which is a change to gang semantics for every Grove user and is tracked separately in [#836](https://github.com/ai-dynamo/grove/issues/836).
 
-To be precise about the coupling, since the Dependencies section states there is no merge dependency: **the identity and authorized-release semantics proposed here are implementable and mergeable on their own.** What they cannot deliver alone is *full-width atomic admission together with runtime shrink* — that combination needs the `minAvailable` split, and until it exists a workload must choose one or the other. That is a stronger coupling to the `minAvailable` Non-Goal than the Non-Goals section currently admits.
+To be precise about the coupling, since the Dependencies section states there is no merge dependency: **the identity and authorized-release semantics proposed here are implementable and mergeable on their own.** What they cannot deliver alone is *full-width atomic admission together with runtime shrink* — that combination needs the `minAvailable` split, and until it exists a workload must choose one or the other. The same coupling applies to each way of handling a failed member; see [Dependencies](#dependencies).
 
 **Status size.** Publishing a slot-to-UID mapping grows `PodClique.status` linearly in replica count. For the fleet sizes Grove targets this is small, but it is a real cost and argues against also publishing derived per-slot detail that the external controller can compute itself.
 
 **Two writers on one resource.** The external controller writes authorizations while an autoscaler may write `spec.replicas`. This GREP does not attempt to arbitrate that; it only guarantees that a replica reduction without matching authorization is inert. Workloads using `Authorized` release should not also point a naive autoscaler at the same PodClique.
+
+**A replacement returns to its predecessor's slot only when no lower slot is free.** When the vacated slot is the only open hole, it always does. A replacement made while an earlier release has left a lower hole open fills that hole instead (see [Replacing a failed member](#replacing-a-failed-member)). This is deliberate: the alternatives either depend on timing, need new API, or would forbid cases that work (see [Alternatives](#alternatives)). Mitigated by making slot assignment predictable and observable, so the controller can refill holes first, accept the lower slot, or keep the member running degraded.
 
 ## Design Details
 
@@ -180,7 +216,18 @@ Holes in the within-clique index set are a designed outcome of `Authorized` rele
 
 One shipped Grove feature reads that index as a *dense* replica ordinal and must be adjusted before `Authorized` release ships. A pod's PCLQ-level `PerReplica` ResourceClaim is named from its within-clique index and referenced by name in its own pod spec, but the ResourceClaim component is bounded by `spec.replicas` on both sides: it creates claims only for `0..spec.replicas-1`, and it issues a `DeleteCollection` for any `PerReplica` claim whose index label falls outside that range. With survivors at `{0,…,7}` minus `{3}` and `spec.replicas` at 7, Grove would delete the ResourceClaim that the live pod at index 7 references, and never recreate it.
 
-This is already reachable on `main` — `DeletionSorter` has no index criterion, so an ordinary scale-in can leave the same hole — so it is a pre-existing gap rather than one this proposal introduces. But `Authorized` release makes it the normal case instead of the unlucky one, so the claim lifecycle must key on the *occupied* index set rather than on `[0, spec.replicas)`.
+This is already reachable on `main` — `DeletionSorter` has no index criterion, so an ordinary scale-in can leave the same hole. But `Authorized` release makes it the normal case instead of the unlucky one, so fixing it is part of this proposal's correctness scope and an Alpha requirement, not a separate cleanup.
+
+The claim lifecycle must key on the indices of active pods **plus** the indices the pod sync is about to fill, not on `[0, spec.replicas)`. Keying on active pods alone is not enough, for two reasons:
+
+1. A terminating pod already frees its index, because the index tracker counts only active pods.
+2. ResourceClaims sync before pods.
+
+So during a replacement, keying on active pods alone would delete the claim that the new pod, created in the same sync, is about to reference. Today's `[0, spec.replicas)` keying never does that.
+
+With this keying, a slot freed by `Authorized` release also releases its claim, once a sync sees the slot neither held nor about to be filled. A pod that fills the slot after that gets a fresh claim and is scheduled like any new pod, rather than reusing the released pod's claim.
+
+A constant-cardinality replacement that returns to its predecessor's slot is the exception. Its index is about to be filled, so the claim is kept, and the replacement references the same claim as its terminating predecessor, as on `main` today. While the predecessor still holds its reservation, that claim's existing allocation decides the new pod's node and devices, so the new pod may not get a device allocation until the predecessor is gone. A controller replacing a member because of a device or node fault should therefore use the scale-down-then-up form and wait for the released pod and its claim to be gone before scaling back up.
 
 ### API
 
@@ -205,8 +252,10 @@ AuthorizationTimeout *metav1.Duration `json:"authorizationTimeout,omitempty"`
 Slot occupancy in `PodCliqueStatus`:
 
 ```go
-// Slots reports the durable logical positions of this PodClique and their current
-// occupants. A slot with no OccupantUID is allocated but not yet filled.
+// Slots reports the slots of this PodClique that are held by a pod, and their current
+// occupants. A free index, including a hole left by a release, is not listed; the next
+// new pod takes the lowest index that is not listed. An entry with no OccupantUID is an
+// index Grove has just chosen for a pod it is still creating.
 // +listType=map
 // +listMapKey=index
 // +optional
@@ -216,8 +265,9 @@ Slots []CapacitySlot `json:"slots,omitempty"`
 ```go
 // CapacitySlot is a durable logical position within a PodClique.
 type CapacitySlot struct {
-	// Index is the within-clique slot index. It is stable for the life of the slot
-	// and is reused by a replacement pod.
+	// Index is the within-clique slot index. It never changes for a running pod.
+	// A new pod takes the lowest free index, so a replacement reuses its
+	// predecessor's index only when no lower index is free.
 	Index int32 `json:"index"`
 	// GroupIndex is the slot's index within its PodCliqueScalingGroup replica, if any.
 	// +optional
@@ -226,7 +276,8 @@ type CapacitySlot struct {
 	// +optional
 	OccupantName *string `json:"occupantName,omitempty"`
 	// OccupantUID is the immutable UID of the pod currently occupying this slot.
-	// A slot whose occupant is replaced reports a different UID under the same Index.
+	// When a freed slot is filled again, it reports the new occupant's UID under
+	// the same Index.
 	// +optional
 	OccupantUID *types.UID `json:"occupantUID,omitempty"`
 }
@@ -310,9 +361,15 @@ On each PodClique sync where `releasePolicy: Authorized` and the computed delta 
 5. If it names more than `surplus`, refuse. Over-authorization signals that the controller's view of the clique disagrees with Grove's.
 6. Delete the authorized pods, record them in `status.releaseAuthorization.releasedPodUIDs`, set `state: Completed`.
 
-`DeletionSorter` is never invoked on this path. Scale-*out* is unchanged: Grove allocates the lowest free slot indices as it does today.
+`DeletionSorter` is never invoked on this path.
 
-Rolling updates are the one interaction worth calling out, because they delete pods too — by a different mechanism than scale-in. For a standalone PodClique the update path replaces one ready old-hash pod at a time, chosen oldest-first by `getNextPodToUpdate`, and deletes every non-ready old-hash pod immediately. For a PodClique owned by a PodCliqueScalingGroup the unit of update is the whole PCSG replica: `processPendingUpdates` picks the lowest old ready replica index and deletes that replica's PodCliques outright. **Neither path constructs a `DeletionSorter`** — that sorter is reached only from the two scale-in callers, `selectExcessPodsToDelete` and `buildPerPodGangDeletionTasks`. Its "prefer outdated pods" rule fires only when a scale-in overlaps an in-flight update.
+Slot assignment is unchanged from today, and becomes part of the slot contract: every new pod takes the lowest free slot index. That covers both a scale-out and a constant-cardinality replacement, meaning a pod deleted while `spec.replicas` is unchanged. `releasePolicy` gates only scale-in, so a constant-cardinality replacement goes through the ordinary create path. Grove does not try to reuse a deleted predecessor's index; see [Alternatives](#alternatives).
+
+An index is free when no active pod holds it. A pod that is terminating, or in phase `Failed` or `Succeeded`, is not active. A `Failed` pod, such as one evicted by the kubelet, therefore frees its index while still counting toward `spec.replicas`, so Grove does not refill it until it is deleted, and `status.slots` does not report it as an occupant.
+
+Grove reconciles counts, not intents. Once `spec.replicas` has been lowered for an authorized scale-in, a pod that disappears for any other reason before Grove acts on the authorization, such as an out-of-band delete or node loss, counts toward the scale-in: Grove neither refills it nor deletes the authorized pod. The surplus is then zero, so the scale-in path no longer runs; Grove sets the outstanding authorization to `Refused` as over-authorization, so the controller sees that its view is stale and recomputes. (While the lost pod is still terminating, whether it already counts depends on Grove's in-memory delete expectations, which an operator restart clears.) A pod deleted after the authorization is written but before `spec.replicas` is lowered is refilled like any constant-cardinality replacement. An external controller should therefore not replace a pod at constant cardinality on a clique with a pending authorized scale-in.
+
+Rolling updates also need calling out, because they delete pods too — by a different mechanism than scale-in. For a standalone PodClique the update path replaces one ready old-hash pod at a time, chosen oldest-first by `getNextPodToUpdate`, and deletes every non-ready old-hash pod immediately. For a PodClique owned by a PodCliqueScalingGroup the unit of update is the whole PCSG replica: `processPendingUpdates` picks the lowest old ready replica index and deletes that replica's PodCliques outright. **Neither path constructs a `DeletionSorter`** — that sorter is reached only from the two scale-in callers, `selectExcessPodsToDelete` and `buildPerPodGangDeletionTasks`. Its "prefer outdated pods" rule fires only when a scale-in overlaps an in-flight update.
 
 The consequence for this proposal is unchanged, and for PCSG members it is sharper: under `Authorized` release an update must not delete a live engine member without authorization either, and for a member clique the update deletes the entire PCSG replica rather than one pod. The conservative rule for the first iteration is that a PodClique with `releasePolicy: Authorized` should belong to a PodCliqueSet whose `spec.updateStrategy.type` is `OnDelete`, so pod replacement is always externally initiated.
 
@@ -336,7 +393,8 @@ Events:
 
 Metrics:
 
-- `grove_podclique_slots_occupied` / `grove_podclique_slots_allocated`, gauge, by clique.
+- `grove_podclique_slots_occupied`, gauge, by clique.
+- `grove_podclique_slot_holes`, gauge, by clique: free indices below the highest occupied one. A nonzero value means the next new pod will not land at the top.
 - `grove_podclique_release_authorizations_total`, counter, by `state`.
 - `grove_podclique_awaiting_release_authorization_seconds`, gauge, age of the oldest outstanding wait. This is the one to alert on.
 
@@ -354,6 +412,19 @@ Resizing a member clique while its `PodCliqueScalingGroup` stays at a fixed posi
 
 **The surviving constraint is narrower, and it is the one that matters.** GREP-0677 rejects `0 < replicas < minAvailable` on create, on update, and through the `/scale` subresource. That does not block this proposal's mechanism, but it does bound the widths an elastic workload can reach, and it changes *when* the motivating case fails — see Limitations. Separating `minAvailable`'s admission floor from its runtime minimum is required semantic #1 of [#793](https://github.com/ai-dynamo/grove/issues/793) and a Non-Goal here; it is tracked on its own in [#836](https://github.com/ai-dynamo/grove/issues/836), and the same field's scale-in behaviour is under discussion in [#829](https://github.com/ai-dynamo/grove/issues/829).
 
+**How the failure-handling choices rely on [#836](https://github.com/ai-dynamo/grove/issues/836) and [#858](https://github.com/ai-dynamo/grove/issues/858).** Neither blocks merging this GREP, but each choice in [Replacing a failed member](#replacing-a-failed-member) depends on one of them at runtime. With the default `minAvailable == replicas`:
+
+| Choice | What Grove does on `main` today | What fixes it |
+|---|---|---|
+| Run degraded | Nothing while the pod stays Ready. If it goes NotReady (a container exited non-zero, or started but is not Ready), `InsufficientReadyPods` sets `MinAvailableBreached`, and after `terminationDelay` Grove gang-terminates at least the whole PCSG replica. | [#836](https://github.com/ai-dynamo/grove/issues/836) |
+| Scale down and stay narrower | Once the released pod is gone, the clique breaches `minAvailable` and stays breached, so it ends in gang termination. Under [GREP-0677](https://github.com/ai-dynamo/grove/pull/686) the `/scale` write is rejected instead. See [Limitations](#limitationsrisks--mitigations). | [#836](https://github.com/ai-dynamo/grove/issues/836) |
+| Replace by scaling down and back up | Once the released pod is gone, the clique breaches (`ScheduledReplicasBelowMinAvailable`) until the new pod is scheduled, and again (`InsufficientReadyPods`) while it has started but is not yet Ready. Under [GREP-0677](https://github.com/ai-dynamo/grove/pull/686) the scale-down is rejected, and since the one-step form is still future work, replacement is blocked entirely until [#836](https://github.com/ai-dynamo/grove/issues/836) lands. | [#858](https://github.com/ai-dynamo/grove/issues/858); [#836](https://github.com/ai-dynamo/grove/issues/836) under [GREP-0677](https://github.com/ai-dynamo/grove/pull/686) |
+| Replace at constant cardinality (future work on the engine side) | No `/scale` write. A terminating pod still counts as scheduled, so the clique breaches once the old pod is gone and until the new pod is scheduled (`ScheduledReplicasBelowMinAvailable`), and while it has started but is not yet Ready (`InsufficientReadyPods`). | [#858](https://github.com/ai-dynamo/grove/issues/858) |
+
+In every row, the `terminationDelay` timer starts at the first breach, which is usually the failure itself if the failed pod went NotReady, and it does not restart when the breach reason changes. A replacement must therefore finish within `terminationDelay` of the first breach, which may be the failure rather than the delete.
+
+So [#836](https://github.com/ai-dynamo/grove/issues/836)'s runtime minimum is what lets a member run degraded, or a clique stay narrower, beyond `terminationDelay`, and what any scale-down needs under [GREP-0677](https://github.com/ai-dynamo/grove/pull/686). The breach during a replacement is temporary, and [#858](https://github.com/ai-dynamo/grove/issues/858)'s hold pauses the termination timer and keeps the survivors stable while the replacement is coordinated. On `main` that covers both forms of replacement; under [GREP-0677](https://github.com/ai-dynamo/grove/pull/686) the scale-down-then-up form also needs [#836](https://github.com/ai-dynamo/grove/issues/836).
+
 Other related in-flight work this GREP does not depend on: [#776](https://github.com/ai-dynamo/grove/issues/776) Coherent Updates, [#789](https://github.com/ai-dynamo/grove/issues/789) gang-termination failure classification.
 
 ### Test Plan
@@ -361,17 +432,23 @@ Other related in-flight work this GREP does not depend on: [#776](https://github
 Unit:
 
 - `getPCSGPodIndexOffset` (or its replacement) returns an unchanged offset for a member clique after a sibling clique's `spec.replicas` changes. This **inverts** `TestSyncPCSGPodIndexOffsetsUsesCurrentReplicaCounts`, which today asserts the `worker` offset annotation is rewritten `"1"` → `"2"` when the preceding `leader` clique grows. That test encodes the current contract faithfully and is *replaced*, not fixed, by this proposal.
-- Authorization validation: unknown UID refused; terminating-pod UID refused; over-authorization refused; subset accepted; empty authorization inert.
+- Authorization validation: unknown UID refused; UID of a pod terminating outside this `operationID` (another operation's release, or an out-of-band delete) refused, and under the same `operationID` accepted (Reconciliation step 3); over-authorization refused, including an authorization left outstanding when the surplus reaches zero; subset accepted; empty authorization inert.
 - `DeletionSorter` is not reachable from the scale-in path when `releasePolicy: Authorized`.
-- Slot status reports a different `OccupantUID` under the same `Index` after replacement.
+- Slot status reports the new `OccupantUID` under the same `Index` when a freed slot is filled again.
+- Slot assignment (pins existing `GetAvailableIndices` behavior as contract): with active pods at `{0,1,2,4,5,7}`, one new pod takes index 3; with active pods at `{0,1,3,4,5,7}`, it takes index 2; a terminating or `Failed` pod does not hold its index.
+- `PerReplica` claims: with active indices `{0,1,2,4,5,6,7}` and `replicas: 7`, the claim for index 7 is kept and the claim for index 3 is removed. During a refill, the claim for the index being filled is kept even though no active pod holds it yet.
 
-E2E, with a scheduler backend:
+E2E, with a scheduler backend. Every test that lowers `spec.replicas` sets the clique's `minAvailable` to the lowest width it reaches, because with the default `minAvailable == replicas` that write is rejected under [GREP-0677](https://github.com/ai-dynamo/grove/pull/686) and gang-terminates after `terminationDelay` on `main` (see [Limitations](#limitationsrisks--mitigations)):
 
 - **Index stability under live inner resize.** A PCSG replica with two member cliques `[a, b]`. Record every pod's `grove.io/podcliquescalinggroup-pod-index`. Scale `a` up. Assert no pod of `b` was relabelled or restarted, and that each surviving container's `GROVE_PCSG_POD_INDEX` still equals the label on its own pod. Both assertions are expected to fail against `main`.
 - **Exact victim.** An 8-replica clique under `Authorized`. Authorize the UID of the pod in slot 3, scale to 7, assert the pod in slot 3 is gone and slots 0-2 and 4-7 are untouched — in particular that the newest pod survives, which is the case `DeletionSorter` gets wrong.
-- **Stale refusal (ABA).** Authorize a UID, delete that pod out of band so a replacement takes the same slot and hostname, then scale in. Assert the authorization is refused and the replacement survives.
+- **Stale refusal (ABA).** In a clique with no holes, authorize a UID, delete that pod out of band so its replacement takes the same slot and hostname, then scale in. Assert the authorization is refused and the replacement survives.
 - **Wait, do not substitute.** Scale in with no authorization. Assert no deletion, and `AwaitingReleaseAuthorization=True`, for the duration of the test.
 - **Restart safety.** Write an authorization, restart the operator, then reduce replicas. Assert the operation completes once and `releasedPodUIDs` names exactly the authorized set.
+- **Replacement returns to its slot.** An 8-replica clique with no holes. Replace the pod in slot 5, once by releasing it and scaling back up, and once by deleting it at constant cardinality. Each time, assert the new UID is at index 5 and no other pod was deleted, restarted, or relabelled.
+- **Replacement below an open hole.** Release slot 6 and stay at 7 replicas, then replace slot 2, once in each form. Each time, assert the new pod is at index 2.
+- **Replacement above an open hole.** Release slot 3 and stay at 7 replicas, then replace slot 6, once in each form. Each time, assert the new pod is at index 3, `status.slots` reports its UID there, and no `status.slots` entry reports an occupant at index 6.
+- **Claims under sparse indices.** After releasing slot 3 of 8, assert the pod at index 7 keeps its `PerReplica` claim, and that a later pod filling slot 3 gets a newly created claim.
 
 **Existing e2e this proposal changes.** `operator/e2e/tests/upgrade/upgrade_test.go` scales the `bootstrap` member clique and then asserts an exact, contiguous group-index set through `waitForPCSGPodIndices`. That assertion *is* the contiguity contract, so it must be rewritten rather than kept green — under any stable-offset scheme the surviving set after scaling `bootstrap` from 2 to 1 is `{0, 2}`, not `{0, 1}`. Reviewers should treat a red `upgrade_test` as the expected signal that the change landed, not as a regression.
 
@@ -381,7 +458,7 @@ A dedicated tracking issue for the e2e suite should be filed once the API shape 
 
 This is a new API surface plus a change to an existing labelling behavior, so criteria are on the richer side.
 
-- **Alpha.** Slot status and `Authorized` release implemented behind a feature gate. Index stability fixed and covered by the e2e test above. `Heuristic` remains the default and is unchanged.
+- **Alpha.** Slot status and `Authorized` release implemented behind a feature gate. Index stability fixed and covered by the e2e test above. `PerReplica` claims fixed for sparse indices as described in [PerReplica ResourceClaims and sparse indices](#perreplica-resourceclaims-and-sparse-indices), and the slot-assignment rule implemented, each covered by the claim and replacement tests above. `Heuristic` remains the default and is unchanged.
 - **Beta.** Feature gate on by default. Authorization transport stable — no further changes to field shape or refusal semantics. `authorizationTimeout` behavior validated. Documented in the user guide, including the `OnDelete` requirement. Exercised by at least one external controller against a live engine.
 - **GA.** Two releases after beta with no API changes. Multi-pod allocations either supported or explicitly deferred with a documented workaround. Interaction with rolling updates resolved beyond the `OnDelete` restriction.
 
@@ -391,7 +468,24 @@ This is a new API surface plus a change to an existing labelling behavior, so cr
 
 **Order-based conventions — always delete the highest index.** Requires no API at all: the external controller drains the highest-numbered member and Grove deletes from the top. Rejected because it forces the engine to retire by position rather than by health. The motivating case is retiring a *degraded* member, which is at an arbitrary index; a convention that only permits retiring the newest member reproduces the exact failure this proposal exists to prevent.
 
-**Delete the pod directly and let Grove observe it.** The external controller deletes the drained pod itself and lowers the replica count afterward. Rejected: Grove races to replace the pod before the scale-in is observed, and the window is not closable from outside. It also gives Grove no way to distinguish an authorized release from an unexpected failure, which is precisely the distinction a survivor-preserving failure policy will later need.
+**Delete the pod directly and let Grove observe it, as a way to scale in.** The external controller deletes the drained pod itself and lowers the replica count afterward. Rejected as a scale-in mechanism: Grove races to replace the pod before the lower count is observed, and the window is not closable from outside. It also gives Grove no way to tell an authorized release from an unexpected failure. At constant cardinality, by contrast, that refill is the intended behavior: it is the one-step form of [Replacing a failed member](#replacing-a-failed-member).
+
+**Put the new pod back into the slot that was just vacated, rather than the lowest free one.** This would make a replacement always return to its predecessor's slot. Rejected, because Grove cannot reliably tell which slot that is:
+
+1. In the scale-down-then-up form, the scale-up only says "one more pod". If an earlier release left slot 3 empty and slot 6 was just released, both slots are empty, both released on purpose, and nothing tells Grove the new pod is meant for slot 6.
+2. In the constant-cardinality form, Grove could look at the pod being deleted, but only while it is still shutting down. After a force delete, or once a dead node's pods are cleaned up, the old pod is already gone when Grove looks.
+
+So the result would depend on timing. The controller could not predict where the new pod lands, which is worse than a simple rule it can count on. Grove could instead record the vacated slot in status, but that only helps the constant-cardinality form. In the scale-down-then-up form, only the controller knows which of the empty slots it wants, so it would have to name the slot: new slot-assignment API, and future work (see [Non-Goals](#non-goals)).
+
+**Allow a replacement only while exactly one hole is open.** That is, treat same-slot replacement as safe only when the vacated slot is the only empty slot in the clique, so the lowest-free rule can only pick it. Rejected as a precondition, for three reasons:
+
+1. Grove cannot enforce it. Only the controller can work toward it, by refilling an open hole before it replaces another member.
+2. Even the controller cannot guarantee it. If a node dies while a hole is open, then once the lost pod is deleted (for example by taint-based eviction), Grove recreates it on its own. The new pod goes to the lowest hole, which may be the earlier one rather than the lost pod's slot, before the controller has done anything.
+3. It is stricter than needed. Some cases with two empty slots still come out right:
+   - Replacing a slot below an open hole: slot 6 was released earlier and slot 2 is now replaced. The empty slots are `{2,6}`, and Grove picks 2, the right one.
+   - Replacing two members at once: slots 2 and 5 are replaced together. The empty slots are `{2,5}`, and Grove fills both.
+
+Wherever the condition holds, the lowest-free rule already returns the replacement to the vacated slot, so stating the rule covers it.
 
 **Support multi-pod capacity allocations now.** #793 notes that one logical replica allocation may span several pods and that a partial allocation is not usable capacity. Deferred rather than rejected: it is a genuine requirement for engines where one DP replica spans multiple pods, but it changes admission, availability accounting, and release atomicity all at once. The contracts here are forward-compatible — a slot becomes a set of UIDs rather than one, and all-or-nothing release is already the refusal rule for a partial set.
 
@@ -402,5 +496,7 @@ This is a new API surface plus a change to an existing labelling behavior, so cr
 - PCSG-wide pod index: [ai-dynamo/grove#754](https://github.com/ai-dynamo/grove/issues/754)
 - Hierarchical workload groups: [ai-dynamo/grove#756](https://github.com/ai-dynamo/grove/issues/756)
 - Cross-PodGang topology enforcement: [ai-dynamo/grove#648](https://github.com/ai-dynamo/grove/issues/648)
+- Separate initial admission from runtime minimum: [ai-dynamo/grove#836](https://github.com/ai-dynamo/grove/issues/836)
+- Externally coordinated lifecycle holds: [ai-dynamo/grove#858](https://github.com/ai-dynamo/grove/issues/858)
 - Current deletion preference order: [`deletionsort.go`](https://github.com/ai-dynamo/grove/blob/main/operator/internal/controller/podclique/components/pod/deletionsort.go)
 - Current index allocation: [`operator/internal/index/tracker.go`](https://github.com/ai-dynamo/grove/blob/main/operator/internal/index/tracker.go)
