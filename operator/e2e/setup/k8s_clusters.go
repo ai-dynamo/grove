@@ -36,8 +36,8 @@ import (
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/k8sclient"
 	nodeutils "github.com/ai-dynamo/grove/operator/e2e/k8s/nodes"
 	"github.com/ai-dynamo/grove/operator/e2e/log"
-	"github.com/docker/docker/api/types/container"
-	dockerclient "github.com/docker/docker/client"
+	"github.com/moby/moby/api/types/container"
+	dockerclient "github.com/moby/moby/client"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -206,14 +206,14 @@ func replaceNotReadyNode(ctx context.Context, node *v1.Node, k8sClient *k8sclien
 // restartNodeContainer finds and restarts the Docker container corresponding to a k3d node
 func restartNodeContainer(ctx context.Context, nodeName string, logger *log.Logger) error {
 	// Create Docker client
-	dockerClient, err := dockerclient.NewClientWithOpts(dockerclient.FromEnv, dockerclient.WithAPIVersionNegotiation())
+	dockerClient, err := dockerclient.New(dockerclient.FromEnv)
 	if err != nil {
 		return fmt.Errorf("failed to create Docker client: %w", err)
 	}
 	defer dockerClient.Close()
 
 	// List all containers to find the one corresponding to this node
-	containers, err := dockerClient.ContainerList(ctx, container.ListOptions{All: true})
+	containers, err := dockerClient.ContainerList(ctx, dockerclient.ContainerListOptions{All: true})
 	if err != nil {
 		return fmt.Errorf("failed to list Docker containers: %w", err)
 	}
@@ -221,7 +221,7 @@ func restartNodeContainer(ctx context.Context, nodeName string, logger *log.Logg
 	// Find the container for this specific node. The Node names match container names exactly
 	// (e.g., k3d-gang-scheduling-pcs-pcsg-scaling-test-cluster-agent-24).
 	var targetContainer *container.Summary
-	for _, c := range containers {
+	for _, c := range containers.Items {
 		for _, name := range c.Names {
 			// Remove leading slash from container name
 			containerName := strings.TrimPrefix(name, "/")
@@ -244,7 +244,7 @@ func restartNodeContainer(ctx context.Context, nodeName string, logger *log.Logg
 
 	// Restart the container
 	logger.Debugf("  🔄 Restarting container: %s", targetContainer.ID[:12])
-	if err := dockerClient.ContainerRestart(ctx, targetContainer.ID, container.StopOptions{}); err != nil {
+	if _, err := dockerClient.ContainerRestart(ctx, targetContainer.ID, dockerclient.ContainerRestartOptions{}); err != nil {
 		return fmt.Errorf("failed to restart container %s: %w", targetContainer.ID[:12], err)
 	}
 

@@ -31,8 +31,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/e2e/log"
 	"github.com/ai-dynamo/grove/operator/e2e/waiter"
 	"github.com/ai-dynamo/grove/operator/internal/utils/ioutil"
-	"github.com/docker/docker/api/types/image"
-	dockerclient "github.com/docker/docker/client"
+	dockerclient "github.com/moby/moby/client"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -565,7 +564,7 @@ func SetupRegistryTestImages(registryPort string, images []string) error {
 	ctx := context.Background()
 
 	// Initialize Docker client
-	cli, err := dockerclient.NewClientWithOpts(dockerclient.FromEnv, dockerclient.WithAPIVersionNegotiation())
+	cli, err := dockerclient.New(dockerclient.FromEnv)
 	if err != nil {
 		return fmt.Errorf("failed to create Docker client: %w", err)
 	}
@@ -578,8 +577,8 @@ func SetupRegistryTestImages(registryPort string, images []string) error {
 		// Step 1: Pull the image only if it is not already in the local Docker cache.
 		// Skipping the pull when the image is cached avoids Docker Hub rate limits
 		// (HTTP 429) during repeated local runs such as stress tests.
-		if _, _, err := cli.ImageInspectWithRaw(ctx, imageName); err != nil {
-			pullReader, err := cli.ImagePull(ctx, imageName, image.PullOptions{})
+		if _, err := cli.ImageInspect(ctx, imageName); err != nil {
+			pullReader, err := cli.ImagePull(ctx, imageName, dockerclient.ImagePullOptions{})
 			if err != nil {
 				return fmt.Errorf("failed to pull %s: %w", imageName, err)
 			}
@@ -591,13 +590,13 @@ func SetupRegistryTestImages(registryPort string, images []string) error {
 		}
 
 		// Step 2: Tag the image for the local registry
-		err = cli.ImageTag(ctx, imageName, registryImage)
+		_, err = cli.ImageTag(ctx, dockerclient.ImageTagOptions{Source: imageName, Target: registryImage})
 		if err != nil {
 			return fmt.Errorf("failed to tag image %s as %s: %w", imageName, registryImage, err)
 		}
 
 		// Step 3: Push the image to the local registry
-		pushReader, err := cli.ImagePush(ctx, registryImage, image.PushOptions{})
+		pushReader, err := cli.ImagePush(ctx, registryImage, dockerclient.ImagePushOptions{})
 		if err != nil {
 			return fmt.Errorf("failed to push %s: %w", registryImage, err)
 		}
