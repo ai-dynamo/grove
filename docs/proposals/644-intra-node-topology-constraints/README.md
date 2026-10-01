@@ -397,7 +397,7 @@ These are the decisions to settle in review:
 
 ### Monitoring
 
-- The `TopologyLevelsUnavailable` condition counts intra-node domains as available, as described in [ClusterTopologyBinding: Intra-Node Levels](#clustertopologybinding-intra-node-levels). If an administrator removes an intra-node level that a deployed PodCliqueSet uses, the condition is set and Grove stops adding that domain's `matchAttribute` to new claims. Existing claims keep theirs.
+- The `TopologyLevelsUnavailable` condition counts intra-node domains as available, as described in [ClusterTopologyBinding: Intra-Node Levels](#clustertopologybinding-intra-node-levels). If an administrator removes an intra-node level that a deployed PodCliqueSet uses, the condition is set and Grove stops adding that domain's `matchAttribute` to new claims, the same way [GREP-244](../244-topology-aware-scheduling/README.md#topology-level-updates) removes a deleted node-scoped level from the PodGang. Existing claims keep theirs.
 - When Grove cannot build a `PerPod` claim, for example because an external template is missing or the claim would exceed DRA's limits, it records an event on the PodCliqueSet and does not create the group's pods. It does the same when a member PodClique has more pods than its claim has copies, and skips only the pods without one. A condition can be added later if events prove insufficient.
 - When allocation fails, the pods' scheduling events report it as for any other DRA claim.
 
