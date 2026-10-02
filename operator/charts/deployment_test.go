@@ -111,6 +111,18 @@ func TestOperatorImagePullSecrets(t *testing.T) {
 func renderOperatorDeployment(t *testing.T, values map[string]interface{}) *appsv1.Deployment {
 	t.Helper()
 
+	manifests := renderChart(t, values)
+	deploymentYAML, ok := manifests["grove-charts/templates/deployment.yaml"]
+	require.True(t, ok)
+
+	deployment := &appsv1.Deployment{}
+	require.NoError(t, yaml.UnmarshalStrict([]byte(deploymentYAML), deployment))
+	return deployment
+}
+
+func renderChart(t *testing.T, values map[string]interface{}) map[string]string {
+	t.Helper()
+
 	chart, err := loader.Load(".")
 	require.NoError(t, err)
 
@@ -124,11 +136,5 @@ func renderOperatorDeployment(t *testing.T, values map[string]interface{}) *apps
 
 	manifests, err := engine.Render(chart, renderValues)
 	require.NoError(t, err)
-
-	deploymentYAML, ok := manifests["grove-charts/templates/deployment.yaml"]
-	require.True(t, ok)
-
-	deployment := &appsv1.Deployment{}
-	require.NoError(t, yaml.UnmarshalStrict([]byte(deploymentYAML), deployment))
-	return deployment
+	return manifests
 }
