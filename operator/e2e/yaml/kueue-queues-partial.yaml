@@ -1,0 +1,41 @@
+# Copyright 2026 NVIDIA CORPORATION
+# SPDX-License-Identifier: Apache-2.0
+#
+# Dedicated, tightly-quota'd Kueue queue for the partial-gang-admission scenario
+# (Test_Kueue2): a ClusterQueue/LocalQueue pair named "grove-e2e-partial", applied by the
+# test itself via tc.ApplyYAMLFile (not part of cluster bring-up like kueue-queues.yaml).
+#
+# Reuses the "default-flavor" ResourceFlavor already applied by kueue-queues.yaml at
+# cluster bring-up instead of defining a second one -- a ResourceFlavor carries no quota
+# information of its own (that lives in the ClusterQueue's resourceGroups), so there is
+# nothing scenario-specific to declare here. This also means the test's teardown must only
+# delete the "grove-e2e-partial" ClusterQueue and LocalQueue, NOT "default-flavor", which
+# stays shared/owned by kueue-queues.yaml for the lifetime of the test binary.
+#
+# memory nominalQuota is deliberately sized to admit exactly 2 of the 4 replicas declared
+# in kueue-workload2-partial.yaml: each pod there requests 50Mi, so 2 pods = 100Mi. This
+# forces Kueue's partial-admission path (bounded below by the PodClique's minAvailable: 2,
+# which becomes PodSet.MinCount) instead of admitting the full gang of 4 (200Mi).
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: ClusterQueue
+metadata:
+  name: grove-e2e-partial
+spec:
+  namespaceSelector: {}
+  resourceGroups:
+    - coveredResources: ["cpu", "memory"]
+      flavors:
+        - name: default-flavor
+          resources:
+            - name: cpu
+              nominalQuota: 1000
+            - name: memory
+              nominalQuota: 100Mi
+---
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: LocalQueue
+metadata:
+  name: grove-e2e-partial
+  namespace: default
+spec:
+  clusterQueue: grove-e2e-partial

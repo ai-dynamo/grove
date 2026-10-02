@@ -28,6 +28,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/controller/podclique/expectations"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/index"
+	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
@@ -186,6 +187,9 @@ func (r _resource) reconcilePCSGLabellessPods(ctx context.Context, logger logr.L
 // runSyncFlow executes the main synchronization logic including pod creation, deletion, updates, and scheduling gate management
 func (r _resource) runSyncFlow(ctx context.Context, logger logr.Logger, ss *syncSnapshot) syncFlowResult {
 	result := syncFlowResult{}
+	if err := r.removeSchedulerFinalizersFromDeletingPods(ctx, ss); err != nil {
+		result.recordError(err)
+	}
 	if ss.isStandalonePCLQ {
 		// A standalone PodClique's pods are distributed across one or more anchor PodGangs, so its
 		// pods are reconciled per PodGang against the PodGangMap counts.
@@ -246,6 +250,32 @@ func (r _resource) runSyncFlow(ctx context.Context, logger logr.Logger, ss *sync
 	}
 	result.recordPendingScheduleGatedPods(skippedScheduleGatedPods)
 	return result
+}
+
+// removeSchedulerFinalizersFromDeletingPods removes the scheduler's own finalizers from Pods being deleted,
+// for schedulers that never remove them themselves (see scheduler.Finalizer).
+func (r _resource) removeSchedulerFinalizersFromDeletingPods(ctx context.Context, ss *syncSnapshot) error {
+	finalizer, ok := r.schedRegistry.GetOrDefault(ss.pclq.Spec.PodSpec.SchedulerName).(scheduler.Finalizer)
+	if !ok {
+		return nil
+	}
+	var errs []error
+	for _, pod := range ss.existingPCLQPods {
+		if pod.DeletionTimestamp == nil {
+			continue
+		}
+		if err := finalizer.RemovePodFinalizers(ctx, pod); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if err := errors.Join(errs...); err != nil {
+		return groveerr.WrapError(err,
+			errCodeRemovePodFinalizers,
+			component.OperationSync,
+			fmt.Sprintf("failed to remove scheduler finalizers from deleting Pods of PodClique %v", client.ObjectKeyFromObject(ss.pclq)),
+		)
+	}
+	return nil
 }
 
 // syncPCSGPodIndexLabels backfills and reconciles the group-wide index label on existing PCSG pods.

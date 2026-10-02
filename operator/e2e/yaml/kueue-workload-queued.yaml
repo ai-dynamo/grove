@@ -1,0 +1,44 @@
+# Queued workload for Test_Kueue7_QueuedWorkloadAdmitsWhenQuotaFrees: submitted through
+# the same "grove-e2e-backlog" LocalQueue (kueue-queues-backlog.yaml) as
+# kueue-workload-filler.yaml, requesting the identical 100Mi (2 pods x 50Mi) that the
+# filler already fully consumes, so it stays un-admitted (pods gated, Workload not
+# Admitted) until the filler PodCliqueSet is deleted mid-test and its quota frees up.
+---
+apiVersion: grove.io/v1alpha1
+kind: PodCliqueSet
+metadata:
+  name: kueue-workload-queued
+  labels:
+    app: kueue-workload-queued
+    kueue.x-k8s.io/queue-name: grove-e2e-backlog
+spec:
+  replicas: 1
+  template:
+    cliques:
+      - name: worker
+        spec:
+          roleName: worker
+          replicas: 2
+          minAvailable: 2
+          podSpec:
+            schedulerName: kueue
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: type
+                          operator: In
+                          values:
+                            - kwok
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: worker
+                image: registry:5001/nginx:alpine-slim
+                resources:
+                  requests:
+                    memory: 50Mi

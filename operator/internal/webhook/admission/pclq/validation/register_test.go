@@ -34,7 +34,7 @@ func TestRegisterWithManager(t *testing.T) {
 		WebhookServer: webhook.NewServer(webhook.Options{Port: 9443}),
 	}
 
-	handler := NewHandler(mgr)
+	handler := NewHandler(mgr, &testutils.FakeSchedulerRegistry{})
 
 	require.NoError(t, handler.RegisterWithManager(mgr))
 }

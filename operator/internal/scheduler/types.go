@@ -52,6 +52,22 @@ type Backend interface {
 	ValidatePodCliqueSet(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet) error
 }
 
+// PodCliqueScaleValidator is an optional interface that Backend implementations may satisfy to
+// restrict scaling of an individual PodClique. The PodClique validating webhook type-asserts the
+// resolved backend to this interface; backends that do not implement it impose no restriction.
+type PodCliqueScaleValidator interface {
+	// ValidatePodCliqueScale validates a requested change to a PodClique's replica count.
+	ValidatePodCliqueScale(ctx context.Context, oldReplicas, newReplicas int32) error
+}
+
+// Finalizer is an optional interface for backends that must finalize Grove's Pods as they are deleted.
+// The PodClique controller calls it for Pods being deleted, and for every Pod of a PodClique being deleted.
+type Finalizer interface {
+	// RemovePodFinalizers removes the finalizers the scheduler puts on pod but never removes itself, so they
+	// never keep a deleted Pod around; it is a no-op if there are none.
+	RemovePodFinalizers(ctx context.Context, pod *corev1.Pod) error
+}
+
 // TopologyAwareBackend is an optional interface that Backend
 // implementations may satisfy if they manage a scheduler-specific topology CRD.
 // The ClusterTopologyBinding controller type-asserts each registered backend to this

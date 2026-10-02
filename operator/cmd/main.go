@@ -77,10 +77,10 @@ func main() {
 
 	ctx := ctrl.SetupSignalHandler()
 
-	// Create a direct (non-cached) client for pre-manager setup tasks.
-	// Both topology synchronization and webhook certificate provisioning run before
-	// mgr.Start(), so the manager's informer cache is not yet available. A direct
-	// client bypasses the cache and talks straight to the API server.
+	// Create a direct (non-cached) client. It is used for pre-manager setup tasks (topology
+	// synchronization and webhook certificate provisioning run before mgr.Start(), when the
+	// manager's informer cache is not yet available) and is also handed to scheduler backends
+	// via Init for runtime reads that cannot tolerate a stale cache.
 	cl, err := client.New(mgr.GetConfig(), client.Options{Scheme: mgr.GetScheme()})
 	if err != nil {
 		logger.Error(err, "failed to create direct API client for pre-start setup")
