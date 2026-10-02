@@ -29,6 +29,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/e2e/grove/podgang"
 	"github.com/ai-dynamo/grove/operator/e2e/grove/topology"
 	"github.com/ai-dynamo/grove/operator/e2e/grove/workload"
+	"github.com/ai-dynamo/grove/operator/e2e/k8s/kwok"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/pods"
 	"github.com/ai-dynamo/grove/operator/e2e/setup"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
@@ -547,10 +548,9 @@ func Test_Kueue4_TopologyAwarePodSetRequest(t *testing.T) {
 }
 
 // Test_Kueue5_WorkloadRepairAfterFinished exercises ensureWorkload's delete-and-recreate repair of a
-// Finished prebuilt Kueue Workload end to end. A Finished condition is patched directly onto the
-// Workload's status (deterministic -- avoids racing Kueue's own pod-group reconciler noticing
-// zero-active-pods, which ensureWorkload's own doc comment calls non-deterministic), and a single pod
-// is deleted to invoke PreparePod for its replacement, which is the path that re-runs ensureWorkload
+// Finished prebuilt Kueue Workload end to end. Kueue never finishes Grove's serving pod groups on its
+// own, so a Finished condition is patched directly onto the Workload's status, and a single pod is
+// deleted to invoke PreparePod for its replacement, which is the path that re-runs ensureWorkload
 // with an uncached read (see backend.go's ensureWorkload and PreparePod).
 func Test_Kueue5_WorkloadRepairAfterFinished(t *testing.T) {
 	ctx := context.Background()
@@ -964,7 +964,9 @@ func Test_Kueue8_AllOrNothingPodsReadyEvictsAndReadmits(t *testing.T) {
 		t.Fatalf("Kueue Workload was not evicted for PodsReadyTimeout: %v", err)
 	}
 
-	Logger.Info("4. Verify every original pod is gone or terminally Failed, replaced by a new admission attempt")
+	// "stuck" never gets a node, so KWOK never strips Kueue's pod finalizer from it: it only goes away
+	// because Grove removes that finalizer from Pods being deleted (RemovePodFinalizers).
+	Logger.Info("4. Verify every original pod is gone, replaced by a new admission attempt")
 	pollUntilTrue(t, tc.Timeout, tc.Interval, func() (bool, string) {
 		current, err := tc.ListPods()
 		if err != nil {
@@ -972,22 +974,130 @@ func Test_Kueue8_AllOrNothingPodsReadyEvictsAndReadmits(t *testing.T) {
 		}
 		sawNewPod := false
 		for _, pod := range current.Items {
-			if _, stillOriginal := originalPodUIDs[pod.UID]; !stillOriginal {
-				sawNewPod = true
-				continue
+			if _, stillOriginal := originalPodUIDs[pod.UID]; stillOriginal {
+				return false, fmt.Sprintf("pod %s (uid %s) from the original admission still exists", pod.Name, pod.UID)
 			}
-			// Kueue deletes group pods it actually scheduled, but a pod that never got bound to a
-			// node (like "stuck") is only patched to Failed and left behind, not deleted.
-			if pod.Status.Phase != corev1.PodFailed {
-				return false, fmt.Sprintf("pod %s (uid %s) from the original admission still exists in phase %s", pod.Name, pod.UID, pod.Status.Phase)
-			}
+			sawNewPod = true
 		}
 		if !sawNewPod {
 			return false, "no replacement pods created yet"
 		}
 		return true, ""
 	})
-	Logger.Infof("Workload %s/%s went through admission again: original UID=%s", podGang.Namespace, podGang.Name, originalUID)
+
+	Logger.Info("5. Verify Kueue requeued the same Workload: Grove's serving pod groups never finish")
+	current, err := wlVerifier.Get(ctx, podGang.Namespace, podGang.Name)
+	if err != nil {
+		t.Fatalf("Failed to get current Kueue Workload: %v", err)
+	}
+	if current.UID != originalUID {
+		t.Fatalf("Expected Workload %s/%s to be requeued in place, but it was rebuilt: original UID=%s, current UID=%s", podGang.Namespace, podGang.Name, originalUID, current.UID)
+	}
 
 	Logger.Info("Test_Kueue8_AllOrNothingPodsReadyEvictsAndReadmits completed successfully!")
+}
+
+// kwokStageCrashloopKueueStuckPath/Name point at the KWOK Stage that holds the
+// kueue-allornothing-notready fixture's "stuck" pod Running-but-NotReady (simulated
+// CrashLoopBackOff) instead of leaving it permanently unschedulable like Test_Kueue8's fixture.
+const (
+	kwokStageCrashloopKueueStuckPath = "../yaml/kwok/pod-crashloop-kueue-allornothing-notready-stuck.yaml"
+	kwokStageCrashloopKueueStuckName = "pod-crashloop-kueue-allornothing-notready-stuck"
+)
+
+// Test_Kueue9_AllOrNothingRunningNotReadyEvictsAndReadmits is Test_Kueue8's scenario with a
+// different trigger: instead of a permanently unschedulable pod, "stuck" actually gets scheduled
+// and starts running, but a KWOK Stage holds it Running with Ready=False (a simulated
+// CrashLoopBackOff), so it never reaches PodsReady. This exercises waitForPodsReady's literal
+// meaning: a started-but-not-ready container, not merely an unscheduled one.
+func Test_Kueue9_AllOrNothingRunningNotReadyEvictsAndReadmits(t *testing.T) {
+	ctx := context.Background()
+	expectedPods := 2
+
+	tc, cleanup := testctx.PrepareTest(ctx, t, 2,
+		testctx.WithWorkload(&testctx.WorkloadConfig{
+			Name:         "kueue-allornothing-notready",
+			YAMLPath:     "../yaml/kueue-workload-allornothing-notready.yaml",
+			Namespace:    "default",
+			ExpectedPods: expectedPods,
+		}),
+	)
+	requireKueueCRD(t, tc)
+	defer cleanup()
+
+	if err := kwok.ApplyStage(ctx, tc.Client, kwokStageCrashloopKueueStuckPath); err != nil {
+		t.Fatalf("Failed to apply KWOK stage %s: %v", kwokStageCrashloopKueueStuckName, err)
+	}
+	defer func() {
+		if err := kwok.DeleteStage(ctx, tc.Client, kwokStageCrashloopKueueStuckName); err != nil {
+			t.Errorf("Failed to delete KWOK stage %s: %v", kwokStageCrashloopKueueStuckName, err)
+		}
+	}()
+
+	Logger.Info("1. Deploy kueue-allornothing-notready: 'ready' becomes Ready normally, 'stuck' is held Running-but-NotReady by the KWOK stage")
+	if _, err := tc.DeployAndVerifyWorkload(); err != nil {
+		t.Fatalf("Failed to deploy workload: %v", err)
+	}
+
+	Logger.Info("2. Verify the Workload admits immediately (quota fits; readiness is a separate, later check)")
+	pgVerifier := podgang.NewVerifier(tc.Client, Logger)
+	podGangs, err := pgVerifier.List(ctx, types.NamespacedName{Namespace: tc.Namespace, Name: tc.Workload.Name})
+	if err != nil {
+		t.Fatalf("Failed to list PodGangs: %v", err)
+	}
+	if len(podGangs) != 1 {
+		t.Fatalf("Expected exactly 1 PodGang, got %d", len(podGangs))
+	}
+	podGang := podGangs[0]
+
+	wlVerifier := kueueworkload.NewVerifier(tc.Client, Logger)
+	admitted, err := wlVerifier.WaitUntilVerified(ctx, podGang.Namespace, podGang.Name, tc.Timeout, tc.Interval, kueueworkload.Admitted)
+	if err != nil {
+		t.Fatalf("Kueue Workload not Admitted: %v", err)
+	}
+	originalUID := admitted.UID
+
+	originalPods, err := tc.ListPods()
+	if err != nil {
+		t.Fatalf("Failed to list original pods: %v", err)
+	}
+	originalPodUIDs := make(map[types.UID]struct{}, len(originalPods.Items))
+	for _, pod := range originalPods.Items {
+		originalPodUIDs[pod.UID] = struct{}{}
+	}
+
+	Logger.Info("3. Verify Kueue evicts the Workload with reason PodsReadyTimeout once the configured timeout elapses")
+	if _, err := wlVerifier.WaitUntilVerified(ctx, podGang.Namespace, podGang.Name, tc.Timeout, tc.Interval, kueueworkload.EvictedByPodsReadyTimeout); err != nil {
+		t.Fatalf("Kueue Workload was not evicted for PodsReadyTimeout: %v", err)
+	}
+
+	Logger.Info("4. Verify every original pod is gone, replaced by a new admission attempt")
+	pollUntilTrue(t, tc.Timeout, tc.Interval, func() (bool, string) {
+		current, err := tc.ListPods()
+		if err != nil {
+			return false, fmt.Sprintf("failed to list pods: %v", err)
+		}
+		sawNewPod := false
+		for _, pod := range current.Items {
+			if _, stillOriginal := originalPodUIDs[pod.UID]; stillOriginal {
+				return false, fmt.Sprintf("pod %s (uid %s) from the original admission still exists", pod.Name, pod.UID)
+			}
+			sawNewPod = true
+		}
+		if !sawNewPod {
+			return false, "no replacement pods created yet"
+		}
+		return true, ""
+	})
+
+	Logger.Info("5. Verify Kueue requeued the same Workload: Grove's serving pod groups never finish")
+	current, err := wlVerifier.Get(ctx, podGang.Namespace, podGang.Name)
+	if err != nil {
+		t.Fatalf("Failed to get current Kueue Workload: %v", err)
+	}
+	if current.UID != originalUID {
+		t.Fatalf("Expected Workload %s/%s to be requeued in place, but it was rebuilt: original UID=%s, current UID=%s", podGang.Namespace, podGang.Name, originalUID, current.UID)
+	}
+
+	Logger.Info("Test_Kueue9_AllOrNothingRunningNotReadyEvictsAndReadmits completed successfully!")
 }

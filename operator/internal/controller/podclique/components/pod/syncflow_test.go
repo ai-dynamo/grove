@@ -25,6 +25,7 @@ import (
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/podclique/expectations"
 	"github.com/ai-dynamo/grove/operator/internal/expect"
+	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
@@ -611,4 +612,35 @@ func scaleOutEntry(epoch, dependsOnEpoch string) grovecorev1alpha1.PodGangEntry 
 		WithRole(grovecorev1alpha1.PodGangEntryRoleScaleOut).
 		WithDependsOn(dependsOnEpoch).
 		Build()
+}
+
+func TestRemoveSchedulerFinalizersFromDeletingPods(t *testing.T) {
+	running := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "running", Namespace: testNamespace}}
+	deleting := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "deleting", Namespace: testNamespace, DeletionTimestamp: &metav1.Time{Time: time.Now()}}}
+	tests := []struct {
+		name          string
+		schedulerName string
+		wantRemoved   []string
+	}{
+		{name: "removes finalizers only from deleting Pods", schedulerName: "kueue", wantRemoved: []string{"deleting"}},
+		{name: "skips backends that do not remove finalizers", schedulerName: ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			finalizer := testutils.NewFakeFinalizerBackend("kueue")
+			r := _resource{schedRegistry: &testutils.FakeSchedulerRegistry{
+				Backends: map[string]scheduler.Backend{
+					"default-scheduler": testutils.NewFakeSchedulerBackend("default-scheduler"),
+					"kueue":             finalizer,
+				},
+				DefaultBackend: "default-scheduler",
+			}}
+			pclq := &grovecorev1alpha1.PodClique{ObjectMeta: metav1.ObjectMeta{Name: "pclq", Namespace: testNamespace}}
+			pclq.Spec.PodSpec.SchedulerName = tc.schedulerName
+			ss := &syncSnapshot{pclq: pclq, existingPCLQPods: []*corev1.Pod{running, deleting}}
+
+			require.NoError(t, r.removeSchedulerFinalizersFromDeletingPods(context.Background(), ss))
+			assert.Equal(t, tc.wantRemoved, finalizer.RemovedFrom)
+		})
+	}
 }
