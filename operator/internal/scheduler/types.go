@@ -62,6 +62,16 @@ type PodCliqueScaleValidator interface {
 	ValidatePodCliqueScale(ctx context.Context, oldReplicas, newReplicas int32) error
 }
 
+// Finalizer is an optional interface for backends that must finalize Grove's Pods as they are deleted.
+// The PodClique controller calls it for Pods being deleted, and for every Pod of a PodClique being deleted.
+// It exists for the kueue backend only; fold it into Backend if another backend needs it.
+type Finalizer interface {
+	// RemovePodFinalizers removes the finalizers the scheduler puts on pod but never removes itself, so they
+	// never keep a deleted Pod around; it is a no-op if there are none. For example, when a PodClique is deleted,
+	// Kueue keeps its finalizer on the Pods of the serving pod group, so they would stay Terminating.
+	RemovePodFinalizers(ctx context.Context, pod *corev1.Pod) error
+}
+
 // TopologyAwareBackend is an optional interface that Backend
 // implementations may satisfy if they manage a scheduler-specific topology CRD.
 // The ClusterTopologyBinding controller type-asserts each registered backend to this

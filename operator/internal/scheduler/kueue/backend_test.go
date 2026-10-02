@@ -88,9 +88,49 @@ func TestBackend_PreparePod_Defaults(t *testing.T) {
 	assert.Equal(t, "test-pcs-0", pod.Labels[prebuiltWorkloadNameLabel])
 	assert.Equal(t, "2", pod.Annotations[podGroupTotalCountAnnotation])
 	assert.Equal(t, "test-pcs-0-worker", pod.Annotations[roleHashAnnotation])
-	// Grove pods are not marked as a Kueue serving group, so Kueue can finalize them on teardown.
-	assert.Empty(t, pod.Annotations[podGroupServingAnnotation])
-	assert.Equal(t, "false", pod.Annotations[retriableInGroupAnnotation])
+	assert.Equal(t, "true", pod.Annotations[podGroupServingAnnotation])
+	assert.NotContains(t, pod.Annotations, "kueue.x-k8s.io/retriable-in-group")
+}
+
+func TestBackend_RemovePodFinalizers(t *testing.T) {
+	const otherFinalizer = "example.com/other"
+	newPod := func(finalizers ...string) *corev1.Pod {
+		return &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "worker-0", Namespace: "default", Finalizers: finalizers}}
+	}
+	tests := []struct {
+		name           string
+		pod            *corev1.Pod
+		stored         bool
+		wantFinalizers []string
+	}{
+		{name: "removes Kueue's finalizer and keeps others", pod: newPod(podFinalizer, otherFinalizer), stored: true, wantFinalizers: []string{otherFinalizer}},
+		{name: "leaves a Pod without Kueue's finalizer alone", pod: newPod(otherFinalizer), stored: true, wantFinalizers: []string{otherFinalizer}},
+		{name: "ignores a Pod that no longer exists", pod: newPod(podFinalizer)},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var existing []client.Object
+			if tc.stored {
+				existing = append(existing, tc.pod.DeepCopy())
+			}
+			cl := testutils.CreateDefaultFakeClient(existing)
+			b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKueue})
+			require.NoError(t, b.Init(nil))
+
+			pod := tc.pod
+			if tc.stored {
+				pod = &corev1.Pod{}
+				require.NoError(t, cl.Get(context.Background(), client.ObjectKeyFromObject(tc.pod), pod))
+			}
+			require.NoError(t, b.(scheduler.Finalizer).RemovePodFinalizers(context.Background(), pod))
+
+			if tc.stored {
+				got := &corev1.Pod{}
+				require.NoError(t, cl.Get(context.Background(), client.ObjectKeyFromObject(tc.pod), got))
+				assert.Equal(t, tc.wantFinalizers, got.Finalizers)
+			}
+		})
+	}
 }
 
 func TestBackend_PreparePod_ConfigAndExistingMetadata(t *testing.T) {

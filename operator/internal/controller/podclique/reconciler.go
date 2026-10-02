@@ -46,6 +46,7 @@ type Reconciler struct {
 	reconcileStatusRecorder ctrlcommon.ReconcileErrorRecorder
 	expectationsStore       *expect.ExpectationsStore
 	operatorRegistry        component.OperatorRegistry[grovecorev1alpha1.PodClique]
+	schedRegistry           scheduler.Registry
 }
 
 // NewReconciler creates a new instance of the PodClique Reconciler.
@@ -63,6 +64,7 @@ func NewReconciler(mgr ctrl.Manager, controllerCfg configv1alpha1.PodCliqueContr
 		reconcileStatusRecorder: ctrlcommon.NewReconcileErrorRecorder(mgr.GetClient()),
 		expectationsStore:       expectationsStore,
 		operatorRegistry:        operatorRegistry,
+		schedRegistry:           schedRegistry,
 	}, nil
 }
 

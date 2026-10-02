@@ -48,7 +48,7 @@ const (
 	podGroupTotalCountAnnotation      = "kueue.x-k8s.io/pod-group-total-count"
 	prebuiltWorkloadNameLabel         = "kueue.x-k8s.io/prebuilt-workload-name"
 	podGroupServingAnnotation         = "kueue.x-k8s.io/pod-group-serving"
-	retriableInGroupAnnotation        = "kueue.x-k8s.io/retriable-in-group"
+	podFinalizer                      = "kueue.x-k8s.io/managed"
 	podSetRequiredTopologyAnnotation  = "kueue.x-k8s.io/podset-required-topology"
 	podSetPreferredTopologyAnnotation = "kueue.x-k8s.io/podset-preferred-topology"
 	roleHashAnnotation                = "kueue.x-k8s.io/role-hash"
@@ -73,6 +73,7 @@ type schedulerBackend struct {
 var (
 	_ scheduler.Backend                 = (*schedulerBackend)(nil)
 	_ scheduler.PodCliqueScaleValidator = (*schedulerBackend)(nil)
+	_ scheduler.Finalizer               = (*schedulerBackend)(nil)
 )
 
 // New creates a new Kueue backend instance. profile is the scheduler profile for kueue; schedulerBackend
@@ -126,14 +127,7 @@ func (b *schedulerBackend) SyncPodGang(ctx context.Context, podGang *groveschedu
 // ensureWorkload ensures a usable prebuilt Kueue Workload exists for podGang, creating it if absent. An
 // existing Workload that is no longer usable (Finished, or deactivated by Kueue) is deleted and rebuilt
 // from scratch instead of repaired in place, since Kueue Workload podSets are immutable once admitted.
-//
-// This is also how Grove recovers from Kueue preempting a Workload: Kueue deletes the admitted Pods,
-// and if it observes zero active Pods before Grove's replacements are created, the Pod-group's
-// retriable-in-group=false annotation causes Kueue to report the group Finished. Once Finished, Kueue
-// never reopens the Workload (see PR #707 review discussion r3987044064). Grove has no watch on Kueue
-// Workloads to notice this independently, so the repair is anchored here: PreparePod calls this for
-// every replacement Pod it prepares, which runs at exactly the point Grove is already recreating Pods
-// for the PodGang.
+// Grove has no watch on Workloads, so PreparePod also calls this for every Pod it prepares.
 //
 // reader is used only for the existence/health Get: PreparePod passes b.directReader (uncached) since
 // the cache can still show a pre-repair Workload immediately after Kueue writes Finished, while
@@ -341,19 +335,28 @@ func (b *schedulerBackend) PreparePod(pod *corev1.Pod) error {
 	}
 	pod.Annotations[podGroupTotalCountAnnotation] = strconv.Itoa(totalPodCount)
 	pod.Annotations[roleHashAnnotation] = podCliqueName
-	// Grove-managed pods are deliberately NOT marked as a Kueue "serving" pod group. A serving group is never
-	// considered finished, so Kueue would never remove the kueue.x-k8s.io/managed finalizer on teardown (the
-	// prebuilt Workload has no Kueue finalizer, so Workload deletion cannot trigger finalization either). As a
-	// non-serving unretriable group, Kueue finalizes the Pods once they all terminate, letting them drain.
-	if pod.Annotations[retriableInGroupAnnotation] == "" {
-		pod.Annotations[retriableInGroupAnnotation] = "false"
-	}
+	// A serving group never finishes, so evicting or preempting it always requeues the same Workload. Kueue
+	// then never releases its pod finalizer, so Grove does (RemovePodFinalizers).
+	pod.Annotations[podGroupServingAnnotation] = "true"
 	if topologyRequest := b.topologyRequestForPodGroup(podGang, podCliqueName); topologyRequest != nil {
 		for k, v := range topologyRequest.annotations {
 			if pod.Annotations[k] == "" {
 				pod.Annotations[k] = v
 			}
 		}
+	}
+	return nil
+}
+
+// RemovePodFinalizers removes the finalizer Kueue's pod webhook adds to every Pod it manages.
+func (b *schedulerBackend) RemovePodFinalizers(ctx context.Context, pod *corev1.Pod) error {
+	if !controllerutil.ContainsFinalizer(pod, podFinalizer) {
+		return nil
+	}
+	patched := pod.DeepCopy()
+	controllerutil.RemoveFinalizer(patched, podFinalizer)
+	if err := b.client.Patch(ctx, patched, client.MergeFromWithOptions(pod, client.MergeFromWithOptimisticLock{})); client.IgnoreNotFound(err) != nil {
+		return fmt.Errorf("failed to remove finalizer %q from Pod %s: %w", podFinalizer, client.ObjectKeyFromObject(pod), err)
 	}
 	return nil
 }
