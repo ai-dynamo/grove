@@ -266,3 +266,10 @@ The `TopologyLevelsUnavailable` condition reports whether all topology domains r
 | `Unknown` | `ClusterTopologyNotFound` | The selected ClusterTopologyBinding does not exist. |
 | `Unknown` | `TopologyNameMissing` | A topology constraint exists but Grove cannot resolve an effective `topologyName`. |
 | `Unknown` | `TopologyAwareSchedulingDisabled` | Grove cannot evaluate topology availability for the existing constrained PCS because topology-aware scheduling is disabled. |
+
+## GPU NUMA Locality
+
+To allocate a single Pod's GPUs on the same NUMA node, use Kubernetes *Dynamic Resource Allocation (DRA)* with `matchAttribute: resource.kubernetes.io/numaNode` in a `ResourceClaimTemplate`, referenced through the existing `podSpec.resourceClaims` and container `resources.claims` fields as shown in [single-pod.yaml](../../operator/samples/user-guide/04_topology-aware-scheduling/single-pod.yaml). Use [NVIDIA DRA driver v0.5.0 or later](https://github.com/kubernetes-sigs/dra-driver-nvidia-gpu/releases/tag/v0.5.0), which publishes this attribute.
+
+- If no eligible node has enough free GPUs on a single NUMA node, the Pod remains `Pending`. This DRA constraint is checked during scheduling, not kubelet admission.
+- GPUs with unknown NUMA locality (`numa_node = -1`) lack `resource.kubernetes.io/numaNode` and cannot satisfy `matchAttribute`. The Pod remains `Pending` unless enough matching GPUs are available elsewhere.
