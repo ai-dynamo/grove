@@ -26,6 +26,7 @@ import (
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	"github.com/ai-dynamo/grove/operator/internal/podgangmigrator"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
@@ -105,6 +106,14 @@ func TestBackend_SyncPodGang_AggregateLockScope(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestBackend_DoesNotExposePerPodGangMembership(t *testing.T) {
+	// The epoch migrator's name-only capability cannot express aggregate and leaf membership.
+	// KAI must leave both fields to PreparePod and aggregate reconciliation.
+	cl := testutils.CreateDefaultFakeClient(nil)
+	b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKai})
+	assert.NotImplements(t, (*podgangmigrator.PodGangMembershipAnnotator)(nil), b)
 }
 
 func TestBackend_PreparePod(t *testing.T) {

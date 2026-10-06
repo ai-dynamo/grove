@@ -208,13 +208,6 @@ func (b *schedulerBackend) PreparePod(pod *corev1.Pod) error {
 	return nil
 }
 
-// PodGangMembershipAnnotations returns the KAI PodGroup membership annotation that KAI reads to
-// determine gang membership. The subgroup label derives from the PodClique name, which migration does
-// not change, so it is not part of the membership annotations.
-func (b *schedulerBackend) PodGangMembershipAnnotations(newPodGangName string) map[string]string {
-	return map[string]string{annotationPodGroup: newPodGangName}
-}
-
 // ValidatePodCliqueSet runs KAI-specific validations on the PodCliqueSet.
 func (b *schedulerBackend) ValidatePodCliqueSet(_ context.Context, pcs *grovecorev1alpha1.PodCliqueSet) error {
 	_, err := resolveQueueNameForPodCliqueSet(pcs)

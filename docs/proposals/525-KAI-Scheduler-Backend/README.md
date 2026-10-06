@@ -289,6 +289,8 @@ For source-owned labels and annotations, Grove ensures desired values are presen
 
 Status-only updates remain ignored. PodGangMap changes that do not change materialized PodGangs do not require reconciliation; a direct PodGangMap watch is added only if tests demonstrate a missing trigger.
 
+During upgrade, the PodGang migrator updates existing Pods' Grove epoch associations. KAI aggregate reconciliation owns both `pod-group-name` and the leaf subgroup label, repairing them gradually after those associations change. KAI does not expose the migrator's temporary name-only, per-PodGang membership-annotation capability; its aggregate identity and leaf require the full Pod context.
+
 ### API and Registration Requirements
 
 - Existing `Backend.SyncPodGang`, `PreparePod`, and `ValidatePodCliqueSet` interfaces remain unchanged.
