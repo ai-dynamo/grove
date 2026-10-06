@@ -128,18 +128,22 @@ func (b *schedulerBackend) SyncPodGang(ctx context.Context, podGang *groveschedu
 }
 
 func (b *schedulerBackend) syncAggregateReplica(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, replica int, podGang *groveschedulerv1alpha1.PodGang) error {
+	sourceScheduler := podGang.Labels[apicommon.LabelSchedulerName]
+	if sourceScheduler != b.Name() && sourceScheduler != string(configv1alpha1.SchedulerNameLPX) {
+		return fmt.Errorf("unsupported KAI aggregate source scheduler %q", sourceScheduler)
+	}
 	var err error
 	if int32(replica) >= pcs.Spec.Replicas {
-		err = b.deleteScaledInAggregatePodGroup(ctx, pcs, replica)
+		err = b.deleteScaledInAggregatePodGroup(ctx, pcs, replica, sourceScheduler)
 	} else {
 		materialized, loadErr := b.loadCurrentPodGangs(ctx, pcs, replica, podGang)
 		if loadErr != nil {
 			return loadErr
 		}
 		if len(materialized) == 0 {
-			err = b.deleteScaledInAggregatePodGroup(ctx, pcs, replica)
+			err = b.deleteScaledInAggregatePodGroup(ctx, pcs, replica, sourceScheduler)
 		} else {
-			err = b.reconcileAggregateReplica(ctx, pcs, replica, materialized)
+			err = b.reconcileAggregateReplica(ctx, pcs, replica, materialized, sourceScheduler)
 		}
 	}
 	if err != nil {
@@ -156,7 +160,7 @@ func (b *schedulerBackend) loadCurrentPodGangs(ctx context.Context, pcs *groveco
 	if int(pgm.Spec.PodCliqueSetReplicaIndex) != replica {
 		return nil, fmt.Errorf("PodGangMap %s/%s has replica index %d, expected %d", pgm.Namespace, pgm.Name, pgm.Spec.PodCliqueSetReplicaIndex, replica)
 	}
-	materialized, err := componentutils.LoadMaterializedPodGangs(ctx, b.client, pcs, pgm, b.Name())
+	materialized, err := componentutils.LoadMaterializedPodGangs(ctx, b.client, pcs, pgm, podGang.Labels[apicommon.LabelSchedulerName])
 	if err != nil {
 		return nil, err
 	}

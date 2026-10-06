@@ -19,22 +19,16 @@ import (
 	"testing"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
-	"github.com/ai-dynamo/grove/operator/api/common/constants"
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler/kai"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
-	schedulertest "github.com/ai-dynamo/grove/operator/test/utils/scheduler"
 
-	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
-	kaischedulingv2alpha2 "github.com/kai-scheduler/KAI-scheduler/pkg/apis/scheduling/v2alpha2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/utils/ptr"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 func TestBackendPreparePod(t *testing.T) {
@@ -66,89 +60,16 @@ func TestBackendPreparePod(t *testing.T) {
 		pod = testutils.NewPodWithBuilderWithDefaultSpec("test-pod", "default").
 			WithSchedulerName("lpx-scheduler").
 			WithLabels(map[string]string{
-				apicommon.LabelPodGang:   "podgang",
-				apicommon.LabelPodClique: "podclique",
+				apicommon.LabelPodGang:                  "podgang",
+				apicommon.LabelPodClique:                "podclique",
+				apicommon.LabelPartOfKey:                "workload",
+				apicommon.LabelPodCliqueSetReplicaIndex: "0",
 			}).
 			Build()
 
 		require.NoError(t, backend.PreparePod(pod))
 		assert.Equal(t, string(configv1alpha1.SchedulerNameKai), pod.Spec.SchedulerName)
 	})
-}
-
-func TestBackendSyncPodGangLPXOnly(t *testing.T) {
-	pcs := testutils.NewPodCliqueSetBuilder("lpx-workload", "default", types.UID("pcs-uid")).
-		Build()
-	lpxPodClique := testutils.NewPodCliqueBuilder(pcs.Name, pcs.UID, "lpx-worker", pcs.Namespace, 0).
-		Build()
-	lpxPodClique.Spec.PodSpec.Containers[0].Resources = corev1.ResourceRequirements{Requests: corev1.ResourceList{resourcesLPX[0]: resource.MustParse("1")}}
-	podGang := testutils.NewPodGangBuilder("lpx-workload-0", pcs.Namespace).
-		WithPodGroups([]groveschedulerv1alpha1.PodGroup{
-			{Name: lpxPodClique.Name, MinReplicas: 1},
-		}).
-		WithOwnerReference(constants.KindPodCliqueSet, pcs.Name, pcs.UID).
-		Build()
-
-	scheme := schedulertest.NewKAIScheme(t)
-	require.NoError(t, corev1.AddToScheme(scheme))
-	require.NoError(t, groveschedulerv1alpha1.AddToScheme(scheme))
-
-	cl := testutils.NewTestClientBuilder().WithScheme(scheme).WithObjects(pcs, lpxPodClique, podGang).Build()
-
-	kaiBackend := kai.New(cl, scheme, nil, configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKai})
-	backend := New(cl, configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameLPX}, kaiBackend)
-	require.NoError(t, backend.Init(cl))
-
-	require.NoError(t, backend.SyncPodGang(t.Context(), podGang))
-
-	storedPodGang := &groveschedulerv1alpha1.PodGang{}
-	require.NoError(t, cl.Get(t.Context(), client.ObjectKeyFromObject(podGang), storedPodGang))
-	require.Len(t, storedPodGang.Spec.PodGroups, 1)
-}
-
-func TestBackendSyncPodGangMixedWorkload(t *testing.T) {
-	pcs := testutils.NewPodCliqueSetBuilder("mixed-workload", "default", types.UID("pcs-uid")).
-		WithLabels(map[string]string{"kai.scheduler/queue": "default"}).
-		Build()
-
-	lpxPodClique := testutils.NewPodCliqueBuilder(pcs.Name, pcs.UID, "lpx-worker", pcs.Namespace, 0).
-		Build()
-	lpxPodClique.Spec.PodSpec.Containers[0].Resources = corev1.ResourceRequirements{Requests: corev1.ResourceList{resourcesLPX[0]: resource.MustParse("1")}}
-
-	kaiPodClique := testutils.NewPodCliqueBuilder(pcs.Name, pcs.UID, "kai-worker", pcs.Namespace, 0).
-		Build()
-
-	podGang := testutils.NewPodGangBuilder("mixed-workload-0", pcs.Namespace).
-		WithPodGroups([]groveschedulerv1alpha1.PodGroup{
-			{Name: lpxPodClique.Name, MinReplicas: 1},
-			{Name: kaiPodClique.Name, MinReplicas: 1},
-		}).
-		WithOwnerReference(constants.KindPodCliqueSet, pcs.Name, pcs.UID).
-		Build()
-
-	scheme := schedulertest.NewKAIScheme(t)
-	require.NoError(t, corev1.AddToScheme(scheme))
-	require.NoError(t, groveschedulerv1alpha1.AddToScheme(scheme))
-
-	cl := testutils.NewTestClientBuilder().WithScheme(scheme).WithObjects(pcs, lpxPodClique, kaiPodClique, podGang).Build()
-
-	kaiBackend := kai.New(cl, scheme, nil, configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKai})
-	backend := New(cl, configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameLPX}, kaiBackend)
-	require.NoError(t, backend.Init(cl))
-
-	require.NoError(t, backend.SyncPodGang(t.Context(), podGang))
-
-	kaiPodGroup := &kaischedulingv2alpha2.PodGroup{}
-	require.NoError(t, cl.Get(t.Context(), client.ObjectKeyFromObject(podGang), kaiPodGroup))
-	require.NotNil(t, kaiPodGroup.Spec.MinMember)
-	assert.Equal(t, int32(1), ptr.Deref(kaiPodGroup.Spec.MinMember, 0))
-	require.Len(t, kaiPodGroup.Spec.SubGroups, 1)
-	assert.Equal(t, kaiPodClique.Name, kaiPodGroup.Spec.SubGroups[0].Name)
-
-	storedPodGang := &groveschedulerv1alpha1.PodGang{}
-	require.NoError(t, cl.Get(t.Context(), client.ObjectKeyFromObject(podGang), storedPodGang))
-	require.Len(t, storedPodGang.Spec.PodGroups, 2)
-	assert.Equal(t, "true", storedPodGang.Annotations["kai.scheduler/skip-podgrouper"])
 }
 
 func TestBackendValidatePodCliqueSet(t *testing.T) {

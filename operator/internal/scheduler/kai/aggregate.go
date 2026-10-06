@@ -27,6 +27,7 @@ import (
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	apicommonconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
+	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
@@ -51,6 +52,7 @@ func (b *schedulerBackend) reconcileAggregateReplica(
 	pcs *grovecorev1alpha1.PodCliqueSet,
 	replica int,
 	materialized []componentutils.MaterializedPodGang,
+	sourceScheduler string,
 ) error {
 	for _, item := range materialized {
 		if !item.PodGang.DeletionTimestamp.IsZero() {
@@ -61,6 +63,16 @@ func (b *schedulerBackend) reconcileAggregateReplica(
 		}
 	}
 
+	if sourceScheduler == string(configv1alpha1.SchedulerNameLPX) {
+		projected, err := b.projectLPXPodGangs(ctx, materialized)
+		if err != nil {
+			return err
+		}
+		if len(projected) == 0 {
+			return b.deleteScaledInAggregatePodGroup(ctx, pcs, replica, sourceScheduler)
+		}
+		materialized = projected
+	}
 	topologyReference, err := b.resolveKAITopologyReference(ctx, materialized)
 	if err != nil {
 		return err
@@ -73,7 +85,7 @@ func (b *schedulerBackend) reconcileAggregateReplica(
 	if err = b.syncAggregatePodGroup(ctx, pcs, plan.podGroup); err != nil {
 		return err
 	}
-	return b.migratePods(ctx, pcs, replica, plan)
+	return b.migratePods(ctx, pcs, replica, plan, sourceScheduler)
 }
 
 type aggregateInputs struct {
@@ -125,7 +137,7 @@ func prepareAggregateInputs(
 			return nil, fmt.Errorf("PodGang %s/%s has unsupported role %q", item.PodGang.Namespace, item.PodGang.Name, item.Entry.Role)
 		}
 	}
-	if len(inputs.anchors) == 0 {
+	if len(inputs.anchors) == 0 && reference.Labels[apicommon.LabelSchedulerName] != string(configv1alpha1.SchedulerNameLPX) {
 		return nil, fmt.Errorf("PodGangMap for PodCliqueSet %s/%s replica %d has no materialized Anchor PodGang", pcs.Namespace, pcs.Name, replica)
 	}
 	return inputs, nil
@@ -430,8 +442,9 @@ func (b *schedulerBackend) migratePods(
 	pcs *grovecorev1alpha1.PodCliqueSet,
 	replica int,
 	plan *aggregatePlan,
+	sourceScheduler string,
 ) error {
-	pods, err := b.listActivePodsForReplica(ctx, pcs, replica)
+	pods, err := b.listActivePodsForReplica(ctx, pcs, replica, sourceScheduler)
 	if err != nil {
 		return err
 	}
@@ -481,7 +494,7 @@ func (b *schedulerBackend) patchPodMembership(ctx context.Context, pod *corev1.P
 	return nil
 }
 
-func (b *schedulerBackend) listActivePodsForReplica(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, replica int) ([]corev1.Pod, error) {
+func (b *schedulerBackend) listActivePodsForReplica(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, replica int, sourceScheduler string) ([]corev1.Pod, error) {
 	list := &corev1.PodList{}
 	if err := b.client.List(ctx, list,
 		client.InNamespace(pcs.Namespace),
@@ -503,11 +516,14 @@ func (b *schedulerBackend) listActivePodsForReplica(ctx context.Context, pcs *gr
 			result = append(result, *pod.DeepCopy())
 		}
 	}
+	if sourceScheduler == string(configv1alpha1.SchedulerNameLPX) {
+		return b.selectLPXFallbackPods(ctx, result)
+	}
 	return result, nil
 }
 
-func (b *schedulerBackend) deleteScaledInAggregatePodGroup(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, replica int) error {
-	pods, err := b.listActivePodsForReplica(ctx, pcs, replica)
+func (b *schedulerBackend) deleteScaledInAggregatePodGroup(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, replica int, sourceScheduler string) error {
+	pods, err := b.listActivePodsForReplica(ctx, pcs, replica, sourceScheduler)
 	if err != nil {
 		return err
 	}

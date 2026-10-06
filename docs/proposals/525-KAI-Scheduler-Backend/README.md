@@ -79,7 +79,7 @@ At a high level, the proposal introduces:
 2. **Deterministic lifecycle behavior**: `PreparePod` assigns aggregate membership, while `SyncPodGang` handles active and terminating PodGangs. A PodGang finalizer preserves deletion as a scale-in/removal trigger.
 3. **KAI version dependency**: The backend requires KAI-Scheduler v0.15.0 or newer.
 4. **Operator readiness requirements**: KAI PodGroup API types are registered in Grove's scheme and RBAC allows backend operations on KAI PodGroups.
-5. **Safe migration**: Grove creates the aggregate before patching Pod membership. Every active Pod eventually references the aggregate and a valid leaf. Former per-PodGang PodGroups may be garbage-collected or remain empty.
+5. **Safe migration**: Grove creates the aggregate before patching Pod membership. Every active KAI-selected Pod eventually references the aggregate and a valid leaf. Former per-PodGang PodGroups may be garbage-collected or remain empty.
 
 ### User Stories
 
@@ -181,6 +181,8 @@ The KAI backend creates one Grove-owned KAI PodGroup for each PodCliqueSet repli
 
 The backend does not infer membership or role from legacy Base/Scaled names, labels, or generated-name parsing. It waits for the complete expected PodGang set before modifying an existing aggregate.
 
+When LPX delegates to KAI, the triggering PodGang's scheduler label identifies the LPX source. KAI loads and validates the complete real PodGang set, then uses LPX's shared PodClique resource-selection policy to project only fallback groups into the aggregate and select Pods for membership repair. Existing Pods' `spec.schedulerName` is not a selection prerequisite and is not rewritten; LPX-selected Pods remain untouched. LPX-only branches are omitted, so a KAI-only Tail or ScaleOut can have no KAI Anchor while Grove continues enforcing its epoch dependencies. An empty KAI projection removes the PCS-owned aggregate after KAI-selected Pods drain, without waiting for LPX Pods. Terminating KAI-backed PodGangs reach KAI reconciliation even after their PodCliques disappear.
+
 #### KAI Queue Resolution
 
 KAI accepts one queue per PodGroup. The backend resolves that queue from the PodGang's owning PodCliqueSet:
@@ -197,8 +199,8 @@ SubGroup mapping is always used for KAI backend PodGroup generation.
 
 Let:
 
-- `A` be the number of materialized Anchor PodGangs in the PodGangMap;
-- `N` be the number of materialized Tail and ScaleOut PodGangs; and
+- `A` be the number of KAI-bearing materialized Anchor PodGangs in the PodGangMap;
+- `N` be the number of KAI-bearing materialized Tail and ScaleOut PodGangs; and
 - `D(pg)` be the number of direct KAI children under a PodGang branch after applying topology grouping.
 
 ```text
@@ -236,7 +238,7 @@ minSubGroup: A + 1 when N > 0, otherwise A
 └── ...
 ```
 
-- Every materialized `Role=Anchor` PodGang maps to a top-level branch and contributes to `A`. Epoch identifies an Anchor; it neither defines KAI allocation order nor determines whether a Tail or ScaleOut PodGang depends on that Anchor. Materializations from every retained entry generation contribute their controller-calculated minimums.
+- Every KAI-bearing materialized `Role=Anchor` PodGang maps to a top-level branch and contributes to `A`. Epoch identifies an Anchor; it neither defines KAI allocation order nor determines whether a Tail or ScaleOut PodGang depends on that Anchor. Materializations from every retained entry generation contribute their controller-calculated minimums.
 - The non-Anchor collection is omitted when `N` is zero. Otherwise, its `N` zero-minimum utility children make the collection initially satisfied while the aggregate root still requires every Anchor branch.
 - Each Tail or ScaleOut PodGang maps below its own utility parent. Empty PodGangMap entries create no branch.
 - Each PodGang branch contains group nodes for `topologyConstraintGroupConfigs` and leaves for `spec.podgroups`. A topology group requires all of its leaves; an ungrouped leaf is a direct PodGang-branch child.
@@ -282,7 +284,7 @@ For source-owned labels and annotations, Grove ensures desired values are presen
 3. KAI backend resolves the owning PodCliqueSet and replica, then locks `<namespace>/<aggregate-podgroup-name>`.
 4. Reconciliation loads the corresponding PodGangMap and complete expected PodGang set once.
 5. For an active replica, backend creates or updates the aggregate before patching Pods. Pod patches are gradual and idempotent.
-6. During upgrade migration, the PodCliqueSet controller follows its normal PodGang deletion and materialization order. Aggregate reconciliation gradually repairs Pod membership. At convergence, no active Pod references a legacy or missing PodGroup; legacy per-PodGang PodGroups may be garbage-collected with their owners or remain empty.
+6. During upgrade migration, the PodCliqueSet controller follows its normal PodGang deletion and materialization order. Aggregate reconciliation gradually repairs Pod membership. At convergence, no active KAI-selected Pod references a legacy or missing PodGroup; legacy per-PodGang PodGroups may be garbage-collected with their owners or remain empty.
 7. The backend adds `kai.scheduler/aggregate-podgroup` only after validating that an active PodGang is a current PodGangMap materialization. Legacy pre-epoch PodGangs do not receive it.
 8. Replica scale-in or an authoritative empty PodGangMap deletes the aggregate only after no active Pods remain for that replica. An absent map or missing expected materialization is an error, not proof of emptiness.
 9. If the PodCliqueSet is missing or deleting, backend removes the finalizer and relies on owner-reference garbage collection.
@@ -346,6 +348,7 @@ Reconciliation errors and Warning Events identify mapping, ownership, migration,
 - Validate subgroup translation: Anchor, Tail, and ScaleOut PodGangs map to KAI subgroups with correct `name`, `minSubGroup` / `minMember`, topology grouping, and parent relationships.
 - Validate subgroup-name constraints (lowercase/unique/valid label) and explicit error surfacing on invalid subgroup references.
 - Validate aggregate locking, aggregate-before-Pod migration, idempotent Pod patching, and eventual membership convergence after legacy deletion.
+- Validate LPX fallback projection and Pod selection independently of existing Pod schedulerName, including KAI-only non-Anchor branches, unchanged real PodGang specs, and deletion after LPX-owned resources disappear.
 - Validate current PodGangMap identity before finalizer installation, deletion-start reconciliation, scale-in, and finalizer release.
 
 #### Phase 2 (Follow-up): E2E Tests
