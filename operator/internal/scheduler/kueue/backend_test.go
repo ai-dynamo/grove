@@ -1250,3 +1250,79 @@ func TestBackend_ValidatePodCliqueSet_TopologyRequiredAndPreferred(t *testing.T)
 		})
 	}
 }
+
+func TestBackend_ValidatePodCliqueSet_PodSetLimit(t *testing.T) {
+	cliques := func(names ...string) []*grovecorev1alpha1.PodCliqueTemplateSpec {
+		result := make([]*grovecorev1alpha1.PodCliqueTemplateSpec, 0, len(names))
+		for _, name := range names {
+			result = append(result, &grovecorev1alpha1.PodCliqueTemplateSpec{Name: name, Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To[int32](1)}})
+		}
+		return result
+	}
+	scalingGroup := func(name string, replicas int32, cliqueNames ...string) grovecorev1alpha1.PodCliqueScalingGroupConfig {
+		return grovecorev1alpha1.PodCliqueScalingGroupConfig{Name: name, CliqueNames: cliqueNames, Replicas: ptr.To(replicas), MinAvailable: ptr.To(replicas)}
+	}
+
+	testCases := []struct {
+		description   string
+		cliques       []*grovecorev1alpha1.PodCliqueTemplateSpec
+		scalingGroups []grovecorev1alpha1.PodCliqueScalingGroupConfig
+		// wantErr is a substring of the expected error; empty means the PodCliqueSet is valid.
+		wantErr string
+	}{
+		{
+			description: "8 standalone cliques fill the limit",
+			cliques:     cliques("c1", "c2", "c3", "c4", "c5", "c6", "c7", "c8"),
+		},
+		{
+			description: "9 standalone cliques exceed the limit",
+			cliques:     cliques("c1", "c2", "c3", "c4", "c5", "c6", "c7", "c8", "c9"),
+			wantErr:     "base PodGang would have 9",
+		},
+		{
+			description:   "a 2-clique scaling group with 4 replicas fills the limit",
+			cliques:       cliques("leader", "worker"),
+			scalingGroups: []grovecorev1alpha1.PodCliqueScalingGroupConfig{scalingGroup("decode", 4, "leader", "worker")},
+		},
+		{
+			description:   "a standalone clique plus a 2-clique scaling group with 4 replicas exceeds the limit",
+			cliques:       cliques("router", "leader", "worker"),
+			scalingGroups: []grovecorev1alpha1.PodCliqueScalingGroupConfig{scalingGroup("decode", 4, "leader", "worker")},
+			wantErr:       "base PodGang would have 9",
+		},
+		{
+			description: "scaling groups add up",
+			cliques:     cliques("router", "p-leader", "p-worker", "d-leader", "d-worker"),
+			scalingGroups: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+				scalingGroup("prefill", 2, "p-leader", "p-worker"),
+				scalingGroup("decode", 2, "d-leader", "d-worker"),
+			},
+			wantErr: "base PodGang would have 9",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.description, func(t *testing.T) {
+			cl := testutils.CreateDefaultFakeClient(nil)
+			b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKueue})
+			require.NoError(t, b.Init(nil))
+
+			pcs := &grovecorev1alpha1.PodCliqueSet{
+				ObjectMeta: metav1.ObjectMeta{Name: "demo", Namespace: "default"},
+				Spec: grovecorev1alpha1.PodCliqueSetSpec{
+					Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
+						Cliques:                      tc.cliques,
+						PodCliqueScalingGroupConfigs: tc.scalingGroups,
+					},
+				},
+			}
+
+			err := b.ValidatePodCliqueSet(context.Background(), pcs)
+			if tc.wantErr == "" {
+				require.NoError(t, err)
+				return
+			}
+			require.ErrorContains(t, err, tc.wantErr)
+		})
+	}
+}

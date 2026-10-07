@@ -38,6 +38,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -55,6 +56,8 @@ const (
 	podSetPreferredTopologyAnnotation = "kueue.x-k8s.io/podset-preferred-topology"
 	roleHashAnnotation                = "kueue.x-k8s.io/role-hash"
 	isGroupWorkloadAnnotation         = "kueue.x-k8s.io/is-group-workload"
+	// maxWorkloadPodSets is the maxItems of a Workload's spec.podSets in Kueue v0.17.8 (v0.19 raises it to 18).
+	maxWorkloadPodSets = 8
 )
 
 type resolvedTopologyRequest struct {
@@ -277,6 +280,21 @@ func isCliqueInScalingGroup(pcs *grovecorev1alpha1.PodCliqueSet, cliqueName stri
 	return false
 }
 
+// basePodGangPodGroupCount returns how many PodGroups pcs's base PodGang has: one per standalone clique, plus one per
+// clique for each of a scaling group's minAvailable replicas (see buildBootstrapAnchorEntry).
+func basePodGangPodGroupCount(pcs *grovecorev1alpha1.PodCliqueSet) int {
+	count := 0
+	for _, cliqueTemplate := range pcs.Spec.Template.Cliques {
+		if cliqueTemplate != nil && !isCliqueInScalingGroup(pcs, cliqueTemplate.Name) {
+			count++
+		}
+	}
+	for _, pcsgConfig := range pcs.Spec.Template.PodCliqueScalingGroupConfigs {
+		count += int(ptr.Deref(pcsgConfig.MinAvailable, 1)) * len(pcsgConfig.CliqueNames)
+	}
+	return count
+}
+
 func (b *schedulerBackend) resolveCliqueTemplate(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, podCliqueName string) (*grovecorev1alpha1.PodCliqueTemplateSpec, error) {
 	pclq := &grovecorev1alpha1.PodClique{}
 	if err := b.client.Get(ctx, client.ObjectKey{Namespace: pcs.Namespace, Name: podCliqueName}, pclq); err != nil {
@@ -472,6 +490,11 @@ func (b *schedulerBackend) ValidatePodCliqueSet(_ context.Context, pcs *grovecor
 	// and Kueue permits minCount on at most one podSet per Workload.
 	if len(partialGangCliques) > 1 {
 		return fmt.Errorf("kueue backend allows at most one standalone PodClique with minAvailable < replicas because Kueue permits minCount on at most one podSet per Workload, but found %d: %s", len(partialGangCliques), strings.Join(partialGangCliques, ", "))
+	}
+
+	// Each PodGroup becomes a Workload podSet, and the base PodGang has the most PodGroups.
+	if podGroups := basePodGangPodGroupCount(pcs); podGroups > maxWorkloadPodSets {
+		return fmt.Errorf("kueue backend allows at most %d PodGroups per PodGang because Kueue permits at most %d podSets per Workload, but this PodCliqueSet's base PodGang would have %d (one per standalone PodClique, plus minAvailable times the cliques of each PodCliqueScalingGroup)", maxWorkloadPodSets, maxWorkloadPodSets, podGroups)
 	}
 
 	// Kueue rejects a pod whose podSet carries more than one topology annotation, so a PodGroup cannot
