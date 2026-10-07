@@ -729,10 +729,40 @@ func Test_Kueue6_ValidatePodCliqueSetAndScaleRejection(t *testing.T) {
 		}
 	})
 
+	t.Run("PCSG resolving both a required and a preferred topology domain is rejected", func(t *testing.T) {
+		ensureGroveTopology(ctx, t, topology.NewTopologyVerifier(tc.Client, Logger))
+		pcs := newPCS("kueue-t6-pcsg-topology")
+		pcs.Spec.Template.Cliques = []*corev1alpha1.PodCliqueTemplateSpec{kueueSchedulerClique("worker", 2, 2)}
+		pcs.Spec.Template.PodCliqueScalingGroupConfigs = []corev1alpha1.PodCliqueScalingGroupConfig{
+			{
+				Name:         "sg",
+				CliqueNames:  []string{"worker"},
+				Replicas:     ptr.To(int32(1)),
+				MinAvailable: ptr.To(int32(1)),
+				TopologyConstraint: &corev1alpha1.TopologyConstraint{
+					TopologyName: "grove-topology",
+					Pack: &corev1alpha1.TopologyPackConstraint{
+						RequiredDomain:  corev1alpha1.TopologyDomainBlock,
+						PreferredDomain: corev1alpha1.TopologyDomainRack,
+					},
+				},
+			},
+		}
+		err := tc.Client.Create(ctx, pcs)
+		if err == nil {
+			t.Fatalf("Expected a PCSG resolving both a required and a preferred topology domain to be rejected, but create succeeded")
+		}
+		wantErrSubstr := "kueue backend does not support a PodClique resolving both a required and a preferred topology domain"
+		if !strings.Contains(err.Error(), wantErrSubstr) {
+			t.Fatalf("Expected error to contain %q, got: %v", wantErrSubstr, err)
+		}
+	})
+
 	t.Run("valid partial-gang standalone PodClique is accepted", func(t *testing.T) {
 		pcs := newPCS("kueue-t6-valid")
 		pcs.Spec.Template.Cliques = []*corev1alpha1.PodCliqueTemplateSpec{kueueSchedulerClique("worker", 4, 2)}
-		if err := tc.Client.Create(ctx, pcs); err != nil {
+		// Dry run: the webhook still runs, but no Workload or pods are created.
+		if err := tc.Client.Create(ctx, pcs, client.DryRunAll); err != nil {
 			t.Fatalf("Expected valid partial-gang PodCliqueSet create to succeed, got: %v", err)
 		}
 	})
