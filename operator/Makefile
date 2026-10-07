@@ -196,8 +196,8 @@ run-e2e-mnnvl-full: e2e-cluster-up
 # installed, run tests, then cleanup.
 # Usage: make run-e2e-kueue-full [TEST_PATTERN=<pattern>]
 # Examples:
-#   make run-e2e-kueue-full                          # Run all Kueue tests
-#   make run-e2e-kueue-full TEST_PATTERN=Test_Kueue1 # Run a single Kueue test
+#   make run-e2e-kueue-full                              # Run all Kueue tests
+#   make run-e2e-kueue-full TEST_PATTERN='^Test_Kueue1_' # Run a single Kueue test
 .PHONY: run-e2e-kueue-full
 # Defaults to only the Kueue scenarios: the cluster this target brings up has Kai disabled, so an
 # unset TEST_PATTERN would otherwise run the whole suite against a cluster missing a dependency most

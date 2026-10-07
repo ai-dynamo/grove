@@ -73,6 +73,17 @@ func Admitted(wl *kueuev1beta2.Workload) bool {
 	return wl != nil && apimeta.IsStatusConditionTrue(wl.Status.Conditions, kueuev1beta2.WorkloadAdmitted)
 }
 
+// Finished is a waiter.Predicate that reports whether wl carries a Finished=True condition.
+func Finished(wl *kueuev1beta2.Workload) bool {
+	return wl != nil && apimeta.IsStatusConditionTrue(wl.Status.Conditions, kueuev1beta2.WorkloadFinished)
+}
+
+// PodsReady is a waiter.Predicate that reports whether wl carries a PodsReady=True condition, which Kueue
+// sets (only with waitForPodsReady configured) once every pod of the group exists and is Ready.
+func PodsReady(wl *kueuev1beta2.Workload) bool {
+	return wl != nil && apimeta.IsStatusConditionTrue(wl.Status.Conditions, kueuev1beta2.WorkloadPodsReady)
+}
+
 // EvictedByPodsReadyTimeout is a waiter.Predicate that reports whether wl carries an Evicted=True
 // condition with reason PodsReadyTimeout, proving Kueue evicted it for not reaching PodsReady=true
 // within the configured waitForPodsReady timeout.
