@@ -15,6 +15,7 @@
 package common
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"strings"
 
@@ -101,20 +102,29 @@ func CreatePodGangNameFromPCSGFQN(pcsgFQN string, scaledPodGangIndex int) string
 }
 
 // GenerateAnchorPodGangName generates the name of an anchor PodGang.
-// Format: <pcs-name>-<pcs-replica-index>-<epoch>.
-// The PodGangMap writer authors the anchor name once. Every other reconciler reads it and never
-// recomputes it.
+// Format: <pcs-name>-<pcs-replica-index>-<epoch>, shortened if needed to fit a label value.
 func GenerateAnchorPodGangName(pcsNameReplica ResourceNameReplica, epoch string) string {
-	return fmt.Sprintf("%s-%d-%s", pcsNameReplica.Name, pcsNameReplica.Replica, epoch)
+	return shortenPodGangName(fmt.Sprintf("%s-%d-%s", pcsNameReplica.Name, pcsNameReplica.Replica, epoch))
 }
 
 // GenerateNonAnchorPodGangName generates the name of a non-anchor PodGang.
-// Format: <pcs-name>-<pcs-replica-index>-<epoch>-<pcsg-name>-<pcsg-replica-index>.
+// Format: <pcs-name>-<pcs-replica-index>-<epoch>-<pcsg-name>-<pcsg-replica-index>, shortened if needed to fit a label value.
 // One non-anchor PodGang exists per PodCliqueScalingGroup replica index within an epoch. The pcsgName
 // segment keeps replica indices of different PodCliqueScalingGroups from colliding. Each
 // PodCliqueScalingGroup numbers its replicas from 0.
 func GenerateNonAnchorPodGangName(pcsNameReplica ResourceNameReplica, epoch, pcsgName string, pcsgReplicaIndex int32) string {
-	return fmt.Sprintf("%s-%d-%s-%s-%d", pcsNameReplica.Name, pcsNameReplica.Replica, epoch, pcsgName, pcsgReplicaIndex)
+	return shortenPodGangName(fmt.Sprintf("%s-%d-%s-%s-%d", pcsNameReplica.Name, pcsNameReplica.Replica, epoch, pcsgName, pcsgReplicaIndex))
+}
+
+// shortenPodGangName preserves existing label-safe names and hashes the full name on overflow.
+func shortenPodGangName(name string) string {
+	if len(name) <= 63 {
+		return name
+	}
+	// Up to 29 prefix bytes + "-h" + 32 hex digits fit the label limit. The marker distinguishes
+	// shortened names from ordinary names, which end in a numeric epoch or replica index.
+	hash := sha256.Sum256([]byte(name))
+	return fmt.Sprintf("%s-h%x", strings.TrimRight(name[:29], "-."), hash[:16])
 }
 
 // GeneratePodGangMapName generates a PodGangMap resource name for a PodCliqueSet replica.

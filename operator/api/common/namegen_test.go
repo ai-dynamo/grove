@@ -15,12 +15,14 @@
 package common
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 
 	"github.com/stretchr/testify/assert"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	k8svalidation "k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/utils/ptr"
 )
 
@@ -324,6 +326,14 @@ func TestGenerateAnchorPodGangName(t *testing.T) {
 	expected := "simple1-0-1700000000000000000"
 	actual := GenerateAnchorPodGangName(ResourceNameReplica{Name: "simple1", Replica: 0}, "1700000000000000000")
 	assert.Equal(t, expected, actual)
+
+	rnr := ResourceNameReplica{Name: strings.Repeat("a", 41), Replica: 0}
+	assert.Equal(t, rnr.Name+"-0-1700000000000000000", GenerateAnchorPodGangName(rnr, "1700000000000000000"))
+	rnr.Name += "a"
+	actual = GenerateAnchorPodGangName(rnr, "1700000000000000000")
+	assert.Len(t, actual, 63)
+	assert.Empty(t, k8svalidation.IsValidLabelValue(actual))
+	assert.NotEqual(t, actual, GenerateAnchorPodGangName(rnr, "1700000000000000001"))
 }
 
 func TestGenerateNonAnchorPodGangName(t *testing.T) {
@@ -331,6 +341,19 @@ func TestGenerateNonAnchorPodGangName(t *testing.T) {
 	expected := "my-app-1-42-worker-group-0"
 	actual := GenerateNonAnchorPodGangName(ResourceNameReplica{Name: "my-app", Replica: 1}, "42", "worker-group", 0)
 	assert.Equal(t, expected, actual)
+
+	rnr := ResourceNameReplica{Name: strings.Repeat("a", 32), Replica: 0}
+	assert.Equal(t, rnr.Name+"-0-1700000000000000002-worker-1", GenerateNonAnchorPodGangName(rnr, "1700000000000000002", "worker", 1))
+	// Issue #874: this accepted PCS produces a 64-byte scale-out PodGang name.
+	rnr.Name = "grove-label-overflow-reproducer-1"
+	actual = GenerateNonAnchorPodGangName(rnr, "1700000000000000002", "worker", 1)
+	assert.Len(t, actual, 63)
+	assert.Empty(t, k8svalidation.IsValidLabelValue(actual))
+	assert.Equal(t, actual, GenerateNonAnchorPodGangName(rnr, "1700000000000000002", "worker", 1))
+	assert.NotEqual(t, actual, GenerateNonAnchorPodGangName(rnr, "1700000000000000002", "worker", 10))
+	assert.NotEqual(t, actual, GenerateNonAnchorPodGangName(rnr, "1700000000000000002", "reader", 1))
+	rnr.Name = "a"
+	assert.Empty(t, k8svalidation.IsDNS1123Subdomain(GenerateNonAnchorPodGangName(rnr, "1700000000000000002", "abcd."+strings.Repeat("a", 38), 1)))
 }
 
 func TestGeneratePodGangMapName(t *testing.T) {
