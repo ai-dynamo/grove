@@ -475,13 +475,15 @@ func (b *schedulerBackend) ValidatePodCliqueSet(_ context.Context, pcs *grovecor
 	}
 
 	// Kueue rejects a pod whose podSet carries more than one topology annotation, so a PodGroup cannot
-	// resolve both a required and a preferred topology domain (see topologyRequestForPodGroup).
+	// resolve both a required and a preferred topology domain. Resolve them as topologyRequestForPodGroup will.
+	preview := podGangTopologyPreview(pcs)
 	var bothRequiredAndPreferredCliques []string
 	for _, cliqueTemplate := range pcs.Spec.Template.Cliques {
 		if cliqueTemplate == nil {
 			continue
 		}
-		required, preferred := effectiveTopologyDomains(pcs.Spec.Template.TopologyConstraint, cliqueTemplate.TopologyConstraint)
+		required := scheduler.RequiredTopologyKeyForPodGroup(preview, cliqueTemplate.Name, "")
+		preferred := scheduler.PreferredTopologyKeyForPodGroup(preview, cliqueTemplate.Name)
 		if required != "" && preferred != "" {
 			bothRequiredAndPreferredCliques = append(bothRequiredAndPreferredCliques, cliqueTemplate.Name)
 		}
@@ -492,20 +494,47 @@ func (b *schedulerBackend) ValidatePodCliqueSet(_ context.Context, pcs *grovecor
 	return nil
 }
 
-// effectiveTopologyDomains returns the required and preferred topology domains that would be resolved
-// for a PodClique's PodGroup: the PodClique's own constraint, falling back per-field to the
-// PodCliqueSet-level constraint for whichever field the PodClique leaves unset. This mirrors the
-// PodGang-side resolution in scheduler.RequiredTopologyKeyForPodGroup / PreferredTopologyKeyForPodGroup.
-func effectiveTopologyDomains(pcsConstraint, cliqueConstraint *grovecorev1alpha1.TopologyConstraint) (required, preferred grovecorev1alpha1.TopologyDomain) {
-	required = cliqueConstraint.RequiredDomain()
-	if required == "" {
-		required = pcsConstraint.RequiredDomain()
+// podGangTopologyPreview lays out pcs's topology constraints the way the PodCliqueSet controller lays them out on a
+// PodGang, with clique names for PodGroup names and topology domains for node label keys.
+func podGangTopologyPreview(pcs *grovecorev1alpha1.PodCliqueSet) *groveschedulerv1alpha1.PodGang {
+	preview := &groveschedulerv1alpha1.PodGang{}
+	preview.Spec.TopologyConstraint = packConstraintForDomains(pcs.Spec.Template.TopologyConstraint)
+	for _, cliqueTemplate := range pcs.Spec.Template.Cliques {
+		if cliqueTemplate == nil {
+			continue
+		}
+		preview.Spec.PodGroups = append(preview.Spec.PodGroups, groveschedulerv1alpha1.PodGroup{
+			Name:               cliqueTemplate.Name,
+			TopologyConstraint: packConstraintForDomains(cliqueTemplate.TopologyConstraint),
+		})
 	}
-	preferred = cliqueConstraint.PreferredDomain()
-	if preferred == "" {
-		preferred = pcsConstraint.PreferredDomain()
+	for _, pcsgConfig := range pcs.Spec.Template.PodCliqueScalingGroupConfigs {
+		if constraint := packConstraintForDomains(pcsgConfig.TopologyConstraint); constraint != nil {
+			preview.Spec.TopologyConstraintGroupConfigs = append(preview.Spec.TopologyConstraintGroupConfigs, groveschedulerv1alpha1.TopologyConstraintGroupConfig{
+				Name:               pcsgConfig.Name,
+				PodGroupNames:      pcsgConfig.CliqueNames,
+				TopologyConstraint: constraint,
+			})
+		}
 	}
-	return required, preferred
+	return preview
+}
+
+// packConstraintForDomains returns constraint's required and preferred domains as a PodGang topology constraint,
+// or nil if it sets neither.
+func packConstraintForDomains(constraint *grovecorev1alpha1.TopologyConstraint) *groveschedulerv1alpha1.TopologyConstraint {
+	required, preferred := string(constraint.RequiredDomain()), string(constraint.PreferredDomain())
+	if required == "" && preferred == "" {
+		return nil
+	}
+	packConstraint := &groveschedulerv1alpha1.TopologyPackConstraint{}
+	if required != "" {
+		packConstraint.Required = &required
+	}
+	if preferred != "" {
+		packConstraint.Preferred = &preferred
+	}
+	return &groveschedulerv1alpha1.TopologyConstraint{PackConstraint: packConstraint}
 }
 
 // ValidatePodCliqueScale rejects any change to a PodClique's replica count. Scaling a PodClique

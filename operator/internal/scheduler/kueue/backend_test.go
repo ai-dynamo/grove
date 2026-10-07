@@ -18,6 +18,7 @@ package kueue
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
@@ -1139,38 +1140,65 @@ func TestBackend_ValidatePodCliqueSet_AutoScalingConfig(t *testing.T) {
 }
 
 func TestBackend_ValidatePodCliqueSet_TopologyRequiredAndPreferred(t *testing.T) {
+	requiredRack := &grovecorev1alpha1.TopologyConstraint{Pack: &grovecorev1alpha1.TopologyPackConstraint{RequiredDomain: "rack"}}
+	preferredHost := &grovecorev1alpha1.TopologyConstraint{Pack: &grovecorev1alpha1.TopologyPackConstraint{PreferredDomain: "host"}}
+	requiredRackPreferredHost := &grovecorev1alpha1.TopologyConstraint{Pack: &grovecorev1alpha1.TopologyPackConstraint{RequiredDomain: "rack", PreferredDomain: "host"}}
+
 	testCases := []struct {
 		description      string
 		pcsConstraint    *grovecorev1alpha1.TopologyConstraint
+		pcsgConstraint   *grovecorev1alpha1.TopologyConstraint
 		cliqueConstraint *grovecorev1alpha1.TopologyConstraint
-		wantErr          bool
+		// wantRejected is the list of cliques the error names, in template order; empty means the PodCliqueSet is valid.
+		wantRejected string
 	}{
 		{
 			description: "no topology constraint is valid",
 		},
 		{
 			description:      "clique with only a required domain is valid",
-			cliqueConstraint: &grovecorev1alpha1.TopologyConstraint{Pack: &grovecorev1alpha1.TopologyPackConstraint{RequiredDomain: "rack"}},
+			cliqueConstraint: requiredRack,
 		},
 		{
 			description:      "clique with only a preferred domain is valid",
-			cliqueConstraint: &grovecorev1alpha1.TopologyConstraint{Pack: &grovecorev1alpha1.TopologyPackConstraint{PreferredDomain: "host"}},
+			cliqueConstraint: preferredHost,
 		},
 		{
 			description:      "clique resolving both required and preferred from its own constraint is rejected",
-			cliqueConstraint: &grovecorev1alpha1.TopologyConstraint{Pack: &grovecorev1alpha1.TopologyPackConstraint{RequiredDomain: "rack", PreferredDomain: "host"}},
-			wantErr:          true,
+			cliqueConstraint: requiredRackPreferredHost,
+			wantRejected:     "worker",
 		},
 		{
 			description:      "clique inheriting a required domain from the PodCliqueSet on top of its own preferred domain is rejected",
-			pcsConstraint:    &grovecorev1alpha1.TopologyConstraint{Pack: &grovecorev1alpha1.TopologyPackConstraint{RequiredDomain: "rack"}},
-			cliqueConstraint: &grovecorev1alpha1.TopologyConstraint{Pack: &grovecorev1alpha1.TopologyPackConstraint{PreferredDomain: "host"}},
-			wantErr:          true,
+			pcsConstraint:    requiredRack,
+			cliqueConstraint: preferredHost,
+			wantRejected:     "worker",
 		},
 		{
-			description:   "PodCliqueSet-level required and preferred domains inherited by a clique with no constraint of its own are rejected",
-			pcsConstraint: &grovecorev1alpha1.TopologyConstraint{Pack: &grovecorev1alpha1.TopologyPackConstraint{RequiredDomain: "rack", PreferredDomain: "host"}},
-			wantErr:       true,
+			description:   "PodCliqueSet-level required and preferred domains inherited by cliques with no constraint of their own are rejected",
+			pcsConstraint: requiredRackPreferredHost,
+			wantRejected:  "worker, leader",
+		},
+		{
+			description:    "PodCliqueScalingGroup with only a required domain is valid",
+			pcsgConstraint: requiredRack,
+		},
+		{
+			description:    "PodCliqueScalingGroup-level required and preferred domains are rejected for its member clique only",
+			pcsgConstraint: requiredRackPreferredHost,
+			wantRejected:   "worker",
+		},
+		{
+			description:      "clique inheriting a required domain from its PodCliqueScalingGroup on top of its own preferred domain is rejected",
+			pcsgConstraint:   requiredRack,
+			cliqueConstraint: preferredHost,
+			wantRejected:     "worker",
+		},
+		{
+			description:    "member clique combining a PodCliqueScalingGroup required domain with a PodCliqueSet preferred domain is rejected",
+			pcsConstraint:  preferredHost,
+			pcsgConstraint: requiredRack,
+			wantRejected:   "worker",
 		},
 	}
 
@@ -1193,17 +1221,32 @@ func TestBackend_ValidatePodCliqueSet_TopologyRequiredAndPreferred(t *testing.T)
 								Spec:               grovecorev1alpha1.PodCliqueSpec{Replicas: 4, MinAvailable: ptr.To[int32](4)},
 								TopologyConstraint: tc.cliqueConstraint,
 							},
+							{
+								Name: "leader",
+								Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To[int32](1)},
+							},
 						},
 					},
 				},
 			}
+			// "worker" joins a scaling group when the case sets one; "leader" always stays standalone.
+			if tc.pcsgConstraint != nil {
+				pcs.Spec.Template.PodCliqueScalingGroupConfigs = []grovecorev1alpha1.PodCliqueScalingGroupConfig{{
+					Name:               "sg",
+					CliqueNames:        []string{"worker"},
+					Replicas:           ptr.To[int32](1),
+					MinAvailable:       ptr.To[int32](1),
+					TopologyConstraint: tc.pcsgConstraint,
+				}}
+			}
 
 			err := b.ValidatePodCliqueSet(context.Background(), pcs)
-			if tc.wantErr {
-				require.ErrorContains(t, err, "resolving both a required and a preferred topology domain")
-			} else {
+			if tc.wantRejected == "" {
 				require.NoError(t, err)
+				return
 			}
+			require.ErrorContains(t, err, "resolving both a required and a preferred topology domain")
+			assert.Truef(t, strings.HasSuffix(err.Error(), "resolve both: "+tc.wantRejected), "got %q", err.Error())
 		})
 	}
 }
