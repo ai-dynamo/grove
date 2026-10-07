@@ -846,6 +846,56 @@ func TestBackend_SyncPodGang_UsesTopologyConstraintGroupConfig(t *testing.T) {
 	}
 }
 
+// TestBackend_SyncPodGang_SortsPodSetsByName proves the Workload lists its PodSets in name order (the order
+// Kueue checks them in), not in the PodGang's order.
+func TestBackend_SyncPodGang_SortsPodSetsByName(t *testing.T) {
+	pcs := &grovecorev1alpha1.PodCliqueSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "demo",
+			Namespace: "default",
+			Labels:    map[string]string{queueNameLabel: "grove-poc"},
+		},
+		Spec: grovecorev1alpha1.PodCliqueSetSpec{
+			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
+				Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+					{Name: "prefill", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 2}},
+					{Name: "decode", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1}},
+				},
+			},
+		},
+	}
+	cl := testutils.NewTestClientBuilder().WithObjects(
+		pcs,
+		newStandalonePodClique("demo-0-prefill", "demo"),
+		newStandalonePodClique("demo-0-decode", "demo"),
+	).Build()
+	b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKueue})
+	require.NoError(t, b.Init(nil))
+	podGang := &groveschedulerv1alpha1.PodGang{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "demo-0",
+			Namespace: "default",
+			Labels:    map[string]string{apicommon.LabelPartOfKey: "demo"},
+		},
+		Spec: groveschedulerv1alpha1.PodGangSpec{
+			PodGroups: []groveschedulerv1alpha1.PodGroup{
+				{Name: "demo-0-prefill", MinReplicas: 2},
+				{Name: "demo-0-decode", MinReplicas: 1},
+			},
+		},
+	}
+
+	require.NoError(t, b.SyncPodGang(context.Background(), podGang))
+
+	got := &kueuev1beta2.Workload{}
+	require.NoError(t, cl.Get(context.Background(), client.ObjectKey{Namespace: "default", Name: "demo-0"}, got))
+	require.Len(t, got.Spec.PodSets, 2)
+	assert.Equal(t, kueuev1beta2.NewPodSetReference("demo-0-decode"), got.Spec.PodSets[0].Name)
+	assert.Equal(t, int32(1), got.Spec.PodSets[0].Count)
+	assert.Equal(t, kueuev1beta2.NewPodSetReference("demo-0-prefill"), got.Spec.PodSets[1].Name)
+	assert.Equal(t, int32(2), got.Spec.PodSets[1].Count)
+}
+
 func TestBackend_ValidatePodCliqueSet_MinCount(t *testing.T) {
 	testCases := []struct {
 		description string

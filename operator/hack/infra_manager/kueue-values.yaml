@@ -49,7 +49,8 @@ managerConfig:
     integrations:
       frameworks:
       - "pod"
-    # Evicts a Workload not PodsReady within 15s (Test_Kueue8); well above other scenarios' ready time.
+    # Evicts a Workload not PodsReady within 15s (Test_Kueue8, 9); well above other scenarios' ready time.
+    # Kueue also sets the PodsReady condition Test_Kueue10 waits for only when this is configured.
     waitForPodsReady:
       timeout: 15s
       blockAdmission: false

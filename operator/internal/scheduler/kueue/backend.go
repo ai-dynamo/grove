@@ -17,9 +17,11 @@
 package kueue
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -229,6 +231,9 @@ func (b *schedulerBackend) buildPrebuiltWorkload(ctx context.Context, pcs *grove
 		}
 		podSets = append(podSets, podSet)
 	}
+	// Kueue checks a prebuilt Workload against its pods' PodSets sorted by name, and finishes it as OutOfSync
+	// if the Workload lists them in another order.
+	slices.SortFunc(podSets, func(a, b kueuev1beta2.PodSet) int { return cmp.Compare(a.Name, b.Name) })
 
 	workload := &kueuev1beta2.Workload{
 		ObjectMeta: metav1.ObjectMeta{

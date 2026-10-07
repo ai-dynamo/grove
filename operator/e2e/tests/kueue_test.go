@@ -33,6 +33,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/pods"
 	"github.com/ai-dynamo/grove/operator/e2e/setup"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
+	"github.com/ai-dynamo/grove/operator/e2e/waiter"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
@@ -548,10 +549,10 @@ func Test_Kueue4_TopologyAwarePodSetRequest(t *testing.T) {
 }
 
 // Test_Kueue5_WorkloadRepairAfterFinished exercises ensureWorkload's delete-and-recreate repair of a
-// Finished prebuilt Kueue Workload end to end. Kueue never finishes Grove's serving pod groups on its
-// own, so a Finished condition is patched directly onto the Workload's status, and a single pod is
-// deleted to invoke PreparePod for its replacement, which is the path that re-runs ensureWorkload
-// with an uncached read (see backend.go's ensureWorkload and PreparePod).
+// Finished prebuilt Kueue Workload end to end. Kueue finishes a serving pod group's Workload only on
+// errors such as falling out of sync with its pods, so a Finished condition is patched directly onto the
+// Workload's status, and a single pod is deleted to invoke PreparePod for its replacement, which is the
+// path that re-runs ensureWorkload with an uncached read (see backend.go's ensureWorkload and PreparePod).
 func Test_Kueue5_WorkloadRepairAfterFinished(t *testing.T) {
 	ctx := context.Background()
 	expectedPods := 2
@@ -1100,4 +1101,72 @@ func Test_Kueue9_AllOrNothingRunningNotReadyEvictsAndReadmits(t *testing.T) {
 	}
 
 	Logger.Info("Test_Kueue9_AllOrNothingRunningNotReadyEvictsAndReadmits completed successfully!")
+}
+
+// Test_Kueue10_UnsortedCliquesKeepWorkloadInSync verifies Kueue accepts the prebuilt Workload of a PodGang whose
+// cliques aren't in name order: Kueue checks a Workload's PodSets against its pods' PodSets sorted by name.
+func Test_Kueue10_UnsortedCliquesKeepWorkloadInSync(t *testing.T) {
+	ctx := context.Background()
+	expectedPods := 2
+
+	tc, cleanup := testctx.PrepareTest(ctx, t, 2,
+		testctx.WithWorkload(&testctx.WorkloadConfig{
+			Name:         "kueue-clique-order",
+			YAMLPath:     "../yaml/kueue-workload-clique-order.yaml",
+			Namespace:    "default",
+			ExpectedPods: expectedPods,
+		}),
+	)
+	defer cleanup()
+	requireKueueCRD(t, tc)
+
+	Logger.Info("1. Deploy kueue-clique-order, whose cliques are listed prefill before decode")
+	if _, err := tc.DeployAndVerifyWorkload(); err != nil {
+		t.Fatalf("Failed to deploy workload: %v", err)
+	}
+
+	pgVerifier := podgang.NewVerifier(tc.Client, Logger)
+	podGangs, err := pgVerifier.List(ctx, types.NamespacedName{Namespace: tc.Namespace, Name: tc.Workload.Name})
+	if err != nil {
+		t.Fatalf("Failed to list PodGangs: %v", err)
+	}
+	if len(podGangs) != 1 {
+		t.Fatalf("Expected exactly 1 PodGang, got %d", len(podGangs))
+	}
+	podGang := podGangs[0]
+
+	// Kueue sets PodsReady only after finding the Workload in sync with every pod of the group, so an out-of-sync
+	// Workload never gets it: Kueue finishes it instead, and Grove may then rebuild it under a new UID.
+	Logger.Info("2. Verify Kueue reports every pod Ready without ever finishing the Workload")
+	wlVerifier := kueueworkload.NewVerifier(tc.Client, Logger)
+	original, err := wlVerifier.WaitUntilVerified(ctx, podGang.Namespace, podGang.Name, tc.Timeout, tc.Interval, waiter.AlwaysTrue[*kueuev1beta2.Workload])
+	if err != nil {
+		t.Fatalf("Kueue Workload not found: %v", err)
+	}
+	wl, err := wlVerifier.WaitUntilVerified(ctx, podGang.Namespace, podGang.Name, tc.Timeout, tc.Interval,
+		func(wl *kueuev1beta2.Workload) bool {
+			return kueueworkload.PodsReady(wl) || kueueworkload.Finished(wl) || kueueworkload.UIDChanged(original.UID)(wl)
+		},
+	)
+	if err != nil {
+		t.Fatalf("Kueue Workload never reached PodsReady=True: %v", err)
+	}
+	if kueueworkload.Finished(wl) {
+		cond := apimeta.FindStatusCondition(wl.Status.Conditions, kueuev1beta2.WorkloadFinished)
+		podSetNames := make([]kueuev1beta2.PodSetReference, 0, len(wl.Spec.PodSets))
+		for _, podSet := range wl.Spec.PodSets {
+			podSetNames = append(podSetNames, podSet.Name)
+		}
+		t.Fatalf("Kueue finished Workload %s/%s (reason %s: %s); its PodSets are %v", wl.Namespace, wl.Name, cond.Reason, cond.Message, podSetNames)
+	}
+	if wl.UID != original.UID {
+		t.Fatalf("Workload %s/%s was rebuilt (UID %s -> %s), which Grove does only once Kueue finishes or deactivates it", wl.Namespace, wl.Name, original.UID, wl.UID)
+	}
+
+	Logger.Info("3. Verify both pods are Running")
+	if err := tc.WaitForPods(expectedPods); err != nil {
+		t.Fatalf("Failed to wait for pods to be Running: %v", err)
+	}
+
+	Logger.Info("Test_Kueue10_UnsortedCliquesKeepWorkloadInSync completed successfully!")
 }
