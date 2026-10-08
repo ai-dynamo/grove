@@ -384,6 +384,12 @@ func (b *schedulerBackend) RemovePodFinalizers(ctx context.Context, pod *corev1.
 	return nil
 }
 
+// IsPodFinalized mirrors Kueue's isPodRunnableOrSucceeded: Kueue stops counting a deleted pod once it has
+// failed, or if it never got a node.
+func (b *schedulerBackend) IsPodFinalized(pod *corev1.Pod) bool {
+	return pod.Spec.NodeName == "" || pod.Status.Phase == corev1.PodFailed
+}
+
 func (b *schedulerBackend) topologyRequestForPodGroup(podGang *groveschedulerv1alpha1.PodGang, podGroupName string) *resolvedTopologyRequest {
 	requiredKey := scheduler.RequiredTopologyKeyForPodGroup(podGang, podGroupName, "")
 	preferredKey := scheduler.PreferredTopologyKeyForPodGroup(podGang, podGroupName)

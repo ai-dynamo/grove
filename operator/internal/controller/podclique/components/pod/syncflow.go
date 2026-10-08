@@ -130,6 +130,7 @@ func (r _resource) prepareSyncFlow(ctx context.Context, logger logr.Logger, pclq
 		)
 	}
 
+	ss.finalizer, _ = r.schedRegistry.GetOrDefault(pclq.Spec.PodSpec.SchedulerName).(scheduler.Finalizer)
 	return ss, nil
 }
 
@@ -337,11 +338,13 @@ func (r _resource) syncPCSGPodIndexLabels(ctx context.Context, ss *syncSnapshot)
 // negative value is pods to delete.
 func (r _resource) computePodCountDelta(ss *syncSnapshot) (int, error) {
 	podsByPodGang, _ := groupPodsByPodGang(ss.existingPCLQPods)
-	reconciledCount, err := r.reconcileLivePodCountWithExpectations(ss.pclq.ObjectMeta, ss.pcsgReplicaPodGangName, podsByPodGang[ss.pcsgReplicaPodGangName])
+	group := podsByPodGang[ss.pcsgReplicaPodGangName]
+	reconciledCount, err := r.reconcileLivePodCountWithExpectations(ss.pclq.ObjectMeta, ss.pcsgReplicaPodGangName, group)
 	if err != nil {
 		return 0, err
 	}
-	return int(ss.pclq.Spec.Replicas) - int(reconciledCount), nil
+	delta, err := r.withholdReplacementsOfUnfinalizedPods(ss, ss.pcsgReplicaPodGangName, group.terminating, ss.pclq.Spec.Replicas-reconciledCount)
+	return int(delta), err
 }
 
 // deleteExcessPods deletes `diff` number of excess Pods from this PodClique concurrently.
@@ -646,6 +649,8 @@ type syncSnapshot struct {
 	pcsgReplicaPodGangName  string
 	existingPCLQPods        []*corev1.Pod
 	expectedPodTemplateHash string
+	// finalizer is nil when the PodClique's scheduler backend does not implement scheduler.Finalizer.
+	finalizer scheduler.Finalizer
 }
 
 // syncFlowResult captures the result of a sync flow run.

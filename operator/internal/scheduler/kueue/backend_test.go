@@ -1326,3 +1326,25 @@ func TestBackend_ValidatePodCliqueSet_PodSetLimit(t *testing.T) {
 		})
 	}
 }
+
+func TestBackend_IsPodFinalized(t *testing.T) {
+	testCases := []struct {
+		description string
+		nodeName    string
+		phase       corev1.PodPhase
+		want        bool
+	}{
+		{description: "a running pod on a node is still counted", nodeName: "node-1", phase: corev1.PodRunning},
+		{description: "a pending pod on a node is still counted", nodeName: "node-1", phase: corev1.PodPending},
+		{description: "a succeeded pod is still counted until it is removed", nodeName: "node-1", phase: corev1.PodSucceeded},
+		{description: "a failed pod is finalized", nodeName: "node-1", phase: corev1.PodFailed, want: true},
+		{description: "a pod that never got a node is finalized", phase: corev1.PodPending, want: true},
+	}
+	b := &schedulerBackend{}
+	for _, tc := range testCases {
+		t.Run(tc.description, func(t *testing.T) {
+			pod := &corev1.Pod{Spec: corev1.PodSpec{NodeName: tc.nodeName}, Status: corev1.PodStatus{Phase: tc.phase}}
+			assert.Equal(t, tc.want, b.IsPodFinalized(pod))
+		})
+	}
+}

@@ -66,6 +66,9 @@ type Finalizer interface {
 	// RemovePodFinalizers removes the finalizers the scheduler puts on pod but never removes itself, so they
 	// never keep a deleted Pod around; it is a no-op if there are none.
 	RemovePodFinalizers(ctx context.Context, pod *corev1.Pod) error
+	// IsPodFinalized reports whether the scheduler no longer counts pod, which is being deleted. The PodClique
+	// controller creates its replacement only then.
+	IsPodFinalized(pod *corev1.Pod) bool
 }
 
 // TopologyAwareBackend is an optional interface that Backend

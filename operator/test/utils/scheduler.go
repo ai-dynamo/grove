@@ -160,3 +160,8 @@ func (s *FakeFinalizerBackend) RemovePodFinalizers(_ context.Context, pod *corev
 	s.RemovedFrom = append(s.RemovedFrom, pod.Name)
 	return nil
 }
+
+// IsPodFinalized reports pod finalized once it has failed, or if it never got a node, as Kueue does.
+func (s *FakeFinalizerBackend) IsPodFinalized(pod *corev1.Pod) bool {
+	return pod.Spec.NodeName == "" || pod.Status.Phase == corev1.PodFailed
+}

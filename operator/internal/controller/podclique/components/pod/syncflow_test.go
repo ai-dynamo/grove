@@ -644,3 +644,54 @@ func TestRemoveSchedulerFinalizersFromDeletingPods(t *testing.T) {
 		})
 	}
 }
+
+func TestComputePodCountDelta(t *testing.T) {
+	const podGangName = "pcsg-pg"
+	testCases := []struct {
+		description    string
+		finalizer      scheduler.Finalizer
+		terminatingPod *corev1.Pod
+		wantDelta      int
+	}{
+		{
+			description:    "without a finalizer a terminating pod is replaced at once",
+			terminatingPod: scheduledTerminatingPod("pod-b", podGangName, corev1.PodRunning),
+			wantDelta:      1,
+		},
+		{
+			description:    "a terminating pod the scheduler still counts withholds its replacement",
+			finalizer:      testutils.NewFakeFinalizerBackend("kueue"),
+			terminatingPod: scheduledTerminatingPod("pod-b", podGangName, corev1.PodRunning),
+			wantDelta:      0,
+		},
+		{
+			description:    "a failed terminating pod is replaced",
+			finalizer:      testutils.NewFakeFinalizerBackend("kueue"),
+			terminatingPod: scheduledTerminatingPod("pod-b", podGangName, corev1.PodFailed),
+			wantDelta:      1,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.description, func(t *testing.T) {
+			pclq := testutils.NewPodCliqueBuilder(testPCSName, "uid", testCliqueName, testNamespace, testPCSReplicaIndex).Build()
+			pclq.Spec.Replicas = 2
+			key, err := componentutils.PodGangScopedExpectationsStoreKey(pclq.ObjectMeta, podGangName)
+			require.NoError(t, err)
+			store := expect.NewExpectationsStore()
+			require.NoError(t, store.ExpectDeletions(logr.Discard(), key, tc.terminatingPod.UID))
+
+			r := _resource{expectationsStore: store}
+			ss := &syncSnapshot{
+				pclq:                   pclq,
+				pcsgReplicaPodGangName: podGangName,
+				existingPCLQPods:       []*corev1.Pod{nonTerminatingPodInPodGang("pod-a", podGangName, ""), tc.terminatingPod},
+				finalizer:              tc.finalizer,
+			}
+
+			delta, err := r.computePodCountDelta(ss)
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantDelta, delta)
+		})
+	}
+}
