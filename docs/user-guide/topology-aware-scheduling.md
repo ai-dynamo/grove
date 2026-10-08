@@ -271,5 +271,7 @@ The `TopologyLevelsUnavailable` condition reports whether all topology domains r
 
 To allocate a single Pod's GPUs on the same NUMA node, use Kubernetes *Dynamic Resource Allocation (DRA)* with `matchAttribute: resource.kubernetes.io/numaNode` in a `ResourceClaimTemplate`, referenced through the existing `podSpec.resourceClaims` and container `resources.claims` fields as shown in [single-pod.yaml](../../operator/samples/user-guide/04_topology-aware-scheduling/single-pod.yaml). Use [NVIDIA DRA driver v0.5.0 or later](https://github.com/kubernetes-sigs/dra-driver-nvidia-gpu/releases/tag/v0.5.0), which publishes this attribute.
 
+Following [Kubernetes DRA roles](https://kubernetes.io/docs/concepts/resource-management/dynamic-resource-allocation/#dra-user-types), cluster administrators provide the driver and DeviceClasses; workload operators define claim templates and their Pod references. In this example, Grove does not inject GPU claims or modify existing ones.
+
 - If no eligible node has enough free GPUs on a single NUMA node, the Pod remains `Pending`. This DRA constraint is checked during scheduling, not kubelet admission.
 - GPUs with unknown NUMA locality (`numa_node = -1`) lack `resource.kubernetes.io/numaNode` and cannot satisfy `matchAttribute`. The Pod remains `Pending` unless enough matching GPUs are available elsewhere.
