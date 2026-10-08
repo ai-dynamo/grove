@@ -28,10 +28,9 @@ kai_scheduler:
     - "ghcr.io/kai-scheduler/kai-scheduler/scheduler"
 
 kueue:
-  # Must match the sigs.k8s.io/kueue version vendored in operator/go.mod, since Grove's kueue
-  # scheduler backend builds Kueue API types directly and relies on Kueue's runtime behavior
-  # (see operator/internal/scheduler/kueue/backend.go).
-  version: "0.17.8"
+  # May be newer than sigs.k8s.io/kueue in operator/go.mod, as long as it still serves the
+  # kueue.x-k8s.io/v1beta2 API that Grove's kueue scheduler backend is built against.
+  version: "0.20.1"
   helm_chart: "oci://registry.k8s.io/kueue/charts/kueue"
   namespace: "kueue-system"
   images:

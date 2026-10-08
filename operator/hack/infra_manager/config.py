@@ -126,9 +126,7 @@ class KueueConfig(BaseModel):
     Attributes:
         enabled: Install Kueue. Unlike Kai, Kueue is opt-in: the kueue scheduler backend is a POC
             and is not part of every e2e run.
-        version: Kueue Helm chart version. Defaults to the sigs.k8s.io/kueue version vendored in
-            operator/go.mod so the installed controller matches the API types Grove's kueue
-            scheduler backend was built against.
+        version: Kueue Helm chart version. Defaults to the version pinned in dependencies.yaml.
     """
 
     model_config = ConfigDict(extra="forbid")
