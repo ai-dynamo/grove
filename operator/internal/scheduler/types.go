@@ -70,6 +70,10 @@ type Finalizer interface {
 	// never keep a deleted Pod around; it is a no-op if there are none. For example, when a PodClique is deleted,
 	// Kueue keeps its finalizer on the Pods of the serving pod group, so they would stay Terminating.
 	RemovePodFinalizers(ctx context.Context, pod *corev1.Pod) error
+	// IsPodFinalized reports whether the scheduler no longer counts pod, which is being deleted. The PodClique
+	// controller creates its replacement only then. For example, Kueue keeps counting a deleted Pod while it
+	// runs, so an earlier replacement would push the pod group past its Workload's PodSet count.
+	IsPodFinalized(pod *corev1.Pod) bool
 }
 
 // TopologyAwareBackend is an optional interface that Backend
