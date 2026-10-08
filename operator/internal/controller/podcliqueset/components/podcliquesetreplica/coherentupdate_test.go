@@ -16,11 +16,13 @@ package podcliquesetreplica
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"testing"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
-	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
+	commonrevision "github.com/ai-dynamo/grove/operator/internal/controller/common/revision"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/go-logr/logr"
@@ -38,6 +40,8 @@ const (
 
 func TestInScopeUpdateCounts(t *testing.T) {
 	pcs := coherentTestPCS([]string{"frontend", "router"}, []string{"decode"})
+	revision, err := testutils.NewRevision(pcs)
+	require.NoError(t, err)
 	replicaInfo := pcsReplicaInfo{
 		replicaIndex: 0,
 		pclqs: []grovecorev1alpha1.PodClique{
@@ -49,7 +53,7 @@ func TestInScopeUpdateCounts(t *testing.T) {
 		},
 	}
 
-	inScopeStandalone, updatedStandalone, inScopePCSG, updatedPCSG := inScopeUpdateCounts(pcs, replicaInfo)
+	inScopeStandalone, updatedStandalone, inScopePCSG, updatedPCSG := inScopeUpdateCounts(pcs, revision, replicaInfo)
 
 	assert.Equal(t, 2, inScopeStandalone)
 	assert.Equal(t, 1, updatedStandalone)
@@ -60,15 +64,19 @@ func TestInScopeUpdateCounts(t *testing.T) {
 func TestCoherentProgressMessage(t *testing.T) {
 	t.Run("returns nil when every in-scope component has converged", func(t *testing.T) {
 		pcs := coherentTestPCS([]string{"frontend"}, []string{"decode"})
+		revision, err := testutils.NewRevision(pcs)
+		require.NoError(t, err)
 		replicaInfo := pcsReplicaInfo{
 			pclqs: []grovecorev1alpha1.PodClique{standalonePCLQAtHash(pcs, "frontend", coherentHashOf(pcs, "frontend"))},
 			pcsgs: []grovecorev1alpha1.PodCliqueScalingGroup{pcsgAtGenerationHash(pcs, "decode", new(coherentTestCurrentGen))},
 		}
-		assert.Nil(t, coherentProgressMessage(pcs, replicaInfo))
+		assert.Nil(t, coherentProgressMessage(pcs, revision, replicaInfo))
 	})
 
 	t.Run("summarizes standalone PodCliques and PodCliqueScalingGroups when both are in scope", func(t *testing.T) {
 		pcs := coherentTestPCS([]string{"frontend", "router"}, []string{"decode"})
+		revision, err := testutils.NewRevision(pcs)
+		require.NoError(t, err)
 		replicaInfo := pcsReplicaInfo{
 			pclqs: []grovecorev1alpha1.PodClique{
 				standalonePCLQAtHash(pcs, "frontend", coherentHashOf(pcs, "frontend")),
@@ -76,17 +84,19 @@ func TestCoherentProgressMessage(t *testing.T) {
 			},
 			pcsgs: []grovecorev1alpha1.PodCliqueScalingGroup{pcsgAtGenerationHash(pcs, "decode", nil)},
 		}
-		require.NotNil(t, coherentProgressMessage(pcs, replicaInfo))
-		assert.Equal(t, "1/2 standalone PodCliques and 0/1 PodCliqueScalingGroups updated to the current revision", *coherentProgressMessage(pcs, replicaInfo))
+		require.NotNil(t, coherentProgressMessage(pcs, revision, replicaInfo))
+		assert.Equal(t, "1/2 standalone PodCliques and 0/1 PodCliqueScalingGroups updated to the current revision", *coherentProgressMessage(pcs, revision, replicaInfo))
 	})
 
 	t.Run("omits the standalone part when only PodCliqueScalingGroups are in scope", func(t *testing.T) {
 		pcs := coherentTestPCS(nil, []string{"decode"})
+		revision, err := testutils.NewRevision(pcs)
+		require.NoError(t, err)
 		replicaInfo := pcsReplicaInfo{
 			pcsgs: []grovecorev1alpha1.PodCliqueScalingGroup{pcsgAtGenerationHash(pcs, "decode", nil)},
 		}
-		require.NotNil(t, coherentProgressMessage(pcs, replicaInfo))
-		assert.Equal(t, "0/1 PodCliqueScalingGroups updated to the current revision", *coherentProgressMessage(pcs, replicaInfo))
+		require.NotNil(t, coherentProgressMessage(pcs, revision, replicaInfo))
+		assert.Equal(t, "0/1 PodCliqueScalingGroups updated to the current revision", *coherentProgressMessage(pcs, revision, replicaInfo))
 	})
 }
 
@@ -129,6 +139,8 @@ func TestInFlightEpochsForReplica(t *testing.T) {
 
 func TestUpdateCoherentReplicaProgress(t *testing.T) {
 	pcs := coherentTestPCS([]string{"frontend"}, nil)
+	revision, err := testutils.NewRevision(pcs)
+	require.NoError(t, err)
 	pcs.Status.UpdateProgress.CurrentlyUpdating = []grovecorev1alpha1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 0}}
 	pgm := testutils.NewPodGangMapBuilder(coherentTestPCSName, coherentTestNamespace, coherentTestPCSUID, 0).
 		WithEntries(grovecorev1alpha1.PodGangEntry{Epoch: "200", PodCliqueSetGenerationHash: coherentTestCurrentGen, PodCliques: map[string]int32{"frontend": 1}}).Build()
@@ -138,7 +150,7 @@ func TestUpdateCoherentReplicaProgress(t *testing.T) {
 	}
 	r := _resource{client: testutils.SetupFakeClient(pcs, pgm)}
 
-	err := r.updateCoherentReplicaProgress(context.Background(), logr.Discard(), pcs, replicaInfo)
+	err = r.updateCoherentReplicaProgress(context.Background(), logr.Discard(), pcs, revision, replicaInfo)
 
 	require.NoError(t, err)
 	current := pcs.Status.UpdateProgress.CurrentlyUpdating[0]
@@ -148,6 +160,8 @@ func TestUpdateCoherentReplicaProgress(t *testing.T) {
 }
 
 func TestIsUpdateComplete(t *testing.T) {
+	revision, err := testutils.NewRevision(coherentTestPCS([]string{"frontend"}, []string{"decode"}))
+	require.NoError(t, err)
 	singleGenEntries := []grovecorev1alpha1.PodGangEntry{
 		{Epoch: "100", PodCliqueSetGenerationHash: coherentTestCurrentGen},
 		{Epoch: "200", PodCliqueSetGenerationHash: coherentTestCurrentGen},
@@ -168,41 +182,70 @@ func TestIsUpdateComplete(t *testing.T) {
 	t.Run("coherent update is complete when all components converged and the PodGangMap is single-generation", func(t *testing.T) {
 		pcs := coherentTestPCS([]string{"frontend"}, []string{"decode"})
 		ri := convergedReplicaInfo(pcs, singleGenEntries)
-		assert.True(t, ri.isUpdateComplete(pcs))
+		assert.True(t, ri.isUpdateComplete(pcs, revision))
 	})
 
 	t.Run("coherent update is not complete when the PodGangMap still holds an older generation", func(t *testing.T) {
 		pcs := coherentTestPCS([]string{"frontend"}, []string{"decode"})
 		ri := convergedReplicaInfo(pcs, multiGenEntries)
-		assert.False(t, ri.isUpdateComplete(pcs))
+		assert.False(t, ri.isUpdateComplete(pcs, revision))
 	})
 
 	t.Run("RollingRecreate update does not apply the single-generation gate", func(t *testing.T) {
 		pcs := coherentTestPCS([]string{"frontend"}, []string{"decode"})
 		pcs.Spec.UpdateStrategy = &grovecorev1alpha1.PodCliqueSetUpdateStrategy{Type: grovecorev1alpha1.RollingRecreateStrategy}
 		ri := convergedReplicaInfo(pcs, multiGenEntries)
-		assert.True(t, ri.isUpdateComplete(pcs))
+		assert.True(t, ri.isUpdateComplete(pcs, revision))
 	})
 
 	t.Run("coherent update with an empty PodGangMap is complete", func(t *testing.T) {
 		pcs := coherentTestPCS([]string{"frontend"}, []string{"decode"})
 		ri := convergedReplicaInfo(pcs, nil)
-		assert.True(t, ri.isUpdateComplete(pcs))
+		assert.True(t, ri.isUpdateComplete(pcs, revision))
 	})
 
 	t.Run("an unconverged standalone PodClique keeps the update incomplete even when the PodGangMap is single-generation", func(t *testing.T) {
 		pcs := coherentTestPCS([]string{"frontend"}, []string{"decode"})
 		ri := convergedReplicaInfo(pcs, singleGenEntries)
 		ri.pclqs = []grovecorev1alpha1.PodClique{standalonePCLQAtHash(pcs, "frontend", "stale-hash")}
-		assert.False(t, ri.isUpdateComplete(pcs))
+		assert.False(t, ri.isUpdateComplete(pcs, revision))
 	})
 
 	t.Run("an unconverged PodCliqueScalingGroup keeps the update incomplete even when the PodGangMap is single-generation", func(t *testing.T) {
 		pcs := coherentTestPCS([]string{"frontend"}, []string{"decode"})
 		ri := convergedReplicaInfo(pcs, singleGenEntries)
 		ri.pcsgs = []grovecorev1alpha1.PodCliqueScalingGroup{pcsgAtGenerationHash(pcs, "decode", nil)} // stale generation
-		assert.False(t, ri.isUpdateComplete(pcs))
+		assert.False(t, ri.isUpdateComplete(pcs, revision))
 	})
+}
+
+func TestIsUpdateCompleteUsesPersistedTemplateIdentity(t *testing.T) {
+	pcs := coherentTestPCS([]string{"frontend"}, nil)
+	controllerRevision, err := testutils.NewPodCliqueSetControllerRevision(pcs)
+	require.NoError(t, err)
+	data := commonrevision.Data{}
+	require.NoError(t, json.Unmarshal(controllerRevision.Data.Raw, &data))
+	data.Cliques[0].Hash = "legacy-frontend"
+	controllerRevision.Data.Raw, err = json.Marshal(data)
+	require.NoError(t, err)
+	revision, err := commonrevision.DecodeRevision(controllerRevision)
+	require.NoError(t, err)
+
+	for _, replicas := range []int32{1, 0} {
+		t.Run(fmt.Sprintf("replicas=%d", replicas), func(t *testing.T) {
+			pclq := standalonePCLQAtHash(pcs, "frontend", "legacy-frontend")
+			pclq.Spec.Replicas = replicas
+			pclq.Status.ReadyReplicas = replicas
+			pclq.Status.UpdatedReplicas = replicas
+			info := pcsReplicaInfo{pclqs: []grovecorev1alpha1.PodClique{pclq}}
+			assert.True(t, info.isUpdateComplete(pcs, revision))
+			assert.Nil(t, coherentProgressMessage(pcs, revision, info))
+
+			info.pclqs[0].Status.CurrentPodTemplateHash = new("stale-hash")
+			assert.False(t, info.isUpdateComplete(pcs, revision))
+			assert.NotNil(t, coherentProgressMessage(pcs, revision, info))
+		})
+	}
 }
 
 // coherentTestPCS builds a PodCliqueSet with the given standalone and PodCliqueScalingGroup component
@@ -228,7 +271,7 @@ func coherentTestPCS(standaloneCliques, pcsgConfigs []string) *grovecorev1alpha1
 //
 //nolint:unparam // cliqueName is a genuine PCLQ dimension. Current tests only exercise "frontend".
 func coherentHashOf(pcs *grovecorev1alpha1.PodCliqueSet, cliqueName string) string {
-	return componentutils.ComputePCLQPodTemplateHash(componentutils.FindPodCliqueTemplateSpecByName(pcs, cliqueName), pcs.Spec.Template.PriorityClassName)
+	return testutils.ComputePodCliqueTemplateHashes(pcs)[cliqueName]
 }
 
 // standalonePCLQAtHash builds a standalone PodClique for replica 0 whose deployed hash and status hashes

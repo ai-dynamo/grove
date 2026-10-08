@@ -20,7 +20,6 @@ import (
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
-	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/stretchr/testify/assert"
@@ -36,7 +35,7 @@ func TestNewlyChangedInScope(t *testing.T) {
 		WithScalingGroupConfig("decode", []string{"decodeworker"}, 3, 1).
 		Build()
 	hashOf := func(cliqueName string) string {
-		return componentutils.ComputePCLQPodTemplateHash(componentutils.FindPodCliqueTemplateSpecByName(pcs, cliqueName), pcs.Spec.Template.PriorityClassName)
+		return testutils.ComputePodCliqueTemplateHashes(pcs)[cliqueName]
 	}
 	testCases := []struct {
 		description       string
@@ -71,7 +70,7 @@ func TestNewlyChangedInScope(t *testing.T) {
 	}
 	for _, tc := range testCases {
 		t.Run(tc.description, func(t *testing.T) {
-			scope := newlyChangedInScope(pcs, tc.deployedHash)
+			scope := newlyChangedInScope(pcs, testutils.ComputePodCliqueTemplateHashes(pcs), tc.deployedHash)
 			assert.Equal(t, tc.wantStandalone, sets.List(scope.standalonePCLQs))
 			assert.Equal(t, tc.wantScalingGroups, sets.List(scope.podCliqueScalingGroups))
 		})
@@ -139,7 +138,7 @@ func TestComputeCoherentUpdateScope(t *testing.T) {
 			WithStandaloneCliqueReplicas("router", 1)
 	}
 	hashOf := func(pcs *grovecorev1alpha1.PodCliqueSet, cliqueName string) string {
-		return componentutils.ComputePCLQPodTemplateHash(componentutils.FindPodCliqueTemplateSpecByName(pcs, cliqueName), pcs.Spec.Template.PriorityClassName)
+		return testutils.ComputePodCliqueTemplateHashes(pcs)[cliqueName]
 	}
 	pclqWithHash := func(cliqueName, podTemplateHash string) *grovecorev1alpha1.PodClique {
 		return testutils.NewPodCliqueBuilder(testPCSName, "uid", cliqueName, testNamespace, 0).
@@ -153,7 +152,7 @@ func TestComputeCoherentUpdateScope(t *testing.T) {
 			pclqWithHash("frontend", "stale-hash"),
 			pclqWithHash("router", hashOf(pcs, "router")))}
 
-		scope, err := r.computeCoherentUpdateScope(context.Background(), pcs)
+		scope, err := r.computeCoherentUpdateScope(context.Background(), pcs, selectedRevisionForPCS(t, pcs))
 
 		require.NoError(t, err)
 		assert.Equal(t, []string{"frontend"}, sets.List(scope.standalonePCLQs))
@@ -177,7 +176,7 @@ func TestComputeCoherentUpdateScope(t *testing.T) {
 			pclqWithHash("frontend", hashOf(pcs, "frontend")), // unchanged by this edit, carried via pending
 			pclqWithHash("router", "stale-hash"))}             // changed by this edit
 
-		scope, err := r.computeCoherentUpdateScope(context.Background(), pcs)
+		scope, err := r.computeCoherentUpdateScope(context.Background(), pcs, selectedRevisionForPCS(t, pcs))
 
 		require.NoError(t, err)
 		assert.Equal(t, []string{"frontend", "router"}, sets.List(scope.standalonePCLQs))

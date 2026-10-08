@@ -23,6 +23,7 @@ import (
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	internalconstants "github.com/ai-dynamo/grove/operator/internal/constants"
 	ctrlcommon "github.com/ai-dynamo/grove/operator/internal/controller/common"
+	commonrevision "github.com/ai-dynamo/grove/operator/internal/controller/common/revision"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
@@ -53,6 +54,10 @@ func (r *Reconciler) reconcileStatus(ctx context.Context, logger logr.Logger, pc
 		logger.Error(err, "could not get PodCliqueSet for PodClique", "pclqObjectKey", pclqObjectKey)
 		return ctrlcommon.ReconcileWithErrors("could not get PodCliqueSet for PodClique", err)
 	}
+	revision, err := componentutils.GetPodCliqueSetRevision(ctx, r.client, pcs)
+	if err != nil {
+		return ctrlcommon.ReconcileWithErrors("could not get PodCliqueSet revision", err)
+	}
 
 	existingPods, err := componentutils.GetPCLQPods(ctx, r.client, pcsName, pclq)
 	if err != nil {
@@ -66,7 +71,7 @@ func (r *Reconciler) reconcileStatus(ctx context.Context, logger logr.Logger, pc
 	mutateReplicas(pclq, podCategories, len(existingPods))
 	mutateUpdatedReplica(pclq, existingPods, podCategories[corev1.PodScheduled])
 	// mutate PodClique.Status.CurrentPodTemplateHash and PodClique.Status.CurrentPodCliqueSetGenerationHash
-	if err = mutateCurrentHashes(logger, pcs, pclq); err != nil {
+	if err = mutateCurrentHashes(logger, revision, pclq); err != nil {
 		logger.Error(err, "failed to compute PodClique current hashes")
 		return ctrlcommon.ReconcileWithErrors("failed to compute PodClique current hashes", err)
 	}
@@ -111,19 +116,19 @@ func (r *Reconciler) reconcileStatus(ctx context.Context, logger logr.Logger, pc
 }
 
 // mutateCurrentHashes updates the PodClique's current template and generation hashes when updates are complete
-func mutateCurrentHashes(logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, pclq *grovecorev1alpha1.PodClique) error {
+func mutateCurrentHashes(logger logr.Logger, revision *commonrevision.Revision, pclq *grovecorev1alpha1.PodClique) error {
 	if componentutils.IsPCLQRollingUpdateInProgress(pclq) || pclq.Status.UpdatedReplicas != pclq.Status.Replicas {
 		logger.V(1).Info("PodClique is currently updating, cannot set PodCliqueSet CurrentGenerationHash yet")
 		return nil
 	}
 	if pclq.Status.UpdateProgress == nil {
-		expectedPodTemplateHash, err := componentutils.GetExpectedPCLQPodTemplateHash(pcs, pclq.ObjectMeta)
+		expectedPodTemplateHash, err := componentutils.GetExpectedPCLQPodTemplateHash(revision, pclq.ObjectMeta)
 		if err != nil {
 			return err
 		}
 		if isPodCliqueTemplateHashCurrent(pclq, expectedPodTemplateHash) {
 			pclq.Status.CurrentPodTemplateHash = ptr.To(expectedPodTemplateHash)
-			pclq.Status.CurrentPodCliqueSetGenerationHash = pcs.Status.CurrentGenerationHash
+			pclq.Status.CurrentPodCliqueSetGenerationHash = ptr.To(revision.GenerationHash())
 		}
 	} else if componentutils.IsLastPCLQUpdateCompleted(pclq) {
 		logger.Info("PodClique update has completed, setting CurrentPodCliqueSetGenerationHash")
