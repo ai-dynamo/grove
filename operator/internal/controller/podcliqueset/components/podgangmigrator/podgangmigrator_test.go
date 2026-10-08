@@ -21,10 +21,12 @@ import (
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	apiconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
+	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	groveclientscheme "github.com/ai-dynamo/grove/operator/internal/client"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
+	"github.com/ai-dynamo/grove/operator/internal/scheduler/kai"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
@@ -251,6 +253,27 @@ func TestMigratePodSkipsMembershipWhenBackendHasNoAnnotations(t *testing.T) {
 	got := getPod(t, cl, pod.Name)
 	assert.Equal(t, "epoch-podgang", got.Labels[apicommon.LabelPodGang])
 	assert.NotContains(t, got.Annotations, testMembershipAnnotationKey, "backend without membership annotations must add none")
+}
+
+func TestMigratePodLeavesKAIMembershipToAggregateReconciliation(t *testing.T) {
+	for _, membership := range []string{"legacy-podgang", "grove-pcs-0"} {
+		t.Run(membership, func(t *testing.T) {
+			pod := testutils.NewPodBuilder("p0", testNamespace).
+				WithLabels(map[string]string{apicommon.LabelPodGang: "legacy-podgang", apicommon.LabelBasePodGang: "legacy-podgang"}).
+				WithSchedulerName(string(configv1alpha1.SchedulerNameKai)).Build()
+			pod.Annotations = map[string]string{"pod-group-name": membership}
+			pod.Labels["kai.scheduler/subgroup-name"] = "existing-leaf"
+			cl := newMigratorClient(pod)
+			backend := kai.New(cl, cl.Scheme(), nil, configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKai})
+			r := New(cl, cl.Scheme(), fakeRegistry{backend: backend}).(*_resource)
+			require.NoError(t, r.migratePodLabelsAndAnnotations(context.Background(), pod, "epoch-podgang"))
+			got := getPod(t, cl, pod.Name)
+			assert.Equal(t, "epoch-podgang", got.Labels[apicommon.LabelPodGang])
+			assert.NotContains(t, got.Labels, apicommon.LabelBasePodGang)
+			assert.Equal(t, membership, got.Annotations["pod-group-name"])
+			assert.Equal(t, "existing-leaf", got.Labels["kai.scheduler/subgroup-name"])
+		})
+	}
 }
 
 func TestDeleteIsNoOp(t *testing.T) {

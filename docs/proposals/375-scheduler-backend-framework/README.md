@@ -176,7 +176,9 @@ type Backend interface {
 
 	// SyncPodGang synchronizes (creates/updates) scheduler-specific resources for a PodGang
 	// reacting to a creation or update of a PodGang resource.
-	// This is called by the Backend Controller when PodGang spec changes.
+	// This is called by the Backend Controller when PodGang spec changes or
+	// when PodGang deletion starts. Backends may continue reconciliation while
+	// the PodGang is terminating and use a finalizer to finish required cleanup.
 	// Backends should:
 	// - Create scheduler-specific custom resources (e.g., PodGroup, Workload)
 	// - Update existing resources if the PodGang spec changed
@@ -431,6 +433,8 @@ A `PodGang` is considered as `Initialized` when:
 
 Unit tests will cover the main framework areas: backend interface and registry behavior, each backend implementation’s contract (e.g. `PreparePod`, `ValidatePodCliqueSet`), controller integration with backend hooks (PodGang lifecycle, pod creation and scheduling gates), and OperatorConfiguration parsing and defaulting. 
 
+PodGang lifecycle tests additionally verify that a transition to a non-zero deletion timestamp invokes `SyncPodGang()` and that terminating PodGangs remain available to the backend until its finalizer is removed.
+
 
 #### E2E Tests
 
@@ -470,4 +474,3 @@ The Scheduler Backend Framework will follow a staged rollout approach:
 
 ## Implementation History
 - **2026-01-27**: Initial GREP proposal created and submitted for review
-
