@@ -137,12 +137,68 @@ func TestGetOrderedKindsForSyncPCSG(t *testing.T) {
 
 // TestShouldResetOrTriggerUpdatePCSG tests the shouldResetOrTriggerUpdate function for PodCliqueScalingGroup
 func TestShouldResetOrTriggerUpdatePCSG(t *testing.T) {
+	rollingPCS := func(hash string) *grovecorev1alpha1.PodCliqueSet {
+		return &grovecorev1alpha1.PodCliqueSet{
+			Status: grovecorev1alpha1.PodCliqueSetStatus{CurrentGenerationHash: ptr.To(hash)},
+		}
+	}
+	endedUpdate := func(hash string) *grovecorev1alpha1.PodCliqueScalingGroup {
+		return &grovecorev1alpha1.PodCliqueScalingGroup{
+			Status: grovecorev1alpha1.PodCliqueScalingGroupStatus{
+				UpdateProgress: &grovecorev1alpha1.PodCliqueScalingGroupUpdateProgress{
+					PodCliqueSetGenerationHash: hash,
+					UpdateStartedAt:            metav1.Now(),
+					UpdateEndedAt:              ptr.To(metav1.Now()),
+				},
+			},
+		}
+	}
+	onDeletePCS := rollingPCS("current-hash")
+	onDeletePCS.Spec.UpdateStrategy = &grovecorev1alpha1.PodCliqueSetUpdateStrategy{Type: grovecorev1alpha1.OnDeleteStrategy}
+
 	tests := []struct {
-		name     string
-		pcs      *grovecorev1alpha1.PodCliqueSet
-		pcsg     *grovecorev1alpha1.PodCliqueScalingGroup
-		expected bool
+		name                  string
+		pcs                   *grovecorev1alpha1.PodCliqueSet
+		pcsg                  *grovecorev1alpha1.PodCliqueScalingGroup
+		pclqFQNsPendingUpdate []string
+		expected              bool
 	}{
+		{
+			// The PCS template moved to "current-hash", away while the update ran and back again: the update
+			// recorded for "current-hash" ended, but the PodCliques never reached it.
+			name:                  "should_restart_ended_update_whose_podcliques_did_not_converge",
+			pcs:                   rollingPCS("current-hash"),
+			pcsg:                  endedUpdate("current-hash"),
+			pclqFQNsPendingUpdate: []string{"pcs-0-sga-0-pclq"},
+			expected:              true,
+		},
+		{
+			name:     "should_not_restart_ended_update_whose_podcliques_converged",
+			pcs:      rollingPCS("current-hash"),
+			pcsg:     endedUpdate("current-hash"),
+			expected: false,
+		},
+		{
+			name:                  "should_not_restart_ended_update_for_on_delete_strategy",
+			pcs:                   onDeletePCS,
+			pcsg:                  endedUpdate("current-hash"),
+			pclqFQNsPendingUpdate: []string{"pcs-0-sga-0-pclq"},
+			expected:              false,
+		},
+		{
+			name: "should_not_restart_update_in_progress_for_same_hash",
+			pcs:  rollingPCS("current-hash"),
+			pcsg: &grovecorev1alpha1.PodCliqueScalingGroup{
+				Status: grovecorev1alpha1.PodCliqueScalingGroupStatus{
+					UpdateProgress: &grovecorev1alpha1.PodCliqueScalingGroupUpdateProgress{
+						PodCliqueSetGenerationHash: "current-hash",
+						UpdateStartedAt:            metav1.Now(),
+					},
+				},
+			},
+			pclqFQNsPendingUpdate: []string{"pcs-0-sga-0-pclq"},
+			expected:              false,
+		},
 		{
 			name: "should_not_trigger_update_until_pcs_current_generation_hash_exists",
 			pcs: &grovecorev1alpha1.PodCliqueSet{
@@ -207,7 +263,7 @@ func TestShouldResetOrTriggerUpdatePCSG(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			result := shouldResetOrTriggerUpdate(tc.pcs, tc.pcsg)
+			result := shouldResetOrTriggerUpdate(tc.pcs, tc.pcsg, tc.pclqFQNsPendingUpdate)
 			assert.Equal(t, tc.expected, result)
 		})
 	}
