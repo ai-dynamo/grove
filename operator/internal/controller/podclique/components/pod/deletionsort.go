@@ -15,6 +15,8 @@
 package pod
 
 import (
+	"strconv"
+
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
@@ -26,6 +28,8 @@ type DeletionSorter struct {
 	Pods []*corev1.Pod
 	// ExpectedPodTemplateHash is the hash that is expected as a label on the updated pods
 	ExpectedPodTemplateHash string
+	// PreferHighestPodIndex preserves contiguous ordinals when scaling in a PCSG member.
+	PreferHighestPodIndex bool
 }
 
 // Len returns the length of the DeletionSorter
@@ -56,6 +60,17 @@ func (s DeletionSorter) Less(i, j int) bool {
 	// is still serving.
 	if isPodTerminating(s.Pods[i]) != isPodTerminating(s.Pods[j]) {
 		return isPodTerminating(s.Pods[i])
+	}
+
+	// PCSG member scale-in must remove the highest ordinals, even if a lower
+	// ordinal is unhealthy or was recreated more recently. Group-wide indices
+	// are computed from these ordinals and must remain within the replica range.
+	if s.PreferHighestPodIndex {
+		indexI := deletionPodIndex(s.Pods[i])
+		indexJ := deletionPodIndex(s.Pods[j])
+		if indexI != indexJ {
+			return indexI > indexJ
+		}
 	}
 
 	// 1. Unassigned < assigned
@@ -100,4 +115,14 @@ func isPodReady(pod *corev1.Pod) bool {
 		}
 	}
 	return false
+}
+
+// Missing or invalid indices sort after valid ordinals and retain the usual
+// deletion preference among themselves.
+func deletionPodIndex(pod *corev1.Pod) int {
+	index, err := strconv.Atoi(pod.Labels[apicommon.LabelPodCliquePodIndex])
+	if err != nil || index < 0 {
+		return -1
+	}
+	return index
 }
