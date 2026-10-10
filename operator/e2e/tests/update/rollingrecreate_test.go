@@ -1393,3 +1393,86 @@ func Test_RU27_RollingRecreateWithComponentScaledToZero(t *testing.T) {
 		t.Fatalf("pods did not become Ready after scaling pc-a back up: %v", err)
 	}
 }
+
+// Test_RU28_MaxUnavailableAboveTemplateReplicas verifies that maxUnavailable is a ceiling on how many
+// replicas a RollingRecreate rollout may disrupt at once, applied against the current number of live
+// replicas rather than the replica count declared in the PodCliqueSet template. The template is only a
+// starting value. The live PodCliqueScalingGroup is scaled separately through its /scale subresource,
+// so maxUnavailable may legitimately be larger than the template replica count.
+//
+// sg-x starts with template replicas 1 and maxUnavailable 2. Deploying it confirms a maxUnavailable
+// larger than the template replica count is accepted. The test then checks the ceiling in both scale
+// directions:
+//
+//  1. Scale sg-x out to 4 live replicas and roll it. The rollout keeps at most 2 replicas unavailable at
+//     once and reaches 2, so the budget is applied to the 4 live replicas, not the template value of 1.
+//  2. Scale sg-x back in to 1 live replica and roll it again. maxUnavailable is still 2, but only one
+//     replica remains, so the rollout disrupts at most that one replica. The scale-in is not rejected,
+//     and the larger budget never disrupts more replicas than exist.
+func Test_RU28_MaxUnavailableAboveTemplateReplicas(t *testing.T) {
+	const workloadName = "wl-mu-rr"
+
+	tests.Logger.Info("1. Deploy wl-mu-rr (sg-x template replicas 1, maxUnavailable 2)")
+	tc, cleanup, _ := setupTest(t, testConfig{
+		workloadName: workloadName,
+		workloadYAML: "../../yaml/workload-mu-rr.yaml",
+		workerNodes:  10,
+		// PCS replicas 1: front(1) + sg-x(1) x pc-b(1) = 2 pods.
+		expectedPods: 2,
+	})
+	defer cleanup()
+
+	tests.Logger.Info("2. Delay pod readiness so the unavailability window is observable")
+	if err := kwok.ApplyStage(tc.Ctx, tc.Client, kwokStageReadyDelayedPath); err != nil {
+		t.Fatalf("failed to apply readiness-delay KWOK stage: %v", err)
+	}
+	defer func() {
+		if err := kwok.DeleteStage(tc.Ctx, tc.Client, kwokStageReadyDelayedName); err != nil {
+			t.Errorf("failed to delete readiness-delay KWOK stage: %v", err)
+		}
+	}()
+
+	tests.Logger.Info("3. Scale sg-x out from 1 to 4 live replicas (front 1 + sg-x 4 = 5 pods)")
+	tc.ScalePCSGAcrossAllReplicasAndWait(workloadName, "sg-x", 1, 4, 5, 0)
+
+	tests.Logger.Info("4. Roll sg-x and verify the budget is honoured against the live count of 4")
+	tcLong := *tc
+	tcLong.Timeout = 2 * time.Minute
+	peakOut, err := maxUnavailablePods(&tcLong, notReadyPodForPCSG(&tcLong, "sg-x"), func() error {
+		prevHash := getPCSGenerationHash(t, &tcLong)
+		if err := triggerPodCliqueUpdate(&tcLong, "pc-b"); err != nil {
+			return err
+		}
+		if err := waitForGenerationHashChange(&tcLong, prevHash); err != nil {
+			return err
+		}
+		return waitForRollingUpdateComplete(&tcLong, 1)
+	})
+	if err != nil {
+		t.Fatalf("rolling update of sg-x at 4 replicas did not complete: %v", err)
+	}
+	assert.LessOrEqualf(t, peakOut, 2, "expected at most maxUnavailable=2 sg-x replicas unavailable at once with 4 live replicas, observed %d", peakOut)
+	assert.Equalf(t, 2, peakOut, "expected the rollout to exercise the full budget of 2 with 4 live replicas (not clamp to the template value of 1), observed peak %d", peakOut)
+	assertUpdateInProgressCleared(tc)
+
+	tests.Logger.Info("5. Scale sg-x back in from 4 to 1 live replica (front 1 + sg-x 1 = 2 pods)")
+	tc.ScalePCSGAcrossAllReplicasAndWait(workloadName, "sg-x", 1, 1, 2, 0)
+
+	tests.Logger.Info("6. Roll sg-x again: the stored budget of 2 must not disrupt more than the single remaining replica")
+	peakIn, err := maxUnavailablePods(&tcLong, notReadyPodForPCSG(&tcLong, "sg-x"), func() error {
+		prevHash := getPCSGenerationHash(t, &tcLong)
+		if err := triggerPodCliqueUpdate(&tcLong, "pc-b"); err != nil {
+			return err
+		}
+		if err := waitForGenerationHashChange(&tcLong, prevHash); err != nil {
+			return err
+		}
+		return waitForRollingUpdateComplete(&tcLong, 1)
+	})
+	if err != nil {
+		t.Fatalf("rolling update of sg-x at 1 replica did not complete: %v", err)
+	}
+	assert.LessOrEqualf(t, peakIn, 1, "expected the rollout to disrupt at most the 1 remaining sg-x replica despite the stored budget of 2, observed %d", peakIn)
+	assert.Equalf(t, 1, peakIn, "expected the single remaining sg-x replica to be rolled, observed peak %d", peakIn)
+	assertUpdateInProgressCleared(tc)
+}

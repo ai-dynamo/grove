@@ -1021,6 +1021,83 @@ func Test_CU17_CoherentCorrectiveUpdateRecoversUnavailableReplicas(t *testing.T)
 	}
 }
 
+// Test_CU18_MaxUnavailableAboveTemplateReplicas is the Coherent version of Test_RU28. It verifies that
+// maxUnavailable caps how many replicas a Coherent rollout disrupts at once, measured against the
+// current number of live replicas rather than the replica count in the PodCliqueSet template. maxUnavailable
+// may be larger than the template replica count because the live PodCliqueScalingGroup is scaled
+// separately through its /scale subresource.
+//
+// sg-x starts with template replicas 1 and maxUnavailable 2 (maxUnavailable stays >= minAvailable 1,
+// which Coherent requires). Deploying it confirms the value is accepted. The test then scales sg-x out
+// to 4 live replicas and rolls it, expecting at most 2 replicas unavailable at once, then scales back in
+// to 1 and rolls again, expecting at most the single remaining replica to be disrupted even though
+// maxUnavailable is still 2.
+func Test_CU18_MaxUnavailableAboveTemplateReplicas(t *testing.T) {
+	const workloadName = "wl-mu-coh"
+
+	tests.Logger.Info("1. Deploy wl-mu-coh (sg-x template replicas 1, maxUnavailable 2)")
+	tc, cleanup, _ := setupTest(t, testConfig{
+		workloadName: workloadName,
+		workloadYAML: "../../yaml/workload-mu-coh.yaml",
+		workerNodes:  10,
+		expectedPods: 2,
+	})
+	defer cleanup()
+
+	tests.Logger.Info("2. Delay pod readiness so the unavailability window is observable")
+	if err := kwok.ApplyStage(tc.Ctx, tc.Client, kwokStageReadyDelayedPath); err != nil {
+		t.Fatalf("failed to apply readiness-delay KWOK stage: %v", err)
+	}
+	defer func() {
+		if err := kwok.DeleteStage(tc.Ctx, tc.Client, kwokStageReadyDelayedName); err != nil {
+			t.Errorf("failed to delete readiness-delay KWOK stage: %v", err)
+		}
+	}()
+
+	tcLong := *tc
+	tcLong.Timeout = 3 * time.Minute
+
+	tests.Logger.Info("3. Scale sg-x out from 1 to 4 live replicas (front 1 + sg-x 4 = 5 pods)")
+	tc.ScalePCSGAcrossAllReplicasAndWait(workloadName, "sg-x", 1, 4, 5, 0)
+
+	tests.Logger.Info("4. Trigger a Coherent rollout of sg-x and verify the budget is honoured against the live count of 4")
+	prevHash := getPCSGenerationHash(t, &tcLong)
+	peakOut, err := maxUnavailablePods(&tcLong, notReadyPodForPCSG(&tcLong, "sg-x"), func() error {
+		if err := triggerPodCliqueUpdate(&tcLong, "pc-b"); err != nil {
+			return err
+		}
+		if err := waitForGenerationHashChange(&tcLong, prevHash); err != nil {
+			return err
+		}
+		return waitForRollingUpdateComplete(&tcLong, 1)
+	})
+	if err != nil {
+		t.Fatalf("coherent update of sg-x at 4 replicas did not complete: %v", err)
+	}
+	assert.LessOrEqualf(t, peakOut, 2, "expected at most maxUnavailable=2 sg-x replicas unavailable at once with 4 live replicas under Coherent, observed %d", peakOut)
+	assertUpdateInProgressCleared(tc)
+
+	tests.Logger.Info("5. Scale sg-x back in from 4 to 1 live replica (front 1 + sg-x 1 = 2 pods)")
+	tc.ScalePCSGAcrossAllReplicasAndWait(workloadName, "sg-x", 1, 1, 2, 0)
+
+	tests.Logger.Info("6. Trigger a Coherent rollout again: the stored budget of 2 must not disrupt more than the single remaining replica")
+	prevHash = getPCSGenerationHash(t, &tcLong)
+	peakIn, err := maxUnavailablePods(&tcLong, notReadyPodForPCSG(&tcLong, "sg-x"), func() error {
+		if err := triggerPodCliqueUpdate(&tcLong, "pc-b"); err != nil {
+			return err
+		}
+		if err := waitForGenerationHashChange(&tcLong, prevHash); err != nil {
+			return err
+		}
+		return waitForRollingUpdateComplete(&tcLong, 1)
+	})
+	if err != nil {
+		t.Fatalf("coherent update of sg-x at 1 replica did not complete: %v", err)
+	}
+	assert.LessOrEqualf(t, peakIn, 1, "expected the Coherent rollout to disrupt at most the 1 remaining sg-x replica despite the stored budget of 2, observed %d", peakIn)
+	assertUpdateInProgressCleared(tc)
+}
+
 // removeUnschedulableSelector removes the impossible node selector from the first clique of the workload's
 // PCS template, letting its Pending pods schedule and bumping the generation hash to trigger the update.
 func removeUnschedulableSelector(t *testing.T, tc *testctx.TestContext) {
