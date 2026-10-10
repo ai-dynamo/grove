@@ -232,7 +232,10 @@ func (r _resource) computeCountDeltaByPodGang(ss *syncSnapshot, desiredCountByPo
 		if err != nil {
 			return nil, err
 		}
-		delta := desiredCountByPodGang[podGangName] - reconciledCount
+		delta, err := r.withholdReplacementsOfUnfinalizedPods(ss, podGangName, podsByPodGang[podGangName].terminating, desiredCountByPodGang[podGangName]-reconciledCount)
+		if err != nil {
+			return nil, err
+		}
 		if delta == 0 {
 			continue
 		}
@@ -264,6 +267,23 @@ func (r _resource) reconcileLivePodCountWithExpectations(pclqObjMeta metav1.Obje
 	return existingPodCount +
 		int32(len(r.expectationsStore.GetCreateExpectations(key))) -
 		int32(len(r.expectationsStore.GetDeleteExpectations(key))), nil
+}
+
+// withholdReplacementsOfUnfinalizedPods lowers a creation delta by the terminating pods the scheduler still counts
+// (see scheduler.Finalizer), so a replacement never overlaps its predecessor. A deletion delta is returned unchanged.
+func (r _resource) withholdReplacementsOfUnfinalizedPods(ss *syncSnapshot, podGangName string, terminatingPods []*corev1.Pod, delta int32) (int32, error) {
+	if delta <= 0 || ss.finalizer == nil {
+		return delta, nil
+	}
+	key, err := pclqexp.PodGangScopedExpectationsStoreKey(ss.pclq.ObjectMeta, podGangName)
+	if err != nil {
+		return 0, err
+	}
+	// Only a pod in the delete expectations was netted out of the count; any other terminating pod still counts as live.
+	withheld := lo.CountBy(terminatingPods, func(pod *corev1.Pod) bool {
+		return !ss.finalizer.IsPodFinalized(pod) && r.expectationsStore.HasDeleteExpectation(key, pod.GetUID())
+	})
+	return max(0, delta-int32(withheld)), nil
 }
 
 // applyCountDeltaByPodGang deletes the excess pods and creates the deficit for each PodGang.

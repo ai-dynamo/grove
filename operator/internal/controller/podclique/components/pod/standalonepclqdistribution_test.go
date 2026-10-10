@@ -112,6 +112,7 @@ func TestComputeCountDeltaByPodGang(t *testing.T) {
 		terminatingPods map[string][]*corev1.Pod
 		createExpUID    map[string][]types.UID // pending creates per PodGang
 		deleteExpUID    map[string][]types.UID // pending deletes per PodGang
+		finalizer       bool                   // whether the scheduler backend implements scheduler.Finalizer
 		expected        map[string]int32
 	}{
 		{
@@ -179,6 +180,42 @@ func TestComputeCountDeltaByPodGang(t *testing.T) {
 			deleteExpUID:    map[string][]types.UID{"pg-a": {"terminating"}},
 			expected:        map[string]int32{"pg-a": 2},
 		},
+		{
+			name:            "a terminating pod the scheduler still counts withholds its replacement",
+			desired:         map[string]int32{"pg-a": 2},
+			livePods:        map[string][]*corev1.Pod{"pg-a": {nonTerminatingPodInPodGang("pod-a", "pg-a", "")}},
+			terminatingPods: map[string][]*corev1.Pod{"pg-a": {scheduledTerminatingPod("pod-b", "pg-a", corev1.PodRunning)}},
+			deleteExpUID:    map[string][]types.UID{"pg-a": {"terminating"}},
+			finalizer:       true,
+			expected:        map[string]int32{},
+		},
+		{
+			name:            "a failed terminating pod no longer withholds its replacement",
+			desired:         map[string]int32{"pg-a": 2},
+			livePods:        map[string][]*corev1.Pod{"pg-a": {nonTerminatingPodInPodGang("pod-a", "pg-a", "")}},
+			terminatingPods: map[string][]*corev1.Pod{"pg-a": {scheduledTerminatingPod("pod-b", "pg-a", corev1.PodFailed)}},
+			deleteExpUID:    map[string][]types.UID{"pg-a": {"terminating"}},
+			finalizer:       true,
+			expected:        map[string]int32{"pg-a": 1},
+		},
+		{
+			name:            "withholding replacements never adds deletions",
+			desired:         map[string]int32{"pg-a": 1},
+			livePods:        map[string][]*corev1.Pod{"pg-a": {nonTerminatingPodInPodGang("pod-a", "pg-a", ""), nonTerminatingPodInPodGang("pod-b", "pg-a", "")}},
+			terminatingPods: map[string][]*corev1.Pod{"pg-a": {scheduledTerminatingPod("pod-c", "pg-a", corev1.PodRunning)}},
+			deleteExpUID:    map[string][]types.UID{"pg-a": {"terminating"}},
+			finalizer:       true,
+			expected:        map[string]int32{"pg-a": -1},
+		},
+		{
+			// Without a delete expectation, as after an operator restart, the terminating pod already counts as live.
+			name:            "a terminating pod still counted as live is not withheld twice",
+			desired:         map[string]int32{"pg-a": 3},
+			livePods:        map[string][]*corev1.Pod{"pg-a": {nonTerminatingPodInPodGang("pod-a", "pg-a", "")}},
+			terminatingPods: map[string][]*corev1.Pod{"pg-a": {scheduledTerminatingPod("pod-b", "pg-a", corev1.PodRunning)}},
+			finalizer:       true,
+			expected:        map[string]int32{"pg-a": 1},
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -195,6 +232,9 @@ func TestComputeCountDeltaByPodGang(t *testing.T) {
 			}
 			r := _resource{expectationsStore: store}
 			ss := &syncSnapshot{pclq: pclq}
+			if tc.finalizer {
+				ss.finalizer = testutils.NewFakeFinalizerBackend("kueue")
+			}
 
 			actual, err := r.computeCountDeltaByPodGang(ss, tc.desired, podsByPodGang)
 			require.NoError(t, err)
@@ -686,5 +726,13 @@ func podWithUID(name, podGangName string, uid types.UID) *corev1.Pod {
 func terminatingPodInPodGang(name, podGangName string, uid types.UID) *corev1.Pod {
 	pod := podWithUID(name, podGangName, uid)
 	pod.DeletionTimestamp = &metav1.Time{Time: time.Now()}
+	return pod
+}
+
+// scheduledTerminatingPod builds a terminating pod with UID "terminating" that got a node and is in phase.
+func scheduledTerminatingPod(name, podGangName string, phase corev1.PodPhase) *corev1.Pod {
+	pod := terminatingPodInPodGang(name, podGangName, "terminating")
+	pod.Spec.NodeName = "node-1"
+	pod.Status.Phase = phase
 	return pod
 }

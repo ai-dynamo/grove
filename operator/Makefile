@@ -192,6 +192,28 @@ run-e2e-mnnvl-full: e2e-cluster-up
 	@echo "> Tests passed, cleaning up cluster..."
 	@$(MAKE) e2e-cluster-down
 
+# Full e2e test run with the Kueue scheduler backend enabled: create a k3d cluster with Kueue
+# installed, run tests, then cleanup.
+# Usage: make run-e2e-kueue-full [TEST_PATTERN=<pattern>]
+# Examples:
+#   make run-e2e-kueue-full                              # Run all Kueue tests
+#   make run-e2e-kueue-full TEST_PATTERN='^Test_Kueue1_' # Run a single Kueue test
+.PHONY: run-e2e-kueue-full
+# Defaults to only the Kueue scenarios: the cluster this target brings up has Kai disabled, so an
+# unset TEST_PATTERN would otherwise run the whole suite against a cluster missing a dependency most
+# of it needs. Command-line TEST_PATTERN=... still overrides this (?= never wins over the command line).
+run-e2e-kueue-full: TEST_PATTERN ?= ^Test_Kueue
+run-e2e-kueue-full: export GROVE_E2E_DIAG_DIR = $(DIAG_DIR)
+run-e2e-kueue-full: export GROVE_E2E_DIAG_MODE = $(DIAG_MODE)
+run-e2e-kueue-full: export E2E_SCHEDULER__KUEUE__ENABLED = true
+run-e2e-kueue-full: export E2E_SCHEDULER__KAI__ENABLED = false
+run-e2e-kueue-full: e2e-cluster-up
+	@echo "> Running e2e Kueue tests..."
+	@$(MAKE) run-e2e TEST_PATTERN=$(TEST_PATTERN) || \
+		(echo "Tests failed, cleaning up cluster..."; $(MAKE) e2e-cluster-down; exit 1)
+	@echo "> Tests passed, cleaning up cluster..."
+	@$(MAKE) e2e-cluster-down
+
 # Create a real-node k3d cluster for e2e testing (no KWOK virtual nodes)
 # Uses 30 actual k3d worker containers with 150m memory each.
 # Delegates to e2e-cluster-up with worker/KWOK overrides.
@@ -265,11 +287,12 @@ run-soak-test:
 # Make targets for local development and testing
 # -------------------------------------------------------------
 # Starts a local k8s cluster using kind.
-# Usage: make kind-up [FAKE_NODES=<count>]
+# Usage: make kind-up [FAKE_NODES=<count>] [WORKERS=<count>]
 # Example: make kind-up FAKE_NODES=20
+# Example: make kind-up WORKERS=1   # 2-node cluster (control-plane + 1 worker)
 .PHONY: kind-up
 kind-up: $(KIND) $(YQ)
-	@$(MODULE_HACK_DIR)/kind-up.sh $(if $(FAKE_NODES),--fake-nodes $(FAKE_NODES))
+	@$(MODULE_HACK_DIR)/kind-up.sh $(if $(FAKE_NODES),--fake-nodes $(FAKE_NODES)) $(if $(WORKERS),--workers $(WORKERS))
 
 # Stops the local k8s cluster.
 .PHONY: kind-down

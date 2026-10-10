@@ -27,6 +27,15 @@ kai_scheduler:
     - "ghcr.io/kai-scheduler/kai-scheduler/queuecontroller"
     - "ghcr.io/kai-scheduler/kai-scheduler/scheduler"
 
+kueue:
+  # May be newer than sigs.k8s.io/kueue in operator/go.mod, as long as it still serves the
+  # kueue.x-k8s.io/v1beta2 API that Grove's kueue scheduler backend is built against.
+  version: "0.20.1"
+  helm_chart: "oci://registry.k8s.io/kueue/charts/kueue"
+  namespace: "kueue-system"
+  images:
+    - "registry.k8s.io/kueue/kueue"
+
 cert_manager:
   version: "v1.14.4"
   helm_repo: "https://charts.jetstack.io"

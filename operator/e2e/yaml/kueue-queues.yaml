@@ -1,0 +1,41 @@
+# Copyright 2026 NVIDIA CORPORATION
+# SPDX-License-Identifier: Apache-2.0
+#
+# Default Kueue queues for e2e tests using the "kueue" scheduler backend: a single
+# generously-quota'd queue named "grove-e2e", available in the "default" namespace that
+# e2e/testctx/context.go uses by default. Unlike Kai's cluster-scoped Queue CRs in
+# queues.yaml (which just need a name, "default" and "test"), Kueue's LocalQueue is
+# namespace-scoped and requires the namespace to actually exist -- there is currently no
+# e2e "test" namespace (resource_sharing_test.go's rsNamespace is "default" too). Add a
+# LocalQueue here (and a matching entry in kueue-values.yaml's
+# managedJobsNamespaceSelector) if a future scenario introduces a new namespace. A
+# PodCliqueSet opts in by setting the label kueue.x-k8s.io/queue-name: grove-e2e.
+
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: ResourceFlavor
+metadata:
+  name: default-flavor
+---
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: ClusterQueue
+metadata:
+  name: grove-e2e
+spec:
+  namespaceSelector: {}
+  resourceGroups:
+    - coveredResources: ["cpu", "memory"]
+      flavors:
+        - name: default-flavor
+          resources:
+            - name: cpu
+              nominalQuota: 1000
+            - name: memory
+              nominalQuota: 1000Gi
+---
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: LocalQueue
+metadata:
+  name: grove-e2e
+  namespace: default
+spec:
+  clusterQueue: grove-e2e
