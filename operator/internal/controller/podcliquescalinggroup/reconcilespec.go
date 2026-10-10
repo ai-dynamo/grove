@@ -29,6 +29,7 @@ import (
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 
 	"github.com/go-logr/logr"
+	"github.com/samber/lo"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -74,7 +75,7 @@ func (r *Reconciler) processUpdate(ctx context.Context, logger logr.Logger, pcsg
 	}
 
 	if !componentutils.IsRollingUpdateStrategy(pcs) {
-		if shouldResetOrTriggerUpdate(pcs, pcsg) {
+		if shouldResetOrTriggerUpdate(pcs, pcsg, nil) {
 			if err = r.initOrResetUpdate(ctx, pcs, pcsg); err != nil {
 				return ctrlcommon.ReconcileWithErrors("could not initialize update for OnDelete", err)
 			}
@@ -97,11 +98,18 @@ func (r *Reconciler) processUpdate(ctx context.Context, logger logr.Logger, pcsg
 		return ctrlcommon.ContinueReconcile()
 	}
 
+	pclqsPerPCSGReplica, err := r.getPodCliquesPerPCSGReplica(ctx, pcs.Name, pcsgObjectKey)
+	if err != nil {
+		return ctrlcommon.ReconcileWithErrors(fmt.Sprintf("could not list PodCliques for PodCliqueScalingGroup: %v", pcsgObjectKey), err)
+	}
+	pclqFQNsPendingUpdate := componentutils.GetPCLQsInPCSGPendingUpdate(pcs, pcsg,
+		lo.Flatten(lo.Values(pruneStrayPCSGPCLQs(pcsg, pclqsPerPCSGReplica))))
+
 	// Trigger processing of pending updates for this PCSG. Check if all pending updates for this PCSG and for the PCS CurrentGenerationHash
 	// has already been completed or are already in-progress. If that is true, then there is nothing more to do.
 	// If the rolling update is in-progress for a different PCS CurrentGenerationHash, or it has not even been started, then
 	// reset the rolling update progress so that it can be restarted.
-	if shouldResetOrTriggerUpdate(pcs, pcsg) {
+	if shouldResetOrTriggerUpdate(pcs, pcsg, pclqFQNsPendingUpdate) {
 		if err = r.initOrResetUpdate(ctx, pcs, pcsg); err != nil {
 			return ctrlcommon.ReconcileWithErrors("could not initialize RollingRecreate update", err)
 		}
@@ -109,17 +117,23 @@ func (r *Reconciler) processUpdate(ctx context.Context, logger logr.Logger, pcsg
 	return ctrlcommon.ContinueReconcile()
 }
 
-// shouldResetOrTriggerUpdate determines if a rolling update should be initiated based on generation hash changes
-func shouldResetOrTriggerUpdate(pcs *grovecorev1alpha1.PodCliqueSet, pcsg *grovecorev1alpha1.PodCliqueScalingGroup) bool {
+// shouldResetOrTriggerUpdate determines if a rolling update should be initiated based on generation hash changes.
+// pclqFQNsPendingUpdate lists the PodCliques of the PCSG whose template does not yet match the PCS template.
+func shouldResetOrTriggerUpdate(pcs *grovecorev1alpha1.PodCliqueSet, pcsg *grovecorev1alpha1.PodCliqueScalingGroup, pclqFQNsPendingUpdate []string) bool {
 	if pcs.Status.CurrentGenerationHash == nil {
 		return false
 	}
 
 	// If processing of rolling update of PCSG for PCS CurrentGenerationHash is either completed or in-progress,
 	// there is no need to reset or trigger another rolling update of this PCSG for the same PCS CurrentGenerationHash.
+	// An update for this hash can also have ended without its PodCliques reaching it: the PCS template was changed
+	// again while the update ran, so the PCSG never converged, and was later changed back. Under a rolling strategy
+	// that update has to be restarted, otherwise the PCS waits for this PCSG forever.
 	if pcsg.Status.UpdateProgress != nil &&
 		pcsg.Status.UpdateProgress.PodCliqueSetGenerationHash == *pcs.Status.CurrentGenerationHash {
-		return false
+		return componentutils.IsRollingUpdateStrategy(pcs) &&
+			pcsg.Status.UpdateProgress.UpdateEndedAt != nil &&
+			len(pclqFQNsPendingUpdate) > 0
 	}
 	return true
 }
