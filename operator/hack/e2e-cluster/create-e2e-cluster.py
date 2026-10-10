@@ -116,7 +116,7 @@ class ClusterConfig(BaseSettings):
         config = ClusterConfig()
 
         # Override via environment
-        E2E_WORKER_NODES=50 E2E_KAI_VERSION=v0.15.2 ./create-e2e-cluster.py
+        E2E_WORKER_NODES=50 E2E_KAI_VERSION=v0.16.9 ./create-e2e-cluster.py
 
         # In shell
         export E2E_CLUSTER_NAME=my-test-cluster

@@ -1,0 +1,272 @@
+// Copyright 2026 The Grove Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package podgangmap
+
+import (
+	"context"
+	"fmt"
+	"slices"
+	"strconv"
+
+	apicommon "github.com/ai-dynamo/grove/operator/api/common"
+	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
+	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
+	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
+	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
+
+	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
+	"github.com/go-logr/logr"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+)
+
+// syncSnapshot captures the state required for reconciling PodGangMap resources for a PodCliqueSet.
+// It is populated at the start of the synchronization and read-only thereafter.
+type syncSnapshot struct {
+	logger                           logr.Logger
+	pcs                              *grovecorev1alpha1.PodCliqueSet
+	existingStandalonePCLQsByReplica map[int][]grovecorev1alpha1.PodClique
+	existingPCSGsByReplica           map[int][]grovecorev1alpha1.PodCliqueScalingGroup
+	existingPGMByReplica             map[int]*grovecorev1alpha1.PodGangMap
+	existingPodGangsByReplica        map[int][]groveschedulerv1alpha1.PodGang
+	// mvuTemplate is the fixed Minimum Updateable Unit composition for a coherent update. It is computed
+	// once while a coherent update is in progress and is nil otherwise.
+	mvuTemplate *mvuTemplate
+}
+
+// takeSnapshot queries the live resources and creates a syncSnapshot.
+func (r _resource) takeSnapshot(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) (syncSnap *syncSnapshot, err error) {
+	syncSnap = &syncSnapshot{
+		logger: logger,
+		pcs:    pcs,
+	}
+	syncSnap.existingStandalonePCLQsByReplica, err = r.getExistingStandalonePCLQsByReplica(ctx, pcs)
+	if err != nil {
+		return nil, err
+	}
+	syncSnap.existingPCSGsByReplica, err = r.getExistingPCSGsByReplica(ctx, pcs)
+	if err != nil {
+		return nil, err
+	}
+	syncSnap.existingPGMByReplica, err = r.getExistingPGMByReplica(ctx, pcs)
+	if err != nil {
+		return nil, err
+	}
+	syncSnap.existingPodGangsByReplica, err = r.getExistingPodGangsByReplica(ctx, pcs)
+	if err != nil {
+		return nil, err
+	}
+	if componentutils.IsCoherentUpdateInProgress(pcs) {
+		syncSnap.mvuTemplate = computeMVUTemplate(pcs)
+	}
+	return syncSnap, nil
+}
+
+// getExistingStandalonePCLQsByReplica fetches all standalone PodCliques for the PCS and groups them by PCS replica index.
+func (r _resource) getExistingStandalonePCLQsByReplica(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet) (map[int][]grovecorev1alpha1.PodClique, error) {
+	existingStandalonePCLQs, err := componentutils.GetPodCliquesWithParentPCS(ctx, r.client, pcs.ObjectMeta)
+	if err != nil {
+		return nil, groveerr.WrapError(err,
+			errCodeListPCLQs,
+			component.OperationSync,
+			fmt.Sprintf("Error listing standalone PodCliques for PodCliqueSet: %v", client.ObjectKeyFromObject(pcs)),
+		)
+	}
+	standalonePCLQsByReplica, err := componentutils.GroupPCLQsByPCSReplicaIndex(existingStandalonePCLQs)
+	if err != nil {
+		return nil, groveerr.WrapError(err,
+			errCodeGroupPCLQsByReplica,
+			component.OperationSync,
+			fmt.Sprintf("Error grouping standalone PodCliques by replica index for PodCliqueSet: %v", client.ObjectKeyFromObject(pcs)),
+		)
+	}
+	return standalonePCLQsByReplica, nil
+}
+
+// getExistingPCSGsByReplica fetches all PodCliqueScalingGroups for the PCS and groups them by PCS replica index.
+func (r _resource) getExistingPCSGsByReplica(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet) (map[int][]grovecorev1alpha1.PodCliqueScalingGroup, error) {
+	existingPCSGs, err := componentutils.GetPCSGsForPCS(ctx, r.client, pcs.ObjectMeta)
+	if err != nil {
+		return nil, groveerr.WrapError(err,
+			errCodeListPCSGs,
+			component.OperationSync,
+			fmt.Sprintf("Error listing PodCliqueScalingGroups for PodCliqueSet: %v", client.ObjectKeyFromObject(pcs)),
+		)
+	}
+	pcsgsByReplica, err := componentutils.GroupPCSGsByPCSReplicaIndex(existingPCSGs)
+	if err != nil {
+		return nil, groveerr.WrapError(err,
+			errCodeGroupPCSGsByReplica,
+			component.OperationSync,
+			fmt.Sprintf("Error grouping PodCliqueScalingGroups by replica index for PodCliqueSet: %v", client.ObjectKeyFromObject(pcs)),
+		)
+	}
+	return pcsgsByReplica, nil
+}
+
+// getExistingPGMByReplica fetches all PodGangMaps for the PCS and groups them by PCS replica index.
+func (r _resource) getExistingPGMByReplica(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet) (map[int]*grovecorev1alpha1.PodGangMap, error) {
+	existingPGMs, err := componentutils.ListPodGangMapsForPCS(ctx, r.client, pcs.ObjectMeta)
+	if err != nil {
+		return nil, groveerr.WrapError(err,
+			errCodeListPodGangMaps,
+			component.OperationSync,
+			fmt.Sprintf("Error listing PodGangMaps for PodCliqueSet: %v", client.ObjectKeyFromObject(pcs)),
+		)
+	}
+	pgmByReplica, err := componentutils.PodGangMapByPCSReplicaIndex(existingPGMs)
+	if err != nil {
+		return nil, groveerr.WrapError(err,
+			errCodeListPodGangMaps,
+			component.OperationSync,
+			fmt.Sprintf("Error grouping PodGangMap by replica index for PodCliqueSet: %v", client.ObjectKeyFromObject(pcs)),
+		)
+	}
+	return pgmByReplica, nil
+}
+
+// getExistingPodGangsByReplica fetches the epoch-scheme PodGangs for the PCS and groups them by PCS
+// replica index. Only PodGangs carrying the grove.io/epoch label are considered. Legacy PodGangs
+// created before the epoch scheme carry no epoch and are not a reconstruction source, so they are
+// skipped and are replaced by the PodGang component during migration.
+func (r _resource) getExistingPodGangsByReplica(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet) (map[int][]groveschedulerv1alpha1.PodGang, error) {
+	existingPodGangs, err := componentutils.GetExistingPodGangs(ctx, r.client, pcs.ObjectMeta, pcs.Namespace)
+	if err != nil {
+		return nil, groveerr.WrapError(err,
+			errCodeListPodGangs,
+			component.OperationSync,
+			fmt.Sprintf("Error listing PodGangs for PodCliqueSet: %v", client.ObjectKeyFromObject(pcs)),
+		)
+	}
+	podGangsByReplica := make(map[int][]groveschedulerv1alpha1.PodGang)
+	for _, existingPodGang := range existingPodGangs {
+		labels := existingPodGang.Labels
+		if _, hasEpoch := labels[apicommon.LabelEpoch]; !hasEpoch {
+			continue
+		}
+		// An epoch-scheme PodGang always carries the replica-index label, so a missing or malformed
+		// value is a coding error.
+		replicaIndexLabel, ok := labels[apicommon.LabelPodCliqueSetReplicaIndex]
+		if !ok {
+			return nil, groveerr.New(errCodeGroupPodGangsByReplica, component.OperationSync,
+				fmt.Sprintf("PodGang %s has label %s but no %s", existingPodGang.Name, apicommon.LabelEpoch, apicommon.LabelPodCliqueSetReplicaIndex))
+		}
+		pcsReplicaIndex, err := strconv.Atoi(replicaIndexLabel)
+		if err != nil {
+			return nil, groveerr.New(errCodeGroupPodGangsByReplica, component.OperationSync,
+				fmt.Sprintf("%s label on PodGang %s is not a valid integer: %q", apicommon.LabelPodCliqueSetReplicaIndex, existingPodGang.Name, replicaIndexLabel))
+		}
+		podGangsByReplica[pcsReplicaIndex] = append(podGangsByReplica[pcsReplicaIndex], existingPodGang)
+	}
+	return podGangsByReplica, nil
+}
+
+// mvuTemplate is the composition of one Minimum Updateable Unit PodGang. It holds the MinAvailable pod
+// count of every in-scope standalone PodClique and the MinAvailable replica count of every in-scope
+// PodCliqueScalingGroup, the set a coherent update keeps gang-scheduled while it rolls the remaining
+// pods. It is computed once when the update starts and stays fixed until the update ends.
+type mvuTemplate struct {
+	// standalonePCLQs maps an in-scope standalone PodClique name to its MinAvailable pod count.
+	standalonePCLQs map[string]int32
+	// pcsgs maps an in-scope PodCliqueScalingGroup name to its MinAvailable replica count.
+	pcsgs map[string]int32
+}
+
+// computeMVUTemplate builds the mvuTemplate from the in-scope component set that
+// PCS.Status.UpdateProgress froze when the coherent update started. MinAvailable values are read
+// from the PCS spec, which the validating webhook holds unchanged for the duration of the update.
+func computeMVUTemplate(pcs *grovecorev1alpha1.PodCliqueSet) *mvuTemplate {
+	progress := pcs.Status.UpdateProgress
+	inScopeComponentNames := slices.Concat(progress.InScopeStandalonePodCliques, progress.InScopePodCliqueScalingGroups)
+	standalonePCLQs, pcsgs := componentutils.CoherentMinAvailableByComponent(pcs, inScopeComponentNames)
+	return &mvuTemplate{standalonePCLQs: standalonePCLQs, pcsgs: pcsgs}
+}
+
+// runSyncFlow reconciles the PodGangMap for every PCS replica, then deletes PodGangMaps orphaned by a
+// PCS replica scale-in. Each replica is in one of three states.
+//  1. No PodGangMap. Its entries are authored from the PCS spec, reusing the epoch its existing
+//     PodGangs carry so a rebuilt PodGangMap does not strand pods.
+//  2. A PodGangMap with no entries. This happens when every entry drained to empty. It is authored
+//     the same way as a missing PodGangMap so the replica recovers instead of staying empty.
+//  3. A PodGangMap with entries. reconcileEntries re-authors them, advancing an under-update replica
+//     to the current generation hash first.
+func (r _resource) runSyncFlow(ctx context.Context, syncSnap *syncSnapshot) error {
+	for pcsReplicaIndex := range int(syncSnap.pcs.Spec.Replicas) {
+		pgm := syncSnap.existingPGMByReplica[pcsReplicaIndex]
+
+		var (
+			entries []grovecorev1alpha1.PodGangEntry
+			err     error
+		)
+		// A coherent update advances an existing PodGangMap one sub-step per reconcile, and only for the
+		// replica the orchestrator has selected. Every other replica, and any replica whose PodGangMap is
+		// missing or empty, is authored through reconcileEntries so it stays frozen or bootstraps.
+		if componentutils.IsPCSReplicaUnderCoherentUpdate(syncSnap.pcs, pcsReplicaIndex) && pgm != nil && len(pgm.Spec.Entries) > 0 {
+			entries, err = r.buildCoherentUpdateEntries(ctx, syncSnap, pcsReplicaIndex, pgm)
+		} else {
+			entries, err = reconcileEntries(r.clk,
+				syncSnap.pcs, pcsReplicaIndex,
+				pgm,
+				syncSnap.existingPodGangsByReplica[pcsReplicaIndex],
+				syncSnap.existingStandalonePCLQsByReplica[pcsReplicaIndex],
+				syncSnap.existingPCSGsByReplica[pcsReplicaIndex])
+		}
+		if err != nil {
+			return err
+		}
+
+		pgmName := apicommon.GeneratePodGangMapName(apicommon.ResourceNameReplica{Name: syncSnap.pcs.Name, Replica: pcsReplicaIndex})
+		if err = r.createOrPatchPodGangMap(ctx, syncSnap.pcs, pgmName, pcsReplicaIndex, entries); err != nil {
+			return err
+		}
+	}
+	return r.deleteOrphanedPodGangMaps(ctx, syncSnap)
+}
+
+// createOrPatchPodGangMap creates or patches the named PodGangMap with the given entries.
+func (r _resource) createOrPatchPodGangMap(ctx context.Context,
+	pcs *grovecorev1alpha1.PodCliqueSet,
+	pgmName string,
+	pcsReplicaIndex int,
+	entries []grovecorev1alpha1.PodGangEntry) error {
+	pgm := emptyPodGangMap(client.ObjectKey{Namespace: pcs.Namespace, Name: pgmName})
+	if _, err := k8sutils.CreateOrPatchSpec(ctx, r.client, pgm, func() error {
+		return r.buildResource(pgm, pcs, pcsReplicaIndex, entries)
+	}); err != nil {
+		return groveerr.WrapError(err, errCodeCreateOrPatchPodGangMap, component.OperationSync,
+			fmt.Sprintf("Error creating or updating PodGangMap %s for PodCliqueSet: %v", pgmName, client.ObjectKeyFromObject(pcs)))
+	}
+	return nil
+}
+
+// deleteOrphanedPodGangMaps deletes PodGangMaps whose replica index is at or beyond the current PCS
+// replica count. PodGangMap is owner-referenced to the PCS, so a PCS replica scale-in does not
+// garbage-collect them. This cleanup is explicit.
+func (r _resource) deleteOrphanedPodGangMaps(ctx context.Context, syncSnap *syncSnapshot) error {
+	for pcsReplicaIndex, pgm := range syncSnap.existingPGMByReplica {
+		if pcsReplicaIndex < int(syncSnap.pcs.Spec.Replicas) {
+			continue
+		}
+		if err := r.client.Delete(ctx, pgm); err != nil {
+			return groveerr.WrapError(err,
+				errCodeDeletePodGangMaps,
+				component.OperationSync,
+				fmt.Sprintf("Error deleting orphaned PodGangMap %s for PodCliqueSet: %v", pgm.Name, client.ObjectKeyFromObject(syncSnap.pcs)),
+			)
+		}
+		syncSnap.logger.Info("Deleted PodGangMap for a scaled-in PCS replica index", "name", pgm.Name, "pcsReplicaIndex", pcsReplicaIndex)
+	}
+	return nil
+}

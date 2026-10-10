@@ -20,6 +20,7 @@ import (
 
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	"github.com/ai-dynamo/grove/operator/internal/controller/podclique/expectations"
 	"github.com/ai-dynamo/grove/operator/internal/expect"
 
 	"github.com/go-logr/logr"
@@ -53,7 +54,7 @@ func TestTriggerDeletionFlow(t *testing.T) {
 					Finalizers: []string{constants.FinalizerPodClique},
 				},
 			},
-			seedExpectationOf: "default/test-pclq",
+			seedExpectationOf: "default/test-pclq/test-pclq-pg-0",
 			expectFinalizer:   false,
 			expectRequeue:     false,
 			expectErrors:      false,
@@ -84,6 +85,7 @@ func TestTriggerDeletionFlow(t *testing.T) {
 				Build()
 
 			expectationsStore := expect.NewExpectationsStore()
+			require.NoError(t, expectationsStore.AddIndexers(expectations.PodCliqueExpectationsIndexers()))
 			if tc.seedExpectationOf != "" {
 				require.NoError(t, expectationsStore.ExpectCreations(logr.Discard(), tc.seedExpectationOf, "uid-1"))
 			}

@@ -55,10 +55,9 @@ func New(client client.Client, scheme *runtime.Scheme) component.Operator[grovec
 
 // GetExistingResourceNames returns the names of all ResourceClaims owned by this PCS.
 func (r _resource) GetExistingResourceNames(ctx context.Context, logger logr.Logger, pcsObjMeta metav1.ObjectMeta) ([]string, error) {
-	objMetaList := &metav1.PartialObjectMetadataList{}
-	objMetaList.SetGroupVersionKind(resourcev1.SchemeGroupVersion.WithKind("ResourceClaim"))
+	claimList := &resourcev1.ResourceClaimList{}
 	if err := r.client.List(ctx,
-		objMetaList,
+		claimList,
 		client.InNamespace(pcsObjMeta.Namespace),
 		client.MatchingLabels(resourceclaim.ResourceClaimLabels(pcsObjMeta.Name)),
 	); err != nil {
@@ -68,7 +67,7 @@ func (r _resource) GetExistingResourceNames(ctx context.Context, logger logr.Log
 			fmt.Sprintf("Error listing ResourceClaims for PCS: %s/%s", pcsObjMeta.Namespace, pcsObjMeta.Name),
 		)
 	}
-	names := k8sutils.FilterMapOwnedResourceNames(pcsObjMeta, objMetaList.Items)
+	names := k8sutils.FilterMapOwnedResourceNames(pcsObjMeta, claimList.Items)
 	logger.V(1).Info("Listed existing ResourceClaims", "pcs", pcsObjMeta.Name, "count", len(names))
 	return names, nil
 }

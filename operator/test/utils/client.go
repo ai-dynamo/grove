@@ -20,8 +20,10 @@ import (
 	groveclientscheme "github.com/ai-dynamo/grove/operator/internal/client"
 
 	"github.com/samber/lo"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -48,10 +50,10 @@ const (
 	ClientMethodPatch ClientMethod = "Patch"
 	// ClientMethodUpdate is the name of the Update method on client.Client.
 	ClientMethodUpdate ClientMethod = "Update"
-	// ClientMethodStatus is the name of the Status method on client.Client.StatusClient.
-	ClientMethodStatus ClientMethod = "Status"
-	// ClientMethodApply is the name of the Apply method on client.Client.
-	ClientMethodApply ClientMethod = "Apply"
+	// ClientMethodStatusPatch is the name of the Patch method on the status subresource writer.
+	ClientMethodStatusPatch ClientMethod = "StatusPatch"
+	// ClientMethodStatusUpdate is the name of the Update method on the status subresource writer.
+	ClientMethodStatusUpdate ClientMethod = "StatusUpdate"
 )
 
 // TestClientBuilder is a builder for creating a test client.Client which is capable of recording and replaying errors.
@@ -68,6 +70,10 @@ type errorRecord struct {
 	labels      labels.Set
 	resourceGVK schema.GroupVersionKind
 	err         error
+	// remainingFailures is nil for an error that fires on every matching call. When non-nil it is the
+	// number of leading consecutive matching calls that still return the error. It decrements per
+	// matching call and once it reaches zero the call succeeds.
+	remainingFailures *int
 }
 
 // CreateDefaultFakeClient creates a default client.Client without any configured reactions to errors.
@@ -152,6 +158,26 @@ func (b *TestClientBuilder) WithStatusSubresource(objs ...client.Object) *TestCl
 	return b
 }
 
+// WithIndex registers a field index on the delegating fake client so that List calls using a
+// field selector on that field are served.
+func (b *TestClientBuilder) WithIndex(obj client.Object, field string, extractValue client.IndexerFunc) *TestClientBuilder {
+	b.delegatingClientBuilder.WithIndex(obj, field, extractValue)
+	return b
+}
+
+// WithPodControllerUIDIndex registers the Pod field index that component.GetPCLQPods queries by controller
+// UID, so a fake client List with that field selector returns matching Pods instead of erroring. It mirrors
+// the index the manager registers in production.
+func (b *TestClientBuilder) WithPodControllerUIDIndex() *TestClientBuilder {
+	return b.WithIndex(&corev1.Pod{}, ".metadata.controller.uid", func(obj client.Object) []string {
+		controllerRef := metav1.GetControllerOfNoCopy(obj)
+		if controllerRef == nil {
+			return nil
+		}
+		return []string{string(controllerRef.UID)}
+	})
+}
+
 // RecordErrorForObjects records an error for a specific client.Client method and object keys.
 func (b *TestClientBuilder) RecordErrorForObjects(method ClientMethod, err *apierrors.StatusError, objectKeys ...client.ObjectKey) *TestClientBuilder {
 	// this method records error, so if nil error is passed then there is no need to create any error record.
@@ -163,6 +189,26 @@ func (b *TestClientBuilder) RecordErrorForObjects(method ClientMethod, err *apie
 			method:    method,
 			objectKey: objectKey,
 			err:       err,
+		})
+	}
+	return b
+}
+
+// RecordErrorForObjectsNTimes records an error that is returned for the first consecutiveFailures
+// matching calls of the given method on the given object keys. Every call after that succeeds and
+// delegates to the underlying client. A consecutiveFailures less than or equal to zero records
+// nothing.
+func (b *TestClientBuilder) RecordErrorForObjectsNTimes(method ClientMethod, err *apierrors.StatusError, consecutiveFailures int, objectKeys ...client.ObjectKey) *TestClientBuilder {
+	if err == nil || consecutiveFailures <= 0 {
+		return b
+	}
+	for _, objectKey := range objectKeys {
+		remaining := consecutiveFailures
+		b.errorRecords = append(b.errorRecords, errorRecord{
+			method:            method,
+			objectKey:         objectKey,
+			err:               err,
+			remainingFailures: &remaining,
 		})
 	}
 	return b
@@ -274,7 +320,7 @@ func (c *testClient) Apply(ctx context.Context, applyConfig runtime.ApplyConfigu
 }
 
 func (c *testClient) Status() client.StatusWriter {
-	return c.delegate.Status()
+	return &testStatusWriter{testClient: c, delegate: c.delegate.Status()}
 }
 
 func (c *testClient) SubResource(subResource string) client.SubResourceClient {
@@ -297,13 +343,53 @@ func (c *testClient) IsObjectNamespaced(obj runtime.Object) (bool, error) {
 	return c.delegate.IsObjectNamespaced(obj)
 }
 
+// testStatusWriter wraps the delegate status writer and reacts to errors recorded for the
+// StatusPatch and StatusUpdate methods before delegating to the underlying fake client.
+type testStatusWriter struct {
+	testClient *testClient
+	delegate   client.SubResourceWriter
+}
+
+func (w *testStatusWriter) Create(ctx context.Context, obj client.Object, subResource client.Object, opts ...client.SubResourceCreateOption) error {
+	return w.delegate.Create(ctx, obj, subResource, opts...)
+}
+
+func (w *testStatusWriter) Apply(ctx context.Context, obj runtime.ApplyConfiguration, opts ...client.SubResourceApplyOption) error {
+	return w.delegate.Apply(ctx, obj, opts...)
+}
+
+func (w *testStatusWriter) Update(ctx context.Context, obj client.Object, opts ...client.SubResourceUpdateOption) error {
+	if err := w.testClient.getRecordedObjectError(ClientMethodStatusUpdate, client.ObjectKeyFromObject(obj)); err != nil {
+		return err
+	}
+	return w.delegate.Update(ctx, obj, opts...)
+}
+
+func (w *testStatusWriter) Patch(ctx context.Context, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
+	if err := w.testClient.getRecordedObjectError(ClientMethodStatusPatch, client.ObjectKeyFromObject(obj)); err != nil {
+		return err
+	}
+	return w.delegate.Patch(ctx, obj, patch, opts...)
+}
+
 // ---------------------------------- Helper methods ----------------------------------
 
 func (c *testClient) getRecordedObjectError(method ClientMethod, objKey client.ObjectKey) error {
-	foundErrorRecord, ok := lo.Find(c.errorRecords, func(errRecord errorRecord) bool {
-		return errRecord.method == method && errRecord.objectKey == objKey
-	})
-	return lo.Ternary(ok, foundErrorRecord.err, nil)
+	for i := range c.errorRecords {
+		rec := &c.errorRecords[i]
+		if rec.method != method || rec.objectKey != objKey {
+			continue
+		}
+		if rec.remainingFailures == nil {
+			return rec.err
+		}
+		if *rec.remainingFailures > 0 {
+			*rec.remainingFailures--
+			return rec.err
+		}
+		return nil
+	}
+	return nil
 }
 
 func (c *testClient) getRecordedObjectCollectionError(method ClientMethod, namespace string, labelSelector labels.Selector, objGVK schema.GroupVersionKind) error {

@@ -29,8 +29,8 @@ var (
 	TestAPIInternalErr = apierrors.NewInternalError(errors.New("fake internal error"))
 )
 
-// CheckGroveError checks that an actual error is a Grove error and further checks its underline cause, error code and operation.
-func CheckGroveError(t *testing.T, expectedError *groveerr.GroveError, actualErr error) {
+// AssertGroveError checks that an actual error is a Grove error and further checks its underline cause, error code and operation.
+func AssertGroveError(t *testing.T, expectedError *groveerr.GroveError, actualErr error) {
 	assert.Error(t, expectedError)
 	var groveErr *groveerr.GroveError
 	assert.True(t, errors.As(actualErr, &groveErr))

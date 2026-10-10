@@ -24,16 +24,12 @@ import (
 	"k8s.io/client-go/tools/cache"
 )
 
-// ControlleeKeyFunc is a key function used to create Controllee keys that are used to uniquely identify expectations that
-// are stored in the expectations store.
-var ControlleeKeyFunc = cache.DeletionHandlingMetaNamespaceKeyFunc
-
 // ExpectationsStore is a cache where add and delete expectations are captured.
 // `controller-runtime` serves the read requests from an informer cache and will query the kube-apiserver
 // during startup or resyncs. The informer cache does not provide read-your-writes consistency which leads to stale
 // caches. Informer caches are eventually consistent but if your controller gets quick events then it is possible
 // that the controller operates on a stale state, thus leading to side effects which could include creation of adding
-// resource replicas or deletion of more then desired replicas of a resource.
+// resource replicas or deletion of more than desired replicas of a resource.
 // NOTE: Expectations is an existing pattern already used in kubernetes.
 // See [ControllerExpectationsInterface]: https://github.com/kubernetes/kubernetes/blob/e6161070d4416f6d9c1ac9961029fdceef5c9286/pkg/controller/controller_utils.go#L157
 // where expectations are used to provide a barrier when reconciling resources. If the previous expectations are not fulfilled, or they have not yet expired
@@ -43,8 +39,8 @@ var ControlleeKeyFunc = cache.DeletionHandlingMetaNamespaceKeyFunc
 // the reconciler correctly compute the desired number of creates or deletes.
 // It also attempts to resolve the 2 issues that are listed in https://github.com/kubernetes/kubernetes/issues/129795#issuecomment-2657716713
 type ExpectationsStore struct {
-	cache.Store
-	mu sync.Mutex
+	cache.Indexer
+	mu sync.RWMutex
 }
 
 // ControlleeExpectations tracks expectations for the reconciled/controlled resource.
@@ -61,10 +57,37 @@ type ControlleeExpectations struct {
 	uidsToAdd sets.Set[types.UID]
 }
 
+// Key returns the storage key this expectation is recorded under. It is the same key
+// the consumer supplied when raising create/delete expectations. The store treats the key
+// as an opaque string and imposes no structure on it.
+//
+// This accessor exists because a cache.IndexFunc registered on the store is invoked with
+// the stored expectation as an opaque value. A consumer that defines its cache.IndexFunc
+// in its own package can only read the exported surface of this type. This accessor allows
+// cache.IndexFunc to read the key.
+// As an example: A consumer that keys by "<namespace>/<name>/<sub-scope>", for instance,
+// reads Key in its cache.IndexFunc and returns the "<namespace>/<name>" prefix as the group,
+// then clears a whole group with DeleteExpectationsByIndex.
+//
+// Keeping the derivation in the consumer keeps the store agnostic to the key's structure.
+func (e *ControlleeExpectations) Key() string {
+	return e.key
+}
+
+// deepCopy returns a copy of the expectations with cloned UID sets, so callers can read the returned
+// value without holding the store lock and cannot mutate the store's live sets.
+func (e *ControlleeExpectations) deepCopy() *ControlleeExpectations {
+	return &ControlleeExpectations{
+		key:          e.key,
+		uidsToDelete: e.uidsToDelete.Clone(),
+		uidsToAdd:    e.uidsToAdd.Clone(),
+	}
+}
+
 // NewExpectationsStore creates a new expectations store.
 func NewExpectationsStore() *ExpectationsStore {
 	return &ExpectationsStore{
-		Store: cache.NewStore(getControlleeExpectationsKeyFunc()),
+		Indexer: cache.NewIndexer(getControlleeExpectationsKeyFunc(), cache.Indexers{}),
 	}
 }
 
@@ -85,6 +108,8 @@ func (s *ExpectationsStore) ObserveDeletions(logger logr.Logger, controlleeKey s
 
 // DeleteExpectations removes all expectations stored against a controlleeKey from the store.
 func (s *ExpectationsStore) DeleteExpectations(logger logr.Logger, controlleeKey string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	exp, exists, err := s.GetByKey(controlleeKey)
 	if err != nil {
 		return err
@@ -98,8 +123,38 @@ func (s *ExpectationsStore) DeleteExpectations(logger logr.Logger, controlleeKey
 	return nil
 }
 
-// GetExpectations gets the recorded expectations against a controlleeKey.
+// DeleteExpectationsByIndex removes every expectation grouped under indexedValue in the named index.
+func (s *ExpectationsStore) DeleteExpectationsByIndex(logger logr.Logger, indexName, indexedValue string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	exps, err := s.ByIndex(indexName, indexedValue)
+	if err != nil {
+		return fmt.Errorf("%w: could not list expectations for index %s=%s", err, indexName, indexedValue)
+	}
+	for _, exp := range exps {
+		if err = s.Delete(exp); err != nil {
+			return fmt.Errorf("%w: could not delete expectations for index %s=%s", err, indexName, indexedValue)
+		}
+	}
+	logger.Info("Successfully deleted expectations by index", "indexName", indexName, "indexedValue", indexedValue)
+	return nil
+}
+
+// GetExpectations returns a copy of the recorded expectations against a controlleeKey. A copy is
+// returned so callers never read the store's live UID sets without holding the lock.
 func (s *ExpectationsStore) GetExpectations(controlleeKey string) (*ControlleeExpectations, bool, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	exp, exists, err := s.getExpectations(controlleeKey)
+	if err != nil || !exists {
+		return nil, false, err
+	}
+	return exp.deepCopy(), true, nil
+}
+
+// getExpectations returns the stored expectations against a controlleeKey. It returns the live object
+// whose UID sets are guarded by s.mu, so callers must already hold the lock (read or write).
+func (s *ExpectationsStore) getExpectations(controlleeKey string) (*ControlleeExpectations, bool, error) {
 	exp, exists, err := s.GetByKey(controlleeKey)
 	if err != nil || !exists {
 		return nil, false, err
@@ -117,7 +172,7 @@ func (s *ExpectationsStore) GetExpectations(controlleeKey string) (*ControlleeEx
 func (s *ExpectationsStore) SyncExpectations(controlleeKey string, existingNonTerminatingUIDs []types.UID, existingTerminatingUIDs []types.UID) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if exp, exists, _ := s.GetExpectations(controlleeKey); exists {
+	if exp, exists, _ := s.getExpectations(controlleeKey); exists {
 		// Remove the UIDs from `uidsToAdd` if the informer cache is already up-to-date and certain events have
 		// been missed/dropped by the watch resulting in missed calls to `CreationObserved`.
 		exp.uidsToAdd.Delete(existingNonTerminatingUIDs...)
@@ -136,7 +191,9 @@ func (s *ExpectationsStore) SyncExpectations(controlleeKey string, existingNonTe
 // GetCreateExpectations is a convenience method which gives a slice of resource UIDs for which creation has not yet been synced
 // in the informer cache.
 func (s *ExpectationsStore) GetCreateExpectations(controlleeKey string) []types.UID {
-	if exp, exists, _ := s.GetExpectations(controlleeKey); exists {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if exp, exists, _ := s.getExpectations(controlleeKey); exists {
 		return exp.uidsToAdd.UnsortedList()
 	}
 	return nil
@@ -145,7 +202,9 @@ func (s *ExpectationsStore) GetCreateExpectations(controlleeKey string) []types.
 // GetDeleteExpectations is a convenience method which gives a slice of resource UIDs for which deletion has not yet been synced
 // in the informer cache.
 func (s *ExpectationsStore) GetDeleteExpectations(controlleeKey string) []types.UID {
-	if exp, exists, _ := s.GetExpectations(controlleeKey); exists {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if exp, exists, _ := s.getExpectations(controlleeKey); exists {
 		return exp.uidsToDelete.UnsortedList()
 	}
 	return nil
@@ -153,7 +212,9 @@ func (s *ExpectationsStore) GetDeleteExpectations(controlleeKey string) []types.
 
 // HasDeleteExpectation returns true if a delete expectation has been recorded for the controlleeKey and the target resource UID.
 func (s *ExpectationsStore) HasDeleteExpectation(controlleeKey string, uid types.UID) bool {
-	if exp, exists, _ := s.GetExpectations(controlleeKey); exists {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if exp, exists, _ := s.getExpectations(controlleeKey); exists {
 		return exp.uidsToDelete.Has(uid)
 	}
 	return false
@@ -163,7 +224,7 @@ func (s *ExpectationsStore) HasDeleteExpectation(controlleeKey string, uid types
 func (s *ExpectationsStore) createOrRaiseExpectations(logger logr.Logger, controlleeKey string, uidsToAdd, uidsToDelete []types.UID) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	exp, exists, err := s.GetExpectations(controlleeKey)
+	exp, exists, err := s.getExpectations(controlleeKey)
 	if err != nil {
 		return fmt.Errorf("%w: could not capture expectations [uidsToAdd: %v, uidsTodelete:%v] for resource: %v", err, uidsToAdd, controlleeKey, controlleeKey)
 	}
@@ -189,7 +250,7 @@ func (s *ExpectationsStore) createOrRaiseExpectations(logger logr.Logger, contro
 func (s *ExpectationsStore) lowerExpectations(logger logr.Logger, controlleeKey string, addUIDs, deleteUIDs []types.UID) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if exp, exists, _ := s.GetExpectations(controlleeKey); exists {
+	if exp, exists, _ := s.getExpectations(controlleeKey); exists {
 		exp.uidsToAdd.Delete(addUIDs...)
 		exp.uidsToAdd.Delete(deleteUIDs...)
 		exp.uidsToDelete.Delete(deleteUIDs...)

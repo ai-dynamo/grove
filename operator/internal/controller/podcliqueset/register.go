@@ -20,10 +20,11 @@ import (
 
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
-	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	grovectrlutils "github.com/ai-dynamo/grove/operator/internal/controller/utils"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
+	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 
+	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -49,6 +50,8 @@ func (r *Reconciler) RegisterWithManager(mgr manager.Manager) error {
 			MaxConcurrentReconciles: *r.config.ConcurrentSyncs,
 		}).
 		For(&grovecorev1alpha1.PodCliqueSet{}, builder.WithPredicates(podCliqueSetPredicate())).
+		Owns(&grovecorev1alpha1.PodGangMap{}, builder.WithPredicates(deleteOnlyPredicate())).
+		Owns(&groveschedulerv1alpha1.PodGang{}, builder.WithPredicates(deleteOnlyPredicate())).
 		Watches(
 			&grovecorev1alpha1.ClusterTopologyBinding{},
 			handler.EnqueueRequestsFromMapFunc(mapClusterTopologyToPodCliqueSets(r.client)),
@@ -79,6 +82,18 @@ func podCliqueSetPredicate() predicate.Predicate {
 				hasAnnotationChanged(updateEvent.ObjectOld.GetAnnotations(), updateEvent.ObjectNew.GetAnnotations(), constants.AnnotationReconcileTrigger)
 		},
 		GenericFunc: func(_ event.GenericEvent) bool { return true },
+	}
+}
+
+// deleteOnlyPredicate returns a predicate that triggers a reconcile only on a delete event, so an
+// externally deleted owned resource is reconstructed. Create and update events are the reconciler's own
+// writes and are ignored.
+func deleteOnlyPredicate() predicate.Predicate {
+	return predicate.Funcs{
+		CreateFunc:  func(_ event.CreateEvent) bool { return false },
+		DeleteFunc:  func(_ event.DeleteEvent) bool { return true },
+		UpdateFunc:  func(_ event.UpdateEvent) bool { return false },
+		GenericFunc: func(_ event.GenericEvent) bool { return false },
 	}
 }
 
@@ -150,7 +165,7 @@ func podCliquePredicate() predicate.Predicate {
 	}
 }
 
-// podCliqueScalingGroupPredicate returns a predicate that filters PCSG events for relevant status changes.
+// podCliqueScalingGroupPredicate returns a predicate that filters PCSG events for relevant spec or status changes.
 func podCliqueScalingGroupPredicate() predicate.Predicate {
 	return predicate.Funcs{
 		CreateFunc: func(_ event.CreateEvent) bool { return false },
@@ -161,7 +176,7 @@ func podCliqueScalingGroupPredicate() predicate.Predicate {
 			if !okOld || !okNew {
 				return false
 			}
-			return hasMinAvailableBreachedConditionChanged(oldPCSG.Status.Conditions, newPCSG.Status.Conditions) ||
+			return hasSpecChanged(updateEvent) ||
 				hasPodCliqueScalingGroupStatusChanged(&oldPCSG.Status, &newPCSG.Status)
 		},
 		GenericFunc: func(_ event.TypedGenericEvent[client.Object]) bool { return false },
@@ -169,6 +184,8 @@ func podCliqueScalingGroupPredicate() predicate.Predicate {
 }
 
 // hasSpecChanged checks if the resource generation has changed.
+// This ensures that any scale-in/out done for a PodCliqueScalingGroup creates a reconcile event
+// for the PodCliqueSet reconciler. This allows PodGangMap component to grow or shrink accordingly.
 func hasSpecChanged(updateEvent event.UpdateEvent) bool {
 	return updateEvent.ObjectOld.GetGeneration() != updateEvent.ObjectNew.GetGeneration()
 }
@@ -195,6 +212,7 @@ func hasStatusChanged(updateEvent event.UpdateEvent) bool {
 // hasAnyStatusReplicasChanged checks if any replica count fields have changed.
 func hasAnyStatusReplicasChanged(oldPCLQStatus, newPCLQStatus grovecorev1alpha1.PodCliqueStatus) bool {
 	return oldPCLQStatus.Replicas != newPCLQStatus.Replicas ||
+		oldPCLQStatus.ScheduledReplicas != newPCLQStatus.ScheduledReplicas ||
 		oldPCLQStatus.ReadyReplicas != newPCLQStatus.ReadyReplicas ||
 		oldPCLQStatus.ScheduleGatedReplicas != newPCLQStatus.ScheduleGatedReplicas ||
 		oldPCLQStatus.UpdatedReplicas != newPCLQStatus.UpdatedReplicas
@@ -223,7 +241,8 @@ func hasPodCliqueScalingGroupStatusChanged(oldPCSGStatus, newPCSGStatus *groveco
 	return oldPCSGStatus.AvailableReplicas != newPCSGStatus.AvailableReplicas ||
 		oldPCSGStatus.UpdatedReplicas != newPCSGStatus.UpdatedReplicas ||
 		!stringPointersEqual(oldPCSGStatus.CurrentPodCliqueSetGenerationHash, newPCSGStatus.CurrentPodCliqueSetGenerationHash) ||
-		hasUpdateStatusChanged(oldPCSGStatus.UpdateProgress, newPCSGStatus.UpdateProgress)
+		hasUpdateStatusChanged(oldPCSGStatus.UpdateProgress, newPCSGStatus.UpdateProgress) ||
+		hasMinAvailableBreachedConditionChanged(oldPCSGStatus.Conditions, newPCSGStatus.Conditions)
 }
 
 // hasUpdateStatusChanged reports whether the update progress has changed between the old and new states.

@@ -21,8 +21,8 @@ import (
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	ctrlcommon "github.com/ai-dynamo/grove/operator/internal/controller/common"
+	"github.com/ai-dynamo/grove/operator/internal/controller/podclique/expectations"
 	ctrlutils "github.com/ai-dynamo/grove/operator/internal/controller/utils"
-	"github.com/ai-dynamo/grove/operator/internal/expect"
 
 	"github.com/go-logr/logr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -49,14 +49,10 @@ func (r *Reconciler) triggerDeletionFlow(ctx context.Context, logger logr.Logger
 	return ctrlcommon.DoNotRequeue()
 }
 
-// clearPodCliqueExpectations drops the in-memory expectations entry for this
+// clearPodCliqueExpectations drops the in-memory expectations entries for this
 // PodClique so the store does not retain stale UIDs after the object is gone.
 func (r *Reconciler) clearPodCliqueExpectations(_ context.Context, logger logr.Logger, pclq *grovecorev1alpha1.PodClique) ctrlcommon.ReconcileStepResult {
-	key, err := expect.ControlleeKeyFunc(pclq)
-	if err != nil {
-		return ctrlcommon.ReconcileWithErrors("error building expectations store key", fmt.Errorf("failed to build expectations store key for PodClique %v: %w", client.ObjectKeyFromObject(pclq), err))
-	}
-	if err := r.expectationsStore.DeleteExpectations(logger, key); err != nil {
+	if err := expectations.ClearPodCliqueExpectations(logger, r.expectationsStore, pclq.ObjectMeta); err != nil {
 		return ctrlcommon.ReconcileWithErrors("error clearing expectations", err)
 	}
 	return ctrlcommon.ContinueReconcile()

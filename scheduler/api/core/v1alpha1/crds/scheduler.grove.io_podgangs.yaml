@@ -286,6 +286,20 @@ spec:
                   - type
                   type: object
                 type: array
+              lastReady:
+                description: |-
+                  LastReady is the time at which the Ready condition most recently transitioned to True. It is nil
+                  until the PodGang is first ready and is never reset to nil once set. On a later transition of the
+                  Ready condition back to True after a regression, it advances to the new time.
+                format: date-time
+                type: string
+              lastScheduled:
+                description: |-
+                  LastScheduled is the time at which the Scheduled condition most recently transitioned to True.
+                  It is nil until the PodGang is first scheduled and is never reset to nil once set. On a later
+                  transition of the Scheduled condition back to True after a regression, it advances to the new time.
+                format: date-time
+                type: string
               phase:
                 description: Phase is the current phase of a PodGang.
                 type: string

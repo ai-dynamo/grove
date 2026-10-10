@@ -236,7 +236,7 @@ func TestInitOrResetUpdate(t *testing.T) {
 			setupPCSG: func(pcsUID types.UID) *grovecorev1alpha1.PodCliqueScalingGroup {
 				pcsg := testutils.NewPodCliqueScalingGroupBuilder(testPCSGName, testNamespacePCSG, testPCSNamePCSG, 0).
 					WithReplicas(2).
-					WithOwnerReference("PodCliqueSet", testPCSNamePCSG, string(pcsUID)).
+					WithOwnerReference("PodCliqueSet", testPCSNamePCSG, pcsUID).
 					Build()
 				pcsg.Status.UpdatedReplicas = 3 // should be reset to 0
 				return pcsg
@@ -255,7 +255,7 @@ func TestInitOrResetUpdate(t *testing.T) {
 			setupPCSG: func(pcsUID types.UID) *grovecorev1alpha1.PodCliqueScalingGroup {
 				pcsg := testutils.NewPodCliqueScalingGroupBuilder(testPCSGName, testNamespacePCSG, testPCSNamePCSG, 0).
 					WithReplicas(2).
-					WithOwnerReference("PodCliqueSet", testPCSNamePCSG, string(pcsUID)).
+					WithOwnerReference("PodCliqueSet", testPCSNamePCSG, pcsUID).
 					Build()
 				pcsg.Status.UpdatedReplicas = 2 // should be reset to 0
 				return pcsg
@@ -277,7 +277,7 @@ func TestInitOrResetUpdate(t *testing.T) {
 			setupPCSG: func(pcsUID types.UID) *grovecorev1alpha1.PodCliqueScalingGroup {
 				pcsg := testutils.NewPodCliqueScalingGroupBuilder(testPCSGName, testNamespacePCSG, testPCSNamePCSG, 0).
 					WithReplicas(2).
-					WithOwnerReference("PodCliqueSet", testPCSNamePCSG, string(pcsUID)).
+					WithOwnerReference("PodCliqueSet", testPCSNamePCSG, pcsUID).
 					Build()
 				pcsg.Status.UpdatedReplicas = 5 // should be reset to 0
 				return pcsg
@@ -301,7 +301,7 @@ func TestInitOrResetUpdate(t *testing.T) {
 
 				pcsg := testutils.NewPodCliqueScalingGroupBuilder(testPCSGName, testNamespacePCSG, testPCSNamePCSG, 0).
 					WithReplicas(2).
-					WithOwnerReference("PodCliqueSet", testPCSNamePCSG, string(pcsUID)).
+					WithOwnerReference("PodCliqueSet", testPCSNamePCSG, pcsUID).
 					Build()
 				// Simulate an existing update in progress
 				pcsg.Status.UpdateProgress = &grovecorev1alpha1.PodCliqueScalingGroupUpdateProgress{
@@ -331,7 +331,7 @@ func TestInitOrResetUpdate(t *testing.T) {
 
 				pcsg := testutils.NewPodCliqueScalingGroupBuilder(testPCSGName, testNamespacePCSG, testPCSNamePCSG, 0).
 					WithReplicas(2).
-					WithOwnerReference("PodCliqueSet", testPCSNamePCSG, string(pcsUID)).
+					WithOwnerReference("PodCliqueSet", testPCSNamePCSG, pcsUID).
 					Build()
 				// Simulate an existing update that was completed
 				pcsg.Status.UpdateProgress = &grovecorev1alpha1.PodCliqueScalingGroupUpdateProgress{

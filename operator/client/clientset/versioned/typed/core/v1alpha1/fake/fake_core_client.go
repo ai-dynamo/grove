@@ -44,6 +44,10 @@ func (c *FakeGroveV1alpha1) PodCliqueSets(namespace string) v1alpha1.PodCliqueSe
 	return newFakePodCliqueSets(c, namespace)
 }
 
+func (c *FakeGroveV1alpha1) PodGangMaps(namespace string) v1alpha1.PodGangMapInterface {
+	return newFakePodGangMaps(c, namespace)
+}
+
 // RESTClient returns a RESTClient that is used to communicate
 // with API server by this client implementation.
 func (c *FakeGroveV1alpha1) RESTClient() rest.Interface {

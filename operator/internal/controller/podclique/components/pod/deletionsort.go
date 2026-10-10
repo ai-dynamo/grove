@@ -39,7 +39,7 @@ func (s DeletionSorter) Swap(i, j int) {
 }
 
 // podPhaseToOrdinal maps pod phases to deletion priority order (lower values are deleted first)
-var podPhaseToOrdinal = map[corev1.PodPhase]int{corev1.PodPending: 0, corev1.PodUnknown: 1, corev1.PodRunning: 2}
+var podPhaseToOrdinal = map[corev1.PodPhase]int{corev1.PodPending: 0, corev1.PodRunning: 2}
 
 // Less compares two pods and returns true if the first one should be preferred for deletion.
 // Code partially adapted from https://github.com/kubernetes/kubernetes/blob/5a450884b127f7b8e477d48cf3967a2a5eca9126/pkg/controller/controller_utils.go#L702

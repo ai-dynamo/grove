@@ -26,51 +26,156 @@
 package upgrade
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"testing"
 
+	apiconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
+	grovev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	"github.com/ai-dynamo/grove/operator/e2e/grove/podgangmap"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/pods"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
 	"github.com/google/go-github/v86/github"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/wait"
 )
 
-// TestUpgradeFromGitHubRelease verifies that a workload's pods created with
-// the latest released version of Grove will not be recreated during an upgrade
-// to the latest code built from the current checkout.
+const (
+	// upgradePCSGWorkloadName is the name of the all-PodCliqueScalingGroup workload used by the
+	// migration recovery test.
+	upgradePCSGWorkloadName = "upgrade-pcsg-only"
+	// upgradePCSGWorkloadNamespace is the namespace of that workload.
+	upgradePCSGWorkloadNamespace = "default"
+)
+
+// podSurvivalUpgrade holds the state shared between the pre-upgrade and post-upgrade steps of the pod
+// survival test. The pod list is captured before the upgrade and asserted against afterwards.
+type podSurvivalUpgrade struct {
+	fromVersion       string
+	workload          *testctx.WorkloadConfig
+	podsBeforeUpgrade *corev1.PodList
+}
+
+// deployWorkload deploys the workload on the fromVersion operator and captures its pods.
+func (s *podSurvivalUpgrade) deployWorkload(t *testing.T, tc *testctx.TestContext) {
+	_, err := tc.DeployAndVerifyWorkload()
+	require.NoError(t, err, "applying workload")
+	s.podsBeforeUpgrade, err = tc.ListPods()
+	require.NoError(t, err, "listing workload pods")
+}
+
+// verifyPodsSurvive scales the workload, then asserts the pre-upgrade pods were not recreated and the
+// init containers were updated.
+func (s *podSurvivalUpgrade) verifyPodsSurvive(t *testing.T, tc *testctx.TestContext) {
+	tc.ScalePCSAndWait(s.workload.Name, 2, 4, 0)
+	initContainerImage := fmt.Sprintf("ghcr.io/ai-dynamo/grove/grove-initc:%s", s.fromVersion)
+	verifyInitContainerUpdate(t, tc, s.podsBeforeUpgrade, initContainerImage)
+	verifyPodUIDsUnchanged(t, tc, s.podsBeforeUpgrade)
+}
+
+// Test_VUPG1_UpgradeFromLatestGitHubRelease verifies that a workload's pods created with the latest released
+// version of Grove are not recreated during an upgrade to the operator built from the current
+// checkout.
 //
 // The initial version of Grove to install can be controlled with GROVE_UPGRADE_FROM_VERSION.
-func TestUpgradeFromLatestGitHubRelease(t *testing.T) {
+func Test_VUPG1_UpgradeFromLatestGitHubRelease(t *testing.T) {
 	fromVersion := os.Getenv("GROVE_UPGRADE_FROM_VERSION")
 	if fromVersion == "" {
 		fromVersion = latestGitHubRelease(t)
 	}
 
-	workload := &testctx.WorkloadConfig{
-		Name:         "upgrade-survivor",
-		YAMLPath:     "../../yaml/upgrade.yaml",
-		Namespace:    "default",
-		ExpectedPods: 2,
+	s := &podSurvivalUpgrade{
+		fromVersion: fromVersion,
+		workload: &testctx.WorkloadConfig{
+			Name:         "upgrade-survivor",
+			YAMLPath:     "../../yaml/upgrade.yaml",
+			Namespace:    "default",
+			ExpectedPods: 2,
+		},
 	}
 
-	tc := setupTest(t, testConfig{
-		fromVersion: fromVersion,
-		workload:    workload,
+	runUpgradeTest(t, upgradeTest{
+		fromVersion:     s.fromVersion,
+		nodeWorkerCount: 1,
+		prepareOpts:     []testctx.TestOption{testctx.WithWorkload(s.workload)},
+		preUpgrade:      s.deployWorkload,
+		postUpgrade:     s.verifyPodsSurvive,
 	})
+}
 
-	podsList, err := tc.ListPods()
-	require.NoError(t, err, "listing workload pods")
+// Test_VUPG2_RecoverPodGangMapAfterScaleBelowMinAvailable verifies that after migrating a
+// legacy workload from v0.1.0-alpha.11 to the epoch-based PodGang scheme, scaling a
+// PodCliqueScalingGroup below MinAvailable drains its PodGangMap to empty without wedging, and scaling
+// it back up rebuilds the anchor and reschedules the pods. This exercises the fix for issues #808 and
+// #809 through the real migration path.
+func Test_VUPG2_RecoverPodGangMapAfterScaleBelowMinAvailable(t *testing.T) {
+	runUpgradeTest(t, upgradeTest{
+		fromVersion:     "v0.1.0-alpha.11",
+		nodeWorkerCount: 4,
+		prepareOpts: []testctx.TestOption{testctx.WithWorkload(&testctx.WorkloadConfig{
+			Name:         upgradePCSGWorkloadName,
+			YAMLPath:     "../../yaml/upgrade-pcsg-only.yaml",
+			Namespace:    upgradePCSGWorkloadNamespace,
+			ExpectedPods: 2,
+		})},
+		preUpgrade:  deployWorkloadOnFromVersion,
+		postUpgrade: verifyPodGangMapRecoversAfterScaleBelowMinAvailable,
+	})
+}
 
-	upgradeGrove(t, tc)
+// deployWorkloadOnFromVersion deploys the configured workload on the fromVersion operator.
+func deployWorkloadOnFromVersion(t *testing.T, tc *testctx.TestContext) {
+	_, err := tc.DeployAndVerifyWorkload()
+	require.NoError(t, err, "applying workload on the fromVersion operator")
+}
 
-	tc.ScalePCSAndWait(workload.Name, 2, 4, 0)
+// verifyPodGangMapRecoversAfterScaleBelowMinAvailable waits for the migration to complete, checks the
+// migrated PodGangMap, scales the worker group below MinAvailable to zero so the anchor drains away,
+// then scales it back up and checks the anchor is rebuilt and the pods run.
+func verifyPodGangMapRecoversAfterScaleBelowMinAvailable(t *testing.T, tc *testctx.TestContext) {
+	verifier := podgangmap.NewVerifier(tc.Client, testctx.Logger)
+	pcsNsName := types.NamespacedName{Namespace: upgradePCSGWorkloadNamespace, Name: upgradePCSGWorkloadName}
 
-	initContainerImage := fmt.Sprintf("ghcr.io/ai-dynamo/grove/grove-initc:%s", fromVersion)
-	verifyInitContainerUpdate(t, tc, podsList, initContainerImage)
+	testctx.Logger.Info("waiting for the legacy workload to finish migrating to the epoch-based scheme")
+	waitForMigrationComplete(t, tc, pcsNsName)
 
-	verifyPodUIDsUnchanged(t, tc, podsList)
+	testctx.Logger.Info("verifying the migrated PodGangMap has an anchor holding worker index 0")
+	require.NoError(t, podgangmap.WaitUntilVerified(t.Context(), verifier, pcsNsName, 0, pgmRecoverTimeout, defaultPollInterval,
+		podgangmap.AnchorPCSGReplicaIndicesCheckFn("worker", []int32{0}),
+	), "migrated PodGangMap not in expected state")
+
+	testctx.Logger.Info("scaling the worker group to 0 and verifying the PodGangMap holds no entries")
+	tc.ScalePCSGAcrossAllReplicasAndWait(upgradePCSGWorkloadName, "worker", 1, 0, 0, 0)
+	require.NoError(t, podgangmap.WaitUntilVerified(t.Context(), verifier, pcsNsName, 0, pgmRecoverTimeout, defaultPollInterval,
+		podgangmap.NoEntriesCheckFn(),
+	))
+
+	testctx.Logger.Info("scaling the worker group back to 1 and verifying the anchor is rebuilt")
+	tc.ScalePCSGAcrossAllReplicasAndWait(upgradePCSGWorkloadName, "worker", 1, 1, 2, 0)
+	require.NoError(t, podgangmap.WaitUntilVerified(t.Context(), verifier, pcsNsName, 0, pgmRecoverTimeout, defaultPollInterval,
+		podgangmap.AnchorPCSGReplicaIndicesCheckFn("worker", []int32{0}),
+	))
+
+	require.NoError(t, tc.WaitForRunningPods(2), "pods not running after scaling the group back up")
+}
+
+// waitForMigrationComplete polls the PodCliqueSet until the PodGangMigrationInProgress condition is
+// cleared, which the operator does once every replica has migrated to the epoch-based PodGang scheme.
+func waitForMigrationComplete(t *testing.T, tc *testctx.TestContext, pcsNsName types.NamespacedName) {
+	t.Helper()
+	err := wait.PollUntilContextTimeout(t.Context(), defaultPollInterval, defaultPollTimeout, true,
+		func(ctx context.Context) (bool, error) {
+			pcs := &grovev1alpha1.PodCliqueSet{}
+			if err := tc.Client.Get(ctx, pcsNsName, pcs); err != nil {
+				return false, err
+			}
+			return meta.FindStatusCondition(pcs.Status.Conditions, apiconstants.ConditionTypePodGangMigrationInProgress) == nil, nil
+		})
+	require.NoError(t, err, "migration did not complete: PodGangMigrationInProgress condition still present")
 }
 
 // verifyInitContainerUpdate verifies that workload pods receive the new init container images after an upgrade.

@@ -106,6 +106,8 @@ _Appears in:_
 | --- | --- | --- | --- |
 | `phase` _[PodGangPhase](#podgangphase)_ | Phase is the current phase of a PodGang. |  |  |
 | `conditions` _[Condition](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#condition-v1-meta) array_ | Conditions is a list of conditions that describe the current state of the PodGang. |  |  |
+| `lastScheduled` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#time-v1-meta)_ | LastScheduled is the time at which the Scheduled condition most recently transitioned to True.<br />It is nil until the PodGang is first scheduled and is never reset to nil once set. On a later<br />transition of the Scheduled condition back to True after a regression, it advances to the new time. |  |  |
+| `lastReady` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#time-v1-meta)_ | LastReady is the time at which the Ready condition most recently transitioned to True. It is nil<br />until the PodGang is first ready and is never reset to nil once set. On a later transition of the<br />Ready condition back to True after a regression, it advances to the new time. |  |  |
 | `placementScore` _float_ | PlacementScore is network optimality score for the PodGang. If the choice that the scheduler has made corresponds to the<br />best possible placement of the pods in the PodGang, then the score will be 1.0. Higher the score, better the placement. |  |  |
 
 

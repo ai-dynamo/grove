@@ -23,7 +23,7 @@ import (
 	apicommonconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
-	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
+	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/go-logr/logr"
@@ -66,13 +66,15 @@ func TestComputePCSAvailableReplicas(t *testing.T) {
 				return []client.Object{
 					// Healthy PCSGs
 					testutils.NewPodCliqueScalingGroupBuilder("test-pcs-0-compute", testNamespace, testPCSName, 0).
+						WithOwnerReference(apicommonconstants.KindPodCliqueSet, testPCSName, pcsUID).
 						WithOptions(testutils.WithPCSGAvailableReplicas(1)).Build(),
 					testutils.NewPodCliqueScalingGroupBuilder("test-pcs-1-compute", testNamespace, testPCSName, 1).
+						WithOwnerReference(apicommonconstants.KindPodCliqueSet, testPCSName, pcsUID).
 						WithOptions(testutils.WithPCSGAvailableReplicas(1)).Build(),
 					// Healthy standalone PodCliques
-					testutils.NewPodCliqueBuilder(testPCSName, uuid.NewUUID(), "worker", testNamespace, 0).
+					testutils.NewPodCliqueBuilder(testPCSName, pcsUID, "worker", testNamespace, 0).
 						WithOptions(testutils.WithPCLQReplicaReadyStatus(1), testutils.WithPCLQCurrentPCSGenerationHash(pcsGenerationHash)).Build(),
-					testutils.NewPodCliqueBuilder(testPCSName, uuid.NewUUID(), "worker", testNamespace, 1).
+					testutils.NewPodCliqueBuilder(testPCSName, pcsUID, "worker", testNamespace, 1).
 						WithOptions(testutils.WithPCLQReplicaReadyStatus(1), testutils.WithPCLQCurrentPCSGenerationHash(pcsGenerationHash)).Build(),
 				}
 			},
@@ -90,12 +92,14 @@ func TestComputePCSAvailableReplicas(t *testing.T) {
 			childResources: func() []client.Object {
 				return []client.Object{
 					testutils.NewPodCliqueScalingGroupBuilder("test-pcs-0-compute", testNamespace, testPCSName, 0).
+						WithOwnerReference(apicommonconstants.KindPodCliqueSet, testPCSName, pcsUID).
 						WithOptions(testutils.WithPCSGAvailableReplicas(1)).Build(),
 					testutils.NewPodCliqueScalingGroupBuilder("test-pcs-1-compute", testNamespace, testPCSName, 1).
+						WithOwnerReference(apicommonconstants.KindPodCliqueSet, testPCSName, pcsUID).
 						WithOptions(testutils.WithPCSGMinAvailableBreached()).Build(),
-					testutils.NewPodCliqueBuilder(testPCSName, uuid.NewUUID(), "worker", testNamespace, 0).
+					testutils.NewPodCliqueBuilder(testPCSName, pcsUID, "worker", testNamespace, 0).
 						WithOptions(testutils.WithPCLQReplicaReadyStatus(1), testutils.WithPCLQCurrentPCSGenerationHash(pcsGenerationHash)).Build(),
-					testutils.NewPodCliqueBuilder(testPCSName, uuid.NewUUID(), "worker", testNamespace, 1).
+					testutils.NewPodCliqueBuilder(testPCSName, pcsUID, "worker", testNamespace, 1).
 						WithOptions(testutils.WithPCLQTerminating(), testutils.WithPCLQCurrentPCSGenerationHash(pcsGenerationHash)).Build(),
 				}
 			},
@@ -113,9 +117,9 @@ func TestComputePCSAvailableReplicas(t *testing.T) {
 			childResources: func() []client.Object {
 				// Missing PCSG, extra standalone PodClique
 				return []client.Object{
-					testutils.NewPodCliqueBuilder(testPCSName, uuid.NewUUID(), "test-pcs-0-worker", testNamespace, 0).
+					testutils.NewPodCliqueBuilder(testPCSName, pcsUID, "test-pcs-0-worker", testNamespace, 0).
 						WithOptions(testutils.WithPCLQAvailable(), testutils.WithPCLQCurrentPCSGenerationHash(pcsGenerationHash)).Build(),
-					testutils.NewPodCliqueBuilder(testPCSName, uuid.NewUUID(), "test-pcs-0-extra", testNamespace, 0).
+					testutils.NewPodCliqueBuilder(testPCSName, pcsUID, "test-pcs-0-extra", testNamespace, 0).
 						WithOptions(testutils.WithPCLQAvailable(), testutils.WithPCLQCurrentPCSGenerationHash(pcsGenerationHash)).Build(),
 				}
 			},
@@ -143,13 +147,13 @@ func TestComputePCSAvailableReplicas(t *testing.T) {
 			},
 			childResources: func() []client.Object {
 				return []client.Object{
-					testutils.NewPodCliqueBuilder(testPCSName, uuid.NewUUID(), "worker", testNamespace, 0).
+					testutils.NewPodCliqueBuilder(testPCSName, pcsUID, "worker", testNamespace, 0).
 						WithOptions(testutils.WithPCLQReplicaReadyStatus(1), testutils.WithPCLQCurrentPCSGenerationHash(pcsGenerationHash)).Build(),
-					testutils.NewPodCliqueBuilder(testPCSName, uuid.NewUUID(), "monitor", testNamespace, 0).
+					testutils.NewPodCliqueBuilder(testPCSName, pcsUID, "monitor", testNamespace, 0).
 						WithOptions(testutils.WithPCLQReplicaReadyStatus(1), testutils.WithPCLQCurrentPCSGenerationHash(pcsGenerationHash)).Build(),
-					testutils.NewPodCliqueBuilder(testPCSName, uuid.NewUUID(), "worker", testNamespace, 1).
+					testutils.NewPodCliqueBuilder(testPCSName, pcsUID, "worker", testNamespace, 1).
 						WithOptions(testutils.WithPCLQReplicaReadyStatus(1), testutils.WithPCLQCurrentPCSGenerationHash(pcsGenerationHash)).Build(),
-					testutils.NewPodCliqueBuilder(testPCSName, uuid.NewUUID(), "monitor", testNamespace, 1).
+					testutils.NewPodCliqueBuilder(testPCSName, pcsUID, "monitor", testNamespace, 1).
 						WithOptions(testutils.WithPCLQReplicaReadyStatus(1), testutils.WithPCLQCurrentPCSGenerationHash(pcsGenerationHash)).Build(),
 				}
 			},
@@ -168,12 +172,16 @@ func TestComputePCSAvailableReplicas(t *testing.T) {
 			childResources: func() []client.Object {
 				return []client.Object{
 					testutils.NewPodCliqueScalingGroupBuilder("test-pcs-0-compute", testNamespace, testPCSName, 0).
+						WithOwnerReference(apicommonconstants.KindPodCliqueSet, testPCSName, pcsUID).
 						WithOptions(testutils.WithPCSGAvailableReplicas(1)).Build(),
 					testutils.NewPodCliqueScalingGroupBuilder("test-pcs-0-storage", testNamespace, testPCSName, 0).
+						WithOwnerReference(apicommonconstants.KindPodCliqueSet, testPCSName, pcsUID).
 						WithOptions(testutils.WithPCSGAvailableReplicas(1)).Build(),
 					testutils.NewPodCliqueScalingGroupBuilder("test-pcs-1-compute", testNamespace, testPCSName, 1).
+						WithOwnerReference(apicommonconstants.KindPodCliqueSet, testPCSName, pcsUID).
 						WithOptions(testutils.WithPCSGAvailableReplicas(1)).Build(),
 					testutils.NewPodCliqueScalingGroupBuilder("test-pcs-1-storage", testNamespace, testPCSName, 1).
+						WithOwnerReference(apicommonconstants.KindPodCliqueSet, testPCSName, pcsUID).
 						WithOptions(testutils.WithPCSGAvailableReplicas(1)).Build(),
 				}
 			},
@@ -190,7 +198,7 @@ func TestComputePCSAvailableReplicas(t *testing.T) {
 			},
 			childResources: func() []client.Object {
 				return []client.Object{
-					testutils.NewPodCliqueBuilder(testPCSName, uuid.NewUUID(), "test-pcs-0-worker", testNamespace, 0).
+					testutils.NewPodCliqueBuilder(testPCSName, pcsUID, "test-pcs-0-worker", testNamespace, 0).
 						WithOptions(testutils.WithPCLQTerminating(), testutils.WithPCLQCurrentPCSGenerationHash(pcsGenerationHash)).Build(),
 				}
 			},
@@ -208,6 +216,7 @@ func TestComputePCSAvailableReplicas(t *testing.T) {
 			childResources: func() []client.Object {
 				return []client.Object{
 					testutils.NewPodCliqueScalingGroupBuilder("test-pcs-0-compute", testNamespace, testPCSName, 0).
+						WithOwnerReference(apicommonconstants.KindPodCliqueSet, testPCSName, pcsUID).
 						WithOptions(testutils.WithPCSGUnknownCondition()).Build(),
 				}
 			},
@@ -224,7 +233,7 @@ func TestComputePCSAvailableReplicas(t *testing.T) {
 			},
 			childResources: func() []client.Object {
 				return []client.Object{
-					testutils.NewPodCliqueBuilder(testPCSName, uuid.NewUUID(), "test-pcs-0-worker", testNamespace, 0).
+					testutils.NewPodCliqueBuilder(testPCSName, pcsUID, "test-pcs-0-worker", testNamespace, 0).
 						WithOptions(testutils.WithPCLQNoConditions()).Build(),
 				}
 			},
@@ -254,10 +263,54 @@ func TestComputePCSAvailableReplicas(t *testing.T) {
 			},
 			childResources: func() []client.Object {
 				return []client.Object{
-					testutils.NewPodCliqueBuilder(testPCSName, uuid.NewUUID(), "worker", testNamespace, 0).
+					testutils.NewPodCliqueBuilder(testPCSName, pcsUID, "worker", testNamespace, 0).
 						WithOptions(testutils.WithPCLQReplicaReadyStatus(1), testutils.WithPCLQCurrentPCSGenerationHash(pcsGenerationHash)).Build(),
 					testutils.NewPodCliqueScalingGroupBuilder("test-pcs-0-unexpected", testNamespace, testPCSName, 0).
+						WithOwnerReference(apicommonconstants.KindPodCliqueSet, testPCSName, pcsUID).
 						WithOptions(testutils.WithPCSGAvailableReplicas(1)).Build(),
+				}
+			},
+			expectedAvailable: 1,
+		},
+		{
+			name: "scaled-to-zero scaling group counts as available alongside a healthy standalone",
+			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
+				return testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, pcsUID).
+					WithReplicas(1).
+					WithStandaloneClique("worker").
+					WithScalingGroup("compute", []string{"frontend"}).
+					WithPodCliqueSetGenerationHash(&pcsGenerationHash).
+					Build()
+			},
+			childResources: func() []client.Object {
+				return []client.Object{
+					testutils.NewPodCliqueScalingGroupBuilder("test-pcs-0-compute", testNamespace, testPCSName, 0).
+						WithOwnerReference(apicommonconstants.KindPodCliqueSet, testPCSName, pcsUID).
+						WithReplicas(0).
+						WithOptions(testutils.WithPCSGAvailableReplicas(0)).Build(),
+					testutils.NewPodCliqueBuilder(testPCSName, pcsUID, "worker", testNamespace, 0).
+						WithOptions(testutils.WithPCLQReplicaReadyStatus(1), testutils.WithPCLQCurrentPCSGenerationHash(pcsGenerationHash)).Build(),
+				}
+			},
+			expectedAvailable: 1,
+		},
+		{
+			name: "scaled-to-zero standalone PodClique counts as available alongside a healthy standalone",
+			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
+				return testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, pcsUID).
+					WithReplicas(1).
+					WithStandaloneClique("worker").
+					WithStandaloneClique("monitor").
+					WithPodCliqueSetGenerationHash(&pcsGenerationHash).
+					Build()
+			},
+			childResources: func() []client.Object {
+				return []client.Object{
+					testutils.NewPodCliqueBuilder(testPCSName, pcsUID, "worker", testNamespace, 0).
+						WithOptions(testutils.WithPCLQReplicaReadyStatus(1), testutils.WithPCLQCurrentPCSGenerationHash(pcsGenerationHash)).Build(),
+					testutils.NewPodCliqueBuilder(testPCSName, pcsUID, "monitor", testNamespace, 0).
+						WithReplicas(0).
+						WithOptions(testutils.WithPCLQCurrentPCSGenerationHash(pcsGenerationHash)).Build(),
 				}
 			},
 			expectedAvailable: 1,
@@ -273,9 +326,109 @@ func TestComputePCSAvailableReplicas(t *testing.T) {
 			cl := testutils.CreateDefaultFakeClient(existingObjects)
 			reconciler := &Reconciler{client: cl}
 			// Compute available replicas
-			stats, err := reconciler.computeAvailableAndUpdatedReplicas(context.Background(), logr.Discard(), pcs)
+			standalonePCLQs, pcsgs, err := reconciler.listExpectedPCSChildren(context.Background(), pcs)
+			assert.NoError(t, err)
+			stats, err := reconciler.computeAvailableAndUpdatedReplicas(logr.Discard(), pcs, standalonePCLQs, pcsgs)
 			assert.NoError(t, err)
 			assert.Equal(t, tt.expectedAvailable, stats.availableReplicas, "Available replicas mismatch")
+		})
+	}
+}
+
+func TestComputePCSUpdatedReplicasWithScaledToZeroComponent(t *testing.T) {
+	pcsGenerationHash := string(uuid.NewUUID())
+	pcsUID := uuid.NewUUID()
+
+	// scaledToZeroPCLQ builds a 0-replica standalone PodClique with no ready pods, whose recorded template
+	// and generation hashes are set to the given values. Ready stays 0 so the case genuinely depends on the
+	// scale-to-zero availability exemption rather than on ready pods.
+	scaledToZeroPCLQ := func(cliqueName, templateHash, genHash string) *grovecorev1alpha1.PodClique {
+		pclq := testutils.NewPodCliqueBuilder(testPCSName, pcsUID, cliqueName, testNamespace, 0).WithReplicas(0).Build()
+		if pclq.Labels == nil {
+			pclq.Labels = map[string]string{}
+		}
+		pclq.Labels[apicommon.LabelPodTemplateHash] = templateHash
+		pclq.Status.CurrentPodTemplateHash = ptr.To(templateHash)
+		pclq.Status.CurrentPodCliqueSetGenerationHash = ptr.To(genHash)
+		return pclq
+	}
+
+	testCases := []struct {
+		name              string
+		setupPCS          func() *grovecorev1alpha1.PodCliqueSet
+		childResources    func(pcs *grovecorev1alpha1.PodCliqueSet) []client.Object
+		expectedAvailable int32
+		expectedUpdated   int32
+	}{
+		{
+			name: "scaled-to-zero scaling group at the current revision is counted available and updated",
+			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
+				return testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, pcsUID).
+					WithReplicas(1).WithStandaloneClique("worker").
+					WithScalingGroup("compute", []string{"frontend"}).
+					WithPodCliqueSetGenerationHash(&pcsGenerationHash).Build()
+			},
+			childResources: func(pcs *grovecorev1alpha1.PodCliqueSet) []client.Object {
+				worker := testutils.NewPodCliqueBuilder(testPCSName, pcsUID, "worker", testNamespace, 0).Build()
+				markStandalonePCLQConverged(t, pcs, worker, pcsGenerationHash)
+				return []client.Object{
+					worker,
+					testutils.NewPodCliqueScalingGroupBuilder("test-pcs-0-compute", testNamespace, testPCSName, 0).
+						WithOwnerReference(apicommonconstants.KindPodCliqueSet, testPCSName, pcsUID).
+						WithReplicas(0).
+						WithOptions(testutils.WithPCSGCurrentPCSGenerationHash(pcsGenerationHash)).Build(),
+				}
+			},
+			expectedAvailable: 1,
+			expectedUpdated:   1,
+		},
+		{
+			name: "scaled-to-zero standalone PodClique at the current revision is counted available and updated",
+			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
+				return testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, pcsUID).
+					WithReplicas(1).WithStandaloneClique("worker").WithStandaloneClique("monitor").
+					WithPodCliqueSetGenerationHash(&pcsGenerationHash).Build()
+			},
+			childResources: func(pcs *grovecorev1alpha1.PodCliqueSet) []client.Object {
+				worker := testutils.NewPodCliqueBuilder(testPCSName, pcsUID, "worker", testNamespace, 0).Build()
+				markStandalonePCLQConverged(t, pcs, worker, pcsGenerationHash)
+				monitor := testutils.NewPodCliqueBuilder(testPCSName, pcsUID, "monitor", testNamespace, 0).WithReplicas(0).Build()
+				expectedHash, err := componentutils.GetExpectedPCLQPodTemplateHash(pcs, monitor.ObjectMeta)
+				require.NoError(t, err)
+				return []client.Object{worker, scaledToZeroPCLQ("monitor", expectedHash, pcsGenerationHash)}
+			},
+			expectedAvailable: 1,
+			expectedUpdated:   1,
+		},
+		{
+			name: "scaled-to-zero standalone PodClique still on the old revision is available but not updated",
+			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
+				return testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, pcsUID).
+					WithReplicas(1).WithStandaloneClique("worker").WithStandaloneClique("monitor").
+					WithPodCliqueSetGenerationHash(&pcsGenerationHash).Build()
+			},
+			childResources: func(pcs *grovecorev1alpha1.PodCliqueSet) []client.Object {
+				worker := testutils.NewPodCliqueBuilder(testPCSName, pcsUID, "worker", testNamespace, 0).Build()
+				markStandalonePCLQConverged(t, pcs, worker, pcsGenerationHash)
+				return []client.Object{worker, scaledToZeroPCLQ("monitor", "stale-hash", "old-gen")}
+			},
+			expectedAvailable: 1,
+			expectedUpdated:   0,
+		},
+	}
+
+	for _, tt := range testCases {
+		t.Run(tt.name, func(t *testing.T) {
+			pcs := tt.setupPCS()
+			existingObjects := append([]client.Object{pcs}, tt.childResources(pcs)...)
+			cl := testutils.CreateDefaultFakeClient(existingObjects)
+			reconciler := &Reconciler{client: cl}
+			standalonePCLQs, pcsgs, err := reconciler.listExpectedPCSChildren(context.Background(), pcs)
+			require.NoError(t, err)
+			stats, err := reconciler.computeAvailableAndUpdatedReplicas(logr.Discard(), pcs, standalonePCLQs, pcsgs)
+			require.NoError(t, err)
+			assert.Equal(t, tt.expectedAvailable, stats.availableReplicas, "availableReplicas")
+			assert.Equal(t, tt.expectedUpdated, stats.updatedReplicas, "updatedReplicas")
 		})
 	}
 }
@@ -685,13 +838,13 @@ func TestComputePCSUpdateProgressCounts(t *testing.T) {
 	makePCSG := func(replicaIndex int, hash string) *grovecorev1alpha1.PodCliqueScalingGroup {
 		return testutils.NewPodCliqueScalingGroupBuilder(
 			pcsgName(replicaIndex), testNamespace, testPCSName, replicaIndex,
-		).WithOptions(testutils.WithPCSGCurrentPCSGenerationHash(hash)).Build()
+		).WithOwnerReference(apicommonconstants.KindPodCliqueSet, testPCSName, pcsUID).WithOptions(testutils.WithPCSGCurrentPCSGenerationHash(hash)).Build()
 	}
 	// makePCSGNoHash builds a PCSG with no CurrentPodCliqueSetGenerationHash (not yet updated).
 	makePCSGNoHash := func(replicaIndex int) *grovecorev1alpha1.PodCliqueScalingGroup {
 		return testutils.NewPodCliqueScalingGroupBuilder(
 			pcsgName(replicaIndex), testNamespace, testPCSName, replicaIndex,
-		).Build()
+		).WithOwnerReference(apicommonconstants.KindPodCliqueSet, testPCSName, pcsUID).Build()
 	}
 
 	testCases := []struct {
@@ -781,7 +934,9 @@ func TestComputePCSUpdateProgressCounts(t *testing.T) {
 			cl := testutils.CreateDefaultFakeClient(objects)
 			r := &Reconciler{client: cl}
 
-			stats, err := r.computeAvailableAndUpdatedReplicas(context.Background(), logr.Discard(), pcs)
+			standalonePCLQs, pcsgs, err := r.listExpectedPCSChildren(context.Background(), pcs)
+			require.NoError(t, err)
+			stats, err := r.computeAvailableAndUpdatedReplicas(logr.Discard(), pcs, standalonePCLQs, pcsgs)
 			require.NoError(t, err)
 			assert.Equal(t, tt.wantUpdatedPCLQs, stats.updatedPCLQs, "updatedPCLQs")
 			assert.Equal(t, tt.wantTotalPCLQs, stats.totalPCLQs, "totalPCLQs")
@@ -812,8 +967,10 @@ func TestPCSMutateReplicasWritesUpdateProgressCounts(t *testing.T) {
 		pcs := b.Build()
 		children := []client.Object{
 			testutils.NewPodCliqueScalingGroupBuilder(pcsgName(0), testNamespace, testPCSName, 0).
+				WithOwnerReference(apicommonconstants.KindPodCliqueSet, testPCSName, pcsUID).
 				WithOptions(testutils.WithPCSGCurrentPCSGenerationHash(pcsHash)).Build(),
 			testutils.NewPodCliqueScalingGroupBuilder(pcsgName(1), testNamespace, testPCSName, 1).
+				WithOwnerReference(apicommonconstants.KindPodCliqueSet, testPCSName, pcsUID).
 				WithOptions(testutils.WithPCSGCurrentPCSGenerationHash(pcsHash)).Build(),
 			markStandalonePCLQConverged(t, pcs, testutils.NewPodCliqueBuilder(testPCSName, pcsUID, "worker", testNamespace, 0).Build(), pcsHash),
 			markStandalonePCLQConverged(t, pcs, testutils.NewPodCliqueBuilder(testPCSName, pcsUID, "worker", testNamespace, 1).Build(), pcsHash),
@@ -825,14 +982,22 @@ func TestPCSMutateReplicasWritesUpdateProgressCounts(t *testing.T) {
 		pcs, children := build(false)
 		cl := testutils.CreateDefaultFakeClient(append([]client.Object{pcs}, children...))
 		r := &Reconciler{client: cl}
-		require.NoError(t, r.mutateReplicas(context.Background(), logr.Discard(), pcs))
+		standalonePCLQs, pcsgs, err := r.listExpectedPCSChildren(context.Background(), pcs)
+		require.NoError(t, err)
+		stats, err := r.computeAvailableAndUpdatedReplicas(logr.Discard(), pcs, standalonePCLQs, pcsgs)
+		require.NoError(t, err)
+		mutateReplicas(pcs, stats)
 		assert.Nil(t, pcs.Status.UpdateProgress, "UpdateProgress must remain nil when not initialized")
 	})
 	t.Run("UpdateProgress non-nil — counts populated from informer cache", func(t *testing.T) {
 		pcs, children := build(true)
 		cl := testutils.CreateDefaultFakeClient(append([]client.Object{pcs}, children...))
 		r := &Reconciler{client: cl}
-		require.NoError(t, r.mutateReplicas(context.Background(), logr.Discard(), pcs))
+		standalonePCLQs, pcsgs, err := r.listExpectedPCSChildren(context.Background(), pcs)
+		require.NoError(t, err)
+		stats, err := r.computeAvailableAndUpdatedReplicas(logr.Discard(), pcs, standalonePCLQs, pcsgs)
+		require.NoError(t, err)
+		mutateReplicas(pcs, stats)
 		require.NotNil(t, pcs.Status.UpdateProgress)
 		assert.Equal(t, int32(2), pcs.Status.UpdateProgress.UpdatedPodCliquesCount)
 		assert.Equal(t, int32(2), pcs.Status.UpdateProgress.TotalPodCliquesCount)
@@ -892,21 +1057,6 @@ func TestCountUpdatedPCLQs(t *testing.T) {
 	}
 }
 
-func markStandalonePCLQConverged(t testing.TB, pcs *grovecorev1alpha1.PodCliqueSet, pclq *grovecorev1alpha1.PodClique, generationHash string) *grovecorev1alpha1.PodClique {
-	t.Helper()
-	expectedTemplateHash, err := componentutils.GetExpectedPCLQPodTemplateHash(pcs, pclq.ObjectMeta)
-	require.NoError(t, err)
-	if pclq.Labels == nil {
-		pclq.Labels = map[string]string{}
-	}
-	pclq.Labels[apicommon.LabelPodTemplateHash] = expectedTemplateHash
-	pclq.Status.CurrentPodTemplateHash = ptr.To(expectedTemplateHash)
-	pclq.Status.CurrentPodCliqueSetGenerationHash = ptr.To(generationHash)
-	pclq.Status.ReadyReplicas = *pclq.Spec.MinAvailable
-	pclq.Status.UpdatedReplicas = *pclq.Spec.MinAvailable
-	return pclq
-}
-
 func TestCountUpdatedPCSGs(t *testing.T) {
 	hash := "h"
 	otherHash := "old"
@@ -962,19 +1112,6 @@ func TestFlattenNamesToSet(t *testing.T) {
 	}
 }
 
-// pcsgName returns the FQN for a PCSG owned by `testPCSName` at the given replica index, using
-// the same scheme that componentutils.GetExpectedPCSGFQNsPerPCSReplica produces.
-func pcsgName(replicaIndex int) string {
-	switch replicaIndex {
-	case 0:
-		return "test-pcs-0-compute"
-	case 1:
-		return "test-pcs-1-compute"
-	default:
-		return ""
-	}
-}
-
 // TestMutateSelector verifies the /scale selector is always published for PodCliqueSet, scoped to
 // resources managed by Grove for this PodCliqueSet (matched by `app.kubernetes.io/managed-by` and
 // `app.kubernetes.io/part-of`). It also asserts the rendered selector parses back into a usable
@@ -1012,5 +1149,82 @@ func TestMutateSelector(t *testing.T) {
 			}
 			assert.True(t, parsed.Matches(podLabels), "selector should match a Pod carrying the PCS-managed default labels")
 		})
+	}
+}
+
+func TestComputeUpdateInProgressCondition(t *testing.T) {
+	tests := []struct {
+		description string
+		counts      updateInProgressCounts
+		wantStatus  metav1.ConditionStatus
+		wantReason  string
+		wantMessage string
+	}{
+		{"no rolling children", updateInProgressCounts{}, metav1.ConditionFalse, apicommonconstants.ConditionReasonNoActiveUpdate, "No rolling update is in progress"},
+		{"rolling but none stuck", updateInProgressCounts{rollingPCLQs: 2, rollingPCSGs: 1}, metav1.ConditionTrue, apicommonconstants.ConditionReasonProgressing, "Rolling update is in progress"},
+		{"stuck PodCliques only", updateInProgressCounts{rollingPCLQs: 2, stuckPCLQs: 2}, metav1.ConditionUnknown, apicommonconstants.ConditionReasonProgressDeadlineExceeded, "2/2 PodCliques stuck"},
+		{"stuck PodCliqueScalingGroups only", updateInProgressCounts{rollingPCSGs: 3, stuckPCSGs: 1}, metav1.ConditionUnknown, apicommonconstants.ConditionReasonProgressDeadlineExceeded, "1/3 PodCliqueScalingGroups stuck"},
+		{"stuck across both kinds", updateInProgressCounts{rollingPCLQs: 2, stuckPCLQs: 2, rollingPCSGs: 3, stuckPCSGs: 1}, metav1.ConditionUnknown, apicommonconstants.ConditionReasonProgressDeadlineExceeded, "2/2 PodCliques stuck, 1/3 PodCliqueScalingGroups stuck"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.description, func(t *testing.T) {
+			cond := computeUpdateInProgressCondition(tc.counts)
+			assert.Equal(t, apicommonconstants.ConditionTypeUpdateInProgress, cond.Type)
+			assert.Equal(t, tc.wantStatus, cond.Status)
+			assert.Equal(t, tc.wantReason, cond.Reason)
+			assert.Equal(t, tc.wantMessage, cond.Message)
+		})
+	}
+}
+
+func TestUpdateInProgressState(t *testing.T) {
+	withStatus := func(s metav1.ConditionStatus) []metav1.Condition {
+		return []metav1.Condition{{Type: apicommonconstants.ConditionTypeUpdateInProgress, Status: s}}
+	}
+	tests := []struct {
+		description string
+		conditions  []metav1.Condition
+		wantRolling bool
+		wantStuck   bool
+	}{
+		{"condition absent", nil, false, false},
+		{"true is rolling", withStatus(metav1.ConditionTrue), true, false},
+		{"unknown is rolling and stuck", withStatus(metav1.ConditionUnknown), true, true},
+		{"false is not rolling", withStatus(metav1.ConditionFalse), false, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.description, func(t *testing.T) {
+			rolling, stuck := updateInProgressState(tc.conditions)
+			assert.Equal(t, tc.wantRolling, rolling)
+			assert.Equal(t, tc.wantStuck, stuck)
+		})
+	}
+}
+
+func markStandalonePCLQConverged(t testing.TB, pcs *grovecorev1alpha1.PodCliqueSet, pclq *grovecorev1alpha1.PodClique, generationHash string) *grovecorev1alpha1.PodClique {
+	t.Helper()
+	expectedTemplateHash, err := componentutils.GetExpectedPCLQPodTemplateHash(pcs, pclq.ObjectMeta)
+	require.NoError(t, err)
+	if pclq.Labels == nil {
+		pclq.Labels = map[string]string{}
+	}
+	pclq.Labels[apicommon.LabelPodTemplateHash] = expectedTemplateHash
+	pclq.Status.CurrentPodTemplateHash = ptr.To(expectedTemplateHash)
+	pclq.Status.CurrentPodCliqueSetGenerationHash = ptr.To(generationHash)
+	pclq.Status.ReadyReplicas = *pclq.Spec.MinAvailable
+	pclq.Status.UpdatedReplicas = *pclq.Spec.MinAvailable
+	return pclq
+}
+
+// pcsgName returns the FQN for a PCSG owned by `testPCSName` at the given replica index, using
+// the same scheme that componentutils.GetExpectedPCSGFQNsPerPCSReplica produces.
+func pcsgName(replicaIndex int) string {
+	switch replicaIndex {
+	case 0:
+		return "test-pcs-0-compute"
+	case 1:
+		return "test-pcs-1-compute"
+	default:
+		return ""
 	}
 }

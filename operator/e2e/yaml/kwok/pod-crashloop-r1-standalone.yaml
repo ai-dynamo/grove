@@ -1,0 +1,67 @@
+# KWOK Stage that makes a fresh standalone-PodClique pod of PCS replica 1 report a container that
+# terminated with a non-zero exit code and stays NotReady (a crash-looping workload). Scoped to replica 1
+# by the podcliqueset-replica-index label and to standalone PodCliques by the absence of the
+# podcliquescalinggroup label, so it never touches replica 0's in-flight update or any PodCliqueScalingGroup
+# pod. Grove counts a pod whose container has a non-zero last-terminated exit code as unavailable
+# (PodHasAtleastOneContainerWithNonZeroExitCode), so the standalone PodClique drops below MinAvailable and,
+# after terminationDelay, the PCS-level gang termination fires for replica 1. It matches a fresh pod before
+# its podIP is assigned, then assigns a podIP so the default pod-ready stage cannot re-fire and recover it.
+# Higher weight than the default pod-ready stage so it wins for matching pods.
+apiVersion: kwok.x-k8s.io/v1alpha1
+kind: Stage
+metadata:
+  name: pod-crashloop-r1-standalone
+spec:
+  resourceRef:
+    apiGroup: v1
+    kind: Pod
+  selector:
+    matchExpressions:
+      - key: .metadata.deletionTimestamp
+        operator: DoesNotExist
+      - key: .status.podIP
+        operator: DoesNotExist
+      - key: '.metadata.labels["grove.io/podcliqueset-replica-index"]'
+        operator: In
+        values:
+          - "1"
+      - key: '.metadata.labels["grove.io/podcliquescalinggroup"]'
+        operator: DoesNotExist
+  weight: 20
+  next:
+    statusSubresource: status
+    statusTemplate: |
+      {{ $now := Now }}
+      conditions:
+      - lastTransitionTime: {{ $now | Quote }}
+        status: "True"
+        type: Initialized
+      - lastTransitionTime: {{ $now | Quote }}
+        status: "False"
+        reason: ContainersNotReady
+        type: Ready
+      - lastTransitionTime: {{ $now | Quote }}
+        status: "False"
+        reason: ContainersNotReady
+        type: ContainersReady
+      containerStatuses:
+      {{ range .spec.containers }}
+      - image: {{ .image | Quote }}
+        name: {{ .name | Quote }}
+        ready: false
+        restartCount: 3
+        state:
+          waiting:
+            reason: CrashLoopBackOff
+            message: "simulated crash loop"
+        lastState:
+          terminated:
+            exitCode: 1
+            reason: Error
+            startedAt: {{ $now | Quote }}
+            finishedAt: {{ $now | Quote }}
+      {{ end }}
+      hostIP: {{ NodeIPWith .spec.nodeName | Quote }}
+      podIP: {{ PodIPWith .spec.nodeName ( or .spec.hostNetwork false ) ( or .metadata.uid "" ) ( or .metadata.name "" ) ( or .metadata.namespace "" ) | Quote }}
+      phase: Running
+      startTime: {{ $now | Quote }}

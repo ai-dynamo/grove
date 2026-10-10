@@ -157,7 +157,7 @@ func (r _resource) doCreate(ctx context.Context, logger logr.Logger, pcs *grovec
 	cd := emptyComputeDomain(cdObjKey)
 	pcsObjKey := client.ObjectKeyFromObject(pcs)
 
-	opResult, err := controllerutil.CreateOrPatch(ctx, r.client, cd, func() error {
+	opResult, err := k8sutils.CreateOrPatchSpec(ctx, r.client, cd, func() error {
 		return r.buildResource(cd, pcs, cdInfo)
 	})
 	if err != nil {

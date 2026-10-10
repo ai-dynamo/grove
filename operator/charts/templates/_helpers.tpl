@@ -84,7 +84,7 @@ grove-operator-cm-{{ include "operator.config.data" . | sha256sum | trunc 8 }}
 {{- end -}}
 
 {{- define "common.chart.labels" -}}
-chart: "{{ .Chart.Name }}-{{ .Chart.Version }}"
+chart: "{{- printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimAll "-_." }}"
 release: "{{ .Release.Name }}"
 {{- end -}}
 
@@ -165,6 +165,20 @@ release: "{{ .Release.Name }}"
 {{- define "operator.pcs.validating.webhook.labels" -}}
 {{- include "common.chart.labels" . }}
 {{- range $key, $val := .Values.webhooks.podCliqueSetValidationWebhook.labels }}
+{{ $key }}: {{ $val }}
+{{- end }}
+{{- end -}}
+
+{{- define "operator.pclq.validating.webhook.labels" -}}
+{{- include "common.chart.labels" . }}
+{{- range $key, $val := .Values.webhooks.podCliqueValidationWebhook.labels }}
+{{ $key }}: {{ $val }}
+{{- end }}
+{{- end -}}
+
+{{- define "operator.pcsg.validating.webhook.labels" -}}
+{{- include "common.chart.labels" . }}
+{{- range $key, $val := .Values.webhooks.podCliqueScalingGroupValidationWebhook.labels }}
 {{ $key }}: {{ $val }}
 {{- end }}
 {{- end -}}

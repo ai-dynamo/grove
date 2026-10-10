@@ -21,16 +21,29 @@ import (
 	"fmt"
 
 	"github.com/go-logr/logr"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/yaml"
 )
 
-const fieldManager = "grove-crd-installer"
+const (
+	fieldManager                 = "grove-crd-installer"
+	legacyClusterTopologyCRDName = "clustertopologies.grove.io"
+	legacyClusterTopologyGroup   = "grove.io"
+	legacyClusterTopologyVersion = "v1alpha1"
+	legacyClusterTopologyKind    = "ClusterTopology"
+)
 
 // InstallCRDs applies the given CRD YAML definitions via server-side apply and
 // logs each applied name. It returns an error if any CRD fails to apply.
 func InstallCRDs(ctx context.Context, cl client.Client, log logr.Logger, crds []string) error {
+	if err := deleteEmptyLegacyClusterTopologyCRD(ctx, cl, log); err != nil {
+		return err
+	}
+
 	for _, crdYAML := range crds {
 		name, err := applyCRD(ctx, cl, []byte(crdYAML))
 		if err != nil {
@@ -38,6 +51,40 @@ func InstallCRDs(ctx context.Context, cl client.Client, log logr.Logger, crds []
 		}
 		log.Info("CRD applied", "name", name)
 	}
+	return nil
+}
+
+// deleteEmptyLegacyClusterTopologyCRD removes the unused ClusterTopology CRD
+// when it has no instances. It retains the CRD when resources exist.
+func deleteEmptyLegacyClusterTopologyCRD(ctx context.Context, cl client.Client, log logr.Logger) error {
+	legacyCRD := &apiextensionsv1.CustomResourceDefinition{}
+	if err := cl.Get(ctx, client.ObjectKey{Name: legacyClusterTopologyCRDName}, legacyCRD); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("get legacy ClusterTopology CRD: %w", err)
+	}
+
+	legacyTopologies := &unstructured.UnstructuredList{}
+	legacyTopologies.SetGroupVersionKind(schema.GroupVersion{
+		Group:   legacyClusterTopologyGroup,
+		Version: legacyClusterTopologyVersion,
+	}.WithKind(legacyClusterTopologyKind + "List"))
+	if err := cl.List(ctx, legacyTopologies); err != nil {
+		return fmt.Errorf("list legacy ClusterTopology resources: %w", err)
+	}
+	if len(legacyTopologies.Items) != 0 {
+		log.Info("Legacy ClusterTopology CRD retained because resources still exist",
+			"name", legacyClusterTopologyCRDName,
+			"resourceCount", len(legacyTopologies.Items),
+		)
+		return nil
+	}
+
+	if err := cl.Delete(ctx, legacyCRD); err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("delete empty legacy ClusterTopology CRD: %w", err)
+	}
+	log.Info("Deleted empty legacy ClusterTopology CRD", "name", legacyClusterTopologyCRDName)
 	return nil
 }
 

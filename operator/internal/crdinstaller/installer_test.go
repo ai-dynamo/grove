@@ -26,17 +26,19 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
 // buildFakeClient creates a fake client with apiextensionsv1 scheme registered.
-func buildFakeClient() client.Client {
+func buildFakeClient(objects ...client.Object) client.Client {
 	scheme := runtime.NewScheme()
 	_ = apiextensionsv1.AddToScheme(scheme)
-	return fake.NewClientBuilder().WithScheme(scheme).Build()
+	return fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).Build()
 }
 
 // minimalCRDYAML returns a minimal valid CRD yaml for testing.
@@ -64,12 +66,12 @@ spec:
 `
 }
 
-// TestInstallCRDs_AllApplied verifies that InstallCRDs applies all 5 Grove CRDs
+// TestInstallCRDs_AllApplied verifies that InstallCRDs applies all 6 Grove CRDs
 // (operator and scheduler) in a single call with no errors.
 //
 // Flow:
 //  1. Call InstallCRDs against a fresh fake client.
-//  2. For each of the 5 expected CRD names, fetch the object from the API.
+//  2. For each of the 6 expected CRD names, fetch the object from the API.
 //  3. Assert every fetch succeeds, confirming all CRDs were created.
 func TestInstallCRDs_AllApplied(t *testing.T) {
 	cl := buildFakeClient()
@@ -80,17 +82,19 @@ func TestInstallCRDs_AllApplied(t *testing.T) {
 		operatorcrds.PodCliqueSetCRD(),
 		operatorcrds.PodCliqueScalingGroupCRD(),
 		operatorcrds.ClusterTopologyCRD(),
+		operatorcrds.PodGangMapCRD(),
 		schedulercrds.PodGangCRD(),
 	}
 	err := crdinstaller.InstallCRDs(ctx, cl, logr.Discard(), allCRDs)
 	require.NoError(t, err)
 
-	// Verify all 5 CRDs exist by name.
+	// Verify all 6 CRDs exist by name.
 	for _, crdName := range []string{
 		"podcliques.grove.io",
 		"podcliquesets.grove.io",
 		"podcliquescalinggroups.grove.io",
 		"clustertopologybindings.grove.io",
+		"podgangmaps.grove.io",
 		"podgangs.scheduler.grove.io",
 	} {
 		obj := &unstructured.Unstructured{}
@@ -214,4 +218,54 @@ func TestInstallCRDs_ReturnsErrorOnInvalidYAML(t *testing.T) {
 
 	err := crdinstaller.InstallCRDs(ctx, cl, logr.Discard(), []string{"not: valid: yaml: [[["})
 	assert.Error(t, err)
+}
+
+// TestInstallCRDs_ClusterTopologyBindingShortName verifies that the ClusterTopologyBinding CRD
+// has the correct shortName "ctb" and not "ct" (which would conflict with the old ClusterTopology CRD).
+//
+// Flow:
+//  1. Call InstallCRDs with the ClusterTopologyBinding CRD.
+//  2. Fetch the CRD from the cluster.
+//  3. Assert that spec.names.shortNames contains "ctb" and not "ct".
+func TestInstallCRDs_ClusterTopologyBindingShortName(t *testing.T) {
+	cl := buildFakeClient()
+	ctx := context.Background()
+
+	err := crdinstaller.InstallCRDs(ctx, cl, logr.Discard(), []string{operatorcrds.ClusterTopologyCRD()})
+	require.NoError(t, err)
+
+	crd := &apiextensionsv1.CustomResourceDefinition{}
+	err = cl.Get(ctx, client.ObjectKey{Name: "clustertopologybindings.grove.io"}, crd)
+	require.NoError(t, err, "ClusterTopologyBinding CRD should exist")
+
+	shortNames := crd.Spec.Names.ShortNames
+	assert.Contains(t, shortNames, "ctb", "ClusterTopologyBinding should have shortName 'ctb'")
+	assert.NotContains(t, shortNames, "ct", "ClusterTopologyBinding should NOT have shortName 'ct' (conflicts with old ClusterTopology)")
+}
+
+func TestInstallCRDs_DeletesEmptyLegacyClusterTopologyCRD(t *testing.T) {
+	legacyCRD := &apiextensionsv1.CustomResourceDefinition{}
+	legacyCRD.Name = "clustertopologies.grove.io"
+	cl := buildFakeClient(legacyCRD)
+
+	err := crdinstaller.InstallCRDs(context.Background(), cl, logr.Discard(), nil)
+	require.NoError(t, err)
+
+	err = cl.Get(context.Background(), client.ObjectKey{Name: legacyCRD.Name}, &apiextensionsv1.CustomResourceDefinition{})
+	assert.True(t, apierrors.IsNotFound(err))
+}
+
+func TestInstallCRDs_RetainsLegacyClusterTopologyCRDWithResources(t *testing.T) {
+	legacyCRD := &apiextensionsv1.CustomResourceDefinition{}
+	legacyCRD.Name = "clustertopologies.grove.io"
+	legacyTopology := &unstructured.Unstructured{}
+	legacyTopology.SetGroupVersionKind(schema.GroupVersion{Group: "grove.io", Version: "v1alpha1"}.WithKind("ClusterTopology"))
+	legacyTopology.SetName("existing-topology")
+	cl := buildFakeClient(legacyCRD, legacyTopology)
+
+	err := crdinstaller.InstallCRDs(context.Background(), cl, logr.Discard(), nil)
+	require.NoError(t, err)
+
+	err = cl.Get(context.Background(), client.ObjectKey{Name: legacyCRD.Name}, &apiextensionsv1.CustomResourceDefinition{})
+	assert.NoError(t, err)
 }

@@ -136,17 +136,22 @@ func TestGetKindSyncGroups(t *testing.T) {
 		component.KindPodClique,
 		component.KindPodCliqueScalingGroup,
 		component.KindPodGang,
+		component.KindPodGangMap,
+		component.KindPodGangMigrator,
 	}
+
+	actualKinds := make([]component.Kind, 0)
 	seen := make(map[component.Kind]bool)
 	for _, group := range groups {
 		for _, k := range group {
 			assert.False(t, seen[k], "kind %s appeared in more than one group", k)
 			seen[k] = true
+			actualKinds = append(actualKinds, k)
 		}
 	}
-	for _, k := range expectedKinds {
-		assert.True(t, seen[k], "kind %s should appear in some group", k)
-	}
+	// Exact set equality: a kind added to or removed from the sync groups without updating
+	// expectedKinds must fail this test.
+	assert.ElementsMatch(t, expectedKinds, actualKinds)
 }
 
 // TestInitUpdateProgress tests the initUpdateProgress function for both OnDelete and RollingRecreate strategies

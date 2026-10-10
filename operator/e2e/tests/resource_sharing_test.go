@@ -26,11 +26,9 @@ import (
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
-	"github.com/ai-dynamo/grove/operator/e2e/grove/gvk"
 	"github.com/ai-dynamo/grove/operator/e2e/grove/workload"
 	k8sutils "github.com/ai-dynamo/grove/operator/e2e/k8s"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/pods"
-	"github.com/ai-dynamo/grove/operator/e2e/k8s/resources"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
 	v1 "k8s.io/api/core/v1"
 	resourcev1 "k8s.io/api/resource/v1"
@@ -385,7 +383,7 @@ func Test_RS1_HierarchicalResourceSharing(t *testing.T) {
 	// --- PCLQ scale-out/in (single PCS replica) ---
 
 	Logger.Info("10. Scale standalone PCLQ worker-a from 1 to 2")
-	if err := scalePodClique(tc, "rs-test-0-worker-a", 2); err != nil {
+	if err := tc.ScalePodClique("rs-test-0-worker-a", 2); err != nil {
 		t.Fatalf("Failed to scale PCLQ: %v", err)
 	}
 	verifyRCState(t, tc, rcLabelSelector, 15, pclqScaleOutRCNames())
@@ -408,7 +406,7 @@ func Test_RS1_HierarchicalResourceSharing(t *testing.T) {
 	Logger.Info("   Verified 15 RCs and 5 pods (per-pod refs) after PCLQ scale-out")
 
 	Logger.Info("11. Scale standalone PCLQ worker-a from 2 to 1")
-	if err := scalePodClique(tc, "rs-test-0-worker-a", 1); err != nil {
+	if err := tc.ScalePodClique("rs-test-0-worker-a", 1); err != nil {
 		t.Fatalf("Failed to scale PCLQ: %v", err)
 	}
 	verifyRCState(t, tc, rcLabelSelector, 14, pcsgScaleOutRCNames())
@@ -453,12 +451,6 @@ func Test_RS1_HierarchicalResourceSharing(t *testing.T) {
 	Logger.Info("   Verified all ResourceClaims garbage-collected after PCS deletion")
 
 	Logger.Info("Hierarchical resource sharing e2e test completed successfully!")
-}
-
-// scalePodClique scales a PodClique using the resource manager.
-func scalePodClique(tc *testctx.TestContext, name string, replicas int) error {
-	rm := resources.NewResourceManager(tc.Client, Logger)
-	return rm.ScaleCRD(tc.Ctx, gvk.PodClique, tc.Namespace, name, replicas)
 }
 
 // verifyRCState waits for the expected RC count and verifies exact RC names.

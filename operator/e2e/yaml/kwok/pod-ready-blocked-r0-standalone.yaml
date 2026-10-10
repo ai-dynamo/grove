@@ -1,0 +1,60 @@
+# KWOK Stage that blocks a fresh standalone-PodClique pod of PCS replica 0 from becoming Ready by delaying
+# readiness far longer than any test runs, so the delay never fires on its own. Scoped to replica 0 by the
+# podcliqueset-replica-index label and to standalone PodCliques by the absence of the podcliquescalinggroup
+# label, so it holds only replica 0's rolled standalone pod and never touches replica 1. A caller keeps it
+# applied to hold that pod Pending and NotReady (keeping replica 0's coherent update in flight so the
+# orchestrator stays parked on replica 0), and removes the stage to release it, at which point the default
+# pod-ready stage readies it. It matches a fresh pod before its podIP is assigned; its weight beats the
+# default pod-ready stage.
+apiVersion: kwok.x-k8s.io/v1alpha1
+kind: Stage
+metadata:
+  name: pod-ready-blocked-r0-standalone
+spec:
+  resourceRef:
+    apiGroup: v1
+    kind: Pod
+  selector:
+    matchExpressions:
+      - key: .metadata.deletionTimestamp
+        operator: DoesNotExist
+      - key: .status.podIP
+        operator: DoesNotExist
+      - key: '.metadata.labels["grove.io/podcliqueset-replica-index"]'
+        operator: In
+        values:
+          - "0"
+      - key: '.metadata.labels["grove.io/podcliquescalinggroup"]'
+        operator: DoesNotExist
+  weight: 20
+  delay:
+    # 1h: effectively a hold. The caller removes the stage to release the pod well before this fires.
+    durationMilliseconds: 3600000
+  next:
+    statusSubresource: status
+    statusTemplate: |
+      {{ $now := Now }}
+      conditions:
+      - lastTransitionTime: {{ $now | Quote }}
+        status: "True"
+        type: Initialized
+      - lastTransitionTime: {{ $now | Quote }}
+        status: "True"
+        type: Ready
+      - lastTransitionTime: {{ $now | Quote }}
+        status: "True"
+        type: ContainersReady
+      containerStatuses:
+      {{ range .spec.containers }}
+      - image: {{ .image | Quote }}
+        name: {{ .name | Quote }}
+        ready: true
+        restartCount: 0
+        state:
+          running:
+            startedAt: {{ $now | Quote }}
+      {{ end }}
+      hostIP: {{ NodeIPWith .spec.nodeName | Quote }}
+      podIP: {{ PodIPWith .spec.nodeName ( or .spec.hostNetwork false ) ( or .metadata.uid "" ) ( or .metadata.name "" ) ( or .metadata.namespace "" ) | Quote }}
+      phase: Running
+      startTime: {{ $now | Quote }}

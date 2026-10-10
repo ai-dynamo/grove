@@ -21,10 +21,10 @@ requires-python = ">=3.12"
 dependencies = [
     "docker==7.1.0",
     "pydantic==2.12.5",
-    "pydantic-settings==2.13.1",
+    "pydantic-settings==2.14.2",
     "pyyaml==6.0.3",
     "rich==14.3.3",
-    "sh==2.2.2",
+    "sh==2.2.4",
     "tenacity==9.1.4",
     "typer==0.24.1",
 ]

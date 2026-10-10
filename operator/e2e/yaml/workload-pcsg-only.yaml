@@ -1,0 +1,83 @@
+# Workload: PCSG-only worker group with no standalone PodClique.
+# Mirrors a multi-node worker DGD (one PodCliqueScalingGroup spanning a leader and a worker clique)
+# so scaling the group below MinAvailable drains the anchor entry to empty.
+---
+apiVersion: grove.io/v1alpha1
+kind: PodCliqueSet
+metadata:
+  name: workload-pcsg-only
+  labels:
+    app: workload-pcsg-only
+spec:
+  replicas: 1
+  template:
+    podCliqueScalingGroups:
+      - name: worker
+        replicas: 1
+        minAvailable: 1
+        cliqueNames:
+          - worker-ldr
+          - worker-wkr
+    cliques:
+      - name: worker-ldr
+        labels:
+          kai.scheduler/queue: test
+        spec:
+          roleName: worker-ldr
+          replicas: 1
+          minAvailable: 1
+          podSpec:
+            terminationGracePeriodSeconds: 5
+            schedulerName: kai-scheduler
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: node_role.e2e.grove.nvidia.com
+                          operator: In
+                          values:
+                            - agent
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: worker-ldr
+                image: registry:5001/busybox:latest
+                command: ["sleep", "infinity"]
+                resources:
+                  requests:
+                    memory: 80Mi
+      - name: worker-wkr
+        labels:
+          kai.scheduler/queue: test
+        spec:
+          roleName: worker-wkr
+          replicas: 1
+          minAvailable: 1
+          podSpec:
+            terminationGracePeriodSeconds: 5
+            schedulerName: kai-scheduler
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: node_role.e2e.grove.nvidia.com
+                          operator: In
+                          values:
+                            - agent
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: worker-wkr
+                image: registry:5001/busybox:latest
+                command: ["sleep", "infinity"]
+                resources:
+                  requests:
+                    memory: 80Mi

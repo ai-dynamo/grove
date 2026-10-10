@@ -86,6 +86,7 @@ webhooks:
         resources:
           - podcliques
           - podcliquescalinggroups
+          - podgangmaps
         scope: "Namespaced"
       - apiGroups:
           - "scheduler.grove.io"

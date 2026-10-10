@@ -319,3 +319,51 @@ func TestCreatePodGangNameFromPCSGFQN(t *testing.T) {
 		})
 	}
 }
+
+func TestGenerateAnchorPodGangName(t *testing.T) {
+	expected := "simple1-0-1700000000000000000"
+	actual := GenerateAnchorPodGangName(ResourceNameReplica{Name: "simple1", Replica: 0}, "1700000000000000000")
+	assert.Equal(t, expected, actual)
+}
+
+func TestGenerateNonAnchorPodGangName(t *testing.T) {
+	// Hyphenated scaling group name must slot intact between the epoch and index segments.
+	expected := "my-app-1-42-worker-group-0"
+	actual := GenerateNonAnchorPodGangName(ResourceNameReplica{Name: "my-app", Replica: 1}, "42", "worker-group", 0)
+	assert.Equal(t, expected, actual)
+}
+
+func TestGeneratePodGangMapName(t *testing.T) {
+	expected := "simple1-0"
+	actual := GeneratePodGangMapName(ResourceNameReplica{Name: "simple1", Replica: 0})
+	assert.Equal(t, expected, actual)
+}
+
+func TestExtractPodCliqueNameFromStandalonePCLQFQN(t *testing.T) {
+	tests := []struct {
+		name           string
+		pclqFQN        string
+		pcsNameReplica ResourceNameReplica
+		expected       string
+	}{
+		{
+			name:           "simple clique name",
+			pclqFQN:        "simple1-0-frontend",
+			pcsNameReplica: ResourceNameReplica{Name: "simple1", Replica: 0},
+			expected:       "frontend",
+		},
+		{
+			name:           "clique name with hyphens is returned whole",
+			pclqFQN:        "my-app-2-data-loader",
+			pcsNameReplica: ResourceNameReplica{Name: "my-app", Replica: 2},
+			expected:       "data-loader",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			actual := ExtractPodCliqueNameFromStandalonePCLQFQN(tt.pclqFQN, tt.pcsNameReplica)
+			assert.Equal(t, tt.expected, actual)
+		})
+	}
+}

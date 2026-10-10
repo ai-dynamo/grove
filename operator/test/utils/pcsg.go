@@ -81,15 +81,16 @@ func (b *PodCliqueScalingGroupBuilder) WithLabels(labels map[string]string) *Pod
 	return b
 }
 
-// WithOwnerReference adds an owner reference to the PodCliqueScalingGroup.
-func (b *PodCliqueScalingGroupBuilder) WithOwnerReference(kind, name, uid string) *PodCliqueScalingGroupBuilder {
+// WithOwnerReference sets a controller owner reference on the PodCliqueScalingGroup.
+func (b *PodCliqueScalingGroupBuilder) WithOwnerReference(kind, name string, uid types.UID) *PodCliqueScalingGroupBuilder {
 	ownerRef := metav1.OwnerReference{
-		Kind: kind,
-		Name: name,
-		UID:  types.UID("test-uid"),
+		Kind:       kind,
+		Name:       name,
+		UID:        types.UID("test-uid"),
+		Controller: ptr.To(true),
 	}
 	if uid != "" {
-		ownerRef.UID = types.UID(uid)
+		ownerRef.UID = uid
 	}
 	b.pcsg.OwnerReferences = append(b.pcsg.OwnerReferences, ownerRef)
 	return b

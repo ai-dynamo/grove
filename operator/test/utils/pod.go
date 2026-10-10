@@ -112,6 +112,12 @@ func (b *PodBuilder) WithPhase(phase corev1.PodPhase) *PodBuilder {
 	return b
 }
 
+// WithSchedulingGate adds a scheduling gate with the given name to the Pod.
+func (b *PodBuilder) WithSchedulingGate(name string) *PodBuilder {
+	b.pod.Spec.SchedulingGates = append(b.pod.Spec.SchedulingGates, corev1.PodSchedulingGate{Name: name})
+	return b
+}
+
 func createDefaultPodSpec() corev1.PodSpec {
 	return corev1.PodSpec{
 		Containers: []corev1.Container{

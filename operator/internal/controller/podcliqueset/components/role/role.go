@@ -58,8 +58,8 @@ func New(client client.Client, scheme *runtime.Scheme) component.Operator[grovec
 func (r _resource) GetExistingResourceNames(ctx context.Context, _ logr.Logger, pcsObjMeta metav1.ObjectMeta) ([]string, error) {
 	roleNames := make([]string, 0, 1)
 	objectKey := getObjectKey(pcsObjMeta)
-	partialObjMeta, err := k8sutils.GetExistingPartialObjectMetadata(ctx, r.client, rbacv1.SchemeGroupVersion.WithKind("Role"), objectKey)
-	if err != nil {
+	role := &rbacv1.Role{}
+	if err := r.client.Get(ctx, objectKey, role); err != nil {
 		if errors.IsNotFound(err) {
 			return roleNames, nil
 		}
@@ -69,8 +69,8 @@ func (r _resource) GetExistingResourceNames(ctx context.Context, _ logr.Logger, 
 			fmt.Sprintf("Error getting Role: %v for PodCliqueSet: %v", objectKey, k8sutils.GetObjectKeyFromObjectMeta(pcsObjMeta)),
 		)
 	}
-	if metav1.IsControlledBy(partialObjMeta, &pcsObjMeta) {
-		roleNames = append(roleNames, partialObjMeta.Name)
+	if metav1.IsControlledBy(role, &pcsObjMeta) {
+		roleNames = append(roleNames, role.Name)
 	}
 	return roleNames, nil
 }
@@ -86,12 +86,12 @@ func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev
 		)
 	}
 	if len(existingRoleNames) > 0 {
-		logger.Info("Role already exists, skipping creation", "existingRole", existingRoleNames[0])
+		logger.V(1).Info("Role already exists, skipping creation", "existingRole", existingRoleNames[0])
 		return nil
 	}
 	objectKey := getObjectKey(pcs.ObjectMeta)
 	role := emptyRole(objectKey)
-	logger.Info("Running CreateOrUpdate Role", "objectKey", objectKey)
+	logger.V(1).Info("Running CreateOrUpdate Role", "objectKey", objectKey)
 	if err := r.buildResource(pcs, role); err != nil {
 		return groveerr.WrapError(err,
 			errSyncRole,

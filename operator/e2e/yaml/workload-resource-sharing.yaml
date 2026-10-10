@@ -200,7 +200,7 @@ spec:
     podCliqueScalingGroups:
       - name: sga
         replicas: 2
-        minAvailable: 2
+        minAvailable: 1
         cliqueNames:
           - worker-b
         resourceSharing:

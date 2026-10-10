@@ -25,14 +25,15 @@ import (
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	internalconstants "github.com/ai-dynamo/grove/operator/internal/constants"
 	ctrlcommon "github.com/ai-dynamo/grove/operator/internal/controller/common"
-	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	ctrlutils "github.com/ai-dynamo/grove/operator/internal/controller/utils"
+	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
 	"github.com/go-logr/logr"
 	"github.com/samber/lo"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
@@ -52,7 +53,7 @@ func (r *Reconciler) reconcileStatus(ctx context.Context, logger logr.Logger, pc
 	}
 
 	originalStatus := pcsg.Status.DeepCopy()
-	patchObj := client.MergeFrom(pcsg.DeepCopy())
+	patchObj := client.MergeFromWithOptions(pcsg.DeepCopy(), client.MergeFromWithOptimisticLock{})
 
 	pcs, err := componentutils.GetPodCliqueSet(ctx, r.client, pcsg.ObjectMeta)
 	if err != nil {
@@ -74,6 +75,11 @@ func (r *Reconciler) reconcileStatus(ctx context.Context, logger logr.Logger, pc
 	pclqsPerPCSGReplica = pruneStrayPCSGPCLQs(pcsg, pclqsPerPCSGReplica)
 	mutateReplicas(logger, pcs, pcsg, pclqsPerPCSGReplica)
 	mutateMinAvailableBreachedCondition(logger, pcsg, pclqsPerPCSGReplica)
+	progressDeadline, err := progressDeadlineForPCSG(pcs, pcsg)
+	if err != nil {
+		logger.Error(err, "could not resolve ProgressDeadline for PodCliqueScalingGroup, proceeding without a deadline")
+	}
+	mutateUpdateInProgressCondition(pcsg, originalStatus, progressDeadline)
 	r.emitAllScheduledReplicasLostIfNeeded(pcsg, originalStatus.ScheduledReplicas)
 
 	if err = mutateSelector(pcs, pcsg); err != nil {
@@ -83,20 +89,17 @@ func (r *Reconciler) reconcileStatus(ctx context.Context, logger logr.Logger, pc
 
 	mutateCurrentPodCliqueSetGenerationHash(logger, pcs, pcsg, lo.Flatten(lo.Values(pclqsPerPCSGReplica)))
 
-	// Skip the status patch when every mutate* above left status byte-identical to what the
-	// previous reconcile already persisted. The mutators are the only code writing
-	// pcsg.Status here, so equality means there is nothing for the apiserver to store.
-	// Issuing the Patch anyway bumps resourceVersion and fires a watch event that wakes the
-	// parent PCS reconciler and any other PCSG observers, cascading into spurious
-	// reconciles. equality.Semantic is required because the status mixes counters,
-	// pointers, conditions, and a label-selector map.
-	if equality.Semantic.DeepEqual(*originalStatus, pcsg.Status) {
-		return ctrlcommon.ContinueReconcile()
-	}
-
-	if err = r.client.Status().Patch(ctx, pcsg, patchObj); err != nil {
-		logger.Error(err, "failed to update PodCliqueScalingGroup status")
-		return ctrlcommon.ReconcileWithErrors("failed to update the status with label selector and replicas", err)
+	// Patch only when the mutators changed the status. The API server no-ops an identical write, but
+	// it still receives, decodes and validates the request. Skipping avoids that cost. equality.Semantic
+	// is used because the status mixes counters, pointers, conditions and a label-selector map.
+	if !equality.Semantic.DeepEqual(*originalStatus, pcsg.Status) {
+		if err = r.client.Status().Patch(ctx, pcsg, patchObj); err != nil {
+			if apierrors.IsConflict(err) {
+				return ctrlcommon.ReconcileAfter(internalconstants.ComponentSyncRetryInterval, fmt.Sprintf("409-conflict when updating PodCliqueScalingGroup status, re-queueing: %v", pcsgObjectKey))
+			}
+			logger.Error(err, "failed to update PodCliqueScalingGroup status")
+			return ctrlcommon.ReconcileWithErrors("failed to update the status with label selector and replicas", err)
+		}
 	}
 
 	return ctrlcommon.ContinueReconcile()
@@ -128,7 +131,7 @@ func mutateReplicas(logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, pcs
 		updatedPCLQs += countPCSGReplicaUpdatedPCLQs(currentPCSGenerationHash, expectedPCLQPodTemplateHashes, pclqs)
 	}
 	totalPCLQs = pcsg.Spec.Replicas * cliqueNamesPerReplica
-	logger.Info("Mutating PodCliqueScalingGroup replicas",
+	logger.V(1).Info("Mutating PodCliqueScalingGroup replicas",
 		"pcsg", client.ObjectKeyFromObject(pcsg),
 		"scheduledReplicas", scheduledReplicas, "availableReplicas", availableReplicas, "updatedReplicas", updatedReplicas,
 		"updatedPCLQs", updatedPCLQs, "totalPCLQs", totalPCLQs)
@@ -264,6 +267,18 @@ func computeMinAvailableBreachedCondition(logger logr.Logger, pcsg *grovecorev1a
 		}
 	}
 
+	// A PodCliqueScalingGroup intentionally scaled to zero has no replicas to keep available, so it is not
+	// in breach. A non-zero replica count below MinAvailable, or a loss of replicas below MinAvailable at
+	// an unchanged replica count, is still a breach.
+	if pcsg.Spec.Replicas == 0 {
+		return metav1.Condition{
+			Type:    constants.ConditionTypeMinAvailableBreached,
+			Status:  metav1.ConditionFalse,
+			Reason:  constants.ConditionReasonSufficientAvailablePCSGReplicas,
+			Message: "PodCliqueScalingGroup is scaled to zero, so MinAvailable is not breached",
+		}
+	}
+
 	// The apiserver defaults Spec.MinAvailable to 1 (+kubebuilder:default), but objects
 	// persisted under an older CRD schema can still read back nil until their next write —
 	// dereferencing unguarded would crash-loop the operator off a single legacy object.
@@ -385,11 +400,11 @@ func mutateSelector(pcs *grovecorev1alpha1.PodCliqueSet, pcsg *grovecorev1alpha1
 func mutateCurrentPodCliqueSetGenerationHash(logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, pcsg *grovecorev1alpha1.PodCliqueScalingGroup, existingPCLQs []grovecorev1alpha1.PodClique) {
 	pclqFQNsPendingUpdate := componentutils.GetPCLQsInPCSGPendingUpdate(pcs, pcsg, existingPCLQs)
 	if len(pclqFQNsPendingUpdate) > 0 {
-		logger.Info("Found PodCliques associated to PodCliqueScalingGroup pending update", "pclqFQNsPendingUpdate", pclqFQNsPendingUpdate)
+		logger.V(1).Info("Found PodCliques associated to PodCliqueScalingGroup pending update", "pclqFQNsPendingUpdate", pclqFQNsPendingUpdate)
 		return
 	}
 	if componentutils.IsPCSGUpdateInProgress(pcsg) {
-		logger.Info("PodCliqueScalingGroup is currently updating, cannot set PodCliqueSet CurrentGenerationHash yet")
+		logger.V(1).Info("PodCliqueScalingGroup is currently updating, cannot set PodCliqueSet CurrentGenerationHash yet")
 		return
 	}
 	if pcs.Status.CurrentGenerationHash == nil {
@@ -462,4 +477,76 @@ func pruneStrayPCSGPCLQs(pcsg *grovecorev1alpha1.PodCliqueScalingGroup, pclqsPer
 		pclqsPerPCSGReplica[key] = kept
 	}
 	return pclqsPerPCSGReplica
+}
+
+// progressDeadlineForPCSG resolves the ProgressDeadline for the PodCliqueScalingGroup from its
+// PodCliqueSet config. It is nil when no ProgressDeadline is configured.
+func progressDeadlineForPCSG(pcs *grovecorev1alpha1.PodCliqueSet, pcsg *grovecorev1alpha1.PodCliqueScalingGroup) (*metav1.Duration, error) {
+	pcsReplicaIndex, err := k8sutils.GetPodCliqueSetReplicaIndex(pcsg.ObjectMeta)
+	if err != nil {
+		return nil, err
+	}
+	pcsgConfig, ok := lo.Find(pcs.Spec.Template.PodCliqueScalingGroupConfigs, func(cfg grovecorev1alpha1.PodCliqueScalingGroupConfig) bool {
+		return apicommon.GeneratePodCliqueScalingGroupName(apicommon.ResourceNameReplica{Name: pcs.Name, Replica: pcsReplicaIndex}, cfg.Name) == pcsg.Name
+	})
+	if !ok || pcsgConfig.RollingUpdate == nil {
+		return nil, nil
+	}
+	return pcsgConfig.RollingUpdate.ProgressDeadline, nil
+}
+
+// isPCSGRollingUpdateInProgress reports whether the PodCliqueScalingGroup is under a rolling update.
+func isPCSGRollingUpdateInProgress(pcsg *grovecorev1alpha1.PodCliqueScalingGroup) bool {
+	return pcsg.Status.UpdateProgress != nil && pcsg.Status.UpdateProgress.UpdateEndedAt == nil
+}
+
+// mutateUpdateInProgressCondition maintains LastProgressedAt and sets the UpdateInProgress
+// condition. While a rolling update is in progress LastProgressedAt starts on the first reconcile and advances
+// whenever UpdatedReplicas increases, and the condition is True (Progressing) or Unknown
+// (ProgressDeadlineExceeded) when no progress has been made within ProgressDeadline. Otherwise, the
+// LastProgressedAt is cleared and the condition is False (NoActiveUpdate).
+func mutateUpdateInProgressCondition(pcsg *grovecorev1alpha1.PodCliqueScalingGroup, originalStatus *grovecorev1alpha1.PodCliqueScalingGroupStatus, progressDeadline *metav1.Duration) {
+	now := metav1.Now()
+	if isPCSGRollingUpdateInProgress(pcsg) {
+		if pcsg.Status.UpdateProgress.LastProgressedAt == nil || pcsg.Status.UpdatedReplicas > originalStatus.UpdatedReplicas {
+			pcsg.Status.UpdateProgress.LastProgressedAt = &now
+		}
+	} else if pcsg.Status.UpdateProgress != nil {
+		pcsg.Status.UpdateProgress.LastProgressedAt = nil
+	}
+
+	newCondition := computeUpdateInProgressCondition(pcsg, progressDeadline, now)
+	if k8sutils.HasConditionChanged(pcsg.Status.Conditions, newCondition) {
+		meta.SetStatusCondition(&pcsg.Status.Conditions, newCondition)
+	}
+}
+
+// computeUpdateInProgressCondition returns the UpdateInProgress condition for the PodCliqueScalingGroup
+// based on whether a rolling update is in progress and whether it has progressed within ProgressDeadline.
+func computeUpdateInProgressCondition(pcsg *grovecorev1alpha1.PodCliqueScalingGroup, progressDeadline *metav1.Duration, now metav1.Time) metav1.Condition {
+	if !isPCSGRollingUpdateInProgress(pcsg) {
+		return metav1.Condition{
+			Type:               constants.ConditionTypeUpdateInProgress,
+			Status:             metav1.ConditionFalse,
+			Reason:             constants.ConditionReasonNoActiveUpdate,
+			Message:            "No rolling update is in progress",
+			LastTransitionTime: now,
+		}
+	}
+	if progressDeadline != nil && now.Sub(pcsg.Status.UpdateProgress.LastProgressedAt.Time) > progressDeadline.Duration {
+		return metav1.Condition{
+			Type:               constants.ConditionTypeUpdateInProgress,
+			Status:             metav1.ConditionUnknown,
+			Reason:             constants.ConditionReasonProgressDeadlineExceeded,
+			Message:            fmt.Sprintf("Rolling update has not progressed within the progress deadline of %s", progressDeadline.Duration),
+			LastTransitionTime: now,
+		}
+	}
+	return metav1.Condition{
+		Type:               constants.ConditionTypeUpdateInProgress,
+		Status:             metav1.ConditionTrue,
+		Reason:             constants.ConditionReasonProgressing,
+		Message:            "Rolling update is in progress",
+		LastTransitionTime: now,
+	}
 }

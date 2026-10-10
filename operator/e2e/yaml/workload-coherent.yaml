@@ -1,0 +1,123 @@
+# Workload for Coherent update e2e tests.
+# frontend: standalone PodClique (2 replicas, minAvailable 1).
+# inference: PodCliqueScalingGroup (2 replicas, minAvailable 1) over prefill and decode.
+# Under a Coherent update the engine rolls Minimum Viable Units, one PCS replica at a time.
+---
+apiVersion: grove.io/v1alpha1
+kind: PodCliqueSet
+metadata:
+  name: workload-coherent
+  labels:
+    app: workload-coherent
+spec:
+  replicas: 1
+  updateStrategy:
+    type: Coherent
+  template:
+    cliques:
+      - name: frontend
+        labels:
+          kai.scheduler/queue: test
+        rollingUpdate:
+          maxUnavailable: 1
+          progressDeadline: 30s
+        spec:
+          roleName: frontend
+          replicas: 2
+          minAvailable: 1
+          podSpec:
+            terminationGracePeriodSeconds: 5
+            schedulerName: kai-scheduler
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: node_role.e2e.grove.nvidia.com
+                          operator: In
+                          values:
+                            - agent
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: frontend
+                image: registry:5001/busybox:latest
+                command: ["sleep", "infinity"]
+                resources:
+                  requests:
+                    memory: 80Mi
+      - name: prefill
+        labels:
+          kai.scheduler/queue: test
+        spec:
+          roleName: prefill
+          replicas: 1
+          minAvailable: 1
+          podSpec:
+            terminationGracePeriodSeconds: 5
+            schedulerName: kai-scheduler
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: node_role.e2e.grove.nvidia.com
+                          operator: In
+                          values:
+                            - agent
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: prefill
+                image: registry:5001/busybox:latest
+                command: ["sleep", "infinity"]
+                resources:
+                  requests:
+                    memory: 80Mi
+      - name: decode
+        labels:
+          kai.scheduler/queue: test
+        spec:
+          roleName: decode
+          replicas: 1
+          minAvailable: 1
+          podSpec:
+            terminationGracePeriodSeconds: 5
+            schedulerName: kai-scheduler
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: node_role.e2e.grove.nvidia.com
+                          operator: In
+                          values:
+                            - agent
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: decode
+                image: registry:5001/busybox:latest
+                command: ["sleep", "infinity"]
+                resources:
+                  requests:
+                    memory: 80Mi
+    podCliqueScalingGroups:
+      - name: inference
+        replicas: 2
+        minAvailable: 1
+        cliqueNames:
+          - prefill
+          - decode
+        rollingUpdate:
+          maxUnavailable: 1
+          progressDeadline: 30s

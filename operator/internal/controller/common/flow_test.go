@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	ctrl "sigs.k8s.io/controller-runtime"
 )
 
@@ -30,12 +31,12 @@ func TestReconcileStepResult(t *testing.T) {
 		err1 := errors.New("error 1")
 		err2 := errors.New("error 2")
 		result := ReconcileStepResult{
-			result: ctrl.Result{Requeue: true},
+			result: ctrl.Result{RequeueAfter: 5 * time.Second},
 			errs:   []error{err1, err2},
 		}
 
 		r, err := result.Result()
-		assert.True(t, r.Requeue)
+		assert.Equal(t, 5*time.Second, r.RequeueAfter)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "error 1")
 		assert.Contains(t, err.Error(), "error 2")
@@ -45,14 +46,6 @@ func TestReconcileStepResult(t *testing.T) {
 	t.Run("NeedsRequeue with errors", func(t *testing.T) {
 		result := ReconcileStepResult{
 			errs: []error{errors.New("some error")},
-		}
-		assert.True(t, result.NeedsRequeue())
-	})
-
-	// Test NeedsRequeue with Requeue flag
-	t.Run("NeedsRequeue with requeue flag", func(t *testing.T) {
-		result := ReconcileStepResult{
-			result: ctrl.Result{Requeue: true},
 		}
 		assert.True(t, result.NeedsRequeue())
 	})
@@ -68,7 +61,7 @@ func TestReconcileStepResult(t *testing.T) {
 	// Test NeedsRequeue returns false
 	t.Run("NeedsRequeue false", func(t *testing.T) {
 		result := ReconcileStepResult{
-			result: ctrl.Result{Requeue: false},
+			result: ctrl.Result{},
 		}
 		assert.False(t, result.NeedsRequeue())
 	})
@@ -114,7 +107,7 @@ func TestDoNotRequeue(t *testing.T) {
 	result := DoNotRequeue()
 
 	assert.False(t, result.continueReconcile)
-	assert.False(t, result.result.Requeue)
+	assert.Zero(t, result.result.RequeueAfter)
 	assert.False(t, result.NeedsRequeue())
 	assert.False(t, result.HasErrors())
 }
@@ -126,7 +119,7 @@ func TestRecordErrorAndDoNotRequeue(t *testing.T) {
 	result := RecordErrorAndDoNotRequeue("test description", err1, err2)
 
 	assert.False(t, result.continueReconcile)
-	assert.False(t, result.result.Requeue)
+	assert.Zero(t, result.result.RequeueAfter)
 	assert.True(t, result.HasErrors())
 	assert.Len(t, result.GetErrors(), 2)
 	assert.Equal(t, "test description", result.GetDescription())
@@ -193,4 +186,70 @@ func TestShortCircuitReconcileFlow(t *testing.T) {
 		result := ReconcileAfter(5*time.Second, "requeue")
 		assert.True(t, ShortCircuitReconcileFlow(result))
 	})
+}
+
+// TestMergeStepResults verifies that merging two step results keeps errors from either result,
+// keeps the sooner of the two requeues, and continues only when both results continue.
+func TestMergeStepResults(t *testing.T) {
+	errSpec := errors.New("spec failed")
+	errStatus := errors.New("status failed")
+
+	tests := []struct {
+		name             string
+		first            ReconcileStepResult
+		second           ReconcileStepResult
+		wantContinue     bool
+		wantErrContains  []string
+		wantRequeueAfter time.Duration
+	}{
+		{
+			name:         "both continue with no requeue",
+			first:        ContinueReconcile(),
+			second:       ContinueReconcile(),
+			wantContinue: true,
+		},
+		{
+			name:             "shorter requeue of the two wins",
+			first:            ReconcileAfter(5*time.Second, "spec"),
+			second:           ReconcileAfter(3*time.Minute, "status resync"),
+			wantRequeueAfter: 5 * time.Second,
+		},
+		{
+			name:             "requeue from one, continue from the other",
+			first:            ReconcileAfter(5*time.Second, "spec"),
+			second:           ContinueReconcile(),
+			wantRequeueAfter: 5 * time.Second,
+		},
+		{
+			name:            "errors from either result are kept",
+			first:           ReconcileWithErrors("spec", errSpec),
+			second:          ReconcileWithErrors("status", errStatus),
+			wantErrContains: []string{"spec failed", "status failed"},
+		},
+		{
+			name:             "spec error is kept even when status requeues",
+			first:            ReconcileWithErrors("spec", errSpec),
+			second:           ReconcileAfter(5*time.Second, "status conflict"),
+			wantErrContains:  []string{"spec failed"},
+			wantRequeueAfter: 5 * time.Second,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			merged := MergeStepResults(tt.first, tt.second)
+			res, err := merged.Result()
+
+			assert.Equal(t, tt.wantContinue, !ShortCircuitReconcileFlow(merged), "continue mismatch")
+			assert.Equal(t, tt.wantRequeueAfter, res.RequeueAfter, "RequeueAfter mismatch")
+			if len(tt.wantErrContains) == 0 {
+				assert.NoError(t, err)
+			} else {
+				require.Error(t, err)
+				for _, want := range tt.wantErrContains {
+					assert.Contains(t, err.Error(), want)
+				}
+			}
+		})
+	}
 }

@@ -19,8 +19,13 @@ package tests
 import (
 	"context"
 	"testing"
+	"time"
 
+	"github.com/ai-dynamo/grove/operator/e2e/grove/podgang"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
+	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 )
 
 // Test_GS1_GangSchedulingWithFullReplicas tests gang-scheduling behavior with insufficient resources
@@ -61,12 +66,37 @@ func Test_GS1_GangSchedulingWithFullReplicas(t *testing.T) {
 		t.Fatalf("Failed to verify all pods have Unschedulable events: %v", err)
 	}
 
-	Logger.Info("4. Uncordon the node and verify all pods get scheduled")
+	verifier := podgang.NewVerifier(tc.Client, Logger)
+	pcsNsName := types.NamespacedName{Namespace: tc.Namespace, Name: "workload1"}
+
+	Logger.Info("4. While pods are pending, verify PodGang conditions Initialized=True, Scheduled=False, Ready=False with timestamps unset")
+	if err := podgang.WaitUntilVerified(ctx, verifier, pcsNsName, tc.Timeout, tc.Interval,
+		podgang.ConditionStatusCheckFn(groveschedulerv1alpha1.PodGangConditionTypeInitialized, metav1.ConditionTrue),
+		podgang.ConditionStatusCheckFn(groveschedulerv1alpha1.PodGangConditionTypeScheduled, metav1.ConditionFalse),
+		podgang.ConditionStatusCheckFn(groveschedulerv1alpha1.PodGangConditionTypeReady, metav1.ConditionFalse),
+		podgang.LastScheduledSetCheckFn(false),
+		podgang.LastReadySetCheckFn(false),
+	); err != nil {
+		t.Fatalf("%v", err)
+	}
+
+	Logger.Info("5. Uncordon the node and verify all pods get scheduled")
 	tc.UncordonNodesAndWaitForPods([]string{workerNodeToCordon}, expectedPods)
 
 	// Verify that each pod is scheduled on a unique node, worker nodes have 150m memory
 	// and workload pods requests 80m memory, so only 1 should fit per node
+	Logger.Info("6. Verify that each pod is scheduled on a unique node")
 	tc.ListPodsAndAssertDistinctNodes()
+
+	Logger.Info("7. Once scheduled, verify PodGang conditions Scheduled=True, Ready=True with timestamps set")
+	if err := podgang.WaitUntilVerified(ctx, verifier, pcsNsName, tc.Timeout, tc.Interval,
+		podgang.ConditionStatusCheckFn(groveschedulerv1alpha1.PodGangConditionTypeScheduled, metav1.ConditionTrue),
+		podgang.ConditionStatusCheckFn(groveschedulerv1alpha1.PodGangConditionTypeReady, metav1.ConditionTrue),
+		podgang.LastScheduledSetCheckFn(true),
+		podgang.LastReadySetCheckFn(true),
+	); err != nil {
+		t.Fatalf("%v", err)
+	}
 
 	Logger.Info("🎉 Gang-scheduling With Full Replicas test completed successfully!")
 }
@@ -1110,4 +1140,41 @@ func Test_GS12_GangSchedulingWithComplexPCSGScaling(t *testing.T) {
 	tc.ListPodsAndAssertDistinctNodes()
 
 	Logger.Info("🎉 Gang-scheduling PCS+PCSG scaling test completed successfully!")
+}
+
+// Test_GS13_GangSchedulingWithPCSGMemberScaling verifies manual scaling of a PCSG-member PCLQ.
+// Scenario GS-13:
+//  1. Deploy one PCSG replica with one leader pod and one worker pod and wait for readiness
+//  2. Scale the worker PCLQ to three pods without changing the PCS template or PCSG replicas
+//  3. Verify all four pods become ready.
+func Test_GS13_GangSchedulingWithPCSGMemberScaling(t *testing.T) {
+	ctx := context.Background()
+
+	Logger.Info("1. Deploy a PCSG with one leader pod and one worker pod and wait for readiness")
+	tc, cleanup := testctx.PrepareTest(ctx, t, 4,
+		testctx.WithWorkload(&testctx.WorkloadConfig{
+			Name:         "workload-pcsg-only",
+			YAMLPath:     "../yaml/workload-pcsg-only.yaml",
+			Namespace:    "default",
+			ExpectedPods: 2,
+		}),
+		testctx.WithTimeout(time.Minute),
+	)
+	defer cleanup()
+
+	if _, err := tc.DeployAndVerifyWorkload(); err != nil {
+		t.Fatalf("Failed to deploy workload: %v", err)
+	}
+
+	Logger.Info("2. Scale the worker PCLQ from one to three pods")
+	if err := tc.ScalePodClique("workload-pcsg-only-0-worker-0-worker-wkr", 3); err != nil {
+		t.Fatalf("Failed to scale PCSG-member PodClique: %v", err)
+	}
+
+	Logger.Info("3. Verify readiness")
+	if err := tc.WaitForReadyPods(4); err != nil {
+		t.Fatalf("Scaled pods did not become ready within one minute: %v", err)
+	}
+
+	Logger.Info("🎉 Gang-scheduling PCSG-member PCLQ scaling test completed successfully!")
 }

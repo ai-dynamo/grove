@@ -85,6 +85,15 @@ func (b *PodCliqueTemplateSpecBuilder) WithMinAvailable(minAvailable int32) *Pod
 	return b
 }
 
+// WithMaxUnavailable sets the RollingUpdate MaxUnavailable for the PodCliqueTemplateSpec.
+func (b *PodCliqueTemplateSpecBuilder) WithMaxUnavailable(maxUnavailable int32) *PodCliqueTemplateSpecBuilder {
+	if b.pclqTemplateSpec.RollingUpdate == nil {
+		b.pclqTemplateSpec.RollingUpdate = &grovecorev1alpha1.RollingUpdateConfiguration{}
+	}
+	b.pclqTemplateSpec.RollingUpdate.MaxUnavailable = &maxUnavailable
+	return b
+}
+
 // WithScaleConfig sets the complete ScaleConfig for the PodCliqueTemplateSpec.
 func (b *PodCliqueTemplateSpecBuilder) WithScaleConfig(minReplicas *int32, maxReplicas int32) *PodCliqueTemplateSpecBuilder {
 	b.pclqTemplateSpec.Spec.ScaleConfig = &grovecorev1alpha1.AutoScalingConfig{

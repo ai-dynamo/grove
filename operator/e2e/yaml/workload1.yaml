@@ -8,6 +8,8 @@ metadata:
     app: workload1
 spec:
   replicas: 1
+  updateStrategy:
+    type: RollingRecreate
   template:
     cliques:
       - name: pc-a

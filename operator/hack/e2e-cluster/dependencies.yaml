@@ -14,12 +14,13 @@
 # - Version defaults (can be overridden via E2E_* environment variables)
 
 kai_scheduler:
-  version: "v0.15.2"
+  version: "v0.16.9"
   helm_chart: "oci://ghcr.io/kai-scheduler/kai-scheduler/kai-scheduler"
   images:
     # All Kai Scheduler component images
     - "ghcr.io/kai-scheduler/kai-scheduler/admission"
     - "ghcr.io/kai-scheduler/kai-scheduler/binder"
+    - "ghcr.io/kai-scheduler/kai-scheduler/crd-upgrader"
     - "ghcr.io/kai-scheduler/kai-scheduler/operator"
     - "ghcr.io/kai-scheduler/kai-scheduler/podgroupcontroller"
     - "ghcr.io/kai-scheduler/kai-scheduler/podgrouper"

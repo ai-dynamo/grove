@@ -90,7 +90,7 @@ format: $(GOIMPORTS_REVISER)
 # Run all unit tests
 .PHONY: test-unit
 test-unit: $(SETUP_ENVTEST)
-	@KUBEBUILDER_ASSETS="$$($(SETUP_ENVTEST) use -p path)" go test ./...
+	@KUBEBUILDER_ASSETS="$$($(SETUP_ENVTEST) use -p path)" go test -race ./...
 
 # Run all unit tests with code coverage
 .PHONY: test-cover
@@ -164,7 +164,7 @@ e2e-cluster-down: $(UV)
 .PHONY: run-e2e-full
 run-e2e-full: e2e-cluster-up
 	@echo "> Running e2e tests..."
-	@$(MAKE) run-e2e TEST_PATTERN=$(TEST_PATTERN) || \
+	@$(MAKE) run-e2e TEST_PATTERN='$(TEST_PATTERN)' || \
 		(echo "Tests failed, cleaning up cluster..."; $(MAKE) e2e-cluster-down; exit 1)
 	@echo "> Tests passed, cleaning up cluster..."
 	@$(MAKE) e2e-cluster-down
@@ -211,7 +211,7 @@ e2e-cluster-up-real: e2e-cluster-up
 .PHONY: run-e2e-real-full
 run-e2e-real-full: e2e-cluster-up-real
 	@echo "> Running e2e tests (real nodes)..."
-	@$(MAKE) run-e2e TEST_PATTERN=$(TEST_PATTERN) || \
+	@$(MAKE) run-e2e TEST_PATTERN='$(TEST_PATTERN)' || \
 		(echo "Tests failed, cleaning up cluster..."; $(MAKE) e2e-cluster-down; exit 1)
 	@echo "> Tests passed, cleaning up cluster..."
 	@$(MAKE) e2e-cluster-down

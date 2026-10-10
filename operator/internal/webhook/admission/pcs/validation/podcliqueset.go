@@ -24,9 +24,9 @@ import (
 	groveconfigv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/clustertopology"
-	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
+	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 
 	"github.com/samber/lo"
 	admissionv1 "k8s.io/api/admission/v1"
@@ -37,6 +37,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	k8svalidation "k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/apimachinery/pkg/util/validation/field"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -241,8 +242,8 @@ func (v *pcsValidator) validatePodCliqueTemplates(fldPath *field.Path) ([]string
 		allErrs = append(allErrs, field.Required(fldPath, "at least one PodClique must be defined"))
 	}
 
-	// Get all clique names that belong to scaling groups
-	scalingGroupCliqueNames := v.getScalingGroupCliqueNames()
+	// Get all clique names that belong to scaling groups.
+	_, scalingGroupCliqueNames := componentutils.GetExpectedPCLQNamesGroupByOwner(v.pcs)
 
 	cliqueNames := make([]string, 0, len(cliqueTemplateSpecs))
 	cliqueRoles := make([]string, 0, len(cliqueTemplateSpecs))
@@ -382,6 +383,9 @@ func (v *pcsValidator) validatePodCliqueScalingGroupConfigs(fldPath *field.Path)
 			}
 		}
 
+		// validate RollingUpdate against the active update strategy.
+		allErrs = append(allErrs, v.validateRollingUpdateConfiguration(scalingGroupConfig.RollingUpdate, ptr.Deref(scalingGroupConfig.Replicas, 1), ptr.Deref(scalingGroupConfig.MinAvailable, 1), fldPath.Index(i).Child("rollingUpdate"))...)
+
 		// validate PCSG-level ResourceSharing
 		allErrs = append(allErrs, v.validatePCSGResourceSharing(scalingGroupConfig, fldPath.Index(i).Child("resourceSharing"))...)
 	}
@@ -457,6 +461,16 @@ func (v *pcsValidator) validatePodCliqueTemplateSpec(cliqueTemplateSpec *groveco
 		allErrs = append(allErrs, errs...)
 	}
 
+	if scalingGroupCliqueNames.Has(cliqueTemplateSpec.Name) {
+		// A PCSG-owned PodClique is governed by the owning PodCliqueScalingGroup.
+		if cliqueTemplateSpec.RollingUpdate != nil {
+			allErrs = append(allErrs, field.Forbidden(fldPath.Child("rollingUpdate"),
+				"rollingUpdate must not be set on a PodClique that is a member of a PodCliqueScalingGroup. Set it on the PodCliqueScalingGroup instead"))
+		}
+	} else {
+		allErrs = append(allErrs, v.validateRollingUpdateConfiguration(cliqueTemplateSpec.RollingUpdate, cliqueTemplateSpec.Spec.Replicas, ptr.Deref(cliqueTemplateSpec.Spec.MinAvailable, cliqueTemplateSpec.Spec.Replicas), fldPath.Child("rollingUpdate"))...)
+	}
+
 	return warnings, allErrs
 }
 
@@ -486,13 +500,43 @@ func validateCliqueDependencies(cliques []*grovecorev1alpha1.PodCliqueTemplateSp
 	return allErrs
 }
 
-// getScalingGroupCliqueNames returns a set of all clique names that belong to scaling groups.
-func (v *pcsValidator) getScalingGroupCliqueNames() sets.Set[string] {
-	scalingGroupCliqueNames := sets.New[string]()
-	for _, scalingGroupConfig := range v.pcs.Spec.Template.PodCliqueScalingGroupConfigs {
-		scalingGroupCliqueNames.Insert(scalingGroupConfig.CliqueNames...)
+// updateStrategyType returns the active update strategy, resolving a nil or unset strategy to the
+// RollingRecreate default so the validator agrees with the defaulting webhook and the operator.
+func (v *pcsValidator) updateStrategyType() grovecorev1alpha1.UpdateStrategyType {
+	return componentutils.ResolveUpdateStrategyType(v.pcs)
+}
+
+// validateRollingUpdateConfiguration checks a component's RollingUpdate against the active update
+// strategy. OnDelete forbids it entirely. Otherwise MaxUnavailable and ProgressDeadline, when set,
+// must be greater than 0, and MaxUnavailable must not exceed the component's replicas. Under the
+// Coherent strategy MaxUnavailable must also not be less than the component's minAvailable, since the
+// MVU sub-step takes down minAvailable of the component at once. A nil MaxUnavailable is allowed since
+// the field is optional and the consumer supplies an effective value.
+func (v *pcsValidator) validateRollingUpdateConfiguration(rollingUpdate *grovecorev1alpha1.RollingUpdateConfiguration, replicas, minAvailable int32, fldPath *field.Path) field.ErrorList {
+	allErrs := field.ErrorList{}
+	if v.updateStrategyType() == grovecorev1alpha1.OnDeleteStrategy {
+		if rollingUpdate != nil {
+			allErrs = append(allErrs, field.Forbidden(fldPath, "rollingUpdate must not be set when the update strategy is OnDelete"))
+		}
+		return allErrs
 	}
-	return scalingGroupCliqueNames
+	if rollingUpdate == nil {
+		return allErrs
+	}
+	if rollingUpdate.MaxUnavailable != nil {
+		switch {
+		case *rollingUpdate.MaxUnavailable <= 0:
+			allErrs = append(allErrs, field.Invalid(fldPath.Child("maxUnavailable"), *rollingUpdate.MaxUnavailable, "must be greater than 0"))
+		case *rollingUpdate.MaxUnavailable > replicas:
+			allErrs = append(allErrs, field.Invalid(fldPath.Child("maxUnavailable"), *rollingUpdate.MaxUnavailable, fmt.Sprintf("must not be greater than replicas (%d)", replicas)))
+		case v.updateStrategyType() == grovecorev1alpha1.CoherentStrategy && *rollingUpdate.MaxUnavailable < minAvailable:
+			allErrs = append(allErrs, field.Invalid(fldPath.Child("maxUnavailable"), *rollingUpdate.MaxUnavailable, fmt.Sprintf("must not be less than minAvailable (%d) under the Coherent update strategy", minAvailable)))
+		}
+	}
+	if rollingUpdate.ProgressDeadline != nil && rollingUpdate.ProgressDeadline.Duration <= 0 {
+		allErrs = append(allErrs, field.Invalid(fldPath.Child("progressDeadline"), rollingUpdate.ProgressDeadline.Duration.String(), "must be greater than 0"))
+	}
+	return allErrs
 }
 
 // validateScalingGroupPodCliqueNames validates that scaling group clique references exist and meet naming constraints.

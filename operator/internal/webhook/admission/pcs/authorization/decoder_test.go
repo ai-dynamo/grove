@@ -42,7 +42,7 @@ func TestDecode(t *testing.T) {
 		{
 			name: "managed resources must decode and return non nil PartialObjectMetadata",
 			gvks: []schema.GroupVersionKind{
-				pcsgGVK, pclqGVK, podGVK, serviceAccountGVK, serviceGVK, secretGVK, roleGVK, roleBindingGVK, hpaV2GVK, hpaV1GVK, podgangGVK,
+				pcsgGVK, pclqGVK, podGVK, serviceAccountGVK, serviceGVK, secretGVK, roleGVK, roleBindingGVK, hpaV2GVK, hpaV1GVK, podGangGVK, podGangMapGVK,
 			},
 			operation:       admissionv1.Create,
 			managedResource: true,
@@ -50,7 +50,7 @@ func TestDecode(t *testing.T) {
 		{
 			name: "managed resources must decode and return non nil PartialObjectMetadata",
 			gvks: []schema.GroupVersionKind{
-				pcsgGVK, pclqGVK, podGVK, secretGVK, roleGVK, roleBindingGVK, serviceGVK, serviceAccountGVK, hpaV1GVK, hpaV2GVK, podgangGVK,
+				pcsgGVK, pclqGVK, podGVK, secretGVK, roleGVK, roleBindingGVK, serviceGVK, serviceAccountGVK, hpaV1GVK, hpaV2GVK, podGangGVK, podGangMapGVK,
 			},
 			operation:       admissionv1.Update,
 			managedResource: true,
@@ -58,7 +58,7 @@ func TestDecode(t *testing.T) {
 		{
 			name: "managed resources must decode and return non nil PartialObjectMetadata",
 			gvks: []schema.GroupVersionKind{
-				pcsgGVK, pclqGVK, podGVK, secretGVK, roleGVK, roleBindingGVK, serviceGVK, serviceAccountGVK, hpaV1GVK, hpaV2GVK, podgangGVK,
+				pcsgGVK, pclqGVK, podGVK, secretGVK, roleGVK, roleBindingGVK, serviceGVK, serviceAccountGVK, hpaV1GVK, hpaV2GVK, podGangGVK, podGangMapGVK,
 			},
 			operation:       admissionv1.Delete,
 			managedResource: true,

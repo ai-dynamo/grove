@@ -20,8 +20,12 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
-// GroupName is the name of the Grove API group.
-const GroupName = "scheduler.grove.io"
+const (
+	// GroupName is the name of the Grove API group.
+	GroupName = "scheduler.grove.io"
+	// KindPodGang is the kind for the PodGang resource.
+	KindPodGang = "PodGang"
+)
 
 var (
 	// SchemeGroupVersion is group version used to register these objects.

@@ -1,0 +1,49 @@
+# Workload: Externally-Managed Topology - PCS with single clique constrained to an
+# externally-managed ClusterTopologyBinding (its KAI Topology resource is named
+# differently from the ClusterTopologyBinding itself).
+---
+apiVersion: grove.io/v1alpha1
+kind: PodCliqueSet
+metadata:
+  name: tas-externally-managed
+  labels:
+    app: tas-externally-managed
+spec:
+  replicas: 1
+  template:
+    cliques:
+      - name: worker
+        labels:
+          kai.scheduler/queue: test
+        topologyConstraint:
+          topologyName: tas24-ct-binding
+          pack:
+            required: host
+        spec:
+          roleName: worker
+          replicas: 2
+          minAvailable: 2
+          podSpec:
+            terminationGracePeriodSeconds: 5
+            schedulerName: kai-scheduler
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: node_role.e2e.grove.nvidia.com
+                          operator: In
+                          values:
+                            - agent
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: worker
+                image: registry:5001/busybox:latest
+                command: ["sleep", "infinity"]
+                resources:
+                  requests:
+                    memory: 40Mi

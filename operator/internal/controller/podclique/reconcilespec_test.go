@@ -160,6 +160,21 @@ func TestShouldResetOrTriggerUpdate(t *testing.T) {
 			expected: true,
 		},
 		{
+			name: "bootstrap_is_not_an_update",
+			pcs: &grovecorev1alpha1.PodCliqueSet{
+				Status: grovecorev1alpha1.PodCliqueSetStatus{
+					CurrentGenerationHash: ptr.To("new-hash"),
+				},
+			},
+			pclq: &grovecorev1alpha1.PodClique{
+				Status: grovecorev1alpha1.PodCliqueStatus{
+					UpdateProgress:                    nil,
+					CurrentPodCliqueSetGenerationHash: nil,
+				},
+			},
+			expected: false,
+		},
+		{
 			name: "in_progress_update_not_stale_same_hash",
 			pcs: &grovecorev1alpha1.PodCliqueSet{
 				Status: grovecorev1alpha1.PodCliqueSetStatus{

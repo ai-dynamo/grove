@@ -53,7 +53,12 @@ func NewWorkloadManager(k8s *k8sclient.Client, logger *log.Logger) *WorkloadMana
 
 // ScalePCS scales a PodCliqueSet to the specified replica count.
 func (wm *WorkloadManager) ScalePCS(ctx context.Context, namespace, name string, replicas int) error {
-	return wm.resources.ScaleCRD(ctx, gvk.PodCliqueSet, namespace, name, replicas)
+	return wm.resources.ScaleResource(ctx, gvk.PodCliqueSet, namespace, name, replicas)
+}
+
+// ScalePodClique scales a standalone PodClique to the specified replica count.
+func (wm *WorkloadManager) ScalePodClique(ctx context.Context, namespace, name string, replicas int) error {
+	return wm.resources.ScaleResource(ctx, gvk.PodClique, namespace, name, replicas)
 }
 
 // ScalePCSG scales a PodCliqueScalingGroup to the specified replica count.
@@ -64,7 +69,7 @@ func (wm *WorkloadManager) ScalePCSG(ctx context.Context, namespace, name string
 		return fmt.Errorf("failed to find PodCliqueScalingGroup %s: %w", name, err)
 	}
 
-	return wm.resources.ScaleCRD(ctx, gvk.PodCliqueScalingGroup, namespace, name, replicas)
+	return wm.resources.ScaleResource(ctx, gvk.PodCliqueScalingGroup, namespace, name, replicas)
 }
 
 // TriggerPCSReconcile bumps a benchmark annotation on a PodCliqueSet without touching its

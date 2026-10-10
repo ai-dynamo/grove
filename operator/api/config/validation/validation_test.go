@@ -244,13 +244,25 @@ func TestValidateSchedulerConfiguration(t *testing.T) {
 			expectErrors: 0,
 		},
 		{
-			name: "valid: lpx enabled with kube default",
+			name: "valid: lpx enabled without kai",
 			scheduler: &configv1alpha1.SchedulerConfiguration{
 				Profiles: []configv1alpha1.SchedulerProfile{
 					{Name: configv1alpha1.SchedulerNameKube},
 					{Name: configv1alpha1.SchedulerNameLPX},
 				},
-				DefaultProfileName: string(configv1alpha1.SchedulerNameKube),
+				DefaultProfileName: string(configv1alpha1.SchedulerNameLPX),
+			},
+			expectErrors: 0,
+		},
+		{
+			name: "valid: lpx enabled with kai",
+			scheduler: &configv1alpha1.SchedulerConfiguration{
+				Profiles: []configv1alpha1.SchedulerProfile{
+					{Name: configv1alpha1.SchedulerNameKube},
+					{Name: configv1alpha1.SchedulerNameKai},
+					{Name: configv1alpha1.SchedulerNameLPX},
+				},
+				DefaultProfileName: string(configv1alpha1.SchedulerNameKai),
 			},
 			expectErrors: 0,
 		},

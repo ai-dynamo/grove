@@ -279,6 +279,11 @@ func (tc *TestContext) ScalePCS(name string, replicas int) error {
 	return tc.newWorkloadManager().ScalePCS(tc.Ctx, tc.Namespace, name, replicas)
 }
 
+// ScalePodClique scales a standalone PodClique to the specified replica count.
+func (tc *TestContext) ScalePodClique(name string, replicas int) error {
+	return tc.newWorkloadManager().ScalePodClique(tc.Ctx, tc.Namespace, name, replicas)
+}
+
 // ScalePCSG scales a PodCliqueScalingGroup to the specified replica count.
 func (tc *TestContext) ScalePCSG(name string, replicas int) error {
 	return tc.newWorkloadManager().ScalePCSG(tc.Ctx, tc.Namespace, name, replicas, tc.Timeout, tc.Interval)
@@ -406,6 +411,21 @@ func (tc *TestContext) ScalePCSAndWait(pcsName string, replicas int32, expectedT
 	totalPods, runningPods, pendingPods, err := tc.WaitForPodConditions(expectedTotalPods, expectedPending)
 	if err != nil {
 		tc.T.Fatalf("Failed to wait for expected pod conditions after PCS scaling: %v. Final state: total=%d, running=%d, pending=%d (expected: total=%d, pending=%d)",
+			err, totalPods, runningPods, pendingPods, expectedTotalPods, expectedPending)
+	}
+}
+
+// ScalePodCliqueAndWait scales a standalone PodClique and waits for the expected pod conditions.
+func (tc *TestContext) ScalePodCliqueAndWait(pclqName string, replicas int32, expectedTotalPods, expectedPending int) {
+	tc.T.Helper()
+
+	if err := tc.ScalePodClique(pclqName, int(replicas)); err != nil {
+		tc.T.Fatalf("Failed to scale PodClique %s: %v", pclqName, err)
+	}
+
+	totalPods, runningPods, pendingPods, err := tc.WaitForPodConditions(expectedTotalPods, expectedPending)
+	if err != nil {
+		tc.T.Fatalf("Failed to wait for expected pod conditions after PodClique scaling: %v. Final state: total=%d, running=%d, pending=%d (expected: total=%d, pending=%d)",
 			err, totalPods, runningPods, pendingPods, expectedTotalPods, expectedPending)
 	}
 }

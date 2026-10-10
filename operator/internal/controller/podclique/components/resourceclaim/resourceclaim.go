@@ -23,10 +23,9 @@ import (
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
-	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/resourceclaim"
-	groveutils "github.com/ai-dynamo/grove/operator/internal/utils"
+	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
 	"github.com/go-logr/logr"
@@ -58,10 +57,9 @@ func New(client client.Client, scheme *runtime.Scheme) component.Operator[grovec
 // GetExistingResourceNames returns the names of PCLQ-level ResourceClaims
 // by selecting on the grove.io/podclique label that Sync stamps on each RC.
 func (r _resource) GetExistingResourceNames(ctx context.Context, _ logr.Logger, pclqObjMeta metav1.ObjectMeta) ([]string, error) {
-	objMetaList := &metav1.PartialObjectMetadataList{}
-	objMetaList.SetGroupVersionKind(resourcev1.SchemeGroupVersion.WithKind("ResourceClaim"))
+	claimList := &resourcev1.ResourceClaimList{}
 	if err := r.client.List(ctx,
-		objMetaList,
+		claimList,
 		client.InNamespace(pclqObjMeta.Namespace),
 		client.MatchingLabels(pclqResourceClaimLabels(pclqObjMeta)),
 	); err != nil {
@@ -74,7 +72,7 @@ func (r _resource) GetExistingResourceNames(ctx context.Context, _ logr.Logger, 
 			fmt.Sprintf("Error listing ResourceClaims for PCLQ %s", pclqObjMeta.Name),
 		)
 	}
-	return k8sutils.FilterMapOwnedResourceNames(pclqObjMeta, objMetaList.Items), nil
+	return k8sutils.FilterMapOwnedResourceNames(pclqObjMeta, claimList.Items), nil
 }
 
 // Sync creates or patches PCLQ-level ResourceClaims (AllReplicas + PerReplica)
@@ -91,7 +89,7 @@ func (r _resource) Sync(ctx context.Context, _ logr.Logger, pclq *grovecorev1alp
 		)
 	}
 
-	cliqueName, err := groveutils.GetPodCliqueNameFromPodCliqueFQN(pclq.ObjectMeta)
+	cliqueName, err := componentutils.GetPodCliqueNameFromPodCliqueFQN(pclq.ObjectMeta)
 	if err != nil {
 		return groveerr.WrapError(err,
 			errSyncPCLQLevelRC,

@@ -20,12 +20,12 @@ import (
 
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/clustertopology"
-	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/common/component/utils"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podclique"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliquescalinggroup"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podgang"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
+	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 
 	ctrl "sigs.k8s.io/controller-runtime"
 )
@@ -44,8 +44,11 @@ func RegisterControllers(mgr ctrl.Manager, config *configv1alpha1.OperatorConfig
 	if err := pcsReconciler.RegisterWithManager(mgr); err != nil {
 		return err
 	}
-	pcReconciler := podclique.NewReconciler(mgr, config.Controllers.PodClique, schedRegistry)
-	if err := pcReconciler.RegisterWithManager(mgr); err != nil {
+	pclqReconciler, err := podclique.NewReconciler(mgr, config.Controllers.PodClique, schedRegistry)
+	if err != nil {
+		return err
+	}
+	if err := pclqReconciler.RegisterWithManager(mgr); err != nil {
 		return err
 	}
 	pcsgReconciler := podcliquescalinggroup.NewReconciler(mgr, config.Controllers.PodCliqueScalingGroup)
@@ -53,8 +56,8 @@ func RegisterControllers(mgr ctrl.Manager, config *configv1alpha1.OperatorConfig
 		return err
 	}
 
-	podgangReconciler := podgang.NewReconciler(mgr, config.Controllers.PodGang, schedRegistry)
-	if err := podgangReconciler.RegisterWithManager(mgr); err != nil {
+	podGangReconciler := podgang.NewReconciler(mgr, config.Controllers.PodGang, schedRegistry)
+	if err := podGangReconciler.RegisterWithManager(mgr); err != nil {
 		return err
 	}
 
