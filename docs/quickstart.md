@@ -11,7 +11,7 @@ By the end of this quickstart, you'll understand how to:
 
 ## Prerequisites
 
-- A Kubernetes cluster (we'll use kind for local testing)
+- A Kubernetes cluster using a [tested version](../README.md#kubernetes-compatibility) (we'll use kind for local testing)
 - `kubectl` installed and configured
 - Docker Desktop running (for kind)
 

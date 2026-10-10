@@ -32,6 +32,17 @@ Follow along with this example in the
 For more install options including local and remote K8s clusters, see the
 **→ [Installation Docs](docs/installation.md)**
 
+## Kubernetes Compatibility
+
+Grove validates the following Kubernetes minor release lines in CI:
+
+| Kubernetes | K3s image | CI coverage |
+| :--- | :--- | :--- |
+| `1.34` | `rancher/k3s:v1.34.11-k3s1` | Additional compatibility job |
+| `1.35` | `rancher/k3s:v1.35.5-k3s1` | Regular E2E jobs |
+
+The compatibility job runs the standard-cluster suites. Scale, AutoMNNVL, startup-ordering, and upgrade tests remain on their dedicated CI targets and are not included in that job.
+
 ## Motivation
 
 Modern AI inference workloads need capabilities that Kubernetes natively doesn't provide out-of-the-box:
