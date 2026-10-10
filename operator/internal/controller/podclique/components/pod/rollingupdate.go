@@ -176,13 +176,21 @@ func (r _resource) computeUpdateWork(logger logr.Logger, ss *syncSnapshot) *upda
 		work.oldHashPodsAwaitingReplacement++
 		// Pending, unhealthy, starting, and uncategorized Pods are deleted immediately; Ready Pods are
 		// queued for ordered budgeted replacement.
+		//
+		// IsPodReady is evaluated before the unhealthy predicates on purpose.
+		// HasAnyContainerExitedErroneously reports on LastTerminationState, which kubelet keeps
+		// for the lifetime of the Pod, so a Pod that restarted a container once and has been
+		// Ready ever since still matches it. Testing it first would classify a Pod that is
+		// currently serving as unhealthy and hand it to the immediate-deletion path, while
+		// CategorizePodsByConditionType (utils/kubernetes/pod.go) counts that very same Pod in
+		// PodClique.Status.ReadyReplicas. The two classifiers must agree on what "ready" means.
 		switch {
 		case k8sutils.IsPodPending(pod):
 			work.oldTemplateHashPendingPods = append(work.oldTemplateHashPendingPods, pod)
-		case k8sutils.HasAnyStartedButNotReadyContainer(pod) || k8sutils.HasAnyContainerExitedErroneously(logger, pod):
-			work.oldTemplateHashUnhealthyPods = append(work.oldTemplateHashUnhealthyPods, pod)
 		case k8sutils.IsPodReady(pod):
 			work.oldTemplateHashReadyPods = append(work.oldTemplateHashReadyPods, pod)
+		case k8sutils.HasAnyStartedButNotReadyContainer(pod) || k8sutils.HasAnyContainerExitedErroneously(logger, pod):
+			work.oldTemplateHashUnhealthyPods = append(work.oldTemplateHashUnhealthyPods, pod)
 		case k8sutils.HasAnyContainerNotStarted(pod):
 			work.oldTemplateHashStartingPods = append(work.oldTemplateHashStartingPods, pod)
 		default:
@@ -228,7 +236,9 @@ func (r _resource) deleteOldNonReadyPods(ctx context.Context, logger logr.Logger
 		"oldUnhealthyPods", componentutils.PodsToObjectNames(work.oldTemplateHashUnhealthyPods),
 		"oldStartingPods", componentutils.PodsToObjectNames(work.oldTemplateHashStartingPods),
 		"oldUncategorizedPods", componentutils.PodsToObjectNames(work.oldTemplateHashUncategorizedPods))
-	if runResult := utils.RunConcurrently(ctx, logger, deletionTasks); runResult.HasErrors() {
+	// Deleted in batches of increasing size, matching createPods, deleteExcessPods and
+	// checkAndRemovePodSchedulingGates, so a wide clique does not issue every DELETE at once.
+	if runResult := utils.RunConcurrentlyWithSlowStart(ctx, logger, 1, deletionTasks); runResult.HasErrors() {
 		err := runResult.GetAggregatedError()
 		pclqObjectKey := client.ObjectKeyFromObject(ss.pclq)
 		logger.Error(err, "failed to delete pods for PCLQ", "runSummary", runResult.GetSummary())
