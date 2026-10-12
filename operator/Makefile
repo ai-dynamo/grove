@@ -196,20 +196,21 @@ run-e2e-mnnvl-full: e2e-cluster-up
 # installed, run tests, then cleanup.
 # Usage: make run-e2e-kueue-full [TEST_PATTERN=<pattern>]
 # Examples:
-#   make run-e2e-kueue-full                              # Run all Kueue tests
+#   make run-e2e-kueue-full                              # Run the Test_Kueue<N> tests
 #   make run-e2e-kueue-full TEST_PATTERN='^Test_Kueue1_' # Run a single Kueue test
 .PHONY: run-e2e-kueue-full
 # Defaults to only the Kueue scenarios: the cluster this target brings up has Kai disabled, so an
 # unset TEST_PATTERN would otherwise run the whole suite against a cluster missing a dependency most
 # of it needs. Command-line TEST_PATTERN=... still overrides this (?= never wins over the command line).
-run-e2e-kueue-full: TEST_PATTERN ?= ^Test_Kueue
+# Test_KueueUpdate* run in their own invocation because their test package can't share a cluster with this one.
+run-e2e-kueue-full: TEST_PATTERN ?= ^Test_Kueue[0-9]
 run-e2e-kueue-full: export GROVE_E2E_DIAG_DIR = $(DIAG_DIR)
 run-e2e-kueue-full: export GROVE_E2E_DIAG_MODE = $(DIAG_MODE)
 run-e2e-kueue-full: export E2E_SCHEDULER__KUEUE__ENABLED = true
 run-e2e-kueue-full: export E2E_SCHEDULER__KAI__ENABLED = false
 run-e2e-kueue-full: e2e-cluster-up
 	@echo "> Running e2e Kueue tests..."
-	@$(MAKE) run-e2e TEST_PATTERN=$(TEST_PATTERN) || \
+	@$(MAKE) run-e2e TEST_PATTERN='$(TEST_PATTERN)' || \
 		(echo "Tests failed, cleaning up cluster..."; $(MAKE) e2e-cluster-down; exit 1)
 	@echo "> Tests passed, cleaning up cluster..."
 	@$(MAKE) e2e-cluster-down

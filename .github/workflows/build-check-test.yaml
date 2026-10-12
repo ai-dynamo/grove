@@ -147,7 +147,10 @@ jobs:
             test_pattern: "^Test_VUPG"
             make_target: "run-upgrade-e2e"
           - test_name: kueue
-            test_pattern: "^Test_Kueue"
+            test_pattern: "^Test_Kueue[0-9]"
+            make_target: "run-e2e-kueue-full"
+          - test_name: kueue_update
+            test_pattern: "^Test_KueueUpdate"
             make_target: "run-e2e-kueue-full"
     name: E2E - ${{ matrix.test_name }}
     steps:
@@ -223,6 +226,7 @@ jobs:
           - test_name: podgangmap_reconstruct
           - test_name: version_upgrade
           - test_name: kueue
+          - test_name: kueue_update
     name: E2E - ${{ matrix.test_name }}
     steps:
       - name: Skip E2E (no relevant changes)

@@ -287,9 +287,9 @@ func updatePCSUpdateStrategy(tc *testctx.TestContext, strategyType grovev1alpha1
 	})
 }
 
-// triggerPodCliqueUpdate triggers an update by adding/updating an environment variable in a PodClique.
-// Uses tc.Workload.Name as the PCS name.
-func triggerPodCliqueUpdate(tc *testctx.TestContext, cliqueName string) error {
+// triggerPodCliqueUpdate triggers an update by adding/updating an environment variable in each named PodClique,
+// all in one PodCliqueSet patch. Uses tc.Workload.Name as the PCS name.
+func triggerPodCliqueUpdate(tc *testctx.TestContext, cliqueNames ...string) error {
 	pcsName := tc.Workload.Name
 	updateValue := fmt.Sprintf("%d", time.Now().UnixNano())
 
@@ -302,33 +302,35 @@ func triggerPodCliqueUpdate(tc *testctx.TestContext, cliqueName string) error {
 		pcs.SetManagedFields(nil)
 		pcs.SetResourceVersion("")
 
-		found := false
-		for i, clique := range pcs.Spec.Template.Cliques {
-			if clique.Name == cliqueName {
-				if len(clique.Spec.PodSpec.Containers) > 0 {
-					container := &pcs.Spec.Template.Cliques[i].Spec.PodSpec.Containers[0]
-					envVarFound := false
-					for j := range container.Env {
-						if container.Env[j].Name == "UPDATE_TRIGGER" {
-							container.Env[j].Value = updateValue
-							envVarFound = true
-							break
+		for _, cliqueName := range cliqueNames {
+			found := false
+			for i, clique := range pcs.Spec.Template.Cliques {
+				if clique.Name == cliqueName {
+					if len(clique.Spec.PodSpec.Containers) > 0 {
+						container := &pcs.Spec.Template.Cliques[i].Spec.PodSpec.Containers[0]
+						envVarFound := false
+						for j := range container.Env {
+							if container.Env[j].Name == "UPDATE_TRIGGER" {
+								container.Env[j].Value = updateValue
+								envVarFound = true
+								break
+							}
 						}
+						if !envVarFound {
+							container.Env = append(container.Env, corev1.EnvVar{
+								Name:  "UPDATE_TRIGGER",
+								Value: updateValue,
+							})
+						}
+						found = true
 					}
-					if !envVarFound {
-						container.Env = append(container.Env, corev1.EnvVar{
-							Name:  "UPDATE_TRIGGER",
-							Value: updateValue,
-						})
-					}
-					found = true
+					break
 				}
-				break
 			}
-		}
 
-		if !found {
-			return fmt.Errorf("clique %s not found in PodCliqueSet %s", cliqueName, pcsName)
+			if !found {
+				return fmt.Errorf("clique %s not found in PodCliqueSet %s", cliqueName, pcsName)
+			}
 		}
 
 		return tc.Client.Patch(tc.Ctx, &pcs, client.Apply, client.FieldOwner("e2e-rolling-update-test"), client.ForceOwnership)

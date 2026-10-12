@@ -95,6 +95,19 @@ func EvictedByPodsReadyTimeout(wl *kueuev1beta2.Workload) bool {
 	return cond != nil && cond.Status == metav1.ConditionTrue && cond.Reason == kueuev1beta2.WorkloadEvictedByPodsReadyTimeout
 }
 
+// EvictionCount returns how many times Kueue evicted wl for reason with underlyingCause, per its scheduling stats.
+func EvictionCount(wl *kueuev1beta2.Workload, reason string, underlyingCause kueuev1beta2.EvictionUnderlyingCause) int32 {
+	if wl == nil || wl.Status.SchedulingStats == nil {
+		return 0
+	}
+	for _, eviction := range wl.Status.SchedulingStats.Evictions {
+		if eviction.Reason == reason && eviction.UnderlyingCause == underlyingCause {
+			return eviction.Count
+		}
+	}
+	return 0
+}
+
 // UIDChanged returns a waiter.Predicate that reports whether wl's UID differs from want. A Workload
 // that was deleted and recreated (see ensureWorkload) gets a new UID, so a changed UID proves the
 // repair ran.

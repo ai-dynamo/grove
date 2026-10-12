@@ -1,0 +1,109 @@
+# Kueue workload for the Coherent update e2e test.
+# frontend: standalone PodClique (1 replica).
+# sg-prefill, sg-decode: PodCliqueScalingGroups over prefill and decode (2 replicas, minAvailable 2).
+---
+apiVersion: grove.io/v1alpha1
+kind: PodCliqueSet
+metadata:
+  name: kueue-update-coherent
+  labels:
+    app: kueue-update-coherent
+    kueue.x-k8s.io/queue-name: grove-e2e
+spec:
+  replicas: 1
+  updateStrategy:
+    type: Coherent
+  template:
+    cliques:
+      - name: frontend
+        spec:
+          roleName: frontend
+          replicas: 1
+          minAvailable: 1
+          podSpec:
+            schedulerName: kueue
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: type
+                          operator: In
+                          values:
+                            - kwok
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: frontend
+                image: registry:5001/nginx:alpine-slim
+                resources:
+                  requests:
+                    memory: 1Mi
+      - name: prefill
+        spec:
+          roleName: prefill
+          replicas: 1
+          minAvailable: 1
+          podSpec:
+            schedulerName: kueue
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: type
+                          operator: In
+                          values:
+                            - kwok
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: prefill
+                image: registry:5001/nginx:alpine-slim
+                resources:
+                  requests:
+                    memory: 1Mi
+      - name: decode
+        spec:
+          roleName: decode
+          replicas: 1
+          minAvailable: 1
+          podSpec:
+            schedulerName: kueue
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: type
+                          operator: In
+                          values:
+                            - kwok
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: decode
+                image: registry:5001/nginx:alpine-slim
+                resources:
+                  requests:
+                    memory: 1Mi
+    podCliqueScalingGroups:
+      - name: sg-prefill
+        replicas: 2
+        minAvailable: 2
+        cliqueNames:
+          - prefill
+      - name: sg-decode
+        replicas: 2
+        minAvailable: 2
+        cliqueNames:
+          - decode
