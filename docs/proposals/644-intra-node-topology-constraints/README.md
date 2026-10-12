@@ -331,7 +331,7 @@ A claim's spec never changes after it is created. Its device requests cannot go 
 A pod with no copy in the claim would reference a request that does not exist and never start. `Shared` entries do not have this problem, because an extra pod shares the whole claim. For member PodCliques covered by a `PerPod` entry:
 
 - The PodCliqueSet webhook rejects updates that change `replicas`.
-- Grove does not validate PodClique updates, so it cannot reject a direct scale at admission. Instead, Grove does not create a pod that would have no copy in the claim, and records an event. After a direct scale-down, the removed pods' copies stay allocated until the replica is recreated.
+- The PodClique webhook, which already validates `spec.replicas` changes made directly or through the scale subresource, rejects them for a covered PodClique. As a fallback for a change that reaches a PodClique anyway, Grove does not create a pod that would have no copy in the claim, and records an event.
 
 The `PodGang` API is unchanged. The scheduler learns about the constraint through the claim, so it needs no new information in the gang.
 
@@ -392,7 +392,7 @@ These are the decisions to settle in review:
 1. Phase 1 scope: PodCliqueScalingGroups and their member PodCliques only, or also standalone PodCliques with a fixed replica count.
 2. Whether an intra-node constraint should align devices from several resourceSharing entries of the same group. DRA constraints cannot span claims, so phase 1 requires one `PerPod` entry that holds every device to align.
 3. Whether KAI and Volcano can schedule gangs that share claims, and when the kube backend gains gang scheduling.
-4. Whether a later phase should let a member PodClique covered by a `PerPod` entry change size, for example for engine-coordinated resizes ([#793](https://github.com/ai-dynamo/grove/issues/793)), by replacing the replica's claim, and whether a PodClique webhook should reject direct resizes at admission instead of Grove catching them in the reconciler.
+4. Whether a later phase should let a member PodClique covered by a `PerPod` entry change size, for example for engine-coordinated resizes ([#793](https://github.com/ai-dynamo/grove/issues/793)), by replacing the replica's claim.
 5. Whether spread gets a follow-up GREP, and whether it should be limited to pods with one device each.
 
 ### Monitoring
@@ -414,7 +414,7 @@ Three behaviors matter most. Each gets unit coverage in the webhook and the clai
 
 1. A group whose devices fit in one intra-node domain is placed on one node, each pod gets only its own copies, and the devices share the level's attribute.
 2. A group that fits in no domain stays pending, and admission rejects constraints that cannot be enforced.
-3. `PerPod` claims follow resourceSharing's lifecycle: one per replica on scale-out, deleted on scale-in, and the same claim used again when a pod is recreated. A covered member PodClique cannot outgrow its claim: the webhook rejects replica changes, and a direct scale-up creates no pod without a copy.
+3. `PerPod` claims follow resourceSharing's lifecycle: one per replica on scale-out, deleted on scale-in, and the same claim used again when a pod is recreated. A covered member PodClique cannot outgrow its claim: the PodCliqueSet and PodClique webhooks reject replica changes, including through the scale subresource, and Grove creates no pod without a copy.
 
 E2E tests run on kind with [dra-example-driver](https://github.com/kubernetes-sigs/dra-example-driver), whose mock GPUs can publish the standard `pcieRoot` attribute from a configured list of roots, so the `PCIeRoot` level needs no hardware. Testing the `NUMANode` level the same way needs a small change to that driver to publish `numaNode` on its mock GPUs.
 
