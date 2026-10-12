@@ -580,10 +580,11 @@ func TestBuildResource_PreservesRevisionForReplicaNotUnderCoherentUpdate(t *test
 	}
 }
 
-// TestBuildResource_ExplicitStartsAfterStaysSinglePrefixed reconciles a preserved replica twice under the
-// Explicit startup type and asserts StartsAfter stays the single-prefix FQN. It guards against re-prefixing
-// the live StartsAfter (which already holds FQNs) instead of reading the template's clique names.
-func TestBuildResource_ExplicitStartsAfterStaysSinglePrefixed(t *testing.T) {
+// TestBuildResource_DoesNotWriteStartsAfter asserts the controller treats StartsAfter as user-declared
+// desired state and never writes it. A preserved replica keeps whatever StartsAfter it already carries, even
+// a stale fully qualified value left by an older operator, since the controller does not reconcile the field
+// (the per-pod init container derives startup ordering from the PodCliqueSet template).
+func TestBuildResource_DoesNotWriteStartsAfter(t *testing.T) {
 	const (
 		leaderClique = "leader"
 		workerClique = "worker"
@@ -601,24 +602,25 @@ func TestBuildResource_ExplicitStartsAfterStaysSinglePrefixed(t *testing.T) {
 		WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder(workerClique).WithStartsAfter([]string{leaderClique}).Build()).
 		Build()
 
-	// The worker PodClique on the preserved replica already holds the resolved FQN from a previous reconcile.
-	wantStartsAfter := []string{fmt.Sprintf("%s-%d-%s", testPCSName, pcsReplica, leaderClique)}
+	// A preserved worker replica from an older operator still carries the resolved parent FQN.
+	staleStartsAfter := []string{fmt.Sprintf("%s-%d-%s", testPCSName, pcsReplica, leaderClique)}
 	pclq := &grovecorev1alpha1.PodClique{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      fmt.Sprintf("%s-%d-%s", testPCSName, pcsReplica, workerClique),
 			Namespace: testPCSNamespace,
 			Labels:    map[string]string{apicommon.LabelPodTemplateHash: "old-hash"},
 		},
-		Spec: grovecorev1alpha1.PodCliqueSpec{StartsAfter: wantStartsAfter},
+		Spec: grovecorev1alpha1.PodCliqueSpec{StartsAfter: staleStartsAfter},
 	}
 
 	operator := &_resource{scheme: groveclientscheme.Scheme}
 
-	// Reconcile twice. StartsAfter must remain the single-prefix FQN both times.
+	// pcsReplica 1 is not the replica under update, so it is preserved. Reconcile twice; the controller must
+	// leave StartsAfter untouched both times.
 	for i := range 2 {
 		err := operator.buildResource(logr.Discard(), pcs, pcsReplica, true, pclq)
 		require.NoError(t, err, "reconcile %d", i)
-		assert.Equal(t, wantStartsAfter, pclq.Spec.StartsAfter, "reconcile %d", i)
+		assert.Equal(t, staleStartsAfter, pclq.Spec.StartsAfter, "reconcile %d", i)
 	}
 }
 

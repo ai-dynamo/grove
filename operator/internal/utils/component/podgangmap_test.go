@@ -425,6 +425,156 @@ func TestExpectedPodGangNamesForEntry(t *testing.T) {
 	})
 }
 
+func TestStartupDependencyTargetsInEntry(t *testing.T) {
+	pcs := &grovecorev1alpha1.PodCliqueSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "ml"},
+		Spec: grovecorev1alpha1.PodCliqueSetSpec{
+			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
+				Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+					{Name: "frontend", Spec: grovecorev1alpha1.PodCliqueSpec{MinAvailable: ptr.To(int32(2))}},
+					{Name: "pf", Spec: grovecorev1alpha1.PodCliqueSpec{MinAvailable: ptr.To(int32(1))}},
+					{Name: "dc", Spec: grovecorev1alpha1.PodCliqueSpec{MinAvailable: ptr.To(int32(1))}},
+				},
+				PodCliqueScalingGroupConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+					{Name: "prefill", CliqueNames: []string{"pf"}},
+					{Name: "decode", CliqueNames: []string{"dc"}},
+				},
+			},
+		},
+	}
+	rnr := apicommon.ResourceNameReplica{Name: "ml", Replica: 0}
+	anchorGang := apicommon.GenerateAnchorPodGangName(rnr, "100")
+	scaleOutGang3 := apicommon.GenerateNonAnchorPodGangName(rnr, "100", "prefill", 3)
+	anchorEntry := func(pcsgIndices map[string][]int32, standalone map[string]int32) *grovecorev1alpha1.PodGangEntry {
+		return &grovecorev1alpha1.PodGangEntry{Epoch: "100", Role: grovecorev1alpha1.PodGangEntryRoleAnchor, PCSGReplicaIndices: pcsgIndices, PodCliques: standalone}
+	}
+	tests := []struct {
+		description   string
+		entry         *grovecorev1alpha1.PodGangEntry
+		podGangName   string
+		parentCliques []string
+		want          []StartupDependencyTarget
+	}{
+		{
+			description:   "PCSG parent at a health-ordered anchor index resolves to that replica",
+			entry:         anchorEntry(map[string][]int32{"prefill": {1}}, nil),
+			podGangName:   anchorGang,
+			parentCliques: []string{"pf"},
+			want:          []StartupDependencyTarget{{PodCliqueFQN: "ml-0-prefill-1-pf", MinReady: 1}},
+		},
+		{
+			description:   "PCSG parent with multiple committed anchor indices resolves to each",
+			entry:         anchorEntry(map[string][]int32{"prefill": {0, 2}}, nil),
+			podGangName:   anchorGang,
+			parentCliques: []string{"pf"},
+			want:          []StartupDependencyTarget{{PodCliqueFQN: "ml-0-prefill-0-pf", MinReady: 1}, {PodCliqueFQN: "ml-0-prefill-2-pf", MinReady: 1}},
+		},
+		{
+			description:   "standalone parent waits on its MinAvailable",
+			entry:         anchorEntry(nil, map[string]int32{"frontend": 2}),
+			podGangName:   anchorGang,
+			parentCliques: []string{"frontend"},
+			want:          []StartupDependencyTarget{{PodCliqueFQN: "ml-0-frontend", MinReady: 2}},
+		},
+		{
+			// A coherent update subsumes the parent's extra pods into this (highest-epoch) anchor; the wait stays
+			// at MinAvailable and reads only this gang's commitment, not the clique's global total.
+			description:   "standalone parent with pods subsumed into this anchor still waits on MinAvailable",
+			entry:         anchorEntry(nil, map[string]int32{"frontend": 3}),
+			podGangName:   anchorGang,
+			parentCliques: []string{"frontend"},
+			want:          []StartupDependencyTarget{{PodCliqueFQN: "ml-0-frontend", MinReady: 2}},
+		},
+		{
+			// A scale-in reduces the clique from the highest-epoch gang first, so a gang can hold fewer than
+			// MinAvailable pods. The init container watches only its own gang, so the wait is clamped to the pods
+			// this gang holds.
+			description:   "standalone parent below MinAvailable in this gang waits only on the pods it commits",
+			entry:         anchorEntry(nil, map[string]int32{"frontend": 1}),
+			podGangName:   anchorGang,
+			parentCliques: []string{"frontend"},
+			want:          []StartupDependencyTarget{{PodCliqueFQN: "ml-0-frontend", MinReady: 1}},
+		},
+		{
+			description:   "a parent not committed in the pod's gang yields nothing",
+			entry:         anchorEntry(map[string][]int32{"decode": {0}}, nil),
+			podGangName:   anchorGang,
+			parentCliques: []string{"pf", "frontend"},
+			want:          nil,
+		},
+		{
+			description:   "a scale-out pod waits only on the parent replica in its own gang",
+			entry:         &grovecorev1alpha1.PodGangEntry{Epoch: "100", Role: grovecorev1alpha1.PodGangEntryRoleScaleOut, PCSGReplicaIndices: map[string][]int32{"prefill": {1, 2, 3}}},
+			podGangName:   scaleOutGang3,
+			parentCliques: []string{"pf"},
+			want:          []StartupDependencyTarget{{PodCliqueFQN: "ml-0-prefill-3-pf", MinReady: 1}},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.description, func(t *testing.T) {
+			assert.Equal(t, tc.want, StartupDependencyTargetsInEntry(pcs, 0, tc.entry, tc.podGangName, tc.parentCliques))
+		})
+	}
+}
+
+func TestStartupDependencyCliqueNames(t *testing.T) {
+	inOrderPCS := &grovecorev1alpha1.PodCliqueSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "ml"},
+		Spec: grovecorev1alpha1.PodCliqueSetSpec{
+			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
+				StartupType: ptr.To(grovecorev1alpha1.CliqueStartupTypeInOrder),
+				Cliques:     []*grovecorev1alpha1.PodCliqueTemplateSpec{{Name: "a"}, {Name: "b"}, {Name: "c"}},
+			},
+		},
+	}
+	explicitPCS := &grovecorev1alpha1.PodCliqueSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "ml"},
+		Spec: grovecorev1alpha1.PodCliqueSetSpec{
+			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
+				StartupType: ptr.To(grovecorev1alpha1.CliqueStartupTypeExplicit),
+				Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+					{Name: "a"},
+					{Name: "b", Spec: grovecorev1alpha1.PodCliqueSpec{StartsAfter: []string{"a"}}},
+					{Name: "c", Spec: grovecorev1alpha1.PodCliqueSpec{StartsAfter: []string{"a", "b"}}},
+				},
+			},
+		},
+	}
+	noStartupTypePCS := &grovecorev1alpha1.PodCliqueSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "ml"},
+		Spec: grovecorev1alpha1.PodCliqueSetSpec{
+			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
+				Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{{Name: "a"}},
+			},
+		},
+	}
+	tests := []struct {
+		description string
+		pcs         *grovecorev1alpha1.PodCliqueSet
+		cliqueName  string
+		want        []string
+		wantErr     bool
+	}{
+		{description: "InOrder first clique has no parent", pcs: inOrderPCS, cliqueName: "a", want: nil},
+		{description: "InOrder non-first clique starts after the preceding clique", pcs: inOrderPCS, cliqueName: "c", want: []string{"b"}},
+		{description: "Explicit clique returns its declared StartsAfter", pcs: explicitPCS, cliqueName: "c", want: []string{"a", "b"}},
+		{description: "Explicit clique without a declared StartsAfter returns none", pcs: explicitPCS, cliqueName: "a", want: nil},
+		{description: "unknown clique is an error", pcs: inOrderPCS, cliqueName: "missing", wantErr: true},
+		{description: "nil startup type is an error", pcs: noStartupTypePCS, cliqueName: "a", wantErr: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.description, func(t *testing.T) {
+			got, err := StartupDependencyCliqueNames(tc.pcs, tc.cliqueName)
+			if tc.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
 func pgmNames(pgms []grovecorev1alpha1.PodGangMap) []string {
 	names := make([]string, 0, len(pgms))
 	for i := range pgms {

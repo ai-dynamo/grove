@@ -17,6 +17,7 @@ package component
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strconv"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
@@ -24,6 +25,7 @@ import (
 
 	"github.com/samber/lo"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -276,4 +278,110 @@ func EpochByAnchorPodGangName(entries []grovecorev1alpha1.PodGangEntry, rnr apic
 		}
 	}
 	return epochByPodGangName
+}
+
+// StartupDependencyCliqueNames returns the parent clique names the given clique must start after.
+// The list of dependencies for the given clique is derived from the PodCliqueSet's immutable startup configuration.
+//   - For CliqueStartupTypeInOrder: it is the preceding clique in the template order (none for the first clique).
+//   - For CliqueStartupTypeExplicit: it is that clique template's declared StartsAfter.
+//
+// An error is returned when the startup type is unset or the clique name is not present in the PodCliqueSet template.
+func StartupDependencyCliqueNames(pcs *grovecorev1alpha1.PodCliqueSet, cliqueName string) ([]string, error) {
+	startupType := pcs.Spec.Template.StartupType
+	if startupType == nil {
+		return nil, fmt.Errorf("no startup type found for PodCliqueSet %q", pcs.Name)
+	}
+	cliqueIndex := slices.IndexFunc(pcs.Spec.Template.Cliques, func(t *grovecorev1alpha1.PodCliqueTemplateSpec) bool {
+		return t.Name == cliqueName
+	})
+	if cliqueIndex < 0 {
+		return nil, fmt.Errorf("clique %q is not present in PodCliqueSet %q template", cliqueName, pcs.Name)
+	}
+	switch *startupType {
+	case grovecorev1alpha1.CliqueStartupTypeInOrder:
+		if cliqueIndex == 0 {
+			return nil, nil
+		}
+		return []string{pcs.Spec.Template.Cliques[cliqueIndex-1].Name}, nil
+	case grovecorev1alpha1.CliqueStartupTypeExplicit:
+		return pcs.Spec.Template.Cliques[cliqueIndex].Spec.StartsAfter, nil
+	default:
+		return nil, nil
+	}
+}
+
+// StartupDependencyTarget is one init-container wait target. It contains the fully qualified name of a parent PodClique
+// and the number of its pods that must be Ready within the dependent pod's own PodGang before it starts.
+type StartupDependencyTarget struct {
+	// PodCliqueFQN is the fully qualified name of the PodClique.
+	PodCliqueFQN string
+	// MinReady is the minimum number of pods for the PodClique that must be ready.
+	MinReady int32
+}
+
+// StartupDependencyTargetsInEntry resolves each declared parent clique name against entry, the committed
+// PodGang entry the dependent pod belongs to. It returns the init-container wait targets for the parents
+// that are committed in the dependent pod's own PodGang (podGangName).
+//
+// A PodCliqueScalingGroup parent yields one target per committed replica index whose materialized PodGang is
+// podGangName, each waiting on that member clique's MinAvailable. An anchor pod therefore waits on every
+// parent replica in the same anchor, while a scale-out pod waits only on the parent replica in its own
+// PodGang.
+//
+// A standalone parent lives only in anchor gangs. When it is present in podGangName it yields one target.
+// The target waits on min(MinAvailable, the number of its pods this gang holds). The init container watches
+// only its own gang, so it must not wait for more pods than this gang holds. A coherent update keeps every
+// gang at or above MinAvailable. A later scale-in can drop a gang below MinAvailable, since it drains the
+// highest gang first.
+//
+// A parent not committed in the pod's gang (out of the update scope) yields nothing, so a subset update
+// never stalls it, and only satisfiable dependencies in the pod's own gang are emitted.
+func StartupDependencyTargetsInEntry(pcs *grovecorev1alpha1.PodCliqueSet, pcsReplicaIndex int, entry *grovecorev1alpha1.PodGangEntry, podGangName string, parentCliqueNames []string) []StartupDependencyTarget {
+	rnr := apicommon.ResourceNameReplica{Name: pcs.Name, Replica: pcsReplicaIndex}
+	anchorGangName := apicommon.GenerateAnchorPodGangName(rnr, entry.Epoch)
+	var targets []StartupDependencyTarget
+	for _, parentCliqueName := range parentCliqueNames {
+		if pcsgConfig := FindScalingGroupConfigForClique(pcs.Spec.Template.PodCliqueScalingGroupConfigs, parentCliqueName); pcsgConfig != nil {
+			minReady := minAvailableForClique(pcs, parentCliqueName)
+			pcsgFQN := apicommon.GeneratePodCliqueScalingGroupName(rnr, pcsgConfig.Name)
+			for _, parentReplicaIndex := range entry.PCSGReplicaIndices[pcsgConfig.Name] {
+				memberGangName := anchorGangName
+				if entry.Role != grovecorev1alpha1.PodGangEntryRoleAnchor {
+					memberGangName = apicommon.GenerateNonAnchorPodGangName(rnr, entry.Epoch, pcsgConfig.Name, parentReplicaIndex)
+				}
+				if memberGangName != podGangName {
+					continue // parent replica is in a different PodGang than the dependent pod
+				}
+				targets = append(targets, StartupDependencyTarget{
+					PodCliqueFQN: apicommon.GeneratePodCliqueName(apicommon.ResourceNameReplica{Name: pcsgFQN, Replica: int(parentReplicaIndex)}, parentCliqueName),
+					MinReady:     minReady,
+				})
+			}
+			continue
+		}
+		// A standalone parent lives only in anchor gangs. The init container watches only its own gang, so it
+		// must not wait for more parent pods than this gang holds. A coherent update keeps every gang at or above
+		// MinAvailable. A later scale-in can drop a gang below MinAvailable, since it drains the highest gang
+		// first. So wait on min(MinAvailable, count). count == 0 means the parent is not in this gang, so skip it.
+		if podGangName == anchorGangName {
+			if count := entry.PodCliques[parentCliqueName]; count > 0 {
+				targets = append(targets, StartupDependencyTarget{
+					PodCliqueFQN: apicommon.GeneratePodCliqueName(rnr, parentCliqueName),
+					MinReady:     min(minAvailableForClique(pcs, parentCliqueName), count),
+				})
+			}
+		}
+	}
+	return targets
+}
+
+// minAvailableForClique returns the MinAvailable of the named PodClique template in the PodCliqueSet, or 0
+// when the clique is not found.
+func minAvailableForClique(pcs *grovecorev1alpha1.PodCliqueSet, cliqueName string) int32 {
+	for _, cliqueTemplate := range pcs.Spec.Template.Cliques {
+		if cliqueTemplate.Name == cliqueName {
+			return ptr.Deref(cliqueTemplate.Spec.MinAvailable, cliqueTemplate.Spec.Replicas)
+		}
+	}
+	return 0
 }

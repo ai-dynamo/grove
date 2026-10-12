@@ -146,13 +146,19 @@ type subStepPlanner struct {
 	// maxUnavailableByComponent bounds how many of a component a single sub-step may take down, from the
 	// current template.
 	maxUnavailableByComponent map[string]int32
-	// runningPodsByCliqueAndAnchor is the running Pod count of each in-scope standalone PodClique on each
-	// anchor, keyed by clique name then anchor epoch. The drain reads it to reclaim missing old-version Pods before taking
-	// down running Pods. It is nil when no standalone PodClique is in scope.
-	runningPodsByCliqueAndAnchor map[string]map[string]int32
+	// standalonePCLQByComponent are the in-scope standalone PodCliques of the replica under update.
+	standalonePCLQByComponent map[string]grovecorev1alpha1.PodClique
+	// pcsgReplicaInfos are the per-replica facts of each in-scope PodCliqueScalingGroup under update, keyed
+	// by PCSG component name. The count-anchored budget and the drain ordering both read it.
+	pcsgReplicaInfos map[string][]pcsgReplicaInfo
+	// pclqPodCounts are the standalone Pod counts gathered once from the live Pod list this reconcile. Its
+	// livePodCountsByAnchor drives the Phase-1 reclaim, missing old-version detection, and the
+	// not-Ready-first drain, and its nonTerminatingByPCLQ and newNotReadyByPCLQ feed the count-anchored
+	// MaxUnavailable budget.
+	pclqPodCounts standalonePCLQPodCounts
 	// numMissingOldVersionPodsByPCLQ is the count of missing old-version Pods per in-scope standalone
-	// PodClique, derived at construction from the committed entries and runningPodsByCliqueAndAnchor. The
-	// gate reads it to keep the reclaim free.
+	// PodClique, derived at construction from the committed entries and pclqPodCounts.
+	// The gate reads it to keep the reclaim free.
 	numMissingOldVersionPodsByPCLQ map[string]int32
 	// plan is the step-level decomposition the sub-step methods work against.
 	plan stepPlan
@@ -160,7 +166,7 @@ type subStepPlanner struct {
 
 // newSubStepPlanner builds the planner for one PCS replica from the in-scope live replica counts and the
 // current-template maxUnavailable, and computes the step plan the planner works against.
-func newSubStepPlanner(syncSnap *syncSnapshot, pcsReplicaIndex int, entries []grovecorev1alpha1.PodGangEntry, clk clock.Clock, desiredReplicas map[string]int32, runningPodsByCliqueAndAnchor map[string]map[string]int32) *subStepPlanner {
+func newSubStepPlanner(syncSnap *syncSnapshot, pcsReplicaIndex int, entries []grovecorev1alpha1.PodGangEntry, clk clock.Clock, desiredReplicas map[string]int32, standalonePCLQByComponent map[string]grovecorev1alpha1.PodClique, pcsgReplicaInfos map[string][]pcsgReplicaInfo, pclqPodCounts standalonePCLQPodCounts) *subStepPlanner {
 	mvu := syncSnap.mvuTemplate
 	minAvailableByComponent := lo.Assign(mvu.standalonePCLQs, mvu.pcsgs)
 	return &subStepPlanner{
@@ -171,8 +177,10 @@ func newSubStepPlanner(syncSnap *syncSnapshot, pcsReplicaIndex int, entries []gr
 		entries:                        entries,
 		desiredReplicas:                desiredReplicas,
 		maxUnavailableByComponent:      componentutils.CoherentMaxUnavailableByComponent(syncSnap.pcs, lo.Keys(minAvailableByComponent)),
-		runningPodsByCliqueAndAnchor:   runningPodsByCliqueAndAnchor,
-		numMissingOldVersionPodsByPCLQ: numMissingOldVersionPodsByStandalonePCLQ(entries, *syncSnap.pcs.Status.CurrentGenerationHash, runningPodsByCliqueAndAnchor),
+		standalonePCLQByComponent:      standalonePCLQByComponent,
+		pcsgReplicaInfos:               pcsgReplicaInfos,
+		pclqPodCounts:                  pclqPodCounts,
+		numMissingOldVersionPodsByPCLQ: numMissingOldVersionPodsByStandalonePCLQ(entries, *syncSnap.pcs.Status.CurrentGenerationHash, pclqPodCounts),
 		plan:                           computeStepPlan(desiredReplicas, mvu),
 	}
 }
@@ -397,7 +405,7 @@ func (p *subStepPlanner) next(planPos planPosition, headroomByComponent map[stri
 	}
 	// No anchor-bearing step is open, so open the next one while any remain unopened.
 	if planPos.anchorBearingStepsDone < p.plan.numAnchorBearingSteps {
-		return p.buildAnchorBearingSubStep(planPos)
+		return p.buildAnchorBearingSubStep()
 	}
 	// Every anchor-bearing step is committed, so commit any remaining leftover.
 	if p.anyLeftoverRemaining(planPos.currentHashCountByComponent) {
@@ -434,45 +442,46 @@ func (p *subStepPlanner) openAnchorStepHasTailRemaining(planPos planPosition) bo
 // standalone PodClique pods into the step's anchor and rolls the PodCliqueScalingGroup tail indices.
 //
 // Worked example. Take one PCSG D of a multi-component update whose step count another component caps low,
-// with MinAvailable 2, MaxUnavailable 3, and StepTarget 6. Step k=0's index block is [0, 6), of which the
-// anchor sub-step already committed [0, 2), leaving a tail of 4 indices [2, 6). The tail exceeds
-// MaxUnavailable 3, so it drains over two tail sub-steps. The first commits min(3, 4) = 3 from index
-// (k+1)*6 - 4 = 2, rolling [2, 5). The next commits min(3, 1) = 1 from index (k+1)*6 - 1 = 5, rolling [5, 6).
+// with MinAvailable 2, MaxUnavailable 3, and StepTarget 6. Step k=0 rolls 6 of D. The anchor sub-step
+// already committed MinAvailable 2, leaving a tail of 4. The tail exceeds MaxUnavailable 3, so it drains
+// over two tail sub-steps, the first committing min(3, 4) = 3 and the next min(3, 1) = 1, each choosing the
+// worst-off still-unrolled indices.
 func (p *subStepPlanner) buildTailSubStep(planPos planPosition, headroomByComponent map[string]int32) (*subStep, error) {
-	stepIndex := planPos.anchorBearingStepsDone // 0-based index of the open anchor-bearing step
 	remainingByComponent := make(map[string]int32)
 	for componentName := range p.desiredReplicas {
 		if gap := p.plan.anchorBearingStepTarget[componentName] - planPos.currentAnchorStepCountByComponent[componentName]; gap > 0 {
 			remainingByComponent[componentName] = gap
 		}
 	}
-	// A PCSG's tail indices continue this step's block just past what it has already rolled. The block
-	// ends at (k+1)*target and remaining are still unrolled, so the next unrolled index is
-	// (k+1)*target - remaining.
-	pcsgIndexStartFn := func(pcsgName string, remaining int32) int32 {
-		return (stepIndex+1)*p.plan.anchorBearingStepTarget[pcsgName] - remaining
-	}
-	return p.buildNonAnchorSubStep(newEpoch(p.clk), planPos.mostRecentAnchorEpoch, remainingByComponent, pcsgIndexStartFn, headroomByComponent)
+	return p.buildNonAnchorSubStep(newEpoch(p.clk), planPos.mostRecentAnchorEpoch, remainingByComponent, headroomByComponent)
 }
 
 // buildAnchorBearingSubStep opens the next anchor-bearing step by committing a new anchor entry that
-// carries MinAvailable of every component, allocating each PodCliqueScalingGroup's MinAvailable replica
-// indices from this step's block and draining the old-hash equivalent. The step's tail, if any, is
-// committed later by buildTailSubStep.
-func (p *subStepPlanner) buildAnchorBearingSubStep(planPos planPosition) (*subStep, error) {
+// carries MinAvailable of every component, allocating each PodCliqueScalingGroup's MinAvailable worst-off
+// old replica indices and draining the old-hash equivalent. The step's tail, if any, is committed later by
+// buildTailSubStep.
+func (p *subStepPlanner) buildAnchorBearingSubStep() (*subStep, error) {
 	dependsOn, err := p.dependsOnLatestEpoch()
 	if err != nil {
 		return nil, err
 	}
-	// This anchor opens the k-th anchor-bearing step and claims the first MinAvailable indices of that
-	// step's block [k*target, (k+1)*target) for each PCSG, so anchors of different steps never collide.
-	stepIndex := planPos.anchorBearingStepsDone
+	// This anchor opens the k-th anchor-bearing step and claims the MinAvailable worst-off old indices for
+	// each PCSG, so an already-unavailable replica rolls before a healthy one. Rolled indices become
+	// current-hash and are excluded next reconcile, so anchors of different steps never collide.
 	anchorPCSGIndices := make(map[string][]int32, len(p.mvu.pcsgs))
 	for pcsgName, minAvailable := range p.mvu.pcsgs {
 		if p.desiredReplicas[pcsgName] == 0 {
 			continue // a scaled-to-zero PodCliqueScalingGroup has no replicas to place in the anchor
 		}
-		anchorPCSGIndices[pcsgName] = lo.RangeFrom(stepIndex*p.plan.anchorBearingStepTarget[pcsgName], int(minAvailable))
+		indices := p.nextOldPCSGIndicesToRoll(pcsgName, minAvailable)
+		// The step plan said an anchor-bearing step remains, which assumes MinAvailable old replicas are
+		// available to roll. If the live inventory can no longer supply it then requeue, so the next reconcile
+		// recomputes the plan rather than opening an anchor that violates the MinAvailable anchor contract.
+		if len(indices) < int(minAvailable) {
+			return nil, groveerr.New(groveerr.ErrCodeRequeueAfter, component.OperationSync,
+				fmt.Sprintf("step plan expects an anchor-bearing step but PodCliqueScalingGroup %q has only %d of %d old replica indices available, requeuing to recompute the plan", pcsgName, len(indices), minAvailable))
+		}
+		anchorPCSGIndices[pcsgName] = indices
 	}
 	anchorStandalonePCLQCounts := make(map[string]int32, len(p.mvu.standalonePCLQs))
 	for pclqName, minAvailable := range p.mvu.standalonePCLQs {
@@ -504,9 +513,8 @@ func (p *subStepPlanner) anyLeftoverRemaining(currentHashCountByComponent map[st
 }
 
 // buildLeftoverSubStep builds one sub-step of the single leftover step, which rolls whatever remains
-// after all anchor-bearing steps. A component's leftover indices sit above every anchor-bearing step's
-// block, [numAnchorBearingSteps*target, replicas), so the next unrolled index is replicas - remaining.
-// Standalone PodClique leftover pods subsume into the most recent anchor.
+// after all anchor-bearing steps. It chooses the worst-off still-unrolled indices of each PodCliqueScalingGroup
+// and subsumes standalone PodClique leftover pods into the most recent anchor.
 func (p *subStepPlanner) buildLeftoverSubStep(planPos planPosition, headroomByComponent map[string]int32) (*subStep, error) {
 	remainingByComponent := make(map[string]int32)
 	for componentName := range p.plan.leftover {
@@ -514,10 +522,7 @@ func (p *subStepPlanner) buildLeftoverSubStep(planPos planPosition, headroomByCo
 			remainingByComponent[componentName] = gap
 		}
 	}
-	pcsgIndexStartFn := func(pcsgName string, remaining int32) int32 {
-		return p.desiredReplicas[pcsgName] - remaining
-	}
-	return p.buildNonAnchorSubStep(newEpoch(p.clk), planPos.mostRecentAnchorEpoch, remainingByComponent, pcsgIndexStartFn, headroomByComponent)
+	return p.buildNonAnchorSubStep(newEpoch(p.clk), planPos.mostRecentAnchorEpoch, remainingByComponent, headroomByComponent)
 }
 
 // buildNonAnchorSubStep assembles a sub-step that adds no anchor, shared by the tail sub-steps of an
@@ -525,10 +530,10 @@ func (p *subStepPlanner) buildLeftoverSubStep(planPos planPosition, headroomByCo
 // sub-step must roll. For each component it rolls a budget of min(MaxUnavailable, remaining), further
 // capped by headroomByComponent so it never takes down more than the component's remaining MaxUnavailable
 // headroom when replicas are already unavailable for unrelated reasons. A nil headroomByComponent disables
-// the headroom cap. A PodCliqueScalingGroup gets tail entries at pcsgIndexStartFn(name, remaining) onward,
-// and a standalone PodClique subsumes that many pods into the anchor at anchorEpoch. The old-hash
-// equivalent is drained in both cases. It returns nil when there is nothing left to roll.
-func (p *subStepPlanner) buildNonAnchorSubStep(epoch, anchorEpoch string, remainingByComponent map[string]int32, pcsgIndexStartFn func(pcsgName string, remaining int32) int32, headroomByComponent map[string]int32) (*subStep, error) {
+// the headroom cap. A PodCliqueScalingGroup gets tail entries for its worst-off still-unrolled indices, and
+// a standalone PodClique subsumes that many pods into the anchor at anchorEpoch. The old-hash equivalent is
+// drained in both cases. It returns nil when there is nothing left to roll.
+func (p *subStepPlanner) buildNonAnchorSubStep(epoch, anchorEpoch string, remainingByComponent map[string]int32, headroomByComponent map[string]int32) (*subStep, error) {
 	if len(remainingByComponent) == 0 {
 		return nil, nil
 	}
@@ -552,14 +557,14 @@ func (p *subStepPlanner) buildNonAnchorSubStep(epoch, anchorEpoch string, remain
 		//   remaining      : never drain more than the step still has left to roll.
 		//   headroom       : running-Pod takedown headroom plus free missing old-version reclaims (see headroomByComponent).
 		// The maxUnavailable bound also caps the reclaim. When more Pods have died than MaxUnavailable, the
-		// extra missing old-version Pods are reclaimed over later reconciles rather than all at once. This is safe and self
-		// correcting. It only slows recovery from many simultaneous unrelated deaths.
+		// extra missing old-version Pods are reclaimed over later reconciles rather than all at once.
+		// This is safe and self-correcting. It only slows recovery from many simultaneous unrelated deaths.
 		rollBudget := min(p.maxUnavailableByComponent[componentName], remaining)
 		if headroomByComponent != nil {
 			rollBudget = min(rollBudget, headroomByComponent[componentName])
 		}
 		if _, isPCSG := p.mvu.pcsgs[componentName]; isPCSG {
-			indices := lo.RangeFrom(pcsgIndexStartFn(componentName, remaining), int(rollBudget))
+			indices := p.nextOldPCSGIndicesToRoll(componentName, rollBudget)
 			ss.tailPCSGReplicaIndices[componentName] = indices
 			ss.drainPCSGReplicaIndices[componentName] = indices
 		} else {
@@ -568,6 +573,23 @@ func (p *subStepPlanner) buildNonAnchorSubStep(epoch, anchorEpoch string, remain
 		}
 	}
 	return ss, nil
+}
+
+// nextOldPCSGIndicesToRoll returns up to count old (not-yet-rolled) replica indices of a PodCliqueScalingGroup,
+// ordered worst-off first (pending, then unavailable, then ready, ascending by index within each state).
+// These are the indices the next sub-step rolls, so an already-unavailable replica is replaced before a
+// healthy one.
+func (p *subStepPlanner) nextOldPCSGIndicesToRoll(pcsgName string, count int32) []int32 {
+	var infos []componentutils.PCSGReplicaDisruptionInfo
+	for _, info := range p.pcsgReplicaInfos[pcsgName] {
+		if info.atCurrentHash {
+			continue // already rolled to the current generation
+		}
+		infos = append(infos, componentutils.PCSGReplicaDisruptionInfo{Index: info.index, State: info.state})
+	}
+	ordered := componentutils.OrderPCSGReplicaIndicesForDisruption(infos)
+	ordered = ordered[:min(int(count), len(ordered))]
+	return lo.Map(ordered, func(replicaIndex int, _ int) int32 { return int32(replicaIndex) })
 }
 
 // dependsOnLatestEpoch returns the DependsOn slice for a newly emitted sub-step, which is the single

@@ -45,7 +45,10 @@ func (r _resource) reconcileReplicasToCommittedPodGangs(ctx context.Context, log
 		return nil
 	}
 
-	deleteTasks := r.createDeleteTasks(logger, ss, indicesToRecreate, "recreating replicas onto their PodGangMap committed PodGang under a coherent update")
+	deleteTasks, err := r.createDeleteTasks(logger, ss, indicesToRecreate, "recreating replicas onto their PodGangMap committed PodGang under a coherent update")
+	if err != nil {
+		return err
+	}
 	if err := r.triggerDeletionOfPodCliques(ctx, logger, client.ObjectKeyFromObject(ss.pcsg), deleteTasks); err != nil {
 		return err
 	}
@@ -64,11 +67,14 @@ func (r _resource) reconcileReplicasToCommittedPodGangs(ctx context.Context, log
 // committed PodGang is not deleted again while a slower sibling is still draining.
 func replicaIndicesToRecreate(ss *syncSnapshot) ([]string, error) {
 	rnr := apicommon.ResourceNameReplica{Name: ss.pcs.Name, Replica: ss.pcsReplicaIndex}
-	membersByReplicaIndex := componentutils.GroupPCLQsByPCSGReplicaIndex(ss.existingPCLQs)
+	membersByReplicaIndex, err := componentutils.GroupPCLQsByPCSGReplicaIndex(ss.existingPCLQs)
+	if err != nil {
+		return nil, err
+	}
 
 	var indicesToRecreate []string
 	for pcsgReplicaIndex := range int(ss.pcsg.Spec.Replicas) {
-		members := membersByReplicaIndex[strconv.Itoa(pcsgReplicaIndex)]
+		members := membersByReplicaIndex[pcsgReplicaIndex]
 		if len(members) == 0 || anyMemberTerminating(members) {
 			continue
 		}
@@ -107,9 +113,12 @@ func anyMemberTerminating(members []grovecorev1alpha1.PodClique) bool {
 // committed PodGang at the current revision and Ready. It is readiness aware because a replica on a
 // superseded PodGang cannot become Ready, so the update stays in progress until placement settles.
 func (r _resource) markCoherentUpdateEndIfConverged(ctx context.Context, logger logr.Logger, ss *syncSnapshot) error {
-	membersByReplicaIndex := componentutils.GroupPCLQsByPCSGReplicaIndex(ss.existingPCLQs)
+	membersByReplicaIndex, err := componentutils.GroupPCLQsByPCSGReplicaIndex(ss.existingPCLQs)
+	if err != nil {
+		return err
+	}
 	for pcsgReplicaIndex := range int(ss.pcsg.Spec.Replicas) {
-		if !isReplicaUpdatedAndReady(ss, pcsgReplicaIndex, membersByReplicaIndex[strconv.Itoa(pcsgReplicaIndex)]) {
+		if !isReplicaUpdatedAndReady(ss, pcsgReplicaIndex, membersByReplicaIndex[pcsgReplicaIndex]) {
 			// The update has not converged. A replica is still draining, pending recreation, or not yet
 			// Ready. Requeue so the roll is re-driven until every replica settles on its committed PodGang
 			// at the current revision, rather than returning without rescheduling.

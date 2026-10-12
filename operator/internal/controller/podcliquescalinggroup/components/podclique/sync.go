@@ -120,7 +120,10 @@ func (r _resource) runSyncFlow(ctx context.Context, logger logr.Logger, ss *sync
 	// Segment MinAvailable-breached replicas from the PodCliques observed at the start of this reconcile:
 	// those past TerminationDelay are gang-terminated, those still within it trigger a requeue. Computed
 	// here rather than stored on the snapshot since it is used only within this flow.
-	pcsgIndicesToTerminate, pcsgIndicesToRequeue := getMinAvailableBreachedPCSGIndices(logger, ss.existingPCLQs, ss.pcs.Spec.Template.TerminationDelay.Duration)
+	pcsgIndicesToTerminate, pcsgIndicesToRequeue, err := getMinAvailableBreachedPCSGIndices(logger, ss.existingPCLQs, ss.pcs.Spec.Template.TerminationDelay.Duration)
+	if err != nil {
+		return err
+	}
 
 	// Ensure PCSG-level ResourceClaims before creating any PodCliques
 	if err := r.ensurePCSGResourceClaims(ctx, ss); err != nil {
@@ -280,7 +283,10 @@ func (r _resource) triggerDeletionOfExcessPCSGReplicas(ctx context.Context, logg
 		logger.Info("Found more PodCliques than expected, triggering deletion of excess PodCliques", "expected", int(ss.pcsg.Spec.Replicas), "existing", existingPCSGReplicas, "diff", diff)
 		reason := "Delete excess PodCliqueScalingGroup replicas"
 		replicaIndicesToDelete := computePCSGReplicasToDelete(existingPCSGReplicas, int(ss.pcsg.Spec.Replicas))
-		deletionTasks := r.createDeleteTasks(logger, ss, replicaIndicesToDelete, reason)
+		deletionTasks, err := r.createDeleteTasks(logger, ss, replicaIndicesToDelete, reason)
+		if err != nil {
+			return err
+		}
 		if err := r.triggerDeletionOfPodCliques(ctx, logger, pcsgObjectKey, deletionTasks); err != nil {
 			return err
 		}
@@ -389,7 +395,10 @@ func (r _resource) processMinAvailableBreachedPCSGReplicas(ctx context.Context, 
 	if len(pcsgIndicesToTerminate) > 0 {
 		logger.Info("Identified PodCliqueScalingGroup indices for gang termination", "indices", pcsgIndicesToTerminate)
 		reason := fmt.Sprintf("Delete PodCliques %v for PodCliqueScalingGroup %v which have breached MinAvailable longer than TerminationDelay: %s", pcsgIndicesToTerminate, client.ObjectKeyFromObject(ss.pcsg), ss.pcs.Spec.Template.TerminationDelay.Duration)
-		pclqGangTerminationTasks := r.createDeleteTasks(logger, ss, pcsgIndicesToTerminate, reason)
+		pclqGangTerminationTasks, err := r.createDeleteTasks(logger, ss, pcsgIndicesToTerminate, reason)
+		if err != nil {
+			return err
+		}
 		if err := r.triggerDeletionOfPodCliques(ctx, logger, client.ObjectKeyFromObject(ss.pcsg), pclqGangTerminationTasks); err != nil {
 			return err
 		}
@@ -402,19 +411,23 @@ func (r _resource) processMinAvailableBreachedPCSGReplicas(ctx context.Context, 
 }
 
 // getMinAvailableBreachedPCSGIndices categorizes PCSG replicas based on MinAvailable breach status and termination delay
-func getMinAvailableBreachedPCSGIndices(logger logr.Logger, existingPCLQs []grovecorev1alpha1.PodClique, terminationDelay time.Duration) (pcsgIndicesToTerminate []string, pcsgIndicesToRequeue []string) {
+func getMinAvailableBreachedPCSGIndices(logger logr.Logger, existingPCLQs []grovecorev1alpha1.PodClique, terminationDelay time.Duration) (pcsgIndicesToTerminate []string, pcsgIndicesToRequeue []string, err error) {
 	now := time.Now()
 	// group existing PCLQs by PCSG replica index. These are PCLQs that belong to one replica of PCSG.
-	pcsgReplicaIndexPCLQs := componentutils.GroupPCLQsByPCSGReplicaIndex(existingPCLQs)
+	pcsgReplicaIndexPCLQs, err := componentutils.GroupPCLQsByPCSGReplicaIndex(existingPCLQs)
+	if err != nil {
+		return nil, nil, err
+	}
 	// For each PCSG replica check if minAvailable for any constituent PCLQ has been violated. Those PCSG replicas should be marked for termination.
 	for pcsgReplicaIndex, pclqs := range pcsgReplicaIndexPCLQs {
 		pclqNames, minWaitFor := componentutils.GetMinAvailableBreachedPCLQInfo(pclqs, terminationDelay, now)
 		if len(pclqNames) > 0 {
-			logger.Info("minAvailable breached for PCLQs", "pcsgReplicaIndex", pcsgReplicaIndex, "pclqNames", pclqNames, "minWaitFor", minWaitFor)
+			pcsgReplicaIndexStr := strconv.Itoa(pcsgReplicaIndex)
+			logger.Info("minAvailable breached for PCLQs", "pcsgReplicaIndex", pcsgReplicaIndexStr, "pclqNames", pclqNames, "minWaitFor", minWaitFor)
 			if minWaitFor <= 0 {
-				pcsgIndicesToTerminate = append(pcsgIndicesToTerminate, pcsgReplicaIndex)
+				pcsgIndicesToTerminate = append(pcsgIndicesToTerminate, pcsgReplicaIndexStr)
 			} else {
-				pcsgIndicesToRequeue = append(pcsgIndicesToRequeue, pcsgReplicaIndex)
+				pcsgIndicesToRequeue = append(pcsgIndicesToRequeue, pcsgReplicaIndexStr)
 			}
 		}
 	}

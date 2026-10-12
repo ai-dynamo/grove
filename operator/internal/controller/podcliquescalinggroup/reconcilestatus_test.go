@@ -100,7 +100,7 @@ func TestComputeReplicaStatus(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			scheduled, available, updated := computeReplicaStatus(logr.Discard(), tt.pcsGenerationHash, nil, "0", tt.expectedSize, tt.cliques)
+			scheduled, available, updated := computeReplicaStatus(logr.Discard(), tt.pcsGenerationHash, nil, 0, tt.expectedSize, tt.cliques)
 
 			assert.Equal(t, tt.wantScheduled, scheduled, "scheduled mismatch")
 			assert.Equal(t, tt.wantAvailable, available, "available mismatch")
@@ -120,17 +120,17 @@ func TestComputeMinAvailableBreachedCondition(t *testing.T) {
 		name         string
 		replicas     int32
 		minAvailable *int32
-		pclqsMap     map[string][]grovecorev1alpha1.PodClique
+		pclqsMap     map[int][]grovecorev1alpha1.PodClique
 		wantStatus   metav1.ConditionStatus
 		wantReason   string
 	}{
 		{
 			name:     "all replicas healthy, none breached",
 			replicas: 3,
-			pclqsMap: map[string][]grovecorev1alpha1.PodClique{
-				"0": healthyPCSGReplica(),
-				"1": healthyPCSGReplica(),
-				"2": healthyPCSGReplica(),
+			pclqsMap: map[int][]grovecorev1alpha1.PodClique{
+				0: healthyPCSGReplica(),
+				1: healthyPCSGReplica(),
+				2: healthyPCSGReplica(),
 			},
 			wantStatus: metav1.ConditionFalse,
 			wantReason: "SufficientAvailablePodCliqueScalingGroupReplicas",
@@ -139,12 +139,12 @@ func TestComputeMinAvailableBreachedCondition(t *testing.T) {
 			name:         "1 of 5 replicas breached, MinAvailable=2 — not in breach",
 			replicas:     5,
 			minAvailable: ptr.To(int32(2)),
-			pclqsMap: map[string][]grovecorev1alpha1.PodClique{
-				"0": breachedPCSGReplica(),
-				"1": healthyPCSGReplica(),
-				"2": healthyPCSGReplica(),
-				"3": healthyPCSGReplica(),
-				"4": healthyPCSGReplica(),
+			pclqsMap: map[int][]grovecorev1alpha1.PodClique{
+				0: breachedPCSGReplica(),
+				1: healthyPCSGReplica(),
+				2: healthyPCSGReplica(),
+				3: healthyPCSGReplica(),
+				4: healthyPCSGReplica(),
 			},
 			wantStatus: metav1.ConditionFalse,
 			wantReason: "SufficientAvailablePodCliqueScalingGroupReplicas",
@@ -158,9 +158,9 @@ func TestComputeMinAvailableBreachedCondition(t *testing.T) {
 			name:         "1 of 2 replicas breached, MinAvailable=1 — not in breach (PCSG-scoped restart only)",
 			replicas:     2,
 			minAvailable: ptr.To(int32(1)),
-			pclqsMap: map[string][]grovecorev1alpha1.PodClique{
-				"0": breachedPCSGReplica(),
-				"1": healthyPCSGReplica(),
+			pclqsMap: map[int][]grovecorev1alpha1.PodClique{
+				0: breachedPCSGReplica(),
+				1: healthyPCSGReplica(),
 			},
 			wantStatus: metav1.ConditionFalse,
 			wantReason: "SufficientAvailablePodCliqueScalingGroupReplicas",
@@ -171,9 +171,9 @@ func TestComputeMinAvailableBreachedCondition(t *testing.T) {
 			name:         "both replicas breached, MinAvailable=1 — in breach (escalates to PCS-level)",
 			replicas:     2,
 			minAvailable: ptr.To(int32(1)),
-			pclqsMap: map[string][]grovecorev1alpha1.PodClique{
-				"0": breachedPCSGReplica(),
-				"1": breachedPCSGReplica(),
+			pclqsMap: map[int][]grovecorev1alpha1.PodClique{
+				0: breachedPCSGReplica(),
+				1: breachedPCSGReplica(),
 			},
 			wantStatus: metav1.ConditionTrue,
 			wantReason: "InsufficientAvailablePodCliqueScalingGroupReplicas",
@@ -182,10 +182,10 @@ func TestComputeMinAvailableBreachedCondition(t *testing.T) {
 			name:         "2 of 3 replicas breached, MinAvailable=2 — in breach",
 			replicas:     3,
 			minAvailable: ptr.To(int32(2)),
-			pclqsMap: map[string][]grovecorev1alpha1.PodClique{
-				"0": breachedPCSGReplica(),
-				"1": breachedPCSGReplica(),
-				"2": healthyPCSGReplica(),
+			pclqsMap: map[int][]grovecorev1alpha1.PodClique{
+				0: breachedPCSGReplica(),
+				1: breachedPCSGReplica(),
+				2: healthyPCSGReplica(),
 			},
 			wantStatus: metav1.ConditionTrue,
 			wantReason: "InsufficientAvailablePodCliqueScalingGroupReplicas",
@@ -196,7 +196,7 @@ func TestComputeMinAvailableBreachedCondition(t *testing.T) {
 			name:         "no replicas exist yet — in breach (startup)",
 			replicas:     3,
 			minAvailable: ptr.To(int32(2)),
-			pclqsMap:     map[string][]grovecorev1alpha1.PodClique{},
+			pclqsMap:     map[int][]grovecorev1alpha1.PodClique{},
 			wantStatus:   metav1.ConditionTrue,
 			wantReason:   "InsufficientAvailablePodCliqueScalingGroupReplicas",
 		},
@@ -208,9 +208,9 @@ func TestComputeMinAvailableBreachedCondition(t *testing.T) {
 			name:         "one replica incomplete, one breached, MinAvailable=1 — in breach",
 			replicas:     2,
 			minAvailable: ptr.To(int32(1)),
-			pclqsMap: map[string][]grovecorev1alpha1.PodClique{
-				"0": incompletePCSGReplica(),
-				"1": breachedPCSGReplica(),
+			pclqsMap: map[int][]grovecorev1alpha1.PodClique{
+				0: incompletePCSGReplica(),
+				1: breachedPCSGReplica(),
 			},
 			wantStatus: metav1.ConditionTrue,
 			wantReason: "InsufficientAvailablePodCliqueScalingGroupReplicas",
@@ -221,9 +221,9 @@ func TestComputeMinAvailableBreachedCondition(t *testing.T) {
 			name:         "one replica incomplete, one healthy, MinAvailable=1 — not in breach",
 			replicas:     2,
 			minAvailable: ptr.To(int32(1)),
-			pclqsMap: map[string][]grovecorev1alpha1.PodClique{
-				"0": incompletePCSGReplica(),
-				"1": healthyPCSGReplica(),
+			pclqsMap: map[int][]grovecorev1alpha1.PodClique{
+				0: incompletePCSGReplica(),
+				1: healthyPCSGReplica(),
 			},
 			wantStatus: metav1.ConditionFalse,
 			wantReason: "SufficientAvailablePodCliqueScalingGroupReplicas",
@@ -311,7 +311,7 @@ func TestComputeMinAvailableBreachedConditionUpdateInProgress(t *testing.T) {
 		replicas       int32
 		minAvailable   *int32
 		updateProgress *grovecorev1alpha1.PodCliqueScalingGroupUpdateProgress
-		pclqsMap       map[string][]grovecorev1alpha1.PodClique
+		pclqsMap       map[int][]grovecorev1alpha1.PodClique
 		wantStatus     metav1.ConditionStatus
 		wantReason     string
 	}{
@@ -324,9 +324,9 @@ func TestComputeMinAvailableBreachedConditionUpdateInProgress(t *testing.T) {
 				UpdateEndedAt:              nil, // active update
 				PodCliqueSetGenerationHash: "gen-hash-1",
 			},
-			pclqsMap: map[string][]grovecorev1alpha1.PodClique{
-				"0": breachedPCSGReplica(),
-				"1": breachedPCSGReplica(),
+			pclqsMap: map[int][]grovecorev1alpha1.PodClique{
+				0: breachedPCSGReplica(),
+				1: breachedPCSGReplica(),
 			},
 			wantStatus: metav1.ConditionUnknown,
 			wantReason: constants.ConditionReasonUpdateInProgress,
@@ -616,7 +616,7 @@ func TestPCSGMutateReplicasWritesUpdateProgressCounts(t *testing.T) {
 	tests := []struct {
 		name             string
 		pcsg             *grovecorev1alpha1.PodCliqueScalingGroup
-		pclqsPerReplica  func(*testing.T, *grovecorev1alpha1.PodCliqueScalingGroup) map[string][]grovecorev1alpha1.PodClique
+		pclqsPerReplica  func(*testing.T, *grovecorev1alpha1.PodCliqueScalingGroup) map[int][]grovecorev1alpha1.PodClique
 		wantWritten      bool
 		wantUpdatedCount int32
 		wantTotalCount   int32
@@ -624,18 +624,18 @@ func TestPCSGMutateReplicasWritesUpdateProgressCounts(t *testing.T) {
 		{
 			name: "UpdateProgress nil - counts not written, no panic",
 			pcsg: build(2, false),
-			pclqsPerReplica: func(t *testing.T, pcsg *grovecorev1alpha1.PodCliqueScalingGroup) map[string][]grovecorev1alpha1.PodClique {
-				return map[string][]grovecorev1alpha1.PodClique{"0": {matchingPCLQ(t, pcsg, 0, "frontend"), matchingPCLQ(t, pcsg, 0, "backend")}}
+			pclqsPerReplica: func(t *testing.T, pcsg *grovecorev1alpha1.PodCliqueScalingGroup) map[int][]grovecorev1alpha1.PodClique {
+				return map[int][]grovecorev1alpha1.PodClique{0: {matchingPCLQ(t, pcsg, 0, "frontend"), matchingPCLQ(t, pcsg, 0, "backend")}}
 			},
 			wantWritten: false,
 		},
 		{
 			name: "UpdateProgress set, all PCLQs at current hash -> updated == total",
 			pcsg: build(2, true),
-			pclqsPerReplica: func(t *testing.T, pcsg *grovecorev1alpha1.PodCliqueScalingGroup) map[string][]grovecorev1alpha1.PodClique {
-				return map[string][]grovecorev1alpha1.PodClique{
-					"0": {matchingPCLQ(t, pcsg, 0, "frontend"), matchingPCLQ(t, pcsg, 0, "backend")},
-					"1": {matchingPCLQ(t, pcsg, 1, "frontend"), matchingPCLQ(t, pcsg, 1, "backend")},
+			pclqsPerReplica: func(t *testing.T, pcsg *grovecorev1alpha1.PodCliqueScalingGroup) map[int][]grovecorev1alpha1.PodClique {
+				return map[int][]grovecorev1alpha1.PodClique{
+					0: {matchingPCLQ(t, pcsg, 0, "frontend"), matchingPCLQ(t, pcsg, 0, "backend")},
+					1: {matchingPCLQ(t, pcsg, 1, "frontend"), matchingPCLQ(t, pcsg, 1, "backend")},
 				}
 			},
 			wantWritten:      true,
@@ -645,10 +645,10 @@ func TestPCSGMutateReplicasWritesUpdateProgressCounts(t *testing.T) {
 		{
 			name: "UpdateProgress set, mixed hashes -> partial updated count",
 			pcsg: build(2, true),
-			pclqsPerReplica: func(t *testing.T, pcsg *grovecorev1alpha1.PodCliqueScalingGroup) map[string][]grovecorev1alpha1.PodClique {
-				return map[string][]grovecorev1alpha1.PodClique{
-					"0": {matchingPCLQ(t, pcsg, 0, "frontend"), staleHashPCLQ(t, pcsg, 0, "backend")},
-					"1": {matchingPCLQ(t, pcsg, 1, "frontend"), matchingPCLQ(t, pcsg, 1, "backend")},
+			pclqsPerReplica: func(t *testing.T, pcsg *grovecorev1alpha1.PodCliqueScalingGroup) map[int][]grovecorev1alpha1.PodClique {
+				return map[int][]grovecorev1alpha1.PodClique{
+					0: {matchingPCLQ(t, pcsg, 0, "frontend"), staleHashPCLQ(t, pcsg, 0, "backend")},
+					1: {matchingPCLQ(t, pcsg, 1, "frontend"), matchingPCLQ(t, pcsg, 1, "backend")},
 				}
 			},
 			wantWritten:      true,
@@ -658,10 +658,10 @@ func TestPCSGMutateReplicasWritesUpdateProgressCounts(t *testing.T) {
 		{
 			name: "UpdateProgress set, terminating matching PCLQ excluded from updated count",
 			pcsg: build(2, true),
-			pclqsPerReplica: func(t *testing.T, pcsg *grovecorev1alpha1.PodCliqueScalingGroup) map[string][]grovecorev1alpha1.PodClique {
-				return map[string][]grovecorev1alpha1.PodClique{
-					"0": {matchingPCLQ(t, pcsg, 0, "frontend"), terminatingMatchingPCLQ(t, pcsg, 0, "backend")},
-					"1": {matchingPCLQ(t, pcsg, 1, "frontend"), matchingPCLQ(t, pcsg, 1, "backend")},
+			pclqsPerReplica: func(t *testing.T, pcsg *grovecorev1alpha1.PodCliqueScalingGroup) map[int][]grovecorev1alpha1.PodClique {
+				return map[int][]grovecorev1alpha1.PodClique{
+					0: {matchingPCLQ(t, pcsg, 0, "frontend"), terminatingMatchingPCLQ(t, pcsg, 0, "backend")},
+					1: {matchingPCLQ(t, pcsg, 1, "frontend"), matchingPCLQ(t, pcsg, 1, "backend")},
 				}
 			},
 			wantWritten:      true,
@@ -671,8 +671,8 @@ func TestPCSGMutateReplicasWritesUpdateProgressCounts(t *testing.T) {
 		{
 			name: "UpdateProgress set, zero replicas -> counts are 0/0",
 			pcsg: build(0, true),
-			pclqsPerReplica: func(_ *testing.T, _ *grovecorev1alpha1.PodCliqueScalingGroup) map[string][]grovecorev1alpha1.PodClique {
-				return map[string][]grovecorev1alpha1.PodClique{}
+			pclqsPerReplica: func(_ *testing.T, _ *grovecorev1alpha1.PodCliqueScalingGroup) map[int][]grovecorev1alpha1.PodClique {
+				return map[int][]grovecorev1alpha1.PodClique{}
 			},
 			wantWritten:      true,
 			wantUpdatedCount: 0,
@@ -826,27 +826,27 @@ func TestPruneStrayPCSGPCLQs(t *testing.T) {
 		return grovecorev1alpha1.PodClique{ObjectMeta: metav1.ObjectMeta{Name: name}}
 	}
 
-	in := map[string][]grovecorev1alpha1.PodClique{
+	in := map[int][]grovecorev1alpha1.PodClique{
 		// expected children for replicas 0 and 1
-		"0": {mkPCLQ("test-pcsg-0-frontend"), mkPCLQ("test-pcsg-0-backend")},
-		"1": {mkPCLQ("test-pcsg-1-frontend"), mkPCLQ("test-pcsg-1-backend")},
+		0: {mkPCLQ("test-pcsg-0-frontend"), mkPCLQ("test-pcsg-0-backend")},
+		1: {mkPCLQ("test-pcsg-1-frontend"), mkPCLQ("test-pcsg-1-backend")},
 		// stale-index leftover from a prior Spec.Replicas=3 (scale-down case)
-		"2": {mkPCLQ("test-pcsg-2-frontend"), mkPCLQ("test-pcsg-2-backend")},
+		2: {mkPCLQ("test-pcsg-2-frontend"), mkPCLQ("test-pcsg-2-backend")},
 	}
 	// stray name within an expected index (post clique-name change)
-	in["1"] = append(in["1"], mkPCLQ("test-pcsg-1-removed-clique"))
+	in[1] = append(in[1], mkPCLQ("test-pcsg-1-removed-clique"))
 
 	out := pruneStrayPCSGPCLQs(pcsg, in)
 
 	// Stale-index bucket must be dropped entirely.
-	_, hasStaleIdx := out["2"]
+	_, hasStaleIdx := out[2]
 	assert.False(t, hasStaleIdx, "replica index 2 is outside Spec.Replicas and must be dropped")
 
 	// Expected indexes retain only spec-derived FQNs.
-	require.Len(t, out["0"], 2)
-	require.Len(t, out["1"], 2, "stray-named PCLQ at expected index must be filtered out")
+	require.Len(t, out[0], 2)
+	require.Len(t, out[1], 2, "stray-named PCLQ at expected index must be filtered out")
 
-	for _, pclq := range append(out["0"], out["1"]...) {
+	for _, pclq := range append(out[0], out[1]...) {
 		assert.Contains(t, []string{
 			"test-pcsg-0-frontend", "test-pcsg-0-backend",
 			"test-pcsg-1-frontend", "test-pcsg-1-backend",
@@ -978,9 +978,9 @@ func TestMutateMinAvailableBreachedConditionClearsGangTerminationInProgress(t *t
 			},
 		},
 	}
-	pclqsHealthy := map[string][]grovecorev1alpha1.PodClique{
-		"0": healthyPCSGReplica(),
-		"1": healthyPCSGReplica(),
+	pclqsHealthy := map[int][]grovecorev1alpha1.PodClique{
+		0: healthyPCSGReplica(),
+		1: healthyPCSGReplica(),
 	}
 
 	mutateMinAvailableBreachedCondition(logr.Discard(), pcsg, pclqsHealthy)

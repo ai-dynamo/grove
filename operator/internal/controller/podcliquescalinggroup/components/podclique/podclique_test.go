@@ -569,180 +569,6 @@ func TestDelete(t *testing.T) {
 }
 
 // TestIdentifyFullyQualifiedStartupDependencyNames tests identifying startup dependencies
-func TestIdentifyFullyQualifiedStartupDependencyNames(t *testing.T) {
-	tests := []struct {
-		name string
-		// pcs is the PodCliqueSet
-		pcs *grovecorev1alpha1.PodCliqueSet
-		// pcsReplica is the PCS replica index
-		pcsReplica int
-		// pcsg is the PodCliqueScalingGroup
-		pcsg *grovecorev1alpha1.PodCliqueScalingGroup
-		// pcsgReplica is the PCSG replica index
-		pcsgReplica int
-		// pclq is the PodClique
-		pclq *grovecorev1alpha1.PodClique
-		// foundAtIndex is the index where the clique was found
-		foundAtIndex int
-		// expected are the expected dependency names
-		expected []string
-		// expectError indicates if an error is expected
-		expectError bool
-	}{
-		{
-			// Tests in-order startup for first clique
-			name: "in_order_first_clique",
-			pcs: &grovecorev1alpha1.PodCliqueSet{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "test-pcs",
-				},
-				Spec: grovecorev1alpha1.PodCliqueSetSpec{
-					Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
-						StartupType: ptr.To(grovecorev1alpha1.CliqueStartupTypeInOrder),
-						Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-							{Name: "clique1"},
-							{Name: "clique2"},
-						},
-					},
-				},
-			},
-			pcsReplica: 0,
-			pcsg: &grovecorev1alpha1.PodCliqueScalingGroup{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "test-pcsg",
-				},
-				Spec: grovecorev1alpha1.PodCliqueScalingGroupSpec{
-					MinAvailable: ptr.To(int32(2)),
-					CliqueNames:  []string{"clique1", "clique2"},
-				},
-			},
-			pcsgReplica:  0,
-			pclq:         &grovecorev1alpha1.PodClique{},
-			foundAtIndex: 0,
-			expected:     nil,
-			expectError:  false,
-		},
-		{
-			// Tests in-order startup for second clique in base PodGang
-			name: "in_order_second_clique_base_podgang",
-			pcs: &grovecorev1alpha1.PodCliqueSet{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "test-pcs",
-				},
-				Spec: grovecorev1alpha1.PodCliqueSetSpec{
-					Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
-						StartupType: ptr.To(grovecorev1alpha1.CliqueStartupTypeInOrder),
-						Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-							{Name: "clique1"},
-							{Name: "clique2"},
-						},
-					},
-				},
-			},
-			pcsReplica: 0,
-			pcsg: &grovecorev1alpha1.PodCliqueScalingGroup{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "test-pcsg",
-				},
-				Spec: grovecorev1alpha1.PodCliqueScalingGroupSpec{
-					MinAvailable: ptr.To(int32(2)),
-					CliqueNames:  []string{"clique1", "clique2"},
-				},
-			},
-			pcsgReplica:  1,
-			pclq:         &grovecorev1alpha1.PodClique{},
-			foundAtIndex: 1,
-			expected:     []string{"test-pcs-0-clique1"},
-			expectError:  false,
-		},
-		{
-			// Tests explicit startup dependencies
-			name: "explicit_startup",
-			pcs: &grovecorev1alpha1.PodCliqueSet{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "test-pcs",
-				},
-				Spec: grovecorev1alpha1.PodCliqueSetSpec{
-					Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
-						StartupType: ptr.To(grovecorev1alpha1.CliqueStartupTypeExplicit),
-						Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-							{Name: "clique1"},
-							{Name: "clique2"},
-						},
-					},
-				},
-			},
-			pcsReplica: 0,
-			pcsg: &grovecorev1alpha1.PodCliqueScalingGroup{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "test-pcsg",
-				},
-				Spec: grovecorev1alpha1.PodCliqueScalingGroupSpec{
-					MinAvailable: ptr.To(int32(1)),
-					CliqueNames:  []string{"clique1", "clique2"},
-				},
-			},
-			pcsgReplica: 0,
-			pclq: &grovecorev1alpha1.PodClique{
-				Spec: grovecorev1alpha1.PodCliqueSpec{
-					StartsAfter: []string{"clique1"},
-				},
-			},
-			foundAtIndex: 1,
-			expected:     []string{"test-pcs-0-clique1"},
-			expectError:  false,
-		},
-		{
-			// Tests nil startup type
-			name: "nil_startup_type",
-			pcs: &grovecorev1alpha1.PodCliqueSet{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "test-pcs",
-				},
-				Spec: grovecorev1alpha1.PodCliqueSetSpec{
-					Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
-						StartupType: nil,
-						Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-							{Name: "clique1"},
-						},
-					},
-				},
-			},
-			pcsReplica: 0,
-			pcsg: &grovecorev1alpha1.PodCliqueScalingGroup{
-				Spec: grovecorev1alpha1.PodCliqueScalingGroupSpec{
-					MinAvailable: ptr.To(int32(1)),
-				},
-			},
-			pcsgReplica:  0,
-			pclq:         &grovecorev1alpha1.PodClique{},
-			foundAtIndex: 0,
-			expected:     nil,
-			expectError:  true,
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			result, err := identifyFullyQualifiedStartupDependencyNames(
-				tc.pcs,
-				tc.pcsReplica,
-				tc.pcsg,
-				tc.pcsgReplica,
-				tc.pclq,
-				tc.foundAtIndex,
-			)
-
-			if tc.expectError {
-				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
-				assert.Equal(t, tc.expected, result)
-			}
-		})
-	}
-}
-
 func TestBuildResource_MNNVLInjection(t *testing.T) {
 	tests := []struct {
 		description                         string
@@ -972,19 +798,17 @@ func TestComputePendingUpdateWork(t *testing.T) {
 		description         string
 		replicas            int32
 		reps                []testReplica
-		wantOldReady        []int
-		wantOldPending      []int
-		wantOldUnavailable  []int
+		wantOldInfos        []componentutils.PCSGReplicaDisruptionInfo
 		wantExisting        int
 		wantNewNotReady     int
 		wantNumUpdatedReady int
 	}{
-		{"all replicas old and ready", 3, []testReplica{oldReadyReplica(0), oldReadyReplica(1), oldReadyReplica(2)}, []int{0, 1, 2}, nil, nil, 3, 0, 0},
-		{"mixed updated, old ready and old pending", 3, []testReplica{updatedReadyReplica(0), oldReadyReplica(1), oldPendingReplica(2)}, []int{1}, []int{2}, nil, 3, 0, 1},
-		{"terminating replica is skipped", 2, []testReplica{updatedReadyReplica(0), terminatingReplica(1)}, nil, nil, nil, 1, 0, 1},
-		{"old unavailable replica", 1, []testReplica{oldUnavailableReplica(0)}, nil, nil, []int{0}, 1, 0, 0},
-		{"all replicas updated and ready", 2, []testReplica{updatedReadyReplica(0), updatedReadyReplica(1)}, nil, nil, nil, 2, 0, 2},
-		{"new configuration replica not yet ready", 1, []testReplica{updatedNotReadyReplica(0)}, nil, nil, nil, 1, 1, 0},
+		{"all replicas old and ready", 3, []testReplica{oldReadyReplica(0), oldReadyReplica(1), oldReadyReplica(2)}, []componentutils.PCSGReplicaDisruptionInfo{{Index: 0, State: componentutils.PCSGReplicaStateReady}, {Index: 1, State: componentutils.PCSGReplicaStateReady}, {Index: 2, State: componentutils.PCSGReplicaStateReady}}, 3, 0, 0},
+		{"mixed updated, old ready and old pending", 3, []testReplica{updatedReadyReplica(0), oldReadyReplica(1), oldPendingReplica(2)}, []componentutils.PCSGReplicaDisruptionInfo{{Index: 1, State: componentutils.PCSGReplicaStateReady}, {Index: 2, State: componentutils.PCSGReplicaStatePending}}, 3, 0, 1},
+		{"terminating replica is skipped", 2, []testReplica{updatedReadyReplica(0), terminatingReplica(1)}, nil, 1, 0, 1},
+		{"old unavailable replica", 1, []testReplica{oldUnavailableReplica(0)}, []componentutils.PCSGReplicaDisruptionInfo{{Index: 0, State: componentutils.PCSGReplicaStateUnavailable}}, 1, 0, 0},
+		{"all replicas updated and ready", 2, []testReplica{updatedReadyReplica(0), updatedReadyReplica(1)}, nil, 2, 0, 2},
+		{"new configuration replica not yet ready", 1, []testReplica{updatedNotReadyReplica(0)}, nil, 1, 1, 0},
 	}
 	for _, tt := range tests {
 		t.Run(tt.description, func(t *testing.T) {
@@ -992,9 +816,7 @@ func TestComputePendingUpdateWork(t *testing.T) {
 			r := _resource{expectationsStore: expect.NewExpectationsStore()}
 			uw, err := r.computePendingUpdateWork(sc)
 			require.NoError(t, err)
-			assert.Equal(t, tt.wantOldReady, uw.oldReadyReplicaIndices, "oldReadyReplicaIndices")
-			assert.Equal(t, tt.wantOldPending, uw.oldPendingReplicaIndices, "oldPendingReplicaIndices")
-			assert.Equal(t, tt.wantOldUnavailable, uw.oldUnavailableReplicaIndices, "oldUnavailableReplicaIndices")
+			assert.Equal(t, tt.wantOldInfos, uw.oldReplicaDisruptionInfos, "oldReplicaDisruptionInfos")
 			assert.Equal(t, tt.wantExisting, uw.existingReplicas, "existingReplicas")
 			assert.Equal(t, tt.wantNewNotReady, uw.newNotReadyReplicas, "newNotReadyReplicas")
 			assert.Equal(t, tt.wantNumUpdatedReady, uw.numUpdatedReadyReplicas, "numUpdatedReadyReplicas")
@@ -1007,7 +829,9 @@ func TestComputePendingUpdateWorkSkipsReplicaWithDeleteExpectation(t *testing.T)
 	// Simulate a disruption we already triggered for replica 0 whose deletion the informer cache has not
 	// yet observed, by recording a delete expectation for its member PodCliques.
 	store := expect.NewExpectationsStore()
-	replica0UIDs := lo.Map(componentutils.GroupPCLQsByPCSGReplicaIndex(sc.existingPCLQs)["0"], func(pclq grovecorev1alpha1.PodClique, _ int) types.UID {
+	membersByReplicaIndex, err := componentutils.GroupPCLQsByPCSGReplicaIndex(sc.existingPCLQs)
+	require.NoError(t, err)
+	replica0UIDs := lo.Map(membersByReplicaIndex[0], func(pclq grovecorev1alpha1.PodClique, _ int) types.UID {
 		return pclq.GetUID()
 	})
 	require.NoError(t, store.ExpectDeletions(logr.Discard(), sc.expectationsStoreKey, replica0UIDs...))
@@ -1015,7 +839,7 @@ func TestComputePendingUpdateWorkSkipsReplicaWithDeleteExpectation(t *testing.T)
 
 	uw, err := r.computePendingUpdateWork(sc)
 	require.NoError(t, err)
-	assert.Equal(t, []int{1, 2}, uw.oldReadyReplicaIndices, "replica 0 with a pending delete expectation must not be a disruption candidate")
+	assert.Equal(t, []componentutils.PCSGReplicaDisruptionInfo{{Index: 1, State: componentutils.PCSGReplicaStateReady}, {Index: 2, State: componentutils.PCSGReplicaStateReady}}, uw.oldReplicaDisruptionInfos, "replica 0 with a pending delete expectation must not be a disruption candidate")
 	assert.Equal(t, 2, uw.existingReplicas, "replica 0 with a pending delete expectation must not be counted as an existing replica")
 }
 

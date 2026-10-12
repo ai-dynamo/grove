@@ -1,0 +1,40 @@
+# Coherent corrective-update regression for #873, faithful to the reported repro: pods schedule but never
+# become Ready. The test applies the KWOK pod-crashloop stage before deploying, so both of this standalone
+# PodClique's pods are Running but not Ready (CrashLoopBackOff). MinAvailable equals the replica count, so the
+# PodGang needs every pod to be admitted and the whole component is unavailable, consuming its budget. The
+# corrective update then replaces both pods together with fresh Ready ones.
+apiVersion: grove.io/v1alpha1
+kind: PodCliqueSet
+metadata:
+  name: wl-coh-crashloop-standalone
+spec:
+  replicas: 1
+  updateStrategy:
+    type: Coherent
+  template:
+    terminationDelay: 1h
+    cliques:
+      - name: worker
+        labels:
+          kai.scheduler/queue: test
+        spec:
+          roleName: worker
+          replicas: 2
+          minAvailable: 2
+          podSpec:
+            schedulerName: kai-scheduler
+            terminationGracePeriodSeconds: 0
+            nodeSelector:
+              node_role.e2e.grove.nvidia.com: agent
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: worker
+                image: registry:5001/busybox:latest
+                command: ["sleep", "infinity"]
+                resources:
+                  requests:
+                    memory: 10Mi

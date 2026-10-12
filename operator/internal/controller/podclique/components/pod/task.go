@@ -34,14 +34,14 @@ import (
 )
 
 // createPodCreationTask creates a utils.Task which will create a Pod, capture the create-expectation and also emit a success/failed event post creation.
-func (r _resource) createPodCreationTask(logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, pclq *grovecorev1alpha1.PodClique, podGangName, pclqExpectationsKey string, taskIndex, podHostNameIndex int) utils.Task {
+func (r _resource) createPodCreationTask(logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, pclq *grovecorev1alpha1.PodClique, podGangName, pclqExpectationsKey string, taskIndex, podHostNameIndex int, pgm *grovecorev1alpha1.PodGangMap) utils.Task {
 	pclqObjKey := client.ObjectKeyFromObject(pclq)
 	return utils.Task{
 		Name: fmt.Sprintf("CreatePod-%s-%d", pclq.Name, taskIndex),
 		Fn: func(ctx context.Context) error {
 			pod := &corev1.Pod{}
 			// build the Pod resource
-			if err := r.buildResource(pcs, pclq, podGangName, pod, podHostNameIndex); err != nil {
+			if err := r.buildResource(pcs, pclq, podGangName, pod, podHostNameIndex, pgm); err != nil {
 				return groveerr.WrapError(err,
 					errCodeBuildPodResource,
 					component.OperationSync,

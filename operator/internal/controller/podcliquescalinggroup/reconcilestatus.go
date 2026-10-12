@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 	"slices"
-	"strconv"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
@@ -109,16 +108,15 @@ func (r *Reconciler) reconcileStatus(ctx context.Context, logger logr.Logger, pc
 // It also derives child-PCLQ update progress counts when an update is in flight. The iteration is bounded to
 // expected replica indexes [0, Spec.Replicas) — the caller has already pruned stray children — so counters stay
 // consistent with the spec-derived totals during scale-down.
-func mutateReplicas(logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, pcsg *grovecorev1alpha1.PodCliqueScalingGroup, pclqsPerPCSGReplica map[string][]grovecorev1alpha1.PodClique) {
+func mutateReplicas(logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, pcsg *grovecorev1alpha1.PodCliqueScalingGroup, pclqsPerPCSGReplica map[int][]grovecorev1alpha1.PodClique) {
 	pcsg.Status.Replicas = pcsg.Spec.Replicas
 	var scheduledReplicas, availableReplicas, updatedReplicas, updatedPCLQs, totalPCLQs int32
 	cliqueNamesPerReplica := int32(len(pcsg.Spec.CliqueNames))
 	currentPCSGenerationHash := pcs.Status.CurrentGenerationHash
 	expectedPCLQPodTemplateHashes := componentutils.GetPCLQTemplateHashes(pcs, pcsg)
 	for replicaIndex := 0; replicaIndex < int(pcsg.Spec.Replicas); replicaIndex++ {
-		pcsgReplicaIndex := strconv.Itoa(replicaIndex)
-		pclqs := pclqsPerPCSGReplica[pcsgReplicaIndex]
-		isScheduled, isAvailable, isUpdated := computeReplicaStatus(logger, currentPCSGenerationHash, expectedPCLQPodTemplateHashes, pcsgReplicaIndex, len(pcsg.Spec.CliqueNames), pclqs)
+		pclqs := pclqsPerPCSGReplica[replicaIndex]
+		isScheduled, isAvailable, isUpdated := computeReplicaStatus(logger, currentPCSGenerationHash, expectedPCLQPodTemplateHashes, replicaIndex, len(pcsg.Spec.CliqueNames), pclqs)
 		if isScheduled {
 			scheduledReplicas++
 		}
@@ -164,7 +162,7 @@ func countPCSGReplicaUpdatedPCLQs(pcsGenerationHash *string, expectedPCLQPodTemp
 }
 
 // computeReplicaStatus processes a single PodCliqueScalingGroup replica and returns whether it is scheduled and available.
-func computeReplicaStatus(logger logr.Logger, currentPCSGenerationHash *string, expectedPCLQPodTemplateHashes map[string]string, pcsgReplicaIndex string, numPCSGCliqueNames int, pclqs []grovecorev1alpha1.PodClique) (isScheduled, isAvailable, isUpdated bool) {
+func computeReplicaStatus(logger logr.Logger, currentPCSGenerationHash *string, expectedPCLQPodTemplateHashes map[string]string, pcsgReplicaIndex int, numPCSGCliqueNames int, pclqs []grovecorev1alpha1.PodClique) (isScheduled, isAvailable, isUpdated bool) {
 	nonTerminatedPCSGPodCliques := lo.Filter(pclqs, func(pclq grovecorev1alpha1.PodClique, _ int) bool {
 		return !k8sutils.IsResourceTerminating(pclq.ObjectMeta)
 	})
@@ -228,7 +226,7 @@ func (r *Reconciler) emitAllScheduledReplicasLostIfNeeded(pcsg *grovecorev1alpha
 // condition is present, the latter is removed. The flag is only ever set while the PCSG is in
 // breach, so the first False observed with the flag still set is the recovery; clearing it
 // re-arms the next breach episode so a fresh regression can be recycled.
-func mutateMinAvailableBreachedCondition(logger logr.Logger, pcsg *grovecorev1alpha1.PodCliqueScalingGroup, pclqsPerPCSGReplica map[string][]grovecorev1alpha1.PodClique) {
+func mutateMinAvailableBreachedCondition(logger logr.Logger, pcsg *grovecorev1alpha1.PodCliqueScalingGroup, pclqsPerPCSGReplica map[int][]grovecorev1alpha1.PodClique) {
 	newCondition := computeMinAvailableBreachedCondition(logger, pcsg, pclqsPerPCSGReplica)
 	if k8sutils.HasConditionChanged(pcsg.Status.Conditions, newCondition) {
 		logger.Info("Updating MinAvailableBreached condition for PodCliqueScalingGroup",
@@ -257,7 +255,7 @@ func mutateMinAvailableBreachedCondition(logger logr.Logger, pcsg *grovecorev1al
 //     handler reads to decide whether to restart the whole PCS replica.
 //
 // Rolling update short-circuits this to Unknown so gang termination doesn't fire mid-update.
-func computeMinAvailableBreachedCondition(logger logr.Logger, pcsg *grovecorev1alpha1.PodCliqueScalingGroup, pclqsPerPCSGReplica map[string][]grovecorev1alpha1.PodClique) metav1.Condition {
+func computeMinAvailableBreachedCondition(logger logr.Logger, pcsg *grovecorev1alpha1.PodCliqueScalingGroup, pclqsPerPCSGReplica map[int][]grovecorev1alpha1.PodClique) metav1.Condition {
 	if componentutils.IsPCSGUpdateInProgress(pcsg) {
 		return metav1.Condition{
 			Type:    constants.ConditionTypeMinAvailableBreached,
@@ -319,11 +317,10 @@ func computeMinAvailableBreachedCondition(logger logr.Logger, pcsg *grovecorev1a
 //
 // Iteration is bounded to expected replica indexes [0, Spec.Replicas) so stale-index children left
 // behind during scale-down neither inflate nor deflate the count.
-func computeNotInBreachReplicas(logger logr.Logger, pcsg *grovecorev1alpha1.PodCliqueScalingGroup, pclqsPerPCSGReplica map[string][]grovecorev1alpha1.PodClique) int {
+func computeNotInBreachReplicas(logger logr.Logger, pcsg *grovecorev1alpha1.PodCliqueScalingGroup, pclqsPerPCSGReplica map[int][]grovecorev1alpha1.PodClique) int {
 	expectedPCLQsPerReplica := len(pcsg.Spec.CliqueNames)
 	var notInBreachReplicas int
-	for replicaIndex := 0; replicaIndex < int(pcsg.Spec.Replicas); replicaIndex++ {
-		pcsgReplicaIndex := strconv.Itoa(replicaIndex)
+	for pcsgReplicaIndex := 0; pcsgReplicaIndex < int(pcsg.Spec.Replicas); pcsgReplicaIndex++ {
 		nonTerminatingPCLQs := lo.Filter(pclqsPerPCSGReplica[pcsgReplicaIndex], func(pclq grovecorev1alpha1.PodClique, _ int) bool {
 			return !k8sutils.IsResourceTerminating(pclq.ObjectMeta)
 		})
@@ -346,7 +343,7 @@ func computeNotInBreachReplicas(logger logr.Logger, pcsg *grovecorev1alpha1.PodC
 }
 
 // getPodCliquesPerPCSGReplica retrieves and groups PodCliques by their PCSG replica index
-func (r *Reconciler) getPodCliquesPerPCSGReplica(ctx context.Context, pcsName string, pcsgObjKey client.ObjectKey) (map[string][]grovecorev1alpha1.PodClique, error) {
+func (r *Reconciler) getPodCliquesPerPCSGReplica(ctx context.Context, pcsName string, pcsgObjKey client.ObjectKey) (map[int][]grovecorev1alpha1.PodClique, error) {
 	selectorLabels := lo.Assign(
 		apicommon.GetDefaultLabelsForPodCliqueSetManagedResources(pcsName),
 		map[string]string{
@@ -363,8 +360,7 @@ func (r *Reconciler) getPodCliquesPerPCSGReplica(ctx context.Context, pcsName st
 	if err != nil {
 		return nil, err
 	}
-	pclqsPerPCSGReplica := componentutils.GroupPCLQsByPCSGReplicaIndex(pclqs)
-	return pclqsPerPCSGReplica, nil
+	return componentutils.GroupPCLQsByPCSGReplicaIndex(pclqs)
 }
 
 // mutateSelector publishes the label selector on the PodCliqueScalingGroup /scale subresource so
@@ -452,18 +448,17 @@ func havePCSGPodCliquesConverged(pcs *grovecorev1alpha1.PodCliqueSet, pcsg *grov
 // is not produced by Spec.CliqueNames at the kept indexes — strays left behind by scale-down or a
 // clique-name change that would otherwise inflate replica/progress counters past the spec-derived
 // totals. Mutates the input map in place (caller holds the only reference, fresh from grouping).
-func pruneStrayPCSGPCLQs(pcsg *grovecorev1alpha1.PodCliqueScalingGroup, pclqsPerPCSGReplica map[string][]grovecorev1alpha1.PodClique) map[string][]grovecorev1alpha1.PodClique {
+func pruneStrayPCSGPCLQs(pcsg *grovecorev1alpha1.PodCliqueScalingGroup, pclqsPerPCSGReplica map[int][]grovecorev1alpha1.PodClique) map[int][]grovecorev1alpha1.PodClique {
 	expectedReplicas := int(pcsg.Spec.Replicas)
 	expectedFQNs := make(map[string]struct{}, expectedReplicas*len(pcsg.Spec.CliqueNames))
-	for replicaIndex := 0; replicaIndex < expectedReplicas; replicaIndex++ {
+	for replicaIndex := range expectedReplicas {
 		for _, cliqueName := range pcsg.Spec.CliqueNames {
 			expectedFQNs[apicommon.GeneratePodCliqueName(apicommon.ResourceNameReplica{Name: pcsg.Name, Replica: replicaIndex}, cliqueName)] = struct{}{}
 		}
 	}
-	for key, pclqs := range pclqsPerPCSGReplica {
-		idx, err := strconv.Atoi(key)
-		if err != nil || idx < 0 || idx >= expectedReplicas {
-			delete(pclqsPerPCSGReplica, key)
+	for pcsgReplicaIndex, pclqs := range pclqsPerPCSGReplica {
+		if pcsgReplicaIndex < 0 || pcsgReplicaIndex >= expectedReplicas {
+			delete(pclqsPerPCSGReplica, pcsgReplicaIndex)
 			continue
 		}
 		kept := slices.DeleteFunc(pclqs, func(p grovecorev1alpha1.PodClique) bool {
@@ -471,10 +466,10 @@ func pruneStrayPCSGPCLQs(pcsg *grovecorev1alpha1.PodCliqueScalingGroup, pclqsPer
 			return !ok
 		})
 		if len(kept) == 0 {
-			delete(pclqsPerPCSGReplica, key)
+			delete(pclqsPerPCSGReplica, pcsgReplicaIndex)
 			continue
 		}
-		pclqsPerPCSGReplica[key] = kept
+		pclqsPerPCSGReplica[pcsgReplicaIndex] = kept
 	}
 	return pclqsPerPCSGReplica
 }

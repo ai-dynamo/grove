@@ -1,0 +1,41 @@
+# Coherent corrective-update regression for #873: a standalone PodClique whose pods are all unschedulable
+# via an impossible node selector, with minAvailable equal to replicas so its PodGang needs every pod to be
+# admitted. Under Coherent, maxUnavailable defaults to minAvailable (2), so the whole component is
+# unavailable and consumes its entire budget. The old readiness-delta budget deadlocked here. The corrective
+# update removes the selector and must replace both pods together so the PodGang reaches MinReplicas.
+apiVersion: grove.io/v1alpha1
+kind: PodCliqueSet
+metadata:
+  name: wl-coh-unavail-standalone
+spec:
+  replicas: 1
+  updateStrategy:
+    type: Coherent
+  template:
+    terminationDelay: 1h
+    cliques:
+      - name: worker
+        labels:
+          kai.scheduler/queue: test
+        spec:
+          roleName: worker
+          replicas: 2
+          minAvailable: 2
+          podSpec:
+            schedulerName: kai-scheduler
+            terminationGracePeriodSeconds: 0
+            nodeSelector:
+              node_role.e2e.grove.nvidia.com: agent
+              e2e.grove.io/unschedulable: "true"
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: worker
+                image: registry:5001/busybox:latest
+                command: ["sleep", "infinity"]
+                resources:
+                  requests:
+                    memory: 10Mi

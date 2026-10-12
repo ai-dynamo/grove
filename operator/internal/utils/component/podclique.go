@@ -49,12 +49,12 @@ func GetPCLQsByOwner(ctx context.Context, cl client.Client, ownerKind string, ow
 }
 
 // GetPCLQsByOwnerReplicaIndex retrieves PodClique objects per replica of the owner resource matching provided selector labels.
-func GetPCLQsByOwnerReplicaIndex(ctx context.Context, cl client.Client, ownerKind string, ownerObjectKey client.ObjectKey, selectorLabels map[string]string) (map[string][]grovecorev1alpha1.PodClique, error) {
+func GetPCLQsByOwnerReplicaIndex(ctx context.Context, cl client.Client, ownerKind string, ownerObjectKey client.ObjectKey, selectorLabels map[string]string) (map[int][]grovecorev1alpha1.PodClique, error) {
 	pclqs, err := GetPCLQsByOwner(ctx, cl, ownerKind, ownerObjectKey, selectorLabels)
 	if err != nil {
 		return nil, err
 	}
-	return groupPCLQsByLabel(pclqs, apicommon.LabelPodCliqueSetReplicaIndex), nil
+	return groupPCLQsByLabelValue(pclqs, apicommon.LabelPodCliqueSetReplicaIndex, strconv.Atoi)
 }
 
 // ListPCLQsMatchingLabels lists all the PodClique's in a given namespace matching selectorLabels.
@@ -71,26 +71,20 @@ func ListPCLQsMatchingLabels(ctx context.Context, cl client.Client, namespace st
 
 // GroupPCLQsByPodGangName filters PCLQs that have a PodGang label and groups them by the PodGang name.
 func GroupPCLQsByPodGangName(pclqs []grovecorev1alpha1.PodClique) map[string][]grovecorev1alpha1.PodClique {
-	return groupPCLQsByLabel(pclqs, apicommon.LabelPodGang)
+	// since the conversion function is nil, there can be no error returned, so ignoring it.
+	grouped, _ := groupPCLQsByLabelValue[string](pclqs, apicommon.LabelPodGang, func(s string) (string, error) { return s, nil })
+	return grouped
 }
 
 // GroupPCLQsByPCSGReplicaIndex filters PCLQs that have a PodCliqueScalingGroupReplicaIndex label and groups them by the PCSG replica.
-func GroupPCLQsByPCSGReplicaIndex(pclqs []grovecorev1alpha1.PodClique) map[string][]grovecorev1alpha1.PodClique {
-	return groupPCLQsByLabel(pclqs, apicommon.LabelPodCliqueScalingGroupReplicaIndex)
+func GroupPCLQsByPCSGReplicaIndex(pclqs []grovecorev1alpha1.PodClique) (map[int][]grovecorev1alpha1.PodClique, error) {
+	return groupPCLQsByLabelValue[int](pclqs, apicommon.LabelPodCliqueScalingGroupReplicaIndex, strconv.Atoi)
 }
 
 // GroupPCLQsByPCSReplicaIndex filters PCLQs that have a PodCliqueSetReplicaIndex label and groups them by the PCS replica index.
 // A PodCliqueSetReplicaIndex label that is not a valid integer is a contract violation and returns an error.
 func GroupPCLQsByPCSReplicaIndex(pclqs []grovecorev1alpha1.PodClique) (map[int][]grovecorev1alpha1.PodClique, error) {
-	grouped := make(map[int][]grovecorev1alpha1.PodClique)
-	for labelValue, pclqsForReplica := range groupPCLQsByLabel(pclqs, apicommon.LabelPodCliqueSetReplicaIndex) {
-		replicaIndex, err := strconv.Atoi(labelValue)
-		if err != nil {
-			return nil, fmt.Errorf("%s label value %q is not a valid integer", apicommon.LabelPodCliqueSetReplicaIndex, labelValue)
-		}
-		grouped[replicaIndex] = pclqsForReplica
-	}
-	return grouped, nil
+	return groupPCLQsByLabelValue(pclqs, apicommon.LabelPodCliqueSetReplicaIndex, strconv.Atoi)
 }
 
 // InitialScheduleGrace is the small window after PodCliqueScalingGroup creation in which a flipped
@@ -180,17 +174,28 @@ func GetPodCliquesWithParentPCS(ctx context.Context, cl client.Client, pcsObjMet
 	}), nil
 }
 
-// groupPCLQsByLabel groups PodCliques by the value of the specified label key
-func groupPCLQsByLabel(pclqs []grovecorev1alpha1.PodClique, labelKey string) map[string][]grovecorev1alpha1.PodClique {
-	grouped := make(map[string][]grovecorev1alpha1.PodClique)
+// groupPCLQsByLabelValue groups PodCliques by the value of the specified label key.
+// The caller should pass a key conversion function that takes in a string (label-value) and converts it
+// into the desired type T. In case no conversion is required just pass an identity function that just returns the same type
+// without any conversion. An error is returned if the conversion fails.
+func groupPCLQsByLabelValue[T comparable](pclqs []grovecorev1alpha1.PodClique, labelKey string, keyConversionFn func(string) (T, error)) (map[T][]grovecorev1alpha1.PodClique, error) {
+	grouped := make(map[T][]grovecorev1alpha1.PodClique)
 	for _, pclq := range pclqs {
 		labelValue, exists := pclq.Labels[labelKey]
 		if !exists {
 			continue
 		}
-		grouped[labelValue] = append(grouped[labelValue], pclq)
+		var (
+			key T
+			err error
+		)
+		key, err = keyConversionFn(labelValue)
+		if err != nil {
+			return nil, err
+		}
+		grouped[key] = append(grouped[key], pclq)
 	}
-	return grouped
+	return grouped, nil
 }
 
 // ComputePCLQPodTemplateHash computes the pod template hash for the PCLQ pod spec.

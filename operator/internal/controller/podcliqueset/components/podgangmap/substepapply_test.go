@@ -185,21 +185,42 @@ func TestDrainStandalonePCLQsReclaimsMissingFirst(t *testing.T) {
 	}
 	t.Run("reclaims a missing old-version Pod before taking a running Pod down on an older anchor", func(t *testing.T) {
 		entries := []grovecorev1alpha1.PodGangEntry{oldAnchor("v1", "40", 2), oldAnchor("v2", "50", 2)}
-		running := map[string]map[string]int32{"frontend": {"40": 2, "50": 1}}
-		drainStandalonePCLQs(entries, "v3", map[string]int32{"frontend": 2}, running)
+		livePods := map[cliqueAndEpochKey]anchorLivePods{{clique: "frontend", epoch: "40"}: {running: 2}, {clique: "frontend", epoch: "50"}: {running: 1}}
+		drainStandalonePCLQs(entries, "v3", map[string]int32{"frontend": 2}, livePods)
 		assert.Equal(t, int32(1), entries[0].PodCliques["frontend"], "one running Pod taken down from the oldest anchor")
 		assert.Equal(t, int32(1), entries[1].PodCliques["frontend"], "the missing old-version slot reclaimed from the newer old anchor")
 	})
 	t.Run("with no missing old-version Pods drains running Pods oldest anchor first", func(t *testing.T) {
 		entries := []grovecorev1alpha1.PodGangEntry{oldAnchor("v1", "40", 2), oldAnchor("v2", "50", 2)}
-		running := map[string]map[string]int32{"frontend": {"40": 2, "50": 2}}
-		drainStandalonePCLQs(entries, "v3", map[string]int32{"frontend": 2}, running)
+		livePods := map[cliqueAndEpochKey]anchorLivePods{{clique: "frontend", epoch: "40"}: {running: 2}, {clique: "frontend", epoch: "50"}: {running: 2}}
+		drainStandalonePCLQs(entries, "v3", map[string]int32{"frontend": 2}, livePods)
 		assert.Equal(t, int32(0), entries[0].PodCliques["frontend"], "oldest anchor drained first")
 		assert.Equal(t, int32(2), entries[1].PodCliques["frontend"], "newer old anchor left untouched")
 	})
 	t.Run("a current-version anchor is never drained", func(t *testing.T) {
 		entries := []grovecorev1alpha1.PodGangEntry{oldAnchor("v3", "200", 4)}
-		drainStandalonePCLQs(entries, "v3", map[string]int32{"frontend": 2}, map[string]map[string]int32{"frontend": {"200": 4}})
+		drainStandalonePCLQs(entries, "v3", map[string]int32{"frontend": 2}, map[cliqueAndEpochKey]anchorLivePods{{clique: "frontend", epoch: "200"}: {running: 4}})
 		assert.Equal(t, int32(4), entries[0].PodCliques["frontend"], "current-version anchor left untouched")
 	})
+}
+
+// TestDrainStandalonePCLQsTakesNotReadyDownFirst covers the cross-anchor health ordering. When the budget
+// grants a single take-down and a not-Ready Pod sits on a newer old anchor while the oldest anchor holds
+// only Ready Pods, the drain shrinks the not-Ready anchor, not the oldest. This is the standalone analog of
+// the PodCliqueScalingGroup worst-off-first drain and the regression guard for the #873 over-disruption.
+func TestDrainStandalonePCLQsTakesNotReadyDownFirst(t *testing.T) {
+	oldAnchor := func(gen, epoch string, count int32) grovecorev1alpha1.PodGangEntry {
+		return grovecorev1alpha1.PodGangEntry{Role: grovecorev1alpha1.PodGangEntryRoleAnchor, PodCliqueSetGenerationHash: gen, Epoch: epoch, PodCliques: map[string]int32{"frontend": count}}
+	}
+	// Oldest anchor: 2 Ready Pods. Newer old anchor: 1 not-Ready Pod. The budget grants one take-down.
+	entries := []grovecorev1alpha1.PodGangEntry{oldAnchor("v1", "40", 2), oldAnchor("v2", "50", 1)}
+	livePods := map[cliqueAndEpochKey]anchorLivePods{
+		{clique: "frontend", epoch: "40"}: {running: 2, notReady: 0},
+		{clique: "frontend", epoch: "50"}: {running: 1, notReady: 1},
+	}
+
+	drainStandalonePCLQs(entries, "v3", map[string]int32{"frontend": 1}, livePods)
+
+	assert.Equal(t, int32(2), entries[0].PodCliques["frontend"], "the oldest anchor keeps both Ready Pods")
+	assert.Equal(t, int32(0), entries[1].PodCliques["frontend"], "the not-Ready Pod on the newer old anchor is taken down first")
 }

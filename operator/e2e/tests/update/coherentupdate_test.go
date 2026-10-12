@@ -17,6 +17,7 @@
 package update
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -25,9 +26,13 @@ import (
 
 	grovev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/kwok"
-	tests "github.com/ai-dynamo/grove/operator/e2e/tests"
+	"github.com/ai-dynamo/grove/operator/e2e/testctx"
+	"github.com/ai-dynamo/grove/operator/e2e/tests"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 const (
@@ -868,4 +873,183 @@ func anchorCompositionKey(standalone map[string]int32, pcsgIndices []int32) stri
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
 	fmt.Fprintf(&b, "pcsg=%v", sorted)
 	return b.String()
+}
+
+// Test_CU17_CoherentCorrectiveUpdateRecoversUnavailableReplicas verifies that a Coherent update makes
+// progress when a component is already unavailable and its unavailability has exhausted MaxUnavailable: the
+// corrective update must replace the unavailable replicas and complete rather than deadlock. This is the
+// Coherent analog of Test_RU26 and the #873 regression.
+//
+// It exercises both ways a replica is unavailable: Pending because the PCS template pins an impossible node
+// selector, and scheduled-but-never-Ready via the pod-crashloop KWOK stage (the issue's bad-image repro).
+// Both exhaust the component's MaxUnavailable budget. Cases cover a single PodCliqueScalingGroup replica, a
+// standalone PodClique whose MinAvailable equals its replica count, and a PodCliqueScalingGroup with more
+// unavailable replicas than MaxUnavailable.
+//
+// Scenario CU-17 (per case):
+//  1. Make the component unavailable, then deploy, so it consumes its whole MaxUnavailable budget.
+//  2. Wait for the initial generation to reconcile (so the correction is an update, not initial creation)
+//     and confirm the workload reports no available pods.
+//  3. Apply the corrective change (remove the selector, or clear the crash-loop stage and bump the
+//     template), triggering a coherent update.
+//  4. Verify Grove replaces every unavailable pod, the coherent update completes, UpdateInProgress clears,
+//     and the generation hash converges.
+func Test_CU17_CoherentCorrectiveUpdateRecoversUnavailableReplicas(t *testing.T) {
+	cases := []struct {
+		name                       string
+		workloadName               string
+		workloadYAML               string
+		expectedPods               int
+		workerNodes                int
+		crashloopStage             bool
+		assertInitiallyUnavailable func(c *assert.CollectT, tc *testctx.TestContext)
+		correct                    func(t *testing.T, tc *testctx.TestContext)
+	}{
+		{
+			name:                       "single PodCliqueScalingGroup replica Pending exhausts MaxUnavailable",
+			workloadName:               "wl-coh-unavail-pcsg",
+			workloadYAML:               "../../yaml/wl-coh-unavail-pcsg.yaml",
+			expectedPods:               1,
+			workerNodes:                1,
+			assertInitiallyUnavailable: assertPCSGUnavailable("sg-x", 1),
+			correct:                    removeUnschedulableSelector,
+		},
+		{
+			name:         "standalone PodClique Pending with MinAvailable equal to replicas",
+			workloadName: "wl-coh-unavail-standalone",
+			workloadYAML: "../../yaml/wl-coh-unavail-standalone.yaml",
+			expectedPods: 2,
+			workerNodes:  2,
+			correct:      removeUnschedulableSelector,
+		},
+		{
+			name:                       "PodCliqueScalingGroup Pending with more unavailable replicas than MaxUnavailable",
+			workloadName:               "wl-coh-unavail-pcsg-multi",
+			workloadYAML:               "../../yaml/wl-coh-unavail-pcsg-multi.yaml",
+			expectedPods:               3,
+			workerNodes:                3,
+			assertInitiallyUnavailable: assertPCSGUnavailable("sg-x", 3),
+			correct:                    removeUnschedulableSelector,
+		},
+		{
+			name:                       "single PodCliqueScalingGroup replica scheduled but never Ready",
+			workloadName:               "wl-coh-crashloop-pcsg",
+			workloadYAML:               "../../yaml/wl-coh-crashloop-pcsg.yaml",
+			expectedPods:               1,
+			workerNodes:                1,
+			crashloopStage:             true,
+			assertInitiallyUnavailable: assertPCSGUnavailable("sg-x", 1),
+			correct:                    recoverFromCrashloopAndTriggerUpdate,
+		},
+		{
+			name:           "standalone PodClique scheduled but never Ready, MinAvailable equal to replicas",
+			workloadName:   "wl-coh-crashloop-standalone",
+			workloadYAML:   "../../yaml/wl-coh-crashloop-standalone.yaml",
+			expectedPods:   2,
+			workerNodes:    2,
+			crashloopStage: true,
+			correct:        recoverFromCrashloopAndTriggerUpdate,
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			tc, cleanup := testctx.PrepareTest(context.Background(), t, tt.workerNodes,
+				testctx.WithWorkload(&testctx.WorkloadConfig{
+					Name:         tt.workloadName,
+					YAMLPath:     tt.workloadYAML,
+					Namespace:    "default",
+					ExpectedPods: tt.expectedPods,
+				}),
+				testctx.WithTimeout(2*time.Minute),
+				testctx.WithInterval(time.Second),
+			)
+			defer cleanup()
+
+			if tt.crashloopStage {
+				tests.Logger.Info("0. Hold freshly created pods scheduled-but-not-Ready via the crash-loop KWOK stage")
+				require.NoError(t, kwok.ApplyStage(tc.Ctx, tc.Client, kwokStageCrashloopPath))
+				defer func() {
+					if err := kwok.DeleteStage(tc.Ctx, tc.Client, kwokStageCrashloopName); err != nil {
+						tests.Logger.Warnf("cleanup: delete crash-loop KWOK stage: %v", err)
+					}
+				}()
+			}
+
+			tests.Logger.Info("1. Create a Coherent workload whose pods never become available")
+			pods, err := tc.DeployAndVerifyWorkload()
+			require.NoError(t, err)
+			require.Len(t, pods.Items, tt.expectedPods)
+			oldUIDs := make(map[types.UID]bool, len(pods.Items))
+			for _, p := range pods.Items {
+				oldUIDs[p.UID] = true
+			}
+
+			// Let the first generation fully reconcile before correcting, so the correction is a coherent
+			// update rather than part of initial pod creation. Confirm the workload is unavailable.
+			require.EventuallyWithT(t, func(c *assert.CollectT) {
+				pcs, err := getPCS(tc, tc.Workload.Name)
+				require.NoError(c, err)
+				require.NotNil(c, pcs.Status.ObservedGeneration)
+				assert.Equal(c, pcs.Generation, *pcs.Status.ObservedGeneration)
+				assert.Zero(c, pcs.Status.AvailableReplicas)
+				if tt.assertInitiallyUnavailable != nil {
+					tt.assertInitiallyUnavailable(c, tc)
+				}
+			}, tc.Timeout, tc.Interval, "initial generation must reconcile with the workload unavailable")
+
+			tests.Logger.Info("2. Apply the corrective change to trigger the coherent update")
+			tt.correct(t, tc)
+
+			tests.Logger.Info("3. Verify Grove replaces the unavailable pods and completes the corrective update")
+			// The corrective update must proceed even though MaxUnavailable is already breached; otherwise the
+			// unavailable pods are never replaced and this wait times out.
+			require.NoError(t, waitForRollingUpdateComplete(tc, 1),
+				"corrective coherent update must replace the unavailable pods and complete")
+			require.NoError(t, tc.WaitForPods(tt.expectedPods))
+
+			pods, err = tc.ListPods()
+			require.NoError(t, err)
+			require.Len(t, pods.Items, tt.expectedPods)
+			for _, p := range pods.Items {
+				assert.False(t, oldUIDs[p.UID], "every unavailable pod must be replaced")
+			}
+			assertUpdateInProgressCleared(tc)
+			assertGenerationHashConverged(tc)
+			assertPodGangMapSingleGeneration(t, tc)
+		})
+	}
+}
+
+// removeUnschedulableSelector removes the impossible node selector from the first clique of the workload's
+// PCS template, letting its Pending pods schedule and bumping the generation hash to trigger the update.
+func removeUnschedulableSelector(t *testing.T, tc *testctx.TestContext) {
+	pcs, err := getPCS(tc, tc.Workload.Name)
+	require.NoError(t, err)
+	original := pcs.DeepCopy()
+	delete(pcs.Spec.Template.Cliques[0].Spec.PodSpec.NodeSelector, "e2e.grove.io/unschedulable")
+	require.NoError(t, tc.Client.Patch(tc.Ctx, pcs, client.MergeFrom(original)))
+	require.Greater(t, pcs.Generation, original.Generation)
+}
+
+// recoverFromCrashloopAndTriggerUpdate clears the crash-loop KWOK stage so freshly created pods come up
+// Ready, then bumps the worker clique's template to trigger the coherent update. The already-crashlooped
+// pods stay not-Ready (KWOK does not re-evaluate a held pod), so only the replacements the update creates
+// recover, which is exactly what the corrective drain must do.
+func recoverFromCrashloopAndTriggerUpdate(t *testing.T, tc *testctx.TestContext) {
+	require.NoError(t, kwok.DeleteStage(tc.Ctx, tc.Client, kwokStageCrashloopName))
+	require.NoError(t, triggerPodCliqueUpdate(tc, "worker"))
+}
+
+// assertPCSGUnavailable returns an assertion that the named PodCliqueScalingGroup reports the expected
+// replica count and zero available replicas.
+func assertPCSGUnavailable(pcsgConfigName string, expectedReplicas int32) func(c *assert.CollectT, tc *testctx.TestContext) {
+	return func(c *assert.CollectT, tc *testctx.TestContext) {
+		var pcsg grovev1alpha1.PodCliqueScalingGroup
+		require.NoError(c, tc.Client.Get(tc.Ctx, types.NamespacedName{
+			Namespace: tc.Namespace, Name: pcsgFQN(tc, pcsgConfigName),
+		}, &pcsg))
+		assert.EqualValues(c, expectedReplicas, pcsg.Status.Replicas)
+		assert.Zero(c, pcsg.Status.AvailableReplicas)
+	}
 }

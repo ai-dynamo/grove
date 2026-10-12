@@ -17,7 +17,6 @@ package podclique
 import (
 	"context"
 	"fmt"
-	"slices"
 	"strconv"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
@@ -40,13 +39,9 @@ import (
 // PodCliques at a given index, and is Ready only when every member has at least MinAvailable Ready
 // Pods.
 type updateWork struct {
-	// oldReadyReplicaIndices are old-configuration replicas that are Ready and not already being
-	// deleted. They are the candidates for replacement, disrupted lowest index first within the budget.
-	oldReadyReplicaIndices []int
-	// oldPendingReplicaIndices are old-configuration replicas that are not yet scheduled.
-	oldPendingReplicaIndices []int
-	// oldUnavailableReplicaIndices are old-configuration replicas that are scheduled but not Ready.
-	oldUnavailableReplicaIndices []int
+	// oldReplicaDisruptionInfos are the old-configuration replicas eligible for replacement, each with
+	// its index and health state, ordered worst-off first at selection time.
+	oldReplicaDisruptionInfos []componentutils.PCSGReplicaDisruptionInfo
 	// existingReplicas is every present, non-terminating replica slot whose deletion has not already been
 	// triggered: ready and not-ready, old-configuration and new-configuration. It anchors the disruption
 	// budget to the live replica count rather than a readiness delta.
@@ -59,14 +54,6 @@ type updateWork struct {
 	// configuration and Ready. The rolling update is complete only when this reaches the desired count.
 	numUpdatedReadyReplicas int
 }
-
-type replicaState int
-
-const (
-	replicaStatePending replicaState = iota
-	replicaStateUnAvailable
-	replicaStateReady
-)
 
 // processPendingUpdates advances the rolling update of a PodCliqueScalingGroup by one reconcile step.
 //
@@ -102,9 +89,9 @@ func (r _resource) processPendingUpdates(ctx context.Context, logger logr.Logger
 		)
 	}
 
-	// Order old-configuration replicas worst-off first: pending, then unavailable, then Ready. Each
-	// slice is already in ascending replica-index order.
-	replicaIndicesToUpdate := slices.Concat(uw.oldPendingReplicaIndices, uw.oldUnavailableReplicaIndices, uw.oldReadyReplicaIndices)
+	// Order old-configuration replicas worst-off first (pending, then unavailable, then Ready), with
+	// ascending replica index within each state, via the shared disruption ordering helper.
+	replicaIndicesToUpdate := componentutils.OrderPCSGReplicaIndicesForDisruption(uw.oldReplicaDisruptionInfos)
 	if len(replicaIndicesToUpdate) == 0 {
 		// Every old-configuration replica is an in-flight replacement. Requeue and wait for them to become Ready.
 		return groveerr.New(
@@ -119,7 +106,10 @@ func (r _resource) processPendingUpdates(ctx context.Context, logger logr.Logger
 		return strconv.Itoa(index)
 	})
 	logger.Info("triggering deletion of old-configuration replicas for rolling update", "replicaIndices", replicaIndicesToUpdate)
-	deleteTasks := r.createDeleteTasks(logger, sc, replicaIndicesToUpdateStr, "deleting old-configuration replicas for rolling update")
+	deleteTasks, err := r.createDeleteTasks(logger, sc, replicaIndicesToUpdateStr, "deleting old-configuration replicas for rolling update")
+	if err != nil {
+		return err
+	}
 	if err := r.triggerDeletionOfPodCliques(ctx, logger, client.ObjectKeyFromObject(sc.pcsg), deleteTasks); err != nil {
 		return err
 	}
@@ -174,10 +164,13 @@ func (r _resource) markUpdateEnd(ctx context.Context, logger logr.Logger, pcsg *
 // counts that drive the disruption budget and the completion check.
 func (r _resource) computePendingUpdateWork(ss *syncSnapshot) (*updateWork, error) {
 	uw := &updateWork{}
-	existingPCLQsByReplicaIndex := componentutils.GroupPCLQsByPCSGReplicaIndex(ss.existingPCLQs)
+	existingPCLQsByReplicaIndex, err := componentutils.GroupPCLQsByPCSGReplicaIndex(ss.existingPCLQs)
+	if err != nil {
+		return nil, err
+	}
 	pcsgexpectations.SyncPCSGReplicaDeleteExpectations(r.expectationsStore, ss.expectationsStoreKey, ss.existingPCLQs)
 	for pcsgReplicaIndex := range int(ss.pcsg.Spec.Replicas) {
-		memberPCLQs := existingPCLQsByReplicaIndex[strconv.Itoa(pcsgReplicaIndex)]
+		memberPCLQs := existingPCLQsByReplicaIndex[pcsgReplicaIndex]
 
 		// A replica with no PodCliques, all terminating, or whose disruption we already triggered
 		// (delete expectation recorded, cache not yet caught up) is mid-replacement: not a live replica
@@ -191,23 +184,19 @@ func (r _resource) computePendingUpdateWork(ss *syncSnapshot) (*updateWork, erro
 		if err != nil {
 			return nil, err
 		}
-		state := getReplicaState(memberPCLQs)
+		state := componentutils.ComputePCSGReplicaState(memberPCLQs, len(ss.pcsg.Spec.CliqueNames))
 		if !labeled {
-			// Old configuration: a replacement candidate, grouped by state.
-			switch state {
-			case replicaStatePending:
-				uw.oldPendingReplicaIndices = append(uw.oldPendingReplicaIndices, pcsgReplicaIndex)
-			case replicaStateUnAvailable:
-				uw.oldUnavailableReplicaIndices = append(uw.oldUnavailableReplicaIndices, pcsgReplicaIndex)
-			case replicaStateReady:
-				uw.oldReadyReplicaIndices = append(uw.oldReadyReplicaIndices, pcsgReplicaIndex)
-			}
+			// Old configuration: a replacement candidate, recorded with its state for worst-off-first ordering.
+			uw.oldReplicaDisruptionInfos = append(uw.oldReplicaDisruptionInfos, componentutils.PCSGReplicaDisruptionInfo{
+				Index: pcsgReplicaIndex,
+				State: state,
+			})
 			continue
 		}
 
 		// New configuration: done once its rollout is confirmed and it is Ready, otherwise an in-flight
 		// replacement that blocks completion and reduces the disruption budget.
-		if isReplicaUpdated(ss, pcsgReplicaIndex, memberPCLQs) && state == replicaStateReady {
+		if isReplicaUpdated(ss, pcsgReplicaIndex, memberPCLQs) && state == componentutils.PCSGReplicaStateReady {
 			uw.numUpdatedReadyReplicas++
 		} else {
 			uw.newNotReadyReplicas++
@@ -262,7 +251,7 @@ func isReplicaUpdatedAndReady(sc *syncSnapshot, replicaIndex int, members []grov
 	if err != nil || !labeled {
 		return false
 	}
-	return isReplicaUpdated(sc, replicaIndex, members) && getReplicaState(members) == replicaStateReady
+	return isReplicaUpdated(sc, replicaIndex, members) && componentutils.ComputePCSGReplicaState(members, len(sc.pcsg.Spec.CliqueNames)) == componentutils.PCSGReplicaStateReady
 }
 
 // allPodCliquesTerminating reports whether every member PodClique of a replica is terminating.
@@ -270,17 +259,4 @@ func allPodCliquesTerminating(pcsgReplicaPCLQs []grovecorev1alpha1.PodClique) bo
 	return lo.EveryBy(pcsgReplicaPCLQs, func(pclq grovecorev1alpha1.PodClique) bool {
 		return k8sutils.IsResourceTerminating(pclq.ObjectMeta)
 	})
-}
-
-// getReplicaState determines the overall state of a PCSG replica based on its constituent PodCliques.
-func getReplicaState(pcsgReplicaPCLQs []grovecorev1alpha1.PodClique) replicaState {
-	for _, pclq := range pcsgReplicaPCLQs {
-		if pclq.Status.ScheduledReplicas < *pclq.Spec.MinAvailable {
-			return replicaStatePending
-		}
-		if pclq.Status.ReadyReplicas < *pclq.Spec.MinAvailable {
-			return replicaStateUnAvailable
-		}
-	}
-	return replicaStateReady
 }

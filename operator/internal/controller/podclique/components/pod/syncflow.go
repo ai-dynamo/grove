@@ -591,7 +591,7 @@ func (r _resource) createPods(ctx context.Context, logger logr.Logger, ss *syncS
 		// Get the available Pod host name index. This ensures that we fill the holes in the indices if there are any when creating
 		// new pods.
 		podHostNameIndex := availableIndices[i]
-		createTasks = append(createTasks, r.createPodCreationTask(logger, ss.pcs, ss.pclq, ss.pcsgReplicaPodGangName, expectationsKey, i, podHostNameIndex))
+		createTasks = append(createTasks, r.createPodCreationTask(logger, ss.pcs, ss.pclq, ss.pcsgReplicaPodGangName, expectationsKey, i, podHostNameIndex, ss.pgm))
 	}
 	runResult := utils.RunConcurrentlyWithSlowStart(ctx, logger, 1, createTasks)
 	if runResult.HasErrors() {

@@ -346,6 +346,7 @@ func TestReconcileStandalonePCLQDistributionCreateAndDelete(t *testing.T) {
 		Containers:    []corev1.Container{{Name: "worker", Image: "worker"}},
 	}
 	testPCS := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "uid").
+		WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeInOrder)).
 		WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder(testCliqueName).WithPodSpec(podSpec).Build()).
 		Build()
 	// The PodClique name must be a real FQN so buildResource can resolve the PCS replica index from it.

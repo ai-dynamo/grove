@@ -1,0 +1,48 @@
+# Coherent corrective-update regression for #873: one unavailable PodCliqueScalingGroup replica consumes
+# the whole maxUnavailable=1 budget. The old readiness-delta budget deadlocked here. The test removes only
+# the impossible selector from the PCS template, so the old pod stays Pending until the corrective update
+# replaces it.
+apiVersion: grove.io/v1alpha1
+kind: PodCliqueSet
+metadata:
+  name: wl-coh-unavail-pcsg
+spec:
+  replicas: 1
+  updateStrategy:
+    type: Coherent
+  template:
+    terminationDelay: 1h
+    podCliqueScalingGroups:
+      - name: sg-x
+        replicas: 1
+        minAvailable: 1
+        cliqueNames:
+          - worker
+        rollingUpdate:
+          maxUnavailable: 1
+    cliques:
+      - name: worker
+        labels:
+          kai.scheduler/queue: test
+        spec:
+          roleName: worker
+          replicas: 1
+          minAvailable: 1
+          podSpec:
+            schedulerName: kai-scheduler
+            terminationGracePeriodSeconds: 0
+            nodeSelector:
+              node_role.e2e.grove.nvidia.com: agent
+              e2e.grove.io/unschedulable: "true"
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: worker
+                image: registry:5001/busybox:latest
+                command: ["sleep", "infinity"]
+                resources:
+                  requests:
+                    memory: 80Mi

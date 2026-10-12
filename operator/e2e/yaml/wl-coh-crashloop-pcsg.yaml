@@ -1,0 +1,47 @@
+# Coherent corrective-update regression for #873, faithful to the reported repro: pods schedule but never
+# become Ready. The test applies the KWOK pod-crashloop stage before deploying, so this PodCliqueScalingGroup's
+# only replica is Running but not Ready (CrashLoopBackOff), consuming the whole maxUnavailable=1 budget. The
+# corrective update then replaces it with a fresh Ready pod.
+apiVersion: grove.io/v1alpha1
+kind: PodCliqueSet
+metadata:
+  name: wl-coh-crashloop-pcsg
+spec:
+  replicas: 1
+  updateStrategy:
+    type: Coherent
+  template:
+    terminationDelay: 1h
+    podCliqueScalingGroups:
+      - name: sg-x
+        replicas: 1
+        minAvailable: 1
+        cliqueNames:
+          - worker
+        rollingUpdate:
+          maxUnavailable: 1
+    cliques:
+      - name: worker
+        labels:
+          kai.scheduler/queue: test
+        spec:
+          roleName: worker
+          replicas: 1
+          minAvailable: 1
+          podSpec:
+            schedulerName: kai-scheduler
+            terminationGracePeriodSeconds: 0
+            nodeSelector:
+              node_role.e2e.grove.nvidia.com: agent
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: worker
+                image: registry:5001/busybox:latest
+                command: ["sleep", "infinity"]
+                resources:
+                  requests:
+                    memory: 80Mi

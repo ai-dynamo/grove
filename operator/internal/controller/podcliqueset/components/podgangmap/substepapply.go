@@ -37,7 +37,7 @@ func (p *subStepPlanner) applySubStep(ss subStep) ([]grovecorev1alpha1.PodGangEn
 		return nil, err
 	}
 
-	drainStandalonePCLQs(entries, currentHash, ss.drainStandalonePCLQCounts, p.runningPodsByCliqueAndAnchor)
+	drainStandalonePCLQs(entries, currentHash, ss.drainStandalonePCLQCounts, p.pclqPodCounts.livePodCountsByAnchor)
 	drainPCSGIndices(entries, currentHash, ss.drainPCSGReplicaIndices)
 	subsumeIntoAnchor(entries, ss.subsumeAnchorEpoch, ss.subsumeStandalonePCLQCounts)
 
@@ -49,72 +49,107 @@ func (p *subStepPlanner) applySubStep(ss subStep) ([]grovecorev1alpha1.PodGangEn
 }
 
 // drainStandalonePCLQs removes each standalone PodClique take-down count from the old-version anchor entries.
-// It runs in two phases per PodClique, and the phase order keeps the MaxUnavailable accounting exact.
+// It runs in phases per PodClique, and the phase order keeps the MaxUnavailable accounting exact.
 //
 // Phase 1 reclaims missing old-version Pods. A missing old-version Pod is an anchor slot with no running
 // Pod behind it. Reclaiming lowers only the entry count and removes no running Pod, so it costs no
 // availability. All old anchors are reclaimed first, in the order entries appear, because a reclaimed slot
 // moves to the current anchor regardless of which old anchor it came from.
 //
-// Phase 2 takes down running Pods, oldest anchor first, so the oldest generation retires before a newer one.
+// Phase 2a takes down not-Ready Pods first, across all old anchors. A standalone PodClique maps to one
+// anchor PodGang per live generation, and the PodClique reconciler's DeletionSorter picks which Pod to
+// delete only within a single PodGang. The choice of which anchor PodGang to shrink is made here. Spending a
+// slot on an anchor of only Ready Pods, while an unavailable Pod survives on another old anchor, would drop
+// availability below the floor and breach MaxUnavailable. Taking the not-Ready Pods down first keeps every
+// slot on an already-unavailable Pod.
 //
-// Why reclaim before takedown. The MaxUnavailable gate credits the sub-step for reclaiming missing
-// old-version Pods for free. If the drain instead took down running Pods first and left missing old-version
-// Pods in place, the gate credit would not match what actually happened and the budget could be breached.
+// Phase 2b takes down the remaining running Pods, oldest anchor first, so the oldest generation retires
+// before a newer one. Only Ready Pods remain to take down by this phase.
 //
-// Example. Two old anchors of one PodClique during back-to-back updates. Drain 2.
+// Why reclaim before takedown. The MaxUnavailable gate does not count a missing old-version Pod against the
+// budget, since reclaiming it removes no running Pod. The gate therefore assumes the drain reclaims those
+// slots first. If the drain instead took running Pods down first and left the missing slots in place, it
+// would remove more running Pods than the gate allowed for and could breach MaxUnavailable.
+//
+// Example, reclaim before takedown. Two old anchors of one PodClique during back-to-back updates. Drain 2.
 //
 //	A  count 2  running 2
 //	B  count 2  running 1   (1 missing old-version Pod)
 //	Phase 1 reclaims B's missing old-version Pod. B count 2 to 1. remaining 1.
-//	Phase 2 takes down oldest first. A count 2 to 1 (1 running Pod removed). remaining 0.
+//	Phase 2b takes down oldest first. A count 2 to 1 (1 running Pod removed). remaining 0.
 //
-// Result. 1 dead on B plus 1 removed on A is 2 unavailable, within a budget of 2. If Phase 2 ran over
-// everything oldest first it would remove 2 running Pods on A and leave B's missing old-version Pod in
-// place, giving 3 unavailable.
+// Result. 1 dead on B plus 1 removed on A is 2 unavailable, within a budget of 2.
 //
-// runningPodsByCliqueAndAnchor gives the running Pod count per anchor epoch, so the split knows which slots
-// are missing old-version Pods. A nil map treats every slot as one, which drains the same total from the
-// same anchors as a plain oldest-first drain. The caller sorts entries oldest first, which both phases
-// rely on.
-func drainStandalonePCLQs(entries []grovecorev1alpha1.PodGangEntry, currentHash string, drainCounts map[string]int32, runningPodsByCliqueAndAnchor map[string]map[string]int32) {
+// Example, not-Ready first. Two old anchors, desired 3, MaxUnavailable 1, so the budget grants 1. Drain 1.
+//
+//	A  count 2  running 2 Ready
+//	B  count 1  running 1 not-Ready
+//	Phase 2a takes the not-Ready Pod on B down. B count 1 to 0. remaining 0. A keeps its 2 Ready Pods.
+//
+// Result. Availability stays at the floor desired - MaxUnavailable, which is 2. Spending the slot on A would
+// leave B's unavailable Pod and drop availability to 1, breaching MaxUnavailable.
+//
+// livePodCountsByAnchor gives the running and not-Ready Pod count per clique and anchor epoch. Phase 1 reads
+// running to find missing old-version slots, and Phase 2a reads notReady to drain unavailable Pods first. A
+// nil map leaves those phases with nothing to find, which drains the same total from the same anchors as a
+// plain oldest-first drain. The caller sorts entries oldest first, which every phase relies on.
+func drainStandalonePCLQs(entries []grovecorev1alpha1.PodGangEntry, currentHash string, drainCounts map[string]int32, livePodCountsByAnchor map[cliqueAndEpochKey]anchorLivePods) {
 	for cliqueName, remaining := range drainCounts {
-		runningPodsByAnchor := runningPodsByCliqueAndAnchor[cliqueName]
-		// Phase 1. Reclaim missing old-version Pods. Each reclaim lowers only the entry count, removing no running Pod.
-		for i := range entries {
-			if remaining == 0 {
-				break
-			}
-			if !isOldHashAnchor(entries[i], currentHash) {
-				continue
-			}
-			anchorPodCount, ok := entries[i].PodCliques[cliqueName]
-			if !ok {
-				continue
-			}
-			missingOldVersionPods := anchorPodCount - runningPodsByAnchor[entries[i].Epoch]
-			if missingOldVersionPods <= 0 {
-				continue
-			}
-			take := min(missingOldVersionPods, remaining)
-			entries[i].PodCliques[cliqueName] -= take
-			remaining -= take
-		}
-		// Phase 2. Take down running Pods, oldest anchor first. Every take here removes a running Pod.
-		for i := range entries {
-			if remaining == 0 {
-				break
-			}
-			if !isOldHashAnchor(entries[i], currentHash) {
-				continue
-			}
-			if anchorPodCount, ok := entries[i].PodCliques[cliqueName]; ok {
-				take := min(anchorPodCount, remaining)
-				entries[i].PodCliques[cliqueName] -= take
-				remaining -= take
-			}
-		}
+		// Phase 1. Reclaim missing old-version Pods (removes no running Pod, costs no availability).
+		remaining = drainOldHashAnchors(entries, currentHash, cliqueName, livePodCountsByAnchor, remaining, missingOldVersionPods)
+		// Phase 2a. Take down not-Ready Pods first, across old anchors, so a slot never shrinks an anchor of
+		// only Ready Pods while an unavailable Pod survives on another old anchor.
+		remaining = drainOldHashAnchors(entries, currentHash, cliqueName, livePodCountsByAnchor, remaining, notReadyPods)
+		// Phase 2b. Take down the remaining running Pods, oldest anchor first. Only Ready Pods remain here, and
+		// nothing reads remaining after this phase, so its return is not kept.
+		drainOldHashAnchors(entries, currentHash, cliqueName, livePodCountsByAnchor, remaining, allCommittedPods)
 	}
+}
+
+// perAnchorTakeable reports how many Pods a drain phase may take down from one old-hash anchor, given the
+// clique's committed Pod count on that anchor and the live Pods observed there.
+type perAnchorTakeable func(committedPodCount int32, livePods anchorLivePods) int32
+
+// missingOldVersionPods is the perAnchorTakeable for Phase 1, the committed slots with no running Pod behind them.
+func missingOldVersionPods(committedPodCount int32, livePods anchorLivePods) int32 {
+	return committedPodCount - livePods.running
+}
+
+// notReadyPods is the perAnchorTakeable for Phase 2a, the not-Ready running Pods on an anchor.
+func notReadyPods(_ int32, livePods anchorLivePods) int32 {
+	return livePods.notReady
+}
+
+// allCommittedPods is the perAnchorTakeable for Phase 2b, every Pod the anchor still commits.
+func allCommittedPods(committedPodCount int32, _ anchorLivePods) int32 {
+	return committedPodCount
+}
+
+// drainOldHashAnchors walks the old-hash anchors in the order entries are given (the caller sorts them
+// oldest first) and takes down up to remaining Pods of cliqueName. From each anchor it takes what takeable
+// reports, clamped to the Pods the anchor still commits and to the budget left. It returns the still
+// undrained remainder.
+func drainOldHashAnchors(entries []grovecorev1alpha1.PodGangEntry, currentHash, cliqueName string, livePodCountsByAnchor map[cliqueAndEpochKey]anchorLivePods, remaining int32, takeable perAnchorTakeable) int32 {
+	for i := range entries {
+		if remaining == 0 {
+			break
+		}
+		if !isOldHashAnchor(entries[i], currentHash) {
+			continue
+		}
+		committedPodCount, ok := entries[i].PodCliques[cliqueName]
+		if !ok {
+			continue
+		}
+		livePods := livePodCountsByAnchor[cliqueAndEpochKey{clique: cliqueName, epoch: entries[i].Epoch}]
+		take := min(takeable(committedPodCount, livePods), committedPodCount, remaining)
+		if take <= 0 {
+			continue
+		}
+		entries[i].PodCliques[cliqueName] -= take
+		remaining -= take
+	}
+	return remaining
 }
 
 // isOldHashAnchor reports whether the entry is an anchor at a generation other than the current one.

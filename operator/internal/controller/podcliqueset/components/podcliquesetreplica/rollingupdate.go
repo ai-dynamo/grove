@@ -128,7 +128,7 @@ func (r _resource) getPCSReplicaInfos(ctx context.Context, pcs *grovecorev1alpha
 		}
 		replicaInfos = append(replicaInfos, pcsReplicaInfo{
 			replicaIndex: pcsReplicaIndex,
-			pclqs:        pclqsByPCSIndex[pcsReplicaIndexStr],
+			pclqs:        pclqsByPCSIndex[pcsReplicaIndex],
 			pcsgs:        pcsgsByPCSIndex[pcsReplicaIndexStr],
 			pgmEntries:   pgmEntries,
 		})
