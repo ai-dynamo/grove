@@ -239,7 +239,11 @@ func (v *pcsValidator) validatePodCliqueTemplates(fldPath *field.Path) ([]string
 	var warnings []string
 	cliqueTemplateSpecs := v.pcs.Spec.Template.Cliques
 	if len(cliqueTemplateSpecs) == 0 {
+		// Return here rather than fall through: with no cliques there are no
+		// scheduler names either, and validateSchedulerNames below indexes the
+		// first of them. Falling through replaced this message with a panic.
 		allErrs = append(allErrs, field.Required(fldPath, "at least one PodClique must be defined"))
+		return warnings, allErrs
 	}
 
 	// Get all clique names that belong to scaling groups.
@@ -292,6 +296,12 @@ func (v *pcsValidator) validateSchedulerNames(schedulerNames []string, fldPath *
 	}))
 	if len(uniqueSchedulerNames) > 1 {
 		allErrs = append(allErrs, field.Invalid(specPath, strings.Join(uniqueSchedulerNames, ", "), "the schedulerName for all pods have to be the same"))
+	}
+
+	if len(uniqueSchedulerNames) == 0 {
+		// No pods, so no scheduler to resolve. The caller reports the missing
+		// clique; there is nothing to add and nothing to index.
+		return allErrs
 	}
 
 	// Check-2: Validate that the resolved scheduler is enabled.
