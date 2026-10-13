@@ -119,7 +119,8 @@ type KueueSchedulerConfiguration struct {
 // KubeSchedulerConfig holds the configuration for the default scheduler.
 // Used when unmarshalling SchedulerProfile.Config for default-scheduler.
 type KubeSchedulerConfig struct {
-	// GangScheduling indicates if Gang scheduling capability is enabled.
+	// GangScheduling enables hierarchical gang scheduling via Kubernetes Workload APIs.
+	// Disabled by default.
 	// +optional
 	GangScheduling bool `json:"gangScheduling,omitempty"`
 }
