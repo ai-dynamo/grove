@@ -26,7 +26,9 @@ import (
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
 	ctrlcommon "github.com/ai-dynamo/grove/operator/internal/controller/common"
+	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	commonrevision "github.com/ai-dynamo/grove/operator/internal/controller/common/revision"
+	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 	"github.com/ai-dynamo/grove/operator/internal/utils/podtemplatehash"
@@ -42,6 +44,8 @@ import (
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
+
+const errCodeRevisionStatusNotPersisted grovecorev1alpha1.ErrorCode = "ERR_REVISION_STATUS_NOT_PERSISTED"
 
 // processRevision will load, initialize, and compare controller revisions for the given PodCliqueSet.
 // If there are differences, it will initiate an upgrade.
@@ -265,6 +269,15 @@ func (r *Reconciler) initUpdateProgress(ctx context.Context, pcs *grovecorev1alp
 
 	if err := r.client.Status().Update(ctx, pcs); err != nil {
 		return fmt.Errorf("could not update revision status for PodCliqueSet %v: %w", client.ObjectKeyFromObject(pcs), err)
+	}
+
+	// Older CRDs can prune this field from a successful status update response.
+	// Do not wait for the informer to observe a selection that was never persisted.
+	if ptr.Deref(pcs.Status.CurrentRevision, "") != revision.Name() {
+		r.pcsRevisionExpectations.Delete(pcs.UID)
+		return groveerr.New(errCodeRevisionStatusNotPersisted, component.OperationSync,
+			fmt.Sprintf("could not persist status.currentRevision %q for PodCliqueSet %v: apply the updated PodCliqueSet CRD before upgrading the operator",
+				revision.Name(), client.ObjectKeyFromObject(pcs)))
 	}
 
 	r.pcsRevisionExpectations.Store(pcs.UID, revision)
