@@ -101,6 +101,20 @@ type Finalizer interface {
 	IsPodFinalized(pod *corev1.Pod) bool
 }
 
+// PodGangResourceBackend optionally exposes the scheduling resources controlled
+// by PodGangs so the PodGang controller can reconcile changes and deletions.
+type PodGangResourceBackend interface {
+	// PodGangResources returns registered object types after Init has completed.
+	// Disabled capabilities must not return types whose APIs may be unavailable.
+	PodGangResources() []client.Object
+}
+
+// PodGangReadinessBackend delays Grove gate removal until backend-specific
+// scheduling prerequisites match the current PodGang intent.
+type PodGangReadinessBackend interface {
+	PodGangReady(ctx context.Context, podGang *groveschedulerv1alpha1.PodGang) (bool, error)
+}
+
 // TopologyAwareBackend is an optional interface that Backend
 // implementations may satisfy if they manage a scheduler-specific topology CRD.
 // The ClusterTopologyBinding controller type-asserts each registered backend to this

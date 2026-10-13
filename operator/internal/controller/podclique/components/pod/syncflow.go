@@ -481,10 +481,29 @@ func (r _resource) checkAndRemovePodSchedulingGates(ctx context.Context, logger 
 	if err != nil {
 		return nil, err
 	}
+	backendReady := make(map[string]bool, len(podGangByName))
+	for name, gang := range podGangByName {
+		if gang == nil {
+			continue
+		}
+		backendReady[name] = true
+		backend := r.schedRegistry.GetOrDefault(gang.Labels[apicommon.LabelSchedulerName])
+		if backend == nil {
+			return nil, fmt.Errorf("scheduler backend not found for PodGang %s", name)
+		}
+		if readiness, ok := backend.(scheduler.PodGangReadinessBackend); ok {
+			ready, err := readiness.PodGangReady(ctx, gang)
+			if err != nil {
+				return nil, err
+			}
+			backendReady[name] = ready
+		}
+	}
 
 	tasks := make([]utils.Task, 0, len(gatedPods))
 	for i, pod := range gatedPods {
-		if !canRemoveSchedulingGate(logger, pod, ss.pclq.Name, podGangByName, dependencySatisfiedByEpoch) {
+		if !canRemoveSchedulingGate(logger, pod, ss.pclq.Name, podGangByName, dependencySatisfiedByEpoch) ||
+			!backendReady[pod.Labels[apicommon.LabelPodGang]] {
 			skippedScheduleGatedPods = append(skippedScheduleGatedPods, pod.Name)
 			continue
 		}
