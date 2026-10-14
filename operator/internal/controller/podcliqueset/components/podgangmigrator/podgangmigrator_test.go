@@ -522,7 +522,7 @@ func (fakeBackend) SyncPodGang(_ context.Context, _ *groveschedulerv1alpha1.PodG
 
 func (fakeBackend) PreparePod(_ *corev1.Pod) error { return nil }
 
-func (fakeBackend) ValidatePodCliqueSet(_ context.Context, _ *grovecorev1alpha1.PodCliqueSet) error {
+func (fakeBackend) ValidatePodCliqueSet(_ context.Context, _ *grovecorev1alpha1.PodCliqueSet, _ ...scheduler.ValidateOption) error {
 	return nil
 }
 

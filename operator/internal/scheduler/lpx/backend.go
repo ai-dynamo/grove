@@ -106,7 +106,7 @@ func (b *schedulerBackend) PreparePod(pod *corev1.Pod) error {
 }
 
 // ValidatePodCliqueSet runs LPX-specific validations on the PodCliqueSet as well as any fallback backend validations, if necessary.
-func (b *schedulerBackend) ValidatePodCliqueSet(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet) error {
+func (b *schedulerBackend) ValidatePodCliqueSet(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, opts ...scheduler.ValidateOption) error {
 	if pcs.Spec.Template.TopologyConstraint != nil {
 		return errTopologyConstraintsUnsupported
 	}
@@ -125,7 +125,7 @@ func (b *schedulerBackend) ValidatePodCliqueSet(ctx context.Context, pcs *grovec
 
 	if b.secondaryBackend != nil {
 		if slices.ContainsFunc(pcs.Spec.Template.Cliques, func(clique *grovecorev1alpha1.PodCliqueTemplateSpec) bool { return !usesLPX(clique.Spec.PodSpec) }) {
-			return b.secondaryBackend.ValidatePodCliqueSet(ctx, pcs)
+			return b.secondaryBackend.ValidatePodCliqueSet(ctx, pcs, opts...)
 		}
 	}
 

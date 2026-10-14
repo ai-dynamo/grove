@@ -780,6 +780,39 @@ func Test_Kueue6_ValidatePodCliqueSetAndScaleRejection(t *testing.T) {
 		}
 	})
 
+	t.Run("PodCliqueSet without the queue label is rejected", func(t *testing.T) {
+		pcs := newPCS("kueue-t6-no-queue")
+		pcs.Labels = nil
+		pcs.Spec.Template.Cliques = []*corev1alpha1.PodCliqueTemplateSpec{kueueSchedulerClique("worker", 1, 1)}
+		err := tc.Client.Create(ctx, pcs)
+		if err == nil {
+			t.Fatalf("Expected a PodCliqueSet without label %q to be rejected, but create succeeded", queueNameLabel)
+		}
+		wantErrSubstr := fmt.Sprintf("must set label %q", queueNameLabel)
+		if !strings.Contains(err.Error(), wantErrSubstr) {
+			t.Fatalf("Expected error to contain %q, got: %v", wantErrSubstr, err)
+		}
+	})
+
+	t.Run("changing the queue label is rejected", func(t *testing.T) {
+		pcs := newPCS("kueue-t6-queue-change")
+		pcs.Spec.Template.Cliques = []*corev1alpha1.PodCliqueTemplateSpec{kueueSchedulerClique("worker", 1, 1)}
+		if err := tc.Client.Create(ctx, pcs); err != nil {
+			t.Fatalf("Failed to create PodCliqueSet %s: %v", pcs.Name, err)
+		}
+		// A merge patch without a resourceVersion, so the operator's own updates of the PodCliqueSet can't conflict.
+		patch := client.MergeFrom(pcs.DeepCopy())
+		pcs.Labels[queueNameLabel] = "grove-e2e-backlog"
+		err := tc.Client.Patch(ctx, pcs, patch)
+		if err == nil {
+			t.Fatalf("Expected changing label %q to be rejected, but the update succeeded", queueNameLabel)
+		}
+		wantErrSubstr := fmt.Sprintf("kueue backend does not support changing label %q (%q -> %q)", queueNameLabel, "grove-e2e", "grove-e2e-backlog")
+		if !strings.Contains(err.Error(), wantErrSubstr) {
+			t.Fatalf("Expected error to contain %q, got: %v", wantErrSubstr, err)
+		}
+	})
+
 	Logger.Info("Test_Kueue6_ValidatePodCliqueSetAndScaleRejection completed successfully!")
 }
 

@@ -22,6 +22,7 @@ import (
 	groveconfigv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
+	"github.com/ai-dynamo/grove/operator/internal/scheduler/kueue"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler/lpx"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
@@ -34,6 +35,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/uuid"
+	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 )
@@ -244,6 +246,43 @@ func TestValidatePodCliqueSetWithLPXBackend(t *testing.T) {
 	err := handler.validatePodCliqueSetWithBackend(context.Background(), pcs)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "does not support Grove topology constraints")
+}
+
+// TestValidateUpdatePassesOldPodCliqueSetToBackend tests that the scheduler backend sees the PodCliqueSet before an update.
+func TestValidateUpdatePassesOldPodCliqueSetToBackend(t *testing.T) {
+	cl := testutils.NewTestClientBuilder().Build()
+	mgr := &testutils.FakeManager{Client: cl, Scheme: cl.Scheme(), Logger: logr.Discard()}
+	kueueBackend := kueue.New(cl, cl.Scheme(), record.NewFakeRecorder(10),
+		groveconfigv1alpha1.SchedulerProfile{Name: groveconfigv1alpha1.SchedulerNameKueue})
+	require.NoError(t, kueueBackend.Init(nil))
+	cfg := groveconfigv1alpha1.OperatorConfiguration{
+		TopologyAwareScheduling: getDefaultTASConfig(),
+		Network:                 getDefaultNetworkConfig(),
+	}
+	handler := NewHandler(mgr, &cfg, &testutils.FakeSchedulerRegistry{
+		Backends:       map[string]scheduler.Backend{string(groveconfigv1alpha1.SchedulerNameKueue): kueueBackend},
+		DefaultBackend: string(groveconfigv1alpha1.SchedulerNameKueue),
+	})
+	newPCS := func(queueName string) *grovecorev1alpha1.PodCliqueSet {
+		pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "default", uuid.NewUUID()).
+			WithReplicas(1).
+			WithTerminationDelay(4 * time.Hour).
+			WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder)).
+			WithPodCliqueTemplateSpec(
+				testutils.NewPodCliqueTemplateSpecBuilder("test").
+					WithReplicas(1).
+					WithRoleName("test-role").
+					WithMinAvailable(1).
+					Build()).
+			Build()
+		pcs.Labels = map[string]string{"kueue.x-k8s.io/queue-name": queueName}
+		return pcs
+	}
+
+	_, err := handler.ValidateUpdate(context.Background(), newPCS("a"), newPCS("a"))
+	require.NoError(t, err)
+	_, err = handler.ValidateUpdate(context.Background(), newPCS("a"), newPCS("b"))
+	require.ErrorContains(t, err, `does not support changing label "kueue.x-k8s.io/queue-name" ("a" -> "b")`)
 }
 
 // TestValidateUpdate tests validation of PodCliqueSet update requests.

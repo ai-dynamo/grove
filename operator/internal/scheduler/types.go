@@ -49,7 +49,32 @@ type Backend interface {
 	PreparePod(pod *corev1.Pod) error
 
 	// ValidatePodCliqueSet runs scheduler-specific validations on the PodCliqueSet (e.g. TAS required but not supported).
-	ValidatePodCliqueSet(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet) error
+	// The PodCliqueSet webhook calls it on both create and update. On update, opts carry extra inputs such as the
+	// old PodCliqueSet (see WithOldPodCliqueSet).
+	ValidatePodCliqueSet(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, opts ...ValidateOption) error
+}
+
+// ValidateOptions holds the optional inputs of Backend.ValidatePodCliqueSet.
+type ValidateOptions struct {
+	// OldPCS is the PodCliqueSet before the change. It is set on update only.
+	OldPCS *grovecorev1alpha1.PodCliqueSet
+}
+
+// ValidateOption sets an optional input of Backend.ValidatePodCliqueSet.
+type ValidateOption func(*ValidateOptions)
+
+// WithOldPodCliqueSet passes the PodCliqueSet before an update to Backend.ValidatePodCliqueSet.
+func WithOldPodCliqueSet(oldPCS *grovecorev1alpha1.PodCliqueSet) ValidateOption {
+	return func(o *ValidateOptions) { o.OldPCS = oldPCS }
+}
+
+// NewValidateOptions returns the ValidateOptions that opts set.
+func NewValidateOptions(opts ...ValidateOption) ValidateOptions {
+	var o ValidateOptions
+	for _, opt := range opts {
+		opt(&o)
+	}
+	return o
 }
 
 // PodCliqueScaleValidator is an optional interface that Backend implementations may satisfy to

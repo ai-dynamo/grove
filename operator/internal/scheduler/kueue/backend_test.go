@@ -1167,7 +1167,7 @@ func TestBackend_ValidatePodCliqueSet_MinCount(t *testing.T) {
 			require.NoError(t, b.Init(nil))
 
 			pcs := &grovecorev1alpha1.PodCliqueSet{
-				ObjectMeta: metav1.ObjectMeta{Name: "demo", Namespace: "default"},
+				ObjectMeta: metav1.ObjectMeta{Name: "demo", Namespace: "default", Labels: map[string]string{queueNameLabel: "grove-poc"}},
 				Spec: grovecorev1alpha1.PodCliqueSetSpec{
 					Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
 						Cliques:                      tc.cliques,
@@ -1242,6 +1242,64 @@ func TestBackend_ValidatePodCliqueScale(t *testing.T) {
 	}
 }
 
+func TestBackend_ValidatePodCliqueSet_QueueLabel(t *testing.T) {
+	testCases := []struct {
+		description string
+		// oldLabels is nil for a create.
+		oldLabels  map[string]string
+		newLabels  map[string]string
+		wantErrMsg string
+	}{
+		{
+			description: "create with the queue label is allowed",
+			newLabels:   map[string]string{queueNameLabel: "grove-poc"},
+		},
+		{
+			description: "create without the queue label is rejected",
+			newLabels:   map[string]string{},
+			wantErrMsg:  `must set label "kueue.x-k8s.io/queue-name"`,
+		},
+		{
+			description: "update that keeps the queue label is allowed",
+			oldLabels:   map[string]string{queueNameLabel: "grove-poc"},
+			newLabels:   map[string]string{queueNameLabel: "grove-poc", "team": "inference"},
+		},
+		{
+			description: "update that changes the queue label is rejected",
+			oldLabels:   map[string]string{queueNameLabel: "grove-poc"},
+			newLabels:   map[string]string{queueNameLabel: "other"},
+			wantErrMsg:  `does not support changing label "kueue.x-k8s.io/queue-name" ("grove-poc" -> "other")`,
+		},
+		{
+			description: "update that removes the queue label is rejected",
+			oldLabels:   map[string]string{queueNameLabel: "grove-poc"},
+			newLabels:   map[string]string{},
+			wantErrMsg:  `must set label "kueue.x-k8s.io/queue-name"`,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.description, func(t *testing.T) {
+			cl := testutils.CreateDefaultFakeClient(nil)
+			b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKueue})
+			require.NoError(t, b.Init(nil))
+
+			var opts []scheduler.ValidateOption
+			if tc.oldLabels != nil {
+				oldPCS := &grovecorev1alpha1.PodCliqueSet{ObjectMeta: metav1.ObjectMeta{Name: "demo", Namespace: "default", Labels: tc.oldLabels}}
+				opts = append(opts, scheduler.WithOldPodCliqueSet(oldPCS))
+			}
+			pcs := &grovecorev1alpha1.PodCliqueSet{ObjectMeta: metav1.ObjectMeta{Name: "demo", Namespace: "default", Labels: tc.newLabels}}
+			err := b.ValidatePodCliqueSet(context.Background(), pcs, opts...)
+			if tc.wantErrMsg != "" {
+				require.ErrorContains(t, err, tc.wantErrMsg)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
 func TestBackend_ValidatePodCliqueSet_AutoScalingConfig(t *testing.T) {
 	testCases := []struct {
 		description string
@@ -1291,7 +1349,7 @@ func TestBackend_ValidatePodCliqueSet_AutoScalingConfig(t *testing.T) {
 			require.NoError(t, b.Init(nil))
 
 			pcs := &grovecorev1alpha1.PodCliqueSet{
-				ObjectMeta: metav1.ObjectMeta{Name: "demo", Namespace: "default"},
+				ObjectMeta: metav1.ObjectMeta{Name: "demo", Namespace: "default", Labels: map[string]string{queueNameLabel: "grove-poc"}},
 				Spec: grovecorev1alpha1.PodCliqueSetSpec{
 					Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
 						Cliques:                      tc.cliques,
@@ -1382,7 +1440,7 @@ func TestBackend_ValidatePodCliqueSet_TopologyRequiredAndPreferred(t *testing.T)
 			require.NoError(t, b.Init(nil))
 
 			pcs := &grovecorev1alpha1.PodCliqueSet{
-				ObjectMeta: metav1.ObjectMeta{Name: "demo", Namespace: "default"},
+				ObjectMeta: metav1.ObjectMeta{Name: "demo", Namespace: "default", Labels: map[string]string{queueNameLabel: "grove-poc"}},
 				Spec: grovecorev1alpha1.PodCliqueSetSpec{
 					Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
 						TopologyConstraint: tc.pcsConstraint,
@@ -1493,7 +1551,7 @@ func TestBackend_ValidatePodCliqueSet_PodSetLimit(t *testing.T) {
 			require.NoError(t, b.Init(nil))
 
 			pcs := &grovecorev1alpha1.PodCliqueSet{
-				ObjectMeta: metav1.ObjectMeta{Name: "demo", Namespace: "default"},
+				ObjectMeta: metav1.ObjectMeta{Name: "demo", Namespace: "default", Labels: map[string]string{queueNameLabel: "grove-poc"}},
 				Spec: grovecorev1alpha1.PodCliqueSetSpec{
 					Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
 						Cliques:                      tc.cliques,

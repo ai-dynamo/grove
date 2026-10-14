@@ -454,7 +454,17 @@ func (b *schedulerBackend) podGangTotalPodCount(ctx context.Context, pcs *grovec
 // Workload to set minCount, so at most one standalone PodClique may declare partial-gang
 // (minAvailable < replicas) semantics. The PodCliques that belong to a PodCliqueScalingGroup are
 // always all-or-nothing and must not declare minAvailable < replicas.
-func (b *schedulerBackend) ValidatePodCliqueSet(_ context.Context, pcs *grovecorev1alpha1.PodCliqueSet) error {
+func (b *schedulerBackend) ValidatePodCliqueSet(_ context.Context, pcs *grovecorev1alpha1.PodCliqueSet, opts ...scheduler.ValidateOption) error {
+	queueName, err := queueNameForPodCliqueSet(pcs)
+	if err != nil {
+		return err
+	}
+	// Neither Grove nor Kueue moves an existing Workload of a serving pod group to another queue, so only new
+	// Workloads would use the new queue.
+	if oldPCS := scheduler.NewValidateOptions(opts...).OldPCS; oldPCS != nil && oldPCS.Labels[queueNameLabel] != queueName {
+		return fmt.Errorf("kueue backend does not support changing label %q (%q -> %q) because existing Kueue Workloads stay in their queue; recreate the PodCliqueSet to move it to another queue", queueNameLabel, oldPCS.Labels[queueNameLabel], queueName)
+	}
+
 	// Grove materializes an HPA per clique declaring autoScalingConfig, which would scale the PodClique
 	// and be denied by ValidatePodCliqueScale on every attempt. Reject it up front instead.
 	var autoScaledCliques []string

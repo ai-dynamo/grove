@@ -265,7 +265,7 @@ For standalone `PodClique`s, Grove maps `PodGroup.MinReplicas` to Kueue `PodSet.
 
 ### Kueue Queue Selection
 
-A `PodCliqueSet` selects the Kueue `LocalQueue` by setting the standard Kueue queue label on the `PodCliqueSet` metadata. The Grove operator uses `metadata.labels["kueue.x-k8s.io/queue-name"]` as the queue name for the prebuilt Kueue `Workload` generated for each `PodGang`, and propagates the same value to the Pods it creates.
+A `PodCliqueSet` selects the Kueue `LocalQueue` by setting the standard Kueue queue label on the `PodCliqueSet` metadata. The Grove operator uses `metadata.labels["kueue.x-k8s.io/queue-name"]` as the queue name for the prebuilt Kueue `Workload` generated for each `PodGang`, and propagates the same value to the Pods it creates. The label is required and immutable: the validating webhook rejects a `PodCliqueSet` without it and any update that changes or removes it, because Kueue never moves an existing serving `Workload` to another queue.
 
 For example, a platform team can partition a shared GPU cluster into separate Kueue queues for training and inference:
 

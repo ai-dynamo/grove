@@ -164,7 +164,7 @@ func (b *schedulerBackend) PodGangMembershipAnnotations(newPodGangName string) m
 }
 
 // ValidatePodCliqueSet runs KAI-specific validations on the PodCliqueSet.
-func (b *schedulerBackend) ValidatePodCliqueSet(_ context.Context, pcs *grovecorev1alpha1.PodCliqueSet) error {
+func (b *schedulerBackend) ValidatePodCliqueSet(_ context.Context, pcs *grovecorev1alpha1.PodCliqueSet, _ ...scheduler.ValidateOption) error {
 	_, err := resolveQueueNameForPodCliqueSet(pcs)
 	return err
 }
