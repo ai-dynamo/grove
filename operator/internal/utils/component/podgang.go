@@ -16,6 +16,7 @@ package component
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
@@ -98,6 +99,36 @@ func AllPodGangsAtEpochEverScheduled(ctx context.Context, cl client.Client, pcsO
 	for i := range podGangs {
 		if podGangs[i].Status.LastScheduled == nil {
 			return false, nil
+		}
+	}
+	return true, nil
+}
+
+// PodGangDependenciesEverScheduled reports whether every epoch that podGang's PodGangMap entry DependsOn
+// has all its PodGangs ever scheduled, the condition for lifting the PodGang scheduling gate from its pods.
+// A PodGang without an epoch label has no PodGangMap entry, so it has no recorded dependency.
+func PodGangDependenciesEverScheduled(ctx context.Context, cl client.Client, podGang *groveschedulerv1alpha1.PodGang) (bool, error) {
+	epoch, ok := podGang.Labels[apicommon.LabelEpoch]
+	if !ok {
+		return true, nil
+	}
+	pcsReplicaIndex, err := strconv.Atoi(podGang.Labels[apicommon.LabelPodCliqueSetReplicaIndex])
+	if err != nil {
+		return false, fmt.Errorf("PodGang %s has no valid %s label: %w", client.ObjectKeyFromObject(podGang), apicommon.LabelPodCliqueSetReplicaIndex, err)
+	}
+	pcsObjectKey := client.ObjectKey{Namespace: podGang.Namespace, Name: podGang.Labels[apicommon.LabelPartOfKey]}
+	pgm, err := GetPodGangMap(ctx, cl, pcsObjectKey, pcsReplicaIndex)
+	if err != nil {
+		return false, err
+	}
+	dependsOn, err := DependsOnForEpoch(pgm, epoch)
+	if err != nil {
+		return false, err
+	}
+	for _, dependencyEpoch := range dependsOn {
+		scheduled, err := AllPodGangsAtEpochEverScheduled(ctx, cl, pcsObjectKey, int32(pcsReplicaIndex), dependencyEpoch)
+		if err != nil || !scheduled {
+			return false, err
 		}
 	}
 	return true, nil

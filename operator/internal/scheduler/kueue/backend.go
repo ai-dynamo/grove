@@ -120,8 +120,10 @@ func (b *schedulerBackend) Init(directClient client.Client) error {
 
 // SyncPodGang builds a prebuilt Kueue Workload for every PodGang, mapping each PodGroup to a Kueue podSet.
 // Standalone PodCliques express partial-gang semantics via minCount == minAvailable, while PodCliques that
-// belong to a PodCliqueScalingGroup are treated as all-or-nothing (minCount == count) under the POC
-// assumption that PCSG.minAvailable == PCSG.replicas.
+// belong to a PodCliqueScalingGroup are all-or-nothing (minCount == count). The anchor PodGang's Workload holds
+// every standalone PodClique and each PodCliqueScalingGroup's minAvailable replicas, so Kueue admits and evicts
+// them together. Each replica above minAvailable has its own PodGang and Workload, created once the anchor is
+// scheduled.
 func (b *schedulerBackend) SyncPodGang(ctx context.Context, podGang *groveschedulerv1alpha1.PodGang) error {
 	pcsName := podGang.Labels[apicommon.LabelPartOfKey]
 	if pcsName == "" {
@@ -130,9 +132,10 @@ func (b *schedulerBackend) SyncPodGang(ctx context.Context, podGang *groveschedu
 	return b.ensureWorkload(ctx, podGang, pcsName, b.client)
 }
 
-// ensureWorkload ensures a usable prebuilt Kueue Workload exists for podGang, creating it if absent. An
-// existing Workload that is no longer usable (Finished, or deactivated by Kueue) is deleted and rebuilt
-// from scratch instead of repaired in place, since Kueue Workload podSets are immutable once admitted.
+// ensureWorkload ensures a usable prebuilt Kueue Workload exists for podGang, creating it if absent once the
+// PodGangs that podGang depends on are scheduled. An existing Workload that is no longer usable (Finished, or
+// deactivated by Kueue) is deleted and rebuilt from scratch instead of repaired in place, since Kueue Workload
+// podSets are immutable once admitted.
 // Grove has no watch on Workloads, so PreparePod also calls this for every Pod it prepares. It returns an
 // error, so the caller requeues, while the old Workload is still being deleted.
 //
@@ -158,6 +161,17 @@ func (b *schedulerBackend) ensureWorkload(ctx context.Context, podGang *grovesch
 		log.FromContext(ctx).Info("Deleted stale prebuilt Kueue Workload", "workload", client.ObjectKeyFromObject(existing))
 	case !apierrors.IsNotFound(err):
 		return fmt.Errorf("failed to get prebuilt kueue Workload %s/%s: %w", podGang.Namespace, podGang.Name, err)
+	}
+
+	// Grove holds podGang's pods until the PodGangs it depends on are scheduled, and Kueue reserves quota on
+	// admission, so create the Workload only then. The PodGang controller resyncs podGang at that point.
+	dependenciesScheduled, err := componentutils.PodGangDependenciesEverScheduled(ctx, b.client, podGang)
+	if err != nil {
+		return fmt.Errorf("failed to check the dependencies of PodGang %s/%s: %w", podGang.Namespace, podGang.Name, err)
+	}
+	if !dependenciesScheduled {
+		log.FromContext(ctx).V(1).Info("Waiting for the PodGangs this PodGang depends on to be scheduled before creating its prebuilt Kueue Workload", "podGang", client.ObjectKeyFromObject(podGang))
+		return nil
 	}
 
 	pcs := &grovecorev1alpha1.PodCliqueSet{}
@@ -199,7 +213,7 @@ func workloadNeedsReplacement(wl *kueuev1beta2.Workload) bool {
 // buildPrebuiltWorkload constructs a prebuilt Kueue Workload from a PodGang, mapping each PodGroup to a Kueue
 // podSet. The podSet name is the PodGroup FQN so scaling-group replicas of the same clique stay unique. count
 // is the clique replicas; minCount is the PodGroup minReplicas for standalone cliques and is forced to count
-// for scaling-group cliques (POC assumption PCSG.minAvailable == PCSG.replicas).
+// for scaling-group cliques.
 func (b *schedulerBackend) buildPrebuiltWorkload(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, podGang *groveschedulerv1alpha1.PodGang) (*kueuev1beta2.Workload, error) {
 	queueName, err := queueNameForPodCliqueSet(pcs)
 	if err != nil {
@@ -208,8 +222,8 @@ func (b *schedulerBackend) buildPrebuiltWorkload(ctx context.Context, pcs *grove
 
 	// Kueue permits at most one podSet per Workload to set minCount (partial admission is limited to a single
 	// podSet). Grove therefore only sets minCount on the first podSet whose minCount is strictly less than its
-	// count; all other podSets (including every PodCliqueScalingGroup clique, which is all-or-nothing in this POC)
-	// omit minCount, which Kueue defaults to count.
+	// count; all other podSets (including every PodCliqueScalingGroup clique, which is all-or-nothing) omit
+	// minCount, which Kueue defaults to count.
 	minCountUsed := false
 	podSets := make([]kueuev1beta2.PodSet, 0, len(podGang.Spec.PodGroups))
 	for _, podGroup := range podGang.Spec.PodGroups {
@@ -438,8 +452,8 @@ func (b *schedulerBackend) podGangTotalPodCount(ctx context.Context, pcs *grovec
 // Grove builds one prebuilt Kueue Workload per PodGang and maps each standalone PodClique with
 // minAvailable < replicas to a Kueue podSet that sets minCount. Kueue permits at most one podSet per
 // Workload to set minCount, so at most one standalone PodClique may declare partial-gang
-// (minAvailable < replicas) semantics. PodCliqueScalingGroups, and the PodCliques that belong to
-// them, are always all-or-nothing and must not declare minAvailable < replicas.
+// (minAvailable < replicas) semantics. The PodCliques that belong to a PodCliqueScalingGroup are
+// always all-or-nothing and must not declare minAvailable < replicas.
 func (b *schedulerBackend) ValidatePodCliqueSet(_ context.Context, pcs *grovecorev1alpha1.PodCliqueSet) error {
 	// Grove materializes an HPA per clique declaring autoScalingConfig, which would scale the PodClique
 	// and be denied by ValidatePodCliqueScale on every attempt. Reject it up front instead.
@@ -454,24 +468,6 @@ func (b *schedulerBackend) ValidatePodCliqueSet(_ context.Context, pcs *grovecor
 	}
 	if len(autoScaledCliques) > 0 {
 		return fmt.Errorf("kueue backend does not support autoScalingConfig on a PodClique because scaling a PodClique reshapes an existing PodGang whose Kueue Workload podSets are immutable, but the following declare it: %s; declare autoscaling on a PodCliqueScalingGroup instead", strings.Join(autoScaledCliques, ", "))
-	}
-
-	var partialGangPCSGs []string
-	for _, pcsgConfig := range pcs.Spec.Template.PodCliqueScalingGroupConfigs {
-		// A nil Replicas or MinAvailable defers to the CRD's kubebuilder default; nothing to compare yet.
-		if pcsgConfig.Replicas == nil || pcsgConfig.MinAvailable == nil {
-			continue
-		}
-		if *pcsgConfig.MinAvailable < *pcsgConfig.Replicas {
-			partialGangPCSGs = append(partialGangPCSGs, pcsgConfig.Name)
-		}
-	}
-	// Kueue permits minCount on at most one podSet per Workload, and Grove reserves that single slot for a
-	// standalone PodClique (see the partialGangCliques check below). PodCliqueScalingGroups are therefore
-	// always all-or-nothing. Hence a PodCliqueSet with a PodCliqueScalingGroup whose minAvailable < replicas
-	// is rejected.
-	if len(partialGangPCSGs) > 0 {
-		return fmt.Errorf("kueue backend requires PodCliqueScalingGroups to set minAvailable == replicas (all-or-nothing), but the following set minAvailable < replicas: %s", strings.Join(partialGangPCSGs, ", "))
 	}
 
 	var (

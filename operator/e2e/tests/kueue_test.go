@@ -651,27 +651,6 @@ func Test_Kueue6_ValidatePodCliqueSetAndScaleRejection(t *testing.T) {
 		return pcs
 	}
 
-	t.Run("PCSG minAvailable < replicas is rejected", func(t *testing.T) {
-		pcs := newPCS("kueue-t6-pcsg-min")
-		pcs.Spec.Template.Cliques = []*corev1alpha1.PodCliqueTemplateSpec{kueueSchedulerClique("worker", 1, 1)}
-		pcs.Spec.Template.PodCliqueScalingGroupConfigs = []corev1alpha1.PodCliqueScalingGroupConfig{
-			{
-				Name:         "sg",
-				CliqueNames:  []string{"worker"},
-				Replicas:     ptr.To(int32(2)),
-				MinAvailable: ptr.To(int32(1)),
-			},
-		}
-		err := tc.Client.Create(ctx, pcs)
-		if err == nil {
-			t.Fatalf("Expected PCSG minAvailable < replicas to be rejected, but create succeeded")
-		}
-		wantErrSubstr := "kueue backend requires PodCliqueScalingGroups to set minAvailable == replicas"
-		if !strings.Contains(err.Error(), wantErrSubstr) {
-			t.Fatalf("Expected error to contain %q, got: %v", wantErrSubstr, err)
-		}
-	})
-
 	t.Run("PCSG-member PodClique minAvailable < replicas is rejected", func(t *testing.T) {
 		pcs := newPCS("kueue-t6-member-min")
 		pcs.Spec.Template.Cliques = []*corev1alpha1.PodCliqueTemplateSpec{kueueSchedulerClique("worker", 2, 1)}
@@ -1214,4 +1193,111 @@ func Test_Kueue10_UnsortedCliquesKeepWorkloadInSync(t *testing.T) {
 	}
 
 	Logger.Info("Test_Kueue10_UnsortedCliquesKeepWorkloadInSync completed successfully!")
+}
+
+// Test_Kueue11_ScalingGroupTailWaitsForAnchor verifies a scaling group with minAvailable < replicas, the
+// layout Dynamo deploys by default. Replicas 1 and 2 are tail PodGangs whose pods Grove holds until the
+// anchor PodGang is scheduled, so Grove creates their Workloads only then. A blocker leaves room in the
+// queue for both tails but not for the anchor: Workloads created up front would let Kueue admit the
+// tails and hold that quota while their pods wait on the anchor.
+func Test_Kueue11_ScalingGroupTailWaitsForAnchor(t *testing.T) {
+	ctx := context.Background()
+	const (
+		queueName   = "grove-e2e-backlog"
+		blockerName = "kueue-pcsg-tail-blocker"
+		// The frontend plus 3 scaling-group replicas of a leader and a worker.
+		expectedPods = 7
+		// How long the tails must stay without a Workload while the anchor cannot be admitted.
+		holdWindow = 15 * time.Second
+	)
+
+	// One node per pod, plus one for the blocker's pod.
+	tc, cleanup := testctx.PrepareTest(ctx, t, expectedPods+1,
+		testctx.WithWorkload(&testctx.WorkloadConfig{
+			Name:         "kueue-pcsg-tail",
+			YAMLPath:     "../yaml/kueue-pcsg-tail.yaml",
+			Namespace:    "default",
+			ExpectedPods: expectedPods,
+		}),
+	)
+	requireKueueCRD(t, tc)
+	// Deferred first so it runs after cleanup deletes the PodCliqueSets.
+	defer deleteKueueQueueResources(ctx, t, tc.Client, queueName)
+	defer cleanup()
+
+	pm := pods.NewPodManager(tc.Client, Logger)
+	pgVerifier := podgang.NewVerifier(tc.Client, Logger)
+	wlVerifier := kueueworkload.NewVerifier(tc.Client, Logger)
+
+	Logger.Info("1. Apply the grove-e2e-backlog queue and a blocker that leaves room for the tails but not the anchor")
+	if _, err := tc.ApplyYAMLFile("../yaml/kueue-queues-backlog.yaml"); err != nil {
+		t.Fatalf("Failed to apply kueue-queues-backlog.yaml: %v", err)
+	}
+	if _, err := tc.ApplyYAMLFile("../yaml/kueue-pcsg-tail-blocker.yaml"); err != nil {
+		t.Fatalf("Failed to apply the blocker: %v", err)
+	}
+	blockerSelector := fmt.Sprintf("%s=%s", nameutils.LabelPartOfKey, blockerName)
+	if err := pm.WaitForCountAndPhases(ctx, tc.Namespace, blockerSelector, 1, 1, 0, tc.Timeout, tc.Interval); err != nil {
+		t.Fatalf("Failed to wait for the blocker pod to be Running: %v", err)
+	}
+
+	Logger.Info("2. Deploy the PodCliqueSet and find its anchor and tail PodGangs")
+	if _, err := tc.DeployAndVerifyWorkload(); err != nil {
+		t.Fatalf("Failed to deploy kueue-pcsg-tail: %v", err)
+	}
+	pcsNsName := types.NamespacedName{Namespace: tc.Namespace, Name: tc.Workload.Name}
+	podGangs := waitForPodGangCount(ctx, t, pgVerifier, pcsNsName, 3, tc.Timeout, tc.Interval)
+	tails := nonAnchorPodGangs(podGangs)
+	if len(tails) != 2 {
+		t.Fatalf("Expected 2 tail PodGangs, got %d", len(tails))
+	}
+	var anchor groveschedulerv1alpha1.PodGang
+	for _, pg := range podGangs {
+		if pg.Labels[nameutils.LabelPodGangRole] == string(corev1alpha1.PodGangEntryRoleAnchor) {
+			anchor = pg
+		}
+	}
+	if anchor.Name == "" {
+		t.Fatalf("Expected an anchor PodGang among %d PodGangs", len(podGangs))
+	}
+
+	Logger.Info("3. Verify the anchor's Workload queues and the tails get no Workload while the anchor cannot be admitted")
+	if _, err := wlVerifier.WaitUntilVerified(ctx, anchor.Namespace, anchor.Name, tc.Timeout, tc.Interval, func(wl *kueuev1beta2.Workload) bool { return wl != nil }); err != nil {
+		t.Fatalf("Anchor Kueue Workload was not created: %v", err)
+	}
+	for deadline := time.Now().Add(holdWindow); time.Now().Before(deadline); time.Sleep(tc.Interval) {
+		anchorWL, err := wlVerifier.Get(ctx, anchor.Namespace, anchor.Name)
+		if err != nil {
+			t.Fatalf("Failed to get the anchor Kueue Workload: %v", err)
+		}
+		if kueueworkload.Admitted(anchorWL) {
+			t.Fatalf("Anchor Kueue Workload was admitted while the blocker holds the quota it needs")
+		}
+		for _, tail := range tails {
+			if _, err := wlVerifier.Get(ctx, tail.Namespace, tail.Name); !apierrors.IsNotFound(err) {
+				t.Fatalf("Tail PodGang %s has a Kueue Workload (get error %v) before its anchor is scheduled", tail.Name, err)
+			}
+		}
+	}
+
+	Logger.Info("4. Delete the blocker to free its quota")
+	blocker := &corev1alpha1.PodCliqueSet{ObjectMeta: metav1.ObjectMeta{Namespace: tc.Namespace, Name: blockerName}}
+	if err := client.IgnoreNotFound(tc.Client.Delete(ctx, blocker)); err != nil {
+		t.Fatalf("Failed to delete the blocker: %v", err)
+	}
+
+	Logger.Info("5. Verify the anchor is admitted, then both tails get admitted Workloads and every pod runs")
+	if _, err := wlVerifier.WaitUntilVerified(ctx, anchor.Namespace, anchor.Name, tc.Timeout, tc.Interval, kueueworkload.Admitted); err != nil {
+		t.Fatalf("Anchor Kueue Workload not Admitted after the blocker was deleted: %v", err)
+	}
+	for _, tail := range tails {
+		if _, err := wlVerifier.WaitUntilVerified(ctx, tail.Namespace, tail.Name, tc.Timeout, tc.Interval, kueueworkload.Admitted); err != nil {
+			t.Fatalf("Tail PodGang %s's Kueue Workload not Admitted: %v", tail.Name, err)
+		}
+	}
+	if err := tc.WaitForPods(expectedPods); err != nil {
+		t.Fatalf("Failed to wait for pods to be Running: %v", err)
+	}
+
+	Logger.Info("Test_Kueue11_ScalingGroupTailWaitsForAnchor completed successfully!")
 }

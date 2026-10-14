@@ -712,6 +712,81 @@ func TestBackend_SyncPodGang_WaitsForDeletedWorkloadToGo(t *testing.T) {
 	assert.Equal(t, kueuev1beta2.LocalQueueName("grove-poc"), got.Spec.QueueName, "the Workload must be rebuilt once the old one is gone")
 }
 
+// TestBackend_TailWorkloadWaitsForAnchor covers a scaling group with 2 replicas and minAvailable 1: replica 1
+// is a tail PodGang that depends on the anchor, so neither SyncPodGang nor PreparePod creates its Workload
+// until the anchor is scheduled.
+func TestBackend_TailWorkloadWaitsForAnchor(t *testing.T) {
+	const anchorEpoch, tailEpoch = "1000", "1001"
+	pcs := &grovecorev1alpha1.PodCliqueSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "demo", Namespace: "default", Labels: map[string]string{queueNameLabel: "grove-poc"}},
+		Spec: grovecorev1alpha1.PodCliqueSetSpec{
+			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
+				Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{{Name: "worker", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1}}},
+				PodCliqueScalingGroupConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+					{Name: "decode", CliqueNames: []string{"worker"}, Replicas: ptr.To[int32](2), MinAvailable: ptr.To[int32](1)},
+				},
+			},
+		},
+	}
+	pgm := testutils.NewPodGangMapBuilder("demo", "default", "pcs-uid", 0).
+		WithEntries(
+			testutils.NewAnchorEntry("hash", anchorEpoch, "decode", 0),
+			testutils.NewPodGangEntryBuilder("hash", tailEpoch).
+				WithRole(grovecorev1alpha1.PodGangEntryRoleTail).
+				WithPCSGReplicaIndices(map[string][]int32{"decode": {1}}).
+				WithDependsOn(anchorEpoch).
+				Build(),
+		).
+		Build()
+	podGangAtEpoch := func(name, epoch, podGroupName string) *groveschedulerv1alpha1.PodGang {
+		return testutils.NewPodGangBuilder(name, "default").
+			WithLabels(map[string]string{
+				apicommon.LabelPartOfKey:                "demo",
+				apicommon.LabelPodCliqueSetReplicaIndex: "0",
+				apicommon.LabelEpoch:                    epoch,
+			}).
+			WithPodGroup(podGroupName, 1).
+			Build()
+	}
+	anchor := podGangAtEpoch("demo-0-1000", anchorEpoch, "demo-0-decode-0-worker")
+	tail := podGangAtEpoch("demo-0-1001-decode-1", tailEpoch, "demo-0-decode-1-worker")
+	tailPCLQ := &grovecorev1alpha1.PodClique{ObjectMeta: metav1.ObjectMeta{
+		Namespace: "default",
+		Name:      "demo-0-decode-1-worker",
+		Labels: map[string]string{
+			apicommon.LabelPodCliqueScalingGroup:             "demo-0-decode",
+			apicommon.LabelPodCliqueScalingGroupReplicaIndex: "1",
+		},
+	}}
+	cl := testutils.NewTestClientBuilder().WithObjects(pcs, pgm, anchor, tail, tailPCLQ).Build()
+	b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKueue})
+	require.NoError(t, b.Init(nil))
+	tailKey := client.ObjectKeyFromObject(tail)
+	tailPod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
+		Namespace: "default",
+		Labels: map[string]string{
+			apicommon.LabelPartOfKey: "demo",
+			apicommon.LabelPodClique: "demo-0-decode-1-worker",
+			apicommon.LabelPodGang:   tail.Name,
+		},
+	}}
+
+	require.NoError(t, b.SyncPodGang(context.Background(), tail))
+	require.NoError(t, b.PreparePod(tailPod))
+	err := cl.Get(context.Background(), tailKey, &kueuev1beta2.Workload{})
+	require.True(t, apierrors.IsNotFound(err), "the tail's Workload must wait for the anchor to be scheduled, got %v", err)
+
+	now := metav1.Now()
+	anchor.Status.LastScheduled = &now
+	require.NoError(t, cl.Update(context.Background(), anchor))
+
+	require.NoError(t, b.SyncPodGang(context.Background(), tail))
+	got := &kueuev1beta2.Workload{}
+	require.NoError(t, cl.Get(context.Background(), tailKey, got))
+	require.Len(t, got.Spec.PodSets, 1)
+	assert.Equal(t, kueuev1beta2.NewPodSetReference("demo-0-decode-1-worker"), got.Spec.PodSets[0].Name)
+}
+
 func TestBackend_SyncPodGang_RejectsInvalidMinReplicas(t *testing.T) {
 	testCases := []struct {
 		name        string
@@ -1063,15 +1138,14 @@ func TestBackend_ValidatePodCliqueSet_MinCount(t *testing.T) {
 			},
 		},
 		{
-			description: "PCSG with minAvailable < replicas is rejected",
+			description: "PCSG with minAvailable < replicas is valid because each extra replica gets its own PodGang",
 			cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-				{Name: "leader", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 4, MinAvailable: ptr.To[int32](4)}},
+				{Name: "leader", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To[int32](1)}},
+				{Name: "worker", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 4, MinAvailable: ptr.To[int32](4)}},
 			},
 			pcsgConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
-				{Name: "decode", CliqueNames: []string{"leader"}, Replicas: ptr.To[int32](4), MinAvailable: ptr.To[int32](2)},
+				{Name: "decode", CliqueNames: []string{"leader", "worker"}, Replicas: ptr.To[int32](5), MinAvailable: ptr.To[int32](1)},
 			},
-			wantErr:    true,
-			wantErrMsg: "PodCliqueScalingGroups to set minAvailable == replicas",
 		},
 		{
 			description: "PCSG with nil replicas or minAvailable defers to CRD defaulting",
@@ -1402,6 +1476,13 @@ func TestBackend_ValidatePodCliqueSet_PodSetLimit(t *testing.T) {
 				scalingGroup("decode", 5, "d-leader", "d-worker"),
 			},
 			wantErr: "base PodGang would have 19",
+		},
+		{
+			description: "scaling-group replicas above minAvailable get their own PodGangs",
+			cliques:     cliques("router", "leader", "worker"),
+			scalingGroups: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+				{Name: "decode", CliqueNames: []string{"leader", "worker"}, Replicas: ptr.To[int32](20), MinAvailable: ptr.To[int32](1)},
+			},
 		},
 	}
 
