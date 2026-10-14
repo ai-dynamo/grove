@@ -458,8 +458,11 @@ func TestBuildResource_MNNVLInjection(t *testing.T) {
 				eventRecorder: record.NewFakeRecorder(10),
 			}
 
-			err := operator.buildResource(logr.Discard(), pcs, pcsReplica, false, pclq)
+			podTemplateHash := testutils.ComputePodCliqueTemplateHashes(pcs)[pclqTemplateName]
+			err := operator.buildResource(logr.Discard(), pcs, pcsReplica, false, pclq, podTemplateHash)
 			require.NoError(t, err)
+			assert.Equal(t, podTemplateHash, pclq.Labels[apicommon.LabelPodTemplateHash])
+			assert.NotContains(t, pclq.Labels, apicommon.LabelPodGang)
 
 			// Verify pod-level claims
 			if tc.expectPodLevelClaim {
@@ -512,7 +515,7 @@ func TestBuildResource_StripsTopologyAnnotation(t *testing.T) {
 	}
 
 	operator := &_resource{scheme: groveclientscheme.Scheme}
-	err := operator.buildResource(logr.Discard(), pcs, 0, false, pclq)
+	err := operator.buildResource(logr.Discard(), pcs, 0, false, pclq, "template-hash")
 	require.NoError(t, err)
 	require.NotNil(t, pclq.Annotations)
 	assert.Equal(t, "yes", pclq.Annotations["example.com/keep"])
@@ -566,7 +569,7 @@ func TestBuildResource_PreservesRevisionForReplicaNotUnderCoherentUpdate(t *test
 
 			operator := &_resource{scheme: groveclientscheme.Scheme}
 
-			err := operator.buildResource(logr.Discard(), pcs, tc.pcsReplica, true, pclq)
+			err := operator.buildResource(logr.Discard(), pcs, tc.pcsReplica, true, pclq, "new-hash")
 			require.NoError(t, err)
 
 			if tc.expectPreserved {
@@ -618,7 +621,7 @@ func TestBuildResource_DoesNotWriteStartsAfter(t *testing.T) {
 	// pcsReplica 1 is not the replica under update, so it is preserved. Reconcile twice; the controller must
 	// leave StartsAfter untouched both times.
 	for i := range 2 {
-		err := operator.buildResource(logr.Discard(), pcs, pcsReplica, true, pclq)
+		err := operator.buildResource(logr.Discard(), pcs, pcsReplica, true, pclq, "new-hash")
 		require.NoError(t, err, "reconcile %d", i)
 		assert.Equal(t, staleStartsAfter, pclq.Spec.StartsAfter, "reconcile %d", i)
 	}

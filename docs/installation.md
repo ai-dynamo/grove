@@ -118,6 +118,14 @@ Follow the instructions in the [quickstart guide](quickstart.md) to deploy a Pod
 
 ## Upgrade Notes
 
+### Rollout revision adoption
+
+Apply the release CRDs before upgrading the operator, or enable `crdInstaller.enabled=true`, so the PodCliqueSet CRD preserves `status.currentRevision`.
+
+On its first reconcile, the new operator creates a baseline `apps/v1` `ControllerRevision` for each PodCliqueSet without one. It reuses an existing selected generation hash and observed per-clique hashes where present, initializes rollout progress, and derives progress from current children on a subsequent reconcile. Matching children are not replaced; missing or mismatched children follow the configured update strategy. Later rollout-relevant template changes select a new ControllerRevision.
+
+An older operator ignores ControllerRevision objects after a downgrade and resumes generation-hash reconciliation. Hash differences may trigger a rollout. When downgrading, retain the newer CRDs and set `crdInstaller.enabled=false`. Compatibility depends on the target release, and temporary unavailability may occur.
+
 ### ClusterTopology renamed to ClusterTopologyBinding
 
 Grove does not provide automatic migration for existing `ClusterTopology`

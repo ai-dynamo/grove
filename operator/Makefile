@@ -132,8 +132,8 @@ run-e2e-verbose: $(GOTESTSUM)
 	@echo "> Running e2e tests (verbose)..."
 	@cd e2e && $(GOTESTSUM) --format short-verbose -- -count=1 -tags=e2e ./tests/... -timeout 45m $(if $(TEST_PATTERN),-run '$(TEST_PATTERN)')
 
-# Run the standalone upgrade test from the latest published GitHub release to
-# the operator built from the current checkout. The test owns its k3d cluster.
+# Run upgrade and downgrade tests against pinned releases and the current checkout.
+# The suite owns its k3d cluster.
 .PHONY: run-upgrade-e2e
 run-upgrade-e2e: export GROVE_E2E_DIAG_DIR = $(DIAG_DIR)
 run-upgrade-e2e: export GROVE_E2E_DIAG_MODE = $(DIAG_MODE)

@@ -36,12 +36,16 @@ import (
 	"github.com/ai-dynamo/grove/operator/e2e/grove/podgangmap"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/pods"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
-	"github.com/google/go-github/v86/github"
+	commonrevision "github.com/ai-dynamo/grove/operator/internal/controller/common/revision"
+
 	"github.com/stretchr/testify/require"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 const (
@@ -58,53 +62,69 @@ type podSurvivalUpgrade struct {
 	fromVersion       string
 	workload          *testctx.WorkloadConfig
 	podsBeforeUpgrade *corev1.PodList
+	pcsBeforeUpgrade  *grovev1alpha1.PodCliqueSet
 }
 
 // deployWorkload deploys the workload on the fromVersion operator and captures its pods.
 func (s *podSurvivalUpgrade) deployWorkload(t *testing.T, tc *testctx.TestContext) {
 	_, err := tc.DeployAndVerifyWorkload()
 	require.NoError(t, err, "applying workload")
+	s.pcsBeforeUpgrade = waitForPCSConvergence(t, tc)
+	require.NoError(t, tc.WaitForPods(s.workload.ExpectedPods))
 	s.podsBeforeUpgrade, err = tc.ListPods()
 	require.NoError(t, err, "listing workload pods")
 }
 
 // verifyPodsSurvive scales the workload, then asserts the pre-upgrade pods were not recreated and the
 // init containers were updated.
-func (s *podSurvivalUpgrade) verifyPodsSurvive(t *testing.T, tc *testctx.TestContext) {
+func (s *podSurvivalUpgrade) verifyPodsSurvive(t *testing.T, tc *testctx.TestContext) *commonrevision.Revision {
 	tc.ScalePCSAndWait(s.workload.Name, 2, 4, 0)
+	pcs, revision := waitForRevisionAdoption(t, tc)
+	require.Equal(t, s.pcsBeforeUpgrade.Status.CurrentGenerationHash, pcs.Status.CurrentGenerationHash,
+		"adoption and scaling must preserve the selected generation hash")
+	require.NoError(t, tc.WaitForPods(4))
 	initContainerImage := fmt.Sprintf("ghcr.io/ai-dynamo/grove/grove-initc:%s", s.fromVersion)
 	verifyInitContainerUpdate(t, tc, s.podsBeforeUpgrade, initContainerImage)
-	verifyPodUIDsUnchanged(t, tc, s.podsBeforeUpgrade)
+	verifyAdoptedPodHashes(t, tc, revision, s.podsBeforeUpgrade)
+	return revision
 }
 
-// Test_VUPG1_UpgradeFromLatestGitHubRelease verifies that a workload's pods created with the latest released
-// version of Grove are not recreated during an upgrade to the operator built from the current
-// checkout.
-//
-// The initial version of Grove to install can be controlled with GROVE_UPGRADE_FROM_VERSION.
-func Test_VUPG1_UpgradeFromLatestGitHubRelease(t *testing.T) {
-	fromVersion := os.Getenv("GROVE_UPGRADE_FROM_VERSION")
-	if fromVersion == "" {
-		fromVersion = latestGitHubRelease(t)
+// Test_VUPG1_RevisionAdoptionAndUpdate covers both released hash layouts and a subsequent template update.
+// GROVE_UPGRADE_FROM_VERSION can select a single starting release.
+func Test_VUPG1_RevisionAdoptionAndUpdate(t *testing.T) {
+	versions := []string{"v0.1.0-alpha.9", defaultUpgradeFromVersion}
+	if version := os.Getenv("GROVE_UPGRADE_FROM_VERSION"); version != "" {
+		versions = []string{version}
 	}
 
-	s := &podSurvivalUpgrade{
-		fromVersion: fromVersion,
-		workload: &testctx.WorkloadConfig{
-			Name:         "upgrade-survivor",
-			YAMLPath:     "../../yaml/upgrade.yaml",
-			Namespace:    "default",
-			ExpectedPods: 2,
-		},
-	}
+	for _, version := range versions {
+		t.Run(version, func(t *testing.T) {
+			s := &podSurvivalUpgrade{fromVersion: version, workload: revisionWorkload()}
+			runUpgradeTest(t, upgradeTest{
+				fromVersion:     version,
+				nodeWorkerCount: 1,
+				prepareOpts:     []testctx.TestOption{testctx.WithWorkload(s.workload)},
+				preUpgrade:      s.deployWorkload,
+				postUpgrade: func(t *testing.T, tc *testctx.TestContext) {
+					before := s.verifyPodsSurvive(t, tc)
+					oldBootstrapHash, err := before.CliqueHash("bootstrap")
+					require.NoError(t, err)
+					oldWorkerHash, err := before.CliqueHash("worker")
+					require.NoError(t, err)
 
-	runUpgradeTest(t, upgradeTest{
-		fromVersion:     s.fromVersion,
-		nodeWorkerCount: 1,
-		prepareOpts:     []testctx.TestOption{testctx.WithWorkload(s.workload)},
-		preUpgrade:      s.deployWorkload,
-		postUpgrade:     s.verifyPodsSurvive,
-	})
+					updateWorkerAndWait(t, tc, "after-upgrade")
+					_, after := waitForRevisionAdoption(t, tc)
+					require.NotEqual(t, before.Name(), after.Name())
+					bootstrapHash, err := after.CliqueHash("bootstrap")
+					require.NoError(t, err)
+					workerHash, err := after.CliqueHash("worker")
+					require.NoError(t, err)
+					require.Equal(t, oldBootstrapHash, bootstrapHash, "unchanged clique identity must survive an update")
+					require.NotEqual(t, oldWorkerHash, workerHash)
+				},
+			})
+		})
+	}
 }
 
 // Test_VUPG2_RecoverPodGangMapAfterScaleBelowMinAvailable verifies that after migrating a
@@ -124,6 +144,50 @@ func Test_VUPG2_RecoverPodGangMapAfterScaleBelowMinAvailable(t *testing.T) {
 		})},
 		preUpgrade:  deployWorkloadOnFromVersion,
 		postUpgrade: verifyPodGangMapRecoversAfterScaleBelowMinAvailable,
+	})
+}
+
+func Test_VUPG3_DowngradeAfterRevisionAdoption(t *testing.T) {
+	version := upgradeFromVersion()
+	s := &podSurvivalUpgrade{fromVersion: version, workload: revisionWorkload()}
+	runUpgradeTest(t, upgradeTest{
+		fromVersion:     version,
+		nodeWorkerCount: 1,
+		prepareOpts:     []testctx.TestOption{testctx.WithWorkload(s.workload)},
+		preUpgrade: func(t *testing.T, tc *testctx.TestContext) {
+			waitForReleasedOperator(t, tc, version)
+			s.deployWorkload(t, tc)
+			require.Nil(t, s.pcsBeforeUpgrade.Status.CurrentRevision)
+			if progress := s.pcsBeforeUpgrade.Status.UpdateProgress; progress != nil {
+				require.Empty(t, progress.CurrentlyUpdating, "the baseline must have no update in progress")
+			}
+			revisions := &appsv1.ControllerRevisionList{}
+			require.NoError(t, tc.Client.List(t.Context(), revisions, client.InNamespace(tc.Namespace)))
+			for i := range revisions.Items {
+				require.False(t, metav1.IsControlledBy(&revisions.Items[i], s.pcsBeforeUpgrade),
+					"the starting release must not manage ControllerRevisions")
+			}
+		},
+		postUpgrade: func(t *testing.T, tc *testctx.TestContext) {
+			beforeDowngrade, selected := waitForRevisionAdoption(t, tc)
+			verifyPodUIDsUnchanged(t, tc, s.podsBeforeUpgrade)
+			require.Equal(t, s.pcsBeforeUpgrade.Spec, beforeDowngrade.Spec,
+				"the round trip must not change the workload template")
+
+			downgradeGrove(t, tc, version)
+			waitForPCSConvergence(t, tc)
+			require.NoError(t, tc.WaitForPods(s.workload.ExpectedPods))
+			// Only scaling is needed to prove the old operator resumed management.
+			tc.ScalePCSAndWait(s.workload.Name, 2, 4, 0)
+			scaled := waitForPCSConvergence(t, tc)
+			require.NoError(t, tc.WaitForPods(4))
+			expected := beforeDowngrade.Spec.DeepCopy()
+			expected.Replicas = 2
+			require.Equal(t, *expected, scaled.Spec, "only replicas may change after downgrading")
+			require.NoError(t, tc.Client.Get(t.Context(), client.ObjectKey{Namespace: tc.Namespace, Name: selected.Name()}, &appsv1.ControllerRevision{}),
+				"the downgraded operator must ignore ControllerRevisions")
+			verifyStableWorkload(t, tc, 4)
+		},
 	})
 }
 
@@ -196,12 +260,13 @@ func verifyInitContainerUpdate(t *testing.T, tc *testctx.TestContext, podsList *
 		initContainers = append(initContainers, pods.InitContainerImages(pod)...)
 	}
 
+	_, pullRepo, tag := upgradeImageSettings()
 	require.ElementsMatch(
 		t,
 		initContainers,
 		// Expect a mix of the existing pods with the old initc and new pods with the updated initc
 		[]string{
-			"registry:5001/grove-initc:latest",
+			pullRepo + "/grove-initc:" + tag,
 			initContainerImage,
 		},
 		"init containers do not match expected list",
@@ -225,16 +290,4 @@ func verifyPodUIDsUnchanged(t *testing.T, tc *testctx.TestContext, podsList *cor
 	}
 
 	require.Subsetf(t, currentPodUIDs, originalPodUIDs, "pods were replaced during the operator upgrade")
-}
-
-// latestGitHubRelease fetches the latest Grove release tag for the base of the upgrade test.
-func latestGitHubRelease(t *testing.T) string {
-	t.Helper()
-
-	client := github.NewClient(nil).WithAuthToken(os.Getenv("GITHUB_TOKEN"))
-	release, _, err := client.Repositories.GetLatestRelease(t.Context(), "ai-dynamo", "grove")
-	require.NoError(t, err, "get latest Grove release from GitHub")
-	tagName := release.GetTagName()
-	require.NotEmpty(t, tagName, "latest Grove GitHub release did not contain tag_name")
-	return tagName
 }
