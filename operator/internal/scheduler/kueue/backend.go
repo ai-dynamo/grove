@@ -56,8 +56,9 @@ const (
 	podSetPreferredTopologyAnnotation = "kueue.x-k8s.io/podset-preferred-topology"
 	roleHashAnnotation                = "kueue.x-k8s.io/role-hash"
 	isGroupWorkloadAnnotation         = "kueue.x-k8s.io/is-group-workload"
-	// maxWorkloadPodSets is the maxItems of a Workload's spec.podSets in Kueue v0.17.8 (v0.19 raises it to 18).
-	maxWorkloadPodSets = 8
+	// maxWorkloadPodSets is the maxItems of a Workload's spec.podSets in Kueue v0.20.1, the version this backend
+	// supports (v0.17 caps it at 8).
+	maxWorkloadPodSets = 18
 )
 
 type resolvedTopologyRequest struct {

@@ -760,14 +760,14 @@ func Test_Kueue6_ValidatePodCliqueSetAndScaleRejection(t *testing.T) {
 
 	t.Run("PodGang with more PodGroups than Kueue's podSet limit is rejected", func(t *testing.T) {
 		pcs := newPCS("kueue-t6-podset-limit")
-		for _, name := range []string{"c1", "c2", "c3", "c4", "c5", "c6", "c7", "c8", "c9"} {
-			pcs.Spec.Template.Cliques = append(pcs.Spec.Template.Cliques, kueueSchedulerClique(name, 1, 1))
+		for i := range 19 {
+			pcs.Spec.Template.Cliques = append(pcs.Spec.Template.Cliques, kueueSchedulerClique(fmt.Sprintf("c%d", i), 1, 1))
 		}
 		err := tc.Client.Create(ctx, pcs)
 		if err == nil {
-			t.Fatalf("Expected a PodCliqueSet whose base PodGang has 9 PodGroups to be rejected, but create succeeded")
+			t.Fatalf("Expected a PodCliqueSet whose base PodGang has 19 PodGroups to be rejected, but create succeeded")
 		}
-		wantErrSubstr := "kueue backend allows at most 8 PodGroups per PodGang"
+		wantErrSubstr := "kueue backend allows at most 18 PodGroups per PodGang"
 		if !strings.Contains(err.Error(), wantErrSubstr) {
 			t.Fatalf("Expected error to contain %q, got: %v", wantErrSubstr, err)
 		}

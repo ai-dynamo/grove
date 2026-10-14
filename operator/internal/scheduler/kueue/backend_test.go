@@ -18,6 +18,7 @@ package kueue
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -1355,6 +1356,13 @@ func TestBackend_ValidatePodCliqueSet_PodSetLimit(t *testing.T) {
 		}
 		return result
 	}
+	numbered := func(prefix string, n int) []string {
+		names := make([]string, 0, n)
+		for i := range n {
+			names = append(names, fmt.Sprintf("%s%d", prefix, i))
+		}
+		return names
+	}
 	scalingGroup := func(name string, replicas int32, cliqueNames ...string) grovecorev1alpha1.PodCliqueScalingGroupConfig {
 		return grovecorev1alpha1.PodCliqueScalingGroupConfig{Name: name, CliqueNames: cliqueNames, Replicas: ptr.To(replicas), MinAvailable: ptr.To(replicas)}
 	}
@@ -1367,33 +1375,33 @@ func TestBackend_ValidatePodCliqueSet_PodSetLimit(t *testing.T) {
 		wantErr string
 	}{
 		{
-			description: "8 standalone cliques fill the limit",
-			cliques:     cliques("c1", "c2", "c3", "c4", "c5", "c6", "c7", "c8"),
+			description: "18 standalone cliques fill the limit",
+			cliques:     cliques(numbered("c", 18)...),
 		},
 		{
-			description: "9 standalone cliques exceed the limit",
-			cliques:     cliques("c1", "c2", "c3", "c4", "c5", "c6", "c7", "c8", "c9"),
-			wantErr:     "base PodGang would have 9",
+			description: "19 standalone cliques exceed the limit",
+			cliques:     cliques(numbered("c", 19)...),
+			wantErr:     "base PodGang would have 19",
 		},
 		{
-			description:   "a 2-clique scaling group with 4 replicas fills the limit",
+			description:   "a 2-clique scaling group with 9 replicas fills the limit",
 			cliques:       cliques("leader", "worker"),
-			scalingGroups: []grovecorev1alpha1.PodCliqueScalingGroupConfig{scalingGroup("decode", 4, "leader", "worker")},
+			scalingGroups: []grovecorev1alpha1.PodCliqueScalingGroupConfig{scalingGroup("decode", 9, "leader", "worker")},
 		},
 		{
-			description:   "a standalone clique plus a 2-clique scaling group with 4 replicas exceeds the limit",
+			description:   "a standalone clique plus a 2-clique scaling group with 9 replicas exceeds the limit",
 			cliques:       cliques("router", "leader", "worker"),
-			scalingGroups: []grovecorev1alpha1.PodCliqueScalingGroupConfig{scalingGroup("decode", 4, "leader", "worker")},
-			wantErr:       "base PodGang would have 9",
+			scalingGroups: []grovecorev1alpha1.PodCliqueScalingGroupConfig{scalingGroup("decode", 9, "leader", "worker")},
+			wantErr:       "base PodGang would have 19",
 		},
 		{
 			description: "scaling groups add up",
 			cliques:     cliques("router", "p-leader", "p-worker", "d-leader", "d-worker"),
 			scalingGroups: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
-				scalingGroup("prefill", 2, "p-leader", "p-worker"),
-				scalingGroup("decode", 2, "d-leader", "d-worker"),
+				scalingGroup("prefill", 4, "p-leader", "p-worker"),
+				scalingGroup("decode", 5, "d-leader", "d-worker"),
 			},
-			wantErr: "base PodGang would have 9",
+			wantErr: "base PodGang would have 19",
 		},
 	}
 
