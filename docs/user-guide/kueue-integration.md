@@ -150,15 +150,17 @@ Use a scheduler that honors [Pod scheduling gates](https://kubernetes.io/docs/co
 
 If the `kueue` profile is not enabled, a PCS that sets `schedulerName: kueue` is rejected at admission time.
 
+A PCS that uses the Kueue backend without the `kueue.x-k8s.io/queue-name` label is also rejected at admission time. See [Queue Selection](#queue-selection).
+
 If a ClusterTopologyBinding exists but Kueue is not installed, the Grove operator exits at startup. The operator logs `failed to synchronize cluster topology`. Install Kueue before you enable the backend.
 
 ## How It Works
 
 ### Queue Selection
 
-A PCS selects its LocalQueue with the `kueue.x-k8s.io/queue-name` label. Every PCS that uses the Kueue backend must set this label. Grove submits every Workload of the PCS to that LocalQueue. Set the label when you create the PCS, and do not change it afterwards. Grove does not move existing Workloads to a new queue.
+A PCS selects its LocalQueue with the `kueue.x-k8s.io/queue-name` label. Every PCS that uses the Kueue backend must set this label. Grove submits every Workload of the PCS to that LocalQueue.
 
-> **Note:** Grove does not check for the label at admission time. Without the label, Grove cannot create the Workloads or the Pods of the PCS. It records the error in the `status.lastErrors` field of each PodClique.
+Grove rejects a PCS that does not set the label. It also rejects an update that changes or removes the label. Neither Grove nor Kueue moves an existing Workload to another queue, so a changed label would split the PCS across two queues. To move a PCS to another queue, delete and recreate it.
 
 ### Workloads and PodSets
 
@@ -215,6 +217,8 @@ waitForPodsReady:
   recoveryTimeout: 15m
 ```
 
+Kueue evicts a whole Workload, not a single Pod. When one Pod stays unready past `recoveryTimeout`, Kueue deletes every Pod of the PodGang, including the healthy ones. The whole PCS replica restarts. Set `recoveryTimeout` high enough that a slow recovery of one Pod does not restart the replica.
+
 Grove marks the Pods of each PodGang as a Kueue serving group. Kueue does not finish a serving group's Workload when its Pods complete. When Kueue evicts or preempts the Workload, it deletes the Pods. Grove then creates new Pods, and the same Workload waits in the queue for readmission.
 
 Grove replaces a Workload that Kueue finishes, for example after an error, or that is deactivated (`spec.active: false`). It deletes the Workload and creates a new one with the same name, which is queued again. The new Workload starts with no requeue history. Hence deactivating a Workload, or reaching Kueue's `requeuingStrategy.backoffLimitCount`, does not stop a PCS replica. To release its quota, reduce the PCS `replicas` or delete the PCS.
@@ -237,7 +241,7 @@ Kueue chooses a topology domain for each PodSet independently. A PCS-level or PC
 
 The examples follow the shapes of the Grove [core concepts](01_core-concepts/01_overview.md) samples. Their Pods request only CPU and memory.
 
-> **Note:** Set `minAvailable` explicitly on every PodClique and PCSG. It defaults to `1`, which makes any PodClique or PCSG with more than one replica a partial gang. The Kueue backend limits partial gangs, as described in [Limitations](#limitations).
+> **Note:** Set `minAvailable` explicitly on every PodClique. It defaults to `1`, which makes any PodClique with more than one replica a partial gang. The Kueue backend limits partial gangs, as described in [Limitations](#limitations).
 
 ### Single-Node Disaggregated Serving
 
@@ -293,7 +297,7 @@ kubectl apply -f my-inference.yaml
 
 ### Multi-Node Disaggregated Serving
 
-The following PCS runs a standalone `frontend` with multi-node `prefill` and `decode` PCSGs. Each PCSG runs a leader and workers. The PCSGs and their PodCliques set `minAvailable` equal to `replicas`, as the Kueue backend requires.
+The following PCS runs a standalone `frontend` with multi-node `prefill` and `decode` PCSGs. Each PCSG runs a leader and workers. The PodCliques of the PCSGs set `minAvailable` equal to `replicas`, as the Kueue backend requires.
 
 ```yaml
 apiVersion: grove.io/v1alpha1
@@ -514,7 +518,7 @@ kubectl apply -f my-packed-inference.yaml
 
 ### Finding the Workloads of a PCS
 
-Each Workload has the same name as its PodGang. List the PodGangs of a PCS to find its Workloads:
+Each Workload has the same name as its PodGang. A PodGang of a PCSG replica above `minAvailable` has no Workload until the anchor PodGang is scheduled. List the PodGangs of a PCS to find its Workloads:
 
 ```bash
 kubectl get podgangs -n default -l app.kubernetes.io/part-of=my-inference
@@ -558,7 +562,7 @@ The following Workload conditions are the most useful:
 | `QuotaReserved` | Kueue reserved quota for the Workload. While the condition is `False`, its message explains why the Workload is pending. |
 | `Admitted` | Kueue admitted the Workload and released its Pods. |
 | `PodsReady` | All Pods of the Workload are ready. |
-| `Evicted` | Kueue evicted the Workload. The reason says why, for example `Preempted` or `PodsReadyTimeout`. |
+| `Evicted` | Kueue evicted the Workload. The reason says why, for example `Preempted` or `PodsReadyTimeout`. Both `waitForPodsReady.timeout` and `waitForPodsReady.recoveryTimeout` report `PodsReadyTimeout`. |
 
 The following messages explain the most common reasons for a pending Workload:
 
@@ -617,7 +621,9 @@ kubectl scale pcs my-multinode-inference -n default --replicas=2
 
 ### Scaling a PCSG
 
-The initial replicas of a PCSG share the PodGang of their PCS replica. Each replica that you add above the PCSG's `minAvailable` gets its own PodGang and Workload. Scaling back down to `minAvailable` deletes those PodGangs and their Workloads.
+The first `minAvailable` replicas of a PCSG share the PodGang of their PCS replica. This PodGang is the anchor. Each replica above `minAvailable` gets its own PodGang and Workload. Scaling back down to `minAvailable` deletes those PodGangs and their Workloads.
+
+Grove holds the Pods of an additional PodGang until the anchor is scheduled. It creates the Workload of an additional PodGang only then. Kueue therefore cannot admit these Workloads and reserve quota for Pods that cannot start. A PodGang can exist without a Workload while the anchor waits for admission.
 
 ```bash
 kubectl scale pcsg my-multinode-inference-0-prefill -n default --replicas=4
@@ -645,7 +651,9 @@ To scale a role, define it as a PCSG instead. For example, a PCSG whose only Pod
 
 The Kueue backend rejects a PCS that breaks any of the following rules when you create or update it:
 
-- **A PCSG and its PodCliques must set `minAvailable` equal to `replicas`.** Kueue allows `minCount` on at most one PodSet per Workload, and Grove reserves it for a standalone PodClique. A PCSG is therefore always admitted in full.
+- **The PCS must set the `kueue.x-k8s.io/queue-name` label.** See [Queue Selection](#queue-selection).
+- **The `kueue.x-k8s.io/queue-name` label cannot change or be removed.** Recreate the PCS to use another queue.
+- **A PodClique in a PCSG must set `minAvailable` equal to `replicas`.** Kueue allows `minCount` on at most one PodSet per Workload, and Grove reserves it for a standalone PodClique. The PodGang of a PCSG replica is therefore always admitted in full. The PCSG's own `minAvailable` can be lower than its `replicas`.
 - **At most one standalone PodClique can set `minAvailable` lower than `replicas`.** It is the only PodSet that can use Kueue's `minCount`.
 - **A PodClique cannot set `autoScalingConfig`.** See [Scaling a PodClique](#scaling-a-podclique).
 - **The PodGang of a PCS replica can have at most 18 PodGroups.** Kueue v0.20.1 allows at most 18 PodSets per Workload. The PodGang has one PodGroup for each standalone PodClique, plus one for each PodClique of each PCSG replica up to `minAvailable`.
