@@ -251,7 +251,7 @@ jobs:
     name: Kubernetes compatibility - ${{ matrix.kubernetes_version }}
     env:
       KUBERNETES_COMPATIBILITY_TEST_PATTERN: >-
-        ^Test_(GS|GT|RU|OD|CU|PCUS|TAS|CM|CRD_Installer|RS|PGMR)
+        ^Test_(GS|GT|RU|OD|CU|PCUS|TAS|CM|CD|CRD_Installer|RS|PGMR)
       # Test packages modify the same cluster.
       E2E_GO_TEST_FLAGS: "-p 1"
     steps:
