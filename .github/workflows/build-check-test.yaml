@@ -102,7 +102,6 @@ jobs:
   #   test_name     (required) - name shown in the GitHub Actions UI
   #   test_pattern  (optional) - Go test -run pattern (standard e2e tests)
   #   make_target   (optional) - Makefile target, defaults to run-e2e-full
-  #   kubernetes_version (optional) - Kubernetes version for compatibility jobs; other jobs use the cluster default
   e2e:
     needs: [test, build, check, changes]
     # Run only from copy-pr-bot's trusted branch.
@@ -111,7 +110,7 @@ jobs:
       needs.changes.outputs.e2e-relevant == 'true'
     # use NVIDIA self-hosted runner setting is on Velonix repository
     runs-on: prod-grove-e2e-v1
-    timeout-minutes: ${{ matrix.timeout_minutes || 60 }}
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -153,10 +152,6 @@ jobs:
           - test_name: kueue_update
             test_pattern: "^Test_KueueUpdate"
             make_target: "run-e2e-kueue-full"
-          - test_name: kubernetes_1_34_default
-            make_target: "run-kubernetes-compatibility-e2e"
-            kubernetes_version: "1.34"
-            timeout_minutes: 90
     name: E2E - ${{ matrix.test_name }}
     steps:
       # print runner specs so we have a record in case of failures
@@ -179,7 +174,6 @@ jobs:
       - name: Run e2e tests - ${{ matrix.test_name }}
         env:
           GITHUB_TOKEN: ${{ matrix.test_name == 'version_upgrade' && secrets.GITHUB_TOKEN || '' }}
-          KUBERNETES_VERSION: ${{ matrix.kubernetes_version || '' }}
         run: |
           make ${{ matrix.make_target || 'run-e2e-full' }} TEST_PATTERN='${{ matrix.test_pattern }}' E2E_CREATE_FLAGS='--dind-memory-mode'
         working-directory: operator
@@ -233,8 +227,68 @@ jobs:
           - test_name: version_upgrade
           - test_name: kueue
           - test_name: kueue_update
-          - test_name: kubernetes_1_34_default
     name: E2E - ${{ matrix.test_name }}
     steps:
       - name: Skip E2E (no relevant changes)
         run: echo "E2E skipped — no changes to operator/ or .github/"
+
+  kubernetes-compatibility:
+    needs: [test, build, check, changes]
+    # Run only from copy-pr-bot's trusted branch.
+    if: |
+      startsWith(github.ref, 'refs/heads/pull-request/') &&
+      needs.changes.outputs.e2e-relevant == 'true'
+    runs-on: prod-grove-e2e-v1
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - kubernetes_version: "1.34"
+            k3s_image: "rancher/k3s:v1.34.11-k3s1"
+          - kubernetes_version: "1.35"
+            k3s_image: "rancher/k3s:v1.35.5-k3s1"
+    name: Kubernetes compatibility - ${{ matrix.kubernetes_version }}
+    env:
+      KUBERNETES_COMPATIBILITY_TEST_PATTERN: >-
+        ^Test_(GS|GT|RU|OD|CU|PCUS|TAS|CM|CRD_Installer|RS|PGMR)
+      # Test packages modify the same cluster.
+      E2E_GO_TEST_FLAGS: "-p 1"
+    steps:
+      - name: Print runner specs
+        run: |
+          echo "CPUs: $(nproc)"
+          echo "RAM: $(free -h | awk '/^Mem:/ {print $2}')"
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Pull registry image from GHCR to avoid Docker Hub rate limits
+        run: |
+          docker pull ghcr.io/distribution/distribution:3.1.0
+          docker tag ghcr.io/distribution/distribution:3.1.0 registry:2
+
+      - name: E2E Setup
+        uses: ./.github/actions/e2e-setup
+
+      - name: Run Kubernetes compatibility tests
+        env:
+          E2E_CLUSTER__K3S_IMAGE: ${{ matrix.k3s_image }}
+        run: |
+          make run-e2e-full TEST_PATTERN='${{ env.KUBERNETES_COMPATIBILITY_TEST_PATTERN }}' E2E_CREATE_FLAGS='--dind-memory-mode'
+        working-directory: operator
+
+      - name: Cleanup k3d cluster
+        if: always()
+        working-directory: operator
+        run: |
+          make e2e-cluster-down || true
+
+      - name: Upload test logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kubernetes-compatibility-test-logs-${{ matrix.kubernetes_version }}
+          path: operator/e2e-diagnostics/
+          if-no-files-found: warn
+          retention-days: 7
