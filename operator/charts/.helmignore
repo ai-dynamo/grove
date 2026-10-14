@@ -16,6 +16,8 @@
 *.tmp
 *.orig
 *~
+# Go test sources
+*.go
 # Various IDEs
 .project
 .idea/
