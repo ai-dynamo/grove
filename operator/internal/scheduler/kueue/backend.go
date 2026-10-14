@@ -132,7 +132,8 @@ func (b *schedulerBackend) SyncPodGang(ctx context.Context, podGang *groveschedu
 // ensureWorkload ensures a usable prebuilt Kueue Workload exists for podGang, creating it if absent. An
 // existing Workload that is no longer usable (Finished, or deactivated by Kueue) is deleted and rebuilt
 // from scratch instead of repaired in place, since Kueue Workload podSets are immutable once admitted.
-// Grove has no watch on Workloads, so PreparePod also calls this for every Pod it prepares.
+// Grove has no watch on Workloads, so PreparePod also calls this for every Pod it prepares. It returns an
+// error, so the caller requeues, while the old Workload is still being deleted.
 //
 // reader is used only for the existence/health Get: PreparePod passes b.directReader (uncached) since
 // the cache can still show a pre-repair Workload immediately after Kueue writes Finished, while
@@ -142,10 +143,15 @@ func (b *schedulerBackend) ensureWorkload(ctx context.Context, podGang *grovesch
 	err := reader.Get(ctx, client.ObjectKey{Namespace: podGang.Namespace, Name: podGang.Name}, existing)
 	switch {
 	case err == nil:
+		if existing.DeletionTimestamp != nil {
+			return fmt.Errorf("prebuilt kueue Workload %s/%s is still being deleted", podGang.Namespace, podGang.Name)
+		}
 		if !workloadNeedsReplacement(existing) {
 			return nil
 		}
-		if err := b.client.Delete(ctx, existing); err != nil && !apierrors.IsNotFound(err) {
+		// The preconditions keep a stale read from deleting a replacement that another caller already created.
+		preconditions := client.Preconditions{UID: &existing.UID, ResourceVersion: &existing.ResourceVersion}
+		if err := b.client.Delete(ctx, existing, preconditions); err != nil && !apierrors.IsNotFound(err) {
 			return fmt.Errorf("failed to delete stale prebuilt kueue Workload %s/%s: %w", podGang.Namespace, podGang.Name, err)
 		}
 		log.FromContext(ctx).Info("Deleted stale prebuilt Kueue Workload", "workload", client.ObjectKeyFromObject(existing))
@@ -162,13 +168,19 @@ func (b *schedulerBackend) ensureWorkload(ctx context.Context, podGang *grovesch
 		return err
 	}
 	if err = b.client.Create(ctx, workload); err != nil {
-		if apierrors.IsAlreadyExists(err) {
-			// A concurrent PreparePod call for another replacement Pod in the same group already
-			// recreated it; that satisfies what this call wanted.
-			log.FromContext(ctx).V(4).Info("Prebuilt Kueue Workload already recreated by a concurrent caller", "workload", client.ObjectKeyFromObject(workload))
-			return nil
+		if !apierrors.IsAlreadyExists(err) {
+			return fmt.Errorf("failed to create prebuilt kueue Workload %s/%s: %w", podGang.Namespace, podGang.Name, err)
 		}
-		return fmt.Errorf("failed to create prebuilt kueue Workload %s/%s: %w", podGang.Namespace, podGang.Name, err)
+		// The Workload is either a concurrent caller's replacement or the old one still being deleted.
+		current := &kueuev1beta2.Workload{}
+		if err := b.directReader.Get(ctx, client.ObjectKeyFromObject(workload), current); err != nil {
+			return fmt.Errorf("failed to get prebuilt kueue Workload %s/%s: %w", podGang.Namespace, podGang.Name, err)
+		}
+		if current.DeletionTimestamp != nil || workloadNeedsReplacement(current) {
+			return fmt.Errorf("prebuilt kueue Workload %s/%s is still being replaced", podGang.Namespace, podGang.Name)
+		}
+		log.FromContext(ctx).V(4).Info("Prebuilt Kueue Workload already recreated by a concurrent caller", "workload", client.ObjectKeyFromObject(workload))
+		return nil
 	}
 	log.FromContext(ctx).Info("Created prebuilt Kueue Workload", "workload", client.ObjectKeyFromObject(workload))
 	return nil

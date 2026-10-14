@@ -31,6 +31,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
@@ -613,6 +614,101 @@ func TestBackend_PreparePod_UsesDirectReaderForFinishedCheck(t *testing.T) {
 	got := &kueuev1beta2.Workload{}
 	require.NoError(t, cachedCl.Get(context.Background(), client.ObjectKey{Namespace: "default", Name: "demo-0"}, got))
 	assert.Equal(t, kueuev1beta2.LocalQueueName("grove-poc"), got.Spec.QueueName, "PreparePod must rebuild based on the direct reader's Finished status, even though the cached client still reports the Workload healthy")
+}
+
+// fixedReader returns workload for every Get, or NotFound if it is nil, like a cache that has not seen the live Workload.
+type fixedReader struct {
+	client.Reader
+	workload *kueuev1beta2.Workload
+}
+
+func (r fixedReader) Get(_ context.Context, key client.ObjectKey, obj client.Object, _ ...client.GetOption) error {
+	if r.workload == nil {
+		return apierrors.NewNotFound(kueuev1beta2.Resource("workloads"), key.Name)
+	}
+	r.workload.DeepCopyInto(obj.(*kueuev1beta2.Workload))
+	return nil
+}
+
+func TestBackend_EnsureWorkload_StaleReadKeepsReplacement(t *testing.T) {
+	pcs, podGang := newTestPCSAndPodGang()
+	cl := testutils.NewTestClientBuilder().WithObjects(pcs, newStandalonePodClique("demo-0-worker", "demo")).Build()
+	b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKueue})
+	require.NoError(t, b.Init(nil))
+	replacement := &kueuev1beta2.Workload{
+		ObjectMeta: metav1.ObjectMeta{Name: "demo-0", Namespace: "default"},
+		Spec:       kueuev1beta2.WorkloadSpec{QueueName: "replacement-queue"},
+	}
+	require.NoError(t, cl.Create(context.Background(), replacement))
+	finishedWorkload := &kueuev1beta2.Workload{
+		ObjectMeta: metav1.ObjectMeta{Name: "demo-0", Namespace: "default", UID: "finished-uid", ResourceVersion: "stale"},
+		Status: kueuev1beta2.WorkloadStatus{
+			Conditions: []metav1.Condition{
+				{Type: kueuev1beta2.WorkloadFinished, Status: metav1.ConditionTrue, Reason: "Test", Message: "test"},
+			},
+		},
+	}
+
+	err := b.(*schedulerBackend).ensureWorkload(context.Background(), podGang, "demo", fixedReader{workload: finishedWorkload})
+	require.Error(t, err)
+	assert.True(t, apierrors.IsConflict(err), "deleting from a stale read must fail its preconditions")
+
+	got := &kueuev1beta2.Workload{}
+	require.NoError(t, cl.Get(context.Background(), client.ObjectKey{Namespace: "default", Name: "demo-0"}, got))
+	assert.Equal(t, kueuev1beta2.LocalQueueName("replacement-queue"), got.Spec.QueueName, "a stale read must not delete the replacement")
+}
+
+func TestBackend_EnsureWorkload_AcceptsConcurrentReplacement(t *testing.T) {
+	pcs, podGang := newTestPCSAndPodGang()
+	cl := testutils.NewTestClientBuilder().WithObjects(pcs, newStandalonePodClique("demo-0-worker", "demo")).Build()
+	b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKueue})
+	require.NoError(t, b.Init(nil))
+	replacement := &kueuev1beta2.Workload{
+		ObjectMeta: metav1.ObjectMeta{Name: "demo-0", Namespace: "default"},
+		Spec:       kueuev1beta2.WorkloadSpec{QueueName: "replacement-queue"},
+	}
+	require.NoError(t, cl.Create(context.Background(), replacement))
+
+	// The read misses the replacement, so Create returns AlreadyExists.
+	require.NoError(t, b.(*schedulerBackend).ensureWorkload(context.Background(), podGang, "demo", fixedReader{}))
+
+	got := &kueuev1beta2.Workload{}
+	require.NoError(t, cl.Get(context.Background(), client.ObjectKey{Namespace: "default", Name: "demo-0"}, got))
+	assert.Equal(t, kueuev1beta2.LocalQueueName("replacement-queue"), got.Spec.QueueName)
+}
+
+func TestBackend_SyncPodGang_WaitsForDeletedWorkloadToGo(t *testing.T) {
+	pcs, podGang := newTestPCSAndPodGang()
+	cl := testutils.NewTestClientBuilder().WithObjects(pcs, newStandalonePodClique("demo-0-worker", "demo")).Build()
+	b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKueue})
+	require.NoError(t, b.Init(nil))
+	finishedWorkload := &kueuev1beta2.Workload{
+		ObjectMeta: metav1.ObjectMeta{Name: "demo-0", Namespace: "default", Finalizers: []string{"test/hold"}},
+		Spec:       kueuev1beta2.WorkloadSpec{QueueName: "stale-queue"},
+		Status: kueuev1beta2.WorkloadStatus{
+			Conditions: []metav1.Condition{
+				{Type: kueuev1beta2.WorkloadFinished, Status: metav1.ConditionTrue, Reason: "Test", Message: "test"},
+			},
+		},
+	}
+	require.NoError(t, cl.Create(context.Background(), finishedWorkload))
+	key := client.ObjectKey{Namespace: "default", Name: "demo-0"}
+
+	// The finalizer keeps the deleted Workload around, so Create returns AlreadyExists and the
+	// first sync fails; the next one fails before Create.
+	require.ErrorContains(t, b.SyncPodGang(context.Background(), podGang), "still being replaced")
+	require.ErrorContains(t, b.SyncPodGang(context.Background(), podGang), "still being deleted")
+
+	got := &kueuev1beta2.Workload{}
+	require.NoError(t, cl.Get(context.Background(), key, got))
+	require.NotNil(t, got.DeletionTimestamp)
+	got.Finalizers = nil
+	require.NoError(t, cl.Update(context.Background(), got))
+
+	require.NoError(t, b.SyncPodGang(context.Background(), podGang))
+	got = &kueuev1beta2.Workload{}
+	require.NoError(t, cl.Get(context.Background(), key, got))
+	assert.Equal(t, kueuev1beta2.LocalQueueName("grove-poc"), got.Spec.QueueName, "the Workload must be rebuilt once the old one is gone")
 }
 
 func TestBackend_SyncPodGang_RejectsInvalidMinReplicas(t *testing.T) {
