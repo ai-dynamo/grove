@@ -1,0 +1,56 @@
+# KWOK Stage that, with pod-delete-kueue-allornothing-recovery, acts as the kubelet for a deleted pod of the
+# kueue-allornothing-recovery fixture (Test_Kueue12). KWOK's default pod-delete stage strips a deleted pod's
+# finalizers and removes it at once. A kubelet instead stops the containers and reports the pod terminated,
+# which is when Kueue releases its finalizer from a pod of an evicted serving pod group. This stage reports
+# the pod Failed with its containers terminated. Scoped to the fixture by its app.kubernetes.io/part-of label.
+# Its positive weight beats the default pod-delete stage, whose weight is 0.
+apiVersion: kwok.x-k8s.io/v1alpha1
+kind: Stage
+metadata:
+  name: pod-terminate-kueue-allornothing-recovery
+spec:
+  resourceRef:
+    apiGroup: v1
+    kind: Pod
+  selector:
+    matchExpressions:
+      - key: .metadata.deletionTimestamp
+        operator: Exists
+      - key: '.metadata.labels["app.kubernetes.io/part-of"]'
+        operator: In
+        values:
+          - "kueue-allornothing-recovery"
+      - key: .status.phase
+        operator: NotIn
+        values:
+          - Failed
+          - Succeeded
+  weight: 20
+  next:
+    statusSubresource: status
+    statusTemplate: |
+      {{ $now := Now }}
+      conditions:
+      - lastTransitionTime: {{ $now | Quote }}
+        status: "False"
+        reason: PodFailed
+        type: Ready
+      - lastTransitionTime: {{ $now | Quote }}
+        status: "False"
+        reason: PodFailed
+        type: ContainersReady
+      containerStatuses:
+      {{ range .spec.containers }}
+      - image: {{ .image | Quote }}
+        name: {{ .name | Quote }}
+        ready: false
+        started: false
+        state:
+          running: null
+          waiting: null
+          terminated:
+            exitCode: 143
+            reason: Error
+            finishedAt: {{ $now | Quote }}
+      {{ end }}
+      phase: Failed

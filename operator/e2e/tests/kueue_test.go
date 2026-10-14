@@ -19,6 +19,7 @@ package tests
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -1300,4 +1301,169 @@ func Test_Kueue11_ScalingGroupTailWaitsForAnchor(t *testing.T) {
 	}
 
 	Logger.Info("Test_Kueue11_ScalingGroupTailWaitsForAnchor completed successfully!")
+}
+
+const (
+	// kwokStagePodTerminateKueueRecoveryPath/Name and kwokStagePodDeleteKueueRecoveryPath/Name point at the KWOK
+	// Stages that act as the kubelet for a deleted pod of the kueue-allornothing-recovery fixture: the first
+	// reports the pod terminated, then the second deletes it, leaving its finalizers in place.
+	kwokStagePodTerminateKueueRecoveryPath = "../yaml/kwok/pod-terminate-kueue-allornothing-recovery.yaml"
+	kwokStagePodTerminateKueueRecoveryName = "pod-terminate-kueue-allornothing-recovery"
+	kwokStagePodDeleteKueueRecoveryPath    = "../yaml/kwok/pod-delete-kueue-allornothing-recovery.yaml"
+	kwokStagePodDeleteKueueRecoveryName    = "pod-delete-kueue-allornothing-recovery"
+
+	// kueuePodFinalizer is the finalizer Kueue's pod webhook adds to every pod it manages. Mirrors
+	// podFinalizer in internal/scheduler/kueue/backend.go.
+	kueuePodFinalizer = "kueue.x-k8s.io/managed"
+)
+
+// Test_Kueue12_AllOrNothingLostReadinessEvictsAndReadmits verifies Kueue's waitForPodsReady recovery timeout.
+// Once every pod is Ready and the Workload is PodsReady, both worker pods start crash looping, Running but not
+// Ready. Kueue waits for the recovery timeout, which defaults to waitForPodsReady.timeout (15s in
+// kueue-values.yaml), then evicts the Workload and deletes every pod of the gang, the healthy frontend included.
+// Once the deleted pods terminate, Kueue releases its finalizer, Grove recreates the pods, and Kueue readmits the
+// same Workload.
+func Test_Kueue12_AllOrNothingLostReadinessEvictsAndReadmits(t *testing.T) {
+	ctx := context.Background()
+	expectedPods := 3
+
+	tc, cleanup := testctx.PrepareTest(ctx, t, expectedPods,
+		testctx.WithWorkload(&testctx.WorkloadConfig{
+			Name:         "kueue-allornothing-recovery",
+			YAMLPath:     "../yaml/kueue-workload-allornothing-recovery.yaml",
+			Namespace:    "default",
+			ExpectedPods: expectedPods,
+		}),
+	)
+	requireKueueCRD(t, tc)
+	defer cleanup()
+
+	// KWOK's default pod-delete stage strips a deleted pod's finalizers; these stages terminate and delete it the
+	// way a kubelet does, so Kueue releases its finalizer as it would on a real node.
+	for _, stage := range []struct{ path, name string }{
+		{kwokStagePodTerminateKueueRecoveryPath, kwokStagePodTerminateKueueRecoveryName},
+		{kwokStagePodDeleteKueueRecoveryPath, kwokStagePodDeleteKueueRecoveryName},
+	} {
+		if err := kwok.ApplyStage(ctx, tc.Client, stage.path); err != nil {
+			t.Fatalf("Failed to apply KWOK stage %s: %v", stage.name, err)
+		}
+		defer func() {
+			if err := kwok.DeleteStage(ctx, tc.Client, stage.name); err != nil {
+				t.Errorf("Failed to delete KWOK stage %s: %v", stage.name, err)
+			}
+		}()
+	}
+
+	Logger.Info("1. Deploy kueue-allornothing-recovery and wait until Kueue reports every pod ready")
+	if _, err := tc.DeployAndVerifyWorkload(); err != nil {
+		t.Fatalf("Failed to deploy workload: %v", err)
+	}
+	if err := tc.WaitForPods(expectedPods); err != nil {
+		t.Fatalf("Failed to wait for pods to be Ready: %v", err)
+	}
+	pgVerifier := podgang.NewVerifier(tc.Client, Logger)
+	podGangs, err := pgVerifier.List(ctx, types.NamespacedName{Namespace: tc.Namespace, Name: tc.Workload.Name})
+	if err != nil {
+		t.Fatalf("Failed to list PodGangs: %v", err)
+	}
+	if len(podGangs) != 1 {
+		t.Fatalf("Expected exactly 1 PodGang, got %d", len(podGangs))
+	}
+	podGang := podGangs[0]
+	wlVerifier := kueueworkload.NewVerifier(tc.Client, Logger)
+	ready, err := wlVerifier.WaitUntilVerified(ctx, podGang.Namespace, podGang.Name, tc.Timeout, tc.Interval, kueueworkload.PodsReady)
+	if err != nil {
+		t.Fatalf("Kueue Workload never reached PodsReady=True: %v", err)
+	}
+
+	originalPods, err := tc.ListPods()
+	if err != nil {
+		t.Fatalf("Failed to list pods: %v", err)
+	}
+	originalPodUIDs := make(map[types.UID]struct{}, len(originalPods.Items))
+	for _, pod := range originalPods.Items {
+		if !slices.Contains(pod.Finalizers, kueuePodFinalizer) {
+			t.Fatalf("Expected pod %s to carry Kueue's finalizer %q, got %v", pod.Name, kueuePodFinalizer, pod.Finalizers)
+		}
+		originalPodUIDs[pod.UID] = struct{}{}
+	}
+
+	Logger.Info("2. Make both worker pods crash loop")
+	workerPCLQ := nameutils.GeneratePodCliqueName(nameutils.ResourceNameReplica{Name: tc.Workload.Name, Replica: 0}, "worker")
+	crashed := 0
+	for i := range originalPods.Items {
+		pod := &originalPods.Items[i]
+		if pod.Labels[nameutils.LabelPodClique] != workerPCLQ {
+			continue
+		}
+		if err := crashLoopPod(ctx, tc.Client, pod); err != nil {
+			t.Fatalf("Failed to make pod %s crash loop: %v", pod.Name, err)
+		}
+		crashed++
+	}
+	if crashed != 2 {
+		t.Fatalf("Expected 2 worker pods, found %d", crashed)
+	}
+
+	Logger.Info("3. Verify Kueue evicts the Workload once the recovery timeout elapses")
+	evicted, err := wlVerifier.WaitUntilVerified(ctx, podGang.Namespace, podGang.Name, tc.Timeout, tc.Interval, kueueworkload.EvictedByPodsReadyTimeout)
+	if err != nil {
+		t.Fatalf("Kueue Workload was not evicted for PodsReadyTimeout: %v", err)
+	}
+	if kueueworkload.EvictionCount(evicted, kueuev1beta2.WorkloadEvictedByPodsReadyTimeout, kueuev1beta2.WorkloadWaitForRecovery) == 0 {
+		t.Fatalf("Kueue evicted Workload %s/%s, but not for the recovery timeout: %+v", evicted.Namespace, evicted.Name, evicted.Status.SchedulingStats)
+	}
+
+	Logger.Info("4. Verify every original pod, the healthy frontend included, is deleted and recreated")
+	pollUntilTrue(t, tc.Timeout, tc.Interval, func() (bool, string) {
+		current, err := tc.ListPods()
+		if err != nil {
+			return false, fmt.Sprintf("failed to list pods: %v", err)
+		}
+		for _, pod := range current.Items {
+			if _, stillOriginal := originalPodUIDs[pod.UID]; stillOriginal {
+				return false, fmt.Sprintf("pod %s (uid %s) from the original admission still exists (finalizers %v)", pod.Name, pod.UID, pod.Finalizers)
+			}
+		}
+		if len(current.Items) != expectedPods {
+			return false, fmt.Sprintf("found %d replacement pods, want %d", len(current.Items), expectedPods)
+		}
+		return true, ""
+	})
+
+	Logger.Info("5. Verify Kueue readmits the same Workload and every pod is Ready again")
+	readmitted, err := wlVerifier.WaitUntilVerified(ctx, podGang.Namespace, podGang.Name, tc.Timeout, tc.Interval, kueueworkload.PodsReady)
+	if err != nil {
+		t.Fatalf("Kueue Workload did not reach PodsReady=True again: %v", err)
+	}
+	if readmitted.UID != ready.UID {
+		t.Fatalf("Workload %s/%s was rebuilt (UID %s -> %s) instead of requeued", readmitted.Namespace, readmitted.Name, ready.UID, readmitted.UID)
+	}
+	if err := tc.WaitForPods(expectedPods); err != nil {
+		t.Fatalf("Failed to wait for the recreated pods to be Ready: %v", err)
+	}
+
+	Logger.Info("Test_Kueue12_AllOrNothingLostReadinessEvictsAndReadmits completed successfully!")
+}
+
+// crashLoopPod sets pod's status to what a kubelet reports for a crash-looping container: Running but not
+// Ready. KWOK's stages only set the status of a pod that has no podIP yet, so this status stays.
+func crashLoopPod(ctx context.Context, cl client.Client, pod *corev1.Pod) error {
+	crashed := pod.DeepCopy()
+	now := metav1.Now()
+	for i := range crashed.Status.Conditions {
+		cond := &crashed.Status.Conditions[i]
+		if cond.Type == corev1.PodReady || cond.Type == corev1.ContainersReady {
+			cond.Status = corev1.ConditionFalse
+			cond.Reason = "ContainersNotReady"
+			cond.LastTransitionTime = now
+		}
+	}
+	for i := range crashed.Status.ContainerStatuses {
+		status := &crashed.Status.ContainerStatuses[i]
+		status.Ready = false
+		status.RestartCount++
+		status.State = corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff", Message: "simulated crash loop"}}
+	}
+	return cl.Status().Patch(ctx, crashed, client.MergeFrom(pod))
 }
