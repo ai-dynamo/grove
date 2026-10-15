@@ -105,7 +105,7 @@ def test_load_config_scale():
     """scale.yaml values load correctly including kwok and pyroscope sections."""
     cfg = load_setup_config(_SCALE_YAML)
 
-    assert cfg.cluster.worker_nodes == 5
+    assert cfg.cluster.worker_nodes == 0
     assert cfg.grove.profiling is True
     assert cfg.kwok.nodes == 100
     assert cfg.pyroscope.enabled is True
@@ -147,7 +147,8 @@ def test_overlay_yaml_precedence():
     cfg = load_setup_config(_E2E_YAML, values_paths=[_SCALE_YAML])
 
     assert cfg.kwok.nodes == 100
-    assert cfg.cluster.worker_nodes == 5
+    assert cfg.cluster.worker_nodes == 0
+    assert cfg.cluster.worker_memory == "300m"
 
 
 # ---------------------------------------------------------------------------
