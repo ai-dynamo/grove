@@ -23,6 +23,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler/kai"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler/kube"
+	"github.com/ai-dynamo/grove/operator/internal/scheduler/kueue"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler/lpx"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler/volcano"
 
@@ -51,6 +52,14 @@ var backendConstructors = map[configv1alpha1.SchedulerName]func() scheduler.Back
 			runtime.NewScheme(),
 			record.NewFakeRecorder(1),
 			configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKube},
+		)
+	},
+	configv1alpha1.SchedulerNameKueue: func() scheduler.Backend {
+		return kueue.New(
+			fake.NewClientBuilder().Build(),
+			runtime.NewScheme(),
+			record.NewFakeRecorder(1),
+			configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKueue},
 		)
 	},
 	configv1alpha1.SchedulerNameVolcano: func() scheduler.Backend {
@@ -118,5 +127,22 @@ func TestCapabilityTableMatchesBackends(t *testing.T) {
 					"or backendInterfaceCapabilities", name, wantTAS, gotTAS)
 			}
 		})
+	}
+}
+
+// Gang support is a semantic property, not a separate Go interface. Pin Kueue's
+// prebuilt-Workload admission capability in addition to the topology cross-check.
+func TestKueueCapabilities(t *testing.T) {
+	set := CapabilitySet{
+		ActiveBackend: string(configv1alpha1.SchedulerNameKueue),
+		caps:          backendInterfaceCapabilities[string(configv1alpha1.SchedulerNameKueue)],
+	}
+	for _, capability := range []Capability{GangScheduling, TopologyAwareScheduling} {
+		if !set.Has(capability) {
+			t.Errorf("Kueue must provide capability %q", capability)
+		}
+	}
+	if set.Has(AutoMNNVL) {
+		t.Error("AutoMNNVL must be resolved from operator configuration, not the backend table")
 	}
 }

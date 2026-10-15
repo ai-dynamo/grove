@@ -71,6 +71,12 @@ var backendInterfaceCapabilities = map[string]map[Capability]bool{
 		GangScheduling:          true,
 		TopologyAwareScheduling: true,
 	},
+	"kueue": {
+		// Kueue admits each PodGang through a prebuilt Workload and
+		// implements scheduler.TopologyAwareBackend for Kueue Topology.
+		GangScheduling:          true,
+		TopologyAwareScheduling: true,
+	},
 	"default-scheduler": {
 		// KubeSchedulerConfig.GangScheduling is forward-looking — the kube
 		// backend does not yet read or act on it. When it does, set
