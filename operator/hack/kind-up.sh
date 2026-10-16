@@ -115,7 +115,7 @@ kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 nodes:
 - role: control-plane
-  image: kindest/node:v1.35.1
+  image: kindest/node:v1.37.0
 EOF
   local worker_index
   for ((worker_index = 0; worker_index < WORKER_NODES; worker_index++)); do

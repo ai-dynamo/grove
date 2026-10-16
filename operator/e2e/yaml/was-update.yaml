@@ -1,0 +1,53 @@
+apiVersion: grove.io/v1alpha1
+kind: PodCliqueSet
+metadata:
+  name: was-update
+spec:
+  replicas: 1
+  updateStrategy:
+    type: Coherent
+  template:
+    cliques:
+      - name: router
+        spec:
+          roleName: router
+          replicas: 3
+          minAvailable: 1
+          podSpec:
+            schedulerName: default-scheduler
+            terminationGracePeriodSeconds: 1
+            nodeSelector:
+              node_role.e2e.grove.nvidia.com: agent
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: router
+                image: registry:5001/busybox:latest
+                command: ["sleep", "infinity"]
+      - name: worker
+        spec:
+          roleName: worker
+          replicas: 2
+          minAvailable: 2
+          podSpec:
+            schedulerName: default-scheduler
+            terminationGracePeriodSeconds: 1
+            nodeSelector:
+              node_role.e2e.grove.nvidia.com: agent
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: worker
+                image: registry:5001/busybox:latest
+                command: ["sleep", "infinity"]
+    podCliqueScalingGroups:
+      - name: workers
+        replicas: 1
+        minAvailable: 1
+        cliqueNames: ["worker"]

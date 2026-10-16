@@ -16,6 +16,7 @@ package pod
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"testing"
 	"time"
@@ -307,6 +308,7 @@ func TestCheckAndRemovePodSchedulingGates(t *testing.T) {
 
 			cl := testutils.NewTestClientBuilder().WithObjects(objects...).Build()
 			r := &_resource{client: cl}
+			r.schedRegistry = testutils.NewDefaultFakeRegistry()
 			ss := gateRemovalSnapshot([]*corev1.Pod{tc.pod}, twoEpochPGM())
 
 			skipped, err := r.checkAndRemovePodSchedulingGates(context.Background(), logr.Discard(), ss)
@@ -333,6 +335,7 @@ func TestCheckAndRemovePodSchedulingGates(t *testing.T) {
 			Build()
 		cl := testutils.NewTestClientBuilder().WithObjects(pod, podGang).Build()
 		r := &_resource{client: cl}
+		r.schedRegistry = testutils.NewDefaultFakeRegistry()
 		ss := gateRemovalSnapshot([]*corev1.Pod{pod}, twoEpochPGM())
 
 		skipped, err := r.checkAndRemovePodSchedulingGates(context.Background(), logr.Discard(), ss)
@@ -534,7 +537,49 @@ func TestReconcilePCSGLabellessPods(t *testing.T) {
 	})
 }
 
+func TestGateRemovalRequiresBackendReadiness(t *testing.T) {
+	probeError := errors.New("incompatible scheduling hierarchy")
+	for _, tc := range []struct {
+		name  string
+		ready bool
+		err   error
+	}{
+		{name: "resources not created"},
+		{name: "resources ready", ready: true},
+		{name: "resources incompatible", err: probeError},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gangName := podGangNameForEpoch(testAnchor0Epoch)
+			pod := gatedPod("pod-a", gangName)
+			gang := testutils.NewPodGangBuilder(gangName, testNamespace).
+				WithLabels(map[string]string{apicommon.LabelEpoch: testAnchor0Epoch}).
+				WithPodGroupPods(testCliqueName, pod.Name).Build()
+			cl := testutils.NewTestClientBuilder().WithObjects(pod, gang).Build()
+			registry := testutils.NewDefaultFakeRegistry()
+			registry.Backends["default-scheduler"] = &readinessBackend{
+				Backend: registry.GetDefault(), ready: tc.ready, err: tc.err,
+			}
+			r := &_resource{client: cl, schedRegistry: registry}
+			_, err := r.checkAndRemovePodSchedulingGates(t.Context(), logr.Discard(), gateRemovalSnapshot([]*corev1.Pod{pod}, twoEpochPGM()))
+			require.ErrorIs(t, err, tc.err)
+			actual := &corev1.Pod{}
+			require.NoError(t, cl.Get(t.Context(), client.ObjectKeyFromObject(pod), actual))
+			assert.Equal(t, !tc.ready, hasPodGangSchedulingGate(actual))
+		})
+	}
+}
+
 // ---------------- test helpers ----------------
+
+type readinessBackend struct {
+	scheduler.Backend
+	ready bool
+	err   error
+}
+
+func (b *readinessBackend) PodGangReady(context.Context, *groveschedulerv1alpha1.PodGang) (bool, error) {
+	return b.ready, b.err
+}
 
 // pcs returns a minimal PodCliqueSet for the gate-removal tests.
 func pcs() *grovecorev1alpha1.PodCliqueSet {
