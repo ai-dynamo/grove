@@ -204,6 +204,7 @@ run-e2e-mnnvl-full: e2e-cluster-up
 # unset TEST_PATTERN would otherwise run the whole suite against a cluster missing a dependency most
 # of it needs. Command-line TEST_PATTERN=... still overrides this (?= never wins over the command line).
 # Test_KueueUpdate* run in their own invocation because their test package can't share a cluster with this one.
+# Test_KueueReal* need real nodes and run under run-e2e-kueue-real-full instead.
 run-e2e-kueue-full: TEST_PATTERN ?= ^Test_Kueue[0-9]
 run-e2e-kueue-full: export GROVE_E2E_DIAG_DIR = $(DIAG_DIR)
 run-e2e-kueue-full: export GROVE_E2E_DIAG_MODE = $(DIAG_MODE)
@@ -211,6 +212,28 @@ run-e2e-kueue-full: export E2E_SCHEDULER__KUEUE__ENABLED = true
 run-e2e-kueue-full: export E2E_SCHEDULER__KAI__ENABLED = false
 run-e2e-kueue-full: e2e-cluster-up
 	@echo "> Running e2e Kueue tests..."
+	@$(MAKE) run-e2e TEST_PATTERN='$(TEST_PATTERN)' || \
+		(echo "Tests failed, cleaning up cluster..."; $(MAKE) e2e-cluster-down; exit 1)
+	@echo "> Tests passed, cleaning up cluster..."
+	@$(MAKE) e2e-cluster-down
+
+# Full e2e test run of the Kueue scenarios that need real kubelets (graceful termination, readiness
+# probes): create a small real-node k3d cluster with Kueue installed, run tests, then cleanup. Real
+# nodes start pods slower than KWOK, so Kueue gets a 2m waitForPodsReady timeout instead of 15s.
+# Test_KueueRealUpdate* run in their own invocation, like Test_KueueUpdate*.
+# Usage: make run-e2e-kueue-real-full [TEST_PATTERN=<pattern>]
+.PHONY: run-e2e-kueue-real-full
+run-e2e-kueue-real-full: TEST_PATTERN ?= ^Test_KueueReal[0-9]
+run-e2e-kueue-real-full: export GROVE_E2E_DIAG_DIR = $(DIAG_DIR)
+run-e2e-kueue-real-full: export GROVE_E2E_DIAG_MODE = $(DIAG_MODE)
+run-e2e-kueue-real-full: export E2E_SCHEDULER__KUEUE__ENABLED = true
+run-e2e-kueue-real-full: export E2E_SCHEDULER__KUEUE__PODS_READY_TIMEOUT = 2m
+run-e2e-kueue-real-full: export E2E_SCHEDULER__KAI__ENABLED = false
+run-e2e-kueue-real-full: export E2E_CLUSTER__WORKER_NODES = 4
+run-e2e-kueue-real-full: export E2E_CLUSTER__WORKER_MEMORY = 150m
+run-e2e-kueue-real-full: export E2E_KWOK__NODES = 0
+run-e2e-kueue-real-full: e2e-cluster-up
+	@echo "> Running e2e Kueue tests (real nodes)..."
 	@$(MAKE) run-e2e TEST_PATTERN='$(TEST_PATTERN)' || \
 		(echo "Tests failed, cleaning up cluster..."; $(MAKE) e2e-cluster-down; exit 1)
 	@echo "> Tests passed, cleaning up cluster..."

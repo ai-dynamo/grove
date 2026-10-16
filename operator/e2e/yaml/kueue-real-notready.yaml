@@ -1,0 +1,82 @@
+# Real-node fixture for Test_KueueReal2: "stuck" runs but its readiness probe never passes, so the gang
+# never reaches PodsReady.
+apiVersion: grove.io/v1alpha1
+kind: PodCliqueSet
+metadata:
+  name: kueue-real-notready
+  labels:
+    app: kueue-real-notready
+    kueue.x-k8s.io/queue-name: grove-e2e
+spec:
+  replicas: 1
+  template:
+    cliques:
+      - name: ready
+        spec:
+          roleName: ready
+          replicas: 1
+          minAvailable: 1
+          podSpec:
+            schedulerName: kueue
+            terminationGracePeriodSeconds: 5
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: node_role.e2e.grove.nvidia.com
+                          operator: In
+                          values:
+                            - agent
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: ready
+                image: registry:5001/busybox:latest
+                command:
+                  - sh
+                  - -c
+                  - trap 'exit 0' TERM; while true; do sleep 1; done
+                resources:
+                  requests:
+                    memory: 10Mi
+      - name: stuck
+        spec:
+          roleName: stuck
+          replicas: 1
+          minAvailable: 1
+          podSpec:
+            schedulerName: kueue
+            terminationGracePeriodSeconds: 5
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: node_role.e2e.grove.nvidia.com
+                          operator: In
+                          values:
+                            - agent
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: stuck
+                image: registry:5001/busybox:latest
+                command:
+                  - sh
+                  - -c
+                  - trap 'exit 0' TERM; while true; do sleep 1; done
+                readinessProbe:
+                  exec:
+                    command: [cat, /tmp/ready]
+                  periodSeconds: 1
+                  failureThreshold: 1
+                resources:
+                  requests:
+                    memory: 10Mi

@@ -1,0 +1,50 @@
+# Real-node fixture for Test_KueueReal3: both pods become ready, then turn unready 60s after they start
+# and stay that way.
+apiVersion: grove.io/v1alpha1
+kind: PodCliqueSet
+metadata:
+  name: kueue-real-recovery
+  labels:
+    app: kueue-real-recovery
+    kueue.x-k8s.io/queue-name: grove-e2e
+spec:
+  replicas: 1
+  template:
+    cliques:
+      - name: worker
+        spec:
+          roleName: worker
+          replicas: 2
+          minAvailable: 2
+          podSpec:
+            schedulerName: kueue
+            terminationGracePeriodSeconds: 5
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: node_role.e2e.grove.nvidia.com
+                          operator: In
+                          values:
+                            - agent
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: worker
+                image: registry:5001/busybox:latest
+                command:
+                  - sh
+                  - -c
+                  - trap 'exit 0' TERM; touch /tmp/ready; sleep 60; rm -f /tmp/ready; while true; do sleep 1; done
+                readinessProbe:
+                  exec:
+                    command: [cat, /tmp/ready]
+                  periodSeconds: 1
+                  failureThreshold: 1
+                resources:
+                  requests:
+                    memory: 10Mi

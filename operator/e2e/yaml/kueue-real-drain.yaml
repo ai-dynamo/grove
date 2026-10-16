@@ -1,0 +1,50 @@
+# Real-node fixture for Test_KueueReal1: on SIGTERM a pod turns unready, then keeps running for 20s
+# before it exits, so its replacement must wait until it is gone.
+apiVersion: grove.io/v1alpha1
+kind: PodCliqueSet
+metadata:
+  name: kueue-real-drain
+  labels:
+    app: kueue-real-drain
+    kueue.x-k8s.io/queue-name: grove-e2e
+spec:
+  replicas: 1
+  template:
+    cliques:
+      - name: worker
+        spec:
+          roleName: worker
+          replicas: 2
+          minAvailable: 2
+          podSpec:
+            schedulerName: kueue
+            terminationGracePeriodSeconds: 60
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: node_role.e2e.grove.nvidia.com
+                          operator: In
+                          values:
+                            - agent
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: worker
+                image: registry:5001/busybox:latest
+                command:
+                  - sh
+                  - -c
+                  - trap 'rm -f /tmp/ready; sleep 20; exit 0' TERM; touch /tmp/ready; while true; do sleep 1; done
+                readinessProbe:
+                  exec:
+                    command: [cat, /tmp/ready]
+                  periodSeconds: 1
+                  failureThreshold: 1
+                resources:
+                  requests:
+                    memory: 10Mi

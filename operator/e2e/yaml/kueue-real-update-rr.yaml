@@ -1,0 +1,138 @@
+# Kueue workload for the real-node RollingRecreate update e2e test.
+# frontend: standalone PodClique (1 replica).
+# sg-prefill, sg-decode: PodCliqueScalingGroups over prefill and decode (2 replicas, minAvailable 2).
+# Each pod turns unready on SIGTERM and keeps running for 10s, so the update has to wait out a real drain.
+---
+apiVersion: grove.io/v1alpha1
+kind: PodCliqueSet
+metadata:
+  name: kueue-real-update-rr
+  labels:
+    app: kueue-real-update-rr
+    kueue.x-k8s.io/queue-name: grove-e2e
+spec:
+  replicas: 1
+  template:
+    cliques:
+      - name: frontend
+        spec:
+          roleName: frontend
+          replicas: 1
+          minAvailable: 1
+          podSpec:
+            schedulerName: kueue
+            terminationGracePeriodSeconds: 30
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: node_role.e2e.grove.nvidia.com
+                          operator: In
+                          values:
+                            - agent
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: frontend
+                image: registry:5001/busybox:latest
+                command:
+                  - sh
+                  - -c
+                  - trap 'rm -f /tmp/ready; sleep 10; exit 0' TERM; touch /tmp/ready; while true; do sleep 1; done
+                readinessProbe:
+                  exec:
+                    command: [cat, /tmp/ready]
+                  periodSeconds: 1
+                  failureThreshold: 1
+                resources:
+                  requests:
+                    memory: 10Mi
+      - name: prefill
+        spec:
+          roleName: prefill
+          replicas: 1
+          minAvailable: 1
+          podSpec:
+            schedulerName: kueue
+            terminationGracePeriodSeconds: 30
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: node_role.e2e.grove.nvidia.com
+                          operator: In
+                          values:
+                            - agent
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: prefill
+                image: registry:5001/busybox:latest
+                command:
+                  - sh
+                  - -c
+                  - trap 'rm -f /tmp/ready; sleep 10; exit 0' TERM; touch /tmp/ready; while true; do sleep 1; done
+                readinessProbe:
+                  exec:
+                    command: [cat, /tmp/ready]
+                  periodSeconds: 1
+                  failureThreshold: 1
+                resources:
+                  requests:
+                    memory: 10Mi
+      - name: decode
+        spec:
+          roleName: decode
+          replicas: 1
+          minAvailable: 1
+          podSpec:
+            schedulerName: kueue
+            terminationGracePeriodSeconds: 30
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: node_role.e2e.grove.nvidia.com
+                          operator: In
+                          values:
+                            - agent
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: decode
+                image: registry:5001/busybox:latest
+                command:
+                  - sh
+                  - -c
+                  - trap 'rm -f /tmp/ready; sleep 10; exit 0' TERM; touch /tmp/ready; while true; do sleep 1; done
+                readinessProbe:
+                  exec:
+                    command: [cat, /tmp/ready]
+                  periodSeconds: 1
+                  failureThreshold: 1
+                resources:
+                  requests:
+                    memory: 10Mi
+    podCliqueScalingGroups:
+      - name: sg-prefill
+        replicas: 2
+        minAvailable: 2
+        cliqueNames:
+          - prefill
+      - name: sg-decode
+        replicas: 2
+        minAvailable: 2
+        cliqueNames:
+          - decode
