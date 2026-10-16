@@ -189,8 +189,8 @@ func Test_KueueReal2_UnreadyGangEvictedAndRequeued(t *testing.T) {
 }
 
 // Test_KueueReal3_LostReadinessEvictedAfterRecoveryTimeout verifies Kueue's recovery timeout: a gang that was ready
-// and then stays unready past waitForPodsReady.recoveryTimeout is evicted and requeued. The recovery timeout defaults
-// to the 2m timeout that run-e2e-kueue-real-full sets.
+// and then stays unready past waitForPodsReady.recoveryTimeout is evicted, Grove recreates its pods, and Kueue admits
+// the same Workload again. The recovery timeout defaults to the 2m timeout that run-e2e-kueue-real-full sets.
 func Test_KueueReal3_LostReadinessEvictedAfterRecoveryTimeout(t *testing.T) {
 	ctx := context.Background()
 	expectedPods := 2
@@ -233,6 +233,15 @@ func Test_KueueReal3_LostReadinessEvictedAfterRecoveryTimeout(t *testing.T) {
 	Logger.Info("3. Verify every original pod terminates and is replaced, and Kueue requeues the same Workload")
 	verifyGangRequeued(ctx, t, tc, wlVerifier, podGang, ready.UID, originalPods)
 
+	Logger.Info("4. Verify Kueue admits the Workload again")
+	readmitted, err := wlVerifier.WaitUntilVerified(ctx, podGang.Namespace, podGang.Name, tc.Timeout, tc.Interval, readmittedAfterEviction)
+	if err != nil {
+		t.Fatalf("Kueue never admitted Workload %s/%s again after evicting it: %v", podGang.Namespace, podGang.Name, err)
+	}
+	if readmitted.UID != ready.UID {
+		t.Fatalf("Workload %s/%s was rebuilt (UID %s -> %s) instead of readmitted", readmitted.Namespace, readmitted.Name, ready.UID, readmitted.UID)
+	}
+
 	Logger.Info("Test_KueueReal3_LostReadinessEvictedAfterRecoveryTimeout completed successfully!")
 }
 
@@ -241,6 +250,11 @@ func onlyPodGang(ctx context.Context, t *testing.T, tc *testctx.TestContext) gro
 	t.Helper()
 	pcs := types.NamespacedName{Namespace: tc.Namespace, Name: tc.Workload.Name}
 	return waitForPodGangCount(ctx, t, podgang.NewVerifier(tc.Client, Logger), pcs, 1, tc.Timeout, tc.Interval)[0]
+}
+
+// readmittedAfterEviction reports whether Kueue admitted wl again: on readmission Kueue resets Evicted to False.
+func readmittedAfterEviction(wl *kueuev1beta2.Workload) bool {
+	return kueueworkload.Admitted(wl) && !kueueworkload.EvictedByPodsReadyTimeout(wl)
 }
 
 // verifyGangRequeued waits until every pod in originalPods is gone and replaced, then checks that Kueue requeued the
