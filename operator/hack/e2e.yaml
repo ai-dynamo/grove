@@ -17,3 +17,5 @@ scheduler:
 grove:
   enabled: true
   profiling: false
+  local:
+    skaffold_profile: e2e-kai
