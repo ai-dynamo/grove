@@ -36,6 +36,7 @@ spec:
             containers:
               - name: worker
                 image: registry:5001/busybox:latest
+                imagePullPolicy: IfNotPresent
                 command:
                   - sh
                   - -c

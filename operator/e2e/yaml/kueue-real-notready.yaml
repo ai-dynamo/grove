@@ -36,6 +36,7 @@ spec:
             containers:
               - name: ready
                 image: registry:5001/busybox:latest
+                imagePullPolicy: IfNotPresent
                 command:
                   - sh
                   - -c
@@ -68,6 +69,7 @@ spec:
             containers:
               - name: stuck
                 image: registry:5001/busybox:latest
+                imagePullPolicy: IfNotPresent
                 command:
                   - sh
                   - -c

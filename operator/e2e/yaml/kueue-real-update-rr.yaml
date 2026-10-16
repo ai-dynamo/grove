@@ -39,6 +39,7 @@ spec:
             containers:
               - name: frontend
                 image: registry:5001/busybox:latest
+                imagePullPolicy: IfNotPresent
                 command:
                   - sh
                   - -c
@@ -76,6 +77,7 @@ spec:
             containers:
               - name: prefill
                 image: registry:5001/busybox:latest
+                imagePullPolicy: IfNotPresent
                 command:
                   - sh
                   - -c
@@ -113,6 +115,7 @@ spec:
             containers:
               - name: decode
                 image: registry:5001/busybox:latest
+                imagePullPolicy: IfNotPresent
                 command:
                   - sh
                   - -c
