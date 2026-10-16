@@ -239,9 +239,7 @@ func (v *pcsValidator) validatePodCliqueTemplates(fldPath *field.Path) ([]string
 	var warnings []string
 	cliqueTemplateSpecs := v.pcs.Spec.Template.Cliques
 	if len(cliqueTemplateSpecs) == 0 {
-		// Return here rather than fall through: with no cliques there are no
-		// scheduler names either, and validateSchedulerNames below indexes the
-		// first of them. Falling through replaced this message with a panic.
+		// Nothing to validate if cliqueTemplateSpecs is empty
 		allErrs = append(allErrs, field.Required(fldPath, "at least one PodClique must be defined"))
 		return warnings, allErrs
 	}
@@ -299,8 +297,7 @@ func (v *pcsValidator) validateSchedulerNames(schedulerNames []string, fldPath *
 	}
 
 	if len(uniqueSchedulerNames) == 0 {
-		// No pods, so no scheduler to resolve. The caller reports the missing
-		// clique; there is nothing to add and nothing to index.
+		// An empty uniqueSchedulerNames implies an empty pcs.Spec.Template.Cliques
 		return allErrs
 	}
 
