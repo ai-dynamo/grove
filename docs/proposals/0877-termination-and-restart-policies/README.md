@@ -41,6 +41,9 @@
   - [Monitoring](#monitoring)
   - [Dependencies](#dependencies)
   - [Test Plan](#test-plan)
+  - [Implementation Plan](#implementation-plan)
+    - [Phase 1: MinAvailable disaggregation and the <code>v1beta1</code> API](#phase-1-minavailable-disaggregation-and-the-v1beta1-api)
+    - [Phase 2: Terminal states and restart policies](#phase-2-terminal-states-and-restart-policies)
 - [Alternatives](#alternatives)
 - [Appendix](#appendix)
 <!-- /toc -->
@@ -77,7 +80,7 @@ Kubernetes defines these semantics for containers (exit code), pods (`restartPol
 - Split `MinAvailable` into `init.minReplicas` (gang scheduling), `update.minReplicas` (minimum update unit) and `termination.resource.availability.minReplicas` (availability floor).
 - Support completion-aware workloads by allowing `Never`/`OnFailure` pod restart policies.
 - Let one PodCliqueSet mix long-running and completion-aware resources, for example a model warm-up PodClique inside a long-running inference service.
-- Preserve today's behaviour for existing PodCliqueSets through defaulting and a documented mapping from the legacy fields.
+- Introduce the new fields in a `grove.io/v1beta1` API, and preserve today's behaviour for existing `v1alpha1` PodCliqueSets through conversion from the legacy fields.
 - Keep completed replicas and resources inspectable for a configurable `ttlAfterFinished`, then free their capacity.
 - Keep status size independent of the number of replicas.
 
@@ -161,7 +164,7 @@ Restart defaults depend on the mode:
 - An **LR** resource defaults both outcomes to `Always` at both scopes. Every failure is therefore handled where it occurs: a failed pod is recreated, and a PodClique that stays breached gang-restarts its own pods.
 - A **CA** resource defaults both outcomes to `{policy: Limit, limit: 0}`. Every terminal state completes at once, so by default a failure escalates level by level until it reaches a scope that allows a retry.
 
-Today's controllers instead recycle the PCSG replica when a member PodClique stays breached, and the PCS replica when a PCSG or standalone PodClique does. To keep that behaviour, a resource sets `resource.restart.onFailure: {policy: Limit}`, so that it completes and its parent replica restarts. Legacy objects are translated this way (see [Migration from legacy fields](#migration-from-legacy-fields)). New objects keep the `Always` defaults, and users configure the restart specs at each level for the escalation they want.
+Today's controllers instead recycle the PCSG replica when a member PodClique stays breached, and the PCS replica when a PCSG or standalone PodClique does. To keep that behaviour, a resource sets `resource.restart.onFailure: {policy: Limit}`, so that it completes and its parent replica restarts. Objects converted from `v1alpha1` get this setting (see [Migration from legacy fields](#migration-from-legacy-fields)). New `v1beta1` objects keep the `Always` defaults, and users configure the restart specs at each level for the escalation they want.
 
 ### Disaggregating MinAvailable
 
@@ -223,9 +226,9 @@ As an operator of a long-running inference service, I want each PCS replica to r
 
 | Risk | Mitigation |
 |---|---|
-| **LR defaults no longer escalate.** With `Always` at every level, a breached PodClique gang-restarts its own pods instead of recycling its PCSG replica as today. In a tensor-parallel group, that recreates the workers while the leader keeps running. | Legacy objects are translated to `resource.restart.onFailure: {policy: Limit}` on PCLQs and PCSGs, which keeps today's escalation. For new objects this is intended: the user guide shows how to configure restart specs for a typical disaggregated inference workload. |
+| **LR defaults no longer escalate.** With `Always` at every level, a breached PodClique gang-restarts its own pods instead of recycling its PCSG replica as today. In a tensor-parallel group, that recreates the workers while the leader keeps running. | Objects converted from `v1alpha1`, and `v1beta1` objects created before Phase 2, get `resource.restart.onFailure: {policy: Limit}` on PCLQs and PCSGs, which keeps today's escalation. For new objects this is intended: the user guide shows how to configure restart specs for a typical disaggregated inference workload. |
 | **Disruptions fail CA replicas.** An evicted, preempted or node-lost pod is externally deleted and makes its replica `Failed` (rule 5b.iii). With the CA default of no restarts, one eviction can fail a whole batch job. | This is the intended default. Users who expect disruptions set a replica `onFailure` limit, and the user guide recommends one. Not counting pods with the `DisruptionTarget` condition, as Kubernetes Job `podFailurePolicy` can, is a possible later extension. |
-| **Behaviour change for new LR objects.** Without `availability`, a new LR PodClique defaults to `init.minReplicas: 1` and never breaches, whereas today `minAvailable` defaults to `replicas` and drives both gang scheduling and gang termination. | This is intended: users declare the gang-scheduling and availability requirements of new objects. Objects that do not use the new sections keep the legacy defaults (see [Migration from legacy fields](#migration-from-legacy-fields)). |
+| **Behaviour change for new LR objects.** A new `v1beta1` LR PodClique without `availability` never breaches, so it is never gang-terminated. Today `minAvailable` defaults to `1`, which also sets a breach threshold of one ready pod. Gang scheduling is unchanged: `init.minReplicas` defaults to `1`, as `minAvailable` does today. | This is intended: users declare the gang-scheduling and availability requirements of new objects. Objects converted from `v1alpha1` always have `availability` set (see [Migration from legacy fields](#migration-from-legacy-fields)). |
 | **Completed replicas keep holding capacity during `ttlAfterFinished`.** A completed replica's children are kept for the TTL, including the running pods of healthy siblings in a failed PCS replica. | The PCS-level default is `0s`. The TTL is best effort: a restart of an ancestor deletes the children early. |
 | **Restart storms.** `Always` restarts can loop on a cluster that cannot place the gang. | Breach evaluation starts only after the resource has been available at least once (the existing `WasPCLQEverScheduled`/`WasPCSGEverHealthy` gates), and a restart resets that gate. `GangRestartInProgress` suppresses re-firing until recovery, and `Limit` gives a hard cap. |
 | **Mis-attributing Grove's own deletions as failures.** Restarts, TTL deletion, rolling updates and scale-in all delete pods, and an external deletion now fails a replica. | Grove marks the pods it deletes and excludes them from failure accounting (see [Pod deletion attribution](#pod-deletion-attribution)). |
@@ -282,6 +285,7 @@ A resource's terminal state is derived from the `MinAvailableBreached` and `MinS
   - **3f.i.** Restarting immediately recreates all its replicas.
   - **3f.ii.** When its restart limit is exhausted, the resource's `Completed` condition is set to `True`, and Grove deletes all its replicas' children after `ttlAfterFinished`.
   - **3f.iii.** A terminal resource does not restart if any ancestor resource up to the PCS has `Completed=True` or the Completed annotation.
+  - **3f.iv.** In every Grove resource, `spec.termination.resource.restart.onSuccess` and `spec.termination.resource.restart.onFailure` define the resource restart policy when the resource is in terminal state `Succeeded` or `Failed`, respectively.
 
 **4. Replica terminal states**
 
@@ -295,6 +299,7 @@ A replica's terminal state is derived from the terminal states of its children.
   - **4c.i.** Restarting immediately recreates all its children.
   - **4c.ii.** When its restart limit is exhausted, the Completed annotation is set on all its children, and Grove deletes them after `ttlAfterFinished`.
   - **4c.iii.** A terminal replica does not restart if any ancestor resource up to the PCS has `Completed=True` or the Completed annotation.
+  - **4c.iv.** In every Grove resource, `spec.termination.replica.restart.onSuccess` and `spec.termination.replica.restart.onFailure` define the restart policy of a replica of the resource when the replica is in terminal state `Succeeded` or `Failed`, respectively.
 
 **5. PodCliques**
 
@@ -507,7 +512,7 @@ type TerminalRule struct {
 A completion-aware PCS for batch inference (Stories 2 and 3). The `model` PCSG holds the 10 instances, and its replica policies target its member clique `leader`. CA resources default to no restarts, so a failed `worker` or `leader` PodClique completes at once and fails its PCSG replica, which retries up to 3 times:
 
 ```yaml
-apiVersion: grove.io/v1alpha1
+apiVersion: grove.io/v1beta1
 kind: PodCliqueSet
 metadata:
   name: batch-infer
@@ -672,7 +677,7 @@ Defaulting materializes explicit values into the stored object, so `kubectl get 
 | Field | LR resource | CA resource |
 |---|---|---|
 | `podSpec.restartPolicy` (PCLQ) | `Always` (only value allowed) | `Never` (`Never` or `OnFailure` allowed) |
-| `availability` | nil (set by legacy translation) | nil (required) |
+| `availability` | nil (always set on objects converted from `v1alpha1`) | nil (required) |
 | `availability.minReplicas`, `breachTolerance` | `1`, `4h` | — |
 | `completion` | nil (it is what makes the resource LR) | `{minSucceeded: spec.replicas}`; also filled in on every descendant of a CA resource that omits it |
 | `init.minReplicas` | `availability.minReplicas` if set, else `1`; `1` on PCS | `spec.replicas`; `1` on PCS |
@@ -855,7 +860,7 @@ if resource.terminal:
 
 ### Long-running lifecycle
 
-A disaggregated inference PCS with a standalone `frontend` and a `prefill` PCSG of `{pleader, pworker}`, all with `availability` set. Below the PCS, each resource sets `resource.restart.onFailure: {policy: Limit}`, which keeps today's escalation and is what legacy objects translate to:
+A disaggregated inference PCS with a standalone `frontend` and a `prefill` PCSG of `{pleader, pworker}`, all with `availability` set. Below the PCS, each resource sets `resource.restart.onFailure: {policy: Limit}`, which keeps today's escalation and is what objects converted from `v1alpha1` get:
 
 ```yaml
 cliques:
@@ -919,7 +924,7 @@ flowchart TD
 An LR PCS for Story 5, with a CA `warmup` PodClique beside two LR serving cliques:
 
 ```yaml
-apiVersion: grove.io/v1alpha1
+apiVersion: grove.io/v1beta1
 kind: PodCliqueSet
 metadata:
   name: serve
@@ -979,22 +984,36 @@ For `serve`:
 
 ### Migration from legacy fields
 
-The legacy fields stay in `v1alpha1`, marked deprecated, and are mutually exclusive with their replacements. A resource that sets none of `init`, `update` and `termination` gets the legacy defaults, translated into the new fields, so existing manifests keep today's behaviour, including `minAvailable` defaulting to `replicas`. The new defaults apply only to resources that use at least one of the new sections:
+The new fields exist only in `grove.io/v1beta1`, and the legacy fields exist only in `grove.io/v1alpha1`, which stays served and is marked deprecated (see [Implementation Plan](#implementation-plan)). There is no object in which both sets coexist. A conversion webhook translates between the versions, so existing `v1alpha1` objects, manifests and Go clients keep working, and the operator only ever reads `v1beta1`.
 
-| Legacy field | Translated to |
+Converting `v1alpha1` to `v1beta1` reproduces what the API server stores today. In particular, an omitted `minAvailable` is `1`, its schema default, and a converted object always has `availability` set, so gang termination keeps firing:
+
+| `v1alpha1` field | `v1beta1` fields |
 |---|---|
-| PCLQ `minAvailable: N` (default `replicas`) | `init.minReplicas: N`, `update.minReplicas: N`, `availability: {minReplicas: N}` |
-| PCSG `minAvailable: N` (default `replicas`) | Same three fields on the PCSG |
+| PCLQ `minAvailable: N` (default `1`) | `init.minReplicas: N`, `update.minReplicas: N`, `availability: {minReplicas: N}` |
+| PCSG `minAvailable: N` (default `1`) | Same three fields on the PCSG |
 | `template.terminationDelay: D` (default 4h) | `availability.breachTolerance: D` on every PCLQ and PCSG |
-| `updateStrategy.type` (default `RollingRecreate`) | `update.policy` with the same value |
+| `updateStrategy.type` (default `RollingRecreate`) | `update.policy` with the same value, always written explicitly |
 | `rollingUpdate.{maxUnavailable, progressDeadline}` | `update.{maxUnavailable, progressDeadline}` |
-| (implicit gang termination) | `resource.restart.onFailure: {policy: Limit, limit: 0}` on every PCLQ and PCSG |
+| (implicit gang termination) | `resource.restart.onFailure: {policy: Limit, limit: 0}` on every PCLQ and PCSG (Phase 2) |
 
-The last row makes a breached PodClique or PCSG complete and hand the failure to its parent replica, whose default `Always` restart recycles it, which reproduces today's gang termination (see [Long-running lifecycle](#long-running-lifecycle)). Legacy objects are always LR, because legacy pods are forced to `restartPolicy: Always`. Removal of the legacy fields happens in a later API version through the CRD upgrader (GREP-436).
+The last row makes a breached PodClique or PCSG complete and hand the failure to its parent replica, whose default `Always` restart recycles it, which reproduces today's gang termination (see [Long-running lifecycle](#long-running-lifecycle)). Converted objects are always LR, because `v1alpha1` pods are forced to `restartPolicy: Always`.
+
+Converting `v1beta1` to `v1alpha1` is lossy, because `v1alpha1` cannot express, for example, distinct init and availability values, `availability: nil` or per-component tolerances. Grove writes the closest `v1alpha1` form, with `minAvailable` set to `init.minReplicas`, and keeps the original `v1beta1` values in the annotation `grove.io/v1beta1-conversion-data`. Converting back restores them wherever the `v1alpha1` client did not change the corresponding field.
+
+**Objects created at `v1beta1` before Phase 2.** Phase 1 serves `v1beta1` without restart specs, and its controllers still gang-terminate a breached PodClique or PCSG as today. Phase 2 must not change that for objects that already exist, so it gives them the same `resource.restart.onFailure: {policy: Limit, limit: 0}` that conversion gives `v1alpha1` objects. Phase 2 defaulting materializes restart specs into every object it admits, so an LR PodClique or PCSG whose `resource.restart` is unset can only predate Phase 2:
+
+- **Controllers** treat an unset `resource.restart` on an LR PodClique or PCSG as `{onFailure: {policy: Limit, limit: 0}}`. Today's escalation is therefore kept from the first reconcile after the upgrade.
+- **The defaulting webhook** fills in the LR default `Always` only on create. On update, if the stored object has no `resource.restart` at that level, it fills in `onFailure: {policy: Limit, limit: 0}`, so that a later edit by the user does not change the behaviour.
+- **A one-time migrator** in the Phase 2 operator writes `onFailure: {policy: Limit, limit: 0}` into every existing PCS template and PCSG and PodClique object that lacks it. This makes the effective policy visible. It is idempotent, so a rerun changes nothing, and the controller rule above covers objects it has not reached yet.
+
+Replica-scope restarts keep their LR default `Always` for these objects, which matches today's pod recreation and replica recycling.
+
+`v1alpha1` is removed after a deprecation window, through the GREP-436 CRD upgrader.
 
 ### Update policy defaults
 
-- **Default policy.** `update.policy` defaults to `Coherent` when a PodCliqueSet uses the new `update` section. Objects that still use the legacy `updateStrategy`, or set neither, keep the GREP-393 default of `RollingRecreate`, so existing manifests do not change behaviour silently.
+- **Default policy.** `update.policy` defaults to `Coherent` for PodCliqueSets created at `v1beta1`. Objects converted from `v1alpha1` always carry an explicit `update.policy`, which is `RollingRecreate` (the GREP-393 default) when `updateStrategy` was not set, so existing manifests do not change behaviour silently.
 - **Allowed values.** `OnDelete` (GREP-291) is a valid value. With `OnDelete`, `update.minReplicas` is not used, and `update.maxUnavailable` and `update.progressDeadline` are rejected, as `rollingUpdate` is today.
 
 ### Open Questions
@@ -1040,13 +1059,14 @@ A client waits for the outcome with `kubectl wait pcs/batch-infer --for=conditio
 ### Dependencies
 
 - GREP-393 (Coherent rolling updates) for the MVU and PodGangMap machinery that `update.minReplicas` and `init.minReplicas` plug into.
-- GREP-436 (CRD upgrader) for removal of the legacy fields in a later API version.
+- GREP-436 (CRD upgrader) for removing `v1alpha1`, and with it the legacy fields, after the deprecation window.
 
 ### Test Plan
 
 **Unit tests:**
 
-- Defaults, including TTL inheritance and the PCS-level values, and the legacy-field translation table.
+- Defaults, including TTL inheritance and the PCS-level values.
+- `v1alpha1` ↔ `v1beta1` conversion: one case per row of the conversion table, including omitted fields (`minAvailable` → `1`, `terminationDelay` → `4h`), and round-trip fuzzing with the conversion annotation.
 - Every validation rule listed above, including:
   - mode inheritance, the CA ban on `availability`, and the check that an LR replica cannot succeed through CA children alone;
   - rejection of replica policies on a PodClique;
@@ -1065,7 +1085,7 @@ A client waits for the outcome with `kubectl wait pcs/batch-infer --for=conditio
 
 **E2E** (extending `operator/e2e/tests`):
 
-- **Equivalence:** `gang_termination_test.go` and `scaleguard_test.go` pass unchanged with legacy fields, and again with the equivalent new fields.
+- **Equivalence:** `gang_termination_test.go` and `scaleguard_test.go` pass unchanged with `v1alpha1` manifests, and again with the equivalent `v1beta1` manifests.
 - **Long-running:**
   - pod eviction fails the PodClique replica and is replaced through the default `onFailure: Always`;
   - a sustained PCLQ breach with `resource.restart.onFailure: {policy: Limit}` leads to a PCSG replica restart;
@@ -1092,6 +1112,83 @@ A client waits for the outcome with `kubectl wait pcs/batch-infer --for=conditio
 - **Updates:** Coherent updates use `update.minReplicas` while availability uses a lower `availability.minReplicas`; completed replicas are skipped.
 
 A dedicated sub-issue of [#877](https://github.com/ai-dynamo/grove/issues/877) will track the detailed e2e scenario matrix.
+
+### Implementation Plan
+
+The GREP is delivered in two phases. Phase 1 changes no behaviour for existing workloads. Phase 2 adds fields to the `v1beta1` API that Phase 1 introduces, without breaking it.
+
+#### Phase 1: MinAvailable disaggregation and the `v1beta1` API
+
+1. **Accessor layer.** Route every read of `MinAvailable` and `terminationDelay` in the operator through purpose-named helpers for gang scheduling, update unit, availability threshold and breach tolerance. On `v1alpha1` they return today's values, so behaviour is unchanged, and every call site is classified by purpose.
+2. **`grove.io/v1beta1` plumbing.**
+   - Add a `v1beta1` package for all `grove.io` kinds (PodCliqueSet, PodClique, PodCliqueScalingGroup, PodGangMap and ClusterTopologyBinding), initially identical to `v1alpha1`, with `v1beta1` as the conversion hub.
+   - Serve both versions from multi-version CRDs, with storage still at `v1alpha1`.
+   - Serve `/convert` from the operator's webhook server, with `spec.conversion` on the CRDs, `caBundle` injection in both certificate modes, and the RBAC that needs.
+   - Switch every Grove admission and authorizer webhook rule to `v1beta1` with `matchPolicy: Equivalent`. This lands in the same change that first serves `v1beta1`, so that `v1beta1` writes never bypass validation or the authorizer.
+3. **Import switch.** Move the operator's Go code to the `v1beta1` types as one mechanical rename, kept separate from semantic changes.
+4. **`v1beta1` schema.**
+   - Add `init.minReplicas`, `update.{policy, minReplicas, maxUnavailable, progressDeadline}` and `termination.resource.availability.{minReplicas, breachTolerance}`.
+   - Remove `minAvailable`, `updateStrategy`, `rollingUpdate` and `terminationDelay` from `v1beta1`. They stay in `v1alpha1`, marked deprecated.
+5. **Conversion.** Hand-written `v1alpha1` ↔ `v1beta1` conversion that follows [Migration from legacy fields](#migration-from-legacy-fields). Values that `v1alpha1` cannot express are kept in a round-trip annotation, so `v1alpha1` clients do not drop them.
+6. **Operator semantics.**
+   - Re-implement the accessors on the new fields.
+   - Port defaulting and validation, including the scale guard and immutability rules, to the new fields.
+   - Use each component's own `breachTolerance` in gang termination.
+   - Replace the `MinAvail` printer columns.
+7. **Docs and first release.** API reference, user guide and samples on `v1beta1`, a migration guide and release notes. The `v1beta1` schema of Phase 1 must be final before this release is cut.
+8. **Storage migration (next release).** Make `v1beta1` the storage version, rewrite stored objects with a storage migrator, and set `status.storedVersions` to `["v1beta1"]`. Storage moves one release after `v1beta1` is introduced, so that rolling back is always safe.
+9. **Retiring `v1alpha1` (later releases).** Stop serving `v1alpha1`, then remove it through the GREP-436 CRD upgrader, after a deprecation window agreed with consumers such as Dynamo.
+10. **Tests.**
+    - Round-trip fuzz tests for every kind.
+    - Conversion table tests.
+    - Envtest coverage of reads, writes and `/scale` at both versions.
+    - Upgrade and rollback e2e tests that assert no pod is recreated.
+    - The equivalence suites run once with `v1alpha1` manifests and once with `v1beta1` manifests.
+    - Story 1 (`init.minReplicas: 8`, `availability.minReplicas: 6`).
+
+**Exit criteria:** every existing `v1alpha1` workload behaves exactly as before: gang scheduling, gang termination, rolling updates and the scale guard, with no pod recreated by the upgrade. New behaviour appears only through fields that `v1alpha1` cannot express.
+
+#### Phase 2: Terminal states and restart policies
+
+1. **API.** Add to `v1beta1`:
+   - `termination.resource.completion`;
+   - `termination.resource.restart` and `termination.replica.restart`;
+   - `termination.replica.success` and `termination.replica.failure`;
+   - `termination.ttlAfterFinished`;
+   - the PCS-level `init` and `termination` sections.
+
+   Allow `podSpec.restartPolicy: Never` and `OnFailure` on CA PodCliques. All additions are optional, so `v1beta1` objects from Phase 1 are unaffected.
+2. **Defaulting and validation.** Implement [Defaults](#defaults) and [Validation](#validation):
+   - per-mode restart defaults;
+   - `completion` filled in on descendants of a CA resource, and `ttlAfterFinished` inherited by descendants;
+   - mode inheritance, and the CA ban on `availability`;
+   - the check that an LR replica cannot succeed through CA children alone;
+   - the PCS-level values fixed at `1`;
+   - the admission warnings.
+3. **Status.** Add the `Succeeded`, `Completed`, `MinSucceededAchieved` and `GangRestartInProgress` conditions with their reasons, the O(1) counters and `completedAt`, and the printer columns.
+4. **Per-replica state.**
+   - Carrier annotations and labels: `grove.io/replica-restart-count`, `grove.io/completed` and `grove.io/replica-terminal-state`.
+   - The `grove.io/replica-accounting` finalizer, completion markers that survive TTL deletion, and counter reset on ancestor restarts.
+   - Pod deletion attribution through `grove.io/deletion-reason`.
+5. **Terminal-state evaluation.**
+   - PodClique replicas follow the pod phase, and an external deletion fails the replica.
+   - The replica rule evaluator (`And`/`Or`, failure precedence) runs over completed children only.
+   - `MinAvailableBreached` and breach tolerance at every level, including the PCS.
+   - `MinSucceededAchieved` counts only completed replicas.
+6. **Long-running restarts.**
+   - Replica and resource restart executors that replace today's hard-wired gang termination (`gangterminate.go`) and the PCSG-replica recycle.
+   - The executors are driven by restart policies and a child's `Completed` condition, with restart suppression by completed ancestors.
+   - Objects converted from `v1alpha1`, and `v1beta1` objects created before Phase 2, get `resource.restart.onFailure: {policy: Limit, limit: 0}` below the PCS, so today's escalation is preserved. For the latter, this uses the controller fallback, the update-time defaulting and the one-time migrator described in [Migration from legacy fields](#migration-from-legacy-fields).
+7. **Completion-aware workloads.** End-to-end completion for CA PodCliques, PCSGs and PodCliqueSets: `Limit` restarts, `Completed`, and `ttlAfterFinished` deletion of children while the resource object is kept.
+8. **Mixed mode.**
+   - CA children inside LR parents.
+   - `startsAfter` on a CA PodClique waits for its `Succeeded` condition, which needs PodClique `get`/`watch` RBAC for the init container.
+   - A completed CA child's PodGroup `minReplicas` is lowered to `0`.
+   - Rolling updates skip completed replicas and re-run a CA child whose template changed.
+9. **Monitoring.** The events and metrics in [Monitoring](#monitoring).
+10. **Tests and docs.** The unit, envtest and e2e scenarios in [Test Plan](#test-plan). User guide pages for LR, CA and mixed-mode workloads, including how to configure restart specs for a typical disaggregated inference service.
+
+**Exit criteria:** the long-running, completion-aware and mixed-mode lifecycles described in this GREP work end to end. The Phase 1 equivalence suites still pass, both for `v1alpha1` objects and for `v1beta1` objects created under Phase 1 and upgraded to Phase 2.
 
 ## Alternatives
 
