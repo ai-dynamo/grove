@@ -16,9 +16,11 @@
 
 from __future__ import annotations
 
+import tempfile
 from pathlib import Path
 
 import sh
+import yaml
 from rich.panel import Panel
 from tenacity import retry, stop_after_attempt, wait_fixed
 
@@ -63,10 +65,38 @@ def install_kueue(cfg: KueueConfig, values_file: Path | None = None) -> None:
         NS_KUEUE,
         "--create-namespace",
     ]
+    rendered_values_file: Path | None = None
     if values_file and values_file.exists():
+        if cfg.pods_ready_timeout:
+            console.print(f"[yellow]PodsReady timeout: {cfg.pods_ready_timeout}[/yellow]")
+            rendered_values_file = values_file = _with_pods_ready_timeout(values_file, cfg.pods_ready_timeout)
         helm_args += ["-f", str(values_file)]
-    sh.helm(*helm_args)
+    try:
+        sh.helm(*helm_args)
+    finally:
+        if rendered_values_file:
+            rendered_values_file.unlink(missing_ok=True)
     console.print("[green]✅ Kueue installed[/green]")
+
+
+def _with_pods_ready_timeout(values_file: Path, timeout: str) -> Path:
+    """Write a temporary copy of values_file whose Kueue config sets waitForPodsReady.timeout.
+
+    Args:
+        values_file: Helm values file holding Kueue's config in managerConfig.controllerManagerConfigYaml.
+        timeout: Duration such as "2m".
+
+    Returns:
+        Path of the temporary values file, which the caller deletes.
+    """
+    values = yaml.safe_load(values_file.read_text())
+    manager_config = values["managerConfig"]
+    config = yaml.safe_load(manager_config["controllerManagerConfigYaml"])
+    config.setdefault("waitForPodsReady", {})["timeout"] = timeout
+    manager_config["controllerManagerConfigYaml"] = yaml.safe_dump(config, sort_keys=False)
+    with tempfile.NamedTemporaryFile("w", delete=False, suffix=".yaml") as tmp:
+        yaml.safe_dump(values, tmp, sort_keys=False)
+    return Path(tmp.name)
 
 
 @retry(

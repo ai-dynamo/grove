@@ -45,14 +45,25 @@ const (
 	prebuiltWorkloadNameLabel = "kueue.x-k8s.io/prebuilt-workload-name"
 )
 
+// kueueUpdateFixture is the PodCliqueSet a Kueue update scenario deploys.
+type kueueUpdateFixture struct {
+	name        string
+	yamlPath    string
+	workerNodes int
+}
+
 // Test_KueueUpdate1_RollingRecreateKeepsWorkload verifies that a RollingRecreate update of every component
 // replaces the Pods within the same PodGang, so Kueue keeps the same Workload ready and never evicts the gang.
 func Test_KueueUpdate1_RollingRecreateKeepsWorkload(t *testing.T) {
-	tests.Logger.Info("1. Deploy kueue-update-rr and wait until Kueue reports the gang ready")
+	testKueueRollingRecreateKeepsWorkload(t, kueueUpdateFixture{name: "kueue-update-rr", yamlPath: "../../yaml/kueue-update-rr.yaml", workerNodes: 5})
+}
+
+func testKueueRollingRecreateKeepsWorkload(t *testing.T, fixture kueueUpdateFixture) {
+	tests.Logger.Infof("1. Deploy %s and wait until Kueue reports the gang ready", fixture.name)
 	tc, cleanup, _ := setupTest(t, testConfig{
-		workloadName: "kueue-update-rr",
-		workloadYAML: "../../yaml/kueue-update-rr.yaml",
-		workerNodes:  5,
+		workloadName: fixture.name,
+		workloadYAML: fixture.yamlPath,
+		workerNodes:  fixture.workerNodes,
 		expectedPods: kueueUpdateExpectedPods,
 	})
 	defer cleanup()
@@ -74,6 +85,9 @@ func Test_KueueUpdate1_RollingRecreateKeepsWorkload(t *testing.T) {
 	if wl.UID != original.UID {
 		t.Fatalf("Workload %s was rebuilt (UID %s -> %s)", wl.Name, original.UID, wl.UID)
 	}
+	if kueueworkload.Finished(wl) {
+		t.Fatalf("Kueue finished Workload %s during the update", wl.Name)
+	}
 	if n := kueueworkload.EvictionCount(wl, kueuev1beta2.WorkloadEvictedByPodsReadyTimeout, kueuev1beta2.WorkloadWaitForRecovery); n > 0 {
 		t.Fatalf("Kueue evicted Workload %s %d time(s) during the update", wl.Name, n)
 	}
@@ -84,11 +98,15 @@ func Test_KueueUpdate1_RollingRecreateKeepsWorkload(t *testing.T) {
 // component at once because a narrower update would drain a PodGroup off the old PodGang while its Workload still
 // counts it.
 func Test_KueueUpdate2_CoherentReplacesWorkload(t *testing.T) {
-	tests.Logger.Info("1. Deploy kueue-update-coherent and wait until Kueue reports the gang ready")
+	testKueueCoherentReplacesWorkload(t, kueueUpdateFixture{name: "kueue-update-coherent", yamlPath: "../../yaml/kueue-update-coherent.yaml", workerNodes: 5})
+}
+
+func testKueueCoherentReplacesWorkload(t *testing.T, fixture kueueUpdateFixture) {
+	tests.Logger.Infof("1. Deploy %s and wait until Kueue reports the gang ready", fixture.name)
 	tc, cleanup, _ := setupTest(t, testConfig{
-		workloadName: "kueue-update-coherent",
-		workloadYAML: "../../yaml/kueue-update-coherent.yaml",
-		workerNodes:  5,
+		workloadName: fixture.name,
+		workloadYAML: fixture.yamlPath,
+		workerNodes:  fixture.workerNodes,
 		expectedPods: kueueUpdateExpectedPods,
 	})
 	defer cleanup()
@@ -108,7 +126,10 @@ func Test_KueueUpdate2_CoherentReplacesWorkload(t *testing.T) {
 	assertPodsUpdatedInWorkload(t, tc, newPodGang.Name)
 
 	tests.Logger.Info("4. Verify Kueue admitted a Workload for the new PodGang and deleted the old one")
-	waitForGangWorkload(t, tc, wlVerifier, newPodGang.Name)
+	newWl := waitForGangWorkload(t, tc, wlVerifier, newPodGang.Name)
+	if n := kueueworkload.EvictionCount(newWl, kueuev1beta2.WorkloadEvictedByPodsReadyTimeout, kueuev1beta2.WorkloadWaitForStart); n > 0 {
+		t.Fatalf("Kueue evicted Workload %s %d time(s) before it became ready", newWl.Name, n)
+	}
 	require.EventuallyWithT(t, func(c *assert.CollectT) {
 		_, err := wlVerifier.Get(tc.Ctx, tc.Namespace, oldPodGang.Name)
 		assert.True(c, apierrors.IsNotFound(err), "Workload %s still exists: %v", oldPodGang.Name, err)
