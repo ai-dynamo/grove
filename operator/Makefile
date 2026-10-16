@@ -219,7 +219,8 @@ run-e2e-kueue-full: e2e-cluster-up
 
 # Full e2e test run of the Kueue scenarios that need real kubelets (graceful termination, readiness
 # probes): create a small real-node k3d cluster with Kueue installed, run tests, then cleanup. Real
-# nodes start pods slower than KWOK, so Kueue gets a 2m waitForPodsReady timeout instead of 15s.
+# nodes start pods slower than KWOK, so Kueue gets a 2m waitForPodsReady timeout instead of 15s. Workers
+# get 512m: at 150m, a Coherent update's new pods took up to ~2m to start while the old ones drained.
 # Test_KueueRealUpdate* run in their own invocation, like Test_KueueUpdate*.
 # Usage: make run-e2e-kueue-real-full [TEST_PATTERN=<pattern>]
 .PHONY: run-e2e-kueue-real-full
@@ -230,7 +231,7 @@ run-e2e-kueue-real-full: export E2E_SCHEDULER__KUEUE__ENABLED = true
 run-e2e-kueue-real-full: export E2E_SCHEDULER__KUEUE__PODS_READY_TIMEOUT = 2m
 run-e2e-kueue-real-full: export E2E_SCHEDULER__KAI__ENABLED = false
 run-e2e-kueue-real-full: export E2E_CLUSTER__WORKER_NODES = 4
-run-e2e-kueue-real-full: export E2E_CLUSTER__WORKER_MEMORY = 150m
+run-e2e-kueue-real-full: export E2E_CLUSTER__WORKER_MEMORY = 512m
 run-e2e-kueue-real-full: export E2E_KWOK__NODES = 0
 run-e2e-kueue-real-full: e2e-cluster-up
 	@echo "> Running e2e Kueue tests (real nodes)..."
