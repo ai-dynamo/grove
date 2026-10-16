@@ -25,24 +25,36 @@ package setup
 import (
 	"context"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
+	"time"
 
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/k8sclient"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/pods"
 	"github.com/ai-dynamo/grove/operator/e2e/log"
+	"github.com/ai-dynamo/grove/operator/e2e/waiter"
+
 	"gopkg.in/yaml.v3"
 	"k8s.io/client-go/rest"
 )
+
+const webhookReadySuccessCount = 3
 
 // GroveConfig holds typed configuration options for updating the Grove operator.
 // This struct provides a user-friendly interface that gets translated to Helm values internally.
 type GroveConfig struct {
 	// InstallCRDs controls whether CRDs should be installed/updated.
 	InstallCRDs bool
+	// Scheduler contains scheduler profile configuration.
+	Scheduler *configv1alpha1.SchedulerConfiguration
+	// TopologyAwareScheduling controls topology constraint validation and translation.
+	TopologyAwareScheduling *configv1alpha1.TopologyAwareSchedulingConfiguration
 	// Webhooks contains webhook-specific configuration.
 	Webhooks WebhooksConfig
 }
@@ -74,7 +86,9 @@ type helmCRDInstallerValues struct {
 }
 
 type helmConfigValues struct {
-	Server helmServerValues `json:"server"`
+	Server                  helmServerValues                                     `json:"server"`
+	Scheduler               *configv1alpha1.SchedulerConfiguration               `json:"scheduler,omitempty"`
+	TopologyAwareScheduling *configv1alpha1.TopologyAwareSchedulingConfiguration `json:"topologyAwareScheduling,omitempty"`
 }
 
 type helmServerValues struct {
@@ -125,6 +139,8 @@ func (c *GroveConfig) toHelmValues() (map[string]interface{}, error) {
 					Port:   DefaultHealthProbePort,
 				},
 			},
+			Scheduler:               c.Scheduler,
+			TopologyAwareScheduling: c.TopologyAwareScheduling,
 		},
 		Webhooks: helmWebhookValues{
 			PodCliqueSetValidationWebhook:          anns,
@@ -172,6 +188,8 @@ func UpdateGroveConfiguration(ctx context.Context, restConfig *rest.Config, char
 		ChartVersion:   chartVersion,
 		Namespace:      OperatorNamespace,
 		ReuseValues:    true,
+		Wait:           true,
+		Timeout:        defaultPollTimeout,
 		Values:         helmValues,
 		HelmLoggerFunc: logger.Debugf,
 		Logger:         logger,
@@ -192,9 +210,50 @@ func UpdateGroveConfiguration(ctx context.Context, restConfig *rest.Config, char
 	if err := podsManager.WaitForReadyInNamespace(ctx, OperatorNamespace, 1, defaultPollTimeout, defaultPollInterval); err != nil {
 		return fmt.Errorf("grove operator pod not ready after upgrade: %w", err)
 	}
+	if err := waitForWebhookReady(ctx, restConfig, defaultPollTimeout, time.Second, logger); err != nil {
+		return fmt.Errorf("grove webhook not ready after upgrade: %w", err)
+	}
 
 	logger.Debug("Grove configuration update completed successfully")
 	return nil
+}
+
+func waitForWebhookReady(ctx context.Context, restConfig *rest.Config, timeout, interval time.Duration, logger *log.Logger) error {
+	httpClient, err := rest.HTTPClientFor(restConfig)
+	if err != nil {
+		return fmt.Errorf("create Kubernetes HTTP client: %w", err)
+	}
+
+	proxyURL := strings.TrimRight(restConfig.Host, "/") +
+		"/api/v1/namespaces/" + OperatorNamespace +
+		"/services/https:" + OperatorDeploymentName + ":webhooks/proxy/webhooks/default-podcliqueset"
+	consecutiveSuccesses := 0
+	fetch := waiter.FetchFunc[bool](func(ctx context.Context) (bool, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, proxyURL, nil)
+		if err != nil {
+			return false, fmt.Errorf("create webhook probe request: %w", err)
+		}
+		response, err := httpClient.Do(req)
+		if err != nil {
+			return false, nil
+		}
+		defer response.Body.Close()
+		_, _ = io.Copy(io.Discard, response.Body)
+		return response.StatusCode == http.StatusOK, nil
+	})
+
+	return waiter.New[bool]().
+		WithTimeout(timeout).
+		WithInterval(interval).
+		WithLogger(logger).
+		WaitUntil(ctx, fetch, func(ready bool) bool {
+			if !ready {
+				consecutiveSuccesses = 0
+				return false
+			}
+			consecutiveSuccesses++
+			return consecutiveSuccesses >= webhookReadySuccessCount
+		})
 }
 
 // chartYAML represents the structure of Chart.yaml for version extraction
