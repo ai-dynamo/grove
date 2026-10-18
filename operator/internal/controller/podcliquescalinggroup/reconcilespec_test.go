@@ -213,6 +213,58 @@ func TestShouldResetOrTriggerUpdatePCSG(t *testing.T) {
 	}
 }
 
+// TestProcessUpdateResetsStaleProgressForSelectedPCSReplica verifies the rollback path where a PCSG's
+// last fully realized generation already matches the PCS target, but its active update still targets a
+// superseded generation. Once the PCS selects this replica again, processUpdate must reset the PCSG target
+// to the current PCS generation so the child update can finish or revert partially updated PodCliques.
+func TestProcessUpdateResetsStaleProgressForSelectedPCSReplica(t *testing.T) {
+	const (
+		currentGeneration    = "generation-a"
+		supersededGeneration = "generation-b"
+	)
+
+	pcsUID := uuid.NewUUID()
+	pcs := testutils.NewPodCliqueSetBuilder(testPCSNamePCSG, testNamespacePCSG, pcsUID).
+		WithReplicas(1).
+		WithScalingGroup(testPCSGName, []string{"worker"}).
+		WithUpdateStrategy(&grovecorev1alpha1.PodCliqueSetUpdateStrategy{Type: grovecorev1alpha1.RollingRecreateStrategy}).
+		WithPodCliqueSetGenerationHash(ptr.To(currentGeneration)).
+		WithUpdateProgress(&grovecorev1alpha1.PodCliqueSetUpdateProgress{
+			UpdateStartedAt: metav1.Now(),
+			CurrentlyUpdating: []grovecorev1alpha1.PodCliqueSetReplicaUpdateProgress{
+				{
+					ReplicaIndex:    0,
+					UpdateStartedAt: metav1.Now(),
+				},
+			},
+		}).
+		Build()
+
+	pcsg := testutils.NewPodCliqueScalingGroupBuilder(testPCSGName, testNamespacePCSG, testPCSNamePCSG, 0).
+		WithReplicas(1).
+		WithOwnerReference("PodCliqueSet", testPCSNamePCSG, pcsUID).
+		Build()
+	pcsg.Status.CurrentPodCliqueSetGenerationHash = ptr.To(currentGeneration)
+	pcsg.Status.UpdateProgress = &grovecorev1alpha1.PodCliqueScalingGroupUpdateProgress{
+		UpdateStartedAt:            metav1.Now(),
+		PodCliqueSetGenerationHash: supersededGeneration,
+	}
+	pcsg.Status.UpdatedReplicas = 1
+
+	fakeClient := testutils.SetupFakeClient(pcs, pcsg)
+	reconciler := &Reconciler{client: fakeClient}
+
+	result := reconciler.processUpdate(t.Context(), logr.Discard(), pcsg)
+
+	require.False(t, result.HasErrors())
+	updatedPCSG := &grovecorev1alpha1.PodCliqueScalingGroup{}
+	require.NoError(t, fakeClient.Get(t.Context(), client.ObjectKeyFromObject(pcsg), updatedPCSG))
+	require.NotNil(t, updatedPCSG.Status.UpdateProgress)
+	assert.Equal(t, currentGeneration, updatedPCSG.Status.UpdateProgress.PodCliqueSetGenerationHash)
+	assert.Nil(t, updatedPCSG.Status.UpdateProgress.UpdateEndedAt)
+	assert.Zero(t, updatedPCSG.Status.UpdatedReplicas)
+}
+
 // TestInitOrResetUpdate tests the initOrResetUpdate function for both OnDelete and RollingRecreate strategies
 func TestInitOrResetUpdate(t *testing.T) {
 	tests := []struct {

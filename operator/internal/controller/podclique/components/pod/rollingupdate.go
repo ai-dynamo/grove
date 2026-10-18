@@ -252,11 +252,17 @@ func (r _resource) deleteOldNonReadyPods(ctx context.Context, logger logr.Logger
 	return nil
 }
 
-// markRollingUpdateEnd marks the completion of the rolling update by setting the end timestamp.
+// markRollingUpdateEnd atomically records successful completion and publishes the update target as the
+// PCLQ's fully realized generation and Pod template. Publishing these hashes is safe only because
+// runSyncFlow permits RollingRecreate and Coherent completion after the progress generation matches the
+// PCS current generation and the progress template hash matches the observed PCLQ template-hash label.
 func (r _resource) markRollingUpdateEnd(ctx context.Context, logger logr.Logger, pclq *grovecorev1alpha1.PodClique) error {
 	patch := client.MergeFrom(pclq.DeepCopy())
+	progress := pclq.Status.UpdateProgress
 
-	pclq.Status.UpdateProgress.UpdateEndedAt = ptr.To(metav1.Now())
+	progress.UpdateEndedAt = ptr.To(metav1.Now())
+	pclq.Status.CurrentPodTemplateHash = ptr.To(progress.PodTemplateHash)
+	pclq.Status.CurrentPodCliqueSetGenerationHash = ptr.To(progress.PodCliqueSetGenerationHash)
 
 	if err := client.IgnoreNotFound(r.client.Status().Patch(ctx, pclq, patch)); err != nil {
 		return groveerr.WrapError(err,

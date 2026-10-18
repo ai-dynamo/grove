@@ -27,6 +27,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/ptr"
 )
 
 func TestReplicaIndicesToRecreate(t *testing.T) {
@@ -133,6 +134,34 @@ func TestReplicaIndicesToRecreate(t *testing.T) {
 // TestMarkCoherentUpdateEndIfConvergedRequeuesWhenNotConverged verifies the coherent update is not
 // ended while a replica is still draining or pending recreation, and that the reconcile is requeued so
 // the roll keeps progressing rather than stalling until a later watch event.
+// TestReconcileInProgressUpdateRejectsStaleCoherentTarget verifies that Coherent updates obey the
+// same target-generation guard as RollingRecreate and cannot complete a superseded PCSG update.
+func TestReconcileInProgressUpdateRejectsStaleCoherentTarget(t *testing.T) {
+	pcs := &grovecorev1alpha1.PodCliqueSet{
+		Status: grovecorev1alpha1.PodCliqueSetStatus{
+			CurrentGenerationHash: ptr.To("generation-a"),
+		},
+		Spec: grovecorev1alpha1.PodCliqueSetSpec{
+			UpdateStrategy: &grovecorev1alpha1.PodCliqueSetUpdateStrategy{
+				Type: grovecorev1alpha1.CoherentStrategy,
+			},
+		},
+	}
+	pcsg := testutils.NewPodCliqueScalingGroupBuilder("test-pcsg", "test-ns", "test-pcs", 0).Build()
+	pcsg.Status.UpdateProgress = &grovecorev1alpha1.PodCliqueScalingGroupUpdateProgress{
+		PodCliqueSetGenerationHash: "generation-b",
+	}
+	ss := &syncSnapshot{pcs: pcs, pcsg: pcsg}
+
+	err := _resource{}.reconcileInProgressUpdate(t.Context(), logr.Discard(), ss)
+
+	require.Error(t, err)
+	var groveError *groveerr.GroveError
+	require.True(t, errors.As(err, &groveError))
+	assert.Equal(t, groveerr.ErrCodeContinueReconcileAndRequeue, groveError.Code)
+	assert.Nil(t, pcsg.Status.UpdateProgress.UpdateEndedAt)
+}
+
 func TestMarkCoherentUpdateEndIfConvergedRequeuesWhenNotConverged(t *testing.T) {
 	pcsg := testutils.NewPodCliqueScalingGroupBuilder("test-pcsg", "test-ns", "test-pcs", 0).
 		WithReplicas(1).

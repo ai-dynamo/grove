@@ -39,7 +39,8 @@ config.yaml: |
     {{- range .Values.config.scheduler.profiles }}
     - name: {{ .name }}
       {{- if hasKey . "config" }}
-      config: {{ toYaml .config | nindent 4 }}
+      config:
+        {{- toYaml .config | nindent 8 }}
       {{- end }}
     {{- end }}
   {{- end }}
@@ -193,6 +194,13 @@ release: "{{ .Release.Name }}"
 {{- define "operator.clustertopology.validating.webhook.labels" -}}
 {{- include "common.chart.labels" . }}
 {{- range $key, $val := .Values.webhooks.clusterTopologyValidationWebhook.labels }}
+{{ $key }}: {{ $val }}
+{{- end }}
+{{- end -}}
+
+{{- define "operator.podclique.validating.webhook.labels" -}}
+{{- include "common.chart.labels" . }}
+{{- range $key, $val := .Values.webhooks.podCliqueValidationWebhook.labels }}
 {{ $key }}: {{ $val }}
 {{- end }}
 {{- end -}}

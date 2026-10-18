@@ -1939,7 +1939,6 @@ func TestValidateRollingUpdateConfiguration(t *testing.T) {
 		description    string
 		updateStrategy grovecorev1alpha1.UpdateStrategyType
 		rollingUpdate  *grovecorev1alpha1.RollingUpdateConfiguration
-		replicas       int32
 		minAvailable   int32
 		wantErrType    *field.ErrorType
 	}{
@@ -1987,20 +1986,19 @@ func TestValidateRollingUpdateConfiguration(t *testing.T) {
 			description:    "valid MaxUnavailable and ProgressDeadline accepted",
 			updateStrategy: grovecorev1alpha1.RollingRecreateStrategy,
 			rollingUpdate:  &grovecorev1alpha1.RollingUpdateConfiguration{MaxUnavailable: ptr.To[int32](2), ProgressDeadline: &metav1.Duration{Duration: 5 * time.Minute}},
-			replicas:       3,
 		},
 		{
-			description:    "MaxUnavailable greater than replicas rejected",
+			// Regression for #876: MaxUnavailable is a ceiling, not bounded above by the template
+			// replica seed. A larger budget must be accepted so it stays valid after the live
+			// component is scaled out independently of the template.
+			description:    "RollingRecreate MaxUnavailable above template replicas accepted",
 			updateStrategy: grovecorev1alpha1.RollingRecreateStrategy,
 			rollingUpdate:  &grovecorev1alpha1.RollingUpdateConfiguration{MaxUnavailable: ptr.To[int32](5)},
-			replicas:       3,
-			wantErrType:    ptr.To(field.ErrorTypeInvalid),
 		},
 		{
 			description:    "coherent MaxUnavailable less than minAvailable rejected",
 			updateStrategy: grovecorev1alpha1.CoherentStrategy,
 			rollingUpdate:  &grovecorev1alpha1.RollingUpdateConfiguration{MaxUnavailable: ptr.To[int32](1)},
-			replicas:       5,
 			minAvailable:   2,
 			wantErrType:    ptr.To(field.ErrorTypeInvalid),
 		},
@@ -2008,21 +2006,26 @@ func TestValidateRollingUpdateConfiguration(t *testing.T) {
 			description:    "coherent MaxUnavailable equal to minAvailable accepted",
 			updateStrategy: grovecorev1alpha1.CoherentStrategy,
 			rollingUpdate:  &grovecorev1alpha1.RollingUpdateConfiguration{MaxUnavailable: ptr.To[int32](2)},
-			replicas:       5,
+			minAvailable:   2,
+		},
+		{
+			// Regression for #876: Coherent MaxUnavailable above the template replica seed accepted,
+			// only the minAvailable floor applies.
+			description:    "coherent MaxUnavailable above template replicas accepted",
+			updateStrategy: grovecorev1alpha1.CoherentStrategy,
+			rollingUpdate:  &grovecorev1alpha1.RollingUpdateConfiguration{MaxUnavailable: ptr.To[int32](5)},
 			minAvailable:   2,
 		},
 		{
 			description:    "unset strategy resolves to RollingRecreate, MaxUnavailable below minAvailable accepted",
 			updateStrategy: "",
 			rollingUpdate:  &grovecorev1alpha1.RollingUpdateConfiguration{MaxUnavailable: ptr.To[int32](1)},
-			replicas:       5,
 			minAvailable:   2,
 		},
 		{
 			description:    "rollingRecreate MaxUnavailable below minAvailable accepted, the bound is Coherent only",
 			updateStrategy: grovecorev1alpha1.RollingRecreateStrategy,
 			rollingUpdate:  &grovecorev1alpha1.RollingUpdateConfiguration{MaxUnavailable: ptr.To[int32](1)},
-			replicas:       5,
 			minAvailable:   3,
 		},
 	}
@@ -2034,7 +2037,7 @@ func TestValidateRollingUpdateConfiguration(t *testing.T) {
 				},
 			}
 			v := &pcsValidator{pcs: pcs}
-			errs := v.validateRollingUpdateConfiguration(tc.rollingUpdate, tc.replicas, tc.minAvailable, field.NewPath("spec", "template", "cliques").Index(0).Child("rollingUpdate"))
+			errs := v.validateRollingUpdateConfiguration(tc.rollingUpdate, tc.minAvailable, field.NewPath("spec", "template", "cliques").Index(0).Child("rollingUpdate"))
 			if tc.wantErrType == nil {
 				assert.Empty(t, errs)
 				return

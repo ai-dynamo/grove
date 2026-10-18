@@ -415,6 +415,51 @@ func TestIsLastPCLQUpdateCompleted(t *testing.T) {
 	}
 }
 
+// TestIsPCLQUpdateCompleteRejectsActiveUpdate models a PCS rollback during a partially completed
+// PCLQ update:
+//
+//  1. The PCLQ previously completed generation-1.
+//  2. The PCS changed to generation-2, and the PCLQ started updating to it.
+//  3. Before the PCLQ completed generation-2, the PCS changed back to generation-1.
+//
+// The PCLQ still reports generation-1 as its last completed generation, but its active progress for
+// generation-2 means some Pods may already belong to generation-2. The PCLQ must therefore remain
+// incomplete until the generation-2 progress is reset and every Pod converges to generation-1.
+func TestIsPCLQUpdateCompleteRejectsActiveUpdate(t *testing.T) {
+	pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "default", "uid").
+		WithPodCliqueParameters("worker", 1, nil).
+		Build()
+	pcs.Status.CurrentGenerationHash = new("generation-1")
+
+	pclq := testutils.NewPodCliqueBuilder("test-pcs", "uid", "worker", "default", 0).
+		WithReplicas(1).
+		WithMinAvailable(1).
+		Build()
+	expectedTemplateHash, err := GetExpectedPCLQPodTemplateHash(pcs, pclq.ObjectMeta)
+	require.NoError(t, err)
+	pclq.Labels[apicommon.LabelPodTemplateHash] = expectedTemplateHash
+	pclq.Status.CurrentPodTemplateHash = new(expectedTemplateHash)
+	// The PCLQ last fully completed generation-1.
+	pclq.Status.CurrentPodCliqueSetGenerationHash = new("generation-1")
+	pclq.Status.UpdatedReplicas = 1
+	pclq.Status.ReadyReplicas = 1
+	// A later generation-2 update started but did not complete before the PCS was changed back to
+	// generation-1.
+	pclq.Status.UpdateProgress = &grovecorev1alpha1.PodCliqueUpdateProgress{
+		PodCliqueSetGenerationHash: "generation-2",
+		PodTemplateHash:            "template-2",
+	}
+
+	t.Run("active later update keeps rolled-back generation incomplete", func(t *testing.T) {
+		assert.False(t, IsPCLQUpdateComplete(pcs, pclq))
+	})
+
+	t.Run("ended update permits otherwise converged generation", func(t *testing.T) {
+		pclq.Status.UpdateProgress.UpdateEndedAt = new(metav1.Now())
+		assert.True(t, IsPCLQUpdateComplete(pcs, pclq))
+	})
+}
+
 // TestWasPCLQEverScheduled verifies the signal used to gate gang-termination reads the durable
 // Status.LastScheduled marker: set means the PodClique was scheduled at least once, nil means never.
 func TestWasPCLQEverScheduled(t *testing.T) {

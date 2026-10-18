@@ -25,10 +25,12 @@ import (
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/podclique/expectations"
 	"github.com/ai-dynamo/grove/operator/internal/expect"
+	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	"github.com/go-logr/logr"
+	"github.com/samber/lo"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
@@ -611,4 +613,163 @@ func scaleOutEntry(epoch, dependsOnEpoch string) grovecorev1alpha1.PodGangEntry 
 		WithRole(grovecorev1alpha1.PodGangEntryRoleScaleOut).
 		WithDependsOn(dependsOnEpoch).
 		Build()
+}
+
+func TestRemoveSchedulerFinalizersFromDeletingPods(t *testing.T) {
+	running := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "running", Namespace: testNamespace}}
+	deleting := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "deleting", Namespace: testNamespace, DeletionTimestamp: &metav1.Time{Time: time.Now()}}}
+	predecessorDeleting := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "predecessor-deleting", Namespace: testNamespace, DeletionTimestamp: &metav1.Time{Time: time.Now()}}}
+	tests := []struct {
+		name          string
+		schedulerName string
+		wantRemoved   []string
+	}{
+		{name: "removes finalizers only from deleting Pods", schedulerName: "kueue", wantRemoved: []string{"deleting", "predecessor-deleting"}},
+		{name: "skips backends that do not remove finalizers", schedulerName: ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			finalizer := testutils.NewFakeFinalizerBackend("kueue")
+			r := _resource{schedRegistry: &testutils.FakeSchedulerRegistry{
+				Backends: map[string]scheduler.Backend{
+					"default-scheduler": testutils.NewFakeSchedulerBackend("default-scheduler"),
+					"kueue":             finalizer,
+				},
+				DefaultBackend: "default-scheduler",
+			}}
+			pclq := &grovecorev1alpha1.PodClique{ObjectMeta: metav1.ObjectMeta{Name: "pclq", Namespace: testNamespace}}
+			pclq.Spec.PodSpec.SchedulerName = tc.schedulerName
+			ss := &syncSnapshot{pclq: pclq, existingPCLQPods: []*corev1.Pod{running, deleting}, predecessorPods: []*corev1.Pod{predecessorDeleting}}
+
+			require.NoError(t, r.removeSchedulerFinalizersFromDeletingPods(context.Background(), ss))
+			assert.Equal(t, tc.wantRemoved, finalizer.RemovedFrom)
+		})
+	}
+}
+
+func TestComputePodCountDelta(t *testing.T) {
+	const podGangName = "pcsg-pg"
+	testCases := []struct {
+		description    string
+		finalizer      scheduler.Finalizer
+		terminatingPod *corev1.Pod
+		wantDelta      int
+	}{
+		{
+			description:    "without a finalizer a terminating pod is replaced at once",
+			terminatingPod: scheduledTerminatingPod("pod-b", podGangName, corev1.PodRunning),
+			wantDelta:      1,
+		},
+		{
+			description:    "a terminating pod the scheduler still counts withholds its replacement",
+			finalizer:      testutils.NewFakeFinalizerBackend("kueue"),
+			terminatingPod: scheduledTerminatingPod("pod-b", podGangName, corev1.PodRunning),
+			wantDelta:      0,
+		},
+		{
+			description:    "a failed terminating pod is replaced",
+			finalizer:      testutils.NewFakeFinalizerBackend("kueue"),
+			terminatingPod: scheduledTerminatingPod("pod-b", podGangName, corev1.PodFailed),
+			wantDelta:      1,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.description, func(t *testing.T) {
+			pclq := testutils.NewPodCliqueBuilder(testPCSName, "uid", testCliqueName, testNamespace, testPCSReplicaIndex).Build()
+			pclq.Spec.Replicas = 2
+			key, err := componentutils.PodGangScopedExpectationsStoreKey(pclq.ObjectMeta, podGangName)
+			require.NoError(t, err)
+			store := expect.NewExpectationsStore()
+			require.NoError(t, store.ExpectDeletions(logr.Discard(), key, tc.terminatingPod.UID))
+
+			r := _resource{expectationsStore: store}
+			ss := &syncSnapshot{
+				pclq:                   pclq,
+				pcsgReplicaPodGangName: podGangName,
+				existingPCLQPods:       []*corev1.Pod{nonTerminatingPodInPodGang("pod-a", podGangName, ""), tc.terminatingPod},
+				finalizer:              tc.finalizer,
+			}
+
+			delta, err := r.computePodCountDelta(ss)
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantDelta, delta)
+		})
+	}
+}
+
+func TestComputePodCountDeltaWithPredecessorPods(t *testing.T) {
+	const podGangName = "pcsg-pg"
+	runningPredecessor := nonTerminatingPodInPodGang("old-pod", podGangName, "")
+	runningPredecessor.Spec.NodeName = "node-1"
+	testCases := []struct {
+		description    string
+		finalizer      scheduler.Finalizer
+		predecessorPod *corev1.Pod
+		wantDelta      int
+	}{
+		{
+			description:    "without a finalizer an earlier PodClique's pod does not withhold the replacement",
+			predecessorPod: scheduledTerminatingPod("old-pod", podGangName, corev1.PodRunning),
+			wantDelta:      1,
+		},
+		{
+			description:    "an earlier PodClique's pod not yet deleted withholds the replacement",
+			finalizer:      testutils.NewFakeFinalizerBackend("kueue"),
+			predecessorPod: runningPredecessor,
+			wantDelta:      0,
+		},
+		{
+			description:    "an earlier PodClique's terminating pod the scheduler still counts withholds the replacement",
+			finalizer:      testutils.NewFakeFinalizerBackend("kueue"),
+			predecessorPod: scheduledTerminatingPod("old-pod", podGangName, corev1.PodRunning),
+			wantDelta:      0,
+		},
+		{
+			description:    "an earlier PodClique's failed terminating pod does not withhold the replacement",
+			finalizer:      testutils.NewFakeFinalizerBackend("kueue"),
+			predecessorPod: scheduledTerminatingPod("old-pod", podGangName, corev1.PodFailed),
+			wantDelta:      1,
+		},
+		{
+			description:    "an earlier PodClique's pod in another PodGang does not withhold the replacement",
+			finalizer:      testutils.NewFakeFinalizerBackend("kueue"),
+			predecessorPod: scheduledTerminatingPod("old-pod", "other-pg", corev1.PodRunning),
+			wantDelta:      1,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.description, func(t *testing.T) {
+			pclq := testutils.NewPodCliqueBuilder(testPCSName, "uid", testCliqueName, testNamespace, testPCSReplicaIndex).Build()
+			pclq.Spec.Replicas = 1
+			r := _resource{expectationsStore: expect.NewExpectationsStore()}
+			ss := &syncSnapshot{
+				pclq:                   pclq,
+				pcsgReplicaPodGangName: podGangName,
+				predecessorPods:        []*corev1.Pod{tc.predecessorPod},
+				finalizer:              tc.finalizer,
+			}
+
+			delta, err := r.computePodCountDelta(ss)
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantDelta, delta)
+		})
+	}
+}
+
+func TestListPredecessorPods(t *testing.T) {
+	pclq := testutils.NewPodCliqueBuilder(testPCSName, "uid", testCliqueName, testNamespace, testPCSReplicaIndex).Build()
+	pclqLabels := map[string]string{apicommon.LabelPodClique: pclq.Name}
+	ownPod := testutils.NewPodBuilder("own", testNamespace).WithLabels(pclqLabels).WithOwner(pclq.Name).Build()
+	ownPod.OwnerReferences[0].UID = pclq.UID
+	predecessorPod := testutils.NewPodBuilder("predecessor", testNamespace).WithLabels(pclqLabels).WithOwner(pclq.Name).Build()
+	orphanPod := testutils.NewPodBuilder("orphan", testNamespace).WithLabels(pclqLabels).Build()
+	otherPCLQPod := testutils.NewPodBuilder("other", testNamespace).WithLabels(map[string]string{apicommon.LabelPodClique: "other"}).WithOwner("other").Build()
+	cl := testutils.NewTestClientBuilder().WithObjects(ownPod, predecessorPod, orphanPod, otherPCLQPod).Build()
+	r := _resource{client: cl}
+
+	pods, err := r.listPredecessorPods(context.Background(), pclq)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"predecessor"}, lo.Map(pods, func(pod *corev1.Pod, _ int) string { return pod.Name }))
 }

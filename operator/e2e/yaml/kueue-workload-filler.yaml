@@ -1,0 +1,44 @@
+# Filler workload for Test_Kueue7_QueuedWorkloadAdmitsWhenQuotaFrees: admitted first
+# through the "grove-e2e-backlog" LocalQueue (kueue-queues-backlog.yaml), consuming its
+# entire 100Mi memory quota (2 pods x 50Mi) so kueue-workload-queued.yaml cannot be
+# admitted until this PodCliqueSet is deleted. Long-running nginx container (matching
+# kueue-smoke.yaml) so it doesn't exit and release quota on its own.
+---
+apiVersion: grove.io/v1alpha1
+kind: PodCliqueSet
+metadata:
+  name: kueue-workload-filler
+  labels:
+    app: kueue-workload-filler
+    kueue.x-k8s.io/queue-name: grove-e2e-backlog
+spec:
+  replicas: 1
+  template:
+    cliques:
+      - name: worker
+        spec:
+          roleName: worker
+          replicas: 2
+          minAvailable: 2
+          podSpec:
+            schedulerName: kueue
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: type
+                          operator: In
+                          values:
+                            - kwok
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: worker
+                image: registry:5001/nginx:alpine-slim
+                resources:
+                  requests:
+                    memory: 50Mi

@@ -1,0 +1,50 @@
+# Copyright 2026 NVIDIA CORPORATION
+# SPDX-License-Identifier: Apache-2.0
+#
+# Dedicated Kueue queue + TAS-bound ResourceFlavor for the topology-aware scenario
+# (Test_Kueue4), applied by the test itself via tc.ApplyYAMLFile.
+#
+# Kueue only honors a PodSet's TopologyRequest if the ClusterQueue's flavor is bound to a
+# Topology object via spec.topologyName (confirmed against sigs.k8s.io/kueue@v0.17.8:
+# pkg/cache/scheduler/cache.go's isTASOnlyFlavor check is
+# features.Enabled(TopologyAwareScheduling) && rf.Spec.TopologyName != nil). The shared
+# "default-flavor" used by kueue-queues.yaml has no such binding, so it is intentionally
+# left untouched here -- a dedicated flavor keeps this scenario's TAS requirement from
+# affecting the other scenarios' plain (non-TAS) admission.
+#
+# nodeLabels selects exactly the KWOK nodes this cluster's pods actually land on (every
+# KWOK node carries type: kwok, see hack/infra_manager/kwok.py's topology_labels), and
+# topologyName binds to "grove-topology", the Topology object Grove's ClusterTopologyBinding
+# controller auto-creates with levels zone/block/rack/hostname.
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: ResourceFlavor
+metadata:
+  name: grove-e2e-topology-flavor
+spec:
+  nodeLabels:
+    type: kwok
+  topologyName: grove-topology
+---
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: ClusterQueue
+metadata:
+  name: grove-e2e-topology
+spec:
+  namespaceSelector: {}
+  resourceGroups:
+    - coveredResources: ["cpu", "memory"]
+      flavors:
+        - name: grove-e2e-topology-flavor
+          resources:
+            - name: cpu
+              nominalQuota: 1000
+            - name: memory
+              nominalQuota: 1000Gi
+---
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: LocalQueue
+metadata:
+  name: grove-e2e-topology
+  namespace: default
+spec:
+  clusterQueue: grove-e2e-topology

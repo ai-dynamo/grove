@@ -77,6 +77,6 @@ func (b *schedulerBackend) PreparePod(pod *corev1.Pod) error {
 }
 
 // ValidatePodCliqueSet runs default-scheduler-specific validations on the PodCliqueSet.
-func (b *schedulerBackend) ValidatePodCliqueSet(_ context.Context, _ *grovecorev1alpha1.PodCliqueSet) error {
+func (b *schedulerBackend) ValidatePodCliqueSet(_ context.Context, _ *grovecorev1alpha1.PodCliqueSet, _ ...scheduler.ValidateOption) error {
 	return nil
 }

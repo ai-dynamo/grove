@@ -1,0 +1,70 @@
+# All-or-nothing PodsReady fixture for Test_Kueue8: two standalone, full-gang cliques in the same
+# PodGang -- "ready" schedules and becomes Ready normally, "stuck" requests memory: 10Gi, far beyond
+# any single KWOK node's advertised capacity (node_memory: 150Mi in hack/e2e.yaml), so it stays
+# genuinely Pending/unschedulable. Comfortably within the shared grove-e2e ClusterQueue's 1000Gi
+# quota, so the Workload is Admitted immediately; only PodsReady never completes.
+apiVersion: grove.io/v1alpha1
+kind: PodCliqueSet
+metadata:
+  name: kueue-allornothing
+  labels:
+    app: kueue-allornothing
+    kueue.x-k8s.io/queue-name: grove-e2e
+spec:
+  replicas: 1
+  template:
+    cliques:
+      - name: ready
+        spec:
+          roleName: ready
+          replicas: 1
+          minAvailable: 1
+          podSpec:
+            schedulerName: kueue
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: type
+                          operator: In
+                          values:
+                            - kwok
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: ready
+                image: registry:5001/nginx:alpine-slim
+                resources:
+                  requests:
+                    memory: 1Mi
+      - name: stuck
+        spec:
+          roleName: stuck
+          replicas: 1
+          minAvailable: 1
+          podSpec:
+            schedulerName: kueue
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: type
+                          operator: In
+                          values:
+                            - kwok
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: stuck
+                image: registry:5001/nginx:alpine-slim
+                resources:
+                  requests:
+                    memory: 10Gi

@@ -55,6 +55,11 @@ type updateWork struct {
 	numUpdatedReadyReplicas int
 }
 
+// isComplete reports whether every desired replica is fully updated and Ready.
+func (uw *updateWork) isComplete(desiredReplicas int) bool {
+	return uw.numUpdatedReadyReplicas == desiredReplicas
+}
+
 // processPendingUpdates advances the rolling update of a PodCliqueScalingGroup by one reconcile step.
 //
 // It replaces old-configuration replicas worst-off first (pending, then unavailable, then Ready), up to
@@ -69,20 +74,28 @@ func (r _resource) processPendingUpdates(ctx context.Context, logger logr.Logger
 			fmt.Sprintf("failed to compute pending update work for PodCliqueScalingGroup %v", client.ObjectKeyFromObject(sc.pcsg)))
 	}
 
-	desiredNumReplicas := int(sc.pcsg.Spec.Replicas)
-
-	// Completion is readiness-aware. End the update only when the desired number of replicas are fully
-	// updated and Ready, so a rollout never completes while replacements are not yet available.
-	if uw.numUpdatedReadyReplicas == desiredNumReplicas {
+	desiredReplicas := int(sc.pcsg.Spec.Replicas)
+	if uw.isComplete(desiredReplicas) {
 		return r.markUpdateEnd(ctx, logger, sc.pcsg)
 	}
 
+	replicaIndicesToUpdate, err := selectReplicasToUpdate(sc, uw)
+	if err != nil {
+		return err
+	}
+
+	return r.deleteSelectedReplicasForUpdate(ctx, logger, sc, replicaIndicesToUpdate)
+}
+
+// selectReplicasToUpdate returns the old-configuration replicas that may be disrupted in this reconcile.
+// It returns a requeue error when the disruption budget is exhausted or all remaining replacements are in flight.
+func selectReplicasToUpdate(sc *syncSnapshot, uw *updateWork) ([]int, error) {
 	// Bound disruption against the live replica count and the minimum that must stay available, not a
 	// readiness delta, so the budget does not collapse to 0 when replicas are already unavailable.
 	effectiveMaxUnavailable := componentutils.EffectiveMaxUnavailable(rollingUpdateConfigForPCSG(sc), componentutils.ResolveUpdateStrategyType(sc.pcs), lo.FromPtrOr(sc.pcsg.Spec.MinAvailable, 1))
-	disruptionBudget := computeDisruptionBudget(uw.existingReplicas, desiredNumReplicas, effectiveMaxUnavailable, uw.newNotReadyReplicas)
+	disruptionBudget := computeDisruptionBudget(uw.existingReplicas, int(sc.pcsg.Spec.Replicas), effectiveMaxUnavailable, uw.newNotReadyReplicas)
 	if disruptionBudget <= 0 {
-		return groveerr.New(
+		return nil, groveerr.New(
 			groveerr.ErrCodeContinueReconcileAndRequeue,
 			component.OperationSync,
 			fmt.Sprintf("rolling update of PodCliqueScalingGroup %v has no disruption headroom this reconcile (availability minimum or in-flight replacements), re-queuing", client.ObjectKeyFromObject(sc.pcsg)),
@@ -94,14 +107,19 @@ func (r _resource) processPendingUpdates(ctx context.Context, logger logr.Logger
 	replicaIndicesToUpdate := componentutils.OrderPCSGReplicaIndicesForDisruption(uw.oldReplicaDisruptionInfos)
 	if len(replicaIndicesToUpdate) == 0 {
 		// Every old-configuration replica is an in-flight replacement. Requeue and wait for them to become Ready.
-		return groveerr.New(
+		return nil, groveerr.New(
 			groveerr.ErrCodeContinueReconcileAndRequeue,
 			component.OperationSync,
 			fmt.Sprintf("rolling update of PodCliqueScalingGroup %v waiting for in-flight replacement replicas to become Ready, requeuing", client.ObjectKeyFromObject(sc.pcsg)),
 		)
 	}
-
 	replicaIndicesToUpdate = replicaIndicesToUpdate[:min(disruptionBudget, len(replicaIndicesToUpdate))]
+	return replicaIndicesToUpdate, nil
+}
+
+// deleteSelectedReplicasForUpdate triggers deletion of the selected old-configuration replicas and requeues
+// reconciliation to observe their replacements.
+func (r _resource) deleteSelectedReplicasForUpdate(ctx context.Context, logger logr.Logger, sc *syncSnapshot, replicaIndicesToUpdate []int) error {
 	replicaIndicesToUpdateStr := lo.Map(replicaIndicesToUpdate, func(index int, _ int) string {
 		return strconv.Itoa(index)
 	})
@@ -138,11 +156,16 @@ func computeDisruptionBudget(existing, desired, effectiveMaxUnavailable, newNotR
 	return existing - (desired - effectiveMaxUnavailable) - newNotReady
 }
 
-// markUpdateEnd finalizes the update by setting the end timestamp.
+// markUpdateEnd atomically records that the update ended and that the PCSG fully realized its target generation.
+// Setting CurrentPodCliqueSetGenerationHash from UpdateProgress is safe only because reconcileInProgressUpdate
+// first requeues when the PCSG update target differs from the current PCS generation. That guard ensures the
+// completion checks were evaluated against the same generation recorded here; it must remain in place for every
+// strategy that calls markUpdateEnd.
 func (r _resource) markUpdateEnd(ctx context.Context, logger logr.Logger, pcsg *grovecorev1alpha1.PodCliqueScalingGroup) error {
 	patch := client.MergeFrom(pcsg.DeepCopy())
 
 	pcsg.Status.UpdateProgress.UpdateEndedAt = ptr.To(metav1.Now())
+	pcsg.Status.CurrentPodCliqueSetGenerationHash = ptr.To(pcsg.Status.UpdateProgress.PodCliqueSetGenerationHash)
 
 	if err := r.client.Status().Patch(ctx, pcsg, patch); err != nil {
 		return groveerr.WrapError(

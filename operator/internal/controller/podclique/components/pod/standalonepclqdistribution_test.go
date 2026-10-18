@@ -112,6 +112,7 @@ func TestComputeCountDeltaByPodGang(t *testing.T) {
 		terminatingPods map[string][]*corev1.Pod
 		createExpUID    map[string][]types.UID // pending creates per PodGang
 		deleteExpUID    map[string][]types.UID // pending deletes per PodGang
+		finalizer       bool                   // whether the scheduler backend implements scheduler.Finalizer
 		expected        map[string]int32
 	}{
 		{
@@ -179,6 +180,42 @@ func TestComputeCountDeltaByPodGang(t *testing.T) {
 			deleteExpUID:    map[string][]types.UID{"pg-a": {"terminating"}},
 			expected:        map[string]int32{"pg-a": 2},
 		},
+		{
+			name:            "a terminating pod the scheduler still counts withholds its replacement",
+			desired:         map[string]int32{"pg-a": 2},
+			livePods:        map[string][]*corev1.Pod{"pg-a": {nonTerminatingPodInPodGang("pod-a", "pg-a", "")}},
+			terminatingPods: map[string][]*corev1.Pod{"pg-a": {scheduledTerminatingPod("pod-b", "pg-a", corev1.PodRunning)}},
+			deleteExpUID:    map[string][]types.UID{"pg-a": {"terminating"}},
+			finalizer:       true,
+			expected:        map[string]int32{},
+		},
+		{
+			name:            "a failed terminating pod no longer withholds its replacement",
+			desired:         map[string]int32{"pg-a": 2},
+			livePods:        map[string][]*corev1.Pod{"pg-a": {nonTerminatingPodInPodGang("pod-a", "pg-a", "")}},
+			terminatingPods: map[string][]*corev1.Pod{"pg-a": {scheduledTerminatingPod("pod-b", "pg-a", corev1.PodFailed)}},
+			deleteExpUID:    map[string][]types.UID{"pg-a": {"terminating"}},
+			finalizer:       true,
+			expected:        map[string]int32{"pg-a": 1},
+		},
+		{
+			name:            "withholding replacements never adds deletions",
+			desired:         map[string]int32{"pg-a": 1},
+			livePods:        map[string][]*corev1.Pod{"pg-a": {nonTerminatingPodInPodGang("pod-a", "pg-a", ""), nonTerminatingPodInPodGang("pod-b", "pg-a", "")}},
+			terminatingPods: map[string][]*corev1.Pod{"pg-a": {scheduledTerminatingPod("pod-c", "pg-a", corev1.PodRunning)}},
+			deleteExpUID:    map[string][]types.UID{"pg-a": {"terminating"}},
+			finalizer:       true,
+			expected:        map[string]int32{"pg-a": -1},
+		},
+		{
+			// Without a delete expectation, as after an operator restart, the terminating pod already counts as live.
+			name:            "a terminating pod still counted as live is not withheld twice",
+			desired:         map[string]int32{"pg-a": 3},
+			livePods:        map[string][]*corev1.Pod{"pg-a": {nonTerminatingPodInPodGang("pod-a", "pg-a", "")}},
+			terminatingPods: map[string][]*corev1.Pod{"pg-a": {scheduledTerminatingPod("pod-b", "pg-a", corev1.PodRunning)}},
+			finalizer:       true,
+			expected:        map[string]int32{"pg-a": 1},
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -195,6 +232,9 @@ func TestComputeCountDeltaByPodGang(t *testing.T) {
 			}
 			r := _resource{expectationsStore: store}
 			ss := &syncSnapshot{pclq: pclq}
+			if tc.finalizer {
+				ss.finalizer = testutils.NewFakeFinalizerBackend("kueue")
+			}
 
 			actual, err := r.computeCountDeltaByPodGang(ss, tc.desired, podsByPodGang)
 			require.NoError(t, err)
@@ -333,6 +373,134 @@ func TestReconcileStandalonePCLQDistributionEarlyReturn(t *testing.T) {
 			testutils.AssertGroveError(t, &groveerr.GroveError{Code: groveerr.ErrCodeRequeueAfter, Operation: component.OperationSync}, err)
 		})
 	}
+}
+
+func TestRunSyncFlowDelaysUpdateWorkUntilRevisionsMatch(t *testing.T) {
+	const (
+		currentGeneration = "generation-1"
+		otherGeneration   = "generation-2"
+	)
+
+	anchor := podGangNameForEpoch(testAnchor0Epoch)
+	newSnapshot := func(strategy grovecorev1alpha1.UpdateStrategyType, replicas int32, existingPods []*corev1.Pod) (*syncSnapshot, _resource, client.Client) {
+		podSpec := corev1.PodSpec{
+			SchedulerName: string(configv1alpha1.SchedulerNameKube),
+			Containers:    []corev1.Container{{Name: "worker", Image: "worker"}},
+		}
+		pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "uid").
+			WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder)).
+			WithUpdateStrategy(&grovecorev1alpha1.PodCliqueSetUpdateStrategy{Type: strategy}).
+			WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder(testCliqueName).WithPodSpec(podSpec).Build()).
+			Build()
+		pcs.Status.CurrentGenerationHash = ptr.To(currentGeneration)
+		pcs.Status.UpdateProgress = &grovecorev1alpha1.PodCliqueSetUpdateProgress{
+			UpdateStartedAt:   metav1.Now(),
+			CurrentlyUpdating: []grovecorev1alpha1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: testPCSReplicaIndex}},
+		}
+		pclq := testutils.NewPodCliqueBuilder(testPCSName, "uid", testCliqueName, testNamespace, testPCSReplicaIndex).
+			WithReplicas(replicas).
+			WithMinAvailable(1).
+			WithLabels(map[string]string{apicommon.LabelPodTemplateHash: testNewHash}).
+			Build()
+		pclq.Spec.PodSpec = *podSpec.DeepCopy()
+		pclq.Status.UpdateProgress = &grovecorev1alpha1.PodCliqueUpdateProgress{
+			PodCliqueSetGenerationHash: currentGeneration,
+			PodTemplateHash:            testNewHash,
+		}
+		objects := []client.Object{pclq}
+		for _, pod := range existingPods {
+			objects = append(objects, pod)
+		}
+		cl := testutils.NewTestClientBuilder().WithObjects(objects...).Build()
+		r := _resource{
+			client:            cl,
+			scheme:            cl.Scheme(),
+			schedRegistry:     testutils.NewDefaultFakeRegistry(),
+			eventRecorder:     record.NewFakeRecorder(64),
+			expectationsStore: expect.NewExpectationsStore(),
+		}
+		currentAnchor := testutils.NewPodGangEntryBuilder(currentGeneration, testAnchor0Epoch).
+			WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).
+			WithPodCliques(map[string]int32{testCliqueName: replicas}).
+			Build()
+		ss := &syncSnapshot{
+			pcs:                     pcs,
+			pclq:                    pclq,
+			pcsReplicaIndex:         testPCSReplicaIndex,
+			pgm:                     pgmWithEntries(currentAnchor),
+			cliqueName:              testCliqueName,
+			existingPCLQPods:        existingPods,
+			expectedPodTemplateHash: testNewHash,
+		}
+		return ss, r, cl
+	}
+	assertRequeue := func(t *testing.T, result syncFlowResult) {
+		t.Helper()
+		require.Error(t, result.getAggregatedError())
+		var requeueErr *groveerr.GroveError
+		require.True(t, errors.As(result.getAggregatedError(), &requeueErr))
+		assert.Equal(t, groveerr.ErrCodeContinueReconcileAndRequeue, requeueErr.Code, "aggregated error: %v", result.getAggregatedError())
+		assert.Equal(t, component.OperationSync, requeueErr.Operation)
+	}
+
+	t.Run("RollingRecreate does not replace Pods when progress targets another PCS generation", func(t *testing.T) {
+		pod := nonTerminatingPodInPodGang("old-pod", anchor, "worker-0")
+		pod.Labels[apicommon.LabelPodTemplateHash] = testOldHash
+		ss, r, cl := newSnapshot(grovecorev1alpha1.RollingRecreateStrategy, 1, []*corev1.Pod{pod})
+		ss.pclq.Status.UpdateProgress.PodCliqueSetGenerationHash = otherGeneration
+
+		result := r.runSyncFlow(t.Context(), logr.Discard(), ss)
+
+		assertRequeue(t, result)
+		assert.Nil(t, ss.pclq.Status.UpdateProgress.UpdateEndedAt)
+		persistedPod := &corev1.Pod{}
+		require.NoError(t, cl.Get(t.Context(), client.ObjectKeyFromObject(pod), persistedPod))
+	})
+
+	t.Run("RollingRecreate waits until the PCLQ template revision is observed", func(t *testing.T) {
+		pod := nonTerminatingPodInPodGang("old-pod", anchor, "worker-0")
+		pod.Labels[apicommon.LabelPodTemplateHash] = testOldHash
+		ss, r, cl := newSnapshot(grovecorev1alpha1.RollingRecreateStrategy, 1, []*corev1.Pod{pod})
+		ss.pclq.Labels[apicommon.LabelPodTemplateHash] = testOldHash
+
+		result := r.runSyncFlow(t.Context(), logr.Discard(), ss)
+
+		assertRequeue(t, result)
+		assert.Nil(t, ss.pclq.Status.UpdateProgress.UpdateEndedAt)
+		persistedPod := &corev1.Pod{}
+		require.NoError(t, cl.Get(t.Context(), client.ObjectKeyFromObject(pod), persistedPod))
+	})
+
+	t.Run("RollingRecreate scaling continues while update work waits for matching revisions", func(t *testing.T) {
+		existing := nonTerminatingPodInPodGang("existing-pod", anchor, "worker-0")
+		existing.Status.Phase = corev1.PodRunning
+		existing.Labels[apicommon.LabelPodTemplateHash] = testOldHash
+		ss, r, cl := newSnapshot(grovecorev1alpha1.RollingRecreateStrategy, 2, []*corev1.Pod{existing})
+		ss.pclq.Status.UpdateProgress.PodCliqueSetGenerationHash = otherGeneration
+
+		result := r.runSyncFlow(t.Context(), logr.Discard(), ss)
+
+		assertRequeue(t, result)
+		var allPods corev1.PodList
+		require.NoError(t, cl.List(t.Context(), &allPods, client.InNamespace(testNamespace)))
+		assert.Greater(t, len(allPods.Items), 1, "regular scaling must create a missing Pod before rolling-update work is delayed")
+		persistedPod := &corev1.Pod{}
+		require.NoError(t, cl.Get(t.Context(), client.ObjectKeyFromObject(existing), persistedPod), "regular scaling must not delete the existing Pod as rolling-update work")
+	})
+
+	t.Run("Coherent does not complete mismatched progress", func(t *testing.T) {
+		pod := nonTerminatingPodInPodGang("current-pod", anchor, "worker-0")
+		pod.Labels[apicommon.LabelPodTemplateHash] = testNewHash
+		ss, r, _ := newSnapshot(grovecorev1alpha1.CoherentStrategy, 1, []*corev1.Pod{pod})
+		ss.pclq.Status.Replicas = 1
+		ss.pclq.Status.UpdatedReplicas = 1
+		ss.pclq.Status.UpdateProgress.PodCliqueSetGenerationHash = otherGeneration
+
+		result := r.runSyncFlow(t.Context(), logr.Discard(), ss)
+
+		assertRequeue(t, result)
+		assert.Nil(t, ss.pclq.Status.UpdateProgress.UpdateEndedAt)
+	})
 }
 
 // TestReconcileStandalonePCLQDistributionCreateAndDelete verifies the full non-early-return path
@@ -686,5 +854,13 @@ func podWithUID(name, podGangName string, uid types.UID) *corev1.Pod {
 func terminatingPodInPodGang(name, podGangName string, uid types.UID) *corev1.Pod {
 	pod := podWithUID(name, podGangName, uid)
 	pod.DeletionTimestamp = &metav1.Time{Time: time.Now()}
+	return pod
+}
+
+// scheduledTerminatingPod builds a terminating pod with UID "terminating" that got a node and is in phase.
+func scheduledTerminatingPod(name, podGangName string, phase corev1.PodPhase) *corev1.Pod {
+	pod := terminatingPodInPodGang(name, podGangName, "terminating")
+	pod.Spec.NodeName = "node-1"
+	pod.Status.Phase = phase
 	return pod
 }

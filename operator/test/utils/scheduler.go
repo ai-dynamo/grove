@@ -101,7 +101,7 @@ func (s *FakeSchedulerBackend) SyncPodGang(_ context.Context, _ *groveschedulerv
 func (s *FakeSchedulerBackend) PreparePod(_ *corev1.Pod) error { return nil }
 
 // ValidatePodCliqueSet is a no-op for the fake backend.
-func (s *FakeSchedulerBackend) ValidatePodCliqueSet(_ context.Context, _ *grovecorev1alpha1.PodCliqueSet) error {
+func (s *FakeSchedulerBackend) ValidatePodCliqueSet(_ context.Context, _ *grovecorev1alpha1.PodCliqueSet, _ ...scheduler.ValidateOption) error {
 	return nil
 }
 
@@ -140,4 +140,28 @@ func (s *FakeTopologyAwareBackend) OnTopologyDelete(_ context.Context, _ client.
 // CheckTopologyDrift is a no-op for the fake topology-aware backend.
 func (s *FakeTopologyAwareBackend) CheckTopologyDrift(_ context.Context, _ *grovecorev1alpha1.ClusterTopologyBinding, _ grovecorev1alpha1.SchedulerTopologyBinding) (bool, string, int64, error) {
 	return true, "", 0, nil
+}
+
+// NewFakeFinalizerBackend creates a FakeSchedulerBackend that also satisfies scheduler.Finalizer.
+func NewFakeFinalizerBackend(name string) *FakeFinalizerBackend {
+	return &FakeFinalizerBackend{FakeSchedulerBackend: FakeSchedulerBackend{name: name}}
+}
+
+// FakeFinalizerBackend extends FakeSchedulerBackend by recording the names of the Pods passed to RemovePodFinalizers.
+type FakeFinalizerBackend struct {
+	FakeSchedulerBackend
+	RemovedFrom []string
+}
+
+var _ scheduler.Finalizer = (*FakeFinalizerBackend)(nil)
+
+// RemovePodFinalizers records pod's name.
+func (s *FakeFinalizerBackend) RemovePodFinalizers(_ context.Context, pod *corev1.Pod) error {
+	s.RemovedFrom = append(s.RemovedFrom, pod.Name)
+	return nil
+}
+
+// IsPodFinalized reports pod finalized once it has failed, or if it never got a node, as Kueue does.
+func (s *FakeFinalizerBackend) IsPodFinalized(pod *corev1.Pod) bool {
+	return pod.Spec.NodeName == "" || pod.Status.Phase == corev1.PodFailed
 }

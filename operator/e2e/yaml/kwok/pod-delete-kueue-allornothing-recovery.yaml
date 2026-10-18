@@ -1,0 +1,28 @@
+# KWOK Stage that, with pod-terminate-kueue-allornothing-recovery, acts as the kubelet for a deleted pod of the
+# kueue-allornothing-recovery fixture (Test_Kueue12). Once the pod is terminated, it deletes the pod with a
+# zero grace period like a kubelet does, leaving its finalizers in place for their owners to remove. KWOK's
+# default pod-delete stage strips them instead. Its positive weight beats that stage, whose weight is 0.
+apiVersion: kwok.x-k8s.io/v1alpha1
+kind: Stage
+metadata:
+  name: pod-delete-kueue-allornothing-recovery
+spec:
+  resourceRef:
+    apiGroup: v1
+    kind: Pod
+  selector:
+    matchExpressions:
+      - key: .metadata.deletionTimestamp
+        operator: Exists
+      - key: '.metadata.labels["app.kubernetes.io/part-of"]'
+        operator: In
+        values:
+          - "kueue-allornothing-recovery"
+      - key: .status.phase
+        operator: In
+        values:
+          - Failed
+          - Succeeded
+  weight: 20
+  next:
+    delete: true

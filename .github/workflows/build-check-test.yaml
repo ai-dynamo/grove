@@ -132,6 +132,8 @@ jobs:
             test_pattern: "^Test_TAS"
           - test_name: cert_management
             test_pattern: "^Test_CM"
+          - test_name: cascade_delete
+            test_pattern: "^Test_CD"
           - test_name: auto_mnnvl
             test_pattern: "^Test_AutoMNNVL"
             make_target: "run-e2e-mnnvl-full"
@@ -144,6 +146,12 @@ jobs:
           - test_name: version_upgrade
             test_pattern: "^Test_VUPG"
             make_target: "run-upgrade-e2e"
+          - test_name: kueue
+            test_pattern: "^Test_Kueue[0-9]"
+            make_target: "run-e2e-kueue-full"
+          - test_name: kueue_update
+            test_pattern: "^Test_KueueUpdate"
+            make_target: "run-e2e-kueue-full"
     name: E2E - ${{ matrix.test_name }}
     steps:
       # print runner specs so we have a record in case of failures
@@ -207,15 +215,80 @@ jobs:
           - test_name: gang_termination
           - test_name: rolling_updates
           - test_name: coherent_updates
+          - test_name: ondelete_updates
           - test_name: startup_ordering
           - test_name: Topology_Aware_Scheduling
           - test_name: cert_management
+          - test_name: cascade_delete
           - test_name: auto_mnnvl
           - test_name: crd_installer
           - test_name: resource_sharing
           - test_name: podgangmap_reconstruct
           - test_name: version_upgrade
+          - test_name: kueue
+          - test_name: kueue_update
     name: E2E - ${{ matrix.test_name }}
     steps:
       - name: Skip E2E (no relevant changes)
         run: echo "E2E skipped — no changes to operator/ or .github/"
+
+  kubernetes-compatibility:
+    needs: [test, build, check, changes]
+    # Run only from copy-pr-bot's trusted branch.
+    if: |
+      startsWith(github.ref, 'refs/heads/pull-request/') &&
+      needs.changes.outputs.e2e-relevant == 'true'
+    runs-on: prod-grove-e2e-v1
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - kubernetes_version: "1.34"
+            k3s_image: "rancher/k3s:v1.34.11-k3s1"
+          - kubernetes_version: "1.35"
+            k3s_image: "rancher/k3s:v1.35.5-k3s1"
+    name: Kubernetes compatibility - ${{ matrix.kubernetes_version }}
+    env:
+      KUBERNETES_COMPATIBILITY_TEST_PATTERN: >-
+        ^Test_(GS|GT|RU|OD|CU|PCUS|TAS|CM|CD|CRD_Installer|RS|PGMR)
+      # Test packages modify the same cluster.
+      E2E_GO_TEST_FLAGS: "-p 1"
+    steps:
+      - name: Print runner specs
+        run: |
+          echo "CPUs: $(nproc)"
+          echo "RAM: $(free -h | awk '/^Mem:/ {print $2}')"
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Pull registry image from GHCR to avoid Docker Hub rate limits
+        run: |
+          docker pull ghcr.io/distribution/distribution:3.1.0
+          docker tag ghcr.io/distribution/distribution:3.1.0 registry:2
+
+      - name: E2E Setup
+        uses: ./.github/actions/e2e-setup
+
+      - name: Run Kubernetes compatibility tests
+        env:
+          E2E_CLUSTER__K3S_IMAGE: ${{ matrix.k3s_image }}
+        run: |
+          make run-e2e-full TEST_PATTERN='${{ env.KUBERNETES_COMPATIBILITY_TEST_PATTERN }}' E2E_CREATE_FLAGS='--dind-memory-mode'
+        working-directory: operator
+
+      - name: Cleanup k3d cluster
+        if: always()
+        working-directory: operator
+        run: |
+          make e2e-cluster-down || true
+
+      - name: Upload test logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kubernetes-compatibility-test-logs-${{ matrix.kubernetes_version }}
+          path: operator/e2e-diagnostics/
+          if-no-files-found: warn
+          retention-days: 7

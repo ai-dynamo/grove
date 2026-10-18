@@ -44,6 +44,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/portforward"
 	"k8s.io/client-go/transport/spdy"
@@ -196,6 +197,7 @@ func Test_CM1_CertManagementRoundTrip(t *testing.T) {
 	Logger.Info("4. Verify cert-manager mode is active")
 	verifyCertManagerMode(t, ctx, tc.Client)
 	verifyWebhookServingCertificate(t, ctx, tc.Client)
+	waitForWebhookCABundlesToTrustServingCertificate(t, ctx, tc.Client)
 
 	Logger.Info("5. Deploy and verify workload with cert-manager certs")
 	if _, err := tc.DeployAndVerifyWorkload(); err != nil {
@@ -218,6 +220,7 @@ func Test_CM1_CertManagementRoundTrip(t *testing.T) {
 	Logger.Info("8. Verify auto-provision mode is active")
 	verifyAutoProvisionMode(t, ctx, tc.Client)
 	verifyWebhookServingCertificate(t, ctx, tc.Client)
+	waitForWebhookCABundlesToTrustServingCertificate(t, ctx, tc.Client)
 
 	Logger.Info("9. Delete and redeploy workload to test webhooks with auto-provisioned certs")
 	// Delete the existing workload to test that webhooks work with new certs
@@ -419,11 +422,19 @@ const (
 	groveNamespace = setup.OperatorNamespace
 )
 
-// webhookNames lists the ValidatingWebhookConfiguration and MutatingWebhookConfiguration names to check
-var webhookConfigNames = []string{
-	"podcliqueset-validating-webhook",
-	"podcliqueset-defaulting-webhook",
-	"clustertopology-validating-webhook",
+type webhookConfigRef struct {
+	name     string
+	mutating bool
+}
+
+// webhookConfigs lists the Grove admission webhook configurations checked by this test and their
+// Kubernetes resource types.
+var webhookConfigs = []webhookConfigRef{
+	{name: "podcliqueset-validating-webhook"},
+	{name: "podcliquescalinggroup-validating-webhook"},
+	{name: "podclique-validating-webhook"},
+	{name: "podcliqueset-defaulting-webhook", mutating: true},
+	{name: "clustertopology-validating-webhook"},
 }
 
 // verifyCertManagerMode verifies that Grove is using cert-manager for certificate management.
@@ -436,9 +447,9 @@ func verifyCertManagerMode(t *testing.T, ctx context.Context, k8sClient *k8sclie
 	Logger.Debug("Verifying cert-manager mode is active...")
 
 	// Check webhook configurations have cert-manager annotation
-	for _, webhookName := range webhookConfigNames {
-		if err := verifyWebhookHasCertManagerAnnotation(ctx, k8sClient, webhookName, true); err != nil {
-			t.Fatalf("Webhook %s does not have cert-manager annotation: %v", webhookName, err)
+	for _, config := range webhookConfigs {
+		if err := verifyWebhookHasCertManagerAnnotation(ctx, k8sClient, config, true); err != nil {
+			t.Fatalf("Webhook %s does not have cert-manager annotation: %v", config.name, err)
 		}
 	}
 
@@ -464,42 +475,42 @@ func verifyAutoProvisionMode(t *testing.T, ctx context.Context, k8sClient *k8scl
 	Logger.Debug("Verified: Grove is using auto-provisioned certificates (secret not managed by cert-manager)")
 }
 
-// verifyWebhookHasCertManagerAnnotation checks if a webhook configuration has the cert-manager annotation.
-// If shouldHave is true, it verifies the annotation exists; if false, it verifies the annotation is absent or empty.
-func verifyWebhookHasCertManagerAnnotation(ctx context.Context, k8sClient *k8sclient.Client, webhookName string, shouldHave bool) error {
-	// Try ValidatingWebhookConfiguration first
-	var vwc admissionregistrationv1.ValidatingWebhookConfiguration
-	if err := k8sClient.Get(ctx, types.NamespacedName{Name: webhookName}, &vwc); err == nil {
-		annotationValue := vwc.Annotations[certManagerInjectAnnotation]
-		hasAnnotation := annotationValue != ""
+// verifyWebhookHasCertManagerAnnotation verifies whether the expected validating or mutating webhook
+// configuration has the cert-manager CA-injection annotation.
+func verifyWebhookHasCertManagerAnnotation(ctx context.Context, k8sClient *k8sclient.Client, config webhookConfigRef, shouldHave bool) error {
+	annotations, err := getWebhookConfigAnnotations(ctx, k8sClient, config)
+	if err != nil {
+		return err
+	}
+	annotationValue := annotations[certManagerInjectAnnotation]
+	hasAnnotation := annotationValue != ""
 
-		if shouldHave && !hasAnnotation {
-			return fmt.Errorf("ValidatingWebhookConfiguration %s missing cert-manager annotation", webhookName)
+	if shouldHave && !hasAnnotation {
+		return fmt.Errorf("webhook configuration %s is missing the cert-manager annotation", config.name)
+	}
+	if !shouldHave && hasAnnotation {
+		return fmt.Errorf("webhook configuration %s has unexpected cert-manager annotation: %s", config.name, annotationValue)
+	}
+	Logger.Debugf("Webhook configuration %s: cert-manager annotation present=%v (expected=%v)", config.name, hasAnnotation, shouldHave)
+	return nil
+}
+
+// getWebhookConfigAnnotations returns annotations from the expected validating or mutating webhook configuration.
+func getWebhookConfigAnnotations(ctx context.Context, k8sClient *k8sclient.Client, config webhookConfigRef) (map[string]string, error) {
+	key := types.NamespacedName{Name: config.name}
+	if config.mutating {
+		var mutatingWebhookConfig admissionregistrationv1.MutatingWebhookConfiguration
+		if err := k8sClient.Get(ctx, key, &mutatingWebhookConfig); err != nil {
+			return nil, fmt.Errorf("failed to get mutating webhook configuration %s: %w", config.name, err)
 		}
-		if !shouldHave && hasAnnotation {
-			return fmt.Errorf("ValidatingWebhookConfiguration %s has unexpected cert-manager annotation: %s", webhookName, annotationValue)
-		}
-		Logger.Debugf("ValidatingWebhookConfiguration %s: cert-manager annotation present=%v (expected=%v)", webhookName, hasAnnotation, shouldHave)
-		return nil
+		return mutatingWebhookConfig.Annotations, nil
 	}
 
-	// Try MutatingWebhookConfiguration
-	var mwc admissionregistrationv1.MutatingWebhookConfiguration
-	if err := k8sClient.Get(ctx, types.NamespacedName{Name: webhookName}, &mwc); err == nil {
-		annotationValue := mwc.Annotations[certManagerInjectAnnotation]
-		hasAnnotation := annotationValue != ""
-
-		if shouldHave && !hasAnnotation {
-			return fmt.Errorf("MutatingWebhookConfiguration %s missing cert-manager annotation", webhookName)
-		}
-		if !shouldHave && hasAnnotation {
-			return fmt.Errorf("MutatingWebhookConfiguration %s has unexpected cert-manager annotation: %s", webhookName, annotationValue)
-		}
-		Logger.Debugf("MutatingWebhookConfiguration %s: cert-manager annotation present=%v (expected=%v)", webhookName, hasAnnotation, shouldHave)
-		return nil
+	var validatingWebhookConfig admissionregistrationv1.ValidatingWebhookConfiguration
+	if err := k8sClient.Get(ctx, key, &validatingWebhookConfig); err != nil {
+		return nil, fmt.Errorf("failed to get validating webhook configuration %s: %w", config.name, err)
 	}
-
-	return fmt.Errorf("webhook configuration %s not found as ValidatingWebhookConfiguration or MutatingWebhookConfiguration", webhookName)
+	return validatingWebhookConfig.Annotations, nil
 }
 
 // verifyWebhookSecretCertManagerStatus checks if the webhook certificate secret's cert-manager management status matches expectations.
@@ -577,6 +588,89 @@ func verifyWebhookServingCertificate(t *testing.T, ctx context.Context, k8sClien
 	}
 
 	Logger.Debug("Verified: webhook is serving the correct certificate from the Secret")
+}
+
+// waitForWebhookCABundlesToTrustServingCertificate waits until every Grove admission webhook trusts
+// the certificate currently served by the operator. The cert-manager annotation only requests CA
+// injection. It does not guarantee that cainjector has updated clientConfig.caBundle yet.
+func waitForWebhookCABundlesToTrustServingCertificate(t *testing.T, ctx context.Context, k8sClient *k8sclient.Client) {
+	t.Helper()
+
+	servedCertificate, err := getServedCertificate(ctx, k8sClient)
+	if err != nil {
+		t.Fatalf("Failed to get the certificate served by the webhook: %v", err)
+	}
+
+	var lastErr error
+	if err := wait.PollUntilContextTimeout(
+		ctx,
+		testctx.DefaultPollInterval,
+		testctx.DefaultPollTimeout,
+		true,
+		func(ctx context.Context) (bool, error) {
+			lastErr = verifyWebhookCABundlesTrustCertificate(ctx, k8sClient, servedCertificate)
+			return lastErr == nil, nil
+		},
+	); err != nil {
+		t.Fatalf("Webhook CA bundles did not trust the served certificate (serial %s): %v: %v",
+			servedCertificate.SerialNumber, lastErr, err)
+	}
+}
+
+// verifyWebhookCABundlesTrustCertificate verifies that every expected Grove admission webhook CA
+// bundle trusts certificate for the Grove webhook service DNS name.
+func verifyWebhookCABundlesTrustCertificate(ctx context.Context, k8sClient *k8sclient.Client, certificate *x509.Certificate) error {
+	for _, config := range webhookConfigs {
+		caBundles, err := getWebhookCABundles(ctx, k8sClient, config)
+		if err != nil {
+			return err
+		}
+		for webhookName, caBundle := range caBundles {
+			if len(caBundle) == 0 {
+				return fmt.Errorf("webhook configuration %s entry %s has an empty caBundle", config.name, webhookName)
+			}
+
+			roots := x509.NewCertPool()
+			if !roots.AppendCertsFromPEM(caBundle) {
+				return fmt.Errorf("webhook configuration %s entry %s has an invalid PEM caBundle", config.name, webhookName)
+			}
+			if _, err := certificate.Verify(x509.VerifyOptions{
+				DNSName: "grove-operator.grove-system.svc",
+				Roots:   roots,
+			}); err != nil {
+				return fmt.Errorf("webhook configuration %s entry %s does not trust served certificate serial %s: %w",
+					config.name, webhookName, certificate.SerialNumber, err)
+			}
+		}
+	}
+	return nil
+}
+
+// getWebhookCABundles returns each webhook entry name and CA bundle from the expected validating or
+// mutating webhook configuration.
+func getWebhookCABundles(ctx context.Context, k8sClient *k8sclient.Client, config webhookConfigRef) (map[string][]byte, error) {
+	key := types.NamespacedName{Name: config.name}
+	if config.mutating {
+		var mutatingWebhookConfig admissionregistrationv1.MutatingWebhookConfiguration
+		if err := k8sClient.Get(ctx, key, &mutatingWebhookConfig); err != nil {
+			return nil, fmt.Errorf("failed to get mutating webhook configuration %s: %w", config.name, err)
+		}
+		caBundles := make(map[string][]byte, len(mutatingWebhookConfig.Webhooks))
+		for _, webhook := range mutatingWebhookConfig.Webhooks {
+			caBundles[webhook.Name] = webhook.ClientConfig.CABundle
+		}
+		return caBundles, nil
+	}
+
+	var validatingWebhookConfig admissionregistrationv1.ValidatingWebhookConfiguration
+	if err := k8sClient.Get(ctx, key, &validatingWebhookConfig); err != nil {
+		return nil, fmt.Errorf("failed to get validating webhook configuration %s: %w", config.name, err)
+	}
+	caBundles := make(map[string][]byte, len(validatingWebhookConfig.Webhooks))
+	for _, webhook := range validatingWebhookConfig.Webhooks {
+		caBundles[webhook.Name] = webhook.ClientConfig.CABundle
+	}
+	return caBundles, nil
 }
 
 // getCertificateFromSecret retrieves and parses the TLS certificate from the webhook Secret.

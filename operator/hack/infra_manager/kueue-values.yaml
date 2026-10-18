@@ -1,0 +1,56 @@
+# Copyright 2026 The Grove Authors.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Helm values override for the e2e Kueue install. Restricts Kueue's job-framework
+# integrations to "pod" only, matching what Grove's kueue scheduler backend actually uses
+# (prebuilt Workloads + the plain-Pod integration; see operator/internal/scheduler/kueue).
+#
+# Without the frameworks restriction, Kueue's default integrations list includes "batch/job",
+# whose controller/failurePolicy gating this restriction gets you -- but does NOT, by itself,
+# stop the chart from unconditionally installing a cluster-wide mutating webhook for every
+# batch/v1 Job (charts/kueue/templates/webhook/manifests.yaml's "mjob.kb.io" entry has no
+# "has batch/job frameworks" guard, unlike its pod/deployment entries, and gets no
+# namespaceSelector at all unless managedJobsNamespaceSelector is set). That webhook has
+# failurePolicy: Fail, so it rejects ANY Job in ANY namespace -- including unrelated
+# installers' internal Jobs (e.g. Kai Scheduler's crd-upgrader pre-install hook) -- whenever
+# Kueue's webhook pods aren't ready yet. managedJobsNamespaceSelector below scopes every
+# framework webhook (Job, pod, deployment, ...) to only the namespaces Grove's e2e suite
+# actually uses (see operator/e2e/testctx/context.go and e2e/yaml/kueue-queues.yaml); a new
+# e2e namespace would need to be added here too.
+managerConfig:
+  controllerManagerConfigYaml: |-
+    apiVersion: config.kueue.x-k8s.io/v1beta2
+    kind: Configuration
+    health:
+      healthProbeBindAddress: :8081
+    metrics:
+      bindAddress: :8443
+    webhook:
+      port: 9443
+    leaderElection:
+      leaderElect: true
+      resourceName: c1f6bfd2.kueue.x-k8s.io
+    controller:
+      groupKindConcurrency:
+        Pod: 5
+        Workload.kueue.x-k8s.io: 5
+        LocalQueue.kueue.x-k8s.io: 1
+        ClusterQueue.kueue.x-k8s.io: 1
+        ResourceFlavor.kueue.x-k8s.io: 1
+    clientConnection:
+      qps: 50
+      burst: 100
+    managedJobsNamespaceSelector:
+      matchExpressions:
+        - key: kubernetes.io/metadata.name
+          operator: In
+          values:
+            - default
+    integrations:
+      frameworks:
+      - "pod"
+    # Evicts a Workload not PodsReady within 15s (Test_Kueue8, 9); well above other scenarios' ready time.
+    # Kueue also sets the PodsReady condition Test_Kueue10 waits for only when this is configured.
+    waitForPodsReady:
+      timeout: 15s
+      blockAdmission: false

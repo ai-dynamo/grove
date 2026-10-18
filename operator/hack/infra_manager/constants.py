@@ -70,6 +70,9 @@ WEBHOOK_READY_POLL_INTERVAL_SECONDS = 5
 KAI_QUEUE_MAX_RETRIES = 12
 KAI_QUEUE_POLL_INTERVAL_SECONDS = 5
 
+KUEUE_QUEUE_MAX_RETRIES = 12
+KUEUE_QUEUE_POLL_INTERVAL_SECONDS = 5
+
 CLUSTER_CREATE_RETRY_WAIT_SECONDS = 10
 
 NODE_CONDITIONS = [
@@ -113,11 +116,13 @@ WEBHOOK_READY_KEYWORDS = ["validated", "denied", "error", "invalid", "created", 
 NS_KAI_SCHEDULER = "kai-scheduler"
 NS_KUBE_SYSTEM = "kube-system"
 NS_DEFAULT = "default"
+NS_KUEUE = "kueue-system"
 
 # -- Helm releases --
 HELM_RELEASE_KAI = "kai-scheduler"
 HELM_RELEASE_GROVE = "grove-operator"
 HELM_RELEASE_PYROSCOPE = "pyroscope"
+HELM_RELEASE_KUEUE = "kueue"
 
 # -- Helm repos --
 HELM_REPO_GRAFANA = "grafana"
@@ -136,6 +141,7 @@ LABEL_CONTROL_PLANE = "node-role.kubernetes.io/control-plane"
 # -- Relative paths --
 REL_WORKLOAD_YAML = "e2e/yaml/workload1.yaml"
 REL_QUEUES_YAML = "e2e/yaml/queues.yaml"
+REL_KUEUE_QUEUES_YAML = "e2e/yaml/kueue-queues.yaml"
 REL_CHARTS_DIR = "charts"
 REL_PREPARE_CHARTS = "hack/prepare-charts.sh"
 
@@ -160,6 +166,14 @@ HELM_KEY_PCLQ_SYNCS = "config.controllers.podClique.concurrentSyncs"
 HELM_KEY_PCSG_SYNCS = "config.controllers.podCliqueScalingGroup.concurrentSyncs"
 HELM_KEY_QPS = "config.runtimeClientConnection.qps"
 HELM_KEY_BURST = "config.runtimeClientConnection.burst"
+# helm --set on a list index rebuilds the WHOLE array (helm does not deep-merge lists even
+# with --reuse-values), so enabling kueue must re-set every entry charts/values.yaml seeds
+# -- [default-scheduler, kai-scheduler] -- plus kueue, not just append at the next index.
+HELM_KEY_SCHEDULER_PROFILES_WITH_KUEUE = (
+    "config.scheduler.profiles[0].name=default-scheduler",
+    "config.scheduler.profiles[1].name=kai-scheduler",
+    "config.scheduler.profiles[2].name=kueue",
+)
 
 # -- K3d cluster defaults --
 DEFAULT_CLUSTER_NAME = "shared-e2e-test-cluster"

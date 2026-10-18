@@ -28,6 +28,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/controller/podclique/expectations"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/index"
+	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
@@ -129,7 +130,31 @@ func (r _resource) prepareSyncFlow(ctx context.Context, logger logr.Logger, pclq
 		)
 	}
 
+	ss.finalizer, _ = r.schedRegistry.GetOrDefault(pclq.Spec.PodSpec.SchedulerName).(scheduler.Finalizer)
+	if ss.finalizer != nil {
+		if ss.predecessorPods, err = r.listPredecessorPods(ctx, pclq); err != nil {
+			return nil, groveerr.WrapError(err,
+				errCodeListPod,
+				component.OperationSync,
+				fmt.Sprintf("failed to list pods left by an earlier PodClique %v", pclqObjectKey),
+			)
+		}
+	}
 	return ss, nil
+}
+
+// listPredecessorPods lists the pods that an earlier PodClique of the same name left behind for garbage collection.
+// The PodClique lists its own pods by owner UID, so it does not see these.
+func (r _resource) listPredecessorPods(ctx context.Context, pclq *grovecorev1alpha1.PodClique) ([]*corev1.Pod, error) {
+	podList := &corev1.PodList{}
+	if err := r.client.List(ctx, podList, client.InNamespace(pclq.Namespace), client.MatchingLabels{apicommon.LabelPodClique: pclq.Name}); err != nil {
+		return nil, err
+	}
+	predecessorPods := lo.Filter(lo.ToSlicePtr(podList.Items), func(pod *corev1.Pod, _ int) bool {
+		owner := metav1.GetControllerOfNoCopy(pod)
+		return owner != nil && owner.UID != pclq.UID
+	})
+	return predecessorPods, nil
 }
 
 // getAssociatedPodGangName gets the associated PodGang name from PodClique labels.
@@ -186,6 +211,9 @@ func (r _resource) reconcilePCSGLabellessPods(ctx context.Context, logger logr.L
 // runSyncFlow executes the main synchronization logic including pod creation, deletion, updates, and scheduling gate management
 func (r _resource) runSyncFlow(ctx context.Context, logger logr.Logger, ss *syncSnapshot) syncFlowResult {
 	result := syncFlowResult{}
+	if err := r.removeSchedulerFinalizersFromDeletingPods(ctx, ss); err != nil {
+		result.recordError(err)
+	}
 	if ss.isStandalonePCLQ {
 		// A standalone PodClique's pods are distributed across one or more anchor PodGangs, so its
 		// pods are reconciled per PodGang against the PodGangMap counts.
@@ -226,7 +254,13 @@ func (r _resource) runSyncFlow(ctx context.Context, logger logr.Logger, ss *sync
 	}
 
 	if componentutils.IsPCLQRollingUpdateInProgress(ss.pclq) {
-		if componentutils.IsRollingRecreateUpdateInProgress(ss.pcs) {
+		if !pclqUpdateProgressMatchesCurrentRevision(ss) {
+			result.recordError(groveerr.New(
+				groveerr.ErrCodeContinueReconcileAndRequeue,
+				component.OperationSync,
+				fmt.Sprintf("PodClique %v update progress does not match the current PCS and PCLQ revisions, requeuing", client.ObjectKeyFromObject(ss.pclq)),
+			))
+		} else if componentutils.IsRollingRecreateUpdateInProgress(ss.pcs) {
 			// RollingRecreate self-paces the roll, deleting old-hash pods within the frozen PodGang.
 			if err := r.processPendingUpdates(ctx, logger, ss); err != nil {
 				result.recordError(err)
@@ -246,6 +280,46 @@ func (r _resource) runSyncFlow(ctx context.Context, logger logr.Logger, ss *sync
 	}
 	result.recordPendingScheduleGatedPods(skippedScheduleGatedPods)
 	return result
+}
+
+// removeSchedulerFinalizersFromDeletingPods removes the scheduler's own finalizers from Pods being deleted,
+// for schedulers that never remove them themselves (see scheduler.Finalizer).
+func (r _resource) removeSchedulerFinalizersFromDeletingPods(ctx context.Context, ss *syncSnapshot) error {
+	finalizer, ok := r.schedRegistry.GetOrDefault(ss.pclq.Spec.PodSpec.SchedulerName).(scheduler.Finalizer)
+	if !ok {
+		return nil
+	}
+	var errs []error
+	for _, pod := range slices.Concat(ss.existingPCLQPods, ss.predecessorPods) {
+		if pod.DeletionTimestamp == nil {
+			continue
+		}
+		if err := finalizer.RemovePodFinalizers(ctx, pod); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if err := errors.Join(errs...); err != nil {
+		return groveerr.WrapError(err,
+			errCodeRemovePodFinalizers,
+			component.OperationSync,
+			fmt.Sprintf("failed to remove scheduler finalizers from deleting Pods of PodClique %v", client.ObjectKeyFromObject(ss.pclq)),
+		)
+	}
+	return nil
+}
+
+// pclqUpdateProgressMatchesCurrentRevision reports whether the PCLQ update progress identifies the
+// same PCS generation and Pod template revision currently observed on the PCS and PCLQ resources.
+// The PCS controller updates these resources independently, so update-specific Pod replacement and
+// completion must wait until all revision markers agree.
+func pclqUpdateProgressMatchesCurrentRevision(ss *syncSnapshot) bool {
+	if ss.pcs.Status.CurrentGenerationHash == nil || ss.pclq.Status.UpdateProgress == nil {
+		return false
+	}
+
+	progress := ss.pclq.Status.UpdateProgress
+	return progress.PodCliqueSetGenerationHash == *ss.pcs.Status.CurrentGenerationHash &&
+		progress.PodTemplateHash == ss.pclq.Labels[apicommon.LabelPodTemplateHash]
 }
 
 // syncPCSGPodIndexLabels backfills and reconciles the group-wide index label on existing PCSG pods.
@@ -307,11 +381,13 @@ func (r _resource) syncPCSGPodIndexLabels(ctx context.Context, ss *syncSnapshot)
 // negative value is pods to delete.
 func (r _resource) computePodCountDelta(ss *syncSnapshot) (int, error) {
 	podsByPodGang, _ := groupPodsByPodGang(ss.existingPCLQPods)
-	reconciledCount, err := r.reconcileLivePodCountWithExpectations(ss.pclq.ObjectMeta, ss.pcsgReplicaPodGangName, podsByPodGang[ss.pcsgReplicaPodGangName])
+	group := podsByPodGang[ss.pcsgReplicaPodGangName]
+	reconciledCount, err := r.reconcileLivePodCountWithExpectations(ss.pclq.ObjectMeta, ss.pcsgReplicaPodGangName, group)
 	if err != nil {
 		return 0, err
 	}
-	return int(ss.pclq.Spec.Replicas) - int(reconciledCount), nil
+	delta, err := r.withholdReplacementsOfUnfinalizedPods(ss, ss.pcsgReplicaPodGangName, group.terminating, ss.pclq.Spec.Replicas-reconciledCount)
+	return int(delta), err
 }
 
 // deleteExcessPods deletes `diff` number of excess Pods from this PodClique concurrently.
@@ -616,6 +692,11 @@ type syncSnapshot struct {
 	pcsgReplicaPodGangName  string
 	existingPCLQPods        []*corev1.Pod
 	expectedPodTemplateHash string
+	// finalizer is nil when the PodClique's scheduler backend does not implement scheduler.Finalizer.
+	finalizer scheduler.Finalizer
+	// predecessorPods are the pods an earlier PodClique of the same name left behind. They are listed only when
+	// finalizer is set.
+	predecessorPods []*corev1.Pod
 }
 
 // syncFlowResult captures the result of a sync flow run.

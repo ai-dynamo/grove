@@ -90,10 +90,12 @@ type helmHealthProbeValues struct {
 }
 
 type helmWebhookValues struct {
-	PodCliqueSetValidationWebhook    helmWebhookAnnotations `json:"podCliqueSetValidationWebhook"`
-	PodCliqueSetDefaultingWebhook    helmWebhookAnnotations `json:"podCliqueSetDefaultingWebhook"`
-	ClusterTopologyValidationWebhook helmWebhookAnnotations `json:"clusterTopologyValidationWebhook"`
-	AuthorizerWebhook                helmWebhookAnnotations `json:"authorizerWebhook"`
+	PodCliqueSetValidationWebhook          helmWebhookAnnotations `json:"podCliqueSetValidationWebhook"`
+	PodCliqueScalingGroupValidationWebhook helmWebhookAnnotations `json:"podCliqueScalingGroupValidationWebhook"`
+	PodCliqueValidationWebhook             helmWebhookAnnotations `json:"podCliqueValidationWebhook"`
+	PodCliqueSetDefaultingWebhook          helmWebhookAnnotations `json:"podCliqueSetDefaultingWebhook"`
+	ClusterTopologyValidationWebhook       helmWebhookAnnotations `json:"clusterTopologyValidationWebhook"`
+	AuthorizerWebhook                      helmWebhookAnnotations `json:"authorizerWebhook"`
 }
 
 type helmWebhookAnnotations struct {
@@ -125,10 +127,12 @@ func (c *GroveConfig) toHelmValues() (map[string]interface{}, error) {
 			},
 		},
 		Webhooks: helmWebhookValues{
-			PodCliqueSetValidationWebhook:    anns,
-			PodCliqueSetDefaultingWebhook:    anns,
-			ClusterTopologyValidationWebhook: anns,
-			AuthorizerWebhook:                anns,
+			PodCliqueSetValidationWebhook:          anns,
+			PodCliqueScalingGroupValidationWebhook: anns,
+			PodCliqueValidationWebhook:             anns,
+			PodCliqueSetDefaultingWebhook:          anns,
+			ClusterTopologyValidationWebhook:       anns,
+			AuthorizerWebhook:                      anns,
 		},
 	}
 

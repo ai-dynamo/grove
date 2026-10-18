@@ -384,7 +384,7 @@ func (v *pcsValidator) validatePodCliqueScalingGroupConfigs(fldPath *field.Path)
 		}
 
 		// validate RollingUpdate against the active update strategy.
-		allErrs = append(allErrs, v.validateRollingUpdateConfiguration(scalingGroupConfig.RollingUpdate, ptr.Deref(scalingGroupConfig.Replicas, 1), ptr.Deref(scalingGroupConfig.MinAvailable, 1), fldPath.Index(i).Child("rollingUpdate"))...)
+		allErrs = append(allErrs, v.validateRollingUpdateConfiguration(scalingGroupConfig.RollingUpdate, ptr.Deref(scalingGroupConfig.MinAvailable, 1), fldPath.Index(i).Child("rollingUpdate"))...)
 
 		// validate PCSG-level ResourceSharing
 		allErrs = append(allErrs, v.validatePCSGResourceSharing(scalingGroupConfig, fldPath.Index(i).Child("resourceSharing"))...)
@@ -468,7 +468,7 @@ func (v *pcsValidator) validatePodCliqueTemplateSpec(cliqueTemplateSpec *groveco
 				"rollingUpdate must not be set on a PodClique that is a member of a PodCliqueScalingGroup. Set it on the PodCliqueScalingGroup instead"))
 		}
 	} else {
-		allErrs = append(allErrs, v.validateRollingUpdateConfiguration(cliqueTemplateSpec.RollingUpdate, cliqueTemplateSpec.Spec.Replicas, ptr.Deref(cliqueTemplateSpec.Spec.MinAvailable, cliqueTemplateSpec.Spec.Replicas), fldPath.Child("rollingUpdate"))...)
+		allErrs = append(allErrs, v.validateRollingUpdateConfiguration(cliqueTemplateSpec.RollingUpdate, ptr.Deref(cliqueTemplateSpec.Spec.MinAvailable, cliqueTemplateSpec.Spec.Replicas), fldPath.Child("rollingUpdate"))...)
 	}
 
 	return warnings, allErrs
@@ -508,11 +508,17 @@ func (v *pcsValidator) updateStrategyType() grovecorev1alpha1.UpdateStrategyType
 
 // validateRollingUpdateConfiguration checks a component's RollingUpdate against the active update
 // strategy. OnDelete forbids it entirely. Otherwise MaxUnavailable and ProgressDeadline, when set,
-// must be greater than 0, and MaxUnavailable must not exceed the component's replicas. Under the
-// Coherent strategy MaxUnavailable must also not be less than the component's minAvailable, since the
-// MVU sub-step takes down minAvailable of the component at once. A nil MaxUnavailable is allowed since
-// the field is optional and the consumer supplies an effective value.
-func (v *pcsValidator) validateRollingUpdateConfiguration(rollingUpdate *grovecorev1alpha1.RollingUpdateConfiguration, replicas, minAvailable int32, fldPath *field.Path) field.ErrorList {
+// must be greater than 0. Under the Coherent strategy MaxUnavailable must also not be less than the
+// component's minAvailable, since the MVU sub-step takes down minAvailable of the component at once.
+// A nil MaxUnavailable is allowed since the field is optional and the consumer supplies an effective
+// value.
+//
+// MaxUnavailable is deliberately not bounded above by replicas. The replicas supplied by the PCS
+// template is a creation-time seed. The live PodClique / PodCliqueScalingGroup is scaled independently
+// through its /scale subresource, so the template count goes stale after any scale. MaxUnavailable is a
+// ceiling on rollout disruption, not a demand to disrupt that many. Runtime rollout planning already
+// caps disruption to the replicas that actually remain.
+func (v *pcsValidator) validateRollingUpdateConfiguration(rollingUpdate *grovecorev1alpha1.RollingUpdateConfiguration, minAvailable int32, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 	if v.updateStrategyType() == grovecorev1alpha1.OnDeleteStrategy {
 		if rollingUpdate != nil {
@@ -527,8 +533,6 @@ func (v *pcsValidator) validateRollingUpdateConfiguration(rollingUpdate *groveco
 		switch {
 		case *rollingUpdate.MaxUnavailable <= 0:
 			allErrs = append(allErrs, field.Invalid(fldPath.Child("maxUnavailable"), *rollingUpdate.MaxUnavailable, "must be greater than 0"))
-		case *rollingUpdate.MaxUnavailable > replicas:
-			allErrs = append(allErrs, field.Invalid(fldPath.Child("maxUnavailable"), *rollingUpdate.MaxUnavailable, fmt.Sprintf("must not be greater than replicas (%d)", replicas)))
 		case v.updateStrategyType() == grovecorev1alpha1.CoherentStrategy && *rollingUpdate.MaxUnavailable < minAvailable:
 			allErrs = append(allErrs, field.Invalid(fldPath.Child("maxUnavailable"), *rollingUpdate.MaxUnavailable, fmt.Sprintf("must not be less than minAvailable (%d) under the Coherent update strategy", minAvailable)))
 		}

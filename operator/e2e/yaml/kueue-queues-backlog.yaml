@@ -1,0 +1,39 @@
+# Copyright 2026 NVIDIA CORPORATION
+# SPDX-License-Identifier: Apache-2.0
+#
+# Dedicated Kueue queue for Test_Kueue7_QueuedWorkloadAdmitsWhenQuotaFrees: a
+# ClusterQueue named "grove-e2e-backlog" whose memory quota (100Mi) is sized to fit
+# exactly one of kueue-workload-filler.yaml / kueue-workload-queued.yaml (each 2 pods x
+# 50Mi = 100Mi total) with zero headroom, so the filler workload consumes the entire
+# quota and the queued workload genuinely cannot be admitted until the filler is
+# deleted. Kept separate from grove-e2e and grove-e2e-partial so this scenario's quota
+# consumption never couples with other scenarios running in the same test binary.
+
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: ResourceFlavor
+metadata:
+  name: default-flavor
+---
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: ClusterQueue
+metadata:
+  name: grove-e2e-backlog
+spec:
+  namespaceSelector: {}
+  resourceGroups:
+    - coveredResources: ["cpu", "memory"]
+      flavors:
+        - name: default-flavor
+          resources:
+            - name: cpu
+              nominalQuota: 1000
+            - name: memory
+              nominalQuota: 100Mi
+---
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: LocalQueue
+metadata:
+  name: grove-e2e-backlog
+  namespace: default
+spec:
+  clusterQueue: grove-e2e-backlog

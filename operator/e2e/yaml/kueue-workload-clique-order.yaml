@@ -1,0 +1,67 @@
+# Test_Kueue10 fixture: two standalone cliques listed out of name order (prefill before decode), so the
+# PodGang lists its PodGroups out of name order too.
+apiVersion: grove.io/v1alpha1
+kind: PodCliqueSet
+metadata:
+  name: kueue-clique-order
+  labels:
+    app: kueue-clique-order
+    kueue.x-k8s.io/queue-name: grove-e2e
+spec:
+  replicas: 1
+  template:
+    cliques:
+      - name: prefill
+        spec:
+          roleName: prefill
+          replicas: 1
+          minAvailable: 1
+          podSpec:
+            schedulerName: kueue
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: type
+                          operator: In
+                          values:
+                            - kwok
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: prefill
+                image: registry:5001/nginx:alpine-slim
+                resources:
+                  requests:
+                    memory: 1Mi
+      - name: decode
+        spec:
+          roleName: decode
+          replicas: 1
+          minAvailable: 1
+          podSpec:
+            schedulerName: kueue
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: type
+                          operator: In
+                          values:
+                            - kwok
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: decode
+                image: registry:5001/nginx:alpine-slim
+                resources:
+                  requests:
+                    memory: 1Mi

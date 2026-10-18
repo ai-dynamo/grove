@@ -1,0 +1,94 @@
+# Coherent workload for the maxUnavailable-above-template-replicas test.
+#
+# Same shape as workload-mu-rr.yaml but under the Coherent update strategy. sg-x declares
+# template replicas 1 and maxUnavailable 2, which stays >= minAvailable 1 (required by Coherent) while
+# being larger than the template replica count. maxUnavailable caps rollout disruption against the live
+# replica count, so a larger value is allowed because the live PodCliqueScalingGroup is scaled separately
+# through its /scale subresource.
+#
+# The test scales sg-x out to 4 live replicas and checks the Coherent rollout honours the budget against
+# the live count, then scales it back in to 1 and checks the rollout disrupts at most the single
+# remaining replica.
+---
+apiVersion: grove.io/v1alpha1
+kind: PodCliqueSet
+metadata:
+  name: wl-mu-coh
+  labels:
+    app: wl-mu-coh
+spec:
+  replicas: 1
+  updateStrategy:
+    type: Coherent
+  template:
+    cliques:
+      - name: front
+        labels:
+          kai.scheduler/queue: test
+        spec:
+          roleName: role-front
+          replicas: 1
+          minAvailable: 1
+          podSpec:
+            terminationGracePeriodSeconds: 5
+            schedulerName: kai-scheduler
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: node_role.e2e.grove.nvidia.com
+                          operator: In
+                          values:
+                            - agent
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: front
+                image: registry:5001/busybox:latest
+                command: ["sleep", "infinity"]
+                resources:
+                  requests:
+                    memory: 80Mi
+      - name: pc-b
+        labels:
+          kai.scheduler/queue: test
+        spec:
+          roleName: role-b
+          replicas: 1
+          minAvailable: 1
+          podSpec:
+            terminationGracePeriodSeconds: 5
+            schedulerName: kai-scheduler
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: node_role.e2e.grove.nvidia.com
+                          operator: In
+                          values:
+                            - agent
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: pc-b
+                image: registry:5001/busybox:latest
+                command: ["sleep", "infinity"]
+                resources:
+                  requests:
+                    memory: 80Mi
+    podCliqueScalingGroups:
+      - name: sg-x
+        replicas: 1
+        minAvailable: 1
+        cliqueNames:
+          - pc-b
+        rollingUpdate:
+          maxUnavailable: 2

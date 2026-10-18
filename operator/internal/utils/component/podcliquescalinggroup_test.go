@@ -178,10 +178,39 @@ func TestIsPCSGUpdateComplete(t *testing.T) {
 			expected:          false,
 		},
 		{
-			name: "returns_true_when_hash_matches",
+			name: "returns_true_when_hash_matches_and_no_update_progress_exists",
 			pcsg: &grovecorev1alpha1.PodCliqueScalingGroup{
 				Status: grovecorev1alpha1.PodCliqueScalingGroupStatus{
 					CurrentPodCliqueSetGenerationHash: ptr.To("hash1"),
+				},
+			},
+			pcsGenerationHash: "hash1",
+			expected:          true,
+		},
+		{
+			name: "returns_false_when_hash_matches_but_update_is_in_progress",
+			pcsg: &grovecorev1alpha1.PodCliqueScalingGroup{
+				Status: grovecorev1alpha1.PodCliqueScalingGroupStatus{
+					CurrentPodCliqueSetGenerationHash: ptr.To("hash1"),
+					UpdateProgress: &grovecorev1alpha1.PodCliqueScalingGroupUpdateProgress{
+						UpdateStartedAt:            metav1.Now(),
+						PodCliqueSetGenerationHash: "superseded-hash",
+					},
+				},
+			},
+			pcsGenerationHash: "hash1",
+			expected:          false,
+		},
+		{
+			name: "returns_true_when_hash_matches_and_update_has_ended",
+			pcsg: &grovecorev1alpha1.PodCliqueScalingGroup{
+				Status: grovecorev1alpha1.PodCliqueScalingGroupStatus{
+					CurrentPodCliqueSetGenerationHash: ptr.To("hash1"),
+					UpdateProgress: &grovecorev1alpha1.PodCliqueScalingGroupUpdateProgress{
+						UpdateStartedAt:            metav1.Now(),
+						UpdateEndedAt:              ptr.To(metav1.Now()),
+						PodCliqueSetGenerationHash: "hash1",
+					},
 				},
 			},
 			pcsGenerationHash: "hash1",

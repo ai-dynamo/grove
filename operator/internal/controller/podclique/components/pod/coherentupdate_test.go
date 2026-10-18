@@ -24,6 +24,7 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 func TestMarkCoherentUpdateEndIfConverged(t *testing.T) {
@@ -40,23 +41,39 @@ func TestMarkCoherentUpdateEndIfConverged(t *testing.T) {
 	}
 	for _, tc := range testCases {
 		t.Run(tc.description, func(t *testing.T) {
+			const generation = "generation-1"
 			pclq := testutils.NewPodCliqueBuilder(testPCSName, "uid", testCliqueName, testNamespace, 0).
 				WithReplicas(tc.specReplicas).
 				WithOptions(func(p *grovecorev1alpha1.PodClique) {
 					p.Status.Replicas = tc.statusReplicas
 					p.Status.UpdatedReplicas = tc.updatedReplicas
-					p.Status.UpdateProgress = &grovecorev1alpha1.PodCliqueUpdateProgress{PodTemplateHash: testNewHash}
+					p.Status.UpdateProgress = &grovecorev1alpha1.PodCliqueUpdateProgress{
+						PodCliqueSetGenerationHash: generation,
+						PodTemplateHash:            testNewHash,
+					}
 				}).Build()
-			cl := testutils.NewTestClientBuilder().WithObjects(pclq).Build()
+			cl := testutils.NewTestClientBuilder().
+				WithObjects(pclq).
+				WithStatusSubresource(&grovecorev1alpha1.PodClique{}).
+				Build()
 			r := _resource{client: cl}
 			ss := &syncSnapshot{pclq: pclq}
 
 			require.NoError(t, r.markCoherentUpdateEndIfConverged(context.Background(), logr.Discard(), ss))
 
+			persistedPCLQ := &grovecorev1alpha1.PodClique{}
+			require.NoError(t, cl.Get(t.Context(), client.ObjectKeyFromObject(pclq), persistedPCLQ))
+			require.NotNil(t, persistedPCLQ.Status.UpdateProgress)
 			if tc.wantUpdateEnded {
-				assert.NotNil(t, pclq.Status.UpdateProgress.UpdateEndedAt)
+				assert.NotNil(t, persistedPCLQ.Status.UpdateProgress.UpdateEndedAt)
+				require.NotNil(t, persistedPCLQ.Status.CurrentPodTemplateHash)
+				assert.Equal(t, testNewHash, *persistedPCLQ.Status.CurrentPodTemplateHash)
+				require.NotNil(t, persistedPCLQ.Status.CurrentPodCliqueSetGenerationHash)
+				assert.Equal(t, generation, *persistedPCLQ.Status.CurrentPodCliqueSetGenerationHash)
 			} else {
-				assert.Nil(t, pclq.Status.UpdateProgress.UpdateEndedAt)
+				assert.Nil(t, persistedPCLQ.Status.UpdateProgress.UpdateEndedAt)
+				assert.Nil(t, persistedPCLQ.Status.CurrentPodTemplateHash)
+				assert.Nil(t, persistedPCLQ.Status.CurrentPodCliqueSetGenerationHash)
 			}
 		})
 	}

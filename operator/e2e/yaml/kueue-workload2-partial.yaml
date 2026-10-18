@@ -1,0 +1,48 @@
+# Copyright 2026 NVIDIA CORPORATION
+# SPDX-License-Identifier: Apache-2.0
+#
+# Partial-gang-admission fixture for Test_Kueue2: a single standalone "worker" clique with
+# replicas: 4 but minAvailable: 2, admitted through the "grove-e2e-partial" LocalQueue in
+# kueue-queues-partial.yaml. Each pod requests memory: 50Mi, so the 4 replicas together ask
+# for 200Mi while the ClusterQueue's nominalQuota.memory is only 100Mi -- exactly enough for
+# 2 pods. Kueue is expected to admit this Workload with
+# status.admission.podSetAssignments[0].count == 2 (matching PodSet.MinCount), leaving the
+# remaining 2 pods Pending.
+apiVersion: grove.io/v1alpha1
+kind: PodCliqueSet
+metadata:
+  name: kueue-workload2
+  labels:
+    app: kueue-workload2
+    kueue.x-k8s.io/queue-name: grove-e2e-partial
+spec:
+  replicas: 1
+  template:
+    cliques:
+      - name: worker
+        spec:
+          roleName: worker
+          replicas: 4
+          minAvailable: 2
+          podSpec:
+            schedulerName: kueue
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: type
+                          operator: In
+                          values:
+                            - kwok
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: worker
+                image: registry:5001/nginx:alpine-slim
+                resources:
+                  requests:
+                    memory: 50Mi

@@ -25,9 +25,13 @@ const (
 	Name = "podclique-validating-webhook"
 	// webhookPath is the path the PodClique validating webhook is registered at.
 	webhookPath = "/webhooks/validate-podclique"
+	// scaleSubResource is the subresource through which kubectl scale and the HorizontalPodAutoscaler
+	// write a PodClique's replica count.
+	scaleSubResource = "scale"
 )
 
-// RegisterWithManager registers the PodClique validating webhook with the manager.
+// RegisterWithManager registers the webhook with the manager. A raw admission.Handler is used instead
+// of admission.WithCustomValidator because two object kinds are admitted: PodClique and Scale.
 func (h *Handler) RegisterWithManager(mgr manager.Manager) error {
 	webhook := admission.Webhook{
 		Handler:      h,

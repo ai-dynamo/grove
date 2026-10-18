@@ -1,0 +1,56 @@
+# KWOK Stage that holds the "stuck" clique's pod of the kueue-allornothing-notready fixture
+# (Test_Kueue9) in a not-ready CrashLoopBackOff state: phase Running, Ready=False,
+# ContainersReady=False. Scoped to that PodClique by the grove.io/podclique label so the fixture's
+# "ready" clique is unaffected. Matches a fresh pod before its podIP is assigned, then assigns a
+# podIP so the default pod-ready stage cannot re-fire and recover it. Higher weight than the
+# default pod-ready stage so it wins for matching pods.
+apiVersion: kwok.x-k8s.io/v1alpha1
+kind: Stage
+metadata:
+  name: pod-crashloop-kueue-allornothing-notready-stuck
+spec:
+  resourceRef:
+    apiGroup: v1
+    kind: Pod
+  selector:
+    matchExpressions:
+      - key: .metadata.deletionTimestamp
+        operator: DoesNotExist
+      - key: .status.podIP
+        operator: DoesNotExist
+      - key: '.metadata.labels["grove.io/podclique"]'
+        operator: In
+        values:
+          - "kueue-allornothing-notready-0-stuck"
+  weight: 20
+  next:
+    statusSubresource: status
+    statusTemplate: |
+      {{ $now := Now }}
+      conditions:
+      - lastTransitionTime: {{ $now | Quote }}
+        status: "True"
+        type: Initialized
+      - lastTransitionTime: {{ $now | Quote }}
+        status: "False"
+        reason: ContainersNotReady
+        type: Ready
+      - lastTransitionTime: {{ $now | Quote }}
+        status: "False"
+        reason: ContainersNotReady
+        type: ContainersReady
+      containerStatuses:
+      {{ range .spec.containers }}
+      - image: {{ .image | Quote }}
+        name: {{ .name | Quote }}
+        ready: false
+        restartCount: 3
+        state:
+          waiting:
+            reason: CrashLoopBackOff
+            message: "simulated crash loop"
+      {{ end }}
+      hostIP: {{ NodeIPWith .spec.nodeName | Quote }}
+      podIP: {{ PodIPWith .spec.nodeName ( or .spec.hostNetwork false ) ( or .metadata.uid "" ) ( or .metadata.name "" ) ( or .metadata.namespace "" ) | Quote }}
+      phase: Running
+      startTime: {{ $now | Quote }}

@@ -186,6 +186,10 @@ func (r _resource) reconcileExpectedPodCliques(ctx context.Context, logger logr.
 // cadence, which would replace replicas on its own schedule disjoint from the PodGangMap. Under
 // RollingRecreate the reconciler paces its own hash driven replacement.
 func (r _resource) reconcileInProgressUpdate(ctx context.Context, logger logr.Logger, ss *syncSnapshot) error {
+	if err := requeueIfPCSGUpdateTargetIsStale(ss); err != nil {
+		return err
+	}
+
 	if componentutils.IsCoherentStrategy(ss.pcs) {
 		if err := r.reconcileReplicasToCommittedPodGangs(ctx, logger, ss); err != nil {
 			return err
@@ -196,6 +200,26 @@ func (r _resource) reconcileInProgressUpdate(ctx context.Context, logger logr.Lo
 		return r.processPendingUpdates(ctx, logger, ss)
 	}
 	return nil
+}
+
+// requeueIfPCSGUpdateTargetIsStale delays RollingRecreate and Coherent processing when the PCSG update
+// target differs from the current PCS generation. A new PCS revision replaces the PCS update progress
+// immediately, while PCSG processUpdate can reset the child target only after the PCS selects this PCSG's
+// replica in UpdateProgress.CurrentlyUpdating. Requeueing gives processUpdate another opportunity to perform
+// that reset and prevents the superseded PCSG update from replacing replicas or being marked complete against
+// the new PCS template in the meantime.
+func requeueIfPCSGUpdateTargetIsStale(ss *syncSnapshot) error {
+	updateTarget := ss.pcsg.Status.UpdateProgress.PodCliqueSetGenerationHash
+	currentTarget := *ss.pcs.Status.CurrentGenerationHash
+	if updateTarget == currentTarget {
+		return nil
+	}
+
+	return groveerr.New(
+		groveerr.ErrCodeContinueReconcileAndRequeue,
+		component.OperationSync,
+		fmt.Sprintf("PodCliqueScalingGroup update target %q is stale; current PodCliqueSet generation is %q", updateTarget, currentTarget),
+	)
 }
 
 // syncPCSGPodIndexOffsets reconciles internal offsets on existing PodCliques without recreating them.

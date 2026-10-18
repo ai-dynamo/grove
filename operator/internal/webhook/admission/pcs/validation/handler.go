@@ -110,7 +110,7 @@ func (h *Handler) ValidateUpdate(ctx context.Context, oldObj, newObj runtime.Obj
 	errs = append(errs, mnnvl.ValidatePCSOnUpdate(oldPCS, newPCS)...)
 
 	// Scheduler-backend-specific validation
-	if err := h.validatePodCliqueSetWithBackend(ctx, newPCS); err != nil {
+	if err := h.validatePodCliqueSetWithBackend(ctx, newPCS, scheduler.WithOldPodCliqueSet(oldPCS)); err != nil {
 		errs = append(errs, field.Invalid(field.NewPath("spec"), newPCS.Spec, err.Error()))
 	}
 
@@ -129,7 +129,7 @@ func (h *Handler) ValidateDelete(_ context.Context, _ runtime.Object) (admission
 
 // validatePodCliqueSetWithBackend resolves the scheduler backend for the PCS and runs backend-specific validation.
 // All cliques share the same (resolved) schedulerName after validateSchedulerNames, so we use the first clique.
-func (h *Handler) validatePodCliqueSetWithBackend(ctx context.Context, pcs *v1alpha1.PodCliqueSet) error {
+func (h *Handler) validatePodCliqueSetWithBackend(ctx context.Context, pcs *v1alpha1.PodCliqueSet, opts ...scheduler.ValidateOption) error {
 	schedulerName := ""
 	if len(pcs.Spec.Template.Cliques) > 0 && pcs.Spec.Template.Cliques[0] != nil {
 		schedulerName = pcs.Spec.Template.Cliques[0].Spec.PodSpec.SchedulerName
@@ -142,7 +142,7 @@ func (h *Handler) validatePodCliqueSetWithBackend(ctx context.Context, pcs *v1al
 		}
 		return fmt.Errorf("schedulerName %q is not enabled in OperatorConfiguration", schedulerName)
 	}
-	return backend.ValidatePodCliqueSet(ctx, pcs)
+	return backend.ValidatePodCliqueSet(ctx, pcs, opts...)
 }
 
 // castToPodCliqueSet attempts to cast a runtime.Object to a PodCliqueSet.

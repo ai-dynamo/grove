@@ -23,6 +23,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler/kai"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler/kube"
+	"github.com/ai-dynamo/grove/operator/internal/scheduler/kueue"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler/lpx"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler/volcano"
 
@@ -102,6 +103,8 @@ func newSchedulerBackend(cfg configv1alpha1.SchedulerConfiguration, cl, directCl
 		b = kube.New(cl, scheme, rec, p)
 	case configv1alpha1.SchedulerNameKai:
 		b = kai.New(cl, scheme, rec, p)
+	case configv1alpha1.SchedulerNameKueue:
+		b = kueue.New(cl, scheme, rec, p)
 	case configv1alpha1.SchedulerNameVolcano:
 		b = volcano.New(cl, scheme, rec, p)
 	case configv1alpha1.SchedulerNameLPX:

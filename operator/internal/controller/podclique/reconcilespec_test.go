@@ -20,6 +20,7 @@ import (
 
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
+	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/go-logr/logr"
@@ -292,6 +293,62 @@ func TestProcessUpdateInitializesProgressWithoutActivePCSUpdate(t *testing.T) {
 	assert.Equal(t, "new-generation-hash", updatedPCLQ.Status.UpdateProgress.PodCliqueSetGenerationHash)
 	assert.NotEmpty(t, updatedPCLQ.Status.UpdateProgress.PodTemplateHash)
 	assert.Equal(t, int32(0), updatedPCLQ.Status.UpdatedReplicas)
+}
+
+// TestProcessUpdateResetsPCLQProgressToSelectedPCSGeneration verifies that processUpdate replaces
+// progress for an older PCS generation after the PCS selects this standalone PCLQ's replica.
+//
+// The PCLQ previously completed generation-1, then started generation-2. Before generation-2
+// completed, the PCS changed back to generation-1 and selected this replica. processUpdate must
+// replace the active generation-2 progress with a new generation-1 update.
+func TestProcessUpdateResetsPCLQProgressToSelectedPCSGeneration(t *testing.T) {
+	const (
+		currentGeneration    = "generation-1"
+		supersededGeneration = "generation-2"
+	)
+
+	pcsUID := uuid.NewUUID()
+	pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, pcsUID).
+		WithReplicas(1).
+		WithPodCliqueParameters("worker", 1, nil).
+		WithUpdateStrategy(&grovecorev1alpha1.PodCliqueSetUpdateStrategy{Type: grovecorev1alpha1.RollingRecreateStrategy}).
+		WithPodCliqueSetGenerationHash(ptr.To(currentGeneration)).
+		WithUpdateProgress(&grovecorev1alpha1.PodCliqueSetUpdateProgress{
+			UpdateStartedAt: metav1.Now(),
+			CurrentlyUpdating: []grovecorev1alpha1.PodCliqueSetReplicaUpdateProgress{
+				{
+					ReplicaIndex:    0,
+					UpdateStartedAt: metav1.Now(),
+				},
+			},
+		}).
+		Build()
+
+	pclq := testutils.NewPodCliqueBuilder(testPCSName, pcsUID, "worker", testNamespace, 0).Build()
+	pclq.Status.CurrentPodCliqueSetGenerationHash = ptr.To(currentGeneration)
+	pclq.Status.CurrentPodTemplateHash = ptr.To("generation-1-template")
+	pclq.Status.UpdateProgress = &grovecorev1alpha1.PodCliqueUpdateProgress{
+		UpdateStartedAt:            metav1.Now(),
+		PodCliqueSetGenerationHash: supersededGeneration,
+		PodTemplateHash:            "generation-2-template",
+	}
+	pclq.Status.UpdatedReplicas = 1
+
+	fakeClient := testutils.SetupFakeClient(pcs, pclq)
+	reconciler := &Reconciler{client: fakeClient}
+
+	result := reconciler.processUpdate(t.Context(), logr.Discard(), pclq)
+
+	require.False(t, result.HasErrors())
+	updatedPCLQ := &grovecorev1alpha1.PodClique{}
+	require.NoError(t, fakeClient.Get(t.Context(), client.ObjectKeyFromObject(pclq), updatedPCLQ))
+	require.NotNil(t, updatedPCLQ.Status.UpdateProgress)
+	expectedTemplateHash, err := componentutils.GetExpectedPCLQPodTemplateHash(pcs, updatedPCLQ.ObjectMeta)
+	require.NoError(t, err)
+	assert.Equal(t, currentGeneration, updatedPCLQ.Status.UpdateProgress.PodCliqueSetGenerationHash)
+	assert.Equal(t, expectedTemplateHash, updatedPCLQ.Status.UpdateProgress.PodTemplateHash)
+	assert.Nil(t, updatedPCLQ.Status.UpdateProgress.UpdateEndedAt)
+	assert.Zero(t, updatedPCLQ.Status.UpdatedReplicas)
 }
 
 // TestInitOrResetUpdate tests the initOrResetUpdate function for both OnDelete and RollingRecreate strategies

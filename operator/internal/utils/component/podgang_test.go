@@ -20,6 +20,7 @@ import (
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
+	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
@@ -364,6 +365,64 @@ func TestAllPodGangsAtEpochEverScheduled(t *testing.T) {
 			cl := builder.Build()
 
 			actual, err := AllPodGangsAtEpochEverScheduled(t.Context(), cl, pcsObjectKey, 0, epoch)
+			require.NoError(t, err)
+			assert.Equal(t, tc.expected, actual)
+		})
+	}
+}
+
+func TestPodGangDependenciesEverScheduled(t *testing.T) {
+	const (
+		pcsName     = "test-pcs"
+		namespace   = "default"
+		anchorEpoch = "1000"
+		tailEpoch   = "1001"
+	)
+	podGangAtEpoch := func(name, epoch string, scheduled bool) *groveschedulerv1alpha1.PodGang {
+		builder := testutils.NewPodGangBuilder(name, namespace).
+			WithLabels(map[string]string{
+				apicommon.LabelPartOfKey:                pcsName,
+				apicommon.LabelPodCliqueSetReplicaIndex: "0",
+				apicommon.LabelEpoch:                    epoch,
+			})
+		if scheduled {
+			builder = builder.WithLastScheduled()
+		}
+		return builder.Build()
+	}
+	pgm := testutils.NewPodGangMapBuilder(pcsName, namespace, "pcs-uid", 0).
+		WithEntries(
+			testutils.NewAnchorEntry("hash", anchorEpoch, "sg", 0),
+			testutils.NewPodGangEntryBuilder("hash", tailEpoch).
+				WithRole(grovecorev1alpha1.PodGangEntryRoleTail).
+				WithPCSGReplicaIndices(map[string][]int32{"sg": {1}}).
+				WithDependsOn(anchorEpoch).
+				Build(),
+		).
+		Build()
+
+	tests := []struct {
+		name      string
+		podGang   *groveschedulerv1alpha1.PodGang
+		anchor    *groveschedulerv1alpha1.PodGang
+		expected  bool
+		expectErr bool
+	}{
+		{name: "an anchor has no dependency", podGang: podGangAtEpoch("anchor", anchorEpoch, false), anchor: podGangAtEpoch("anchor", anchorEpoch, false), expected: true},
+		{name: "a tail waits for its anchor to be scheduled", podGang: podGangAtEpoch("tail", tailEpoch, false), anchor: podGangAtEpoch("anchor", anchorEpoch, false), expected: false},
+		{name: "a tail is ready once its anchor is scheduled", podGang: podGangAtEpoch("tail", tailEpoch, false), anchor: podGangAtEpoch("anchor", anchorEpoch, true), expected: true},
+		{name: "a PodGang without an epoch has no dependency", podGang: testutils.NewPodGangBuilder("legacy", namespace).Build(), anchor: podGangAtEpoch("anchor", anchorEpoch, false), expected: true},
+		{name: "an epoch missing from the PodGangMap is an error", podGang: podGangAtEpoch("orphan", "999", false), anchor: podGangAtEpoch("anchor", anchorEpoch, false), expectErr: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cl := testutils.NewTestClientBuilder().WithObjects(pgm, tc.anchor).Build()
+
+			actual, err := PodGangDependenciesEverScheduled(t.Context(), cl, tc.podGang)
+			if tc.expectErr {
+				require.Error(t, err)
+				return
+			}
 			require.NoError(t, err)
 			assert.Equal(t, tc.expected, actual)
 		})

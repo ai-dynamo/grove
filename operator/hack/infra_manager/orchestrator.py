@@ -34,6 +34,7 @@ from infra_manager.cluster import (
 )
 from infra_manager.grove import deploy_grove_operator
 from infra_manager.kai import apply_kai_queues, install_kai_scheduler
+from infra_manager.kueue import apply_kueue_queues, install_kueue
 from infra_manager.pyroscope import install_pyroscope
 from infra_manager.config import (
     ClusterConfig,
@@ -43,7 +44,9 @@ from infra_manager.constants import (
     DEFAULT_KWOK_VERSION,
     DEPENDENCIES,
     NS_KAI_SCHEDULER,
+    NS_KUEUE,
     OPERATOR_DIR,
+    REL_KUEUE_QUEUES_YAML,
     REL_PREPARE_CHARTS,
     REL_QUEUES_YAML,
     SCRIPT_DIR,
@@ -53,17 +56,18 @@ from infra_manager.kwok import create_nodes, install_kwok_controller
 from infra_manager.utils import require_command
 
 
-def _check_prerequisites(install_kai: bool, install_grove: bool, grove_mode: str, operator_dir: Path) -> None:
+def _check_prerequisites(install_kai: bool, install_kueue: bool, install_grove: bool, grove_mode: str, operator_dir: Path) -> None:
     """Check CLI tools and prepare Helm charts.
 
     Args:
         install_kai: Whether Kai Scheduler will be installed.
+        install_kueue: Whether Kueue will be installed.
         install_grove: Whether Grove operator will be deployed.
         grove_mode: Grove deployment mode ("local" or "image"); skaffold/jq only required for "local".
         operator_dir: Root directory of the Grove operator source tree.
     """
     prereqs = ["k3d", "kubectl", "docker"]
-    if install_kai or install_grove:
+    if install_kai or install_kueue or install_grove:
         prereqs.append("helm")
     if install_grove and grove_mode == "local":
         prereqs.extend(["skaffold", "jq"])
@@ -124,16 +128,19 @@ def _run_parallel(tasks: dict[str, Callable[[], None]]) -> None:
             console.print(outputs[name], end="")
 
 
-def _run_prepull(registry_port: int) -> None:
+def _run_prepull(registry_port: int, prepull_kueue: bool) -> None:
     """Pre-pull images to local registry in a single batch.
 
     Args:
         registry_port: Port for the local container registry.
+        prepull_kueue: Whether to include Kueue's controller image in the batch.
     """
     groups: list[tuple[list[str], str]] = [
         (DEPENDENCIES["kai_scheduler"]["images"], DEPENDENCIES["kai_scheduler"]["version"]),
         (DEPENDENCIES["cert_manager"]["images"], DEPENDENCIES["cert_manager"]["version"]),
     ]
+    if prepull_kueue:
+        groups.append((DEPENDENCIES["kueue"]["images"], f"v{DEPENDENCIES['kueue']['version']}"))
     busybox_images = dep_value("test_images", "busybox")
     if busybox_images:
         groups.append((busybox_images, "latest"))
@@ -159,6 +166,25 @@ def _run_kai_post_install(operator_dir: Path) -> None:
         raise RuntimeError("Failed to create Kai queues after retries") from err
 
 
+def _run_kueue_post_install(operator_dir: Path) -> None:
+    """Wait for the Kueue controller deployment and create default queues.
+
+    Args:
+        operator_dir: Root directory of the Grove operator source tree.
+
+    Raises:
+        RuntimeError: If Kueue queue creation fails after retries.
+    """
+    console.print("[yellow]ℹ️  Waiting for Kueue controller deployment to be available...[/yellow]")
+    sh.kubectl("wait", "--for=condition=Available", "deployment", "--all", "-n", NS_KUEUE, "--timeout=5m")
+    console.print("[yellow]ℹ️  Creating default Kueue queues (with retry for webhook readiness)...[/yellow]")
+    try:
+        apply_kueue_queues(operator_dir / REL_KUEUE_QUEUES_YAML)
+        console.print("[green]✅ Kueue queues created successfully[/green]")
+    except (RuntimeError, RetryError) as err:
+        raise RuntimeError("Failed to create Kueue queues after retries") from err
+
+
 def _run_kubeconfig_merge(cluster_name: str) -> None:
     """Merge k3d kubeconfig into the default kubeconfig file.
 
@@ -179,7 +205,8 @@ def run_setup(cfg: SetupConfig) -> None:
 
     Topology labels are applied only when cfg.cluster.create is True.
     KWOK activates when cfg.kwok.nodes > 0. Pyroscope activates when
-    cfg.pyroscope.enabled is True.
+    cfg.pyroscope.enabled is True. Kueue installs only when
+    cfg.scheduler.kueue.enabled is True (unlike Kai, it is opt-in).
 
     Note: prepull_images is skipped when create_cluster=False or an external
     registry is set -- the registry is assumed to already contain images. A
@@ -200,7 +227,7 @@ def run_setup(cfg: SetupConfig) -> None:
     operator_dir = OPERATOR_DIR
 
     # Phase 1: Prerequisites + cluster creation
-    _check_prerequisites(cfg.scheduler.kai.enabled, cfg.grove.enabled, cfg.grove.mode, operator_dir)
+    _check_prerequisites(cfg.scheduler.kai.enabled, cfg.scheduler.kueue.enabled, cfg.grove.enabled, cfg.grove.mode, operator_dir)
     if cfg.cluster.create:
         _run_cluster_creation(cfg.cluster)
 
@@ -209,11 +236,14 @@ def run_setup(cfg: SetupConfig) -> None:
     if cfg.cluster.create:
         parallel_tasks["topology"] = apply_topology_labels
     if do_prepull:
-        parallel_tasks["prepull"] = lambda: _run_prepull(cfg.cluster.registry_port)
+        parallel_tasks["prepull"] = lambda: _run_prepull(cfg.cluster.registry_port, cfg.scheduler.kueue.enabled)
     if cfg.scheduler.kai.enabled:
         parallel_tasks["kai"] = lambda: install_kai_scheduler(cfg.scheduler.kai)
+    if cfg.scheduler.kueue.enabled:
+        kueue_values_file = SCRIPT_DIR / "infra_manager" / "kueue-values.yaml"
+        parallel_tasks["kueue"] = lambda: install_kueue(cfg.scheduler.kueue, kueue_values_file)
     if cfg.grove.enabled:
-        parallel_tasks["grove"] = lambda: deploy_grove_operator(cfg.grove, cfg.cluster, operator_dir)
+        parallel_tasks["grove"] = lambda: deploy_grove_operator(cfg.grove, cfg.cluster, operator_dir, cfg.scheduler.kueue.enabled)
     if cfg.pyroscope.enabled:
         values_file = SCRIPT_DIR / "infra_manager" / "pyroscope-values.yaml"
         pyroscope_version = dep_value("pyroscope", "version", default="")
@@ -231,6 +261,8 @@ def run_setup(cfg: SetupConfig) -> None:
     # Phase 3: Post-install
     if cfg.scheduler.kai.enabled:
         _run_kai_post_install(operator_dir)
+    if cfg.scheduler.kueue.enabled:
+        _run_kueue_post_install(operator_dir)
     if use_kwok:
         create_nodes(cfg.kwok)
     if cfg.cluster.create:

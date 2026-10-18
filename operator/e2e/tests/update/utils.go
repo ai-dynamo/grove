@@ -37,6 +37,8 @@ import (
 	"github.com/ai-dynamo/grove/operator/e2e/tests"
 	"github.com/ai-dynamo/grove/operator/e2e/waiter"
 	kubeutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -287,11 +289,17 @@ func updatePCSUpdateStrategy(tc *testctx.TestContext, strategyType grovev1alpha1
 	})
 }
 
-// triggerPodCliqueUpdate triggers an update by adding/updating an environment variable in a PodClique.
-// Uses tc.Workload.Name as the PCS name.
-func triggerPodCliqueUpdate(tc *testctx.TestContext, cliqueName string) error {
+// triggerPodCliqueUpdate triggers an update by adding/updating an environment variable in each named PodClique,
+// all in one PodCliqueSet patch. Uses tc.Workload.Name as the PCS name.
+func triggerPodCliqueUpdate(tc *testctx.TestContext, cliqueNames ...string) error {
+	return triggerPodCliqueUpdateWithRevision(tc, fmt.Sprintf("%d", time.Now().UnixNano()), cliqueNames...)
+}
+
+// triggerPodCliqueUpdateWithRevision triggers an update by setting UPDATE_TRIGGER to an explicit value
+// in each named PodClique template. Explicit values let revision-transition tests reapply an earlier,
+// byte-identical PCS template.
+func triggerPodCliqueUpdateWithRevision(tc *testctx.TestContext, updateValue string, cliqueNames ...string) error {
 	pcsName := tc.Workload.Name
-	updateValue := fmt.Sprintf("%d", time.Now().UnixNano())
 
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		var pcs grovev1alpha1.PodCliqueSet
@@ -302,37 +310,117 @@ func triggerPodCliqueUpdate(tc *testctx.TestContext, cliqueName string) error {
 		pcs.SetManagedFields(nil)
 		pcs.SetResourceVersion("")
 
-		found := false
-		for i, clique := range pcs.Spec.Template.Cliques {
-			if clique.Name == cliqueName {
-				if len(clique.Spec.PodSpec.Containers) > 0 {
-					container := &pcs.Spec.Template.Cliques[i].Spec.PodSpec.Containers[0]
-					envVarFound := false
-					for j := range container.Env {
-						if container.Env[j].Name == "UPDATE_TRIGGER" {
-							container.Env[j].Value = updateValue
-							envVarFound = true
-							break
+		for _, cliqueName := range cliqueNames {
+			found := false
+			for i, clique := range pcs.Spec.Template.Cliques {
+				if clique.Name == cliqueName {
+					if len(clique.Spec.PodSpec.Containers) > 0 {
+						container := &pcs.Spec.Template.Cliques[i].Spec.PodSpec.Containers[0]
+						envVarFound := false
+						for j := range container.Env {
+							if container.Env[j].Name == "UPDATE_TRIGGER" {
+								container.Env[j].Value = updateValue
+								envVarFound = true
+								break
+							}
 						}
+						if !envVarFound {
+							container.Env = append(container.Env, corev1.EnvVar{
+								Name:  "UPDATE_TRIGGER",
+								Value: updateValue,
+							})
+						}
+						found = true
 					}
-					if !envVarFound {
-						container.Env = append(container.Env, corev1.EnvVar{
-							Name:  "UPDATE_TRIGGER",
-							Value: updateValue,
-						})
-					}
-					found = true
+					break
 				}
-				break
 			}
-		}
 
-		if !found {
-			return fmt.Errorf("clique %s not found in PodCliqueSet %s", cliqueName, pcsName)
+			if !found {
+				return fmt.Errorf("clique %s not found in PodCliqueSet %s", cliqueName, pcsName)
+			}
 		}
 
 		return tc.Client.Patch(tc.Ctx, &pcs, client.Apply, client.FieldOwner("e2e-rolling-update-test"), client.ForceOwnership)
 	})
+}
+
+// waitForActiveChildUpdateProgressGeneration waits until the selected standalone PCLQ or PCSG has
+// active update progress whose captured PCS generation hash equals generationHash. The readiness-delay
+// KWOK stage keeps the update active long enough for this milestone to be observed.
+func waitForActiveChildUpdateProgressGeneration(tc *testctx.TestContext, standaloneCliqueName, pcsgConfigName, generationHash string) error {
+	return wait.PollUntilContextTimeout(tc.Ctx, tc.Interval, tc.Timeout, true, func(ctx context.Context) (bool, error) {
+		if standaloneCliqueName != "" {
+			var pclq grovev1alpha1.PodClique
+			key := types.NamespacedName{Namespace: tc.Namespace, Name: standaloneCliqueFQN(tc, standaloneCliqueName)}
+			if err := tc.Client.Get(ctx, key, &pclq); err != nil {
+				return false, client.IgnoreNotFound(err)
+			}
+			progress := pclq.Status.UpdateProgress
+			return progress != nil && progress.UpdateEndedAt == nil &&
+				progress.PodCliqueSetGenerationHash == generationHash, nil
+		}
+
+		var pcsg grovev1alpha1.PodCliqueScalingGroup
+		key := types.NamespacedName{Namespace: tc.Namespace, Name: pcsgFQN(tc, pcsgConfigName)}
+		if err := tc.Client.Get(ctx, key, &pcsg); err != nil {
+			return false, client.IgnoreNotFound(err)
+		}
+		progress := pcsg.Status.UpdateProgress
+		return progress != nil && progress.UpdateEndedAt == nil &&
+			progress.PodCliqueSetGenerationHash == generationHash, nil
+	})
+}
+
+// assertAffectedPodsAtRevision fails unless every Pod in the named clique carries updateValue.
+func assertAffectedPodsAtRevision(tc *testctx.TestContext, cliqueName, updateValue string) {
+	tc.T.Helper()
+	pods, err := tc.ListPods()
+	require.NoError(tc.T, err)
+
+	matched := 0
+	for i := range pods.Items {
+		pod := &pods.Items[i]
+		pclqName := pod.Labels[common.LabelPodClique]
+		if !strings.HasSuffix(pclqName, "-"+cliqueName) {
+			continue
+		}
+		matched++
+		require.NotEmpty(tc.T, pod.Spec.Containers, "Pod %s has no containers", pod.Name)
+		found := false
+		for _, env := range pod.Spec.Containers[0].Env {
+			if env.Name == "UPDATE_TRIGGER" && env.Value == updateValue {
+				found = true
+				break
+			}
+		}
+		assert.True(tc.T, found, "Pod %s does not carry UPDATE_TRIGGER=%q", pod.Name, updateValue)
+	}
+	require.Positive(tc.T, matched, "no Pods found for clique %s", cliqueName)
+}
+
+// assertNoActiveChildUpdates fails if any PCLQ or PCSG owned by the workload still has unfinished
+// update progress after the PCS reports completion.
+func assertNoActiveChildUpdates(tc *testctx.TestContext) {
+	tc.T.Helper()
+	matchingPCS := client.MatchingLabels{common.LabelPartOfKey: tc.Workload.Name}
+	inNamespace := client.InNamespace(tc.Namespace)
+
+	var pclqs grovev1alpha1.PodCliqueList
+	require.NoError(tc.T, tc.Client.List(tc.Ctx, &pclqs, inNamespace, matchingPCS))
+	for i := range pclqs.Items {
+		progress := pclqs.Items[i].Status.UpdateProgress
+		assert.False(tc.T, progress != nil && progress.UpdateEndedAt == nil,
+			"PodClique %s still has an active update", pclqs.Items[i].Name)
+	}
+
+	var pcsgs grovev1alpha1.PodCliqueScalingGroupList
+	require.NoError(tc.T, tc.Client.List(tc.Ctx, &pcsgs, inNamespace, matchingPCS))
+	for i := range pcsgs.Items {
+		progress := pcsgs.Items[i].Status.UpdateProgress
+		assert.False(tc.T, progress != nil && progress.UpdateEndedAt == nil,
+			"PodCliqueScalingGroup %s still has an active update", pcsgs.Items[i].Name)
+	}
 }
 
 // patchPCSWithSIGTERMIgnoringCommand patches all containers in the PCS to use a command that ignores SIGTERM

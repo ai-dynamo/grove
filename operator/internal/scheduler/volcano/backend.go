@@ -150,7 +150,7 @@ func (b *schedulerBackend) PodGangMembershipAnnotations(newPodGangName string) m
 	}
 }
 
-func (b *schedulerBackend) ValidatePodCliqueSet(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet) error {
+func (b *schedulerBackend) ValidatePodCliqueSet(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, _ ...scheduler.ValidateOption) error {
 	if err := validateTopologyConstraints(pcs); err != nil {
 		return err
 	}
