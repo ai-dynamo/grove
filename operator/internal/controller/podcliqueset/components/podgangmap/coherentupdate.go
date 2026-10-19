@@ -49,14 +49,14 @@ func (r _resource) buildCoherentUpdateEntries(ctx context.Context, syncSnap *syn
 	// old-version anchor still commits but has no running Pod behind it, left by a Pod that died and was not
 	// refilled (the pod controller does not refill an old-version PodGang mid-update). Its non-terminating and
 	// new-not-ready counts feed the count-anchored MaxUnavailable budget.
-	pclqPodCounts, err := r.gatherStandalonePodCounts(ctx, syncSnap.pcs, pcsReplicaIndex, pgm.Spec.Entries, standalonePCLQByComponent)
+	pclqPodCounts, err := r.gatherStandalonePodCounts(ctx, syncSnap.pcs, syncSnap.generationHash, pcsReplicaIndex, pgm.Spec.Entries, standalonePCLQByComponent)
 	if err != nil {
 		return nil, err
 	}
 	// pcsgReplicaInfos is derived from the member PodCliques of each in-scope PodCliqueScalingGroup under
 	// update. Its per-index health and roll state feed the count-anchored MaxUnavailable budget and the
 	// health-ordered drain selection.
-	pcsgReplicaInfos, err := r.gatherPCSGReplicaInfos(ctx, syncSnap.pcs, pgm.Spec.Entries, pcsgByComponent)
+	pcsgReplicaInfos, err := r.gatherPCSGReplicaInfos(ctx, syncSnap.pcs, syncSnap.generationHash, pgm.Spec.Entries, pcsgByComponent)
 	if err != nil {
 		return nil, err
 	}
@@ -95,7 +95,7 @@ func (r _resource) buildCoherentUpdateEntries(ctx context.Context, syncSnap *syn
 	if err != nil {
 		return nil, err
 	}
-	applied = advanceFullyDrainedEntries(applied, *syncSnap.pcs.Status.CurrentGenerationHash, planner.mvu)
+	applied = advanceFullyDrainedEntries(applied, syncSnap.generationHash, planner.mvu)
 	syncSnap.logger.V(1).Info("Applied coherent update sub-step", "pcsReplicaIndex", pcsReplicaIndex, "entries", formatPodGangEntries(applied))
 	return applied, nil
 }
@@ -103,7 +103,7 @@ func (r _resource) buildCoherentUpdateEntries(ctx context.Context, syncSnap *syn
 // heldEntries returns the current entries for a reconcile that emits no sub-step, advancing any fully
 // drained old entry to the current generation. The committed content is otherwise unchanged.
 func (p *subStepPlanner) heldEntries() []grovecorev1alpha1.PodGangEntry {
-	return advanceFullyDrainedEntries(clonePodGangEntries(p.entries), *p.pcs.Status.CurrentGenerationHash, p.mvu)
+	return advanceFullyDrainedEntries(clonePodGangEntries(p.entries), p.generationHash, p.mvu)
 }
 
 // advanceFullyDrainedEntries reconverges the PodGangMap during a coherent update. It bumps an entry's
@@ -217,7 +217,7 @@ func (s *syncSnapshot) inScopePCSGsByComponent(pcsReplicaIndex int) (map[string]
 // capping. The first check that fails holds the advance, and its name is returned as the hold reason for
 // tracing.
 func (r _resource) canEmitNextSubStep(ctx context.Context, planner *subStepPlanner, planPos planPosition, ss *subStep) (canEmit bool, holdReason string, err error) {
-	currentBatchScheduled, err := r.currentBatchScheduled(ctx, planner.pcs, planner.pcsReplicaIndex, planner.entries)
+	currentBatchScheduled, err := r.currentBatchScheduled(ctx, planner.pcs, planner.generationHash, planner.pcsReplicaIndex, planner.entries)
 	if err != nil {
 		return false, "", err
 	}
@@ -242,8 +242,8 @@ func (r _resource) canEmitNextSubStep(ctx context.Context, planner *subStepPlann
 // pass. When no current-hash entry exists yet the first sub-step has nothing to wait on, so it reports true.
 // Readiness is not required to advance because MaxUnavailable, checked separately, bounds availability
 // across both revisions.
-func (r _resource) currentBatchScheduled(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, pcsReplicaIndex int, entries []grovecorev1alpha1.PodGangEntry) (bool, error) {
-	latestEntry, err := componentutils.LatestEntryForGenerationHash(entries, *pcs.Status.CurrentGenerationHash)
+func (r _resource) currentBatchScheduled(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, generationHash string, pcsReplicaIndex int, entries []grovecorev1alpha1.PodGangEntry) (bool, error) {
+	latestEntry, err := componentutils.LatestEntryForGenerationHash(entries, generationHash)
 	if err != nil {
 		return false, groveerr.WrapError(err, errCodeInvalidEpoch, component.OperationSync,
 			fmt.Sprintf("failed to determine the latest current-hash entry for PodCliqueSet %v replica %d", client.ObjectKeyFromObject(pcs), pcsReplicaIndex))
@@ -422,10 +422,10 @@ type standalonePCLQPodCounts struct {
 // If the cache is stale it can only show a dead Pod as still running, which lowers the missing old-version
 // count, never raises it, so a drain never exceeds budget. This holds because old anchors are delete-only
 // during the update, so their Pod set only shrinks and a creation can never be missed.
-func (r _resource) gatherStandalonePodCounts(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, pcsReplicaIndex int, entries []grovecorev1alpha1.PodGangEntry, standalonePCLQByComponent map[string]grovecorev1alpha1.PodClique) (standalonePCLQPodCounts, error) {
+func (r _resource) gatherStandalonePodCounts(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, generationHash string, pcsReplicaIndex int, entries []grovecorev1alpha1.PodGangEntry, standalonePCLQByComponent map[string]grovecorev1alpha1.PodClique) (standalonePCLQPodCounts, error) {
 	rnr := apicommon.ResourceNameReplica{Name: pcs.Name, Replica: pcsReplicaIndex}
 	epochByAnchorPodGangName := componentutils.EpochByAnchorPodGangName(entries, rnr)
-	currentHashAnchorEpochs := currentHashAnchorEpochSet(entries, *pcs.Status.CurrentGenerationHash)
+	currentHashAnchorEpochs := currentHashAnchorEpochSet(entries, generationHash)
 
 	counts := standalonePCLQPodCounts{
 		livePodCountsByAnchor: make(map[cliqueAndEpochKey]anchorLivePods),
@@ -501,8 +501,8 @@ type pcsgReplicaInfo struct {
 // member PodCliques, or whose members are all terminating during a gang restart, is classified Pending by
 // ComputePCSGReplicaState rather than dropped. Dropping it would let the anchor open with fewer than
 // MinAvailable replicas. atCurrentHash is set when a current-hash entry commits the index.
-func (r _resource) gatherPCSGReplicaInfos(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, entries []grovecorev1alpha1.PodGangEntry, pcsgByComponent map[string]grovecorev1alpha1.PodCliqueScalingGroup) (map[string][]pcsgReplicaInfo, error) {
-	currentHash := *pcs.Status.CurrentGenerationHash
+func (r _resource) gatherPCSGReplicaInfos(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, generationHash string, entries []grovecorev1alpha1.PodGangEntry, pcsgByComponent map[string]grovecorev1alpha1.PodCliqueScalingGroup) (map[string][]pcsgReplicaInfo, error) {
+	currentHash := generationHash
 	infosByComponent := make(map[string][]pcsgReplicaInfo, len(pcsgByComponent))
 	for componentName, pcsg := range pcsgByComponent {
 		pcsgObjKey := client.ObjectKey{Namespace: pcs.Namespace, Name: pcsg.Name}

@@ -102,11 +102,11 @@ func advanceEntriesGenerationHash(entries []grovecorev1alpha1.PodGangEntry, pcsC
 // Coherent update is skipped. A coherent update creates new-generation entries and drains old-generation
 // entries, so a PodGangMap deliberately holds entries for more than one generation hash at once.
 // Advancing all entries to the current hash would erase that distinction.
-func shouldAdvanceEntriesGenerationHash(pcs *grovecorev1alpha1.PodCliqueSet, entries []grovecorev1alpha1.PodGangEntry) bool {
+func shouldAdvanceEntriesGenerationHash(pcs *grovecorev1alpha1.PodCliqueSet, generationHash string, entries []grovecorev1alpha1.PodGangEntry) bool {
 	if componentutils.IsCoherentStrategy(pcs) {
 		return false
 	}
-	currentHash := *pcs.Status.CurrentGenerationHash
+	currentHash := generationHash
 	for i := range entries {
 		if entries[i].PodCliqueSetGenerationHash != currentHash {
 			return true

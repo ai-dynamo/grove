@@ -477,7 +477,7 @@ _Appears in:_
 | `availableReplicas` _integer_ | AvailableReplicas is the number of PodCliqueSet replicas that are available.<br />A PodCliqueSet replica is considered available when all standalone PodCliques within that replica<br />have MinAvailableBreached condition = False AND all PodCliqueScalingGroups (PCSG) within that replica<br />have MinAvailableBreached condition = False. | 0 |  |
 | `hpaPodSelector` _string_ | Selector is the label selector that determines which pods are part of the PodGang.<br />PodGang is a unit of scale and this selector is used by HPA to scale the PodGang based on metrics captured for<br />the pods that match this selector. |  |  |
 | `podGangStatuses` _[PodGangStatus](#podgangstatus) array_ | PodGangStatuses captures the status for all the PodGang's that are part of the PodCliqueSet. |  |  |
-| `currentGenerationHash` _string_ | CurrentGenerationHash is the opaque identity selected for the current rollout-relevant revision. |  |  |
+| `currentGenerationHash` _string_ | CurrentGenerationHash holds the legacy rollout identity, then mirrors the selected revision after adoption. |  |  |
 | `currentRevision` _string_ | CurrentRevision names the ControllerRevision containing the selected rollout revision. |  |  |
 | `updateProgress` _[PodCliqueSetUpdateProgress](#podcliquesetupdateprogress)_ | UpdateProgress represents the progress of an update. |  |  |
 

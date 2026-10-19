@@ -131,9 +131,6 @@ func TestReplicaIndicesToRecreate(t *testing.T) {
 	}
 }
 
-// TestMarkCoherentUpdateEndIfConvergedRequeuesWhenNotConverged verifies the coherent update is not
-// ended while a replica is still draining or pending recreation, and that the reconcile is requeued so
-// the roll keeps progressing rather than stalling until a later watch event.
 // TestReconcileInProgressUpdateRejectsStaleCoherentTarget verifies that Coherent updates obey the
 // same target-generation guard as RollingRecreate and cannot complete a superseded PCSG update.
 func TestReconcileInProgressUpdateRejectsStaleCoherentTarget(t *testing.T) {
@@ -147,13 +144,16 @@ func TestReconcileInProgressUpdateRejectsStaleCoherentTarget(t *testing.T) {
 			},
 		},
 	}
+	revision, err := testutils.NewRevision(pcs)
+	require.NoError(t, err)
+	pcs.Status.CurrentGenerationHash = ptr.To("generation-b")
 	pcsg := testutils.NewPodCliqueScalingGroupBuilder("test-pcsg", "test-ns", "test-pcs", 0).Build()
 	pcsg.Status.UpdateProgress = &grovecorev1alpha1.PodCliqueScalingGroupUpdateProgress{
 		PodCliqueSetGenerationHash: "generation-b",
 	}
-	ss := &syncSnapshot{pcs: pcs, pcsg: pcsg}
+	ss := &syncSnapshot{pcs: pcs, pcsg: pcsg, revision: revision}
 
-	err := _resource{}.reconcileInProgressUpdate(t.Context(), logr.Discard(), ss)
+	err = _resource{}.reconcileInProgressUpdate(t.Context(), logr.Discard(), ss)
 
 	require.Error(t, err)
 	var groveError *groveerr.GroveError
@@ -162,6 +162,9 @@ func TestReconcileInProgressUpdateRejectsStaleCoherentTarget(t *testing.T) {
 	assert.Nil(t, pcsg.Status.UpdateProgress.UpdateEndedAt)
 }
 
+// TestMarkCoherentUpdateEndIfConvergedRequeuesWhenNotConverged verifies the coherent update is not
+// ended while a replica is still draining or pending recreation, and that the reconcile is requeued so
+// the roll keeps progressing rather than stalling until a later watch event.
 func TestMarkCoherentUpdateEndIfConvergedRequeuesWhenNotConverged(t *testing.T) {
 	pcsg := testutils.NewPodCliqueScalingGroupBuilder("test-pcsg", "test-ns", "test-pcs", 0).
 		WithReplicas(1).

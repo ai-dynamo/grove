@@ -149,8 +149,9 @@ func TestComputeStepPlan(t *testing.T) {
 
 func TestCountReplicasAtCurrentHash(t *testing.T) {
 	p := &subStepPlanner{
-		pcs: pcsWithCurrentHash("v2"),
-		mvu: &mvuTemplate{standalonePCLQs: map[string]int32{"frontend": 2}, pcsgs: map[string]int32{"decode": 3}},
+		pcs:            pcsWithCurrentHash("v2"),
+		generationHash: "v2",
+		mvu:            &mvuTemplate{standalonePCLQs: map[string]int32{"frontend": 2}, pcsgs: map[string]int32{"decode": 3}},
 		entries: []grovecorev1alpha1.PodGangEntry{
 			{Epoch: "50", PodCliqueSetGenerationHash: "v1", Role: grovecorev1alpha1.PodGangEntryRoleAnchor, PodCliques: map[string]int32{"frontend": 5}},
 			{Epoch: "100", PodCliqueSetGenerationHash: "v2", Role: grovecorev1alpha1.PodGangEntryRoleAnchor, PodCliques: map[string]int32{"frontend": 3}, PCSGReplicaIndices: map[string][]int32{"decode": {0, 1, 2}}},
@@ -165,7 +166,8 @@ func TestCountReplicasAtCurrentHash(t *testing.T) {
 func TestMostRecentAnchorEpoch(t *testing.T) {
 	t.Run("returns the epoch of the highest-epoch current-hash anchor", func(t *testing.T) {
 		p := &subStepPlanner{
-			pcs: pcsWithCurrentHash("v2"),
+			pcs:            pcsWithCurrentHash("v2"),
+			generationHash: "v2",
 			entries: []grovecorev1alpha1.PodGangEntry{
 				{Epoch: "100", PodCliqueSetGenerationHash: "v2", Role: grovecorev1alpha1.PodGangEntryRoleAnchor},
 				{Epoch: "200", PodCliqueSetGenerationHash: "v2", Role: grovecorev1alpha1.PodGangEntryRoleAnchor},
@@ -181,7 +183,8 @@ func TestMostRecentAnchorEpoch(t *testing.T) {
 	})
 	t.Run("returns empty when there is no current-hash anchor", func(t *testing.T) {
 		p := &subStepPlanner{
-			pcs: pcsWithCurrentHash("v2"),
+			pcs:            pcsWithCurrentHash("v2"),
+			generationHash: "v2",
 			entries: []grovecorev1alpha1.PodGangEntry{
 				{Epoch: "400", PodCliqueSetGenerationHash: "v1", Role: grovecorev1alpha1.PodGangEntryRoleAnchor},
 			},
@@ -195,6 +198,7 @@ func TestMostRecentAnchorEpoch(t *testing.T) {
 func TestAscertainPlanPosition(t *testing.T) {
 	p := &subStepPlanner{
 		pcs:             pcsWithCurrentHash("v2"),
+		generationHash:  "v2",
 		mvu:             &mvuTemplate{standalonePCLQs: map[string]int32{"frontend": 2}, pcsgs: map[string]int32{"decode": 3}},
 		desiredReplicas: map[string]int32{"frontend": 10, "decode": 9},
 		plan:            computeStepPlan(map[string]int32{"frontend": 10, "decode": 9}, &mvuTemplate{standalonePCLQs: map[string]int32{"frontend": 2}, pcsgs: map[string]int32{"decode": 3}}),
@@ -222,6 +226,7 @@ func TestAscertainPlanPositionSkipsZeroTargetComponent(t *testing.T) {
 	desiredReplicas := map[string]int32{"frontend": 2, "decode": 0}
 	p := &subStepPlanner{
 		pcs:             pcsWithCurrentHash("v2"),
+		generationHash:  "v2",
 		mvu:             mvu,
 		desiredReplicas: desiredReplicas,
 		plan:            computeStepPlan(desiredReplicas, mvu),
@@ -845,6 +850,7 @@ func newTestPlanner(clk clock.Clock, currentHash string, entries []grovecorev1al
 	return &subStepPlanner{
 		clk:                       clk,
 		pcs:                       pcsWithCurrentHash(currentHash),
+		generationHash:            currentHash,
 		entries:                   entries,
 		mvu:                       mvu,
 		desiredReplicas:           liveReplicas,

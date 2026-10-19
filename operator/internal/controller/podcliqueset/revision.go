@@ -61,19 +61,26 @@ func (r *Reconciler) processRevision(ctx context.Context, _ logr.Logger, pcs *gr
 	}
 
 	startUpdate := true
+	var previousGenerationHash string
 
 	if currentRevision == nil {
+		// Read legacy status only before a revision has been selected.
+		previousGenerationHash = ptr.Deref(pcs.Status.CurrentGenerationHash, "")
 		startUpdate, err = r.updateInitialRevision(ctx, pcs, &desiredData)
 		if err != nil {
 			return ctrlcommon.ReconcileWithErrors("error creating initial revision", err)
 		}
 	} else {
+		previousGenerationHash = currentRevision.GenerationHash()
 		equal, err := currentRevision.MatchesOrderedCliques(desiredData.Cliques)
 		if err != nil {
 			return ctrlcommon.ReconcileWithErrors("error comparing desired revision", err)
 		}
 
 		if equal {
+			if err := r.syncCurrentGenerationHash(ctx, pcs, currentRevision); err != nil {
+				return ctrlcommon.ReconcileWithErrors("error synchronizing revision status", err)
+			}
 			return ctrlcommon.ContinueReconcile()
 		}
 		if err := currentRevision.RetainCliqueHashes(desiredData.Cliques); err != nil {
@@ -81,11 +88,24 @@ func (r *Reconciler) processRevision(ctx context.Context, _ logr.Logger, pcs *gr
 		}
 	}
 
-	if err = r.ensureControllerRevision(ctx, pcs, desiredData, startUpdate); err != nil {
+	if err = r.ensureControllerRevision(ctx, pcs, desiredData, previousGenerationHash, startUpdate); err != nil {
 		return ctrlcommon.ReconcileWithErrors(fmt.Sprintf("error creating revision for PodCliqueSet: %v", client.ObjectKeyFromObject(pcs)), err)
 	}
 
 	return ctrlcommon.ReconcileAfter(constants.ComponentSyncRetryInterval, fmt.Sprintf("waiting for revision %q to be observed for PodCliqueSet: %v", *pcs.Status.CurrentRevision, client.ObjectKeyFromObject(pcs)))
+}
+
+// syncCurrentGenerationHash repairs the legacy status mirror without restarting updates.
+func (r *Reconciler) syncCurrentGenerationHash(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, revision *commonrevision.Revision) error {
+	if ptr.Deref(pcs.Status.CurrentGenerationHash, "") == revision.GenerationHash() {
+		return nil
+	}
+	patch := client.MergeFromWithOptions(pcs.DeepCopy(), client.MergeFromWithOptimisticLock{})
+	pcs.Status.CurrentGenerationHash = ptr.To(revision.GenerationHash())
+	if err := r.client.Status().Patch(ctx, pcs, patch); err != nil {
+		return fmt.Errorf("could not synchronize generation hash for PodCliqueSet %v: %w", client.ObjectKeyFromObject(pcs), err)
+	}
+	return nil
 }
 
 // loadCurrentRevision will load the current controller revision from the expectations store.
@@ -100,7 +120,7 @@ func (r *Reconciler) loadCurrentRevision(ctx context.Context, pcs *grovecorev1al
 	if ok {
 		revision = value.(*commonrevision.Revision)
 		// The PodCliqueSet has a CurrentRevision set that we haven't stored. Clear the expectations cache and continue.
-		if ptr.Deref(pcs.Status.CurrentRevision, "") != revision.Name() || ptr.Deref(pcs.Status.CurrentGenerationHash, "") != revision.GenerationHash() {
+		if ptr.Deref(pcs.Status.CurrentRevision, "") != revision.Name() {
 			revision = nil
 			r.pcsRevisionExpectations.CompareAndDelete(pcs.UID, value)
 		}
@@ -126,6 +146,7 @@ func (r *Reconciler) updateInitialRevision(ctx context.Context, pcs *grovecorev1
 		// Bootstrap creates children at the selected revision without starting a rolling update.
 		return false, nil
 	}
+	// Legacy adoption only; use the selected revision afterward.
 	templates := make([]*corev1.PodTemplateSpec, len(pcs.Spec.Template.Cliques))
 	for i, clique := range pcs.Spec.Template.Cliques {
 		templates[i] = podtemplatehash.PodTemplateSpec(pcs, clique)
@@ -166,6 +187,7 @@ func (r *Reconciler) updateInitialRevision(ctx context.Context, pcs *grovecorev1
 	return true, nil
 }
 
+// existingPodTemplateHashes collects owned legacy identities for adoption only.
 func (r *Reconciler) existingPodTemplateHashes(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet) (sets.Set[string], error) {
 	pcsgs := &grovecorev1alpha1.PodCliqueScalingGroupList{}
 	pclqs := &grovecorev1alpha1.PodCliqueList{}
@@ -209,7 +231,7 @@ func (r *Reconciler) existingPodTemplateHashes(ctx context.Context, pcs *groveco
 
 // ensureControllerRevision will create a ControllerRevision object for the given PodCliqueSet and Data.
 // It will also update the PodCliqueSet status.
-func (r *Reconciler) ensureControllerRevision(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, data commonrevision.Data, startUpdate bool) error {
+func (r *Reconciler) ensureControllerRevision(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, data commonrevision.Data, previousGenerationHash string, startUpdate bool) error {
 	raw, err := json.Marshal(data)
 	if err != nil {
 		return fmt.Errorf("could not serialize revision data: %w", err)
@@ -239,16 +261,16 @@ func (r *Reconciler) ensureControllerRevision(ctx context.Context, pcs *grovecor
 		return err
 	}
 
-	return r.initUpdateProgress(ctx, pcs, revision, startUpdate)
+	return r.initUpdateProgress(ctx, pcs, revision, previousGenerationHash, startUpdate)
 }
 
 // initUpdateProgress initializes a new rolling update by resetting progress tracking.
-func (r *Reconciler) initUpdateProgress(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, revision *commonrevision.Revision, startUpdate bool) error {
+func (r *Reconciler) initUpdateProgress(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, revision *commonrevision.Revision, previousGenerationHash string, startUpdate bool) error {
 	if startUpdate {
 		updateProgress := &grovecorev1alpha1.PodCliqueSetUpdateProgress{UpdateStartedAt: metav1.Now()}
 		// Capture pending work before replacing the previous generation and update scope.
 		if componentutils.IsCoherentStrategy(pcs) {
-			scope, err := r.computeCoherentUpdateScope(ctx, pcs, revision)
+			scope, err := r.computeCoherentUpdateScope(ctx, pcs, revision, previousGenerationHash)
 			if err != nil {
 				return fmt.Errorf("could not compute coherent update scope for PodCliqueSet %v: %w", client.ObjectKeyFromObject(pcs), err)
 			}
@@ -265,6 +287,7 @@ func (r *Reconciler) initUpdateProgress(ctx context.Context, pcs *grovecorev1alp
 	}
 
 	pcs.Status.CurrentRevision = ptr.To(revision.Name())
+	// Mirror the selected identity for older operators.
 	pcs.Status.CurrentGenerationHash = ptr.To(revision.GenerationHash())
 
 	if err := r.client.Status().Update(ctx, pcs); err != nil {

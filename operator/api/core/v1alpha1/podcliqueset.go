@@ -99,7 +99,7 @@ type PodCliqueSetStatus struct {
 	Selector *string `json:"hpaPodSelector,omitempty"`
 	// PodGangStatuses captures the status for all the PodGang's that are part of the PodCliqueSet.
 	PodGangStatutes []PodGangStatus `json:"podGangStatuses,omitempty"`
-	// CurrentGenerationHash is the opaque identity selected for the current rollout-relevant revision.
+	// CurrentGenerationHash holds the legacy rollout identity, then mirrors the selected revision after adoption.
 	CurrentGenerationHash *string `json:"currentGenerationHash,omitempty"`
 	// CurrentRevision names the ControllerRevision containing the selected rollout revision.
 	CurrentRevision *string `json:"currentRevision,omitempty"`

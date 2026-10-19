@@ -217,6 +217,20 @@ func TestProcessRevisionWithCurrentRevision(t *testing.T) {
 			name: "unchanged template keeps the selected revision",
 		},
 		{
+			name: "stale compatibility hash is repaired without restarting an update",
+			mutate: func(pcs *grovecorev1alpha1.PodCliqueSet) {
+				pcs.Status.CurrentGenerationHash = ptr.To("stale-mirror")
+				pcs.Status.UpdateProgress = &grovecorev1alpha1.PodCliqueSetUpdateProgress{UpdateStartedAt: metav1.Now()}
+			},
+		},
+		{
+			name:             "missing compatibility hash is restored from the persisted identity",
+			semanticRevision: true,
+			mutate: func(pcs *grovecorev1alpha1.PodCliqueSet) {
+				pcs.Status.CurrentGenerationHash = nil
+			},
+		},
+		{
 			name: "scale-only change keeps the selected revision",
 			mutate: func(pcs *grovecorev1alpha1.PodCliqueSet) {
 				pcs.Generation++
@@ -305,6 +319,8 @@ func TestProcessRevisionWithCurrentRevision(t *testing.T) {
 			}
 			fakeClient := testutils.SetupFakeClient(objects...)
 			reconciler := &Reconciler{client: fakeClient, pcsRevisionExpectations: sync.Map{}}
+			require.NoError(t, fakeClient.Get(ctx, client.ObjectKeyFromObject(pcs), pcs))
+			previousProgress := pcs.Status.UpdateProgress.DeepCopy()
 
 			result := reconciler.processRevision(ctx, logr.Discard(), pcs)
 			if tt.missingRevision {
@@ -341,7 +357,7 @@ func TestProcessRevisionWithCurrentRevision(t *testing.T) {
 			} else {
 				assert.Equal(t, oldRevision.Name, *updatedPCS.Status.CurrentRevision)
 				assert.Equal(t, int32(1), updatedPCS.Status.UpdatedReplicas)
-				assert.Nil(t, updatedPCS.Status.UpdateProgress)
+				assert.Equal(t, previousProgress, updatedPCS.Status.UpdateProgress)
 			}
 
 			revisions := &appsv1.ControllerRevisionList{}
@@ -368,6 +384,7 @@ func TestProcessRevisionWithCurrentRevision(t *testing.T) {
 			}
 			assert.Equal(t, wantData.UID, selectedData.UID)
 			assert.Equal(t, wantData.GenerationHash, selectedData.GenerationHash)
+			assert.Equal(t, selectedData.GenerationHash, ptr.Deref(updatedPCS.Status.CurrentGenerationHash, ""))
 			require.Len(t, selectedData.Cliques, len(wantData.Cliques))
 			for i := range wantData.Cliques {
 				assert.Equal(t, wantData.Cliques[i].Name, selectedData.Cliques[i].Name)
@@ -376,6 +393,101 @@ func TestProcessRevisionWithCurrentRevision(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestReconcileRepairsGenerationHashMirror(t *testing.T) {
+	for _, pending := range []bool{false, true} {
+		for _, mirror := range []*string{nil, ptr.To("stale-mirror")} {
+			t.Run(fmt.Sprintf("pending=%t/mirror=%s", pending, ptr.Deref(mirror, "missing")), func(t *testing.T) {
+				ctx := t.Context()
+				pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "test-namespace", uuid.NewUUID()).
+					WithReplicas(0).
+					WithPodCliqueParameters("worker", 1, nil).
+					WithPodCliqueSetGenerationHash(ptr.To("persisted-identity")).
+					Build()
+				pcs.Generation = 1
+				pcs.Finalizers = []string{apiconstants.FinalizerPodCliqueSet}
+				object, err := testutils.NewPodCliqueSetControllerRevision(pcs)
+				require.NoError(t, err)
+				revision, err := commonrevision.DecodeRevision(object)
+				require.NoError(t, err)
+				pcs.Status.CurrentGenerationHash = mirror
+				storage := testutils.SetupFakeClient(pcs, object)
+				patches := 0
+				cl := interceptor.NewClient(storage, interceptor.Funcs{
+					SubResourcePatch: func(ctx context.Context, cl client.Client, subResource string, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
+						data, err := patch.Data(obj)
+						require.NoError(t, err)
+						var payload struct {
+							Metadata metav1.ObjectMeta                    `json:"metadata"`
+							Status   grovecorev1alpha1.PodCliqueSetStatus `json:"status"`
+						}
+						require.NoError(t, json.Unmarshal(data, &payload))
+						if payload.Status.CurrentGenerationHash != nil {
+							patches++
+							require.Equal(t, obj.GetResourceVersion(), payload.Metadata.ResourceVersion)
+						}
+						return cl.SubResource(subResource).Patch(ctx, obj, patch, opts...)
+					},
+				})
+				r := &Reconciler{
+					client: cl, apiReader: cl,
+					reconcileStatusRecorder: ctrlcommon.NewReconcileErrorRecorder(cl),
+					operatorRegistry:        component.NewOperatorRegistry[grovecorev1alpha1.PodCliqueSet](),
+				}
+				if pending {
+					r.pcsRevisionExpectations.Store(pcs.UID, revision)
+				}
+				for range 2 {
+					result, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(pcs)})
+					require.NoError(t, err)
+					assert.Zero(t, result.RequeueAfter)
+				}
+				require.NoError(t, storage.Get(ctx, client.ObjectKeyFromObject(pcs), pcs))
+				assert.Equal(t, "persisted-identity", ptr.Deref(pcs.Status.CurrentGenerationHash, ""))
+				assert.Equal(t, revision.Name(), ptr.Deref(pcs.Status.CurrentRevision, ""))
+				assert.Equal(t, pcs.Generation, ptr.Deref(pcs.Status.ObservedGeneration, 0))
+				assert.Nil(t, pcs.Status.UpdateProgress)
+				assert.Equal(t, 1, patches, "a matching mirror must not be rewritten")
+				revisions := &appsv1.ControllerRevisionList{}
+				require.NoError(t, storage.List(ctx, revisions))
+				assert.Len(t, revisions.Items, 1)
+			})
+		}
+	}
+}
+
+func TestGenerationHashMirrorRepairConflict(t *testing.T) {
+	ctx := t.Context()
+	pcs := testutils.NewPodCliqueSetBuilder("pcs", "default", "uid").
+		WithPodCliqueParameters("worker", 1, nil).
+		WithPodCliqueSetGenerationHash(ptr.To("selected")).Build()
+	revision, err := testutils.NewPodCliqueSetControllerRevision(pcs)
+	require.NoError(t, err)
+	pcs.Status.CurrentGenerationHash = ptr.To("stale")
+	cl := testutils.SetupFakeClient(pcs, revision)
+	require.NoError(t, cl.Get(ctx, client.ObjectKeyFromObject(pcs), pcs))
+	concurrent := pcs.DeepCopy()
+	concurrent.Status.UpdateProgress = &grovecorev1alpha1.PodCliqueSetUpdateProgress{
+		UpdateStartedAt:   metav1.NewTime(time.Unix(100, 0)),
+		CurrentlyUpdating: []grovecorev1alpha1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 1}},
+	}
+	require.NoError(t, cl.Status().Update(ctx, concurrent))
+	r := &Reconciler{client: cl}
+	result := r.processRevision(ctx, logr.Discard(), pcs)
+	require.True(t, result.HasErrors())
+	_, err = result.Result()
+	assert.True(t, apierrors.IsConflict(err), "%v", err)
+
+	require.NoError(t, cl.Get(ctx, client.ObjectKeyFromObject(pcs), pcs))
+	assert.Equal(t, "stale", ptr.Deref(pcs.Status.CurrentGenerationHash, ""))
+	assert.Equal(t, concurrent.Status.UpdateProgress, pcs.Status.UpdateProgress)
+	result = r.processRevision(ctx, logr.Discard(), pcs)
+	require.False(t, result.HasErrors(), "%v", result.GetErrors())
+	require.NoError(t, cl.Get(ctx, client.ObjectKeyFromObject(pcs), pcs))
+	assert.Equal(t, "selected", ptr.Deref(pcs.Status.CurrentGenerationHash, ""))
+	assert.Equal(t, concurrent.Status.UpdateProgress, pcs.Status.UpdateProgress)
+	assert.Equal(t, revision.Name, ptr.Deref(pcs.Status.CurrentRevision, ""))
 }
 
 func TestTruncateRevisionHistory(t *testing.T) {
@@ -585,12 +697,6 @@ func TestReconcileRevisionCacheLag(t *testing.T) {
 			require.NoError(t, storage.Get(ctx, request.NamespacedName, persisted))
 			assert.Equal(t, progress, persisted.Status.UpdateProgress)
 			assert.Empty(t, persisted.Status.LastErrors)
-
-			stalePCS.Status.CurrentRevision = persisted.Status.CurrentRevision
-			result, err = r.Reconcile(ctx, request)
-			require.NoError(t, err, "a mismatched generation hash must also preserve the expectation")
-			assert.Positive(t, result.RequeueAfter)
-			assert.Equal(t, 1, revisionWrites)
 
 			staleStatus = false
 			_, err = r.Reconcile(ctx, request)
@@ -860,15 +966,18 @@ func TestProcessRevisionPreservesCoherentUpdateScope(t *testing.T) {
 		name              string
 		previousUpdate    bool
 		pendingGeneration string
+		mirror            *string
 		wantScalingGroups []string
 	}{
 		{
-			name: "unchanged components retain legacy identities outside the new scope",
+			name:   "unchanged components retain legacy identities outside the new scope",
+			mirror: ptr.To("previous-generation"),
 		},
 		{
 			name:              "unfinished components from the previous update remain in scope",
 			previousUpdate:    true,
 			pendingGeneration: "older-generation",
+			mirror:            ptr.To("older-generation"),
 			wantScalingGroups: []string{"decode"},
 		},
 		{
@@ -894,6 +1003,7 @@ func TestProcessRevisionPreservesCoherentUpdateScope(t *testing.T) {
 			}
 			oldRevision, err := testutils.NewPodCliqueSetControllerRevision(pcs)
 			require.NoError(t, err)
+			pcs.Status.CurrentGenerationHash = tt.mirror
 			data := commonrevision.Data{}
 			require.NoError(t, json.Unmarshal(oldRevision.Data.Raw, &data))
 			for i := range data.Cliques {
@@ -949,6 +1059,37 @@ func TestProcessRevisionPreservesCoherentUpdateScope(t *testing.T) {
 				require.NoError(t, err)
 				assert.Equal(t, "legacy-"+name, hash)
 			}
+		})
+	}
+}
+
+func TestProcessRevisionPreservesLegacyCoherentScope(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		entryHash string
+		wantScope []string
+	}{
+		{name: "unfinished legacy component remains", entryHash: "older-generation", wantScope: []string{"frontend", "worker"}},
+		{name: "completed legacy component leaves", entryHash: legacyPairHash, wantScope: []string{"frontend"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			pcs, objects := legacyRevisionFixture("frontend", "worker")
+			pcs.Spec.UpdateStrategy = &grovecorev1alpha1.PodCliqueSetUpdateStrategy{Type: grovecorev1alpha1.CoherentStrategy}
+			pcs.Status.UpdateProgress = &grovecorev1alpha1.PodCliqueSetUpdateProgress{
+				UpdateStartedAt:             metav1.NewTime(time.Unix(100, 0)),
+				InScopeStandalonePodCliques: []string{"worker"},
+			}
+			objects = append(objects, testutils.NewPodGangMapBuilder(pcs.Name, pcs.Namespace, pcs.UID, 0).
+				WithEntries(grovecorev1alpha1.PodGangEntry{
+					PodCliqueSetGenerationHash: tt.entryHash,
+					PodCliques:                 map[string]int32{"worker": 1},
+				}).Build())
+			pcs.Generation++
+			pcs.Spec.Template.Cliques[0].Spec.PodSpec.Containers[0].Image = "frontend:v2"
+			cl := testutils.SetupFakeClient(objects...)
+			data := processAndReadRevision(t, &Reconciler{client: cl, apiReader: cl}, pcs)
+			assert.ElementsMatch(t, tt.wantScope, pcs.Status.UpdateProgress.InScopeStandalonePodCliques)
+			assert.Equal(t, legacyWorkerHash, data.Cliques[1].Hash)
 		})
 	}
 }

@@ -72,10 +72,14 @@ func (r *Reconciler) processUpdate(ctx context.Context, logger logr.Logger, pcsg
 	if err != nil {
 		return ctrlcommon.ReconcileWithErrors(fmt.Sprintf("could not get owner PodCliqueSet for PodCliqueScalingGroup: %v", pcsgObjectKey), err)
 	}
+	revision, err := componentutils.GetPodCliqueSetRevision(ctx, r.client, pcs)
+	if err != nil {
+		return ctrlcommon.ReconcileWithErrors("PodCliqueSet revision is not initialized", err)
+	}
 
 	if !componentutils.IsRollingUpdateStrategy(pcs) {
-		if shouldResetOrTriggerUpdate(pcs, pcsg) {
-			if err = r.initOrResetUpdate(ctx, pcs, pcsg); err != nil {
+		if shouldResetOrTriggerUpdate(revision.GenerationHash(), pcsg) {
+			if err = r.initOrResetUpdate(ctx, pcs, pcsg, revision.GenerationHash()); err != nil {
 				return ctrlcommon.ReconcileWithErrors("could not initialize update for OnDelete", err)
 			}
 		}
@@ -97,12 +101,10 @@ func (r *Reconciler) processUpdate(ctx context.Context, logger logr.Logger, pcsg
 		return ctrlcommon.ContinueReconcile()
 	}
 
-	// Trigger processing of pending updates for this PCSG. Check if all pending updates for this PCSG and for the PCS CurrentGenerationHash
-	// has already been completed or are already in-progress. If that is true, then there is nothing more to do.
-	// If the rolling update is in-progress for a different PCS CurrentGenerationHash, or it has not even been started, then
-	// reset the rolling update progress so that it can be restarted.
-	if shouldResetOrTriggerUpdate(pcs, pcsg) {
-		if err = r.initOrResetUpdate(ctx, pcs, pcsg); err != nil {
+	// Preserve completed or in-progress work for the selected revision. Reset progress only
+	// when this PCSG has not yet started updating to that target.
+	if shouldResetOrTriggerUpdate(revision.GenerationHash(), pcsg) {
+		if err = r.initOrResetUpdate(ctx, pcs, pcsg, revision.GenerationHash()); err != nil {
 			return ctrlcommon.ReconcileWithErrors("could not initialize RollingRecreate update", err)
 		}
 	}
@@ -110,26 +112,21 @@ func (r *Reconciler) processUpdate(ctx context.Context, logger logr.Logger, pcsg
 }
 
 // shouldResetOrTriggerUpdate determines if a rolling update should be initiated based on generation hash changes
-func shouldResetOrTriggerUpdate(pcs *grovecorev1alpha1.PodCliqueSet, pcsg *grovecorev1alpha1.PodCliqueScalingGroup) bool {
-	if pcs.Status.CurrentGenerationHash == nil {
-		return false
-	}
-
-	// If processing of rolling update of PCSG for PCS CurrentGenerationHash is either completed or in-progress,
-	// there is no need to reset or trigger another rolling update of this PCSG for the same PCS CurrentGenerationHash.
+func shouldResetOrTriggerUpdate(generationHash string, pcsg *grovecorev1alpha1.PodCliqueScalingGroup) bool {
+	// Completed and in-progress updates both belong to the selected revision.
 	if pcsg.Status.UpdateProgress != nil &&
-		pcsg.Status.UpdateProgress.PodCliqueSetGenerationHash == *pcs.Status.CurrentGenerationHash {
+		pcsg.Status.UpdateProgress.PodCliqueSetGenerationHash == generationHash {
 		return false
 	}
 	return true
 }
 
-func (r *Reconciler) initOrResetUpdate(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, pcsg *grovecorev1alpha1.PodCliqueScalingGroup) error {
+func (r *Reconciler) initOrResetUpdate(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, pcsg *grovecorev1alpha1.PodCliqueScalingGroup, generationHash string) error {
 	// reset and start the update
 	patch := client.MergeFrom(pcsg.DeepCopy())
 	pcsg.Status.UpdateProgress = &grovecorev1alpha1.PodCliqueScalingGroupUpdateProgress{
 		UpdateStartedAt:            metav1.Now(),
-		PodCliqueSetGenerationHash: *pcs.Status.CurrentGenerationHash,
+		PodCliqueSetGenerationHash: generationHash,
 	}
 	// OnDelete strategy sets UpdateEndedAt too, since we do not know when all the pods will manually be deleted, and gang termination is disabled when an update is in progress
 	if !componentutils.IsRollingUpdateStrategy(pcs) {

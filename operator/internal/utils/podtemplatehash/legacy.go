@@ -26,9 +26,9 @@ import (
 	"k8s.io/apimachinery/pkg/util/rand"
 )
 
-// LegacyHashes returns the identities pre-revision operators could have assigned
-// to these exact inputs, in Kubernetes 1.35 then 1.34 order. The 1.34 identity is
-// omitted if a new field cannot be represented. Only use this during adoption.
+// LegacyHashes reconstructs pre-revision identities from these exact inputs.
+// Used only during adoption, with results in Kubernetes 1.35 then 1.34 order.
+// The 1.34 identity is omitted if a new field cannot be represented.
 func LegacyHashes(templates ...*corev1.PodTemplateSpec) []string {
 	previousHasher := fnv.New64a()
 	for _, template := range templates {

@@ -35,9 +35,9 @@ type updateScope struct {
 // computeCoherentUpdateScope determines which components a coherent update must roll for the given
 // PodCliqueSet. A component is in scope when its pod template changed in this edit. When a coherent update
 // is already in flight, the previous scope's still-pending components are merged in so a half-rolled
-// component is finished rather than frozen. It reads the current generation hash from status, so it must
-// run before that hash is overwritten with the new one.
-func (r *Reconciler) computeCoherentUpdateScope(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, revision *commonrevision.Revision) (updateScope, error) {
+// component is finished rather than frozen. previousGenerationHash identifies the previous target,
+// while revision contains the desired target.
+func (r *Reconciler) computeCoherentUpdateScope(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, revision *commonrevision.Revision, previousGenerationHash string) (updateScope, error) {
 	deployedHashByClique, err := r.deployedPodTemplateHashByClique(ctx, pcs)
 	if err != nil {
 		return updateScope{}, err
@@ -58,7 +58,7 @@ func (r *Reconciler) computeCoherentUpdateScope(ctx context.Context, pcs *grovec
 	if err != nil {
 		return updateScope{}, err
 	}
-	previousInScope := previousPendingInScope(pcs, pgms, *pcs.Status.CurrentGenerationHash)
+	previousInScope := previousPendingInScope(pcs, pgms, previousGenerationHash)
 	return mergeInScopes(newInScope, previousInScope), nil
 }
 

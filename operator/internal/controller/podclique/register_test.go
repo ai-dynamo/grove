@@ -219,6 +219,29 @@ func TestPodCliqueSetPredicateCurrentlyUpdatingReplicaChanges(t *testing.T) {
 	}
 }
 
+func TestPodCliqueSetPredicateRevisionChanges(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		revision *string
+		mirror   *string
+		want     bool
+	}{
+		{name: "revision changes with unchanged mirror", revision: ptr.To("new-revision"), mirror: ptr.To("old-hash"), want: true},
+		{name: "mirror repair alone", revision: ptr.To("old-revision"), mirror: ptr.To("repaired-hash")},
+		{name: "missing mirror", revision: ptr.To("old-revision")},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			oldPCS := &grovecorev1alpha1.PodCliqueSet{Status: grovecorev1alpha1.PodCliqueSetStatus{
+				CurrentRevision: ptr.To("old-revision"), CurrentGenerationHash: ptr.To("old-hash"),
+			}}
+			newPCS := oldPCS.DeepCopy()
+			newPCS.Status.CurrentRevision = tt.revision
+			newPCS.Status.CurrentGenerationHash = tt.mirror
+			assert.Equal(t, tt.want, podCliqueSetPredicate().Update(event.UpdateEvent{ObjectOld: oldPCS, ObjectNew: newPCS}))
+		})
+	}
+}
+
 // TestPodCliqueScalingGroupPredicateGenerationStatusChanges verifies that the
 // PodCliqueScalingGroup watch predicate triggers PodClique reconciles when the PCSG's view
 // of the PodCliqueSet generation changes during a rolling update.

@@ -37,6 +37,7 @@ import (
 type syncSnapshot struct {
 	logger                           logr.Logger
 	pcs                              *grovecorev1alpha1.PodCliqueSet
+	generationHash                   string
 	existingStandalonePCLQsByReplica map[int][]grovecorev1alpha1.PodClique
 	existingPCSGsByReplica           map[int][]grovecorev1alpha1.PodCliqueScalingGroup
 	existingPGMByReplica             map[int]*grovecorev1alpha1.PodGangMap
@@ -52,6 +53,11 @@ func (r _resource) takeSnapshot(ctx context.Context, logger logr.Logger, pcs *gr
 		logger: logger,
 		pcs:    pcs,
 	}
+	revision, err := componentutils.GetPodCliqueSetRevision(ctx, r.client, pcs)
+	if err != nil {
+		return nil, err
+	}
+	syncSnap.generationHash = revision.GenerationHash()
 	syncSnap.existingStandalonePCLQsByReplica, err = r.getExistingStandalonePCLQsByReplica(ctx, pcs)
 	if err != nil {
 		return nil, err
@@ -217,7 +223,7 @@ func (r _resource) runSyncFlow(ctx context.Context, syncSnap *syncSnapshot) erro
 			entries, err = r.buildCoherentUpdateEntries(ctx, syncSnap, pcsReplicaIndex, pgm)
 		} else {
 			entries, err = reconcileEntries(r.clk,
-				syncSnap.pcs, pcsReplicaIndex,
+				syncSnap.pcs, syncSnap.generationHash, pcsReplicaIndex,
 				pgm,
 				syncSnap.existingPodGangsByReplica[pcsReplicaIndex],
 				syncSnap.existingStandalonePCLQsByReplica[pcsReplicaIndex],

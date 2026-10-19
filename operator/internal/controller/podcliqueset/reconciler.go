@@ -83,7 +83,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	if value, ok := r.pcsRevisionExpectations.Load(pcs.UID); ok {
 		revision := value.(*commonrevision.Revision)
 		// A successful write can precede both the PCS and ControllerRevision informer events.
-		if ptr.Deref(pcs.Status.CurrentRevision, "") != revision.Name() || ptr.Deref(pcs.Status.CurrentGenerationHash, "") != revision.GenerationHash() {
+		if ptr.Deref(pcs.Status.CurrentRevision, "") != revision.Name() {
 			return ctrlcommon.ReconcileAfter(ctrlconstants.ComponentSyncRetryInterval, "waiting for revision status to be observed").Result()
 		}
 		componentutils.CachePodCliqueSetRevision(ctx, pcs, revision)

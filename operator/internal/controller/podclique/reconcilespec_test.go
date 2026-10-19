@@ -312,7 +312,10 @@ func TestProcessUpdateResetsPCLQProgressToSelectedPCSGeneration(t *testing.T) {
 	}
 	pclq.Status.UpdatedReplicas = 1
 
-	fakeClient := testutils.SetupFakeClient(pcs, pclq)
+	revision, err := testutils.NewPodCliqueSetControllerRevision(pcs)
+	require.NoError(t, err)
+	pcs.Status.CurrentGenerationHash = nil
+	fakeClient := testutils.SetupFakeClient(pcs, pclq, revision)
 	reconciler := &Reconciler{client: fakeClient}
 
 	result := reconciler.processUpdate(t.Context(), logr.Discard(), pclq)
@@ -321,7 +324,9 @@ func TestProcessUpdateResetsPCLQProgressToSelectedPCSGeneration(t *testing.T) {
 	updatedPCLQ := &grovecorev1alpha1.PodClique{}
 	require.NoError(t, fakeClient.Get(t.Context(), client.ObjectKeyFromObject(pclq), updatedPCLQ))
 	require.NotNil(t, updatedPCLQ.Status.UpdateProgress)
-	expectedTemplateHash, err := componentutils.GetExpectedPCLQPodTemplateHash(pcs, updatedPCLQ.ObjectMeta)
+	selectedRevision, err := componentutils.GetPodCliqueSetRevision(t.Context(), fakeClient, pcs)
+	require.NoError(t, err)
+	expectedTemplateHash, err := componentutils.GetExpectedPCLQPodTemplateHash(selectedRevision, updatedPCLQ.ObjectMeta)
 	require.NoError(t, err)
 	assert.Equal(t, currentGeneration, updatedPCLQ.Status.UpdateProgress.PodCliqueSetGenerationHash)
 	assert.Equal(t, expectedTemplateHash, updatedPCLQ.Status.UpdateProgress.PodTemplateHash)

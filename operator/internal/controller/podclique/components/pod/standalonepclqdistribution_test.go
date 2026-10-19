@@ -392,7 +392,6 @@ func TestRunSyncFlowDelaysUpdateWorkUntilRevisionsMatch(t *testing.T) {
 			WithUpdateStrategy(&grovecorev1alpha1.PodCliqueSetUpdateStrategy{Type: strategy}).
 			WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder(testCliqueName).WithPodSpec(podSpec).Build()).
 			Build()
-		pcs.Status.CurrentGenerationHash = ptr.To(currentGeneration)
 		pcs.Status.UpdateProgress = &grovecorev1alpha1.PodCliqueSetUpdateProgress{
 			UpdateStartedAt:   metav1.Now(),
 			CurrentlyUpdating: []grovecorev1alpha1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: testPCSReplicaIndex}},
@@ -425,6 +424,7 @@ func TestRunSyncFlowDelaysUpdateWorkUntilRevisionsMatch(t *testing.T) {
 			Build()
 		ss := &syncSnapshot{
 			pcs:                     pcs,
+			generationHash:          currentGeneration,
 			pclq:                    pclq,
 			pcsReplicaIndex:         testPCSReplicaIndex,
 			pgm:                     pgmWithEntries(currentAnchor),
@@ -760,14 +760,14 @@ func TestCurrentGenerationPodGangNames(t *testing.T) {
 	rnr := apicommon.ResourceNameReplica{Name: "pcs", Replica: 0}
 	pcs := &grovecorev1alpha1.PodCliqueSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "pcs"},
-		Status:     grovecorev1alpha1.PodCliqueSetStatus{CurrentGenerationHash: ptr.To("v2")},
+		Status:     grovecorev1alpha1.PodCliqueSetStatus{CurrentGenerationHash: ptr.To("v1")},
 	}
 	pgm := &grovecorev1alpha1.PodGangMap{Spec: grovecorev1alpha1.PodGangMapSpec{Entries: []grovecorev1alpha1.PodGangEntry{
 		{Role: grovecorev1alpha1.PodGangEntryRoleAnchor, PodCliqueSetGenerationHash: "v1", Epoch: "50", PodCliques: map[string]int32{"frontend": 2}},
 		{Role: grovecorev1alpha1.PodGangEntryRoleAnchor, PodCliqueSetGenerationHash: "v2", Epoch: "200", PodCliques: map[string]int32{"frontend": 2}},
 		{Role: grovecorev1alpha1.PodGangEntryRoleAnchor, PodCliqueSetGenerationHash: "v2", Epoch: "250", PodCliques: map[string]int32{"other": 1}},
 	}}}
-	ss := &syncSnapshot{pcs: pcs, pgm: pgm, cliqueName: "frontend", pcsReplicaIndex: 0}
+	ss := &syncSnapshot{pcs: pcs, generationHash: "v2", pgm: pgm, cliqueName: "frontend", pcsReplicaIndex: 0}
 
 	got := currentGenerationPodGangNames(ss)
 

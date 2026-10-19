@@ -131,8 +131,10 @@ func (p stepPlan) String() string {
 type subStepPlanner struct {
 	// clk supplies the epoch for a newly emitted sub-step.
 	clk clock.Clock
-	// pcs is the PodCliqueSet being updated, read for its name and generation hash.
+	// pcs is the PodCliqueSet being updated.
 	pcs *grovecorev1alpha1.PodCliqueSet
+	// generationHash is the target identity from the selected ControllerRevision.
+	generationHash string
 	// pcsReplicaIndex is the PCS replica this planner works on.
 	pcsReplicaIndex int
 	// mvu is the Minimum Updateable Unit template frozen at update start, holding the in-scope
@@ -172,6 +174,7 @@ func newSubStepPlanner(syncSnap *syncSnapshot, pcsReplicaIndex int, entries []gr
 	return &subStepPlanner{
 		clk:                            clk,
 		pcs:                            syncSnap.pcs,
+		generationHash:                 syncSnap.generationHash,
 		pcsReplicaIndex:                pcsReplicaIndex,
 		mvu:                            mvu,
 		entries:                        entries,
@@ -180,7 +183,7 @@ func newSubStepPlanner(syncSnap *syncSnapshot, pcsReplicaIndex int, entries []gr
 		standalonePCLQByComponent:      standalonePCLQByComponent,
 		pcsgReplicaInfos:               pcsgReplicaInfos,
 		pclqPodCounts:                  pclqPodCounts,
-		numMissingOldVersionPodsByPCLQ: numMissingOldVersionPodsByStandalonePCLQ(entries, *syncSnap.pcs.Status.CurrentGenerationHash, pclqPodCounts),
+		numMissingOldVersionPodsByPCLQ: numMissingOldVersionPodsByStandalonePCLQ(entries, syncSnap.generationHash, pclqPodCounts),
 		plan:                           computeStepPlan(desiredReplicas, mvu),
 	}
 }
@@ -341,7 +344,7 @@ func (p *subStepPlanner) ascertainPlanPosition() (planPosition, error) {
 // carry. A standalone PodClique contributes its pod count and a PodCliqueScalingGroup its number of
 // replica indices. It is a structural count of the current-hash entries and does not check readiness.
 func (p *subStepPlanner) countReplicasAtCurrentHash() map[string]int32 {
-	currentHash := *p.pcs.Status.CurrentGenerationHash
+	currentHash := p.generationHash
 	countByComponent := make(map[string]int32)
 	for i := range p.entries {
 		entry := p.entries[i]
@@ -366,7 +369,7 @@ func (p *subStepPlanner) countReplicasAtCurrentHash() map[string]int32 {
 // most recently created anchor since epoch increases with every new entry. It returns the empty string
 // when no current-hash anchor exists yet, and an error when an anchor epoch is not numeric.
 func (p *subStepPlanner) mostRecentAnchorEpoch() (string, error) {
-	pcsCurrentGenerationHash := *p.pcs.Status.CurrentGenerationHash
+	pcsCurrentGenerationHash := p.generationHash
 	var (
 		epoch             string
 		found             bool
@@ -595,7 +598,7 @@ func (p *subStepPlanner) nextOldPCSGIndicesToRoll(pcsgName string, count int32) 
 // dependsOnLatestEpoch returns the DependsOn slice for a newly emitted sub-step, which is the single
 // latest current-hash epoch, or nil for the first sub-step of the update when no current-hash entry exists yet.
 func (p *subStepPlanner) dependsOnLatestEpoch() ([]string, error) {
-	latestEpoch, err := componentutils.LatestEpochForGenerationHash(p.entries, *p.pcs.Status.CurrentGenerationHash)
+	latestEpoch, err := componentutils.LatestEpochForGenerationHash(p.entries, p.generationHash)
 	if err != nil {
 		return nil, groveerr.WrapError(err, errCodeInvalidEpoch, component.OperationSync,
 			fmt.Sprintf("failed to derive the DependsOn epoch for PodCliqueSet %s", p.pcs.Name))

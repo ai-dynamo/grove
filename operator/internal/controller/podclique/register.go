@@ -220,7 +220,7 @@ func mapPodCliqueSetToPCLQs() handler.MapFunc {
 	}
 }
 
-// podCliqueSetPredicate filters PodCliqueSet events to only process generation hash changes
+// podCliqueSetPredicate filters PodCliqueSet events to process selected revision and update progress changes.
 func podCliqueSetPredicate() predicate.Predicate {
 	return predicate.Funcs{
 		CreateFunc: func(_ event.CreateEvent) bool { return false },
@@ -231,7 +231,7 @@ func podCliqueSetPredicate() predicate.Predicate {
 			if !okOld || !okNew {
 				return false
 			}
-			return !stringPointersEqual(oldPCS.Status.CurrentGenerationHash, newPCS.Status.CurrentGenerationHash) ||
+			return !stringPointersEqual(oldPCS.Status.CurrentRevision, newPCS.Status.CurrentRevision) ||
 				pcsCurrentlyUpdatingReplicaChanged(oldPCS.Status.UpdateProgress, newPCS.Status.UpdateProgress)
 		},
 		GenericFunc: func(_ event.GenericEvent) bool { return false },

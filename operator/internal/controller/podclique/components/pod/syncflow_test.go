@@ -37,6 +37,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
@@ -91,6 +92,33 @@ func TestSyncPCSGPodIndexLabels(t *testing.T) {
 
 // TestIsPodInPodReferences verifies isPodInPodReferences reports whether a pod appears in the
 // PodGroup for a given PodClique FQN.
+func TestExpectedPodTemplateHashUsesSelectedRevision(t *testing.T) {
+	for _, tt := range []struct {
+		name         string
+		progressHash string
+		mirror       *string
+		expected     string
+	}{
+		{name: "selected update with stale mirror", progressHash: "selected", mirror: ptr.To("old"), expected: "new-template"},
+		{name: "selected update without mirror", progressHash: "selected", expected: "new-template"},
+		{name: "old update matches mirror but not selected revision", progressHash: "old", mirror: ptr.To("old"), expected: "old-template"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			ss := &syncSnapshot{
+				generationHash: "selected",
+				pcs:            &grovecorev1alpha1.PodCliqueSet{Status: grovecorev1alpha1.PodCliqueSetStatus{CurrentGenerationHash: tt.mirror}},
+				pclq: &grovecorev1alpha1.PodClique{
+					ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{apicommon.LabelPodTemplateHash: "old-template"}},
+					Status: grovecorev1alpha1.PodCliqueStatus{UpdateProgress: &grovecorev1alpha1.PodCliqueUpdateProgress{
+						PodCliqueSetGenerationHash: tt.progressHash, PodTemplateHash: "new-template",
+					}},
+				},
+			}
+			assert.Equal(t, tt.expected, ss.getExpectedPodTemplateHash())
+		})
+	}
+}
+
 func TestIsPodInPodReferences(t *testing.T) {
 	podGang := testutils.NewPodGangBuilder(podGangNameForEpoch(testAnchor0Epoch), testNamespace).
 		WithPodGroupPods(testCliqueName, "pod-a", "pod-b").

@@ -209,14 +209,14 @@ func (r _resource) reconcileInProgressUpdate(ctx context.Context, logger logr.Lo
 }
 
 // requeueIfPCSGUpdateTargetIsStale delays RollingRecreate and Coherent processing when the PCSG update
-// target differs from the current PCS generation. A new PCS revision replaces the PCS update progress
+// target differs from the selected PCS revision. A new PCS revision replaces the PCS update progress
 // immediately, while PCSG processUpdate can reset the child target only after the PCS selects this PCSG's
 // replica in UpdateProgress.CurrentlyUpdating. Requeueing gives processUpdate another opportunity to perform
 // that reset and prevents the superseded PCSG update from replacing replicas or being marked complete against
 // the new PCS template in the meantime.
 func requeueIfPCSGUpdateTargetIsStale(ss *syncSnapshot) error {
 	updateTarget := ss.pcsg.Status.UpdateProgress.PodCliqueSetGenerationHash
-	currentTarget := *ss.pcs.Status.CurrentGenerationHash
+	currentTarget := ss.revision.GenerationHash()
 	if updateTarget == currentTarget {
 		return nil
 	}

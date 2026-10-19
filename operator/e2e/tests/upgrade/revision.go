@@ -26,6 +26,7 @@ import (
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	"github.com/ai-dynamo/grove/operator/e2e/grove/workload"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/k8sclient"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/pods"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
@@ -113,6 +114,38 @@ func verifyAdoptedPodHashes(t *testing.T, tc *testctx.TestContext, revision *com
 		require.NotEmpty(t, pod.Labels[apicommon.LabelPodTemplateHash])
 		require.Contains(t, byUID, pod.UID)
 		require.Equal(t, pod.Labels[apicommon.LabelPodTemplateHash], byUID[pod.UID].Labels[apicommon.LabelPodTemplateHash])
+	}
+}
+
+func verifyRevisionMirrorRepair(t *testing.T, tc *testctx.TestContext, selected *commonrevision.Revision) {
+	t.Helper()
+	before, err := tc.ListPods()
+	require.NoError(t, err)
+	key := client.ObjectKey{Namespace: tc.Namespace, Name: tc.Workload.Name}
+	manager := workload.NewWorkloadManager(tc.Client, testctx.Logger)
+	for _, mirror := range []*string{nil, ptr.To("stale-mirror")} {
+		pcs := &grovev1alpha1.PodCliqueSet{}
+		var progress *grovev1alpha1.PodCliqueSetUpdateProgress
+		require.NoError(t, retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			if err := tc.Client.Get(t.Context(), key, pcs); err != nil {
+				return err
+			}
+			original := pcs.DeepCopy()
+			progress = original.Status.UpdateProgress
+			pcs.Status.CurrentGenerationHash = mirror
+			return tc.Client.Status().Patch(t.Context(), pcs, client.MergeFromWithOptions(original, client.MergeFromWithOptimisticLock{}))
+		}))
+		require.NoError(t, manager.TriggerPCSReconcile(t.Context(), key.Namespace, key.Name, "mirror-repair-"+ptr.Deref(mirror, "missing")))
+		require.NoError(t, wait.PollUntilContextTimeout(t.Context(), tc.Interval, tc.Timeout, true, func(ctx context.Context) (bool, error) {
+			if err := tc.Client.Get(ctx, key, pcs); err != nil {
+				return false, err
+			}
+			return ptr.Deref(pcs.Status.CurrentGenerationHash, "") == selected.GenerationHash(), nil
+		}), "the compatibility mirror must converge to the selected revision")
+		require.Equal(t, selected.Name(), ptr.Deref(pcs.Status.CurrentRevision, ""))
+		require.Equal(t, progress, pcs.Status.UpdateProgress, "mirror repair must not restart an update")
+		require.NoError(t, tc.WaitForPods(len(before.Items)))
+		verifyPodUIDsUnchanged(t, tc, before)
 	}
 }
 

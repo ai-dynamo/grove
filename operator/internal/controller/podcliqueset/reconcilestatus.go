@@ -121,7 +121,7 @@ type pcsReplicaStats struct {
 	availableReplicas int32
 	updatedReplicas   int32
 	// updatedPCLQs counts standalone PCLQs (not in a PCSG) whose CurrentPodCliqueSetGenerationHash
-	// matches pcs.Status.CurrentGenerationHash. PCSG-owned PCLQs are tracked on their owning PCSG.
+	// matches the selected revision. PCSG-owned PCLQs are tracked on their owning PCSG.
 	updatedPCLQs int32
 	totalPCLQs   int32
 	updatedPCSGs int32

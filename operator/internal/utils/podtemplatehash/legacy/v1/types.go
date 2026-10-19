@@ -17,6 +17,7 @@
 // Legacy hashes include Go type names, field names, field order, and zero values.
 // Keep the package name and these layouts unchanged. These types are hash inputs,
 // not API objects; unchanged nested types use the Kubernetes 1.35 definitions.
+// These types are used only to adopt pre-revision workloads.
 package v1
 
 import (

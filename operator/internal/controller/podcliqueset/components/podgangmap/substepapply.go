@@ -29,7 +29,7 @@ import (
 // drops any entry drained to empty.
 func (p *subStepPlanner) applySubStep(ss subStep) ([]grovecorev1alpha1.PodGangEntry, error) {
 	entries := clonePodGangEntries(p.entries)
-	currentHash := *p.pcs.Status.CurrentGenerationHash
+	currentHash := p.generationHash
 
 	// Sort oldest epoch first so the drains retire the oldest generation first, which matters when a
 	// re-update mid-update has left more than one old-hash generation live.
@@ -202,7 +202,7 @@ func subsumeIntoAnchor(entries []grovecorev1alpha1.PodGangEntry, anchorEpoch str
 // standalone PodClique pods into an existing anchor adds no entry. So a sub-step yields at most one entry,
 // returned with ok true, or ok false when it adds none.
 func (p *subStepPlanner) newHashEntryForSubStep(ss subStep) (grovecorev1alpha1.PodGangEntry, bool) {
-	currentHash := *p.pcs.Status.CurrentGenerationHash
+	currentHash := p.generationHash
 
 	if ss.opensAnchor {
 		anchorEntry := newPodGangEntry(ss.epoch, currentHash, ss.dependsOn)

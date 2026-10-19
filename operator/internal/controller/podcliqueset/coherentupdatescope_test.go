@@ -152,7 +152,7 @@ func TestComputeCoherentUpdateScope(t *testing.T) {
 			pclqWithHash("frontend", "stale-hash"),
 			pclqWithHash("router", hashOf(pcs, "router")))}
 
-		scope, err := r.computeCoherentUpdateScope(context.Background(), pcs, selectedRevisionForPCS(t, pcs))
+		scope, err := r.computeCoherentUpdateScope(context.Background(), pcs, selectedRevisionForPCS(t, pcs), "")
 
 		require.NoError(t, err)
 		assert.Equal(t, []string{"frontend"}, sets.List(scope.standalonePCLQs))
@@ -176,7 +176,7 @@ func TestComputeCoherentUpdateScope(t *testing.T) {
 			pclqWithHash("frontend", hashOf(pcs, "frontend")), // unchanged by this edit, carried via pending
 			pclqWithHash("router", "stale-hash"))}             // changed by this edit
 
-		scope, err := r.computeCoherentUpdateScope(context.Background(), pcs, selectedRevisionForPCS(t, pcs))
+		scope, err := r.computeCoherentUpdateScope(context.Background(), pcs, selectedRevisionForPCS(t, pcs), "v1")
 
 		require.NoError(t, err)
 		assert.Equal(t, []string{"frontend", "router"}, sets.List(scope.standalonePCLQs))

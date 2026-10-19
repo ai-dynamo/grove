@@ -48,15 +48,16 @@ func TestPCLQUpdateProgressMatchesCurrentRevision(t *testing.T) {
 	const generation = "generation-1"
 
 	tests := []struct {
-		name         string
-		pcsHash      *string
-		progress     *grovecorev1alpha1.PodCliqueUpdateProgress
-		pclqHash     string
-		wantMatching bool
+		name           string
+		generationHash string
+		mirror         *string
+		progress       *grovecorev1alpha1.PodCliqueUpdateProgress
+		pclqHash       string
+		wantMatching   bool
 	}{
 		{
-			name:    "matches when generation and template revisions agree",
-			pcsHash: ptr.To(generation),
+			name:           "matches when generation and template revisions agree without a status mirror",
+			generationHash: generation,
 			progress: &grovecorev1alpha1.PodCliqueUpdateProgress{
 				PodCliqueSetGenerationHash: generation,
 				PodTemplateHash:            testNewHash,
@@ -65,8 +66,20 @@ func TestPCLQUpdateProgressMatchesCurrentRevision(t *testing.T) {
 			wantMatching: true,
 		},
 		{
-			name:    "does not match when progress targets another PCS generation",
-			pcsHash: ptr.To(generation),
+			name:           "matches when the status mirror is stale",
+			generationHash: generation,
+			mirror:         ptr.To("generation-2"),
+			progress: &grovecorev1alpha1.PodCliqueUpdateProgress{
+				PodCliqueSetGenerationHash: generation,
+				PodTemplateHash:            testNewHash,
+			},
+			pclqHash:     testNewHash,
+			wantMatching: true,
+		},
+		{
+			name:           "does not match when progress targets another PCS generation despite a matching mirror",
+			generationHash: generation,
+			mirror:         ptr.To("generation-2"),
 			progress: &grovecorev1alpha1.PodCliqueUpdateProgress{
 				PodCliqueSetGenerationHash: "generation-2",
 				PodTemplateHash:            testNewHash,
@@ -74,8 +87,8 @@ func TestPCLQUpdateProgressMatchesCurrentRevision(t *testing.T) {
 			pclqHash: testNewHash,
 		},
 		{
-			name:    "does not match before the PCLQ template update is observed",
-			pcsHash: ptr.To(generation),
+			name:           "does not match before the PCLQ template update is observed",
+			generationHash: generation,
 			progress: &grovecorev1alpha1.PodCliqueUpdateProgress{
 				PodCliqueSetGenerationHash: generation,
 				PodTemplateHash:            testNewHash,
@@ -83,9 +96,9 @@ func TestPCLQUpdateProgressMatchesCurrentRevision(t *testing.T) {
 			pclqHash: testOldHash,
 		},
 		{
-			name:     "does not match without progress",
-			pcsHash:  ptr.To(generation),
-			pclqHash: testNewHash,
+			name:           "does not match without progress",
+			generationHash: generation,
+			pclqHash:       testNewHash,
 		},
 		{
 			name:     "does not match without a PCS generation",
@@ -97,7 +110,8 @@ func TestPCLQUpdateProgressMatchesCurrentRevision(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ss := &syncSnapshot{
-				pcs: &grovecorev1alpha1.PodCliqueSet{Status: grovecorev1alpha1.PodCliqueSetStatus{CurrentGenerationHash: tt.pcsHash}},
+				generationHash: tt.generationHash,
+				pcs:            &grovecorev1alpha1.PodCliqueSet{Status: grovecorev1alpha1.PodCliqueSetStatus{CurrentGenerationHash: tt.mirror}},
 				pclq: &grovecorev1alpha1.PodClique{
 					ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{apicommon.LabelPodTemplateHash: tt.pclqHash}},
 					Status:     grovecorev1alpha1.PodCliqueStatus{UpdateProgress: tt.progress},

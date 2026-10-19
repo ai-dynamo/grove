@@ -11136,8 +11136,8 @@ spec:
                   type: object
                 type: array
               currentGenerationHash:
-                description: CurrentGenerationHash is the opaque identity selected
-                  for the current rollout-relevant revision.
+                description: CurrentGenerationHash holds the legacy rollout identity,
+                  then mirrors the selected revision after adoption.
                 type: string
               currentRevision:
                 description: CurrentRevision names the ControllerRevision containing

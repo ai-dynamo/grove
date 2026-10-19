@@ -430,12 +430,15 @@ func TestIsPCLQUpdateCompleteRejectsActiveUpdate(t *testing.T) {
 		WithPodCliqueParameters("worker", 1, nil).
 		Build()
 	pcs.Status.CurrentGenerationHash = new("generation-1")
+	revision, err := testutils.NewRevision(pcs)
+	require.NoError(t, err)
+	pcs.Status.CurrentGenerationHash = nil
 
 	pclq := testutils.NewPodCliqueBuilder("test-pcs", "uid", "worker", "default", 0).
 		WithReplicas(1).
 		WithMinAvailable(1).
 		Build()
-	expectedTemplateHash, err := GetExpectedPCLQPodTemplateHash(pcs, pclq.ObjectMeta)
+	expectedTemplateHash, err := GetExpectedPCLQPodTemplateHash(revision, pclq.ObjectMeta)
 	require.NoError(t, err)
 	pclq.Labels[apicommon.LabelPodTemplateHash] = expectedTemplateHash
 	pclq.Status.CurrentPodTemplateHash = new(expectedTemplateHash)
@@ -451,12 +454,12 @@ func TestIsPCLQUpdateCompleteRejectsActiveUpdate(t *testing.T) {
 	}
 
 	t.Run("active later update keeps rolled-back generation incomplete", func(t *testing.T) {
-		assert.False(t, IsPCLQUpdateComplete(pcs, pclq))
+		assert.False(t, IsPCLQUpdateComplete(revision, pclq))
 	})
 
 	t.Run("ended update permits otherwise converged generation", func(t *testing.T) {
 		pclq.Status.UpdateProgress.UpdateEndedAt = new(metav1.Now())
-		assert.True(t, IsPCLQUpdateComplete(pcs, pclq))
+		assert.True(t, IsPCLQUpdateComplete(revision, pclq))
 	})
 }
 

@@ -107,6 +107,7 @@ func Test_VUPG1_RevisionAdoptionAndUpdate(t *testing.T) {
 				preUpgrade:      s.deployWorkload,
 				postUpgrade: func(t *testing.T, tc *testctx.TestContext) {
 					before := s.verifyPodsSurvive(t, tc)
+					verifyRevisionMirrorRepair(t, tc, before)
 					oldBootstrapHash, err := before.CliqueHash("bootstrap")
 					require.NoError(t, err)
 					oldWorkerHash, err := before.CliqueHash("worker")

@@ -385,7 +385,7 @@ func TestCurrentBatchScheduled(t *testing.T) {
 		entries := []grovecorev1alpha1.PodGangEntry{{Epoch: "50", PodCliqueSetGenerationHash: coherentTestOldGen, Role: grovecorev1alpha1.PodGangEntryRoleAnchor, PodCliques: map[string]int32{"frontend": 2}}}
 		r := _resource{client: testutils.NewTestClientBuilder().Build()}
 
-		ready, err := r.currentBatchScheduled(t.Context(), pcs, 0, entries)
+		ready, err := r.currentBatchScheduled(t.Context(), pcs, coherentTestCurrentGen, 0, entries)
 
 		require.NoError(t, err)
 		assert.True(t, ready)
@@ -394,7 +394,7 @@ func TestCurrentBatchScheduled(t *testing.T) {
 	t.Run("anchor batch is scheduled", func(t *testing.T) {
 		r := _resource{client: testutils.NewTestClientBuilder().WithObjects(podGangAtEpoch(anchorPodGang, true)).Build()}
 
-		ready, err := r.currentBatchScheduled(t.Context(), pcs, 0, []grovecorev1alpha1.PodGangEntry{anchorEntry})
+		ready, err := r.currentBatchScheduled(t.Context(), pcs, coherentTestCurrentGen, 0, []grovecorev1alpha1.PodGangEntry{anchorEntry})
 
 		require.NoError(t, err)
 		assert.True(t, ready)
@@ -403,7 +403,7 @@ func TestCurrentBatchScheduled(t *testing.T) {
 	t.Run("anchor batch is not scheduled", func(t *testing.T) {
 		r := _resource{client: testutils.NewTestClientBuilder().WithObjects(podGangAtEpoch(anchorPodGang, false)).Build()}
 
-		ready, err := r.currentBatchScheduled(t.Context(), pcs, 0, []grovecorev1alpha1.PodGangEntry{anchorEntry})
+		ready, err := r.currentBatchScheduled(t.Context(), pcs, coherentTestCurrentGen, 0, []grovecorev1alpha1.PodGangEntry{anchorEntry})
 
 		require.NoError(t, err)
 		assert.False(t, ready)
@@ -412,7 +412,7 @@ func TestCurrentBatchScheduled(t *testing.T) {
 	t.Run("tail batch fully materialized and scheduled", func(t *testing.T) {
 		r := _resource{client: testutils.NewTestClientBuilder().WithObjects(podGangAtEpoch(tailPodGang0, true), podGangAtEpoch(tailPodGang1, true)).Build()}
 
-		ready, err := r.currentBatchScheduled(t.Context(), pcs, 0, []grovecorev1alpha1.PodGangEntry{tailEntry})
+		ready, err := r.currentBatchScheduled(t.Context(), pcs, coherentTestCurrentGen, 0, []grovecorev1alpha1.PodGangEntry{tailEntry})
 
 		require.NoError(t, err)
 		assert.True(t, ready)
@@ -423,7 +423,7 @@ func TestCurrentBatchScheduled(t *testing.T) {
 		// gang that happens to exist, since the executor has already taken down the old pods for index 1.
 		r := _resource{client: testutils.NewTestClientBuilder().WithObjects(podGangAtEpoch(tailPodGang0, true)).Build()}
 
-		ready, err := r.currentBatchScheduled(t.Context(), pcs, 0, []grovecorev1alpha1.PodGangEntry{tailEntry})
+		ready, err := r.currentBatchScheduled(t.Context(), pcs, coherentTestCurrentGen, 0, []grovecorev1alpha1.PodGangEntry{tailEntry})
 
 		require.NoError(t, err)
 		assert.False(t, ready)
@@ -749,7 +749,7 @@ func TestGatherStandalonePodCounts(t *testing.T) {
 	}
 	r := _resource{client: testutils.NewTestClientBuilder().WithPodControllerUIDIndex().WithObjects(objs...).Build()}
 
-	got, err := r.gatherStandalonePodCounts(t.Context(), pcs, 0, entries, map[string]grovecorev1alpha1.PodClique{"frontend": pclq})
+	got, err := r.gatherStandalonePodCounts(t.Context(), pcs, "new", 0, entries, map[string]grovecorev1alpha1.PodClique{"frontend": pclq})
 
 	require.NoError(t, err)
 	assert.Equal(t, map[cliqueAndEpochKey]anchorLivePods{
@@ -782,7 +782,7 @@ func TestGatherPCSGReplicaInfos(t *testing.T) {
 	}
 	r := _resource{client: testutils.NewTestClientBuilder().WithObjects(objs...).Build()}
 
-	got, err := r.gatherPCSGReplicaInfos(t.Context(), pcs, entries, map[string]grovecorev1alpha1.PodCliqueScalingGroup{"sga": pcsg})
+	got, err := r.gatherPCSGReplicaInfos(t.Context(), pcs, "new", entries, map[string]grovecorev1alpha1.PodCliqueScalingGroup{"sga": pcsg})
 
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []pcsgReplicaInfo{
@@ -810,7 +810,7 @@ func TestGatherPCSGReplicaInfosSkipsStrayReplicaIndices(t *testing.T) {
 	}
 	r := _resource{client: testutils.NewTestClientBuilder().WithObjects(objs...).Build()}
 
-	got, err := r.gatherPCSGReplicaInfos(t.Context(), pcs, nil, map[string]grovecorev1alpha1.PodCliqueScalingGroup{"sga": pcsg})
+	got, err := r.gatherPCSGReplicaInfos(t.Context(), pcs, "new", nil, map[string]grovecorev1alpha1.PodCliqueScalingGroup{"sga": pcsg})
 
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []pcsgReplicaInfo{
@@ -844,7 +844,7 @@ func TestGatherPCSGReplicaInfosInventoriesAbsentReplicasAsPending(t *testing.T) 
 	}
 	r := _resource{client: testutils.NewTestClientBuilder().WithObjects(objs...).Build()}
 
-	got, err := r.gatherPCSGReplicaInfos(t.Context(), pcs, nil, map[string]grovecorev1alpha1.PodCliqueScalingGroup{"sga": pcsg})
+	got, err := r.gatherPCSGReplicaInfos(t.Context(), pcs, "new", nil, map[string]grovecorev1alpha1.PodCliqueScalingGroup{"sga": pcsg})
 
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []pcsgReplicaInfo{
@@ -951,7 +951,8 @@ func newCoherentTestSnapshot(pcsNameReplica apicommon.ResourceNameReplica, liveR
 				},
 			},
 		},
-		Status: grovecorev1alpha1.PodCliqueSetStatus{CurrentGenerationHash: ptr.To(coherentTestCurrentGen)},
+		// Planning must use the selected target even while the status mirror is stale.
+		Status: grovecorev1alpha1.PodCliqueSetStatus{CurrentGenerationHash: ptr.To(coherentTestOldGen)},
 	}
 	frontendPCLQ := grovecorev1alpha1.PodClique{
 		ObjectMeta: metav1.ObjectMeta{Name: apicommon.GeneratePodCliqueName(pcsNameReplica, "frontend")},
@@ -963,6 +964,7 @@ func newCoherentTestSnapshot(pcsNameReplica apicommon.ResourceNameReplica, liveR
 	}
 	return &syncSnapshot{
 		pcs:                              pcs,
+		generationHash:                   coherentTestCurrentGen,
 		mvuTemplate:                      &mvuTemplate{standalonePCLQs: map[string]int32{"frontend": minAvailable}},
 		existingStandalonePCLQsByReplica: map[int][]grovecorev1alpha1.PodClique{0: {frontendPCLQ}},
 	}
@@ -1015,7 +1017,6 @@ func newCoherentPCSGTest(replicas, minAvailable int32, maxUnavailable *int32, co
 				},
 			},
 		},
-		Status: grovecorev1alpha1.PodCliqueSetStatus{CurrentGenerationHash: ptr.To(coherentTestCurrentGen)},
 	}
 	pcsg := grovecorev1alpha1.PodCliqueScalingGroup{
 		ObjectMeta: metav1.ObjectMeta{Name: coherentTestPCSGObjName, Namespace: coherentTestNamespace},
@@ -1035,6 +1036,7 @@ func newCoherentPCSGTest(replicas, minAvailable int32, maxUnavailable *int32, co
 	snap := &syncSnapshot{
 		logger:                 logr.Discard(),
 		pcs:                    pcs,
+		generationHash:         coherentTestCurrentGen,
 		existingPCSGsByReplica: map[int][]grovecorev1alpha1.PodCliqueScalingGroup{0: {pcsg}},
 		mvuTemplate:            &mvuTemplate{pcsgs: map[string]int32{"sga": minAvailable}},
 	}

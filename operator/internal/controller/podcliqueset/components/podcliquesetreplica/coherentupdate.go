@@ -37,7 +37,7 @@ import (
 // coherent update. InFlightEpochs mirrors the latest current-hash epoch on the replica's PodGangMap, and
 // Message summarizes the in-scope components that have not yet reached the current revision.
 func (r _resource) updateCoherentReplicaProgress(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, revision *commonrevision.Revision, replicaInfo pcsReplicaInfo) error {
-	inFlightEpochs, err := r.inFlightEpochsForReplica(ctx, pcs, replicaInfo.replicaIndex)
+	inFlightEpochs, err := r.inFlightEpochsForReplica(ctx, pcs, revision.GenerationHash(), replicaInfo.replicaIndex)
 	if err != nil {
 		return err
 	}
@@ -51,7 +51,7 @@ func (r _resource) updateCoherentReplicaProgress(ctx context.Context, logger log
 // inFlightEpochsForReplica returns the latest current-hash epoch on the replica's PodGangMap, the batch
 // the coherent engine is currently rolling. It is a list to leave room for a future iteration that rolls
 // more than one batch at a time. It is empty when no PodGangMap or no current-hash entry exists yet.
-func (r _resource) inFlightEpochsForReplica(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, pcsReplicaIndex int) ([]string, error) {
+func (r _resource) inFlightEpochsForReplica(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, generationHash string, pcsReplicaIndex int) ([]string, error) {
 	pgm, err := componentutils.GetPodGangMap(ctx, r.client, client.ObjectKeyFromObject(pcs), pcsReplicaIndex)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
@@ -60,7 +60,7 @@ func (r _resource) inFlightEpochsForReplica(ctx context.Context, pcs *grovecorev
 		return nil, groveerr.WrapError(err, errCodeGetPodGangMap, component.OperationSync,
 			fmt.Sprintf("could not get PodGangMap for PodCliqueSet %v replica %d", client.ObjectKeyFromObject(pcs), pcsReplicaIndex))
 	}
-	latestEpoch, err := componentutils.LatestEpochForGenerationHash(pgm.Spec.Entries, *pcs.Status.CurrentGenerationHash)
+	latestEpoch, err := componentutils.LatestEpochForGenerationHash(pgm.Spec.Entries, generationHash)
 	if err != nil {
 		return nil, groveerr.WrapError(err, errCodeInvalidEpoch, component.OperationSync,
 			fmt.Sprintf("could not determine the latest current-hash epoch for PodCliqueSet %v replica %d", client.ObjectKeyFromObject(pcs), pcsReplicaIndex))

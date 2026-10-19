@@ -49,6 +49,7 @@ func CachePodCliqueSetRevision(ctx context.Context, pcs *grovecorev1alpha1.PodCl
 // GetPodCliqueSetRevision gets the current Revision object for a given PodCliqueSet.
 // When the context carries a cache from WithPodCliqueSetRevisionCache, the first lookup populates it and subsequent calls skip the Get.
 func GetPodCliqueSetRevision(ctx context.Context, cl client.Client, pcs *grovecorev1alpha1.PodCliqueSet) (*commonrevision.Revision, error) {
+	// Legacy adoption belongs to the PCS controller; never fall back to status hashes.
 	if pcs.Status.CurrentRevision == nil || *pcs.Status.CurrentRevision == "" {
 		return nil, fmt.Errorf("PodCliqueSet %v has no current ControllerRevision", client.ObjectKeyFromObject(pcs))
 	}

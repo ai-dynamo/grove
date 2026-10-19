@@ -110,7 +110,7 @@ func TestInFlightEpochsForReplica(t *testing.T) {
 			WithEntries(oldHashEntry, currentHashEntry).Build()
 		r := _resource{client: testutils.SetupFakeClient(pcs, pgm)}
 
-		epochs, err := r.inFlightEpochsForReplica(context.Background(), pcs, 0)
+		epochs, err := r.inFlightEpochsForReplica(context.Background(), pcs, *pcs.Status.CurrentGenerationHash, 0)
 
 		require.NoError(t, err)
 		assert.Equal(t, []string{"200"}, epochs)
@@ -121,7 +121,7 @@ func TestInFlightEpochsForReplica(t *testing.T) {
 			WithEntries(oldHashEntry).Build()
 		r := _resource{client: testutils.SetupFakeClient(pcs, pgm)}
 
-		epochs, err := r.inFlightEpochsForReplica(context.Background(), pcs, 0)
+		epochs, err := r.inFlightEpochsForReplica(context.Background(), pcs, *pcs.Status.CurrentGenerationHash, 0)
 
 		require.NoError(t, err)
 		assert.Empty(t, epochs)
@@ -130,7 +130,7 @@ func TestInFlightEpochsForReplica(t *testing.T) {
 	t.Run("returns empty when the PodGangMap does not exist", func(t *testing.T) {
 		r := _resource{client: testutils.SetupFakeClient(pcs)}
 
-		epochs, err := r.inFlightEpochsForReplica(context.Background(), pcs, 0)
+		epochs, err := r.inFlightEpochsForReplica(context.Background(), pcs, *pcs.Status.CurrentGenerationHash, 0)
 
 		require.NoError(t, err)
 		assert.Empty(t, epochs)
