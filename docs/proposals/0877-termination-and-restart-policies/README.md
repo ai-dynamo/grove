@@ -77,7 +77,7 @@ Kubernetes defines these semantics for containers (exit code), pods (`restartPol
   - **Resource scope:** an availability policy (`MinAvailableBreached` plus a breach tolerance) for long-running resources, or a completion policy (`MinSucceededAchieved`) for completion-aware resources.
   - **Replica scope:** success and failure rules evaluated over the terminal states of the replica's children.
 - Define resource-scope and replica-scope restart policies (`Always` or `Limit`, separately for success and failure) that apply only once the resource or replica is terminal, and a `Completed` signal that stops all restarts below a resource or replica whose restart limit is exhausted.
-- Split `MinAvailable` into `init.minReplicas` (gang scheduling), `update.minReplicas` (minimum update unit) and `termination.resource.availability.minReplicas` (availability floor).
+- Split `MinAvailable` into `init.minReplicas` (gang scheduling), `rollingUpdate.minReplicas` (minimum update unit) and `termination.resource.availability.minReplicas` (availability floor).
 - Support completion-aware workloads by allowing `Never`/`OnFailure` pod restart policies.
 - Let one PodCliqueSet mix long-running and completion-aware resources, for example a model warm-up PodClique inside a long-running inference service.
 - Introduce the new fields in a `grove.io/v1beta1` API, and preserve today's behaviour for existing `v1alpha1` PodCliqueSets through conversion from the legacy fields.
@@ -171,16 +171,16 @@ Today's controllers instead recycle the PCSG replica when a member PodClique sta
 | New field | Purpose | Replaces |
 |---|---|---|
 | `init.minReplicas` | Minimum number of replicas gang-scheduled together on initial deployment and on every restart | `MinAvailable` as `PodGroup.minReplicas` and the Anchor/Tail split |
-| `update.minReplicas` | Minimum number of replicas rolled together as one gang during an update | `MinAvailable` as the Coherent MVU size |
+| `rollingUpdate.minReplicas` | Minimum number of replicas rolled together as one gang during a Coherent update. Added to the existing `RollingUpdateConfiguration`, so it exists only on standalone PodCliques and PCSGs | `MinAvailable` as the Coherent MVU size |
 | `termination.resource.availability.minReplicas` | Minimum number of available replicas before `MinAvailableBreached` becomes true | `MinAvailable` as the breach threshold |
 
 Defaults on PCSG and PCLQ:
 
 - `init.minReplicas` defaults to `availability.minReplicas` when `availability` is set, to `spec.replicas` for a CA resource, and to `1` otherwise.
-- `update.minReplicas` defaults to `availability.minReplicas` when `availability` is set, and to `1` otherwise.
+- `rollingUpdate.minReplicas` (standalone PCLQ and PCSG only, `Coherent` strategy only) defaults to `availability.minReplicas` when `availability` is set, and to `1` otherwise.
 - `availability.minReplicas` defaults to `1`.
 
-On a PCS, all three fields are fixed at `1`, because every PCS replica is its own gang-scheduling, update and availability unit.
+A PCS has no `init` or `rollingUpdate`, because every PCS replica is its own gang-scheduling and update unit, and its `availability.minReplicas` is fixed at `1`, because every PCS replica is its own availability unit; `updateStrategy` stays on `PodCliqueSetSpec` unchanged.
 
 ### Long-running and completion-aware resources
 
@@ -356,44 +356,49 @@ A replica's terminal state is derived from the terminal states of its children.
 
 ### API changes
 
-The same three sections are added at every level:
+A new `termination` section is added at every level, and a new `init` section on PCSGs and PodCliques:
 
-- `PodCliqueSetSpec`
-- `PodCliqueScalingGroupConfig` in the PCS template, copied into `PodCliqueScalingGroupSpec`
-- `PodCliqueSpec`, used inside `PodCliqueTemplateSpec` and copied into `PodClique`
+- `PodCliqueSetSpec`: `termination` only. A PCS has no `init`, because every PCS replica is its own gang-scheduling unit, so its value could only ever be `1`.
+- `PodCliqueScalingGroupConfig` in the PCS template, copied into `PodCliqueScalingGroupSpec`: `init` and `termination`
+- `PodCliqueSpec`, used inside `PodCliqueTemplateSpec` and copied into `PodClique`: `init` and `termination`
+
+Update configuration stays where it is today:
+
+- `PodCliqueSetSpec.updateStrategy` is unchanged. It holds the single strategy (`RollingRecreate`, `Coherent` or `OnDelete`) for all components, and its default stays `RollingRecreate`.
+- The existing `RollingUpdateConfiguration` gains one field, `minReplicas`, the minimum update unit of a Coherent update, and its `maxUnavailable` becomes an int-or-percentage in `v1beta1`. `RollingUpdateConfiguration` is already carried by `PodCliqueTemplateSpec.rollingUpdate` (standalone PodCliques only) and `PodCliqueScalingGroupConfig.rollingUpdate`, so the change applies only to standalone PCLQs and PCSGs. A PCSG member PodClique is updated as part of its PCSG replica, as today.
 
 ```go
 // InitSpec configures the initial (and every re-) deployment of a resource's replicas.
+// It is carried by PCSGs and PodCliques only.
 type InitSpec struct {
 	// MinReplicas is the guaranteed minimum number of replicas gang-scheduled together when the
 	// resource is first deployed and whenever it, or one of its replicas, is restarted.
-	// On a PodCliqueSet the only allowed value is 1, since every PCS replica is a separate
-	// gang-scheduling unit.
-	// Defaults on PCSG and PCLQ to termination.resource.availability.minReplicas when availability is
-	// set, to spec.replicas when the resource is completion-aware, and to 1 otherwise.
+	// Defaults to termination.resource.availability.minReplicas when availability is set, to
+	// spec.replicas when the resource is completion-aware, and to 1 otherwise.
 	// +optional
 	MinReplicas *int32 `json:"minReplicas,omitempty"`
 }
 
-// UpdateSpec configures how template changes are rolled out.
-type UpdateSpec struct {
-	// Policy is the update strategy. Only allowed on PodCliqueSetSpec; it applies to every component.
-	// Defaults to Coherent.
-	// +kubebuilder:validation:Enum={Coherent,RollingRecreate,OnDelete}
-	// +optional
-	Policy *UpdateStrategyType `json:"policy,omitempty"`
-	// MinReplicas is the minimum number of replicas that must be rolled together, as one gang, to keep
-	// a functional unit on a single revision. It is distinct from MaxUnavailable.
-	// On a PodCliqueSet the only allowed value is 1, since every PCS replica is a distinct scheduling unit.
-	// Defaults on PCSG and PCLQ to termination.resource.availability.minReplicas when availability is set,
-	// otherwise to 1.
+// RollingUpdateConfiguration is the existing per-component update configuration of a standalone
+// PodClique (PodCliqueTemplateSpec.RollingUpdate) or a PodCliqueScalingGroup
+// (PodCliqueScalingGroupConfig.RollingUpdate). MinReplicas is new, and MaxUnavailable changes type.
+type RollingUpdateConfiguration struct {
+	// MinReplicas is the minimum number of pods (for a standalone PodClique) or PodCliqueScalingGroup
+	// replicas (for a PCSG) that must be rolled together, as one gang, to keep a functional unit on a
+	// single revision. It is the component's share of the Minimum Viable Unit, and it is distinct from
+	// MaxUnavailable. It is only allowed when updateStrategy.type is Coherent, and is rejected under
+	// RollingRecreate and OnDelete.
+	// Under Coherent it defaults to termination.resource.availability.minReplicas of the component when
+	// availability is set, otherwise to 1.
 	// +optional
 	MinReplicas *int32 `json:"minReplicas,omitempty"`
-	// MaxUnavailable is the maximum number of replicas that may be disrupted at any time during an update.
-	// Defaults to MinReplicas.
+	// MaxUnavailable is the maximum number of pods (for a standalone PodClique) or PCSG replicas (for a
+	// PCSG) that may be unavailable at any time during an update. It is an absolute number or a
+	// percentage of the component's spec.replicas; a percentage is rounded down, with a minimum of 1.
+	// Under Coherent it defaults to MinReplicas (today: MinAvailable), and under RollingRecreate to 1.
 	// +optional
 	MaxUnavailable *intstr.IntOrString `json:"maxUnavailable,omitempty"`
-	// ProgressDeadline is carried over unchanged from RollingUpdateConfiguration.
+	// ProgressDeadline is unchanged.
 	// +optional
 	ProgressDeadline *metav1.Duration `json:"progressDeadline,omitempty"`
 }
@@ -667,7 +672,7 @@ Applying the rules to the current controllers exposes several details the rules 
 9. **Restart limits are per replica index** for replica restarts and per resource for gang restarts. Counters reset when an ancestor restarts.
 10. **A gang restart supersedes replica restarts.** If a resource gang-restarts, replica restarts pending in the same reconcile are dropped and no replica restart is counted. Likewise, a child whose parent replica is being recreated is deleted, and its own restart is moot.
 11. **A completed resource or replica stops managing what is below it.** Its terminal descendants are held, and its non-terminal descendants keep running, without restarts, until an ancestor restart recreates them or the TTL deletes them. This is what Story 4 needs.
-12. **`update.policy` exists only on the PCS.** A Coherent update coordinates all components of a PCS replica, so per-component policies cannot be honoured. PCSG and PCLQ accept only `update.minReplicas`, `update.maxUnavailable` and `update.progressDeadline`. Under `RollingRecreate`, `update.minReplicas` is ignored.
+12. **The update strategy stays on the PCS, and the minimum update unit lives in `rollingUpdate`.** A Coherent update coordinates all components of a PCS replica, so `updateStrategy` remains a single PCS-level setting. `rollingUpdate.minReplicas` exists only where `rollingUpdate` does, on standalone PodCliques and PCSGs, and is only allowed when `updateStrategy.type` is `Coherent`. It is rejected under `RollingRecreate` and `OnDelete`. A PCSG member PodClique has no `rollingUpdate`. When a PCSG replica is rolled, the per-member threshold in the replica's updated and ready checks keeps today's behaviour: it is the member's legacy `minAvailable`. `v1beta1` carries that value as the member's `init.minReplicas`, which conversion sets to `minAvailable` and which defaults the same way for new objects.
 13. **TTL is inherited at defaulting time.** The defaulting webhook materializes the effective `ttlAfterFinished` into every PCSG and PCLQ from its parent, so the stored object shows it.
 
 ### Defaults
@@ -680,18 +685,23 @@ Defaulting materializes explicit values into the stored object, so `kubectl get 
 | `availability` | nil (always set on objects converted from `v1alpha1`) | nil (required) |
 | `availability.minReplicas`, `breachTolerance` | `1`, `4h` | — |
 | `completion` | nil (it is what makes the resource LR) | `{minSucceeded: spec.replicas}`; also filled in on every descendant of a CA resource that omits it |
-| `init.minReplicas` | `availability.minReplicas` if set, else `1`; `1` on PCS | `spec.replicas`; `1` on PCS |
-| `update.minReplicas` | `availability.minReplicas` if set, else `1`; `1` on PCS | `1` |
-| `update.maxUnavailable` | `update.minReplicas` | `update.minReplicas` |
+| `init.minReplicas` (PCSG and PCLQ only) | `availability.minReplicas` if set, else `1` | `spec.replicas` |
+| `rollingUpdate.minReplicas` (standalone PCLQ and PCSG only) | Under `Coherent`: `availability.minReplicas` if set, else `1`. Not allowed under other strategies | Under `Coherent`: `1` |
+| `rollingUpdate.maxUnavailable` (standalone PCLQ and PCSG only) | `rollingUpdate.minReplicas` under `Coherent`, `1` under `RollingRecreate` (as today); always an integer | Same as LR |
+| `updateStrategy.type` (PCS only) | `RollingRecreate` (unchanged) | `RollingRecreate` (unchanged) |
 | `resource.restart`, `replica.restart` | `{onSuccess: Always, onFailure: Always}` | `{onSuccess: {Limit, 0}, onFailure: {Limit, 0}}` |
 | `RestartPolicy.limit` | `0` | `0` |
 | `ttlAfterFinished` | Inherited from the parent; `0s` on PCS | Inherited from the parent; `0s` on PCS |
 
 ### Validation
 
-- `1 ≤ availability.minReplicas ≤ init.minReplicas ≤ replicas`, and `update.minReplicas ≤ replicas`.
-- On a PCS, `init.minReplicas`, `update.minReplicas` and `availability.minReplicas` must be `1`.
-- Under `Coherent`, the resolved `update.maxUnavailable` must be at least `update.minReplicas`. This is today's `maxUnavailable ≥ minAvailable` rule.
+- `1 ≤ availability.minReplicas ≤ init.minReplicas ≤ replicas`, and `1 ≤ rollingUpdate.minReplicas ≤ replicas`.
+- On a PCS, `availability.minReplicas` must be `1`.
+- The existing `RollingUpdateConfiguration` rules stay, with `minReplicas` taking the place of `minAvailable`:
+  - `rollingUpdate` is rejected on a PodClique template that is a member of a PCSG.
+  - `rollingUpdate.maxUnavailable` must be an integer in `[1, replicas]` or a percentage in `[1%, 100%]`.
+  - Under `Coherent`, the resolved `rollingUpdate.maxUnavailable` must be at least `rollingUpdate.minReplicas`. This is today's `maxUnavailable ≥ minAvailable` rule. Because a percentage changes with scaling, the controllers also use `max(resolved maxUnavailable, minReplicas)` at run time.
+  - `rollingUpdate.minReplicas` is only allowed when `updateStrategy.type` is `Coherent`. It is rejected under `RollingRecreate` and under `OnDelete`, where all of `rollingUpdate` is rejected, as today.
 - `RestartPolicy.limit` is only allowed with `policy: Limit`, and must be `≥ 0`. `ttlAfterFinished` must be `≥ 0`.
 - `replica.success` and `replica.failure` are rejected on a PodClique.
 - `TerminalRule.target` entries must name existing children of the replica at that level.
@@ -702,9 +712,8 @@ Defaulting materializes explicit values into the stored object, so `kubectl get 
   - rejects `autoScalingConfig`/`scaleConfig`;
   - rejects `podSpec.restartPolicy: Always`.
 - **An LR PodClique** rejects `podSpec.restartPolicy` other than `Always`.
-- `update.policy` is rejected outside `PodCliqueSetSpec`.
 - **Warnings:** a CA PCS whose resolved `resource.restart.onSuccess` is `Always` gets an admission warning that it will never complete. A CA child of an LR parent with `onSuccess: Always` at either scope gets a warning that it re-runs for as long as its parent runs.
-- **Immutable fields:** `init.minReplicas`, `update.minReplicas`, `availability.minReplicas` and `completion` are immutable, as `MinAvailable` is today. The PodGangMap layout, pod dependency names and in-flight Coherent plans are derived from them.
+- **Immutable fields:** `init.minReplicas`, `rollingUpdate.minReplicas`, `availability.minReplicas` and `completion` are immutable, as `MinAvailable` is today. The PodGangMap layout, pod dependency names and in-flight Coherent plans are derived from them. The one exception: because `rollingUpdate.minReplicas` is only allowed under `Coherent`, a request that changes `updateStrategy.type` to `Coherent` may add it (otherwise the defaulting webhook fills it in), and a request that changes it away from `Coherent` must remove it.
 - **Mutable fields:** restart specs, `breachTolerance` and `ttlAfterFinished`.
 - **Scale guard:** `spec.replicas` must be `0` or `≥ availability.minReplicas` (today it is `≥ minAvailable`). The anchor `PodGroup.minReplicas` is clamped to `min(init.minReplicas, replicas)`, as non-base anchors already are.
 
@@ -976,7 +985,7 @@ For `serve`:
 
 - **Gang scheduling:** `init.minReplicas` replaces `MinAvailable` in PodGang construction (`podgang/syncflow.go`), the bootstrap Anchor/Tail split (`podgangmap/steadystate.go`) and startup-dependency thresholds (`initcontainer.go`, `GenerateDependencyNamesForBasePodGang`). Every restart rebuilds the affected PodGangMap entries, as gang termination does today. When a CA child of an LR replica completes, Grove lowers its PodGroup's `minReplicas` in the PodGang to `0`, so replacement pods of LR siblings are not held back waiting for pods that will never return.
 - **Startup dependencies:** the init container (`operator/initc`) counts ready pods of each parent PodClique. For a CA parent it instead watches the PodClique's `Succeeded` condition, which needs `get`/`watch` on PodCliques in the init container's RBAC.
-- **Updates:** `update.minReplicas` replaces `MinAvailable` in `computeMVUTemplate`, `CoherentMinAvailableByComponent` and `EffectiveMaxUnavailable`. Rolling updates skip completed replicas, which pick up the new revision only if they are restarted. The exception is a completed CA child of an LR replica: when an update replaces that replica and the CA child's template changed, Grove recreates the CA child at the new revision, so a warm-up runs again for a new model. This does not count as a restart.
+- **Updates:** `rollingUpdate.minReplicas` replaces `MinAvailable` in `computeMVUTemplate`, `CoherentMinAvailableByComponent` and `EffectiveMaxUnavailable`, and a member's `init.minReplicas` (its legacy `minAvailable`) replaces its `MinAvailable` in the PCSG replica updated and ready checks. `EffectiveMaxUnavailable` resolves a percentage `maxUnavailable` against the component's `spec.replicas`; a Coherent update freezes the resolved value in its plan when it starts. Rolling updates skip completed replicas, which pick up the new revision only if they are restarted. The exception is a completed CA child of an LR replica: when an update replaces that replica and the CA child's template changed, Grove recreates the CA child at the new revision, so a warm-up runs again for a new model. This does not count as a restart.
 - **Availability status:** `MinAvailableBreached` computation in the PCLQ and PCSG status reconcilers switches from `MinAvailable` to `availability.minReplicas`, and gains the PCS level.
 - **Gang termination:** `gangterminate.go` and the PCSG-replica recycle in `podcliquescalinggroup/components/podclique/sync.go` become the replica-restart executors at PCS and PCSG level. They are driven by a child's `Completed` condition and the restart policies instead of firing unconditionally on a breach.
 - **External pod deletion:** the PCLQ controller already recreates missing pods. This GREP routes that through the replica's `onFailure` policy (clarification 3), so the LR default keeps today's behaviour. Grove's own deletions are excluded by the deletion-reason annotation, and completion markers stop recreation for completed replicas.
@@ -990,16 +999,17 @@ Converting `v1alpha1` to `v1beta1` reproduces what the API server stores today. 
 
 | `v1alpha1` field | `v1beta1` fields |
 |---|---|
-| PCLQ `minAvailable: N` (default `1`) | `init.minReplicas: N`, `update.minReplicas: N`, `availability: {minReplicas: N}` |
-| PCSG `minAvailable: N` (default `1`) | Same three fields on the PCSG |
+| Standalone PCLQ `minAvailable: N` (default `1`) | `init.minReplicas: N`, `availability: {minReplicas: N}`, and `rollingUpdate.minReplicas: N` when `updateStrategy.type` is `Coherent` |
+| PCSG member PCLQ `minAvailable: N` (default `1`) | `init.minReplicas: N`, `availability: {minReplicas: N}` (members have no `rollingUpdate`) |
+| PCSG `minAvailable: N` (default `1`) | Same as a standalone PCLQ, on the PCSG |
 | `template.terminationDelay: D` (default 4h) | `availability.breachTolerance: D` on every PCLQ and PCSG |
-| `updateStrategy.type` (default `RollingRecreate`) | `update.policy` with the same value, always written explicitly |
-| `rollingUpdate.{maxUnavailable, progressDeadline}` | `update.{maxUnavailable, progressDeadline}` |
+| `rollingUpdate.maxUnavailable: N` (`int32`) | `rollingUpdate.maxUnavailable: N` (integer form of int-or-percentage) |
+| `updateStrategy`, `rollingUpdate.progressDeadline` | Unchanged |
 | (implicit gang termination) | `resource.restart.onFailure: {policy: Limit, limit: 0}` on every PCLQ and PCSG (Phase 2) |
 
 The last row makes a breached PodClique or PCSG complete and hand the failure to its parent replica, whose default `Always` restart recycles it, which reproduces today's gang termination (see [Long-running lifecycle](#long-running-lifecycle)). Converted objects are always LR, because `v1alpha1` pods are forced to `restartPolicy: Always`.
 
-Converting `v1beta1` to `v1alpha1` is lossy, because `v1alpha1` cannot express, for example, distinct init and availability values, `availability: nil` or per-component tolerances. Grove writes the closest `v1alpha1` form, with `minAvailable` set to `init.minReplicas`, and keeps the original `v1beta1` values in the annotation `grove.io/v1beta1-conversion-data`. Converting back restores them wherever the `v1alpha1` client did not change the corresponding field.
+Converting `v1beta1` to `v1alpha1` is lossy, because `v1alpha1` cannot express, for example, distinct init and availability values, `availability: nil` or per-component tolerances. Grove writes the closest `v1alpha1` form, with `minAvailable` set to `init.minReplicas` and a percentage `maxUnavailable` resolved to an integer against the current `spec.replicas`, and keeps the original `v1beta1` values in the annotation `grove.io/v1beta1-conversion-data`. Converting back restores them wherever the `v1alpha1` client did not change the corresponding field.
 
 **Objects created at `v1beta1` before Phase 2.** Phase 1 serves `v1beta1` without restart specs, and its controllers still gang-terminate a breached PodClique or PCSG as today. Phase 2 must not change that for objects that already exist, so it gives them the same `resource.restart.onFailure: {policy: Limit, limit: 0}` that conversion gives `v1alpha1` objects. Phase 2 defaulting materializes restart specs into every object it admits, so an LR PodClique or PCSG whose `resource.restart` is unset can only predate Phase 2:
 
@@ -1013,8 +1023,9 @@ Replica-scope restarts keep their LR default `Always` for these objects, which m
 
 ### Update policy defaults
 
-- **Default policy.** `update.policy` defaults to `Coherent` for PodCliqueSets created at `v1beta1`. Objects converted from `v1alpha1` always carry an explicit `update.policy`, which is `RollingRecreate` (the GREP-393 default) when `updateStrategy` was not set, so existing manifests do not change behaviour silently.
-- **Allowed values.** `OnDelete` (GREP-291) is a valid value. With `OnDelete`, `update.minReplicas` is not used, and `update.maxUnavailable` and `update.progressDeadline` are rejected, as `rollingUpdate` is today.
+- **Default policy.** `PodCliqueSetSpec.updateStrategy` is not changed by this GREP. `updateStrategy.type` keeps its `RollingRecreate` default (GREP-393) and its `Coherent` and `OnDelete` (GREP-291) values, in both `v1alpha1` and `v1beta1`.
+- **Minimum update unit.** `rollingUpdate.minReplicas` is only allowed when `updateStrategy.type` is `Coherent`, where it sizes each component's share of the Minimum Viable Unit. It is rejected under `RollingRecreate` and `OnDelete` (see [Validation](#validation)).
+- **Disruption budget.** `rollingUpdate.maxUnavailable` accepts an integer or a percentage of the component's `spec.replicas` in `v1beta1`. Its defaults are unchanged.
 
 ### Open Questions
 
@@ -1058,7 +1069,7 @@ A client waits for the outcome with `kubectl wait pcs/batch-infer --for=conditio
 
 ### Dependencies
 
-- GREP-393 (Coherent rolling updates) for the MVU and PodGangMap machinery that `update.minReplicas` and `init.minReplicas` plug into.
+- GREP-393 (Coherent rolling updates) for the MVU and PodGangMap machinery that `rollingUpdate.minReplicas` and `init.minReplicas` plug into.
 - GREP-436 (CRD upgrader) for removing `v1alpha1`, and with it the legacy fields, after the deprecation window.
 
 ### Test Plan
@@ -1070,7 +1081,7 @@ A client waits for the outcome with `kubectl wait pcs/batch-infer --for=conditio
 - Every validation rule listed above, including:
   - mode inheritance, the CA ban on `availability`, and the check that an LR replica cannot succeed through CA children alone;
   - rejection of replica policies on a PodClique;
-  - the PCS-level value of `1` for the three `minReplicas` fields;
+  - the PCS-level value of `1` for `availability.minReplicas`;
   - immutability;
   - scale-guard changes.
 - The rule evaluator: And/Or targets, And/Or across rules (including the `Or` default), failure precedence, scaled-to-zero children, and only completed children counted.
@@ -1109,7 +1120,7 @@ A client waits for the outcome with `kubectl wait pcs/batch-infer --for=conditio
   - a failed warm-up fails and recreates the PCS replica;
   - a PCS replica restart re-runs the warm-up;
   - LR pod replacements are scheduled after the warm-up's pods are deleted.
-- **Updates:** Coherent updates use `update.minReplicas` while availability uses a lower `availability.minReplicas`; completed replicas are skipped.
+- **Updates:** Coherent updates use `rollingUpdate.minReplicas` while availability uses a lower `availability.minReplicas`; percentage `maxUnavailable` is resolved and rounded correctly, including after scaling; `rollingUpdate.minReplicas` is rejected under `RollingRecreate` and `OnDelete`, is filled in when switching to `Coherent`, and must be removed when switching away from it; completed replicas are skipped.
 
 A dedicated sub-issue of [#877](https://github.com/ai-dynamo/grove/issues/877) will track the detailed e2e scenario matrix.
 
@@ -1127,8 +1138,10 @@ The GREP is delivered in two phases. Phase 1 changes no behaviour for existing w
    - Switch every Grove admission and authorizer webhook rule to `v1beta1` with `matchPolicy: Equivalent`. This lands in the same change that first serves `v1beta1`, so that `v1beta1` writes never bypass validation or the authorizer.
 3. **Import switch.** Move the operator's Go code to the `v1beta1` types as one mechanical rename, kept separate from semantic changes.
 4. **`v1beta1` schema.**
-   - Add `init.minReplicas`, `update.{policy, minReplicas, maxUnavailable, progressDeadline}` and `termination.resource.availability.{minReplicas, breachTolerance}`.
-   - Remove `minAvailable`, `updateStrategy`, `rollingUpdate` and `terminationDelay` from `v1beta1`. They stay in `v1alpha1`, marked deprecated.
+   - Add `init.minReplicas` and `termination.resource.availability.{minReplicas, breachTolerance}`, and add `minReplicas` to the existing `RollingUpdateConfiguration`.
+   - Change `rollingUpdate.maxUnavailable` from `int32` to int-or-percentage.
+   - Remove `minAvailable` and `terminationDelay` from `v1beta1`. They stay in `v1alpha1`, marked deprecated.
+   - Keep `PodCliqueSetSpec.updateStrategy` and `rollingUpdate.progressDeadline` unchanged.
 5. **Conversion.** Hand-written `v1alpha1` ↔ `v1beta1` conversion that follows [Migration from legacy fields](#migration-from-legacy-fields). Values that `v1alpha1` cannot express are kept in a round-trip annotation, so `v1alpha1` clients do not drop them.
 6. **Operator semantics.**
    - Re-implement the accessors on the new fields.
@@ -1155,7 +1168,7 @@ The GREP is delivered in two phases. Phase 1 changes no behaviour for existing w
    - `termination.resource.restart` and `termination.replica.restart`;
    - `termination.replica.success` and `termination.replica.failure`;
    - `termination.ttlAfterFinished`;
-   - the PCS-level `init` and `termination` sections.
+   - the PCS-level `termination` section.
 
    Allow `podSpec.restartPolicy: Never` and `OnFailure` on CA PodCliques. All additions are optional, so `v1beta1` objects from Phase 1 are unaffected.
 2. **Defaulting and validation.** Implement [Defaults](#defaults) and [Validation](#validation):
@@ -1163,7 +1176,7 @@ The GREP is delivered in two phases. Phase 1 changes no behaviour for existing w
    - `completion` filled in on descendants of a CA resource, and `ttlAfterFinished` inherited by descendants;
    - mode inheritance, and the CA ban on `availability`;
    - the check that an LR replica cannot succeed through CA children alone;
-   - the PCS-level values fixed at `1`;
+   - the PCS-level `availability.minReplicas` fixed at `1`;
    - the admission warnings.
 3. **Status.** Add the `Succeeded`, `Completed`, `MinSucceededAchieved` and `GangRestartInProgress` conditions with their reasons, the O(1) counters and `completedAt`, and the printer columns.
 4. **Per-replica state.**
