@@ -40,7 +40,8 @@ Grove validates the following Kubernetes minor release lines in CI:
 | :--- | :--- | :--- |
 | `1.34` | `rancher/k3s:v1.34.11-k3s1` | Compatibility matrix |
 | `1.35` | `rancher/k3s:v1.35.5-k3s1` | Compatibility matrix |
-| `1.36` | `rancher/k3s:v1.36.4-k3s1` | Compatibility matrix and regular E2E jobs |
+| `1.36` | `rancher/k3s:v1.36.4-k3s1` | Compatibility matrix |
+| `1.37` | `rancher/k3s:v1.37.0-k3s1` | Compatibility matrix and regular E2E jobs |
 
 The compatibility matrix runs the standard-cluster suites on each version, including coherent updates and post-update scaling. Scale, AutoMNNVL, startup-ordering, and upgrade tests remain on their dedicated CI targets and are not included in the matrix.
 
