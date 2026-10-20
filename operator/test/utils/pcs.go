@@ -17,15 +17,14 @@ package utils
 import (
 	"time"
 
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
-
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 )
 
 // PodCliqueSetBuilder is a builder for PodCliqueSet objects.
 type PodCliqueSetBuilder struct {
-	pcs *grovecorev1alpha1.PodCliqueSet
+	pcs *grovecorev1beta1.PodCliqueSet
 }
 
 // NewPodCliqueSetBuilder creates a new PodCliqueSetBuilder.
@@ -36,7 +35,7 @@ func NewPodCliqueSetBuilder(name, namespace string, uid types.UID) *PodCliqueSet
 }
 
 // WithCliqueStartupType sets the StartupType for the PodCliqueSet.
-func (b *PodCliqueSetBuilder) WithCliqueStartupType(startupType *grovecorev1alpha1.CliqueStartupType) *PodCliqueSetBuilder {
+func (b *PodCliqueSetBuilder) WithCliqueStartupType(startupType *grovecorev1beta1.CliqueStartupType) *PodCliqueSetBuilder {
 	b.pcs.Spec.Template.StartupType = startupType
 	return b
 }
@@ -58,13 +57,13 @@ func (b *PodCliqueSetBuilder) WithPodCliqueParameters(name string, replicas int3
 
 // WithPodCliqueTemplateSpec sets the PodCliqueTemplateSpec for the PodCliqueSet.
 // Consumers can use PodCliqueBuilder to create a PodCliqueTemplateSpec and then use this method to add it to the PodCliqueSet.
-func (b *PodCliqueSetBuilder) WithPodCliqueTemplateSpec(pclq *grovecorev1alpha1.PodCliqueTemplateSpec) *PodCliqueSetBuilder {
+func (b *PodCliqueSetBuilder) WithPodCliqueTemplateSpec(pclq *grovecorev1beta1.PodCliqueTemplateSpec) *PodCliqueSetBuilder {
 	b.pcs.Spec.Template.Cliques = append(b.pcs.Spec.Template.Cliques, pclq)
 	return b
 }
 
 // WithPodCliqueScalingGroupConfig adds a PodCliqueScalingGroupConfig to the PodCliqueSet.
-func (b *PodCliqueSetBuilder) WithPodCliqueScalingGroupConfig(config grovecorev1alpha1.PodCliqueScalingGroupConfig) *PodCliqueSetBuilder {
+func (b *PodCliqueSetBuilder) WithPodCliqueScalingGroupConfig(config grovecorev1beta1.PodCliqueScalingGroupConfig) *PodCliqueSetBuilder {
 	b.pcs.Spec.Template.PodCliqueScalingGroupConfigs = append(b.pcs.Spec.Template.PodCliqueScalingGroupConfigs, config)
 	return b
 }
@@ -83,9 +82,9 @@ func (b *PodCliqueSetBuilder) WithTerminationDelay(duration time.Duration) *PodC
 
 // WithStandaloneClique adds a standalone clique (not part of any scaling group).
 func (b *PodCliqueSetBuilder) WithStandaloneClique(name string) *PodCliqueSetBuilder {
-	cliqueSpec := &grovecorev1alpha1.PodCliqueTemplateSpec{
+	cliqueSpec := &grovecorev1beta1.PodCliqueTemplateSpec{
 		Name: name,
-		Spec: grovecorev1alpha1.PodCliqueSpec{
+		Spec: grovecorev1beta1.PodCliqueSpec{
 			Replicas: 1,
 		},
 	}
@@ -95,9 +94,9 @@ func (b *PodCliqueSetBuilder) WithStandaloneClique(name string) *PodCliqueSetBui
 
 // WithStandaloneCliqueReplicas adds a standalone clique with specific replica count.
 func (b *PodCliqueSetBuilder) WithStandaloneCliqueReplicas(name string, replicas int32) *PodCliqueSetBuilder {
-	cliqueSpec := &grovecorev1alpha1.PodCliqueTemplateSpec{
+	cliqueSpec := &grovecorev1beta1.PodCliqueTemplateSpec{
 		Name: name,
-		Spec: grovecorev1alpha1.PodCliqueSpec{
+		Spec: grovecorev1beta1.PodCliqueSpec{
 			Replicas: replicas,
 		},
 	}
@@ -114,9 +113,9 @@ func (b *PodCliqueSetBuilder) WithScalingGroup(name string, cliqueNames []string
 func (b *PodCliqueSetBuilder) WithScalingGroupConfig(name string, cliqueNames []string, replicas, minAvailable int32) *PodCliqueSetBuilder {
 	// Add cliques for the scaling group
 	for _, cliqueName := range cliqueNames {
-		cliqueSpec := &grovecorev1alpha1.PodCliqueTemplateSpec{
+		cliqueSpec := &grovecorev1beta1.PodCliqueTemplateSpec{
 			Name: cliqueName,
-			Spec: grovecorev1alpha1.PodCliqueSpec{
+			Spec: grovecorev1beta1.PodCliqueSpec{
 				Replicas: 1,
 			},
 		}
@@ -124,7 +123,7 @@ func (b *PodCliqueSetBuilder) WithScalingGroupConfig(name string, cliqueNames []
 	}
 
 	// Add scaling group config
-	pcsgConfig := grovecorev1alpha1.PodCliqueScalingGroupConfig{
+	pcsgConfig := grovecorev1beta1.PodCliqueScalingGroupConfig{
 		Name:         name,
 		CliqueNames:  cliqueNames,
 		Replicas:     &replicas,
@@ -141,19 +140,19 @@ func (b *PodCliqueSetBuilder) WithPodCliqueSetGenerationHash(pcsGenerationHash *
 }
 
 // WithUpdateStrategy sets the UpdateStrategy for the PodCliqueSet.
-func (b *PodCliqueSetBuilder) WithUpdateStrategy(strategy *grovecorev1alpha1.PodCliqueSetUpdateStrategy) *PodCliqueSetBuilder {
+func (b *PodCliqueSetBuilder) WithUpdateStrategy(strategy *grovecorev1beta1.PodCliqueSetUpdateStrategy) *PodCliqueSetBuilder {
 	b.pcs.Spec.UpdateStrategy = strategy
 	return b
 }
 
 // WithUpdateProgress sets the UpdateProgress in the PodCliqueSet status.
-func (b *PodCliqueSetBuilder) WithUpdateProgress(progress *grovecorev1alpha1.PodCliqueSetUpdateProgress) *PodCliqueSetBuilder {
+func (b *PodCliqueSetBuilder) WithUpdateProgress(progress *grovecorev1beta1.PodCliqueSetUpdateProgress) *PodCliqueSetBuilder {
 	b.pcs.Status.UpdateProgress = progress
 	return b
 }
 
 // WithTopologyConstraint sets the TopologyConstraint for the PodCliqueSet template.
-func (b *PodCliqueSetBuilder) WithTopologyConstraint(constraint *grovecorev1alpha1.TopologyConstraint) *PodCliqueSetBuilder {
+func (b *PodCliqueSetBuilder) WithTopologyConstraint(constraint *grovecorev1beta1.TopologyConstraint) *PodCliqueSetBuilder {
 	b.pcs.Spec.Template.TopologyConstraint = constraint
 	return b
 }
@@ -177,18 +176,18 @@ func (b *PodCliqueSetBuilder) WithStatusConditions(conditions ...metav1.Conditio
 }
 
 // Build creates a PodCliqueSet object.
-func (b *PodCliqueSetBuilder) Build() *grovecorev1alpha1.PodCliqueSet {
+func (b *PodCliqueSetBuilder) Build() *grovecorev1beta1.PodCliqueSet {
 	return b.pcs
 }
 
-func createEmptyPodCliqueSet(name, namespace string, uid types.UID) *grovecorev1alpha1.PodCliqueSet {
-	return &grovecorev1alpha1.PodCliqueSet{
+func createEmptyPodCliqueSet(name, namespace string, uid types.UID) *grovecorev1beta1.PodCliqueSet {
+	return &grovecorev1beta1.PodCliqueSet{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: namespace,
 			UID:       uid,
 		},
-		Spec: grovecorev1alpha1.PodCliqueSetSpec{
+		Spec: grovecorev1beta1.PodCliqueSetSpec{
 			Replicas: 1,
 		},
 	}

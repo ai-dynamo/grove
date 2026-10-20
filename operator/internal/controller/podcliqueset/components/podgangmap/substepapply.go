@@ -18,8 +18,7 @@ import (
 	"maps"
 	"slices"
 
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
-
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"k8s.io/apimachinery/pkg/util/sets"
 )
 
@@ -27,7 +26,7 @@ import (
 // leaving the snapshot's PodGangMap untouched. It drains the sub-step's old-hash take-down, grows the target
 // new-hash anchor with the subsumed standalone PodClique pods, appends the sub-step's new-hash entry, and
 // drops any entry drained to empty.
-func (p *subStepPlanner) applySubStep(ss subStep) ([]grovecorev1alpha1.PodGangEntry, error) {
+func (p *subStepPlanner) applySubStep(ss subStep) ([]grovecorev1beta1.PodGangEntry, error) {
 	entries := clonePodGangEntries(p.entries)
 	currentHash := *p.pcs.Status.CurrentGenerationHash
 
@@ -93,7 +92,7 @@ func (p *subStepPlanner) applySubStep(ss subStep) ([]grovecorev1alpha1.PodGangEn
 // running to find missing old-version slots, and Phase 2a reads notReady to drain unavailable Pods first. A
 // nil map leaves those phases with nothing to find, which drains the same total from the same anchors as a
 // plain oldest-first drain. The caller sorts entries oldest first, which every phase relies on.
-func drainStandalonePCLQs(entries []grovecorev1alpha1.PodGangEntry, currentHash string, drainCounts map[string]int32, livePodCountsByAnchor map[cliqueAndEpochKey]anchorLivePods) {
+func drainStandalonePCLQs(entries []grovecorev1beta1.PodGangEntry, currentHash string, drainCounts map[string]int32, livePodCountsByAnchor map[cliqueAndEpochKey]anchorLivePods) {
 	for cliqueName, remaining := range drainCounts {
 		// Phase 1. Reclaim missing old-version Pods (removes no running Pod, costs no availability).
 		remaining = drainOldHashAnchors(entries, currentHash, cliqueName, livePodCountsByAnchor, remaining, missingOldVersionPods)
@@ -129,7 +128,7 @@ func allCommittedPods(committedPodCount int32, _ anchorLivePods) int32 {
 // oldest first) and takes down up to remaining Pods of cliqueName. From each anchor it takes what takeable
 // reports, clamped to the Pods the anchor still commits and to the budget left. It returns the still
 // undrained remainder.
-func drainOldHashAnchors(entries []grovecorev1alpha1.PodGangEntry, currentHash, cliqueName string, livePodCountsByAnchor map[cliqueAndEpochKey]anchorLivePods, remaining int32, takeable perAnchorTakeable) int32 {
+func drainOldHashAnchors(entries []grovecorev1beta1.PodGangEntry, currentHash, cliqueName string, livePodCountsByAnchor map[cliqueAndEpochKey]anchorLivePods, remaining int32, takeable perAnchorTakeable) int32 {
 	for i := range entries {
 		if remaining == 0 {
 			break
@@ -153,14 +152,14 @@ func drainOldHashAnchors(entries []grovecorev1alpha1.PodGangEntry, currentHash, 
 }
 
 // isOldHashAnchor reports whether the entry is an anchor at a generation other than the current one.
-func isOldHashAnchor(entry grovecorev1alpha1.PodGangEntry, currentHash string) bool {
-	return entry.Role == grovecorev1alpha1.PodGangEntryRoleAnchor && entry.PodCliqueSetGenerationHash != currentHash
+func isOldHashAnchor(entry grovecorev1beta1.PodGangEntry, currentHash string) bool {
+	return entry.Role == grovecorev1beta1.PodGangEntryRoleAnchor && entry.PodCliqueSetGenerationHash != currentHash
 }
 
 // drainPCSGIndices removes each PodCliqueScalingGroup's take-down replica indices from whichever old-hash
 // entry carries them. A PCSG replica index is an identity that lives in exactly one entry, so no ordering or
 // budgeting is needed.
-func drainPCSGIndices(entries []grovecorev1alpha1.PodGangEntry, currentHash string, drainIndices map[string][]int32) {
+func drainPCSGIndices(entries []grovecorev1beta1.PodGangEntry, currentHash string, drainIndices map[string][]int32) {
 	for pcsgName, indices := range drainIndices {
 		drainSet := sets.New(indices...)
 		for i := range entries {
@@ -178,7 +177,7 @@ func drainPCSGIndices(entries []grovecorev1alpha1.PodGangEntry, currentHash stri
 
 // subsumeIntoAnchor adds the subsumed standalone PodClique pod counts to the new-hash anchor entry at
 // anchorEpoch. It is a no-op when there is nothing to subsume.
-func subsumeIntoAnchor(entries []grovecorev1alpha1.PodGangEntry, anchorEpoch string, subsumeCounts map[string]int32) {
+func subsumeIntoAnchor(entries []grovecorev1beta1.PodGangEntry, anchorEpoch string, subsumeCounts map[string]int32) {
 	if len(subsumeCounts) == 0 {
 		return
 	}
@@ -201,12 +200,12 @@ func subsumeIntoAnchor(entries []grovecorev1alpha1.PodGangEntry, anchorEpoch str
 // sub-step that rolls PCSG tail indices adds a single tail entry holding them. A sub-step that only subsumes
 // standalone PodClique pods into an existing anchor adds no entry. So a sub-step yields at most one entry,
 // returned with ok true, or ok false when it adds none.
-func (p *subStepPlanner) newHashEntryForSubStep(ss subStep) (grovecorev1alpha1.PodGangEntry, bool) {
+func (p *subStepPlanner) newHashEntryForSubStep(ss subStep) (grovecorev1beta1.PodGangEntry, bool) {
 	currentHash := *p.pcs.Status.CurrentGenerationHash
 
 	if ss.opensAnchor {
 		anchorEntry := newPodGangEntry(ss.epoch, currentHash, ss.dependsOn)
-		anchorEntry.Role = grovecorev1alpha1.PodGangEntryRoleAnchor
+		anchorEntry.Role = grovecorev1beta1.PodGangEntryRoleAnchor
 		anchorEntry.PodCliques = maps.Clone(p.mvu.standalonePCLQs)
 		anchorEntry.PCSGReplicaIndices = ss.anchorPCSGReplicaIndices
 		return anchorEntry, true
@@ -219,10 +218,10 @@ func (p *subStepPlanner) newHashEntryForSubStep(ss subStep) (grovecorev1alpha1.P
 		}
 	}
 	if len(tailPCSGReplicaIndices) == 0 {
-		return grovecorev1alpha1.PodGangEntry{}, false
+		return grovecorev1beta1.PodGangEntry{}, false
 	}
 	tailEntry := newPodGangEntry(ss.epoch, currentHash, ss.dependsOn)
-	tailEntry.Role = grovecorev1alpha1.PodGangEntryRoleTail
+	tailEntry.Role = grovecorev1beta1.PodGangEntryRoleTail
 	tailEntry.PCSGReplicaIndices = tailPCSGReplicaIndices
 	return tailEntry, true
 }

@@ -20,7 +20,7 @@ import (
 	"strings"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
@@ -37,9 +37,9 @@ import (
 )
 
 const (
-	errGetRoleBinding    grovecorev1alpha1.ErrorCode = "ERR_GET_ROLEBINDING"
-	errSyncRoleBinding   grovecorev1alpha1.ErrorCode = "ERR_SYNC_ROLEBINDING"
-	errDeleteRoleBinding grovecorev1alpha1.ErrorCode = "ERR_DELETE_ROLEBINDING"
+	errGetRoleBinding    grovecorev1beta1.ErrorCode = "ERR_GET_ROLEBINDING"
+	errSyncRoleBinding   grovecorev1beta1.ErrorCode = "ERR_SYNC_ROLEBINDING"
+	errDeleteRoleBinding grovecorev1beta1.ErrorCode = "ERR_DELETE_ROLEBINDING"
 )
 
 type _resource struct {
@@ -48,7 +48,7 @@ type _resource struct {
 }
 
 // New creates an instance of RoleBinding components operator.
-func New(client client.Client, scheme *runtime.Scheme) component.Operator[grovecorev1alpha1.PodCliqueSet] {
+func New(client client.Client, scheme *runtime.Scheme) component.Operator[grovecorev1beta1.PodCliqueSet] {
 	return &_resource{
 		client: client,
 		scheme: scheme,
@@ -77,7 +77,7 @@ func (r _resource) GetExistingResourceNames(ctx context.Context, _ logr.Logger, 
 }
 
 // Sync synchronizes all resources that the RoleBinding Operator manages.
-func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) error {
+func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet) error {
 	existingRoleBindingNames, err := r.GetExistingResourceNames(ctx, logger, pcs.ObjectMeta)
 	if err != nil {
 		return groveerr.WrapError(err,
@@ -131,7 +131,7 @@ func (r _resource) Delete(ctx context.Context, logger logr.Logger, pcsObjMeta me
 }
 
 // buildResource configures the RoleBinding linking ServiceAccount to Role.
-func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, roleBinding *rbacv1.RoleBinding) error {
+func (r _resource) buildResource(pcs *grovecorev1beta1.PodCliqueSet, roleBinding *rbacv1.RoleBinding) error {
 	roleBinding.Labels = getLabels(pcs.ObjectMeta)
 	if err := controllerutil.SetControllerReference(pcs, roleBinding, r.scheme); err != nil {
 		return groveerr.WrapError(err,

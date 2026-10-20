@@ -32,7 +32,7 @@ import (
 	"testing"
 
 	apiconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
-	grovev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/e2e/grove/podgangmap"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/pods"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
@@ -169,7 +169,7 @@ func waitForMigrationComplete(t *testing.T, tc *testctx.TestContext, pcsNsName t
 	t.Helper()
 	err := wait.PollUntilContextTimeout(t.Context(), defaultPollInterval, defaultPollTimeout, true,
 		func(ctx context.Context) (bool, error) {
-			pcs := &grovev1alpha1.PodCliqueSet{}
+			pcs := &grovev1beta1.PodCliqueSet{}
 			if err := tc.Client.Get(ctx, pcsNsName, pcs); err != nil {
 				return false, err
 			}

@@ -21,7 +21,7 @@ import (
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
@@ -38,9 +38,9 @@ import (
 )
 
 const (
-	errListHPA   grovecorev1alpha1.ErrorCode = "ERR_LIST_HPA"
-	errSyncHPA   grovecorev1alpha1.ErrorCode = "ERR_SYNC_HPA"
-	errDeleteHPA grovecorev1alpha1.ErrorCode = "ERR_DELETE_HPA"
+	errListHPA   grovecorev1beta1.ErrorCode = "ERR_LIST_HPA"
+	errSyncHPA   grovecorev1beta1.ErrorCode = "ERR_SYNC_HPA"
+	errDeleteHPA grovecorev1beta1.ErrorCode = "ERR_DELETE_HPA"
 )
 
 type _resource struct {
@@ -49,7 +49,7 @@ type _resource struct {
 }
 
 // New creates an instance of HPA components operator.
-func New(client client.Client, scheme *runtime.Scheme) component.Operator[grovecorev1alpha1.PodCliqueSet] {
+func New(client client.Client, scheme *runtime.Scheme) component.Operator[grovecorev1beta1.PodCliqueSet] {
 	return &_resource{
 		client: client,
 		scheme: scheme,
@@ -76,7 +76,7 @@ func (r _resource) GetExistingResourceNames(ctx context.Context, logger logr.Log
 }
 
 // Sync synchronizes all resources that the HPA Operator manages.
-func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) error {
+func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet) error {
 	existingHPANames, err := r.GetExistingResourceNames(ctx, logger, pcs.ObjectMeta)
 	if err != nil {
 		return err
@@ -121,11 +121,11 @@ type hpaInfo struct {
 	objectKey               client.ObjectKey
 	targetScaleResourceKind string
 	targetScaleResourceName string
-	scaleConfig             grovecorev1alpha1.AutoScalingConfig
+	scaleConfig             grovecorev1beta1.AutoScalingConfig
 }
 
 // computeExpectedHPAs calculates the set of HPAs that should exist for the PodCliqueSet.
-func (r _resource) computeExpectedHPAs(pcs *grovecorev1alpha1.PodCliqueSet) []hpaInfo {
+func (r _resource) computeExpectedHPAs(pcs *grovecorev1beta1.PodCliqueSet) []hpaInfo {
 	expectedHPAInfos := make([]hpaInfo, 0, (len(pcs.Spec.Template.Cliques)+len(pcs.Spec.Template.PodCliqueScalingGroupConfigs))*int(pcs.Spec.Replicas))
 	for replicaIndex := range pcs.Spec.Replicas {
 		// compute expected HPA for PodCliques with individual HPAs attached to them
@@ -166,7 +166,7 @@ func (r _resource) computeExpectedHPAs(pcs *grovecorev1alpha1.PodCliqueSet) []hp
 }
 
 // createOrUpdateHPATasks generates tasks to create or update HPAs.
-func (r _resource) createOrUpdateHPATasks(logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, expectedHPAInfos []hpaInfo) []utils.Task {
+func (r _resource) createOrUpdateHPATasks(logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, expectedHPAInfos []hpaInfo) []utils.Task {
 	createOrUpdateTasks := make([]utils.Task, 0, len(expectedHPAInfos))
 	for _, expectedHPAInfo := range expectedHPAInfos {
 		task := utils.Task{
@@ -182,7 +182,7 @@ func (r _resource) createOrUpdateHPATasks(logger logr.Logger, pcs *grovecorev1al
 }
 
 // deleteExcessHPATasks generates tasks to delete HPAs that are no longer needed.
-func (r _resource) deleteExcessHPATasks(logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, existingHPANames []string, expectedHPAInfos []hpaInfo) []utils.Task {
+func (r _resource) deleteExcessHPATasks(logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, existingHPANames []string, expectedHPAInfos []hpaInfo) []utils.Task {
 	deleteTasks := make([]utils.Task, 0)
 	expectedHPANames := lo.Map(expectedHPAInfos, func(h hpaInfo, _ int) string {
 		return h.objectKey.Name
@@ -208,7 +208,7 @@ func (r _resource) deleteExcessHPATasks(logger logr.Logger, pcs *grovecorev1alph
 }
 
 // doCreateOrUpdateHPA creates or updates a single HPA resource.
-func (r _resource) doCreateOrUpdateHPA(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, expectedHPAInfo hpaInfo) error {
+func (r _resource) doCreateOrUpdateHPA(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, expectedHPAInfo hpaInfo) error {
 	logger.V(1).Info("Running CreateOrUpdate HPA", "targetScaleResourceKind", expectedHPAInfo.targetScaleResourceKind, "targetScaleResourceName", expectedHPAInfo.targetScaleResourceName, "hpaObjectKey", expectedHPAInfo.objectKey)
 	hpa := emptyHPA(expectedHPAInfo.objectKey)
 	opResult, err := k8sutils.CreateOrPatchSpec(ctx, r.client, hpa, func() error {
@@ -244,14 +244,14 @@ func (r _resource) doDeleteHPA(ctx context.Context, logger logr.Logger, pcsObjec
 }
 
 // buildResource configures an HPA with the desired state.
-func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, hpa *autoscalingv2.HorizontalPodAutoscaler, expectedHPAInfo hpaInfo) error {
+func (r _resource) buildResource(pcs *grovecorev1beta1.PodCliqueSet, hpa *autoscalingv2.HorizontalPodAutoscaler, expectedHPAInfo hpaInfo) error {
 	// MinReplicas is always set by defaulting webhook
 	hpa.Spec.MinReplicas = expectedHPAInfo.scaleConfig.MinReplicas
 	hpa.Spec.MaxReplicas = expectedHPAInfo.scaleConfig.MaxReplicas
 	hpa.Spec.ScaleTargetRef = autoscalingv2.CrossVersionObjectReference{
 		Kind:       expectedHPAInfo.targetScaleResourceKind,
 		Name:       expectedHPAInfo.targetScaleResourceName,
-		APIVersion: grovecorev1alpha1.SchemeGroupVersion.String(),
+		APIVersion: grovecorev1beta1.SchemeGroupVersion.String(),
 	}
 	hpa.Spec.Metrics = expectedHPAInfo.scaleConfig.Metrics
 	hpa.Labels = getLabels(pcs.Name, hpa.Name)

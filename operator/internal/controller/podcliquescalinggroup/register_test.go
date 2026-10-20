@@ -17,7 +17,7 @@ package podcliquescalinggroup
 import (
 	"testing"
 
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/stretchr/testify/assert"
@@ -38,12 +38,12 @@ func TestPodGangMapPredicate(t *testing.T) {
 	pred, ok := podGangMapPredicate().(predicate.Funcs)
 	require.True(t, ok, "predicate must be predicate.Funcs")
 
-	pgmWith := func(entries ...grovecorev1alpha1.PodGangEntry) *grovecorev1alpha1.PodGangMap {
+	pgmWith := func(entries ...grovecorev1beta1.PodGangEntry) *grovecorev1beta1.PodGangMap {
 		return testutils.NewPodGangMapBuilder(pcsName, ns, "pcs-uid", 0).WithEntries(entries...).Build()
 	}
-	anchor := func(epoch string, indices map[string][]int32) grovecorev1alpha1.PodGangEntry {
+	anchor := func(epoch string, indices map[string][]int32) grovecorev1beta1.PodGangEntry {
 		return testutils.NewPodGangEntryBuilder(hash, epoch).
-			WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).
+			WithRole(grovecorev1beta1.PodGangEntryRoleAnchor).
 			WithPCSGReplicaIndices(indices).
 			Build()
 	}
@@ -51,8 +51,8 @@ func TestPodGangMapPredicate(t *testing.T) {
 	tests := []struct {
 		name     string
 		isCreate bool
-		old      *grovecorev1alpha1.PodGangMap
-		new      *grovecorev1alpha1.PodGangMap
+		old      *grovecorev1beta1.PodGangMap
+		new      *grovecorev1beta1.PodGangMap
 		want     bool
 	}{
 		{
@@ -91,11 +91,11 @@ func TestPodGangMapPredicate(t *testing.T) {
 		{
 			name: "only standalone PodClique counts change does not fire",
 			old: pgmWith(testutils.NewPodGangEntryBuilder(hash, "100").
-				WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).
+				WithRole(grovecorev1beta1.PodGangEntryRoleAnchor).
 				WithPodCliques(map[string]int32{"frontend": 6}).
 				WithPCSGReplicaIndices(map[string][]int32{"sga": {0, 1, 2}}).Build()),
 			new: pgmWith(testutils.NewPodGangEntryBuilder(hash, "100").
-				WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).
+				WithRole(grovecorev1beta1.PodGangEntryRoleAnchor).
 				WithPodCliques(map[string]int32{"frontend": 3}).
 				WithPCSGReplicaIndices(map[string][]int32{"sga": {0, 1, 2}}).Build()),
 			want: false,
@@ -123,10 +123,10 @@ func TestMapPodGangMapToPCSGs(t *testing.T) {
 
 	pgm := testutils.NewPodGangMapBuilder(pcsName, ns, "pcs-uid", 0).WithEntries(
 		testutils.NewPodGangEntryBuilder(hash, "100").
-			WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).
+			WithRole(grovecorev1beta1.PodGangEntryRoleAnchor).
 			WithPCSGReplicaIndices(map[string][]int32{"sga": {0, 1}, "sgb": {0}}).Build(),
 		testutils.NewPodGangEntryBuilder(hash, "200").
-			WithRole(grovecorev1alpha1.PodGangEntryRoleTail).
+			WithRole(grovecorev1beta1.PodGangEntryRoleTail).
 			WithPCSGReplicaIndices(map[string][]int32{"sga": {2}}).Build(),
 	).Build()
 

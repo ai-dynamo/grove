@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"net/http"
 
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	"github.com/ai-dynamo/grove/operator/internal/webhook/admission/scaleguard"
@@ -83,7 +82,7 @@ func (h *Handler) Handle(ctx context.Context, req admission.Request) admission.R
 			return admission.Denied(err.Error())
 		}
 	}
-	return scaleguard.Handle(ctx, req, h.client, h.logger, &grovecorev1alpha1.PodClique{})
+	return scaleguard.Handle(ctx, req, h.client, h.logger, &grovecorev1beta1.PodClique{})
 }
 
 // decodeReplicas returns the replica counts the request moves between. The scale subresource admits
@@ -109,16 +108,15 @@ func (h *Handler) decodeReplicas(req admission.Request) (int32, int32, error) {
 // immutable on a live PodClique, so trusting it would let one request switch to a permissive backend
 // and scale at the same time.
 func (h *Handler) resolveBackend(ctx context.Context, req admission.Request) (scheduler.Backend, error) {
+	pclq := &grovecorev1beta1.PodClique{}
 	if req.SubResource == scaleSubResource {
-		pclq := &grovecorev1alpha1.PodClique{}
 		if err := h.client.Get(ctx, client.ObjectKey{Namespace: req.Namespace, Name: req.Name}, pclq); err != nil {
 			return nil, fmt.Errorf("failed to get PodClique to resolve its scheduler backend: %w", err)
 		}
-		return h.schedRegistry.GetOrDefault(pclq.Spec.PodSpec.SchedulerName), nil
-	}
-	pclq := &grovecorev1beta1.PodClique{}
-	if err := h.decoder.DecodeRaw(req.OldObject, pclq); err != nil {
-		return nil, fmt.Errorf("failed to decode PodClique to resolve its scheduler backend: %w", err)
+	} else {
+		if err := h.decoder.DecodeRaw(req.OldObject, pclq); err != nil {
+			return nil, fmt.Errorf("failed to decode PodClique to resolve its scheduler backend: %w", err)
+		}
 	}
 	return h.schedRegistry.GetOrDefault(pclq.Spec.PodSpec.SchedulerName), nil
 }

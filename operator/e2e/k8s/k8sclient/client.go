@@ -21,7 +21,7 @@ import (
 	"fmt"
 	"reflect"
 
-	corev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	corev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/e2e/waiter"
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	kaitopologyv1alpha1 "github.com/kai-scheduler/KAI-scheduler/pkg/apis/kai/v1alpha1"
@@ -53,7 +53,7 @@ type Client struct {
 // schemeBuilder registers all types needed by e2e tests.
 var schemeBuilder = runtime.SchemeBuilder{
 	clientgoscheme.AddToScheme,
-	corev1alpha1.AddToScheme,
+	corev1beta1.AddToScheme,
 	groveschedulerv1alpha1.AddToScheme,
 	kaischedulingv2alpha2.AddToScheme,
 	kaitopologyv1alpha1.AddToScheme,

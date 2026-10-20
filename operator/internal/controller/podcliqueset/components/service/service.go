@@ -20,7 +20,7 @@ import (
 	"strconv"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
@@ -36,8 +36,8 @@ import (
 )
 
 const (
-	errSyncPodCliqueSetService   grovecorev1alpha1.ErrorCode = "ERR_SYNC_PODCLIQUESET_SERVICE"
-	errDeletePodCliqueSetService grovecorev1alpha1.ErrorCode = "ERR_DELETE_PODCLIQUESET_SERVICE"
+	errSyncPodCliqueSetService   grovecorev1beta1.ErrorCode = "ERR_SYNC_PODCLIQUESET_SERVICE"
+	errDeletePodCliqueSetService grovecorev1beta1.ErrorCode = "ERR_DELETE_PODCLIQUESET_SERVICE"
 )
 
 type _resource struct {
@@ -46,7 +46,7 @@ type _resource struct {
 }
 
 // New creates a new Service operator for managing Service resources within PodCliqueSets
-func New(client client.Client, scheme *runtime.Scheme) component.Operator[grovecorev1alpha1.PodCliqueSet] {
+func New(client client.Client, scheme *runtime.Scheme) component.Operator[grovecorev1beta1.PodCliqueSet] {
 	return &_resource{
 		client: client,
 		scheme: scheme,
@@ -72,7 +72,7 @@ func (r _resource) GetExistingResourceNames(ctx context.Context, logger logr.Log
 }
 
 // Sync synchronizes all resources that the Service Operator manages.
-func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) error {
+func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet) error {
 	replicaIndexToObjectKeys := getObjectKeys(pcs)
 	tasks := make([]utils.Task, 0, len(replicaIndexToObjectKeys))
 	for replicaIndex, objectKey := range replicaIndexToObjectKeys {
@@ -113,7 +113,7 @@ func (r _resource) Delete(ctx context.Context, logger logr.Logger, pgObjMeta met
 }
 
 // doCreateOrUpdate creates or updates a single headless Service.
-func (r _resource) doCreateOrUpdate(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, pcsReplicaIndex int, svcObjectKey client.ObjectKey) error {
+func (r _resource) doCreateOrUpdate(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, pcsReplicaIndex int, svcObjectKey client.ObjectKey) error {
 	logger.V(1).Info("Running CreateOrUpdate PodCliqueSet Headless Service", "pcsReplicaIndex", pcsReplicaIndex, "objectKey", svcObjectKey)
 	svc := emptyService(svcObjectKey)
 	opResult, err := k8sutils.CreateOrPatchSpec(ctx, r.client, svc, func() error {
@@ -131,7 +131,7 @@ func (r _resource) doCreateOrUpdate(ctx context.Context, logger logr.Logger, pcs
 }
 
 // buildResource configures a headless Service for a PCS replica.
-func (r _resource) buildResource(svc *corev1.Service, pcs *grovecorev1alpha1.PodCliqueSet, pcsReplicaIndex int) error {
+func (r _resource) buildResource(svc *corev1.Service, pcs *grovecorev1beta1.PodCliqueSet, pcsReplicaIndex int) error {
 	svc.Labels = getLabels(pcs.Name, client.ObjectKeyFromObject(svc), pcsReplicaIndex)
 	var publishNotReadyAddresses bool
 	if pcs.Spec.Template.HeadlessServiceConfig != nil {
@@ -185,7 +185,7 @@ func getSelectorLabelsForAllHeadlessServices(pcsName string) map[string]string {
 }
 
 // getObjectKeys constructs object keys for all headless Services across PCS replicas.
-func getObjectKeys(pcs *grovecorev1alpha1.PodCliqueSet) []client.ObjectKey {
+func getObjectKeys(pcs *grovecorev1beta1.PodCliqueSet) []client.ObjectKey {
 	objectKeys := make([]client.ObjectKey, 0, pcs.Spec.Replicas)
 	for replicaIndex := range pcs.Spec.Replicas {
 		serviceName := apicommon.GenerateHeadlessServiceName(apicommon.ResourceNameReplica{Name: pcs.Name, Replica: int(replicaIndex)})

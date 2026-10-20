@@ -21,7 +21,7 @@ import (
 	"strconv"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/resourceclaim"
@@ -36,8 +36,8 @@ import (
 )
 
 const (
-	errSyncPCSResourceClaim   grovecorev1alpha1.ErrorCode = "ERR_SYNC_PCS_RESOURCE_CLAIM"
-	errDeletePCSResourceClaim grovecorev1alpha1.ErrorCode = "ERR_DELETE_PCS_RESOURCE_CLAIM"
+	errSyncPCSResourceClaim   grovecorev1beta1.ErrorCode = "ERR_SYNC_PCS_RESOURCE_CLAIM"
+	errDeletePCSResourceClaim grovecorev1beta1.ErrorCode = "ERR_DELETE_PCS_RESOURCE_CLAIM"
 )
 
 type _resource struct {
@@ -46,7 +46,7 @@ type _resource struct {
 }
 
 // New creates a new ResourceClaim operator for managing PCS-level ResourceClaims.
-func New(client client.Client, scheme *runtime.Scheme) component.Operator[grovecorev1alpha1.PodCliqueSet] {
+func New(client client.Client, scheme *runtime.Scheme) component.Operator[grovecorev1beta1.PodCliqueSet] {
 	return &_resource{
 		client: client,
 		scheme: scheme,
@@ -74,7 +74,7 @@ func (r _resource) GetExistingResourceNames(ctx context.Context, logger logr.Log
 
 // Sync creates or patches PCS-level ResourceClaims (AllReplicas + PerReplica)
 // and cleans up stale RCs from previous scale-in operations.
-func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) error {
+func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet) error {
 	if len(pcs.Spec.Template.ResourceSharing) == 0 {
 		return nil
 	}
@@ -141,7 +141,7 @@ func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev
 // belong to PCS replicas that no longer exist after a scale-in.
 // Uses LabelPodCliqueSetReplicaIndex for the NotIn selector, which only matches
 // PCS-level RCs (PCSG/PCLQ-level RCs use different label keys).
-func (r _resource) cleanupStaleResourceClaims(ctx context.Context, _ logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) error {
+func (r _resource) cleanupStaleResourceClaims(ctx context.Context, _ logr.Logger, pcs *grovecorev1beta1.PodCliqueSet) error {
 	labels := resourceclaim.ResourceClaimLabels(pcs.Name)
 	if err := resourceclaim.CleanupStalePerReplicaRCs(
 		ctx, r.client,

@@ -19,7 +19,7 @@ import (
 	"testing"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
@@ -165,7 +165,7 @@ func TestMapPodGangToDependentPodGangs(t *testing.T) {
 		WithEntries(
 			testutils.NewAnchorEntry("hash", anchorEpoch, "sg", 0),
 			testutils.NewPodGangEntryBuilder("hash", tailEpoch).
-				WithRole(grovecorev1alpha1.PodGangEntryRoleTail).
+				WithRole(grovecorev1beta1.PodGangEntryRoleTail).
 				WithPCSGReplicaIndices(map[string][]int32{"sg": {1, 2}}).
 				WithDependsOn(anchorEpoch).
 				Build(),

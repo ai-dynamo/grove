@@ -21,8 +21,7 @@ import (
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	apiconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
-
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/go-logr/logr"
 	"github.com/samber/lo"
 	"github.com/stretchr/testify/assert"
@@ -43,7 +42,7 @@ import (
 func TestGetMinAvailableBreachedPCSGInfoGangTerminationGate(t *testing.T) {
 	pastTransition := metav1.NewTime(time.Now().Add(-1 * time.Hour))
 	now := time.Now()
-	breachTolerance := func(*grovecorev1alpha1.PodCliqueScalingGroup) time.Duration { return 10 * time.Second }
+	breachTolerance := func(*grovecorev1beta1.PodCliqueScalingGroup) time.Duration { return 10 * time.Second }
 
 	breachedTrue := metav1.Condition{
 		Type:               apiconstants.ConditionTypeMinAvailableBreached,
@@ -60,14 +59,14 @@ func TestGetMinAvailableBreachedPCSGInfoGangTerminationGate(t *testing.T) {
 
 	tests := []struct {
 		name       string
-		pcsg       grovecorev1alpha1.PodCliqueScalingGroup
+		pcsg       grovecorev1beta1.PodCliqueScalingGroup
 		wantInList bool
 	}{
 		{
 			name: "breached, no in-progress flag — candidate for fire",
-			pcsg: grovecorev1alpha1.PodCliqueScalingGroup{
+			pcsg: grovecorev1beta1.PodCliqueScalingGroup{
 				ObjectMeta: metav1.ObjectMeta{Name: "pcsg-fresh-breach"},
-				Status: grovecorev1alpha1.PodCliqueScalingGroupStatus{
+				Status: grovecorev1beta1.PodCliqueScalingGroupStatus{
 					Conditions: []metav1.Condition{breachedTrue},
 				},
 			},
@@ -75,9 +74,9 @@ func TestGetMinAvailableBreachedPCSGInfoGangTerminationGate(t *testing.T) {
 		},
 		{
 			name: "breached AND in-progress flag set — skipped (recycle in flight)",
-			pcsg: grovecorev1alpha1.PodCliqueScalingGroup{
+			pcsg: grovecorev1beta1.PodCliqueScalingGroup{
 				ObjectMeta: metav1.ObjectMeta{Name: "pcsg-recycling"},
-				Status: grovecorev1alpha1.PodCliqueScalingGroupStatus{
+				Status: grovecorev1beta1.PodCliqueScalingGroupStatus{
 					Conditions: []metav1.Condition{breachedTrue, inProgressTrue},
 				},
 			},
@@ -85,9 +84,9 @@ func TestGetMinAvailableBreachedPCSGInfoGangTerminationGate(t *testing.T) {
 		},
 		{
 			name: "not breached, in-progress flag still set — skipped (no action needed)",
-			pcsg: grovecorev1alpha1.PodCliqueScalingGroup{
+			pcsg: grovecorev1beta1.PodCliqueScalingGroup{
 				ObjectMeta: metav1.ObjectMeta{Name: "pcsg-recovered-but-stale-flag"},
-				Status: grovecorev1alpha1.PodCliqueScalingGroupStatus{
+				Status: grovecorev1beta1.PodCliqueScalingGroupStatus{
 					Conditions: []metav1.Condition{
 						{Type: apiconstants.ConditionTypeMinAvailableBreached, Status: metav1.ConditionFalse, LastTransitionTime: pastTransition},
 						inProgressTrue,
@@ -98,19 +97,19 @@ func TestGetMinAvailableBreachedPCSGInfoGangTerminationGate(t *testing.T) {
 		},
 		{
 			name: "no MinAvailableBreached condition at all — skipped",
-			pcsg: grovecorev1alpha1.PodCliqueScalingGroup{
+			pcsg: grovecorev1beta1.PodCliqueScalingGroup{
 				ObjectMeta: metav1.ObjectMeta{Name: "pcsg-fresh"},
 			},
 			wantInList: false,
 		},
 		{
 			name: "breached but never healthy (initial startup) — skipped by wasHealthy gate",
-			pcsg: grovecorev1alpha1.PodCliqueScalingGroup{
+			pcsg: grovecorev1beta1.PodCliqueScalingGroup{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:              "pcsg-initial-startup",
 					CreationTimestamp: metav1.NewTime(now.Add(-2 * time.Second)),
 				},
-				Status: grovecorev1alpha1.PodCliqueScalingGroupStatus{
+				Status: grovecorev1beta1.PodCliqueScalingGroupStatus{
 					Conditions: []metav1.Condition{
 						{
 							Type:               apiconstants.ConditionTypeMinAvailableBreached,
@@ -127,7 +126,7 @@ func TestGetMinAvailableBreachedPCSGInfoGangTerminationGate(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			names, _ := getMinAvailableBreachedPCSGInfo([]grovecorev1alpha1.PodCliqueScalingGroup{tc.pcsg}, breachTolerance, now)
+			names, _ := getMinAvailableBreachedPCSGInfo([]grovecorev1beta1.PodCliqueScalingGroup{tc.pcsg}, breachTolerance, now)
 			if tc.wantInList {
 				assert.Equal(t, []string{tc.pcsg.Name}, names, "expected PCSG in breach candidate list")
 			} else {
@@ -144,9 +143,9 @@ func TestGetMinAvailableBreachedPCSGInfoGangTerminationGate(t *testing.T) {
 // would leave sg-a breached, freshly flagged, and never recycled (permanent suppression).
 func TestCreatePCSReplicaDeleteTaskIgnoresStaleSiblingFlag(t *testing.T) {
 	scheme := runtime.NewScheme()
-	require.NoError(t, grovecorev1alpha1.AddToScheme(scheme))
+	require.NoError(t, grovecorev1beta1.AddToScheme(scheme))
 
-	pcs := &grovecorev1alpha1.PodCliqueSet{
+	pcs := &grovecorev1beta1.PodCliqueSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "pcs", Namespace: "default"},
 	}
 	replicaLabels := lo.Assign(
@@ -154,12 +153,12 @@ func TestCreatePCSReplicaDeleteTaskIgnoresStaleSiblingFlag(t *testing.T) {
 		map[string]string{apicommon.LabelPodCliqueSetReplicaIndex: "0"},
 	)
 
-	sgA := &grovecorev1alpha1.PodCliqueScalingGroup{
+	sgA := &grovecorev1beta1.PodCliqueScalingGroup{
 		ObjectMeta: metav1.ObjectMeta{Name: "pcs-0-sg-a", Namespace: "default", Labels: replicaLabels},
 	}
-	sgB := &grovecorev1alpha1.PodCliqueScalingGroup{
+	sgB := &grovecorev1beta1.PodCliqueScalingGroup{
 		ObjectMeta: metav1.ObjectMeta{Name: "pcs-0-sg-b", Namespace: "default", Labels: replicaLabels},
-		Status: grovecorev1alpha1.PodCliqueScalingGroupStatus{
+		Status: grovecorev1beta1.PodCliqueScalingGroupStatus{
 			Conditions: []metav1.Condition{{
 				Type:               apiconstants.ConditionTypeGangTerminationInProgress,
 				Status:             metav1.ConditionTrue,
@@ -168,14 +167,14 @@ func TestCreatePCSReplicaDeleteTaskIgnoresStaleSiblingFlag(t *testing.T) {
 			}},
 		},
 	}
-	pclq := &grovecorev1alpha1.PodClique{
+	pclq := &grovecorev1beta1.PodClique{
 		ObjectMeta: metav1.ObjectMeta{Name: "pcs-0-sg-a-pc-x", Namespace: "default", Labels: replicaLabels},
 	}
 
 	cl := fake.NewClientBuilder().
 		WithScheme(scheme).
 		WithObjects(pcs, sgA, sgB, pclq).
-		WithStatusSubresource(&grovecorev1alpha1.PodCliqueScalingGroup{}).
+		WithStatusSubresource(&grovecorev1beta1.PodCliqueScalingGroup{}).
 		Build()
 	r := _resource{client: cl, eventRecorder: record.NewFakeRecorder(10)}
 
@@ -183,13 +182,13 @@ func TestCreatePCSReplicaDeleteTaskIgnoresStaleSiblingFlag(t *testing.T) {
 	require.NoError(t, task.Fn(context.Background()))
 
 	// The delete must have run despite sg-b's stale flag.
-	pclqList := &grovecorev1alpha1.PodCliqueList{}
+	pclqList := &grovecorev1beta1.PodCliqueList{}
 	require.NoError(t, cl.List(context.Background(), pclqList, client.InNamespace("default"), client.MatchingLabels(replicaLabels)))
 	assert.Empty(t, pclqList.Items, "PodCliques must be deleted even when a sibling PCSG carries a stale GangTerminationInProgress flag")
 
 	// Both PCSGs end up flagged: sg-a freshly, sg-b unchanged.
 	for _, name := range []string{sgA.Name, sgB.Name} {
-		got := &grovecorev1alpha1.PodCliqueScalingGroup{}
+		got := &grovecorev1beta1.PodCliqueScalingGroup{}
 		require.NoError(t, cl.Get(context.Background(), client.ObjectKey{Name: name, Namespace: "default"}, got))
 		assert.True(t, meta.IsStatusConditionTrue(got.Status.Conditions, apiconstants.ConditionTypeGangTerminationInProgress), "expected %s to carry GangTerminationInProgress", name)
 	}
@@ -200,32 +199,32 @@ func TestCreatePCSReplicaDeleteTaskIgnoresStaleSiblingFlag(t *testing.T) {
 // must bootstrap fresh rather than keep a structure a past coherent update may have left behind.
 func TestCreatePCSReplicaDeleteTaskDeletesPodGangMap(t *testing.T) {
 	scheme := runtime.NewScheme()
-	require.NoError(t, grovecorev1alpha1.AddToScheme(scheme))
+	require.NoError(t, grovecorev1beta1.AddToScheme(scheme))
 
-	pcs := &grovecorev1alpha1.PodCliqueSet{ObjectMeta: metav1.ObjectMeta{Name: "pcs", Namespace: "default"}}
+	pcs := &grovecorev1beta1.PodCliqueSet{ObjectMeta: metav1.ObjectMeta{Name: "pcs", Namespace: "default"}}
 	replicaLabels := lo.Assign(
 		apicommon.GetDefaultLabelsForPodCliqueSetManagedResources(pcs.Name),
 		map[string]string{apicommon.LabelPodCliqueSetReplicaIndex: "0"},
 	)
-	pclq := &grovecorev1alpha1.PodClique{ObjectMeta: metav1.ObjectMeta{Name: "pcs-0-pc-a", Namespace: "default", Labels: replicaLabels}}
+	pclq := &grovecorev1beta1.PodClique{ObjectMeta: metav1.ObjectMeta{Name: "pcs-0-pc-a", Namespace: "default", Labels: replicaLabels}}
 	pgmName := apicommon.GeneratePodGangMapName(apicommon.ResourceNameReplica{Name: pcs.Name, Replica: 0})
-	pgm := &grovecorev1alpha1.PodGangMap{ObjectMeta: metav1.ObjectMeta{Name: pgmName, Namespace: "default"}}
+	pgm := &grovecorev1beta1.PodGangMap{ObjectMeta: metav1.ObjectMeta{Name: pgmName, Namespace: "default"}}
 
 	cl := fake.NewClientBuilder().
 		WithScheme(scheme).
 		WithObjects(pcs, pclq, pgm).
-		WithStatusSubresource(&grovecorev1alpha1.PodCliqueScalingGroup{}).
+		WithStatusSubresource(&grovecorev1beta1.PodCliqueScalingGroup{}).
 		Build()
 	r := _resource{client: cl, eventRecorder: record.NewFakeRecorder(10)}
 
 	require.NoError(t, r.createPCSReplicaDeleteTask(logr.Discard(), pcs, 0, "full replica gang termination").Fn(context.Background()))
 
 	// PodCliques of the replica are deleted.
-	pclqList := &grovecorev1alpha1.PodCliqueList{}
+	pclqList := &grovecorev1beta1.PodCliqueList{}
 	require.NoError(t, cl.List(context.Background(), pclqList, client.InNamespace("default"), client.MatchingLabels(replicaLabels)))
 	assert.Empty(t, pclqList.Items)
 
 	// The replica's PodGangMap is deleted so the next reconcile bootstraps a fresh one.
-	err := cl.Get(context.Background(), client.ObjectKey{Name: pgmName, Namespace: "default"}, &grovecorev1alpha1.PodGangMap{})
+	err := cl.Get(context.Background(), client.ObjectKey{Name: pgmName, Namespace: "default"}, &grovecorev1beta1.PodGangMap{})
 	assert.True(t, apierrors.IsNotFound(err), "expected PodGangMap to be deleted, got %v", err)
 }

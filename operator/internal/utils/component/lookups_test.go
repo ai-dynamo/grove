@@ -17,8 +17,7 @@ package component
 import (
 	"testing"
 
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
-
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	"github.com/stretchr/testify/assert"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -28,13 +27,13 @@ import (
 func TestPodCliqueByName(t *testing.T) {
 	testCases := []struct {
 		description string
-		pclqs       []grovecorev1alpha1.PodClique
+		pclqs       []grovecorev1beta1.PodClique
 		wantNames   []string
 	}{
 		{description: "nil slice yields empty map"},
 		{
 			description: "maps each PodClique by its name",
-			pclqs: []grovecorev1alpha1.PodClique{
+			pclqs: []grovecorev1beta1.PodClique{
 				{ObjectMeta: metav1.ObjectMeta{Name: "prefill"}},
 				{ObjectMeta: metav1.ObjectMeta{Name: "decode"}},
 			},
@@ -57,13 +56,13 @@ func TestPodCliqueByName(t *testing.T) {
 func TestPodCliqueNameSet(t *testing.T) {
 	testCases := []struct {
 		description string
-		pclqs       []grovecorev1alpha1.PodClique
+		pclqs       []grovecorev1beta1.PodClique
 		wantNames   []string
 	}{
 		{description: "nil slice yields empty set"},
 		{
 			description: "collects each PodClique name",
-			pclqs: []grovecorev1alpha1.PodClique{
+			pclqs: []grovecorev1beta1.PodClique{
 				{ObjectMeta: metav1.ObjectMeta{Name: "prefill"}},
 				{ObjectMeta: metav1.ObjectMeta{Name: "decode"}},
 			},

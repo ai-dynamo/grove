@@ -18,8 +18,7 @@ import (
 	"context"
 	"testing"
 
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
-
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	resourcev1 "k8s.io/api/resource/v1"
@@ -30,7 +29,7 @@ import (
 
 func newTestScheme() *runtime.Scheme {
 	scheme := runtime.NewScheme()
-	_ = grovecorev1alpha1.AddToScheme(scheme)
+	_ = grovecorev1beta1.AddToScheme(scheme)
 	_ = resourcev1.AddToScheme(scheme)
 	return scheme
 }
@@ -39,8 +38,8 @@ func TestResolveTemplateSpec_InternalMatch(t *testing.T) {
 	scheme := newTestScheme()
 	cl := fake.NewClientBuilder().WithScheme(scheme).Build()
 
-	ref := &grovecorev1alpha1.ResourceSharingSpec{Name: "gpu-mps"}
-	templates := []grovecorev1alpha1.ResourceClaimTemplateConfig{
+	ref := &grovecorev1beta1.ResourceSharingSpec{Name: "gpu-mps"}
+	templates := []grovecorev1beta1.ResourceClaimTemplateConfig{
 		{
 			Name: "gpu-mps",
 			TemplateSpec: resourcev1.ResourceClaimTemplateSpec{
@@ -75,8 +74,8 @@ func TestResolveTemplateSpec_InternalShadowsExternal(t *testing.T) {
 	}
 	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(externalRCT).Build()
 
-	ref := &grovecorev1alpha1.ResourceSharingSpec{Name: "gpu-mps"}
-	internalTemplates := []grovecorev1alpha1.ResourceClaimTemplateConfig{
+	ref := &grovecorev1beta1.ResourceSharingSpec{Name: "gpu-mps"}
+	internalTemplates := []grovecorev1beta1.ResourceClaimTemplateConfig{
 		{
 			Name: "gpu-mps",
 			TemplateSpec: resourcev1.ResourceClaimTemplateSpec{
@@ -109,8 +108,8 @@ func TestResolveTemplateSpec_ExternalFallback(t *testing.T) {
 	}
 	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(externalRCT).Build()
 
-	ref := &grovecorev1alpha1.ResourceSharingSpec{Name: "gpu-mps"}
-	emptyInternal := []grovecorev1alpha1.ResourceClaimTemplateConfig{}
+	ref := &grovecorev1beta1.ResourceSharingSpec{Name: "gpu-mps"}
+	emptyInternal := []grovecorev1beta1.ResourceClaimTemplateConfig{}
 
 	spec, err := ResolveTemplateSpec(context.Background(), cl, ref, emptyInternal, "default")
 	require.NoError(t, err)
@@ -132,8 +131,8 @@ func TestResolveTemplateSpec_ExternalWithExplicitNamespace(t *testing.T) {
 	}
 	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(externalRCT).Build()
 
-	ref := &grovecorev1alpha1.ResourceSharingSpec{Name: "gpu-mps", Namespace: "other-ns"}
-	emptyInternal := []grovecorev1alpha1.ResourceClaimTemplateConfig{}
+	ref := &grovecorev1beta1.ResourceSharingSpec{Name: "gpu-mps", Namespace: "other-ns"}
+	emptyInternal := []grovecorev1beta1.ResourceClaimTemplateConfig{}
 
 	spec, err := ResolveTemplateSpec(context.Background(), cl, ref, emptyInternal, "default")
 	require.NoError(t, err)
@@ -144,8 +143,8 @@ func TestResolveTemplateSpec_NotFound(t *testing.T) {
 	scheme := newTestScheme()
 	cl := fake.NewClientBuilder().WithScheme(scheme).Build()
 
-	ref := &grovecorev1alpha1.ResourceSharingSpec{Name: "nonexistent"}
-	emptyInternal := []grovecorev1alpha1.ResourceClaimTemplateConfig{}
+	ref := &grovecorev1beta1.ResourceSharingSpec{Name: "nonexistent"}
+	emptyInternal := []grovecorev1beta1.ResourceClaimTemplateConfig{}
 
 	spec, err := ResolveTemplateSpec(context.Background(), cl, ref, emptyInternal, "default")
 	assert.Error(t, err)

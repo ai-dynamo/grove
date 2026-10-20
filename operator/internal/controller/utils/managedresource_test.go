@@ -18,8 +18,7 @@ import (
 	"testing"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
-
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/stretchr/testify/assert"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/uuid"
@@ -140,7 +139,7 @@ func TestIsManagedPodClique(t *testing.T) {
 	}{
 		{
 			description: "should return true when PodClique is managed by Grove with correct owner",
-			obj: &grovecorev1alpha1.PodClique{
+			obj: &grovecorev1beta1.PodClique{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "managed-pclq",
 					Namespace: "test-ns",
@@ -157,7 +156,7 @@ func TestIsManagedPodClique(t *testing.T) {
 		},
 		{
 			description: "should return false when PodClique is not managed by Grove",
-			obj: &grovecorev1alpha1.PodClique{
+			obj: &grovecorev1beta1.PodClique{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "unmanaged-pclq",
 					Namespace: "test-ns",
@@ -174,7 +173,7 @@ func TestIsManagedPodClique(t *testing.T) {
 		},
 		{
 			description: "should return false when PodClique has wrong owner kind",
-			obj: &grovecorev1alpha1.PodClique{
+			obj: &grovecorev1beta1.PodClique{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "wrong-owner-pclq",
 					Namespace: "test-ns",
@@ -191,7 +190,7 @@ func TestIsManagedPodClique(t *testing.T) {
 		},
 		{
 			description: "should return false when object is not a PodClique",
-			obj: &grovecorev1alpha1.PodCliqueSet{
+			obj: &grovecorev1beta1.PodCliqueSet{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-pcs",
 					Namespace: "different-ns",
@@ -208,7 +207,7 @@ func TestIsManagedPodClique(t *testing.T) {
 		},
 		{
 			description: "should return false when PodClique has no labels",
-			obj: &grovecorev1alpha1.PodClique{
+			obj: &grovecorev1beta1.PodClique{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "no-labels-pclq",
 					Namespace: "test-ns",

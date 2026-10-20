@@ -22,7 +22,7 @@ import (
 	"time"
 
 	groveconfigv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler/kai"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
@@ -45,14 +45,14 @@ func TestResourceNamingValidation(t *testing.T) {
 		description   string
 		pcsName       string
 		cliqueNames   []string
-		scalingGroups []grovecorev1alpha1.PodCliqueScalingGroupConfig
+		scalingGroups []grovecorev1beta1.PodCliqueScalingGroupConfig
 		errorMatchers []testutils.ErrorMatcher
 	}{
 		{
 			description: "Valid resource names",
 			pcsName:     "inference",
 			cliqueNames: []string{"prefill", "decode"},
-			scalingGroups: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+			scalingGroups: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				createScalingGroupConfig("workers", []string{"prefill", "decode"}),
 			},
 		},
@@ -60,7 +60,7 @@ func TestResourceNamingValidation(t *testing.T) {
 			description: "PodClique template name exceeds character limit",
 			pcsName:     "verylongpodcliquesetnamethatisverylong",
 			cliqueNames: []string{"verylongpodcliquenamethatexceedslimit"},
-			scalingGroups: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+			scalingGroups: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				createScalingGroupConfig("workers-1", []string{"prefill-1", "decode-1"}),
 				createScalingGroupConfig("verylongpodcliquenamethatexceedslimit-2", []string{"prefill", "decode"}),
 				createScalingGroupConfig("verylongpodcliquenamethatexceedslimit-3", []string{"prefill", "decode"}),
@@ -91,7 +91,7 @@ func TestResourceNamingValidation(t *testing.T) {
 			description:   "Scaling group with long names",
 			pcsName:       "verylongpodcliquesetname",
 			cliqueNames:   []string{"verylongpodcliquename"},
-			scalingGroups: []grovecorev1alpha1.PodCliqueScalingGroupConfig{createScalingGroupConfig("verylongscalinggroup", []string{"verylongpodcliquename"})},
+			scalingGroups: []grovecorev1beta1.PodCliqueScalingGroupConfig{createScalingGroupConfig("verylongscalinggroup", []string{"verylongpodcliquename"})},
 			errorMatchers: []testutils.ErrorMatcher{
 				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.podCliqueScalingGroups[0].name"},
 				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.podCliqueScalingGroups[0].cliqueNames[0].name"},
@@ -102,7 +102,7 @@ func TestResourceNamingValidation(t *testing.T) {
 			description:   "Scaling group referencing non-existent PodClique",
 			pcsName:       "inference",
 			cliqueNames:   []string{"prefill"},
-			scalingGroups: []grovecorev1alpha1.PodCliqueScalingGroupConfig{createScalingGroupConfig("workers", []string{"nonexistent"})},
+			scalingGroups: []grovecorev1beta1.PodCliqueScalingGroupConfig{createScalingGroupConfig("workers", []string{"nonexistent"})},
 			errorMatchers: []testutils.ErrorMatcher{
 				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.podCliqueScalingGroups[0].cliqueNames"},
 			},
@@ -111,7 +111,7 @@ func TestResourceNamingValidation(t *testing.T) {
 			description:   "Maximum valid character usage",
 			pcsName:       "pcs",
 			cliqueNames:   []string{"cliquename20charssss"},
-			scalingGroups: []grovecorev1alpha1.PodCliqueScalingGroupConfig{createScalingGroupConfig("sg", []string{"cliquename20charssss"})},
+			scalingGroups: []grovecorev1beta1.PodCliqueScalingGroupConfig{createScalingGroupConfig("sg", []string{"cliquename20charssss"})},
 		},
 	}
 
@@ -120,7 +120,7 @@ func TestResourceNamingValidation(t *testing.T) {
 			pcsBuilder := testutils.NewPodCliqueSetBuilder(tc.pcsName, "default", uuid.NewUUID()).
 				WithReplicas(1).
 				WithTerminationDelay(4 * time.Hour).
-				WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder))
+				WithCliqueStartupType(ptr.To(grovecorev1beta1.CliqueStartupTypeAnyOrder))
 
 			// Add PodClique templates
 			for _, cliqueName := range tc.cliqueNames {
@@ -299,7 +299,7 @@ func TestValidateSchedulerNames(t *testing.T) {
 			pcsBuilder := testutils.NewPodCliqueSetBuilder("test", "default", uuid.NewUUID()).
 				WithReplicas(1).
 				WithTerminationDelay(4 * time.Hour).
-				WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder))
+				WithCliqueStartupType(ptr.To(grovecorev1beta1.CliqueStartupTypeAnyOrder))
 			for i := 0; i < len(tt.schedulerNames); i++ {
 				clique := createPodCliqueTemplate(fmt.Sprintf("c%d", i))
 				clique.Spec.PodSpec.SchedulerName = tt.schedulerNames[i]
@@ -335,14 +335,14 @@ func TestPodCliqueScalingGroupConfigValidation(t *testing.T) {
 	testCases := []struct {
 		description     string
 		pcsName         string
-		scalingGroups   []grovecorev1alpha1.PodCliqueScalingGroupConfig
+		scalingGroups   []grovecorev1beta1.PodCliqueScalingGroupConfig
 		cliqueTemplates []string
 		errorMatchers   []testutils.ErrorMatcher
 	}{
 		{
 			description: "Valid scaling group with Replicas and MinAvailable",
 			pcsName:     "inference",
-			scalingGroups: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+			scalingGroups: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{
 					Name:         "workers",
 					CliqueNames:  []string{"prefill"},
@@ -355,7 +355,7 @@ func TestPodCliqueScalingGroupConfigValidation(t *testing.T) {
 		{
 			description: "Invalid Replicas (negative value)",
 			pcsName:     "inference",
-			scalingGroups: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+			scalingGroups: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{
 					Name:         "workers",
 					CliqueNames:  []string{"prefill"},
@@ -372,7 +372,7 @@ func TestPodCliqueScalingGroupConfigValidation(t *testing.T) {
 		{
 			description: "Invalid MinAvailable (zero value)",
 			pcsName:     "inference",
-			scalingGroups: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+			scalingGroups: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{
 					Name:         "workers",
 					CliqueNames:  []string{"prefill"},
@@ -388,7 +388,7 @@ func TestPodCliqueScalingGroupConfigValidation(t *testing.T) {
 		{
 			description: "Invalid MinAvailable > Replicas",
 			pcsName:     "inference",
-			scalingGroups: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+			scalingGroups: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{
 					Name:         "workers",
 					CliqueNames:  []string{"prefill"},
@@ -404,13 +404,13 @@ func TestPodCliqueScalingGroupConfigValidation(t *testing.T) {
 		{
 			description: "Invalid ScaleConfig.MinReplicas < MinAvailable",
 			pcsName:     "inference",
-			scalingGroups: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+			scalingGroups: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{
 					Name:         "workers",
 					CliqueNames:  []string{"prefill"},
 					Replicas:     ptr.To(int32(4)),
 					MinAvailable: ptr.To(int32(3)),
-					ScaleConfig: &grovecorev1alpha1.AutoScalingConfig{
+					ScaleConfig: &grovecorev1beta1.AutoScalingConfig{
 						MinReplicas: ptr.To(int32(2)),
 						MaxReplicas: 10,
 					},
@@ -424,7 +424,7 @@ func TestPodCliqueScalingGroupConfigValidation(t *testing.T) {
 		{
 			description: "Valid with partial configuration",
 			pcsName:     "inference",
-			scalingGroups: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+			scalingGroups: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{
 					Name:        "workers",
 					CliqueNames: []string{"prefill"},
@@ -469,20 +469,20 @@ func TestPodCliqueScalingGroupConfigValidation(t *testing.T) {
 func TestPodCliqueUpdateValidation(t *testing.T) {
 	testCases := []struct {
 		name           string
-		startupType    *grovecorev1alpha1.CliqueStartupType
-		oldCliques     []*grovecorev1alpha1.PodCliqueTemplateSpec
-		newCliques     []*grovecorev1alpha1.PodCliqueTemplateSpec
+		startupType    *grovecorev1beta1.CliqueStartupType
+		oldCliques     []*grovecorev1beta1.PodCliqueTemplateSpec
+		newCliques     []*grovecorev1beta1.PodCliqueTemplateSpec
 		expectError    bool
 		expectedErrMsg string
 	}{
 		{
 			name:        "Valid: same cliques in different order with AnyOrder",
-			startupType: ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder),
-			oldCliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+			startupType: ptr.To(grovecorev1beta1.CliqueStartupTypeAnyOrder),
+			oldCliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
 				createPodCliqueTemplate("prefill"),
 				createPodCliqueTemplate("decode"),
 			},
-			newCliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+			newCliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
 				createPodCliqueTemplate("decode"),
 				createPodCliqueTemplate("prefill"),
 			},
@@ -490,11 +490,11 @@ func TestPodCliqueUpdateValidation(t *testing.T) {
 		},
 		{
 			name:        "Invalid: adding new clique",
-			startupType: ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder),
-			oldCliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+			startupType: ptr.To(grovecorev1beta1.CliqueStartupTypeAnyOrder),
+			oldCliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
 				createPodCliqueTemplate("prefill"),
 			},
-			newCliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+			newCliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
 				createPodCliqueTemplate("prefill"),
 				createPodCliqueTemplate("decode"),
 			},
@@ -503,12 +503,12 @@ func TestPodCliqueUpdateValidation(t *testing.T) {
 		},
 		{
 			name:        "Invalid: removing clique",
-			startupType: ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder),
-			oldCliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+			startupType: ptr.To(grovecorev1beta1.CliqueStartupTypeAnyOrder),
+			oldCliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
 				createPodCliqueTemplate("prefill"),
 				createPodCliqueTemplate("decode"),
 			},
-			newCliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+			newCliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
 				createPodCliqueTemplate("prefill"),
 			},
 			expectError:    true,
@@ -516,12 +516,12 @@ func TestPodCliqueUpdateValidation(t *testing.T) {
 		},
 		{
 			name:        "Invalid: InOrder doesn't allow order change",
-			startupType: ptr.To(grovecorev1alpha1.CliqueStartupTypeInOrder),
-			oldCliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+			startupType: ptr.To(grovecorev1beta1.CliqueStartupTypeInOrder),
+			oldCliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
 				createPodCliqueTemplate("prefill"),
 				createPodCliqueTemplate("decode"),
 			},
-			newCliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+			newCliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
 				createPodCliqueTemplate("decode"),
 				createPodCliqueTemplate("prefill"),
 			},
@@ -530,12 +530,12 @@ func TestPodCliqueUpdateValidation(t *testing.T) {
 		},
 		{
 			name:        "Invalid: Explicit doesn't allow order change",
-			startupType: ptr.To(grovecorev1alpha1.CliqueStartupTypeExplicit),
-			oldCliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+			startupType: ptr.To(grovecorev1beta1.CliqueStartupTypeExplicit),
+			oldCliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
 				createPodCliqueTemplate("prefill"),
 				createPodCliqueTemplate("decode"),
 			},
-			newCliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+			newCliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
 				createPodCliqueTemplate("decode"),
 				createPodCliqueTemplate("prefill"),
 			},
@@ -544,12 +544,12 @@ func TestPodCliqueUpdateValidation(t *testing.T) {
 		},
 		{
 			name:        "Valid: InOrder allows same order",
-			startupType: ptr.To(grovecorev1alpha1.CliqueStartupTypeInOrder),
-			oldCliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+			startupType: ptr.To(grovecorev1beta1.CliqueStartupTypeInOrder),
+			oldCliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
 				createPodCliqueTemplate("prefill"),
 				createPodCliqueTemplate("decode"),
 			},
-			newCliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+			newCliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
 				createPodCliqueTemplate("prefill"),
 				createPodCliqueTemplate("decode"),
 			},
@@ -557,9 +557,9 @@ func TestPodCliqueUpdateValidation(t *testing.T) {
 		},
 		{
 			name:        "Edge case: empty arrays",
-			startupType: ptr.To(grovecorev1alpha1.CliqueStartupTypeInOrder),
-			oldCliques:  []*grovecorev1alpha1.PodCliqueTemplateSpec{},
-			newCliques:  []*grovecorev1alpha1.PodCliqueTemplateSpec{},
+			startupType: ptr.To(grovecorev1beta1.CliqueStartupTypeInOrder),
+			oldCliques:  []*grovecorev1beta1.PodCliqueTemplateSpec{},
+			newCliques:  []*grovecorev1beta1.PodCliqueTemplateSpec{},
 			expectError: false,
 		},
 	}
@@ -598,19 +598,19 @@ func TestPodCliqueUpdateValidation(t *testing.T) {
 func TestImmutableFieldsValidation(t *testing.T) {
 	testCases := []struct {
 		name           string
-		setupOldPCS    func() *grovecorev1alpha1.PodCliqueSet
-		setupNewPCS    func() *grovecorev1alpha1.PodCliqueSet
+		setupOldPCS    func() *grovecorev1beta1.PodCliqueSet
+		setupNewPCS    func() *grovecorev1beta1.PodCliqueSet
 		expectError    bool
 		expectedErrMsg string
 	}{
 		{
 			name: "Valid: PriorityClassName can be updated",
-			setupOldPCS: func() *grovecorev1alpha1.PodCliqueSet {
+			setupOldPCS: func() *grovecorev1beta1.PodCliqueSet {
 				pcs := createTestPodCliqueSet("test")
 				pcs.Spec.Template.PriorityClassName = "old-priority"
 				return pcs
 			},
-			setupNewPCS: func() *grovecorev1alpha1.PodCliqueSet {
+			setupNewPCS: func() *grovecorev1beta1.PodCliqueSet {
 				pcs := createTestPodCliqueSet("test")
 				pcs.Spec.Template.PriorityClassName = "new-priority"
 				return pcs
@@ -619,12 +619,12 @@ func TestImmutableFieldsValidation(t *testing.T) {
 		},
 		{
 			name: "Invalid: RoleName is immutable",
-			setupOldPCS: func() *grovecorev1alpha1.PodCliqueSet {
+			setupOldPCS: func() *grovecorev1beta1.PodCliqueSet {
 				pcs := createTestPodCliqueSet("test")
 				pcs.Spec.Template.Cliques[0].Spec.RoleName = "old-role"
 				return pcs
 			},
-			setupNewPCS: func() *grovecorev1alpha1.PodCliqueSet {
+			setupNewPCS: func() *grovecorev1beta1.PodCliqueSet {
 				pcs := createTestPodCliqueSet("test")
 				pcs.Spec.Template.Cliques[0].Spec.RoleName = "new-role"
 				return pcs
@@ -634,12 +634,12 @@ func TestImmutableFieldsValidation(t *testing.T) {
 		},
 		{
 			name: "Invalid: MinAvailable is immutable",
-			setupOldPCS: func() *grovecorev1alpha1.PodCliqueSet {
+			setupOldPCS: func() *grovecorev1beta1.PodCliqueSet {
 				pcs := createTestPodCliqueSet("test")
 				pcs.Spec.Template.Cliques[0].Spec.MinAvailable = ptr.To(int32(1))
 				return pcs
 			},
-			setupNewPCS: func() *grovecorev1alpha1.PodCliqueSet {
+			setupNewPCS: func() *grovecorev1beta1.PodCliqueSet {
 				pcs := createTestPodCliqueSet("test")
 				pcs.Spec.Template.Cliques[0].Spec.MinAvailable = ptr.To(int32(2))
 				return pcs
@@ -649,17 +649,17 @@ func TestImmutableFieldsValidation(t *testing.T) {
 		},
 		{
 			name: "Invalid: StartsAfter is immutable",
-			setupOldPCS: func() *grovecorev1alpha1.PodCliqueSet {
+			setupOldPCS: func() *grovecorev1beta1.PodCliqueSet {
 				pcs := createTestPodCliqueSet("test")
-				pcs.Spec.Template.StartupType = ptr.To(grovecorev1alpha1.CliqueStartupTypeExplicit)
+				pcs.Spec.Template.StartupType = ptr.To(grovecorev1beta1.CliqueStartupTypeExplicit)
 				pcs.Spec.Template.Cliques = append(pcs.Spec.Template.Cliques, createPodCliqueTemplate("clique2"))
 				pcs.Spec.Template.Cliques[0].Spec.StartsAfter = []string{}
 				pcs.Spec.Template.Cliques[1].Spec.StartsAfter = []string{"test"}
 				return pcs
 			},
-			setupNewPCS: func() *grovecorev1alpha1.PodCliqueSet {
+			setupNewPCS: func() *grovecorev1beta1.PodCliqueSet {
 				pcs := createTestPodCliqueSet("test")
-				pcs.Spec.Template.StartupType = ptr.To(grovecorev1alpha1.CliqueStartupTypeExplicit)
+				pcs.Spec.Template.StartupType = ptr.To(grovecorev1beta1.CliqueStartupTypeExplicit)
 				pcs.Spec.Template.Cliques = append(pcs.Spec.Template.Cliques, createPodCliqueTemplate("clique2"))
 				pcs.Spec.Template.Cliques[0].Spec.StartsAfter = []string{}
 				pcs.Spec.Template.Cliques[1].Spec.StartsAfter = []string{"test", "another"}
@@ -670,14 +670,14 @@ func TestImmutableFieldsValidation(t *testing.T) {
 		},
 		{
 			name: "Edge case: Multiple immutable field violations",
-			setupOldPCS: func() *grovecorev1alpha1.PodCliqueSet {
+			setupOldPCS: func() *grovecorev1beta1.PodCliqueSet {
 				pcs := createTestPodCliqueSet("test")
 				pcs.Spec.Template.Cliques[0].Spec.RoleName = "old-role"
 				pcs.Spec.Template.Cliques[0].Spec.MinAvailable = ptr.To(int32(1))
 				pcs.Spec.Template.Cliques[0].Spec.StartsAfter = []string{"dep1"}
 				return pcs
 			},
-			setupNewPCS: func() *grovecorev1alpha1.PodCliqueSet {
+			setupNewPCS: func() *grovecorev1beta1.PodCliqueSet {
 				pcs := createTestPodCliqueSet("test")
 				pcs.Spec.Template.Cliques[0].Spec.RoleName = "new-role"
 				pcs.Spec.Template.Cliques[0].Spec.MinAvailable = ptr.To(int32(2))
@@ -689,12 +689,12 @@ func TestImmutableFieldsValidation(t *testing.T) {
 		},
 		{
 			name: "Invalid: schedulerName is immutable",
-			setupOldPCS: func() *grovecorev1alpha1.PodCliqueSet {
+			setupOldPCS: func() *grovecorev1beta1.PodCliqueSet {
 				pcs := createTestPodCliqueSet("test")
 				pcs.Spec.Template.Cliques[0].Spec.PodSpec.SchedulerName = ""
 				return pcs
 			},
-			setupNewPCS: func() *grovecorev1alpha1.PodCliqueSet {
+			setupNewPCS: func() *grovecorev1beta1.PodCliqueSet {
 				pcs := createTestPodCliqueSet("test")
 				pcs.Spec.Template.Cliques[0].Spec.PodSpec.SchedulerName = "default-scheduler"
 				return pcs
@@ -704,16 +704,16 @@ func TestImmutableFieldsValidation(t *testing.T) {
 		},
 		{
 			name: "Invalid: PCS resourceClaimTemplates is immutable",
-			setupOldPCS: func() *grovecorev1alpha1.PodCliqueSet {
+			setupOldPCS: func() *grovecorev1beta1.PodCliqueSet {
 				pcs := createTestPodCliqueSet("test")
-				pcs.Spec.Template.ResourceClaimTemplates = []grovecorev1alpha1.ResourceClaimTemplateConfig{
+				pcs.Spec.Template.ResourceClaimTemplates = []grovecorev1beta1.ResourceClaimTemplateConfig{
 					{Name: "tpl-a", TemplateSpec: resourcev1.ResourceClaimTemplateSpec{}},
 				}
 				return pcs
 			},
-			setupNewPCS: func() *grovecorev1alpha1.PodCliqueSet {
+			setupNewPCS: func() *grovecorev1beta1.PodCliqueSet {
 				pcs := createTestPodCliqueSet("test")
-				pcs.Spec.Template.ResourceClaimTemplates = []grovecorev1alpha1.ResourceClaimTemplateConfig{
+				pcs.Spec.Template.ResourceClaimTemplates = []grovecorev1beta1.ResourceClaimTemplateConfig{
 					{Name: "tpl-b", TemplateSpec: resourcev1.ResourceClaimTemplateSpec{}},
 				}
 				return pcs
@@ -723,17 +723,17 @@ func TestImmutableFieldsValidation(t *testing.T) {
 		},
 		{
 			name: "Invalid: PCS resourceSharing is immutable",
-			setupOldPCS: func() *grovecorev1alpha1.PodCliqueSet {
+			setupOldPCS: func() *grovecorev1beta1.PodCliqueSet {
 				pcs := createTestPodCliqueSet("test")
-				pcs.Spec.Template.ResourceSharing = []grovecorev1alpha1.PCSResourceSharingSpec{
-					{ResourceSharingSpec: grovecorev1alpha1.ResourceSharingSpec{Name: "share-a", Scope: grovecorev1alpha1.ResourceSharingScopeAllReplicas}},
+				pcs.Spec.Template.ResourceSharing = []grovecorev1beta1.PCSResourceSharingSpec{
+					{ResourceSharingSpec: grovecorev1beta1.ResourceSharingSpec{Name: "share-a", Scope: grovecorev1beta1.ResourceSharingScopeAllReplicas}},
 				}
 				return pcs
 			},
-			setupNewPCS: func() *grovecorev1alpha1.PodCliqueSet {
+			setupNewPCS: func() *grovecorev1beta1.PodCliqueSet {
 				pcs := createTestPodCliqueSet("test")
-				pcs.Spec.Template.ResourceSharing = []grovecorev1alpha1.PCSResourceSharingSpec{
-					{ResourceSharingSpec: grovecorev1alpha1.ResourceSharingSpec{Name: "share-a", Scope: grovecorev1alpha1.ResourceSharingScopePerReplica}},
+				pcs.Spec.Template.ResourceSharing = []grovecorev1beta1.PCSResourceSharingSpec{
+					{ResourceSharingSpec: grovecorev1beta1.ResourceSharingSpec{Name: "share-a", Scope: grovecorev1beta1.ResourceSharingScopePerReplica}},
 				}
 				return pcs
 			},
@@ -742,17 +742,17 @@ func TestImmutableFieldsValidation(t *testing.T) {
 		},
 		{
 			name: "Invalid: PCLQ resourceSharing is immutable",
-			setupOldPCS: func() *grovecorev1alpha1.PodCliqueSet {
+			setupOldPCS: func() *grovecorev1beta1.PodCliqueSet {
 				pcs := createTestPodCliqueSet("test")
-				pcs.Spec.Template.Cliques[0].ResourceSharing = []grovecorev1alpha1.ResourceSharingSpec{
-					{Name: "share-a", Scope: grovecorev1alpha1.ResourceSharingScopeAllReplicas},
+				pcs.Spec.Template.Cliques[0].ResourceSharing = []grovecorev1beta1.ResourceSharingSpec{
+					{Name: "share-a", Scope: grovecorev1beta1.ResourceSharingScopeAllReplicas},
 				}
 				return pcs
 			},
-			setupNewPCS: func() *grovecorev1alpha1.PodCliqueSet {
+			setupNewPCS: func() *grovecorev1beta1.PodCliqueSet {
 				pcs := createTestPodCliqueSet("test")
-				pcs.Spec.Template.Cliques[0].ResourceSharing = []grovecorev1alpha1.ResourceSharingSpec{
-					{Name: "share-a", Scope: grovecorev1alpha1.ResourceSharingScopePerReplica},
+				pcs.Spec.Template.Cliques[0].ResourceSharing = []grovecorev1beta1.ResourceSharingSpec{
+					{Name: "share-a", Scope: grovecorev1beta1.ResourceSharingScopePerReplica},
 				}
 				return pcs
 			},
@@ -761,16 +761,16 @@ func TestImmutableFieldsValidation(t *testing.T) {
 		},
 		{
 			name: "Valid: PCS resourceClaimTemplates unchanged",
-			setupOldPCS: func() *grovecorev1alpha1.PodCliqueSet {
+			setupOldPCS: func() *grovecorev1beta1.PodCliqueSet {
 				pcs := createTestPodCliqueSet("test")
-				pcs.Spec.Template.ResourceClaimTemplates = []grovecorev1alpha1.ResourceClaimTemplateConfig{
+				pcs.Spec.Template.ResourceClaimTemplates = []grovecorev1beta1.ResourceClaimTemplateConfig{
 					{Name: "tpl-a", TemplateSpec: resourcev1.ResourceClaimTemplateSpec{}},
 				}
 				return pcs
 			},
-			setupNewPCS: func() *grovecorev1alpha1.PodCliqueSet {
+			setupNewPCS: func() *grovecorev1beta1.PodCliqueSet {
 				pcs := createTestPodCliqueSet("test")
-				pcs.Spec.Template.ResourceClaimTemplates = []grovecorev1alpha1.ResourceClaimTemplateConfig{
+				pcs.Spec.Template.ResourceClaimTemplates = []grovecorev1beta1.ResourceClaimTemplateConfig{
 					{Name: "tpl-a", TemplateSpec: resourcev1.ResourceClaimTemplateSpec{}},
 				}
 				return pcs
@@ -800,20 +800,20 @@ func TestImmutableFieldsValidation(t *testing.T) {
 func TestPodCliqueScalingGroupConfigsUpdateValidation(t *testing.T) {
 	tests := []struct {
 		name           string
-		oldConfigs     []grovecorev1alpha1.PodCliqueScalingGroupConfig
-		newConfigs     []grovecorev1alpha1.PodCliqueScalingGroupConfig
+		oldConfigs     []grovecorev1beta1.PodCliqueScalingGroupConfig
+		newConfigs     []grovecorev1beta1.PodCliqueScalingGroupConfig
 		expectedErrors bool
 		expectedErrMsg string
 	}{
 		{
 			name: "same configs - should pass",
-			oldConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+			oldConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{
 					CliqueNames:  []string{"clique1", "clique2"},
 					MinAvailable: ptr.To(int32(1)),
 				},
 			},
-			newConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+			newConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{
 					CliqueNames:  []string{"clique1", "clique2"},
 					MinAvailable: ptr.To(int32(1)),
@@ -823,13 +823,13 @@ func TestPodCliqueScalingGroupConfigsUpdateValidation(t *testing.T) {
 		},
 		{
 			name: "different clique names - should fail",
-			oldConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+			oldConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{
 					CliqueNames:  []string{"clique1", "clique2"},
 					MinAvailable: ptr.To(int32(1)),
 				},
 			},
-			newConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+			newConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{
 					CliqueNames:  []string{"clique1", "clique3"},
 					MinAvailable: ptr.To(int32(1)),
@@ -840,13 +840,13 @@ func TestPodCliqueScalingGroupConfigsUpdateValidation(t *testing.T) {
 		},
 		{
 			name: "different min available - should fail",
-			oldConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+			oldConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{
 					CliqueNames:  []string{"clique1", "clique2"},
 					MinAvailable: ptr.To(int32(1)),
 				},
 			},
-			newConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+			newConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{
 					CliqueNames:  []string{"clique1", "clique2"},
 					MinAvailable: ptr.To(int32(2)),
@@ -857,13 +857,13 @@ func TestPodCliqueScalingGroupConfigsUpdateValidation(t *testing.T) {
 		},
 		{
 			name: "adding new config - should fail",
-			oldConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+			oldConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{
 					CliqueNames:  []string{"clique1"},
 					MinAvailable: ptr.To(int32(1)),
 				},
 			},
-			newConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+			newConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{
 					CliqueNames:  []string{"clique1"},
 					MinAvailable: ptr.To(int32(1)),
@@ -878,7 +878,7 @@ func TestPodCliqueScalingGroupConfigsUpdateValidation(t *testing.T) {
 		},
 		{
 			name: "removing config - should fail",
-			oldConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+			oldConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{
 					CliqueNames:  []string{"clique1"},
 					MinAvailable: ptr.To(int32(1)),
@@ -888,7 +888,7 @@ func TestPodCliqueScalingGroupConfigsUpdateValidation(t *testing.T) {
 					MinAvailable: ptr.To(int32(1)),
 				},
 			},
-			newConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+			newConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{
 					CliqueNames:  []string{"clique1"},
 					MinAvailable: ptr.To(int32(1)),
@@ -900,24 +900,24 @@ func TestPodCliqueScalingGroupConfigsUpdateValidation(t *testing.T) {
 		{
 			name:           "nil to empty slice - should pass",
 			oldConfigs:     nil,
-			newConfigs:     []grovecorev1alpha1.PodCliqueScalingGroupConfig{},
+			newConfigs:     []grovecorev1beta1.PodCliqueScalingGroupConfig{},
 			expectedErrors: false,
 		},
 		{
 			name:           "empty slice to nil - should pass",
-			oldConfigs:     []grovecorev1alpha1.PodCliqueScalingGroupConfig{},
+			oldConfigs:     []grovecorev1beta1.PodCliqueScalingGroupConfig{},
 			newConfigs:     nil,
 			expectedErrors: false,
 		},
 		{
 			name: "nil min available in both - should pass",
-			oldConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+			oldConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{
 					CliqueNames:  []string{"clique1"},
 					MinAvailable: nil,
 				},
 			},
-			newConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+			newConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{
 					CliqueNames:  []string{"clique1"},
 					MinAvailable: nil,
@@ -927,13 +927,13 @@ func TestPodCliqueScalingGroupConfigsUpdateValidation(t *testing.T) {
 		},
 		{
 			name: "nil to non-nil min available - should fail",
-			oldConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+			oldConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{
 					CliqueNames:  []string{"clique1"},
 					MinAvailable: nil,
 				},
 			},
-			newConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+			newConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{
 					CliqueNames:  []string{"clique1"},
 					MinAvailable: ptr.To(int32(1)),
@@ -944,23 +944,23 @@ func TestPodCliqueScalingGroupConfigsUpdateValidation(t *testing.T) {
 		},
 		{
 			name: "same resourceSharing - should pass",
-			oldConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+			oldConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{
 					Name:         "sg1",
 					CliqueNames:  []string{"clique1"},
 					MinAvailable: ptr.To(int32(1)),
-					ResourceSharing: []grovecorev1alpha1.PCSGResourceSharingSpec{
-						{ResourceSharingSpec: grovecorev1alpha1.ResourceSharingSpec{Name: "share-a", Scope: grovecorev1alpha1.ResourceSharingScopeAllReplicas}},
+					ResourceSharing: []grovecorev1beta1.PCSGResourceSharingSpec{
+						{ResourceSharingSpec: grovecorev1beta1.ResourceSharingSpec{Name: "share-a", Scope: grovecorev1beta1.ResourceSharingScopeAllReplicas}},
 					},
 				},
 			},
-			newConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+			newConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{
 					Name:         "sg1",
 					CliqueNames:  []string{"clique1"},
 					MinAvailable: ptr.To(int32(1)),
-					ResourceSharing: []grovecorev1alpha1.PCSGResourceSharingSpec{
-						{ResourceSharingSpec: grovecorev1alpha1.ResourceSharingSpec{Name: "share-a", Scope: grovecorev1alpha1.ResourceSharingScopeAllReplicas}},
+					ResourceSharing: []grovecorev1beta1.PCSGResourceSharingSpec{
+						{ResourceSharingSpec: grovecorev1beta1.ResourceSharingSpec{Name: "share-a", Scope: grovecorev1beta1.ResourceSharingScopeAllReplicas}},
 					},
 				},
 			},
@@ -968,23 +968,23 @@ func TestPodCliqueScalingGroupConfigsUpdateValidation(t *testing.T) {
 		},
 		{
 			name: "different resourceSharing - should fail",
-			oldConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+			oldConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{
 					Name:         "sg1",
 					CliqueNames:  []string{"clique1"},
 					MinAvailable: ptr.To(int32(1)),
-					ResourceSharing: []grovecorev1alpha1.PCSGResourceSharingSpec{
-						{ResourceSharingSpec: grovecorev1alpha1.ResourceSharingSpec{Name: "share-a", Scope: grovecorev1alpha1.ResourceSharingScopeAllReplicas}},
+					ResourceSharing: []grovecorev1beta1.PCSGResourceSharingSpec{
+						{ResourceSharingSpec: grovecorev1beta1.ResourceSharingSpec{Name: "share-a", Scope: grovecorev1beta1.ResourceSharingScopeAllReplicas}},
 					},
 				},
 			},
-			newConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+			newConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{
 					Name:         "sg1",
 					CliqueNames:  []string{"clique1"},
 					MinAvailable: ptr.To(int32(1)),
-					ResourceSharing: []grovecorev1alpha1.PCSGResourceSharingSpec{
-						{ResourceSharingSpec: grovecorev1alpha1.ResourceSharingSpec{Name: "share-a", Scope: grovecorev1alpha1.ResourceSharingScopePerReplica}},
+					ResourceSharing: []grovecorev1beta1.PCSGResourceSharingSpec{
+						{ResourceSharingSpec: grovecorev1beta1.ResourceSharingSpec{Name: "share-a", Scope: grovecorev1beta1.ResourceSharingScopePerReplica}},
 					},
 				},
 			},
@@ -1030,7 +1030,7 @@ func TestValidateCliqueDependencies(t *testing.T) {
 		// name identifies this test case
 		name string
 		// cliques is the list of clique templates to validate
-		cliques []*grovecorev1alpha1.PodCliqueTemplateSpec
+		cliques []*grovecorev1beta1.PodCliqueTemplateSpec
 		// expectError indicates whether validation should fail
 		expectError bool
 		// errorContains is a substring expected in the error message
@@ -1038,16 +1038,16 @@ func TestValidateCliqueDependencies(t *testing.T) {
 	}{
 		{
 			name: "valid dependencies with no cycles",
-			cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+			cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
 				{
 					Name: "clique1",
-					Spec: grovecorev1alpha1.PodCliqueSpec{
+					Spec: grovecorev1beta1.PodCliqueSpec{
 						StartsAfter: []string{},
 					},
 				},
 				{
 					Name: "clique2",
-					Spec: grovecorev1alpha1.PodCliqueSpec{
+					Spec: grovecorev1beta1.PodCliqueSpec{
 						StartsAfter: []string{"clique1"},
 					},
 				},
@@ -1056,16 +1056,16 @@ func TestValidateCliqueDependencies(t *testing.T) {
 		},
 		{
 			name: "circular dependency between two cliques",
-			cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+			cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
 				{
 					Name: "clique1",
-					Spec: grovecorev1alpha1.PodCliqueSpec{
+					Spec: grovecorev1beta1.PodCliqueSpec{
 						StartsAfter: []string{"clique2"},
 					},
 				},
 				{
 					Name: "clique2",
-					Spec: grovecorev1alpha1.PodCliqueSpec{
+					Spec: grovecorev1beta1.PodCliqueSpec{
 						StartsAfter: []string{"clique1"},
 					},
 				},
@@ -1075,10 +1075,10 @@ func TestValidateCliqueDependencies(t *testing.T) {
 		},
 		{
 			name: "dependency on unknown clique",
-			cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+			cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
 				{
 					Name: "clique1",
-					Spec: grovecorev1alpha1.PodCliqueSpec{
+					Spec: grovecorev1beta1.PodCliqueSpec{
 						StartsAfter: []string{"unknown-clique"},
 					},
 				},
@@ -1088,22 +1088,22 @@ func TestValidateCliqueDependencies(t *testing.T) {
 		},
 		{
 			name: "three-way circular dependency",
-			cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+			cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
 				{
 					Name: "clique1",
-					Spec: grovecorev1alpha1.PodCliqueSpec{
+					Spec: grovecorev1beta1.PodCliqueSpec{
 						StartsAfter: []string{"clique3"},
 					},
 				},
 				{
 					Name: "clique2",
-					Spec: grovecorev1alpha1.PodCliqueSpec{
+					Spec: grovecorev1beta1.PodCliqueSpec{
 						StartsAfter: []string{"clique1"},
 					},
 				},
 				{
 					Name: "clique3",
-					Spec: grovecorev1alpha1.PodCliqueSpec{
+					Spec: grovecorev1beta1.PodCliqueSpec{
 						StartsAfter: []string{"clique2"},
 					},
 				},
@@ -1113,10 +1113,10 @@ func TestValidateCliqueDependencies(t *testing.T) {
 		},
 		{
 			name: "no dependencies passes validation",
-			cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+			cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
 				{
 					Name: "clique1",
-					Spec: grovecorev1alpha1.PodCliqueSpec{
+					Spec: grovecorev1beta1.PodCliqueSpec{
 						StartsAfter: []string{},
 					},
 				},
@@ -1152,7 +1152,7 @@ func TestValidateScaleConfig(t *testing.T) {
 		// name identifies this test case
 		name string
 		// scaleConfig is the autoscaling configuration to validate
-		scaleConfig *grovecorev1alpha1.AutoScalingConfig
+		scaleConfig *grovecorev1beta1.AutoScalingConfig
 		// minAvailable is the minimum available pods
 		minAvailable int32
 		// expectError indicates whether validation should fail
@@ -1162,7 +1162,7 @@ func TestValidateScaleConfig(t *testing.T) {
 	}{
 		{
 			name: "valid scale config",
-			scaleConfig: &grovecorev1alpha1.AutoScalingConfig{
+			scaleConfig: &grovecorev1beta1.AutoScalingConfig{
 				MinReplicas: ptr.To(int32(2)),
 				MaxReplicas: 5,
 			},
@@ -1171,7 +1171,7 @@ func TestValidateScaleConfig(t *testing.T) {
 		},
 		{
 			name: "minReplicas less than minAvailable returns error",
-			scaleConfig: &grovecorev1alpha1.AutoScalingConfig{
+			scaleConfig: &grovecorev1beta1.AutoScalingConfig{
 				MinReplicas: ptr.To(int32(1)),
 				MaxReplicas: 5,
 			},
@@ -1181,7 +1181,7 @@ func TestValidateScaleConfig(t *testing.T) {
 		},
 		{
 			name: "maxReplicas less than minReplicas returns error",
-			scaleConfig: &grovecorev1alpha1.AutoScalingConfig{
+			scaleConfig: &grovecorev1beta1.AutoScalingConfig{
 				MinReplicas: ptr.To(int32(5)),
 				MaxReplicas: 3,
 			},
@@ -1191,7 +1191,7 @@ func TestValidateScaleConfig(t *testing.T) {
 		},
 		{
 			name: "minReplicas equal to maxReplicas passes validation",
-			scaleConfig: &grovecorev1alpha1.AutoScalingConfig{
+			scaleConfig: &grovecorev1beta1.AutoScalingConfig{
 				MinReplicas: ptr.To(int32(5)),
 				MaxReplicas: 5,
 			},
@@ -1330,7 +1330,7 @@ func TestEnvVarValidation(t *testing.T) {
 			pcs := testutils.NewPodCliqueSetBuilder("inference", "default", uuid.NewUUID()).
 				WithReplicas(1).
 				WithTerminationDelay(4 * time.Hour).
-				WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder)).
+				WithCliqueStartupType(ptr.To(grovecorev1beta1.CliqueStartupTypeAnyOrder)).
 				WithPodCliqueTemplateSpec(clique.Build()).
 				Build()
 
@@ -1351,19 +1351,19 @@ func TestEnvVarValidation(t *testing.T) {
 func TestValidateResourceClaimTemplates(t *testing.T) {
 	tests := []struct {
 		name          string
-		templates     []grovecorev1alpha1.ResourceClaimTemplateConfig
+		templates     []grovecorev1beta1.ResourceClaimTemplateConfig
 		errorMatchers []testutils.ErrorMatcher
 	}{
 		{
 			name: "valid unique names",
-			templates: []grovecorev1alpha1.ResourceClaimTemplateConfig{
+			templates: []grovecorev1beta1.ResourceClaimTemplateConfig{
 				{Name: "gpu-mps", TemplateSpec: resourcev1.ResourceClaimTemplateSpec{Spec: resourcev1.ResourceClaimSpec{Devices: resourcev1.DeviceClaim{Requests: []resourcev1.DeviceRequest{{Name: "gpu"}}}}}},
 				{Name: "shared-mem", TemplateSpec: resourcev1.ResourceClaimTemplateSpec{Spec: resourcev1.ResourceClaimSpec{Devices: resourcev1.DeviceClaim{Requests: []resourcev1.DeviceRequest{{Name: "mem"}}}}}},
 			},
 		},
 		{
 			name: "empty name",
-			templates: []grovecorev1alpha1.ResourceClaimTemplateConfig{
+			templates: []grovecorev1beta1.ResourceClaimTemplateConfig{
 				{Name: ""},
 			},
 			errorMatchers: []testutils.ErrorMatcher{
@@ -1373,7 +1373,7 @@ func TestValidateResourceClaimTemplates(t *testing.T) {
 		},
 		{
 			name: "empty template spec",
-			templates: []grovecorev1alpha1.ResourceClaimTemplateConfig{
+			templates: []grovecorev1beta1.ResourceClaimTemplateConfig{
 				{Name: "gpu-mps"},
 			},
 			errorMatchers: []testutils.ErrorMatcher{
@@ -1382,7 +1382,7 @@ func TestValidateResourceClaimTemplates(t *testing.T) {
 		},
 		{
 			name: "duplicate names",
-			templates: []grovecorev1alpha1.ResourceClaimTemplateConfig{
+			templates: []grovecorev1beta1.ResourceClaimTemplateConfig{
 				{Name: "gpu-mps"},
 				{Name: "gpu-mps"},
 			},
@@ -1415,21 +1415,21 @@ func TestValidateResourceClaimTemplates(t *testing.T) {
 func TestValidateResourceSharingSpecs(t *testing.T) {
 	tests := []struct {
 		name          string
-		templates     []grovecorev1alpha1.ResourceClaimTemplateConfig
-		refs          []grovecorev1alpha1.ResourceSharingSpec
+		templates     []grovecorev1beta1.ResourceClaimTemplateConfig
+		refs          []grovecorev1beta1.ResourceSharingSpec
 		errorMatchers []testutils.ErrorMatcher
 	}{
 		{
 			name:      "valid refs",
-			templates: []grovecorev1alpha1.ResourceClaimTemplateConfig{{Name: "gpu-mps"}},
-			refs: []grovecorev1alpha1.ResourceSharingSpec{
-				{Name: "gpu-mps", Scope: grovecorev1alpha1.ResourceSharingScopeAllReplicas},
+			templates: []grovecorev1beta1.ResourceClaimTemplateConfig{{Name: "gpu-mps"}},
+			refs: []grovecorev1beta1.ResourceSharingSpec{
+				{Name: "gpu-mps", Scope: grovecorev1beta1.ResourceSharingScopeAllReplicas},
 			},
 		},
 		{
 			name: "empty ref name",
-			refs: []grovecorev1alpha1.ResourceSharingSpec{
-				{Name: "", Scope: grovecorev1alpha1.ResourceSharingScopeAllReplicas},
+			refs: []grovecorev1beta1.ResourceSharingSpec{
+				{Name: "", Scope: grovecorev1beta1.ResourceSharingScopeAllReplicas},
 			},
 			errorMatchers: []testutils.ErrorMatcher{
 				{ErrorType: field.ErrorTypeRequired, Field: "spec.template.resourceSharing[0].name"},
@@ -1437,10 +1437,10 @@ func TestValidateResourceSharingSpecs(t *testing.T) {
 		},
 		{
 			name:      "duplicate refs",
-			templates: []grovecorev1alpha1.ResourceClaimTemplateConfig{{Name: "gpu-mps"}},
-			refs: []grovecorev1alpha1.ResourceSharingSpec{
-				{Name: "gpu-mps", Scope: grovecorev1alpha1.ResourceSharingScopeAllReplicas},
-				{Name: "gpu-mps", Scope: grovecorev1alpha1.ResourceSharingScopePerReplica},
+			templates: []grovecorev1beta1.ResourceClaimTemplateConfig{{Name: "gpu-mps"}},
+			refs: []grovecorev1beta1.ResourceSharingSpec{
+				{Name: "gpu-mps", Scope: grovecorev1beta1.ResourceSharingScopeAllReplicas},
+				{Name: "gpu-mps", Scope: grovecorev1beta1.ResourceSharingScopePerReplica},
 			},
 			errorMatchers: []testutils.ErrorMatcher{
 				{ErrorType: field.ErrorTypeDuplicate, Field: "spec.template.resourceSharing[1].name"},
@@ -1448,9 +1448,9 @@ func TestValidateResourceSharingSpecs(t *testing.T) {
 		},
 		{
 			name:      "namespace set for internal template",
-			templates: []grovecorev1alpha1.ResourceClaimTemplateConfig{{Name: "gpu-mps"}},
-			refs: []grovecorev1alpha1.ResourceSharingSpec{
-				{Name: "gpu-mps", Namespace: "other-ns", Scope: grovecorev1alpha1.ResourceSharingScopeAllReplicas},
+			templates: []grovecorev1beta1.ResourceClaimTemplateConfig{{Name: "gpu-mps"}},
+			refs: []grovecorev1beta1.ResourceSharingSpec{
+				{Name: "gpu-mps", Namespace: "other-ns", Scope: grovecorev1beta1.ResourceSharingScopeAllReplicas},
 			},
 			errorMatchers: []testutils.ErrorMatcher{
 				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.resourceSharing[0].namespace"},
@@ -1458,14 +1458,14 @@ func TestValidateResourceSharingSpecs(t *testing.T) {
 		},
 		{
 			name: "external ref (no internal match) with namespace is valid",
-			refs: []grovecorev1alpha1.ResourceSharingSpec{
-				{Name: "external-tpl", Namespace: "shared-ns", Scope: grovecorev1alpha1.ResourceSharingScopeAllReplicas},
+			refs: []grovecorev1beta1.ResourceSharingSpec{
+				{Name: "external-tpl", Namespace: "shared-ns", Scope: grovecorev1beta1.ResourceSharingScopeAllReplicas},
 			},
 		},
 		{
 			name: "invalid scope",
-			refs: []grovecorev1alpha1.ResourceSharingSpec{
-				{Name: "gpu-mps", Scope: grovecorev1alpha1.ResourceSharingScope("BadScope")},
+			refs: []grovecorev1beta1.ResourceSharingSpec{
+				{Name: "gpu-mps", Scope: grovecorev1beta1.ResourceSharingScope("BadScope")},
 			},
 			errorMatchers: []testutils.ErrorMatcher{
 				{ErrorType: field.ErrorTypeNotSupported, Field: "spec.template.resourceSharing[0].scope"},
@@ -1494,40 +1494,40 @@ func TestValidatePCSResourceSharing(t *testing.T) {
 	tests := []struct {
 		name          string
 		cliqueNames   []string
-		groupConfigs  []grovecorev1alpha1.PodCliqueScalingGroupConfig
-		refs          []grovecorev1alpha1.PCSResourceSharingSpec
+		groupConfigs  []grovecorev1beta1.PodCliqueScalingGroupConfig
+		refs          []grovecorev1beta1.PCSResourceSharingSpec
 		errorMatchers []testutils.ErrorMatcher
 	}{
 		{
 			name:        "valid filter with known clique name",
 			cliqueNames: []string{"worker"},
-			refs: []grovecorev1alpha1.PCSResourceSharingSpec{
+			refs: []grovecorev1beta1.PCSResourceSharingSpec{
 				{
-					ResourceSharingSpec: grovecorev1alpha1.ResourceSharingSpec{Name: "gpu-mps", Scope: grovecorev1alpha1.ResourceSharingScopeAllReplicas},
-					Filter:              &grovecorev1alpha1.PCSResourceSharingFilter{ChildCliqueNames: []string{"worker"}},
+					ResourceSharingSpec: grovecorev1beta1.ResourceSharingSpec{Name: "gpu-mps", Scope: grovecorev1beta1.ResourceSharingScopeAllReplicas},
+					Filter:              &grovecorev1beta1.PCSResourceSharingFilter{ChildCliqueNames: []string{"worker"}},
 				},
 			},
 		},
 		{
 			name:        "valid filter with known group name",
 			cliqueNames: []string{"worker"},
-			groupConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+			groupConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{Name: "sga", CliqueNames: []string{"worker"}},
 			},
-			refs: []grovecorev1alpha1.PCSResourceSharingSpec{
+			refs: []grovecorev1beta1.PCSResourceSharingSpec{
 				{
-					ResourceSharingSpec: grovecorev1alpha1.ResourceSharingSpec{Name: "gpu-mps", Scope: grovecorev1alpha1.ResourceSharingScopeAllReplicas},
-					Filter:              &grovecorev1alpha1.PCSResourceSharingFilter{ChildScalingGroupNames: []string{"sga"}},
+					ResourceSharingSpec: grovecorev1beta1.ResourceSharingSpec{Name: "gpu-mps", Scope: grovecorev1beta1.ResourceSharingScopeAllReplicas},
+					Filter:              &grovecorev1beta1.PCSResourceSharingFilter{ChildScalingGroupNames: []string{"sga"}},
 				},
 			},
 		},
 		{
 			name:        "invalid clique name in filter",
 			cliqueNames: []string{"worker"},
-			refs: []grovecorev1alpha1.PCSResourceSharingSpec{
+			refs: []grovecorev1beta1.PCSResourceSharingSpec{
 				{
-					ResourceSharingSpec: grovecorev1alpha1.ResourceSharingSpec{Name: "gpu-mps", Scope: grovecorev1alpha1.ResourceSharingScopeAllReplicas},
-					Filter:              &grovecorev1alpha1.PCSResourceSharingFilter{ChildCliqueNames: []string{"nonexistent"}},
+					ResourceSharingSpec: grovecorev1beta1.ResourceSharingSpec{Name: "gpu-mps", Scope: grovecorev1beta1.ResourceSharingScopeAllReplicas},
+					Filter:              &grovecorev1beta1.PCSResourceSharingFilter{ChildCliqueNames: []string{"nonexistent"}},
 				},
 			},
 			errorMatchers: []testutils.ErrorMatcher{
@@ -1537,10 +1537,10 @@ func TestValidatePCSResourceSharing(t *testing.T) {
 		{
 			name:        "invalid group name in filter",
 			cliqueNames: []string{"worker"},
-			refs: []grovecorev1alpha1.PCSResourceSharingSpec{
+			refs: []grovecorev1beta1.PCSResourceSharingSpec{
 				{
-					ResourceSharingSpec: grovecorev1alpha1.ResourceSharingSpec{Name: "gpu-mps", Scope: grovecorev1alpha1.ResourceSharingScopeAllReplicas},
-					Filter:              &grovecorev1alpha1.PCSResourceSharingFilter{ChildScalingGroupNames: []string{"nonexistent"}},
+					ResourceSharingSpec: grovecorev1beta1.ResourceSharingSpec{Name: "gpu-mps", Scope: grovecorev1beta1.ResourceSharingScopeAllReplicas},
+					Filter:              &grovecorev1beta1.PCSResourceSharingFilter{ChildScalingGroupNames: []string{"nonexistent"}},
 				},
 			},
 			errorMatchers: []testutils.ErrorMatcher{
@@ -1550,10 +1550,10 @@ func TestValidatePCSResourceSharing(t *testing.T) {
 		{
 			name:        "empty filter (no names specified)",
 			cliqueNames: []string{"worker"},
-			refs: []grovecorev1alpha1.PCSResourceSharingSpec{
+			refs: []grovecorev1beta1.PCSResourceSharingSpec{
 				{
-					ResourceSharingSpec: grovecorev1alpha1.ResourceSharingSpec{Name: "gpu-mps", Scope: grovecorev1alpha1.ResourceSharingScopeAllReplicas},
-					Filter:              &grovecorev1alpha1.PCSResourceSharingFilter{},
+					ResourceSharingSpec: grovecorev1beta1.ResourceSharingSpec{Name: "gpu-mps", Scope: grovecorev1beta1.ResourceSharingScopeAllReplicas},
+					Filter:              &grovecorev1beta1.PCSResourceSharingFilter{},
 				},
 			},
 			errorMatchers: []testutils.ErrorMatcher{
@@ -1588,37 +1588,37 @@ func TestValidatePCSResourceSharing(t *testing.T) {
 func TestValidatePCSGResourceSharing(t *testing.T) {
 	tests := []struct {
 		name          string
-		cfg           grovecorev1alpha1.PodCliqueScalingGroupConfig
-		templates     []grovecorev1alpha1.ResourceClaimTemplateConfig
+		cfg           grovecorev1beta1.PodCliqueScalingGroupConfig
+		templates     []grovecorev1beta1.ResourceClaimTemplateConfig
 		errorMatchers []testutils.ErrorMatcher
 	}{
 		{
 			name: "valid PCSG sharing with clique filter",
-			cfg: grovecorev1alpha1.PodCliqueScalingGroupConfig{
+			cfg: grovecorev1beta1.PodCliqueScalingGroupConfig{
 				Name:        "sga",
 				CliqueNames: []string{"worker"},
-				ResourceSharing: []grovecorev1alpha1.PCSGResourceSharingSpec{
+				ResourceSharing: []grovecorev1beta1.PCSGResourceSharingSpec{
 					{
-						ResourceSharingSpec: grovecorev1alpha1.ResourceSharingSpec{Name: "gpu-mps", Scope: grovecorev1alpha1.ResourceSharingScopeAllReplicas},
-						Filter:              &grovecorev1alpha1.PCSGResourceSharingFilter{ChildCliqueNames: []string{"worker"}},
+						ResourceSharingSpec: grovecorev1beta1.ResourceSharingSpec{Name: "gpu-mps", Scope: grovecorev1beta1.ResourceSharingScopeAllReplicas},
+						Filter:              &grovecorev1beta1.PCSGResourceSharingFilter{ChildCliqueNames: []string{"worker"}},
 					},
 				},
 			},
-			templates: []grovecorev1alpha1.ResourceClaimTemplateConfig{{Name: "gpu-mps"}},
+			templates: []grovecorev1beta1.ResourceClaimTemplateConfig{{Name: "gpu-mps"}},
 		},
 		{
 			name: "invalid clique name in PCSG filter",
-			cfg: grovecorev1alpha1.PodCliqueScalingGroupConfig{
+			cfg: grovecorev1beta1.PodCliqueScalingGroupConfig{
 				Name:        "sga",
 				CliqueNames: []string{"worker"},
-				ResourceSharing: []grovecorev1alpha1.PCSGResourceSharingSpec{
+				ResourceSharing: []grovecorev1beta1.PCSGResourceSharingSpec{
 					{
-						ResourceSharingSpec: grovecorev1alpha1.ResourceSharingSpec{Name: "gpu-mps", Scope: grovecorev1alpha1.ResourceSharingScopeAllReplicas},
-						Filter:              &grovecorev1alpha1.PCSGResourceSharingFilter{ChildCliqueNames: []string{"unknown-clique"}},
+						ResourceSharingSpec: grovecorev1beta1.ResourceSharingSpec{Name: "gpu-mps", Scope: grovecorev1beta1.ResourceSharingScopeAllReplicas},
+						Filter:              &grovecorev1beta1.PCSGResourceSharingFilter{ChildCliqueNames: []string{"unknown-clique"}},
 					},
 				},
 			},
-			templates: []grovecorev1alpha1.ResourceClaimTemplateConfig{{Name: "gpu-mps"}},
+			templates: []grovecorev1beta1.ResourceClaimTemplateConfig{{Name: "gpu-mps"}},
 			errorMatchers: []testutils.ErrorMatcher{
 				{ErrorType: field.ErrorTypeNotFound, Field: "spec.template.podCliqueScalingGroups[0].resourceSharing[0].filter.childCliqueNames[0]"},
 			},
@@ -1657,20 +1657,20 @@ func TestValidateTopologyConstraintsPCSTopologyName(t *testing.T) {
 	tests := []struct {
 		name          string
 		operation     admissionv1.Operation
-		setupOldPCS   func() *grovecorev1alpha1.PodCliqueSet
-		setupNewPCS   func() *grovecorev1alpha1.PodCliqueSet
+		setupOldPCS   func() *grovecorev1beta1.PodCliqueSet
+		setupNewPCS   func() *grovecorev1beta1.PodCliqueSet
 		clusterObjs   []client.Object
 		errorMatchers []testutils.ErrorMatcher
 	}{
 		{
 			name:      "create allows child-only explicit topology constraint",
 			operation: admissionv1.Create,
-			setupNewPCS: func() *grovecorev1alpha1.PodCliqueSet {
+			setupNewPCS: func() *grovecorev1beta1.PodCliqueSet {
 				pcs := createTestPodCliqueSet("pcs-topology-create")
-				pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
+				pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1beta1.TopologyConstraint{
 					TopologyName: "topo-a",
-					Pack: &grovecorev1alpha1.TopologyPackConstraint{
-						RequiredDomain: grovecorev1alpha1.TopologyDomainHost,
+					Pack: &grovecorev1beta1.TopologyPackConstraint{
+						RequiredDomain: grovecorev1beta1.TopologyDomainHost,
 					},
 				}
 				return pcs
@@ -1680,18 +1680,18 @@ func TestValidateTopologyConstraintsPCSTopologyName(t *testing.T) {
 		{
 			name:      "create allows child topologyName when it matches PCS",
 			operation: admissionv1.Create,
-			setupNewPCS: func() *grovecorev1alpha1.PodCliqueSet {
+			setupNewPCS: func() *grovecorev1beta1.PodCliqueSet {
 				pcs := createTestPodCliqueSet("pcs-child-topology-match")
-				pcs.Spec.Template.TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
+				pcs.Spec.Template.TopologyConstraint = &grovecorev1beta1.TopologyConstraint{
 					TopologyName: "topo-a",
-					Pack: &grovecorev1alpha1.TopologyPackConstraint{
-						RequiredDomain: grovecorev1alpha1.TopologyDomainZone,
+					Pack: &grovecorev1beta1.TopologyPackConstraint{
+						RequiredDomain: grovecorev1beta1.TopologyDomainZone,
 					},
 				}
-				pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
+				pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1beta1.TopologyConstraint{
 					TopologyName: "topo-a",
-					Pack: &grovecorev1alpha1.TopologyPackConstraint{
-						RequiredDomain: grovecorev1alpha1.TopologyDomainHost,
+					Pack: &grovecorev1beta1.TopologyPackConstraint{
+						RequiredDomain: grovecorev1beta1.TopologyDomainHost,
 					},
 				}
 				return pcs
@@ -1701,18 +1701,18 @@ func TestValidateTopologyConstraintsPCSTopologyName(t *testing.T) {
 		{
 			name:      "create rejects child topologyName that differs from PCS",
 			operation: admissionv1.Create,
-			setupNewPCS: func() *grovecorev1alpha1.PodCliqueSet {
+			setupNewPCS: func() *grovecorev1beta1.PodCliqueSet {
 				pcs := createTestPodCliqueSet("pcs-child-topology-mismatch")
-				pcs.Spec.Template.TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
+				pcs.Spec.Template.TopologyConstraint = &grovecorev1beta1.TopologyConstraint{
 					TopologyName: "topo-a",
-					Pack: &grovecorev1alpha1.TopologyPackConstraint{
-						RequiredDomain: grovecorev1alpha1.TopologyDomainZone,
+					Pack: &grovecorev1beta1.TopologyPackConstraint{
+						RequiredDomain: grovecorev1beta1.TopologyDomainZone,
 					},
 				}
-				pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
+				pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1beta1.TopologyConstraint{
 					TopologyName: "topo-b",
-					Pack: &grovecorev1alpha1.TopologyPackConstraint{
-						RequiredDomain: grovecorev1alpha1.TopologyDomainHost,
+					Pack: &grovecorev1beta1.TopologyPackConstraint{
+						RequiredDomain: grovecorev1beta1.TopologyDomainHost,
 					},
 				}
 				return pcs
@@ -1724,18 +1724,18 @@ func TestValidateTopologyConstraintsPCSTopologyName(t *testing.T) {
 		{
 			name:      "update repairs legacy missing child topologyName",
 			operation: admissionv1.Update,
-			setupOldPCS: func() *grovecorev1alpha1.PodCliqueSet {
+			setupOldPCS: func() *grovecorev1beta1.PodCliqueSet {
 				pcs := createTestPodCliqueSet("pcs-repair-missing")
-				pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
-					PackDomain: grovecorev1alpha1.TopologyDomainHost,
+				pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1beta1.TopologyConstraint{
+					PackDomain: grovecorev1beta1.TopologyDomainHost,
 				}
 				return pcs
 			},
-			setupNewPCS: func() *grovecorev1alpha1.PodCliqueSet {
+			setupNewPCS: func() *grovecorev1beta1.PodCliqueSet {
 				pcs := createTestPodCliqueSet("pcs-repair-missing")
-				pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
+				pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1beta1.TopologyConstraint{
 					TopologyName: "topo-a",
-					PackDomain:   grovecorev1alpha1.TopologyDomainHost,
+					PackDomain:   grovecorev1beta1.TopologyDomainHost,
 				}
 				return pcs
 			},
@@ -1744,24 +1744,24 @@ func TestValidateTopologyConstraintsPCSTopologyName(t *testing.T) {
 		{
 			name:      "update repairs legacy child topologyName through PCS inheritance",
 			operation: admissionv1.Update,
-			setupOldPCS: func() *grovecorev1alpha1.PodCliqueSet {
+			setupOldPCS: func() *grovecorev1beta1.PodCliqueSet {
 				pcs := createTestPodCliqueSet("pcs-repair-inherited-child")
-				pcs.Spec.Template.TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
-					PackDomain: grovecorev1alpha1.TopologyDomainZone,
+				pcs.Spec.Template.TopologyConstraint = &grovecorev1beta1.TopologyConstraint{
+					PackDomain: grovecorev1beta1.TopologyDomainZone,
 				}
-				pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
-					PackDomain: grovecorev1alpha1.TopologyDomainHost,
+				pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1beta1.TopologyConstraint{
+					PackDomain: grovecorev1beta1.TopologyDomainHost,
 				}
 				return pcs
 			},
-			setupNewPCS: func() *grovecorev1alpha1.PodCliqueSet {
+			setupNewPCS: func() *grovecorev1beta1.PodCliqueSet {
 				pcs := createTestPodCliqueSet("pcs-repair-inherited-child")
-				pcs.Spec.Template.TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
+				pcs.Spec.Template.TopologyConstraint = &grovecorev1beta1.TopologyConstraint{
 					TopologyName: "topo-a",
-					PackDomain:   grovecorev1alpha1.TopologyDomainZone,
+					PackDomain:   grovecorev1beta1.TopologyDomainZone,
 				}
-				pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
-					PackDomain: grovecorev1alpha1.TopologyDomainHost,
+				pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1beta1.TopologyConstraint{
+					PackDomain: grovecorev1beta1.TopologyDomainHost,
 				}
 				return pcs
 			},
@@ -1770,18 +1770,18 @@ func TestValidateTopologyConstraintsPCSTopologyName(t *testing.T) {
 		{
 			name:      "update does not treat topologyName-only PCS constraint as repairable legacy shape",
 			operation: admissionv1.Update,
-			setupOldPCS: func() *grovecorev1alpha1.PodCliqueSet {
+			setupOldPCS: func() *grovecorev1beta1.PodCliqueSet {
 				pcs := createTestPodCliqueSet("pcs-repair-child")
-				pcs.Spec.Template.TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
+				pcs.Spec.Template.TopologyConstraint = &grovecorev1beta1.TopologyConstraint{
 					TopologyName: "topo-a",
 				}
 				return pcs
 			},
-			setupNewPCS: func() *grovecorev1alpha1.PodCliqueSet {
+			setupNewPCS: func() *grovecorev1beta1.PodCliqueSet {
 				pcs := createTestPodCliqueSet("pcs-repair-child")
-				pcs.Spec.Template.TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
+				pcs.Spec.Template.TopologyConstraint = &grovecorev1beta1.TopologyConstraint{
 					TopologyName: "topo-a",
-					PackDomain:   grovecorev1alpha1.TopologyDomainZone,
+					PackDomain:   grovecorev1beta1.TopologyDomainZone,
 				}
 				return pcs
 			},
@@ -1793,18 +1793,18 @@ func TestValidateTopologyConstraintsPCSTopologyName(t *testing.T) {
 		{
 			name:      "update repair does not allow changing child packDomain",
 			operation: admissionv1.Update,
-			setupOldPCS: func() *grovecorev1alpha1.PodCliqueSet {
+			setupOldPCS: func() *grovecorev1beta1.PodCliqueSet {
 				pcs := createTestPodCliqueSet("pcs-repair-packdomain")
-				pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
-					PackDomain: grovecorev1alpha1.TopologyDomainHost,
+				pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1beta1.TopologyConstraint{
+					PackDomain: grovecorev1beta1.TopologyDomainHost,
 				}
 				return pcs
 			},
-			setupNewPCS: func() *grovecorev1alpha1.PodCliqueSet {
+			setupNewPCS: func() *grovecorev1beta1.PodCliqueSet {
 				pcs := createTestPodCliqueSet("pcs-repair-packdomain")
-				pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
+				pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1beta1.TopologyConstraint{
 					TopologyName: "topo-a",
-					PackDomain:   grovecorev1alpha1.TopologyDomainRack,
+					PackDomain:   grovecorev1beta1.TopologyDomainRack,
 				}
 				return pcs
 			},
@@ -1816,18 +1816,18 @@ func TestValidateTopologyConstraintsPCSTopologyName(t *testing.T) {
 		{
 			name:      "update repair does not allow changing existing topologyName while adding missing packDomain",
 			operation: admissionv1.Update,
-			setupOldPCS: func() *grovecorev1alpha1.PodCliqueSet {
+			setupOldPCS: func() *grovecorev1beta1.PodCliqueSet {
 				pcs := createTestPodCliqueSet("pcs-repair-pcs-packdomain")
-				pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
+				pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1beta1.TopologyConstraint{
 					TopologyName: "topo-a",
 				}
 				return pcs
 			},
-			setupNewPCS: func() *grovecorev1alpha1.PodCliqueSet {
+			setupNewPCS: func() *grovecorev1beta1.PodCliqueSet {
 				pcs := createTestPodCliqueSet("pcs-repair-pcs-packdomain")
-				pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
+				pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1beta1.TopologyConstraint{
 					TopologyName: "topo-b",
-					PackDomain:   grovecorev1alpha1.TopologyDomainHost,
+					PackDomain:   grovecorev1beta1.TopologyDomainHost,
 				}
 				return pcs
 			},
@@ -1890,11 +1890,11 @@ func defaultTASConfig() groveconfigv1alpha1.TopologyAwareSchedulingConfiguration
 }
 
 // createTestPodCliqueSet creates a basic PodCliqueSet for testing.
-func createTestPodCliqueSet(name string) *grovecorev1alpha1.PodCliqueSet {
+func createTestPodCliqueSet(name string) *grovecorev1beta1.PodCliqueSet {
 	return testutils.NewPodCliqueSetBuilder(name, "default", uuid.NewUUID()).
 		WithReplicas(1).
 		WithTerminationDelay(4 * time.Hour).
-		WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder)).
+		WithCliqueStartupType(ptr.To(grovecorev1beta1.CliqueStartupTypeAnyOrder)).
 		WithPodCliqueTemplateSpec(
 			testutils.NewPodCliqueTemplateSpecBuilder("test").
 				WithReplicas(1).
@@ -1905,7 +1905,7 @@ func createTestPodCliqueSet(name string) *grovecorev1alpha1.PodCliqueSet {
 }
 
 // createPodCliqueTemplate creates a basic PodCliqueTemplateSpec for testing.
-func createPodCliqueTemplate(name string) *grovecorev1alpha1.PodCliqueTemplateSpec {
+func createPodCliqueTemplate(name string) *grovecorev1beta1.PodCliqueTemplateSpec {
 	return testutils.NewPodCliqueTemplateSpecBuilder(name).
 		WithReplicas(1).
 		WithRoleName(fmt.Sprintf("dummy-%s-role", name)).
@@ -1914,21 +1914,21 @@ func createPodCliqueTemplate(name string) *grovecorev1alpha1.PodCliqueTemplateSp
 }
 
 // createScalingGroupConfig creates a basic PodCliqueScalingGroupConfig for testing.
-func createScalingGroupConfig(name string, cliqueNames []string) grovecorev1alpha1.PodCliqueScalingGroupConfig {
-	return grovecorev1alpha1.PodCliqueScalingGroupConfig{
+func createScalingGroupConfig(name string, cliqueNames []string) grovecorev1beta1.PodCliqueScalingGroupConfig {
+	return grovecorev1beta1.PodCliqueScalingGroupConfig{
 		Name:        name,
 		CliqueNames: cliqueNames,
 	}
 }
 
-func createTestClusterTopology() *grovecorev1alpha1.ClusterTopologyBinding {
-	return &grovecorev1alpha1.ClusterTopologyBinding{
+func createTestClusterTopology() *grovecorev1beta1.ClusterTopologyBinding {
+	return &grovecorev1beta1.ClusterTopologyBinding{
 		ObjectMeta: metav1.ObjectMeta{Name: "topo-a"},
-		Spec: grovecorev1alpha1.ClusterTopologyBindingSpec{
-			Levels: []grovecorev1alpha1.TopologyLevel{
-				{Domain: grovecorev1alpha1.TopologyDomainZone, Key: "topology.kubernetes.io/zone"},
-				{Domain: grovecorev1alpha1.TopologyDomainRack, Key: "topology.grove.io/rack"},
-				{Domain: grovecorev1alpha1.TopologyDomainHost, Key: "kubernetes.io/hostname"},
+		Spec: grovecorev1beta1.ClusterTopologyBindingSpec{
+			Levels: []grovecorev1beta1.TopologyLevel{
+				{Domain: grovecorev1beta1.TopologyDomainZone, Key: "topology.kubernetes.io/zone"},
+				{Domain: grovecorev1beta1.TopologyDomainRack, Key: "topology.grove.io/rack"},
+				{Domain: grovecorev1beta1.TopologyDomainHost, Key: "kubernetes.io/hostname"},
 			},
 		},
 	}
@@ -1937,103 +1937,103 @@ func createTestClusterTopology() *grovecorev1alpha1.ClusterTopologyBinding {
 func TestValidateRollingUpdateConfiguration(t *testing.T) {
 	testCases := []struct {
 		description    string
-		updateStrategy grovecorev1alpha1.UpdateStrategyType
-		rollingUpdate  *grovecorev1alpha1.RollingUpdateConfiguration
+		updateStrategy grovecorev1beta1.UpdateStrategyType
+		rollingUpdate  *grovecorev1beta1.RollingUpdateConfiguration
 		minAvailable   int32
 		wantErrType    *field.ErrorType
 	}{
 		{
 			description:    "OnDelete rejects RollingUpdate when set",
-			updateStrategy: grovecorev1alpha1.OnDeleteStrategy,
-			rollingUpdate:  &grovecorev1alpha1.RollingUpdateConfiguration{MaxUnavailable: ptr.To[int32](1)},
+			updateStrategy: grovecorev1beta1.OnDeleteStrategy,
+			rollingUpdate:  &grovecorev1beta1.RollingUpdateConfiguration{MaxUnavailable: ptr.To[int32](1)},
 			wantErrType:    ptr.To(field.ErrorTypeForbidden),
 		},
 		{
 			description:    "OnDelete accepts nil RollingUpdate",
-			updateStrategy: grovecorev1alpha1.OnDeleteStrategy,
+			updateStrategy: grovecorev1beta1.OnDeleteStrategy,
 			rollingUpdate:  nil,
 		},
 		{
 			description:    "nil RollingUpdate accepted under RollingRecreate",
-			updateStrategy: grovecorev1alpha1.RollingRecreateStrategy,
+			updateStrategy: grovecorev1beta1.RollingRecreateStrategy,
 			rollingUpdate:  nil,
 		},
 		{
 			description:    "MaxUnavailable zero rejected",
-			updateStrategy: grovecorev1alpha1.RollingRecreateStrategy,
-			rollingUpdate:  &grovecorev1alpha1.RollingUpdateConfiguration{MaxUnavailable: ptr.To[int32](0)},
+			updateStrategy: grovecorev1beta1.RollingRecreateStrategy,
+			rollingUpdate:  &grovecorev1beta1.RollingUpdateConfiguration{MaxUnavailable: ptr.To[int32](0)},
 			wantErrType:    ptr.To(field.ErrorTypeInvalid),
 		},
 		{
 			description:    "MaxUnavailable negative rejected",
-			updateStrategy: grovecorev1alpha1.RollingRecreateStrategy,
-			rollingUpdate:  &grovecorev1alpha1.RollingUpdateConfiguration{MaxUnavailable: ptr.To[int32](-1)},
+			updateStrategy: grovecorev1beta1.RollingRecreateStrategy,
+			rollingUpdate:  &grovecorev1beta1.RollingUpdateConfiguration{MaxUnavailable: ptr.To[int32](-1)},
 			wantErrType:    ptr.To(field.ErrorTypeInvalid),
 		},
 		{
 			description:    "ProgressDeadline zero rejected",
-			updateStrategy: grovecorev1alpha1.RollingRecreateStrategy,
-			rollingUpdate:  &grovecorev1alpha1.RollingUpdateConfiguration{ProgressDeadline: &metav1.Duration{Duration: 0}},
+			updateStrategy: grovecorev1beta1.RollingRecreateStrategy,
+			rollingUpdate:  &grovecorev1beta1.RollingUpdateConfiguration{ProgressDeadline: &metav1.Duration{Duration: 0}},
 			wantErrType:    ptr.To(field.ErrorTypeInvalid),
 		},
 		{
 			description:    "ProgressDeadline negative rejected",
-			updateStrategy: grovecorev1alpha1.RollingRecreateStrategy,
-			rollingUpdate:  &grovecorev1alpha1.RollingUpdateConfiguration{ProgressDeadline: &metav1.Duration{Duration: -time.Minute}},
+			updateStrategy: grovecorev1beta1.RollingRecreateStrategy,
+			rollingUpdate:  &grovecorev1beta1.RollingUpdateConfiguration{ProgressDeadline: &metav1.Duration{Duration: -time.Minute}},
 			wantErrType:    ptr.To(field.ErrorTypeInvalid),
 		},
 		{
 			description:    "valid MaxUnavailable and ProgressDeadline accepted",
-			updateStrategy: grovecorev1alpha1.RollingRecreateStrategy,
-			rollingUpdate:  &grovecorev1alpha1.RollingUpdateConfiguration{MaxUnavailable: ptr.To[int32](2), ProgressDeadline: &metav1.Duration{Duration: 5 * time.Minute}},
+			updateStrategy: grovecorev1beta1.RollingRecreateStrategy,
+			rollingUpdate:  &grovecorev1beta1.RollingUpdateConfiguration{MaxUnavailable: ptr.To[int32](2), ProgressDeadline: &metav1.Duration{Duration: 5 * time.Minute}},
 		},
 		{
 			// Regression for #876: MaxUnavailable is a ceiling, not bounded above by the template
 			// replica seed. A larger budget must be accepted so it stays valid after the live
 			// component is scaled out independently of the template.
 			description:    "RollingRecreate MaxUnavailable above template replicas accepted",
-			updateStrategy: grovecorev1alpha1.RollingRecreateStrategy,
-			rollingUpdate:  &grovecorev1alpha1.RollingUpdateConfiguration{MaxUnavailable: ptr.To[int32](5)},
+			updateStrategy: grovecorev1beta1.RollingRecreateStrategy,
+			rollingUpdate:  &grovecorev1beta1.RollingUpdateConfiguration{MaxUnavailable: ptr.To[int32](5)},
 		},
 		{
 			description:    "coherent MaxUnavailable less than minAvailable rejected",
-			updateStrategy: grovecorev1alpha1.CoherentStrategy,
-			rollingUpdate:  &grovecorev1alpha1.RollingUpdateConfiguration{MaxUnavailable: ptr.To[int32](1)},
+			updateStrategy: grovecorev1beta1.CoherentStrategy,
+			rollingUpdate:  &grovecorev1beta1.RollingUpdateConfiguration{MaxUnavailable: ptr.To[int32](1)},
 			minAvailable:   2,
 			wantErrType:    ptr.To(field.ErrorTypeInvalid),
 		},
 		{
 			description:    "coherent MaxUnavailable equal to minAvailable accepted",
-			updateStrategy: grovecorev1alpha1.CoherentStrategy,
-			rollingUpdate:  &grovecorev1alpha1.RollingUpdateConfiguration{MaxUnavailable: ptr.To[int32](2)},
+			updateStrategy: grovecorev1beta1.CoherentStrategy,
+			rollingUpdate:  &grovecorev1beta1.RollingUpdateConfiguration{MaxUnavailable: ptr.To[int32](2)},
 			minAvailable:   2,
 		},
 		{
 			// Regression for #876: Coherent MaxUnavailable above the template replica seed accepted,
 			// only the minAvailable floor applies.
 			description:    "coherent MaxUnavailable above template replicas accepted",
-			updateStrategy: grovecorev1alpha1.CoherentStrategy,
-			rollingUpdate:  &grovecorev1alpha1.RollingUpdateConfiguration{MaxUnavailable: ptr.To[int32](5)},
+			updateStrategy: grovecorev1beta1.CoherentStrategy,
+			rollingUpdate:  &grovecorev1beta1.RollingUpdateConfiguration{MaxUnavailable: ptr.To[int32](5)},
 			minAvailable:   2,
 		},
 		{
 			description:    "unset strategy resolves to RollingRecreate, MaxUnavailable below minAvailable accepted",
 			updateStrategy: "",
-			rollingUpdate:  &grovecorev1alpha1.RollingUpdateConfiguration{MaxUnavailable: ptr.To[int32](1)},
+			rollingUpdate:  &grovecorev1beta1.RollingUpdateConfiguration{MaxUnavailable: ptr.To[int32](1)},
 			minAvailable:   2,
 		},
 		{
 			description:    "rollingRecreate MaxUnavailable below minAvailable accepted, the bound is Coherent only",
-			updateStrategy: grovecorev1alpha1.RollingRecreateStrategy,
-			rollingUpdate:  &grovecorev1alpha1.RollingUpdateConfiguration{MaxUnavailable: ptr.To[int32](1)},
+			updateStrategy: grovecorev1beta1.RollingRecreateStrategy,
+			rollingUpdate:  &grovecorev1beta1.RollingUpdateConfiguration{MaxUnavailable: ptr.To[int32](1)},
 			minAvailable:   3,
 		},
 	}
 	for _, tc := range testCases {
 		t.Run(tc.description, func(t *testing.T) {
-			pcs := &grovecorev1alpha1.PodCliqueSet{
-				Spec: grovecorev1alpha1.PodCliqueSetSpec{
-					UpdateStrategy: &grovecorev1alpha1.PodCliqueSetUpdateStrategy{Type: tc.updateStrategy},
+			pcs := &grovecorev1beta1.PodCliqueSet{
+				Spec: grovecorev1beta1.PodCliqueSetSpec{
+					UpdateStrategy: &grovecorev1beta1.PodCliqueSetUpdateStrategy{Type: tc.updateStrategy},
 				},
 			}
 			v := &pcsValidator{pcs: pcs}
@@ -2051,9 +2051,9 @@ func TestValidateRollingUpdateConfiguration(t *testing.T) {
 func TestValidateRollingUpdateOnPCSGMemberRejected(t *testing.T) {
 	pcs := createTestPodCliqueSet("inference")
 	member := createPodCliqueTemplate("member")
-	member.RollingUpdate = &grovecorev1alpha1.RollingUpdateConfiguration{MaxUnavailable: ptr.To[int32](1)}
+	member.RollingUpdate = &grovecorev1beta1.RollingUpdateConfiguration{MaxUnavailable: ptr.To[int32](1)}
 	pcs.Spec.Template.Cliques = append(pcs.Spec.Template.Cliques, member)
-	pcs.Spec.Template.PodCliqueScalingGroupConfigs = []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+	pcs.Spec.Template.PodCliqueScalingGroupConfigs = []grovecorev1beta1.PodCliqueScalingGroupConfig{
 		{Name: "sg", CliqueNames: []string{"member"}, Replicas: ptr.To[int32](1), MinAvailable: ptr.To[int32](1)},
 	}
 

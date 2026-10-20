@@ -17,7 +17,7 @@ package component
 import (
 	"testing"
 
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/stretchr/testify/assert"
@@ -30,13 +30,13 @@ func TestCoherentMaxUnavailableByComponent(t *testing.T) {
 		WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("other").WithReplicas(4).WithMinAvailable(1).WithMaxUnavailable(1).Build()).
 		WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("pf-leader").WithReplicas(1).WithMinAvailable(1).Build()).
 		WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("pfnil-leader").WithReplicas(1).WithMinAvailable(1).Build()).
-		WithPodCliqueScalingGroupConfig(grovecorev1alpha1.PodCliqueScalingGroupConfig{
+		WithPodCliqueScalingGroupConfig(grovecorev1beta1.PodCliqueScalingGroupConfig{
 			Name:          "pf",
 			CliqueNames:   []string{"pf-leader"},
 			MinAvailable:  ptr.To[int32](1),
-			RollingUpdate: &grovecorev1alpha1.RollingUpdateConfiguration{MaxUnavailable: ptr.To[int32](2)},
+			RollingUpdate: &grovecorev1beta1.RollingUpdateConfiguration{MaxUnavailable: ptr.To[int32](2)},
 		}).
-		WithPodCliqueScalingGroupConfig(grovecorev1alpha1.PodCliqueScalingGroupConfig{
+		WithPodCliqueScalingGroupConfig(grovecorev1beta1.PodCliqueScalingGroupConfig{
 			Name:         "pfnil",
 			CliqueNames:  []string{"pfnil-leader"},
 			MinAvailable: ptr.To[int32](4),
@@ -54,7 +54,7 @@ func TestCoherentMinAvailableByComponent(t *testing.T) {
 		WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("fe").WithReplicas(5).WithMinAvailable(2).Build()).
 		WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("other").WithReplicas(4).WithMinAvailable(1).Build()).
 		WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("pf-leader").WithReplicas(1).WithMinAvailable(1).Build()).
-		WithPodCliqueScalingGroupConfig(grovecorev1alpha1.PodCliqueScalingGroupConfig{
+		WithPodCliqueScalingGroupConfig(grovecorev1beta1.PodCliqueScalingGroupConfig{
 			Name:         "pf",
 			CliqueNames:  []string{"pf-leader"},
 			MinAvailable: ptr.To[int32](3),
@@ -71,41 +71,41 @@ func TestCoherentMinAvailableByComponent(t *testing.T) {
 func TestResolvedMaxUnavailable(t *testing.T) {
 	testCases := []struct {
 		description    string
-		rollingUpdate  *grovecorev1alpha1.RollingUpdateConfiguration
-		updateStrategy grovecorev1alpha1.UpdateStrategyType
+		rollingUpdate  *grovecorev1beta1.RollingUpdateConfiguration
+		updateStrategy grovecorev1beta1.UpdateStrategyType
 		minAvailable   int32
 		want           int
 	}{
 		{
 			description:    "RollingRecreate nil rollingUpdate returns the RollingRecreate default",
 			rollingUpdate:  nil,
-			updateStrategy: grovecorev1alpha1.RollingRecreateStrategy,
+			updateStrategy: grovecorev1beta1.RollingRecreateStrategy,
 			want:           int(DefaultRollingRecreateMaxUnavailable),
 		},
 		{
 			description:    "RollingRecreate nil MaxUnavailable returns the RollingRecreate default",
-			rollingUpdate:  &grovecorev1alpha1.RollingUpdateConfiguration{},
-			updateStrategy: grovecorev1alpha1.RollingRecreateStrategy,
+			rollingUpdate:  &grovecorev1beta1.RollingUpdateConfiguration{},
+			updateStrategy: grovecorev1beta1.RollingRecreateStrategy,
 			want:           int(DefaultRollingRecreateMaxUnavailable),
 		},
 		{
 			description:    "Coherent nil rollingUpdate returns MinAvailable",
 			rollingUpdate:  nil,
-			updateStrategy: grovecorev1alpha1.CoherentStrategy,
+			updateStrategy: grovecorev1beta1.CoherentStrategy,
 			minAvailable:   3,
 			want:           3,
 		},
 		{
 			description:    "Coherent nil MaxUnavailable returns MinAvailable",
-			rollingUpdate:  &grovecorev1alpha1.RollingUpdateConfiguration{},
-			updateStrategy: grovecorev1alpha1.CoherentStrategy,
+			rollingUpdate:  &grovecorev1beta1.RollingUpdateConfiguration{},
+			updateStrategy: grovecorev1beta1.CoherentStrategy,
 			minAvailable:   2,
 			want:           2,
 		},
 		{
 			description:    "configured MaxUnavailable is returned regardless of strategy",
-			rollingUpdate:  &grovecorev1alpha1.RollingUpdateConfiguration{MaxUnavailable: ptr.To[int32](5)},
-			updateStrategy: grovecorev1alpha1.CoherentStrategy,
+			rollingUpdate:  &grovecorev1beta1.RollingUpdateConfiguration{MaxUnavailable: ptr.To[int32](5)},
+			updateStrategy: grovecorev1beta1.CoherentStrategy,
 			minAvailable:   2,
 			want:           5,
 		},

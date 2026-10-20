@@ -23,7 +23,7 @@ import (
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
 	"github.com/samber/lo"
@@ -34,12 +34,12 @@ import (
 )
 
 // GetPCLQsByOwner retrieves PodClique objects that are owned by the specified owner kind and object key, and match the provided selector labels.
-func GetPCLQsByOwner(ctx context.Context, cl client.Client, ownerKind string, ownerObjectKey client.ObjectKey, selectorLabels map[string]string) ([]grovecorev1alpha1.PodClique, error) {
+func GetPCLQsByOwner(ctx context.Context, cl client.Client, ownerKind string, ownerObjectKey client.ObjectKey, selectorLabels map[string]string) ([]grovecorev1beta1.PodClique, error) {
 	pclqs, err := ListPCLQsMatchingLabels(ctx, cl, ownerObjectKey.Namespace, selectorLabels)
 	if err != nil {
 		return pclqs, err
 	}
-	filteredPCLQs := lo.Filter(pclqs, func(pclq grovecorev1alpha1.PodClique, _ int) bool {
+	filteredPCLQs := lo.Filter(pclqs, func(pclq grovecorev1beta1.PodClique, _ int) bool {
 		if len(pclq.OwnerReferences) == 0 {
 			return false
 		}
@@ -49,7 +49,7 @@ func GetPCLQsByOwner(ctx context.Context, cl client.Client, ownerKind string, ow
 }
 
 // GetPCLQsByOwnerReplicaIndex retrieves PodClique objects per replica of the owner resource matching provided selector labels.
-func GetPCLQsByOwnerReplicaIndex(ctx context.Context, cl client.Client, ownerKind string, ownerObjectKey client.ObjectKey, selectorLabels map[string]string) (map[int][]grovecorev1alpha1.PodClique, error) {
+func GetPCLQsByOwnerReplicaIndex(ctx context.Context, cl client.Client, ownerKind string, ownerObjectKey client.ObjectKey, selectorLabels map[string]string) (map[int][]grovecorev1beta1.PodClique, error) {
 	pclqs, err := GetPCLQsByOwner(ctx, cl, ownerKind, ownerObjectKey, selectorLabels)
 	if err != nil {
 		return nil, err
@@ -58,8 +58,8 @@ func GetPCLQsByOwnerReplicaIndex(ctx context.Context, cl client.Client, ownerKin
 }
 
 // ListPCLQsMatchingLabels lists all the PodClique's in a given namespace matching selectorLabels.
-func ListPCLQsMatchingLabels(ctx context.Context, cl client.Client, namespace string, selectorLabels map[string]string) ([]grovecorev1alpha1.PodClique, error) {
-	podCliqueList := &grovecorev1alpha1.PodCliqueList{}
+func ListPCLQsMatchingLabels(ctx context.Context, cl client.Client, namespace string, selectorLabels map[string]string) ([]grovecorev1beta1.PodClique, error) {
+	podCliqueList := &grovecorev1beta1.PodCliqueList{}
 	if err := cl.List(ctx,
 		podCliqueList,
 		client.InNamespace(namespace),
@@ -70,20 +70,20 @@ func ListPCLQsMatchingLabels(ctx context.Context, cl client.Client, namespace st
 }
 
 // GroupPCLQsByPodGangName filters PCLQs that have a PodGang label and groups them by the PodGang name.
-func GroupPCLQsByPodGangName(pclqs []grovecorev1alpha1.PodClique) map[string][]grovecorev1alpha1.PodClique {
+func GroupPCLQsByPodGangName(pclqs []grovecorev1beta1.PodClique) map[string][]grovecorev1beta1.PodClique {
 	// since the conversion function is nil, there can be no error returned, so ignoring it.
 	grouped, _ := groupPCLQsByLabelValue[string](pclqs, apicommon.LabelPodGang, func(s string) (string, error) { return s, nil })
 	return grouped
 }
 
 // GroupPCLQsByPCSGReplicaIndex filters PCLQs that have a PodCliqueScalingGroupReplicaIndex label and groups them by the PCSG replica.
-func GroupPCLQsByPCSGReplicaIndex(pclqs []grovecorev1alpha1.PodClique) (map[int][]grovecorev1alpha1.PodClique, error) {
+func GroupPCLQsByPCSGReplicaIndex(pclqs []grovecorev1beta1.PodClique) (map[int][]grovecorev1beta1.PodClique, error) {
 	return groupPCLQsByLabelValue[int](pclqs, apicommon.LabelPodCliqueScalingGroupReplicaIndex, strconv.Atoi)
 }
 
 // GroupPCLQsByPCSReplicaIndex filters PCLQs that have a PodCliqueSetReplicaIndex label and groups them by the PCS replica index.
 // A PodCliqueSetReplicaIndex label that is not a valid integer is a contract violation and returns an error.
-func GroupPCLQsByPCSReplicaIndex(pclqs []grovecorev1alpha1.PodClique) (map[int][]grovecorev1alpha1.PodClique, error) {
+func GroupPCLQsByPCSReplicaIndex(pclqs []grovecorev1beta1.PodClique) (map[int][]grovecorev1beta1.PodClique, error) {
 	return groupPCLQsByLabelValue(pclqs, apicommon.LabelPodCliqueSetReplicaIndex, strconv.Atoi)
 }
 
@@ -97,7 +97,7 @@ const InitialScheduleGrace = 5 * time.Second
 // state. It reads Status.LastScheduled, a durable marker stamped in the same status reconcile that
 // first sets PodCliqueScheduled to True and never reset once set. A nil value means no reconcile has
 // yet observed the PodClique meet its scheduled count.
-func WasPCLQEverScheduled(pclq *grovecorev1alpha1.PodClique) bool {
+func WasPCLQEverScheduled(pclq *grovecorev1beta1.PodClique) bool {
 	return pclq.Status.LastScheduled != nil
 }
 
@@ -107,7 +107,7 @@ func WasPCLQEverScheduled(pclq *grovecorev1alpha1.PodClique) bool {
 // Used to gate gang-termination so an initial-startup PCSG that has not yet stabilized is left
 // alone — only regressions from a previously-healthy state get recycled.
 // Shares the observed-transitions-only limitation documented on WasPCLQEverScheduled.
-func WasPCSGEverHealthy(pcsg *grovecorev1alpha1.PodCliqueScalingGroup) bool {
+func WasPCSGEverHealthy(pcsg *grovecorev1beta1.PodCliqueScalingGroup) bool {
 	cond := meta.FindStatusCondition(pcsg.Status.Conditions, constants.ConditionTypeMinAvailableBreached)
 	if cond == nil {
 		return false
@@ -118,7 +118,7 @@ func WasPCSGEverHealthy(pcsg *grovecorev1alpha1.PodCliqueScalingGroup) bool {
 	return cond.LastTransitionTime.After(pcsg.CreationTimestamp.Add(InitialScheduleGrace))
 }
 
-// GetMinAvailableBreachedPCLQInfo filters PodCliques that have grovecorev1alpha1.ConditionTypeMinAvailableBreached set to true.
+// GetMinAvailableBreachedPCLQInfo filters PodCliques that have grovecorev1beta1.ConditionTypeMinAvailableBreached set to true.
 // For each such PodClique it returns the name of the PodClique, and it returns the shortest duration to wait for before a
 // PodClique's breach tolerance, as returned by breachToleranceFor, is exceeded.
 //
@@ -126,7 +126,7 @@ func WasPCSGEverHealthy(pcsg *grovecorev1alpha1.PodCliqueScalingGroup) bool {
 // MinAvailableBreached condition is still True on them (operators can observe the state) but
 // gang-termination would only churn-loop Pending pods against a cluster that already cannot
 // schedule them. Recycling makes sense only after a workload has been healthy and then regressed.
-func GetMinAvailableBreachedPCLQInfo(pclqs []grovecorev1alpha1.PodClique, breachToleranceFor func(*grovecorev1alpha1.PodClique) time.Duration, since time.Time) ([]string, time.Duration) {
+func GetMinAvailableBreachedPCLQInfo(pclqs []grovecorev1beta1.PodClique, breachToleranceFor func(*grovecorev1beta1.PodClique) time.Duration, since time.Time) ([]string, time.Duration) {
 	pclqCandidateNames := make([]string, 0, len(pclqs))
 	waitForDurations := make([]time.Duration, 0, len(pclqs))
 	for _, pclq := range pclqs {
@@ -153,8 +153,8 @@ func GetMinAvailableBreachedPCLQInfo(pclqs []grovecorev1alpha1.PodClique, breach
 
 // GetPodCliquesWithParentPCS retrieves PodClique objects that are not part of any PodCliqueScalingGroup for the given PodCliqueSet.
 // GetPodCliquesWithParentPCS retrieves PodClique objects that are not part of any PodCliqueScalingGroup for the given PodCliqueSet.
-func GetPodCliquesWithParentPCS(ctx context.Context, cl client.Client, pcsObjMeta metav1.ObjectMeta) ([]grovecorev1alpha1.PodClique, error) {
-	pclqList := &grovecorev1alpha1.PodCliqueList{}
+func GetPodCliquesWithParentPCS(ctx context.Context, cl client.Client, pcsObjMeta metav1.ObjectMeta) ([]grovecorev1beta1.PodClique, error) {
+	pclqList := &grovecorev1beta1.PodCliqueList{}
 	err := cl.List(ctx,
 		pclqList,
 		client.InNamespace(pcsObjMeta.Namespace),
@@ -170,7 +170,7 @@ func GetPodCliquesWithParentPCS(ctx context.Context, cl client.Client, pcsObjMet
 	}
 	// Exclude PodCliques controlled by an older PodCliqueSet of the same name, so a recreated
 	// PodCliqueSet does not ingest a deleted one's leftover children.
-	return lo.Filter(pclqList.Items, func(pclq grovecorev1alpha1.PodClique, _ int) bool {
+	return lo.Filter(pclqList.Items, func(pclq grovecorev1beta1.PodClique, _ int) bool {
 		return metav1.IsControlledBy(&pclq, &pcsObjMeta)
 	}), nil
 }
@@ -179,8 +179,8 @@ func GetPodCliquesWithParentPCS(ctx context.Context, cl client.Client, pcsObjMet
 // The caller should pass a key conversion function that takes in a string (label-value) and converts it
 // into the desired type T. In case no conversion is required just pass an identity function that just returns the same type
 // without any conversion. An error is returned if the conversion fails.
-func groupPCLQsByLabelValue[T comparable](pclqs []grovecorev1alpha1.PodClique, labelKey string, keyConversionFn func(string) (T, error)) (map[T][]grovecorev1alpha1.PodClique, error) {
-	grouped := make(map[T][]grovecorev1alpha1.PodClique)
+func groupPCLQsByLabelValue[T comparable](pclqs []grovecorev1beta1.PodClique, labelKey string, keyConversionFn func(string) (T, error)) (map[T][]grovecorev1beta1.PodClique, error) {
+	grouped := make(map[T][]grovecorev1beta1.PodClique)
 	for _, pclq := range pclqs {
 		labelValue, exists := pclq.Labels[labelKey]
 		if !exists {
@@ -200,7 +200,7 @@ func groupPCLQsByLabelValue[T comparable](pclqs []grovecorev1alpha1.PodClique, l
 }
 
 // ComputePCLQPodTemplateHash computes the pod template hash for the PCLQ pod spec.
-func ComputePCLQPodTemplateHash(pclqTemplateSpec *grovecorev1alpha1.PodCliqueTemplateSpec, priorityClassName string) string {
+func ComputePCLQPodTemplateHash(pclqTemplateSpec *grovecorev1beta1.PodCliqueTemplateSpec, priorityClassName string) string {
 	podTemplateSpec := corev1.PodTemplateSpec{
 		ObjectMeta: metav1.ObjectMeta{
 			Labels:      pclqTemplateSpec.Labels,
@@ -213,14 +213,14 @@ func ComputePCLQPodTemplateHash(pclqTemplateSpec *grovecorev1alpha1.PodCliqueTem
 }
 
 // IsPCLQRollingUpdateInProgress checks if PodClique is under a rolling update.
-func IsPCLQRollingUpdateInProgress(pclq *grovecorev1alpha1.PodClique) bool {
+func IsPCLQRollingUpdateInProgress(pclq *grovecorev1beta1.PodClique) bool {
 	return pclq.Status.UpdateProgress != nil && pclq.Status.UpdateProgress.UpdateEndedAt == nil
 }
 
 // IsLastPCLQUpdateCompleted checks if the last update of PodClique is completed.
 // For rolling update strategies, it returns if all Pods of the PodClique have been updated with the new specification.
 // For the OnDelete strategy, it returns whether the PodClique controller has processed the update by refreshing all hash fields in the PodCliqueStatus, based on which PodCliqueStatus.UpdatedReplicas are calculated.
-func IsLastPCLQUpdateCompleted(pclq *grovecorev1alpha1.PodClique) bool {
+func IsLastPCLQUpdateCompleted(pclq *grovecorev1beta1.PodClique) bool {
 	return pclq.Status.UpdateProgress != nil && pclq.Status.UpdateProgress.UpdateEndedAt != nil
 }
 
@@ -228,7 +228,7 @@ func IsLastPCLQUpdateCompleted(pclq *grovecorev1alpha1.PodClique) bool {
 // by its owning PodCliqueSet. CurrentPodCliqueSetGenerationHash records the last generation that completed,
 // but a later active update may already have replaced some Pods without completing. An active update
 // therefore means the PodClique is not complete, even if that stored generation matches the PCS again.
-func IsPCLQUpdateComplete(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grovecorev1alpha1.PodClique) bool {
+func IsPCLQUpdateComplete(pcs *grovecorev1beta1.PodCliqueSet, pclq *grovecorev1beta1.PodClique) bool {
 	// A PodCliqueSet without a current generation hash has no target for its children to converge to, so
 	// no PodClique can be complete. computePCLQsStatus reaches here for a freshly created PodCliqueSet
 	// before its first generation hash is recorded.
@@ -255,7 +255,7 @@ func IsPCLQUpdateComplete(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grovecorev1
 }
 
 // GetExpectedPCLQPodTemplateHash finds the matching PodCliqueTemplateSpec from the PodCliqueSet and computes the pod template hash for the PCLQ pod spec.
-func GetExpectedPCLQPodTemplateHash(pcs *grovecorev1alpha1.PodCliqueSet, pclqObjectMeta metav1.ObjectMeta) (string, error) {
+func GetExpectedPCLQPodTemplateHash(pcs *grovecorev1beta1.PodCliqueSet, pclqObjectMeta metav1.ObjectMeta) (string, error) {
 	cliqueName, err := GetPodCliqueNameFromPodCliqueFQN(pclqObjectMeta)
 	if err != nil {
 		return "", err
@@ -269,8 +269,8 @@ func GetExpectedPCLQPodTemplateHash(pcs *grovecorev1alpha1.PodCliqueSet, pclqObj
 
 // FindPodCliqueTemplateSpecByName retrieves the PodCliqueTemplateSpec from the PodCliqueSet by its name.
 // If there is no matching PodCliqueTemplateSpec, it returns nil.
-func FindPodCliqueTemplateSpecByName(pcs *grovecorev1alpha1.PodCliqueSet, pclqName string) *grovecorev1alpha1.PodCliqueTemplateSpec {
-	matchingPCLQTemplateSpec, ok := lo.Find(pcs.Spec.Template.Cliques, func(pclqTemplateSpec *grovecorev1alpha1.PodCliqueTemplateSpec) bool {
+func FindPodCliqueTemplateSpecByName(pcs *grovecorev1beta1.PodCliqueSet, pclqName string) *grovecorev1beta1.PodCliqueTemplateSpec {
+	matchingPCLQTemplateSpec, ok := lo.Find(pcs.Spec.Template.Cliques, func(pclqTemplateSpec *grovecorev1beta1.PodCliqueTemplateSpec) bool {
 		return pclqName == pclqTemplateSpec.Name
 	})
 	if !ok {

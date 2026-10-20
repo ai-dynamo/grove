@@ -18,8 +18,7 @@ import (
 	"testing"
 	"time"
 
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
-
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/stretchr/testify/assert"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
@@ -38,10 +37,10 @@ func TestMinReplicaAccessors(t *testing.T) {
 	}
 	for _, tc := range testCases {
 		t.Run(tc.description, func(t *testing.T) {
-			pcs := &grovecorev1alpha1.PodCliqueSet{}
-			pclqSpec := grovecorev1alpha1.PodCliqueSpec{Replicas: 5, MinAvailable: tc.minAvailable}
-			pcsgSpec := grovecorev1alpha1.PodCliqueScalingGroupSpec{Replicas: 5, MinAvailable: tc.minAvailable}
-			pcsgConfig := grovecorev1alpha1.PodCliqueScalingGroupConfig{MinAvailable: tc.minAvailable}
+			pcs := &grovecorev1beta1.PodCliqueSet{}
+			pclqSpec := grovecorev1beta1.PodCliqueSpec{Replicas: 5, MinAvailable: tc.minAvailable}
+			pcsgSpec := grovecorev1beta1.PodCliqueScalingGroupSpec{Replicas: 5, MinAvailable: tc.minAvailable}
+			pcsgConfig := grovecorev1beta1.PodCliqueScalingGroupConfig{MinAvailable: tc.minAvailable}
 
 			assert.Equal(t, tc.want, PCLQInitMinReplicas(&pclqSpec))
 			assert.Equal(t, tc.want, PCSGInitMinReplicas(&pcsgSpec))
@@ -57,10 +56,10 @@ func TestMinReplicaAccessors(t *testing.T) {
 			assert.Equal(t, tc.want, PCLQReadyThreshold(&pclqSpec))
 			assert.Equal(t, tc.want, PCSGReadyThreshold(&pcsgSpec))
 
-			assert.Equal(t, tc.want, CliqueTemplateUpdateMinReplicas(pcs, &grovecorev1alpha1.PodCliqueTemplateSpec{Spec: pclqSpec}))
+			assert.Equal(t, tc.want, CliqueTemplateUpdateMinReplicas(pcs, &grovecorev1beta1.PodCliqueTemplateSpec{Spec: pclqSpec}))
 			assert.Equal(t, tc.want, PCSGConfigUpdateMinReplicas(pcs, &pcsgConfig))
-			assert.Equal(t, tc.want, PCLQUpdateMinReplicas(pcs, &grovecorev1alpha1.PodClique{Spec: pclqSpec}))
-			assert.Equal(t, tc.want, PCSGUpdateMinReplicas(pcs, &grovecorev1alpha1.PodCliqueScalingGroup{Spec: pcsgSpec}))
+			assert.Equal(t, tc.want, PCLQUpdateMinReplicas(pcs, &grovecorev1beta1.PodClique{Spec: pclqSpec}))
+			assert.Equal(t, tc.want, PCSGUpdateMinReplicas(pcs, &grovecorev1beta1.PodCliqueScalingGroup{Spec: pcsgSpec}))
 		})
 	}
 }
@@ -78,13 +77,13 @@ func TestBreachToleranceAccessors(t *testing.T) {
 	}
 	for _, tc := range testCases {
 		t.Run(tc.description, func(t *testing.T) {
-			pcs := &grovecorev1alpha1.PodCliqueSet{
-				Spec: grovecorev1alpha1.PodCliqueSetSpec{
-					Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{TerminationDelay: tc.terminationDelay},
+			pcs := &grovecorev1beta1.PodCliqueSet{
+				Spec: grovecorev1beta1.PodCliqueSetSpec{
+					Template: grovecorev1beta1.PodCliqueSetTemplateSpec{TerminationDelay: tc.terminationDelay},
 				},
 			}
-			assert.Equal(t, tc.want, PCLQBreachTolerance(pcs, &grovecorev1alpha1.PodClique{}))
-			assert.Equal(t, tc.want, PCSGBreachTolerance(pcs, &grovecorev1alpha1.PodCliqueScalingGroup{}))
+			assert.Equal(t, tc.want, PCLQBreachTolerance(pcs, &grovecorev1beta1.PodClique{}))
+			assert.Equal(t, tc.want, PCSGBreachTolerance(pcs, &grovecorev1beta1.PodCliqueScalingGroup{}))
 		})
 	}
 }

@@ -19,7 +19,7 @@ import (
 	"fmt"
 
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	ctrlcommon "github.com/ai-dynamo/grove/operator/internal/controller/common"
 	pcsgexpectations "github.com/ai-dynamo/grove/operator/internal/controller/podcliquescalinggroup/expectations"
 	ctrlutils "github.com/ai-dynamo/grove/operator/internal/controller/utils"
@@ -32,9 +32,9 @@ import (
 // triggerDeletionFlow handles the deletion of a PodCliqueScalingGroup.
 // Child PodCliques carry a controller owner reference to this PCSG, so finalizer
 // removal hands the cascade off to the Kubernetes garbage collector.
-func (r *Reconciler) triggerDeletionFlow(ctx context.Context, logger logr.Logger, pcsg *grovecorev1alpha1.PodCliqueScalingGroup) ctrlcommon.ReconcileStepResult {
+func (r *Reconciler) triggerDeletionFlow(ctx context.Context, logger logr.Logger, pcsg *grovecorev1beta1.PodCliqueScalingGroup) ctrlcommon.ReconcileStepResult {
 	dLog := logger.WithValues("operation", "delete")
-	deleteStepFns := []ctrlcommon.ReconcileStepFn[grovecorev1alpha1.PodCliqueScalingGroup]{
+	deleteStepFns := []ctrlcommon.ReconcileStepFn[grovecorev1beta1.PodCliqueScalingGroup]{
 		r.clearExpectations,
 		r.removeFinalizer,
 	}
@@ -50,7 +50,7 @@ func (r *Reconciler) triggerDeletionFlow(ctx context.Context, logger logr.Logger
 // clearExpectations drops the in-memory delete-expectations entry for this PodCliqueScalingGroup so
 // the store does not retain an entry after the object is gone. It runs before finalizer removal so a
 // failure is retried while the object still exists.
-func (r *Reconciler) clearExpectations(_ context.Context, logger logr.Logger, pcsg *grovecorev1alpha1.PodCliqueScalingGroup) ctrlcommon.ReconcileStepResult {
+func (r *Reconciler) clearExpectations(_ context.Context, logger logr.Logger, pcsg *grovecorev1beta1.PodCliqueScalingGroup) ctrlcommon.ReconcileStepResult {
 	if err := pcsgexpectations.ClearPCSGExpectations(logger, r.expectationStore, pcsg.ObjectMeta); err != nil {
 		return ctrlcommon.ReconcileWithErrors("error clearing expectations", err)
 	}
@@ -58,7 +58,7 @@ func (r *Reconciler) clearExpectations(_ context.Context, logger logr.Logger, pc
 }
 
 // removeFinalizer removes the PodCliqueScalingGroup finalizer to allow Kubernetes to complete the deletion
-func (r *Reconciler) removeFinalizer(ctx context.Context, logger logr.Logger, pcsg *grovecorev1alpha1.PodCliqueScalingGroup) ctrlcommon.ReconcileStepResult {
+func (r *Reconciler) removeFinalizer(ctx context.Context, logger logr.Logger, pcsg *grovecorev1beta1.PodCliqueScalingGroup) ctrlcommon.ReconcileStepResult {
 	if !controllerutil.ContainsFinalizer(pcsg, constants.FinalizerPodCliqueScalingGroup) {
 		logger.Info("Finalizer not found", "PodCliqueScalingGroup", pcsg)
 		return ctrlcommon.DoNotRequeue()

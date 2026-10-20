@@ -21,7 +21,7 @@ import (
 	"strconv"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
 	"github.com/samber/lo"
@@ -33,8 +33,8 @@ import (
 // the one that contains the specified clique name in its CliqueNames list.
 //
 // Returns the matching PodCliqueScalingGroupConfig and true if found, or an empty config and false if not found.
-func FindScalingGroupConfigForClique(scalingGroupConfigs []grovecorev1alpha1.PodCliqueScalingGroupConfig, cliqueName string) *grovecorev1alpha1.PodCliqueScalingGroupConfig {
-	pcsgConfig, ok := lo.Find(scalingGroupConfigs, func(pcsgConfig grovecorev1alpha1.PodCliqueScalingGroupConfig) bool {
+func FindScalingGroupConfigForClique(scalingGroupConfigs []grovecorev1beta1.PodCliqueScalingGroupConfig, cliqueName string) *grovecorev1beta1.PodCliqueScalingGroupConfig {
+	pcsgConfig, ok := lo.Find(scalingGroupConfigs, func(pcsgConfig grovecorev1beta1.PodCliqueScalingGroupConfig) bool {
 		return slices.Contains(pcsgConfig.CliqueNames, cliqueName)
 	})
 	if !ok {
@@ -44,21 +44,21 @@ func FindScalingGroupConfigForClique(scalingGroupConfigs []grovecorev1alpha1.Pod
 }
 
 // GetPCSGsForPCS fetches all PodCliqueScalingGroups for a PodCliqueSet.
-func GetPCSGsForPCS(ctx context.Context, cl client.Client, pcsObjMeta metav1.ObjectMeta) ([]grovecorev1alpha1.PodCliqueScalingGroup, error) {
+func GetPCSGsForPCS(ctx context.Context, cl client.Client, pcsObjMeta metav1.ObjectMeta) ([]grovecorev1beta1.PodCliqueScalingGroup, error) {
 	pcsgList, err := doGetPCSGsForPCS(ctx, cl, client.ObjectKey{Namespace: pcsObjMeta.Namespace, Name: pcsObjMeta.Name}, nil)
 	if err != nil {
 		return nil, err
 	}
 	// Exclude PodCliqueScalingGroups controlled by an older PodCliqueSet of the same name, so a
 	// recreated PodCliqueSet does not ingest a deleted one's leftover children.
-	return lo.Filter(pcsgList.Items, func(pcsg grovecorev1alpha1.PodCliqueScalingGroup, _ int) bool {
+	return lo.Filter(pcsgList.Items, func(pcsg grovecorev1beta1.PodCliqueScalingGroup, _ int) bool {
 		return metav1.IsControlledBy(&pcsg, &pcsObjMeta)
 	}), nil
 }
 
 // doGetPCSGsForPCS is a helper function that fetches PodCliqueScalingGroups with optional additional label filtering
-func doGetPCSGsForPCS(ctx context.Context, cl client.Client, pcsObjKey client.ObjectKey, matchingLabels map[string]string) (*grovecorev1alpha1.PodCliqueScalingGroupList, error) {
-	pcsgList := &grovecorev1alpha1.PodCliqueScalingGroupList{}
+func doGetPCSGsForPCS(ctx context.Context, cl client.Client, pcsObjKey client.ObjectKey, matchingLabels map[string]string) (*grovecorev1beta1.PodCliqueScalingGroupList, error) {
+	pcsgList := &grovecorev1beta1.PodCliqueScalingGroupList{}
 	if err := cl.List(ctx,
 		pcsgList,
 		client.InNamespace(pcsObjKey.Namespace),
@@ -74,8 +74,8 @@ func doGetPCSGsForPCS(ctx context.Context, cl client.Client, pcsObjKey client.Ob
 
 // GroupPCSGsByPCSReplicaIndex filters PCSGs that have a PodCliqueSetReplicaIndex label and groups them by the PCS replica index.
 // A PodCliqueSetReplicaIndex label that is not a valid integer is a contract violation and returns an error.
-func GroupPCSGsByPCSReplicaIndex(pcsgs []grovecorev1alpha1.PodCliqueScalingGroup) (map[int][]grovecorev1alpha1.PodCliqueScalingGroup, error) {
-	grouped := make(map[int][]grovecorev1alpha1.PodCliqueScalingGroup)
+func GroupPCSGsByPCSReplicaIndex(pcsgs []grovecorev1beta1.PodCliqueScalingGroup) (map[int][]grovecorev1beta1.PodCliqueScalingGroup, error) {
+	grouped := make(map[int][]grovecorev1beta1.PodCliqueScalingGroup)
 	for labelValue, pcsgsForReplica := range groupPCSGsByLabel(pcsgs, apicommon.LabelPodCliqueSetReplicaIndex) {
 		replicaIndex, err := strconv.Atoi(labelValue)
 		if err != nil {
@@ -87,8 +87,8 @@ func GroupPCSGsByPCSReplicaIndex(pcsgs []grovecorev1alpha1.PodCliqueScalingGroup
 }
 
 // groupPCSGsByLabel groups PodCliqueScalingGroups by the value of the specified label key
-func groupPCSGsByLabel(pcsgs []grovecorev1alpha1.PodCliqueScalingGroup, label string) map[string][]grovecorev1alpha1.PodCliqueScalingGroup {
-	result := make(map[string][]grovecorev1alpha1.PodCliqueScalingGroup)
+func groupPCSGsByLabel(pcsgs []grovecorev1beta1.PodCliqueScalingGroup, label string) map[string][]grovecorev1beta1.PodCliqueScalingGroup {
+	result := make(map[string][]grovecorev1beta1.PodCliqueScalingGroup)
 	for _, pcsg := range pcsgs {
 		labelValue, exists := pcsg.Labels[label]
 		if !exists {
@@ -101,8 +101,8 @@ func groupPCSGsByLabel(pcsgs []grovecorev1alpha1.PodCliqueScalingGroup, label st
 
 // GetPCSGsByPCSReplicaIndex groups the PodCliqueScalingGroups per PodCliqueSet replica index and returns a map with the key being the PodCliqueSet replica index and the value
 // being the slice of PodCliqueScalingGroup objects.
-func GetPCSGsByPCSReplicaIndex(ctx context.Context, cl client.Client, pcsObjKey client.ObjectKey) (map[string][]grovecorev1alpha1.PodCliqueScalingGroup, error) {
-	pcsgList := &grovecorev1alpha1.PodCliqueScalingGroupList{}
+func GetPCSGsByPCSReplicaIndex(ctx context.Context, cl client.Client, pcsObjKey client.ObjectKey) (map[string][]grovecorev1beta1.PodCliqueScalingGroup, error) {
+	pcsgList := &grovecorev1beta1.PodCliqueScalingGroupList{}
 	if err := cl.List(ctx,
 		pcsgList,
 		client.InNamespace(pcsObjKey.Namespace),
@@ -110,7 +110,7 @@ func GetPCSGsByPCSReplicaIndex(ctx context.Context, cl client.Client, pcsObjKey 
 	); err != nil {
 		return nil, err
 	}
-	pcsgsByPCSReplicaIndex := make(map[string][]grovecorev1alpha1.PodCliqueScalingGroup)
+	pcsgsByPCSReplicaIndex := make(map[string][]grovecorev1beta1.PodCliqueScalingGroup)
 	for _, pcsg := range pcsgList.Items {
 		pcsReplicaIndex, ok := pcsg.Labels[apicommon.LabelPodCliqueSetReplicaIndex]
 		if !ok {
@@ -122,8 +122,8 @@ func GetPCSGsByPCSReplicaIndex(ctx context.Context, cl client.Client, pcsObjKey 
 }
 
 // GetPCLQTemplateHashes generates the Pod template hash for all PCLQs in a PCSG. Returns a map of [PCLQ Name : PodTemplateHas]
-func GetPCLQTemplateHashes(pcs *grovecorev1alpha1.PodCliqueSet, pcsg *grovecorev1alpha1.PodCliqueScalingGroup) map[string]string {
-	pclqTemplateSpecs := make([]*grovecorev1alpha1.PodCliqueTemplateSpec, 0, len(pcsg.Spec.CliqueNames))
+func GetPCLQTemplateHashes(pcs *grovecorev1beta1.PodCliqueSet, pcsg *grovecorev1beta1.PodCliqueScalingGroup) map[string]string {
+	pclqTemplateSpecs := make([]*grovecorev1beta1.PodCliqueTemplateSpec, 0, len(pcsg.Spec.CliqueNames))
 	for _, cliqueName := range pcsg.Spec.CliqueNames {
 		pclqTemplateSpec := FindPodCliqueTemplateSpecByName(pcs, cliqueName)
 		if pclqTemplateSpec == nil {
@@ -144,7 +144,7 @@ func GetPCLQTemplateHashes(pcs *grovecorev1alpha1.PodCliqueSet, pcsg *grovecorev
 // GetPCLQsInPCSGPendingUpdate collects the PodClique FQNs that are pending updates.
 // It identifies PCLQ pending update by comparing the current PodTemplateHash label on an existing PCLQ with that of
 // a computed PodTemplateHash from the latest PodCliqueSet resource.
-func GetPCLQsInPCSGPendingUpdate(pcs *grovecorev1alpha1.PodCliqueSet, pcsg *grovecorev1alpha1.PodCliqueScalingGroup, existingPCLQs []grovecorev1alpha1.PodClique) []string {
+func GetPCLQsInPCSGPendingUpdate(pcs *grovecorev1beta1.PodCliqueSet, pcsg *grovecorev1beta1.PodCliqueScalingGroup, existingPCLQs []grovecorev1beta1.PodClique) []string {
 	pclqFQNsPendingUpdate := make([]string, 0, len(existingPCLQs))
 	expectedPCLQPodTemplateHashes := GetPCLQTemplateHashes(pcs, pcsg)
 	for _, existingPCLQ := range existingPCLQs {
@@ -158,7 +158,7 @@ func GetPCLQsInPCSGPendingUpdate(pcs *grovecorev1alpha1.PodCliqueSet, pcsg *grov
 }
 
 // IsPCSGUpdateInProgress checks if PCSG is under rolling update.
-func IsPCSGUpdateInProgress(pcsg *grovecorev1alpha1.PodCliqueScalingGroup) bool {
+func IsPCSGUpdateInProgress(pcsg *grovecorev1beta1.PodCliqueScalingGroup) bool {
 	return pcsg.Status.UpdateProgress != nil && pcsg.Status.UpdateProgress.UpdateEndedAt == nil
 }
 
@@ -167,14 +167,14 @@ func IsPCSGUpdateInProgress(pcsg *grovecorev1alpha1.PodCliqueScalingGroup) bool 
 // a PCSG as complete merely because CurrentPodCliqueSetGenerationHash still matches the restored generation
 // while the PCSG is partway through an update to the superseded generation. Keeping that replica incomplete
 // allows the PCS to select it again, after which PCSG processUpdate can reset its update target.
-func IsPCSGUpdateComplete(pcsg *grovecorev1alpha1.PodCliqueScalingGroup, pcsGenerationHash string) bool {
+func IsPCSGUpdateComplete(pcsg *grovecorev1beta1.PodCliqueScalingGroup, pcsGenerationHash string) bool {
 	generationConverged := pcsg.Status.CurrentPodCliqueSetGenerationHash != nil &&
 		*pcsg.Status.CurrentPodCliqueSetGenerationHash == pcsGenerationHash
 	return generationConverged && !IsPCSGUpdateInProgress(pcsg)
 }
 
 // GetPodCliqueFQNsForPCSG generates the PodClique FQNs for all PodCliques that are owned by a PodCliqueScalingGroup.
-func GetPodCliqueFQNsForPCSG(pcsg *grovecorev1alpha1.PodCliqueScalingGroup) []string {
+func GetPodCliqueFQNsForPCSG(pcsg *grovecorev1beta1.PodCliqueScalingGroup) []string {
 	pclqFQNsInPCSG := make([]string, 0, len(pcsg.Spec.CliqueNames)*int(pcsg.Spec.Replicas))
 	for replicaIndex := range int(pcsg.Spec.Replicas) {
 		for _, cliqueName := range pcsg.Spec.CliqueNames {
@@ -217,8 +217,8 @@ type PCSGReplicaDisruptionInfo struct {
 // ready. A missing member is treated as below MinAvailable scheduled, so an incomplete replica is never
 // classified ready and never counts as serving capacity. Terminating member PodCliques are ignored, so a
 // replica mid-replacement reads as incomplete.
-func ComputePCSGReplicaState(memberPCLQs []grovecorev1alpha1.PodClique, expectedMemberCount int) PCSGReplicaState {
-	nonTerminating := lo.Filter(memberPCLQs, func(pclq grovecorev1alpha1.PodClique, _ int) bool {
+func ComputePCSGReplicaState(memberPCLQs []grovecorev1beta1.PodClique, expectedMemberCount int) PCSGReplicaState {
+	nonTerminating := lo.Filter(memberPCLQs, func(pclq grovecorev1beta1.PodClique, _ int) bool {
 		return !k8sutils.IsResourceTerminating(pclq.ObjectMeta)
 	})
 	if len(nonTerminating) < expectedMemberCount {

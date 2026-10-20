@@ -17,8 +17,7 @@ package podgangmap
 import (
 	"testing"
 
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
-
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -26,10 +25,10 @@ import (
 func TestApplySubStep(t *testing.T) {
 	testCases := []struct {
 		description string
-		entries     []grovecorev1alpha1.PodGangEntry
+		entries     []grovecorev1beta1.PodGangEntry
 		mvu         *mvuTemplate
 		ss          subStep
-		want        []grovecorev1alpha1.PodGangEntry
+		want        []grovecorev1beta1.PodGangEntry
 	}{
 		{
 			// Current state is one old-hash v1 anchor holding MinAvailable of each component, frontend 2 and
@@ -37,8 +36,8 @@ func TestApplySubStep(t *testing.T) {
 			// v2 anchor with MinAvailable frontend from the mvuTemplate and the decode MinAvailable indices. v1
 			// then drains to empty and is removed, leaving only the new v2 anchor at AnchorIndex 0.
 			description: "an anchor sub-step creates the new anchor and removes the drained old anchor",
-			entries: []grovecorev1alpha1.PodGangEntry{
-				{Epoch: "50", PodCliqueSetGenerationHash: "v1", Role: grovecorev1alpha1.PodGangEntryRoleAnchor, PodCliques: map[string]int32{"frontend": 2}, PCSGReplicaIndices: map[string][]int32{"decode": {0, 1, 2}}},
+			entries: []grovecorev1beta1.PodGangEntry{
+				{Epoch: "50", PodCliqueSetGenerationHash: "v1", Role: grovecorev1beta1.PodGangEntryRoleAnchor, PodCliques: map[string]int32{"frontend": 2}, PCSGReplicaIndices: map[string][]int32{"decode": {0, 1, 2}}},
 			},
 			mvu: &mvuTemplate{standalonePCLQs: map[string]int32{"frontend": 2}, pcsgs: map[string]int32{"decode": 3}},
 			ss: subStep{
@@ -48,8 +47,8 @@ func TestApplySubStep(t *testing.T) {
 				drainStandalonePCLQCounts: map[string]int32{"frontend": 2},
 				drainPCSGReplicaIndices:   map[string][]int32{"decode": {0, 1, 2}},
 			},
-			want: []grovecorev1alpha1.PodGangEntry{
-				{Epoch: "200", PodCliqueSetGenerationHash: "v2", Role: grovecorev1alpha1.PodGangEntryRoleAnchor, PodCliques: map[string]int32{"frontend": 2}, PCSGReplicaIndices: map[string][]int32{"decode": {0, 1, 2}}},
+			want: []grovecorev1beta1.PodGangEntry{
+				{Epoch: "200", PodCliqueSetGenerationHash: "v2", Role: grovecorev1beta1.PodGangEntryRoleAnchor, PodCliques: map[string]int32{"frontend": 2}, PCSGReplicaIndices: map[string][]int32{"decode": {0, 1, 2}}},
 			},
 		},
 		{
@@ -58,9 +57,9 @@ func TestApplySubStep(t *testing.T) {
 			// v1 drains fully and is removed, the v2 anchor grows to frontend 5, and a new v2 tail entry holds
 			// decode indices [3,4,5] depending on the anchor epoch 200.
 			description: "a tail sub-step subsumes standalone pods into the anchor and appends a tail entry",
-			entries: []grovecorev1alpha1.PodGangEntry{
-				{Epoch: "50", PodCliqueSetGenerationHash: "v1", Role: grovecorev1alpha1.PodGangEntryRoleAnchor, PodCliques: map[string]int32{"frontend": 3}, PCSGReplicaIndices: map[string][]int32{"decode": {3, 4, 5}}},
-				{Epoch: "200", PodCliqueSetGenerationHash: "v2", Role: grovecorev1alpha1.PodGangEntryRoleAnchor, PodCliques: map[string]int32{"frontend": 2}, PCSGReplicaIndices: map[string][]int32{"decode": {0, 1, 2}}},
+			entries: []grovecorev1beta1.PodGangEntry{
+				{Epoch: "50", PodCliqueSetGenerationHash: "v1", Role: grovecorev1beta1.PodGangEntryRoleAnchor, PodCliques: map[string]int32{"frontend": 3}, PCSGReplicaIndices: map[string][]int32{"decode": {3, 4, 5}}},
+				{Epoch: "200", PodCliqueSetGenerationHash: "v2", Role: grovecorev1beta1.PodGangEntryRoleAnchor, PodCliques: map[string]int32{"frontend": 2}, PCSGReplicaIndices: map[string][]int32{"decode": {0, 1, 2}}},
 			},
 			mvu: &mvuTemplate{standalonePCLQs: map[string]int32{"frontend": 2}, pcsgs: map[string]int32{"decode": 3}},
 			ss: subStep{
@@ -72,9 +71,9 @@ func TestApplySubStep(t *testing.T) {
 				tailPCSGReplicaIndices:      map[string][]int32{"decode": {3, 4, 5}},
 				drainPCSGReplicaIndices:     map[string][]int32{"decode": {3, 4, 5}},
 			},
-			want: []grovecorev1alpha1.PodGangEntry{
-				{Epoch: "200", PodCliqueSetGenerationHash: "v2", Role: grovecorev1alpha1.PodGangEntryRoleAnchor, PodCliques: map[string]int32{"frontend": 5}, PCSGReplicaIndices: map[string][]int32{"decode": {0, 1, 2}}},
-				{Epoch: "300", PodCliqueSetGenerationHash: "v2", Role: grovecorev1alpha1.PodGangEntryRoleTail, DependsOn: []string{"200"}, PCSGReplicaIndices: map[string][]int32{"decode": {3, 4, 5}}},
+			want: []grovecorev1beta1.PodGangEntry{
+				{Epoch: "200", PodCliqueSetGenerationHash: "v2", Role: grovecorev1beta1.PodGangEntryRoleAnchor, PodCliques: map[string]int32{"frontend": 5}, PCSGReplicaIndices: map[string][]int32{"decode": {0, 1, 2}}},
+				{Epoch: "300", PodCliqueSetGenerationHash: "v2", Role: grovecorev1beta1.PodGangEntryRoleTail, DependsOn: []string{"200"}, PCSGReplicaIndices: map[string][]int32{"decode": {3, 4, 5}}},
 			},
 		},
 		{
@@ -83,9 +82,9 @@ func TestApplySubStep(t *testing.T) {
 			// there is no PCSG. v1 keeps its 2 remaining pods as a partial drain, the v2 anchor grows to frontend
 			// 5, and nothing is appended.
 			description: "a subsume-only sub-step grows the anchor, adds no entry, and keeps the partially drained old anchor",
-			entries: []grovecorev1alpha1.PodGangEntry{
-				{Epoch: "50", PodCliqueSetGenerationHash: "v1", Role: grovecorev1alpha1.PodGangEntryRoleAnchor, PodCliques: map[string]int32{"frontend": 5}},
-				{Epoch: "200", PodCliqueSetGenerationHash: "v2", Role: grovecorev1alpha1.PodGangEntryRoleAnchor, PodCliques: map[string]int32{"frontend": 2}},
+			entries: []grovecorev1beta1.PodGangEntry{
+				{Epoch: "50", PodCliqueSetGenerationHash: "v1", Role: grovecorev1beta1.PodGangEntryRoleAnchor, PodCliques: map[string]int32{"frontend": 5}},
+				{Epoch: "200", PodCliqueSetGenerationHash: "v2", Role: grovecorev1beta1.PodGangEntryRoleAnchor, PodCliques: map[string]int32{"frontend": 2}},
 			},
 			mvu: &mvuTemplate{standalonePCLQs: map[string]int32{"frontend": 2}},
 			ss: subStep{
@@ -95,9 +94,9 @@ func TestApplySubStep(t *testing.T) {
 				subsumeStandalonePCLQCounts: map[string]int32{"frontend": 3},
 				drainStandalonePCLQCounts:   map[string]int32{"frontend": 3},
 			},
-			want: []grovecorev1alpha1.PodGangEntry{
-				{Epoch: "50", PodCliqueSetGenerationHash: "v1", Role: grovecorev1alpha1.PodGangEntryRoleAnchor, PodCliques: map[string]int32{"frontend": 2}},
-				{Epoch: "200", PodCliqueSetGenerationHash: "v2", Role: grovecorev1alpha1.PodGangEntryRoleAnchor, PodCliques: map[string]int32{"frontend": 5}},
+			want: []grovecorev1beta1.PodGangEntry{
+				{Epoch: "50", PodCliqueSetGenerationHash: "v1", Role: grovecorev1beta1.PodGangEntryRoleAnchor, PodCliques: map[string]int32{"frontend": 2}},
+				{Epoch: "200", PodCliqueSetGenerationHash: "v2", Role: grovecorev1beta1.PodGangEntryRoleAnchor, PodCliques: map[string]int32{"frontend": 5}},
 			},
 		},
 		{
@@ -106,10 +105,10 @@ func TestApplySubStep(t *testing.T) {
 			// The drain retires the oldest generation first, so v0 empties and is removed and v1 gives up 1 (kept
 			// at frontend 2), while the v2 anchor grows to frontend 5.
 			description: "the drain retires the oldest generation first across two old-hash generations",
-			entries: []grovecorev1alpha1.PodGangEntry{
-				{Epoch: "40", PodCliqueSetGenerationHash: "v0", Role: grovecorev1alpha1.PodGangEntryRoleAnchor, PodCliques: map[string]int32{"frontend": 2}},
-				{Epoch: "50", PodCliqueSetGenerationHash: "v1", Role: grovecorev1alpha1.PodGangEntryRoleAnchor, PodCliques: map[string]int32{"frontend": 3}},
-				{Epoch: "200", PodCliqueSetGenerationHash: "v2", Role: grovecorev1alpha1.PodGangEntryRoleAnchor, PodCliques: map[string]int32{"frontend": 2}},
+			entries: []grovecorev1beta1.PodGangEntry{
+				{Epoch: "40", PodCliqueSetGenerationHash: "v0", Role: grovecorev1beta1.PodGangEntryRoleAnchor, PodCliques: map[string]int32{"frontend": 2}},
+				{Epoch: "50", PodCliqueSetGenerationHash: "v1", Role: grovecorev1beta1.PodGangEntryRoleAnchor, PodCliques: map[string]int32{"frontend": 3}},
+				{Epoch: "200", PodCliqueSetGenerationHash: "v2", Role: grovecorev1beta1.PodGangEntryRoleAnchor, PodCliques: map[string]int32{"frontend": 2}},
 			},
 			mvu: &mvuTemplate{standalonePCLQs: map[string]int32{"frontend": 2}},
 			ss: subStep{
@@ -119,9 +118,9 @@ func TestApplySubStep(t *testing.T) {
 				subsumeStandalonePCLQCounts: map[string]int32{"frontend": 3},
 				drainStandalonePCLQCounts:   map[string]int32{"frontend": 3},
 			},
-			want: []grovecorev1alpha1.PodGangEntry{
-				{Epoch: "50", PodCliqueSetGenerationHash: "v1", Role: grovecorev1alpha1.PodGangEntryRoleAnchor, PodCliques: map[string]int32{"frontend": 2}},
-				{Epoch: "200", PodCliqueSetGenerationHash: "v2", Role: grovecorev1alpha1.PodGangEntryRoleAnchor, PodCliques: map[string]int32{"frontend": 5}},
+			want: []grovecorev1beta1.PodGangEntry{
+				{Epoch: "50", PodCliqueSetGenerationHash: "v1", Role: grovecorev1beta1.PodGangEntryRoleAnchor, PodCliques: map[string]int32{"frontend": 2}},
+				{Epoch: "200", PodCliqueSetGenerationHash: "v2", Role: grovecorev1beta1.PodGangEntryRoleAnchor, PodCliques: map[string]int32{"frontend": 5}},
 			},
 		},
 		{
@@ -131,9 +130,9 @@ func TestApplySubStep(t *testing.T) {
 			// carries no inference rather than write into its nil map. v0 drains to empty and is removed, the
 			// v1 anchor is left untouched, and the new v2 anchor holds frontend 1 and inference [0].
 			description: "an anchor sub-step draining a PCSG skips an old anchor that carries no PCSG indices",
-			entries: []grovecorev1alpha1.PodGangEntry{
-				{Epoch: "40", PodCliqueSetGenerationHash: "v0", Role: grovecorev1alpha1.PodGangEntryRoleAnchor, PodCliques: map[string]int32{"frontend": 1}, PCSGReplicaIndices: map[string][]int32{"inference": {0}}},
-				{Epoch: "50", PodCliqueSetGenerationHash: "v1", Role: grovecorev1alpha1.PodGangEntryRoleAnchor, PodCliques: map[string]int32{"frontend": 1}},
+			entries: []grovecorev1beta1.PodGangEntry{
+				{Epoch: "40", PodCliqueSetGenerationHash: "v0", Role: grovecorev1beta1.PodGangEntryRoleAnchor, PodCliques: map[string]int32{"frontend": 1}, PCSGReplicaIndices: map[string][]int32{"inference": {0}}},
+				{Epoch: "50", PodCliqueSetGenerationHash: "v1", Role: grovecorev1beta1.PodGangEntryRoleAnchor, PodCliques: map[string]int32{"frontend": 1}},
 			},
 			mvu: &mvuTemplate{standalonePCLQs: map[string]int32{"frontend": 1}, pcsgs: map[string]int32{"inference": 1}},
 			ss: subStep{
@@ -143,9 +142,9 @@ func TestApplySubStep(t *testing.T) {
 				drainStandalonePCLQCounts: map[string]int32{"frontend": 1},
 				drainPCSGReplicaIndices:   map[string][]int32{"inference": {0}},
 			},
-			want: []grovecorev1alpha1.PodGangEntry{
-				{Epoch: "50", PodCliqueSetGenerationHash: "v1", Role: grovecorev1alpha1.PodGangEntryRoleAnchor, PodCliques: map[string]int32{"frontend": 1}},
-				{Epoch: "200", PodCliqueSetGenerationHash: "v2", Role: grovecorev1alpha1.PodGangEntryRoleAnchor, PodCliques: map[string]int32{"frontend": 1}, PCSGReplicaIndices: map[string][]int32{"inference": {0}}},
+			want: []grovecorev1beta1.PodGangEntry{
+				{Epoch: "50", PodCliqueSetGenerationHash: "v1", Role: grovecorev1beta1.PodGangEntryRoleAnchor, PodCliques: map[string]int32{"frontend": 1}},
+				{Epoch: "200", PodCliqueSetGenerationHash: "v2", Role: grovecorev1beta1.PodGangEntryRoleAnchor, PodCliques: map[string]int32{"frontend": 1}, PCSGReplicaIndices: map[string][]int32{"inference": {0}}},
 			},
 		},
 	}
@@ -165,9 +164,9 @@ func TestDrainStandalonePCLQsSkipsNilPodCliquesAnchor(t *testing.T) {
 	// onto a higher-epoch anchor, so in a cascade the nil-map anchor sits at the lower epoch. Sorted
 	// oldest-first, the frontend drain reaches the nil-map anchor with remaining > 0. It must skip that
 	// anchor without writing to its nil map, and drain frontend from the anchor that carries it.
-	entries := []grovecorev1alpha1.PodGangEntry{
-		{Epoch: "100", PodCliqueSetGenerationHash: "v1", Role: grovecorev1alpha1.PodGangEntryRoleAnchor, PCSGReplicaIndices: map[string][]int32{"decode": {0}}},
-		{Epoch: "150", PodCliqueSetGenerationHash: "v2", Role: grovecorev1alpha1.PodGangEntryRoleAnchor, PodCliques: map[string]int32{"frontend": 2}},
+	entries := []grovecorev1beta1.PodGangEntry{
+		{Epoch: "100", PodCliqueSetGenerationHash: "v1", Role: grovecorev1beta1.PodGangEntryRoleAnchor, PCSGReplicaIndices: map[string][]int32{"decode": {0}}},
+		{Epoch: "150", PodCliqueSetGenerationHash: "v2", Role: grovecorev1beta1.PodGangEntryRoleAnchor, PodCliques: map[string]int32{"frontend": 2}},
 	}
 
 	drainStandalonePCLQs(entries, "v3", map[string]int32{"frontend": 1}, nil)
@@ -180,25 +179,25 @@ func TestDrainStandalonePCLQsSkipsNilPodCliquesAnchor(t *testing.T) {
 // reclaimed before running Pods are taken down, real takedowns then run oldest anchor first, and
 // current-version anchors are skipped.
 func TestDrainStandalonePCLQsReclaimsMissingFirst(t *testing.T) {
-	oldAnchor := func(gen, epoch string, count int32) grovecorev1alpha1.PodGangEntry {
-		return grovecorev1alpha1.PodGangEntry{Role: grovecorev1alpha1.PodGangEntryRoleAnchor, PodCliqueSetGenerationHash: gen, Epoch: epoch, PodCliques: map[string]int32{"frontend": count}}
+	oldAnchor := func(gen, epoch string, count int32) grovecorev1beta1.PodGangEntry {
+		return grovecorev1beta1.PodGangEntry{Role: grovecorev1beta1.PodGangEntryRoleAnchor, PodCliqueSetGenerationHash: gen, Epoch: epoch, PodCliques: map[string]int32{"frontend": count}}
 	}
 	t.Run("reclaims a missing old-version Pod before taking a running Pod down on an older anchor", func(t *testing.T) {
-		entries := []grovecorev1alpha1.PodGangEntry{oldAnchor("v1", "40", 2), oldAnchor("v2", "50", 2)}
+		entries := []grovecorev1beta1.PodGangEntry{oldAnchor("v1", "40", 2), oldAnchor("v2", "50", 2)}
 		livePods := map[cliqueAndEpochKey]anchorLivePods{{clique: "frontend", epoch: "40"}: {running: 2}, {clique: "frontend", epoch: "50"}: {running: 1}}
 		drainStandalonePCLQs(entries, "v3", map[string]int32{"frontend": 2}, livePods)
 		assert.Equal(t, int32(1), entries[0].PodCliques["frontend"], "one running Pod taken down from the oldest anchor")
 		assert.Equal(t, int32(1), entries[1].PodCliques["frontend"], "the missing old-version slot reclaimed from the newer old anchor")
 	})
 	t.Run("with no missing old-version Pods drains running Pods oldest anchor first", func(t *testing.T) {
-		entries := []grovecorev1alpha1.PodGangEntry{oldAnchor("v1", "40", 2), oldAnchor("v2", "50", 2)}
+		entries := []grovecorev1beta1.PodGangEntry{oldAnchor("v1", "40", 2), oldAnchor("v2", "50", 2)}
 		livePods := map[cliqueAndEpochKey]anchorLivePods{{clique: "frontend", epoch: "40"}: {running: 2}, {clique: "frontend", epoch: "50"}: {running: 2}}
 		drainStandalonePCLQs(entries, "v3", map[string]int32{"frontend": 2}, livePods)
 		assert.Equal(t, int32(0), entries[0].PodCliques["frontend"], "oldest anchor drained first")
 		assert.Equal(t, int32(2), entries[1].PodCliques["frontend"], "newer old anchor left untouched")
 	})
 	t.Run("a current-version anchor is never drained", func(t *testing.T) {
-		entries := []grovecorev1alpha1.PodGangEntry{oldAnchor("v3", "200", 4)}
+		entries := []grovecorev1beta1.PodGangEntry{oldAnchor("v3", "200", 4)}
 		drainStandalonePCLQs(entries, "v3", map[string]int32{"frontend": 2}, map[cliqueAndEpochKey]anchorLivePods{{clique: "frontend", epoch: "200"}: {running: 4}})
 		assert.Equal(t, int32(4), entries[0].PodCliques["frontend"], "current-version anchor left untouched")
 	})
@@ -209,11 +208,11 @@ func TestDrainStandalonePCLQsReclaimsMissingFirst(t *testing.T) {
 // only Ready Pods, the drain shrinks the not-Ready anchor, not the oldest. This is the standalone analog of
 // the PodCliqueScalingGroup worst-off-first drain and the regression guard for the #873 over-disruption.
 func TestDrainStandalonePCLQsTakesNotReadyDownFirst(t *testing.T) {
-	oldAnchor := func(gen, epoch string, count int32) grovecorev1alpha1.PodGangEntry {
-		return grovecorev1alpha1.PodGangEntry{Role: grovecorev1alpha1.PodGangEntryRoleAnchor, PodCliqueSetGenerationHash: gen, Epoch: epoch, PodCliques: map[string]int32{"frontend": count}}
+	oldAnchor := func(gen, epoch string, count int32) grovecorev1beta1.PodGangEntry {
+		return grovecorev1beta1.PodGangEntry{Role: grovecorev1beta1.PodGangEntryRoleAnchor, PodCliqueSetGenerationHash: gen, Epoch: epoch, PodCliques: map[string]int32{"frontend": count}}
 	}
 	// Oldest anchor: 2 Ready Pods. Newer old anchor: 1 not-Ready Pod. The budget grants one take-down.
-	entries := []grovecorev1alpha1.PodGangEntry{oldAnchor("v1", "40", 2), oldAnchor("v2", "50", 1)}
+	entries := []grovecorev1beta1.PodGangEntry{oldAnchor("v1", "40", 2), oldAnchor("v2", "50", 1)}
 	livePods := map[cliqueAndEpochKey]anchorLivePods{
 		{clique: "frontend", epoch: "40"}: {running: 2, notReady: 0},
 		{clique: "frontend", epoch: "50"}: {running: 1, notReady: 1},

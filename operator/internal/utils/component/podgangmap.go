@@ -21,8 +21,7 @@ import (
 	"strconv"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
-
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/samber/lo"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -30,8 +29,8 @@ import (
 )
 
 // GetPodGangMap fetches a PodGangMap for a given PCS objectKey and replica index.
-func GetPodGangMap(ctx context.Context, cl client.Client, pcsObjectKey client.ObjectKey, pcsReplicaIndex int) (*grovecorev1alpha1.PodGangMap, error) {
-	pgm := &grovecorev1alpha1.PodGangMap{}
+func GetPodGangMap(ctx context.Context, cl client.Client, pcsObjectKey client.ObjectKey, pcsReplicaIndex int) (*grovecorev1beta1.PodGangMap, error) {
+	pgm := &grovecorev1beta1.PodGangMap{}
 	pgmName := apicommon.GeneratePodGangMapName(apicommon.ResourceNameReplica{Name: pcsObjectKey.Name, Replica: pcsReplicaIndex})
 	if err := cl.Get(ctx, client.ObjectKey{Namespace: pcsObjectKey.Namespace, Name: pgmName}, pgm); err != nil {
 		return nil, err
@@ -40,8 +39,8 @@ func GetPodGangMap(ctx context.Context, cl client.Client, pcsObjectKey client.Ob
 }
 
 // ListPodGangMapsForPCS fetches all PodGangMaps owned by a PodCliqueSet.
-func ListPodGangMapsForPCS(ctx context.Context, cl client.Client, pcsObjMeta metav1.ObjectMeta) ([]grovecorev1alpha1.PodGangMap, error) {
-	pgmList := &grovecorev1alpha1.PodGangMapList{}
+func ListPodGangMapsForPCS(ctx context.Context, cl client.Client, pcsObjMeta metav1.ObjectMeta) ([]grovecorev1beta1.PodGangMap, error) {
+	pgmList := &grovecorev1beta1.PodGangMapList{}
 	if err := cl.List(ctx, pgmList,
 		client.InNamespace(pcsObjMeta.Namespace),
 		client.MatchingLabels(lo.Assign(
@@ -52,15 +51,15 @@ func ListPodGangMapsForPCS(ctx context.Context, cl client.Client, pcsObjMeta met
 	}
 	// Exclude PodGangMaps controlled by an older PodCliqueSet of the same name, so a recreated
 	// PodCliqueSet does not pick up a deleted one's stale PodGangMap.
-	return lo.Filter(pgmList.Items, func(pgm grovecorev1alpha1.PodGangMap, _ int) bool {
+	return lo.Filter(pgmList.Items, func(pgm grovecorev1beta1.PodGangMap, _ int) bool {
 		return metav1.IsControlledBy(&pgm, &pcsObjMeta)
 	}), nil
 }
 
 // PodGangMapByPCSReplicaIndex groups PodGangMaps by their PCS replica index.
 // A PodCliqueSetReplicaIndex label that is missing or not a valid integer is a contract violation and returns an error.
-func PodGangMapByPCSReplicaIndex(pgms []grovecorev1alpha1.PodGangMap) (map[int]*grovecorev1alpha1.PodGangMap, error) {
-	pgmByReplicaIndex := make(map[int]*grovecorev1alpha1.PodGangMap, len(pgms))
+func PodGangMapByPCSReplicaIndex(pgms []grovecorev1beta1.PodGangMap) (map[int]*grovecorev1beta1.PodGangMap, error) {
+	pgmByReplicaIndex := make(map[int]*grovecorev1beta1.PodGangMap, len(pgms))
 	for i := range pgms {
 		labelValue, ok := pgms[i].Labels[apicommon.LabelPodCliqueSetReplicaIndex]
 		if !ok {
@@ -79,12 +78,12 @@ func PodGangMapByPCSReplicaIndex(pgms []grovecorev1alpha1.PodGangMap) (map[int]*
 // index belongs to, reading its entry from the PodGangMap. An Anchor entry yields the anchor PodGang
 // name. A Tail or ScaleOut entry yields the non-anchor name. It reads the role from the entry, so it
 // agrees with how the PodGang materializer names the PodGang.
-func PodGangNameForPCSGReplica(pgm *grovecorev1alpha1.PodGangMap, rnr apicommon.ResourceNameReplica, pcsgName string, pcsgReplicaIndex int32) (string, error) {
+func PodGangNameForPCSGReplica(pgm *grovecorev1beta1.PodGangMap, rnr apicommon.ResourceNameReplica, pcsgName string, pcsgReplicaIndex int32) (string, error) {
 	entry, err := podGangEntryForPCSGReplica(pgm, pcsgName, pcsgReplicaIndex)
 	if err != nil {
 		return "", err
 	}
-	if entry.Role == grovecorev1alpha1.PodGangEntryRoleAnchor {
+	if entry.Role == grovecorev1beta1.PodGangEntryRoleAnchor {
 		return apicommon.GenerateAnchorPodGangName(rnr, entry.Epoch), nil
 	}
 	return apicommon.GenerateNonAnchorPodGangName(rnr, entry.Epoch, pcsgName, pcsgReplicaIndex), nil
@@ -94,7 +93,7 @@ func PodGangNameForPCSGReplica(pgm *grovecorev1alpha1.PodGangMap, rnr apicommon.
 // before its pods may be scheduled. An empty result means the entry has no scheduling dependency. It
 // returns an error when no entry carries the epoch, which the caller treats as requeue-worthy rather
 // than proceeding with an unknown dependency.
-func DependsOnForEpoch(pgm *grovecorev1alpha1.PodGangMap, epoch string) ([]string, error) {
+func DependsOnForEpoch(pgm *grovecorev1beta1.PodGangMap, epoch string) ([]string, error) {
 	for i := range pgm.Spec.Entries {
 		if pgm.Spec.Entries[i].Epoch == epoch {
 			return pgm.Spec.Entries[i].DependsOn, nil
@@ -113,14 +112,14 @@ func DependsOnForEpoch(pgm *grovecorev1alpha1.PodGangMap, epoch string) ([]strin
 // It does not filter by generation hash: a replica's PodGangMap holds a single generation's entries,
 // and during a rolling update only the under-update replica's entries advance, so a lagging replica
 // is resolved against its own entries.
-func podGangEntryForPCSGReplica(pgm *grovecorev1alpha1.PodGangMap, pcsgName string, pcsgReplicaIndex int32) (*grovecorev1alpha1.PodGangEntry, error) {
-	var scaleOut *grovecorev1alpha1.PodGangEntry
+func podGangEntryForPCSGReplica(pgm *grovecorev1beta1.PodGangMap, pcsgName string, pcsgReplicaIndex int32) (*grovecorev1beta1.PodGangEntry, error) {
+	var scaleOut *grovecorev1beta1.PodGangEntry
 	for i := range pgm.Spec.Entries {
 		entry := &pgm.Spec.Entries[i]
 		if lo.Contains(entry.PCSGReplicaIndices[pcsgName], pcsgReplicaIndex) {
 			return entry, nil
 		}
-		if entry.Role == grovecorev1alpha1.PodGangEntryRoleScaleOut {
+		if entry.Role == grovecorev1beta1.PodGangEntryRoleScaleOut {
 			scaleOut = entry
 		}
 	}
@@ -132,7 +131,7 @@ func podGangEntryForPCSGReplica(pgm *grovecorev1alpha1.PodGangMap, pcsgName stri
 
 // BaseAnchorPodGangEpoch returns the epoch of the base anchor of the PodGangMap. The base anchor is the
 // PodGang that standalone Pods key off for their guaranteed MinAvailable. See BaseAnchorEpoch.
-func BaseAnchorPodGangEpoch(pgm *grovecorev1alpha1.PodGangMap) (string, error) {
+func BaseAnchorPodGangEpoch(pgm *grovecorev1beta1.PodGangMap) (string, error) {
 	epoch, found, err := BaseAnchorEpoch(pgm.Spec.Entries, nil)
 	if err != nil {
 		return "", err
@@ -152,7 +151,7 @@ func BaseAnchorPodGangEpoch(pgm *grovecorev1alpha1.PodGangMap) (string, error) {
 // standalone scale-in drains from the highest-epoch anchor downward, so the base anchor is drained last
 // and always retains the final MinAvailable pods. Its standalone PodGroups keep MinReplicas at the
 // template MinAvailable, while every other anchor clamps MinReplicas to its per-anchor count.
-func BaseAnchorEpoch(entries []grovecorev1alpha1.PodGangEntry, pcsGenerationHash *string) (string, bool, error) {
+func BaseAnchorEpoch(entries []grovecorev1beta1.PodGangEntry, pcsGenerationHash *string) (string, bool, error) {
 	var (
 		lowestEpoch      string
 		found            bool
@@ -160,7 +159,7 @@ func BaseAnchorEpoch(entries []grovecorev1alpha1.PodGangEntry, pcsGenerationHash
 	)
 	for i := range entries {
 		entry := entries[i]
-		if entry.Role != grovecorev1alpha1.PodGangEntryRoleAnchor {
+		if entry.Role != grovecorev1beta1.PodGangEntryRoleAnchor {
 			continue
 		}
 		if pcsGenerationHash != nil && entry.PodCliqueSetGenerationHash != *pcsGenerationHash {
@@ -179,8 +178,8 @@ func BaseAnchorEpoch(entries []grovecorev1alpha1.PodGangEntry, pcsGenerationHash
 
 // IndexPodGangEntriesByEpoch returns a map of the PodGangMap entries keyed by their epoch. Epoch is
 // unique per entry, so each key maps to a single entry.
-func IndexPodGangEntriesByEpoch(entries []grovecorev1alpha1.PodGangEntry) map[string]grovecorev1alpha1.PodGangEntry {
-	byEpoch := make(map[string]grovecorev1alpha1.PodGangEntry, len(entries))
+func IndexPodGangEntriesByEpoch(entries []grovecorev1beta1.PodGangEntry) map[string]grovecorev1beta1.PodGangEntry {
+	byEpoch := make(map[string]grovecorev1beta1.PodGangEntry, len(entries))
 	for _, entry := range entries {
 		byEpoch[entry.Epoch] = entry
 	}
@@ -191,7 +190,7 @@ func IndexPodGangEntriesByEpoch(entries []grovecorev1alpha1.PodGangEntry) map[st
 // nil when no entry carries it. Filtering by hash makes it safe across generations, the coherent flow
 // queries it with the current generation hash while older or mid-flight generations coexist as drain
 // targets. Epochs are monotonic unix-nano decimals, so the largest is the newest.
-func LatestEpochForGenerationHash(entries []grovecorev1alpha1.PodGangEntry, pcsGenerationHash string) (*string, error) {
+func LatestEpochForGenerationHash(entries []grovecorev1beta1.PodGangEntry, pcsGenerationHash string) (*string, error) {
 	var (
 		latestEpoch   string
 		maxEpochValue int64
@@ -218,9 +217,9 @@ func LatestEpochForGenerationHash(entries []grovecorev1alpha1.PodGangEntry, pcsG
 // LatestEntryForGenerationHash returns the entry with the largest epoch among entries carrying
 // pcsGenerationHash, or nil when none carries it. Epochs are monotonic unix-nano decimals, so the largest
 // is the most recently committed sub-step. It errors when an entry has a non-numeric epoch.
-func LatestEntryForGenerationHash(entries []grovecorev1alpha1.PodGangEntry, pcsGenerationHash string) (*grovecorev1alpha1.PodGangEntry, error) {
+func LatestEntryForGenerationHash(entries []grovecorev1beta1.PodGangEntry, pcsGenerationHash string) (*grovecorev1beta1.PodGangEntry, error) {
 	var (
-		latest        *grovecorev1alpha1.PodGangEntry
+		latest        *grovecorev1beta1.PodGangEntry
 		maxEpochValue int64
 	)
 	for i := range entries {
@@ -242,8 +241,8 @@ func LatestEntryForGenerationHash(entries []grovecorev1alpha1.PodGangEntry, pcsG
 // entry yields one anchor PodGang. A tail or scale-out entry yields one PodGang per PodCliqueScalingGroup
 // replica index it carries. It mirrors buildPodGangInfosFromEntry in the PodGang component, reusing the
 // same name generators, so the two stay in step.
-func ExpectedPodGangNamesForEntry(rnr apicommon.ResourceNameReplica, entry grovecorev1alpha1.PodGangEntry) []string {
-	if entry.Role == grovecorev1alpha1.PodGangEntryRoleAnchor {
+func ExpectedPodGangNamesForEntry(rnr apicommon.ResourceNameReplica, entry grovecorev1beta1.PodGangEntry) []string {
+	if entry.Role == grovecorev1beta1.PodGangEntryRoleAnchor {
 		return []string{apicommon.GenerateAnchorPodGangName(rnr, entry.Epoch)}
 	}
 	var names []string
@@ -258,7 +257,7 @@ func ExpectedPodGangNamesForEntry(rnr apicommon.ResourceNameReplica, entry grove
 // IsPodGangMapAtSingleGeneration reports whether every entry carries pcsGenerationHash, so the PodGangMap
 // has reconverged to a single generation with no older-generation entries left to drain. An empty entry
 // set is vacuously single-generation.
-func IsPodGangMapAtSingleGeneration(entries []grovecorev1alpha1.PodGangEntry, pcsGenerationHash string) bool {
+func IsPodGangMapAtSingleGeneration(entries []grovecorev1beta1.PodGangEntry, pcsGenerationHash string) bool {
 	for i := range entries {
 		if entries[i].PodCliqueSetGenerationHash != pcsGenerationHash {
 			return false
@@ -270,10 +269,10 @@ func IsPodGangMapAtSingleGeneration(entries []grovecorev1alpha1.PodGangEntry, pc
 // EpochByAnchorPodGangName maps each anchor PodGang name of a PodCliqueSet replica to its epoch. Only anchor
 // entries are included. The PodGang name is derived from the replica identity and the entry epoch, so this
 // inverts that mapping. It lets a caller resolve a Pod grove.io/podgang label back to an epoch.
-func EpochByAnchorPodGangName(entries []grovecorev1alpha1.PodGangEntry, rnr apicommon.ResourceNameReplica) map[string]string {
+func EpochByAnchorPodGangName(entries []grovecorev1beta1.PodGangEntry, rnr apicommon.ResourceNameReplica) map[string]string {
 	epochByPodGangName := make(map[string]string)
 	for i := range entries {
-		if entries[i].Role == grovecorev1alpha1.PodGangEntryRoleAnchor {
+		if entries[i].Role == grovecorev1beta1.PodGangEntryRoleAnchor {
 			epochByPodGangName[apicommon.GenerateAnchorPodGangName(rnr, entries[i].Epoch)] = entries[i].Epoch
 		}
 	}
@@ -297,24 +296,24 @@ type StartupDependency struct {
 // Every dependency waits on the pod Ready condition.
 //
 // An error is returned when the startup type is unset or the clique name is not present in the PodCliqueSet template.
-func StartupDependencies(pcs *grovecorev1alpha1.PodCliqueSet, cliqueName string) ([]StartupDependency, error) {
+func StartupDependencies(pcs *grovecorev1beta1.PodCliqueSet, cliqueName string) ([]StartupDependency, error) {
 	startupType := pcs.Spec.Template.StartupType
 	if startupType == nil {
 		return nil, fmt.Errorf("no startup type found for PodCliqueSet %q", pcs.Name)
 	}
-	cliqueIndex := slices.IndexFunc(pcs.Spec.Template.Cliques, func(t *grovecorev1alpha1.PodCliqueTemplateSpec) bool {
+	cliqueIndex := slices.IndexFunc(pcs.Spec.Template.Cliques, func(t *grovecorev1beta1.PodCliqueTemplateSpec) bool {
 		return t.Name == cliqueName
 	})
 	if cliqueIndex < 0 {
 		return nil, fmt.Errorf("clique %q is not present in PodCliqueSet %q template", cliqueName, pcs.Name)
 	}
 	switch *startupType {
-	case grovecorev1alpha1.CliqueStartupTypeInOrder:
+	case grovecorev1beta1.CliqueStartupTypeInOrder:
 		if cliqueIndex == 0 {
 			return nil, nil
 		}
 		return []StartupDependency{{CliqueName: pcs.Spec.Template.Cliques[cliqueIndex-1].Name, ConditionType: corev1.PodReady}}, nil
-	case grovecorev1alpha1.CliqueStartupTypeExplicit:
+	case grovecorev1beta1.CliqueStartupTypeExplicit:
 		startsAfter := pcs.Spec.Template.Cliques[cliqueIndex].Spec.StartsAfter
 		if len(startsAfter) == 0 {
 			return nil, nil
@@ -356,7 +355,7 @@ type StartupDependencyTarget struct {
 //
 // A parent not committed in the pod's gang (out of the update scope) yields nothing, so a subset update
 // never stalls it, and only satisfiable dependencies in the pod's own gang are emitted.
-func StartupDependencyTargetsInEntry(pcs *grovecorev1alpha1.PodCliqueSet, pcsReplicaIndex int, entry *grovecorev1alpha1.PodGangEntry, podGangName string, parents []StartupDependency) []StartupDependencyTarget {
+func StartupDependencyTargetsInEntry(pcs *grovecorev1beta1.PodCliqueSet, pcsReplicaIndex int, entry *grovecorev1beta1.PodGangEntry, podGangName string, parents []StartupDependency) []StartupDependencyTarget {
 	rnr := apicommon.ResourceNameReplica{Name: pcs.Name, Replica: pcsReplicaIndex}
 	anchorGangName := apicommon.GenerateAnchorPodGangName(rnr, entry.Epoch)
 	var targets []StartupDependencyTarget
@@ -367,7 +366,7 @@ func StartupDependencyTargetsInEntry(pcs *grovecorev1alpha1.PodCliqueSet, pcsRep
 			pcsgFQN := apicommon.GeneratePodCliqueScalingGroupName(rnr, pcsgConfig.Name)
 			for _, parentReplicaIndex := range entry.PCSGReplicaIndices[pcsgConfig.Name] {
 				memberGangName := anchorGangName
-				if entry.Role != grovecorev1alpha1.PodGangEntryRoleAnchor {
+				if entry.Role != grovecorev1beta1.PodGangEntryRoleAnchor {
 					memberGangName = apicommon.GenerateNonAnchorPodGangName(rnr, entry.Epoch, pcsgConfig.Name, parentReplicaIndex)
 				}
 				if memberGangName != podGangName {
@@ -400,7 +399,7 @@ func StartupDependencyTargetsInEntry(pcs *grovecorev1alpha1.PodCliqueSet, pcsRep
 
 // minAvailableForClique returns the gang-scheduled minimum of the named PodClique template in the
 // PodCliqueSet, or 0 when the clique is not found.
-func minAvailableForClique(pcs *grovecorev1alpha1.PodCliqueSet, cliqueName string) int32 {
+func minAvailableForClique(pcs *grovecorev1beta1.PodCliqueSet, cliqueName string) int32 {
 	for _, cliqueTemplate := range pcs.Spec.Template.Cliques {
 		if cliqueTemplate.Name == cliqueName {
 			return PCLQInitMinReplicas(&cliqueTemplate.Spec)

@@ -15,8 +15,7 @@
 package component
 
 import (
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
-
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	"github.com/samber/lo"
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -27,14 +26,14 @@ import (
 // only need membership checks should prefer the *NameSet variants.
 
 // PodCliqueByName builds a name-keyed map for O(1) PodClique lookups.
-func PodCliqueByName(pclqs []grovecorev1alpha1.PodClique) map[string]grovecorev1alpha1.PodClique {
-	return lo.SliceToMap(pclqs, func(pclq grovecorev1alpha1.PodClique) (string, grovecorev1alpha1.PodClique) {
+func PodCliqueByName(pclqs []grovecorev1beta1.PodClique) map[string]grovecorev1beta1.PodClique {
+	return lo.SliceToMap(pclqs, func(pclq grovecorev1beta1.PodClique) (string, grovecorev1beta1.PodClique) {
 		return pclq.Name, pclq
 	})
 }
 
 // PodCliqueNameSet builds a set of PodClique names for O(1) membership checks.
-func PodCliqueNameSet(pclqs []grovecorev1alpha1.PodClique) sets.Set[string] {
+func PodCliqueNameSet(pclqs []grovecorev1beta1.PodClique) sets.Set[string] {
 	names := sets.New[string]()
 	for _, pclq := range pclqs {
 		names.Insert(pclq.Name)

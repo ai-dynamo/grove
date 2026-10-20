@@ -19,7 +19,7 @@ import (
 	"testing"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/resourceclaim"
 
 	"github.com/go-logr/logr"
@@ -49,7 +49,7 @@ var noResourceClaimAPIInterceptor = interceptor.Funcs{
 
 func newTestScheme() *runtime.Scheme {
 	scheme := runtime.NewScheme()
-	_ = grovecorev1alpha1.AddToScheme(scheme)
+	_ = grovecorev1beta1.AddToScheme(scheme)
 	_ = resourcev1.AddToScheme(scheme)
 	return scheme
 }
@@ -62,13 +62,13 @@ const (
 
 // newPCS returns a minimal PCS with one clique template ("worker") that has
 // the given ResourceSharing specs and ResourceClaimTemplates.
-func newPCS(refs []grovecorev1alpha1.ResourceSharingSpec, templates []grovecorev1alpha1.ResourceClaimTemplateConfig) *grovecorev1alpha1.PodCliqueSet {
-	return &grovecorev1alpha1.PodCliqueSet{
+func newPCS(refs []grovecorev1beta1.ResourceSharingSpec, templates []grovecorev1beta1.ResourceClaimTemplateConfig) *grovecorev1beta1.PodCliqueSet {
+	return &grovecorev1beta1.PodCliqueSet{
 		ObjectMeta: metav1.ObjectMeta{Name: pcsName, Namespace: namespace, UID: "pcs-uid"},
-		Spec: grovecorev1alpha1.PodCliqueSetSpec{
+		Spec: grovecorev1beta1.PodCliqueSetSpec{
 			Replicas: 1,
-			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
-				Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+			Template: grovecorev1beta1.PodCliqueSetTemplateSpec{
+				Cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
 					{
 						Name:            "worker",
 						ResourceSharing: refs,
@@ -81,8 +81,8 @@ func newPCS(refs []grovecorev1alpha1.ResourceSharingSpec, templates []grovecorev
 }
 
 // newPCLQ returns a PCLQ object with the standard labels expected by the component.
-func newPCLQ(replicas int32) *grovecorev1alpha1.PodClique {
-	return &grovecorev1alpha1.PodClique{
+func newPCLQ(replicas int32) *grovecorev1beta1.PodClique {
+	return &grovecorev1beta1.PodClique{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      pclqName,
 			Namespace: namespace,
@@ -93,14 +93,14 @@ func newPCLQ(replicas int32) *grovecorev1alpha1.PodClique {
 				apicommon.LabelPodCliqueSetReplicaIndex: "0",
 			},
 		},
-		Spec: grovecorev1alpha1.PodCliqueSpec{
+		Spec: grovecorev1beta1.PodCliqueSpec{
 			Replicas: replicas,
 			RoleName: "worker",
 		},
 	}
 }
 
-var gpuTemplate = grovecorev1alpha1.ResourceClaimTemplateConfig{
+var gpuTemplate = grovecorev1beta1.ResourceClaimTemplateConfig{
 	Name: "gpu-mps",
 	TemplateSpec: resourcev1.ResourceClaimTemplateSpec{
 		Spec: resourcev1.ResourceClaimSpec{
@@ -111,7 +111,7 @@ var gpuTemplate = grovecorev1alpha1.ResourceClaimTemplateConfig{
 	},
 }
 
-var gpuSharedTemplate = grovecorev1alpha1.ResourceClaimTemplateConfig{
+var gpuSharedTemplate = grovecorev1beta1.ResourceClaimTemplateConfig{
 	Name: "gpu-shared",
 	TemplateSpec: resourcev1.ResourceClaimTemplateSpec{
 		Spec: resourcev1.ResourceClaimSpec{
@@ -131,7 +131,7 @@ func newRC(name string, labels map[string]string, ownerName string, ownerUID typ
 			Labels:    labels,
 			OwnerReferences: []metav1.OwnerReference{
 				{
-					APIVersion: grovecorev1alpha1.SchemeGroupVersion.String(),
+					APIVersion: grovecorev1beta1.SchemeGroupVersion.String(),
 					Kind:       "PodClique",
 					Name:       ownerName,
 					UID:        ownerUID,
@@ -222,11 +222,11 @@ func TestGetExistingResourceNames(t *testing.T) {
 func TestSync(t *testing.T) {
 	scheme := newTestScheme()
 
-	refs := []grovecorev1alpha1.ResourceSharingSpec{
-		{Name: "gpu-shared", Scope: grovecorev1alpha1.ResourceSharingScopeAllReplicas},
-		{Name: "gpu-mps", Scope: grovecorev1alpha1.ResourceSharingScopePerReplica},
+	refs := []grovecorev1beta1.ResourceSharingSpec{
+		{Name: "gpu-shared", Scope: grovecorev1beta1.ResourceSharingScopeAllReplicas},
+		{Name: "gpu-mps", Scope: grovecorev1beta1.ResourceSharingScopePerReplica},
 	}
-	templates := []grovecorev1alpha1.ResourceClaimTemplateConfig{gpuTemplate, gpuSharedTemplate}
+	templates := []grovecorev1beta1.ResourceClaimTemplateConfig{gpuTemplate, gpuSharedTemplate}
 
 	t.Run("creates AllReplicas and PerReplica RCs", func(t *testing.T) {
 		pcs := newPCS(refs, templates)
@@ -315,12 +315,12 @@ func TestSync(t *testing.T) {
 	})
 
 	t.Run("no-op when clique template not found", func(t *testing.T) {
-		pcs := &grovecorev1alpha1.PodCliqueSet{
+		pcs := &grovecorev1beta1.PodCliqueSet{
 			ObjectMeta: metav1.ObjectMeta{Name: pcsName, Namespace: namespace, UID: "pcs-uid"},
-			Spec: grovecorev1alpha1.PodCliqueSetSpec{
+			Spec: grovecorev1beta1.PodCliqueSetSpec{
 				Replicas: 1,
-				Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
-					Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+				Template: grovecorev1beta1.PodCliqueSetTemplateSpec{
+					Cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
 						{Name: "router"},
 					},
 					ResourceClaimTemplates: templates,

@@ -23,7 +23,7 @@ import (
 	"time"
 
 	apiconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
-	grovev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/kwok"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
 	"github.com/ai-dynamo/grove/operator/e2e/tests"
@@ -1269,7 +1269,7 @@ func Test_RU26_CorrectiveUpdateReplacesUnschedulablePods(t *testing.T) {
 			workloadYAML: "../../yaml/workload-unavailable-pcsg.yaml",
 			expectedPods: 1,
 			assertInitiallyUnavailable: func(c *assert.CollectT, tc *testctx.TestContext) {
-				var pcsg grovev1alpha1.PodCliqueScalingGroup
+				var pcsg grovev1beta1.PodCliqueScalingGroup
 				require.NoError(c, tc.Client.Get(tc.Ctx, types.NamespacedName{
 					Namespace: tc.Namespace, Name: pcsgFQN(tc, "sg-x"),
 				}, &pcsg))

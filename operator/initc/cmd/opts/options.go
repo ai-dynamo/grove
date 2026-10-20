@@ -19,7 +19,7 @@ import (
 	"strconv"
 	"strings"
 
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/initc/internal"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 
@@ -29,7 +29,7 @@ import (
 
 // Constants for error codes.
 const (
-	errCodeInvalidInput grovecorev1alpha1.ErrorCode = "ERR_INVALID_INPUT"
+	errCodeInvalidInput grovecorev1beta1.ErrorCode = "ERR_INVALID_INPUT"
 )
 
 const (

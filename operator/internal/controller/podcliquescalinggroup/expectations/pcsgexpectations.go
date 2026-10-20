@@ -18,7 +18,7 @@ import (
 	"fmt"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/expect"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
@@ -32,7 +32,7 @@ import (
 // PCSGScopedExpectationsStoreKey returns the key under which a PodCliqueScalingGroup's in-flight
 // member PodClique delete expectations are recorded. The key has the form "<namespace>/<pcsg-name>"
 func PCSGScopedExpectationsStoreKey(pcsgObjectMeta metav1.ObjectMeta) (string, error) {
-	key, err := cache.MetaNamespaceKeyFunc(&grovecorev1alpha1.PodCliqueScalingGroup{ObjectMeta: pcsgObjectMeta})
+	key, err := cache.MetaNamespaceKeyFunc(&grovecorev1beta1.PodCliqueScalingGroup{ObjectMeta: pcsgObjectMeta})
 	if err != nil {
 		return "", fmt.Errorf("error getting key for object %s/%s: %v", pcsgObjectMeta.Namespace, pcsgObjectMeta.Name, err)
 	}
@@ -53,7 +53,7 @@ func ClearPCSGExpectations(logger logr.Logger, store *expect.ExpectationsStore, 
 // PCSGScopedExpectationsStoreKeyForMemberPodClique returns the owning PodCliqueScalingGroup's
 // expectations key for a member PodClique, derived from its namespace and its
 // grove.io/podcliquescalinggroup label. The second return is false when the label is absent.
-func PCSGScopedExpectationsStoreKeyForMemberPodClique(pclq *grovecorev1alpha1.PodClique) (string, bool) {
+func PCSGScopedExpectationsStoreKeyForMemberPodClique(pclq *grovecorev1beta1.PodClique) (string, bool) {
 	pcsgName, ok := pclq.GetLabels()[apicommon.LabelPodCliqueScalingGroup]
 	if !ok || pcsgName == "" {
 		return "", false
@@ -65,11 +65,11 @@ func PCSGScopedExpectationsStoreKeyForMemberPodClique(pclq *grovecorev1alpha1.Po
 // disrupted PodCliqueScalingGroup replica under the PCSG-scoped key, so the rolling update budget
 // counts that replica as unavailable immediately, independent of the eventually-consistent informer
 // cache. It is a no-op when the replica has no members.
-func RecordPCSGReplicaDeleteExpectations(logger logr.Logger, store *expect.ExpectationsStore, key string, members []grovecorev1alpha1.PodClique) error {
+func RecordPCSGReplicaDeleteExpectations(logger logr.Logger, store *expect.ExpectationsStore, key string, members []grovecorev1beta1.PodClique) error {
 	if len(members) == 0 {
 		return nil
 	}
-	uids := lo.Map(members, func(pclq grovecorev1alpha1.PodClique, _ int) types.UID { return pclq.GetUID() })
+	uids := lo.Map(members, func(pclq grovecorev1beta1.PodClique, _ int) types.UID { return pclq.GetUID() })
 	return store.ExpectDeletions(logger, key, uids...)
 }
 
@@ -77,15 +77,15 @@ func RecordPCSGReplicaDeleteExpectations(logger logr.Logger, store *expect.Expec
 // replica has already been triggered this rollout, by checking whether any member PodClique carries a
 // delete expectation under the PCSG-scoped key. Such a replica is treated as unavailable immediately,
 // without waiting for the eventually-consistent cache or member PodClique status to catch up.
-func HasPCSGReplicaDisruptionBeenTriggered(store *expect.ExpectationsStore, key string, members []grovecorev1alpha1.PodClique) bool {
-	return lo.SomeBy(members, func(pclq grovecorev1alpha1.PodClique) bool {
+func HasPCSGReplicaDisruptionBeenTriggered(store *expect.ExpectationsStore, key string, members []grovecorev1beta1.PodClique) bool {
+	return lo.SomeBy(members, func(pclq grovecorev1beta1.PodClique) bool {
 		return store.HasDeleteExpectation(key, pclq.GetUID())
 	})
 }
 
 // SyncPCSGReplicaDeleteExpectations reconciles the PodCliqueScalingGroup's delete expectations against
 // the observed member PodCliques so an expectation clears once its PodClique is gone.
-func SyncPCSGReplicaDeleteExpectations(store *expect.ExpectationsStore, key string, existingPCLQs []grovecorev1alpha1.PodClique) {
+func SyncPCSGReplicaDeleteExpectations(store *expect.ExpectationsStore, key string, existingPCLQs []grovecorev1beta1.PodClique) {
 	var nonTerminating, terminating []types.UID
 	for _, pclq := range existingPCLQs {
 		if k8sutils.IsResourceTerminating(pclq.ObjectMeta) {

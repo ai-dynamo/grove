@@ -20,7 +20,7 @@ import (
 	"sync"
 
 	apiconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
 	ctrlcommon "github.com/ai-dynamo/grove/operator/internal/controller/common"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
@@ -40,9 +40,9 @@ import (
 )
 
 // reconcileSpec performs the main reconciliation logic for PodCliqueSet spec changes
-func (r *Reconciler) reconcileSpec(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) ctrlcommon.ReconcileStepResult {
+func (r *Reconciler) reconcileSpec(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet) ctrlcommon.ReconcileStepResult {
 	rLog := logger.WithValues("operation", "spec-reconcile")
-	reconcileStepFns := []ctrlcommon.ReconcileStepFn[grovecorev1alpha1.PodCliqueSet]{
+	reconcileStepFns := []ctrlcommon.ReconcileStepFn[grovecorev1beta1.PodCliqueSet]{
 		r.ensureFinalizer,
 		r.processGenerationHashChange,
 		r.syncPodCliqueSetResources,
@@ -59,7 +59,7 @@ func (r *Reconciler) reconcileSpec(ctx context.Context, logger logr.Logger, pcs 
 }
 
 // ensureFinalizer adds the PodCliqueSet finalizer if not already present.
-func (r *Reconciler) ensureFinalizer(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) ctrlcommon.ReconcileStepResult {
+func (r *Reconciler) ensureFinalizer(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet) ctrlcommon.ReconcileStepResult {
 	if !controllerutil.ContainsFinalizer(pcs, apiconstants.FinalizerPodCliqueSet) {
 		logger.Info("Adding finalizer", "finalizerName", apiconstants.FinalizerPodCliqueSet)
 		if err := ctrlutils.AddAndPatchFinalizer(ctx, r.client, pcs, apiconstants.FinalizerPodCliqueSet); err != nil {
@@ -71,7 +71,7 @@ func (r *Reconciler) ensureFinalizer(ctx context.Context, logger logr.Logger, pc
 
 // processGenerationHashChange computes the generation hash given a PodCliqueSet resource and if the generation has
 // changed from the previously persisted pcs.status.generationHash then it resets the pcs.status.updateProgress
-func (r *Reconciler) processGenerationHashChange(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) ctrlcommon.ReconcileStepResult {
+func (r *Reconciler) processGenerationHashChange(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet) ctrlcommon.ReconcileStepResult {
 	pcsObjectKey := client.ObjectKeyFromObject(pcs)
 	pcsGenHashKey := pcsGenerationHashKey(pcs)
 
@@ -106,7 +106,7 @@ func (r *Reconciler) processGenerationHashChange(ctx context.Context, logger log
 // remnant expectation entry for the same <pcs-namespace>/<pcs-name> does not block reconciliation of
 // a new PCS (with a different UID).
 // See https://github.com/ai-dynamo/grove/issues/782 for context.
-func pcsGenerationHashKey(pcs *grovecorev1alpha1.PodCliqueSet) string {
+func pcsGenerationHashKey(pcs *grovecorev1beta1.PodCliqueSet) string {
 	return fmt.Sprintf("%s/%s", client.ObjectKeyFromObject(pcs), pcs.UID)
 }
 
@@ -117,8 +117,8 @@ func (r *Reconciler) isGenerationHashExpectationSatisfied(pcsGenHashKey string, 
 }
 
 // computeGenerationHash calculates a hash of the PodCliqueSet pod template specifications.
-func computeGenerationHash(pcs *grovecorev1alpha1.PodCliqueSet) string {
-	podTemplateSpecs := lo.Map(pcs.Spec.Template.Cliques, func(pclqTemplateSpec *grovecorev1alpha1.PodCliqueTemplateSpec, _ int) *corev1.PodTemplateSpec {
+func computeGenerationHash(pcs *grovecorev1beta1.PodCliqueSet) string {
+	podTemplateSpecs := lo.Map(pcs.Spec.Template.Cliques, func(pclqTemplateSpec *grovecorev1beta1.PodCliqueTemplateSpec, _ int) *corev1.PodTemplateSpec {
 		podTemplateSpec := &corev1.PodTemplateSpec{
 			ObjectMeta: metav1.ObjectMeta{
 				Labels:      pclqTemplateSpec.Labels,
@@ -133,7 +133,7 @@ func computeGenerationHash(pcs *grovecorev1alpha1.PodCliqueSet) string {
 }
 
 // setGenerationHashAndUpdateStatus updates the PodCliqueSet status with the new generation hash, stores the expectation, and updates the status subresource.
-func (r *Reconciler) setGenerationHashAndUpdateStatus(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, pcsGenHashKey, newGenerationHash string) error {
+func (r *Reconciler) setGenerationHashAndUpdateStatus(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet, pcsGenHashKey, newGenerationHash string) error {
 	pcs.Status.CurrentGenerationHash = &newGenerationHash
 	if err := r.client.Status().Update(ctx, pcs); err != nil {
 		return fmt.Errorf("could not update CurrentGenerationHash for PodCliqueSet: %v: %w", client.ObjectKeyFromObject(pcs), err)
@@ -143,12 +143,12 @@ func (r *Reconciler) setGenerationHashAndUpdateStatus(ctx context.Context, pcs *
 }
 
 // initUpdateProgress initializes a new rolling update by resetting progress tracking.
-func (r *Reconciler) initUpdateProgress(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, pcsGenHashKey, newGenerationHash string) error {
-	updateProgress := &grovecorev1alpha1.PodCliqueSetUpdateProgress{
+func (r *Reconciler) initUpdateProgress(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet, pcsGenHashKey, newGenerationHash string) error {
+	updateProgress := &grovecorev1beta1.PodCliqueSetUpdateProgress{
 		UpdateStartedAt: metav1.Now(),
 	}
 	// OnDelete strategy sets UpdateEndedAt too, since we do not know when all the pods will manually be deleted, and gang termination is disabled when an update is in progress
-	if pcs.Spec.UpdateStrategy != nil && pcs.Spec.UpdateStrategy.Type == grovecorev1alpha1.OnDeleteStrategy {
+	if pcs.Spec.UpdateStrategy != nil && pcs.Spec.UpdateStrategy.Type == grovecorev1beta1.OnDeleteStrategy {
 		updateProgress.UpdateEndedAt = ptr.To(metav1.Now())
 	}
 	// The Coherent strategy rolls only the components whose pod template changed. Capture that scope now,
@@ -172,7 +172,7 @@ func (r *Reconciler) initUpdateProgress(ctx context.Context, pcs *grovecorev1alp
 
 // syncPodCliqueSetResources synchronizes all managed child resources. Components are
 // sync'd in dependency-ordered groups; within each group sync runs concurrently.
-func (r *Reconciler) syncPodCliqueSetResources(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) ctrlcommon.ReconcileStepResult {
+func (r *Reconciler) syncPodCliqueSetResources(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet) ctrlcommon.ReconcileStepResult {
 	continueReconcileAndRequeueKinds := make([]component.Kind, 0)
 	for groupIdx, group := range getKindSyncGroups() {
 		result, requeuedKinds := r.syncKindGroup(ctx, logger, pcs, group, groupIdx)
@@ -190,7 +190,7 @@ func (r *Reconciler) syncPodCliqueSetResources(ctx context.Context, logger logr.
 // syncKindGroup runs the Sync operation for each kind in the group concurrently.
 // Returns a non-nil ReconcileStepResult if reconciliation should stop for this group,
 // plus the list of kinds that returned "continue and requeue" errors.
-func (r *Reconciler) syncKindGroup(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, group []component.Kind, groupIdx int) (*ctrlcommon.ReconcileStepResult, []component.Kind) {
+func (r *Reconciler) syncKindGroup(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, group []component.Kind, groupIdx int) (*ctrlcommon.ReconcileStepResult, []component.Kind) {
 	var (
 		mu              sync.Mutex
 		requeuedKinds   []component.Kind
@@ -263,7 +263,7 @@ func (r *Reconciler) syncKindGroup(ctx context.Context, logger logr.Logger, pcs 
 }
 
 // updateObservedGeneration updates the status to reflect the current observed generation.
-func (r *Reconciler) updateObservedGeneration(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) ctrlcommon.ReconcileStepResult {
+func (r *Reconciler) updateObservedGeneration(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet) ctrlcommon.ReconcileStepResult {
 	if pcs.Status.ObservedGeneration != nil && *pcs.Status.ObservedGeneration == pcs.Generation {
 		return ctrlcommon.ContinueReconcile()
 	}
@@ -279,7 +279,7 @@ func (r *Reconciler) updateObservedGeneration(ctx context.Context, logger logr.L
 }
 
 // recordIncompleteReconcile records errors that occurred during reconciliation.
-func (r *Reconciler) recordIncompleteReconcile(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, errResult *ctrlcommon.ReconcileStepResult) ctrlcommon.ReconcileStepResult {
+func (r *Reconciler) recordIncompleteReconcile(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, errResult *ctrlcommon.ReconcileStepResult) ctrlcommon.ReconcileStepResult {
 	if err := r.reconcileStatusRecorder.RecordErrors(ctx, pcs, errResult); err != nil {
 		logger.Error(err, "failed to record incomplete reconcile operation")
 		// combine all errors

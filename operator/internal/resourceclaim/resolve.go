@@ -18,8 +18,7 @@ import (
 	"context"
 	"fmt"
 
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
-
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	resourcev1 "k8s.io/api/resource/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -31,8 +30,8 @@ import (
 func ResolveTemplateSpec(
 	ctx context.Context,
 	cl client.Reader,
-	base *grovecorev1alpha1.ResourceSharingSpec,
-	pcsTemplates []grovecorev1alpha1.ResourceClaimTemplateConfig,
+	base *grovecorev1beta1.ResourceSharingSpec,
+	pcsTemplates []grovecorev1beta1.ResourceClaimTemplateConfig,
 	pcsNamespace string,
 ) (*resourcev1.ResourceClaimTemplateSpec, error) {
 	if spec := resolveInternalRef(base, pcsTemplates); spec != nil {
@@ -44,8 +43,8 @@ func ResolveTemplateSpec(
 // resolveInternalRef returns the matching template spec from pcsTemplates, or
 // nil when the name does not match any internal template.
 func resolveInternalRef(
-	base *grovecorev1alpha1.ResourceSharingSpec,
-	pcsTemplates []grovecorev1alpha1.ResourceClaimTemplateConfig,
+	base *grovecorev1beta1.ResourceSharingSpec,
+	pcsTemplates []grovecorev1beta1.ResourceClaimTemplateConfig,
 ) *resourcev1.ResourceClaimTemplateSpec {
 	if base.Namespace != "" {
 		return nil
@@ -61,7 +60,7 @@ func resolveInternalRef(
 func resolveExternalRef(
 	ctx context.Context,
 	cl client.Reader,
-	base *grovecorev1alpha1.ResourceSharingSpec,
+	base *grovecorev1beta1.ResourceSharingSpec,
 	pcsNamespace string,
 ) (*resourcev1.ResourceClaimTemplateSpec, error) {
 	ns := base.Namespace

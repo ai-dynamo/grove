@@ -19,7 +19,6 @@ import (
 	"fmt"
 
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
@@ -47,7 +46,7 @@ var (
 	serviceAccountGVK = corev1.SchemeGroupVersion.WithKind("ServiceAccount")
 	hpaV2GVK          = autoscalingv2.SchemeGroupVersion.WithKind("HorizontalPodAutoscaler")
 	hpaV1GVK          = autoscalingv1.SchemeGroupVersion.WithKind("HorizontalPodAutoscaler")
-	pcsGVK            = grovecorev1alpha1.SchemeGroupVersion.WithKind(constants.KindPodCliqueSet)
+	pcsGVK            = grovecorev1beta1.SchemeGroupVersion.WithKind(constants.KindPodCliqueSet)
 	pcsgGVK           = grovecorev1beta1.SchemeGroupVersion.WithKind(constants.KindPodCliqueScalingGroup)
 	pclqGVK           = grovecorev1beta1.SchemeGroupVersion.WithKind(constants.KindPodClique)
 	podGangGVK        = groveschedulerv1alpha1.SchemeGroupVersion.WithKind(groveschedulerv1alpha1.KindPodGang)

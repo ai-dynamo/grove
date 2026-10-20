@@ -22,7 +22,7 @@ import (
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podclique/expectations"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
@@ -44,32 +44,32 @@ import (
 
 // constants for error codes
 const (
-	errCodeGetPod                              grovecorev1alpha1.ErrorCode = "ERR_GET_POD"
-	errCodeDeletePod                           grovecorev1alpha1.ErrorCode = "ERR_DELETE_POD"
-	errCodeGetAvailablePodHostNameIndices      grovecorev1alpha1.ErrorCode = "ERR_GET_AVAILABLE_POD_HOSTNAME_INDICES"
-	errCodeGetPodGang                          grovecorev1alpha1.ErrorCode = "ERR_GET_PODGANG"
-	errCodeGetPodGangMap                       grovecorev1alpha1.ErrorCode = "ERR_GET_PODGANGMAP"
-	errCodePodGangMapNotFound                  grovecorev1alpha1.ErrorCode = "ERR_PODGANGMAP_NOT_FOUND"
-	errCodeGetPodCliqueSet                     grovecorev1alpha1.ErrorCode = "ERR_GET_PODCLIQUESET"
-	errCodeListPod                             grovecorev1alpha1.ErrorCode = "ERR_LIST_POD"
-	errCodeRemovePodSchedulingGate             grovecorev1alpha1.ErrorCode = "ERR_REMOVE_POD_SCHEDULING_GATE"
-	errCodeRemovePodFinalizers                 grovecorev1alpha1.ErrorCode = "ERR_REMOVE_POD_FINALIZERS"
-	errCodeCreatePod                           grovecorev1alpha1.ErrorCode = "ERR_CREATE_POD"
-	errCodeMissingPodGangLabelOnPCLQ           grovecorev1alpha1.ErrorCode = "ERR_MISSING_PODGANG_LABEL_ON_PODCLIQUE"
-	errCodeInitContainerImageEnvVarMissing     grovecorev1alpha1.ErrorCode = "ERR_INITCONTAINER_ENVIRONMENT_VARIABLE_MISSING"
-	errCodeCreatePodCliqueExpectationsStoreKey grovecorev1alpha1.ErrorCode = "ERR_CREATE_PODCLIQUE_EXPECTATIONS_STORE_KEY"
-	errCodeDeletePodCliqueExpectations         grovecorev1alpha1.ErrorCode = "ERR_DELETE_PODCLIQUE_EXPECTATIONS_STORE_KEY"
-	errCodeGetPodCliqueSetReplicaIndex         grovecorev1alpha1.ErrorCode = "ERR_GET_PODCLIQUESET_REPLICA_INDEX"
-	errCodeSetControllerReference              grovecorev1alpha1.ErrorCode = "ERR_SET_CONTROLLER_REFERENCE"
-	errCodeBuildPodResource                    grovecorev1alpha1.ErrorCode = "ERR_BUILD_POD_RESOURCE"
-	errCodeMissingPodCliqueTemplate            grovecorev1alpha1.ErrorCode = "ERR_MISSING_PODCLIQUE_TEMPLATE"
-	errCodeGetPodCliqueTemplate                grovecorev1alpha1.ErrorCode = "ERR_GET_PODCLIQUE_TEMPLATE"
-	errCodeGetPCSGPodIndex                     grovecorev1alpha1.ErrorCode = "ERR_GET_PCSG_POD_INDEX"
-	errCodeUpdatePCSGPodIndexLabel             grovecorev1alpha1.ErrorCode = "ERR_UPDATE_PCSG_POD_INDEX_LABEL"
-	errCodeUpdatePodCliqueStatus               grovecorev1alpha1.ErrorCode = "ERR_UPDATE_PODCLIQUE_STATUS"
-	errCodeLabelPod                            grovecorev1alpha1.ErrorCode = "ERR_LABEL_POD"
-	errCodeRegisterExpectationsIndexers        grovecorev1alpha1.ErrorCode = "ERR_REGISTER_EXPECTATIONS_INDEXERS"
-	errCodeResolveStartupDependencies          grovecorev1alpha1.ErrorCode = "ERR_RESOLVE_STARTUP_DEPS"
+	errCodeGetPod                              grovecorev1beta1.ErrorCode = "ERR_GET_POD"
+	errCodeDeletePod                           grovecorev1beta1.ErrorCode = "ERR_DELETE_POD"
+	errCodeGetAvailablePodHostNameIndices      grovecorev1beta1.ErrorCode = "ERR_GET_AVAILABLE_POD_HOSTNAME_INDICES"
+	errCodeGetPodGang                          grovecorev1beta1.ErrorCode = "ERR_GET_PODGANG"
+	errCodeGetPodGangMap                       grovecorev1beta1.ErrorCode = "ERR_GET_PODGANGMAP"
+	errCodePodGangMapNotFound                  grovecorev1beta1.ErrorCode = "ERR_PODGANGMAP_NOT_FOUND"
+	errCodeGetPodCliqueSet                     grovecorev1beta1.ErrorCode = "ERR_GET_PODCLIQUESET"
+	errCodeListPod                             grovecorev1beta1.ErrorCode = "ERR_LIST_POD"
+	errCodeRemovePodSchedulingGate             grovecorev1beta1.ErrorCode = "ERR_REMOVE_POD_SCHEDULING_GATE"
+	errCodeRemovePodFinalizers                 grovecorev1beta1.ErrorCode = "ERR_REMOVE_POD_FINALIZERS"
+	errCodeCreatePod                           grovecorev1beta1.ErrorCode = "ERR_CREATE_POD"
+	errCodeMissingPodGangLabelOnPCLQ           grovecorev1beta1.ErrorCode = "ERR_MISSING_PODGANG_LABEL_ON_PODCLIQUE"
+	errCodeInitContainerImageEnvVarMissing     grovecorev1beta1.ErrorCode = "ERR_INITCONTAINER_ENVIRONMENT_VARIABLE_MISSING"
+	errCodeCreatePodCliqueExpectationsStoreKey grovecorev1beta1.ErrorCode = "ERR_CREATE_PODCLIQUE_EXPECTATIONS_STORE_KEY"
+	errCodeDeletePodCliqueExpectations         grovecorev1beta1.ErrorCode = "ERR_DELETE_PODCLIQUE_EXPECTATIONS_STORE_KEY"
+	errCodeGetPodCliqueSetReplicaIndex         grovecorev1beta1.ErrorCode = "ERR_GET_PODCLIQUESET_REPLICA_INDEX"
+	errCodeSetControllerReference              grovecorev1beta1.ErrorCode = "ERR_SET_CONTROLLER_REFERENCE"
+	errCodeBuildPodResource                    grovecorev1beta1.ErrorCode = "ERR_BUILD_POD_RESOURCE"
+	errCodeMissingPodCliqueTemplate            grovecorev1beta1.ErrorCode = "ERR_MISSING_PODCLIQUE_TEMPLATE"
+	errCodeGetPodCliqueTemplate                grovecorev1beta1.ErrorCode = "ERR_GET_PODCLIQUE_TEMPLATE"
+	errCodeGetPCSGPodIndex                     grovecorev1beta1.ErrorCode = "ERR_GET_PCSG_POD_INDEX"
+	errCodeUpdatePCSGPodIndexLabel             grovecorev1beta1.ErrorCode = "ERR_UPDATE_PCSG_POD_INDEX_LABEL"
+	errCodeUpdatePodCliqueStatus               grovecorev1beta1.ErrorCode = "ERR_UPDATE_PODCLIQUE_STATUS"
+	errCodeLabelPod                            grovecorev1beta1.ErrorCode = "ERR_LABEL_POD"
+	errCodeRegisterExpectationsIndexers        grovecorev1beta1.ErrorCode = "ERR_REGISTER_EXPECTATIONS_INDEXERS"
+	errCodeResolveStartupDependencies          grovecorev1beta1.ErrorCode = "ERR_RESOLVE_STARTUP_DEPS"
 )
 
 const (
@@ -89,7 +89,7 @@ func New(client client.Client,
 	scheme *runtime.Scheme,
 	eventRecorder record.EventRecorder,
 	expectationsStore *expect.ExpectationsStore,
-	schedRegistry scheduler.Registry) (component.Operator[grovecorev1alpha1.PodClique], error) {
+	schedRegistry scheduler.Registry) (component.Operator[grovecorev1beta1.PodClique], error) {
 	// The pod component groups its create and delete expectations by owning PodClique so it can clear
 	// them per PodClique in one call regardless of how many PodGangs a PodClique's pods span.
 	if err := expectationsStore.AddIndexers(expectations.PodCliqueExpectationsIndexers()); err != nil {
@@ -129,7 +129,7 @@ func (r _resource) GetExistingResourceNames(ctx context.Context, _ logr.Logger, 
 }
 
 // Sync ensures that the desired number of Pods exist for the PodClique with the correct configuration
-func (r _resource) Sync(ctx context.Context, logger logr.Logger, pclq *grovecorev1alpha1.PodClique) error {
+func (r _resource) Sync(ctx context.Context, logger logr.Logger, pclq *grovecorev1beta1.PodClique) error {
 	sc, err := r.prepareSyncFlow(ctx, logger, pclq)
 	if err != nil {
 		return err
@@ -151,7 +151,7 @@ func (r _resource) Sync(ctx context.Context, logger logr.Logger, pclq *grovecore
 }
 
 // buildResource constructs a Pod resource from PodClique specifications, setting up metadata, labels, scheduling gates, and dependencies
-func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grovecorev1alpha1.PodClique, podGangName string, pod *corev1.Pod, podIndex int, pgm *grovecorev1alpha1.PodGangMap) error {
+func (r _resource) buildResource(pcs *grovecorev1beta1.PodCliqueSet, pclq *grovecorev1beta1.PodClique, podGangName string, pod *corev1.Pod, podIndex int, pgm *grovecorev1beta1.PodGangMap) error {
 	// Extract PCS replica index from PodClique FQN
 	pcsName := componentutils.GetPodCliqueSetName(pclq.ObjectMeta)
 	pcsReplicaIndex, err := componentutils.GetPodCliqueSetReplicaIndexFromPodCliqueFQN(pcsName, pclq.Name)
@@ -235,7 +235,7 @@ func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grov
 
 // getPCSGPodIndex returns the pod's zero-based index within its PodCliqueScalingGroup replica.
 // Standalone PodCliques return nil because they have no group-wide index.
-func getPCSGPodIndex(pclq *grovecorev1alpha1.PodClique, podIndex int) (*int, error) {
+func getPCSGPodIndex(pclq *grovecorev1beta1.PodClique, podIndex int) (*int, error) {
 	if pclq.Labels[apicommon.LabelPodCliqueScalingGroup] == "" {
 		return nil, nil
 	}
@@ -255,7 +255,7 @@ func getPCSGPodIndex(pclq *grovecorev1alpha1.PodClique, podIndex int) (*int, err
 // injectAllResourceClaimRefs is the single consolidated injection point for all
 // ResourceClaim references into a Pod's spec. It injects refs from every level
 // of the hierarchy: PCS, PCSG (if applicable), and PCLQ.
-func injectAllResourceClaimRefs(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grovecorev1alpha1.PodClique, podSpec *corev1.PodSpec, pcsReplicaIndex, podIndex int) error {
+func injectAllResourceClaimRefs(pcs *grovecorev1beta1.PodCliqueSet, pclq *grovecorev1beta1.PodClique, podSpec *corev1.PodSpec, pcsReplicaIndex, podIndex int) error {
 	cliqueName, err := componentutils.GetPodCliqueNameFromPodCliqueFQN(pclq.ObjectMeta)
 	if err != nil {
 		return fmt.Errorf("failed to get PodClique name: %w", err)
@@ -268,7 +268,7 @@ func injectAllResourceClaimRefs(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grove
 	matchNames := []string{pclqTemplateSpec.Name}
 
 	pcsgName := pclq.Labels[apicommon.LabelPodCliqueScalingGroup]
-	var pcsgConfig *grovecorev1alpha1.PodCliqueScalingGroupConfig
+	var pcsgConfig *grovecorev1beta1.PodCliqueScalingGroupConfig
 	var pcsgReplicaIndex int
 	if pcsgName != "" {
 		pcsgConfig = resourceclaim.FindPCSGConfigByName(pcs, pcsgName, pcsReplicaIndex)
@@ -293,7 +293,7 @@ func injectAllResourceClaimRefs(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grove
 	return nil
 }
 
-func injectPCSResourceClaimRefs(podSpec *corev1.PodSpec, pcs *grovecorev1alpha1.PodCliqueSet, replicaIndex int, matchNames []string) {
+func injectPCSResourceClaimRefs(podSpec *corev1.PodSpec, pcs *grovecorev1beta1.PodCliqueSet, replicaIndex int, matchNames []string) {
 	if len(pcs.Spec.Template.ResourceSharing) == 0 {
 		return
 	}
@@ -302,7 +302,7 @@ func injectPCSResourceClaimRefs(podSpec *corev1.PodSpec, pcs *grovecorev1alpha1.
 	resourceclaim.InjectResourceClaimRefs(podSpec, pcs.Name, resourceSharers, &replicaIndex, matchNames...)
 }
 
-func injectPCSGResourceClaimRefs(podSpec *corev1.PodSpec, pcsgConfig *grovecorev1alpha1.PodCliqueScalingGroupConfig, pcsgName string, replicaIndex int, cliqueName string) {
+func injectPCSGResourceClaimRefs(podSpec *corev1.PodSpec, pcsgConfig *grovecorev1beta1.PodCliqueScalingGroupConfig, pcsgName string, replicaIndex int, cliqueName string) {
 	if pcsgConfig == nil || len(pcsgConfig.ResourceSharing) == 0 {
 		return
 	}
@@ -311,7 +311,7 @@ func injectPCSGResourceClaimRefs(podSpec *corev1.PodSpec, pcsgConfig *grovecorev
 	resourceclaim.InjectResourceClaimRefs(podSpec, pcsgName, resourceSharers, &replicaIndex, cliqueName)
 }
 
-func injectPCLQResourceClaimRefs(podSpec *corev1.PodSpec, pclqName string, resourceSharing []grovecorev1alpha1.ResourceSharingSpec, podIndex int) {
+func injectPCLQResourceClaimRefs(podSpec *corev1.PodSpec, pclqName string, resourceSharing []grovecorev1beta1.ResourceSharingSpec, podIndex int) {
 	if len(resourceSharing) == 0 {
 		return
 	}
@@ -378,7 +378,7 @@ func getLabels(pclqObjectMeta metav1.ObjectMeta, pcsName, podGangName string, pc
 }
 
 // addEnvironmentVariables adds Grove-specific environment variables to all containers and init-containers.
-func addEnvironmentVariables(pod *corev1.Pod, pclq *grovecorev1alpha1.PodClique, pcsName string, pcsReplicaIndex int) {
+func addEnvironmentVariables(pod *corev1.Pod, pclq *grovecorev1beta1.PodClique, pcsName string, pcsReplicaIndex int) {
 	groveEnvVars := []corev1.EnvVar{
 		{
 			Name:  constants.EnvVarPodCliqueSetName,

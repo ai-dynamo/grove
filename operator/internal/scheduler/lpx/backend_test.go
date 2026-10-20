@@ -21,7 +21,7 @@ import (
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler/kai"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 	schedulertest "github.com/ai-dynamo/grove/operator/test/utils/scheduler"
@@ -154,36 +154,36 @@ func TestBackendSyncPodGangMixedWorkload(t *testing.T) {
 func TestBackendValidatePodCliqueSet(t *testing.T) {
 	tests := []struct {
 		name      string
-		mutatePCS func(*grovecorev1alpha1.PodCliqueSet)
+		mutatePCS func(*grovecorev1beta1.PodCliqueSet)
 		wantError bool
 		errorType error
 	}{
 		{
 			name:      "no Grove topology constraints",
-			mutatePCS: func(_ *grovecorev1alpha1.PodCliqueSet) {},
+			mutatePCS: func(_ *grovecorev1beta1.PodCliqueSet) {},
 		},
 		{
 			name: "PodCliqueSet topology constraint",
-			mutatePCS: func(pcs *grovecorev1alpha1.PodCliqueSet) {
-				pcs.Spec.Template.TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{}
+			mutatePCS: func(pcs *grovecorev1beta1.PodCliqueSet) {
+				pcs.Spec.Template.TopologyConstraint = &grovecorev1beta1.TopologyConstraint{}
 			},
 			wantError: true,
 			errorType: errTopologyConstraintsUnsupported,
 		},
 		{
 			name: "PodClique topology constraint",
-			mutatePCS: func(pcs *grovecorev1alpha1.PodCliqueSet) {
-				pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{}
+			mutatePCS: func(pcs *grovecorev1beta1.PodCliqueSet) {
+				pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1beta1.TopologyConstraint{}
 			},
 			wantError: true,
 			errorType: errTopologyConstraintsUnsupported,
 		},
 		{
 			name: "PodCliqueScalingGroup topology constraint",
-			mutatePCS: func(pcs *grovecorev1alpha1.PodCliqueSet) {
-				pcs.Spec.Template.PodCliqueScalingGroupConfigs = []grovecorev1alpha1.PodCliqueScalingGroupConfig{{
+			mutatePCS: func(pcs *grovecorev1beta1.PodCliqueSet) {
+				pcs.Spec.Template.PodCliqueScalingGroupConfigs = []grovecorev1beta1.PodCliqueScalingGroupConfig{{
 					Name:               "workers",
-					TopologyConstraint: &grovecorev1alpha1.TopologyConstraint{},
+					TopologyConstraint: &grovecorev1beta1.TopologyConstraint{},
 				}}
 			},
 			wantError: true,
@@ -191,14 +191,14 @@ func TestBackendValidatePodCliqueSet(t *testing.T) {
 		},
 		{
 			name: "Fallback validation for non-LPX pods",
-			mutatePCS: func(pcs *grovecorev1alpha1.PodCliqueSet) {
+			mutatePCS: func(pcs *grovecorev1beta1.PodCliqueSet) {
 				pcs.Labels = map[string]string{"kai.scheduler/queue": "default"}
 				pcs.Spec.Template.Cliques[0].Spec.PodSpec.Containers[0] = corev1.Container{}
 			},
 		},
 		{
 			name: "Fallback validation for non-LPX pods without a queue name",
-			mutatePCS: func(pcs *grovecorev1alpha1.PodCliqueSet) {
+			mutatePCS: func(pcs *grovecorev1beta1.PodCliqueSet) {
 				pcs.Spec.Template.Cliques[0].Spec.PodSpec.Containers[0] = corev1.Container{}
 			},
 			wantError: true,

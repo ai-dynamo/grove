@@ -18,8 +18,7 @@ import (
 	"strconv"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
-
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
@@ -27,13 +26,13 @@ import (
 
 // PodCliqueScalingGroupBuilder provides a fluent interface for building test PodCliqueScalingGroup objects.
 type PodCliqueScalingGroupBuilder struct {
-	pcsg *grovecorev1alpha1.PodCliqueScalingGroup
+	pcsg *grovecorev1beta1.PodCliqueScalingGroup
 }
 
 // NewPodCliqueScalingGroupBuilder creates a new PodCliqueScalingGroupBuilder with basic configuration.
 func NewPodCliqueScalingGroupBuilder(name, namespace, pcsName string, pcsReplicaIndex int) *PodCliqueScalingGroupBuilder {
 	return &PodCliqueScalingGroupBuilder{
-		pcsg: &grovecorev1alpha1.PodCliqueScalingGroup{
+		pcsg: &grovecorev1beta1.PodCliqueScalingGroup{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      name,
 				Namespace: namespace,
@@ -43,11 +42,11 @@ func NewPodCliqueScalingGroupBuilder(name, namespace, pcsName string, pcsReplica
 					apicommon.LabelPodCliqueSetReplicaIndex: strconv.Itoa(pcsReplicaIndex),
 				},
 			},
-			Spec: grovecorev1alpha1.PodCliqueScalingGroupSpec{
+			Spec: grovecorev1beta1.PodCliqueScalingGroupSpec{
 				Replicas:     1,
 				MinAvailable: ptr.To(int32(1)),
 			},
-			Status: grovecorev1alpha1.PodCliqueScalingGroupStatus{},
+			Status: grovecorev1beta1.PodCliqueScalingGroupStatus{},
 		},
 	}
 }
@@ -105,6 +104,6 @@ func (b *PodCliqueScalingGroupBuilder) WithOptions(opts ...PCSGOption) *PodCliqu
 }
 
 // Build returns the constructed PodCliqueScalingGroup.
-func (b *PodCliqueScalingGroupBuilder) Build() *grovecorev1alpha1.PodCliqueScalingGroup {
+func (b *PodCliqueScalingGroupBuilder) Build() *grovecorev1beta1.PodCliqueScalingGroup {
 	return b.pcsg
 }

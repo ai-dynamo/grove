@@ -18,7 +18,7 @@ import (
 	"context"
 	"testing"
 
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	groveclientscheme "github.com/ai-dynamo/grove/operator/internal/client"
 
 	"github.com/stretchr/testify/assert"
@@ -153,7 +153,7 @@ func TestCreateOrPatchSpec(t *testing.T) {
 		// the main resource, which the API server ignores for the status subresource: the caller
 		// sees OperationResultUpdated but the status change is silently lost. This test pins that
 		// contract so callers are not tempted to mutate Status through this helper.
-		existing := &grovecorev1alpha1.PodClique{
+		existing := &grovecorev1beta1.PodClique{
 			ObjectMeta: metav1.ObjectMeta{Name: "pclq", Namespace: "default"},
 		}
 		// PodClique must be registered as a status subresource for the fake client to reproduce the
@@ -161,10 +161,10 @@ func TestCreateOrPatchSpec(t *testing.T) {
 		cl := fake.NewClientBuilder().
 			WithScheme(groveclientscheme.Scheme).
 			WithObjects(existing.DeepCopy()).
-			WithStatusSubresource(&grovecorev1alpha1.PodClique{}).
+			WithStatusSubresource(&grovecorev1beta1.PodClique{}).
 			Build()
 
-		pclq := &grovecorev1alpha1.PodClique{
+		pclq := &grovecorev1beta1.PodClique{
 			ObjectMeta: metav1.ObjectMeta{Name: "pclq", Namespace: "default"},
 		}
 		result, err := CreateOrPatchSpec(ctx, cl, pclq, func() error {
@@ -175,7 +175,7 @@ func TestCreateOrPatchSpec(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, controllerutil.OperationResultUpdated, result, "a status change is observed as a change and reported as an update")
 
-		fetched := &grovecorev1alpha1.PodClique{}
+		fetched := &grovecorev1beta1.PodClique{}
 		require.NoError(t, cl.Get(ctx, client.ObjectKeyFromObject(pclq), fetched))
 		assert.Equal(t, int32(0), fetched.Status.Replicas, "the status-only mutation must not be persisted by the main-resource patch")
 	})

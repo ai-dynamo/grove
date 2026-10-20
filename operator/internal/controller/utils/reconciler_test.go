@@ -18,8 +18,7 @@ import (
 	"context"
 	"testing"
 
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
-
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -36,7 +35,7 @@ func TestGetPodCliqueSet(t *testing.T) {
 		// namespacedName is the object key
 		namespacedName types.NamespacedName
 		// existingPCS is the existing PodCliqueSet
-		existingPCS *grovecorev1alpha1.PodCliqueSet
+		existingPCS *grovecorev1beta1.PodCliqueSet
 		// notFound indicates if the object should not be found
 		notFound bool
 		// expectedResult is the expected ReconcileStepResult
@@ -51,7 +50,7 @@ func TestGetPodCliqueSet(t *testing.T) {
 				Name:      "test-pcs",
 				Namespace: "default",
 			},
-			existingPCS: &grovecorev1alpha1.PodCliqueSet{
+			existingPCS: &grovecorev1beta1.PodCliqueSet{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-pcs",
 					Namespace: "default",
@@ -80,7 +79,7 @@ func TestGetPodCliqueSet(t *testing.T) {
 				Name:      "test-pcs",
 				Namespace: "default",
 			},
-			existingPCS: &grovecorev1alpha1.PodCliqueSet{
+			existingPCS: &grovecorev1beta1.PodCliqueSet{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:              "test-pcs",
 					Namespace:         "default",
@@ -100,7 +99,7 @@ func TestGetPodCliqueSet(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			scheme := runtime.NewScheme()
-			require.NoError(t, grovecorev1alpha1.AddToScheme(scheme))
+			require.NoError(t, grovecorev1beta1.AddToScheme(scheme))
 
 			builder := fake.NewClientBuilder().WithScheme(scheme)
 			if tc.existingPCS != nil {
@@ -108,7 +107,7 @@ func TestGetPodCliqueSet(t *testing.T) {
 			}
 			fakeClient := builder.Build()
 
-			pcs := &grovecorev1alpha1.PodCliqueSet{}
+			pcs := &grovecorev1beta1.PodCliqueSet{}
 			result := GetPodCliqueSet(ctx, fakeClient, logger, tc.namespacedName, pcs)
 
 			assert.Equal(t, tc.expectedNeedsRequeue, result.NeedsRequeue())
@@ -128,7 +127,7 @@ func TestGetPodClique(t *testing.T) {
 		// namespacedName is the object key
 		namespacedName types.NamespacedName
 		// existingPCLQ is the existing PodClique
-		existingPCLQ *grovecorev1alpha1.PodClique
+		existingPCLQ *grovecorev1beta1.PodClique
 		// notFound indicates if the object should not be found
 		notFound bool
 		// expectedResult is the expected ReconcileStepResult
@@ -141,7 +140,7 @@ func TestGetPodClique(t *testing.T) {
 				Name:      "test-pclq",
 				Namespace: "default",
 			},
-			existingPCLQ: &grovecorev1alpha1.PodClique{
+			existingPCLQ: &grovecorev1beta1.PodClique{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-pclq",
 					Namespace: "default",
@@ -169,7 +168,7 @@ func TestGetPodClique(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			scheme := runtime.NewScheme()
-			require.NoError(t, grovecorev1alpha1.AddToScheme(scheme))
+			require.NoError(t, grovecorev1beta1.AddToScheme(scheme))
 
 			builder := fake.NewClientBuilder().WithScheme(scheme)
 			if tc.existingPCLQ != nil {
@@ -177,7 +176,7 @@ func TestGetPodClique(t *testing.T) {
 			}
 			fakeClient := builder.Build()
 
-			pclq := &grovecorev1alpha1.PodClique{}
+			pclq := &grovecorev1beta1.PodClique{}
 			result := GetPodClique(ctx, fakeClient, logger, tc.namespacedName, pclq, true)
 
 			assert.Equal(t, tc.expectedNeedsRequeue, result.NeedsRequeue())
@@ -196,10 +195,10 @@ func TestGetPodCliqueIgnoreNotFoundFalse(t *testing.T) {
 	logger := logr.Discard()
 
 	scheme := runtime.NewScheme()
-	require.NoError(t, grovecorev1alpha1.AddToScheme(scheme))
+	require.NoError(t, grovecorev1beta1.AddToScheme(scheme))
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
 
-	pclq := &grovecorev1alpha1.PodClique{}
+	pclq := &grovecorev1beta1.PodClique{}
 	result := GetPodClique(ctx, fakeClient, logger, types.NamespacedName{Name: "missing", Namespace: "default"}, pclq, false)
 
 	assert.True(t, result.NeedsRequeue(), "should requeue on error when ignoreNotFound is false")
@@ -213,7 +212,7 @@ func TestGetPodCliqueScalingGroup(t *testing.T) {
 		// namespacedName is the object key
 		namespacedName types.NamespacedName
 		// existingPCSG is the existing PodCliqueScalingGroup
-		existingPCSG *grovecorev1alpha1.PodCliqueScalingGroup
+		existingPCSG *grovecorev1beta1.PodCliqueScalingGroup
 		// notFound indicates if the object should not be found
 		notFound bool
 		// expectedResult is the expected ReconcileStepResult
@@ -226,7 +225,7 @@ func TestGetPodCliqueScalingGroup(t *testing.T) {
 				Name:      "test-pcsg",
 				Namespace: "default",
 			},
-			existingPCSG: &grovecorev1alpha1.PodCliqueScalingGroup{
+			existingPCSG: &grovecorev1beta1.PodCliqueScalingGroup{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-pcsg",
 					Namespace: "default",
@@ -254,7 +253,7 @@ func TestGetPodCliqueScalingGroup(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			scheme := runtime.NewScheme()
-			require.NoError(t, grovecorev1alpha1.AddToScheme(scheme))
+			require.NoError(t, grovecorev1beta1.AddToScheme(scheme))
 
 			builder := fake.NewClientBuilder().WithScheme(scheme)
 			if tc.existingPCSG != nil {
@@ -262,7 +261,7 @@ func TestGetPodCliqueScalingGroup(t *testing.T) {
 			}
 			fakeClient := builder.Build()
 
-			pcsg := &grovecorev1alpha1.PodCliqueScalingGroup{}
+			pcsg := &grovecorev1beta1.PodCliqueScalingGroup{}
 			result := GetPodCliqueScalingGroup(ctx, fakeClient, logger, tc.namespacedName, pcsg)
 
 			assert.Equal(t, tc.expectedNeedsRequeue, result.NeedsRequeue())

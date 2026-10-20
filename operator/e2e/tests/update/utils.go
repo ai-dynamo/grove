@@ -28,7 +28,7 @@ import (
 
 	"github.com/ai-dynamo/grove/operator/api/common"
 	apiconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
-	grovev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/e2e/grove/workload"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/k8sclient"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/pods"
@@ -55,8 +55,8 @@ import (
 // ============================================================================
 
 // getPCS fetches a PodCliqueSet by name using the K8s client.
-func getPCS(tc *testctx.TestContext, pcsName string) (*grovev1alpha1.PodCliqueSet, error) {
-	var pcs grovev1alpha1.PodCliqueSet
+func getPCS(tc *testctx.TestContext, pcsName string) (*grovev1beta1.PodCliqueSet, error) {
+	var pcs grovev1beta1.PodCliqueSet
 	if err := tc.Client.Get(tc.Ctx, types.NamespacedName{Name: pcsName, Namespace: tc.Namespace}, &pcs); err != nil {
 		return nil, err
 	}
@@ -256,27 +256,27 @@ func verifyPodsStillPresent(tc *testctx.TestContext, expectedPods map[string]boo
 
 // updatePCSUpdateStrategy changes the update strategy type of the PodCliqueSet.
 // Uses tc.Workload.Name as the PCS name.
-func updatePCSUpdateStrategy(tc *testctx.TestContext, strategyType grovev1alpha1.UpdateStrategyType) error {
+func updatePCSUpdateStrategy(tc *testctx.TestContext, strategyType grovev1beta1.UpdateStrategyType) error {
 	tc.T.Helper()
 
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		var pcs grovev1alpha1.PodCliqueSet
+		var pcs grovev1beta1.PodCliqueSet
 		if err := tc.Client.Get(tc.Ctx, types.NamespacedName{Name: tc.Workload.Name, Namespace: tc.Namespace}, &pcs); err != nil {
 			return fmt.Errorf("failed to fetch PodCliqueSet: %w", err)
 		}
-		pcs.SetGroupVersionKind(grovev1alpha1.SchemeGroupVersion.WithKind("PodCliqueSet"))
+		pcs.SetGroupVersionKind(grovev1beta1.SchemeGroupVersion.WithKind("PodCliqueSet"))
 		pcs.SetManagedFields(nil)
 		pcs.SetResourceVersion("")
 
 		if pcs.Spec.UpdateStrategy == nil {
-			pcs.Spec.UpdateStrategy = &grovev1alpha1.PodCliqueSetUpdateStrategy{}
+			pcs.Spec.UpdateStrategy = &grovev1beta1.PodCliqueSetUpdateStrategy{}
 		}
 		pcs.Spec.UpdateStrategy.Type = strategyType
 
 		// Switching to OnDelete requires removing any RollingUpdate configuration: the validating webhook
 		// rejects a RollingUpdate that is set under OnDelete, and defaulting no longer clears it. This
 		// mirrors what a consumer must do when changing the strategy.
-		if strategyType == grovev1alpha1.OnDeleteStrategy {
+		if strategyType == grovev1beta1.OnDeleteStrategy {
 			for i := range pcs.Spec.Template.Cliques {
 				pcs.Spec.Template.Cliques[i].RollingUpdate = nil
 			}
@@ -302,11 +302,11 @@ func triggerPodCliqueUpdateWithRevision(tc *testctx.TestContext, updateValue str
 	pcsName := tc.Workload.Name
 
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		var pcs grovev1alpha1.PodCliqueSet
+		var pcs grovev1beta1.PodCliqueSet
 		if err := tc.Client.Get(tc.Ctx, types.NamespacedName{Name: pcsName, Namespace: tc.Namespace}, &pcs); err != nil {
 			return fmt.Errorf("failed to get PodCliqueSet: %w", err)
 		}
-		pcs.SetGroupVersionKind(grovev1alpha1.SchemeGroupVersion.WithKind("PodCliqueSet"))
+		pcs.SetGroupVersionKind(grovev1beta1.SchemeGroupVersion.WithKind("PodCliqueSet"))
 		pcs.SetManagedFields(nil)
 		pcs.SetResourceVersion("")
 
@@ -351,7 +351,7 @@ func triggerPodCliqueUpdateWithRevision(tc *testctx.TestContext, updateValue str
 func waitForActiveChildUpdateProgressGeneration(tc *testctx.TestContext, standaloneCliqueName, pcsgConfigName, generationHash string) error {
 	return wait.PollUntilContextTimeout(tc.Ctx, tc.Interval, tc.Timeout, true, func(ctx context.Context) (bool, error) {
 		if standaloneCliqueName != "" {
-			var pclq grovev1alpha1.PodClique
+			var pclq grovev1beta1.PodClique
 			key := types.NamespacedName{Namespace: tc.Namespace, Name: standaloneCliqueFQN(tc, standaloneCliqueName)}
 			if err := tc.Client.Get(ctx, key, &pclq); err != nil {
 				return false, client.IgnoreNotFound(err)
@@ -361,7 +361,7 @@ func waitForActiveChildUpdateProgressGeneration(tc *testctx.TestContext, standal
 				progress.PodCliqueSetGenerationHash == generationHash, nil
 		}
 
-		var pcsg grovev1alpha1.PodCliqueScalingGroup
+		var pcsg grovev1beta1.PodCliqueScalingGroup
 		key := types.NamespacedName{Namespace: tc.Namespace, Name: pcsgFQN(tc, pcsgConfigName)}
 		if err := tc.Client.Get(ctx, key, &pcsg); err != nil {
 			return false, client.IgnoreNotFound(err)
@@ -406,7 +406,7 @@ func assertNoActiveChildUpdates(tc *testctx.TestContext) {
 	matchingPCS := client.MatchingLabels{common.LabelPartOfKey: tc.Workload.Name}
 	inNamespace := client.InNamespace(tc.Namespace)
 
-	var pclqs grovev1alpha1.PodCliqueList
+	var pclqs grovev1beta1.PodCliqueList
 	require.NoError(tc.T, tc.Client.List(tc.Ctx, &pclqs, inNamespace, matchingPCS))
 	for i := range pclqs.Items {
 		progress := pclqs.Items[i].Status.UpdateProgress
@@ -414,7 +414,7 @@ func assertNoActiveChildUpdates(tc *testctx.TestContext) {
 			"PodClique %s still has an active update", pclqs.Items[i].Name)
 	}
 
-	var pcsgs grovev1alpha1.PodCliqueScalingGroupList
+	var pcsgs grovev1beta1.PodCliqueScalingGroupList
 	require.NoError(tc.T, tc.Client.List(tc.Ctx, &pcsgs, inNamespace, matchingPCS))
 	for i := range pcsgs.Items {
 		progress := pcsgs.Items[i].Status.UpdateProgress
@@ -428,11 +428,11 @@ func assertNoActiveChildUpdates(tc *testctx.TestContext) {
 // allows updates to progress in a reasonable time for testing.
 func patchPCSWithSIGTERMIgnoringCommand(tc *testctx.TestContext) error {
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		var pcs grovev1alpha1.PodCliqueSet
+		var pcs grovev1beta1.PodCliqueSet
 		if err := tc.Client.Get(tc.Ctx, types.NamespacedName{Name: tc.Workload.Name, Namespace: tc.Namespace}, &pcs); err != nil {
 			return fmt.Errorf("failed to get PodCliqueSet: %w", err)
 		}
-		pcs.SetGroupVersionKind(grovev1alpha1.SchemeGroupVersion.WithKind("PodCliqueSet"))
+		pcs.SetGroupVersionKind(grovev1beta1.SchemeGroupVersion.WithKind("PodCliqueSet"))
 		pcs.SetManagedFields(nil)
 		pcs.SetResourceVersion("")
 
@@ -455,8 +455,8 @@ func waitForRollingUpdateComplete(tc *testctx.TestContext, expectedReplicas int3
 	pcsName := tc.Workload.Name
 
 	pollCount := 0
-	fetchPCS := waiter.FetchByName(pcsName, k8sclient.Getter[*grovev1alpha1.PodCliqueSet](tc.Client, tc.Namespace))
-	predicate := waiter.Predicate[*grovev1alpha1.PodCliqueSet](func(pcs *grovev1alpha1.PodCliqueSet) bool {
+	fetchPCS := waiter.FetchByName(pcsName, k8sclient.Getter[*grovev1beta1.PodCliqueSet](tc.Client, tc.Namespace))
+	predicate := waiter.Predicate[*grovev1beta1.PodCliqueSet](func(pcs *grovev1beta1.PodCliqueSet) bool {
 		pollCount++
 		if pcs == nil {
 			// A transient cache miss returns a nil object. Keep polling.
@@ -482,7 +482,7 @@ func waitForRollingUpdateComplete(tc *testctx.TestContext, expectedReplicas int3
 
 		return false
 	})
-	w := waiter.New[*grovev1alpha1.PodCliqueSet]().
+	w := waiter.New[*grovev1beta1.PodCliqueSet]().
 		WithTimeout(tc.Timeout).
 		WithInterval(tc.Interval)
 	err := w.WaitUntil(tc.Ctx, fetchPCS, predicate)
@@ -518,7 +518,7 @@ func scalePodCliqueInPCS(tc *testctx.TestContext, cliqueName string, replicas in
 	pcsName := tc.Workload.Name
 
 	// Get the PCS to find out how many replicas it has
-	var pcs grovev1alpha1.PodCliqueSet
+	var pcs grovev1beta1.PodCliqueSet
 	if err := tc.Client.Get(tc.Ctx, types.NamespacedName{Name: pcsName, Namespace: tc.Namespace}, &pcs); err != nil {
 		return fmt.Errorf("failed to get PodCliqueSet: %w", err)
 	}
@@ -552,7 +552,7 @@ func scalePodCliqueInPCS(tc *testctx.TestContext, cliqueName string, replicas in
 				return fmt.Errorf("failed to marshal patch: %w", err)
 			}
 
-			pclq := grovev1alpha1.PodClique{
+			pclq := grovev1beta1.PodClique{
 				ObjectMeta: metav1.ObjectMeta{Name: pclqName, Namespace: tc.Namespace},
 			}
 			return tc.Client.Patch(tc.Ctx, &pclq, client.RawPatch(types.MergePatchType, patchBytes))
@@ -617,8 +617,8 @@ func waitForGenerationHashChange(tc *testctx.TestContext, previousHash string) e
 	pcsName := tc.Workload.Name
 
 	pollCount := 0
-	fetchPCS := waiter.FetchByName(pcsName, k8sclient.Getter[*grovev1alpha1.PodCliqueSet](tc.Client, tc.Namespace))
-	predicate := waiter.Predicate[*grovev1alpha1.PodCliqueSet](func(pcs *grovev1alpha1.PodCliqueSet) bool {
+	fetchPCS := waiter.FetchByName(pcsName, k8sclient.Getter[*grovev1beta1.PodCliqueSet](tc.Client, tc.Namespace))
+	predicate := waiter.Predicate[*grovev1beta1.PodCliqueSet](func(pcs *grovev1beta1.PodCliqueSet) bool {
 		pollCount++
 		if pcs == nil || pcs.Status.CurrentGenerationHash == nil {
 			// A transient cache miss returns a nil object. Keep polling.
@@ -631,7 +631,7 @@ func waitForGenerationHashChange(tc *testctx.TestContext, previousHash string) e
 		}
 		return false
 	})
-	w := waiter.New[*grovev1alpha1.PodCliqueSet]().
+	w := waiter.New[*grovev1beta1.PodCliqueSet]().
 		WithTimeout(tc.Timeout).
 		WithInterval(tc.Interval)
 	return w.WaitUntil(tc.Ctx, fetchPCS, predicate)
@@ -643,8 +643,8 @@ func waitForOrdinalUpdating(tc *testctx.TestContext, ordinal int32) error {
 	pcsName := tc.Workload.Name
 
 	pollCount := 0
-	fetchPCS := waiter.FetchByName(pcsName, k8sclient.Getter[*grovev1alpha1.PodCliqueSet](tc.Client, tc.Namespace))
-	predicate := waiter.Predicate[*grovev1alpha1.PodCliqueSet](func(pcs *grovev1alpha1.PodCliqueSet) bool {
+	fetchPCS := waiter.FetchByName(pcsName, k8sclient.Getter[*grovev1beta1.PodCliqueSet](tc.Client, tc.Namespace))
+	predicate := waiter.Predicate[*grovev1beta1.PodCliqueSet](func(pcs *grovev1beta1.PodCliqueSet) bool {
 		pollCount++
 		if pcs == nil {
 			// A transient cache miss returns a nil object. Keep polling.
@@ -671,7 +671,7 @@ func waitForOrdinalUpdating(tc *testctx.TestContext, ordinal int32) error {
 
 		return false
 	})
-	w := waiter.New[*grovev1alpha1.PodCliqueSet]().
+	w := waiter.New[*grovev1beta1.PodCliqueSet]().
 		WithTimeout(tc.Timeout).
 		WithInterval(tc.Interval)
 	err := w.WaitUntil(tc.Ctx, fetchPCS, predicate)
@@ -1300,10 +1300,10 @@ func scalePodClique(tc *testctx.TestContext, cliqueName string, replicas int32, 
 
 func waitForOnDeleteUpdateComplete(tc *testctx.TestContext) error {
 	pollCount := 0
-	fetchPCS := waiter.FetchFunc[*grovev1alpha1.PodCliqueSet](func(_ context.Context) (*grovev1alpha1.PodCliqueSet, error) {
+	fetchPCS := waiter.FetchFunc[*grovev1beta1.PodCliqueSet](func(_ context.Context) (*grovev1beta1.PodCliqueSet, error) {
 		return getPCS(tc, tc.Workload.Name)
 	})
-	predicate := waiter.Predicate[*grovev1alpha1.PodCliqueSet](func(pcs *grovev1alpha1.PodCliqueSet) bool {
+	predicate := waiter.Predicate[*grovev1beta1.PodCliqueSet](func(pcs *grovev1beta1.PodCliqueSet) bool {
 		pollCount++
 		if pcs == nil {
 			// A transient cache miss returns a nil object. Keep polling.
@@ -1316,7 +1316,7 @@ func waitForOnDeleteUpdateComplete(tc *testctx.TestContext) error {
 		}
 		return false
 	})
-	w := waiter.New[*grovev1alpha1.PodCliqueSet]().WithTimeout(tc.Timeout).WithInterval(tc.Interval)
+	w := waiter.New[*grovev1beta1.PodCliqueSet]().WithTimeout(tc.Timeout).WithInterval(tc.Interval)
 	_, err := w.WaitFor(tc.Ctx, fetchPCS, predicate)
 	return err
 }
@@ -1427,11 +1427,11 @@ func excludeNodeFromPodCliqueAffinity(tc *testctx.TestContext, cliqueName string
 
 	pcsName := tc.Workload.Name
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		var pcs grovev1alpha1.PodCliqueSet
+		var pcs grovev1beta1.PodCliqueSet
 		if err := tc.Client.Get(tc.Ctx, types.NamespacedName{Name: pcsName, Namespace: tc.Namespace}, &pcs); err != nil {
 			return fmt.Errorf("failed to get PodCliqueSet: %w", err)
 		}
-		pcs.SetGroupVersionKind(grovev1alpha1.SchemeGroupVersion.WithKind("PodCliqueSet"))
+		pcs.SetGroupVersionKind(grovev1beta1.SchemeGroupVersion.WithKind("PodCliqueSet"))
 		pcs.SetManagedFields(nil)
 		pcs.SetResourceVersion("")
 
@@ -1611,9 +1611,9 @@ func deleteNotReadyPodsOnReplica(t *testing.T, tc *testctx.TestContext, pcsRepli
 }
 
 // getReplicaPodGangMap fetches the PodGangMap object of the given PCS replica.
-func getReplicaPodGangMap(tc *testctx.TestContext, pcsReplicaIndex int) (*grovev1alpha1.PodGangMap, error) {
+func getReplicaPodGangMap(tc *testctx.TestContext, pcsReplicaIndex int) (*grovev1beta1.PodGangMap, error) {
 	pgmName := common.GeneratePodGangMapName(common.ResourceNameReplica{Name: tc.Workload.Name, Replica: pcsReplicaIndex})
-	var pgm grovev1alpha1.PodGangMap
+	var pgm grovev1beta1.PodGangMap
 	if err := tc.Client.Get(tc.Ctx, types.NamespacedName{Namespace: tc.Namespace, Name: pgmName}, &pgm); err != nil {
 		return nil, err
 	}
@@ -1705,11 +1705,11 @@ func updateInProgressConditionMet[T any](getConds func(T) []metav1.Condition, wa
 
 // waitForPCSUpdateCondition waits for the PodCliqueSet UpdateInProgress condition to match.
 func waitForPCSUpdateCondition(tc *testctx.TestContext, wantStatus metav1.ConditionStatus, wantReason string) error {
-	fetch := waiter.FetchFunc[*grovev1alpha1.PodCliqueSet](func(context.Context) (*grovev1alpha1.PodCliqueSet, error) {
+	fetch := waiter.FetchFunc[*grovev1beta1.PodCliqueSet](func(context.Context) (*grovev1beta1.PodCliqueSet, error) {
 		return getPCS(tc, tc.Workload.Name)
 	})
-	_, err := waiter.New[*grovev1alpha1.PodCliqueSet]().WithTimeout(tc.Timeout).WithInterval(tc.Interval).WithRetryOnError().
-		WaitFor(tc.Ctx, fetch, updateInProgressConditionMet(func(p *grovev1alpha1.PodCliqueSet) []metav1.Condition { return p.Status.Conditions }, wantStatus, wantReason))
+	_, err := waiter.New[*grovev1beta1.PodCliqueSet]().WithTimeout(tc.Timeout).WithInterval(tc.Interval).WithRetryOnError().
+		WaitFor(tc.Ctx, fetch, updateInProgressConditionMet(func(p *grovev1beta1.PodCliqueSet) []metav1.Condition { return p.Status.Conditions }, wantStatus, wantReason))
 	if err != nil {
 		return fmt.Errorf("PodCliqueSet UpdateInProgress did not reach status=%s reason=%s: %w", wantStatus, wantReason, err)
 	}
@@ -1719,15 +1719,15 @@ func waitForPCSUpdateCondition(tc *testctx.TestContext, wantStatus metav1.Condit
 // waitForPodCliqueUpdateCondition waits for a standalone PodClique's UpdateInProgress condition to match.
 func waitForPodCliqueUpdateCondition(tc *testctx.TestContext, cliqueName string, wantStatus metav1.ConditionStatus, wantReason string) error {
 	name := standaloneCliqueFQN(tc, cliqueName)
-	fetch := waiter.FetchFunc[*grovev1alpha1.PodClique](func(ctx context.Context) (*grovev1alpha1.PodClique, error) {
-		var pclq grovev1alpha1.PodClique
+	fetch := waiter.FetchFunc[*grovev1beta1.PodClique](func(ctx context.Context) (*grovev1beta1.PodClique, error) {
+		var pclq grovev1beta1.PodClique
 		if err := tc.Client.Get(ctx, types.NamespacedName{Name: name, Namespace: tc.Namespace}, &pclq); err != nil {
 			return nil, err
 		}
 		return &pclq, nil
 	})
-	_, err := waiter.New[*grovev1alpha1.PodClique]().WithTimeout(tc.Timeout).WithInterval(tc.Interval).WithRetryOnError().
-		WaitFor(tc.Ctx, fetch, updateInProgressConditionMet(func(p *grovev1alpha1.PodClique) []metav1.Condition { return p.Status.Conditions }, wantStatus, wantReason))
+	_, err := waiter.New[*grovev1beta1.PodClique]().WithTimeout(tc.Timeout).WithInterval(tc.Interval).WithRetryOnError().
+		WaitFor(tc.Ctx, fetch, updateInProgressConditionMet(func(p *grovev1beta1.PodClique) []metav1.Condition { return p.Status.Conditions }, wantStatus, wantReason))
 	if err != nil {
 		return fmt.Errorf("PodClique %s UpdateInProgress did not reach status=%s reason=%s: %w", name, wantStatus, wantReason, err)
 	}
@@ -1737,15 +1737,15 @@ func waitForPodCliqueUpdateCondition(tc *testctx.TestContext, cliqueName string,
 // waitForPCSGUpdateCondition waits for a PodCliqueScalingGroup's UpdateInProgress condition to match.
 func waitForPCSGUpdateCondition(tc *testctx.TestContext, pcsgConfigName string, wantStatus metav1.ConditionStatus, wantReason string) error {
 	name := pcsgFQN(tc, pcsgConfigName)
-	fetch := waiter.FetchFunc[*grovev1alpha1.PodCliqueScalingGroup](func(ctx context.Context) (*grovev1alpha1.PodCliqueScalingGroup, error) {
-		var pcsg grovev1alpha1.PodCliqueScalingGroup
+	fetch := waiter.FetchFunc[*grovev1beta1.PodCliqueScalingGroup](func(ctx context.Context) (*grovev1beta1.PodCliqueScalingGroup, error) {
+		var pcsg grovev1beta1.PodCliqueScalingGroup
 		if err := tc.Client.Get(ctx, types.NamespacedName{Name: name, Namespace: tc.Namespace}, &pcsg); err != nil {
 			return nil, err
 		}
 		return &pcsg, nil
 	})
-	_, err := waiter.New[*grovev1alpha1.PodCliqueScalingGroup]().WithTimeout(tc.Timeout).WithInterval(tc.Interval).WithRetryOnError().
-		WaitFor(tc.Ctx, fetch, updateInProgressConditionMet(func(p *grovev1alpha1.PodCliqueScalingGroup) []metav1.Condition { return p.Status.Conditions }, wantStatus, wantReason))
+	_, err := waiter.New[*grovev1beta1.PodCliqueScalingGroup]().WithTimeout(tc.Timeout).WithInterval(tc.Interval).WithRetryOnError().
+		WaitFor(tc.Ctx, fetch, updateInProgressConditionMet(func(p *grovev1beta1.PodCliqueScalingGroup) []metav1.Condition { return p.Status.Conditions }, wantStatus, wantReason))
 	if err != nil {
 		return fmt.Errorf("PodCliqueScalingGroup %s UpdateInProgress did not reach status=%s reason=%s: %w", name, wantStatus, wantReason, err)
 	}
@@ -1809,7 +1809,7 @@ func assertGenerationHashConverged(tc *testctx.TestContext) {
 	inNamespace := client.InNamespace(tc.Namespace)
 	matchingPCS := client.MatchingLabels{common.LabelPartOfKey: pcs.Name}
 
-	var pclqList grovev1alpha1.PodCliqueList
+	var pclqList grovev1beta1.PodCliqueList
 	if err := tc.Client.List(tc.Ctx, &pclqList, inNamespace, matchingPCS); err != nil {
 		tc.T.Fatalf("failed to list PodCliques: %v", err)
 	}
@@ -1820,7 +1820,7 @@ func assertGenerationHashConverged(tc *testctx.TestContext) {
 		}
 	}
 
-	var pcsgList grovev1alpha1.PodCliqueScalingGroupList
+	var pcsgList grovev1beta1.PodCliqueScalingGroupList
 	if err := tc.Client.List(tc.Ctx, &pcsgList, inNamespace, matchingPCS); err != nil {
 		tc.T.Fatalf("failed to list PodCliqueScalingGroups: %v", err)
 	}
@@ -1838,7 +1838,7 @@ func assertGenerationHashConverged(tc *testctx.TestContext) {
 func assertPodCliqueUpdateNotComplete(tc *testctx.TestContext, cliqueName string) {
 	tc.T.Helper()
 	name := standaloneCliqueFQN(tc, cliqueName)
-	var pclq grovev1alpha1.PodClique
+	var pclq grovev1beta1.PodClique
 	if err := tc.Client.Get(tc.Ctx, types.NamespacedName{Name: name, Namespace: tc.Namespace}, &pclq); err != nil {
 		tc.T.Fatalf("failed to get PodClique %s: %v", name, err)
 	}
@@ -1853,7 +1853,7 @@ func assertPodCliqueUpdateNotComplete(tc *testctx.TestContext, cliqueName string
 func assertGangTerminationSuspended(tc *testctx.TestContext, cliqueName string) {
 	tc.T.Helper()
 	name := standaloneCliqueFQN(tc, cliqueName)
-	var pclq grovev1alpha1.PodClique
+	var pclq grovev1beta1.PodClique
 	if err := tc.Client.Get(tc.Ctx, types.NamespacedName{Name: name, Namespace: tc.Namespace}, &pclq); err != nil {
 		tc.T.Fatalf("failed to get PodClique %s: %v", name, err)
 	}

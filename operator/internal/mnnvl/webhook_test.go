@@ -17,15 +17,14 @@ package mnnvl
 import (
 	"testing"
 
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
-
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestValidatePCSOnCreate_Metadata(t *testing.T) {
 	tests := []struct {
 		description      string
-		pcs              *grovecorev1alpha1.PodCliqueSet
+		pcs              *grovecorev1beta1.PodCliqueSet
 		autoMNNVLEnabled bool
 		expectError      bool
 		errorContains    string
@@ -69,7 +68,7 @@ func TestValidatePCSOnCreate_Metadata(t *testing.T) {
 		},
 		{
 			description:      "nil annotations map -> no error",
-			pcs:              &grovecorev1alpha1.PodCliqueSet{},
+			pcs:              &grovecorev1beta1.PodCliqueSet{},
 			autoMNNVLEnabled: false,
 			expectError:      false,
 		},
@@ -106,8 +105,8 @@ func TestValidatePCSOnCreate_Metadata(t *testing.T) {
 func TestValidatePCSOnUpdate_Metadata(t *testing.T) {
 	tests := []struct {
 		description string
-		oldPCS      *grovecorev1alpha1.PodCliqueSet
-		newPCS      *grovecorev1alpha1.PodCliqueSet
+		oldPCS      *grovecorev1beta1.PodCliqueSet
+		newPCS      *grovecorev1beta1.PodCliqueSet
 		expectError bool
 		errorMsg    string
 	}{
@@ -169,7 +168,7 @@ func TestValidatePCSOnUpdate_Metadata(t *testing.T) {
 func TestValidatePCSOnCreate_Spec(t *testing.T) {
 	tests := []struct {
 		description      string
-		pcs              *grovecorev1alpha1.PodCliqueSet
+		pcs              *grovecorev1beta1.PodCliqueSet
 		autoMNNVLEnabled bool
 		expectError      bool
 		errorContains    string
@@ -263,7 +262,7 @@ func TestValidatePCSOnCreate_Spec(t *testing.T) {
 func TestValidatePCSOnCreate_PCSGConfig(t *testing.T) {
 	tests := []struct {
 		description      string
-		pcs              *grovecorev1alpha1.PodCliqueSet
+		pcs              *grovecorev1beta1.PodCliqueSet
 		autoMNNVLEnabled bool
 		expectError      bool
 		errorContains    string
@@ -319,8 +318,8 @@ func TestValidatePCSOnCreate_PCSGConfig(t *testing.T) {
 func TestValidatePCSOnUpdate_PCSGConfig(t *testing.T) {
 	tests := []struct {
 		description string
-		oldPCS      *grovecorev1alpha1.PodCliqueSet
-		newPCS      *grovecorev1alpha1.PodCliqueSet
+		oldPCS      *grovecorev1beta1.PodCliqueSet
+		newPCS      *grovecorev1beta1.PodCliqueSet
 		expectError bool
 		errorMsg    string
 	}{
@@ -376,8 +375,8 @@ func TestValidatePCSOnUpdate_PCSGConfig(t *testing.T) {
 func TestValidatePCSOnUpdate_Spec(t *testing.T) {
 	tests := []struct {
 		description string
-		oldPCS      *grovecorev1alpha1.PodCliqueSet
-		newPCS      *grovecorev1alpha1.PodCliqueSet
+		oldPCS      *grovecorev1beta1.PodCliqueSet
+		newPCS      *grovecorev1beta1.PodCliqueSet
 		expectError bool
 		errorMsg    string
 	}{
@@ -480,7 +479,7 @@ func TestValidatePCSOnUpdate_Spec(t *testing.T) {
 func TestValidatePCSOnCreate_NonGPUCliqueWithMNNVL(t *testing.T) {
 	tests := []struct {
 		description      string
-		pcs              *grovecorev1alpha1.PodCliqueSet
+		pcs              *grovecorev1beta1.PodCliqueSet
 		autoMNNVLEnabled bool
 	}{
 		{

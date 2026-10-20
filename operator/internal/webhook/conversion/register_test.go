@@ -89,11 +89,13 @@ func TestRegisterServesConvertedKinds(t *testing.T) {
 
 func TestConvertPodCliqueSetRoundTrip(t *testing.T) {
 	handler, _ := registeredHandler(t)
-	original := testutils.NewPodCliqueSetBuilder("pcs", "default", types.UID("uid")).
+	built := testutils.NewPodCliqueSetBuilder("pcs", "default", types.UID("uid")).
 		WithReplicas(2).
 		WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("worker").WithReplicas(3).WithMinAvailable(2).Build()).
 		WithScalingGroupConfig("sg", []string{"worker"}, 4, 2).
 		Build()
+	original := &grovecorev1alpha1.PodCliqueSet{}
+	require.NoError(t, grovecorev1alpha1.Convert_v1beta1_PodCliqueSet_To_v1alpha1_PodCliqueSet(built, original, nil))
 	original.TypeMeta = metav1.TypeMeta{APIVersion: grovecorev1alpha1.SchemeGroupVersion.String(), Kind: "PodCliqueSet"}
 
 	toHub := convert(t, handler, grovecorev1beta1.SchemeGroupVersion.String(), original)

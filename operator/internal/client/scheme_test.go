@@ -17,8 +17,7 @@ package client
 import (
 	"testing"
 
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
-
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	schedv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
@@ -29,7 +28,7 @@ func TestSchemeIncludesSharedAPIs(t *testing.T) {
 	_, err := apiutil.GVKForObject(&corev1.Pod{}, Scheme)
 	require.NoError(t, err)
 
-	_, err = apiutil.GVKForObject(&grovecorev1alpha1.PodCliqueSet{}, Scheme)
+	_, err = apiutil.GVKForObject(&grovecorev1beta1.PodCliqueSet{}, Scheme)
 	require.NoError(t, err)
 
 	_, err = apiutil.GVKForObject(&schedv1alpha1.PodGang{}, Scheme)

@@ -15,8 +15,7 @@
 package component
 
 import (
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
-
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/utils/ptr"
 )
@@ -31,17 +30,17 @@ const DefaultRollingRecreateMaxUnavailable int32 = 1
 // UpdateStrategyType value "Coherent"). It is consumed by the coherent step planner and the
 // per-sub-step MaxUnavailable budget gate, which run only when the PodCliqueSet uses the Coherent
 // update strategy.
-func CoherentMaxUnavailableByComponent(pcs *grovecorev1alpha1.PodCliqueSet, inScopeComponentNames []string) map[string]int32 {
+func CoherentMaxUnavailableByComponent(pcs *grovecorev1beta1.PodCliqueSet, inScopeComponentNames []string) map[string]int32 {
 	inScopeComponents := sets.New(inScopeComponentNames...)
 	maxUnavailableByComponent := make(map[string]int32, len(inScopeComponentNames))
 	for _, cliqueTemplate := range pcs.Spec.Template.Cliques {
 		if inScopeComponents.Has(cliqueTemplate.Name) && IsStandalonePCLQ(pcs, cliqueTemplate.Name) {
-			maxUnavailableByComponent[cliqueTemplate.Name] = int32(ResolvedMaxUnavailable(cliqueTemplate.RollingUpdate, grovecorev1alpha1.CoherentStrategy, CliqueTemplateUpdateMinReplicas(pcs, cliqueTemplate), cliqueTemplate.Spec.Replicas))
+			maxUnavailableByComponent[cliqueTemplate.Name] = int32(ResolvedMaxUnavailable(cliqueTemplate.RollingUpdate, grovecorev1beta1.CoherentStrategy, CliqueTemplateUpdateMinReplicas(pcs, cliqueTemplate), cliqueTemplate.Spec.Replicas))
 		}
 	}
 	for _, pcsgConfig := range pcs.Spec.Template.PodCliqueScalingGroupConfigs {
 		if inScopeComponents.Has(pcsgConfig.Name) {
-			maxUnavailableByComponent[pcsgConfig.Name] = int32(ResolvedMaxUnavailable(pcsgConfig.RollingUpdate, grovecorev1alpha1.CoherentStrategy, PCSGConfigUpdateMinReplicas(pcs, &pcsgConfig), ptr.Deref(pcsgConfig.Replicas, 1)))
+			maxUnavailableByComponent[pcsgConfig.Name] = int32(ResolvedMaxUnavailable(pcsgConfig.RollingUpdate, grovecorev1beta1.CoherentStrategy, PCSGConfigUpdateMinReplicas(pcs, &pcsgConfig), ptr.Deref(pcsgConfig.Replicas, 1)))
 		}
 	}
 	return maxUnavailableByComponent
@@ -58,11 +57,11 @@ func CoherentMaxUnavailableByComponent(pcs *grovecorev1alpha1.PodCliqueSet, inSc
 // existed, which reconcile without re-admission and carry a nil MaxUnavailable. Once every
 // PodCliqueSet has been re-admitted and carries a MaxUnavailable populated by the defaulting webhook,
 // this can be simplified to reading the field directly.
-func ResolvedMaxUnavailable(rollingUpdate *grovecorev1alpha1.RollingUpdateConfiguration, updateStrategy grovecorev1alpha1.UpdateStrategyType, updateMinReplicas int32, _ int32) int {
+func ResolvedMaxUnavailable(rollingUpdate *grovecorev1beta1.RollingUpdateConfiguration, updateStrategy grovecorev1beta1.UpdateStrategyType, updateMinReplicas int32, _ int32) int {
 	if rollingUpdate != nil && rollingUpdate.MaxUnavailable != nil {
 		return int(*rollingUpdate.MaxUnavailable)
 	}
-	if updateStrategy == grovecorev1alpha1.CoherentStrategy {
+	if updateStrategy == grovecorev1beta1.CoherentStrategy {
 		return int(updateMinReplicas)
 	}
 	return int(DefaultRollingRecreateMaxUnavailable)
@@ -73,7 +72,7 @@ func ResolvedMaxUnavailable(rollingUpdate *grovecorev1alpha1.RollingUpdateConfig
 // standalonePCLQMinAvailable keys a standalone PodClique name to its pod count, and pcsgMinAvailable keys a
 // PodCliqueScalingGroup name to its replica count. A component not named in inScopeComponentNames is
 // excluded. It backs the coherent MVU template.
-func CoherentMinAvailableByComponent(pcs *grovecorev1alpha1.PodCliqueSet, inScopeComponentNames []string) (standalonePCLQMinAvailable, pcsgMinAvailable map[string]int32) {
+func CoherentMinAvailableByComponent(pcs *grovecorev1beta1.PodCliqueSet, inScopeComponentNames []string) (standalonePCLQMinAvailable, pcsgMinAvailable map[string]int32) {
 	inScopeComponents := sets.New(inScopeComponentNames...)
 	standalonePCLQMinAvailable = make(map[string]int32)
 	pcsgMinAvailable = make(map[string]int32)

@@ -21,7 +21,7 @@ import (
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podclique/expectations"
 	grovectrlutils "github.com/ai-dynamo/grove/operator/internal/controller/utils"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
@@ -57,7 +57,7 @@ func (r *Reconciler) RegisterWithManager(mgr ctrl.Manager) error {
 		WithOptions(controller.Options{
 			MaxConcurrentReconciles: *r.config.ConcurrentSyncs,
 		}).
-		For(&grovecorev1alpha1.PodClique{},
+		For(&grovecorev1beta1.PodClique{},
 			builder.WithPredicates(
 				predicate.And(
 					managedPodCliquePredicate(),
@@ -70,12 +70,12 @@ func (r *Reconciler) RegisterWithManager(mgr ctrl.Manager) error {
 		).
 		Owns(&corev1.Pod{}, builder.WithPredicates(r.podPredicate())).
 		Watches(
-			&grovecorev1alpha1.PodCliqueSet{},
+			&grovecorev1beta1.PodCliqueSet{},
 			handler.EnqueueRequestsFromMapFunc(mapPodCliqueSetToPCLQs()),
 			builder.WithPredicates(podCliqueSetPredicate()),
 		).
 		Watches(
-			&grovecorev1alpha1.PodCliqueScalingGroup{},
+			&grovecorev1beta1.PodCliqueScalingGroup{},
 			handler.EnqueueRequestsFromMapFunc(mapPodCliqueScalingGroupToPCLQs()),
 			builder.WithPredicates(podCliqueScalingGroupPredicate()),
 		).
@@ -85,7 +85,7 @@ func (r *Reconciler) RegisterWithManager(mgr ctrl.Manager) error {
 			builder.WithPredicates(podGangPredicate()),
 		).
 		Watches(
-			&grovecorev1alpha1.PodGangMap{},
+			&grovecorev1beta1.PodGangMap{},
 			handler.EnqueueRequestsFromMapFunc(mapPodGangMapToPCLQs()),
 			builder.WithPredicates(podGangMapPredicate()),
 		).
@@ -207,7 +207,7 @@ func hasStartedAndReadyChangedForAnyContainer(oldContainerStatuses []corev1.Cont
 // These events are needed to keep the PodClique.Status.CurrentPodCliqueSetGenerationHash in sync with the PodCliqueSet.
 func mapPodCliqueSetToPCLQs() handler.MapFunc {
 	return func(_ context.Context, obj client.Object) []reconcile.Request {
-		pcs, ok := obj.(*grovecorev1alpha1.PodCliqueSet)
+		pcs, ok := obj.(*grovecorev1beta1.PodCliqueSet)
 		if !ok {
 			return nil
 		}
@@ -226,8 +226,8 @@ func podCliqueSetPredicate() predicate.Predicate {
 		CreateFunc: func(_ event.CreateEvent) bool { return false },
 		DeleteFunc: func(_ event.DeleteEvent) bool { return false },
 		UpdateFunc: func(event event.UpdateEvent) bool {
-			oldPCS, okOld := event.ObjectOld.(*grovecorev1alpha1.PodCliqueSet)
-			newPCS, okNew := event.ObjectNew.(*grovecorev1alpha1.PodCliqueSet)
+			oldPCS, okOld := event.ObjectOld.(*grovecorev1beta1.PodCliqueSet)
+			newPCS, okNew := event.ObjectNew.(*grovecorev1beta1.PodCliqueSet)
 			if !okOld || !okNew {
 				return false
 			}
@@ -239,7 +239,7 @@ func podCliqueSetPredicate() predicate.Predicate {
 }
 
 // pcsCurrentlyUpdatingReplicaChanged reports whether the replica currently being updated has changed between the old and new PodCliqueSet update progress.
-func pcsCurrentlyUpdatingReplicaChanged(oldProgress, newProgress *grovecorev1alpha1.PodCliqueSetUpdateProgress) bool {
+func pcsCurrentlyUpdatingReplicaChanged(oldProgress, newProgress *grovecorev1beta1.PodCliqueSetUpdateProgress) bool {
 	oldReplicaIndex, oldOK := currentPCSReplicaInUpdate(oldProgress)
 	newReplicaIndex, newOK := currentPCSReplicaInUpdate(newProgress)
 	if oldOK != newOK {
@@ -249,7 +249,7 @@ func pcsCurrentlyUpdatingReplicaChanged(oldProgress, newProgress *grovecorev1alp
 }
 
 // currentPCSReplicaInUpdate returns the replica index of the PodCliqueSet replica currently being updated, if any.
-func currentPCSReplicaInUpdate(progress *grovecorev1alpha1.PodCliqueSetUpdateProgress) (int32, bool) {
+func currentPCSReplicaInUpdate(progress *grovecorev1beta1.PodCliqueSetUpdateProgress) (int32, bool) {
 	if progress == nil || len(progress.CurrentlyUpdating) == 0 {
 		return 0, false
 	}
@@ -260,7 +260,7 @@ func currentPCSReplicaInUpdate(progress *grovecorev1alpha1.PodCliqueSetUpdatePro
 // These events are needed to keep the PodClique.Status.CurrentPodCliqueSetGenerationHash in sync with the PodCliqueSet.
 func mapPodCliqueScalingGroupToPCLQs() handler.MapFunc {
 	return func(_ context.Context, obj client.Object) []reconcile.Request {
-		pcsg, ok := obj.(*grovecorev1alpha1.PodCliqueScalingGroup)
+		pcsg, ok := obj.(*grovecorev1beta1.PodCliqueScalingGroup)
 		if !ok {
 			return nil
 		}
@@ -279,8 +279,8 @@ func podCliqueScalingGroupPredicate() predicate.Predicate {
 		CreateFunc: func(_ event.CreateEvent) bool { return false },
 		DeleteFunc: func(_ event.DeleteEvent) bool { return false },
 		UpdateFunc: func(event event.UpdateEvent) bool {
-			oldPCSG, okOld := event.ObjectOld.(*grovecorev1alpha1.PodCliqueScalingGroup)
-			newPCSG, okNew := event.ObjectNew.(*grovecorev1alpha1.PodCliqueScalingGroup)
+			oldPCSG, okOld := event.ObjectOld.(*grovecorev1beta1.PodCliqueScalingGroup)
+			newPCSG, okNew := event.ObjectNew.(*grovecorev1beta1.PodCliqueScalingGroup)
 			if !okOld || !okNew {
 				return false
 			}
@@ -292,7 +292,7 @@ func podCliqueScalingGroupPredicate() predicate.Predicate {
 }
 
 // pcsgUpdateTargetGenerationChanged reports whether the PodCliqueScalingGroup update's target PodCliqueSet generation hash has changed between the old and new update progress.
-func pcsgUpdateTargetGenerationChanged(oldProgress, newProgress *grovecorev1alpha1.PodCliqueScalingGroupUpdateProgress) bool {
+func pcsgUpdateTargetGenerationChanged(oldProgress, newProgress *grovecorev1beta1.PodCliqueScalingGroupUpdateProgress) bool {
 	oldTarget, oldOK := pcsgUpdateTargetGeneration(oldProgress)
 	newTarget, newOK := pcsgUpdateTargetGeneration(newProgress)
 	if oldOK != newOK {
@@ -302,7 +302,7 @@ func pcsgUpdateTargetGenerationChanged(oldProgress, newProgress *grovecorev1alph
 }
 
 // pcsgUpdateTargetGeneration returns the target PodCliqueSet generation hash for an in-progress PodCliqueScalingGroup update, if any.
-func pcsgUpdateTargetGeneration(progress *grovecorev1alpha1.PodCliqueScalingGroupUpdateProgress) (string, bool) {
+func pcsgUpdateTargetGeneration(progress *grovecorev1beta1.PodCliqueScalingGroupUpdateProgress) (string, bool) {
 	if progress == nil {
 		return "", false
 	}
@@ -383,7 +383,7 @@ func podGangPredicate() predicate.Predicate {
 // every standalone PodClique named across the entries.
 func mapPodGangMapToPCLQs() handler.MapFunc {
 	return func(_ context.Context, obj client.Object) []reconcile.Request {
-		pgm, ok := obj.(*grovecorev1alpha1.PodGangMap)
+		pgm, ok := obj.(*grovecorev1beta1.PodGangMap)
 		if !ok {
 			return nil
 		}
@@ -415,8 +415,8 @@ func podGangMapPredicate() predicate.Predicate {
 		DeleteFunc:  func(_ event.DeleteEvent) bool { return false },
 		GenericFunc: func(_ event.GenericEvent) bool { return false },
 		UpdateFunc: func(e event.UpdateEvent) bool {
-			oldPGM, okOld := e.ObjectOld.(*grovecorev1alpha1.PodGangMap)
-			newPGM, okNew := e.ObjectNew.(*grovecorev1alpha1.PodGangMap)
+			oldPGM, okOld := e.ObjectOld.(*grovecorev1beta1.PodGangMap)
+			newPGM, okNew := e.ObjectNew.(*grovecorev1beta1.PodGangMap)
 			if !okOld || !okNew {
 				return false
 			}
@@ -429,14 +429,14 @@ func podGangMapPredicate() predicate.Predicate {
 // two PodGangMaps. It compares the maps returned by standaloneDistribution. Because those maps key a
 // count by both the entry epoch and the PodClique name, moving a PodClique from one entry to another
 // with the same total still counts as a change.
-func standaloneDistributionChanged(oldPGM, newPGM *grovecorev1alpha1.PodGangMap) bool {
+func standaloneDistributionChanged(oldPGM, newPGM *grovecorev1beta1.PodGangMap) bool {
 	return !maps.Equal(standaloneDistribution(oldPGM), standaloneDistribution(newPGM))
 }
 
 // standaloneDistribution returns the standalone PodClique count of every entry. The key of each count
 // is the entry epoch and the PodClique name joined together, so the same PodClique under two
 // different epochs yields two distinct keys. Entries with no standalone PodCliques contribute no keys.
-func standaloneDistribution(pgm *grovecorev1alpha1.PodGangMap) map[string]int32 {
+func standaloneDistribution(pgm *grovecorev1beta1.PodGangMap) map[string]int32 {
 	dist := make(map[string]int32)
 	for _, entry := range pgm.Spec.Entries {
 		for cliqueName, count := range entry.PodCliques {

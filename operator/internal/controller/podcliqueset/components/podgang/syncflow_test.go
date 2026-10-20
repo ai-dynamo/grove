@@ -21,7 +21,7 @@ import (
 	"time"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	groveclientscheme "github.com/ai-dynamo/grove/operator/internal/client"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
@@ -58,31 +58,31 @@ var defaultFakeSchedulerRegistry = &testutils.FakeSchedulerRegistry{
 // getPodsPendingCreationOrAssociation. The 1:N split of a PodClique across multiple PodGangs is
 // covered by TestGetPodsPendingCreation.
 func TestVerifyAllPodsCreated(t *testing.T) {
-	makePCLQ := func(name string) grovecorev1alpha1.PodClique {
-		return grovecorev1alpha1.PodClique{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"}}
+	makePCLQ := func(name string) grovecorev1beta1.PodClique {
+		return grovecorev1beta1.PodClique{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"}}
 	}
 
 	tests := []struct {
 		name          string
-		existingPCLQs []grovecorev1alpha1.PodClique
+		existingPCLQs []grovecorev1beta1.PodClique
 		podGang       *podGangInfo
 		wantRequeue   bool
 	}{
 		{
 			name:          "requeue when not all constituent PodCliques exist yet",
-			existingPCLQs: []grovecorev1alpha1.PodClique{makePCLQ("pclq-a")},
+			existingPCLQs: []grovecorev1beta1.PodClique{makePCLQ("pclq-a")},
 			podGang:       &podGangInfo{fqn: "pg-1", pclqs: []pclqInfo{{fqn: "pclq-a", replicas: 1, minAvailable: 1, associatedPodNames: []string{"a1"}}, {fqn: "pclq-b", replicas: 1, minAvailable: 1}}},
 			wantRequeue:   true,
 		},
 		{
 			name:          "requeue when a PodClique has fewer associated pods than its share",
-			existingPCLQs: []grovecorev1alpha1.PodClique{makePCLQ("pclq-a")},
+			existingPCLQs: []grovecorev1beta1.PodClique{makePCLQ("pclq-a")},
 			podGang:       &podGangInfo{fqn: "pg-1", pclqs: []pclqInfo{{fqn: "pclq-a", replicas: 5, minAvailable: 2, associatedPodNames: []string{"a1", "a2"}}}},
 			wantRequeue:   true, // 5 share - 2 associated = 3 pending
 		},
 		{
 			name:          "success when every PodClique has its full share associated",
-			existingPCLQs: []grovecorev1alpha1.PodClique{makePCLQ("pclq-a")},
+			existingPCLQs: []grovecorev1beta1.PodClique{makePCLQ("pclq-a")},
 			podGang:       &podGangInfo{fqn: "pg-1", pclqs: []pclqInfo{{fqn: "pclq-a", replicas: 5, minAvailable: 2, associatedPodNames: []string{"a1", "a2", "a3", "a4", "a5"}}}},
 			wantRequeue:   false,
 		},
@@ -110,14 +110,14 @@ func TestVerifyAllPodsCreated(t *testing.T) {
 // PodGang's share (pclqInfo.replicas) and the pods already associated to this PodGang
 // (pclqInfo.associatedPodNames).
 func TestGetPodsPendingCreation(t *testing.T) {
-	makePCLQ := func(name string) grovecorev1alpha1.PodClique {
-		return grovecorev1alpha1.PodClique{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"}}
+	makePCLQ := func(name string) grovecorev1beta1.PodClique {
+		return grovecorev1beta1.PodClique{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"}}
 	}
 
 	tests := []struct {
 		name            string
 		podGangs        []*podGangInfo
-		existingPCLQs   []grovecorev1alpha1.PodClique
+		existingPCLQs   []grovecorev1beta1.PodClique
 		expectedPending []int // parallel to podGangs
 	}{
 		{
@@ -130,19 +130,19 @@ func TestGetPodsPendingCreation(t *testing.T) {
 			// deployment and RollingRecreate/OnDelete shape.
 			name:            "1:1 existing PodClique with its full share associated has no pending pods",
 			podGangs:        []*podGangInfo{{fqn: "pg-0", pclqs: []pclqInfo{{fqn: "worker", replicas: 3, associatedPodNames: []string{"worker-0", "worker-1", "worker-2"}}}}},
-			existingPCLQs:   []grovecorev1alpha1.PodClique{makePCLQ("worker")},
+			existingPCLQs:   []grovecorev1beta1.PodClique{makePCLQ("worker")},
 			expectedPending: []int{0},
 		},
 		{
 			name:            "1:1 existing PodClique with fewer associated pods than its share counts the shortfall",
 			podGangs:        []*podGangInfo{{fqn: "pg-0", pclqs: []pclqInfo{{fqn: "worker", replicas: 3, associatedPodNames: []string{"worker-0"}}}}},
-			existingPCLQs:   []grovecorev1alpha1.PodClique{makePCLQ("worker")},
+			existingPCLQs:   []grovecorev1beta1.PodClique{makePCLQ("worker")},
 			expectedPending: []int{2},
 		},
 		{
 			name:            "existing PodClique with more associated pods than its share clamps the negative shortfall to zero",
 			podGangs:        []*podGangInfo{{fqn: "pg-0", pclqs: []pclqInfo{{fqn: "worker", replicas: 1, associatedPodNames: []string{"worker-0", "worker-1"}}}}},
-			existingPCLQs:   []grovecorev1alpha1.PodClique{makePCLQ("worker")},
+			existingPCLQs:   []grovecorev1beta1.PodClique{makePCLQ("worker")},
 			expectedPending: []int{0},
 		},
 		{
@@ -155,7 +155,7 @@ func TestGetPodsPendingCreation(t *testing.T) {
 				{fqn: "pg-0", pclqs: []pclqInfo{{fqn: "worker", replicas: 3, associatedPodNames: []string{"worker-0", "worker-1"}}}},
 				{fqn: "pg-1", pclqs: []pclqInfo{{fqn: "worker", replicas: 3, associatedPodNames: []string{"worker-2", "worker-3", "worker-4"}}}},
 			},
-			existingPCLQs:   []grovecorev1alpha1.PodClique{makePCLQ("worker")},
+			existingPCLQs:   []grovecorev1beta1.PodClique{makePCLQ("worker")},
 			expectedPending: []int{1, 0},
 		},
 		{
@@ -164,7 +164,7 @@ func TestGetPodsPendingCreation(t *testing.T) {
 				{fqn: "missing", replicas: 4},
 				{fqn: "worker", replicas: 3, associatedPodNames: []string{"worker-0", "worker-1"}},
 			}}},
-			existingPCLQs: []grovecorev1alpha1.PodClique{makePCLQ("worker")},
+			existingPCLQs: []grovecorev1beta1.PodClique{makePCLQ("worker")},
 			// missing clique does not exist yet -> its full share of 4; worker exists -> 3 share - 2 associated = 1.
 			expectedPending: []int{5},
 		},
@@ -204,22 +204,22 @@ func TestCreateOrUpdatePodGangs(t *testing.T) {
 	pcsLabels := apicommon.GetDefaultLabelsForPodCliqueSetManagedResources(pcsName)
 	pgName := apicommon.GenerateAnchorPodGangName(apicommon.ResourceNameReplica{Name: pcsName, Replica: 0}, anchorEpoch)
 
-	pcs := &grovecorev1alpha1.PodCliqueSet{
+	pcs := &grovecorev1beta1.PodCliqueSet{
 		ObjectMeta: metav1.ObjectMeta{Name: pcsName, Namespace: ns, UID: "pcs-uid"},
-		Spec: grovecorev1alpha1.PodCliqueSetSpec{
+		Spec: grovecorev1beta1.PodCliqueSetSpec{
 			Replicas: 1,
-			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
-				Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-					{Name: "worker", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 2, MinAvailable: ptr.To(int32(1))}},
+			Template: grovecorev1beta1.PodCliqueSetTemplateSpec{
+				Cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
+					{Name: "worker", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 2, MinAvailable: ptr.To(int32(1))}},
 				},
 			},
 		},
-		Status: grovecorev1alpha1.PodCliqueSetStatus{CurrentGenerationHash: ptr.To("gen-hash-1")},
+		Status: grovecorev1beta1.PodCliqueSetStatus{CurrentGenerationHash: ptr.To("gen-hash-1")},
 	}
-	makePCLQ := func(name string, replicas int32) grovecorev1alpha1.PodClique {
-		return grovecorev1alpha1.PodClique{
+	makePCLQ := func(name string, replicas int32) grovecorev1beta1.PodClique {
+		return grovecorev1beta1.PodClique{
 			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
-			Spec:       grovecorev1alpha1.PodCliqueSpec{Replicas: replicas, MinAvailable: ptr.To(int32(1))},
+			Spec:       grovecorev1beta1.PodCliqueSpec{Replicas: replicas, MinAvailable: ptr.To(int32(1))},
 		}
 	}
 	makePod := func(name, podGangLabel string) v1.Pod {
@@ -244,10 +244,10 @@ func TestCreateOrUpdatePodGangs(t *testing.T) {
 	}
 	// readyPCLQState builds the syncState pieces for a single fully-populated, correctly labeled PCLQ
 	// (2 pods labeled for pgName), so verifyAllPodsCreated passes.
-	readyPCLQState := func(podGangName string) ([]grovecorev1alpha1.PodClique, map[string][]v1.Pod) {
+	readyPCLQState := func(podGangName string) ([]grovecorev1beta1.PodClique, map[string][]v1.Pod) {
 		pclq := makePCLQ(pclqName, 2)
 		pods := map[string][]v1.Pod{pclqName: {makePod("worker-0", podGangName), makePod("worker-1", podGangName)}}
-		return []grovecorev1alpha1.PodClique{pclq}, pods
+		return []grovecorev1beta1.PodClique{pclq}, pods
 	}
 	// anchorPodGangInfo builds the anchor PodGang's info. associatedPodNames are the pods already
 	// associated to this PodGang, mirroring what initializeAssignedAndUnassignedPodsForPCS populates
@@ -285,7 +285,7 @@ func TestCreateOrUpdatePodGangs(t *testing.T) {
 			logger:                ctrllogger.FromContext(ctx),
 			expectedPodGangs:      []*podGangInfo{pgi},
 			existingPodGangByName: map[string]groveschedulerv1alpha1.PodGang{},
-			existingPCLQByName:    componentutils.PodCliqueByName([]grovecorev1alpha1.PodClique{pclq}),
+			existingPCLQByName:    componentutils.PodCliqueByName([]grovecorev1beta1.PodClique{pclq}),
 			existingPCLQPods:      map[string][]v1.Pod{},
 		}
 
@@ -321,7 +321,7 @@ func TestCreateOrUpdatePodGangs(t *testing.T) {
 			logger:                ctrllogger.FromContext(ctx),
 			expectedPodGangs:      []*podGangInfo{pgi},
 			existingPodGangByName: map[string]groveschedulerv1alpha1.PodGang{pgName: *existingPG},
-			existingPCLQByName:    componentutils.PodCliqueByName([]grovecorev1alpha1.PodClique{pclq}),
+			existingPCLQByName:    componentutils.PodCliqueByName([]grovecorev1beta1.PodClique{pclq}),
 			existingPCLQPods:      map[string][]v1.Pod{},
 		}
 
@@ -434,7 +434,7 @@ func TestCreateOrUpdatePodGangs(t *testing.T) {
 		// First PodGang: PCLQ exists but no pods -> not ready. Second PodGang: fully ready.
 		firstPCLQ := makePCLQ(firstPCLQName, 2)
 		secondPCLQ := makePCLQ(secondPCLQName, 2)
-		pclqs := []grovecorev1alpha1.PodClique{firstPCLQ, secondPCLQ}
+		pclqs := []grovecorev1beta1.PodClique{firstPCLQ, secondPCLQ}
 		pods := map[string][]v1.Pod{
 			secondPCLQName: {makePod("worker-1-0", secondPGName), makePod("worker-1-1", secondPGName)},
 		}
@@ -483,7 +483,7 @@ func TestCreateOrUpdatePodGangs(t *testing.T) {
 			logger:                ctrllogger.FromContext(ctx),
 			expectedPodGangs:      []*podGangInfo{firstPGI, secondPGI},
 			existingPodGangByName: map[string]groveschedulerv1alpha1.PodGang{},
-			existingPCLQByName:    map[string]grovecorev1alpha1.PodClique{},
+			existingPCLQByName:    map[string]grovecorev1beta1.PodClique{},
 			existingPCLQPods:      map[string][]v1.Pod{},
 		}
 
@@ -531,11 +531,11 @@ func TestComputeExpectedPodGangsWithTopologyConstraints(t *testing.T) {
 		tailEpoch   = "1001"
 	)
 	var (
-		topologyLevelZone = grovecorev1alpha1.TopologyLevel{Domain: "zone", Key: "topology.kubernetes.io/zone"}
-		topologyLevelRack = grovecorev1alpha1.TopologyLevel{Domain: "rack", Key: "topology.kubernetes.io/rack"}
-		topologyLevelHost = grovecorev1alpha1.TopologyLevel{Domain: "host", Key: "kubernetes.io/hostname"}
+		topologyLevelZone = grovecorev1beta1.TopologyLevel{Domain: "zone", Key: "topology.kubernetes.io/zone"}
+		topologyLevelRack = grovecorev1beta1.TopologyLevel{Domain: "rack", Key: "topology.kubernetes.io/rack"}
+		topologyLevelHost = grovecorev1beta1.TopologyLevel{Domain: "host", Key: "kubernetes.io/hostname"}
 	)
-	clusterTopologyLevels := []grovecorev1alpha1.TopologyLevel{
+	clusterTopologyLevels := []grovecorev1beta1.TopologyLevel{
 		topologyLevelZone,
 		topologyLevelRack,
 		topologyLevelHost,
@@ -550,18 +550,18 @@ func TestComputeExpectedPodGangsWithTopologyConstraints(t *testing.T) {
 		// pcsDeprecatedPackDomain sets the PCS-level constraint via the deprecated PackDomain field
 		// (required-only). pcsTopologyConstraint sets it via the modern Pack struct. A case sets at
 		// most one; the modern form takes precedence when both are set.
-		pcsDeprecatedPackDomain            *grovecorev1alpha1.TopologyLevel
-		pcsTopologyConstraint              *grovecorev1alpha1.TopologyConstraint
-		pclqTemplateSpecs                  []*grovecorev1alpha1.PodCliqueTemplateSpec
-		pcsgConfigs                        []grovecorev1alpha1.PodCliqueScalingGroupConfig
+		pcsDeprecatedPackDomain            *grovecorev1beta1.TopologyLevel
+		pcsTopologyConstraint              *grovecorev1beta1.TopologyConstraint
+		pclqTemplateSpecs                  []*grovecorev1beta1.PodCliqueTemplateSpec
+		pcsgConfigs                        []grovecorev1beta1.PodCliqueScalingGroupConfig
 		expectedNumPodGangs                int
 		expectedPodGangTopologyConstraints []expectedPodGangTopologyConstraints
 	}{
 		{
 			name:       "PCS with a single standalone PCLQ where no topology constraints are set",
 			tasEnabled: true,
-			pclqTemplateSpecs: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-				{Name: "worker", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 3, MinAvailable: ptr.To(int32(2))}},
+			pclqTemplateSpecs: []*grovecorev1beta1.PodCliqueTemplateSpec{
+				{Name: "worker", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 3, MinAvailable: ptr.To(int32(2))}},
 			},
 			expectedNumPodGangs: 1,
 		},
@@ -569,8 +569,8 @@ func TestComputeExpectedPodGangsWithTopologyConstraints(t *testing.T) {
 			name:                    "PCS with single standalone PCLQ where topology constraints are set at PCS only",
 			tasEnabled:              true,
 			pcsDeprecatedPackDomain: &topologyLevelZone,
-			pclqTemplateSpecs: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-				{Name: "worker", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 3, MinAvailable: ptr.To(int32(2))}},
+			pclqTemplateSpecs: []*grovecorev1beta1.PodCliqueTemplateSpec{
+				{Name: "worker", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 3, MinAvailable: ptr.To(int32(2))}},
 			},
 			expectedNumPodGangs: 1,
 			expectedPodGangTopologyConstraints: []expectedPodGangTopologyConstraints{
@@ -583,11 +583,11 @@ func TestComputeExpectedPodGangsWithTopologyConstraints(t *testing.T) {
 		{
 			name:       "PCS with preferred-only topology constraint at PCS level",
 			tasEnabled: true,
-			pcsTopologyConstraint: &grovecorev1alpha1.TopologyConstraint{
-				Pack: &grovecorev1alpha1.TopologyPackConstraint{PreferredDomain: "host"},
+			pcsTopologyConstraint: &grovecorev1beta1.TopologyConstraint{
+				Pack: &grovecorev1beta1.TopologyPackConstraint{PreferredDomain: "host"},
 			},
-			pclqTemplateSpecs: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-				{Name: "worker", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 3, MinAvailable: ptr.To(int32(2))}},
+			pclqTemplateSpecs: []*grovecorev1beta1.PodCliqueTemplateSpec{
+				{Name: "worker", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 3, MinAvailable: ptr.To(int32(2))}},
 			},
 			expectedNumPodGangs: 1,
 			expectedPodGangTopologyConstraints: []expectedPodGangTopologyConstraints{
@@ -600,11 +600,11 @@ func TestComputeExpectedPodGangsWithTopologyConstraints(t *testing.T) {
 		{
 			name:       "PCS with required and preferred topology constraints at PCS level",
 			tasEnabled: true,
-			pcsTopologyConstraint: &grovecorev1alpha1.TopologyConstraint{
-				Pack: &grovecorev1alpha1.TopologyPackConstraint{RequiredDomain: "zone", PreferredDomain: "host"},
+			pcsTopologyConstraint: &grovecorev1beta1.TopologyConstraint{
+				Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: "zone", PreferredDomain: "host"},
 			},
-			pclqTemplateSpecs: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-				{Name: "worker", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 3, MinAvailable: ptr.To(int32(2))}},
+			pclqTemplateSpecs: []*grovecorev1beta1.PodCliqueTemplateSpec{
+				{Name: "worker", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 3, MinAvailable: ptr.To(int32(2))}},
 			},
 			expectedNumPodGangs: 1,
 			expectedPodGangTopologyConstraints: []expectedPodGangTopologyConstraints{
@@ -617,11 +617,11 @@ func TestComputeExpectedPodGangsWithTopologyConstraints(t *testing.T) {
 		{
 			name:       "PCS with stale preferred domain preserves required topology constraint",
 			tasEnabled: true,
-			pcsTopologyConstraint: &grovecorev1alpha1.TopologyConstraint{
-				Pack: &grovecorev1alpha1.TopologyPackConstraint{RequiredDomain: "rack", PreferredDomain: "block"},
+			pcsTopologyConstraint: &grovecorev1beta1.TopologyConstraint{
+				Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: "rack", PreferredDomain: "block"},
 			},
-			pclqTemplateSpecs: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-				{Name: "worker", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 3, MinAvailable: ptr.To(int32(2))}},
+			pclqTemplateSpecs: []*grovecorev1beta1.PodCliqueTemplateSpec{
+				{Name: "worker", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 3, MinAvailable: ptr.To(int32(2))}},
 			},
 			expectedNumPodGangs: 1,
 			expectedPodGangTopologyConstraints: []expectedPodGangTopologyConstraints{
@@ -634,11 +634,11 @@ func TestComputeExpectedPodGangsWithTopologyConstraints(t *testing.T) {
 		{
 			name:       "PCS with stale required domain preserves preferred topology constraint",
 			tasEnabled: true,
-			pcsTopologyConstraint: &grovecorev1alpha1.TopologyConstraint{
-				Pack: &grovecorev1alpha1.TopologyPackConstraint{RequiredDomain: "block", PreferredDomain: "rack"},
+			pcsTopologyConstraint: &grovecorev1beta1.TopologyConstraint{
+				Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: "block", PreferredDomain: "rack"},
 			},
-			pclqTemplateSpecs: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-				{Name: "worker", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 3, MinAvailable: ptr.To(int32(2))}},
+			pclqTemplateSpecs: []*grovecorev1beta1.PodCliqueTemplateSpec{
+				{Name: "worker", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 3, MinAvailable: ptr.To(int32(2))}},
 			},
 			expectedNumPodGangs: 1,
 			expectedPodGangTopologyConstraints: []expectedPodGangTopologyConstraints{
@@ -651,12 +651,12 @@ func TestComputeExpectedPodGangsWithTopologyConstraints(t *testing.T) {
 		{
 			name:       "PCS with single standalone PCLQ where topology constraints are set for one of the PCLQs",
 			tasEnabled: true,
-			pclqTemplateSpecs: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-				{Name: "router", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 3, MinAvailable: ptr.To(int32(2))}},
+			pclqTemplateSpecs: []*grovecorev1beta1.PodCliqueTemplateSpec{
+				{Name: "router", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 3, MinAvailable: ptr.To(int32(2))}},
 				{
 					Name:               "worker",
-					TopologyConstraint: &grovecorev1alpha1.TopologyConstraint{Pack: &grovecorev1alpha1.TopologyPackConstraint{RequiredDomain: "host"}},
-					Spec:               grovecorev1alpha1.PodCliqueSpec{Replicas: 2, MinAvailable: ptr.To(int32(1))},
+					TopologyConstraint: &grovecorev1beta1.TopologyConstraint{Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: "host"}},
+					Spec:               grovecorev1beta1.PodCliqueSpec{Replicas: 2, MinAvailable: ptr.To(int32(1))},
 				},
 			},
 			expectedNumPodGangs: 1,
@@ -670,12 +670,12 @@ func TestComputeExpectedPodGangsWithTopologyConstraints(t *testing.T) {
 		{
 			name:       "PCS with preferred-only topology constraint on standalone PCLQ",
 			tasEnabled: true,
-			pclqTemplateSpecs: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-				{Name: "router", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 3, MinAvailable: ptr.To(int32(2))}},
+			pclqTemplateSpecs: []*grovecorev1beta1.PodCliqueTemplateSpec{
+				{Name: "router", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 3, MinAvailable: ptr.To(int32(2))}},
 				{
 					Name:               "worker",
-					TopologyConstraint: &grovecorev1alpha1.TopologyConstraint{Pack: &grovecorev1alpha1.TopologyPackConstraint{PreferredDomain: "host"}},
-					Spec:               grovecorev1alpha1.PodCliqueSpec{Replicas: 2, MinAvailable: ptr.To(int32(1))},
+					TopologyConstraint: &grovecorev1beta1.TopologyConstraint{Pack: &grovecorev1beta1.TopologyPackConstraint{PreferredDomain: "host"}},
+					Spec:               grovecorev1beta1.PodCliqueSpec{Replicas: 2, MinAvailable: ptr.To(int32(1))},
 				},
 			},
 			expectedNumPodGangs: 1,
@@ -690,16 +690,16 @@ func TestComputeExpectedPodGangsWithTopologyConstraints(t *testing.T) {
 			name:                    "PCS with single standalone PCLQs where topology constraints are set at all levels",
 			tasEnabled:              true,
 			pcsDeprecatedPackDomain: &topologyLevelZone,
-			pclqTemplateSpecs: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+			pclqTemplateSpecs: []*grovecorev1beta1.PodCliqueTemplateSpec{
 				{
 					Name:               "router",
-					TopologyConstraint: &grovecorev1alpha1.TopologyConstraint{PackDomain: "zone"},
-					Spec:               grovecorev1alpha1.PodCliqueSpec{Replicas: 3, MinAvailable: ptr.To(int32(2))},
+					TopologyConstraint: &grovecorev1beta1.TopologyConstraint{PackDomain: "zone"},
+					Spec:               grovecorev1beta1.PodCliqueSpec{Replicas: 3, MinAvailable: ptr.To(int32(2))},
 				},
 				{
 					Name:               "worker",
-					TopologyConstraint: &grovecorev1alpha1.TopologyConstraint{PackDomain: "host"},
-					Spec:               grovecorev1alpha1.PodCliqueSpec{Replicas: 2, MinAvailable: ptr.To(int32(1))},
+					TopologyConstraint: &grovecorev1beta1.TopologyConstraint{PackDomain: "host"},
+					Spec:               grovecorev1beta1.PodCliqueSpec{Replicas: 2, MinAvailable: ptr.To(int32(1))},
 				},
 			},
 			expectedNumPodGangs: 1,
@@ -718,25 +718,25 @@ func TestComputeExpectedPodGangsWithTopologyConstraints(t *testing.T) {
 			name:                    "PCS with PCSG where topology constraints are set at PCS and PCSG levels",
 			tasEnabled:              true,
 			pcsDeprecatedPackDomain: &topologyLevelZone,
-			pclqTemplateSpecs: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+			pclqTemplateSpecs: []*grovecorev1beta1.PodCliqueTemplateSpec{
 				{
 					Name:               "decode-leader",
-					TopologyConstraint: &grovecorev1alpha1.TopologyConstraint{PackDomain: "host"},
-					Spec:               grovecorev1alpha1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To(int32(1))},
+					TopologyConstraint: &grovecorev1beta1.TopologyConstraint{PackDomain: "host"},
+					Spec:               grovecorev1beta1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To(int32(1))},
 				},
 				{
 					Name:               "decode-worker",
-					TopologyConstraint: &grovecorev1alpha1.TopologyConstraint{PackDomain: "host"},
-					Spec:               grovecorev1alpha1.PodCliqueSpec{Replicas: 5, MinAvailable: ptr.To(int32(1))},
+					TopologyConstraint: &grovecorev1beta1.TopologyConstraint{PackDomain: "host"},
+					Spec:               grovecorev1beta1.PodCliqueSpec{Replicas: 5, MinAvailable: ptr.To(int32(1))},
 				},
 			},
-			pcsgConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+			pcsgConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{
 					Name:               "scaling-group",
 					Replicas:           ptr.To(int32(2)),
 					MinAvailable:       ptr.To(int32(1)),
 					CliqueNames:        []string{"decode-leader", "decode-worker"},
-					TopologyConstraint: &grovecorev1alpha1.TopologyConstraint{PackDomain: "rack"},
+					TopologyConstraint: &grovecorev1beta1.TopologyConstraint{PackDomain: "rack"},
 				},
 			},
 			expectedNumPodGangs: 2,
@@ -768,17 +768,17 @@ func TestComputeExpectedPodGangsWithTopologyConstraints(t *testing.T) {
 		{
 			name:       "PCS with preferred-only topology constraint on PCSG",
 			tasEnabled: true,
-			pclqTemplateSpecs: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-				{Name: "decode-leader", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To(int32(1))}},
-				{Name: "decode-worker", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 5, MinAvailable: ptr.To(int32(1))}},
+			pclqTemplateSpecs: []*grovecorev1beta1.PodCliqueTemplateSpec{
+				{Name: "decode-leader", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To(int32(1))}},
+				{Name: "decode-worker", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 5, MinAvailable: ptr.To(int32(1))}},
 			},
-			pcsgConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+			pcsgConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{
 					Name:               "scaling-group",
 					Replicas:           ptr.To(int32(2)),
 					MinAvailable:       ptr.To(int32(1)),
 					CliqueNames:        []string{"decode-leader", "decode-worker"},
-					TopologyConstraint: &grovecorev1alpha1.TopologyConstraint{Pack: &grovecorev1alpha1.TopologyPackConstraint{PreferredDomain: "rack"}},
+					TopologyConstraint: &grovecorev1beta1.TopologyConstraint{Pack: &grovecorev1beta1.TopologyPackConstraint{PreferredDomain: "rack"}},
 				},
 			},
 			expectedNumPodGangs: 2,
@@ -797,30 +797,30 @@ func TestComputeExpectedPodGangsWithTopologyConstraints(t *testing.T) {
 			name:                    "PCS with standalone PCLQ and PCSG where topology constraints are set at all levels",
 			tasEnabled:              true,
 			pcsDeprecatedPackDomain: &topologyLevelZone,
-			pclqTemplateSpecs: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+			pclqTemplateSpecs: []*grovecorev1beta1.PodCliqueTemplateSpec{
 				{
 					Name:               "router",
-					TopologyConstraint: &grovecorev1alpha1.TopologyConstraint{PackDomain: "zone"},
-					Spec:               grovecorev1alpha1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To(int32(1))},
+					TopologyConstraint: &grovecorev1beta1.TopologyConstraint{PackDomain: "zone"},
+					Spec:               grovecorev1beta1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To(int32(1))},
 				},
 				{
 					Name:               "decode-leader",
-					TopologyConstraint: &grovecorev1alpha1.TopologyConstraint{PackDomain: "host"},
-					Spec:               grovecorev1alpha1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To(int32(1))},
+					TopologyConstraint: &grovecorev1beta1.TopologyConstraint{PackDomain: "host"},
+					Spec:               grovecorev1beta1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To(int32(1))},
 				},
 				{
 					Name:               "decode-worker",
-					TopologyConstraint: &grovecorev1alpha1.TopologyConstraint{PackDomain: "host"},
-					Spec:               grovecorev1alpha1.PodCliqueSpec{Replicas: 5, MinAvailable: ptr.To(int32(1))},
+					TopologyConstraint: &grovecorev1beta1.TopologyConstraint{PackDomain: "host"},
+					Spec:               grovecorev1beta1.PodCliqueSpec{Replicas: 5, MinAvailable: ptr.To(int32(1))},
 				},
 			},
-			pcsgConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+			pcsgConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{
 					Name:               "scaling-group",
 					Replicas:           ptr.To(int32(2)),
 					MinAvailable:       ptr.To(int32(1)),
 					CliqueNames:        []string{"decode-leader", "decode-worker"},
-					TopologyConstraint: &grovecorev1alpha1.TopologyConstraint{PackDomain: "rack"},
+					TopologyConstraint: &grovecorev1beta1.TopologyConstraint{PackDomain: "rack"},
 				},
 			},
 			expectedNumPodGangs: 2,
@@ -854,30 +854,30 @@ func TestComputeExpectedPodGangsWithTopologyConstraints(t *testing.T) {
 			name:                    "PCS with topology constraints set for PCLQ and PCSG but TAS is disabled",
 			tasEnabled:              false,
 			pcsDeprecatedPackDomain: &topologyLevelZone,
-			pclqTemplateSpecs: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+			pclqTemplateSpecs: []*grovecorev1beta1.PodCliqueTemplateSpec{
 				{
 					Name:               "router",
-					TopologyConstraint: &grovecorev1alpha1.TopologyConstraint{PackDomain: "zone"},
-					Spec:               grovecorev1alpha1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To(int32(1))},
+					TopologyConstraint: &grovecorev1beta1.TopologyConstraint{PackDomain: "zone"},
+					Spec:               grovecorev1beta1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To(int32(1))},
 				},
 				{
 					Name:               "decode-leader",
-					TopologyConstraint: &grovecorev1alpha1.TopologyConstraint{PackDomain: "host"},
-					Spec:               grovecorev1alpha1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To(int32(1))},
+					TopologyConstraint: &grovecorev1beta1.TopologyConstraint{PackDomain: "host"},
+					Spec:               grovecorev1beta1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To(int32(1))},
 				},
 				{
 					Name:               "decode-worker",
-					TopologyConstraint: &grovecorev1alpha1.TopologyConstraint{PackDomain: "host"},
-					Spec:               grovecorev1alpha1.PodCliqueSpec{Replicas: 5, MinAvailable: ptr.To(int32(1))},
+					TopologyConstraint: &grovecorev1beta1.TopologyConstraint{PackDomain: "host"},
+					Spec:               grovecorev1beta1.PodCliqueSpec{Replicas: 5, MinAvailable: ptr.To(int32(1))},
 				},
 			},
-			pcsgConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+			pcsgConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{
 					Name:               "scaling-group",
 					Replicas:           ptr.To(int32(2)),
 					MinAvailable:       ptr.To(int32(1)),
 					CliqueNames:        []string{"decode-leader", "decode-worker"},
-					TopologyConstraint: &grovecorev1alpha1.TopologyConstraint{PackDomain: "rack"},
+					TopologyConstraint: &grovecorev1beta1.TopologyConstraint{PackDomain: "rack"},
 				},
 			},
 			expectedNumPodGangs:                2,
@@ -887,19 +887,19 @@ func TestComputeExpectedPodGangsWithTopologyConstraints(t *testing.T) {
 			name:                    "PCS with PCSG where PCSG has nil topology constraints and falls back to PCS level",
 			tasEnabled:              true,
 			pcsDeprecatedPackDomain: &topologyLevelZone,
-			pclqTemplateSpecs: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+			pclqTemplateSpecs: []*grovecorev1beta1.PodCliqueTemplateSpec{
 				{
 					Name:               "decode-leader",
-					TopologyConstraint: &grovecorev1alpha1.TopologyConstraint{PackDomain: "host"},
-					Spec:               grovecorev1alpha1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To(int32(1))},
+					TopologyConstraint: &grovecorev1beta1.TopologyConstraint{PackDomain: "host"},
+					Spec:               grovecorev1beta1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To(int32(1))},
 				},
 				{
 					Name:               "decode-worker",
-					TopologyConstraint: &grovecorev1alpha1.TopologyConstraint{PackDomain: "host"},
-					Spec:               grovecorev1alpha1.PodCliqueSpec{Replicas: 5, MinAvailable: ptr.To(int32(1))},
+					TopologyConstraint: &grovecorev1beta1.TopologyConstraint{PackDomain: "host"},
+					Spec:               grovecorev1beta1.PodCliqueSpec{Replicas: 5, MinAvailable: ptr.To(int32(1))},
 				},
 			},
-			pcsgConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+			pcsgConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{
 					Name:         "scaling-group",
 					Replicas:     ptr.To(int32(2)),
@@ -931,18 +931,18 @@ func TestComputeExpectedPodGangsWithTopologyConstraints(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			var pcsTopologyConstraint *grovecorev1alpha1.TopologyConstraint
+			var pcsTopologyConstraint *grovecorev1beta1.TopologyConstraint
 			switch {
 			case test.pcsTopologyConstraint != nil:
 				pcsTopologyConstraint = test.pcsTopologyConstraint
 			case test.pcsDeprecatedPackDomain != nil:
-				pcsTopologyConstraint = &grovecorev1alpha1.TopologyConstraint{PackDomain: test.pcsDeprecatedPackDomain.Domain}
+				pcsTopologyConstraint = &grovecorev1beta1.TopologyConstraint{PackDomain: test.pcsDeprecatedPackDomain.Domain}
 			}
-			pcs := &grovecorev1alpha1.PodCliqueSet{
+			pcs := &grovecorev1beta1.PodCliqueSet{
 				ObjectMeta: metav1.ObjectMeta{Name: pcsName, Namespace: namespace, UID: "test-uid-123"},
-				Spec: grovecorev1alpha1.PodCliqueSetSpec{
+				Spec: grovecorev1beta1.PodCliqueSetSpec{
 					Replicas: 1,
-					Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
+					Template: grovecorev1beta1.PodCliqueSetTemplateSpec{
 						TopologyConstraint:           pcsTopologyConstraint,
 						Cliques:                      test.pclqTemplateSpecs,
 						PodCliqueScalingGroupConfigs: test.pcsgConfigs,
@@ -976,16 +976,16 @@ func TestComputeExpectedPodGangsWithTopologyConstraints(t *testing.T) {
 					tailPCSGIndices[cfg.Name] = tailIdx
 				}
 			}
-			entries := []grovecorev1alpha1.PodGangEntry{
+			entries := []grovecorev1beta1.PodGangEntry{
 				testutils.NewPodGangEntryBuilder(genHash, anchorEpoch).
-					WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).
+					WithRole(grovecorev1beta1.PodGangEntryRoleAnchor).
 					WithPodCliques(anchorPodCliques).
 					WithPCSGReplicaIndices(anchorPCSGIndices).
 					Build(),
 			}
 			if len(tailPCSGIndices) > 0 {
 				entries = append(entries, testutils.NewPodGangEntryBuilder(genHash, tailEpoch).
-					WithRole(grovecorev1alpha1.PodGangEntryRoleTail).
+					WithRole(grovecorev1beta1.PodGangEntryRoleTail).
 					WithPCSGReplicaIndices(tailPCSGIndices).
 					WithDependsOn(anchorEpoch).Build())
 			}
@@ -1037,7 +1037,7 @@ func TestResolveTopologyLevels(t *testing.T) {
 		pcsName      = "test-pcs"
 		topologyName = "my-topology"
 	)
-	ctLevels := []grovecorev1alpha1.TopologyLevel{
+	ctLevels := []grovecorev1beta1.TopologyLevel{
 		{Domain: "zone", Key: "topology.kubernetes.io/zone"},
 		{Domain: "rack", Key: "topology.kubernetes.io/rack"},
 		{Domain: "host", Key: "kubernetes.io/hostname"},
@@ -1045,16 +1045,16 @@ func TestResolveTopologyLevels(t *testing.T) {
 
 	tests := []struct {
 		name                  string
-		buildPCS              func() *grovecorev1alpha1.PodCliqueSet
+		buildPCS              func() *grovecorev1beta1.PodCliqueSet
 		clusterTopologyExists bool
-		wantTopologyLevels    []grovecorev1alpha1.TopologyLevel
+		wantTopologyLevels    []grovecorev1beta1.TopologyLevel
 	}{
 		{
 			name: "PCS-level topologyName set and ClusterTopologyBinding exists resolves levels",
-			buildPCS: func() *grovecorev1alpha1.PodCliqueSet {
+			buildPCS: func() *grovecorev1beta1.PodCliqueSet {
 				return testutils.NewPodCliqueSetBuilder(pcsName, ns, "pcs-uid").
 					WithStandaloneClique("worker").
-					WithTopologyConstraint(&grovecorev1alpha1.TopologyConstraint{TopologyName: topologyName, Pack: &grovecorev1alpha1.TopologyPackConstraint{RequiredDomain: "rack"}}).
+					WithTopologyConstraint(&grovecorev1beta1.TopologyConstraint{TopologyName: topologyName, Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: "rack"}}).
 					Build()
 			},
 			clusterTopologyExists: true,
@@ -1062,10 +1062,10 @@ func TestResolveTopologyLevels(t *testing.T) {
 		},
 		{
 			name: "PCS-level constraint using the deprecated packDomain field resolves levels",
-			buildPCS: func() *grovecorev1alpha1.PodCliqueSet {
+			buildPCS: func() *grovecorev1beta1.PodCliqueSet {
 				return testutils.NewPodCliqueSetBuilder(pcsName, ns, "pcs-uid").
 					WithStandaloneClique("worker").
-					WithTopologyConstraint(&grovecorev1alpha1.TopologyConstraint{TopologyName: topologyName, PackDomain: "rack"}).
+					WithTopologyConstraint(&grovecorev1beta1.TopologyConstraint{TopologyName: topologyName, PackDomain: "rack"}).
 					Build()
 			},
 			clusterTopologyExists: true,
@@ -1073,7 +1073,7 @@ func TestResolveTopologyLevels(t *testing.T) {
 		},
 		{
 			name: "no topology constraint on PCS returns nil",
-			buildPCS: func() *grovecorev1alpha1.PodCliqueSet {
+			buildPCS: func() *grovecorev1beta1.PodCliqueSet {
 				return testutils.NewPodCliqueSetBuilder(pcsName, ns, "pcs-uid").
 					WithStandaloneClique("worker").
 					Build()
@@ -1082,12 +1082,12 @@ func TestResolveTopologyLevels(t *testing.T) {
 		},
 		{
 			name: "topologyName set only on a child clique constraint resolves levels",
-			buildPCS: func() *grovecorev1alpha1.PodCliqueSet {
+			buildPCS: func() *grovecorev1beta1.PodCliqueSet {
 				return testutils.NewPodCliqueSetBuilder(pcsName, ns, "pcs-uid").
-					WithPodCliqueTemplateSpec(&grovecorev1alpha1.PodCliqueTemplateSpec{
+					WithPodCliqueTemplateSpec(&grovecorev1beta1.PodCliqueTemplateSpec{
 						Name:               "worker",
-						TopologyConstraint: &grovecorev1alpha1.TopologyConstraint{TopologyName: topologyName, Pack: &grovecorev1alpha1.TopologyPackConstraint{RequiredDomain: "rack"}},
-						Spec:               grovecorev1alpha1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To(int32(1))},
+						TopologyConstraint: &grovecorev1beta1.TopologyConstraint{TopologyName: topologyName, Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: "rack"}},
+						Spec:               grovecorev1beta1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To(int32(1))},
 					}).
 					Build()
 			},
@@ -1096,10 +1096,10 @@ func TestResolveTopologyLevels(t *testing.T) {
 		},
 		{
 			name: "PCS-level topologyName set but ClusterTopologyBinding not found returns nil",
-			buildPCS: func() *grovecorev1alpha1.PodCliqueSet {
+			buildPCS: func() *grovecorev1beta1.PodCliqueSet {
 				return testutils.NewPodCliqueSetBuilder(pcsName, ns, "pcs-uid").
 					WithStandaloneClique("worker").
-					WithTopologyConstraint(&grovecorev1alpha1.TopologyConstraint{TopologyName: "missing-topology", Pack: &grovecorev1alpha1.TopologyPackConstraint{RequiredDomain: "rack"}}).
+					WithTopologyConstraint(&grovecorev1beta1.TopologyConstraint{TopologyName: "missing-topology", Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: "rack"}}).
 					Build()
 			},
 			clusterTopologyExists: false,
@@ -1154,25 +1154,25 @@ func TestComputeExpectedPodGangs(t *testing.T) {
 	tests := []struct {
 		name        string
 		pcsReplicas int32
-		pclqs       []*grovecorev1alpha1.PodCliqueTemplateSpec
-		pcsgConfigs []grovecorev1alpha1.PodCliqueScalingGroupConfig
+		pclqs       []*grovecorev1beta1.PodCliqueTemplateSpec
+		pcsgConfigs []grovecorev1beta1.PodCliqueScalingGroupConfig
 		entries     entrySpec
 	}{
 		{
 			name:        "anchor only, standalone cliques, no scaling group",
 			pcsReplicas: 1,
-			pclqs: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-				{Name: "worker", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 3, MinAvailable: ptr.To(int32(2))}},
+			pclqs: []*grovecorev1beta1.PodCliqueTemplateSpec{
+				{Name: "worker", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 3, MinAvailable: ptr.To(int32(2))}},
 			},
 			entries: entrySpec{},
 		},
 		{
 			name:        "anchor only, scaling group with replicas equal to minAvailable",
 			pcsReplicas: 1,
-			pclqs: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-				{Name: "sg-worker", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 2, MinAvailable: ptr.To(int32(2))}},
+			pclqs: []*grovecorev1beta1.PodCliqueTemplateSpec{
+				{Name: "sg-worker", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 2, MinAvailable: ptr.To(int32(2))}},
 			},
-			pcsgConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+			pcsgConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{Name: "sg", Replicas: ptr.To(int32(2)), MinAvailable: ptr.To(int32(2)), CliqueNames: []string{"sg-worker"}},
 			},
 			entries: entrySpec{anchorPCSGIndices: map[string][]int32{"sg": {0, 1}}},
@@ -1180,10 +1180,10 @@ func TestComputeExpectedPodGangs(t *testing.T) {
 		{
 			name:        "anchor and tail, scaling group with replicas above minAvailable",
 			pcsReplicas: 1,
-			pclqs: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-				{Name: "sg-worker", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To(int32(1))}},
+			pclqs: []*grovecorev1beta1.PodCliqueTemplateSpec{
+				{Name: "sg-worker", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To(int32(1))}},
 			},
-			pcsgConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+			pcsgConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{Name: "sg", Replicas: ptr.To(int32(3)), MinAvailable: ptr.To(int32(1)), CliqueNames: []string{"sg-worker"}},
 			},
 			entries: entrySpec{
@@ -1194,10 +1194,10 @@ func TestComputeExpectedPodGangs(t *testing.T) {
 		{
 			name:        "anchor and scaleout, scaled out beyond template replicas",
 			pcsReplicas: 1,
-			pclqs: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-				{Name: "sg-worker", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To(int32(1))}},
+			pclqs: []*grovecorev1beta1.PodCliqueTemplateSpec{
+				{Name: "sg-worker", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To(int32(1))}},
 			},
-			pcsgConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+			pcsgConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{Name: "sg", Replicas: ptr.To(int32(1)), MinAvailable: ptr.To(int32(1)), CliqueNames: []string{"sg-worker"}},
 			},
 			entries: entrySpec{
@@ -1208,10 +1208,10 @@ func TestComputeExpectedPodGangs(t *testing.T) {
 		{
 			name:        "anchor, tail and scaleout together",
 			pcsReplicas: 1,
-			pclqs: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-				{Name: "sg-worker", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To(int32(1))}},
+			pclqs: []*grovecorev1beta1.PodCliqueTemplateSpec{
+				{Name: "sg-worker", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To(int32(1))}},
 			},
-			pcsgConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+			pcsgConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{Name: "sg", Replicas: ptr.To(int32(3)), MinAvailable: ptr.To(int32(1)), CliqueNames: []string{"sg-worker"}},
 			},
 			entries: entrySpec{
@@ -1223,11 +1223,11 @@ func TestComputeExpectedPodGangs(t *testing.T) {
 		{
 			name:        "multiple scaling groups contribute to tail",
 			pcsReplicas: 1,
-			pclqs: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-				{Name: "worker-a", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To(int32(1))}},
-				{Name: "worker-b", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To(int32(1))}},
+			pclqs: []*grovecorev1beta1.PodCliqueTemplateSpec{
+				{Name: "worker-a", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To(int32(1))}},
+				{Name: "worker-b", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To(int32(1))}},
 			},
-			pcsgConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+			pcsgConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{Name: "sg-a", Replicas: ptr.To(int32(3)), MinAvailable: ptr.To(int32(1)), CliqueNames: []string{"worker-a"}},
 				{Name: "sg-b", Replicas: ptr.To(int32(2)), MinAvailable: ptr.To(int32(1)), CliqueNames: []string{"worker-b"}},
 			},
@@ -1239,10 +1239,10 @@ func TestComputeExpectedPodGangs(t *testing.T) {
 		{
 			name:        "multiple PCS replicas each with anchor and tail",
 			pcsReplicas: 2,
-			pclqs: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-				{Name: "worker", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To(int32(1))}},
+			pclqs: []*grovecorev1beta1.PodCliqueTemplateSpec{
+				{Name: "worker", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To(int32(1))}},
 			},
-			pcsgConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+			pcsgConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{Name: "sg", Replicas: ptr.To(int32(2)), MinAvailable: ptr.To(int32(1)), CliqueNames: []string{"worker"}},
 			},
 			entries: entrySpec{
@@ -1253,10 +1253,10 @@ func TestComputeExpectedPodGangs(t *testing.T) {
 		{
 			name:        "scaleout entry with multiple indices",
 			pcsReplicas: 1,
-			pclqs: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-				{Name: "sg-worker", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To(int32(1))}},
+			pclqs: []*grovecorev1beta1.PodCliqueTemplateSpec{
+				{Name: "sg-worker", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To(int32(1))}},
 			},
-			pcsgConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+			pcsgConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{Name: "sg", Replicas: ptr.To(int32(1)), MinAvailable: ptr.To(int32(1)), CliqueNames: []string{"sg-worker"}},
 			},
 			entries: entrySpec{
@@ -1267,10 +1267,10 @@ func TestComputeExpectedPodGangs(t *testing.T) {
 		{
 			name:        "empty scaleout entry materializes no PodGang",
 			pcsReplicas: 1,
-			pclqs: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-				{Name: "sg-worker", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To(int32(1))}},
+			pclqs: []*grovecorev1beta1.PodCliqueTemplateSpec{
+				{Name: "sg-worker", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To(int32(1))}},
 			},
-			pcsgConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+			pcsgConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{Name: "sg", Replicas: ptr.To(int32(1)), MinAvailable: ptr.To(int32(1)), CliqueNames: []string{"sg-worker"}},
 			},
 			entries: entrySpec{
@@ -1282,11 +1282,11 @@ func TestComputeExpectedPodGangs(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			pcs := &grovecorev1alpha1.PodCliqueSet{
+			pcs := &grovecorev1beta1.PodCliqueSet{
 				ObjectMeta: metav1.ObjectMeta{Name: pcsName, Namespace: namespace, UID: "test-uid-123"},
-				Spec: grovecorev1alpha1.PodCliqueSetSpec{
+				Spec: grovecorev1beta1.PodCliqueSetSpec{
 					Replicas: test.pcsReplicas,
-					Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
+					Template: grovecorev1beta1.PodCliqueSetTemplateSpec{
 						Cliques:                      test.pclqs,
 						PodCliqueScalingGroupConfigs: test.pcsgConfigs,
 					},
@@ -1307,9 +1307,9 @@ func TestComputeExpectedPodGangs(t *testing.T) {
 			objs := []client.Object{pcs}
 			for replicaIndex := range int(test.pcsReplicas) {
 				rnr := apicommon.ResourceNameReplica{Name: pcsName, Replica: replicaIndex}
-				entries := []grovecorev1alpha1.PodGangEntry{
+				entries := []grovecorev1beta1.PodGangEntry{
 					testutils.NewPodGangEntryBuilder(genHash, anchorEpoch).
-						WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).
+						WithRole(grovecorev1beta1.PodGangEntryRoleAnchor).
 						WithPodCliques(anchorPodCliques).
 						WithPCSGReplicaIndices(test.entries.anchorPCSGIndices).
 						Build(),
@@ -1317,14 +1317,14 @@ func TestComputeExpectedPodGangs(t *testing.T) {
 				expectedAnchorNames = append(expectedAnchorNames, apicommon.GenerateAnchorPodGangName(rnr, anchorEpoch))
 				if len(test.entries.tailPCSGIndices) > 0 {
 					entries = append(entries, testutils.NewPodGangEntryBuilder(genHash, tailEpoch).
-						WithRole(grovecorev1alpha1.PodGangEntryRoleTail).
+						WithRole(grovecorev1beta1.PodGangEntryRoleTail).
 						WithPCSGReplicaIndices(test.entries.tailPCSGIndices).
 						WithDependsOn(anchorEpoch).Build())
 					expectedTailNames = append(expectedTailNames, nonAnchorPodGangNames(rnr, tailEpoch, test.pcsgConfigs, test.entries.tailPCSGIndices)...)
 				}
 				if len(test.entries.scaleOutPCSGIndices) > 0 || test.entries.emptyScaleOut {
 					entries = append(entries, testutils.NewPodGangEntryBuilder(genHash, scaleOutEpoch).
-						WithRole(grovecorev1alpha1.PodGangEntryRoleScaleOut).
+						WithRole(grovecorev1beta1.PodGangEntryRoleScaleOut).
 						WithPCSGReplicaIndices(test.entries.scaleOutPCSGIndices).
 						WithDependsOn(anchorEpoch).Build())
 					expectedScaleOutNames = append(expectedScaleOutNames, nonAnchorPodGangNames(rnr, scaleOutEpoch, test.pcsgConfigs, test.entries.scaleOutPCSGIndices)...)
@@ -1340,9 +1340,9 @@ func TestComputeExpectedPodGangs(t *testing.T) {
 			require.NoError(t, err)
 
 			actualNamesByRole := podGangNamesByRole(actual)
-			assert.ElementsMatch(t, expectedAnchorNames, actualNamesByRole[grovecorev1alpha1.PodGangEntryRoleAnchor], "anchor PodGangs")
-			assert.ElementsMatch(t, expectedTailNames, actualNamesByRole[grovecorev1alpha1.PodGangEntryRoleTail], "tail PodGangs")
-			assert.ElementsMatch(t, expectedScaleOutNames, actualNamesByRole[grovecorev1alpha1.PodGangEntryRoleScaleOut], "scaleout PodGangs")
+			assert.ElementsMatch(t, expectedAnchorNames, actualNamesByRole[grovecorev1beta1.PodGangEntryRoleAnchor], "anchor PodGangs")
+			assert.ElementsMatch(t, expectedTailNames, actualNamesByRole[grovecorev1beta1.PodGangEntryRoleTail], "tail PodGangs")
+			assert.ElementsMatch(t, expectedScaleOutNames, actualNamesByRole[grovecorev1beta1.PodGangEntryRoleScaleOut], "scaleout PodGangs")
 			assert.Len(t, actual, len(expectedAnchorNames)+len(expectedTailNames)+len(expectedScaleOutNames))
 		})
 	}
@@ -1360,25 +1360,25 @@ func TestComputeExpectedPodGangsClampsNonMinAvailableAnchorMinReplicas(t *testin
 		lowEpoch  = "1000" // MinAvailable anchor, drained last
 		highEpoch = "1001" // non-MinAvailable anchor, drained first
 	)
-	pcs := &grovecorev1alpha1.PodCliqueSet{
+	pcs := &grovecorev1beta1.PodCliqueSet{
 		ObjectMeta: metav1.ObjectMeta{Name: pcsName, Namespace: namespace, UID: "test-uid-123"},
-		Spec: grovecorev1alpha1.PodCliqueSetSpec{
+		Spec: grovecorev1beta1.PodCliqueSetSpec{
 			Replicas: 1,
-			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
-				Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-					{Name: "worker", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 3, MinAvailable: ptr.To(int32(2))}},
+			Template: grovecorev1beta1.PodCliqueSetTemplateSpec{
+				Cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
+					{Name: "worker", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 3, MinAvailable: ptr.To(int32(2))}},
 				},
 			},
 		},
-		Status: grovecorev1alpha1.PodCliqueSetStatus{CurrentGenerationHash: ptr.To(genHash)},
+		Status: grovecorev1beta1.PodCliqueSetStatus{CurrentGenerationHash: ptr.To(genHash)},
 	}
 	rnr := apicommon.ResourceNameReplica{Name: pcsName, Replica: 0}
-	entries := []grovecorev1alpha1.PodGangEntry{
+	entries := []grovecorev1beta1.PodGangEntry{
 		testutils.NewPodGangEntryBuilder(genHash, lowEpoch).
-			WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).
+			WithRole(grovecorev1beta1.PodGangEntryRoleAnchor).
 			WithPodCliques(map[string]int32{"worker": 2}).Build(),
 		testutils.NewPodGangEntryBuilder(genHash, highEpoch).
-			WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).
+			WithRole(grovecorev1beta1.PodGangEntryRoleAnchor).
 			WithPodCliques(map[string]int32{"worker": 1}).
 			WithDependsOn(lowEpoch).Build(),
 	}
@@ -1417,13 +1417,13 @@ func TestBuildStandalonePCLQInfosForAnchorEntry(t *testing.T) {
 		pcsName   = "test-pcs"
 		namespace = "default"
 	)
-	pcs := &grovecorev1alpha1.PodCliqueSet{
+	pcs := &grovecorev1beta1.PodCliqueSet{
 		ObjectMeta: metav1.ObjectMeta{Name: pcsName, Namespace: namespace},
-		Spec: grovecorev1alpha1.PodCliqueSetSpec{
-			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
-				Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-					{Name: "worker", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 3, MinAvailable: ptr.To(int32(2))}},
-					{Name: "aux", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To(int32(1))}},
+		Spec: grovecorev1beta1.PodCliqueSetSpec{
+			Template: grovecorev1beta1.PodCliqueSetTemplateSpec{
+				Cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
+					{Name: "worker", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 3, MinAvailable: ptr.To(int32(2))}},
+					{Name: "aux", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To(int32(1))}},
 				},
 			},
 		},
@@ -1502,7 +1502,7 @@ func TestBuildStandalonePCLQInfosForAnchorEntry(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			ss := &syncState{pcs: pcs, logger: ctrllogger.FromContext(t.Context())}
 			entry := testutils.NewPodGangEntryBuilder("hash", "1000").
-				WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).
+				WithRole(grovecorev1beta1.PodGangEntryRoleAnchor).
 				WithPodCliques(test.podCliques).Build()
 
 			actual := buildStandalonePCLQInfosForAnchorEntry(ss, 0, entry, test.isBaseAnchor)
@@ -1529,14 +1529,14 @@ func TestGetExistingPCLQsForPCS(t *testing.T) {
 	)
 	pcsLabels := apicommon.GetDefaultLabelsForPodCliqueSetManagedResources(pcsName)
 
-	standalonePCLQ := &grovecorev1alpha1.PodClique{
+	standalonePCLQ := &grovecorev1beta1.PodClique{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-pcs-0-worker", Namespace: namespace, Labels: pcsLabels},
 	}
-	pcsgPCLQ := &grovecorev1alpha1.PodClique{
+	pcsgPCLQ := &grovecorev1beta1.PodClique{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-pcs-0-sg-0-worker", Namespace: namespace, Labels: pcsLabels},
 	}
 	// A PodClique belonging to a different PodCliqueSet must not be returned.
-	otherPCLQ := &grovecorev1alpha1.PodClique{
+	otherPCLQ := &grovecorev1beta1.PodClique{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "other-pcs-0-worker",
 			Namespace: namespace,
@@ -1544,14 +1544,14 @@ func TestGetExistingPCLQsForPCS(t *testing.T) {
 		},
 	}
 
-	pcs := &grovecorev1alpha1.PodCliqueSet{ObjectMeta: metav1.ObjectMeta{Name: pcsName, Namespace: namespace}}
+	pcs := &grovecorev1beta1.PodCliqueSet{ObjectMeta: metav1.ObjectMeta{Name: pcsName, Namespace: namespace}}
 	fakeClient := testutils.NewTestClientBuilder().WithObjects(standalonePCLQ, pcsgPCLQ, otherPCLQ).Build()
 	r := &_resource{client: fakeClient, schedRegistry: defaultFakeSchedulerRegistry}
 
 	actual, err := r.getExistingPCLQsForPCS(t.Context(), pcs)
 	require.NoError(t, err)
 
-	actualNames := lo.Map(actual, func(pclq grovecorev1alpha1.PodClique, _ int) string { return pclq.Name })
+	actualNames := lo.Map(actual, func(pclq grovecorev1beta1.PodClique, _ int) string { return pclq.Name })
 	assert.ElementsMatch(t, []string{standalonePCLQ.Name, pcsgPCLQ.Name}, actualNames)
 }
 
@@ -2040,9 +2040,9 @@ func TestReconcilePodGangStatus(t *testing.T) {
 // TestBuildAdditionalLabelsFromPodGangEntry pins that a PodGang materialized from an entry carries the
 // entry's generation hash, epoch and role.
 func TestBuildAdditionalLabelsFromPodGangEntry(t *testing.T) {
-	entry := grovecorev1alpha1.PodGangEntry{
+	entry := grovecorev1beta1.PodGangEntry{
 		Epoch:                      "1500",
-		Role:                       grovecorev1alpha1.PodGangEntryRoleAnchor,
+		Role:                       grovecorev1beta1.PodGangEntryRoleAnchor,
 		PodCliqueSetGenerationHash: "hash-1",
 	}
 
@@ -2050,7 +2050,7 @@ func TestBuildAdditionalLabelsFromPodGangEntry(t *testing.T) {
 
 	expected := map[string]string{
 		apicommon.LabelEpoch:                      "1500",
-		apicommon.LabelPodGangRole:                string(grovecorev1alpha1.PodGangEntryRoleAnchor),
+		apicommon.LabelPodGangRole:                string(grovecorev1beta1.PodGangEntryRoleAnchor),
 		apicommon.LabelPodCliqueSetGenerationHash: "hash-1",
 	}
 	assert.Equal(t, expected, actual)
@@ -2063,34 +2063,34 @@ func TestBuildPCLQInfosAndTopoConstraintsForPCSGReplica(t *testing.T) {
 		pcsName   = "test-pcs"
 		namespace = "default"
 	)
-	pcsgConfig := grovecorev1alpha1.PodCliqueScalingGroupConfig{
+	pcsgConfig := grovecorev1beta1.PodCliqueScalingGroupConfig{
 		Name:         "scaling-group",
 		Replicas:     ptr.To(int32(2)),
 		MinAvailable: ptr.To(int32(1)),
 		CliqueNames:  []string{"worker"},
 	}
-	pcs := &grovecorev1alpha1.PodCliqueSet{
+	pcs := &grovecorev1beta1.PodCliqueSet{
 		ObjectMeta: metav1.ObjectMeta{Name: pcsName, Namespace: namespace},
-		Spec: grovecorev1alpha1.PodCliqueSetSpec{
-			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
-				Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-					{Name: "worker", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 3, MinAvailable: ptr.To(int32(2))}},
+		Spec: grovecorev1beta1.PodCliqueSetSpec{
+			Template: grovecorev1beta1.PodCliqueSetTemplateSpec{
+				Cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
+					{Name: "worker", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 3, MinAvailable: ptr.To(int32(2))}},
 				},
-				PodCliqueScalingGroupConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{pcsgConfig},
+				PodCliqueScalingGroupConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{pcsgConfig},
 			},
 		},
 	}
 
 	pcsgFQN := apicommon.GeneratePodCliqueScalingGroupName(apicommon.ResourceNameReplica{Name: pcs.Name, Replica: 0}, pcsgConfig.Name)
 
-	makePCLQ := func(templateName string, replicas int32) grovecorev1alpha1.PodClique {
+	makePCLQ := func(templateName string, replicas int32) grovecorev1beta1.PodClique {
 		pclqFQN := apicommon.GeneratePodCliqueName(apicommon.ResourceNameReplica{Name: pcsgFQN, Replica: 0}, templateName)
-		return grovecorev1alpha1.PodClique{ObjectMeta: metav1.ObjectMeta{Name: pclqFQN, Namespace: namespace}, Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: replicas}}
+		return grovecorev1beta1.PodClique{ObjectMeta: metav1.ObjectMeta{Name: pclqFQN, Namespace: namespace}, Spec: grovecorev1beta1.PodCliqueSpec{Replicas: replicas}}
 	}
 
 	tests := []struct {
 		name             string
-		existingPCLQs    []grovecorev1alpha1.PodClique
+		existingPCLQs    []grovecorev1beta1.PodClique
 		expectedReplicas []int32
 	}{
 		{
@@ -2099,7 +2099,7 @@ func TestBuildPCLQInfosAndTopoConstraintsForPCSGReplica(t *testing.T) {
 		},
 		{
 			name:             "present clique sets replica",
-			existingPCLQs:    []grovecorev1alpha1.PodClique{makePCLQ("worker", 5)},
+			existingPCLQs:    []grovecorev1beta1.PodClique{makePCLQ("worker", 5)},
 			expectedReplicas: []int32{5},
 		},
 	}
@@ -2217,7 +2217,7 @@ func assertPackConstraint(t *testing.T, got *groveschedulerv1alpha1.TopologyCons
 
 // nonAnchorPodGangNames returns the non-anchor PodGang names for the given epoch and PCSG replica
 // indices, iterating PCSG configs in order for deterministic output.
-func nonAnchorPodGangNames(rnr apicommon.ResourceNameReplica, epoch string, pcsgConfigs []grovecorev1alpha1.PodCliqueScalingGroupConfig, indicesByPCSG map[string][]int32) []string {
+func nonAnchorPodGangNames(rnr apicommon.ResourceNameReplica, epoch string, pcsgConfigs []grovecorev1beta1.PodCliqueScalingGroupConfig, indicesByPCSG map[string][]int32) []string {
 	var names []string
 	for _, pcsgConfig := range pcsgConfigs {
 		for _, idx := range indicesByPCSG[pcsgConfig.Name] {
@@ -2229,18 +2229,18 @@ func nonAnchorPodGangNames(rnr apicommon.ResourceNameReplica, epoch string, pcsg
 
 // podGangNamesByRole groups the materialized PodGang names by the role recorded on their
 // grove.io/podgang-role label.
-func podGangNamesByRole(podGangs []*podGangInfo) map[grovecorev1alpha1.PodGangEntryRole][]string {
-	byRole := make(map[grovecorev1alpha1.PodGangEntryRole][]string)
+func podGangNamesByRole(podGangs []*podGangInfo) map[grovecorev1beta1.PodGangEntryRole][]string {
+	byRole := make(map[grovecorev1beta1.PodGangEntryRole][]string)
 	for _, pg := range podGangs {
-		role := grovecorev1alpha1.PodGangEntryRole(pg.extraLabels[apicommon.LabelPodGangRole])
+		role := grovecorev1beta1.PodGangEntryRole(pg.extraLabels[apicommon.LabelPodGangRole])
 		byRole[role] = append(byRole[role], pg.fqn)
 	}
 	return byRole
 }
 
-func makeClusterTopologyBindingWithLevels(name string, levels []grovecorev1alpha1.TopologyLevel) *grovecorev1alpha1.ClusterTopologyBinding {
-	return &grovecorev1alpha1.ClusterTopologyBinding{
+func makeClusterTopologyBindingWithLevels(name string, levels []grovecorev1beta1.TopologyLevel) *grovecorev1beta1.ClusterTopologyBinding {
+	return &grovecorev1beta1.ClusterTopologyBinding{
 		ObjectMeta: metav1.ObjectMeta{Name: name},
-		Spec:       grovecorev1alpha1.ClusterTopologyBindingSpec{Levels: levels},
+		Spec:       grovecorev1beta1.ClusterTopologyBindingSpec{Levels: levels},
 	}
 }

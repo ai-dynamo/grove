@@ -20,7 +20,7 @@ import (
 	"slices"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podclique/expectations"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
@@ -139,7 +139,7 @@ func selectOldestPods(pods []*corev1.Pod, n int) []*corev1.Pod {
 
 // rollingUpdateConfigForPCLQ returns the RollingUpdate configuration for the PodClique from its
 // PodCliqueSet template, or nil when the template or the field is absent.
-func rollingUpdateConfigForPCLQ(ss *syncSnapshot) *grovecorev1alpha1.RollingUpdateConfiguration {
+func rollingUpdateConfigForPCLQ(ss *syncSnapshot) *grovecorev1beta1.RollingUpdateConfiguration {
 	templateSpec := componentutils.FindPodCliqueTemplateSpecByName(ss.pcs, ss.cliqueName)
 	if templateSpec == nil {
 		return nil
@@ -256,7 +256,7 @@ func (r _resource) deleteOldNonReadyPods(ctx context.Context, logger logr.Logger
 // PCLQ's fully realized generation and Pod template. Publishing these hashes is safe only because
 // runSyncFlow permits RollingRecreate and Coherent completion after the progress generation matches the
 // PCS current generation and the progress template hash matches the observed PCLQ template-hash label.
-func (r _resource) markRollingUpdateEnd(ctx context.Context, logger logr.Logger, pclq *grovecorev1alpha1.PodClique) error {
+func (r _resource) markRollingUpdateEnd(ctx context.Context, logger logr.Logger, pclq *grovecorev1beta1.PodClique) error {
 	patch := client.MergeFrom(pclq.DeepCopy())
 	progress := pclq.Status.UpdateProgress
 
