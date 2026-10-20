@@ -24,6 +24,7 @@ import (
 
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 	schedulertest "github.com/ai-dynamo/grove/operator/test/utils/scheduler"
 
@@ -38,6 +39,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	utilerrors "k8s.io/apimachinery/pkg/util/errors"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -155,6 +158,39 @@ func TestValidatePodCliqueSet_AcceptsTopologyConstraints(t *testing.T) {
 	pcs.Spec.Template.Cliques = []*grovecorev1alpha1.PodCliqueTemplateSpec{{Name: "worker", TopologyConstraint: constraint}}
 	pcs.Spec.Template.PodCliqueScalingGroupConfigs = []grovecorev1alpha1.PodCliqueScalingGroupConfig{{Name: "workers", TopologyConstraint: constraint}}
 	require.NoError(t, b.ValidatePodCliqueSet(t.Context(), pcs), "required and preferred constraints are accepted at every level")
+}
+
+func TestValidatePodCliqueSet_PriorityClassUpdates(t *testing.T) {
+	for _, strategy := range []grovecorev1alpha1.UpdateStrategyType{
+		grovecorev1alpha1.RollingRecreateStrategy, grovecorev1alpha1.OnDeleteStrategy, grovecorev1alpha1.CoherentStrategy,
+	} {
+		t.Run(string(strategy), func(t *testing.T) {
+			backend := &schedulerBackend{gangSchedulingEnabled: true}
+			pcs := &grovecorev1alpha1.PodCliqueSet{Spec: grovecorev1alpha1.PodCliqueSetSpec{
+				UpdateStrategy: &grovecorev1alpha1.PodCliqueSetUpdateStrategy{Type: strategy},
+				Template:       grovecorev1alpha1.PodCliqueSetTemplateSpec{PriorityClassName: "original"},
+			}}
+			require.NoError(t, backend.ValidatePodCliqueSet(t.Context(), pcs), "creation remains supported")
+			old := pcs.DeepCopy()
+			pcs.Annotations = map[string]string{"example.com/note": "updated"}
+			require.NoError(t, backend.ValidatePodCliqueSet(t.Context(), pcs, scheduler.WithOldPodCliqueSet(old)))
+			for _, priority := range []string{"replacement", ""} {
+				pcs.Spec.Template.PriorityClassName = priority
+				err := backend.ValidatePodCliqueSet(t.Context(), pcs, scheduler.WithOldPodCliqueSet(old))
+				require.Error(t, err)
+				aggregate, ok := err.(utilerrors.Aggregate)
+				require.True(t, ok)
+				require.Len(t, aggregate.Errors(), 1)
+				fieldErr, ok := aggregate.Errors()[0].(*field.Error)
+				require.True(t, ok)
+				assert.Equal(t, field.ErrorTypeInvalid, fieldErr.Type)
+				assert.Equal(t, "spec.template.priorityClassName", fieldErr.Field)
+			}
+			backend.gangSchedulingEnabled = false
+			require.NoError(t, backend.ValidatePodCliqueSet(t.Context(), pcs, scheduler.WithOldPodCliqueSet(old)),
+				"plain default-scheduler must not inherit WAS restrictions")
+		})
+	}
 }
 
 func TestBackend_InitWithWorkloadAPIs(t *testing.T) {

@@ -29,7 +29,9 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	schedulingv1alpha3 "k8s.io/api/scheduling/v1alpha3"
 	schedulingv1beta1 "k8s.io/api/scheduling/v1beta1"
+	apivalidation "k8s.io/apimachinery/pkg/api/validation"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -175,8 +177,14 @@ func (b *schedulerBackend) PreparePod(pod *corev1.Pod) error {
 }
 
 // ValidatePodCliqueSet runs default-scheduler-specific validations on the PodCliqueSet.
-func (b *schedulerBackend) ValidatePodCliqueSet(_ context.Context, _ *grovecorev1alpha1.PodCliqueSet, _ ...scheduler.ValidateOption) error {
-	return nil
+func (b *schedulerBackend) ValidatePodCliqueSet(_ context.Context, pcs *grovecorev1alpha1.PodCliqueSet, opts ...scheduler.ValidateOption) error {
+	oldPCS := scheduler.NewValidateOptions(opts...).OldPCS
+	if !b.gangSchedulingEnabled || oldPCS == nil {
+		return nil
+	}
+	// Native group priorities are immutable, including on epochs retained by an update.
+	return apivalidation.ValidateImmutableField(pcs.Spec.Template.PriorityClassName, oldPCS.Spec.Template.PriorityClassName,
+		field.NewPath("spec", "template", "priorityClassName")).ToAggregate()
 }
 
 func (b *schedulerBackend) warnPreferredTopologyConstraints(podGang *groveschedulerv1alpha1.PodGang) {

@@ -243,6 +243,9 @@ func indexLeafTemplates(workload *schedulingv1beta1.Workload) map[string]*schedu
 	return index
 }
 
+// TODO: When WAS requires Kubernetes >= 1.38, update composite
+// minGroupCount in place, including the corresponding Workload templates.
+// Workload template membership changes remain unsupported.
 func copyMutableSchedulingFields(existing, desired client.Object) {
 	switch current := existing.(type) {
 	case *schedulingv1beta1.Workload:
