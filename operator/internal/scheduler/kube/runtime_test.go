@@ -47,13 +47,7 @@ func TestWASHierarchyGangScopedMembership(t *testing.T) {
 	for _, name := range []string{"pcs-0-1000", "pcs-0-1001"} {
 		gang := runtimeGang(name)
 		gang.Spec.PodGroups = append(gang.Spec.PodGroups, groveschedulerv1alpha1.PodGroup{Name: "router", MinReplicas: 1})
-		ready, err := backend.PodGangReady(t.Context(), gang)
-		require.NoError(t, err)
-		assert.False(t, ready)
 		require.NoError(t, backend.SyncPodGang(t.Context(), gang))
-		ready, err = backend.PodGangReady(t.Context(), gang)
-		require.NoError(t, err)
-		assert.True(t, ready)
 		for _, group := range gang.Spec.PodGroups {
 			pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{
 				apicommon.LabelPodGang: gang.Name, apicommon.LabelPodClique: group.Name,
@@ -193,9 +187,6 @@ func TestWASHierarchyRejectsImmutableChangesWithoutDeletion(t *testing.T) {
 			require.NoError(t, cl.Get(t.Context(), client.ObjectKeyFromObject(gang), before))
 			mutation.edit(gang)
 			require.ErrorContains(t, backend.SyncPodGang(t.Context(), gang), "immutable scheduling fields")
-			ready, err := backend.PodGangReady(t.Context(), gang)
-			require.Error(t, err)
-			assert.False(t, ready)
 			after := &schedulingv1beta1.Workload{}
 			require.NoError(t, cl.Get(t.Context(), client.ObjectKeyFromObject(gang), after))
 			assert.Equal(t, before, after, "must preserve serving hierarchy")
@@ -232,9 +223,6 @@ func TestWASHierarchyRejectsForeignAndTerminatingObjects(t *testing.T) {
 				require.NoError(t, cl.Delete(t.Context(), leaf))
 			}
 			require.Error(t, backend.SyncPodGang(t.Context(), gang))
-			ready, err := backend.PodGangReady(t.Context(), gang)
-			require.Error(t, err)
-			assert.False(t, ready)
 			require.NoError(t, cl.Get(t.Context(), key, leaf), "must not adopt, delete, or strip finalizers")
 		})
 	}
@@ -253,11 +241,13 @@ func TestWASHierarchyRecoversPartialCreateAndPatchConflicts(t *testing.T) {
 		},
 	})
 	require.Error(t, backend.SyncPodGang(t.Context(), gang))
-	ready, err := backend.PodGangReady(t.Context(), gang)
-	require.NoError(t, err)
-	assert.False(t, ready)
+	leaf := &schedulingv1beta1.PodGroup{}
+	key := client.ObjectKey{Namespace: gang.Namespace, Name: runtimeLeafName(gang.Name, "worker")}
+	require.True(t, apierrors.IsNotFound(cl.Get(t.Context(), key, leaf)))
 	failCreate = false
 	require.NoError(t, backend.SyncPodGang(t.Context(), gang))
+	require.NoError(t, cl.Get(t.Context(), key, leaf))
+	assert.EqualValues(t, 2, leaf.Spec.SchedulingPolicy.Gang.MinCount)
 	gang.Spec.PodGroups[0].MinReplicas = 3
 	backend.client = interceptor.NewClient(cl, interceptor.Funcs{
 		Patch: func(_ context.Context, _ client.WithWatch, obj client.Object, patch client.Patch, _ ...client.PatchOption) error {

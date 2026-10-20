@@ -101,12 +101,6 @@ type Finalizer interface {
 	IsPodFinalized(pod *corev1.Pod) bool
 }
 
-// PodGangReadinessBackend delays Grove gate removal until backend-specific
-// scheduling prerequisites match the current PodGang intent.
-type PodGangReadinessBackend interface {
-	PodGangReady(ctx context.Context, podGang *groveschedulerv1alpha1.PodGang) (bool, error)
-}
-
 // TopologyAwareBackend is an optional interface that Backend
 // implementations may satisfy if they manage a scheduler-specific topology CRD.
 // The ClusterTopologyBinding controller type-asserts each registered backend to this

@@ -49,10 +49,7 @@ type schedulerBackend struct {
 	gangSchedulingEnabled bool
 }
 
-var (
-	_ scheduler.Backend                 = (*schedulerBackend)(nil)
-	_ scheduler.PodGangReadinessBackend = (*schedulerBackend)(nil)
-)
+var _ scheduler.Backend = (*schedulerBackend)(nil)
 
 const workloadAPICheckTimeout = 30 * time.Second
 

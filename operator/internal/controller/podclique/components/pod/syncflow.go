@@ -481,34 +481,10 @@ func (r _resource) checkAndRemovePodSchedulingGates(ctx context.Context, logger 
 	if err != nil {
 		return nil, err
 	}
-	var errs []error
-	backendReady := make(map[string]bool, len(podGangByName))
-	for name, gang := range podGangByName {
-		if gang == nil {
-			continue
-		}
-		backend := r.schedRegistry.GetOrDefault(gang.Labels[apicommon.LabelSchedulerName])
-		if backend == nil {
-			errs = append(errs, fmt.Errorf("scheduler backend not found for PodGang %s", name))
-			continue
-		}
-		if readiness, ok := backend.(scheduler.PodGangReadinessBackend); ok {
-			ready, err := readiness.PodGangReady(ctx, gang)
-			if err != nil {
-				// Keep this gang gated while allowing other gangs to make progress.
-				errs = append(errs, fmt.Errorf("check scheduler readiness for PodGang %s: %w", name, err))
-				continue
-			}
-			backendReady[name] = ready
-		} else {
-			backendReady[name] = true
-		}
-	}
 
 	tasks := make([]utils.Task, 0, len(gatedPods))
 	for i, pod := range gatedPods {
-		if !canRemoveSchedulingGate(logger, pod, ss.pclq.Name, podGangByName, dependencySatisfiedByEpoch) ||
-			!backendReady[pod.Labels[apicommon.LabelPodGang]] {
+		if !canRemoveSchedulingGate(logger, pod, ss.pclq.Name, podGangByName, dependencySatisfiedByEpoch) {
 			skippedScheduleGatedPods = append(skippedScheduleGatedPods, pod.Name)
 			continue
 		}
@@ -535,15 +511,15 @@ func (r _resource) checkAndRemovePodSchedulingGates(ctx context.Context, logger 
 		if runResult := utils.RunConcurrentlyWithSlowStart(ctx, logger, 1, tasks); runResult.HasErrors() {
 			err := runResult.GetAggregatedError()
 			logger.Error(err, "failed to remove scheduling gates from pods for PCLQ", "runSummary", runResult.GetSummary())
-			errs = append(errs, groveerr.WrapError(err,
+			return skippedScheduleGatedPods, groveerr.WrapError(err,
 				errCodeRemovePodSchedulingGate,
 				component.OperationSync,
 				fmt.Sprintf("failed to remove scheduling gates from Pods for PodClique %v", client.ObjectKeyFromObject(ss.pclq)),
-			))
+			)
 		}
 	}
 
-	return skippedScheduleGatedPods, errors.Join(errs...)
+	return skippedScheduleGatedPods, nil
 }
 
 // fetchPodGangsForGatedPods fetches, once each, the distinct PodGangs the gated pods reference by

@@ -84,30 +84,6 @@ func (b *schedulerBackend) syncWorkloadHierarchy(ctx context.Context, gang *grov
 	return nil
 }
 
-// PodGangReady keeps Grove's scheduling gate until every desired WAS object
-// exists and matches the current intent. Conditions remain owned by the PCS
-// controller and the scheduler, not by this backend.
-func (b *schedulerBackend) PodGangReady(ctx context.Context, gang *groveschedulerv1alpha1.PodGang) (bool, error) {
-	if !b.gangSchedulingEnabled {
-		return true, nil
-	}
-	objects, err := b.readHierarchy(ctx, gang)
-	if err != nil {
-		return false, err
-	}
-	for _, object := range objects {
-		if object.existing == nil {
-			return false, nil
-		}
-		updated := object.existing.DeepCopyObject().(client.Object)
-		copyMutableSchedulingFields(updated, object.desired)
-		if !equality.Semantic.DeepEqual(updated, object.existing) {
-			return false, nil
-		}
-	}
-	return true, nil
-}
-
 func (b *schedulerBackend) readHierarchy(ctx context.Context, gang *groveschedulerv1alpha1.PodGang) ([]hierarchyObject, error) {
 	effective, err := b.withPersistedMinimums(ctx, gang)
 	if err != nil {
