@@ -15,6 +15,7 @@
 package controller
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -34,6 +35,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/rest"
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -46,9 +48,10 @@ import (
 )
 
 var (
-	waitTillWebhookCertsReady  = cert.WaitTillWebhookCertsReady
-	registerControllersWithMgr = RegisterControllers
-	registerWebhooksWithMgr    = webhook.Register
+	waitTillWebhookCertsReady    = cert.WaitTillWebhookCertsReady
+	waitTillWebhookServerStarted = waitForWebhookServer
+	registerControllersWithMgr   = RegisterControllers
+	registerWebhooksWithMgr      = webhook.Register
 )
 
 // CreateManager creates the manager.
@@ -57,13 +60,32 @@ func CreateManager(operatorCfg *configv1alpha1.OperatorConfiguration) (ctrl.Mana
 }
 
 // RegisterControllersAndWebhooks adds all the controllers and webhooks to the controller-manager using the passed in Config.
-func RegisterControllersAndWebhooks(mgr ctrl.Manager, logger logr.Logger, operatorCfg *configv1alpha1.OperatorConfiguration, certsReady chan struct{}, schedRegistry scheduler.Registry) error {
+// Webhooks are registered first and served before the controllers are added, because the controllers read the
+// converted kinds through the conversion webhook while they are stored at another version. beforeControllers, if
+// set, runs once the webhook server is serving and before any controller is added.
+func RegisterControllersAndWebhooks(ctx context.Context, mgr ctrl.Manager, logger logr.Logger, operatorCfg *configv1alpha1.OperatorConfiguration, certsReady chan struct{}, schedRegistry scheduler.Registry, beforeControllers func(context.Context) error) error {
 	waitTillWebhookCertsReady(logger, certsReady)
-	if err := registerControllersWithMgr(mgr, operatorCfg, schedRegistry); err != nil {
-		return err
-	}
 	if err := registerWebhooksWithMgr(mgr, operatorCfg, schedRegistry); err != nil {
 		return err
+	}
+	if err := waitTillWebhookServerStarted(ctx, mgr); err != nil {
+		return err
+	}
+	if beforeControllers != nil {
+		if err := beforeControllers(ctx); err != nil {
+			return err
+		}
+	}
+	return registerControllersWithMgr(mgr, operatorCfg, schedRegistry)
+}
+
+// waitForWebhookServer blocks until the manager's webhook server accepts TLS connections.
+func waitForWebhookServer(ctx context.Context, mgr ctrl.Manager) error {
+	started := mgr.GetWebhookServer().StartedChecker()
+	if err := wait.PollUntilContextCancel(ctx, 200*time.Millisecond, true, func(context.Context) (bool, error) {
+		return started(&http.Request{}) == nil, nil
+	}); err != nil {
+		return fmt.Errorf("webhook server did not start: %w", err)
 	}
 	return nil
 }
