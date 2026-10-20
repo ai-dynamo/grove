@@ -86,7 +86,7 @@ Kubernetes defines these semantics for containers (exit code), pods (`restartPol
 
 ### Non-Goals
 
-- **Startup deadlines.** Detecting workloads that never become ready is out of scope. Breach evaluation starts only after a resource has been available at least once, and a startup timeout can be proposed separately.
+- **Startup deadlines.** Detecting workloads that never become ready is out of scope. Breach evaluation starts only after a PodClique has first been scheduled, or a PCSG or PCS has first been available (rule 3a.ii), and a startup timeout can be proposed separately.
 - **Container-level restart policies or retry back-off inside a pod.** Kubernetes already handles these through the kubelet.
 - **Container-targeted PodClique replica rules.** A PodClique replica's terminal state follows its pod's phase (rule 5b); see [Alternatives](#alternatives).
 - **Suspend/resume, queueing and admission semantics.** These belong to the Kueue integration (GREP-704).
@@ -230,10 +230,11 @@ As an operator of a long-running inference service, I want each PCS replica to r
 | **Disruptions fail CA replicas.** An evicted, preempted or node-lost pod is externally deleted and makes its replica `Failed` (rule 5b.iii). With the CA default of no restarts, one eviction can fail a whole batch job. | This is the intended default. Users who expect disruptions set a replica `onFailure` limit, and the user guide recommends one. Not counting pods with the `DisruptionTarget` condition, as Kubernetes Job `podFailurePolicy` can, is a possible later extension. |
 | **Behaviour change for new LR objects.** A new `v1beta1` LR PodClique without `availability` never breaches, so it is never gang-terminated. Today `minAvailable` defaults to `1`, which also sets a breach threshold of one ready pod. Gang scheduling is unchanged: `init.minReplicas` defaults to `1`, as `minAvailable` does today. | This is intended: users declare the gang-scheduling and availability requirements of new objects. Objects converted from `v1alpha1` always have `availability` set (see [Migration from legacy fields](#migration-from-legacy-fields)). |
 | **Completed replicas keep holding capacity during `ttlAfterFinished`.** A completed replica's children are kept for the TTL, including the running pods of healthy siblings in a failed PCS replica. | The PCS-level default is `0s`. The TTL is best effort: a restart of an ancestor deletes the children early. |
-| **Restart storms.** `Always` restarts can loop on a cluster that cannot place the gang. | Breach evaluation starts only after the resource has been available at least once (the existing `WasPCLQEverScheduled`/`WasPCSGEverHealthy` gates), and a restart resets that gate. `GangRestartInProgress` suppresses re-firing until recovery, and `Limit` gives a hard cap. |
+| **Restart storms.** `Always` restarts can loop on a cluster that cannot place the gang. | Breach evaluation starts only after a PodClique's first schedule or a PCSG's or PCS's first availability (rule 3a.ii), so a gang that is never placed is never restarted. A resource-scope restart returns `MinAvailableBreached` to its awaiting state. `GangRestartInProgress` suppresses re-firing until recovery, and `Limit` gives a hard cap. |
 | **Mis-attributing Grove's own deletions as failures.** Restarts, TTL deletion, rolling updates and scale-in all delete pods, and an external deletion now fails a replica. | Grove marks the pods it deletes and excludes them from failure accounting (see [Pod deletion attribution](#pod-deletion-attribution)). |
 | **Status size and write amplification.** Per-replica state for PodCliques with thousands of pods would make status grow with replicas. | Status holds only O(1) aggregates and conditions, and per-replica transitions are reported as events. Restart counts and completion markers live on per-replica carrier objects, written only when needed (see [Per-replica state](#per-replica-state)). |
 | **Finalizers on carrier objects** can block deletion if the operator is unavailable. | The finalizer is removed during resource deletion, during an ancestor restart, and when the TTL deletes the children. Kubernetes Jobs make the same trade-off with `batch.kubernetes.io/job-tracking`. |
+| **Rollback after the `v1beta1` release.** Storage moves to `v1beta1` in the same release that introduces it, so a plain rollback to the previous release fails. | The release ships a downgrade procedure that moves storage back to `v1alpha1` first (Phase 1 step 8). It is tested end to end and documented in the release notes. Rollbacks from later releases to the `v1beta1` release are plain. |
 | **API surface and cognitive load.** The termination spec is deep. | Every field is optional and defaulted. The user guide will lead with one example per mode. |
 
 ## Design Details
@@ -269,7 +270,7 @@ A resource's terminal state is derived from the `MinAvailableBreached` and `MinS
 
 - **3a.** When `availability` is set, `MinAvailableBreached` is `True` while fewer than `availability.minReplicas` replicas are available.
   - **3a.i.** If `MinAvailableBreached` stays `True` for longer than `availability.breachTolerance`, the resource becomes `Failed`.
-  - **3a.ii.** Breach evaluation starts only after the resource has been available at least once.
+  - **3a.ii.** Breach evaluation starts only after the resource's first schedule (PodClique) or first availability (PCSG and PCS). Until then, `MinAvailableBreached` is `Unknown` with reason `AwaitingInitialSchedule` or `AwaitingInitialAvailability`, and a resource-scope restart returns it to that state.
   - **3a.iii.** When `availability` is nil, `MinAvailableBreached` is permanently `False`.
 - **3b.** When `completion` is set, the resource is completion-aware.
   - **3b.i.** Every child resource in every replica of a completion-aware resource is also completion-aware.
@@ -362,6 +363,12 @@ A new `termination` section is added at every level, and a new `init` section on
 - `PodCliqueScalingGroupConfig` in the PCS template, copied into `PodCliqueScalingGroupSpec`: `init` and `termination`
 - `PodCliqueSpec`, used inside `PodCliqueTemplateSpec` and copied into `PodClique`: `init` and `termination`
 
+Removed in `v1beta1`, and kept in `v1alpha1` as deprecated fields (see [Migration from legacy fields](#migration-from-legacy-fields)):
+
+- `minAvailable` on PodCliques and PCSGs, replaced by `init.minReplicas`, `rollingUpdate.minReplicas` and `availability.minReplicas`;
+- `template.terminationDelay` on the PCS, replaced by a per-component `availability.breachTolerance`;
+- the deprecated `topologyConstraint.packDomain`, at every level where it exists, replaced by `topologyConstraint.pack.required`, which is the only way to express the required domain in `v1beta1`.
+
 Update configuration stays where it is today:
 
 - `PodCliqueSetSpec.updateStrategy` is unchanged. It holds the single strategy (`RollingRecreate`, `Coherent` or `OnDelete`) for all components, and its default stays `RollingRecreate`.
@@ -394,7 +401,8 @@ type RollingUpdateConfiguration struct {
 	MinReplicas *int32 `json:"minReplicas,omitempty"`
 	// MaxUnavailable is the maximum number of pods (for a standalone PodClique) or PCSG replicas (for a
 	// PCSG) that may be unavailable at any time during an update. It is an absolute number or a
-	// percentage of the component's spec.replicas; a percentage is rounded down, with a minimum of 1.
+	// percentage of the live component's spec.replicas (the PodClique or PCSG object, which can be
+	// scaled independently of the template); a percentage is rounded down, with a minimum of 1.
 	// Under Coherent it defaults to MinReplicas (today: MinAvailable), and under RollingRecreate to 1.
 	// +optional
 	MaxUnavailable *intstr.IntOrString `json:"maxUnavailable,omitempty"`
@@ -580,7 +588,7 @@ Conditions:
 |---|---|---|---|
 | `Succeeded` (new) | Terminal state `Succeeded` | Terminal state `Failed` | Not terminal |
 | `Completed` (new) | Terminal with the restart limit exhausted | Not terminal, restarting, or held by a completed ancestor | — |
-| `MinAvailableBreached` (existing) | Available replicas below `availability.minReplicas`, evaluated only after first availability | At or above it, or `availability` is nil (permanently False) | Update in progress (as today) |
+| `MinAvailableBreached` (existing) | Available replicas below `availability.minReplicas` | At or above it, or `availability` is nil (permanently False) | Not yet first scheduled (PodClique) or first available (PCSG, PCS), or update in progress (as today) |
 | `MinSucceededAchieved` (new) | Completed `Succeeded` replicas at least `minSucceeded` | Completed `Failed` replicas exceed `spec.replicas − minSucceeded` | Neither yet, or `completion` is nil (permanently Unknown) |
 | `GangRestartInProgress` (new; generalizes `GangTerminationInProgress`) | A gang restart is in flight, until all replicas are recreated | Otherwise | — |
 
@@ -593,6 +601,7 @@ Reasons:
 | `Succeeded` | `Unknown` | `InProgress` |
 | `Completed` | `True` | `RestartLimitExhausted` |
 | `Completed` | `False` | `InProgress`, `Restarting`, `AncestorCompleted` |
+| `MinAvailableBreached` | `Unknown` | `AwaitingInitialSchedule` (PodClique), `AwaitingInitialAvailability` (PCSG, PCS), `UpdateInProgress` |
 
 The condition messages carry the counts, for example "8/10 replicas succeeded (minSucceeded 8)".
 
@@ -661,8 +670,8 @@ Applying the rules to the current controllers exposes several details the rules 
 2. **Checking the ancestors.** A controller reads at most three objects from its informer cache to check rules 3f.iii and 4c.iii: the resource itself (its `Completed` condition and Completed annotation), its PCSG for a member PCLQ, and its PCS. A completed PCS replica is visible below it through the Completed annotation on its PCSGs and standalone PCLQs, and a completed PCSG replica through the annotation on its member PCLQs. No controller needs to write to objects it does not own, except for the annotation on direct children.
 3. **External pod deletion is a replica failure.** Rule 5b.iii makes the PodClique replica `Failed`, and its `onFailure` policy decides whether the pod is recreated and whether a restart is consumed. This covers eviction, preemption and node loss. Grove's own deletions are excluded (see [Pod deletion attribution](#pod-deletion-attribution)). Deleting the pod of a replica that is already terminal or completed does not change its state.
 4. **PodClique replicas follow the pod phase only.** Rule 5b maps pod phases directly to replica states, so `replica.success` and `replica.failure` are rejected on a PodClique. A pod that ends in phase `Failed`, for example after an out-of-memory kill with `restartPolicy: Never`, makes the replica `Failed`.
-5. **A CA child never reduces its LR parent's availability.** A child resource counts as available unless its `MinAvailableBreached` is `True` or it is `Failed`. A `Succeeded` CA child therefore stays available after its pods complete. See [Mixed-mode resources](#mixed-mode-resources).
-6. **`MinAvailableBreached` during updates.** A non-terminal resource may have `MinAvailableBreached=True` for up to `breachTolerance` (rule 3a.i). As today, the condition is `Unknown` while an update is in progress, which suspends the tolerance timer.
+5. **A CA child never reduces its LR parent's availability.** A child resource counts as available unless it is `Failed`, or its `MinAvailableBreached` is `True` or still awaiting its first schedule or availability (clarification 15). `Unknown` because of an update still counts as available. A `Succeeded` CA child therefore stays available after its pods complete. See [Mixed-mode resources](#mixed-mode-resources).
+6. **`MinAvailableBreached` during updates.** A non-terminal resource may have `MinAvailableBreached=True` for up to `breachTolerance` (rule 3a.i). As today, the condition is `Unknown` with reason `UpdateInProgress` while an update is in progress, which suspends the tolerance timer. A resource that has not left its awaiting state (clarification 15) keeps its awaiting reason during an update, so the update does not count as its first availability.
 7. **Rule combination.** Combining operators work at two levels:
    - within a rule, `operator` combines the targets and defaults to `And`;
    - across rules, the policy-level `operator` combines the rules and defaults to `Or`, matching Kubernetes Job `successPolicy`.
@@ -674,6 +683,13 @@ Applying the rules to the current controllers exposes several details the rules 
 11. **A completed resource or replica stops managing what is below it.** Its terminal descendants are held, and its non-terminal descendants keep running, without restarts, until an ancestor restart recreates them or the TTL deletes them. This is what Story 4 needs.
 12. **The update strategy stays on the PCS, and the minimum update unit lives in `rollingUpdate`.** A Coherent update coordinates all components of a PCS replica, so `updateStrategy` remains a single PCS-level setting. `rollingUpdate.minReplicas` exists only where `rollingUpdate` does, on standalone PodCliques and PCSGs, and is only allowed when `updateStrategy.type` is `Coherent`. It is rejected under `RollingRecreate` and `OnDelete`. A PCSG member PodClique has no `rollingUpdate`. When a PCSG replica is rolled, the per-member threshold in the replica's updated and ready checks keeps today's behaviour: it is the member's legacy `minAvailable`. `v1beta1` carries that value as the member's `init.minReplicas`, which conversion sets to `minAvailable` and which defaults the same way for new objects.
 13. **TTL is inherited at defaulting time.** The defaulting webhook materializes the effective `ttlAfterFinished` into every PCSG and PCLQ from its parent, so the stored object shows it.
+14. **The ready threshold falls back to `init.minReplicas`.** A PodClique or PCSG counts as available in its parent's status (PCSG and PCS `availableReplicas`, and the PCSG replica ready check) once it has at least its ready threshold of ready replicas. The threshold is `availability.minReplicas` when `availability` is set, which equals the legacy `minAvailable` for converted objects, so status is unchanged. When `availability` is nil, the threshold is `init.minReplicas`: the resource counts as available once its gang-scheduled minimum is ready. This is the same per-member threshold that clarification 12 uses for the PCSG replica updated and ready checks.
+15. **`MinAvailableBreached` records whether breach evaluation has started.** Rule 3a.ii is tracked in the condition itself, with no extra status field. It replaces today's `WasPCLQEverScheduled` check and `WasPCSGEverHealthy` heuristic, and applies only when `availability` is set, since otherwise the condition is permanently `False`.
+    - A PodClique leaves `AwaitingInitialSchedule` once at least `init.minReplicas` of its pods are scheduled, which is today's gate. A clique that is scheduled but never becomes ready therefore still breaches and fails after `breachTolerance`. The tolerance is measured from that first schedule, while today it runs from about creation, so such a clique fails later by its scheduling wait, never earlier.
+    - A PCSG or PCS leaves `AwaitingInitialAvailability` the first time it has at least `availability.minReplicas` available replicas. Unlike the 5-second grace heuristic in `WasPCSGEverHealthy`, an `Unknown` to `True` transition no longer counts as having been healthy.
+    - A resource scaled to zero before it leaves the awaiting state stays in it rather than reporting `False`.
+    - A resource-scope restart returns the condition to the awaiting state. Recreated children start in it.
+    - On upgrade, the first reconcile carries existing state over: a PodClique with `status.lastScheduled` set, or a PCSG that passes `WasPCSGEverHealthy`, is treated as having left the awaiting state, so running workloads keep their breach evaluation.
 
 ### Defaults
 
@@ -699,7 +715,7 @@ Defaulting materializes explicit values into the stored object, so `kubectl get 
 - On a PCS, `availability.minReplicas` must be `1`.
 - The existing `RollingUpdateConfiguration` rules stay, with `minReplicas` taking the place of `minAvailable`:
   - `rollingUpdate` is rejected on a PodClique template that is a member of a PCSG.
-  - `rollingUpdate.maxUnavailable` must be an integer in `[1, replicas]` or a percentage in `[1%, 100%]`.
+  - `rollingUpdate.maxUnavailable` must be an integer `≥ 1` or a percentage in `[1%, 100%]`. There is no upper bound against `replicas` ([#884](https://github.com/ai-dynamo/grove/pull/884)): the live PodClique or PCSG is scaled independently of the template through `/scale`, and the controllers already cap disruption at the replicas that remain.
   - Under `Coherent`, the resolved `rollingUpdate.maxUnavailable` must be at least `rollingUpdate.minReplicas`. This is today's `maxUnavailable ≥ minAvailable` rule. Because a percentage changes with scaling, the controllers also use `max(resolved maxUnavailable, minReplicas)` at run time.
   - `rollingUpdate.minReplicas` is only allowed when `updateStrategy.type` is `Coherent`. It is rejected under `RollingRecreate` and under `OnDelete`, where all of `rollingUpdate` is rejected, as today.
 - `RestartPolicy.limit` is only allowed with `policy: Limit`, and must be `≥ 0`. `ttlAfterFinished` must be `≥ 0`.
@@ -713,7 +729,7 @@ Defaulting materializes explicit values into the stored object, so `kubectl get 
   - rejects `podSpec.restartPolicy: Always`.
 - **An LR PodClique** rejects `podSpec.restartPolicy` other than `Always`.
 - **Warnings:** a CA PCS whose resolved `resource.restart.onSuccess` is `Always` gets an admission warning that it will never complete. A CA child of an LR parent with `onSuccess: Always` at either scope gets a warning that it re-runs for as long as its parent runs.
-- **Immutable fields:** `init.minReplicas`, `rollingUpdate.minReplicas`, `availability.minReplicas` and `completion` are immutable, as `MinAvailable` is today. The PodGangMap layout, pod dependency names and in-flight Coherent plans are derived from them. The one exception: because `rollingUpdate.minReplicas` is only allowed under `Coherent`, a request that changes `updateStrategy.type` to `Coherent` may add it (otherwise the defaulting webhook fills it in), and a request that changes it away from `Coherent` must remove it.
+- **Immutable fields:** `init.minReplicas`, `rollingUpdate.minReplicas`, `availability.minReplicas` and `completion` are immutable, as `MinAvailable` is today. The PodGangMap layout, pod dependency names and in-flight Coherent plans are derived from them. Adding or removing `availability` is also rejected, because it switches gang termination on or off for the resource. The one exception: because `rollingUpdate.minReplicas` is only allowed under `Coherent`, a request that changes `updateStrategy.type` to `Coherent` may add it (otherwise the defaulting webhook fills it in), and a request that changes it away from `Coherent` must remove it.
 - **Mutable fields:** restart specs, `breachTolerance` and `ttlAfterFinished`.
 - **Scale guard:** `spec.replicas` must be `0` or `≥ availability.minReplicas` (today it is `≥ minAvailable`). The anchor `PodGroup.minReplicas` is clamped to `min(init.minReplicas, replicas)`, as non-base anchors already are.
 
@@ -983,10 +999,10 @@ For `serve`:
 
 ### Interaction with existing features
 
-- **Gang scheduling:** `init.minReplicas` replaces `MinAvailable` in PodGang construction (`podgang/syncflow.go`), the bootstrap Anchor/Tail split (`podgangmap/steadystate.go`) and startup-dependency thresholds (`initcontainer.go`, `GenerateDependencyNamesForBasePodGang`). Every restart rebuilds the affected PodGangMap entries, as gang termination does today. When a CA child of an LR replica completes, Grove lowers its PodGroup's `minReplicas` in the PodGang to `0`, so replacement pods of LR siblings are not held back waiting for pods that will never return.
+- **Gang scheduling:** `init.minReplicas` replaces `MinAvailable` in PodGang construction (`podgang/syncflow.go`), the bootstrap Anchor/Tail split (`podgangmap/steadystate.go`) and startup-dependency thresholds (`initcontainer.go`, `GenerateDependencyNamesForBasePodGang`). It also replaces `MinAvailable` in the Kueue scheduler backend ([#707](https://github.com/ai-dynamo/grove/pull/707)): the partial-gang rejection and the base PodGang PodGroup count (`scheduler/kueue/backend.go`). Every restart rebuilds the affected PodGangMap entries, as gang termination does today. When a CA child of an LR replica completes, Grove lowers its PodGroup's `minReplicas` in the PodGang to `0`, so replacement pods of LR siblings are not held back waiting for pods that will never return.
 - **Startup dependencies:** the init container (`operator/initc`) counts ready pods of each parent PodClique. For a CA parent it instead watches the PodClique's `Succeeded` condition, which needs `get`/`watch` on PodCliques in the init container's RBAC.
-- **Updates:** `rollingUpdate.minReplicas` replaces `MinAvailable` in `computeMVUTemplate`, `CoherentMinAvailableByComponent` and `EffectiveMaxUnavailable`, and a member's `init.minReplicas` (its legacy `minAvailable`) replaces its `MinAvailable` in the PCSG replica updated and ready checks. `EffectiveMaxUnavailable` resolves a percentage `maxUnavailable` against the component's `spec.replicas`; a Coherent update freezes the resolved value in its plan when it starts. Rolling updates skip completed replicas, which pick up the new revision only if they are restarted. The exception is a completed CA child of an LR replica: when an update replaces that replica and the CA child's template changed, Grove recreates the CA child at the new revision, so a warm-up runs again for a new model. This does not count as a restart.
-- **Availability status:** `MinAvailableBreached` computation in the PCLQ and PCSG status reconcilers switches from `MinAvailable` to `availability.minReplicas`, and gains the PCS level.
+- **Updates:** `rollingUpdate.minReplicas` replaces `MinAvailable` in `computeMVUTemplate`, `CoherentMinAvailableByComponent` and `EffectiveMaxUnavailable`, and a member's `init.minReplicas` (its legacy `minAvailable`) replaces its `MinAvailable` in the PCSG replica updated and ready checks. `EffectiveMaxUnavailable` resolves a percentage `maxUnavailable` against the live PodClique's or PCSG's `spec.replicas`; a Coherent update freezes the resolved value in its plan when it starts. Rolling updates skip completed replicas, which pick up the new revision only if they are restarted. The exception is a completed CA child of an LR replica: when an update replaces that replica and the CA child's template changed, Grove recreates the CA child at the new revision, so a warm-up runs again for a new model. This does not count as a restart.
+- **Availability status:** `MinAvailableBreached` computation in the PCLQ and PCSG status reconcilers switches from `MinAvailable` to `availability.minReplicas`, and gains the PCS level. The PCSG and PCS `availableReplicas` counts switch to the ready threshold of clarification 14.
 - **Gang termination:** `gangterminate.go` and the PCSG-replica recycle in `podcliquescalinggroup/components/podclique/sync.go` become the replica-restart executors at PCS and PCSG level. They are driven by a child's `Completed` condition and the restart policies instead of firing unconditionally on a breach.
 - **External pod deletion:** the PCLQ controller already recreates missing pods. This GREP routes that through the replica's `onFailure` policy (clarification 3), so the LR default keeps today's behaviour. Grove's own deletions are excluded by the deletion-reason annotation, and completion markers stop recreation for completed replicas.
 - **TTL:** a requeue at `CompletedAt + ttlAfterFinished` for resources, and at the replica's completion time plus the TTL for replicas, deletes the children. The resource object is kept, so its terminal status stays observable.
@@ -1002,8 +1018,9 @@ Converting `v1alpha1` to `v1beta1` reproduces what the API server stores today. 
 | Standalone PCLQ `minAvailable: N` (default `1`) | `init.minReplicas: N`, `availability: {minReplicas: N}`, and `rollingUpdate.minReplicas: N` when `updateStrategy.type` is `Coherent` |
 | PCSG member PCLQ `minAvailable: N` (default `1`) | `init.minReplicas: N`, `availability: {minReplicas: N}` (members have no `rollingUpdate`) |
 | PCSG `minAvailable: N` (default `1`) | Same as a standalone PCLQ, on the PCSG |
-| `template.terminationDelay: D` (default 4h) | `availability.breachTolerance: D` on every PCLQ and PCSG |
+| `template.terminationDelay: D` (default 4h) | `availability.breachTolerance: D` on every PCLQ and PCSG in the PCS template. A `v1alpha1` PodClique or PCSG object has no `terminationDelay` of its own, so its `breachTolerance` also comes from its owning PCS's `terminationDelay`. Conversion is pure and cannot read the owning PCS, so converting the child leaves `breachTolerance` unset (unless the round-trip annotation holds it). The operator resolves the unset value from the owning PCS template, and the PCS controller writes it into the child's spec. |
 | `rollingUpdate.maxUnavailable: N` (`int32`) | `rollingUpdate.maxUnavailable: N` (integer form of int-or-percentage) |
+| `topologyConstraint.packDomain: X` (PCS template, clique templates and PCSG configs) | `topologyConstraint.pack.required: X`, creating `pack` if needed. The `v1alpha1` schema already forbids setting both. Converting back writes `pack.required`; the round-trip annotation restores the `packDomain` form for `v1alpha1` readers that used it. |
 | `updateStrategy`, `rollingUpdate.progressDeadline` | Unchanged |
 | (implicit gang termination) | `resource.restart.onFailure: {policy: Limit, limit: 0}` on every PCLQ and PCSG (Phase 2) |
 
@@ -1019,13 +1036,13 @@ Converting `v1beta1` to `v1alpha1` is lossy, because `v1alpha1` cannot express, 
 
 Replica-scope restarts keep their LR default `Always` for these objects, which matches today's pod recreation and replica recycling.
 
-`v1alpha1` is removed after a deprecation window, through the GREP-436 CRD upgrader.
+`v1beta1` becomes the storage version in the same release that introduces it. `v1alpha1` is served for two more releases after that, and removed in the third through the GREP-436 CRD upgrader (see [Implementation Plan](#implementation-plan)).
 
 ### Update policy defaults
 
 - **Default policy.** `PodCliqueSetSpec.updateStrategy` is not changed by this GREP. `updateStrategy.type` keeps its `RollingRecreate` default (GREP-393) and its `Coherent` and `OnDelete` (GREP-291) values, in both `v1alpha1` and `v1beta1`.
 - **Minimum update unit.** `rollingUpdate.minReplicas` is only allowed when `updateStrategy.type` is `Coherent`, where it sizes each component's share of the Minimum Viable Unit. It is rejected under `RollingRecreate` and `OnDelete` (see [Validation](#validation)).
-- **Disruption budget.** `rollingUpdate.maxUnavailable` accepts an integer or a percentage of the component's `spec.replicas` in `v1beta1`. Its defaults are unchanged.
+- **Disruption budget.** `rollingUpdate.maxUnavailable` accepts an integer or a percentage of the live component's `spec.replicas` in `v1beta1`. Its defaults are unchanged.
 
 ### Open Questions
 
@@ -1130,6 +1147,8 @@ The GREP is delivered in two phases. Phase 1 changes no behaviour for existing w
 
 #### Phase 1: MinAvailable disaggregation and the `v1beta1` API
 
+Phase 1 ships in a single release. Steps 1–8 and 10 may land as one PR whose commits follow the step order below, provided that each commit builds and passes the unit tests on its own. Keeping the steps as separate commits keeps the mechanical import switch (step 3) apart from the semantic changes, so the PR can be reviewed and bisected step by step. The release is cut once the PR merges.
+
 1. **Accessor layer.** Route every read of `MinAvailable` and `terminationDelay` in the operator through purpose-named helpers for gang scheduling, update unit, availability threshold and breach tolerance. On `v1alpha1` they return today's values, so behaviour is unchanged, and every call site is classified by purpose.
 2. **`grove.io/v1beta1` plumbing.**
    - Add a `v1beta1` package for all `grove.io` kinds (PodCliqueSet, PodClique, PodCliqueScalingGroup, PodGangMap and ClusterTopologyBinding), initially identical to `v1alpha1`, with `v1beta1` as the conversion hub.
@@ -1140,26 +1159,31 @@ The GREP is delivered in two phases. Phase 1 changes no behaviour for existing w
 4. **`v1beta1` schema.**
    - Add `init.minReplicas` and `termination.resource.availability.{minReplicas, breachTolerance}`, and add `minReplicas` to the existing `RollingUpdateConfiguration`.
    - Change `rollingUpdate.maxUnavailable` from `int32` to int-or-percentage.
-   - Remove `minAvailable` and `terminationDelay` from `v1beta1`. They stay in `v1alpha1`, marked deprecated.
+   - Remove `minAvailable`, `terminationDelay` and the deprecated `topologyConstraint.packDomain` from `v1beta1`. They stay in `v1alpha1`, marked deprecated.
    - Keep `PodCliqueSetSpec.updateStrategy` and `rollingUpdate.progressDeadline` unchanged.
 5. **Conversion.** Hand-written `v1alpha1` ↔ `v1beta1` conversion that follows [Migration from legacy fields](#migration-from-legacy-fields). Values that `v1alpha1` cannot express are kept in a round-trip annotation, so `v1alpha1` clients do not drop them.
 6. **Operator semantics.**
    - Re-implement the accessors on the new fields.
    - Port defaulting and validation, including the scale guard and immutability rules, to the new fields.
    - Use each component's own `breachTolerance` in gang termination.
+   - Track the start of breach evaluation in `MinAvailableBreached` with the awaiting reasons, including the upgrade carry-over (clarification 15).
    - Replace the `MinAvail` printer columns.
-7. **Docs and first release.** API reference, user guide and samples on `v1beta1`, a migration guide and release notes. The `v1beta1` schema of Phase 1 must be final before this release is cut.
-8. **Storage migration (next release).** Make `v1beta1` the storage version, rewrite stored objects with a storage migrator, and set `status.storedVersions` to `["v1beta1"]`. Storage moves one release after `v1beta1` is introduced, so that rolling back is always safe.
-9. **Retiring `v1alpha1` (later releases).** Stop serving `v1alpha1`, then remove it through the GREP-436 CRD upgrader, after a deprecation window agreed with consumers such as Dynamo.
+7. **Docs and release.** API reference, user guide and samples on `v1beta1`, a migration guide and release notes, including the downgrade procedure of step 8. The `v1beta1` schema of Phase 1 must be final before this release is cut.
+8. **Storage migration (same release).** `v1beta1` becomes the storage version in the release that introduces it, so there is no extra release before it is the stored form.
+   - **Staged switch.** The release's CRD manifests keep storage at `v1alpha1`, so applying them is harmless to the previous operator, which still reads and writes `v1alpha1` during the rollout. Once the new operator serves `/convert` and the CRD `caBundle` is injected, it switches the CRDs to `v1beta1` storage itself. A storage migrator then rewrites every stored object and sets `status.storedVersions` to `["v1beta1"]`. This way no write needs conversion before something serves it.
+   - **Sticky storage.** Nothing reverts the storage version within the release. The `crdInstaller` and the chart keep the live value, and the operator switches it back if a manual apply reverts it.
+   - **Downgrade procedure.** Once `storedVersions` contains `v1beta1`, the API server rejects the previous release's `v1alpha1`-only CRDs, and that operator does not serve `/convert`, so a plain rollback fails. The release therefore ships a downgrade command, run while it is still installed. The command moves storage back to `v1alpha1`, rewrites every object (values `v1alpha1` cannot express stay in the round-trip annotation) and sets `storedVersions` to `["v1alpha1"]`. After that, the previous release can be installed. Rolling back from any later release to this one is a plain rollback.
+9. **Retiring `v1alpha1` (later releases).** `v1alpha1` stays served, and deprecated, for the two releases that follow the storage migration. The third release stops serving it and removes it through the GREP-436 CRD upgrader. The `deprecationWarning` and the release notes name that release from the first release onward, so consumers such as Dynamo can plan for it.
 10. **Tests.**
     - Round-trip fuzz tests for every kind.
     - Conversion table tests.
     - Envtest coverage of reads, writes and `/scale` at both versions.
-    - Upgrade and rollback e2e tests that assert no pod is recreated.
+    - Upgrade e2e tests that assert no pod is recreated, run while clients keep writing `v1alpha1` objects, and checking that storage switches only after `/convert` is serving.
+    - Downgrade e2e tests that run the downgrade procedure, install the previous release, and upgrade again without losing `v1beta1`-only values.
     - The equivalence suites run once with `v1alpha1` manifests and once with `v1beta1` manifests.
     - Story 1 (`init.minReplicas: 8`, `availability.minReplicas: 6`).
 
-**Exit criteria:** every existing `v1alpha1` workload behaves exactly as before: gang scheduling, gang termination, rolling updates and the scale guard, with no pod recreated by the upgrade. New behaviour appears only through fields that `v1alpha1` cannot express.
+**Exit criteria:** every existing `v1alpha1` workload behaves exactly as before: gang scheduling, gang termination, rolling updates and the scale guard, with no pod recreated by the upgrade. The one intended difference is that breach tolerance is measured from a PodClique's first schedule (clarification 15). New behaviour appears only through fields that `v1alpha1` cannot express.
 
 #### Phase 2: Terminal states and restart policies
 
