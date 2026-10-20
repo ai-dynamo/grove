@@ -21,9 +21,10 @@ import (
 	"os"
 
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
-	operatorcrds "github.com/ai-dynamo/grove/operator/api/core/v1alpha1/crds"
+	operatorcrds "github.com/ai-dynamo/grove/operator/api/core/crds"
 	"github.com/ai-dynamo/grove/operator/internal/crdinstaller"
 	grovelogger "github.com/ai-dynamo/grove/operator/internal/logger"
+	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
 	schedulercrds "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1/crds"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -58,8 +59,14 @@ func main() {
 		os.Exit(1)
 	}
 
-	logger.Info("Installing Grove CRDs")
-	if err = crdinstaller.InstallCRDs(ctx, cl, logger, allCRDs()); err != nil {
+	namespace, err := k8sutils.OperatorNamespace()
+	if err != nil {
+		logger.Error(err, "failed to read the operator namespace")
+		os.Exit(1)
+	}
+
+	logger.Info("Installing Grove CRDs", "conversionServiceNamespace", namespace)
+	if err = crdinstaller.InstallCRDs(ctx, cl, logger, allCRDs(), namespace); err != nil {
 		logger.Error(err, "failed to install CRDs")
 		os.Exit(1)
 	}

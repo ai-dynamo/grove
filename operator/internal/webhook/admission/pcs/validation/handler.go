@@ -23,6 +23,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
+	"github.com/ai-dynamo/grove/operator/internal/webhook/admission/v1alpha1bridge"
 
 	"github.com/go-logr/logr"
 	admissionv1 "k8s.io/api/admission/v1"
@@ -147,11 +148,7 @@ func (h *Handler) validatePodCliqueSetWithBackend(ctx context.Context, pcs *v1al
 
 // castToPodCliqueSet attempts to cast a runtime.Object to a PodCliqueSet.
 func castToPodCliqueSet(obj runtime.Object) (*v1alpha1.PodCliqueSet, error) {
-	pcs, ok := obj.(*v1alpha1.PodCliqueSet)
-	if !ok {
-		return nil, fmt.Errorf("expected an PodCliqueSet object but got %T", obj)
-	}
-	return pcs, nil
+	return v1alpha1bridge.PodCliqueSet(obj)
 }
 
 // logValidatorFunctionInvocation logs details about the validation request including user and operation information.

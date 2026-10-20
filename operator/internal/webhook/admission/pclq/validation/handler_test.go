@@ -21,6 +21,7 @@ import (
 
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler/kueue"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
@@ -52,6 +53,22 @@ func newPodClique(schedulerName string, replicas int32) *grovecorev1alpha1.PodCl
 		},
 		ObjectMeta: metav1.ObjectMeta{Namespace: testNamespace, Name: testPCLQName},
 		Spec: grovecorev1alpha1.PodCliqueSpec{
+			Replicas: replicas,
+			PodSpec:  corev1.PodSpec{SchedulerName: schedulerName},
+		},
+	}
+}
+
+// newAdmittedPodClique returns a PodClique as the API server sends it to the webhook. The webhook matches
+// every served version with matchPolicy Equivalent, so the object always arrives as v1beta1.
+func newAdmittedPodClique(schedulerName string, replicas int32) *grovecorev1beta1.PodClique {
+	return &grovecorev1beta1.PodClique{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: grovecorev1beta1.SchemeGroupVersion.String(),
+			Kind:       "PodClique",
+		},
+		ObjectMeta: metav1.ObjectMeta{Namespace: testNamespace, Name: testPCLQName},
+		Spec: grovecorev1beta1.PodCliqueSpec{
 			Replicas: replicas,
 			PodSpec:  corev1.PodSpec{SchedulerName: schedulerName},
 		},
@@ -138,8 +155,8 @@ func TestHandle_PodCliqueResource(t *testing.T) {
 					Operation: admissionv1.Update,
 					Namespace: testNamespace,
 					Name:      testPCLQName,
-					OldObject: rawOf(t, newPodClique(tc.schedulerName, tc.oldReplicas)),
-					Object:    rawOf(t, newPodClique(tc.schedulerName, tc.newReplicas)),
+					OldObject: rawOf(t, newAdmittedPodClique(tc.schedulerName, tc.oldReplicas)),
+					Object:    rawOf(t, newAdmittedPodClique(tc.schedulerName, tc.newReplicas)),
 				},
 			})
 			assert.Equal(t, tc.wantAllowed, resp.Allowed)
@@ -211,8 +228,8 @@ func TestHandle_SchedulerNameSwitchDoesNotBypass(t *testing.T) {
 			Operation: admissionv1.Update,
 			Namespace: testNamespace,
 			Name:      testPCLQName,
-			OldObject: rawOf(t, newPodClique(string(configv1alpha1.SchedulerNameKueue), 4)),
-			Object:    rawOf(t, newPodClique(string(configv1alpha1.SchedulerNameKube), 7)),
+			OldObject: rawOf(t, newAdmittedPodClique(string(configv1alpha1.SchedulerNameKueue), 4)),
+			Object:    rawOf(t, newAdmittedPodClique(string(configv1alpha1.SchedulerNameKube), 7)),
 		},
 	})
 	assert.False(t, resp.Allowed)
@@ -274,7 +291,7 @@ func TestHandle_FallsThroughToScaleguard(t *testing.T) {
 			Namespace: testNamespace,
 			Name:      testPCLQName,
 			OldObject: rawOf(t, pclq),
-			Object:    rawOf(t, newPodClique(string(configv1alpha1.SchedulerNameKube), 7)),
+			Object:    rawOf(t, newAdmittedPodClique(string(configv1alpha1.SchedulerNameKube), 7)),
 		},
 	})
 	assert.False(t, resp.Allowed, "scaleguard must deny a replica change while a coherent update is in progress")

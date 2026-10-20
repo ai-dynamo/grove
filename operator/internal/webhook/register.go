@@ -29,6 +29,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/webhook/admission/pcs/defaulting"
 	pcsvalidation "github.com/ai-dynamo/grove/operator/internal/webhook/admission/pcs/validation"
 	pcsgvalidation "github.com/ai-dynamo/grove/operator/internal/webhook/admission/pcsg/validation"
+	"github.com/ai-dynamo/grove/operator/internal/webhook/conversion"
 
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 )
@@ -37,6 +38,10 @@ import (
 func Register(mgr manager.Manager, operatorCfg *configv1alpha1.OperatorConfiguration, schedRegistry scheduler.Registry) error {
 	if operatorCfg == nil {
 		return fmt.Errorf("operator configuration must not be nil")
+	}
+	slog.Info("Registering webhook with manager", "handler", conversion.Name)
+	if err := conversion.Register(mgr); err != nil {
+		return fmt.Errorf("failed adding %s webhook handler: %v", conversion.Name, err)
 	}
 	defaultingWebhook := defaulting.NewHandler(mgr)
 	slog.Info("Registering webhook with manager", "handler", defaulting.Name)

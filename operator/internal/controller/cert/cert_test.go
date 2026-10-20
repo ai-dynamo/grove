@@ -39,29 +39,41 @@ func TestGetWebhooks(t *testing.T) {
 	t.Run("authorizer disabled", func(t *testing.T) {
 		webhooks := getWebhooks(false)
 
-		// Expect 5 webhooks: podcliqueset-defaulting, podcliqueset-validating, clustertopology-validating,
-		// podclique-validating, podcliquescalinggroup-validating.
-		require.Len(t, webhooks, 5)
+		// Expect 5 admission webhooks: podcliqueset-defaulting, podcliqueset-validating, clustertopology-validating,
+		// podclique-validating, podcliquescalinggroup-validating, plus the 3 converted CRDs.
+		require.Len(t, webhooks, 8)
 		assert.Equal(t, cert.Mutating, webhooks[0].Type)   // podcliqueset-defaulting-webhook
 		assert.Equal(t, cert.Validating, webhooks[1].Type) // podcliqueset-validating-webhook
 		assert.Equal(t, cert.Validating, webhooks[2].Type) // clustertopology-validating-webhook
 		assert.Equal(t, cert.Validating, webhooks[3].Type) // podclique-validating-webhook
 		assert.Equal(t, cert.Validating, webhooks[4].Type) // podcliquescalinggroup-validating-webhook
+		assertConversionCRDs(t, webhooks[5:])
 	})
 
 	// Test with authorizer enabled
 	t.Run("authorizer enabled", func(t *testing.T) {
 		webhooks := getWebhooks(true)
 
-		// Expect 6 webhooks: the 5 base webhooks plus the authorizer-webhook
-		require.Len(t, webhooks, 6)
+		// Expect 9 webhooks: the 5 base webhooks, the authorizer-webhook and the 3 converted CRDs
+		require.Len(t, webhooks, 9)
 		assert.Equal(t, cert.Mutating, webhooks[0].Type)   // podcliqueset-defaulting-webhook
 		assert.Equal(t, cert.Validating, webhooks[1].Type) // podcliqueset-validating-webhook
 		assert.Equal(t, cert.Validating, webhooks[2].Type) // clustertopology-validating-webhook
 		assert.Equal(t, cert.Validating, webhooks[3].Type) // podclique-validating-webhook
 		assert.Equal(t, cert.Validating, webhooks[4].Type) // podcliquescalinggroup-validating-webhook
 		assert.Equal(t, cert.Validating, webhooks[5].Type) // authorizer-webhook
+		assertConversionCRDs(t, webhooks[6:])
 	})
+}
+
+// assertConversionCRDs asserts that webhooks injects the CA into the spec.conversion of each converted CRD.
+func assertConversionCRDs(t *testing.T, webhooks []cert.WebhookInfo) {
+	t.Helper()
+	assert.Equal(t, []cert.WebhookInfo{
+		{Type: cert.CRDConversion, Name: "podcliquesets.grove.io"},
+		{Type: cert.CRDConversion, Name: "podcliques.grove.io"},
+		{Type: cert.CRDConversion, Name: "podcliquescalinggroups.grove.io"},
+	}, webhooks)
 }
 
 // TestGetOperatorNamespace tests reading the operator namespace from a file.
