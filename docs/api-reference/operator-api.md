@@ -476,7 +476,6 @@ _Appears in:_
 | `updatedReplicas` _integer_ | UpdatedReplicas is the number of replicas that have been updated to the desired revision of the PodCliqueSet. | 0 |  |
 | `availableReplicas` _integer_ | AvailableReplicas is the number of PodCliqueSet replicas that are available.<br />A PodCliqueSet replica is considered available when all standalone PodCliques within that replica<br />have MinAvailableBreached condition = False AND all PodCliqueScalingGroups (PCSG) within that replica<br />have MinAvailableBreached condition = False. | 0 |  |
 | `hpaPodSelector` _string_ | Selector is the label selector that determines which pods are part of the PodGang.<br />PodGang is a unit of scale and this selector is used by HPA to scale the PodGang based on metrics captured for<br />the pods that match this selector. |  |  |
-| `podGangStatuses` _[PodGangStatus](#podgangstatus) array_ | PodGangStatuses captures the status for all the PodGang's that are part of the PodCliqueSet. |  |  |
 | `currentGenerationHash` _string_ | CurrentGenerationHash is a hash value generated out of a collection of fields in a PodCliqueSet.<br />Since only a subset of fields is taken into account when generating the hash, not every change in the PodCliqueSetSpec will<br />be accounted for when generating this hash value. A field in PodCliqueSetSpec is included if a change to it triggers<br />a rolling recreate of PodCliques and/or PodCliqueScalingGroups.<br />Only if this value is not nil and the newly computed hash value is different from the persisted CurrentGenerationHash value<br />then an update needs to be triggered. |  |  |
 | `updateProgress` _[PodCliqueSetUpdateProgress](#podcliquesetupdateprogress)_ | UpdateProgress represents the progress of an update. |  |  |
 
@@ -720,45 +719,6 @@ _Appears in:_
 | --- | --- | --- | --- |
 | `podCliqueSetReplicaIndex` _integer_ | PodCliqueSetReplicaIndex is the index of the PodCliqueSet replica this map belongs to. |  |  |
 | `entries` _[PodGangEntry](#podgangentry) array_ | Entries is the ordered list of desired PodGang entries for this PodCliqueSet replica. An Anchor<br />entry materializes into one PodGang. A Tail or ScaleOut entry materializes into one PodGang per<br />PodCliqueScalingGroup replica index it carries. |  |  |
-
-
-#### PodGangPhase
-
-_Underlying type:_ _string_
-
-PodGangPhase represents the phase of a PodGang.
-
-_Validation:_
-- Enum: [Pending Starting Running Failed Succeeded]
-
-_Appears in:_
-- [PodGangStatus](#podgangstatus)
-
-| Field | Description |
-| --- | --- |
-| `Pending` | PodGangPending indicates that the pods in a PodGang have not yet been taken up for scheduling.<br /> |
-| `Starting` | PodGangStarting indicates that the pods are bound to nodes by the scheduler and are starting.<br /> |
-| `Running` | PodGangRunning indicates that the all the pods in a PodGang are running.<br /> |
-| `Failed` | PodGangFailed indicates that one or more pods in a PodGang have failed.<br />This is a terminal state and is typically used for batch jobs.<br /> |
-| `Succeeded` | PodGangSucceeded indicates that all the pods in a PodGang have succeeded.<br />This is a terminal state and is typically used for batch jobs.<br /> |
-
-
-#### PodGangStatus
-
-
-
-PodGangStatus defines the status of a PodGang.
-
-
-
-_Appears in:_
-- [PodCliqueSetStatus](#podcliquesetstatus)
-
-| Field | Description | Default | Validation |
-| --- | --- | --- | --- |
-| `name` _string_ | Name is the name of the PodGang. |  |  |
-| `phase` _[PodGangPhase](#podgangphase)_ | Phase is the current phase of the PodGang. |  | Enum: [Pending Starting Running Failed Succeeded] <br /> |
-| `conditions` _[Condition](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#condition-v1-meta) array_ | Conditions represents the latest available observations of the PodGang by its controller. |  |  |
 
 
 #### ResourceClaimTemplateConfig

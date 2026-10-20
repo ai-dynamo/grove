@@ -97,8 +97,6 @@ type PodCliqueSetStatus struct {
 	// PodGang is a unit of scale and this selector is used by HPA to scale the PodGang based on metrics captured for
 	// the pods that match this selector.
 	Selector *string `json:"hpaPodSelector,omitempty"`
-	// PodGangStatuses captures the status for all the PodGang's that are part of the PodCliqueSet.
-	PodGangStatutes []PodGangStatus `json:"podGangStatuses,omitempty"`
 	// CurrentGenerationHash is a hash value generated out of a collection of fields in a PodCliqueSet.
 	// Since only a subset of fields is taken into account when generating the hash, not every change in the PodCliqueSetSpec will
 	// be accounted for when generating this hash value. A field in PodCliqueSetSpec is included if a change to it triggers
@@ -601,35 +599,6 @@ const (
 	CliqueStartupTypeInOrder CliqueStartupType = "CliqueStartupTypeInOrder"
 	// CliqueStartupTypeExplicit defines that the cliques should be started after the cliques defined in PodClique.StartsAfter have started.
 	CliqueStartupTypeExplicit CliqueStartupType = "CliqueStartupTypeExplicit"
-)
-
-// PodGangStatus defines the status of a PodGang.
-type PodGangStatus struct {
-	// Name is the name of the PodGang.
-	Name string `json:"name"`
-	// Phase is the current phase of the PodGang.
-	Phase PodGangPhase `json:"phase"`
-	// Conditions represents the latest available observations of the PodGang by its controller.
-	Conditions []metav1.Condition `json:"conditions,omitempty"`
-}
-
-// PodGangPhase represents the phase of a PodGang.
-// +kubebuilder:validation:Enum={Pending,Starting,Running,Failed,Succeeded}
-type PodGangPhase string
-
-const (
-	// PodGangPending indicates that the pods in a PodGang have not yet been taken up for scheduling.
-	PodGangPending PodGangPhase = "Pending"
-	// PodGangStarting indicates that the pods are bound to nodes by the scheduler and are starting.
-	PodGangStarting PodGangPhase = "Starting"
-	// PodGangRunning indicates that the all the pods in a PodGang are running.
-	PodGangRunning PodGangPhase = "Running"
-	// PodGangFailed indicates that one or more pods in a PodGang have failed.
-	// This is a terminal state and is typically used for batch jobs.
-	PodGangFailed PodGangPhase = "Failed"
-	// PodGangSucceeded indicates that all the pods in a PodGang have succeeded.
-	// This is a terminal state and is typically used for batch jobs.
-	PodGangSucceeded PodGangPhase = "Succeeded"
 )
 
 // LastOperationType is a string alias for the type of the last operation.
