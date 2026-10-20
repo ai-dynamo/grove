@@ -51,7 +51,6 @@ type schedulerBackend struct {
 
 var (
 	_ scheduler.Backend                 = (*schedulerBackend)(nil)
-	_ scheduler.PodGangResourceBackend  = (*schedulerBackend)(nil)
 	_ scheduler.PodGangReadinessBackend = (*schedulerBackend)(nil)
 )
 
@@ -133,18 +132,6 @@ func verifyWorkloadAPIsServed(directClient client.Client) error {
 		return fmt.Errorf("cannot access %s CompositePodGroup API: %w", schedulingv1alpha3.SchemeGroupVersion.String(), err)
 	}
 	return nil
-}
-
-// PodGangResources enables owner watches only when the WAS backend is active.
-func (b *schedulerBackend) PodGangResources() []client.Object {
-	if !b.gangSchedulingEnabled {
-		return nil
-	}
-	return []client.Object{
-		&schedulingv1beta1.Workload{},
-		&schedulingv1alpha3.CompositePodGroup{},
-		&schedulingv1beta1.PodGroup{},
-	}
 }
 
 // SyncPodGang synchronizes scheduler resources for a PodGang. Without gang

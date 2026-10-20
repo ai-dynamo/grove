@@ -128,18 +128,8 @@ func TestBackend_Init(t *testing.T) {
 				Name: configv1alpha1.SchedulerNameKube, Config: tt.config,
 			})
 			err := b.Init(directClient)
-			resources := b.(interface{ PodGangResources() []client.Object }).PodGangResources()
 			require.ErrorIs(t, err, tt.cause)
-			var kinds, expectedKinds []string
-			for _, resource := range resources {
-				gvk, err := directClient.GroupVersionKindFor(resource)
-				require.NoError(t, err)
-				kinds = append(kinds, gvk.Kind)
-			}
-			if tt.cause == nil && len(tt.wantCalls) > 0 {
-				expectedKinds = []string{"Workload", "CompositePodGroup", "PodGroup"}
-			}
-			assert.ElementsMatch(t, expectedKinds, kinds)
+			assert.Equal(t, tt.cause == nil && len(tt.wantCalls) > 0, b.(*schedulerBackend).gangSchedulingEnabled)
 			assert.Equal(t, tt.wantCalls, calls)
 		})
 	}

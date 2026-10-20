@@ -171,7 +171,7 @@ func Test_WAS3_PreferredTopologyIgnored(t *testing.T) {
 		}), "expected a preferred-topology warning on PodGang %s", gang.Name)
 }
 
-func Test_WAS4_ScalingAndWorkloadRecovery(t *testing.T) {
+func Test_WAS4_Scaling(t *testing.T) {
 	tc, cleanup := testctx.PrepareTest(t.Context(), t, 3,
 		testctx.WithWorkload(&testctx.WorkloadConfig{
 			Name: "was-scaling", YAMLPath: "../yaml/was-scaling.yaml", Namespace: "default", ExpectedPods: 3,
@@ -206,21 +206,6 @@ func Test_WAS4_ScalingAndWorkloadRecovery(t *testing.T) {
 	gangs, err := podgang.NewVerifier(tc.Client, Logger).List(tc.Ctx, client.ObjectKey{Namespace: tc.Namespace, Name: tc.Workload.Name})
 	require.NoError(t, err)
 	require.Len(t, gangs, 2)
-	for i := range gangs {
-		workload := &schedulingv1beta1.Workload{}
-		require.NoError(t, tc.Client.Get(tc.Ctx, client.ObjectKeyFromObject(&gangs[i]), workload))
-		oldUID := workload.UID
-		require.NoError(t, tc.Client.Delete(tc.Ctx, workload))
-		require.Eventually(t, func() bool {
-			return tc.Client.Get(tc.Ctx, client.ObjectKeyFromObject(&gangs[i]), workload) == nil && workload.UID != oldUID
-		}, tc.Timeout, tc.Interval, "owner watch must reconstruct the deleted Workload")
-	}
-	recovered, err := tc.ListPods()
-	require.NoError(t, err)
-	require.Len(t, recovered.Items, len(scaledUIDs))
-	for _, pod := range recovered.Items {
-		require.Equal(t, scaledUIDs[pod.Name], pod.UID, "Workload recovery must preserve member Pods")
-	}
 
 	require.NoError(t, tc.ScalePCSG("was-scaling-0-workers", 1))
 	require.NoError(t, tc.WaitForPods(3))

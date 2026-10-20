@@ -101,14 +101,6 @@ type Finalizer interface {
 	IsPodFinalized(pod *corev1.Pod) bool
 }
 
-// PodGangResourceBackend optionally exposes the scheduling resources controlled
-// by PodGangs so the PodGang controller can reconcile changes and deletions.
-type PodGangResourceBackend interface {
-	// PodGangResources returns registered object types after Init has completed.
-	// Disabled capabilities must not return types whose APIs may be unavailable.
-	PodGangResources() []client.Object
-}
-
 // PodGangReadinessBackend delays Grove gate removal until backend-specific
 // scheduling prerequisites match the current PodGang intent.
 type PodGangReadinessBackend interface {
