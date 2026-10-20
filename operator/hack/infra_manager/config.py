@@ -135,28 +135,18 @@ class KueueConfig(BaseModel):
     version: str = Field(default=dep_value("kueue", "version", default="0.0.0"), pattern=r"^[\d.]+(-[\w.]+)?$")
 
 
-class WASConfig(BaseModel):
-    """Opt-in native Workload API scheduling on Kubernetes 1.37 or newer."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    enabled: bool = False
-
-
 class SchedulerConfig(BaseModel):
     """Extensible scheduler backend group.
 
     Attributes:
         kai: Kai Scheduler settings.
         kueue: Kueue settings.
-        was: Native Workload API scheduling settings.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     kai: KaiConfig = KaiConfig()
     kueue: KueueConfig = KueueConfig()
-    was: WASConfig = WASConfig()
 
 
 class GroveConfig(BaseModel):
@@ -238,7 +228,6 @@ class SetupConfig(BaseSettings):
       E2E_SCHEDULER__KAI__VERSION=v1.2.3
       E2E_SCHEDULER__KUEUE__ENABLED=true
       E2E_SCHEDULER__KUEUE__VERSION=0.17.8
-      E2E_SCHEDULER__WAS__ENABLED=true
       E2E_KWOK__NODES=500
       E2E_KWOK__BATCH_SIZE=100
       E2E_KWOK__NODE_CPU=64
@@ -251,7 +240,7 @@ class SetupConfig(BaseSettings):
 
     Attributes:
         cluster: k3d cluster creation, registry/prepull, and sizing config.
-        scheduler: Scheduler backend group (kai, kueue, was).
+        scheduler: Scheduler backend group (kai, kueue).
         grove: Grove operator behavior and deployment config.
         kwok: KWOK simulated nodes config.
         pyroscope: Pyroscope profiler options.

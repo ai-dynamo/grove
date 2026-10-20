@@ -84,17 +84,16 @@ def _check_prerequisites(install_kai: bool, install_kueue: bool, install_grove: 
             console.print("[green]\u2705 Charts prepared[/green]")
 
 
-def _run_cluster_creation(cfg: ClusterConfig, was_enabled: bool = False) -> None:
+def _run_cluster_creation(cfg: ClusterConfig) -> None:
     """Create k3d cluster and wait for nodes.
 
     Args:
         cfg: Cluster configuration including retry count.
-        was_enabled: Enable native Workload API scheduling in the control plane.
 
     Raises:
         RetryError: If the cluster cannot be created after all retries.
     """
-    create_cluster(cfg, was_enabled)
+    create_cluster(cfg)
     wait_for_nodes(cfg)
 
 
@@ -129,20 +128,17 @@ def _run_parallel(tasks: dict[str, Callable[[], None]]) -> None:
             console.print(outputs[name], end="")
 
 
-def _run_prepull(registry_port: int, prepull_kueue: bool, prepull_kai: bool = True) -> None:
+def _run_prepull(registry_port: int, prepull_kueue: bool) -> None:
     """Pre-pull images to local registry in a single batch.
 
     Args:
         registry_port: Port for the local container registry.
         prepull_kueue: Whether to include Kueue's controller image in the batch.
-        prepull_kai: Whether to include Kai and its cert-manager dependency.
     """
-    groups: list[tuple[list[str], str]] = []
-    if prepull_kai:
-        groups.extend([
-            (DEPENDENCIES["kai_scheduler"]["images"], DEPENDENCIES["kai_scheduler"]["version"]),
-            (DEPENDENCIES["cert_manager"]["images"], DEPENDENCIES["cert_manager"]["version"]),
-        ])
+    groups: list[tuple[list[str], str]] = [
+        (DEPENDENCIES["kai_scheduler"]["images"], DEPENDENCIES["kai_scheduler"]["version"]),
+        (DEPENDENCIES["cert_manager"]["images"], DEPENDENCIES["cert_manager"]["version"]),
+    ]
     if prepull_kueue:
         groups.append((DEPENDENCIES["kueue"]["images"], f"v{DEPENDENCIES['kueue']['version']}"))
     busybox_images = dep_value("test_images", "busybox")
@@ -189,6 +185,21 @@ def _run_kueue_post_install(operator_dir: Path) -> None:
         raise RuntimeError("Failed to create Kueue queues after retries") from err
 
 
+def _run_kubeconfig_merge(cluster_name: str) -> None:
+    """Merge k3d kubeconfig into the default kubeconfig file.
+
+    Args:
+        cluster_name: Name of the k3d cluster to merge kubeconfig for.
+    """
+    console.print(Panel.fit("Configuring kubeconfig", style="bold blue"))
+    default_kubeconfig_dir = Path.home() / ".kube"
+    default_kubeconfig_dir.mkdir(parents=True, exist_ok=True)
+    default_kubeconfig_path = default_kubeconfig_dir / "config"
+    sh.k3d("kubeconfig", "merge", cluster_name, "-o", str(default_kubeconfig_path))
+    default_kubeconfig_path.chmod(0o600)
+    console.print(f"[green]  \u2713 Merged to {default_kubeconfig_path}[/green]")
+
+
 def run_setup(cfg: SetupConfig) -> None:
     """Run the unified setup workflow driven by a SetupConfig.
 
@@ -218,25 +229,21 @@ def run_setup(cfg: SetupConfig) -> None:
     # Phase 1: Prerequisites + cluster creation
     _check_prerequisites(cfg.scheduler.kai.enabled, cfg.scheduler.kueue.enabled, cfg.grove.enabled, cfg.grove.mode, operator_dir)
     if cfg.cluster.create:
-        _run_cluster_creation(cfg.cluster, cfg.scheduler.was.enabled)
+        _run_cluster_creation(cfg.cluster)
 
     # Phase 2: All opted-in components in parallel
     parallel_tasks: dict[str, Callable[[], None]] = {}
     if cfg.cluster.create:
         parallel_tasks["topology"] = apply_topology_labels
     if do_prepull:
-        parallel_tasks["prepull"] = lambda: _run_prepull(
-            cfg.cluster.registry_port, cfg.scheduler.kueue.enabled, cfg.scheduler.kai.enabled
-        )
+        parallel_tasks["prepull"] = lambda: _run_prepull(cfg.cluster.registry_port, cfg.scheduler.kueue.enabled)
     if cfg.scheduler.kai.enabled:
         parallel_tasks["kai"] = lambda: install_kai_scheduler(cfg.scheduler.kai)
     if cfg.scheduler.kueue.enabled:
         kueue_values_file = SCRIPT_DIR / "infra_manager" / "kueue-values.yaml"
         parallel_tasks["kueue"] = lambda: install_kueue(cfg.scheduler.kueue, kueue_values_file)
     if cfg.grove.enabled:
-        parallel_tasks["grove"] = lambda: deploy_grove_operator(
-            cfg.grove, cfg.cluster, operator_dir, cfg.scheduler.kueue.enabled, cfg.scheduler.was.enabled
-        )
+        parallel_tasks["grove"] = lambda: deploy_grove_operator(cfg.grove, cfg.cluster, operator_dir, cfg.scheduler.kueue.enabled)
     if cfg.pyroscope.enabled:
         values_file = SCRIPT_DIR / "infra_manager" / "pyroscope-values.yaml"
         pyroscope_version = dep_value("pyroscope", "version", default="")
@@ -258,3 +265,5 @@ def run_setup(cfg: SetupConfig) -> None:
         _run_kueue_post_install(operator_dir)
     if use_kwok:
         create_nodes(cfg.kwok)
+    if cfg.cluster.create:
+        _run_kubeconfig_merge(cfg.cluster.name)

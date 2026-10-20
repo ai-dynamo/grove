@@ -23,7 +23,6 @@ OPERATOR_NAME        := "grove-operator"
 INITC_NAME           := "grove-initc"
 INSTALL_CRDS_NAME    := "grove-install-crds"
 K3S_IMAGE       ?= rancher/k3s:v1.37.0-k3s1
-WAS_ENVTEST_K8S_VERSION ?= 1.37.0
 E2E_REGISTRY_PORT ?= 5001
 E2E_CREATE_FLAGS  ?=
 E2E_GO_TEST_FLAGS ?=
@@ -93,20 +92,6 @@ format: $(GOIMPORTS_REVISER)
 .PHONY: test-unit
 test-unit: $(SETUP_ENVTEST)
 	@KUBEBUILDER_ASSETS="$$($(SETUP_ENVTEST) use -p path)" go test -race ./...
-
-.PHONY: test-infra
-test-infra: $(UV)
-	@PYTHONPATH=$(MODULE_HACK_DIR) $(UV) run --locked --group test python -m pytest hack/infra_manager/tests
-
-# Opt in to the WAS API-server tests independently of the ordinary envtest baseline.
-.PHONY: test-unit-was
-test-unit-was: $(SETUP_ENVTEST)
-	@set -eu; \
-		assets="$$($(SETUP_ENVTEST) use -p path $(WAS_ENVTEST_K8S_VERSION))"; \
-		test -n "$$assets"; \
-		GROVE_WAS_ENVTEST_ASSETS="$$assets" KUBEBUILDER_ASSETS="$$assets" \
-			go test -count=1 -race ./internal/scheduler/kube
-	@go test -count=1 -race -tags=e2e ./e2e/k8s/pods ./e2e/setup ./e2e/k8s/k8sclient
 
 # Run all unit tests with code coverage
 .PHONY: test-cover
@@ -230,30 +215,6 @@ run-e2e-kueue-full: e2e-cluster-up
 		(echo "Tests failed, cleaning up cluster..."; $(MAKE) e2e-cluster-down; exit 1)
 	@echo "> Tests passed, cleaning up cluster..."
 	@$(MAKE) e2e-cluster-down
-
-# Native Workload API scheduling requires real kubelets and Kubernetes 1.37+.
-# Use the same setup path locally and in CI; never skip tests for missing WAS APIs.
-.PHONY: e2e-cluster-up-was run-e2e-was-full
-e2e-cluster-up-was run-e2e-was-full: export KUBECONFIG ?= $(HOME)/.kube/grove-was-e2e
-e2e-cluster-up-was run-e2e-was-full: export E2E_CLUSTER__K3S_IMAGE = $(K3S_IMAGE)
-e2e-cluster-up-was run-e2e-was-full: export E2E_CLUSTER__WORKER_NODES = 3
-e2e-cluster-up-was run-e2e-was-full: export E2E_CLUSTER__WORKER_MEMORY = 512m
-e2e-cluster-up-was run-e2e-was-full: export E2E_KWOK__NODES = 0
-e2e-cluster-up-was run-e2e-was-full: export E2E_SCHEDULER__WAS__ENABLED = true
-e2e-cluster-up-was run-e2e-was-full: export E2E_SCHEDULER__KAI__ENABLED = false
-e2e-cluster-up-was run-e2e-was-full: export E2E_SCHEDULER__KUEUE__ENABLED = false
-e2e-cluster-up-was run-e2e-was-full: export E2E_REGISTRY_PORT = $(or $(E2E_CLUSTER__REGISTRY_PORT),5001)
-e2e-cluster-up-was: e2e-cluster-up
-
-run-e2e-was-full: TEST_PATTERN ?= ^Test_WAS[0-9]
-run-e2e-was-full: export GROVE_E2E_REQUIRE_WAS = true
-run-e2e-was-full: export GROVE_E2E_DIAG_DIR = $(DIAG_DIR)
-run-e2e-was-full: export GROVE_E2E_DIAG_MODE = $(DIAG_MODE)
-run-e2e-was-full:
-	@set -eu; \
-		trap '$(MAKE) e2e-cluster-down' EXIT; \
-		$(MAKE) e2e-cluster-up; \
-		$(MAKE) run-e2e TEST_PATTERN='$(TEST_PATTERN)' E2E_GO_TEST_FLAGS='$(E2E_GO_TEST_FLAGS) -p 1'
 
 # Create a real-node k3d cluster for e2e testing (no KWOK virtual nodes)
 # Uses 30 actual k3d worker containers with 150m memory each.

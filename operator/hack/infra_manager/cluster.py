@@ -16,15 +16,11 @@
 
 from __future__ import annotations
 
-import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from pathlib import Path
-from tempfile import TemporaryDirectory
 
 import docker
 import sh
-import yaml
 from rich.panel import Panel
 from rich.progress import BarColumn, Progress, SpinnerColumn, TaskProgressColumn, TextColumn
 from tenacity import retry, stop_after_attempt, wait_fixed
@@ -35,7 +31,6 @@ from infra_manager.constants import (
     CLUSTER_CREATE_RETRY_WAIT_SECONDS,
     CLUSTER_TIMEOUT,
     DEFAULT_IMAGE_PULL_MAX_WORKERS,
-    DEFAULT_REGISTRY_PORT,
     parse_memory_mb,
     E2E_NODE_ROLE_KEY,
     LABEL_BLOCK,
@@ -191,30 +186,16 @@ def delete_cluster(cfg: ClusterConfig) -> None:
         console.print(f"[yellow]\u26a0\ufe0f  Cluster '{cfg.name}' not found or already deleted[/yellow]")
 
 
-def create_cluster(cfg: ClusterConfig, was_enabled: bool = False) -> None:
+def create_cluster(cfg: ClusterConfig) -> None:
     """Create a k3d cluster with retry logic.
 
     Args:
         cfg: k3d cluster configuration including retry count.
-        was_enabled: Enable the native scheduling APIs and control-plane feature gates.
 
     Raises:
         RetryError: If the cluster cannot be created after all retries.
     """
     console.print(Panel.fit("Creating k3d cluster", style="bold blue"))
-    kubeconfig = os.environ.get("KUBECONFIG")
-    if kubeconfig and os.pathsep in kubeconfig:
-        raise ValueError("Cluster creation requires KUBECONFIG to name a single file")
-
-    was_args: list[str] = []
-    if was_enabled:
-        gates = "GenericWorkload=true,CompositePodGroup=true,TopologyAwareWorkloadScheduling=true"
-        was_args = [
-            "--k3s-arg", f"--kube-apiserver-arg=feature-gates={gates}@server:*",
-            "--k3s-arg", f"--kube-scheduler-arg=feature-gates={gates}@server:*",
-            "--k3s-arg", "--kube-controller-manager-arg=feature-gates=GenericWorkload=true@server:*",
-            "--k3s-arg", "--kube-apiserver-arg=runtime-config=scheduling.k8s.io/v1beta1=true,scheduling.k8s.io/v1alpha3=true@server:*",
-        ]
 
     # In DinD, --agents-memory is broken (DinD bind-mounts /proc/meminfo from the host,
     # so k3d sees the full host RAM and ignores the flag). Use kubelet system-reserved
@@ -251,7 +232,7 @@ def create_cluster(cfg: ClusterConfig, was_enabled: bool = False) -> None:
         wait=wait_fixed(CLUSTER_CREATE_RETRY_WAIT_SECONDS),
         reraise=True,
     )
-    def _attempt(registry_config: Path) -> None:
+    def _attempt() -> None:
         """Delete any existing cluster, then create a fresh one with the configured parameters."""
         try:
             sh.k3d("cluster", "delete", cfg.name)
@@ -274,11 +255,7 @@ def create_cluster(cfg: ClusterConfig, was_enabled: bool = False) -> None:
             "--port",
             f"{cfg.lb_port}@loadbalancer",
             "--registry-create",
-            f"{cfg.name}-registry:0.0.0.0:{cfg.registry_port}",
-            "--registry-config",
-            str(registry_config),
-            "--kubeconfig-update-default=false",
-            "--kubeconfig-switch-context=false",
+            f"registry:0.0.0.0:{cfg.registry_port}",
             # Scale CI creates enough pod/status churn that the default k3s
             # sqlite/kine datastore can lag and stall watch/list calls. This
             # keeps a single-server cluster, but bootstraps k3s with embedded
@@ -294,29 +271,12 @@ def create_cluster(cfg: ClusterConfig, was_enabled: bool = False) -> None:
             "--k3s-node-label",
             "nvidia.com/gpu.deploy.operands=false@agent:*",
             *memory_args,
-            *was_args,
             "--timeout",
             CLUSTER_TIMEOUT,
             "--wait",
         )
 
-    # Test manifests use registry:5001. Keep that in-cluster alias independent of
-    # the host port and registry container name so concurrent clusters do not collide.
-    with TemporaryDirectory(prefix="grove-k3d-") as directory:
-        registry_config = Path(directory) / "registries.yaml"
-        endpoint = {"endpoint": [f"http://{cfg.name}-registry:5000"]}
-        registry_config.write_text(yaml.safe_dump({
-            "mirrors": {
-                f"registry:{port}": endpoint
-                for port in {DEFAULT_REGISTRY_PORT, cfg.registry_port}
-            },
-        }))
-        _attempt(registry_config)
-
-    kubeconfig_path = Path(kubeconfig) if kubeconfig else Path.home() / ".kube" / "config"
-    kubeconfig_path.parent.mkdir(parents=True, exist_ok=True)
-    sh.k3d("kubeconfig", "merge", cfg.name, "-o", str(kubeconfig_path), "--kubeconfig-switch-context")
-    kubeconfig_path.chmod(0o600)
+    _attempt()
     console.print("[green]\u2705 Cluster created successfully[/green]")
 
 

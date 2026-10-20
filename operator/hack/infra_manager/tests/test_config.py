@@ -93,12 +93,11 @@ def test_load_config_e2e_defaults():
     """e2e.yaml values load correctly; unset fields use model defaults."""
     cfg = load_setup_config(_E2E_YAML)
 
-    assert cfg.cluster.worker_nodes == 0
+    assert cfg.cluster.worker_nodes == 30
     assert cfg.scheduler.kai.enabled is True
-    assert cfg.scheduler.was.enabled is False
     assert cfg.grove.enabled is True
     assert cfg.grove.profiling is False
-    assert cfg.kwok.nodes == 30
+    assert cfg.kwok.nodes == 0
     assert cfg.pyroscope.enabled is False
 
 
@@ -106,7 +105,7 @@ def test_load_config_scale():
     """scale.yaml values load correctly including kwok and pyroscope sections."""
     cfg = load_setup_config(_SCALE_YAML)
 
-    assert cfg.cluster.worker_nodes == 0
+    assert cfg.cluster.worker_nodes == 5
     assert cfg.grove.profiling is True
     assert cfg.kwok.nodes == 100
     assert cfg.pyroscope.enabled is True
@@ -148,7 +147,7 @@ def test_overlay_yaml_precedence():
     cfg = load_setup_config(_E2E_YAML, values_paths=[_SCALE_YAML])
 
     assert cfg.kwok.nodes == 100
-    assert cfg.cluster.worker_memory == "300m"
+    assert cfg.cluster.worker_nodes == 5
 
 
 # ---------------------------------------------------------------------------
@@ -203,20 +202,10 @@ def test_env_var_beats_set_override(monkeypatch):
     """E2E_CLUSTER__WORKER_NODES env var wins over a --set override for the same field."""
     monkeypatch.setenv("E2E_CLUSTER__WORKER_NODES", "5")
 
-    # Use 99 as --set value (distinct from e2e.yaml default of 0 and env var 5)
+    # Use 99 as --set value (distinct from e2e.yaml default of 30 and env var 5)
     cfg = load_setup_config(
         _E2E_YAML,
         set_overrides=["cluster.worker_nodes=99"],
     )
 
     assert cfg.cluster.worker_nodes == 5
-
-
-def test_was_opt_in(monkeypatch):
-    """WAS can be enabled through the same config and environment paths as Kueue."""
-    cfg = load_setup_config(_E2E_YAML, set_overrides=["scheduler.was.enabled=true"])
-    assert cfg.scheduler.was.enabled is True
-
-    monkeypatch.setenv("E2E_SCHEDULER__WAS__ENABLED", "false")
-    cfg = load_setup_config(_E2E_YAML, set_overrides=["scheduler.was.enabled=true"])
-    assert cfg.scheduler.was.enabled is False

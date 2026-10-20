@@ -68,10 +68,6 @@ jobs:
             cli-plugin/go.sum
       - name: test-unit
         run: make test-unit
-      - name: test-unit-was
-        run: make --directory=operator test-unit-was
-      - name: test-infra
-        run: make --directory=operator test-infra
   build:
     runs-on: ubuntu-latest
     steps:
@@ -156,9 +152,6 @@ jobs:
           - test_name: kueue_update
             test_pattern: "^Test_KueueUpdate"
             make_target: "run-e2e-kueue-full"
-          - test_name: was
-            test_pattern: "^Test_WAS[0-9]"
-            make_target: "run-e2e-was-full"
     name: E2E - ${{ matrix.test_name }}
     steps:
       # print runner specs so we have a record in case of failures
@@ -180,7 +173,6 @@ jobs:
 
       - name: Run e2e tests - ${{ matrix.test_name }}
         env:
-          KUBECONFIG: ${{ runner.temp }}/grove-e2e-kubeconfig
           GITHUB_TOKEN: ${{ matrix.test_name == 'version_upgrade' && secrets.GITHUB_TOKEN || '' }}
         run: |
           make ${{ matrix.make_target || 'run-e2e-full' }} TEST_PATTERN='${{ matrix.test_pattern }}' E2E_CREATE_FLAGS='--dind-memory-mode'
@@ -192,8 +184,6 @@ jobs:
       - name: Cleanup k3d cluster
         if: always()
         working-directory: operator
-        env:
-          KUBECONFIG: ${{ runner.temp }}/grove-e2e-kubeconfig
         run: |
           make e2e-cluster-down || true
 
@@ -237,7 +227,6 @@ jobs:
           - test_name: version_upgrade
           - test_name: kueue
           - test_name: kueue_update
-          - test_name: was
     name: E2E - ${{ matrix.test_name }}
     steps:
       - name: Skip E2E (no relevant changes)

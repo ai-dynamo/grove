@@ -18,10 +18,8 @@ package pods
 
 import (
 	"testing"
-	"time"
 
 	v1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func TestIsUnschedulableEvent(t *testing.T) {
@@ -30,7 +28,6 @@ func TestIsUnschedulableEvent(t *testing.T) {
 		eventType string
 		reason    string
 		component string
-		reporter  string
 		want      bool
 	}{
 		{
@@ -39,20 +36,6 @@ func TestIsUnschedulableEvent(t *testing.T) {
 			reason:    failedSchedulingReason,
 			component: defaultSchedulerComponent,
 			want:      true,
-		},
-		{
-			name:      "default scheduler reporting controller",
-			eventType: v1.EventTypeWarning,
-			reason:    failedSchedulingReason,
-			reporter:  defaultSchedulerComponent,
-			want:      true,
-		},
-		{
-			name:      "reporting controller takes precedence over legacy source",
-			eventType: v1.EventTypeWarning,
-			reason:    failedSchedulingReason,
-			component: defaultSchedulerComponent,
-			reporter:  "custom-scheduler",
 		},
 		{
 			name:      "KAI scheduler",
@@ -91,49 +74,12 @@ func TestIsUnschedulableEvent(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			event := &v1.Event{
-				Type:                tt.eventType,
-				Reason:              tt.reason,
-				Source:              v1.EventSource{Component: tt.component},
-				ReportingController: tt.reporter,
+				Type:   tt.eventType,
+				Reason: tt.reason,
+				Source: v1.EventSource{Component: tt.component},
 			}
 			if got := isUnschedulableEvent(event); got != tt.want {
 				t.Fatalf("isUnschedulableEvent() = %t, want %t", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestEventLastObservedTime(t *testing.T) {
-	first := time.Unix(1, 0)
-	last := time.Unix(2, 0)
-	tests := []struct {
-		name  string
-		event v1.Event
-		want  time.Time
-	}{
-		{
-			name:  "legacy event",
-			event: v1.Event{FirstTimestamp: metav1.NewTime(first), LastTimestamp: metav1.NewTime(last)},
-			want:  last,
-		},
-		{
-			name:  "singleton event",
-			event: v1.Event{EventTime: metav1.NewMicroTime(first)},
-			want:  first,
-		},
-		{
-			name: "event series",
-			event: v1.Event{
-				EventTime: metav1.NewMicroTime(first),
-				Series:    &v1.EventSeries{Count: 2, LastObservedTime: metav1.NewMicroTime(last)},
-			},
-			want: last,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := eventLastObservedTime(&tt.event); !got.Equal(tt.want) {
-				t.Fatalf("eventLastObservedTime() = %v, want %v", got, tt.want)
 			}
 		})
 	}
