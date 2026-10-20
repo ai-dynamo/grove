@@ -25,6 +25,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/podclique/expectations"
+	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/expect"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
@@ -35,6 +36,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -547,6 +549,7 @@ func TestGateRemovalRequiresBackendReadiness(t *testing.T) {
 		{name: "resources not created"},
 		{name: "resources ready", ready: true},
 		{name: "resources incompatible", err: probeError},
+		{name: "readiness error overrides ready result", ready: true, err: probeError},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			gangName := podGangNameForEpoch(testAnchor0Epoch)
@@ -557,14 +560,110 @@ func TestGateRemovalRequiresBackendReadiness(t *testing.T) {
 			cl := testutils.NewTestClientBuilder().WithObjects(pod, gang).Build()
 			registry := testutils.NewDefaultFakeRegistry()
 			registry.Backends["default-scheduler"] = &readinessBackend{
-				Backend: registry.GetDefault(), ready: tc.ready, err: tc.err,
+				Backend: registry.GetDefault(),
+				check: func(*groveschedulerv1alpha1.PodGang) (bool, error) {
+					return tc.ready, tc.err
+				},
 			}
 			r := &_resource{client: cl, schedRegistry: registry}
 			_, err := r.checkAndRemovePodSchedulingGates(t.Context(), logr.Discard(), gateRemovalSnapshot([]*corev1.Pod{pod}, twoEpochPGM()))
 			require.ErrorIs(t, err, tc.err)
 			actual := &corev1.Pod{}
 			require.NoError(t, cl.Get(t.Context(), client.ObjectKeyFromObject(pod), actual))
-			assert.Equal(t, !tc.ready, hasPodGangSchedulingGate(actual))
+			assert.Equal(t, !tc.ready || tc.err != nil, hasPodGangSchedulingGate(actual))
+		})
+	}
+}
+
+func TestGateRemovalIsolatesBackendReadinessErrors(t *testing.T) {
+	probeError := errors.New("incompatible scheduling hierarchy")
+	secondProbeError := errors.New("terminating scheduling hierarchy")
+	patchError := apierrors.NewForbidden(corev1.Resource("pods"), "pod-"+testTailEpoch, errors.New("pod patch denied"))
+	for _, tc := range []struct {
+		name           string
+		missingBackend bool
+		failPatch      bool
+	}{
+		{name: "healthy gang progresses despite other readiness errors"},
+		{name: "healthy gang progresses despite a missing backend", missingBackend: true},
+		{name: "readiness and patch errors are both returned", failPatch: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			epochs := []string{testAnchor0Epoch, testTailEpoch, testScaleOutEpoch}
+			pods := make([]*corev1.Pod, 0, len(epochs))
+			var objects []client.Object
+			for i, epoch := range epochs {
+				gangName := podGangNameForEpoch(epoch)
+				pod := gatedPod("pod-"+epoch, gangName)
+				gang := testutils.NewPodGangBuilder(gangName, testNamespace).
+					WithLabels(map[string]string{
+						apicommon.LabelPartOfKey:                testPCSName,
+						apicommon.LabelPodCliqueSetReplicaIndex: "0",
+						apicommon.LabelEpoch:                    epoch,
+					}).
+					WithLastScheduled().
+					WithPodGroupPods(testCliqueName, pod.Name).Build()
+				if tc.missingBackend && i == 2 {
+					gang.Labels[apicommon.LabelSchedulerName] = "missing"
+				}
+				pods = append(pods, pod)
+				objects = append(objects, pod, gang)
+			}
+			clientBuilder := testutils.NewTestClientBuilder().WithObjects(objects...)
+			if tc.failPatch {
+				clientBuilder.RecordErrorForObjects(testutils.ClientMethodPatch, patchError, client.ObjectKeyFromObject(pods[1]))
+			}
+			cl := clientBuilder.Build()
+			registry := testutils.NewDefaultFakeRegistry()
+			calls := make(map[string]int)
+			registry.Backends["default-scheduler"] = &readinessBackend{
+				Backend: registry.GetDefault(),
+				check: func(gang *groveschedulerv1alpha1.PodGang) (bool, error) {
+					calls[gang.Name]++
+					switch gang.Labels[apicommon.LabelEpoch] {
+					case testAnchor0Epoch:
+						return false, probeError
+					case testScaleOutEpoch:
+						return false, secondProbeError
+					default:
+						return true, nil
+					}
+				},
+			}
+			r := &_resource{client: cl, schedRegistry: registry}
+			pgm := pgmWithEntries(anchorEntry(), tailEntry(testTailEpoch, testAnchor0Epoch), scaleOutEntry(testScaleOutEpoch, testAnchor0Epoch))
+			skipped, err := r.checkAndRemovePodSchedulingGates(t.Context(), logr.Discard(), gateRemovalSnapshot(pods, pgm))
+			assert.ErrorIs(t, err, probeError)
+			var joined interface{ Unwrap() []error }
+			require.ErrorAs(t, err, &joined)
+			expectedErrors := 2
+			if tc.failPatch {
+				expectedErrors++
+			}
+			assert.Len(t, joined.Unwrap(), expectedErrors)
+			if tc.missingBackend {
+				assert.Zero(t, calls[podGangNameForEpoch(testScaleOutEpoch)])
+				assert.True(t, slices.ContainsFunc(joined.Unwrap(), func(err error) bool {
+					return err.Error() == "scheduler backend not found for PodGang "+podGangNameForEpoch(testScaleOutEpoch)
+				}))
+			} else {
+				assert.ErrorIs(t, err, secondProbeError)
+				assert.Equal(t, 1, calls[podGangNameForEpoch(testScaleOutEpoch)])
+			}
+			if tc.failPatch {
+				var gateError *groveerr.GroveError
+				require.ErrorAs(t, err, &gateError)
+				assert.Equal(t, errCodeRemovePodSchedulingGate, gateError.Code)
+				assert.ErrorIs(t, gateError.Cause, patchError)
+			}
+			assert.Equal(t, 1, calls[podGangNameForEpoch(testAnchor0Epoch)])
+			assert.Equal(t, 1, calls[podGangNameForEpoch(testTailEpoch)])
+			assert.ElementsMatch(t, []string{pods[0].Name, pods[2].Name}, skipped)
+			for i, pod := range pods {
+				actual := &corev1.Pod{}
+				require.NoError(t, cl.Get(t.Context(), client.ObjectKeyFromObject(pod), actual))
+				assert.Equal(t, i != 1 || tc.failPatch, hasPodGangSchedulingGate(actual), "pod %s", pod.Name)
+			}
 		})
 	}
 }
@@ -573,12 +672,11 @@ func TestGateRemovalRequiresBackendReadiness(t *testing.T) {
 
 type readinessBackend struct {
 	scheduler.Backend
-	ready bool
-	err   error
+	check func(*groveschedulerv1alpha1.PodGang) (bool, error)
 }
 
-func (b *readinessBackend) PodGangReady(context.Context, *groveschedulerv1alpha1.PodGang) (bool, error) {
-	return b.ready, b.err
+func (b *readinessBackend) PodGangReady(_ context.Context, gang *groveschedulerv1alpha1.PodGang) (bool, error) {
+	return b.check(gang)
 }
 
 // pcs returns a minimal PodCliqueSet for the gate-removal tests.
