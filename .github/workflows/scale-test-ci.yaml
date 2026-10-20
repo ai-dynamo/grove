@@ -16,7 +16,7 @@ jobs:
   run-scale-test:
     # Run the weekly schedule only in the main repo, while keeping manual runs available in forks.
     if: github.event_name != 'schedule' || github.repository == 'ai-dynamo/grove'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 120
     env:
       GROVE_E2E_PYROSCOPE_DISABLED: "true"

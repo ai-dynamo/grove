@@ -35,7 +35,7 @@ permissions:
 jobs:
   # Detect which paths have changed to conditionally run E2E tests
   changes:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     if: startsWith(github.ref, 'refs/heads/pull-request/')
     outputs:
       e2e-relevant: ${{ steps.filter.outputs.e2e-relevant }}
@@ -51,7 +51,7 @@ jobs:
               - '.github/**'
 
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - name: Set up Go
@@ -69,7 +69,7 @@ jobs:
       - name: test-unit
         run: make test-unit
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - name: Set up Go
@@ -83,7 +83,7 @@ jobs:
       - name: build-initc
         run: make --directory=operator build-initc
   check:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - name: Set up Go
@@ -206,7 +206,7 @@ jobs:
     if: |
       startsWith(github.ref, 'refs/heads/pull-request/') &&
       needs.changes.outputs.e2e-relevant != 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
