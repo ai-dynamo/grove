@@ -121,16 +121,15 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 }
 
 // getStatusResyncInterval returns the requeue interval for a successful reconcile. It is the periodic
-// status resync bounded by the owner PodCliqueSet's TerminationDelay. Gang termination is armed off
-// the MinAvailableBreached condition this reconciler writes. A stale condition must be recomputed
-// before the delay expires, else the breach goes undetected past its termination deadline. It falls
-// back to the plain resync interval when the owner PodCliqueSet cannot be read or sets no
-// TerminationDelay.
+// status resync bounded by the PodClique's breach tolerance. Gang termination is armed off the
+// MinAvailableBreached condition this reconciler writes. A stale condition must be recomputed before
+// the tolerance expires, else the breach goes undetected past its termination deadline. It falls back
+// to the plain resync interval when the owner PodCliqueSet cannot be read.
 func (r *Reconciler) getStatusResyncInterval(ctx context.Context, pclq *grovecorev1alpha1.PodClique) time.Duration {
 	defaultResyncInterval := constants.PodCliqueStatusResyncInterval
 	pcs, err := componentutils.GetPodCliqueSet(ctx, r.client, pclq.ObjectMeta)
-	if err != nil || pcs.Spec.Template.TerminationDelay == nil {
+	if err != nil {
 		return defaultResyncInterval
 	}
-	return min(pcs.Spec.Template.TerminationDelay.Duration, defaultResyncInterval)
+	return min(componentutils.PCLQBreachTolerance(pcs, pclq), defaultResyncInterval)
 }

@@ -49,18 +49,25 @@ const (
 	operationWaitForParentPodClique = "WaitForParentPodClique"
 )
 
+// PodCliqueDependency is the startup requirement on one parent PodClique: at least MinReady of its pods
+// must have the pod condition ConditionType set to True.
+type PodCliqueDependency struct {
+	MinReady      int
+	ConditionType corev1.PodConditionType
+}
+
 // ParentPodCliqueDependencies contains the last known (readiness) state of all parent PodCliques.
 type ParentPodCliqueDependencies struct {
-	mutex                 sync.Mutex                  // Protects concurrent access to state
-	namespace             string                      // Kubernetes namespace to watch for pods
-	podGang               string                      // PodGang name used for pod label selection
-	pclqFQNToMinAvailable map[string]int              // Required minimum available pods per PodClique
-	currentPCLQReadyPods  map[string]sets.Set[string] // Currently ready pods per PodClique
-	allReadyCh            chan struct{}               // Signals when all dependencies are satisfied
+	mutex                sync.Mutex                     // Protects concurrent access to state
+	namespace            string                         // Kubernetes namespace to watch for pods
+	podGang              string                         // PodGang name used for pod label selection
+	pclqFQNToDependency  map[string]PodCliqueDependency // Required pod count and condition type per PodClique
+	currentPCLQReadyPods map[string]sets.Set[string]    // Pods per PodClique whose required condition is True
+	allReadyCh           chan struct{}                  // Signals when all dependencies are satisfied
 }
 
 // NewPodCliqueState creates and initializes all parent PodCliques with an unready state.
-func NewPodCliqueState(podCliqueDependencies map[string]int, log logr.Logger) (*ParentPodCliqueDependencies, error) {
+func NewPodCliqueState(podCliqueDependencies map[string]PodCliqueDependency, log logr.Logger) (*ParentPodCliqueDependencies, error) {
 	namespace, podGang, err := readPodInfo()
 	if err != nil {
 		log.Error(err, "Failed to read pod information from files")
@@ -89,7 +96,7 @@ func readPodInfo() (string, string, error) {
 
 // newPodCliqueStateWithInfo creates a ParentPodCliqueDependencies with provided info.
 // This function is more testable as it doesn't depend on file system operations.
-func newPodCliqueStateWithInfo(podCliqueDependencies map[string]int, namespace, podGang string) *ParentPodCliqueDependencies {
+func newPodCliqueStateWithInfo(podCliqueDependencies map[string]PodCliqueDependency, namespace, podGang string) *ParentPodCliqueDependencies {
 	// Initialize tracking for each parent PodClique's ready pods
 	currentlyReadyPods := make(map[string]sets.Set[string])
 	for parentPodCliqueName := range podCliqueDependencies {
@@ -97,11 +104,11 @@ func newPodCliqueStateWithInfo(podCliqueDependencies map[string]int, namespace, 
 	}
 
 	return &ParentPodCliqueDependencies{
-		namespace:             namespace,
-		podGang:               podGang,
-		pclqFQNToMinAvailable: podCliqueDependencies,
-		currentPCLQReadyPods:  currentlyReadyPods,
-		allReadyCh:            make(chan struct{}, 1),
+		namespace:            namespace,
+		podGang:              podGang,
+		pclqFQNToDependency:  podCliqueDependencies,
+		currentPCLQReadyPods: currentlyReadyPods,
+		allReadyCh:           make(chan struct{}, 1),
 	}
 }
 
@@ -109,7 +116,7 @@ func newPodCliqueStateWithInfo(podCliqueDependencies map[string]int, namespace, 
 func (c *ParentPodCliqueDependencies) WaitForReady(ctx context.Context, log logr.Logger) error {
 	defer close(c.allReadyCh) // Close the channel the informers write to *after* the context they use is cancelled.
 
-	log.Info("Parent PodClique(s) being waited on", "pclqFQNToMinAvailable", c.pclqFQNToMinAvailable)
+	log.Info("Parent PodClique(s) being waited on", "pclqFQNToDependency", c.pclqFQNToDependency)
 
 	client, err := createClient()
 	if err != nil {
@@ -234,7 +241,7 @@ func (c *ParentPodCliqueDependencies) registerEventHandler(factory informers.Sha
 // refreshReadyPodsOfPodClique updates the ready pod count for the PodClique that owns the given pod.
 func (c *ParentPodCliqueDependencies) refreshReadyPodsOfPodClique(pod *corev1.Pod, deletionEvent bool) {
 	// Find which parent PodClique this pod belongs to by name prefix matching
-	podCliqueName, ok := lo.Find(lo.Keys(c.pclqFQNToMinAvailable), func(podCliqueFQN string) bool {
+	podCliqueName, ok := lo.Find(lo.Keys(c.pclqFQNToDependency), func(podCliqueFQN string) bool {
 		return strings.HasPrefix(pod.Name, podCliqueFQN)
 	})
 	if !ok {
@@ -246,9 +253,10 @@ func (c *ParentPodCliqueDependencies) refreshReadyPodsOfPodClique(pod *corev1.Po
 		return
 	}
 
-	// Check if pod is in Ready state
+	// Check if the pod has the condition this dependency waits on
+	conditionType := c.pclqFQNToDependency[podCliqueName].ConditionType
 	readyCondition, ok := lo.Find(pod.Status.Conditions, func(podCondition corev1.PodCondition) bool {
-		return podCondition.Type == corev1.PodReady
+		return podCondition.Type == conditionType
 	})
 	podReady := ok && readyCondition.Status == corev1.ConditionTrue
 
@@ -262,7 +270,7 @@ func (c *ParentPodCliqueDependencies) refreshReadyPodsOfPodClique(pod *corev1.Po
 // notifyIfAllParentsReady will notify consumers if all PCLQ pods are ready.
 func (c *ParentPodCliqueDependencies) notifyIfAllParentsReady() {
 	for cliqueName, readyPods := range c.currentPCLQReadyPods {
-		if len(readyPods) < c.pclqFQNToMinAvailable[cliqueName] {
+		if len(readyPods) < c.pclqFQNToDependency[cliqueName].MinReady {
 			return
 		}
 	}

@@ -92,7 +92,7 @@ func (r _resource) processPendingUpdates(ctx context.Context, logger logr.Logger
 func selectReplicasToUpdate(sc *syncSnapshot, uw *updateWork) ([]int, error) {
 	// Bound disruption against the live replica count and the minimum that must stay available, not a
 	// readiness delta, so the budget does not collapse to 0 when replicas are already unavailable.
-	effectiveMaxUnavailable := componentutils.EffectiveMaxUnavailable(rollingUpdateConfigForPCSG(sc), componentutils.ResolveUpdateStrategyType(sc.pcs), lo.FromPtrOr(sc.pcsg.Spec.MinAvailable, 1))
+	effectiveMaxUnavailable := componentutils.ResolvedMaxUnavailable(rollingUpdateConfigForPCSG(sc), componentutils.ResolveUpdateStrategyType(sc.pcs), componentutils.PCSGUpdateMinReplicas(sc.pcs, sc.pcsg), sc.pcsg.Spec.Replicas)
 	disruptionBudget := computeDisruptionBudget(uw.existingReplicas, int(sc.pcsg.Spec.Replicas), effectiveMaxUnavailable, uw.newNotReadyReplicas)
 	if disruptionBudget <= 0 {
 		return nil, groveerr.New(
@@ -260,7 +260,7 @@ func isReplicaUpdated(sc *syncSnapshot, replicaIndex int, members []grovecorev1a
 			pclq.Status.CurrentPodTemplateHash != nil && *pclq.Status.CurrentPodTemplateHash == expectedPodTemplateHash &&
 			sc.pcs.Status.CurrentGenerationHash != nil &&
 			pclq.Status.CurrentPodCliqueSetGenerationHash != nil && *pclq.Status.CurrentPodCliqueSetGenerationHash == *sc.pcs.Status.CurrentGenerationHash &&
-			pclq.Status.UpdatedReplicas >= *pclq.Spec.MinAvailable
+			pclq.Status.UpdatedReplicas >= componentutils.PCLQUpdateMinReplicas(sc.pcs, &pclq)
 	})
 }
 

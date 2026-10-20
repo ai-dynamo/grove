@@ -17,10 +17,18 @@ package opts
 import (
 	"testing"
 
+	"github.com/ai-dynamo/grove/operator/initc/internal"
+
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
 )
+
+// readyDependency returns a dependency on minReady pods with the pod Ready condition.
+func readyDependency(minReady int) internal.PodCliqueDependency {
+	return internal.PodCliqueDependency{MinReady: minReady, ConditionType: corev1.PodReady}
+}
 
 // TestGetPodCliqueDependencies tests parsing of podclique dependencies from various input formats.
 func TestGetPodCliqueDependencies(t *testing.T) {
@@ -30,7 +38,7 @@ func TestGetPodCliqueDependencies(t *testing.T) {
 		// Input podCliques slice to test
 		podCliques []string
 		// Expected parsed dependencies map (podclique name -> min available count)
-		expected map[string]int
+		expected map[string]internal.PodCliqueDependency
 		// Whether an error is expected
 		expectError bool
 		// Expected error message substring (only checked if expectError is true)
@@ -40,9 +48,9 @@ func TestGetPodCliqueDependencies(t *testing.T) {
 			// Basic valid input with multiple podcliques
 			name:       "valid_multiple_podcliques",
 			podCliques: []string{"podclique-a:3", "podclique-b:5"},
-			expected: map[string]int{
-				"podclique-a": 3,
-				"podclique-b": 5,
+			expected: map[string]internal.PodCliqueDependency{
+				"podclique-a": readyDependency(3),
+				"podclique-b": readyDependency(5),
 			},
 			expectError: false,
 		},
@@ -50,8 +58,8 @@ func TestGetPodCliqueDependencies(t *testing.T) {
 			// Single podclique with valid format
 			name:       "valid_single_podclique",
 			podCliques: []string{"my-podclique:1"},
-			expected: map[string]int{
-				"my-podclique": 1,
+			expected: map[string]internal.PodCliqueDependency{
+				"my-podclique": readyDependency(1),
 			},
 			expectError: false,
 		},
@@ -59,23 +67,23 @@ func TestGetPodCliqueDependencies(t *testing.T) {
 			// Empty input should result in empty map
 			name:        "empty_input",
 			podCliques:  []string{},
-			expected:    map[string]int{},
+			expected:    map[string]internal.PodCliqueDependency{},
 			expectError: false,
 		},
 		{
 			// Input with whitespace should be trimmed and ignored if empty
 			name:        "whitespace_only_entries",
 			podCliques:  []string{"  ", "\t", ""},
-			expected:    map[string]int{},
+			expected:    map[string]internal.PodCliqueDependency{},
 			expectError: false,
 		},
 		{
 			// Valid input with extra whitespace around the entire entry should be trimmed
 			name:       "input_with_whitespace",
 			podCliques: []string{"  podclique-a:2  ", "podclique-b:4"},
-			expected: map[string]int{
-				"podclique-a": 2,
-				"podclique-b": 4,
+			expected: map[string]internal.PodCliqueDependency{
+				"podclique-a": readyDependency(2),
+				"podclique-b": readyDependency(4),
 			},
 			expectError: false,
 		},
@@ -83,11 +91,29 @@ func TestGetPodCliqueDependencies(t *testing.T) {
 			// Valid input with extra whitespace around the colon should be trimmed
 			name:       "input_with_whitespace_around_colon",
 			podCliques: []string{"  podclique-a :   2  ", "podclique-b:  4"},
-			expected: map[string]int{
-				"podclique-a": 2,
-				"podclique-b": 4,
+			expected: map[string]internal.PodCliqueDependency{
+				"podclique-a": readyDependency(2),
+				"podclique-b": readyDependency(4),
 			},
 			expectError: false,
+		},
+		{
+			// An optional third part sets the pod condition type to wait on
+			name:       "custom_condition_type",
+			podCliques: []string{"podclique-a:2:example.com/model-loaded", "podclique-b:1:Ready"},
+			expected: map[string]internal.PodCliqueDependency{
+				"podclique-a": {MinReady: 2, ConditionType: corev1.PodConditionType("example.com/model-loaded")},
+				"podclique-b": readyDependency(1),
+			},
+			expectError: false,
+		},
+		{
+			// An empty condition type should cause error
+			name:          "empty_condition_type",
+			podCliques:    []string{"podclique-a:2: "},
+			expected:      nil,
+			expectError:   true,
+			errorContains: "pod condition type cannot be empty",
 		},
 		{
 			// Zero replicas should cause error
@@ -103,7 +129,7 @@ func TestGetPodCliqueDependencies(t *testing.T) {
 			podCliques:    []string{"podclique-invalid"},
 			expected:      nil,
 			expectError:   true,
-			errorContains: "expected two values per podclique, found 1",
+			errorContains: "expected two or three values per podclique, found 1",
 		},
 		{
 			// Too many colon separators should cause error
@@ -111,7 +137,7 @@ func TestGetPodCliqueDependencies(t *testing.T) {
 			podCliques:    []string{"podclique:extra:parts:3"},
 			expected:      nil,
 			expectError:   true,
-			errorContains: "expected two values per podclique, found 4",
+			errorContains: "expected two or three values per podclique, found 4",
 		},
 		{
 			// Non-numeric replica count should cause error
@@ -143,7 +169,7 @@ func TestGetPodCliqueDependencies(t *testing.T) {
 			podCliques:    []string{"podclique-a:3", "invalid-entry"},
 			expected:      nil,
 			expectError:   true,
-			errorContains: "expected two values per podclique, found 1",
+			errorContains: "expected two or three values per podclique, found 1",
 		},
 		{
 			// Empty podclique name should cause error

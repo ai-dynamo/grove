@@ -243,7 +243,7 @@ func buildStandalonePCLQInfosForAnchorEntry(ss *syncState, pcsReplicaIndex int, 
 		if !ok || desiredPCLQReplicas == 0 {
 			continue
 		}
-		minAvailable := *cliqueTemplate.Spec.MinAvailable
+		minAvailable := componentutils.PCLQInitMinReplicas(&cliqueTemplate.Spec)
 		if !isBaseAnchor {
 			// MinReplicas is the pod count the scheduler must gang schedule, and it decides gang termination.
 			// Only the base anchor carries the clique's guaranteed MinAvailable. Scale-in drains the newer
@@ -347,7 +347,7 @@ func buildPCLQInfosAndTopoConstraintsForPCSGReplica(ss *syncState, pcsReplicaInd
 		pi := pclqInfo{
 			fqn:          pclqFQN,
 			replicas:     replicas,
-			minAvailable: *pclqTemplateSpec.Spec.MinAvailable,
+			minAvailable: componentutils.PCLQInitMinReplicas(&pclqTemplateSpec.Spec),
 			isStandalone: false,
 		}
 		pi.topologyConstraint = createTopologyPackConstraint(ss, types.NamespacedName{Namespace: ss.pcs.Namespace, Name: pclqFQN}, pclqTemplateSpec.TopologyConstraint)

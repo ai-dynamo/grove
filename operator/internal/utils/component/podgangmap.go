@@ -24,8 +24,8 @@ import (
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 
 	"github.com/samber/lo"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -280,13 +280,24 @@ func EpochByAnchorPodGangName(entries []grovecorev1alpha1.PodGangEntry, rnr apic
 	return epochByPodGangName
 }
 
-// StartupDependencyCliqueNames returns the parent clique names the given clique must start after.
+// StartupDependency is one parent clique the given clique must start after, and the pod condition the
+// parent's pods must have set to True before the dependent pod starts.
+type StartupDependency struct {
+	// CliqueName is the clique template name of the parent.
+	CliqueName string
+	// ConditionType is the pod condition the parent's pods must have set to True.
+	ConditionType corev1.PodConditionType
+}
+
+// StartupDependencies returns the parent cliques the given clique must start after.
 // The list of dependencies for the given clique is derived from the PodCliqueSet's immutable startup configuration.
 //   - For CliqueStartupTypeInOrder: it is the preceding clique in the template order (none for the first clique).
 //   - For CliqueStartupTypeExplicit: it is that clique template's declared StartsAfter.
 //
+// Every dependency waits on the pod Ready condition.
+//
 // An error is returned when the startup type is unset or the clique name is not present in the PodCliqueSet template.
-func StartupDependencyCliqueNames(pcs *grovecorev1alpha1.PodCliqueSet, cliqueName string) ([]string, error) {
+func StartupDependencies(pcs *grovecorev1alpha1.PodCliqueSet, cliqueName string) ([]StartupDependency, error) {
 	startupType := pcs.Spec.Template.StartupType
 	if startupType == nil {
 		return nil, fmt.Errorf("no startup type found for PodCliqueSet %q", pcs.Name)
@@ -302,24 +313,33 @@ func StartupDependencyCliqueNames(pcs *grovecorev1alpha1.PodCliqueSet, cliqueNam
 		if cliqueIndex == 0 {
 			return nil, nil
 		}
-		return []string{pcs.Spec.Template.Cliques[cliqueIndex-1].Name}, nil
+		return []StartupDependency{{CliqueName: pcs.Spec.Template.Cliques[cliqueIndex-1].Name, ConditionType: corev1.PodReady}}, nil
 	case grovecorev1alpha1.CliqueStartupTypeExplicit:
-		return pcs.Spec.Template.Cliques[cliqueIndex].Spec.StartsAfter, nil
+		startsAfter := pcs.Spec.Template.Cliques[cliqueIndex].Spec.StartsAfter
+		if len(startsAfter) == 0 {
+			return nil, nil
+		}
+		return lo.Map(startsAfter, func(parentCliqueName string, _ int) StartupDependency {
+			return StartupDependency{CliqueName: parentCliqueName, ConditionType: corev1.PodReady}
+		}), nil
 	default:
 		return nil, nil
 	}
 }
 
 // StartupDependencyTarget is one init-container wait target. It contains the fully qualified name of a parent PodClique
-// and the number of its pods that must be Ready within the dependent pod's own PodGang before it starts.
+// and the number of its pods that must have ConditionType set to True within the dependent pod's own PodGang
+// before it starts.
 type StartupDependencyTarget struct {
 	// PodCliqueFQN is the fully qualified name of the PodClique.
 	PodCliqueFQN string
-	// MinReady is the minimum number of pods for the PodClique that must be ready.
+	// MinReady is the minimum number of pods for the PodClique that must have ConditionType set to True.
 	MinReady int32
+	// ConditionType is the pod condition the parent's pods must have set to True.
+	ConditionType corev1.PodConditionType
 }
 
-// StartupDependencyTargetsInEntry resolves each declared parent clique name against entry, the committed
+// StartupDependencyTargetsInEntry resolves each declared parent clique against entry, the committed
 // PodGang entry the dependent pod belongs to. It returns the init-container wait targets for the parents
 // that are committed in the dependent pod's own PodGang (podGangName).
 //
@@ -336,11 +356,12 @@ type StartupDependencyTarget struct {
 //
 // A parent not committed in the pod's gang (out of the update scope) yields nothing, so a subset update
 // never stalls it, and only satisfiable dependencies in the pod's own gang are emitted.
-func StartupDependencyTargetsInEntry(pcs *grovecorev1alpha1.PodCliqueSet, pcsReplicaIndex int, entry *grovecorev1alpha1.PodGangEntry, podGangName string, parentCliqueNames []string) []StartupDependencyTarget {
+func StartupDependencyTargetsInEntry(pcs *grovecorev1alpha1.PodCliqueSet, pcsReplicaIndex int, entry *grovecorev1alpha1.PodGangEntry, podGangName string, parents []StartupDependency) []StartupDependencyTarget {
 	rnr := apicommon.ResourceNameReplica{Name: pcs.Name, Replica: pcsReplicaIndex}
 	anchorGangName := apicommon.GenerateAnchorPodGangName(rnr, entry.Epoch)
 	var targets []StartupDependencyTarget
-	for _, parentCliqueName := range parentCliqueNames {
+	for _, parent := range parents {
+		parentCliqueName := parent.CliqueName
 		if pcsgConfig := FindScalingGroupConfigForClique(pcs.Spec.Template.PodCliqueScalingGroupConfigs, parentCliqueName); pcsgConfig != nil {
 			minReady := minAvailableForClique(pcs, parentCliqueName)
 			pcsgFQN := apicommon.GeneratePodCliqueScalingGroupName(rnr, pcsgConfig.Name)
@@ -353,8 +374,9 @@ func StartupDependencyTargetsInEntry(pcs *grovecorev1alpha1.PodCliqueSet, pcsRep
 					continue // parent replica is in a different PodGang than the dependent pod
 				}
 				targets = append(targets, StartupDependencyTarget{
-					PodCliqueFQN: apicommon.GeneratePodCliqueName(apicommon.ResourceNameReplica{Name: pcsgFQN, Replica: int(parentReplicaIndex)}, parentCliqueName),
-					MinReady:     minReady,
+					PodCliqueFQN:  apicommon.GeneratePodCliqueName(apicommon.ResourceNameReplica{Name: pcsgFQN, Replica: int(parentReplicaIndex)}, parentCliqueName),
+					MinReady:      minReady,
+					ConditionType: parent.ConditionType,
 				})
 			}
 			continue
@@ -366,8 +388,9 @@ func StartupDependencyTargetsInEntry(pcs *grovecorev1alpha1.PodCliqueSet, pcsRep
 		if podGangName == anchorGangName {
 			if count := entry.PodCliques[parentCliqueName]; count > 0 {
 				targets = append(targets, StartupDependencyTarget{
-					PodCliqueFQN: apicommon.GeneratePodCliqueName(rnr, parentCliqueName),
-					MinReady:     min(minAvailableForClique(pcs, parentCliqueName), count),
+					PodCliqueFQN:  apicommon.GeneratePodCliqueName(rnr, parentCliqueName),
+					MinReady:      min(minAvailableForClique(pcs, parentCliqueName), count),
+					ConditionType: parent.ConditionType,
 				})
 			}
 		}
@@ -375,12 +398,12 @@ func StartupDependencyTargetsInEntry(pcs *grovecorev1alpha1.PodCliqueSet, pcsRep
 	return targets
 }
 
-// minAvailableForClique returns the MinAvailable of the named PodClique template in the PodCliqueSet, or 0
-// when the clique is not found.
+// minAvailableForClique returns the gang-scheduled minimum of the named PodClique template in the
+// PodCliqueSet, or 0 when the clique is not found.
 func minAvailableForClique(pcs *grovecorev1alpha1.PodCliqueSet, cliqueName string) int32 {
 	for _, cliqueTemplate := range pcs.Spec.Template.Cliques {
 		if cliqueTemplate.Name == cliqueName {
-			return ptr.Deref(cliqueTemplate.Spec.MinAvailable, cliqueTemplate.Spec.Replicas)
+			return PCLQInitMinReplicas(&cliqueTemplate.Spec)
 		}
 	}
 	return 0

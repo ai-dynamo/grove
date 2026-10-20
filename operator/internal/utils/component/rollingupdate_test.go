@@ -68,7 +68,7 @@ func TestCoherentMinAvailableByComponent(t *testing.T) {
 	assert.Equal(t, map[string]int32{"pf": 3}, pcsgMinAvailable)
 }
 
-func TestEffectiveMaxUnavailable(t *testing.T) {
+func TestResolvedMaxUnavailable(t *testing.T) {
 	testCases := []struct {
 		description    string
 		rollingUpdate  *grovecorev1alpha1.RollingUpdateConfiguration
@@ -112,7 +112,7 @@ func TestEffectiveMaxUnavailable(t *testing.T) {
 	}
 	for _, tc := range testCases {
 		t.Run(tc.description, func(t *testing.T) {
-			assert.Equal(t, tc.want, EffectiveMaxUnavailable(tc.rollingUpdate, tc.updateStrategy, tc.minAvailable))
+			assert.Equal(t, tc.want, ResolvedMaxUnavailable(tc.rollingUpdate, tc.updateStrategy, tc.minAvailable, 0))
 		})
 	}
 }

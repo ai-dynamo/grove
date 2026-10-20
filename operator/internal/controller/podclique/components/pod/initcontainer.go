@@ -147,12 +147,12 @@ func generateArgsForInitContainer(pcs *grovecorev1alpha1.PodCliqueSet, pclq *gro
 			fmt.Sprintf("error extracting PodCliqueSet replica index for PodClique %v", client.ObjectKeyFromObject(pclq)))
 	}
 	rnr := apicommon.ResourceNameReplica{Name: pcsName, Replica: pcsReplicaIndex}
-	parentCliqueNames, err := componentutils.StartupDependencyCliqueNames(pcs, cliqueTemplateName(pclq, rnr))
+	parents, err := componentutils.StartupDependencies(pcs, cliqueTemplateName(pclq, rnr))
 	if err != nil {
 		return nil, groveerr.WrapError(err, errCodeResolveStartupDependencies, component.OperationSync,
 			fmt.Sprintf("error identifying startup dependencies for PodClique %v", client.ObjectKeyFromObject(pclq)))
 	}
-	if len(parentCliqueNames) == 0 {
+	if len(parents) == 0 {
 		return nil, nil
 	}
 	podGangName := pod.Labels[apicommon.LabelPodGang]
@@ -161,8 +161,8 @@ func generateArgsForInitContainer(pcs *grovecorev1alpha1.PodCliqueSet, pclq *gro
 		return nil, groveerr.New(groveerr.ErrCodeRequeueAfter, component.OperationSync,
 			fmt.Sprintf("PodGang %q for PodClique %v has no committed PodGangMap entry yet, requeuing", podGangName, client.ObjectKeyFromObject(pclq)))
 	}
-	args := make([]string, 0, len(parentCliqueNames))
-	for _, target := range componentutils.StartupDependencyTargetsInEntry(pcs, pcsReplicaIndex, entry, podGangName, parentCliqueNames) {
+	args := make([]string, 0, len(parents))
+	for _, target := range componentutils.StartupDependencyTargetsInEntry(pcs, pcsReplicaIndex, entry, podGangName, parents) {
 		args = append(args, fmt.Sprintf("--podcliques=%s:%d", target.PodCliqueFQN, target.MinReady))
 	}
 	return args, nil

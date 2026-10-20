@@ -225,10 +225,10 @@ func ComputePCSGReplicaState(memberPCLQs []grovecorev1alpha1.PodClique, expected
 		return PCSGReplicaStatePending
 	}
 	for _, pclq := range nonTerminating {
-		if pclq.Status.ScheduledReplicas < *pclq.Spec.MinAvailable {
+		if pclq.Status.ScheduledReplicas < PCLQInitMinReplicas(&pclq.Spec) {
 			return PCSGReplicaStatePending
 		}
-		if pclq.Status.ReadyReplicas < *pclq.Spec.MinAvailable {
+		if pclq.Status.ReadyReplicas < PCLQReadyThreshold(&pclq.Spec) {
 			return PCSGReplicaStateUnavailable
 		}
 	}

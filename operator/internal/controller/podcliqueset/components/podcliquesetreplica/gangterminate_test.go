@@ -43,7 +43,7 @@ import (
 func TestGetMinAvailableBreachedPCSGInfoGangTerminationGate(t *testing.T) {
 	pastTransition := metav1.NewTime(time.Now().Add(-1 * time.Hour))
 	now := time.Now()
-	terminationDelay := 10 * time.Second
+	breachTolerance := func(*grovecorev1alpha1.PodCliqueScalingGroup) time.Duration { return 10 * time.Second }
 
 	breachedTrue := metav1.Condition{
 		Type:               apiconstants.ConditionTypeMinAvailableBreached,
@@ -127,7 +127,7 @@ func TestGetMinAvailableBreachedPCSGInfoGangTerminationGate(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			names, _ := getMinAvailableBreachedPCSGInfo([]grovecorev1alpha1.PodCliqueScalingGroup{tc.pcsg}, terminationDelay, now)
+			names, _ := getMinAvailableBreachedPCSGInfo([]grovecorev1alpha1.PodCliqueScalingGroup{tc.pcsg}, breachTolerance, now)
 			if tc.wantInList {
 				assert.Equal(t, []string{tc.pcsg.Name}, names, "expected PCSG in breach candidate list")
 			} else {

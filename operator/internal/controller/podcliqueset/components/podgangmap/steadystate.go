@@ -98,7 +98,7 @@ func buildBootstrapAnchorEntry(pcs *grovecorev1alpha1.PodCliqueSet, epoch string
 	entry.Role = grovecorev1alpha1.PodGangEntryRoleAnchor
 	entry.PodCliques = componentutils.GetStandalonePCLQReplicasFromPCSTemplateSpec(pcs)
 
-	pcsgMinAvailable := componentutils.GetPCSGMinAvailableFromPCSTemplateSpec(pcs)
+	pcsgMinAvailable := componentutils.GetPCSGInitMinReplicasFromPCSTemplateSpec(pcs)
 	entry.PCSGReplicaIndices = make(map[string][]int32, len(pcsgMinAvailable))
 	for name, minAvailable := range pcsgMinAvailable {
 		entry.PCSGReplicaIndices[name] = lo.RangeFrom[int32](0, int(minAvailable))
@@ -116,7 +116,7 @@ func buildBootstrapTailEntry(pcs *grovecorev1alpha1.PodCliqueSet, epoch, anchorE
 	pcsgReplicaIndices := make(map[string][]int32)
 	for _, pcsgConfig := range pcs.Spec.Template.PodCliqueScalingGroupConfigs {
 		replicas := *pcsgConfig.Replicas
-		minAvailable := *pcsgConfig.MinAvailable
+		minAvailable := componentutils.PCSGConfigInitMinReplicas(&pcsgConfig)
 		if replicas == minAvailable {
 			continue
 		}

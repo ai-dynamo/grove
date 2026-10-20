@@ -237,11 +237,11 @@ func GetStandalonePCLQReplicasFromPCSTemplateSpec(pcs *grovecorev1alpha1.PodCliq
 	return result
 }
 
-// GetPCSGMinAvailableFromPCSTemplateSpec returns the MinAvailable replica count per PodCliqueScalingGroup from the PCS template spec.
-func GetPCSGMinAvailableFromPCSTemplateSpec(pcs *grovecorev1alpha1.PodCliqueSet) map[string]int32 {
+// GetPCSGInitMinReplicasFromPCSTemplateSpec returns the gang-scheduled replica count per PodCliqueScalingGroup from the PCS template spec.
+func GetPCSGInitMinReplicasFromPCSTemplateSpec(pcs *grovecorev1alpha1.PodCliqueSet) map[string]int32 {
 	result := make(map[string]int32)
 	for _, pcsgConfig := range pcs.Spec.Template.PodCliqueScalingGroupConfigs {
-		result[pcsgConfig.Name] = *pcsgConfig.MinAvailable
+		result[pcsgConfig.Name] = PCSGConfigInitMinReplicas(&pcsgConfig)
 	}
 	return result
 }

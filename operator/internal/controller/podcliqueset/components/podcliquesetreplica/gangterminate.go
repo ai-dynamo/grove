@@ -69,17 +69,16 @@ func (d deletionWork) hasPendingPCSReplicaDeletion() bool {
 // getPCSReplicaDeletionWork identifies PCS replicas that need termination due to MinAvailable breaches.
 func (r _resource) getPCSReplicaDeletionWork(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) (*deletionWork, error) {
 	var (
-		now              = time.Now()
-		pcsObjectKey     = client.ObjectKeyFromObject(pcs)
-		terminationDelay = pcs.Spec.Template.TerminationDelay.Duration
-		deletionTasks    = make([]utils.Task, 0, pcs.Spec.Replicas)
-		work             = &deletionWork{
+		now           = time.Now()
+		pcsObjectKey  = client.ObjectKeyFromObject(pcs)
+		deletionTasks = make([]utils.Task, 0, pcs.Spec.Replicas)
+		work          = &deletionWork{
 			minAvailableBreachedConstituents: make(map[int][]string),
 		}
 	)
 
 	for pcsReplicaIndex := range int(pcs.Spec.Replicas) {
-		breachedPCSGNames, minPCSGWaitFor, err := r.getMinAvailableBreachedPCSGs(ctx, pcsObjectKey, pcsReplicaIndex, terminationDelay, now)
+		breachedPCSGNames, minPCSGWaitFor, err := r.getMinAvailableBreachedPCSGs(ctx, pcs, pcsReplicaIndex, now)
 		if err != nil {
 			return nil, err
 		}
@@ -93,7 +92,7 @@ func (r _resource) getPCSReplicaDeletionWork(ctx context.Context, logger logr.Lo
 		if (len(breachedPCSGNames) > 0 && minPCSGWaitFor <= 0) ||
 			(len(breachedPCLQNames) > 0 && minPCLQWaitFor <= 0) {
 			// terminate all PodCliques for this PCS replica index
-			reason := fmt.Sprintf("Delete all PodCliques for PodCliqueSet %v with replicaIndex :%d due to MinAvailable breached longer than TerminationDelay: %s", pcsObjectKey, pcsReplicaIndex, terminationDelay)
+			reason := fmt.Sprintf("Delete all PodCliques for PodCliqueSet %v with replicaIndex :%d due to MinAvailable breached longer than the breach tolerance", pcsObjectKey, pcsReplicaIndex)
 			pclqGangTerminationTask := r.createPCSReplicaDeleteTask(logger, pcs, pcsReplicaIndex, reason)
 			deletionTasks = append(deletionTasks, pclqGangTerminationTask)
 			work.pcsIndicesToTerminate = append(work.pcsIndicesToTerminate, pcsReplicaIndex)
@@ -107,7 +106,8 @@ func (r _resource) getPCSReplicaDeletionWork(ctx context.Context, logger logr.Lo
 }
 
 // getMinAvailableBreachedPCSGs retrieves PCSGs that have breached MinAvailable for a PCS replica.
-func (r _resource) getMinAvailableBreachedPCSGs(ctx context.Context, pcsObjKey client.ObjectKey, pcsReplicaIndex int, terminationDelay time.Duration, since time.Time) ([]string, time.Duration, error) {
+func (r _resource) getMinAvailableBreachedPCSGs(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, pcsReplicaIndex int, since time.Time) ([]string, time.Duration, error) {
+	pcsObjKey := client.ObjectKeyFromObject(pcs)
 	pcsgList := &grovecorev1alpha1.PodCliqueScalingGroupList{}
 	if err := r.client.List(ctx,
 		pcsgList,
@@ -121,7 +121,9 @@ func (r _resource) getMinAvailableBreachedPCSGs(ctx context.Context, pcsObjKey c
 	); err != nil {
 		return nil, 0, err
 	}
-	breachedPCSGNames, minWaitFor := getMinAvailableBreachedPCSGInfo(pcsgList.Items, terminationDelay, since)
+	breachedPCSGNames, minWaitFor := getMinAvailableBreachedPCSGInfo(pcsgList.Items, func(pcsg *grovecorev1alpha1.PodCliqueScalingGroup) time.Duration {
+		return componentutils.PCSGBreachTolerance(pcs, pcsg)
+	}, since)
 	return breachedPCSGNames, minWaitFor, nil
 }
 
@@ -146,7 +148,9 @@ func (r _resource) getMinAvailableBreachedPCLQsNotInPCSG(ctx context.Context, lo
 		skipPCSReplica = true
 		return
 	}
-	breachedPCLQNames, minWaitFor = componentutils.GetMinAvailableBreachedPCLQInfo(pclqs, pcs.Spec.Template.TerminationDelay.Duration, since)
+	breachedPCLQNames, minWaitFor = componentutils.GetMinAvailableBreachedPCLQInfo(pclqs, func(pclq *grovecorev1alpha1.PodClique) time.Duration {
+		return componentutils.PCLQBreachTolerance(pcs, pclq)
+	}, since)
 	return
 }
 
@@ -178,7 +182,7 @@ func (r _resource) getExistingPCLQsByNames(ctx context.Context, namespace string
 //     it's still in flight would also churn-loop. The flag is set by createPCSReplicaDeleteTask
 //     after the DeleteAllOf succeeds, and cleared by the PCSG status reconciler once it
 //     observes MinAvailableBreached=False (recovery).
-func getMinAvailableBreachedPCSGInfo(pcsgs []grovecorev1alpha1.PodCliqueScalingGroup, terminationDelay time.Duration, since time.Time) ([]string, time.Duration) {
+func getMinAvailableBreachedPCSGInfo(pcsgs []grovecorev1alpha1.PodCliqueScalingGroup, breachToleranceFor func(*grovecorev1alpha1.PodCliqueScalingGroup) time.Duration, since time.Time) ([]string, time.Duration) {
 	pcsgCandidateNames := make([]string, 0, len(pcsgs))
 	waitForDurations := make([]time.Duration, 0, len(pcsgs))
 	for _, pcsg := range pcsgs {
@@ -196,7 +200,7 @@ func getMinAvailableBreachedPCSGInfo(pcsgs []grovecorev1alpha1.PodCliqueScalingG
 			continue
 		}
 		pcsgCandidateNames = append(pcsgCandidateNames, pcsg.Name)
-		waitFor := terminationDelay - since.Sub(cond.LastTransitionTime.Time)
+		waitFor := breachToleranceFor(&pcsg) - since.Sub(cond.LastTransitionTime.Time)
 		waitForDurations = append(waitForDurations, waitFor)
 	}
 	if len(waitForDurations) == 0 {

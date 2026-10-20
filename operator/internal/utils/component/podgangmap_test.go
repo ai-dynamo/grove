@@ -24,6 +24,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -452,29 +453,29 @@ func TestStartupDependencyTargetsInEntry(t *testing.T) {
 		description   string
 		entry         *grovecorev1alpha1.PodGangEntry
 		podGangName   string
-		parentCliques []string
+		parentCliques []StartupDependency
 		want          []StartupDependencyTarget
 	}{
 		{
 			description:   "PCSG parent at a health-ordered anchor index resolves to that replica",
 			entry:         anchorEntry(map[string][]int32{"prefill": {1}}, nil),
 			podGangName:   anchorGang,
-			parentCliques: []string{"pf"},
-			want:          []StartupDependencyTarget{{PodCliqueFQN: "ml-0-prefill-1-pf", MinReady: 1}},
+			parentCliques: readyParents("pf"),
+			want:          []StartupDependencyTarget{{PodCliqueFQN: "ml-0-prefill-1-pf", MinReady: 1, ConditionType: corev1.PodReady}},
 		},
 		{
 			description:   "PCSG parent with multiple committed anchor indices resolves to each",
 			entry:         anchorEntry(map[string][]int32{"prefill": {0, 2}}, nil),
 			podGangName:   anchorGang,
-			parentCliques: []string{"pf"},
-			want:          []StartupDependencyTarget{{PodCliqueFQN: "ml-0-prefill-0-pf", MinReady: 1}, {PodCliqueFQN: "ml-0-prefill-2-pf", MinReady: 1}},
+			parentCliques: readyParents("pf"),
+			want:          []StartupDependencyTarget{{PodCliqueFQN: "ml-0-prefill-0-pf", MinReady: 1, ConditionType: corev1.PodReady}, {PodCliqueFQN: "ml-0-prefill-2-pf", MinReady: 1, ConditionType: corev1.PodReady}},
 		},
 		{
 			description:   "standalone parent waits on its MinAvailable",
 			entry:         anchorEntry(nil, map[string]int32{"frontend": 2}),
 			podGangName:   anchorGang,
-			parentCliques: []string{"frontend"},
-			want:          []StartupDependencyTarget{{PodCliqueFQN: "ml-0-frontend", MinReady: 2}},
+			parentCliques: readyParents("frontend"),
+			want:          []StartupDependencyTarget{{PodCliqueFQN: "ml-0-frontend", MinReady: 2, ConditionType: corev1.PodReady}},
 		},
 		{
 			// A coherent update subsumes the parent's extra pods into this (highest-epoch) anchor; the wait stays
@@ -482,8 +483,8 @@ func TestStartupDependencyTargetsInEntry(t *testing.T) {
 			description:   "standalone parent with pods subsumed into this anchor still waits on MinAvailable",
 			entry:         anchorEntry(nil, map[string]int32{"frontend": 3}),
 			podGangName:   anchorGang,
-			parentCliques: []string{"frontend"},
-			want:          []StartupDependencyTarget{{PodCliqueFQN: "ml-0-frontend", MinReady: 2}},
+			parentCliques: readyParents("frontend"),
+			want:          []StartupDependencyTarget{{PodCliqueFQN: "ml-0-frontend", MinReady: 2, ConditionType: corev1.PodReady}},
 		},
 		{
 			// A scale-in reduces the clique from the highest-epoch gang first, so a gang can hold fewer than
@@ -492,22 +493,22 @@ func TestStartupDependencyTargetsInEntry(t *testing.T) {
 			description:   "standalone parent below MinAvailable in this gang waits only on the pods it commits",
 			entry:         anchorEntry(nil, map[string]int32{"frontend": 1}),
 			podGangName:   anchorGang,
-			parentCliques: []string{"frontend"},
-			want:          []StartupDependencyTarget{{PodCliqueFQN: "ml-0-frontend", MinReady: 1}},
+			parentCliques: readyParents("frontend"),
+			want:          []StartupDependencyTarget{{PodCliqueFQN: "ml-0-frontend", MinReady: 1, ConditionType: corev1.PodReady}},
 		},
 		{
 			description:   "a parent not committed in the pod's gang yields nothing",
 			entry:         anchorEntry(map[string][]int32{"decode": {0}}, nil),
 			podGangName:   anchorGang,
-			parentCliques: []string{"pf", "frontend"},
+			parentCliques: readyParents("pf", "frontend"),
 			want:          nil,
 		},
 		{
 			description:   "a scale-out pod waits only on the parent replica in its own gang",
 			entry:         &grovecorev1alpha1.PodGangEntry{Epoch: "100", Role: grovecorev1alpha1.PodGangEntryRoleScaleOut, PCSGReplicaIndices: map[string][]int32{"prefill": {1, 2, 3}}},
 			podGangName:   scaleOutGang3,
-			parentCliques: []string{"pf"},
-			want:          []StartupDependencyTarget{{PodCliqueFQN: "ml-0-prefill-3-pf", MinReady: 1}},
+			parentCliques: readyParents("pf"),
+			want:          []StartupDependencyTarget{{PodCliqueFQN: "ml-0-prefill-3-pf", MinReady: 1, ConditionType: corev1.PodReady}},
 		},
 	}
 	for _, tc := range tests {
@@ -517,7 +518,7 @@ func TestStartupDependencyTargetsInEntry(t *testing.T) {
 	}
 }
 
-func TestStartupDependencyCliqueNames(t *testing.T) {
+func TestStartupDependencies(t *testing.T) {
 	inOrderPCS := &grovecorev1alpha1.PodCliqueSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "ml"},
 		Spec: grovecorev1alpha1.PodCliqueSetSpec{
@@ -552,19 +553,19 @@ func TestStartupDependencyCliqueNames(t *testing.T) {
 		description string
 		pcs         *grovecorev1alpha1.PodCliqueSet
 		cliqueName  string
-		want        []string
+		want        []StartupDependency
 		wantErr     bool
 	}{
 		{description: "InOrder first clique has no parent", pcs: inOrderPCS, cliqueName: "a", want: nil},
-		{description: "InOrder non-first clique starts after the preceding clique", pcs: inOrderPCS, cliqueName: "c", want: []string{"b"}},
-		{description: "Explicit clique returns its declared StartsAfter", pcs: explicitPCS, cliqueName: "c", want: []string{"a", "b"}},
+		{description: "InOrder non-first clique starts after the preceding clique", pcs: inOrderPCS, cliqueName: "c", want: readyParents("b")},
+		{description: "Explicit clique returns its declared StartsAfter", pcs: explicitPCS, cliqueName: "c", want: readyParents("a", "b")},
 		{description: "Explicit clique without a declared StartsAfter returns none", pcs: explicitPCS, cliqueName: "a", want: nil},
 		{description: "unknown clique is an error", pcs: inOrderPCS, cliqueName: "missing", wantErr: true},
 		{description: "nil startup type is an error", pcs: noStartupTypePCS, cliqueName: "a", wantErr: true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.description, func(t *testing.T) {
-			got, err := StartupDependencyCliqueNames(tc.pcs, tc.cliqueName)
+			got, err := StartupDependencies(tc.pcs, tc.cliqueName)
 			if tc.wantErr {
 				require.Error(t, err)
 				return
@@ -573,6 +574,15 @@ func TestStartupDependencyCliqueNames(t *testing.T) {
 			assert.Equal(t, tc.want, got)
 		})
 	}
+}
+
+// readyParents returns a startup dependency on the pod Ready condition of each named parent clique.
+func readyParents(cliqueNames ...string) []StartupDependency {
+	parents := make([]StartupDependency, 0, len(cliqueNames))
+	for _, cliqueName := range cliqueNames {
+		parents = append(parents, StartupDependency{CliqueName: cliqueName, ConditionType: corev1.PodReady})
+	}
+	return parents
 }
 
 func pgmNames(pgms []grovecorev1alpha1.PodGangMap) []string {

@@ -229,6 +229,15 @@ func mutateMinAvailableBreachedCondition(pclq *grovecorev1alpha1.PodClique, numN
 
 // computeMinAvailableBreachedCondition calculates the MinAvailableBreached condition status based on pod availability
 func computeMinAvailableBreachedCondition(pclq *grovecorev1alpha1.PodClique, numPodsHavingAtleastOneContainerWithNonZeroExitCode, numPodsStartedButNotReady int) metav1.Condition {
+	availabilityMinReplicas, hasAvailability := componentutils.PCLQAvailabilityMinReplicas(&pclq.Spec)
+	if !hasAvailability {
+		return metav1.Condition{
+			Type:    constants.ConditionTypeMinAvailableBreached,
+			Status:  metav1.ConditionFalse,
+			Reason:  constants.ConditionReasonSufficientReadyPods,
+			Message: "PodClique has no availability requirement, so MinAvailable is never breached",
+		}
+	}
 	if componentutils.IsPCLQRollingUpdateInProgress(pclq) {
 		return metav1.Condition{
 			Type:    constants.ConditionTypeMinAvailableBreached,
@@ -237,8 +246,6 @@ func computeMinAvailableBreachedCondition(pclq *grovecorev1alpha1.PodClique, num
 			Message: "Update is in progress",
 		}
 	}
-	// dereferencing is considered safe as MinAvailable will always be set by the defaulting webhook. If this changes in the future,
-	// make sure that you check for nil explicitly.
 	// A PodClique intentionally scaled to zero has no pods to keep available, so it is not in breach. A
 	// non-zero replica count below MinAvailable, or a loss of pods below MinAvailable at an unchanged
 	// replica count, is still a breach.
@@ -251,7 +258,7 @@ func computeMinAvailableBreachedCondition(pclq *grovecorev1alpha1.PodClique, num
 			LastTransitionTime: metav1.Now(),
 		}
 	}
-	minAvailable := int(*pclq.Spec.MinAvailable)
+	minAvailable := int(availabilityMinReplicas)
 	scheduledReplicas := int(pclq.Status.ScheduledReplicas)
 	now := metav1.Now()
 
@@ -321,12 +328,13 @@ func mutateLastScheduled(pclq *grovecorev1alpha1.PodClique, originalStatus *grov
 // computePodCliqueScheduledCondition calculates the PodCliqueScheduled condition based on minimum availability requirements
 func computePodCliqueScheduledCondition(pclq *grovecorev1alpha1.PodClique) metav1.Condition {
 	now := metav1.Now()
-	if pclq.Status.ScheduledReplicas < *pclq.Spec.MinAvailable {
+	initMinReplicas := componentutils.PCLQInitMinReplicas(&pclq.Spec)
+	if pclq.Status.ScheduledReplicas < initMinReplicas {
 		return metav1.Condition{
 			Type:               constants.ConditionTypePodCliqueScheduled,
 			Status:             metav1.ConditionFalse,
 			Reason:             constants.ConditionReasonInsufficientScheduledPods,
-			Message:            fmt.Sprintf("Insufficient scheduled pods. expected at least: %d, found: %d", *pclq.Spec.MinAvailable, pclq.Status.ScheduledReplicas),
+			Message:            fmt.Sprintf("Insufficient scheduled pods. expected at least: %d, found: %d", initMinReplicas, pclq.Status.ScheduledReplicas),
 			LastTransitionTime: now,
 		}
 	}
@@ -334,7 +342,7 @@ func computePodCliqueScheduledCondition(pclq *grovecorev1alpha1.PodClique) metav
 		Type:               constants.ConditionTypePodCliqueScheduled,
 		Status:             metav1.ConditionTrue,
 		Reason:             constants.ConditionReasonSufficientScheduledPods,
-		Message:            fmt.Sprintf("Sufficient scheduled pods found. expected at least: %d, found: %d", *pclq.Spec.MinAvailable, pclq.Status.ScheduledReplicas),
+		Message:            fmt.Sprintf("Sufficient scheduled pods found. expected at least: %d, found: %d", initMinReplicas, pclq.Status.ScheduledReplicas),
 		LastTransitionTime: now,
 	}
 }

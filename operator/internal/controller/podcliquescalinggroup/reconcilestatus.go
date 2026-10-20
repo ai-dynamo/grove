@@ -176,10 +176,10 @@ func computeReplicaStatus(logger logr.Logger, currentPCSGenerationHash *string, 
 	isScheduled = lo.EveryBy(nonTerminatedPCSGPodCliques, func(pclq grovecorev1alpha1.PodClique) bool {
 		return k8sutils.IsConditionTrue(pclq.Status.Conditions, constants.ConditionTypePodCliqueScheduled)
 	})
-	// A PodClique is considered available if it schedules at least MinAvailable pods.
+	// A PodClique is considered available if it has at least its ready threshold of ready pods.
 	if isScheduled {
 		isAvailable = lo.EveryBy(nonTerminatedPCSGPodCliques, func(pclq grovecorev1alpha1.PodClique) bool {
-			return pclq.Status.ReadyReplicas >= *pclq.Spec.MinAvailable
+			return pclq.Status.ReadyReplicas >= componentutils.PCLQReadyThreshold(&pclq.Spec)
 		})
 		isAvailable = isAvailable && len(nonTerminatedPCSGPodCliques) == numPCSGCliqueNames
 		isUpdated = isAvailable &&
@@ -192,9 +192,11 @@ func computeReplicaStatus(logger logr.Logger, currentPCSGenerationHash *string, 
 }
 
 func isPCSGChildPCLQUpdated(pclq *grovecorev1alpha1.PodClique, expectedPCLQPodTemplateHashes map[string]string, pcsGenerationHash *string) bool {
-	if pcsGenerationHash == nil || pclq.Spec.MinAvailable == nil {
+	if pcsGenerationHash == nil {
 		return false
 	}
+	// A PCSG member's update unit is its gang-scheduled minimum.
+	updateMinReplicas := componentutils.PCLQInitMinReplicas(&pclq.Spec)
 	expectedPodTemplateHash, ok := expectedPCLQPodTemplateHashes[pclq.Name]
 	if !ok || expectedPodTemplateHash == "" {
 		return false
@@ -204,8 +206,8 @@ func isPCSGChildPCLQUpdated(pclq *grovecorev1alpha1.PodClique, expectedPCLQPodTe
 		*pclq.Status.CurrentPodTemplateHash == expectedPodTemplateHash &&
 		pclq.Status.CurrentPodCliqueSetGenerationHash != nil &&
 		*pclq.Status.CurrentPodCliqueSetGenerationHash == *pcsGenerationHash &&
-		pclq.Status.ReadyReplicas >= *pclq.Spec.MinAvailable &&
-		pclq.Status.UpdatedReplicas >= *pclq.Spec.MinAvailable
+		pclq.Status.ReadyReplicas >= updateMinReplicas &&
+		pclq.Status.UpdatedReplicas >= updateMinReplicas
 }
 
 // emitAllScheduledReplicasLostIfNeeded emits a Warning event when ScheduledReplicas drops from
@@ -256,6 +258,15 @@ func mutateMinAvailableBreachedCondition(logger logr.Logger, pcsg *grovecorev1al
 //
 // Rolling update short-circuits this to Unknown so gang termination doesn't fire mid-update.
 func computeMinAvailableBreachedCondition(logger logr.Logger, pcsg *grovecorev1alpha1.PodCliqueScalingGroup, pclqsPerPCSGReplica map[int][]grovecorev1alpha1.PodClique) metav1.Condition {
+	availabilityMinReplicas, hasAvailability := componentutils.PCSGAvailabilityMinReplicas(&pcsg.Spec)
+	if !hasAvailability {
+		return metav1.Condition{
+			Type:    constants.ConditionTypeMinAvailableBreached,
+			Status:  metav1.ConditionFalse,
+			Reason:  constants.ConditionReasonSufficientAvailablePCSGReplicas,
+			Message: "PodCliqueScalingGroup has no availability requirement, so MinAvailable is never breached",
+		}
+	}
 	if componentutils.IsPCSGUpdateInProgress(pcsg) {
 		return metav1.Condition{
 			Type:    constants.ConditionTypeMinAvailableBreached,
@@ -277,15 +288,7 @@ func computeMinAvailableBreachedCondition(logger logr.Logger, pcsg *grovecorev1a
 		}
 	}
 
-	// The apiserver defaults Spec.MinAvailable to 1 (+kubebuilder:default), but objects
-	// persisted under an older CRD schema can still read back nil until their next write —
-	// dereferencing unguarded would crash-loop the operator off a single legacy object.
-	minAvailable := 1
-	if pcsg.Spec.MinAvailable != nil {
-		minAvailable = int(*pcsg.Spec.MinAvailable)
-	} else {
-		logger.Info("PCSG has nil Spec.MinAvailable; assuming API default of 1", "pcsg", client.ObjectKeyFromObject(pcsg))
-	}
+	minAvailable := int(availabilityMinReplicas)
 	notInBreachReplicas := computeNotInBreachReplicas(logger, pcsg, pclqsPerPCSGReplica)
 	if notInBreachReplicas < minAvailable {
 		return metav1.Condition{

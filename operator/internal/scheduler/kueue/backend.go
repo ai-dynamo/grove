@@ -38,7 +38,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
-	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -317,7 +316,7 @@ func basePodGangPodGroupCount(pcs *grovecorev1alpha1.PodCliqueSet) int {
 		}
 	}
 	for _, pcsgConfig := range pcs.Spec.Template.PodCliqueScalingGroupConfigs {
-		count += int(ptr.Deref(pcsgConfig.MinAvailable, 1)) * len(pcsgConfig.CliqueNames)
+		count += int(componentutils.PCSGConfigInitMinReplicas(&pcsgConfig)) * len(pcsgConfig.CliqueNames)
 	}
 	return count
 }

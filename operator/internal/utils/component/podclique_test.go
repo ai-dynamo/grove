@@ -579,7 +579,7 @@ func TestGetMinAvailableBreachedPCLQInfoFiltersNeverScheduled(t *testing.T) {
 	}
 
 	pclqs := []grovecorev1alpha1.PodClique{pclqBreachedNeverScheduled, pclqBreachedAfterScheduled}
-	actual, _ := GetMinAvailableBreachedPCLQInfo(pclqs, time.Hour, time.Now())
+	actual, _ := GetMinAvailableBreachedPCLQInfo(pclqs, func(*grovecorev1alpha1.PodClique) time.Duration { return time.Hour }, time.Now())
 	assert.Equal(t, []string{"scheduled-once"}, actual, "never-scheduled PodClique must be filtered out")
 }
 

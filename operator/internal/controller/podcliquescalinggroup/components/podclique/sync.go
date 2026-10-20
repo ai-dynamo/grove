@@ -118,9 +118,11 @@ func (r _resource) prepareSyncContext(ctx context.Context, pcsg *grovecorev1alph
 // runSyncFlow executes the main synchronization logic for PodCliqueScalingGroup including replica management and updates
 func (r _resource) runSyncFlow(ctx context.Context, logger logr.Logger, ss *syncSnapshot) error {
 	// Segment MinAvailable-breached replicas from the PodCliques observed at the start of this reconcile:
-	// those past TerminationDelay are gang-terminated, those still within it trigger a requeue. Computed
-	// here rather than stored on the snapshot since it is used only within this flow.
-	pcsgIndicesToTerminate, pcsgIndicesToRequeue, err := getMinAvailableBreachedPCSGIndices(logger, ss.existingPCLQs, ss.pcs.Spec.Template.TerminationDelay.Duration)
+	// those past their breach tolerance are gang-terminated, those still within it trigger a requeue.
+	// Computed here rather than stored on the snapshot since it is used only within this flow.
+	pcsgIndicesToTerminate, pcsgIndicesToRequeue, err := getMinAvailableBreachedPCSGIndices(logger, ss.existingPCLQs, func(pclq *grovecorev1alpha1.PodClique) time.Duration {
+		return componentutils.PCLQBreachTolerance(ss.pcs, pclq)
+	})
 	if err != nil {
 		return err
 	}
@@ -411,14 +413,15 @@ func (r _resource) processMinAvailableBreachedPCSGReplicas(ctx context.Context, 
 	// If pcsg.spec.minAvailable is breached, then delegate the responsibility to the PodCliqueSet reconciler which after
 	// termination delay terminate the PodCliqueSet replica. No further processing is required to be done here.
 	minAvailableBreachedPCSGReplicas := len(pcsgIndicesToTerminate) + len(pcsgIndicesToRequeue)
-	if int(ss.pcsg.Spec.Replicas)-minAvailableBreachedPCSGReplicas < int(*ss.pcsg.Spec.MinAvailable) {
+	if availabilityMinReplicas, ok := componentutils.PCSGAvailabilityMinReplicas(&ss.pcsg.Spec); ok &&
+		int(ss.pcsg.Spec.Replicas)-minAvailableBreachedPCSGReplicas < int(availabilityMinReplicas) {
 		return errPCCGMinAvailableBreached
 	}
 	// If pcsg.spec.minAvailable is not breached but if there is one more PCSG replica for which there is at least one PCLQ that has
 	// its minAvailable breached for a duration > terminationDelay then gang terminate such PCSG replicas.
 	if len(pcsgIndicesToTerminate) > 0 {
 		logger.Info("Identified PodCliqueScalingGroup indices for gang termination", "indices", pcsgIndicesToTerminate)
-		reason := fmt.Sprintf("Delete PodCliques %v for PodCliqueScalingGroup %v which have breached MinAvailable longer than TerminationDelay: %s", pcsgIndicesToTerminate, client.ObjectKeyFromObject(ss.pcsg), ss.pcs.Spec.Template.TerminationDelay.Duration)
+		reason := fmt.Sprintf("Delete PodCliques %v for PodCliqueScalingGroup %v which have breached MinAvailable longer than their breach tolerance", pcsgIndicesToTerminate, client.ObjectKeyFromObject(ss.pcsg))
 		pclqGangTerminationTasks, err := r.createDeleteTasks(logger, ss, pcsgIndicesToTerminate, reason)
 		if err != nil {
 			return err
@@ -435,7 +438,7 @@ func (r _resource) processMinAvailableBreachedPCSGReplicas(ctx context.Context, 
 }
 
 // getMinAvailableBreachedPCSGIndices categorizes PCSG replicas based on MinAvailable breach status and termination delay
-func getMinAvailableBreachedPCSGIndices(logger logr.Logger, existingPCLQs []grovecorev1alpha1.PodClique, terminationDelay time.Duration) (pcsgIndicesToTerminate []string, pcsgIndicesToRequeue []string, err error) {
+func getMinAvailableBreachedPCSGIndices(logger logr.Logger, existingPCLQs []grovecorev1alpha1.PodClique, breachToleranceFor func(*grovecorev1alpha1.PodClique) time.Duration) (pcsgIndicesToTerminate []string, pcsgIndicesToRequeue []string, err error) {
 	now := time.Now()
 	// group existing PCLQs by PCSG replica index. These are PCLQs that belong to one replica of PCSG.
 	pcsgReplicaIndexPCLQs, err := componentutils.GroupPCLQsByPCSGReplicaIndex(existingPCLQs)
@@ -444,7 +447,7 @@ func getMinAvailableBreachedPCSGIndices(logger logr.Logger, existingPCLQs []grov
 	}
 	// For each PCSG replica check if minAvailable for any constituent PCLQ has been violated. Those PCSG replicas should be marked for termination.
 	for pcsgReplicaIndex, pclqs := range pcsgReplicaIndexPCLQs {
-		pclqNames, minWaitFor := componentutils.GetMinAvailableBreachedPCLQInfo(pclqs, terminationDelay, now)
+		pclqNames, minWaitFor := componentutils.GetMinAvailableBreachedPCLQInfo(pclqs, breachToleranceFor, now)
 		if len(pclqNames) > 0 {
 			pcsgReplicaIndexStr := strconv.Itoa(pcsgReplicaIndex)
 			logger.Info("minAvailable breached for PCLQs", "pcsgReplicaIndex", pcsgReplicaIndexStr, "pclqNames", pclqNames, "minWaitFor", minWaitFor)

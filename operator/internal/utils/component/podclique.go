@@ -119,13 +119,14 @@ func WasPCSGEverHealthy(pcsg *grovecorev1alpha1.PodCliqueScalingGroup) bool {
 }
 
 // GetMinAvailableBreachedPCLQInfo filters PodCliques that have grovecorev1alpha1.ConditionTypeMinAvailableBreached set to true.
-// For each such PodClique it returns the name of the PodClique a duration to wait for before terminationDelay is breached.
+// For each such PodClique it returns the name of the PodClique, and it returns the shortest duration to wait for before a
+// PodClique's breach tolerance, as returned by breachToleranceFor, is exceeded.
 //
 // PodCliques that have never been scheduled (per WasPCLQEverScheduled) are excluded — the
 // MinAvailableBreached condition is still True on them (operators can observe the state) but
 // gang-termination would only churn-loop Pending pods against a cluster that already cannot
 // schedule them. Recycling makes sense only after a workload has been healthy and then regressed.
-func GetMinAvailableBreachedPCLQInfo(pclqs []grovecorev1alpha1.PodClique, terminationDelay time.Duration, since time.Time) ([]string, time.Duration) {
+func GetMinAvailableBreachedPCLQInfo(pclqs []grovecorev1alpha1.PodClique, breachToleranceFor func(*grovecorev1alpha1.PodClique) time.Duration, since time.Time) ([]string, time.Duration) {
 	pclqCandidateNames := make([]string, 0, len(pclqs))
 	waitForDurations := make([]time.Duration, 0, len(pclqs))
 	for _, pclq := range pclqs {
@@ -140,7 +141,7 @@ func GetMinAvailableBreachedPCLQInfo(pclqs []grovecorev1alpha1.PodClique, termin
 			continue
 		}
 		pclqCandidateNames = append(pclqCandidateNames, pclq.Name)
-		waitFor := terminationDelay - since.Sub(cond.LastTransitionTime.Time)
+		waitFor := breachToleranceFor(&pclq) - since.Sub(cond.LastTransitionTime.Time)
 		waitForDurations = append(waitForDurations, waitFor)
 	}
 	if len(pclqCandidateNames) == 0 {
@@ -244,9 +245,10 @@ func IsPCLQUpdateComplete(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grovecorev1
 		*pclq.Status.CurrentPodCliqueSetGenerationHash == *pcs.Status.CurrentGenerationHash
 	// A PodClique scaled to zero has no pods to make Ready, so hash convergence alone completes it. Its
 	// resource spec still advances to the new revision, so a later scale-out launches new-spec pods.
+	updateMinReplicas := PCLQUpdateMinReplicas(pcs, pclq)
 	minAvailablePodsUpdatedAndReady := pclq.Spec.Replicas == 0 ||
-		(pclq.Status.UpdatedReplicas >= *pclq.Spec.MinAvailable &&
-			pclq.Status.ReadyReplicas >= *pclq.Spec.MinAvailable)
+		(pclq.Status.UpdatedReplicas >= updateMinReplicas &&
+			pclq.Status.ReadyReplicas >= updateMinReplicas)
 
 	return podTemplateHashConverged && pcsGenerationHashConverged && minAvailablePodsUpdatedAndReady &&
 		!IsPCLQRollingUpdateInProgress(pclq)
