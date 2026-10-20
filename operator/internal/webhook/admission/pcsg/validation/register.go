@@ -24,7 +24,7 @@ const (
 	// Name is the validating webhook handler name for PodCliqueScalingGroup.
 	Name = "podcliquescalinggroup-validating-webhook"
 	// webhookPath is the path the PodCliqueScalingGroup validating webhook is registered at.
-	webhookPath = "/webhooks/validate-podcliquescalinggroup"
+	webhookPath = "/webhooks/v1beta1/validate-podcliquescalinggroup"
 )
 
 // RegisterWithManager registers the PodCliqueScalingGroup validating webhook with the manager.

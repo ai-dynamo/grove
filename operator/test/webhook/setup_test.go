@@ -60,11 +60,12 @@ func TestSetup(t *testing.T) {
 
 	require.NoError(t, Setup(mgr, operatorCfg))
 	require.ElementsMatch(t, []string{
-		"/webhooks/default-podcliqueset",
-		"/webhooks/validate-clustertopology",
-		"/webhooks/validate-podcliqueset",
-		"/webhooks/validate-podclique",
-		"/webhooks/validate-podcliquescalinggroup",
+		"/convert",
+		"/webhooks/v1beta1/default-podcliqueset",
+		"/webhooks/v1beta1/validate-clustertopology",
+		"/webhooks/v1beta1/validate-podcliqueset",
+		"/webhooks/v1beta1/validate-podclique",
+		"/webhooks/v1beta1/validate-podcliquescalinggroup",
 	}, registeredPaths(server.handlers))
 }
 

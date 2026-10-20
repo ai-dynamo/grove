@@ -46,6 +46,9 @@ const (
 	// ExitErrSetPodGangMigrationGate indicates that the application exited due to an error setting the
 	// PodGang migration gate condition on legacy PodCliqueSets before the manager started.
 	ExitErrSetPodGangMigrationGate
+	// ExitErrConfigureCRDConversion indicates that the application exited because the conversion webhook of the
+	// CRDs could not be configured, including when the installed CRDs do not serve the hub version.
+	ExitErrConfigureCRDConversion
 )
 
 var (

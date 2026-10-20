@@ -20,17 +20,17 @@ webhooks:
       service:
         name: {{ required ".Values.service.name is required" .Values.service.name }}
         namespace: {{ .Release.Namespace }}
-        path: /webhooks/default-podcliqueset
+        path: /webhooks/v1beta1/default-podcliqueset
         port: {{ required ".Values.config.server.webhooks.port" .Values.config.server.webhooks.port }}
     failurePolicy: Fail
-    matchPolicy: Exact
+    matchPolicy: Equivalent
     name: pcs.defaulting.webhooks.grove.io
     namespaceSelector: { }
     rules:
       - apiGroups:
           - "grove.io"
         apiVersions:
-          - "v1alpha1"
+          - "v1beta1"
         operations:
           - CREATE
           - UPDATE

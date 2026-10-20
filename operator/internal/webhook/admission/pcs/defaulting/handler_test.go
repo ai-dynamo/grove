@@ -20,6 +20,7 @@ import (
 	"time"
 
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/go-logr/logr"
@@ -165,7 +166,7 @@ func TestDefault(t *testing.T) {
 				})
 			},
 			expectError:   true,
-			errorContains: "expected an PodCliqueSet object",
+			errorContains: "expected a PodCliqueSet object",
 		},
 		{
 			name: "context without admission request returns error",
@@ -217,4 +218,31 @@ func TestDefault(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestDefaultV1beta1 tests that a v1beta1 PodCliqueSet, as the API server sends it for both served versions,
+// is defaulted in place and stays a v1beta1 object.
+func TestDefaultV1beta1(t *testing.T) {
+	v1alpha1PCS := testutils.NewPodCliqueSetBuilder("test-pcs", "default", uuid.NewUUID()).
+		WithReplicas(1).
+		WithPodCliqueTemplateSpec(
+			testutils.NewPodCliqueTemplateSpecBuilder("test").
+				WithReplicas(1).
+				WithRoleName("test-role").
+				Build()).
+		Build()
+	pcs := &grovecorev1beta1.PodCliqueSet{}
+	require.NoError(t, grovecorev1alpha1.Convert_v1alpha1_PodCliqueSet_To_v1beta1_PodCliqueSet(v1alpha1PCS, pcs, nil))
+	require.Nil(t, pcs.Spec.UpdateStrategy)
+
+	cl := testutils.NewTestClientBuilder().Build()
+	handler := NewHandler(&testutils.FakeManager{Client: cl, Scheme: cl.Scheme(), Logger: logr.Discard()})
+	ctx := admission.NewContextWithRequest(context.Background(), admission.Request{
+		AdmissionRequest: admissionv1.AdmissionRequest{Name: "test-pcs", Namespace: "default", Operation: admissionv1.Create},
+	})
+
+	require.NoError(t, handler.Default(ctx, pcs))
+	require.NotNil(t, pcs.Spec.UpdateStrategy)
+	assert.Equal(t, grovecorev1beta1.RollingRecreateStrategy, pcs.Spec.UpdateStrategy.Type)
+	assert.Equal(t, &metav1.Duration{Duration: 4 * time.Hour}, pcs.Spec.Template.TerminationDelay)
 }

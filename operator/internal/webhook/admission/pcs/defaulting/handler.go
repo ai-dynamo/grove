@@ -16,10 +16,9 @@ package defaulting
 
 import (
 	"context"
-	"fmt"
 
-	"github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
+	"github.com/ai-dynamo/grove/operator/internal/webhook/admission/v1alpha1bridge"
 
 	"github.com/go-logr/logr"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -42,9 +41,9 @@ func NewHandler(mgr manager.Manager) *Handler {
 // Default applies default values to a PodCliqueSet object.
 func (h *Handler) Default(ctx context.Context, obj runtime.Object) error {
 	h.logger.Info("Defaulting webhook invoked for PodCliqueSet")
-	pcs, ok := obj.(*v1alpha1.PodCliqueSet)
-	if !ok {
-		return fmt.Errorf("expected an PodCliqueSet object but got %T", obj)
+	pcs, err := v1alpha1bridge.PodCliqueSet(obj)
+	if err != nil {
+		return err
 	}
 	req, err := admission.RequestFromContext(ctx)
 	if err != nil {
@@ -53,5 +52,5 @@ func (h *Handler) Default(ctx context.Context, obj runtime.Object) error {
 	h.logger.Info("Applying defaults", "PodCliqueSet", k8sutils.CreateObjectKeyForCreateWebhooks(pcs, req))
 	defaultPodCliqueSet(pcs)
 
-	return nil
+	return v1alpha1bridge.SetPodCliqueSet(pcs, obj)
 }

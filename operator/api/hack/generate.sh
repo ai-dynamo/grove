@@ -52,25 +52,45 @@ function generate_deepcopy_defaulter() {
 }
 
 function generate_crds() {
-  local output_dir="${MODULE_ROOT}/core/v1alpha1/crds"
-  local package="github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
-  local package_path="$(go list -f '{{.Dir}}' "${package}")"
-
-  if [ -z "${package_path}" ]; then
-    echo >&2 "Could not locate directory for package: ${package}"
-    exit 1
-  fi
-
-  if [ -z "${output_dir}" ]; then
-    mkdir -p "${output_dir}"
-  fi
+  local output_dir="${MODULE_ROOT}/core/crds"
+  mkdir -p "${output_dir}"
 
   # clean all generated crd files
-  if ls "${output_dir}/*.yaml" 1> /dev/null 2>&1; then
-    rm "${output_dir}/*.yaml"
-  fi
+  rm -f "${output_dir}"/*.yaml
 
-  controller-gen crd paths="${package_path}" output:crd:dir="${output_dir}" output:stdout
+  # Every API version of the grove.io group is generated into one multi-version CRD per kind.
+  controller-gen crd paths="${MODULE_ROOT}/core/..." output:crd:dir="${output_dir}" output:stdout
+
+  add_conversion_webhook "${output_dir}"
+}
+
+# add_conversion_webhook sets spec.conversion on the CRDs whose versions are converted by the operator's
+# conversion webhook. controller-gen has no marker for it. The service address is the default install
+# (release "grove" in namespace "default", webhook port 9443). The crd-installer rewrites the namespace to the
+# operator's own, the operator sets the namespace and its configured port, and the caBundle is injected at run time. Until then conversion requests fail rather than
+# silently pruning fields, as the None strategy would.
+function add_conversion_webhook() {
+  local output_dir="$1"
+  local conversion_block
+  conversion_block="$(mktemp)"
+  cat > "${conversion_block}" <<'EOF'
+  conversion:
+    strategy: Webhook
+    webhook:
+      clientConfig:
+        service:
+          name: grove-operator
+          namespace: default
+          path: /convert
+          port: 9443
+      conversionReviewVersions:
+      - v1
+EOF
+  for crd in grove.io_podcliquesets.yaml grove.io_podcliques.yaml grove.io_podcliquescalinggroups.yaml; do
+    sed -i.bak "/^spec:$/r ${conversion_block}" "${output_dir}/${crd}"
+    rm -f "${output_dir}/${crd}.bak"
+  done
+  rm -f "${conversion_block}"
 }
 
 function generate_clientset() {

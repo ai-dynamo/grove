@@ -259,6 +259,28 @@ rules:
   - patch
   - update
 {{- end }}
+# The conversion webhook of the converted Grove CRDs is pointed at the operator on startup, and its caBundle is
+# injected by cert-controller (certProvisionMode=auto) or by the operator (certProvisionMode=manual).
+# cert-controller watches CRDs through an informer, which cannot be restricted by name.
+- apiGroups:
+  - apiextensions.k8s.io
+  resources:
+  - customresourcedefinitions
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - apiextensions.k8s.io
+  resources:
+  - customresourcedefinitions
+  resourceNames:
+  - podcliquesets.grove.io
+  - podcliques.grove.io
+  - podcliquescalinggroups.grove.io
+  verbs:
+  - update
+  - patch
 {{- if .Values.crdInstaller.enabled }}
 # CRD installer init container requires permissions to apply Grove CRDs on startup.
 - apiGroups:
