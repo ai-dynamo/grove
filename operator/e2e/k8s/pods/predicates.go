@@ -19,6 +19,7 @@ package pods
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/ai-dynamo/grove/operator/e2e/waiter"
 	kubeutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
@@ -137,7 +138,7 @@ func HasUnschedulableEvents(ctx context.Context, cl client.Reader, namespace str
 			var mostRecentEvent *v1.Event
 			for i := range eventList.Items {
 				event := &eventList.Items[i]
-				if mostRecentEvent == nil || event.LastTimestamp.After(mostRecentEvent.LastTimestamp.Time) {
+				if mostRecentEvent == nil || eventLastObservedTime(event).After(eventLastObservedTime(mostRecentEvent)) {
 					mostRecentEvent = event
 				}
 			}
@@ -156,7 +157,11 @@ func isUnschedulableEvent(event *v1.Event) bool {
 	if event.Type != v1.EventTypeWarning {
 		return false
 	}
-	switch event.Source.Component {
+	component := event.ReportingController
+	if component == "" {
+		component = event.Source.Component
+	}
+	switch component {
 	case defaultSchedulerComponent:
 		return event.Reason == failedSchedulingReason
 	case kaiSchedulerComponent:
@@ -166,4 +171,14 @@ func isUnschedulableEvent(event *v1.Event) bool {
 	default:
 		return false
 	}
+}
+
+func eventLastObservedTime(event *v1.Event) time.Time {
+	if event.Series != nil {
+		return event.Series.LastObservedTime.Time
+	}
+	if !event.LastTimestamp.IsZero() {
+		return event.LastTimestamp.Time
+	}
+	return event.EventTime.Time
 }

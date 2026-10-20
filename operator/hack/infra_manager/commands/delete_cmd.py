@@ -27,7 +27,9 @@ app = typer.Typer(help="Delete infrastructure resources.")
 
 @app.command("k3d-cluster")
 def k3d_cluster(
-    cluster_name: str | None = typer.Option(None, "--cluster-name", help="k3d cluster name"),
+    cluster_name: str | None = typer.Option(
+        None, "--cluster-name", envvar="E2E_CLUSTER__NAME", help="k3d cluster name"
+    ),
 ) -> None:
     """Delete the k3d cluster."""
     cfg = ClusterConfig()

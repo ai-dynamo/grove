@@ -32,3 +32,6 @@ keywords = ["inference", "kubernetes", "operator", "grove", "dynamo"]
 
 [project.urls]
 Repository = "https://github.com/ai-dynamo/grove.git"
+
+[dependency-groups]
+test = ["pytest==9.0.2"]

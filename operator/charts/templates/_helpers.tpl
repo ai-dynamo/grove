@@ -98,6 +98,13 @@ release: "{{ .Release.Name }}"
 {{- end -}}
 {{- end -}}
 
+{{/* Native scheduling permissions are needed only when gang scheduling is enabled. */}}
+{{- define "grove.scheduler.hasWAS" -}}
+{{- range .Values.config.scheduler.profiles -}}
+{{- if and (eq .name "default-scheduler") (dig "gangScheduling" false (.config | default dict)) -}}true{{- end -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "operator.config.labels" -}}
 {{- include "common.chart.labels" . }}
 {{- range $key, $val := .Values.configMap.labels }}

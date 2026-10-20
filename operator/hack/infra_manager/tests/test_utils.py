@@ -14,6 +14,10 @@
 
 """Unit tests for infra_manager.utils: helm override collection."""
 
+import json
+
+import pytest
+
 from infra_manager.config import GroveConfig
 from infra_manager.utils import collect_grove_helm_overrides
 
@@ -42,3 +46,26 @@ def test_collect_grove_helm_overrides_annotation_set_string():
     ann = [(flag, val) for flag, val in overrides if "podAnnotations." in val]
     assert ann, "expected at least one annotation override"
     assert all(flag == "--set-string" for flag, _ in ann)
+
+
+@pytest.mark.parametrize("kueue_enabled", [False, True])
+def test_collect_grove_helm_overrides_was(kueue_enabled):
+    """Enable WAS even when the skaffold profile would otherwise default to Kai."""
+    overrides = collect_grove_helm_overrides(GroveConfig(), kueue_enabled, was_enabled=True)
+    profiles = [
+        json.loads(value.split("=", 1)[1])
+        for flag, value in overrides
+        if flag == "--set-json" and value.startswith("config.scheduler.profiles=")
+    ]
+    expected = [{"name": "default-scheduler", "config": {"gangScheduling": True}}]
+    if kueue_enabled:
+        expected.append({"name": "kueue"})
+    assert profiles == [expected]
+    assert ("--set", "config.scheduler.defaultProfileName=default-scheduler") in overrides
+    assert ("--set", "config.topologyAwareScheduling.enabled=true") in overrides
+    assert not any("config.scheduler.profiles[" in value for _, value in overrides)
+
+
+def test_collect_grove_helm_overrides_without_was():
+    """The default setup must not silently opt in to native gang scheduling."""
+    assert collect_grove_helm_overrides(GroveConfig()) == []
