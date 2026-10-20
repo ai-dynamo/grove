@@ -152,6 +152,9 @@ jobs:
           - test_name: kueue_update
             test_pattern: "^Test_KueueUpdate"
             make_target: "run-e2e-kueue-full"
+          - test_name: was
+            test_pattern: "^Test_WAS[0-9]"
+            make_target: "run-e2e-was-full"
     name: E2E - ${{ matrix.test_name }}
     steps:
       # print runner specs so we have a record in case of failures
@@ -227,6 +230,7 @@ jobs:
           - test_name: version_upgrade
           - test_name: kueue
           - test_name: kueue_update
+          - test_name: was
     name: E2E - ${{ matrix.test_name }}
     steps:
       - name: Skip E2E (no relevant changes)

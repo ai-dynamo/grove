@@ -1,0 +1,34 @@
+apiVersion: grove.io/v1alpha1
+kind: PodCliqueSet
+metadata:
+  name: was-partial
+spec:
+  replicas: 1
+  template:
+    cliques:
+      - name: worker
+        spec:
+          roleName: worker
+          replicas: 3
+          minAvailable: 2
+          podSpec:
+            schedulerName: default-scheduler
+            terminationGracePeriodSeconds: 1
+            nodeSelector:
+              node_role.e2e.grove.nvidia.com: agent
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            affinity:
+              podAntiAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  - labelSelector:
+                      matchLabels:
+                        app.kubernetes.io/part-of: was-partial
+                    topologyKey: kubernetes.io/hostname
+            containers:
+              - name: worker
+                image: registry:5001/busybox:latest
+                command: ["sleep", "infinity"]

@@ -15,7 +15,6 @@
 package scheduler
 
 import (
-	"os"
 	"testing"
 	"time"
 
@@ -27,16 +26,9 @@ import (
 const workloadControlPlaneTimeout = time.Minute
 
 // StartWorkloadEnvtest starts an isolated API server with explicit WAS gates.
-// GROVE_WAS_ENVTEST_ASSETS must point to Kubernetes >= 1.37 envtest binaries;
-// ordinary unit tests remain runnable with Grove's older envtest baseline.
 func StartWorkloadEnvtest(t *testing.T, featureGates string, crdPaths ...string) *rest.Config {
 	t.Helper()
-	assets := os.Getenv("GROVE_WAS_ENVTEST_ASSETS")
-	if assets == "" {
-		t.Skip("set GROVE_WAS_ENVTEST_ASSETS to Kubernetes >= 1.37 envtest binaries")
-	}
 	testEnv := &envtest.Environment{
-		BinaryAssetsDirectory:    assets,
 		CRDDirectoryPaths:        crdPaths,
 		ErrorIfCRDPathMissing:    true,
 		ControlPlaneStartTimeout: workloadControlPlaneTimeout,

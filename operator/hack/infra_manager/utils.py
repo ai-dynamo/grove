@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 
 import sh
@@ -65,11 +66,13 @@ def resolve_registry_repos(port: int) -> tuple[str, str]:
     return f"localhost:{port}", f"registry:{port}"
 
 
-def collect_grove_helm_overrides(cfg: GroveConfig, kueue_enabled: bool = False) -> list[tuple[str, str]]:
+def collect_grove_helm_overrides(
+    cfg: GroveConfig, kueue_enabled: bool = False, was_enabled: bool = False
+) -> list[tuple[str, str]]:
     """Build helm override tuples from grove tuning options.
 
     Each tuple is ``(helm_flag, "key=value")`` where ``helm_flag`` is either
-    ``"--set"`` (typed) or ``"--set-string"`` (string-forced).
+    ``"--set"`` (typed), ``"--set-json"`` (structured), or ``"--set-string"`` (string-forced).
 
     Args:
         cfg: Grove configuration with profiling and sync settings.
@@ -77,13 +80,20 @@ def collect_grove_helm_overrides(cfg: GroveConfig, kueue_enabled: bool = False) 
             kai-scheduler (always on in charts/values.yaml), kueue is opt-in. Since helm --set
             on a list index replaces the whole array rather than merging it, every existing
             profile entry is re-set alongside kueue's, not just the new one.
+        was_enabled: Enable native gang scheduling and make it the default profile.
 
     Returns:
         List of ``(helm_flag, "key=value")`` tuples.
         When profiling is enabled, Grafana/Pyroscope pod annotation overrides
         are also appended using ``--set-string`` to prevent helm from coercing
         annotation values to booleans or integers.
+
+    Raises:
+        ValueError: If WAS and Kueue are both enabled in this test setup.
     """
+    if was_enabled and kueue_enabled:
+        raise ValueError("WAS and Kueue cannot both be enabled in this test setup")
+
     overrides: list[tuple[bool, str, str]] = [
         (cfg.profiling, HELM_KEY_PROFILING, "true"),
         (cfg.profiling, HELM_KEY_PPROF_BIND_HOST, DEFAULT_PPROF_BIND_HOST),
@@ -97,6 +107,13 @@ def collect_grove_helm_overrides(cfg: GroveConfig, kueue_enabled: bool = False) 
     result: list[tuple[str, str]] = [("--set", f"{key}={value}") for enabled, key, value in overrides if enabled]
     if kueue_enabled:
         result.extend(("--set", kv) for kv in HELM_KEY_SCHEDULER_PROFILES_WITH_KUEUE)
+    if was_enabled:
+        profiles = [{"name": "default-scheduler", "config": {"gangScheduling": True}}]
+        result.extend([
+            ("--set-json", f"config.scheduler.profiles={json.dumps(profiles)}"),
+            ("--set", "config.scheduler.defaultProfileName=default-scheduler"),
+            ("--set", "config.topologyAwareScheduling.enabled=true"),
+        ])
     if cfg.profiling:
         result.extend(_pyroscope_annotation_overrides())
     return result

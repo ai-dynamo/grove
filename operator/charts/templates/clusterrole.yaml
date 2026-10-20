@@ -161,6 +161,24 @@ rules:
   - update
   - delete
 {{- end }}
+{{- range .Values.config.scheduler.profiles }}
+{{- if and (eq .name "default-scheduler") (dig "gangScheduling" false (.config | default dict)) }}
+- apiGroups:
+  - scheduling.k8s.io
+  resources:
+  - workloads
+  - podgroups
+  - compositepodgroups
+  verbs:
+  - create
+  - get
+  - list
+  - watch
+  - patch
+  - update
+  - delete
+{{- end }}
+{{- end }}
 # DRA (Dynamic Resource Allocation) integration for resource sharing
 - apiGroups:
   - resource.k8s.io
