@@ -149,6 +149,12 @@ jobs:
           - test_name: kueue
             test_pattern: "^Test_Kueue[0-9]"
             make_target: "run-e2e-kueue-full"
+          - test_name: kueue_real
+            test_pattern: "^Test_KueueReal[0-9]"
+            make_target: "run-e2e-kueue-real-full"
+          - test_name: kueue_real_update
+            test_pattern: "^Test_KueueRealUpdate"
+            make_target: "run-e2e-kueue-real-full"
           - test_name: kueue_update
             test_pattern: "^Test_KueueUpdate"
             make_target: "run-e2e-kueue-full"
@@ -226,6 +232,8 @@ jobs:
           - test_name: podgangmap_reconstruct
           - test_name: version_upgrade
           - test_name: kueue
+          - test_name: kueue_real
+          - test_name: kueue_real_update
           - test_name: kueue_update
     name: E2E - ${{ matrix.test_name }}
     steps:
