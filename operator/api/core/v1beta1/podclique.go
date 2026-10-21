@@ -26,7 +26,8 @@ import (
 // +kubebuilder:subresource:status
 // +kubebuilder:subresource:scale:specpath=.spec.replicas,statuspath=.status.replicas,selectorpath=.status.hpaPodSelector
 // +kubebuilder:resource:shortName={pclq}
-// +kubebuilder:printcolumn:name="MinAvail",type=integer,JSONPath=`.spec.minAvailable`
+// +kubebuilder:printcolumn:name="InitMin",type=integer,JSONPath=`.spec.init.minReplicas`
+// +kubebuilder:printcolumn:name="AvailMin",type=integer,JSONPath=`.spec.termination.resource.availability.minReplicas`
 // +kubebuilder:printcolumn:name="Replicas",type=integer,JSONPath=`.spec.replicas`
 // +kubebuilder:printcolumn:name="Ready",type=integer,JSONPath=`.status.readyReplicas`
 // +kubebuilder:printcolumn:name="Scheduled",type=integer,JSONPath=`.status.scheduledReplicas`
@@ -65,14 +66,12 @@ type PodCliqueSpec struct {
 	PodSpec corev1.PodSpec `json:"podSpec"`
 	// Replicas is the number of replicas of the pods in the clique. It cannot be less than 1.
 	Replicas int32 `json:"replicas"`
-	// MinAvailable serves two purposes:
-	// 1. It defines the minimum number of pods that are guaranteed to be gang scheduled.
-	// 2. It defines the minimum requirement of available pods in a PodClique. Violation of this threshold will result
-	// in termination of the PodGang that it belongs to.
-	// If MinAvailable is not set, then it defaults to 1.
-	// +kubebuilder:default=1
+	// Init configures the gang scheduling of the PodClique's pods.
 	// +optional
-	MinAvailable *int32 `json:"minAvailable,omitempty"`
+	Init *InitSpec `json:"init,omitempty"`
+	// Termination defines the terminal conditions of the PodClique.
+	// +optional
+	Termination *TerminationSpec `json:"termination,omitempty"`
 	// StartsAfter provides you a way to explicitly define the startup dependencies amongst cliques.
 	// If CliqueStartupType in PodGang has been set to 'CliqueStartupTypeExplicit', then to create an ordered start
 	// amongst PodClique's StartsAfter can be used. A forest of DAG's can be defined to model any start order dependencies.
@@ -81,17 +80,35 @@ type PodCliqueSpec struct {
 	// Validations:
 	// 1. If a StartsAfter has been defined and one or more cycles are detected in DAG's then it will be flagged as validation error.
 	// 2. If StartsAfter is defined and does not identify any PodClique then it will be flagged as a validation error.
+	// +listType=map
+	// +listMapKey=name
 	// +optional
-	StartsAfter []string `json:"startsAfter,omitempty"`
+	StartsAfter []StartupDependency `json:"startsAfter,omitempty"`
 	// ScaleConfig is the horizontal pod autoscaler configuration for a PodClique.
 	// +optional
 	ScaleConfig *AutoScalingConfig `json:"autoScalingConfig,omitempty"`
+}
+
+// StartupDependency is one startup dependency of a PodClique on a parent PodClique.
+type StartupDependency struct {
+	// Name is the name of the PodClique this clique depends on.
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
+	// ConditionType is the Pod condition that must be True on the target pods of the parent
+	// before the dependency is released. The target pods are init.minReplicas pods of the parent
+	// within the dependent pod's own PodGang. A condition other than the built-in Pod conditions must be
+	// declared in the parent's podSpec.readinessGates. Defaults to "Ready".
+	// +kubebuilder:default=Ready
+	// +optional
+	ConditionType string `json:"conditionType,omitempty"`
 }
 
 // AutoScalingConfig defines the configuration for the horizontal pod autoscaler.
 type AutoScalingConfig struct {
 	// MinReplicas is the lower limit for the number of replicas for the target resource.
 	// It will be used by the horizontal pod autoscaler to determine the minimum number of replicas to scale-in to.
+	// It must not be less than termination.resource.availability.minReplicas when availability is set, nor less
+	// than 1 otherwise, and defaults to that floor.
 	// +optional
 	MinReplicas *int32 `json:"minReplicas,omitempty"`
 	// maxReplicas is the upper limit for the number of replicas to which the autoscaler can scale up.

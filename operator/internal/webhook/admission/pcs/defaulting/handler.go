@@ -51,7 +51,7 @@ func (h *Handler) Default(ctx context.Context, obj runtime.Object) error {
 		return err
 	}
 	h.logger.Info("Applying defaults", "PodCliqueSet", k8sutils.CreateObjectKeyForCreateWebhooks(pcs, req))
-	defaultPodCliqueSet(pcs)
+	defaultPodCliqueSet(pcs, k8sutils.IsV1Alpha1Request(req))
 
 	return nil
 }

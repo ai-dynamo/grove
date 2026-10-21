@@ -293,7 +293,7 @@ type StartupDependency struct {
 //   - For CliqueStartupTypeInOrder: it is the preceding clique in the template order (none for the first clique).
 //   - For CliqueStartupTypeExplicit: it is that clique template's declared StartsAfter.
 //
-// Every dependency waits on the pod Ready condition.
+// An explicit dependency waits on its conditionType, and an in-order dependency on the pod Ready condition.
 //
 // An error is returned when the startup type is unset or the clique name is not present in the PodCliqueSet template.
 func StartupDependencies(pcs *grovecorev1beta1.PodCliqueSet, cliqueName string) ([]StartupDependency, error) {
@@ -318,8 +318,12 @@ func StartupDependencies(pcs *grovecorev1beta1.PodCliqueSet, cliqueName string) 
 		if len(startsAfter) == 0 {
 			return nil, nil
 		}
-		return lo.Map(startsAfter, func(parentCliqueName string, _ int) StartupDependency {
-			return StartupDependency{CliqueName: parentCliqueName, ConditionType: corev1.PodReady}
+		return lo.Map(startsAfter, func(dependency grovecorev1beta1.StartupDependency, _ int) StartupDependency {
+			conditionType := corev1.PodConditionType(dependency.ConditionType)
+			if conditionType == "" {
+				conditionType = corev1.PodReady
+			}
+			return StartupDependency{CliqueName: dependency.Name, ConditionType: conditionType}
 		}), nil
 	default:
 		return nil, nil
@@ -343,7 +347,7 @@ type StartupDependencyTarget struct {
 // that are committed in the dependent pod's own PodGang (podGangName).
 //
 // A PodCliqueScalingGroup parent yields one target per committed replica index whose materialized PodGang is
-// podGangName, each waiting on that member clique's MinAvailable. An anchor pod therefore waits on every
+// podGangName, each waiting on that member clique's init.minReplicas. An anchor pod therefore waits on every
 // parent replica in the same anchor, while a scale-out pod waits only on the parent replica in its own
 // PodGang.
 //

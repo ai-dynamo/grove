@@ -80,13 +80,7 @@ func (v *topologyConstraintsValidator) warnings() []string {
 }
 
 func (v *topologyConstraintsValidator) updateWarnings() []string {
-	warnings := v.validateSameResourcePreferredWarnings()
-	forEachTopologyConstraint(v.pcs, func(tc *grovecorev1beta1.TopologyConstraint, tcPath *field.Path) {
-		if tc.PackDomain != "" {
-			warnings = append(warnings, fmt.Sprintf("%s is deprecated; use %s instead", tcPath.Child("packDomain"), tcPath.Child("pack", "required")))
-		}
-	})
-	return warnings
+	return v.validateSameResourcePreferredWarnings()
 }
 
 // disallowConstraintsForCreateWhenTASIsDisabled ensures that no topology constraints are specified for new PodCliqueSet
@@ -158,9 +152,6 @@ func (v *topologyConstraintsValidator) validateTopologyDomainsExistInClusterTopo
 	}
 
 	forEachTopologyConstraint(v.pcs, func(tc *grovecorev1beta1.TopologyConstraint, tcPath *field.Path) {
-		if tc.PackDomain != "" {
-			validateDomain(tc.PackDomain, tcPath.Child("packDomain"))
-		}
 		if tc.Pack != nil {
 			validateDomain(tc.Pack.RequiredDomain, tcPath.Child("pack", "required"))
 			validateDomain(tc.Pack.PreferredDomain, tcPath.Child("pack", "preferred"))
@@ -306,7 +297,7 @@ func (v *topologyConstraintsValidator) validateSameResourcePreferredWarnings() [
 
 // validateTopologyConstraintImmutability ensures that topology constraints are not modified during updates.
 // When allowInvalidConstraintRepair is true, the validator permits the legacy upgrade repair path:
-// adding a missing topologyName to an existing constraint that already had a packDomain.
+// adding a missing topologyName to an existing constraint that already had a required domain.
 func (v *topologyConstraintsValidator) validateTopologyConstraintImmutability(oldPCS *grovecorev1beta1.PodCliqueSet, fldPath *field.Path, allowInvalidConstraintRepair bool) field.ErrorList {
 	var allErrs field.ErrorList
 
@@ -322,7 +313,6 @@ func (v *topologyConstraintsValidator) validateTopologyConstraintImmutability(ol
 		newTopologyName = newPCSConstraint.TopologyName
 	}
 	allowedPCSRepair := allowInvalidConstraintRepair && isAllowedInvalidTopologyConstraintRepair(oldPCSConstraint, newPCSConstraint)
-	allowedPCSMigration := isAllowedDeprecatedPackDomainMigration(oldPCSConstraint, newPCSConstraint)
 
 	if oldTopologyName != newTopologyName && !allowedPCSRepair {
 		allErrs = append(allErrs, field.Forbidden(
@@ -332,7 +322,7 @@ func (v *topologyConstraintsValidator) validateTopologyConstraintImmutability(ol
 
 	// Validate PCS level pack changes only when topologyName is unchanged; adding or removing
 	// the whole topologyConstraint or changing topologyName is already reported above.
-	if oldTopologyName == newTopologyName && constraintChanged(oldPCSConstraint, newPCSConstraint) && !allowedPCSRepair && !allowedPCSMigration {
+	if oldTopologyName == newTopologyName && constraintChanged(oldPCSConstraint, newPCSConstraint) && !allowedPCSRepair {
 		allErrs = append(allErrs, field.Forbidden(
 			fldPath.Child("topologyConstraint"),
 			constraintChangeMsg(apicommonconstants.KindPodCliqueSet, "", oldPCSConstraint, newPCSConstraint)))
@@ -348,8 +338,7 @@ func (v *topologyConstraintsValidator) validateTopologyConstraintImmutability(ol
 	for i, clique := range v.pcs.Spec.Template.Cliques {
 		oldConstraint := oldCliqueConstraints[clique.Name]
 		if constraintChanged(oldConstraint, clique.TopologyConstraint) &&
-			(!allowInvalidConstraintRepair || !isAllowedInvalidTopologyConstraintRepair(oldConstraint, clique.TopologyConstraint)) &&
-			!isAllowedDeprecatedPackDomainMigration(oldConstraint, clique.TopologyConstraint) {
+			(!allowInvalidConstraintRepair || !isAllowedInvalidTopologyConstraintRepair(oldConstraint, clique.TopologyConstraint)) {
 			allErrs = append(allErrs, field.Forbidden(
 				fldPath.Child("cliques").Index(i).Child("topologyConstraint"),
 				constraintChangeMsg(apicommonconstants.KindPodClique, clique.Name, oldConstraint, clique.TopologyConstraint)))
@@ -366,8 +355,7 @@ func (v *topologyConstraintsValidator) validateTopologyConstraintImmutability(ol
 	for i, pcsg := range v.pcs.Spec.Template.PodCliqueScalingGroupConfigs {
 		oldConstraint := oldPCSGConstraints[pcsg.Name]
 		if constraintChanged(oldConstraint, pcsg.TopologyConstraint) &&
-			(!allowInvalidConstraintRepair || !isAllowedInvalidTopologyConstraintRepair(oldConstraint, pcsg.TopologyConstraint)) &&
-			!isAllowedDeprecatedPackDomainMigration(oldConstraint, pcsg.TopologyConstraint) {
+			(!allowInvalidConstraintRepair || !isAllowedInvalidTopologyConstraintRepair(oldConstraint, pcsg.TopologyConstraint)) {
 			allErrs = append(allErrs, field.Forbidden(
 				fldPath.Child("podCliqueScalingGroups").Index(i).Child("topologyConstraint"),
 				constraintChangeMsg(apicommonconstants.KindPodCliqueScalingGroup, pcsg.Name, oldConstraint, pcsg.TopologyConstraint)))
@@ -381,52 +369,33 @@ func isAllowedInvalidTopologyConstraintRepair(old, new *grovecorev1beta1.Topolog
 	if old == nil || new == nil {
 		return false
 	}
-	// Legacy objects can only be missing topologyName, because older API versions exposed packDomain
-	// but not topologyName. topologyName-without-packDomain is not considered a repairable legacy shape.
+	// Legacy objects can only be missing topologyName, because older API versions exposed packDomain (now
+	// pack.required) but not topologyName. topologyName-without-required-domain is not considered a
+	// repairable legacy shape.
 	return old.TopologyName == "" &&
-		old.PackDomain != "" &&
+		old.RequiredDomain() != "" &&
 		new.TopologyName != "" &&
-		new.PackDomain == old.PackDomain
-}
-
-func isAllowedDeprecatedPackDomainMigration(old, new *grovecorev1beta1.TopologyConstraint) bool {
-	if !isDeprecatedPackDomainMigrationAttempt(old, new) {
-		return false
-	}
-	return old.TopologyName == new.TopologyName &&
-		new.RequiredDomain() == old.PackDomain &&
+		new.RequiredDomain() == old.RequiredDomain() &&
 		new.PreferredDomain() == old.PreferredDomain()
 }
 
-func isDeprecatedPackDomainMigrationAttempt(old, new *grovecorev1beta1.TopologyConstraint) bool {
-	return old != nil &&
-		new != nil &&
-		old.PackDomain != "" &&
-		new.PackDomain == "" &&
-		new.Pack != nil &&
-		new.Pack.RequiredDomain != ""
-}
-
 func hasRepairableLegacyTopologyConstraint(pcs *grovecorev1beta1.PodCliqueSet) bool {
-	if pcs.Spec.Template.TopologyConstraint != nil && pcs.Spec.Template.TopologyConstraint.TopologyName == "" &&
-		pcs.Spec.Template.TopologyConstraint.PackDomain != "" {
+	isLegacy := func(tc *grovecorev1beta1.TopologyConstraint) bool {
+		return tc != nil && tc.TopologyName == "" && tc.RequiredDomain() != ""
+	}
+	if isLegacy(pcs.Spec.Template.TopologyConstraint) {
 		return true
 	}
-
 	for _, clique := range pcs.Spec.Template.Cliques {
-		if clique.TopologyConstraint != nil && clique.TopologyConstraint.TopologyName == "" &&
-			clique.TopologyConstraint.PackDomain != "" {
+		if isLegacy(clique.TopologyConstraint) {
 			return true
 		}
 	}
-
 	for _, pcsg := range pcs.Spec.Template.PodCliqueScalingGroupConfigs {
-		if pcsg.TopologyConstraint != nil && pcsg.TopologyConstraint.TopologyName == "" &&
-			pcsg.TopologyConstraint.PackDomain != "" {
+		if isLegacy(pcsg.TopologyConstraint) {
 			return true
 		}
 	}
-
 	return false
 }
 
@@ -439,7 +408,6 @@ func constraintChanged(old, new *grovecorev1beta1.TopologyConstraint) bool {
 		return true
 	}
 	return old.TopologyName != new.TopologyName ||
-		old.PackDomain != new.PackDomain ||
 		old.RequiredDomain() != new.RequiredDomain() ||
 		old.PreferredDomain() != new.PreferredDomain()
 }
@@ -460,10 +428,6 @@ func constraintChangeMsg(kind, name string, old, new *grovecorev1beta1.TopologyC
 	if old.TopologyName != new.TopologyName {
 		return fmt.Sprintf("%s%s topology constraint topologyName cannot be changed from '%s' to '%s'",
 			kind, identifier, old.TopologyName, new.TopologyName)
-	}
-	if isDeprecatedPackDomainMigrationAttempt(old, new) {
-		return fmt.Sprintf("%s%s deprecated packDomain migration can only move packDomain to pack.required without changing the required or preferred topology domain (old required=%q preferred=%q, new required=%q preferred=%q)",
-			kind, identifier, old.PackDomain, old.PreferredDomain(), new.RequiredDomain(), new.PreferredDomain())
 	}
 	return fmt.Sprintf("%s%s topology constraint cannot be changed from required=%q preferred=%q to required=%q preferred=%q",
 		kind, identifier, old.RequiredDomain(), old.PreferredDomain(), new.RequiredDomain(), new.PreferredDomain())

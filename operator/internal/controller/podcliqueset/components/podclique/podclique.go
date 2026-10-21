@@ -319,10 +319,12 @@ func (r _resource) setPodCliqueObjectMeta(pcs *grovecorev1beta1.PodCliqueSet, pc
 	// Capture the running pod-template-hash before getLabels overwrites the labels with the current
 	// template hash, so a preserved replica keeps its running revision's hash.
 	runningPodTemplateHash := pclq.Labels[apicommon.LabelPodTemplateHash]
+	gangShapeHash := componentutils.GangShapeHashLabelValue(pcs, pclq.Labels)
 	pclq.Labels = getLabels(pcs, pcsReplica, pclqObjectKey, pclqTemplate)
 	if preserveRevision && runningPodTemplateHash != "" {
 		pclq.Labels[apicommon.LabelPodTemplateHash] = runningPodTemplateHash
 	}
+	pclq.Labels[apicommon.LabelGangShapeHash] = gangShapeHash
 
 	pclq.Annotations = maps.Clone(pclqTemplate.Annotations)
 	// PodGang owns topology selection; do not propagate a template topology annotation to PodClique pods.
@@ -334,8 +336,8 @@ func (r _resource) setPodCliqueObjectMeta(pcs *grovecorev1beta1.PodCliqueSet, pc
 }
 
 // setPodCliqueSpec sets the PodClique spec from its template. It preserves the HPA-managed replica count
-// and, for a replica not under a coherent update, the entire running revision, leaving the existing spec
-// untouched. StartsAfter is user-declared desired state carried through the template, so the controller does
+// and, for a replica not under a coherent update, the running revision, leaving the existing spec untouched
+// apart from termination, which takes effect in place on every replica. StartsAfter is user-declared desired state carried through the template, so the controller does
 // not write it. MNNVL claims are injected only when a fresh template is applied, since a preserved revision
 // already carries them.
 func setPodCliqueSpec(logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, pcsReplica int, pclqTemplate *grovecorev1beta1.PodCliqueTemplateSpec, pclqExists, preserveRevision bool, pclq *grovecorev1beta1.PodClique) error {
@@ -344,6 +346,8 @@ func setPodCliqueSpec(logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, pc
 		preservedReplicas := pclq.Spec.Replicas
 		if !preserveRevision {
 			pclq.Spec = *pclqTemplate.Spec.DeepCopy()
+		} else {
+			pclq.Spec.Termination = pclqTemplate.Spec.Termination.DeepCopy()
 		}
 		pclq.Spec.Replicas = preservedReplicas
 	} else {

@@ -19,10 +19,12 @@ import (
 	"time"
 
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
+	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/utils/ptr"
 )
@@ -50,17 +52,20 @@ func TestDefaultPodCliqueSet(t *testing.T) {
 							MinReplicas: ptr.To(int32(2)),
 							MaxReplicas: 3,
 						},
-						MinAvailable: ptr.To[int32](1),
+						Init: &grovecorev1beta1.InitSpec{MinReplicas: ptr.To[int32](1)},
+						Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{
+							MinReplicas:     ptr.To[int32](1),
+							BreachTolerance: &metav1.Duration{Duration: 4 * time.Hour},
+						}}},
 					},
 					RollingUpdate: &grovecorev1beta1.RollingUpdateConfiguration{
-						MaxUnavailable: ptr.To[int32](1),
+						MaxUnavailable: ptr.To(intstr.FromInt32(1)),
 					},
 				}},
 				PodCliqueScalingGroupConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{},
 				HeadlessServiceConfig: &grovecorev1beta1.HeadlessServiceConfig{
 					PublishNotReadyAddresses: true,
 				},
-				TerminationDelay: &metav1.Duration{Duration: 4 * time.Hour},
 			},
 		},
 	}
@@ -73,8 +78,8 @@ func TestDefaultPodCliqueSet(t *testing.T) {
 				Cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{{
 					Name: "test",
 					Spec: grovecorev1beta1.PodCliqueSpec{
-						Replicas:     2,
-						MinAvailable: ptr.To[int32](1),
+						Replicas: 2,
+						Init:     &grovecorev1beta1.InitSpec{MinReplicas: ptr.To[int32](1)}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To[int32](1)}}},
 						ScaleConfig: &grovecorev1beta1.AutoScalingConfig{
 							MinReplicas: ptr.To[int32](2),
 							MaxReplicas: 3,
@@ -84,7 +89,7 @@ func TestDefaultPodCliqueSet(t *testing.T) {
 			},
 		},
 	}
-	defaultPodCliqueSet(&input)
+	defaultPodCliqueSet(&input, false)
 	assert.Equal(t, want, input)
 }
 
@@ -116,15 +121,14 @@ func TestDefaultPodCliqueTemplateSpecs(t *testing.T) {
 			},
 		},
 		{
-			name: "scaleConfig minReplicas defaults to the defaulted replicas when replicas is 0",
+			name: "scaleConfig minReplicas defaults to 1 when replicas is 0 and availability is unset",
 			input: []*grovecorev1beta1.PodCliqueTemplateSpec{
 				{
 					Name: "clique1",
 					Spec: grovecorev1beta1.PodCliqueSpec{
-						Replicas:     0,
-						RoleName:     "role1",
-						MinAvailable: nil,
-						PodSpec:      corev1.PodSpec{},
+						Replicas: 0,
+						RoleName: "role1",
+						PodSpec:  corev1.PodSpec{},
 						ScaleConfig: &grovecorev1beta1.AutoScalingConfig{
 							MinReplicas: nil,
 							MaxReplicas: 10,
@@ -141,33 +145,35 @@ func TestDefaultPodCliqueTemplateSpecs(t *testing.T) {
 			},
 		},
 		{
-			name: "minAvailable is not overridden when set",
-			input: []*grovecorev1beta1.PodCliqueTemplateSpec{
-				{
-					Name: "clique1",
-					Spec: grovecorev1beta1.PodCliqueSpec{
-						Replicas:     5,
-						RoleName:     "role1",
-						MinAvailable: ptr.To(int32(3)),
-						PodSpec:      corev1.PodSpec{},
-					},
-				},
-			},
-			verify: func(t *testing.T, result []*grovecorev1beta1.PodCliqueTemplateSpec) {
-				require.Len(t, result, 1)
-				require.NotNil(t, result[0].Spec.MinAvailable)
-				assert.Equal(t, int32(3), *result[0].Spec.MinAvailable)
-			},
-		},
-		{
-			name: "scaleConfig minReplicas defaults to replicas when nil",
+			name: "init.minReplicas is not overridden when set",
 			input: []*grovecorev1beta1.PodCliqueTemplateSpec{
 				{
 					Name: "clique1",
 					Spec: grovecorev1beta1.PodCliqueSpec{
 						Replicas: 5,
 						RoleName: "role1",
-						PodSpec:  corev1.PodSpec{},
+						Init:     &grovecorev1beta1.InitSpec{MinReplicas: ptr.To(int32(3))}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To(int32(3))}}},
+						PodSpec: corev1.PodSpec{},
+					},
+				},
+			},
+			verify: func(t *testing.T, result []*grovecorev1beta1.PodCliqueTemplateSpec) {
+				require.Len(t, result, 1)
+				require.NotNil(t, result[0].Spec.Init)
+				require.NotNil(t, result[0].Spec.Init.MinReplicas)
+				assert.Equal(t, int32(3), *result[0].Spec.Init.MinReplicas)
+			},
+		},
+		{
+			name: "scaleConfig minReplicas defaults to availability.minReplicas when nil",
+			input: []*grovecorev1beta1.PodCliqueTemplateSpec{
+				{
+					Name: "clique1",
+					Spec: grovecorev1beta1.PodCliqueSpec{
+						Replicas:    5,
+						RoleName:    "role1",
+						PodSpec:     corev1.PodSpec{},
+						Termination: testutils.NewAvailabilityTermination(3),
 						ScaleConfig: &grovecorev1beta1.AutoScalingConfig{
 							MinReplicas: nil,
 							MaxReplicas: 10,
@@ -179,7 +185,31 @@ func TestDefaultPodCliqueTemplateSpecs(t *testing.T) {
 				require.Len(t, result, 1)
 				require.NotNil(t, result[0].Spec.ScaleConfig)
 				require.NotNil(t, result[0].Spec.ScaleConfig.MinReplicas)
-				assert.Equal(t, int32(5), *result[0].Spec.ScaleConfig.MinReplicas)
+				assert.Equal(t, int32(3), *result[0].Spec.ScaleConfig.MinReplicas)
+			},
+		},
+		{
+			name: "scaleConfig minReplicas defaults to 1 when nil and availability is unset",
+			input: []*grovecorev1beta1.PodCliqueTemplateSpec{
+				{
+					Name: "clique1",
+					Spec: grovecorev1beta1.PodCliqueSpec{
+						Replicas: 5,
+						RoleName: "role1",
+						PodSpec:  corev1.PodSpec{},
+						Init:     testutils.NewInitSpec(4),
+						ScaleConfig: &grovecorev1beta1.AutoScalingConfig{
+							MinReplicas: nil,
+							MaxReplicas: 10,
+						},
+					},
+				},
+			},
+			verify: func(t *testing.T, result []*grovecorev1beta1.PodCliqueTemplateSpec) {
+				require.Len(t, result, 1)
+				require.NotNil(t, result[0].Spec.ScaleConfig)
+				require.NotNil(t, result[0].Spec.ScaleConfig.MinReplicas)
+				assert.Equal(t, int32(1), *result[0].Spec.ScaleConfig.MinReplicas)
 			},
 		},
 		{
@@ -246,7 +276,7 @@ func TestDefaultPodCliqueTemplateSpecs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := defaultPodCliqueTemplateSpecs(tt.input, grovecorev1beta1.RollingRecreateStrategy, sets.New[string]())
+			result := defaultPodCliqueTemplateSpecs(tt.input, defaultingContext{updateStrategy: grovecorev1beta1.RollingRecreateStrategy, pcsgOwnedCliqueNames: sets.New[string]()})
 			tt.verify(t, result)
 		})
 	}
@@ -263,12 +293,13 @@ func TestDefaultPodCliqueScalingGroupConfigs(t *testing.T) {
 		verify func(*testing.T, []grovecorev1beta1.PodCliqueScalingGroupConfig)
 	}{
 		{
-			name: "scaleConfig minReplicas defaults to replicas when nil",
+			name: "scaleConfig minReplicas defaults to availability.minReplicas when nil",
 			input: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{
 					Name:        "sg1",
 					CliqueNames: []string{"clique1", "clique2"},
 					Replicas:    ptr.To(int32(3)),
+					Termination: testutils.NewAvailabilityTermination(3),
 					ScaleConfig: &grovecorev1beta1.AutoScalingConfig{
 						MinReplicas: nil,
 						MaxReplicas: 10,
@@ -338,6 +369,7 @@ func TestDefaultPodCliqueScalingGroupConfigs(t *testing.T) {
 					Name:        "sg1",
 					CliqueNames: []string{"clique1"},
 					Replicas:    ptr.To(int32(2)),
+					Termination: testutils.NewAvailabilityTermination(2),
 					ScaleConfig: &grovecorev1beta1.AutoScalingConfig{
 						MinReplicas: nil,
 						MaxReplicas: 5,
@@ -358,14 +390,14 @@ func TestDefaultPodCliqueScalingGroupConfigs(t *testing.T) {
 				require.NotNil(t, result[0].ScaleConfig.MinReplicas)
 				assert.Equal(t, int32(2), *result[0].ScaleConfig.MinReplicas)
 				require.NotNil(t, result[1].ScaleConfig.MinReplicas)
-				assert.Equal(t, int32(4), *result[1].ScaleConfig.MinReplicas)
+				assert.Equal(t, int32(1), *result[1].ScaleConfig.MinReplicas, "no availability, so the floor is 1")
 			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := defaultPodCliqueScalingGroupConfigs(tt.input, grovecorev1beta1.RollingRecreateStrategy)
+			result := defaultPodCliqueScalingGroupConfigs(tt.input, defaultingContext{updateStrategy: grovecorev1beta1.RollingRecreateStrategy})
 			tt.verify(t, result)
 		})
 	}
@@ -464,9 +496,10 @@ func TestDefaultRollingUpdateConfiguration(t *testing.T) {
 		description        string
 		existing           *grovecorev1beta1.RollingUpdateConfiguration
 		updateStrategy     grovecorev1beta1.UpdateStrategyType
-		minAvailable       int32
+		termination        *grovecorev1beta1.TerminationSpec
 		wantNil            bool
 		wantMaxUnavailable int32
+		wantMinReplicas    *int32
 	}{
 		{
 			description:        "rollingRecreate defaults MaxUnavailable to 1",
@@ -482,13 +515,13 @@ func TestDefaultRollingUpdateConfiguration(t *testing.T) {
 		},
 		{
 			description:        "onDelete leaves an existing configuration untouched for the validating webhook to reject",
-			existing:           &grovecorev1beta1.RollingUpdateConfiguration{MaxUnavailable: ptr.To[int32](7)},
+			existing:           &grovecorev1beta1.RollingUpdateConfiguration{MaxUnavailable: ptr.To(intstr.FromInt32(7))},
 			updateStrategy:     grovecorev1beta1.OnDeleteStrategy,
 			wantMaxUnavailable: 7,
 		},
 		{
 			description:        "existing MaxUnavailable is preserved",
-			existing:           &grovecorev1beta1.RollingUpdateConfiguration{MaxUnavailable: ptr.To[int32](7)},
+			existing:           &grovecorev1beta1.RollingUpdateConfiguration{MaxUnavailable: ptr.To(intstr.FromInt32(7))},
 			updateStrategy:     grovecorev1beta1.RollingRecreateStrategy,
 			wantMaxUnavailable: 7,
 		},
@@ -499,30 +532,48 @@ func TestDefaultRollingUpdateConfiguration(t *testing.T) {
 			wantMaxUnavailable: 1,
 		},
 		{
-			description:        "coherent defaults MaxUnavailable to minAvailable",
+			description:        "coherent defaults minReplicas to availability.minReplicas and MaxUnavailable to minReplicas",
 			existing:           nil,
 			updateStrategy:     grovecorev1beta1.CoherentStrategy,
-			minAvailable:       3,
+			termination:        testutils.NewAvailabilityTermination(3),
+			wantMinReplicas:    ptr.To[int32](3),
 			wantMaxUnavailable: 3,
 		},
 		{
-			description:        "coherent preserves an existing MaxUnavailable",
-			existing:           &grovecorev1beta1.RollingUpdateConfiguration{MaxUnavailable: ptr.To[int32](5)},
+			description:        "coherent defaults minReplicas to 1 when availability is unset",
+			existing:           nil,
 			updateStrategy:     grovecorev1beta1.CoherentStrategy,
-			minAvailable:       3,
+			wantMinReplicas:    ptr.To[int32](1),
+			wantMaxUnavailable: 1,
+		},
+		{
+			description:        "coherent defaults MaxUnavailable to a set minReplicas",
+			existing:           &grovecorev1beta1.RollingUpdateConfiguration{MinReplicas: ptr.To[int32](2)},
+			updateStrategy:     grovecorev1beta1.CoherentStrategy,
+			termination:        testutils.NewAvailabilityTermination(3),
+			wantMinReplicas:    ptr.To[int32](2),
+			wantMaxUnavailable: 2,
+		},
+		{
+			description:        "coherent preserves an existing MaxUnavailable",
+			existing:           &grovecorev1beta1.RollingUpdateConfiguration{MaxUnavailable: ptr.To(intstr.FromInt32(5))},
+			updateStrategy:     grovecorev1beta1.CoherentStrategy,
+			termination:        testutils.NewAvailabilityTermination(3),
+			wantMinReplicas:    ptr.To[int32](3),
 			wantMaxUnavailable: 5,
 		},
 	}
 	for _, tc := range testCases {
 		t.Run(tc.description, func(t *testing.T) {
-			result := defaultRollingUpdateConfiguration(tc.existing, tc.updateStrategy, tc.minAvailable)
+			result := defaultRollingUpdateConfiguration(tc.existing, tc.updateStrategy, tc.termination)
 			if tc.wantNil {
 				assert.Nil(t, result)
 				return
 			}
 			require.NotNil(t, result)
 			require.NotNil(t, result.MaxUnavailable)
-			assert.Equal(t, tc.wantMaxUnavailable, *result.MaxUnavailable)
+			assert.Equal(t, intstr.FromInt32(tc.wantMaxUnavailable), *result.MaxUnavailable)
+			assert.Equal(t, tc.wantMinReplicas, result.MinReplicas)
 		})
 	}
 }
@@ -539,32 +590,32 @@ func TestDefaultRollingUpdateForTemplateSpecsPerStrategy(t *testing.T) {
 		{
 			description:        "rollingRecreate defaults standalone MaxUnavailable to 1",
 			updateStrategy:     grovecorev1beta1.RollingRecreateStrategy,
-			input:              &grovecorev1beta1.PodCliqueTemplateSpec{Name: "standalone", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 5, MinAvailable: ptr.To[int32](3)}},
+			input:              &grovecorev1beta1.PodCliqueTemplateSpec{Name: "standalone", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 5, Init: &grovecorev1beta1.InitSpec{MinReplicas: ptr.To[int32](3)}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To[int32](3)}}}}},
 			wantMaxUnavailable: 1,
 		},
 		{
 			description:          "onDelete leaves standalone RollingUpdate nil",
 			updateStrategy:       grovecorev1beta1.OnDeleteStrategy,
-			input:                &grovecorev1beta1.PodCliqueTemplateSpec{Name: "standalone", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 5, MinAvailable: ptr.To[int32](3)}},
+			input:                &grovecorev1beta1.PodCliqueTemplateSpec{Name: "standalone", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 5, Init: &grovecorev1beta1.InitSpec{MinReplicas: ptr.To[int32](3)}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To[int32](3)}}}}},
 			wantRollingUpdateNil: true,
 		},
 		{
 			description:        "onDelete leaves an existing standalone RollingUpdate untouched for the validating webhook to reject",
 			updateStrategy:     grovecorev1beta1.OnDeleteStrategy,
-			input:              &grovecorev1beta1.PodCliqueTemplateSpec{Name: "standalone", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 5, MinAvailable: ptr.To[int32](3)}, RollingUpdate: &grovecorev1beta1.RollingUpdateConfiguration{MaxUnavailable: ptr.To[int32](2)}},
+			input:              &grovecorev1beta1.PodCliqueTemplateSpec{Name: "standalone", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 5, Init: &grovecorev1beta1.InitSpec{MinReplicas: ptr.To[int32](3)}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To[int32](3)}}}}, RollingUpdate: &grovecorev1beta1.RollingUpdateConfiguration{MaxUnavailable: ptr.To(intstr.FromInt32(2))}},
 			wantMaxUnavailable: 2,
 		},
 		{
 			description:          "PCSG-owned clique is skipped",
 			updateStrategy:       grovecorev1beta1.RollingRecreateStrategy,
 			pcsgOwnedCliqueNames: sets.New("member"),
-			input:                &grovecorev1beta1.PodCliqueTemplateSpec{Name: "member", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 5, MinAvailable: ptr.To[int32](3)}},
+			input:                &grovecorev1beta1.PodCliqueTemplateSpec{Name: "member", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 5, Init: &grovecorev1beta1.InitSpec{MinReplicas: ptr.To[int32](3)}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To[int32](3)}}}}},
 			wantRollingUpdateNil: true,
 		},
 	}
 	for _, tc := range testCases {
 		t.Run(tc.description, func(t *testing.T) {
-			result := defaultPodCliqueTemplateSpecs([]*grovecorev1beta1.PodCliqueTemplateSpec{tc.input}, tc.updateStrategy, tc.pcsgOwnedCliqueNames)
+			result := defaultPodCliqueTemplateSpecs([]*grovecorev1beta1.PodCliqueTemplateSpec{tc.input}, defaultingContext{updateStrategy: tc.updateStrategy, pcsgOwnedCliqueNames: tc.pcsgOwnedCliqueNames})
 			require.Len(t, result, 1)
 			if tc.wantRollingUpdateNil {
 				assert.Nil(t, result[0].RollingUpdate)
@@ -572,7 +623,7 @@ func TestDefaultRollingUpdateForTemplateSpecsPerStrategy(t *testing.T) {
 			}
 			require.NotNil(t, result[0].RollingUpdate)
 			require.NotNil(t, result[0].RollingUpdate.MaxUnavailable)
-			assert.Equal(t, tc.wantMaxUnavailable, *result[0].RollingUpdate.MaxUnavailable)
+			assert.Equal(t, intstr.FromInt32(tc.wantMaxUnavailable), *result[0].RollingUpdate.MaxUnavailable)
 		})
 	}
 }
@@ -588,19 +639,19 @@ func TestDefaultRollingUpdateForScalingGroupConfigsPerStrategy(t *testing.T) {
 		{
 			description:        "rollingRecreate defaults MaxUnavailable to 1",
 			updateStrategy:     grovecorev1beta1.RollingRecreateStrategy,
-			input:              grovecorev1beta1.PodCliqueScalingGroupConfig{Name: "sg", CliqueNames: []string{"c"}, Replicas: ptr.To[int32](4), MinAvailable: ptr.To[int32](2)},
+			input:              grovecorev1beta1.PodCliqueScalingGroupConfig{Name: "sg", CliqueNames: []string{"c"}, Replicas: ptr.To[int32](4), Init: &grovecorev1beta1.InitSpec{MinReplicas: ptr.To[int32](2)}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To[int32](2)}}}},
 			wantMaxUnavailable: 1,
 		},
 		{
 			description:          "onDelete leaves RollingUpdate nil",
 			updateStrategy:       grovecorev1beta1.OnDeleteStrategy,
-			input:                grovecorev1beta1.PodCliqueScalingGroupConfig{Name: "sg", CliqueNames: []string{"c"}, Replicas: ptr.To[int32](4), MinAvailable: ptr.To[int32](2)},
+			input:                grovecorev1beta1.PodCliqueScalingGroupConfig{Name: "sg", CliqueNames: []string{"c"}, Replicas: ptr.To[int32](4), Init: &grovecorev1beta1.InitSpec{MinReplicas: ptr.To[int32](2)}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To[int32](2)}}}},
 			wantRollingUpdateNil: true,
 		},
 	}
 	for _, tc := range testCases {
 		t.Run(tc.description, func(t *testing.T) {
-			result := defaultPodCliqueScalingGroupConfigs([]grovecorev1beta1.PodCliqueScalingGroupConfig{tc.input}, tc.updateStrategy)
+			result := defaultPodCliqueScalingGroupConfigs([]grovecorev1beta1.PodCliqueScalingGroupConfig{tc.input}, defaultingContext{updateStrategy: tc.updateStrategy})
 			require.Len(t, result, 1)
 			if tc.wantRollingUpdateNil {
 				assert.Nil(t, result[0].RollingUpdate)
@@ -608,7 +659,99 @@ func TestDefaultRollingUpdateForScalingGroupConfigsPerStrategy(t *testing.T) {
 			}
 			require.NotNil(t, result[0].RollingUpdate)
 			require.NotNil(t, result[0].RollingUpdate.MaxUnavailable)
-			assert.Equal(t, tc.wantMaxUnavailable, *result[0].RollingUpdate.MaxUnavailable)
+			assert.Equal(t, intstr.FromInt32(tc.wantMaxUnavailable), *result[0].RollingUpdate.MaxUnavailable)
+		})
+	}
+}
+
+// TestDefaultMinReplicaFields pins the defaults of init, availability and autoScalingConfig.minReplicas, and
+// that a request sent as v1alpha1 keeps the v1alpha1 autoscaling default of replicas.
+func TestDefaultMinReplicaFields(t *testing.T) {
+	testCases := []struct {
+		description         string
+		init                *grovecorev1beta1.InitSpec
+		termination         *grovecorev1beta1.TerminationSpec
+		alphaRequest        bool
+		wantInit            int32
+		wantAvailability    *grovecorev1beta1.AvailabilityPolicy
+		wantScaleMinReplica int32
+	}{
+		{
+			description:         "nothing set: init and the autoscaling floor default to 1, availability stays unset",
+			wantInit:            1,
+			wantScaleMinReplica: 1,
+		},
+		{
+			description:         "availability set: init and the autoscaling floor follow it, breachTolerance defaults to 4h",
+			termination:         testutils.NewAvailabilityTermination(2),
+			wantInit:            2,
+			wantAvailability:    &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To[int32](2), BreachTolerance: &metav1.Duration{Duration: 4 * time.Hour}},
+			wantScaleMinReplica: 2,
+		},
+		{
+			description: "empty availability: minReplicas defaults to 1",
+			termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{}}},
+			init:        testutils.NewInitSpec(3),
+			wantInit:    3,
+			wantAvailability: &grovecorev1beta1.AvailabilityPolicy{
+				MinReplicas: ptr.To[int32](1), BreachTolerance: &metav1.Duration{Duration: 4 * time.Hour},
+			},
+			wantScaleMinReplica: 1,
+		},
+		{
+			description:         "v1alpha1 request keeps the autoscaling default of replicas",
+			termination:         testutils.NewAvailabilityTermination(2),
+			alphaRequest:        true,
+			wantInit:            2,
+			wantAvailability:    &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To[int32](2), BreachTolerance: &metav1.Duration{Duration: 4 * time.Hour}},
+			wantScaleMinReplica: 5,
+		},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.description, func(t *testing.T) {
+			pcs := &grovecorev1beta1.PodCliqueSet{
+				ObjectMeta: metav1.ObjectMeta{Name: "pcs", Namespace: "default"},
+				Spec: grovecorev1beta1.PodCliqueSetSpec{
+					Template: grovecorev1beta1.PodCliqueSetTemplateSpec{
+						Cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{{
+							Name: "standalone",
+							Spec: grovecorev1beta1.PodCliqueSpec{
+								Replicas:    5,
+								Init:        tc.init.DeepCopy(),
+								Termination: tc.termination.DeepCopy(),
+								ScaleConfig: &grovecorev1beta1.AutoScalingConfig{MaxReplicas: 10},
+							},
+						}, {Name: "member", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 1}}},
+						PodCliqueScalingGroupConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{{
+							Name:        "sg",
+							CliqueNames: []string{"member"},
+							Replicas:    ptr.To[int32](5),
+							Init:        tc.init.DeepCopy(),
+							Termination: tc.termination.DeepCopy(),
+							ScaleConfig: &grovecorev1beta1.AutoScalingConfig{MaxReplicas: 10},
+						}},
+					},
+				},
+			}
+			defaultPodCliqueSet(pcs, tc.alphaRequest)
+
+			clique := pcs.Spec.Template.Cliques[0].Spec
+			cfg := pcs.Spec.Template.PodCliqueScalingGroupConfigs[0]
+			for _, got := range []struct {
+				init        *grovecorev1beta1.InitSpec
+				termination *grovecorev1beta1.TerminationSpec
+				scaleConfig *grovecorev1beta1.AutoScalingConfig
+			}{{clique.Init, clique.Termination, clique.ScaleConfig}, {cfg.Init, cfg.Termination, cfg.ScaleConfig}} {
+				require.NotNil(t, got.init)
+				assert.Equal(t, ptr.To(tc.wantInit), got.init.MinReplicas)
+				if tc.wantAvailability == nil {
+					assert.Nil(t, got.termination)
+				} else {
+					require.NotNil(t, got.termination)
+					assert.Equal(t, tc.wantAvailability, got.termination.Resource.Availability)
+				}
+				assert.Equal(t, ptr.To(tc.wantScaleMinReplica), got.scaleConfig.MinReplicas)
+			}
 		})
 	}
 }

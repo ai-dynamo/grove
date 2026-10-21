@@ -22,7 +22,8 @@ import metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 // +kubebuilder:subresource:status
 // +kubebuilder:subresource:scale:specpath=.spec.replicas,statuspath=.status.replicas,selectorpath=.status.selector
 // +kubebuilder:resource:shortName={pcsg}
-// +kubebuilder:printcolumn:name="MinAvail",type=integer,JSONPath=`.spec.minAvailable`
+// +kubebuilder:printcolumn:name="InitMin",type=integer,JSONPath=`.spec.init.minReplicas`
+// +kubebuilder:printcolumn:name="AvailMin",type=integer,JSONPath=`.spec.termination.resource.availability.minReplicas`
 // +kubebuilder:printcolumn:name="Replicas",type=integer,JSONPath=`.spec.replicas`
 // +kubebuilder:printcolumn:name="Available",type=integer,JSONPath=`.status.availableReplicas`
 // +kubebuilder:printcolumn:name="Scheduled",type=integer,JSONPath=`.status.scheduledReplicas`
@@ -61,18 +62,14 @@ type PodCliqueScalingGroupSpec struct {
 	// If not specified, it defaults to 1.
 	// +kubebuilder:default=1
 	Replicas int32 `json:"replicas"`
-	// MinAvailable specifies the minimum number of ready replicas required for a PodCliqueScalingGroup to be considered operational.
-	// A PodCliqueScalingGroup replica is considered "ready" when its associated PodCliques have sufficient ready or starting pods.
-	// If MinAvailable is breached, it will be used to signal that the PodCliqueScalingGroup is no longer operating with the desired availability.
-	// MinAvailable cannot be greater than Replicas. If ScaleConfig is defined then its MinAvailable should not be less than ScaleConfig.MinReplicas.
-	//
-	// It serves two main purposes:
-	// 1. Gang Scheduling: MinAvailable defines the minimum number of replicas that are guaranteed to be gang scheduled.
-	// 2. Gang Termination: MinAvailable is used as a lower bound below which a PodGang becomes a candidate for Gang termination.
-	// If not specified, it defaults to 1.
+	// Init configures the gang scheduling of the PodCliqueScalingGroup's replicas. It is copied from the
+	// matching PodCliqueScalingGroupConfig.
 	// +optional
-	// +kubebuilder:default=1
-	MinAvailable *int32 `json:"minAvailable,omitempty"`
+	Init *InitSpec `json:"init,omitempty"`
+	// Termination defines the terminal conditions of the PodCliqueScalingGroup. It is copied from the
+	// matching PodCliqueScalingGroupConfig.
+	// +optional
+	Termination *TerminationSpec `json:"termination,omitempty"`
 	// CliqueNames is the list of PodClique names that are configured in the
 	// matching PodCliqueScalingGroup in PodCliqueSet.Spec.Template.PodCliqueScalingGroupConfigs.
 	CliqueNames []string `json:"cliqueNames"`
@@ -80,16 +77,17 @@ type PodCliqueScalingGroupSpec struct {
 
 // PodCliqueScalingGroupStatus is the status of the PodCliqueScalingGroup.
 type PodCliqueScalingGroupStatus struct {
-	// Replicas is the observed number of replicas for the PodCliqueScalingGroup.
+	// Replicas mirrors spec.replicas of the PodCliqueScalingGroup.
 	Replicas int32 `json:"replicas,omitempty"`
 	// ScheduledReplicas is the number of replicas that are scheduled for the PodCliqueScalingGroup.
-	// A replica of PodCliqueScalingGroup is considered "scheduled" when at least MinAvailable number
-	// of pods in each constituent PodClique has been scheduled.
+	// A replica of PodCliqueScalingGroup is considered "scheduled" when at least init.minReplicas
+	// pods of each constituent PodClique have been scheduled.
 	// +kubebuilder:default=0
 	ScheduledReplicas int32 `json:"scheduledReplicas"`
 	// AvailableReplicas is the number of PodCliqueScalingGroup replicas that are available.
-	// A PodCliqueScalingGroup replica is considered available when all constituent PodClique's have
-	// PodClique.Status.ReadyReplicas greater than or equal to PodClique.Spec.MinAvailable
+	// A PodCliqueScalingGroup replica is considered available when every constituent PodClique has
+	// PodClique.Status.ReadyReplicas of at least its ready threshold: termination.resource.availability.minReplicas
+	// when availability is set, and init.minReplicas otherwise.
 	// +kubebuilder:default=0
 	AvailableReplicas int32 `json:"availableReplicas"`
 	// UpdatedReplicas is the number of PodCliqueScalingGroup replicas that correspond with the latest PodCliqueSetGenerationHash.

@@ -443,7 +443,7 @@ func TestMutateTopologyLevelUnavailableConditions(t *testing.T) {
 		if topologyName != "" {
 			tc = &grovecorev1beta1.TopologyConstraint{
 				TopologyName: topologyName,
-				PackDomain:   grovecorev1beta1.TopologyDomainRack,
+				Pack:         &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: grovecorev1beta1.TopologyDomainRack},
 			}
 		}
 		return &grovecorev1beta1.PodCliqueSet{
@@ -460,8 +460,8 @@ func TestMutateTopologyLevelUnavailableConditions(t *testing.T) {
 						{
 							Name: "worker",
 							Spec: grovecorev1beta1.PodCliqueSpec{
-								Replicas:     1,
-								MinAvailable: ptr.To(int32(1)),
+								Replicas: 1,
+								Init:     &grovecorev1beta1.InitSpec{MinReplicas: ptr.To(int32(1))}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To(int32(1))}}},
 							},
 						},
 					},
@@ -511,7 +511,7 @@ func TestMutateTopologyLevelUnavailableConditions(t *testing.T) {
 				pcs := basePCS("")
 				// Add a clique-level constraint so getUniqueTopologyDomainsInPodCliqueSet returns domains.
 				pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1beta1.TopologyConstraint{
-					PackDomain: grovecorev1beta1.TopologyDomainRack,
+					Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: grovecorev1beta1.TopologyDomainRack},
 				}
 				return pcs
 			},
@@ -535,7 +535,7 @@ func TestMutateTopologyLevelUnavailableConditions(t *testing.T) {
 			tasEnabled: true,
 			setupPCS: func() *grovecorev1beta1.PodCliqueSet {
 				pcs := basePCS("my-topology")
-				pcs.Spec.Template.TopologyConstraint.PackDomain = ""
+				pcs.Spec.Template.TopologyConstraint.Pack = nil
 				pcs.Spec.Template.TopologyConstraint.Pack = &grovecorev1beta1.TopologyPackConstraint{
 					RequiredDomain:  grovecorev1beta1.TopologyDomainRack,
 					PreferredDomain: grovecorev1beta1.TopologyDomainZone,
@@ -571,7 +571,7 @@ func TestMutateTopologyLevelUnavailableConditions(t *testing.T) {
 				// Add a clique-level constraint with a domain not present in the CT levels.
 				pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1beta1.TopologyConstraint{
 					TopologyName: "my-topology",
-					PackDomain:   grovecorev1beta1.TopologyDomainHost, // "host" is not in standardLevels
+					Pack:         &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: grovecorev1beta1.TopologyDomainHost}, // "host" is not in standardLevels
 				}
 				return pcs
 			},
@@ -588,7 +588,7 @@ func TestMutateTopologyLevelUnavailableConditions(t *testing.T) {
 			tasEnabled: true,
 			setupPCS: func() *grovecorev1beta1.PodCliqueSet {
 				pcs := basePCS("my-topology")
-				pcs.Spec.Template.TopologyConstraint.PackDomain = ""
+				pcs.Spec.Template.TopologyConstraint.Pack = nil
 				pcs.Spec.Template.TopologyConstraint.Pack = &grovecorev1beta1.TopologyPackConstraint{
 					RequiredDomain:  grovecorev1beta1.TopologyDomainRack,
 					PreferredDomain: grovecorev1beta1.TopologyDomainHost,
@@ -617,7 +617,7 @@ func TestMutateTopologyLevelUnavailableConditions(t *testing.T) {
 				pcs := basePCS("") // PCS-level TopologyConstraint is nil
 				// Only a clique-level constraint is present, but it is incomplete.
 				pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1beta1.TopologyConstraint{
-					PackDomain: grovecorev1beta1.TopologyDomainRack,
+					Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: grovecorev1beta1.TopologyDomainRack},
 				}
 				return pcs
 			},
@@ -648,7 +648,7 @@ func TestMutateTopologyLevelUnavailableConditions(t *testing.T) {
 						CliqueNames: []string{"worker"},
 						TopologyConstraint: &grovecorev1beta1.TopologyConstraint{
 							TopologyName: "my-topology",
-							PackDomain:   grovecorev1beta1.TopologyDomainRack,
+							Pack:         &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: grovecorev1beta1.TopologyDomainRack},
 						},
 					},
 				}
@@ -746,7 +746,7 @@ func TestGetUniqueTopologyDomainsInPodCliqueSet(t *testing.T) {
 				return makePCS(func(tmpl *grovecorev1beta1.PodCliqueSetTemplateSpec) {
 					tmpl.TopologyConstraint = &grovecorev1beta1.TopologyConstraint{
 						TopologyName: "my-topology",
-						PackDomain:   grovecorev1beta1.TopologyDomainRack,
+						Pack:         &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: grovecorev1beta1.TopologyDomainRack},
 					}
 				})
 			},
@@ -795,7 +795,7 @@ func TestGetUniqueTopologyDomainsInPodCliqueSet(t *testing.T) {
 							Name:        "workers",
 							CliqueNames: []string{"worker"},
 							TopologyConstraint: &grovecorev1beta1.TopologyConstraint{
-								PackDomain: grovecorev1beta1.TopologyDomainRack,
+								Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: grovecorev1beta1.TopologyDomainRack},
 							},
 						},
 					}
@@ -1211,8 +1211,8 @@ func markStandalonePCLQConverged(t testing.TB, pcs *grovecorev1beta1.PodCliqueSe
 	pclq.Labels[apicommon.LabelPodTemplateHash] = expectedTemplateHash
 	pclq.Status.CurrentPodTemplateHash = ptr.To(expectedTemplateHash)
 	pclq.Status.CurrentPodCliqueSetGenerationHash = ptr.To(generationHash)
-	pclq.Status.ReadyReplicas = *pclq.Spec.MinAvailable
-	pclq.Status.UpdatedReplicas = *pclq.Spec.MinAvailable
+	pclq.Status.ReadyReplicas = *pclq.Spec.Init.MinReplicas
+	pclq.Status.UpdatedReplicas = *pclq.Spec.Init.MinReplicas
 	return pclq
 }
 

@@ -239,6 +239,8 @@ func (c *ParentPodCliqueDependencies) registerEventHandler(factory informers.Sha
 }
 
 // refreshReadyPodsOfPodClique updates the ready pod count for the PodClique that owns the given pod.
+// Pods are tracked by UID, so a replacement pod with the same name does not inherit its predecessor's
+// condition, and a terminating pod never counts, so that the wait fails closed.
 func (c *ParentPodCliqueDependencies) refreshReadyPodsOfPodClique(pod *corev1.Pod, deletionEvent bool) {
 	// Find which parent PodClique this pod belongs to by name prefix matching
 	podCliqueName, ok := lo.Find(lo.Keys(c.pclqFQNToDependency), func(podCliqueFQN string) bool {
@@ -248,23 +250,32 @@ func (c *ParentPodCliqueDependencies) refreshReadyPodsOfPodClique(pod *corev1.Po
 		return // Pod doesn't belong to any tracked parent PodClique
 	}
 
-	if deletionEvent {
-		c.currentPCLQReadyPods[podCliqueName].Delete(pod.Name)
+	podKey := podTrackingKey(pod)
+	if deletionEvent || pod.DeletionTimestamp != nil {
+		c.currentPCLQReadyPods[podCliqueName].Delete(podKey)
 		return
 	}
 
 	// Check if the pod has the condition this dependency waits on
 	conditionType := c.pclqFQNToDependency[podCliqueName].ConditionType
-	readyCondition, ok := lo.Find(pod.Status.Conditions, func(podCondition corev1.PodCondition) bool {
+	condition, ok := lo.Find(pod.Status.Conditions, func(podCondition corev1.PodCondition) bool {
 		return podCondition.Type == conditionType
 	})
-	podReady := ok && readyCondition.Status == corev1.ConditionTrue
+	conditionMet := ok && condition.Status == corev1.ConditionTrue
 
-	if podReady {
-		c.currentPCLQReadyPods[podCliqueName].Insert(pod.Name)
+	if conditionMet {
+		c.currentPCLQReadyPods[podCliqueName].Insert(podKey)
 	} else {
-		c.currentPCLQReadyPods[podCliqueName].Delete(pod.Name)
+		c.currentPCLQReadyPods[podCliqueName].Delete(podKey)
 	}
+}
+
+// podTrackingKey returns the pod UID, or the pod name when the UID is not set.
+func podTrackingKey(pod *corev1.Pod) string {
+	if pod.UID != "" {
+		return string(pod.UID)
+	}
+	return pod.Name
 }
 
 // notifyIfAllParentsReady will notify consumers if all PCLQ pods are ready.

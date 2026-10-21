@@ -30,6 +30,7 @@ import (
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/go-logr/logr"
+	"github.com/samber/lo"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
@@ -201,7 +202,7 @@ func createExistingPodCliquesFromPCS(pcs *grovecorev1beta1.PodCliqueSet, podCliq
 		for _, pclqTemplate := range pcs.Spec.Template.Cliques {
 			pclq := testutils.NewPodCliqueBuilder(pcs.Name, pcs.UID, pclqTemplate.Name, pcs.Namespace, replicaIndex).
 				WithLabels(getPodCliqueSelectorLabels(pcs.ObjectMeta)).
-				WithStartsAfter(pclqTemplate.Spec.StartsAfter).
+				WithStartsAfter(lo.Map(pclqTemplate.Spec.StartsAfter, func(dependency grovecorev1beta1.StartupDependency, _ int) string { return dependency.Name })).
 				Build()
 			existingPodCliques = append(existingPodCliques, pclq)
 		}
@@ -603,7 +604,7 @@ func TestBuildResource_DoesNotWriteStartsAfter(t *testing.T) {
 		Build()
 
 	// A preserved worker replica from an older operator still carries the resolved parent FQN.
-	staleStartsAfter := []string{fmt.Sprintf("%s-%d-%s", testPCSName, pcsReplica, leaderClique)}
+	staleStartsAfter := []grovecorev1beta1.StartupDependency{{Name: fmt.Sprintf("%s-%d-%s", testPCSName, pcsReplica, leaderClique)}}
 	pclq := &grovecorev1beta1.PodClique{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      fmt.Sprintf("%s-%d-%s", testPCSName, pcsReplica, workerClique),

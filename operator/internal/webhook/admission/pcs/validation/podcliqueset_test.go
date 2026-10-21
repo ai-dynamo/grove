@@ -34,6 +34,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	resourcev1 "k8s.io/api/resource/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/utils/ptr"
@@ -119,7 +120,7 @@ func TestResourceNamingValidation(t *testing.T) {
 		t.Run(tc.description, func(t *testing.T) {
 			pcsBuilder := testutils.NewPodCliqueSetBuilder(tc.pcsName, "default", uuid.NewUUID()).
 				WithReplicas(1).
-				WithTerminationDelay(4 * time.Hour).
+				WithBreachTolerance(4 * time.Hour).
 				WithCliqueStartupType(ptr.To(grovecorev1beta1.CliqueStartupTypeAnyOrder))
 
 			// Add PodClique templates
@@ -298,7 +299,7 @@ func TestValidateSchedulerNames(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			pcsBuilder := testutils.NewPodCliqueSetBuilder("test", "default", uuid.NewUUID()).
 				WithReplicas(1).
-				WithTerminationDelay(4 * time.Hour).
+				WithBreachTolerance(4 * time.Hour).
 				WithCliqueStartupType(ptr.To(grovecorev1beta1.CliqueStartupTypeAnyOrder))
 			for i := 0; i < len(tt.schedulerNames); i++ {
 				clique := createPodCliqueTemplate(fmt.Sprintf("c%d", i))
@@ -344,10 +345,10 @@ func TestPodCliqueScalingGroupConfigValidation(t *testing.T) {
 			pcsName:     "inference",
 			scalingGroups: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{
-					Name:         "workers",
-					CliqueNames:  []string{"prefill"},
-					Replicas:     ptr.To(int32(4)),
-					MinAvailable: ptr.To(int32(2)),
+					Name:        "workers",
+					CliqueNames: []string{"prefill"},
+					Replicas:    ptr.To(int32(4)),
+					Init:        &grovecorev1beta1.InitSpec{MinReplicas: ptr.To(int32(2))}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To(int32(2))}}},
 				},
 			},
 			cliqueTemplates: []string{"prefill"},
@@ -357,59 +358,92 @@ func TestPodCliqueScalingGroupConfigValidation(t *testing.T) {
 			pcsName:     "inference",
 			scalingGroups: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{
-					Name:         "workers",
-					CliqueNames:  []string{"prefill"},
-					Replicas:     ptr.To(int32(-1)),
-					MinAvailable: ptr.To(int32(1)),
+					Name:        "workers",
+					CliqueNames: []string{"prefill"},
+					Replicas:    ptr.To(int32(-1)),
+					Init:        &grovecorev1beta1.InitSpec{MinReplicas: ptr.To(int32(1))}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To(int32(1))}}},
 				},
 			},
 			cliqueTemplates: []string{"prefill"},
 			errorMatchers: []testutils.ErrorMatcher{
 				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.podCliqueScalingGroups[0].replicas"},
-				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.podCliqueScalingGroups[0].minAvailable"},
+				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.podCliqueScalingGroups[0].init.minReplicas"},
 			},
 		},
 		{
-			description: "Invalid MinAvailable (zero value)",
+			description: "Invalid init and availability minReplicas (zero value)",
 			pcsName:     "inference",
 			scalingGroups: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{
-					Name:         "workers",
-					CliqueNames:  []string{"prefill"},
-					Replicas:     ptr.To(int32(4)),
-					MinAvailable: ptr.To(int32(0)),
+					Name:        "workers",
+					CliqueNames: []string{"prefill"},
+					Replicas:    ptr.To(int32(4)),
+					Init:        &grovecorev1beta1.InitSpec{MinReplicas: ptr.To(int32(0))}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To(int32(0))}}},
 				},
 			},
 			cliqueTemplates: []string{"prefill"},
 			errorMatchers: []testutils.ErrorMatcher{
-				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.podCliqueScalingGroups[0].minAvailable"},
+				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.podCliqueScalingGroups[0].init.minReplicas"},
+				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.podCliqueScalingGroups[0].termination.resource.availability.minReplicas"},
 			},
 		},
 		{
-			description: "Invalid MinAvailable > Replicas",
+			description: "Invalid init.minReplicas > Replicas",
 			pcsName:     "inference",
 			scalingGroups: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{
-					Name:         "workers",
-					CliqueNames:  []string{"prefill"},
-					Replicas:     ptr.To(int32(2)),
-					MinAvailable: ptr.To(int32(4)),
+					Name:        "workers",
+					CliqueNames: []string{"prefill"},
+					Replicas:    ptr.To(int32(2)),
+					Init:        &grovecorev1beta1.InitSpec{MinReplicas: ptr.To(int32(4))}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To(int32(4))}}},
 				},
 			},
 			cliqueTemplates: []string{"prefill"},
 			errorMatchers: []testutils.ErrorMatcher{
-				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.podCliqueScalingGroups[0].minAvailable"},
+				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.podCliqueScalingGroups[0].init.minReplicas"},
 			},
 		},
 		{
-			description: "Invalid ScaleConfig.MinReplicas < MinAvailable",
+			description: "Invalid availability.minReplicas > init.minReplicas",
 			pcsName:     "inference",
 			scalingGroups: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{
-					Name:         "workers",
-					CliqueNames:  []string{"prefill"},
-					Replicas:     ptr.To(int32(4)),
-					MinAvailable: ptr.To(int32(3)),
+					Name:        "workers",
+					CliqueNames: []string{"prefill"},
+					Replicas:    ptr.To(int32(4)),
+					Init:        testutils.NewInitSpec(2),
+					Termination: testutils.NewAvailabilityTermination(3),
+				},
+			},
+			cliqueTemplates: []string{"prefill"},
+			errorMatchers: []testutils.ErrorMatcher{
+				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.podCliqueScalingGroups[0].termination.resource.availability.minReplicas"},
+			},
+		},
+		{
+			description: "Valid ScaleConfig.MinReplicas below init.minReplicas but at availability.minReplicas",
+			pcsName:     "inference",
+			scalingGroups: []grovecorev1beta1.PodCliqueScalingGroupConfig{
+				{
+					Name:        "workers",
+					CliqueNames: []string{"prefill"},
+					Replicas:    ptr.To(int32(4)),
+					Init:        testutils.NewInitSpec(3),
+					Termination: testutils.NewAvailabilityTermination(2),
+					ScaleConfig: &grovecorev1beta1.AutoScalingConfig{MinReplicas: ptr.To(int32(2)), MaxReplicas: 10},
+				},
+			},
+			cliqueTemplates: []string{"prefill"},
+		},
+		{
+			description: "Invalid ScaleConfig.MinReplicas < availability.minReplicas",
+			pcsName:     "inference",
+			scalingGroups: []grovecorev1beta1.PodCliqueScalingGroupConfig{
+				{
+					Name:        "workers",
+					CliqueNames: []string{"prefill"},
+					Replicas:    ptr.To(int32(4)),
+					Init:        &grovecorev1beta1.InitSpec{MinReplicas: ptr.To(int32(3))}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To(int32(3))}}},
 					ScaleConfig: &grovecorev1beta1.AutoScalingConfig{
 						MinReplicas: ptr.To(int32(2)),
 						MaxReplicas: 10,
@@ -578,7 +612,7 @@ func TestPodCliqueUpdateValidation(t *testing.T) {
 			// Create validator and validate update
 			validator := newPCSValidator(newPCS, admissionv1.Update, defaultTASConfig(), groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube)}, nil, testutils.NewDefaultFakeRegistry())
 			fldPath := field.NewPath("spec").Child("template").Child("cliques")
-			validationErrors := validator.validatePodCliqueUpdate(oldPCS.Spec.Template.Cliques, fldPath)
+			validationErrors := validator.validatePodCliqueUpdate(oldPCS, fldPath)
 
 			if tc.expectError {
 				assert.NotEmpty(t, validationErrors, "Expected validation errors for test case: %s", tc.name)
@@ -633,36 +667,21 @@ func TestImmutableFieldsValidation(t *testing.T) {
 			expectedErrMsg: "field is immutable",
 		},
 		{
-			name: "Invalid: MinAvailable is immutable",
-			setupOldPCS: func() *grovecorev1beta1.PodCliqueSet {
-				pcs := createTestPodCliqueSet("test")
-				pcs.Spec.Template.Cliques[0].Spec.MinAvailable = ptr.To(int32(1))
-				return pcs
-			},
-			setupNewPCS: func() *grovecorev1beta1.PodCliqueSet {
-				pcs := createTestPodCliqueSet("test")
-				pcs.Spec.Template.Cliques[0].Spec.MinAvailable = ptr.To(int32(2))
-				return pcs
-			},
-			expectError:    true,
-			expectedErrMsg: "field is immutable",
-		},
-		{
 			name: "Invalid: StartsAfter is immutable",
 			setupOldPCS: func() *grovecorev1beta1.PodCliqueSet {
 				pcs := createTestPodCliqueSet("test")
 				pcs.Spec.Template.StartupType = ptr.To(grovecorev1beta1.CliqueStartupTypeExplicit)
 				pcs.Spec.Template.Cliques = append(pcs.Spec.Template.Cliques, createPodCliqueTemplate("clique2"))
-				pcs.Spec.Template.Cliques[0].Spec.StartsAfter = []string{}
-				pcs.Spec.Template.Cliques[1].Spec.StartsAfter = []string{"test"}
+				pcs.Spec.Template.Cliques[0].Spec.StartsAfter = []grovecorev1beta1.StartupDependency{}
+				pcs.Spec.Template.Cliques[1].Spec.StartsAfter = []grovecorev1beta1.StartupDependency{{Name: "test"}}
 				return pcs
 			},
 			setupNewPCS: func() *grovecorev1beta1.PodCliqueSet {
 				pcs := createTestPodCliqueSet("test")
 				pcs.Spec.Template.StartupType = ptr.To(grovecorev1beta1.CliqueStartupTypeExplicit)
 				pcs.Spec.Template.Cliques = append(pcs.Spec.Template.Cliques, createPodCliqueTemplate("clique2"))
-				pcs.Spec.Template.Cliques[0].Spec.StartsAfter = []string{}
-				pcs.Spec.Template.Cliques[1].Spec.StartsAfter = []string{"test", "another"}
+				pcs.Spec.Template.Cliques[0].Spec.StartsAfter = []grovecorev1beta1.StartupDependency{}
+				pcs.Spec.Template.Cliques[1].Spec.StartsAfter = []grovecorev1beta1.StartupDependency{{Name: "test"}, {Name: "another"}}
 				return pcs
 			},
 			expectError:    true,
@@ -673,15 +692,15 @@ func TestImmutableFieldsValidation(t *testing.T) {
 			setupOldPCS: func() *grovecorev1beta1.PodCliqueSet {
 				pcs := createTestPodCliqueSet("test")
 				pcs.Spec.Template.Cliques[0].Spec.RoleName = "old-role"
-				pcs.Spec.Template.Cliques[0].Spec.MinAvailable = ptr.To(int32(1))
-				pcs.Spec.Template.Cliques[0].Spec.StartsAfter = []string{"dep1"}
+				pcs.Spec.Template.Cliques[0].Spec.Init = &grovecorev1beta1.InitSpec{MinReplicas: ptr.To(int32(1))}
+				pcs.Spec.Template.Cliques[0].Spec.StartsAfter = []grovecorev1beta1.StartupDependency{{Name: "dep1"}}
 				return pcs
 			},
 			setupNewPCS: func() *grovecorev1beta1.PodCliqueSet {
 				pcs := createTestPodCliqueSet("test")
 				pcs.Spec.Template.Cliques[0].Spec.RoleName = "new-role"
-				pcs.Spec.Template.Cliques[0].Spec.MinAvailable = ptr.To(int32(2))
-				pcs.Spec.Template.Cliques[0].Spec.StartsAfter = []string{"dep1", "dep2"}
+				pcs.Spec.Template.Cliques[0].Spec.Init = &grovecorev1beta1.InitSpec{MinReplicas: ptr.To(int32(2))}
+				pcs.Spec.Template.Cliques[0].Spec.StartsAfter = []grovecorev1beta1.StartupDependency{{Name: "dep1"}, {Name: "dep2"}}
 				return pcs
 			},
 			expectError:    true,
@@ -809,14 +828,14 @@ func TestPodCliqueScalingGroupConfigsUpdateValidation(t *testing.T) {
 			name: "same configs - should pass",
 			oldConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{
-					CliqueNames:  []string{"clique1", "clique2"},
-					MinAvailable: ptr.To(int32(1)),
+					CliqueNames: []string{"clique1", "clique2"},
+					Init:        &grovecorev1beta1.InitSpec{MinReplicas: ptr.To(int32(1))}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To(int32(1))}}},
 				},
 			},
 			newConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{
-					CliqueNames:  []string{"clique1", "clique2"},
-					MinAvailable: ptr.To(int32(1)),
+					CliqueNames: []string{"clique1", "clique2"},
+					Init:        &grovecorev1beta1.InitSpec{MinReplicas: ptr.To(int32(1))}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To(int32(1))}}},
 				},
 			},
 			expectedErrors: false,
@@ -825,52 +844,51 @@ func TestPodCliqueScalingGroupConfigsUpdateValidation(t *testing.T) {
 			name: "different clique names - should fail",
 			oldConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{
-					CliqueNames:  []string{"clique1", "clique2"},
-					MinAvailable: ptr.To(int32(1)),
+					CliqueNames: []string{"clique1", "clique2"},
+					Init:        &grovecorev1beta1.InitSpec{MinReplicas: ptr.To(int32(1))}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To(int32(1))}}},
 				},
 			},
 			newConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{
-					CliqueNames:  []string{"clique1", "clique3"},
-					MinAvailable: ptr.To(int32(1)),
+					CliqueNames: []string{"clique1", "clique3"},
+					Init:        &grovecorev1beta1.InitSpec{MinReplicas: ptr.To(int32(1))}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To(int32(1))}}},
 				},
 			},
 			expectedErrors: true,
 			expectedErrMsg: "field is immutable",
 		},
 		{
-			name: "different min available - should fail",
+			name: "different init and availability minReplicas in a v1beta1 request - should pass",
 			oldConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{
-					CliqueNames:  []string{"clique1", "clique2"},
-					MinAvailable: ptr.To(int32(1)),
+					CliqueNames: []string{"clique1", "clique2"},
+					Init:        &grovecorev1beta1.InitSpec{MinReplicas: ptr.To(int32(1))}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To(int32(1))}}},
 				},
 			},
 			newConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{
-					CliqueNames:  []string{"clique1", "clique2"},
-					MinAvailable: ptr.To(int32(2)),
+					CliqueNames: []string{"clique1", "clique2"},
+					Init:        &grovecorev1beta1.InitSpec{MinReplicas: ptr.To(int32(2))}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To(int32(2))}}},
 				},
 			},
-			expectedErrors: true,
-			expectedErrMsg: "field is immutable",
+			expectedErrors: false,
 		},
 		{
 			name: "adding new config - should fail",
 			oldConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{
-					CliqueNames:  []string{"clique1"},
-					MinAvailable: ptr.To(int32(1)),
+					CliqueNames: []string{"clique1"},
+					Init:        &grovecorev1beta1.InitSpec{MinReplicas: ptr.To(int32(1))}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To(int32(1))}}},
 				},
 			},
 			newConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{
-					CliqueNames:  []string{"clique1"},
-					MinAvailable: ptr.To(int32(1)),
+					CliqueNames: []string{"clique1"},
+					Init:        &grovecorev1beta1.InitSpec{MinReplicas: ptr.To(int32(1))}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To(int32(1))}}},
 				},
 				{
-					CliqueNames:  []string{"clique2"},
-					MinAvailable: ptr.To(int32(1)),
+					CliqueNames: []string{"clique2"},
+					Init:        &grovecorev1beta1.InitSpec{MinReplicas: ptr.To(int32(1))}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To(int32(1))}}},
 				},
 			},
 			expectedErrors: true,
@@ -880,18 +898,18 @@ func TestPodCliqueScalingGroupConfigsUpdateValidation(t *testing.T) {
 			name: "removing config - should fail",
 			oldConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{
-					CliqueNames:  []string{"clique1"},
-					MinAvailable: ptr.To(int32(1)),
+					CliqueNames: []string{"clique1"},
+					Init:        &grovecorev1beta1.InitSpec{MinReplicas: ptr.To(int32(1))}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To(int32(1))}}},
 				},
 				{
-					CliqueNames:  []string{"clique2"},
-					MinAvailable: ptr.To(int32(1)),
+					CliqueNames: []string{"clique2"},
+					Init:        &grovecorev1beta1.InitSpec{MinReplicas: ptr.To(int32(1))}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To(int32(1))}}},
 				},
 			},
 			newConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{
-					CliqueNames:  []string{"clique1"},
-					MinAvailable: ptr.To(int32(1)),
+					CliqueNames: []string{"clique1"},
+					Init:        &grovecorev1beta1.InitSpec{MinReplicas: ptr.To(int32(1))}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To(int32(1))}}},
 				},
 			},
 			expectedErrors: true,
@@ -913,42 +931,39 @@ func TestPodCliqueScalingGroupConfigsUpdateValidation(t *testing.T) {
 			name: "nil min available in both - should pass",
 			oldConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{
-					CliqueNames:  []string{"clique1"},
-					MinAvailable: nil,
+					CliqueNames: []string{"clique1"},
 				},
 			},
 			newConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{
-					CliqueNames:  []string{"clique1"},
-					MinAvailable: nil,
+					CliqueNames: []string{"clique1"},
 				},
 			},
 			expectedErrors: false,
 		},
 		{
-			name: "nil to non-nil min available - should fail",
+			name: "adding availability - should fail",
 			oldConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{
-					CliqueNames:  []string{"clique1"},
-					MinAvailable: nil,
+					CliqueNames: []string{"clique1"},
 				},
 			},
 			newConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{
-					CliqueNames:  []string{"clique1"},
-					MinAvailable: ptr.To(int32(1)),
+					CliqueNames: []string{"clique1"},
+					Init:        &grovecorev1beta1.InitSpec{MinReplicas: ptr.To(int32(1))}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To(int32(1))}}},
 				},
 			},
 			expectedErrors: true,
-			expectedErrMsg: "field is immutable",
+			expectedErrMsg: "adding or removing availability is not allowed",
 		},
 		{
 			name: "same resourceSharing - should pass",
 			oldConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{
-					Name:         "sg1",
-					CliqueNames:  []string{"clique1"},
-					MinAvailable: ptr.To(int32(1)),
+					Name:        "sg1",
+					CliqueNames: []string{"clique1"},
+					Init:        &grovecorev1beta1.InitSpec{MinReplicas: ptr.To(int32(1))}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To(int32(1))}}},
 					ResourceSharing: []grovecorev1beta1.PCSGResourceSharingSpec{
 						{ResourceSharingSpec: grovecorev1beta1.ResourceSharingSpec{Name: "share-a", Scope: grovecorev1beta1.ResourceSharingScopeAllReplicas}},
 					},
@@ -956,9 +971,9 @@ func TestPodCliqueScalingGroupConfigsUpdateValidation(t *testing.T) {
 			},
 			newConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{
-					Name:         "sg1",
-					CliqueNames:  []string{"clique1"},
-					MinAvailable: ptr.To(int32(1)),
+					Name:        "sg1",
+					CliqueNames: []string{"clique1"},
+					Init:        &grovecorev1beta1.InitSpec{MinReplicas: ptr.To(int32(1))}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To(int32(1))}}},
 					ResourceSharing: []grovecorev1beta1.PCSGResourceSharingSpec{
 						{ResourceSharingSpec: grovecorev1beta1.ResourceSharingSpec{Name: "share-a", Scope: grovecorev1beta1.ResourceSharingScopeAllReplicas}},
 					},
@@ -970,9 +985,9 @@ func TestPodCliqueScalingGroupConfigsUpdateValidation(t *testing.T) {
 			name: "different resourceSharing - should fail",
 			oldConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{
-					Name:         "sg1",
-					CliqueNames:  []string{"clique1"},
-					MinAvailable: ptr.To(int32(1)),
+					Name:        "sg1",
+					CliqueNames: []string{"clique1"},
+					Init:        &grovecorev1beta1.InitSpec{MinReplicas: ptr.To(int32(1))}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To(int32(1))}}},
 					ResourceSharing: []grovecorev1beta1.PCSGResourceSharingSpec{
 						{ResourceSharingSpec: grovecorev1beta1.ResourceSharingSpec{Name: "share-a", Scope: grovecorev1beta1.ResourceSharingScopeAllReplicas}},
 					},
@@ -980,9 +995,9 @@ func TestPodCliqueScalingGroupConfigsUpdateValidation(t *testing.T) {
 			},
 			newConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{
-					Name:         "sg1",
-					CliqueNames:  []string{"clique1"},
-					MinAvailable: ptr.To(int32(1)),
+					Name:        "sg1",
+					CliqueNames: []string{"clique1"},
+					Init:        &grovecorev1beta1.InitSpec{MinReplicas: ptr.To(int32(1))}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To(int32(1))}}},
 					ResourceSharing: []grovecorev1beta1.PCSGResourceSharingSpec{
 						{ResourceSharingSpec: grovecorev1beta1.ResourceSharingSpec{Name: "share-a", Scope: grovecorev1beta1.ResourceSharingScopePerReplica}},
 					},
@@ -1005,7 +1020,7 @@ func TestPodCliqueScalingGroupConfigsUpdateValidation(t *testing.T) {
 			// Create validator and validate update
 			validator := newPCSValidator(newPCS, admissionv1.Update, defaultTASConfig(), groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube)}, nil, testutils.NewDefaultFakeRegistry())
 			fldPath := field.NewPath("spec", "template", "podCliqueScalingGroupConfigs")
-			validationErrors := validator.validatePodCliqueScalingGroupConfigsUpdate(tc.oldConfigs, fldPath)
+			validationErrors := validator.validatePodCliqueScalingGroupConfigsUpdate(oldPCS, fldPath)
 
 			if tc.expectedErrors {
 				assert.NotEmpty(t, validationErrors, "Expected validation errors for test case: %s", tc.name)
@@ -1042,13 +1057,13 @@ func TestValidateCliqueDependencies(t *testing.T) {
 				{
 					Name: "clique1",
 					Spec: grovecorev1beta1.PodCliqueSpec{
-						StartsAfter: []string{},
+						StartsAfter: []grovecorev1beta1.StartupDependency{},
 					},
 				},
 				{
 					Name: "clique2",
 					Spec: grovecorev1beta1.PodCliqueSpec{
-						StartsAfter: []string{"clique1"},
+						StartsAfter: []grovecorev1beta1.StartupDependency{{Name: "clique1"}},
 					},
 				},
 			},
@@ -1060,13 +1075,13 @@ func TestValidateCliqueDependencies(t *testing.T) {
 				{
 					Name: "clique1",
 					Spec: grovecorev1beta1.PodCliqueSpec{
-						StartsAfter: []string{"clique2"},
+						StartsAfter: []grovecorev1beta1.StartupDependency{{Name: "clique2"}},
 					},
 				},
 				{
 					Name: "clique2",
 					Spec: grovecorev1beta1.PodCliqueSpec{
-						StartsAfter: []string{"clique1"},
+						StartsAfter: []grovecorev1beta1.StartupDependency{{Name: "clique1"}},
 					},
 				},
 			},
@@ -1079,7 +1094,7 @@ func TestValidateCliqueDependencies(t *testing.T) {
 				{
 					Name: "clique1",
 					Spec: grovecorev1beta1.PodCliqueSpec{
-						StartsAfter: []string{"unknown-clique"},
+						StartsAfter: []grovecorev1beta1.StartupDependency{{Name: "unknown-clique"}},
 					},
 				},
 			},
@@ -1092,19 +1107,19 @@ func TestValidateCliqueDependencies(t *testing.T) {
 				{
 					Name: "clique1",
 					Spec: grovecorev1beta1.PodCliqueSpec{
-						StartsAfter: []string{"clique3"},
+						StartsAfter: []grovecorev1beta1.StartupDependency{{Name: "clique3"}},
 					},
 				},
 				{
 					Name: "clique2",
 					Spec: grovecorev1beta1.PodCliqueSpec{
-						StartsAfter: []string{"clique1"},
+						StartsAfter: []grovecorev1beta1.StartupDependency{{Name: "clique1"}},
 					},
 				},
 				{
 					Name: "clique3",
 					Spec: grovecorev1beta1.PodCliqueSpec{
-						StartsAfter: []string{"clique2"},
+						StartsAfter: []grovecorev1beta1.StartupDependency{{Name: "clique2"}},
 					},
 				},
 			},
@@ -1117,7 +1132,7 @@ func TestValidateCliqueDependencies(t *testing.T) {
 				{
 					Name: "clique1",
 					Spec: grovecorev1beta1.PodCliqueSpec{
-						StartsAfter: []string{},
+						StartsAfter: []grovecorev1beta1.StartupDependency{},
 					},
 				},
 			},
@@ -1170,14 +1185,14 @@ func TestValidateScaleConfig(t *testing.T) {
 			expectError:  false,
 		},
 		{
-			name: "minReplicas less than minAvailable returns error",
+			name: "minReplicas less than the scale floor returns error",
 			scaleConfig: &grovecorev1beta1.AutoScalingConfig{
 				MinReplicas: ptr.To(int32(1)),
 				MaxReplicas: 5,
 			},
 			minAvailable:  2,
 			expectError:   true,
-			errorContains: "must be greater than or equal to podCliqueSpec.minAvailable",
+			errorContains: "must be greater than or equal to 2",
 		},
 		{
 			name: "maxReplicas less than minReplicas returns error",
@@ -1329,7 +1344,7 @@ func TestEnvVarValidation(t *testing.T) {
 
 			pcs := testutils.NewPodCliqueSetBuilder("inference", "default", uuid.NewUUID()).
 				WithReplicas(1).
-				WithTerminationDelay(4 * time.Hour).
+				WithBreachTolerance(4 * time.Hour).
 				WithCliqueStartupType(ptr.To(grovecorev1beta1.CliqueStartupTypeAnyOrder)).
 				WithPodCliqueTemplateSpec(clique.Build()).
 				Build()
@@ -1727,7 +1742,7 @@ func TestValidateTopologyConstraintsPCSTopologyName(t *testing.T) {
 			setupOldPCS: func() *grovecorev1beta1.PodCliqueSet {
 				pcs := createTestPodCliqueSet("pcs-repair-missing")
 				pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1beta1.TopologyConstraint{
-					PackDomain: grovecorev1beta1.TopologyDomainHost,
+					Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: grovecorev1beta1.TopologyDomainHost},
 				}
 				return pcs
 			},
@@ -1735,7 +1750,7 @@ func TestValidateTopologyConstraintsPCSTopologyName(t *testing.T) {
 				pcs := createTestPodCliqueSet("pcs-repair-missing")
 				pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1beta1.TopologyConstraint{
 					TopologyName: "topo-a",
-					PackDomain:   grovecorev1beta1.TopologyDomainHost,
+					Pack:         &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: grovecorev1beta1.TopologyDomainHost},
 				}
 				return pcs
 			},
@@ -1747,10 +1762,10 @@ func TestValidateTopologyConstraintsPCSTopologyName(t *testing.T) {
 			setupOldPCS: func() *grovecorev1beta1.PodCliqueSet {
 				pcs := createTestPodCliqueSet("pcs-repair-inherited-child")
 				pcs.Spec.Template.TopologyConstraint = &grovecorev1beta1.TopologyConstraint{
-					PackDomain: grovecorev1beta1.TopologyDomainZone,
+					Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: grovecorev1beta1.TopologyDomainZone},
 				}
 				pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1beta1.TopologyConstraint{
-					PackDomain: grovecorev1beta1.TopologyDomainHost,
+					Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: grovecorev1beta1.TopologyDomainHost},
 				}
 				return pcs
 			},
@@ -1758,10 +1773,10 @@ func TestValidateTopologyConstraintsPCSTopologyName(t *testing.T) {
 				pcs := createTestPodCliqueSet("pcs-repair-inherited-child")
 				pcs.Spec.Template.TopologyConstraint = &grovecorev1beta1.TopologyConstraint{
 					TopologyName: "topo-a",
-					PackDomain:   grovecorev1beta1.TopologyDomainZone,
+					Pack:         &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: grovecorev1beta1.TopologyDomainZone},
 				}
 				pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1beta1.TopologyConstraint{
-					PackDomain: grovecorev1beta1.TopologyDomainHost,
+					Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: grovecorev1beta1.TopologyDomainHost},
 				}
 				return pcs
 			},
@@ -1781,7 +1796,7 @@ func TestValidateTopologyConstraintsPCSTopologyName(t *testing.T) {
 				pcs := createTestPodCliqueSet("pcs-repair-child")
 				pcs.Spec.Template.TopologyConstraint = &grovecorev1beta1.TopologyConstraint{
 					TopologyName: "topo-a",
-					PackDomain:   grovecorev1beta1.TopologyDomainZone,
+					Pack:         &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: grovecorev1beta1.TopologyDomainZone},
 				}
 				return pcs
 			},
@@ -1796,7 +1811,7 @@ func TestValidateTopologyConstraintsPCSTopologyName(t *testing.T) {
 			setupOldPCS: func() *grovecorev1beta1.PodCliqueSet {
 				pcs := createTestPodCliqueSet("pcs-repair-packdomain")
 				pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1beta1.TopologyConstraint{
-					PackDomain: grovecorev1beta1.TopologyDomainHost,
+					Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: grovecorev1beta1.TopologyDomainHost},
 				}
 				return pcs
 			},
@@ -1804,7 +1819,7 @@ func TestValidateTopologyConstraintsPCSTopologyName(t *testing.T) {
 				pcs := createTestPodCliqueSet("pcs-repair-packdomain")
 				pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1beta1.TopologyConstraint{
 					TopologyName: "topo-a",
-					PackDomain:   grovecorev1beta1.TopologyDomainRack,
+					Pack:         &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: grovecorev1beta1.TopologyDomainRack},
 				}
 				return pcs
 			},
@@ -1827,7 +1842,7 @@ func TestValidateTopologyConstraintsPCSTopologyName(t *testing.T) {
 				pcs := createTestPodCliqueSet("pcs-repair-pcs-packdomain")
 				pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1beta1.TopologyConstraint{
 					TopologyName: "topo-b",
-					PackDomain:   grovecorev1beta1.TopologyDomainHost,
+					Pack:         &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: grovecorev1beta1.TopologyDomainHost},
 				}
 				return pcs
 			},
@@ -1893,7 +1908,7 @@ func defaultTASConfig() groveconfigv1alpha1.TopologyAwareSchedulingConfiguration
 func createTestPodCliqueSet(name string) *grovecorev1beta1.PodCliqueSet {
 	return testutils.NewPodCliqueSetBuilder(name, "default", uuid.NewUUID()).
 		WithReplicas(1).
-		WithTerminationDelay(4 * time.Hour).
+		WithBreachTolerance(4 * time.Hour).
 		WithCliqueStartupType(ptr.To(grovecorev1beta1.CliqueStartupTypeAnyOrder)).
 		WithPodCliqueTemplateSpec(
 			testutils.NewPodCliqueTemplateSpecBuilder("test").
@@ -1936,16 +1951,17 @@ func createTestClusterTopology() *grovecorev1beta1.ClusterTopologyBinding {
 
 func TestValidateRollingUpdateConfiguration(t *testing.T) {
 	testCases := []struct {
-		description    string
-		updateStrategy grovecorev1beta1.UpdateStrategyType
-		rollingUpdate  *grovecorev1beta1.RollingUpdateConfiguration
-		minAvailable   int32
-		wantErrType    *field.ErrorType
+		description     string
+		updateStrategy  grovecorev1beta1.UpdateStrategyType
+		rollingUpdate   *grovecorev1beta1.RollingUpdateConfiguration
+		initMinReplicas int32
+		replicas        *int32
+		wantErrType     *field.ErrorType
 	}{
 		{
 			description:    "OnDelete rejects RollingUpdate when set",
 			updateStrategy: grovecorev1beta1.OnDeleteStrategy,
-			rollingUpdate:  &grovecorev1beta1.RollingUpdateConfiguration{MaxUnavailable: ptr.To[int32](1)},
+			rollingUpdate:  &grovecorev1beta1.RollingUpdateConfiguration{MaxUnavailable: ptr.To(intstr.FromInt32(1))},
 			wantErrType:    ptr.To(field.ErrorTypeForbidden),
 		},
 		{
@@ -1961,13 +1977,13 @@ func TestValidateRollingUpdateConfiguration(t *testing.T) {
 		{
 			description:    "MaxUnavailable zero rejected",
 			updateStrategy: grovecorev1beta1.RollingRecreateStrategy,
-			rollingUpdate:  &grovecorev1beta1.RollingUpdateConfiguration{MaxUnavailable: ptr.To[int32](0)},
+			rollingUpdate:  &grovecorev1beta1.RollingUpdateConfiguration{MaxUnavailable: ptr.To(intstr.FromInt32(0))},
 			wantErrType:    ptr.To(field.ErrorTypeInvalid),
 		},
 		{
 			description:    "MaxUnavailable negative rejected",
 			updateStrategy: grovecorev1beta1.RollingRecreateStrategy,
-			rollingUpdate:  &grovecorev1beta1.RollingUpdateConfiguration{MaxUnavailable: ptr.To[int32](-1)},
+			rollingUpdate:  &grovecorev1beta1.RollingUpdateConfiguration{MaxUnavailable: ptr.To(intstr.FromInt32(-1))},
 			wantErrType:    ptr.To(field.ErrorTypeInvalid),
 		},
 		{
@@ -1985,7 +2001,7 @@ func TestValidateRollingUpdateConfiguration(t *testing.T) {
 		{
 			description:    "valid MaxUnavailable and ProgressDeadline accepted",
 			updateStrategy: grovecorev1beta1.RollingRecreateStrategy,
-			rollingUpdate:  &grovecorev1beta1.RollingUpdateConfiguration{MaxUnavailable: ptr.To[int32](2), ProgressDeadline: &metav1.Duration{Duration: 5 * time.Minute}},
+			rollingUpdate:  &grovecorev1beta1.RollingUpdateConfiguration{MaxUnavailable: ptr.To(intstr.FromInt32(2)), ProgressDeadline: &metav1.Duration{Duration: 5 * time.Minute}},
 		},
 		{
 			// Regression for #876: MaxUnavailable is a ceiling, not bounded above by the template
@@ -1993,40 +2009,98 @@ func TestValidateRollingUpdateConfiguration(t *testing.T) {
 			// component is scaled out independently of the template.
 			description:    "RollingRecreate MaxUnavailable above template replicas accepted",
 			updateStrategy: grovecorev1beta1.RollingRecreateStrategy,
-			rollingUpdate:  &grovecorev1beta1.RollingUpdateConfiguration{MaxUnavailable: ptr.To[int32](5)},
+			rollingUpdate:  &grovecorev1beta1.RollingUpdateConfiguration{MaxUnavailable: ptr.To(intstr.FromInt32(5))},
 		},
 		{
-			description:    "coherent MaxUnavailable less than minAvailable rejected",
-			updateStrategy: grovecorev1beta1.CoherentStrategy,
-			rollingUpdate:  &grovecorev1beta1.RollingUpdateConfiguration{MaxUnavailable: ptr.To[int32](1)},
-			minAvailable:   2,
-			wantErrType:    ptr.To(field.ErrorTypeInvalid),
+			description:     "coherent MaxUnavailable less than rollingUpdate.minReplicas rejected",
+			updateStrategy:  grovecorev1beta1.CoherentStrategy,
+			rollingUpdate:   &grovecorev1beta1.RollingUpdateConfiguration{MinReplicas: ptr.To[int32](2), MaxUnavailable: ptr.To(intstr.FromInt32(1))},
+			initMinReplicas: 2,
+			wantErrType:     ptr.To(field.ErrorTypeInvalid),
 		},
 		{
-			description:    "coherent MaxUnavailable equal to minAvailable accepted",
-			updateStrategy: grovecorev1beta1.CoherentStrategy,
-			rollingUpdate:  &grovecorev1beta1.RollingUpdateConfiguration{MaxUnavailable: ptr.To[int32](2)},
-			minAvailable:   2,
+			description:     "coherent MaxUnavailable equal to rollingUpdate.minReplicas accepted",
+			updateStrategy:  grovecorev1beta1.CoherentStrategy,
+			rollingUpdate:   &grovecorev1beta1.RollingUpdateConfiguration{MinReplicas: ptr.To[int32](2), MaxUnavailable: ptr.To(intstr.FromInt32(2))},
+			initMinReplicas: 2,
 		},
 		{
 			// Regression for #876: Coherent MaxUnavailable above the template replica seed accepted,
-			// only the minAvailable floor applies.
-			description:    "coherent MaxUnavailable above template replicas accepted",
-			updateStrategy: grovecorev1beta1.CoherentStrategy,
-			rollingUpdate:  &grovecorev1beta1.RollingUpdateConfiguration{MaxUnavailable: ptr.To[int32](5)},
-			minAvailable:   2,
+			// only the rollingUpdate.minReplicas floor applies.
+			description:     "coherent MaxUnavailable above template replicas accepted",
+			updateStrategy:  grovecorev1beta1.CoherentStrategy,
+			rollingUpdate:   &grovecorev1beta1.RollingUpdateConfiguration{MinReplicas: ptr.To[int32](2), MaxUnavailable: ptr.To(intstr.FromInt32(5))},
+			initMinReplicas: 2,
+			replicas:        ptr.To[int32](3),
 		},
 		{
-			description:    "unset strategy resolves to RollingRecreate, MaxUnavailable below minAvailable accepted",
-			updateStrategy: "",
-			rollingUpdate:  &grovecorev1beta1.RollingUpdateConfiguration{MaxUnavailable: ptr.To[int32](1)},
-			minAvailable:   2,
+			description:     "coherent percentage MaxUnavailable resolving below rollingUpdate.minReplicas rejected",
+			updateStrategy:  grovecorev1beta1.CoherentStrategy,
+			rollingUpdate:   &grovecorev1beta1.RollingUpdateConfiguration{MinReplicas: ptr.To[int32](2), MaxUnavailable: ptr.To(intstr.FromString("25%"))},
+			initMinReplicas: 2,
+			replicas:        ptr.To[int32](4),
+			wantErrType:     ptr.To(field.ErrorTypeInvalid),
 		},
 		{
-			description:    "rollingRecreate MaxUnavailable below minAvailable accepted, the bound is Coherent only",
+			description:     "coherent percentage MaxUnavailable resolving to rollingUpdate.minReplicas accepted",
+			updateStrategy:  grovecorev1beta1.CoherentStrategy,
+			rollingUpdate:   &grovecorev1beta1.RollingUpdateConfiguration{MinReplicas: ptr.To[int32](2), MaxUnavailable: ptr.To(intstr.FromString("50%"))},
+			initMinReplicas: 2,
+			replicas:        ptr.To[int32](4),
+		},
+		{
+			description:     "coherent rollingUpdate.minReplicas zero rejected",
+			updateStrategy:  grovecorev1beta1.CoherentStrategy,
+			rollingUpdate:   &grovecorev1beta1.RollingUpdateConfiguration{MinReplicas: ptr.To[int32](0)},
+			initMinReplicas: 2,
+			wantErrType:     ptr.To(field.ErrorTypeInvalid),
+		},
+		{
+			description:     "coherent rollingUpdate.minReplicas above init.minReplicas rejected",
+			updateStrategy:  grovecorev1beta1.CoherentStrategy,
+			rollingUpdate:   &grovecorev1beta1.RollingUpdateConfiguration{MinReplicas: ptr.To[int32](3)},
+			initMinReplicas: 2,
+			replicas:        ptr.To[int32](5),
+			wantErrType:     ptr.To(field.ErrorTypeInvalid),
+		},
+		{
+			description:     "coherent rollingUpdate.minReplicas above replicas rejected",
+			updateStrategy:  grovecorev1beta1.CoherentStrategy,
+			rollingUpdate:   &grovecorev1beta1.RollingUpdateConfiguration{MinReplicas: ptr.To[int32](3)},
+			initMinReplicas: 3,
+			replicas:        ptr.To[int32](2),
+			wantErrType:     ptr.To(field.ErrorTypeInvalid),
+		},
+		{
+			description:     "rollingRecreate rejects rollingUpdate.minReplicas",
+			updateStrategy:  grovecorev1beta1.RollingRecreateStrategy,
+			rollingUpdate:   &grovecorev1beta1.RollingUpdateConfiguration{MinReplicas: ptr.To[int32](1)},
+			initMinReplicas: 2,
+			wantErrType:     ptr.To(field.ErrorTypeForbidden),
+		},
+		{
+			description:    "percentage MaxUnavailable of 0% rejected",
 			updateStrategy: grovecorev1beta1.RollingRecreateStrategy,
-			rollingUpdate:  &grovecorev1beta1.RollingUpdateConfiguration{MaxUnavailable: ptr.To[int32](1)},
-			minAvailable:   3,
+			rollingUpdate:  &grovecorev1beta1.RollingUpdateConfiguration{MaxUnavailable: ptr.To(intstr.FromString("0%"))},
+			wantErrType:    ptr.To(field.ErrorTypeInvalid),
+		},
+		{
+			description:    "percentage MaxUnavailable above 100% rejected",
+			updateStrategy: grovecorev1beta1.RollingRecreateStrategy,
+			rollingUpdate:  &grovecorev1beta1.RollingUpdateConfiguration{MaxUnavailable: ptr.To(intstr.FromString("101%"))},
+			wantErrType:    ptr.To(field.ErrorTypeInvalid),
+		},
+		{
+			description:    "malformed string MaxUnavailable rejected",
+			updateStrategy: grovecorev1beta1.RollingRecreateStrategy,
+			rollingUpdate:  &grovecorev1beta1.RollingUpdateConfiguration{MaxUnavailable: ptr.To(intstr.FromString("half"))},
+			wantErrType:    ptr.To(field.ErrorTypeInvalid),
+		},
+		{
+			description:     "rollingRecreate MaxUnavailable below init.minReplicas accepted, the bound is Coherent only",
+			updateStrategy:  grovecorev1beta1.RollingRecreateStrategy,
+			rollingUpdate:   &grovecorev1beta1.RollingUpdateConfiguration{MaxUnavailable: ptr.To(intstr.FromInt32(1))},
+			initMinReplicas: 3,
 		},
 	}
 	for _, tc := range testCases {
@@ -2037,7 +2111,7 @@ func TestValidateRollingUpdateConfiguration(t *testing.T) {
 				},
 			}
 			v := &pcsValidator{pcs: pcs}
-			errs := v.validateRollingUpdateConfiguration(tc.rollingUpdate, tc.minAvailable, field.NewPath("spec", "template", "cliques").Index(0).Child("rollingUpdate"))
+			errs := v.validateRollingUpdateConfiguration(tc.rollingUpdate, tc.initMinReplicas, tc.replicas, field.NewPath("spec", "template", "cliques").Index(0).Child("rollingUpdate"))
 			if tc.wantErrType == nil {
 				assert.Empty(t, errs)
 				return
@@ -2051,10 +2125,10 @@ func TestValidateRollingUpdateConfiguration(t *testing.T) {
 func TestValidateRollingUpdateOnPCSGMemberRejected(t *testing.T) {
 	pcs := createTestPodCliqueSet("inference")
 	member := createPodCliqueTemplate("member")
-	member.RollingUpdate = &grovecorev1beta1.RollingUpdateConfiguration{MaxUnavailable: ptr.To[int32](1)}
+	member.RollingUpdate = &grovecorev1beta1.RollingUpdateConfiguration{MaxUnavailable: ptr.To(intstr.FromInt32(1))}
 	pcs.Spec.Template.Cliques = append(pcs.Spec.Template.Cliques, member)
 	pcs.Spec.Template.PodCliqueScalingGroupConfigs = []grovecorev1beta1.PodCliqueScalingGroupConfig{
-		{Name: "sg", CliqueNames: []string{"member"}, Replicas: ptr.To[int32](1), MinAvailable: ptr.To[int32](1)},
+		{Name: "sg", CliqueNames: []string{"member"}, Replicas: ptr.To[int32](1), Init: &grovecorev1beta1.InitSpec{MinReplicas: ptr.To[int32](1)}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To[int32](1)}}}},
 	}
 
 	validator := newPCSValidator(pcs, admissionv1.Create, defaultTASConfig(),

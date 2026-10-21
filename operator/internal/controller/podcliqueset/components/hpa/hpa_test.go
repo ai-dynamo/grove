@@ -65,10 +65,10 @@ func TestComputeExpectedHPAs(t *testing.T) {
 			pcs: testutils.NewPodCliqueSetBuilder("test-pcs", "default", pcsUID).
 				WithReplicas(1).
 				WithPodCliqueScalingGroupConfig(grovecorev1beta1.PodCliqueScalingGroupConfig{
-					Name:         "test-sg",
-					Replicas:     ptr.To(int32(4)),
-					MinAvailable: ptr.To(int32(3)),
-					CliqueNames:  []string{"test-clique"},
+					Name:     "test-sg",
+					Replicas: ptr.To(int32(4)),
+					Init:     &grovecorev1beta1.InitSpec{MinReplicas: ptr.To(int32(3))}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To(int32(3))}}},
+					CliqueNames: []string{"test-clique"},
 					ScaleConfig: &grovecorev1beta1.AutoScalingConfig{
 						MinReplicas: ptr.To(int32(2)),
 						MaxReplicas: 6,
@@ -98,10 +98,10 @@ func TestComputeExpectedHPAs(t *testing.T) {
 						Build(),
 				).
 				WithPodCliqueScalingGroupConfig(grovecorev1beta1.PodCliqueScalingGroupConfig{
-					Name:         "scaling-group",
-					Replicas:     ptr.To(int32(3)),
-					MinAvailable: ptr.To(int32(2)),
-					CliqueNames:  []string{"sg-clique"},
+					Name:     "scaling-group",
+					Replicas: ptr.To(int32(3)),
+					Init:     &grovecorev1beta1.InitSpec{MinReplicas: ptr.To(int32(2))}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To(int32(2))}}},
+					CliqueNames: []string{"sg-clique"},
 					ScaleConfig: &grovecorev1beta1.AutoScalingConfig{
 						MinReplicas: ptr.To(int32(1)),
 						MaxReplicas: 5,

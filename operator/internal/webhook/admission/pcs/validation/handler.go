@@ -23,6 +23,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
+	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
 	"github.com/go-logr/logr"
 	admissionv1 "k8s.io/api/admission/v1"
@@ -104,6 +105,9 @@ func (h *Handler) ValidateUpdate(ctx context.Context, oldObj, newObj runtime.Obj
 	}
 
 	v := newPCSValidator(newPCS, admissionv1.Update, h.tasConfig, h.schedulerConfig, h.client, h.schedRegistry)
+	if req, err := admission.RequestFromContext(ctx); err == nil {
+		v.alphaRequest = k8sutils.IsV1Alpha1Request(req)
+	}
 	warnings, errs := v.validate()
 
 	// Validate MNNVL annotation immutability on PCS metadata and spec (clique templates)

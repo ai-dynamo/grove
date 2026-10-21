@@ -187,10 +187,10 @@ func TestSync(t *testing.T) {
 					Template: grovecorev1beta1.PodCliqueSetTemplateSpec{
 						PodCliqueScalingGroupConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 							{
-								Name:         "pcsg1",
-								MinAvailable: ptr.To(int32(1)),
-								Replicas:     ptr.To(int32(2)),
-								CliqueNames:  []string{"clique1"},
+								Name: "pcsg1",
+								Init: &grovecorev1beta1.InitSpec{MinReplicas: ptr.To(int32(1))}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To(int32(1))}}},
+								Replicas:    ptr.To(int32(2)),
+								CliqueNames: []string{"clique1"},
 							},
 						},
 					},
@@ -220,10 +220,10 @@ func TestSync(t *testing.T) {
 					Template: grovecorev1beta1.PodCliqueSetTemplateSpec{
 						PodCliqueScalingGroupConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 							{
-								Name:         "pcsg1",
-								MinAvailable: ptr.To(int32(1)),
-								Replicas:     ptr.To(int32(1)),
-								CliqueNames:  []string{"clique1"},
+								Name: "pcsg1",
+								Init: &grovecorev1beta1.InitSpec{MinReplicas: ptr.To(int32(1))}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To(int32(1))}}},
+								Replicas:    ptr.To(int32(1)),
+								CliqueNames: []string{"clique1"},
 							},
 						},
 					},
@@ -444,16 +444,16 @@ func TestBuildResource(t *testing.T) {
 				},
 			},
 			pcsgCfg: &grovecorev1beta1.PodCliqueScalingGroupConfig{
-				Name:         "pcsg1",
-				MinAvailable: ptr.To(int32(2)),
-				Replicas:     ptr.To(int32(3)),
-				CliqueNames:  []string{"clique1", "clique2"},
+				Name: "pcsg1",
+				Init: &grovecorev1beta1.InitSpec{MinReplicas: ptr.To(int32(2))}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To(int32(2))}}},
+				Replicas:    ptr.To(int32(3)),
+				CliqueNames: []string{"clique1", "clique2"},
 			},
 			pcsReplica: 0,
 			validate: func(t *testing.T, pcsg *grovecorev1beta1.PodCliqueScalingGroup) {
 				assert.Equal(t, "test-pcs-0-pcsg1", pcsg.Name)
 				assert.Equal(t, "default", pcsg.Namespace)
-				assert.Equal(t, int32(2), *pcsg.Spec.MinAvailable)
+				assert.Equal(t, int32(2), *pcsg.Spec.Init.MinReplicas)
 				assert.Equal(t, int32(3), pcsg.Spec.Replicas)
 				assert.Equal(t, []string{"clique1", "clique2"}, pcsg.Spec.CliqueNames)
 				assert.Contains(t, pcsg.Labels, apicommon.LabelPodCliqueSetReplicaIndex)
@@ -470,10 +470,10 @@ func TestBuildResource(t *testing.T) {
 				},
 			},
 			pcsgCfg: &grovecorev1beta1.PodCliqueScalingGroupConfig{
-				Name:         "pcsg1",
-				MinAvailable: ptr.To(int32(1)),
-				Replicas:     ptr.To(int32(1)),
-				CliqueNames:  []string{"clique1"},
+				Name: "pcsg1",
+				Init: &grovecorev1beta1.InitSpec{MinReplicas: ptr.To(int32(1))}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To(int32(1))}}},
+				Replicas:    ptr.To(int32(1)),
+				CliqueNames: []string{"clique1"},
 				Annotations: map[string]string{
 					"example.com/team":    "platform",
 					"example.com/version": "v2",
@@ -497,10 +497,10 @@ func TestBuildResource(t *testing.T) {
 				},
 			},
 			pcsgCfg: &grovecorev1beta1.PodCliqueScalingGroupConfig{
-				Name:         "pcsg1",
-				MinAvailable: ptr.To(int32(1)),
-				Replicas:     ptr.To(int32(1)),
-				CliqueNames:  []string{"clique1"},
+				Name: "pcsg1",
+				Init: &grovecorev1beta1.InitSpec{MinReplicas: ptr.To(int32(1))}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To(int32(1))}}},
+				Replicas:    ptr.To(int32(1)),
+				CliqueNames: []string{"clique1"},
 			},
 			pcsReplica: 0,
 			validate: func(t *testing.T, pcsg *grovecorev1beta1.PodCliqueScalingGroup) {
@@ -625,11 +625,11 @@ func TestBuildResource_MNNVLAnnotationPropagation(t *testing.T) {
 			}
 
 			pcsgCfg := grovecorev1beta1.PodCliqueScalingGroupConfig{
-				Name:         "pcsg1",
-				MinAvailable: ptr.To(int32(1)),
-				Replicas:     ptr.To(int32(2)),
-				CliqueNames:  []string{"clique1"},
-				Annotations:  tc.pcsgConfigAnnotions,
+				Name: "pcsg1",
+				Init: &grovecorev1beta1.InitSpec{MinReplicas: ptr.To(int32(1))}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To(int32(1))}}},
+				Replicas:    ptr.To(int32(2)),
+				CliqueNames: []string{"clique1"},
+				Annotations: tc.pcsgConfigAnnotions,
 			}
 
 			r := &_resource{

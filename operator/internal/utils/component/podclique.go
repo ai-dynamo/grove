@@ -122,10 +122,8 @@ func WasPCSGEverHealthy(pcsg *grovecorev1beta1.PodCliqueScalingGroup) bool {
 // For each such PodClique it returns the name of the PodClique, and it returns the shortest duration to wait for before a
 // PodClique's breach tolerance, as returned by breachToleranceFor, is exceeded.
 //
-// PodCliques that have never been scheduled (per WasPCLQEverScheduled) are excluded — the
-// MinAvailableBreached condition is still True on them (operators can observe the state) but
-// gang-termination would only churn-loop Pending pods against a cluster that already cannot
-// schedule them. Recycling makes sense only after a workload has been healthy and then regressed.
+// A PodClique that has never been scheduled reports the condition as Unknown with reason AwaitingInitialSchedule,
+// never True, so it is never a candidate.
 func GetMinAvailableBreachedPCLQInfo(pclqs []grovecorev1beta1.PodClique, breachToleranceFor func(*grovecorev1beta1.PodClique) time.Duration, since time.Time) ([]string, time.Duration) {
 	pclqCandidateNames := make([]string, 0, len(pclqs))
 	waitForDurations := make([]time.Duration, 0, len(pclqs))
@@ -135,9 +133,6 @@ func GetMinAvailableBreachedPCLQInfo(pclqs []grovecorev1beta1.PodClique, breachT
 			continue
 		}
 		if cond.Status != metav1.ConditionTrue {
-			continue
-		}
-		if !WasPCLQEverScheduled(&pclq) {
 			continue
 		}
 		pclqCandidateNames = append(pclqCandidateNames, pclq.Name)

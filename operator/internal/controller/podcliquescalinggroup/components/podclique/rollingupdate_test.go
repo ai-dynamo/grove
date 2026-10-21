@@ -33,6 +33,7 @@ import (
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -322,7 +323,7 @@ func buildRollingUpdateSnapshot(replicas, minAvailable, maxUnavailable int32, re
 		pcs:                            pcs,
 		pcsg:                           pcsg,
 		expectationsStoreKey:           pcsg.Namespace + "/" + pcsg.Name,
-		pcsgConfig:                     &grovecorev1beta1.PodCliqueScalingGroupConfig{RollingUpdate: &grovecorev1beta1.RollingUpdateConfiguration{MaxUnavailable: ptr.To(maxUnavailable)}},
+		pcsgConfig:                     &grovecorev1beta1.PodCliqueScalingGroupConfig{RollingUpdate: &grovecorev1beta1.RollingUpdateConfiguration{MaxUnavailable: ptr.To(intstr.FromInt32(maxUnavailable))}},
 		existingPCLQs:                  members,
 		expectedPCLQPodTemplateHashMap: expectedHashByName,
 		expectedPCLQFQNsPerPCSGReplica: expectedFQNsByReplica,

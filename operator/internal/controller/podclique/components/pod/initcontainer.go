@@ -163,7 +163,12 @@ func generateArgsForInitContainer(pcs *grovecorev1beta1.PodCliqueSet, pclq *grov
 	}
 	args := make([]string, 0, len(parents))
 	for _, target := range componentutils.StartupDependencyTargetsInEntry(pcs, pcsReplicaIndex, entry, podGangName, parents) {
-		args = append(args, fmt.Sprintf("--podcliques=%s:%d", target.PodCliqueFQN, target.MinReady))
+		arg := fmt.Sprintf("--podcliques=%s:%d", target.PodCliqueFQN, target.MinReady)
+		// The condition is omitted for Ready, so pods of converted workloads keep the args of earlier releases.
+		if target.ConditionType != "" && target.ConditionType != corev1.PodReady {
+			arg = fmt.Sprintf("%s:%s", arg, target.ConditionType)
+		}
+		args = append(args, arg)
 	}
 	return args, nil
 }

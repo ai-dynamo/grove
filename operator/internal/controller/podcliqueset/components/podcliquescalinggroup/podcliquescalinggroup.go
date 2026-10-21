@@ -27,6 +27,7 @@ import (
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
+	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
 	"github.com/go-logr/logr"
@@ -218,9 +219,12 @@ func (r _resource) buildResource(pcsg *grovecorev1beta1.PodCliqueScalingGroup, p
 	if !pcsgExists {
 		pcsg.Spec.Replicas = *pcsgConfig.Replicas
 	}
-	pcsg.Spec.MinAvailable = pcsgConfig.MinAvailable
+	pcsg.Spec.Init = pcsgConfig.Init.DeepCopy()
+	pcsg.Spec.Termination = pcsgConfig.Termination.DeepCopy()
 	pcsg.Spec.CliqueNames = pcsgConfig.CliqueNames
+	gangShapeHash := componentutils.GangShapeHashLabelValue(pcs, pcsg.Labels)
 	pcsg.Labels = getLabels(pcs, pcsReplica, client.ObjectKeyFromObject(pcsg))
+	pcsg.Labels[apicommon.LabelGangShapeHash] = gangShapeHash
 	pcsg.Annotations = getAnnotations(pcsgConfig)
 	pcsg.Annotations = propagateMNNVLAnnotations(pcsg.Annotations, pcs.Annotations)
 

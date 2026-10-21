@@ -17,6 +17,7 @@ package v1beta1
 import (
 	resourcev1 "k8s.io/api/resource/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
 // +genclient
@@ -34,9 +35,6 @@ import (
 // +kubebuilder:printcolumn:name="PCSGs-Total",type=integer,JSONPath=`.status.updateProgress.totalPodCliqueScalingGroupsCount`
 // +kubebuilder:printcolumn:name="Update",type=string,JSONPath=`.status.conditions[?(@.type=="UpdateInProgress")].reason`,priority=1
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
-// +kubebuilder:validation:XValidation:rule="oldSelf.hasValue() || !has(self.spec.template.topologyConstraint) || !has(self.spec.template.topologyConstraint.packDomain)",message="packDomain is deprecated and cannot be used on new workloads; use pack.required",fieldPath=".spec.template.topologyConstraint.packDomain",optionalOldSelf=true,reason=FieldValueForbidden
-// +kubebuilder:validation:XValidation:rule="oldSelf.hasValue() || !has(self.spec.template.cliques) || self.spec.template.cliques.all(c, !has(c.topologyConstraint) || !has(c.topologyConstraint.packDomain))",message="packDomain is deprecated and cannot be used on new workloads; use pack.required",fieldPath=".spec.template.cliques",optionalOldSelf=true,reason=FieldValueForbidden
-// +kubebuilder:validation:XValidation:rule="oldSelf.hasValue() || !has(self.spec.template.podCliqueScalingGroups) || self.spec.template.podCliqueScalingGroups.all(g, !has(g.topologyConstraint) || !has(g.topologyConstraint.packDomain))",message="packDomain is deprecated and cannot be used on new workloads; use pack.required",fieldPath=".spec.template.podCliqueScalingGroups",optionalOldSelf=true,reason=FieldValueForbidden
 
 // PodCliqueSet is a set of PodGangs defining specification on how to spread and manage a gang of pods and monitoring their status.
 type PodCliqueSet struct {
@@ -88,9 +86,10 @@ type PodCliqueSetStatus struct {
 	// +kubebuilder:default=0
 	UpdatedReplicas int32 `json:"updatedReplicas"`
 	// AvailableReplicas is the number of PodCliqueSet replicas that are available.
-	// A PodCliqueSet replica is considered available when all standalone PodCliques within that replica
-	// have MinAvailableBreached condition = False AND all PodCliqueScalingGroups (PCSG) within that replica
-	// have MinAvailableBreached condition = False.
+	// A PodCliqueSet replica is considered available when every standalone PodClique within that replica has at
+	// least its ready threshold of ready pods, and every PodCliqueScalingGroup within that replica has at least its
+	// ready threshold of available replicas. The ready threshold is termination.resource.availability.minReplicas when
+	// availability is set, and init.minReplicas otherwise.
 	// +kubebuilder:default=0
 	AvailableReplicas int32 `json:"availableReplicas"`
 	// Selector is the label selector that determines which pods are part of the PodGang.
@@ -213,21 +212,36 @@ type PodCliqueSetReplicaUpdateProgress struct {
 // the OnDelete strategy, where the PodCliqueSet validating webhook rejects it if set. Defaulting
 // never clears it, so removing it when switching to OnDelete is left to the consumer.
 type RollingUpdateConfiguration struct {
+	// MinReplicas is the minimum number of pods (for a standalone PodClique) or PodCliqueScalingGroup
+	// replicas (for a PCSG) that must be rolled together, as one gang, to keep a functional unit on a
+	// single revision. It is the component's share of the Minimum Viable Unit, and it is distinct from
+	// MaxUnavailable. It is only allowed when updateStrategy.type is Coherent, and is rejected under
+	// RollingRecreate and OnDelete. Under Coherent it defaults to
+	// termination.resource.availability.minReplicas of the component when availability is set, otherwise to 1.
+	// It must be between 1 and the smaller of init.minReplicas and the template's replicas. Changing it rolls no
+	// pods: it applies from the next Coherent update, and it cannot be changed while a Coherent update is in
+	// progress.
+	// +optional
+	MinReplicas *int32 `json:"minReplicas,omitempty"`
 	// MaxUnavailable is the maximum number of pods (for a standalone PodClique) or
 	// PodCliqueScalingGroup replicas (for a PCSG) that may be unavailable at any moment during an
-	// update of this component, measured against the component's desired count.
+	// update of this component. It is an absolute number or a percentage of the live component's
+	// spec.replicas (the PodClique or PodCliqueScalingGroup object, which can be scaled independently of the
+	// template); a percentage is rounded down, with a minimum of 1. It is resolved again on every reconcile.
 	//
 	// Defaulting:
+	//   - Coherent: defaults to MinReplicas.
 	//   - RollingRecreate: defaults to 1.
 	//   - OnDelete: not defaulted. Defaulting never clears a RollingUpdateConfiguration that is set. The validating
 	//     webhook rejects it instead, so the consumer must remove it when switching to OnDelete.
 	//
 	// Validation:
-	//   - When set, must be greater than 0.
+	//   - When set, must be an integer of at least 1 or a percentage between 1% and 100%.
+	//   - Coherent: the resolved value must not be less than MinReplicas.
 	//   - OnDelete: RollingUpdate must not be set. The PodCliqueSet validating webhook rejects a
 	//     RollingUpdateConfiguration on any component when the strategy is OnDelete.
 	// +optional
-	MaxUnavailable *int32 `json:"maxUnavailable,omitempty"`
+	MaxUnavailable *intstr.IntOrString `json:"maxUnavailable,omitempty"`
 	// ProgressDeadline tracks the progress of this component's rolling update. If the component,
 	// a PodClique or a PodCliqueScalingGroup, shows no observable progress within this duration, the
 	// breach is reported through the UpdateInProgress condition, whose Status is set to Unknown with
@@ -238,11 +252,9 @@ type RollingUpdateConfiguration struct {
 }
 
 // PodCliqueSetTemplateSpec defines a template spec for a PodGang.
-// A PodGang does not have a RestartPolicy field because the restart policy is predefined:
-// If the number of pods in any of the cliques falls below the threshold, the entire PodGang will be restarted.
-// The threshold is determined by either:
-// - The value of "MinReplicas", if specified in the ScaleConfig of that clique, or
-// - The "Replicas" value of that clique
+// If a PodClique or PodCliqueScalingGroup with an availability policy stays below its
+// termination.resource.availability.minReplicas for longer than its breachTolerance, the PodCliqueSet replica
+// it belongs to is gang-terminated and recreated.
 type PodCliqueSetTemplateSpec struct {
 	// Cliques is a slice of cliques that make up the PodGang. There should be at least one PodClique.
 	// +listType=map
@@ -268,14 +280,6 @@ type PodCliqueSetTemplateSpec struct {
 	// TopologyConstraint defines topology placement requirements for PodCliqueSet.
 	// +optional
 	TopologyConstraint *TopologyConstraint `json:"topologyConstraint,omitempty"`
-	// TerminationDelay is the delay after which the gang termination will be triggered.
-	// A gang is a candidate for termination if number of running pods fall below a threshold for any PodClique.
-	// If a PodGang remains a candidate past TerminationDelay then it will be terminated. This allows additional time
-	// to the backend scheduler to re-schedule sufficient pods in the PodGang that will result in having the total number of
-	// running pods go above the threshold.
-	// Defaults to 4 hours.
-	// +optional
-	TerminationDelay *metav1.Duration `json:"terminationDelay,omitempty"`
 	// ResourceClaimTemplates declares named ResourceClaimTemplateSpecs that can be
 	// referenced by name from resourceSharing fields at any level in the hierarchy.
 	// +optional
@@ -336,8 +340,7 @@ type PodCliqueTemplateSpec struct {
 }
 
 // TopologyConstraint defines topology placement requirements.
-// +kubebuilder:validation:XValidation:rule="has(self.pack) || has(self.packDomain)",message="topologyConstraint must specify pack or deprecated packDomain",fieldPath=".pack",reason=FieldValueRequired
-// +kubebuilder:validation:XValidation:rule="!(has(self.packDomain) && has(self.pack) && has(self.pack.required))",message="must not set both pack.required and deprecated packDomain",fieldPath=".pack.required"
+// +kubebuilder:validation:XValidation:rule="has(self.pack)",message="topologyConstraint must specify pack",fieldPath=".pack",reason=FieldValueRequired
 type TopologyConstraint struct {
 	// TopologyName is the name of the ClusterTopologyBinding resource to use for topology-aware scheduling.
 	// Setting TopologyName may be optional if the name can be inherited from a higher level scope.
@@ -353,16 +356,6 @@ type TopologyConstraint struct {
 	// Pack specifies topology packing constraints for each replica of the resource.
 	// +optional
 	Pack *TopologyPackConstraint `json:"pack,omitempty"`
-
-	// PackDomain specifies the required topology domain using the legacy field name.
-	// Controls placement constraint for EACH individual replica instance.
-	// Must reference a domain in the topology levels defined in the ClusterTopologyBinding named by TopologyName.
-	// Example: "rack" means each replica independently placed within one rack.
-	// Note: Does NOT constrain all replicas to the same rack together.
-	// Different replicas can be in different topology domains.
-	// Deprecated: use Pack.RequiredDomain.
-	// +optional
-	PackDomain TopologyDomain `json:"packDomain,omitempty"`
 }
 
 // TopologyPackConstraint defines topology pack placement requirements.
@@ -385,15 +378,12 @@ func (tc *TopologyConstraint) HasAnyPackDomain() bool {
 	return tc != nil && (tc.RequiredDomain() != "" || tc.PreferredDomain() != "")
 }
 
-// RequiredDomain returns the required pack domain, falling back to legacy packDomain.
+// RequiredDomain returns the required pack domain.
 func (tc *TopologyConstraint) RequiredDomain() TopologyDomain {
-	if tc == nil {
+	if tc == nil || tc.Pack == nil {
 		return ""
 	}
-	if tc.Pack != nil && tc.Pack.RequiredDomain != "" {
-		return tc.Pack.RequiredDomain
-	}
-	return tc.PackDomain
+	return tc.Pack.RequiredDomain
 }
 
 // PreferredDomain returns the preferred pack domain.
@@ -443,19 +433,14 @@ type PodCliqueScalingGroupConfig struct {
 	// +optional
 	// +kubebuilder:default=1
 	Replicas *int32 `json:"replicas,omitempty"`
-	// MinAvailable serves two purposes:
-	// Gang Scheduling:
-	// It defines the minimum number of replicas that are guaranteed to be gang scheduled.
-	// Gang Termination:
-	// It defines the minimum requirement of available replicas for a PodCliqueScalingGroup.
-	// Violation of this threshold for a duration beyond TerminationDelay will result in termination of the PodCliqueSet replica that it belongs to.
-	// Default: If not specified, it defaults to 1.
-	// Constraints:
-	// MinAvailable cannot be greater than Replicas.
-	// If ScaleConfig is defined then its MinAvailable should not be less than ScaleConfig.MinReplicas.
+	// Init configures the gang scheduling of the scaling group's replicas. It is copied into the
+	// PodCliqueScalingGroup.
 	// +optional
-	// +kubebuilder:default=1
-	MinAvailable *int32 `json:"minAvailable,omitempty"`
+	Init *InitSpec `json:"init,omitempty"`
+	// Termination defines the terminal conditions of the scaling group. It is copied into the
+	// PodCliqueScalingGroup.
+	// +optional
+	Termination *TerminationSpec `json:"termination,omitempty"`
 	// ScaleConfig is the horizontal pod autoscaler configuration for the pod clique scaling group.
 	// +optional
 	ScaleConfig *AutoScalingConfig `json:"scaleConfig,omitempty"`
@@ -570,8 +555,8 @@ type UpdateStrategyType string
 
 const (
 	// CoherentStrategy indicates that replicas will be updated in Minimal Viable Units —
-	// MinAvailable replicas of each updated standalone PodClique plus MinAvailable replicas of each
-	// updated PodCliqueScalingGroup — scheduled atomically as a new PodGang. This guarantees
+	// rollingUpdate.minReplicas pods of each updated standalone PodClique plus rollingUpdate.minReplicas replicas of
+	// each updated PodCliqueScalingGroup — scheduled atomically as a new PodGang. This guarantees
 	// that pods forming a minimum-viable serving unit are always version-compatible.
 	CoherentStrategy UpdateStrategyType = "Coherent"
 	// RollingRecreateStrategy indicates that replicas will be progressively

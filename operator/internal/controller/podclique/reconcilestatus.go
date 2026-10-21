@@ -238,6 +238,16 @@ func computeMinAvailableBreachedCondition(pclq *grovecorev1beta1.PodClique, numP
 			Message: "PodClique has no availability requirement, so MinAvailable is never breached",
 		}
 	}
+	// Breach evaluation starts at the first schedule, so a PodClique that has never been scheduled is never in
+	// breach. status.lastScheduled is never reset, so this state is left exactly once.
+	if pclq.Status.LastScheduled == nil {
+		return metav1.Condition{
+			Type:    constants.ConditionTypeMinAvailableBreached,
+			Status:  metav1.ConditionUnknown,
+			Reason:  constants.ConditionReasonAwaitingInitialSchedule,
+			Message: "PodClique has not been scheduled yet",
+		}
+	}
 	if componentutils.IsPCLQRollingUpdateInProgress(pclq) {
 		return metav1.Condition{
 			Type:    constants.ConditionTypeMinAvailableBreached,

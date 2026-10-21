@@ -95,10 +95,10 @@ func TestShouldCheckPendingUpdatesForPCLQ(t *testing.T) {
 			}
 			if tc.pcsgOwned {
 				pcsBuilder.WithPodCliqueScalingGroupConfig(grovecorev1beta1.PodCliqueScalingGroupConfig{
-					Name:         "group",
-					CliqueNames:  []string{"worker"},
-					Replicas:     &replicas,
-					MinAvailable: &minAvailable,
+					Name:        "group",
+					CliqueNames: []string{"worker"},
+					Replicas:    &replicas,
+					Init:        &grovecorev1beta1.InitSpec{MinReplicas: &minAvailable}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: &minAvailable}}},
 				})
 			}
 			pcs := pcsBuilder.Build()

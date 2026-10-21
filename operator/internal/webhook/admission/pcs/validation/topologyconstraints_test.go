@@ -41,7 +41,7 @@ func TestValidateTASDisabledWithConstraints(t *testing.T) {
 	}{
 		{
 			name:                  "Should not allow PCS level constraint when TAS is disabled",
-			pcsTopologyConstraint: &grovecorev1beta1.TopologyConstraint{PackDomain: grovecorev1beta1.TopologyDomainZone},
+			pcsTopologyConstraint: &grovecorev1beta1.TopologyConstraint{Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: grovecorev1beta1.TopologyDomainZone}},
 			errorMatchers: []testutils.ErrorMatcher{
 				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.topologyConstraint"},
 			},
@@ -51,7 +51,7 @@ func TestValidateTASDisabledWithConstraints(t *testing.T) {
 			cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
 				{
 					Name:               "worker",
-					TopologyConstraint: &grovecorev1beta1.TopologyConstraint{PackDomain: grovecorev1beta1.TopologyDomainHost},
+					TopologyConstraint: &grovecorev1beta1.TopologyConstraint{Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: grovecorev1beta1.TopologyDomainHost}},
 					Spec:               grovecorev1beta1.PodCliqueSpec{Replicas: 1, RoleName: "worker-role"},
 				},
 			},
@@ -65,7 +65,7 @@ func TestValidateTASDisabledWithConstraints(t *testing.T) {
 				{
 					Name:               "sg1",
 					CliqueNames:        []string{"worker"},
-					TopologyConstraint: &grovecorev1beta1.TopologyConstraint{PackDomain: grovecorev1beta1.TopologyDomainRack},
+					TopologyConstraint: &grovecorev1beta1.TopologyConstraint{Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: grovecorev1beta1.TopologyDomainRack}},
 				},
 			},
 			errorMatchers: []testutils.ErrorMatcher{
@@ -74,16 +74,16 @@ func TestValidateTASDisabledWithConstraints(t *testing.T) {
 		},
 		{
 			name:                  "Should report all errors when Topology constraints are set during create when TAS disabled",
-			pcsTopologyConstraint: &grovecorev1beta1.TopologyConstraint{PackDomain: grovecorev1beta1.TopologyDomainRegion},
+			pcsTopologyConstraint: &grovecorev1beta1.TopologyConstraint{Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: grovecorev1beta1.TopologyDomainRegion}},
 			cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
 				{
 					Name:               "worker1",
-					TopologyConstraint: &grovecorev1beta1.TopologyConstraint{PackDomain: grovecorev1beta1.TopologyDomainZone},
+					TopologyConstraint: &grovecorev1beta1.TopologyConstraint{Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: grovecorev1beta1.TopologyDomainZone}},
 					Spec:               grovecorev1beta1.PodCliqueSpec{Replicas: 1, RoleName: "worker1-role"},
 				},
 				{
 					Name:               "worker2",
-					TopologyConstraint: &grovecorev1beta1.TopologyConstraint{PackDomain: grovecorev1beta1.TopologyDomainHost},
+					TopologyConstraint: &grovecorev1beta1.TopologyConstraint{Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: grovecorev1beta1.TopologyDomainHost}},
 					Spec:               grovecorev1beta1.PodCliqueSpec{Replicas: 1, RoleName: "worker2-role"},
 				},
 			},
@@ -91,7 +91,7 @@ func TestValidateTASDisabledWithConstraints(t *testing.T) {
 				{
 					Name:               "sg1",
 					CliqueNames:        []string{"worker1"},
-					TopologyConstraint: &grovecorev1beta1.TopologyConstraint{PackDomain: grovecorev1beta1.TopologyDomainRack},
+					TopologyConstraint: &grovecorev1beta1.TopologyConstraint{Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: grovecorev1beta1.TopologyDomainRack}},
 				},
 			},
 			errorMatchers: []testutils.ErrorMatcher{
@@ -134,7 +134,7 @@ func TestValidateTASEnabledWhenDomainNotInClusterTopology(t *testing.T) {
 	}{
 		{
 			name:                  "Should report error when PCS level domain not in cluster topology",
-			pcsTopologyConstraint: &grovecorev1beta1.TopologyConstraint{PackDomain: grovecorev1beta1.TopologyDomainHost},
+			pcsTopologyConstraint: &grovecorev1beta1.TopologyConstraint{Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: grovecorev1beta1.TopologyDomainHost}},
 			errorMatchers: []testutils.ErrorMatcher{
 				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.topologyConstraint.pack.required"},
 			},
@@ -144,7 +144,7 @@ func TestValidateTASEnabledWhenDomainNotInClusterTopology(t *testing.T) {
 			cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
 				{
 					Name:               "worker",
-					TopologyConstraint: &grovecorev1beta1.TopologyConstraint{PackDomain: grovecorev1beta1.TopologyDomainNuma},
+					TopologyConstraint: &grovecorev1beta1.TopologyConstraint{Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: grovecorev1beta1.TopologyDomainNuma}},
 					Spec:               grovecorev1beta1.PodCliqueSpec{Replicas: 1, RoleName: "worker-role"},
 				},
 			},
@@ -158,7 +158,7 @@ func TestValidateTASEnabledWhenDomainNotInClusterTopology(t *testing.T) {
 				{
 					Name:               "sg1",
 					CliqueNames:        []string{"worker"},
-					TopologyConstraint: &grovecorev1beta1.TopologyConstraint{PackDomain: grovecorev1beta1.TopologyDomainDataCenter},
+					TopologyConstraint: &grovecorev1beta1.TopologyConstraint{Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: grovecorev1beta1.TopologyDomainDataCenter}},
 				},
 			},
 			errorMatchers: []testutils.ErrorMatcher{
@@ -167,11 +167,11 @@ func TestValidateTASEnabledWhenDomainNotInClusterTopology(t *testing.T) {
 		},
 		{
 			name:                  "Should allow Valid domains in cluster topology",
-			pcsTopologyConstraint: &grovecorev1beta1.TopologyConstraint{PackDomain: grovecorev1beta1.TopologyDomainRegion},
+			pcsTopologyConstraint: &grovecorev1beta1.TopologyConstraint{Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: grovecorev1beta1.TopologyDomainRegion}},
 			cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
 				{
 					Name:               "worker",
-					TopologyConstraint: &grovecorev1beta1.TopologyConstraint{PackDomain: grovecorev1beta1.TopologyDomainZone},
+					TopologyConstraint: &grovecorev1beta1.TopologyConstraint{Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: grovecorev1beta1.TopologyDomainZone}},
 					Spec:               grovecorev1beta1.PodCliqueSpec{Replicas: 1, RoleName: "worker-role"},
 				},
 			},
@@ -182,11 +182,11 @@ func TestValidateTASEnabledWhenDomainNotInClusterTopology(t *testing.T) {
 			// PCS has invalid domain (numa not in cluster topology: region, zone, rack)
 			// AND PCS is narrower than child (rack < zone) - would be hierarchical violation
 			// Should ONLY report domain error, NOT hierarchical error
-			pcsTopologyConstraint: &grovecorev1beta1.TopologyConstraint{PackDomain: grovecorev1beta1.TopologyDomainNuma},
+			pcsTopologyConstraint: &grovecorev1beta1.TopologyConstraint{Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: grovecorev1beta1.TopologyDomainNuma}},
 			cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
 				{
 					Name:               "worker",
-					TopologyConstraint: &grovecorev1beta1.TopologyConstraint{PackDomain: grovecorev1beta1.TopologyDomainZone},
+					TopologyConstraint: &grovecorev1beta1.TopologyConstraint{Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: grovecorev1beta1.TopologyDomainZone}},
 					Spec:               grovecorev1beta1.PodCliqueSpec{Replicas: 1, RoleName: "worker-role"},
 				},
 			},
@@ -201,11 +201,11 @@ func TestValidateTASEnabledWhenDomainNotInClusterTopology(t *testing.T) {
 			// Child has invalid domain (numa not in cluster topology)
 			// AND there's a hierarchical violation (rack is narrower than region if it existed)
 			// Should ONLY report child's domain error
-			pcsTopologyConstraint: &grovecorev1beta1.TopologyConstraint{PackDomain: grovecorev1beta1.TopologyDomainRack},
+			pcsTopologyConstraint: &grovecorev1beta1.TopologyConstraint{Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: grovecorev1beta1.TopologyDomainRack}},
 			cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
 				{
 					Name:               "worker",
-					TopologyConstraint: &grovecorev1beta1.TopologyConstraint{PackDomain: grovecorev1beta1.TopologyDomainNuma},
+					TopologyConstraint: &grovecorev1beta1.TopologyConstraint{Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: grovecorev1beta1.TopologyDomainNuma}},
 					Spec:               grovecorev1beta1.PodCliqueSpec{Replicas: 1, RoleName: "worker-role"},
 				},
 			},
@@ -244,11 +244,11 @@ func TestValidateHierarchyViolations(t *testing.T) {
 	}{
 		{
 			name:                  "Should allow PCS topology constraints broader than PodClique",
-			pcsTopologyConstraint: &grovecorev1beta1.TopologyConstraint{PackDomain: grovecorev1beta1.TopologyDomainZone},
+			pcsTopologyConstraint: &grovecorev1beta1.TopologyConstraint{Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: grovecorev1beta1.TopologyDomainZone}},
 			cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
 				{
 					Name:               "worker",
-					TopologyConstraint: &grovecorev1beta1.TopologyConstraint{PackDomain: grovecorev1beta1.TopologyDomainHost},
+					TopologyConstraint: &grovecorev1beta1.TopologyConstraint{Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: grovecorev1beta1.TopologyDomainHost}},
 					Spec:               grovecorev1beta1.PodCliqueSpec{Replicas: 1, RoleName: "worker-role"},
 				},
 			},
@@ -256,11 +256,11 @@ func TestValidateHierarchyViolations(t *testing.T) {
 		},
 		{
 			name:                  "Should forbid PCS topology constraints narrower than PodClique",
-			pcsTopologyConstraint: &grovecorev1beta1.TopologyConstraint{PackDomain: grovecorev1beta1.TopologyDomainHost},
+			pcsTopologyConstraint: &grovecorev1beta1.TopologyConstraint{Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: grovecorev1beta1.TopologyDomainHost}},
 			cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
 				{
 					Name:               "worker",
-					TopologyConstraint: &grovecorev1beta1.TopologyConstraint{PackDomain: grovecorev1beta1.TopologyDomainZone},
+					TopologyConstraint: &grovecorev1beta1.TopologyConstraint{Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: grovecorev1beta1.TopologyDomainZone}},
 					Spec:               grovecorev1beta1.PodCliqueSpec{Replicas: 1, RoleName: "worker-role"},
 				},
 			},
@@ -270,12 +270,12 @@ func TestValidateHierarchyViolations(t *testing.T) {
 		},
 		{
 			name:                  "Should forbid PCS topology constraints narrower than PCSG",
-			pcsTopologyConstraint: &grovecorev1beta1.TopologyConstraint{PackDomain: grovecorev1beta1.TopologyDomainNuma},
+			pcsTopologyConstraint: &grovecorev1beta1.TopologyConstraint{Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: grovecorev1beta1.TopologyDomainNuma}},
 			pcsgConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{
 					Name:               "sg1",
 					CliqueNames:        []string{"worker"},
-					TopologyConstraint: &grovecorev1beta1.TopologyConstraint{PackDomain: grovecorev1beta1.TopologyDomainRack},
+					TopologyConstraint: &grovecorev1beta1.TopologyConstraint{Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: grovecorev1beta1.TopologyDomainRack}},
 				},
 			},
 			errorMatchers: []testutils.ErrorMatcher{
@@ -287,7 +287,7 @@ func TestValidateHierarchyViolations(t *testing.T) {
 			cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
 				{
 					Name:               "worker",
-					TopologyConstraint: &grovecorev1beta1.TopologyConstraint{PackDomain: grovecorev1beta1.TopologyDomainZone},
+					TopologyConstraint: &grovecorev1beta1.TopologyConstraint{Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: grovecorev1beta1.TopologyDomainZone}},
 					Spec:               grovecorev1beta1.PodCliqueSpec{Replicas: 1, RoleName: "worker-role"},
 				},
 			},
@@ -295,7 +295,7 @@ func TestValidateHierarchyViolations(t *testing.T) {
 				{
 					Name:               "sg1",
 					CliqueNames:        []string{"worker"},
-					TopologyConstraint: &grovecorev1beta1.TopologyConstraint{PackDomain: grovecorev1beta1.TopologyDomainHost},
+					TopologyConstraint: &grovecorev1beta1.TopologyConstraint{Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: grovecorev1beta1.TopologyDomainHost}},
 				},
 			},
 			errorMatchers: []testutils.ErrorMatcher{
@@ -304,11 +304,11 @@ func TestValidateHierarchyViolations(t *testing.T) {
 		},
 		{
 			name:                  "Should allow same level for topology constraints",
-			pcsTopologyConstraint: &grovecorev1beta1.TopologyConstraint{PackDomain: grovecorev1beta1.TopologyDomainZone},
+			pcsTopologyConstraint: &grovecorev1beta1.TopologyConstraint{Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: grovecorev1beta1.TopologyDomainZone}},
 			cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
 				{
 					Name:               "worker",
-					TopologyConstraint: &grovecorev1beta1.TopologyConstraint{PackDomain: grovecorev1beta1.TopologyDomainZone},
+					TopologyConstraint: &grovecorev1beta1.TopologyConstraint{Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: grovecorev1beta1.TopologyDomainZone}},
 					Spec:               grovecorev1beta1.PodCliqueSpec{Replicas: 1, RoleName: "worker-role"},
 				},
 			},
@@ -316,16 +316,16 @@ func TestValidateHierarchyViolations(t *testing.T) {
 		},
 		{
 			name:                  "Should disallow topology constraints at multiple levels",
-			pcsTopologyConstraint: &grovecorev1beta1.TopologyConstraint{PackDomain: grovecorev1beta1.TopologyDomainNuma},
+			pcsTopologyConstraint: &grovecorev1beta1.TopologyConstraint{Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: grovecorev1beta1.TopologyDomainNuma}},
 			cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
 				{
 					Name:               "worker1",
-					TopologyConstraint: &grovecorev1beta1.TopologyConstraint{PackDomain: grovecorev1beta1.TopologyDomainZone},
+					TopologyConstraint: &grovecorev1beta1.TopologyConstraint{Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: grovecorev1beta1.TopologyDomainZone}},
 					Spec:               grovecorev1beta1.PodCliqueSpec{Replicas: 1, RoleName: "worker1-role"},
 				},
 				{
 					Name:               "worker2",
-					TopologyConstraint: &grovecorev1beta1.TopologyConstraint{PackDomain: grovecorev1beta1.TopologyDomainRack},
+					TopologyConstraint: &grovecorev1beta1.TopologyConstraint{Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: grovecorev1beta1.TopologyDomainRack}},
 					Spec:               grovecorev1beta1.PodCliqueSpec{Replicas: 1, RoleName: "worker2-role"},
 				},
 			},
@@ -333,7 +333,7 @@ func TestValidateHierarchyViolations(t *testing.T) {
 				{
 					Name:               "sg1",
 					CliqueNames:        []string{"worker1", "worker2"},
-					TopologyConstraint: &grovecorev1beta1.TopologyConstraint{PackDomain: grovecorev1beta1.TopologyDomainHost},
+					TopologyConstraint: &grovecorev1beta1.TopologyConstraint{Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: grovecorev1beta1.TopologyDomainHost}},
 				},
 			},
 			errorMatchers: []testutils.ErrorMatcher{
@@ -366,14 +366,14 @@ func TestValidateUpdateTopologyNameImmutability(t *testing.T) {
 	}{
 		{
 			name:             "Should allow when topologyName is unchanged",
-			oldPCSConstraint: &grovecorev1beta1.TopologyConstraint{TopologyName: "topo-a", PackDomain: "zone"},
-			newPCSConstraint: &grovecorev1beta1.TopologyConstraint{TopologyName: "topo-a", PackDomain: "zone"},
+			oldPCSConstraint: &grovecorev1beta1.TopologyConstraint{TopologyName: "topo-a", Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: "zone"}},
+			newPCSConstraint: &grovecorev1beta1.TopologyConstraint{TopologyName: "topo-a", Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: "zone"}},
 			errorMatchers:    []testutils.ErrorMatcher{},
 		},
 		{
 			name:             "Should disallow when topologyName is changed",
-			oldPCSConstraint: &grovecorev1beta1.TopologyConstraint{TopologyName: "topo-a", PackDomain: "zone"},
-			newPCSConstraint: &grovecorev1beta1.TopologyConstraint{TopologyName: "topo-b", PackDomain: "zone"},
+			oldPCSConstraint: &grovecorev1beta1.TopologyConstraint{TopologyName: "topo-a", Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: "zone"}},
+			newPCSConstraint: &grovecorev1beta1.TopologyConstraint{TopologyName: "topo-b", Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: "zone"}},
 			errorMatchers: []testutils.ErrorMatcher{
 				{ErrorType: field.ErrorTypeForbidden, Field: "spec.template.topologyConstraint.topologyName"},
 			},
@@ -381,14 +381,14 @@ func TestValidateUpdateTopologyNameImmutability(t *testing.T) {
 		{
 			name:             "Should disallow when topologyName is added",
 			oldPCSConstraint: nil,
-			newPCSConstraint: &grovecorev1beta1.TopologyConstraint{TopologyName: "topo-a", PackDomain: "zone"},
+			newPCSConstraint: &grovecorev1beta1.TopologyConstraint{TopologyName: "topo-a", Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: "zone"}},
 			errorMatchers: []testutils.ErrorMatcher{
 				{ErrorType: field.ErrorTypeForbidden, Field: "spec.template.topologyConstraint.topologyName"},
 			},
 		},
 		{
 			name:             "Should disallow when topologyName is removed",
-			oldPCSConstraint: &grovecorev1beta1.TopologyConstraint{TopologyName: "topo-a", PackDomain: "zone"},
+			oldPCSConstraint: &grovecorev1beta1.TopologyConstraint{TopologyName: "topo-a", Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: "zone"}},
 			newPCSConstraint: nil,
 			errorMatchers: []testutils.ErrorMatcher{
 				{ErrorType: field.ErrorTypeForbidden, Field: "spec.template.topologyConstraint.topologyName"},
@@ -420,11 +420,11 @@ func TestValidateHierarchyWithCustomDomains(t *testing.T) {
 	}{
 		{
 			name:                  "Should allow custom domain hierarchy: datacenter > host",
-			pcsTopologyConstraint: &grovecorev1beta1.TopologyConstraint{PackDomain: "datacenter"},
+			pcsTopologyConstraint: &grovecorev1beta1.TopologyConstraint{Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: "datacenter"}},
 			cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
 				{
 					Name:               "worker",
-					TopologyConstraint: &grovecorev1beta1.TopologyConstraint{PackDomain: "host"},
+					TopologyConstraint: &grovecorev1beta1.TopologyConstraint{Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: "host"}},
 					Spec:               grovecorev1beta1.PodCliqueSpec{Replicas: 1, RoleName: "worker-role"},
 				},
 			},
@@ -432,11 +432,11 @@ func TestValidateHierarchyWithCustomDomains(t *testing.T) {
 		},
 		{
 			name:                  "Should reject custom domain hierarchy: host > datacenter (narrower parent)",
-			pcsTopologyConstraint: &grovecorev1beta1.TopologyConstraint{PackDomain: "host"},
+			pcsTopologyConstraint: &grovecorev1beta1.TopologyConstraint{Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: "host"}},
 			cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
 				{
 					Name:               "worker",
-					TopologyConstraint: &grovecorev1beta1.TopologyConstraint{PackDomain: "datacenter"},
+					TopologyConstraint: &grovecorev1beta1.TopologyConstraint{Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: "datacenter"}},
 					Spec:               grovecorev1beta1.PodCliqueSpec{Replicas: 1, RoleName: "worker-role"},
 				},
 			},
@@ -471,10 +471,10 @@ func TestValidateUpdateTopologyConstraintImmutability(t *testing.T) {
 	region := grovecorev1beta1.TopologyDomainRegion
 
 	workerWithHost := []*grovecorev1beta1.PodCliqueTemplateSpec{
-		{Name: "worker", TopologyConstraint: &grovecorev1beta1.TopologyConstraint{PackDomain: host}, Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 1, RoleName: "worker-role"}},
+		{Name: "worker", TopologyConstraint: &grovecorev1beta1.TopologyConstraint{Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: host}}, Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 1, RoleName: "worker-role"}},
 	}
 	workerWithZone := []*grovecorev1beta1.PodCliqueTemplateSpec{
-		{Name: "worker", TopologyConstraint: &grovecorev1beta1.TopologyConstraint{PackDomain: zone}, Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 1, RoleName: "worker-role"}},
+		{Name: "worker", TopologyConstraint: &grovecorev1beta1.TopologyConstraint{Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: zone}}, Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 1, RoleName: "worker-role"}},
 	}
 
 	tests := []struct {
@@ -492,30 +492,30 @@ func TestValidateUpdateTopologyConstraintImmutability(t *testing.T) {
 	}{
 		{
 			name:             "Should allow when there are no changes to topology constraints",
-			oldPCSConstraint: &grovecorev1beta1.TopologyConstraint{PackDomain: zone},
+			oldPCSConstraint: &grovecorev1beta1.TopologyConstraint{Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: zone}},
 			oldCliques:       workerWithHost,
-			newPCSConstraint: &grovecorev1beta1.TopologyConstraint{PackDomain: zone},
+			newPCSConstraint: &grovecorev1beta1.TopologyConstraint{Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: zone}},
 			newCliques:       workerWithHost,
 			errorMatchers:    []testutils.ErrorMatcher{},
 		},
 		{
 			name:             "Should disallow when PCS constraint are changed",
-			oldPCSConstraint: &grovecorev1beta1.TopologyConstraint{PackDomain: zone},
-			newPCSConstraint: &grovecorev1beta1.TopologyConstraint{PackDomain: rack},
+			oldPCSConstraint: &grovecorev1beta1.TopologyConstraint{Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: zone}},
+			newPCSConstraint: &grovecorev1beta1.TopologyConstraint{Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: rack}},
 			errorMatchers: []testutils.ErrorMatcher{
 				{ErrorType: field.ErrorTypeForbidden, Field: "spec.template.topologyConstraint"},
 			},
 		},
 		{
 			name:             "Should disallow when PCS constraint are added",
-			newPCSConstraint: &grovecorev1beta1.TopologyConstraint{PackDomain: zone},
+			newPCSConstraint: &grovecorev1beta1.TopologyConstraint{Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: zone}},
 			errorMatchers: []testutils.ErrorMatcher{
 				{ErrorType: field.ErrorTypeForbidden, Field: "spec.template.topologyConstraint.topologyName"},
 			},
 		},
 		{
 			name:             "Should disallow when PCS constraint are removed",
-			oldPCSConstraint: &grovecorev1beta1.TopologyConstraint{PackDomain: zone},
+			oldPCSConstraint: &grovecorev1beta1.TopologyConstraint{Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: zone}},
 			errorMatchers: []testutils.ErrorMatcher{
 				{ErrorType: field.ErrorTypeForbidden, Field: "spec.template.topologyConstraint.topologyName"},
 			},
@@ -545,10 +545,10 @@ func TestValidateUpdateTopologyConstraintImmutability(t *testing.T) {
 		{
 			name: "Should disallow when PCSG constraint is changed",
 			oldPCSGConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
-				{Name: "sg1", CliqueNames: []string{"worker"}, TopologyConstraint: &grovecorev1beta1.TopologyConstraint{PackDomain: zone}},
+				{Name: "sg1", CliqueNames: []string{"worker"}, TopologyConstraint: &grovecorev1beta1.TopologyConstraint{Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: zone}}},
 			},
 			newPCSGConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
-				{Name: "sg1", CliqueNames: []string{"worker"}, TopologyConstraint: &grovecorev1beta1.TopologyConstraint{PackDomain: rack}},
+				{Name: "sg1", CliqueNames: []string{"worker"}, TopologyConstraint: &grovecorev1beta1.TopologyConstraint{Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: rack}}},
 			},
 			errorMatchers: []testutils.ErrorMatcher{
 				{ErrorType: field.ErrorTypeForbidden, Field: "spec.template.podCliqueScalingGroups[0].topologyConstraint"},
@@ -560,7 +560,7 @@ func TestValidateUpdateTopologyConstraintImmutability(t *testing.T) {
 				{Name: "sg1", CliqueNames: []string{"worker"}},
 			},
 			newPCSGConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
-				{Name: "sg1", CliqueNames: []string{"worker"}, TopologyConstraint: &grovecorev1beta1.TopologyConstraint{PackDomain: zone}},
+				{Name: "sg1", CliqueNames: []string{"worker"}, TopologyConstraint: &grovecorev1beta1.TopologyConstraint{Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: zone}}},
 			},
 			errorMatchers: []testutils.ErrorMatcher{
 				{ErrorType: field.ErrorTypeForbidden, Field: "spec.template.podCliqueScalingGroups[0].topologyConstraint"},
@@ -569,7 +569,7 @@ func TestValidateUpdateTopologyConstraintImmutability(t *testing.T) {
 		{
 			name: "Should disallow when PCSG constraint is removed",
 			oldPCSGConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
-				{Name: "sg1", CliqueNames: []string{"worker"}, TopologyConstraint: &grovecorev1beta1.TopologyConstraint{PackDomain: zone}},
+				{Name: "sg1", CliqueNames: []string{"worker"}, TopologyConstraint: &grovecorev1beta1.TopologyConstraint{Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: zone}}},
 			},
 			newPCSGConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{Name: "sg1", CliqueNames: []string{"worker"}},
@@ -580,14 +580,14 @@ func TestValidateUpdateTopologyConstraintImmutability(t *testing.T) {
 		},
 		{
 			name:             "Should disallow when multiple constraint are changed",
-			oldPCSConstraint: &grovecorev1beta1.TopologyConstraint{PackDomain: region},
+			oldPCSConstraint: &grovecorev1beta1.TopologyConstraint{Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: region}},
 			oldCliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
-				{Name: "worker1", TopologyConstraint: &grovecorev1beta1.TopologyConstraint{PackDomain: zone}, Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 1, RoleName: "worker1-role"}},
-				{Name: "worker2", TopologyConstraint: &grovecorev1beta1.TopologyConstraint{PackDomain: rack}, Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 1, RoleName: "worker2-role"}},
+				{Name: "worker1", TopologyConstraint: &grovecorev1beta1.TopologyConstraint{Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: zone}}, Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 1, RoleName: "worker1-role"}},
+				{Name: "worker2", TopologyConstraint: &grovecorev1beta1.TopologyConstraint{Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: rack}}, Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 1, RoleName: "worker2-role"}},
 			},
-			newPCSConstraint: &grovecorev1beta1.TopologyConstraint{PackDomain: zone},
+			newPCSConstraint: &grovecorev1beta1.TopologyConstraint{Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: zone}},
 			newCliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
-				{Name: "worker1", TopologyConstraint: &grovecorev1beta1.TopologyConstraint{PackDomain: rack}, Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 1, RoleName: "worker1-role"}},
+				{Name: "worker1", TopologyConstraint: &grovecorev1beta1.TopologyConstraint{Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: rack}}, Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 1, RoleName: "worker1-role"}},
 				{Name: "worker2", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 1, RoleName: "worker2-role"}},
 			},
 			errorMatchers: []testutils.ErrorMatcher{
@@ -606,83 +606,6 @@ func TestValidateUpdateTopologyConstraintImmutability(t *testing.T) {
 			errs := validator.validateUpdate(oldPCS)
 			assert.Len(t, errs, len(tc.errorMatchers), "unexpected number of errors")
 			testutils.AssertErrorMatches(t, errs, tc.errorMatchers)
-		})
-	}
-}
-
-func TestValidateUpdateDeprecatedPackDomainMigration(t *testing.T) {
-	tests := []struct {
-		name                string
-		oldPCSConstraint    *grovecorev1beta1.TopologyConstraint
-		newPCSConstraint    *grovecorev1beta1.TopologyConstraint
-		errorMatchers       []testutils.ErrorMatcher
-		errorDetailContains string
-	}{
-		{
-			name: "Should allow moving deprecated packDomain to pack.required when level is unchanged",
-			oldPCSConstraint: &grovecorev1beta1.TopologyConstraint{
-				TopologyName: "topo-a",
-				PackDomain:   grovecorev1beta1.TopologyDomainHost,
-			},
-			newPCSConstraint: &grovecorev1beta1.TopologyConstraint{
-				TopologyName: "topo-a",
-				Pack: &grovecorev1beta1.TopologyPackConstraint{
-					RequiredDomain: grovecorev1beta1.TopologyDomainHost,
-				},
-			},
-			errorMatchers: []testutils.ErrorMatcher{},
-		},
-		{
-			name: "Should reject moving deprecated packDomain to a different pack.required level",
-			oldPCSConstraint: &grovecorev1beta1.TopologyConstraint{
-				TopologyName: "topo-a",
-				PackDomain:   grovecorev1beta1.TopologyDomainHost,
-			},
-			newPCSConstraint: &grovecorev1beta1.TopologyConstraint{
-				TopologyName: "topo-a",
-				Pack: &grovecorev1beta1.TopologyPackConstraint{
-					RequiredDomain: grovecorev1beta1.TopologyDomainRack,
-				},
-			},
-			errorMatchers: []testutils.ErrorMatcher{
-				{ErrorType: field.ErrorTypeForbidden, Field: "spec.template.topologyConstraint"},
-			},
-			errorDetailContains: "deprecated packDomain migration",
-		},
-		{
-			name: "Should reject changing preferred domain while moving deprecated packDomain to pack.required",
-			oldPCSConstraint: &grovecorev1beta1.TopologyConstraint{
-				TopologyName: "topo-a",
-				PackDomain:   grovecorev1beta1.TopologyDomainHost,
-				Pack: &grovecorev1beta1.TopologyPackConstraint{
-					PreferredDomain: grovecorev1beta1.TopologyDomainRack,
-				},
-			},
-			newPCSConstraint: &grovecorev1beta1.TopologyConstraint{
-				TopologyName: "topo-a",
-				Pack: &grovecorev1beta1.TopologyPackConstraint{
-					RequiredDomain:  grovecorev1beta1.TopologyDomainHost,
-					PreferredDomain: grovecorev1beta1.TopologyDomainZone,
-				},
-			},
-			errorMatchers: []testutils.ErrorMatcher{
-				{ErrorType: field.ErrorTypeForbidden, Field: "spec.template.topologyConstraint"},
-			},
-			errorDetailContains: "deprecated packDomain migration",
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			oldPCS := buildRawTestPCS(tc.oldPCSConstraint)
-			newPCS := buildRawTestPCS(tc.newPCSConstraint)
-			validator := newTopologyConstraintsValidator(newPCS, true, nil)
-			errs := validator.validateUpdate(oldPCS)
-			assert.Len(t, errs, len(tc.errorMatchers), "unexpected number of errors")
-			testutils.AssertErrorMatches(t, errs, tc.errorMatchers)
-			if tc.errorDetailContains != "" && assert.NotEmpty(t, errs) {
-				assert.Contains(t, errs[0].Detail, tc.errorDetailContains)
-			}
 		})
 	}
 }
@@ -706,28 +629,9 @@ func TestTopologyConstraintWarnings(t *testing.T) {
 		assert.Contains(t, warnings[0], "spec.template.topologyConstraint.pack.preferred")
 		assert.Contains(t, warnings[0], "is coarser than")
 	})
-
-	t.Run("Should warn on update while deprecated packDomain remains in use", func(t *testing.T) {
-		pcs := buildRawTestPCS(&grovecorev1beta1.TopologyConstraint{
-			TopologyName: "topo-a",
-			PackDomain:   grovecorev1beta1.TopologyDomainHost,
-		})
-		warnings := newTopologyConstraintsValidator(pcs, true, nil).updateWarnings()
-		require.Len(t, warnings, 1)
-		assert.Contains(t, warnings[0], "spec.template.topologyConstraint.packDomain is deprecated")
-		assert.Contains(t, warnings[0], "spec.template.topologyConstraint.pack.required")
-	})
 }
 
 // Helper functions to reduce test duplication
-
-func buildRawTestPCS(pcsConstraint *grovecorev1beta1.TopologyConstraint) *grovecorev1beta1.PodCliqueSet {
-	return testutils.NewPodCliqueSetBuilder("test-pcs", "default", uuid.NewUUID()).
-		WithReplicas(1).
-		WithTopologyConstraint(pcsConstraint).
-		WithPodCliqueTemplateSpec(testutils.NewBasicPodCliqueTemplateSpec("worker")).
-		Build()
-}
 
 // buildTestPCS constructs a PodCliqueSet for testing based on provided parameters.
 // If cliques is nil or empty, a default worker clique will be added.
@@ -742,10 +646,6 @@ func buildTestPCS(pcsConstraint *grovecorev1beta1.TopologyConstraint,
 		normalized := tc.DeepCopy()
 		if normalized.TopologyName == "" {
 			normalized.TopologyName = defaultTopologyName
-		}
-		if normalized.Pack == nil && normalized.PackDomain != "" {
-			normalized.Pack = &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: normalized.PackDomain}
-			normalized.PackDomain = ""
 		}
 		return normalized
 	}
@@ -789,7 +689,7 @@ func TestResolveTopologyDomains(t *testing.T) {
 			name: "Happy path: PCS has constraint and ClusterTopologyBinding exists",
 			pcsConstraint: &grovecorev1beta1.TopologyConstraint{
 				TopologyName: "my-topo",
-				PackDomain:   "zone",
+				Pack:         &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: "zone"},
 			},
 			clusterTopologyObjects: []client.Object{
 				&grovecorev1beta1.ClusterTopologyBinding{
@@ -808,13 +708,13 @@ func TestResolveTopologyDomains(t *testing.T) {
 		},
 		{
 			name:          "Child topologyName matching PCS is allowed",
-			pcsConstraint: &grovecorev1beta1.TopologyConstraint{TopologyName: "my-topo", PackDomain: "zone"},
+			pcsConstraint: &grovecorev1beta1.TopologyConstraint{TopologyName: "my-topo", Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: "zone"}},
 			cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
 				{
 					Name: "worker",
 					TopologyConstraint: &grovecorev1beta1.TopologyConstraint{
 						TopologyName: "my-topo",
-						PackDomain:   "host",
+						Pack:         &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: "host"},
 					},
 					Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 1, RoleName: "worker-role"},
 				},
@@ -841,12 +741,12 @@ func TestResolveTopologyDomains(t *testing.T) {
 					WithReplicas(1).
 					WithTopologyConstraint(&grovecorev1beta1.TopologyConstraint{
 						TopologyName: "my-topo",
-						PackDomain:   "zone",
+						Pack:         &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: "zone"},
 					}).
 					WithPodCliqueTemplateSpec(&grovecorev1beta1.PodCliqueTemplateSpec{
 						Name: "worker",
 						TopologyConstraint: &grovecorev1beta1.TopologyConstraint{
-							PackDomain: "host",
+							Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: "host"},
 						},
 						Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 1, RoleName: "worker-role"},
 					}).
@@ -875,14 +775,14 @@ func TestResolveTopologyDomains(t *testing.T) {
 					WithPodCliqueTemplateSpec(&grovecorev1beta1.PodCliqueTemplateSpec{
 						Name: "standalone",
 						TopologyConstraint: &grovecorev1beta1.TopologyConstraint{
-							PackDomain: "host",
+							Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: "host"},
 						},
 						Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 1, RoleName: "standalone-role"},
 					}).
 					WithPodCliqueTemplateSpec(&grovecorev1beta1.PodCliqueTemplateSpec{
 						Name: "grouped",
 						TopologyConstraint: &grovecorev1beta1.TopologyConstraint{
-							PackDomain: "host",
+							Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: "host"},
 						},
 						Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 1, RoleName: "grouped-role"},
 					}).
@@ -891,7 +791,7 @@ func TestResolveTopologyDomains(t *testing.T) {
 						CliqueNames: []string{"grouped"},
 						TopologyConstraint: &grovecorev1beta1.TopologyConstraint{
 							TopologyName: "my-topo",
-							PackDomain:   "zone",
+							Pack:         &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: "zone"},
 						},
 					}).
 					Build()
@@ -911,7 +811,7 @@ func TestResolveTopologyDomains(t *testing.T) {
 			setupPCS: func() *grovecorev1beta1.PodCliqueSet {
 				pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "default", uuid.NewUUID()).
 					WithReplicas(1).
-					WithTopologyConstraint(&grovecorev1beta1.TopologyConstraint{PackDomain: "zone"}).
+					WithTopologyConstraint(&grovecorev1beta1.TopologyConstraint{Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: "zone"}}).
 					WithPodCliqueTemplateSpec(testutils.NewBasicPodCliqueTemplateSpec("worker")).
 					Build()
 				return pcs
@@ -934,7 +834,7 @@ func TestResolveTopologyDomains(t *testing.T) {
 					Name: "worker",
 					TopologyConstraint: &grovecorev1beta1.TopologyConstraint{
 						TopologyName: "my-topo",
-						PackDomain:   "host",
+						Pack:         &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: "host"},
 					},
 					Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 1, RoleName: "worker-role"},
 				},
@@ -956,13 +856,13 @@ func TestResolveTopologyDomains(t *testing.T) {
 		},
 		{
 			name:          "Child topologyName mismatch is rejected",
-			pcsConstraint: &grovecorev1beta1.TopologyConstraint{TopologyName: "my-topo", PackDomain: "zone"},
+			pcsConstraint: &grovecorev1beta1.TopologyConstraint{TopologyName: "my-topo", Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: "zone"}},
 			cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
 				{
 					Name: "worker",
 					TopologyConstraint: &grovecorev1beta1.TopologyConstraint{
 						TopologyName: "other-topo",
-						PackDomain:   "host",
+						Pack:         &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: "host"},
 					},
 					Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 1, RoleName: "worker-role"},
 				},
@@ -989,7 +889,7 @@ func TestResolveTopologyDomains(t *testing.T) {
 			name: "CT not found: ClusterTopologyBinding referenced by topologyName does not exist",
 			pcsConstraint: &grovecorev1beta1.TopologyConstraint{
 				TopologyName: "missing-topo",
-				PackDomain:   "zone",
+				Pack:         &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: "zone"},
 			},
 			clusterTopologyObjects: []client.Object{},
 			expectedDomains:        nil,
@@ -1005,7 +905,7 @@ func TestResolveTopologyDomains(t *testing.T) {
 			name: "API error: non-404 error is surfaced as InternalError",
 			pcsConstraint: &grovecorev1beta1.TopologyConstraint{
 				TopologyName: "broken-topo",
-				PackDomain:   "zone",
+				Pack:         &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: "zone"},
 			},
 			clusterTopologyObjects: []client.Object{},
 			expectedDomains:        nil,

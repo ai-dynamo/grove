@@ -343,7 +343,9 @@ func (r _resource) buildResource(logger logr.Logger, ss *syncSnapshot, pcsgRepli
 		)
 	}
 
+	gangShapeHash := componentutils.GangShapeHashLabelValue(pcs, pclq.Labels)
 	pclq.Labels = getLabels(pcs, pcsReplicaIndex, pcsg, pcsgReplicaIndex, pclqObjectKey, pclqTemplateSpec, podGangName)
+	pclq.Labels[apicommon.LabelGangShapeHash] = gangShapeHash
 	pclq.Annotations = maps.Clone(pclqTemplateSpec.Annotations)
 	if pclq.Annotations == nil {
 		pclq.Annotations = make(map[string]string)

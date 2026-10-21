@@ -432,9 +432,9 @@ func TestStartupDependencyTargetsInEntry(t *testing.T) {
 		Spec: grovecorev1beta1.PodCliqueSetSpec{
 			Template: grovecorev1beta1.PodCliqueSetTemplateSpec{
 				Cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
-					{Name: "frontend", Spec: grovecorev1beta1.PodCliqueSpec{MinAvailable: ptr.To(int32(2))}},
-					{Name: "pf", Spec: grovecorev1beta1.PodCliqueSpec{MinAvailable: ptr.To(int32(1))}},
-					{Name: "dc", Spec: grovecorev1beta1.PodCliqueSpec{MinAvailable: ptr.To(int32(1))}},
+					{Name: "frontend", Spec: grovecorev1beta1.PodCliqueSpec{Init: &grovecorev1beta1.InitSpec{MinReplicas: ptr.To(int32(2))}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To(int32(2))}}}}},
+					{Name: "pf", Spec: grovecorev1beta1.PodCliqueSpec{Init: &grovecorev1beta1.InitSpec{MinReplicas: ptr.To(int32(1))}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To(int32(1))}}}}},
+					{Name: "dc", Spec: grovecorev1beta1.PodCliqueSpec{Init: &grovecorev1beta1.InitSpec{MinReplicas: ptr.To(int32(1))}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To(int32(1))}}}}},
 				},
 				PodCliqueScalingGroupConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 					{Name: "prefill", CliqueNames: []string{"pf"}},
@@ -535,8 +535,8 @@ func TestStartupDependencies(t *testing.T) {
 				StartupType: ptr.To(grovecorev1beta1.CliqueStartupTypeExplicit),
 				Cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
 					{Name: "a"},
-					{Name: "b", Spec: grovecorev1beta1.PodCliqueSpec{StartsAfter: []string{"a"}}},
-					{Name: "c", Spec: grovecorev1beta1.PodCliqueSpec{StartsAfter: []string{"a", "b"}}},
+					{Name: "b", Spec: grovecorev1beta1.PodCliqueSpec{StartsAfter: []grovecorev1beta1.StartupDependency{{Name: "a"}}}},
+					{Name: "c", Spec: grovecorev1beta1.PodCliqueSpec{StartsAfter: []grovecorev1beta1.StartupDependency{{Name: "a"}, {Name: "b"}}}},
 				},
 			},
 		},

@@ -1794,19 +1794,11 @@ func Test_TAS22_PodCliqueSetTopologyCELValidation(t *testing.T) {
 		errContains []string
 	}{
 		{
-			name: "deprecated packDomain on PCS create",
-			pcs: newPCS("tas22-legacy-pcs", &corev1beta1.TopologyConstraint{
-				TopologyName: "grove-topology",
-				PackDomain:   corev1beta1.TopologyDomainHost,
-			}),
-			errContains: []string{"packDomain is deprecated and cannot be used on new workloads; use pack.required"},
-		},
-		{
 			name: "topologyConstraint without pack",
 			pcs: newPCS("tas22-missing-pack", &corev1beta1.TopologyConstraint{
 				TopologyName: "grove-topology",
 			}),
-			errContains: []string{"topologyConstraint must specify pack or deprecated packDomain"},
+			errContains: []string{"topologyConstraint must specify pack"},
 		},
 		{
 			name: "empty pack",
@@ -1815,59 +1807,6 @@ func Test_TAS22_PodCliqueSetTopologyCELValidation(t *testing.T) {
 				Pack:         &corev1beta1.TopologyPackConstraint{},
 			}),
 			errContains: []string{"pack must specify at least one of required or preferred"},
-		},
-		{
-			name: "deprecated packDomain with pack.required",
-			pcs: newPCS("tas22-ambiguous-pack", &corev1beta1.TopologyConstraint{
-				TopologyName: "grove-topology",
-				PackDomain:   corev1beta1.TopologyDomainHost,
-				Pack: &corev1beta1.TopologyPackConstraint{
-					RequiredDomain: corev1beta1.TopologyDomainHost,
-				},
-			}),
-			errContains: []string{"must not set both pack.required and deprecated packDomain"},
-		},
-		{
-			name: "deprecated packDomain on PodClique create",
-			pcs: func() *corev1beta1.PodCliqueSet {
-				pcs := newPCS("tas22-legacy-pclq", &corev1beta1.TopologyConstraint{
-					TopologyName: "grove-topology",
-					Pack: &corev1beta1.TopologyPackConstraint{
-						RequiredDomain: corev1beta1.TopologyDomainRack,
-					},
-				})
-				pcs.Spec.Template.Cliques[0].TopologyConstraint = &corev1beta1.TopologyConstraint{
-					PackDomain: corev1beta1.TopologyDomainHost,
-				}
-				return pcs
-			}(),
-			errContains: []string{"packDomain is deprecated and cannot be used on new workloads; use pack.required"},
-		},
-		{
-			name: "deprecated packDomain on PodCliqueScalingGroup create",
-			pcs: func() *corev1beta1.PodCliqueSet {
-				pcs := newPCS("tas22-legacy-pcsg", &corev1beta1.TopologyConstraint{
-					TopologyName: "grove-topology",
-					Pack: &corev1beta1.TopologyPackConstraint{
-						RequiredDomain: corev1beta1.TopologyDomainRack,
-					},
-				})
-				replicas := int32(1)
-				minAvailable := int32(1)
-				pcs.Spec.Template.PodCliqueScalingGroupConfigs = []corev1beta1.PodCliqueScalingGroupConfig{
-					{
-						Name:         "workers",
-						CliqueNames:  []string{"worker"},
-						Replicas:     &replicas,
-						MinAvailable: &minAvailable,
-						TopologyConstraint: &corev1beta1.TopologyConstraint{
-							PackDomain: corev1beta1.TopologyDomainHost,
-						},
-					},
-				}
-				return pcs
-			}(),
-			errContains: []string{"packDomain is deprecated and cannot be used on new workloads; use pack.required"},
 		},
 	}
 

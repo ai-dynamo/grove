@@ -59,7 +59,7 @@ func TestResolveEffectiveTopologyNameForPodCliqueSet(t *testing.T) {
 				return makePCS(func(pcs *grovecorev1beta1.PodCliqueSet) {
 					pcs.Spec.Template.TopologyConstraint = &grovecorev1beta1.TopologyConstraint{
 						TopologyName: "topo-a",
-						PackDomain:   grovecorev1beta1.TopologyDomainRack,
+						Pack:         &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: grovecorev1beta1.TopologyDomainRack},
 					}
 				})
 			},
@@ -87,11 +87,11 @@ func TestResolveEffectiveTopologyNameForPodCliqueSet(t *testing.T) {
 				return makePCS(func(pcs *grovecorev1beta1.PodCliqueSet) {
 					pcs.Spec.Template.TopologyConstraint = &grovecorev1beta1.TopologyConstraint{
 						TopologyName: "topo-a",
-						PackDomain:   grovecorev1beta1.TopologyDomainRack,
+						Pack:         &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: grovecorev1beta1.TopologyDomainRack},
 					}
 					pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1beta1.TopologyConstraint{
 						TopologyName: "topo-a",
-						PackDomain:   grovecorev1beta1.TopologyDomainHost,
+						Pack:         &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: grovecorev1beta1.TopologyDomainHost},
 					}
 				})
 			},
@@ -104,10 +104,10 @@ func TestResolveEffectiveTopologyNameForPodCliqueSet(t *testing.T) {
 				return makePCS(func(pcs *grovecorev1beta1.PodCliqueSet) {
 					pcs.Spec.Template.TopologyConstraint = &grovecorev1beta1.TopologyConstraint{
 						TopologyName: "topo-a",
-						PackDomain:   grovecorev1beta1.TopologyDomainRack,
+						Pack:         &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: grovecorev1beta1.TopologyDomainRack},
 					}
 					pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1beta1.TopologyConstraint{
-						PackDomain: grovecorev1beta1.TopologyDomainHost,
+						Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: grovecorev1beta1.TopologyDomainHost},
 					}
 				})
 			},
@@ -119,7 +119,7 @@ func TestResolveEffectiveTopologyNameForPodCliqueSet(t *testing.T) {
 			setupPCS: func() *grovecorev1beta1.PodCliqueSet {
 				return makePCS(func(pcs *grovecorev1beta1.PodCliqueSet) {
 					pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1beta1.TopologyConstraint{
-						PackDomain: grovecorev1beta1.TopologyDomainHost,
+						Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: grovecorev1beta1.TopologyDomainHost},
 					}
 					pcs.Spec.Template.PodCliqueScalingGroupConfigs = []grovecorev1beta1.PodCliqueScalingGroupConfig{
 						{
@@ -127,7 +127,7 @@ func TestResolveEffectiveTopologyNameForPodCliqueSet(t *testing.T) {
 							CliqueNames: []string{"worker"},
 							TopologyConstraint: &grovecorev1beta1.TopologyConstraint{
 								TopologyName: "topo-a",
-								PackDomain:   grovecorev1beta1.TopologyDomainRack,
+								Pack:         &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: grovecorev1beta1.TopologyDomainRack},
 							},
 						},
 					}
@@ -144,14 +144,14 @@ func TestResolveEffectiveTopologyNameForPodCliqueSet(t *testing.T) {
 						{
 							Name: "standalone",
 							TopologyConstraint: &grovecorev1beta1.TopologyConstraint{
-								PackDomain: grovecorev1beta1.TopologyDomainHost,
+								Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: grovecorev1beta1.TopologyDomainHost},
 							},
 							Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 1},
 						},
 						{
 							Name: "grouped",
 							TopologyConstraint: &grovecorev1beta1.TopologyConstraint{
-								PackDomain: grovecorev1beta1.TopologyDomainHost,
+								Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: grovecorev1beta1.TopologyDomainHost},
 							},
 							Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 1},
 						},
@@ -162,7 +162,7 @@ func TestResolveEffectiveTopologyNameForPodCliqueSet(t *testing.T) {
 							CliqueNames: []string{"grouped"},
 							TopologyConstraint: &grovecorev1beta1.TopologyConstraint{
 								TopologyName: "topo-a",
-								PackDomain:   grovecorev1beta1.TopologyDomainRack,
+								Pack:         &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: grovecorev1beta1.TopologyDomainRack},
 							},
 						},
 					}
@@ -177,7 +177,7 @@ func TestResolveEffectiveTopologyNameForPodCliqueSet(t *testing.T) {
 				return makePCS(func(pcs *grovecorev1beta1.PodCliqueSet) {
 					pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1beta1.TopologyConstraint{
 						TopologyName: "topo-a",
-						PackDomain:   grovecorev1beta1.TopologyDomainHost,
+						Pack:         &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: grovecorev1beta1.TopologyDomainHost},
 					}
 				})
 			},
@@ -220,11 +220,11 @@ func TestResolveEffectiveTopologyNameForPodCliqueSet(t *testing.T) {
 				return makePCS(func(pcs *grovecorev1beta1.PodCliqueSet) {
 					pcs.Spec.Template.TopologyConstraint = &grovecorev1beta1.TopologyConstraint{
 						TopologyName: "topo-a",
-						PackDomain:   grovecorev1beta1.TopologyDomainRack,
+						Pack:         &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: grovecorev1beta1.TopologyDomainRack},
 					}
 					pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1beta1.TopologyConstraint{
 						TopologyName: "topo-b",
-						PackDomain:   grovecorev1beta1.TopologyDomainHost,
+						Pack:         &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: grovecorev1beta1.TopologyDomainHost},
 					}
 				})
 			},
@@ -273,7 +273,7 @@ func TestGetUniqueTopologyDomainsInPodCliqueSet(t *testing.T) {
 						Name:        "sg1",
 						CliqueNames: []string{"worker"},
 						TopologyConstraint: &grovecorev1beta1.TopologyConstraint{
-							PackDomain: grovecorev1beta1.TopologyDomainRack,
+							Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: grovecorev1beta1.TopologyDomainRack},
 						},
 					},
 				},
@@ -329,7 +329,7 @@ func TestFindExplicitTopologyNameForPodCliqueSet(t *testing.T) {
 					}
 					pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1beta1.TopologyConstraint{
 						TopologyName: "topo-a",
-						PackDomain:   grovecorev1beta1.TopologyDomainHost,
+						Pack:         &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: grovecorev1beta1.TopologyDomainHost},
 					}
 				})
 			},
@@ -368,7 +368,7 @@ func TestFindExplicitTopologyNameForPodCliqueSet(t *testing.T) {
 			setupPCS: func() *grovecorev1beta1.PodCliqueSet {
 				return makePCS(func(pcs *grovecorev1beta1.PodCliqueSet) {
 					pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1beta1.TopologyConstraint{
-						PackDomain: grovecorev1beta1.TopologyDomainHost,
+						Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: grovecorev1beta1.TopologyDomainHost},
 					}
 				})
 			},

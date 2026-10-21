@@ -28,7 +28,6 @@ import (
 	admissionv1 "k8s.io/api/admission/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 )
@@ -194,39 +193,47 @@ func TestHandle(t *testing.T) {
 	}
 }
 
-// TestMinAvailableOf checks that minAvailable is read from the stored PodClique or PodCliqueScalingGroup and
-// that any other type yields nil.
-func TestMinAvailableOf(t *testing.T) {
+// TestScaleFloorOf checks that the scale floor is availability.minReplicas of the stored PodClique or
+// PodCliqueScalingGroup, 1 when availability is unset (even when init.minReplicas is higher), and that any
+// other type has no floor.
+func TestScaleFloorOf(t *testing.T) {
 	testCases := []struct {
 		description string
 		target      client.Object
-		want        *int32
+		want        int32
+		wantOK      bool
 	}{
 		{
-			description: "reads minAvailable from a PodClique",
-			target:      &grovecorev1beta1.PodClique{Spec: grovecorev1beta1.PodCliqueSpec{MinAvailable: ptr.To[int32](3)}},
-			want:        ptr.To[int32](3),
+			description: "reads availability.minReplicas from a PodClique",
+			target:      &grovecorev1beta1.PodClique{Spec: grovecorev1beta1.PodCliqueSpec{Init: testutils.NewInitSpec(3), Termination: testutils.NewAvailabilityTermination(2)}},
+			want:        2,
+			wantOK:      true,
 		},
 		{
-			description: "reads minAvailable from a PodCliqueScalingGroup",
-			target:      &grovecorev1beta1.PodCliqueScalingGroup{Spec: grovecorev1beta1.PodCliqueScalingGroupSpec{MinAvailable: ptr.To[int32](2)}},
-			want:        ptr.To[int32](2),
+			description: "reads availability.minReplicas from a PodCliqueScalingGroup",
+			target:      &grovecorev1beta1.PodCliqueScalingGroup{Spec: grovecorev1beta1.PodCliqueScalingGroupSpec{Init: testutils.NewInitSpec(3), Termination: testutils.NewAvailabilityTermination(2)}},
+			want:        2,
+			wantOK:      true,
 		},
 		{
-			description: "returns nil when minAvailable is unset",
-			target:      &grovecorev1beta1.PodClique{},
-			want:        nil,
+			description: "floor is 1 when availability is unset, regardless of init.minReplicas",
+			target:      &grovecorev1beta1.PodClique{Spec: grovecorev1beta1.PodCliqueSpec{Init: testutils.NewInitSpec(3)}},
+			want:        1,
+			wantOK:      true,
 		},
 		{
-			description: "returns nil for an unexpected type",
+			description: "no floor for an unexpected type",
 			target:      &grovecorev1beta1.PodCliqueSet{},
-			want:        nil,
+			want:        0,
+			wantOK:      false,
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.description, func(t *testing.T) {
-			assert.Equal(t, tc.want, minAvailableOf(tc.target))
+			got, ok := scaleFloorOf(tc.target)
+			assert.Equal(t, tc.wantOK, ok)
+			assert.Equal(t, tc.want, got)
 		})
 	}
 }

@@ -118,7 +118,7 @@ const (
 
 // Constants for Condition Types
 const (
-	// ConditionTypeMinAvailableBreached indicates that the minimum number of ready pods in the PodClique are below the threshold defined in the PodCliqueSpec.MinAvailable threshold.
+	// ConditionTypeMinAvailableBreached indicates that the minimum number of ready pods in the PodClique are below the availability.minReplicas threshold.
 	ConditionTypeMinAvailableBreached = "MinAvailableBreached"
 	// ConditionTypePodCliqueScheduled indicates that the PodClique has been successfully scheduled.
 	// This condition is set to true when number of scheduled pods in the PodClique is greater than or equal to PodCliqueSpec.MinAvailable.
@@ -129,8 +129,8 @@ const (
 	// back to False (recovered). While it is True, further PCS-level gang termination for the PCS replica is
 	// suppressed — at most one fire per breach episode, regardless of how long the workload stays below
 	// MinAvailable. This is a PCS-level-only mechanism: the PCSG-replica-scoped recycle path does not use this
-	// flag and instead breaks its own re-fire loop via WasPCLQEverScheduled, since a freshly recreated
-	// PodClique has never been scheduled and is therefore excluded from the breached set.
+	// flag and instead breaks its own re-fire loop through the awaiting state: a freshly recreated PodClique has
+	// never been scheduled, so it reports MinAvailableBreached=Unknown (AwaitingInitialSchedule), not True.
 	// Its only Reason is ConditionReasonGangTerminationActive.
 	ConditionTypeGangTerminationInProgress = "GangTerminationInProgress"
 	// ConditionTopologyLevelsUnavailable indicates that the required topology levels defined on a PodCliqueSet for topology-aware scheduling are no longer available.
@@ -150,20 +150,26 @@ const (
 
 // Constants for Condition Reasons.
 const (
-	// ConditionReasonInsufficientReadyPods indicates that the number of ready pods in the PodClique is below the threshold defined in the PodCliqueSpec.MinAvailable threshold.
+	// ConditionReasonInsufficientReadyPods indicates that the number of ready pods in the PodClique is below the availability.minReplicas threshold.
 	ConditionReasonInsufficientReadyPods = "InsufficientReadyPods"
-	// ConditionReasonSufficientReadyPods indicates that the number of ready pods in the PodClique is above the threshold defined in the PodCliqueSpec.MinAvailable threshold.
+	// ConditionReasonSufficientReadyPods indicates that the number of ready pods in the PodClique is above the availability.minReplicas threshold.
 	ConditionReasonSufficientReadyPods = "SufficientReadyPods"
-	// ConditionReasonInsufficientScheduledPods indicates that the number of scheduled pods in the PodClique is below the threshold defined in the PodCliqueSpec.MinAvailable threshold.
+	// ConditionReasonInsufficientScheduledPods indicates that the number of scheduled pods in the PodClique is below the availability.minReplicas threshold.
 	ConditionReasonInsufficientScheduledPods = "InsufficientScheduledPods"
-	// ConditionReasonSufficientScheduledPods indicates that the number of scheduled pods in the PodClique greater or equal to PodCliqueSpec.MinAvailable.
+	// ConditionReasonSufficientScheduledPods indicates that the number of scheduled pods in the PodClique greater or equal to init.minReplicas.
 	ConditionReasonSufficientScheduledPods = "SufficientScheduledPods"
-	// ConditionReasonScheduledReplicasBelowMinAvailable indicates that scheduledReplicas is below MinAvailable but greater than zero.
+	// ConditionReasonScheduledReplicasBelowMinAvailable indicates that scheduledReplicas is below availability.minReplicas.
 	ConditionReasonScheduledReplicasBelowMinAvailable = "ScheduledReplicasBelowMinAvailable"
-	// ConditionReasonInsufficientAvailablePCSGReplicas indicates that the number of ready replicas in the PodCliqueScalingGroup is below the PodCliqueScalingGroupSpec.MinAvailable.
+	// ConditionReasonInsufficientAvailablePCSGReplicas indicates that the number of ready replicas in the PodCliqueScalingGroup is below availability.minReplicas.
 	ConditionReasonInsufficientAvailablePCSGReplicas = "InsufficientAvailablePodCliqueScalingGroupReplicas"
-	// ConditionReasonSufficientAvailablePCSGReplicas indicates that the number of ready replicas in the PodCliqueScalingGroup is greater than or equal to the PodCliqueScalingGroupSpec.MinAvailable.
+	// ConditionReasonSufficientAvailablePCSGReplicas indicates that the number of ready replicas in the PodCliqueScalingGroup is greater than or equal to availability.minReplicas.
 	ConditionReasonSufficientAvailablePCSGReplicas = "SufficientAvailablePodCliqueScalingGroupReplicas"
+	// ConditionReasonAwaitingInitialSchedule indicates that MinAvailableBreached is not evaluated yet because the
+	// PodClique has never been scheduled.
+	ConditionReasonAwaitingInitialSchedule = "AwaitingInitialSchedule"
+	// ConditionReasonAwaitingInitialAvailability indicates that MinAvailableBreached is not evaluated yet because the
+	// PodCliqueScalingGroup has never been available.
+	ConditionReasonAwaitingInitialAvailability = "AwaitingInitialAvailability"
 	// ConditionReasonUpdateInProgress indicates that the resource is undergoing rolling update.
 	ConditionReasonUpdateInProgress = "UpdateInProgress"
 	// ConditionReasonGangTerminationActive is the (only) Reason paired with

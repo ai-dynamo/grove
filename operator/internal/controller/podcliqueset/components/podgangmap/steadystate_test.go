@@ -671,6 +671,6 @@ func pcsg(replicas int32) grovecorev1beta1.PodCliqueScalingGroup {
 		ObjectMeta: metav1.ObjectMeta{
 			Name: apicommon.GeneratePodCliqueScalingGroupName(apicommon.ResourceNameReplica{Name: testPCSName, Replica: 0}, testPCSGName),
 		},
-		Spec: grovecorev1beta1.PodCliqueScalingGroupSpec{Replicas: replicas, MinAvailable: ptr.To(int32(2))},
+		Spec: grovecorev1beta1.PodCliqueScalingGroupSpec{Replicas: replicas, Init: &grovecorev1beta1.InitSpec{MinReplicas: ptr.To(int32(2))}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To(int32(2))}}}},
 	}
 }

@@ -23,6 +23,9 @@ spec:
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
+    deprecated: true
+    deprecationWarning: grove.io/v1alpha1 is deprecated and will be removed two releases
+      after grove.io/v1beta1 becomes the storage version; use grove.io/v1beta1
     name: v1alpha1
     schema:
       openAPIV3Schema:

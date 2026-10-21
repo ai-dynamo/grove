@@ -36,13 +36,9 @@ func TestTopologyConstraintPackDomainHelpers(t *testing.T) {
 			hasAnyPackDomain: false,
 		},
 		{
-			name: "legacy required domain",
-			constraint: &TopologyConstraint{
-				PackDomain: TopologyDomainRack,
-			},
-			hasAnyPackDomain:  true,
-			requiredDomain:    TopologyDomainRack,
-			referencedDomains: []TopologyDomain{TopologyDomainRack},
+			name:             "constraint without pack",
+			constraint:       &TopologyConstraint{TopologyName: "tb"},
+			hasAnyPackDomain: false,
 		},
 		{
 			name: "new required domain",

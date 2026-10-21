@@ -311,7 +311,7 @@ func createValidPCSWithGPU(annotations map[string]string) *grovecorev1beta1.PodC
 	return testutils.NewPodCliqueSetBuilder("test-pcs", "default", "").
 		WithAnnotations(annotations).
 		WithCliqueStartupType(ptr.To(grovecorev1beta1.CliqueStartupTypeAnyOrder)).
-		WithTerminationDelay(4 * time.Hour).
+		WithBreachTolerance(4 * time.Hour).
 		WithPodCliqueTemplateSpec(
 			testutils.NewPodCliqueTemplateSpecBuilder("worker").
 				WithRoleName("worker").
@@ -327,7 +327,7 @@ func createValidPCSWithGPU(annotations map[string]string) *grovecorev1beta1.PodC
 func createValidPCSWithCliqueAnnotations(cliqueAnnotations map[string]string) *grovecorev1beta1.PodCliqueSet {
 	return testutils.NewPodCliqueSetBuilder("test-pcs", "default", "").
 		WithCliqueStartupType(ptr.To(grovecorev1beta1.CliqueStartupTypeAnyOrder)).
-		WithTerminationDelay(4 * time.Hour).
+		WithBreachTolerance(4 * time.Hour).
 		WithPodCliqueTemplateSpec(
 			testutils.NewPodCliqueTemplateSpecBuilder("worker").
 				WithRoleName("worker").
@@ -344,7 +344,7 @@ func createValidPCSWithCliqueAnnotations(cliqueAnnotations map[string]string) *g
 func createValidPCSWithPCSGConfigAnnotations(pcsgAnnotations map[string]string) *grovecorev1beta1.PodCliqueSet {
 	return testutils.NewPodCliqueSetBuilder("test-pcs", "default", "").
 		WithCliqueStartupType(ptr.To(grovecorev1beta1.CliqueStartupTypeAnyOrder)).
-		WithTerminationDelay(4 * time.Hour).
+		WithBreachTolerance(4 * time.Hour).
 		WithPodCliqueTemplateSpec(
 			testutils.NewPodCliqueTemplateSpecBuilder("worker").
 				WithRoleName("worker").

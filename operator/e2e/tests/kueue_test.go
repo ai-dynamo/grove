@@ -657,10 +657,10 @@ func Test_Kueue6_ValidatePodCliqueSetAndScaleRejection(t *testing.T) {
 		pcs.Spec.Template.Cliques = []*corev1beta1.PodCliqueTemplateSpec{kueueSchedulerClique("worker", 2, 1)}
 		pcs.Spec.Template.PodCliqueScalingGroupConfigs = []corev1beta1.PodCliqueScalingGroupConfig{
 			{
-				Name:         "sg",
-				CliqueNames:  []string{"worker"},
-				Replicas:     ptr.To(int32(2)),
-				MinAvailable: ptr.To(int32(2)),
+				Name:        "sg",
+				CliqueNames: []string{"worker"},
+				Replicas:    ptr.To(int32(2)),
+				Init:        &corev1beta1.InitSpec{MinReplicas: ptr.To(int32(2))},
 			},
 		}
 		err := tc.Client.Create(ctx, pcs)
@@ -715,10 +715,10 @@ func Test_Kueue6_ValidatePodCliqueSetAndScaleRejection(t *testing.T) {
 		pcs.Spec.Template.Cliques = []*corev1beta1.PodCliqueTemplateSpec{kueueSchedulerClique("worker", 2, 2)}
 		pcs.Spec.Template.PodCliqueScalingGroupConfigs = []corev1beta1.PodCliqueScalingGroupConfig{
 			{
-				Name:         "sg",
-				CliqueNames:  []string{"worker"},
-				Replicas:     ptr.To(int32(1)),
-				MinAvailable: ptr.To(int32(1)),
+				Name:        "sg",
+				CliqueNames: []string{"worker"},
+				Replicas:    ptr.To(int32(1)),
+				Init:        &corev1beta1.InitSpec{MinReplicas: ptr.To(int32(1))},
 				TopologyConstraint: &corev1beta1.TopologyConstraint{
 					TopologyName: "grove-topology",
 					Pack: &corev1beta1.TopologyPackConstraint{

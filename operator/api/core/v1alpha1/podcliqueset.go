@@ -26,6 +26,7 @@ import (
 // +kubebuilder:subresource:status
 // +kubebuilder:subresource:scale:specpath=.spec.replicas,statuspath=.status.replicas,selectorpath=.status.hpaPodSelector
 // +kubebuilder:resource:shortName={pcs}
+// +kubebuilder:deprecatedversion:warning="grove.io/v1alpha1 is deprecated and will be removed two releases after grove.io/v1beta1 becomes the storage version; use grove.io/v1beta1"
 // +kubebuilder:printcolumn:name="Replicas",type=integer,JSONPath=`.spec.replicas`
 // +kubebuilder:printcolumn:name="Available",type=integer,JSONPath=`.status.availableReplicas`
 // +kubebuilder:printcolumn:name="Updated",type=integer,JSONPath=`.status.updatedReplicas`
@@ -228,6 +229,7 @@ type RollingUpdateConfiguration struct {
 	//   - OnDelete: RollingUpdate must not be set. The PodCliqueSet validating webhook rejects a
 	//     RollingUpdateConfiguration on any component when the strategy is OnDelete.
 	// +optional
+	// +k8s:conversion-gen=false
 	MaxUnavailable *int32 `json:"maxUnavailable,omitempty"`
 	// ProgressDeadline tracks the progress of this component's rolling update. If the component,
 	// a PodClique or a PodCliqueScalingGroup, shows no observable progress within this duration, the
@@ -293,6 +295,8 @@ type PodCliqueSetTemplateSpec struct {
 }
 
 // PodCliqueTemplateSpec defines a template spec for a PodClique.
+// +kubebuilder:validation:XValidation:rule="!has(self.spec.minAvailable) || self.spec.minAvailable > 0",message="must be greater than 0",fieldPath=".spec.minAvailable"
+// +kubebuilder:validation:XValidation:rule="!has(self.spec.minAvailable) || self.spec.minAvailable <= self.spec.replicas",message="minAvailable must not be greater than replicas",fieldPath=".spec.minAvailable"
 type PodCliqueTemplateSpec struct {
 	// Name must be unique within a PodCliqueSet and is used to denote a role.
 	// Once set it cannot be updated.
@@ -424,6 +428,8 @@ func (tc *TopologyConstraint) ReferencedDomains() []TopologyDomain {
 // PodCliqueScalingGroupConfig is a group of PodClique's that are scaled together.
 // Each member PodClique.Replicas will be computed as a product of PodCliqueScalingGroupConfig.Replicas and PodCliqueTemplateSpec.Spec.Replicas.
 // NOTE: If a PodCliqueScalingGroupConfig is defined, then for the member PodClique's, individual AutoScalingConfig cannot be defined.
+// +kubebuilder:validation:XValidation:rule="!has(self.minAvailable) || self.minAvailable > 0",message="must be greater than 0",fieldPath=".minAvailable"
+// +kubebuilder:validation:XValidation:rule="!has(self.minAvailable) || !has(self.replicas) || self.minAvailable <= self.replicas",message="minAvailable must not be greater than replicas",fieldPath=".minAvailable"
 type PodCliqueScalingGroupConfig struct {
 	// Name is the name of the PodCliqueScalingGroupConfig. This should be unique within the PodCliqueSet.
 	// It allows consumers to give a semantic name to a group of PodCliques that needs to be scaled together.

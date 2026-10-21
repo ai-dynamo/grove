@@ -24,7 +24,8 @@ import (
 
 // PodCliqueSetBuilder is a builder for PodCliqueSet objects.
 type PodCliqueSetBuilder struct {
-	pcs *grovecorev1beta1.PodCliqueSet
+	pcs             *grovecorev1beta1.PodCliqueSet
+	breachTolerance *time.Duration
 }
 
 // NewPodCliqueSetBuilder creates a new PodCliqueSetBuilder.
@@ -74,9 +75,10 @@ func (b *PodCliqueSetBuilder) WithPriorityClassName(priorityClassName string) *P
 	return b
 }
 
-// WithTerminationDelay sets the TerminationDelay for the PodCliqueSet.
-func (b *PodCliqueSetBuilder) WithTerminationDelay(duration time.Duration) *PodCliqueSetBuilder {
-	b.pcs.Spec.Template.TerminationDelay = &metav1.Duration{Duration: duration}
+// WithBreachTolerance sets availability.breachTolerance on every clique and scaling group config that has
+// availability when Build is called.
+func (b *PodCliqueSetBuilder) WithBreachTolerance(duration time.Duration) *PodCliqueSetBuilder {
+	b.breachTolerance = &duration
 	return b
 }
 
@@ -124,10 +126,11 @@ func (b *PodCliqueSetBuilder) WithScalingGroupConfig(name string, cliqueNames []
 
 	// Add scaling group config
 	pcsgConfig := grovecorev1beta1.PodCliqueScalingGroupConfig{
-		Name:         name,
-		CliqueNames:  cliqueNames,
-		Replicas:     &replicas,
-		MinAvailable: &minAvailable,
+		Name:        name,
+		CliqueNames: cliqueNames,
+		Replicas:    &replicas,
+		Init:        NewInitSpec(minAvailable),
+		Termination: NewAvailabilityTermination(minAvailable),
 	}
 	b.pcs.Spec.Template.PodCliqueScalingGroupConfigs = append(b.pcs.Spec.Template.PodCliqueScalingGroupConfigs, pcsgConfig)
 	return b
@@ -177,7 +180,22 @@ func (b *PodCliqueSetBuilder) WithStatusConditions(conditions ...metav1.Conditio
 
 // Build creates a PodCliqueSet object.
 func (b *PodCliqueSetBuilder) Build() *grovecorev1beta1.PodCliqueSet {
+	if b.breachTolerance != nil {
+		for _, clique := range b.pcs.Spec.Template.Cliques {
+			setBreachTolerance(clique.Spec.Termination, *b.breachTolerance)
+		}
+		for i := range b.pcs.Spec.Template.PodCliqueScalingGroupConfigs {
+			setBreachTolerance(b.pcs.Spec.Template.PodCliqueScalingGroupConfigs[i].Termination, *b.breachTolerance)
+		}
+	}
 	return b.pcs
+}
+
+func setBreachTolerance(termination *grovecorev1beta1.TerminationSpec, duration time.Duration) {
+	if termination == nil || termination.Resource == nil || termination.Resource.Availability == nil {
+		return
+	}
+	termination.Resource.Availability.BreachTolerance = &metav1.Duration{Duration: duration}
 }
 
 func createEmptyPodCliqueSet(name, namespace string, uid types.UID) *grovecorev1beta1.PodCliqueSet {

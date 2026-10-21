@@ -24,6 +24,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -36,25 +37,25 @@ func TestGetStatusResyncInterval(t *testing.T) {
 	// expected values are literals, not constants.PodCliqueStatusResyncInterval, so the test does not
 	// pass by construction. A change to the resync interval must consciously update these.
 	tests := []struct {
-		name             string
-		terminationDelay *time.Duration
-		getPCSFails      bool
-		expected         time.Duration
+		name            string
+		breachTolerance *time.Duration
+		getPCSFails     bool
+		expected        time.Duration
 	}{
 		{
-			name:             "TerminationDelay shorter than the resync interval bounds the interval",
-			terminationDelay: ptr.To(2 * time.Minute),
-			expected:         2 * time.Minute,
+			name:            "breachTolerance shorter than the resync interval bounds the interval",
+			breachTolerance: ptr.To(2 * time.Minute),
+			expected:        2 * time.Minute,
 		},
 		{
-			name:             "TerminationDelay longer than the resync interval keeps the resync interval",
-			terminationDelay: ptr.To(4 * time.Hour),
-			expected:         3 * time.Minute,
+			name:            "breachTolerance longer than the resync interval keeps the resync interval",
+			breachTolerance: ptr.To(4 * time.Hour),
+			expected:        3 * time.Minute,
 		},
 		{
-			name:             "no TerminationDelay falls back to the resync interval",
-			terminationDelay: nil,
-			expected:         3 * time.Minute,
+			name:            "no breachTolerance falls back to the resync interval",
+			breachTolerance: nil,
+			expected:        3 * time.Minute,
 		},
 		{
 			name:        "PodCliqueSet fetch failure falls back to the resync interval",
@@ -64,12 +65,11 @@ func TestGetStatusResyncInterval(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			pcsBuilder := testutils.NewPodCliqueSetBuilder(pcsName, namespace, "uid")
-			if tt.terminationDelay != nil {
-				pcsBuilder.WithTerminationDelay(*tt.terminationDelay)
-			}
-			pcs := pcsBuilder.Build()
+			pcs := testutils.NewPodCliqueSetBuilder(pcsName, namespace, "uid").Build()
 			pclq := testutils.NewPodCliqueBuilder(pcsName, "uid", "clq", namespace, 0).Build()
+			if tt.breachTolerance != nil {
+				pclq.Spec.Termination.Resource.Availability.BreachTolerance = &metav1.Duration{Duration: *tt.breachTolerance}
+			}
 
 			clientBuilder := testutils.NewTestClientBuilder().WithObjects(pcs, pclq)
 			if tt.getPCSFails {

@@ -267,6 +267,17 @@ func computeMinAvailableBreachedCondition(logger logr.Logger, pcsg *grovecorev1b
 			Message: "PodCliqueScalingGroup has no availability requirement, so MinAvailable is never breached",
 		}
 	}
+	minAvailable := int(availabilityMinReplicas)
+	// Breach evaluation starts at the first availability. Until then the PCSG is never in breach, including
+	// during an update and while it is scaled to zero.
+	if !hasLeftAwaitingInitialAvailability(pcsg) {
+		if componentutils.IsPCSGUpdateInProgress(pcsg) || pcsg.Spec.Replicas == 0 {
+			return awaitingInitialAvailabilityCondition()
+		}
+		if notInBreachReplicas := computeNotInBreachReplicas(logger, pcsg, pclqsPerPCSGReplica); notInBreachReplicas < minAvailable {
+			return awaitingInitialAvailabilityCondition()
+		}
+	}
 	if componentutils.IsPCSGUpdateInProgress(pcsg) {
 		return metav1.Condition{
 			Type:    constants.ConditionTypeMinAvailableBreached,
@@ -288,7 +299,6 @@ func computeMinAvailableBreachedCondition(logger logr.Logger, pcsg *grovecorev1b
 		}
 	}
 
-	minAvailable := int(availabilityMinReplicas)
 	notInBreachReplicas := computeNotInBreachReplicas(logger, pcsg, pclqsPerPCSGReplica)
 	if notInBreachReplicas < minAvailable {
 		return metav1.Condition{
@@ -306,10 +316,42 @@ func computeMinAvailableBreachedCondition(logger logr.Logger, pcsg *grovecorev1b
 	}
 }
 
+func awaitingInitialAvailabilityCondition() metav1.Condition {
+	return metav1.Condition{
+		Type:    constants.ConditionTypeMinAvailableBreached,
+		Status:  metav1.ConditionUnknown,
+		Reason:  constants.ConditionReasonAwaitingInitialAvailability,
+		Message: "PodCliqueScalingGroup has not been available yet",
+	}
+}
+
+// hasLeftAwaitingInitialAvailability reports whether the PCSG has been available at least once, read from its
+// previous MinAvailableBreached condition. False, or Unknown with UpdateInProgress, means it has left the
+// awaiting state. Unknown with any other reason, or no condition, means it has not. True was either written
+// after the first availability, or by a release without the awaiting state; WasPCSGEverHealthy tells the two
+// apart.
+//
+// NOTE: the WasPCSGEverHealthy fallback carries over conditions written by a release without the awaiting
+// state. Every PCSG is reconciled by this release before the next one runs, so the next release can drop it.
+func hasLeftAwaitingInitialAvailability(pcsg *grovecorev1beta1.PodCliqueScalingGroup) bool {
+	cond := meta.FindStatusCondition(pcsg.Status.Conditions, constants.ConditionTypeMinAvailableBreached)
+	if cond == nil {
+		return false
+	}
+	switch cond.Status {
+	case metav1.ConditionFalse:
+		return true
+	case metav1.ConditionTrue:
+		return componentutils.WasPCSGEverHealthy(pcsg)
+	default:
+		return cond.Reason == constants.ConditionReasonUpdateInProgress
+	}
+}
+
 // computeNotInBreachReplicas counts PCSG replicas that are healthy for the purpose of the PCSG-level
 // MinAvailableBreached signal. A replica counts as not-in-breach only when it is *complete* — all
 // expected PodCliques (len(Spec.CliqueNames)) exist and are non-terminating — AND none of those
-// PodCliques has MinAvailableBreached=True.
+// PodCliques has MinAvailableBreached=True or is still awaiting its first schedule.
 //
 // Completeness is required because a partially-created replica (e.g. one whose pc-c was deleted and
 // not yet recreated) has no breached PodClique yet is still not a valid healthy replica. Counting it
@@ -333,10 +375,12 @@ func computeNotInBreachReplicas(logger logr.Logger, pcsg *grovecorev1beta1.PodCl
 			continue
 		}
 		anyBreached := lo.SomeBy(nonTerminatingPCLQs, func(pclq grovecorev1beta1.PodClique) bool {
-			return k8sutils.IsConditionTrue(pclq.Status.Conditions, constants.ConditionTypeMinAvailableBreached)
+			cond := meta.FindStatusCondition(pclq.Status.Conditions, constants.ConditionTypeMinAvailableBreached)
+			return cond != nil && (cond.Status == metav1.ConditionTrue ||
+				(cond.Status == metav1.ConditionUnknown && cond.Reason == constants.ConditionReasonAwaitingInitialSchedule))
 		})
 		if anyBreached {
-			logger.Info("PodCliqueScalingGroup replica has at least one PodClique with MinAvailableBreached=True",
+			logger.Info("PodCliqueScalingGroup replica has at least one PodClique that is in breach or awaiting its first schedule",
 				"pcsgReplicaIndex", pcsgReplicaIndex)
 			continue
 		}

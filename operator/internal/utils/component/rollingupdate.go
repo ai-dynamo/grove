@@ -16,6 +16,7 @@ package component
 
 import (
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/utils/ptr"
 )
@@ -47,19 +48,29 @@ func CoherentMaxUnavailableByComponent(pcs *grovecorev1beta1.PodCliqueSet, inSco
 }
 
 // ResolvedMaxUnavailable returns the MaxUnavailable to use for a component under the given update
-// strategy, where replicas is the component's live replica count. It tolerates a nil rollingUpdate or a
-// nil MaxUnavailable by applying the strategy's default: the minimum update unit (updateMinReplicas) for
-// Coherent, since the MVU sub-step takes down that many at once, and 1 for RollingRecreate. This mirrors
-// the defaulting webhook so an in-flight object that predates the RollingUpdate fields resolves to the
-// same value the webhook would have written.
+// strategy, where replicas is the component's live replica count. A percentage is resolved against replicas,
+// rounding down with a minimum of 1, on every call, so scaling during an update changes the budget. Under
+// Coherent the result is at least the minimum update unit (updateMinReplicas), since the MVU sub-step takes
+// down that many at once. It tolerates a nil rollingUpdate or a nil MaxUnavailable by applying the
+// strategy's default: updateMinReplicas for Coherent and 1 for RollingRecreate. This mirrors the defaulting
+// webhook so an in-flight object that predates the RollingUpdate fields resolves to the same value the
+// webhook would have written.
 //
 // NOTE: the nil-tolerance exists only for PodCliqueSets created before the RollingUpdate fields
 // existed, which reconcile without re-admission and carry a nil MaxUnavailable. Once every
 // PodCliqueSet has been re-admitted and carries a MaxUnavailable populated by the defaulting webhook,
 // this can be simplified to reading the field directly.
-func ResolvedMaxUnavailable(rollingUpdate *grovecorev1beta1.RollingUpdateConfiguration, updateStrategy grovecorev1beta1.UpdateStrategyType, updateMinReplicas int32, _ int32) int {
+func ResolvedMaxUnavailable(rollingUpdate *grovecorev1beta1.RollingUpdateConfiguration, updateStrategy grovecorev1beta1.UpdateStrategyType, updateMinReplicas int32, replicas int32) int {
 	if rollingUpdate != nil && rollingUpdate.MaxUnavailable != nil {
-		return int(*rollingUpdate.MaxUnavailable)
+		resolved, err := intstr.GetScaledValueFromIntOrPercent(rollingUpdate.MaxUnavailable, int(replicas), false)
+		if err != nil {
+			resolved = int(DefaultRollingRecreateMaxUnavailable)
+		}
+		resolved = max(resolved, 1)
+		if updateStrategy == grovecorev1beta1.CoherentStrategy {
+			resolved = max(resolved, int(updateMinReplicas))
+		}
+		return resolved
 	}
 	if updateStrategy == grovecorev1beta1.CoherentStrategy {
 		return int(updateMinReplicas)

@@ -487,12 +487,7 @@ func (b *schedulerBackend) ValidatePodCliqueSet(_ context.Context, pcs *grovecor
 		if cliqueTemplate == nil {
 			continue
 		}
-		minAvailable := cliqueTemplate.Spec.MinAvailable
-		// A nil minAvailable defaults to replicas, so it is a full gang.
-		if minAvailable == nil {
-			continue
-		}
-		isPartialGang := *minAvailable > 0 && *minAvailable < cliqueTemplate.Spec.Replicas
+		isPartialGang := componentutils.PCLQInitMinReplicas(&cliqueTemplate.Spec) < cliqueTemplate.Spec.Replicas
 		if !isPartialGang {
 			continue
 		}

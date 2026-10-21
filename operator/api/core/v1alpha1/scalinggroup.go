@@ -23,6 +23,7 @@ import metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 // +kubebuilder:subresource:status
 // +kubebuilder:subresource:scale:specpath=.spec.replicas,statuspath=.status.replicas,selectorpath=.status.selector
 // +kubebuilder:resource:shortName={pcsg}
+// +kubebuilder:deprecatedversion:warning="grove.io/v1alpha1 is deprecated and will be removed two releases after grove.io/v1beta1 becomes the storage version; use grove.io/v1beta1"
 // +kubebuilder:printcolumn:name="MinAvail",type=integer,JSONPath=`.spec.minAvailable`
 // +kubebuilder:printcolumn:name="Replicas",type=integer,JSONPath=`.spec.replicas`
 // +kubebuilder:printcolumn:name="Available",type=integer,JSONPath=`.status.availableReplicas`

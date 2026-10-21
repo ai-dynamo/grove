@@ -648,8 +648,8 @@ func Test_generateArgsForInitContainer_WaitsOnParentReplicaInOwnPodGang(t *testi
 			Template: grovecorev1beta1.PodCliqueSetTemplateSpec{
 				StartupType: ptr.To(grovecorev1beta1.CliqueStartupTypeExplicit),
 				Cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
-					{Name: "pf", Spec: grovecorev1beta1.PodCliqueSpec{MinAvailable: ptr.To(int32(1))}},
-					{Name: "dc", Spec: grovecorev1beta1.PodCliqueSpec{MinAvailable: ptr.To(int32(1)), StartsAfter: []string{"pf"}}},
+					{Name: "pf", Spec: grovecorev1beta1.PodCliqueSpec{Init: &grovecorev1beta1.InitSpec{MinReplicas: ptr.To(int32(1))}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To(int32(1))}}}}},
+					{Name: "dc", Spec: grovecorev1beta1.PodCliqueSpec{Init: &grovecorev1beta1.InitSpec{MinReplicas: ptr.To(int32(1))}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To(int32(1))}}}, StartsAfter: []grovecorev1beta1.StartupDependency{{Name: "pf"}}}},
 				},
 				PodCliqueScalingGroupConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 					{Name: "prefill", CliqueNames: []string{"pf"}},
@@ -715,8 +715,8 @@ func Test_generateArgsForInitContainer_IgnoresStalePreUpgradeStartsAfter(t *test
 			Template: grovecorev1beta1.PodCliqueSetTemplateSpec{
 				StartupType: ptr.To(grovecorev1beta1.CliqueStartupTypeExplicit),
 				Cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
-					{Name: "pf", Spec: grovecorev1beta1.PodCliqueSpec{MinAvailable: ptr.To(int32(1))}},
-					{Name: "dc", Spec: grovecorev1beta1.PodCliqueSpec{MinAvailable: ptr.To(int32(1)), StartsAfter: []string{"pf"}}},
+					{Name: "pf", Spec: grovecorev1beta1.PodCliqueSpec{Init: &grovecorev1beta1.InitSpec{MinReplicas: ptr.To(int32(1))}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To(int32(1))}}}}},
+					{Name: "dc", Spec: grovecorev1beta1.PodCliqueSpec{Init: &grovecorev1beta1.InitSpec{MinReplicas: ptr.To(int32(1))}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To(int32(1))}}}, StartsAfter: []grovecorev1beta1.StartupDependency{{Name: "pf"}}}},
 				},
 				PodCliqueScalingGroupConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 					{Name: "prefill", CliqueNames: []string{"pf"}},
@@ -751,7 +751,7 @@ func Test_generateArgsForInitContainer_IgnoresStalePreUpgradeStartsAfter(t *test
 				common.LabelPodCliqueScalingGroupReplicaIndex: "0",
 			},
 		},
-		Spec: grovecorev1beta1.PodCliqueSpec{StartsAfter: []string{fmt.Sprintf("%s-0-prefill-1-pf", pcsName)}},
+		Spec: grovecorev1beta1.PodCliqueSpec{StartsAfter: []grovecorev1beta1.StartupDependency{{Name: fmt.Sprintf("%s-0-prefill-1-pf", pcsName)}}},
 	}
 	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{common.LabelPodGang: anchorGangName}}}
 
@@ -803,6 +803,64 @@ func TestCliqueTemplateName(t *testing.T) {
 	}
 }
 
+// Test_generateArgsForInitContainer_AppendsConditionType verifies that a dependency on a condition other than
+// Ready carries the condition in its init-container arg, and that a Ready dependency keeps the earlier form.
+func Test_generateArgsForInitContainer_AppendsConditionType(t *testing.T) {
+	const (
+		pcsName     = "ml"
+		epoch       = "100"
+		modelLoaded = "example.com/model-loaded"
+	)
+	pcs := &grovecorev1beta1.PodCliqueSet{
+		ObjectMeta: metav1.ObjectMeta{Name: pcsName},
+		Spec: grovecorev1beta1.PodCliqueSetSpec{
+			Template: grovecorev1beta1.PodCliqueSetTemplateSpec{
+				StartupType: ptr.To(grovecorev1beta1.CliqueStartupTypeExplicit),
+				Cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
+					{Name: "frontend", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 1, Init: &grovecorev1beta1.InitSpec{MinReplicas: ptr.To(int32(1))}}},
+					{Name: "model", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 2, Init: &grovecorev1beta1.InitSpec{MinReplicas: ptr.To(int32(2))}}},
+					{Name: "worker", Spec: grovecorev1beta1.PodCliqueSpec{
+						Replicas: 1,
+						Init:     &grovecorev1beta1.InitSpec{MinReplicas: ptr.To(int32(1))},
+						StartsAfter: []grovecorev1beta1.StartupDependency{
+							{Name: "frontend", ConditionType: string(corev1.PodReady)},
+							{Name: "model", ConditionType: modelLoaded},
+						},
+					}},
+				},
+			},
+		},
+	}
+	rnr := common.ResourceNameReplica{Name: pcsName, Replica: 0}
+	anchorGangName := common.GenerateAnchorPodGangName(rnr, epoch)
+	pgm := &grovecorev1beta1.PodGangMap{
+		Spec: grovecorev1beta1.PodGangMapSpec{
+			Entries: []grovecorev1beta1.PodGangEntry{
+				{
+					Epoch:                      epoch,
+					PodCliqueSetGenerationHash: "hash",
+					Role:                       grovecorev1beta1.PodGangEntryRoleAnchor,
+					PodCliques:                 map[string]int32{"frontend": 1, "model": 2, "worker": 1},
+				},
+			},
+		},
+	}
+	pclq := &grovecorev1beta1.PodClique{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:   fmt.Sprintf("%s-0-worker", pcsName),
+			Labels: map[string]string{common.LabelPartOfKey: pcsName, common.LabelPodCliqueSetReplicaIndex: "0"},
+		},
+	}
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{common.LabelPodGang: anchorGangName}}}
+
+	args, err := generateArgsForInitContainer(pcs, pclq, pod, pgm)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{
+		fmt.Sprintf("--podcliques=%s-0-frontend:1", pcsName),
+		fmt.Sprintf("--podcliques=%s-0-model:2:%s", pcsName, modelLoaded),
+	}, args)
+}
+
 // Test_generateArgsForInitContainer_BoundsStandaloneWaitToGangCommittedCount is the scale-in reproducer: a
 // worker PCSG member starts after a standalone frontend with MinAvailable 2. A scale-in can leave the gang
 // holding only one frontend pod, so the worker's init container must wait on just that one pod, not the full
@@ -818,8 +876,8 @@ func Test_generateArgsForInitContainer_BoundsStandaloneWaitToGangCommittedCount(
 			Template: grovecorev1beta1.PodCliqueSetTemplateSpec{
 				StartupType: ptr.To(grovecorev1beta1.CliqueStartupTypeExplicit),
 				Cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
-					{Name: "frontend", Spec: grovecorev1beta1.PodCliqueSpec{MinAvailable: ptr.To(int32(2))}},
-					{Name: "worker", Spec: grovecorev1beta1.PodCliqueSpec{MinAvailable: ptr.To(int32(1)), StartsAfter: []string{"frontend"}}},
+					{Name: "frontend", Spec: grovecorev1beta1.PodCliqueSpec{Init: &grovecorev1beta1.InitSpec{MinReplicas: ptr.To(int32(2))}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To(int32(2))}}}}},
+					{Name: "worker", Spec: grovecorev1beta1.PodCliqueSpec{Init: &grovecorev1beta1.InitSpec{MinReplicas: ptr.To(int32(1))}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To(int32(1))}}}, StartsAfter: []grovecorev1beta1.StartupDependency{{Name: "frontend"}}}},
 				},
 				PodCliqueScalingGroupConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 					{Name: "decode", CliqueNames: []string{"worker"}},

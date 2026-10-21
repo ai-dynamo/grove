@@ -100,9 +100,7 @@ func TestSync(t *testing.T) {
 				},
 				Spec: grovecorev1beta1.PodCliqueSetSpec{
 					Replicas: 0,
-					Template: grovecorev1beta1.PodCliqueSetTemplateSpec{
-						TerminationDelay: &metav1.Duration{},
-					},
+					Template: grovecorev1beta1.PodCliqueSetTemplateSpec{},
 				},
 			},
 			existingObjs: []runtime.Object{},
@@ -118,9 +116,7 @@ func TestSync(t *testing.T) {
 				},
 				Spec: grovecorev1beta1.PodCliqueSetSpec{
 					Replicas: 2,
-					Template: grovecorev1beta1.PodCliqueSetTemplateSpec{
-						TerminationDelay: &metav1.Duration{},
-					},
+					Template: grovecorev1beta1.PodCliqueSetTemplateSpec{},
 				},
 			},
 			existingObjs: []runtime.Object{},

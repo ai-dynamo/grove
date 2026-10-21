@@ -56,6 +56,9 @@ spec:
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
+    deprecated: true
+    deprecationWarning: grove.io/v1alpha1 is deprecated and will be removed two releases
+      after grove.io/v1beta1 becomes the storage version; use grove.io/v1beta1
     name: v1alpha1
     schema:
       openAPIV3Schema:
@@ -9489,6 +9492,15 @@ spec:
                       - name
                       - spec
                       type: object
+                      x-kubernetes-validations:
+                      - fieldPath: .spec.minAvailable
+                        message: must be greater than 0
+                        rule: '!has(self.spec.minAvailable) || self.spec.minAvailable
+                          > 0'
+                      - fieldPath: .spec.minAvailable
+                        message: minAvailable must not be greater than replicas
+                        rule: '!has(self.spec.minAvailable) || self.spec.minAvailable
+                          <= self.spec.replicas'
                     type: array
                     x-kubernetes-list-map-keys:
                     - name
@@ -10221,6 +10233,14 @@ spec:
                       - cliqueNames
                       - name
                       type: object
+                      x-kubernetes-validations:
+                      - fieldPath: .minAvailable
+                        message: must be greater than 0
+                        rule: '!has(self.minAvailable) || self.minAvailable > 0'
+                      - fieldPath: .minAvailable
+                        message: minAvailable must not be greater than replicas
+                        rule: '!has(self.minAvailable) || !has(self.replicas) || self.minAvailable
+                          <= self.replicas'
                     type: array
                   priorityClassName:
                     description: |-
@@ -11518,20 +11538,39 @@ spec:
                             owning PodCliqueScalingGroup's RollingUpdate.
                           properties:
                             maxUnavailable:
+                              anyOf:
+                              - type: integer
+                              - type: string
                               description: |-
                                 MaxUnavailable is the maximum number of pods (for a standalone PodClique) or
                                 PodCliqueScalingGroup replicas (for a PCSG) that may be unavailable at any moment during an
-                                update of this component, measured against the component's desired count.
+                                update of this component. It is an absolute number or a percentage of the live component's
+                                spec.replicas (the PodClique or PodCliqueScalingGroup object, which can be scaled independently of the
+                                template); a percentage is rounded down, with a minimum of 1. It is resolved again on every reconcile.
 
                                 Defaulting:
+                                  - Coherent: defaults to MinReplicas.
                                   - RollingRecreate: defaults to 1.
                                   - OnDelete: not defaulted. Defaulting never clears a RollingUpdateConfiguration that is set. The validating
                                     webhook rejects it instead, so the consumer must remove it when switching to OnDelete.
 
                                 Validation:
-                                  - When set, must be greater than 0.
+                                  - When set, must be an integer of at least 1 or a percentage between 1% and 100%.
+                                  - Coherent: the resolved value must not be less than MinReplicas.
                                   - OnDelete: RollingUpdate must not be set. The PodCliqueSet validating webhook rejects a
                                     RollingUpdateConfiguration on any component when the strategy is OnDelete.
+                              x-kubernetes-int-or-string: true
+                            minReplicas:
+                              description: |-
+                                MinReplicas is the minimum number of pods (for a standalone PodClique) or PodCliqueScalingGroup
+                                replicas (for a PCSG) that must be rolled together, as one gang, to keep a functional unit on a
+                                single revision. It is the component's share of the Minimum Viable Unit, and it is distinct from
+                                MaxUnavailable. It is only allowed when updateStrategy.type is Coherent, and is rejected under
+                                RollingRecreate and OnDelete. Under Coherent it defaults to
+                                termination.resource.availability.minReplicas of the component when availability is set, otherwise to 1.
+                                It must be between 1 and the smaller of init.minReplicas and the template's replicas. Changing it rolls no
+                                pods: it applies from the next Coherent update, and it cannot be changed while a Coherent update is in
+                                progress.
                               format: int32
                               type: integer
                             progressDeadline:
@@ -12052,21 +12091,27 @@ spec:
                                   description: |-
                                     MinReplicas is the lower limit for the number of replicas for the target resource.
                                     It will be used by the horizontal pod autoscaler to determine the minimum number of replicas to scale-in to.
+                                    It must not be less than termination.resource.availability.minReplicas when availability is set, nor less
+                                    than 1 otherwise, and defaults to that floor.
                                   format: int32
                                   type: integer
                               required:
                               - maxReplicas
                               type: object
-                            minAvailable:
-                              default: 1
-                              description: |-
-                                MinAvailable serves two purposes:
-                                1. It defines the minimum number of pods that are guaranteed to be gang scheduled.
-                                2. It defines the minimum requirement of available pods in a PodClique. Violation of this threshold will result
-                                in termination of the PodGang that it belongs to.
-                                If MinAvailable is not set, then it defaults to 1.
-                              format: int32
-                              type: integer
+                            init:
+                              description: Init configures the gang scheduling of
+                                the PodClique's pods.
+                              properties:
+                                minReplicas:
+                                  description: |-
+                                    MinReplicas is the guaranteed minimum number of replicas gang-scheduled together when the
+                                    resource is first deployed and whenever it, or one of its replicas, is recreated.
+                                    Defaults to termination.resource.availability.minReplicas when availability is set, and to 1 otherwise.
+                                    It must not be greater than the template's replicas, nor less than availability.minReplicas.
+                                    Changing it changes the gang shape: every PodCliqueSet replica is recreated, one at a time.
+                                  format: int32
+                                  type: integer
+                              type: object
                             podSpec:
                               description: Spec is the spec of the pods in the clique.
                               properties:
@@ -20746,8 +20791,59 @@ spec:
                                 1. If a StartsAfter has been defined and one or more cycles are detected in DAG's then it will be flagged as validation error.
                                 2. If StartsAfter is defined and does not identify any PodClique then it will be flagged as a validation error.
                               items:
-                                type: string
+                                description: StartupDependency is one startup dependency
+                                  of a PodClique on a parent PodClique.
+                                properties:
+                                  conditionType:
+                                    default: Ready
+                                    description: |-
+                                      ConditionType is the Pod condition that must be True on the target pods of the parent
+                                      before the dependency is released. The target pods are init.minReplicas pods of the parent
+                                      within the dependent pod's own PodGang. A condition other than the built-in Pod conditions must be
+                                      declared in the parent's podSpec.readinessGates. Defaults to "Ready".
+                                    type: string
+                                  name:
+                                    description: Name is the name of the PodClique
+                                      this clique depends on.
+                                    minLength: 1
+                                    type: string
+                                required:
+                                - name
+                                type: object
                               type: array
+                              x-kubernetes-list-map-keys:
+                              - name
+                              x-kubernetes-list-type: map
+                            termination:
+                              description: Termination defines the terminal conditions
+                                of the PodClique.
+                              properties:
+                                resource:
+                                  description: Resource defines resource-scope terminal
+                                    conditions.
+                                  properties:
+                                    availability:
+                                      description: |-
+                                        Availability defines the minimum requirement for a long-running resource to be available.
+                                        Nil means MinAvailableBreached is permanently False, so the resource never triggers gang termination.
+                                        It cannot be added or removed after creation.
+                                      properties:
+                                        breachTolerance:
+                                          description: |-
+                                            BreachTolerance is how long MinAvailableBreached may stay True before the PodCliqueSet replica that the
+                                            resource belongs to (or, for a PodCliqueScalingGroup member PodClique, its PodCliqueScalingGroup replica)
+                                            is gang-terminated. Defaults to 4h.
+                                          type: string
+                                        minReplicas:
+                                          description: |-
+                                            MinReplicas is the minimum number of available replicas. Defaults to 1.
+                                            It must not be greater than init.minReplicas. It can be changed, and the new floor applies to every
+                                            replica in place: raising it above the available replicas makes MinAvailableBreached True at once.
+                                          format: int32
+                                          type: integer
+                                      type: object
+                                  type: object
+                              type: object
                           required:
                           - podSpec
                           - replicas
@@ -20785,19 +20881,6 @@ spec:
                                   or preferred
                                 reason: FieldValueRequired
                                 rule: has(self.required) || has(self.preferred)
-                            packDomain:
-                              description: |-
-                                PackDomain specifies the required topology domain using the legacy field name.
-                                Controls placement constraint for EACH individual replica instance.
-                                Must reference a domain in the topology levels defined in the ClusterTopologyBinding named by TopologyName.
-                                Example: "rack" means each replica independently placed within one rack.
-                                Note: Does NOT constrain all replicas to the same rack together.
-                                Different replicas can be in different topology domains.
-                                Deprecated: use Pack.RequiredDomain.
-                              maxLength: 63
-                              minLength: 1
-                              pattern: ^[a-z][a-z0-9-]*$
-                              type: string
                             topologyName:
                               description: |-
                                 TopologyName is the name of the ClusterTopologyBinding resource to use for topology-aware scheduling.
@@ -20812,14 +20895,9 @@ spec:
                           type: object
                           x-kubernetes-validations:
                           - fieldPath: .pack
-                            message: topologyConstraint must specify pack or deprecated
-                              packDomain
+                            message: topologyConstraint must specify pack
                             reason: FieldValueRequired
-                            rule: has(self.pack) || has(self.packDomain)
-                          - fieldPath: .pack.required
-                            message: must not set both pack.required and deprecated
-                              packDomain
-                            rule: '!(has(self.packDomain) && has(self.pack) && has(self.pack.required))'
+                            rule: has(self.pack)
                       required:
                       - name
                       - spec
@@ -20868,21 +20946,21 @@ spec:
                           items:
                             type: string
                           type: array
-                        minAvailable:
-                          default: 1
+                        init:
                           description: |-
-                            MinAvailable serves two purposes:
-                            Gang Scheduling:
-                            It defines the minimum number of replicas that are guaranteed to be gang scheduled.
-                            Gang Termination:
-                            It defines the minimum requirement of available replicas for a PodCliqueScalingGroup.
-                            Violation of this threshold for a duration beyond TerminationDelay will result in termination of the PodCliqueSet replica that it belongs to.
-                            Default: If not specified, it defaults to 1.
-                            Constraints:
-                            MinAvailable cannot be greater than Replicas.
-                            If ScaleConfig is defined then its MinAvailable should not be less than ScaleConfig.MinReplicas.
-                          format: int32
-                          type: integer
+                            Init configures the gang scheduling of the scaling group's replicas. It is copied into the
+                            PodCliqueScalingGroup.
+                          properties:
+                            minReplicas:
+                              description: |-
+                                MinReplicas is the guaranteed minimum number of replicas gang-scheduled together when the
+                                resource is first deployed and whenever it, or one of its replicas, is recreated.
+                                Defaults to termination.resource.availability.minReplicas when availability is set, and to 1 otherwise.
+                                It must not be greater than the template's replicas, nor less than availability.minReplicas.
+                                Changing it changes the gang shape: every PodCliqueSet replica is recreated, one at a time.
+                              format: int32
+                              type: integer
+                          type: object
                         name:
                           description: |-
                             Name is the name of the PodCliqueScalingGroupConfig. This should be unique within the PodCliqueSet.
@@ -20955,20 +21033,39 @@ spec:
                             PodCliqueTemplateSpecs must not carry their own RollingUpdate.
                           properties:
                             maxUnavailable:
+                              anyOf:
+                              - type: integer
+                              - type: string
                               description: |-
                                 MaxUnavailable is the maximum number of pods (for a standalone PodClique) or
                                 PodCliqueScalingGroup replicas (for a PCSG) that may be unavailable at any moment during an
-                                update of this component, measured against the component's desired count.
+                                update of this component. It is an absolute number or a percentage of the live component's
+                                spec.replicas (the PodClique or PodCliqueScalingGroup object, which can be scaled independently of the
+                                template); a percentage is rounded down, with a minimum of 1. It is resolved again on every reconcile.
 
                                 Defaulting:
+                                  - Coherent: defaults to MinReplicas.
                                   - RollingRecreate: defaults to 1.
                                   - OnDelete: not defaulted. Defaulting never clears a RollingUpdateConfiguration that is set. The validating
                                     webhook rejects it instead, so the consumer must remove it when switching to OnDelete.
 
                                 Validation:
-                                  - When set, must be greater than 0.
+                                  - When set, must be an integer of at least 1 or a percentage between 1% and 100%.
+                                  - Coherent: the resolved value must not be less than MinReplicas.
                                   - OnDelete: RollingUpdate must not be set. The PodCliqueSet validating webhook rejects a
                                     RollingUpdateConfiguration on any component when the strategy is OnDelete.
+                              x-kubernetes-int-or-string: true
+                            minReplicas:
+                              description: |-
+                                MinReplicas is the minimum number of pods (for a standalone PodClique) or PodCliqueScalingGroup
+                                replicas (for a PCSG) that must be rolled together, as one gang, to keep a functional unit on a
+                                single revision. It is the component's share of the Minimum Viable Unit, and it is distinct from
+                                MaxUnavailable. It is only allowed when updateStrategy.type is Coherent, and is rejected under
+                                RollingRecreate and OnDelete. Under Coherent it defaults to
+                                termination.resource.availability.minReplicas of the component when availability is set, otherwise to 1.
+                                It must be between 1 and the smaller of init.minReplicas and the template's replicas. Changing it rolls no
+                                pods: it applies from the next Coherent update, and it cannot be changed while a Coherent update is in
+                                progress.
                               format: int32
                               type: integer
                             progressDeadline:
@@ -21480,10 +21577,43 @@ spec:
                               description: |-
                                 MinReplicas is the lower limit for the number of replicas for the target resource.
                                 It will be used by the horizontal pod autoscaler to determine the minimum number of replicas to scale-in to.
+                                It must not be less than termination.resource.availability.minReplicas when availability is set, nor less
+                                than 1 otherwise, and defaults to that floor.
                               format: int32
                               type: integer
                           required:
                           - maxReplicas
+                          type: object
+                        termination:
+                          description: |-
+                            Termination defines the terminal conditions of the scaling group. It is copied into the
+                            PodCliqueScalingGroup.
+                          properties:
+                            resource:
+                              description: Resource defines resource-scope terminal
+                                conditions.
+                              properties:
+                                availability:
+                                  description: |-
+                                    Availability defines the minimum requirement for a long-running resource to be available.
+                                    Nil means MinAvailableBreached is permanently False, so the resource never triggers gang termination.
+                                    It cannot be added or removed after creation.
+                                  properties:
+                                    breachTolerance:
+                                      description: |-
+                                        BreachTolerance is how long MinAvailableBreached may stay True before the PodCliqueSet replica that the
+                                        resource belongs to (or, for a PodCliqueScalingGroup member PodClique, its PodCliqueScalingGroup replica)
+                                        is gang-terminated. Defaults to 4h.
+                                      type: string
+                                    minReplicas:
+                                      description: |-
+                                        MinReplicas is the minimum number of available replicas. Defaults to 1.
+                                        It must not be greater than init.minReplicas. It can be changed, and the new floor applies to every
+                                        replica in place: raising it above the available replicas makes MinAvailableBreached True at once.
+                                      format: int32
+                                      type: integer
+                                  type: object
+                              type: object
                           type: object
                         topologyConstraint:
                           description: |-
@@ -21517,19 +21647,6 @@ spec:
                                   or preferred
                                 reason: FieldValueRequired
                                 rule: has(self.required) || has(self.preferred)
-                            packDomain:
-                              description: |-
-                                PackDomain specifies the required topology domain using the legacy field name.
-                                Controls placement constraint for EACH individual replica instance.
-                                Must reference a domain in the topology levels defined in the ClusterTopologyBinding named by TopologyName.
-                                Example: "rack" means each replica independently placed within one rack.
-                                Note: Does NOT constrain all replicas to the same rack together.
-                                Different replicas can be in different topology domains.
-                                Deprecated: use Pack.RequiredDomain.
-                              maxLength: 63
-                              minLength: 1
-                              pattern: ^[a-z][a-z0-9-]*$
-                              type: string
                             topologyName:
                               description: |-
                                 TopologyName is the name of the ClusterTopologyBinding resource to use for topology-aware scheduling.
@@ -21544,14 +21661,9 @@ spec:
                           type: object
                           x-kubernetes-validations:
                           - fieldPath: .pack
-                            message: topologyConstraint must specify pack or deprecated
-                              packDomain
+                            message: topologyConstraint must specify pack
                             reason: FieldValueRequired
-                            rule: has(self.pack) || has(self.packDomain)
-                          - fieldPath: .pack.required
-                            message: must not set both pack.required and deprecated
-                              packDomain
-                            rule: '!(has(self.packDomain) && has(self.pack) && has(self.pack.required))'
+                            rule: has(self.pack)
                       required:
                       - cliqueNames
                       - name
@@ -22313,15 +22425,6 @@ spec:
                       - scope
                       type: object
                     type: array
-                  terminationDelay:
-                    description: |-
-                      TerminationDelay is the delay after which the gang termination will be triggered.
-                      A gang is a candidate for termination if number of running pods fall below a threshold for any PodClique.
-                      If a PodGang remains a candidate past TerminationDelay then it will be terminated. This allows additional time
-                      to the backend scheduler to re-schedule sufficient pods in the PodGang that will result in having the total number of
-                      running pods go above the threshold.
-                      Defaults to 4 hours.
-                    type: string
                   topologyConstraint:
                     description: TopologyConstraint defines topology placement requirements
                       for PodCliqueSet.
@@ -22352,19 +22455,6 @@ spec:
                         - message: pack must specify at least one of required or preferred
                           reason: FieldValueRequired
                           rule: has(self.required) || has(self.preferred)
-                      packDomain:
-                        description: |-
-                          PackDomain specifies the required topology domain using the legacy field name.
-                          Controls placement constraint for EACH individual replica instance.
-                          Must reference a domain in the topology levels defined in the ClusterTopologyBinding named by TopologyName.
-                          Example: "rack" means each replica independently placed within one rack.
-                          Note: Does NOT constrain all replicas to the same rack together.
-                          Different replicas can be in different topology domains.
-                          Deprecated: use Pack.RequiredDomain.
-                        maxLength: 63
-                        minLength: 1
-                        pattern: ^[a-z][a-z0-9-]*$
-                        type: string
                       topologyName:
                         description: |-
                           TopologyName is the name of the ClusterTopologyBinding resource to use for topology-aware scheduling.
@@ -22379,13 +22469,9 @@ spec:
                     type: object
                     x-kubernetes-validations:
                     - fieldPath: .pack
-                      message: topologyConstraint must specify pack or deprecated
-                        packDomain
+                      message: topologyConstraint must specify pack
                       reason: FieldValueRequired
-                      rule: has(self.pack) || has(self.packDomain)
-                    - fieldPath: .pack.required
-                      message: must not set both pack.required and deprecated packDomain
-                      rule: '!(has(self.packDomain) && has(self.pack) && has(self.pack.required))'
+                      rule: has(self.pack)
                 required:
                 - cliques
                 type: object
@@ -22418,9 +22504,10 @@ spec:
                 default: 0
                 description: |-
                   AvailableReplicas is the number of PodCliqueSet replicas that are available.
-                  A PodCliqueSet replica is considered available when all standalone PodCliques within that replica
-                  have MinAvailableBreached condition = False AND all PodCliqueScalingGroups (PCSG) within that replica
-                  have MinAvailableBreached condition = False.
+                  A PodCliqueSet replica is considered available when every standalone PodClique within that replica has at
+                  least its ready threshold of ready pods, and every PodCliqueScalingGroup within that replica has at least its
+                  ready threshold of available replicas. The ready threshold is termination.resource.availability.minReplicas when
+                  availability is set, and init.minReplicas otherwise.
                 format: int32
                 type: integer
               conditions:
@@ -22666,29 +22753,6 @@ spec:
         required:
         - spec
         type: object
-        x-kubernetes-validations:
-        - fieldPath: .spec.template.topologyConstraint.packDomain
-          message: packDomain is deprecated and cannot be used on new workloads; use
-            pack.required
-          optionalOldSelf: true
-          reason: FieldValueForbidden
-          rule: oldSelf.hasValue() || !has(self.spec.template.topologyConstraint)
-            || !has(self.spec.template.topologyConstraint.packDomain)
-        - fieldPath: .spec.template.cliques
-          message: packDomain is deprecated and cannot be used on new workloads; use
-            pack.required
-          optionalOldSelf: true
-          reason: FieldValueForbidden
-          rule: oldSelf.hasValue() || !has(self.spec.template.cliques) || self.spec.template.cliques.all(c,
-            !has(c.topologyConstraint) || !has(c.topologyConstraint.packDomain))
-        - fieldPath: .spec.template.podCliqueScalingGroups
-          message: packDomain is deprecated and cannot be used on new workloads; use
-            pack.required
-          optionalOldSelf: true
-          reason: FieldValueForbidden
-          rule: oldSelf.hasValue() || !has(self.spec.template.podCliqueScalingGroups)
-            || self.spec.template.podCliqueScalingGroups.all(g, !has(g.topologyConstraint)
-            || !has(g.topologyConstraint.packDomain))
     served: true
     storage: false
     subresources:

@@ -336,8 +336,8 @@ func TestReconcileStatusConvergesWhenReadyPodMatchesDesiredHash(t *testing.T) {
 	pclq.UID = types.UID("pclq-uid")
 	pclq.Generation = 2
 	pclq.Spec = grovecorev1beta1.PodCliqueSpec{
-		Replicas:     1,
-		MinAvailable: ptr.To[int32](1),
+		Replicas: 1,
+		Init:     &grovecorev1beta1.InitSpec{MinReplicas: ptr.To[int32](1)}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To[int32](1)}}},
 	}
 	pclq.Status = grovecorev1beta1.PodCliqueStatus{
 		Replicas:                          1,
@@ -374,7 +374,7 @@ func TestReconcileStatusConvergesWhenReadyPodMatchesDesiredHash(t *testing.T) {
 func TestReconcileStatusRequeuesWithoutPatchWhenStatusUnchanged(t *testing.T) {
 	pcs, pclq, templateHash := newPodCliqueHashConvergenceFixture(t)
 	pclq.Generation = 1
-	pclq.Spec = grovecorev1beta1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To[int32](1)}
+	pclq.Spec = grovecorev1beta1.PodCliqueSpec{Replicas: 1, Init: &grovecorev1beta1.InitSpec{MinReplicas: ptr.To[int32](1)}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To[int32](1)}}}}
 	pclq.Status = grovecorev1beta1.PodCliqueStatus{ObservedGeneration: ptr.To[int64](1)}
 	pod := createReadyOwnedPodWithHash("ready-pod", pclq, templateHash)
 
@@ -498,14 +498,15 @@ func TestComputeMinAvailableBreachedConditionPartialScheduleRegression(t *testin
 			name: "0 < scheduled < MinAvailable breaches",
 			pclq: &grovecorev1beta1.PodClique{
 				Spec: grovecorev1beta1.PodCliqueSpec{
-					Replicas:     3,
-					MinAvailable: ptr.To(int32(3)),
+					Replicas: 3,
+					Init:     &grovecorev1beta1.InitSpec{MinReplicas: ptr.To(int32(3))}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To(int32(3))}}},
 				},
 				Status: grovecorev1beta1.PodCliqueStatus{
 					ObservedGeneration: ptr.To(int64(1)),
 					Replicas:           3,
 					ScheduledReplicas:  1,
 					ReadyReplicas:      1,
+					LastScheduled:      &pastTransition,
 					Conditions: []metav1.Condition{
 						{
 							Type:               constants.ConditionTypePodCliqueScheduled,
@@ -526,20 +527,21 @@ func TestComputeMinAvailableBreachedConditionPartialScheduleRegression(t *testin
 			wantReason: constants.ConditionReasonScheduledReplicasBelowMinAvailable,
 		},
 		{
-			// scheduled == 0 also breaches now. Gang termination is armed; the
-			// downstream TerminationDelay (default 4h) gives the cluster a
+			// scheduled == 0 also breaches. Gang termination is armed; the
+			// downstream breachTolerance (default 4h) gives the cluster a
 			// window to schedule before the workload is recycled.
 			name: "previously-healthy PCLQ loses all scheduled pods — breaches",
 			pclq: &grovecorev1beta1.PodClique{
 				Spec: grovecorev1beta1.PodCliqueSpec{
-					Replicas:     2,
-					MinAvailable: ptr.To(int32(2)),
+					Replicas: 2,
+					Init:     &grovecorev1beta1.InitSpec{MinReplicas: ptr.To(int32(2))}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To(int32(2))}}},
 				},
 				Status: grovecorev1beta1.PodCliqueStatus{
 					ObservedGeneration: ptr.To(int64(1)),
 					Replicas:           2,
 					ScheduledReplicas:  0,
 					ReadyReplicas:      0,
+					LastScheduled:      &pastTransition,
 					Conditions: []metav1.Condition{
 						{
 							Type:               constants.ConditionTypePodCliqueScheduled,
@@ -554,15 +556,13 @@ func TestComputeMinAvailableBreachedConditionPartialScheduleRegression(t *testin
 			wantReason: constants.ConditionReasonScheduledReplicasBelowMinAvailable,
 		},
 		{
-			// A fresh PCLQ that has not yet scheduled any pods still breaches
-			// under the always-breach rule. TerminationDelay (4h) is the grace
-			// window: if pods schedule in time the breach resolves before any
-			// termination action.
-			name: "fresh PCLQ never scheduled — also breaches (TerminationDelay is the grace)",
+			// A fresh PCLQ that has never been scheduled is awaiting its initial schedule, so it is not
+			// in breach and gang termination does not start its breach tolerance.
+			name: "fresh PCLQ never scheduled — awaiting initial schedule",
 			pclq: &grovecorev1beta1.PodClique{
 				Spec: grovecorev1beta1.PodCliqueSpec{
-					Replicas:     3,
-					MinAvailable: ptr.To(int32(3)),
+					Replicas: 3,
+					Init:     &grovecorev1beta1.InitSpec{MinReplicas: ptr.To(int32(3))}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To(int32(3))}}},
 				},
 				Status: grovecorev1beta1.PodCliqueStatus{
 					ObservedGeneration: ptr.To(int64(1)),
@@ -571,8 +571,8 @@ func TestComputeMinAvailableBreachedConditionPartialScheduleRegression(t *testin
 					ReadyReplicas:      0,
 				},
 			},
-			wantStatus: metav1.ConditionTrue,
-			wantReason: constants.ConditionReasonScheduledReplicasBelowMinAvailable,
+			wantStatus: metav1.ConditionUnknown,
+			wantReason: constants.ConditionReasonAwaitingInitialSchedule,
 		},
 	}
 
@@ -597,8 +597,8 @@ func TestReconcileStatusRequeuesOnConflict(t *testing.T) {
 	pcs, pclq, templateHash := newPodCliqueHashConvergenceFixture(t)
 	pclq.Generation = 1
 	pclq.Spec = grovecorev1beta1.PodCliqueSpec{
-		Replicas:     1,
-		MinAvailable: ptr.To[int32](1),
+		Replicas: 1,
+		Init:     &grovecorev1beta1.InitSpec{MinReplicas: ptr.To[int32](1)}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To[int32](1)}}},
 	}
 	pclq.Status = grovecorev1beta1.PodCliqueStatus{ObservedGeneration: ptr.To[int64](1)}
 	pod := createReadyOwnedPodWithHash("ready-pod", pclq, templateHash)

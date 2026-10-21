@@ -43,8 +43,9 @@ func NewPodCliqueScalingGroupBuilder(name, namespace, pcsName string, pcsReplica
 				},
 			},
 			Spec: grovecorev1beta1.PodCliqueScalingGroupSpec{
-				Replicas:     1,
-				MinAvailable: ptr.To(int32(1)),
+				Replicas:    1,
+				Init:        NewInitSpec(1),
+				Termination: NewAvailabilityTermination(1),
 			},
 			Status: grovecorev1beta1.PodCliqueScalingGroupStatus{},
 		},
@@ -57,9 +58,29 @@ func (b *PodCliqueScalingGroupBuilder) WithReplicas(replicas int32) *PodCliqueSc
 	return b
 }
 
-// WithMinAvailable sets the MinAvailable field for the PodCliqueScalingGroup.
+// WithMinAvailable sets init.minReplicas and availability.minReplicas to minAvailable, the v1beta1 form of a
+// v1alpha1 minAvailable.
 func (b *PodCliqueScalingGroupBuilder) WithMinAvailable(minAvailable int32) *PodCliqueScalingGroupBuilder {
-	b.pcsg.Spec.MinAvailable = ptr.To(minAvailable)
+	b.pcsg.Spec.Init = NewInitSpec(minAvailable)
+	b.pcsg.Spec.Termination = NewAvailabilityTermination(minAvailable)
+	return b
+}
+
+// WithInitMinReplicas sets init.minReplicas for the PodCliqueScalingGroup.
+func (b *PodCliqueScalingGroupBuilder) WithInitMinReplicas(minReplicas int32) *PodCliqueScalingGroupBuilder {
+	b.pcsg.Spec.Init = NewInitSpec(minReplicas)
+	return b
+}
+
+// WithAvailabilityMinReplicas sets availability.minReplicas for the PodCliqueScalingGroup.
+func (b *PodCliqueScalingGroupBuilder) WithAvailabilityMinReplicas(minReplicas int32) *PodCliqueScalingGroupBuilder {
+	b.pcsg.Spec.Termination = NewAvailabilityTermination(minReplicas)
+	return b
+}
+
+// WithoutAvailability removes the availability requirement from the PodCliqueScalingGroup.
+func (b *PodCliqueScalingGroupBuilder) WithoutAvailability() *PodCliqueScalingGroupBuilder {
+	b.pcsg.Spec.Termination = nil
 	return b
 }
 

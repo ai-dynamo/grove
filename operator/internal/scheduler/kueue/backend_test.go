@@ -723,7 +723,7 @@ func TestBackend_TailWorkloadWaitsForAnchor(t *testing.T) {
 			Template: grovecorev1beta1.PodCliqueSetTemplateSpec{
 				Cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{{Name: "worker", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 1}}},
 				PodCliqueScalingGroupConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
-					{Name: "decode", CliqueNames: []string{"worker"}, Replicas: ptr.To[int32](2), MinAvailable: ptr.To[int32](1)},
+					{Name: "decode", CliqueNames: []string{"worker"}, Replicas: ptr.To[int32](2), Init: &grovecorev1beta1.InitSpec{MinReplicas: ptr.To[int32](1)}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To[int32](1)}}}},
 				},
 			},
 		},
@@ -1080,21 +1080,21 @@ func TestBackend_ValidatePodCliqueSet_MinCount(t *testing.T) {
 		{
 			description: "no partial-gang standalone clique is valid",
 			cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
-				{Name: "worker", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 4, MinAvailable: ptr.To[int32](4)}},
+				{Name: "worker", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 4, Init: &grovecorev1beta1.InitSpec{MinReplicas: ptr.To[int32](4)}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To[int32](4)}}}}},
 			},
 		},
 		{
 			description: "single partial-gang standalone clique is valid",
 			cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
-				{Name: "worker", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 4, MinAvailable: ptr.To[int32](2)}},
-				{Name: "frontend", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 2, MinAvailable: ptr.To[int32](2)}},
+				{Name: "worker", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 4, Init: &grovecorev1beta1.InitSpec{MinReplicas: ptr.To[int32](2)}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To[int32](2)}}}}},
+				{Name: "frontend", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 2, Init: &grovecorev1beta1.InitSpec{MinReplicas: ptr.To[int32](2)}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To[int32](2)}}}}},
 			},
 		},
 		{
 			description: "two partial-gang standalone cliques are rejected",
 			cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
-				{Name: "worker", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 4, MinAvailable: ptr.To[int32](2)}},
-				{Name: "frontend", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 3, MinAvailable: ptr.To[int32](1)}},
+				{Name: "worker", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 4, Init: &grovecorev1beta1.InitSpec{MinReplicas: ptr.To[int32](2)}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To[int32](2)}}}}},
+				{Name: "frontend", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 3, Init: &grovecorev1beta1.InitSpec{MinReplicas: ptr.To[int32](1)}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To[int32](1)}}}}},
 			},
 			wantErr:    true,
 			wantErrMsg: "at most one standalone PodClique with minAvailable < replicas",
@@ -1102,8 +1102,8 @@ func TestBackend_ValidatePodCliqueSet_MinCount(t *testing.T) {
 		{
 			description: "scaling-group cliques with minAvailable == replicas are valid",
 			cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
-				{Name: "leader", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To[int32](1)}},
-				{Name: "worker", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 4, MinAvailable: ptr.To[int32](4)}},
+				{Name: "leader", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 1, Init: &grovecorev1beta1.InitSpec{MinReplicas: ptr.To[int32](1)}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To[int32](1)}}}}},
+				{Name: "worker", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 4, Init: &grovecorev1beta1.InitSpec{MinReplicas: ptr.To[int32](4)}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To[int32](4)}}}}},
 			},
 			pcsgConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{Name: "decode", CliqueNames: []string{"leader", "worker"}},
@@ -1112,8 +1112,8 @@ func TestBackend_ValidatePodCliqueSet_MinCount(t *testing.T) {
 		{
 			description: "scaling-group clique with minAvailable < replicas is rejected",
 			cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
-				{Name: "leader", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To[int32](1)}},
-				{Name: "worker", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 4, MinAvailable: ptr.To[int32](3)}},
+				{Name: "leader", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 1, Init: &grovecorev1beta1.InitSpec{MinReplicas: ptr.To[int32](1)}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To[int32](1)}}}}},
+				{Name: "worker", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 4, Init: &grovecorev1beta1.InitSpec{MinReplicas: ptr.To[int32](3)}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To[int32](3)}}}}},
 			},
 			pcsgConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{Name: "decode", CliqueNames: []string{"leader", "worker"}},
@@ -1122,35 +1122,35 @@ func TestBackend_ValidatePodCliqueSet_MinCount(t *testing.T) {
 			wantErrMsg: "members of a PodCliqueScalingGroup to set minAvailable == replicas",
 		},
 		{
-			description: "nil minAvailable is treated as full gang",
+			description: "init.minReplicas equal to replicas is a full gang",
 			cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
-				{Name: "worker", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 4}},
-				{Name: "frontend", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 3, MinAvailable: ptr.To[int32](1)}},
+				{Name: "worker", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 4, Init: &grovecorev1beta1.InitSpec{MinReplicas: ptr.To[int32](4)}}},
+				{Name: "frontend", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 3, Init: &grovecorev1beta1.InitSpec{MinReplicas: ptr.To[int32](1)}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To[int32](1)}}}}},
 			},
 		},
 		{
 			description: "PCSG with minAvailable == replicas is valid",
 			cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
-				{Name: "leader", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 4, MinAvailable: ptr.To[int32](4)}},
+				{Name: "leader", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 4, Init: &grovecorev1beta1.InitSpec{MinReplicas: ptr.To[int32](4)}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To[int32](4)}}}}},
 			},
 			pcsgConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
-				{Name: "decode", CliqueNames: []string{"leader"}, Replicas: ptr.To[int32](4), MinAvailable: ptr.To[int32](4)},
+				{Name: "decode", CliqueNames: []string{"leader"}, Replicas: ptr.To[int32](4), Init: &grovecorev1beta1.InitSpec{MinReplicas: ptr.To[int32](4)}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To[int32](4)}}}},
 			},
 		},
 		{
 			description: "PCSG with minAvailable < replicas is valid because each extra replica gets its own PodGang",
 			cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
-				{Name: "leader", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To[int32](1)}},
-				{Name: "worker", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 4, MinAvailable: ptr.To[int32](4)}},
+				{Name: "leader", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 1, Init: &grovecorev1beta1.InitSpec{MinReplicas: ptr.To[int32](1)}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To[int32](1)}}}}},
+				{Name: "worker", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 4, Init: &grovecorev1beta1.InitSpec{MinReplicas: ptr.To[int32](4)}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To[int32](4)}}}}},
 			},
 			pcsgConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
-				{Name: "decode", CliqueNames: []string{"leader", "worker"}, Replicas: ptr.To[int32](5), MinAvailable: ptr.To[int32](1)},
+				{Name: "decode", CliqueNames: []string{"leader", "worker"}, Replicas: ptr.To[int32](5), Init: &grovecorev1beta1.InitSpec{MinReplicas: ptr.To[int32](1)}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To[int32](1)}}}},
 			},
 		},
 		{
 			description: "PCSG with nil replicas or minAvailable defers to CRD defaulting",
 			cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
-				{Name: "leader", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To[int32](1)}},
+				{Name: "leader", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 1, Init: &grovecorev1beta1.InitSpec{MinReplicas: ptr.To[int32](1)}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To[int32](1)}}}}},
 			},
 			pcsgConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{Name: "decode", CliqueNames: []string{"leader"}},
@@ -1310,16 +1310,16 @@ func TestBackend_ValidatePodCliqueSet_AutoScalingConfig(t *testing.T) {
 		{
 			description: "cliques without autoScalingConfig are valid",
 			cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
-				{Name: "worker", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 4, MinAvailable: ptr.To[int32](4)}},
+				{Name: "worker", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 4, Init: &grovecorev1beta1.InitSpec{MinReplicas: ptr.To[int32](4)}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To[int32](4)}}}}},
 			},
 		},
 		{
 			description: "clique declaring autoScalingConfig is rejected",
 			cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
 				{Name: "worker", Spec: grovecorev1beta1.PodCliqueSpec{
-					Replicas:     4,
-					MinAvailable: ptr.To[int32](4),
-					ScaleConfig:  &grovecorev1beta1.AutoScalingConfig{MaxReplicas: 10},
+					Replicas: 4,
+					Init:     &grovecorev1beta1.InitSpec{MinReplicas: ptr.To[int32](4)}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To[int32](4)}}},
+					ScaleConfig: &grovecorev1beta1.AutoScalingConfig{MaxReplicas: 10},
 				}},
 			},
 			wantErr: true,
@@ -1327,8 +1327,8 @@ func TestBackend_ValidatePodCliqueSet_AutoScalingConfig(t *testing.T) {
 		{
 			description: "autoScalingConfig on a PodCliqueScalingGroup is allowed",
 			cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
-				{Name: "leader", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To[int32](1)}},
-				{Name: "worker", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 4, MinAvailable: ptr.To[int32](4)}},
+				{Name: "leader", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 1, Init: &grovecorev1beta1.InitSpec{MinReplicas: ptr.To[int32](1)}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To[int32](1)}}}}},
+				{Name: "worker", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 4, Init: &grovecorev1beta1.InitSpec{MinReplicas: ptr.To[int32](4)}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To[int32](4)}}}}},
 			},
 			pcsgConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{
@@ -1447,12 +1447,12 @@ func TestBackend_ValidatePodCliqueSet_TopologyRequiredAndPreferred(t *testing.T)
 						Cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
 							{
 								Name:               "worker",
-								Spec:               grovecorev1beta1.PodCliqueSpec{Replicas: 4, MinAvailable: ptr.To[int32](4)},
+								Spec:               grovecorev1beta1.PodCliqueSpec{Replicas: 4, Init: &grovecorev1beta1.InitSpec{MinReplicas: ptr.To[int32](4)}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To[int32](4)}}}},
 								TopologyConstraint: tc.cliqueConstraint,
 							},
 							{
 								Name: "leader",
-								Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To[int32](1)},
+								Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 1, Init: &grovecorev1beta1.InitSpec{MinReplicas: ptr.To[int32](1)}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To[int32](1)}}}},
 							},
 						},
 					},
@@ -1461,10 +1461,10 @@ func TestBackend_ValidatePodCliqueSet_TopologyRequiredAndPreferred(t *testing.T)
 			// "worker" joins a scaling group when the case sets one; "leader" always stays standalone.
 			if tc.pcsgConstraint != nil {
 				pcs.Spec.Template.PodCliqueScalingGroupConfigs = []grovecorev1beta1.PodCliqueScalingGroupConfig{{
-					Name:               "sg",
-					CliqueNames:        []string{"worker"},
-					Replicas:           ptr.To[int32](1),
-					MinAvailable:       ptr.To[int32](1),
+					Name:        "sg",
+					CliqueNames: []string{"worker"},
+					Replicas:    ptr.To[int32](1),
+					Init:        &grovecorev1beta1.InitSpec{MinReplicas: ptr.To[int32](1)}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To[int32](1)}}},
 					TopologyConstraint: tc.pcsgConstraint,
 				}}
 			}
@@ -1484,7 +1484,7 @@ func TestBackend_ValidatePodCliqueSet_PodSetLimit(t *testing.T) {
 	cliques := func(names ...string) []*grovecorev1beta1.PodCliqueTemplateSpec {
 		result := make([]*grovecorev1beta1.PodCliqueTemplateSpec, 0, len(names))
 		for _, name := range names {
-			result = append(result, &grovecorev1beta1.PodCliqueTemplateSpec{Name: name, Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To[int32](1)}})
+			result = append(result, &grovecorev1beta1.PodCliqueTemplateSpec{Name: name, Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 1, Init: &grovecorev1beta1.InitSpec{MinReplicas: ptr.To[int32](1)}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To[int32](1)}}}}})
 		}
 		return result
 	}
@@ -1496,7 +1496,7 @@ func TestBackend_ValidatePodCliqueSet_PodSetLimit(t *testing.T) {
 		return names
 	}
 	scalingGroup := func(name string, replicas int32, cliqueNames ...string) grovecorev1beta1.PodCliqueScalingGroupConfig {
-		return grovecorev1beta1.PodCliqueScalingGroupConfig{Name: name, CliqueNames: cliqueNames, Replicas: ptr.To(replicas), MinAvailable: ptr.To(replicas)}
+		return grovecorev1beta1.PodCliqueScalingGroupConfig{Name: name, CliqueNames: cliqueNames, Replicas: ptr.To(replicas), Init: &grovecorev1beta1.InitSpec{MinReplicas: ptr.To(replicas)}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To(replicas)}}}}
 	}
 
 	testCases := []struct {
@@ -1539,7 +1539,7 @@ func TestBackend_ValidatePodCliqueSet_PodSetLimit(t *testing.T) {
 			description: "scaling-group replicas above minAvailable get their own PodGangs",
 			cliques:     cliques("router", "leader", "worker"),
 			scalingGroups: []grovecorev1beta1.PodCliqueScalingGroupConfig{
-				{Name: "decode", CliqueNames: []string{"leader", "worker"}, Replicas: ptr.To[int32](20), MinAvailable: ptr.To[int32](1)},
+				{Name: "decode", CliqueNames: []string{"leader", "worker"}, Replicas: ptr.To[int32](20), Init: &grovecorev1beta1.InitSpec{MinReplicas: ptr.To[int32](1)}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To[int32](1)}}}},
 			},
 		},
 	}

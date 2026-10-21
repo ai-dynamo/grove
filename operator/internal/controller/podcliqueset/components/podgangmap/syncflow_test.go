@@ -30,9 +30,9 @@ func TestComputeMVUTemplate(t *testing.T) {
 		WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("other").WithReplicas(4).WithMinAvailable(1).Build()).
 		WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("pf-leader").WithReplicas(1).WithMinAvailable(1).Build()).
 		WithPodCliqueScalingGroupConfig(grovecorev1beta1.PodCliqueScalingGroupConfig{
-			Name:         "pf",
-			CliqueNames:  []string{"pf-leader"},
-			MinAvailable: ptr.To[int32](3),
+			Name:        "pf",
+			CliqueNames: []string{"pf-leader"},
+			Init:        &grovecorev1beta1.InitSpec{MinReplicas: ptr.To[int32](3)}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To[int32](3)}}},
 		}).
 		WithUpdateProgress(&grovecorev1beta1.PodCliqueSetUpdateProgress{
 			InScopeStandalonePodCliques:   []string{"fe"},

@@ -93,7 +93,7 @@ func (r _resource) getPCSReplicaDeletionWork(ctx context.Context, logger logr.Lo
 			(len(breachedPCLQNames) > 0 && minPCLQWaitFor <= 0) {
 			// terminate all PodCliques for this PCS replica index
 			reason := fmt.Sprintf("Delete all PodCliques for PodCliqueSet %v with replicaIndex :%d due to MinAvailable breached longer than the breach tolerance", pcsObjectKey, pcsReplicaIndex)
-			pclqGangTerminationTask := r.createPCSReplicaDeleteTask(logger, pcs, pcsReplicaIndex, reason)
+			pclqGangTerminationTask := r.createPCSReplicaDeleteTask(logger, pcs, pcsReplicaIndex, constants.ReasonPodCliqueSetReplicaDeleteSuccessful, reason)
 			deletionTasks = append(deletionTasks, pclqGangTerminationTask)
 			work.pcsIndicesToTerminate = append(work.pcsIndicesToTerminate, pcsReplicaIndex)
 		} else if len(breachedPCSGNames) > 0 || len(breachedPCLQNames) > 0 {
@@ -173,13 +173,12 @@ func (r _resource) getExistingPCLQsByNames(ctx context.Context, namespace string
 // getMinAvailableBreachedPCSGInfo filters PodCliqueScalingGroups that have grovecorev1beta1.ConditionTypeMinAvailableBreached set to true.
 // It returns the names of all such PodCliqueScalingGroups and minimum of all the waitDurations.
 //
-// Two gates run on top of the MinAvailableBreached=True check:
+// A PCSG that has never been available reports MinAvailableBreached=Unknown with reason
+// AwaitingInitialAvailability, never True, so initial startup is never a candidate. One gate runs on top of
+// the MinAvailableBreached=True check:
 //
-//  1. WasPCSGEverHealthy — a PCSG that has never reached MinAvailableBreached=False since
-//     creation is in initial-startup, not a regression. Gang termination would just churn-loop
-//     Pending pods against a cluster that already cannot schedule them.
-//  2. GangTerminationInProgress=True — a previous fire is already in flight; re-firing while
-//     it's still in flight would also churn-loop. The flag is set by createPCSReplicaDeleteTask
+//   - GangTerminationInProgress=True — a previous fire is already in flight; re-firing while
+//     it's still in flight would churn-loop Pending pods. The flag is set by createPCSReplicaDeleteTask
 //     after the DeleteAllOf succeeds, and cleared by the PCSG status reconciler once it
 //     observes MinAvailableBreached=False (recovery).
 func getMinAvailableBreachedPCSGInfo(pcsgs []grovecorev1beta1.PodCliqueScalingGroup, breachToleranceFor func(*grovecorev1beta1.PodCliqueScalingGroup) time.Duration, since time.Time) ([]string, time.Duration) {
@@ -191,9 +190,6 @@ func getMinAvailableBreachedPCSGInfo(pcsgs []grovecorev1beta1.PodCliqueScalingGr
 			continue
 		}
 		if cond.Status != metav1.ConditionTrue {
-			continue
-		}
-		if !componentutils.WasPCSGEverHealthy(&pcsg) {
 			continue
 		}
 		if meta.IsStatusConditionTrue(pcsg.Status.Conditions, apiconstants.ConditionTypeGangTerminationInProgress) {
@@ -230,7 +226,11 @@ func getMinAvailableBreachedPCSGInfo(pcsgs []grovecorev1beta1.PodCliqueScalingGr
 // new fire indefinitely. Re-running the delete after a partial flag-write failure is instead
 // kept rare by retrying the flag writes inline (see markGangTerminationInProgress), and kept
 // harmless by the convergence property above.
-func (r _resource) createPCSReplicaDeleteTask(logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, pcsReplicaIndex int, reason string) utils.Task {
+//
+// eventReason is the reason of the event recorded on success. For a gang-shape recreate (ReasonGangShapeChanged)
+// the task also writes the current gang-shape hash onto the replica's PCSGs, which are not deleted, so the
+// replica is no longer stale once its PodCliques are recreated.
+func (r _resource) createPCSReplicaDeleteTask(logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, pcsReplicaIndex int, eventReason, reason string) utils.Task {
 	return utils.Task{
 		Name: fmt.Sprintf("DeletePCSReplicaPodCliques-%d", pcsReplicaIndex),
 		Fn: func(ctx context.Context) error {
@@ -256,7 +256,7 @@ func (r _resource) createPCSReplicaDeleteTask(logger logr.Logger, pcs *grovecore
 				return err
 			}
 			logger.Info("Deleted PCS replica PodCliques", "pcsReplicaIndex", pcsReplicaIndex, "reason", reason)
-			r.eventRecorder.Eventf(pcs, corev1.EventTypeNormal, constants.ReasonPodCliqueSetReplicaDeleteSuccessful, "PodCliqueSet replica %d deleted", pcsReplicaIndex)
+			r.eventRecorder.Eventf(pcs, corev1.EventTypeNormal, eventReason, "PodCliqueSet replica %d deleted: %s", pcsReplicaIndex, reason)
 
 			// Deleting all PodCliques removes every pod of the replica, so it will be recreated as a fresh
 			// initial deployment whose PodGangMap is a single anchor with one tail and one scale-out. A past
@@ -285,6 +285,12 @@ func (r _resource) createPCSReplicaDeleteTask(logger logr.Logger, pcs *grovecore
 				if err := r.markGangTerminationInProgress(ctx, client.ObjectKeyFromObject(&pcsgList.Items[i]), pcsReplicaIndex); err != nil {
 					logger.Error(err, "failed to mark GangTerminationInProgress on PCSG", "pcsg", client.ObjectKeyFromObject(&pcsgList.Items[i]))
 					flagErrs = append(flagErrs, err)
+				}
+				if eventReason == constants.ReasonGangShapeChanged {
+					if err := r.setGangShapeHash(ctx, &pcsgList.Items[i], componentutils.ComputeGangShapeHash(pcs)); err != nil {
+						logger.Error(err, "failed to set the gang-shape hash on PCSG", "pcsg", client.ObjectKeyFromObject(&pcsgList.Items[i]))
+						flagErrs = append(flagErrs, err)
+					}
 				}
 			}
 			return errors.Join(flagErrs...)

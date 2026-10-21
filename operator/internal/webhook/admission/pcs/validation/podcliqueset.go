@@ -37,7 +37,6 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	k8svalidation "k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/apimachinery/pkg/util/validation/field"
-	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -55,6 +54,8 @@ type pcsValidator struct {
 	schedulerConfig groveconfigv1alpha1.SchedulerConfiguration
 	client          client.Client
 	schedRegistry   scheduler.Registry
+	// alphaRequest is true when the request was sent as grove.io/v1alpha1.
+	alphaRequest bool
 }
 
 // newPCSValidator creates a new PodCliqueSet validator for the given operation.
@@ -113,7 +114,6 @@ func (v *pcsValidator) validatePodCliqueSetTemplateSpec(fldPath *field.Path) ([]
 		allErrs = append(allErrs, errs...)
 	}
 	allErrs = append(allErrs, v.validatePodCliqueScalingGroupConfigs(fldPath.Child("podCliqueScalingGroups"))...)
-	allErrs = append(allErrs, v.validateTerminationDelay(fldPath.Child("terminationDelay"))...)
 
 	return warnings, allErrs
 }
@@ -362,29 +362,8 @@ func (v *pcsValidator) validatePodCliqueScalingGroupConfigs(fldPath *field.Path)
 			}
 		}
 
-		// validate MinAvailable field
-		if scalingGroupConfig.MinAvailable != nil {
-			if *scalingGroupConfig.MinAvailable <= 0 {
-				allErrs = append(allErrs, field.Invalid(fldPath.Index(i).Child("minAvailable"), *scalingGroupConfig.MinAvailable, "must be greater than 0"))
-			}
-		}
-
-		// validate MinAvailable <= Replicas
-		if scalingGroupConfig.Replicas != nil && scalingGroupConfig.MinAvailable != nil {
-			if *scalingGroupConfig.MinAvailable > *scalingGroupConfig.Replicas {
-				allErrs = append(allErrs, field.Invalid(fldPath.Index(i).Child("minAvailable"), *scalingGroupConfig.MinAvailable, "minAvailable must not be greater than replicas"))
-			}
-		}
-
-		// validate ScaleConfig.MinReplicas >= MinAvailable
-		if scalingGroupConfig.ScaleConfig != nil && scalingGroupConfig.MinAvailable != nil {
-			if scalingGroupConfig.ScaleConfig.MinReplicas != nil && *scalingGroupConfig.ScaleConfig.MinReplicas < *scalingGroupConfig.MinAvailable {
-				allErrs = append(allErrs, field.Invalid(fldPath.Index(i).Child("scaleConfig", "minReplicas"), *scalingGroupConfig.ScaleConfig.MinReplicas, "scaleConfig.minReplicas must be greater than or equal to minAvailable"))
-			}
-		}
-
-		// validate RollingUpdate against the active update strategy.
-		allErrs = append(allErrs, v.validateRollingUpdateConfiguration(scalingGroupConfig.RollingUpdate, ptr.Deref(scalingGroupConfig.MinAvailable, 1), fldPath.Index(i).Child("rollingUpdate"))...)
+		// validate the min-replica fields, the autoscaling floor and RollingUpdate against the active update strategy.
+		allErrs = append(allErrs, v.validateMinReplicas(scalingGroupConfigComponent(&scalingGroupConfig, fldPath.Index(i)))...)
 
 		// validate PCSG-level ResourceSharing
 		allErrs = append(allErrs, v.validatePCSGResourceSharing(scalingGroupConfig, fldPath.Index(i).Child("resourceSharing"))...)
@@ -401,21 +380,6 @@ func (v *pcsValidator) validatePodCliqueScalingGroupConfigs(fldPath *field.Path)
 		if slices.Contains(scalingGroupCliqueNames, cliqueTemplateSpec.Name) && cliqueTemplateSpec.Spec.ScaleConfig != nil {
 			allErrs = append(allErrs, field.Invalid(fldPath, cliqueTemplateSpec.Name, "AutoScalingConfig is not allowed to be defined for PodClique that is part of scaling group"))
 		}
-	}
-
-	return allErrs
-}
-
-// validateTerminationDelay validates that terminationDelay is set and greater than zero.
-func (v *pcsValidator) validateTerminationDelay(fldPath *field.Path) field.ErrorList {
-	allErrs := field.ErrorList{}
-
-	// This should ideally not happen, the defaulting webhook will always set the default value for terminationDelay.
-	if v.pcs.Spec.Template.TerminationDelay == nil {
-		return append(allErrs, field.Required(fldPath, "terminationDelay is required"))
-	}
-	if v.pcs.Spec.Template.TerminationDelay.Duration <= 0 {
-		allErrs = append(allErrs, field.Invalid(fldPath, v.pcs.Spec.Template.TerminationDelay, "terminationDelay must be greater than 0"))
 	}
 
 	return allErrs
@@ -461,15 +425,8 @@ func (v *pcsValidator) validatePodCliqueTemplateSpec(cliqueTemplateSpec *groveco
 		allErrs = append(allErrs, errs...)
 	}
 
-	if scalingGroupCliqueNames.Has(cliqueTemplateSpec.Name) {
-		// A PCSG-owned PodClique is governed by the owning PodCliqueScalingGroup.
-		if cliqueTemplateSpec.RollingUpdate != nil {
-			allErrs = append(allErrs, field.Forbidden(fldPath.Child("rollingUpdate"),
-				"rollingUpdate must not be set on a PodClique that is a member of a PodCliqueScalingGroup. Set it on the PodCliqueScalingGroup instead"))
-		}
-	} else {
-		allErrs = append(allErrs, v.validateRollingUpdateConfiguration(cliqueTemplateSpec.RollingUpdate, ptr.Deref(cliqueTemplateSpec.Spec.MinAvailable, cliqueTemplateSpec.Spec.Replicas), fldPath.Child("rollingUpdate"))...)
-	}
+	// A PCSG-owned PodClique is governed by the owning PodCliqueScalingGroup, so it must not set rollingUpdate.
+	allErrs = append(allErrs, v.validateMinReplicas(cliqueTemplateComponent(cliqueTemplateSpec, fldPath, scalingGroupCliqueNames.Has(cliqueTemplateSpec.Name)))...)
 
 	return warnings, allErrs
 }
@@ -482,7 +439,9 @@ func validateCliqueDependencies(cliques []*grovecorev1beta1.PodCliqueTemplateSpe
 	var discoveredCliqueNames []string
 	for _, clique := range cliques {
 		discoveredCliqueNames = append(discoveredCliqueNames, clique.Name)
-		depG.AddDependencies(clique.Name, clique.Spec.StartsAfter)
+		depG.AddDependencies(clique.Name, lo.Map(clique.Spec.StartsAfter, func(dependency grovecorev1beta1.StartupDependency, _ int) string {
+			return dependency.Name
+		}))
 	}
 
 	unknownCliquesDeps := depG.GetUnknownCliques(discoveredCliqueNames)
@@ -506,43 +465,6 @@ func (v *pcsValidator) updateStrategyType() grovecorev1beta1.UpdateStrategyType 
 	return componentutils.ResolveUpdateStrategyType(v.pcs)
 }
 
-// validateRollingUpdateConfiguration checks a component's RollingUpdate against the active update
-// strategy. OnDelete forbids it entirely. Otherwise MaxUnavailable and ProgressDeadline, when set,
-// must be greater than 0. Under the Coherent strategy MaxUnavailable must also not be less than the
-// component's minAvailable, since the MVU sub-step takes down minAvailable of the component at once.
-// A nil MaxUnavailable is allowed since the field is optional and the consumer supplies an effective
-// value.
-//
-// MaxUnavailable is deliberately not bounded above by replicas. The replicas supplied by the PCS
-// template is a creation-time seed. The live PodClique / PodCliqueScalingGroup is scaled independently
-// through its /scale subresource, so the template count goes stale after any scale. MaxUnavailable is a
-// ceiling on rollout disruption, not a demand to disrupt that many. Runtime rollout planning already
-// caps disruption to the replicas that actually remain.
-func (v *pcsValidator) validateRollingUpdateConfiguration(rollingUpdate *grovecorev1beta1.RollingUpdateConfiguration, minAvailable int32, fldPath *field.Path) field.ErrorList {
-	allErrs := field.ErrorList{}
-	if v.updateStrategyType() == grovecorev1beta1.OnDeleteStrategy {
-		if rollingUpdate != nil {
-			allErrs = append(allErrs, field.Forbidden(fldPath, "rollingUpdate must not be set when the update strategy is OnDelete"))
-		}
-		return allErrs
-	}
-	if rollingUpdate == nil {
-		return allErrs
-	}
-	if rollingUpdate.MaxUnavailable != nil {
-		switch {
-		case *rollingUpdate.MaxUnavailable <= 0:
-			allErrs = append(allErrs, field.Invalid(fldPath.Child("maxUnavailable"), *rollingUpdate.MaxUnavailable, "must be greater than 0"))
-		case v.updateStrategyType() == grovecorev1beta1.CoherentStrategy && *rollingUpdate.MaxUnavailable < minAvailable:
-			allErrs = append(allErrs, field.Invalid(fldPath.Child("maxUnavailable"), *rollingUpdate.MaxUnavailable, fmt.Sprintf("must not be less than minAvailable (%d) under the Coherent update strategy", minAvailable)))
-		}
-	}
-	if rollingUpdate.ProgressDeadline != nil && rollingUpdate.ProgressDeadline.Duration <= 0 {
-		allErrs = append(allErrs, field.Invalid(fldPath.Child("progressDeadline"), rollingUpdate.ProgressDeadline.Duration.String(), "must be greater than 0"))
-	}
-	return allErrs
-}
-
 // validateScalingGroupPodCliqueNames validates that scaling group clique references exist and meet naming constraints.
 func (v *pcsValidator) validateScalingGroupPodCliqueNames(pcsgName string, allPclqNames, pclqNameInScalingGrp []string, fldPath, pcsgNameFieldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
@@ -564,7 +486,8 @@ func (v *pcsValidator) validateScalingGroupPodCliqueNames(pcsgName string, allPc
 	return allErrs
 }
 
-// validatePodCliqueSpec validates the specification of a PodClique including replicas, minAvailable, dependencies, and autoscaling configuration.
+// validatePodCliqueSpec validates the specification of a PodClique including replicas, dependencies, and autoscaling configuration.
+// The min-replica fields and the autoscaling floor are validated by validateMinReplicas.
 func (v *pcsValidator) validatePodCliqueSpec(name string, cliqueSpec grovecorev1beta1.PodCliqueSpec, fldPath *field.Path) ([]string, field.ErrorList) {
 	allErrs := field.ErrorList{}
 
@@ -572,33 +495,11 @@ func (v *pcsValidator) validatePodCliqueSpec(name string, cliqueSpec grovecorev1
 		allErrs = append(allErrs, field.Invalid(fldPath.Child("replicas"), cliqueSpec.Replicas, "must be greater than 0"))
 	}
 
-	// Ideally this should never happen, the defaulting webhook will always set the default value for minAvailable.
-	if cliqueSpec.MinAvailable == nil {
-		allErrs = append(allErrs, field.Required(fldPath.Child("minAvailable"), "field is required"))
-	} else {
-		// prevent nil pointer dereference, no point checking the value if it is nil
-		if *cliqueSpec.MinAvailable <= 0 {
-			allErrs = append(allErrs, field.Invalid(fldPath.Child("minAvailable"), *cliqueSpec.MinAvailable, "must be greater than 0"))
-		}
-		if *cliqueSpec.MinAvailable > cliqueSpec.Replicas {
-			allErrs = append(allErrs, field.Invalid(fldPath.Child("minAvailable"), *cliqueSpec.MinAvailable, "minAvailable must not be greater than replicas"))
-		}
-	}
-
 	if v.isStartupTypeExplicit() && len(cliqueSpec.StartsAfter) > 0 {
-		for _, dep := range cliqueSpec.StartsAfter {
-			if utils.IsEmptyStringType(dep) {
-				allErrs = append(allErrs, field.Required(fldPath.Child("startsAfter"), "clique dependency must not be empty"))
-			}
-			if dep == name {
-				allErrs = append(allErrs, field.Invalid(fldPath.Child("startsAfter"), dep, "clique dependency cannot refer to itself"))
-			}
-		}
-		allErrs = append(allErrs, sliceMustHaveUniqueElements(cliqueSpec.StartsAfter, fldPath.Child("startsAfter"))...)
+		allErrs = append(allErrs, v.validateStartsAfter(name, cliqueSpec.StartsAfter, fldPath.Child("startsAfter"))...)
 	}
 
 	if cliqueSpec.ScaleConfig != nil {
-		allErrs = append(allErrs, validateScaleConfig(cliqueSpec.ScaleConfig, *cliqueSpec.MinAvailable, fldPath.Child("autoScalingConfig"))...)
 		if cliqueSpec.ScaleConfig.MaxReplicas < cliqueSpec.Replicas {
 			allErrs = append(allErrs, field.Invalid(fldPath.Child("autoScalingConfig", "maxReplicas"), cliqueSpec.ScaleConfig.MaxReplicas, "must be greater than or equal to replicas"))
 		}
@@ -617,17 +518,18 @@ func (v *pcsValidator) isStartupTypeExplicit() bool {
 	return v.pcs.Spec.Template.StartupType != nil && *v.pcs.Spec.Template.StartupType == grovecorev1beta1.CliqueStartupTypeExplicit
 }
 
-// validateScaleConfig validates autoscaling configuration ensuring minReplicas and maxReplicas are properly set relative to minAvailable.
-func validateScaleConfig(scaleConfig *grovecorev1beta1.AutoScalingConfig, minAvailable int32, fldPath *field.Path) field.ErrorList {
+// validateScaleConfig validates autoscaling configuration ensuring minReplicas is at least the scale floor and
+// maxReplicas is at least minReplicas. The floor is availability.minReplicas when availability is set, and 1
+// otherwise.
+func validateScaleConfig(scaleConfig *grovecorev1beta1.AutoScalingConfig, floor int32, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 	// This should ideally not happen, the defaulting webhook will always set the default value for minReplicas.
 	if scaleConfig.MinReplicas == nil {
-		allErrs = append(allErrs, field.Required(fldPath.Child("minReplicas"), "field is required"))
-	} else {
-		// scaleConfig.MinReplicas should be greater than or equal to minAvailable else it will trigger a PodGang termination.
-		if *scaleConfig.MinReplicas < minAvailable {
-			allErrs = append(allErrs, field.Invalid(fldPath.Child("minReplicas"), *scaleConfig.MinReplicas, "must be greater than or equal to podCliqueSpec.minAvailable"))
-		}
+		return append(allErrs, field.Required(fldPath.Child("minReplicas"), "field is required"))
+	}
+	// scaleConfig.MinReplicas must be at least availability.minReplicas, else scaling down would trigger gang termination.
+	if *scaleConfig.MinReplicas < floor {
+		allErrs = append(allErrs, field.Invalid(fldPath.Child("minReplicas"), *scaleConfig.MinReplicas, fmt.Sprintf("must be greater than or equal to %d (termination.resource.availability.minReplicas, or 1 when availability is not set)", floor)))
 	}
 	if scaleConfig.MaxReplicas < *scaleConfig.MinReplicas {
 		allErrs = append(allErrs, field.Invalid(fldPath.Child("maxReplicas"), scaleConfig.MaxReplicas, "must be greater than or equal to podCliqueSpec.minReplicas"))
@@ -698,6 +600,7 @@ func (v *pcsValidator) validateUpdate(oldPCS *grovecorev1beta1.PodCliqueSet) err
 // validatePodCliqueSetSpecUpdate validates updates to the PodCliqueSet specification.
 func (v *pcsValidator) validatePodCliqueSetSpecUpdate(oldPCS *grovecorev1beta1.PodCliqueSet, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
+	allErrs = append(allErrs, v.validateUpdateStrategyUpdate(oldPCS, fldPath.Child("updateStrategy"))...)
 	allErrs = append(allErrs, v.validatePodCliqueSetTemplateSpecUpdate(oldPCS, fldPath.Child("template"))...)
 	return allErrs
 }
@@ -706,9 +609,9 @@ func (v *pcsValidator) validatePodCliqueSetSpecUpdate(oldPCS *grovecorev1beta1.P
 func (v *pcsValidator) validatePodCliqueSetTemplateSpecUpdate(oldPCS *grovecorev1beta1.PodCliqueSet, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 
-	allErrs = append(allErrs, v.validatePodCliqueUpdate(oldPCS.Spec.Template.Cliques, fldPath.Child("cliques"))...)
+	allErrs = append(allErrs, v.validatePodCliqueUpdate(oldPCS, fldPath.Child("cliques"))...)
 	allErrs = append(allErrs, apivalidation.ValidateImmutableField(v.pcs.Spec.Template.StartupType, oldPCS.Spec.Template.StartupType, fldPath.Child("cliqueStartupType"))...)
-	allErrs = append(allErrs, v.validatePodCliqueScalingGroupConfigsUpdate(oldPCS.Spec.Template.PodCliqueScalingGroupConfigs, fldPath.Child("podCliqueScalingGroups"))...)
+	allErrs = append(allErrs, v.validatePodCliqueScalingGroupConfigsUpdate(oldPCS, fldPath.Child("podCliqueScalingGroups"))...)
 	allErrs = append(allErrs, v.validateTopologyConstraintsUpdate(oldPCS)...)
 	allErrs = append(allErrs, apivalidation.ValidateImmutableField(v.pcs.Spec.Template.ResourceClaimTemplates, oldPCS.Spec.Template.ResourceClaimTemplates, fldPath.Child("resourceClaimTemplates"))...)
 	allErrs = append(allErrs, apivalidation.ValidateImmutableField(v.pcs.Spec.Template.ResourceSharing, oldPCS.Spec.Template.ResourceSharing, fldPath.Child("resourceSharing"))...)
@@ -717,8 +620,9 @@ func (v *pcsValidator) validatePodCliqueSetTemplateSpecUpdate(oldPCS *grovecorev
 }
 
 // validatePodCliqueScalingGroupConfigsUpdate validates immutable fields in PodCliqueScalingGroupConfigs.
-func (v *pcsValidator) validatePodCliqueScalingGroupConfigsUpdate(oldConfigs []grovecorev1beta1.PodCliqueScalingGroupConfig, fldPath *field.Path) field.ErrorList {
+func (v *pcsValidator) validatePodCliqueScalingGroupConfigsUpdate(oldPCS *grovecorev1beta1.PodCliqueSet, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
+	oldConfigs := oldPCS.Spec.Template.PodCliqueScalingGroupConfigs
 	newConfigs := v.pcs.Spec.Template.PodCliqueScalingGroupConfigs
 	// Validate that scaling group composition hasn't changed
 	if len(newConfigs) != len(oldConfigs) {
@@ -732,7 +636,7 @@ func (v *pcsValidator) validatePodCliqueScalingGroupConfigsUpdate(oldConfigs []g
 	})
 
 	// Validate each new config against its corresponding old config by name
-	for _, newConfig := range newConfigs {
+	for i, newConfig := range newConfigs {
 		oldConfig, exists := oldConfigMap[newConfig.Name]
 		if !exists {
 			allErrs = append(allErrs, field.Forbidden(fldPath.Child("name"), fmt.Sprintf("not allowed to change scaling group composition, new scaling group name '%s' is not allowed", newConfig.Name)))
@@ -742,7 +646,7 @@ func (v *pcsValidator) validatePodCliqueScalingGroupConfigsUpdate(oldConfigs []g
 		// Validate immutable fields
 		configFldPath := fldPath
 		allErrs = append(allErrs, apivalidation.ValidateImmutableField(newConfig.CliqueNames, oldConfig.CliqueNames, configFldPath.Child("cliqueNames"))...)
-		allErrs = append(allErrs, apivalidation.ValidateImmutableField(newConfig.MinAvailable, oldConfig.MinAvailable, configFldPath.Child("minAvailable"))...)
+		allErrs = append(allErrs, v.validateMinReplicasUpdate(oldPCS, scalingGroupConfigComponent(&newConfig, fldPath.Index(i)), scalingGroupConfigComponent(&oldConfig, fldPath.Index(i)))...)
 		allErrs = append(allErrs, apivalidation.ValidateImmutableField(newConfig.ResourceSharing, oldConfig.ResourceSharing, configFldPath.Child("resourceSharing"))...)
 	}
 
@@ -753,7 +657,7 @@ func (v *pcsValidator) validateTopologyConstraintsUpdate(oldPCS *grovecorev1beta
 	immutabilityValidator := newTopologyConstraintsValidator(v.pcs, v.tasEnabled, nil)
 
 	// Allow only the legacy upgrade case to be repaired under the current rules: older objects could carry
-	// packDomain without topologyName, because topologyName did not exist in the API yet. Other invalid shapes
+	// packDomain (now pack.required) without topologyName, because topologyName did not exist in the API yet. Other invalid shapes
 	// are not treated as repairable legacy state here.
 	if componentutils.HasAnyTopologyConstraint(oldPCS) && hasRepairableLegacyTopologyConstraint(oldPCS) {
 		if _, err := componentutils.ResolveEffectiveTopologyNameForPodCliqueSet(oldPCS); err != nil {
@@ -770,7 +674,7 @@ func (v *pcsValidator) validateTopologyConstraintsUpdate(oldPCS *grovecorev1beta
 	}
 
 	// Domain/hierarchy validation is not needed on update because topology constraints are immutable.
-	// Only topologyName and packDomain immutability are checked here for already valid objects.
+	// Only topologyName and pack immutability are checked here for already valid objects.
 	return immutabilityValidator.validateUpdate(oldPCS)
 }
 
@@ -1012,8 +916,10 @@ func requiresOrderValidation(startupType *grovecorev1beta1.CliqueStartupType) bo
 }
 
 // validatePodCliqueUpdate validates that PodClique updates maintain composition, order (when required), and immutable fields.
-func (v *pcsValidator) validatePodCliqueUpdate(oldCliques []*grovecorev1beta1.PodCliqueTemplateSpec, fldPath *field.Path) field.ErrorList {
+func (v *pcsValidator) validatePodCliqueUpdate(oldPCS *grovecorev1beta1.PodCliqueSet, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
+	oldCliques := oldPCS.Spec.Template.Cliques
+	_, scalingGroupCliqueNames := componentutils.GetExpectedPCLQNamesGroupByOwner(v.pcs)
 	newCliques := v.pcs.Spec.Template.Cliques
 	if len(newCliques) != len(oldCliques) {
 		allErrs = append(allErrs, field.Forbidden(fldPath, "not allowed to change clique composition"))
@@ -1048,7 +954,10 @@ func (v *pcsValidator) validatePodCliqueUpdate(oldCliques []*grovecorev1beta1.Po
 		// Validate immutable PodClique fields
 		cliqueFldPath := fldPath.Child("spec")
 		allErrs = append(allErrs, apivalidation.ValidateImmutableField(newClique.Spec.RoleName, oldIndexCliqueTuple.B.Spec.RoleName, cliqueFldPath.Child("roleName"))...)
-		allErrs = append(allErrs, apivalidation.ValidateImmutableField(newClique.Spec.MinAvailable, oldIndexCliqueTuple.B.Spec.MinAvailable, cliqueFldPath.Child("minAvailable"))...)
+		isPCSGMember := scalingGroupCliqueNames.Has(newClique.Name)
+		allErrs = append(allErrs, v.validateMinReplicasUpdate(oldPCS,
+			cliqueTemplateComponent(newClique, fldPath.Index(newCliqueIndex), isPCSGMember),
+			cliqueTemplateComponent(oldIndexCliqueTuple.B, fldPath.Index(newCliqueIndex), isPCSGMember))...)
 		allErrs = append(allErrs, apivalidation.ValidateImmutableField(newClique.Spec.StartsAfter, oldIndexCliqueTuple.B.Spec.StartsAfter, cliqueFldPath.Child("startsAfter"))...)
 		allErrs = append(allErrs, apivalidation.ValidateImmutableField(newClique.Spec.PodSpec.SchedulerName, oldIndexCliqueTuple.B.Spec.PodSpec.SchedulerName, cliqueFldPath.Child("podSpec", "schedulerName"))...)
 		allErrs = append(allErrs, apivalidation.ValidateImmutableField(newClique.ResourceSharing, oldIndexCliqueTuple.B.ResourceSharing, fldPath.Index(newCliqueIndex).Child("resourceSharing"))...)

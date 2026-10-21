@@ -23,7 +23,9 @@ import (
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/utils/ptr"
 )
 
 // readyDependency returns a dependency on minReady pods with the pod Ready condition.
@@ -343,6 +345,38 @@ func TestRefreshReadyPodsOfPodCliqueCustomCondition(t *testing.T) {
 		corev1.PodCondition{Type: corev1.PodReady, Status: corev1.ConditionFalse},
 		corev1.PodCondition{Type: modelLoaded, Status: corev1.ConditionTrue}), false)
 	assert.Equal(t, sets.New("podclique-a-pod-1"), deps.currentPCLQReadyPods["podclique-a"])
+}
+
+// TestRefreshReadyPodsOfPodCliqueTracksByUID tests that pods are tracked by UID, so a replacement pod with the
+// same name does not inherit its predecessor's condition, and that a terminating pod never counts.
+func TestRefreshReadyPodsOfPodCliqueTracksByUID(t *testing.T) {
+	readyPod := func(uid types.UID, ready bool) *corev1.Pod {
+		status := corev1.ConditionFalse
+		if ready {
+			status = corev1.ConditionTrue
+		}
+		return &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: "podclique-a-pod-1", UID: uid},
+			Status:     corev1.PodStatus{Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: status}}},
+		}
+	}
+	deps := &ParentPodCliqueDependencies{
+		pclqFQNToDependency:  map[string]PodCliqueDependency{"podclique-a": readyDependency(1)},
+		currentPCLQReadyPods: map[string]sets.Set[string]{"podclique-a": sets.New[string]()},
+	}
+
+	deps.refreshReadyPodsOfPodClique(readyPod("uid-1", true), false)
+	assert.Equal(t, sets.New("uid-1"), deps.currentPCLQReadyPods["podclique-a"])
+
+	// The replacement pod reuses the name but is not ready yet, and the old pod's delete event arrives later.
+	deps.refreshReadyPodsOfPodClique(readyPod("uid-2", false), false)
+	deps.refreshReadyPodsOfPodClique(readyPod("uid-1", true), true)
+	assert.Equal(t, 0, deps.currentPCLQReadyPods["podclique-a"].Len(), "the replacement must not inherit readiness")
+
+	terminating := readyPod("uid-2", true)
+	terminating.DeletionTimestamp = ptr.To(metav1.Now())
+	deps.refreshReadyPodsOfPodClique(terminating, false)
+	assert.Equal(t, 0, deps.currentPCLQReadyPods["podclique-a"].Len(), "a terminating pod must not count")
 }
 
 // TestNewPodCliqueStateWithInfo tests the core initialization logic without file dependencies.

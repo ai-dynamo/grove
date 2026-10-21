@@ -61,12 +61,12 @@ type PodGangMapSpec struct {
 type PodGangEntryRole string
 
 const (
-	// PodGangEntryRoleAnchor marks the entry that carries the MinAvailable replicas.
-	// It holds every standalone PodClique and each PodCliqueScalingGroup's MinAvailable replicas.
+	// PodGangEntryRoleAnchor marks the entry that carries the gang-scheduled replicas.
+	// It holds every standalone PodClique and each PodCliqueScalingGroup's init.minReplicas replicas.
 	// It materializes into a single PodGang.
 	PodGangEntryRoleAnchor PodGangEntryRole = "Anchor"
 	// PodGangEntryRoleTail marks a non-anchor entry that holds a PodCliqueScalingGroup's replica
-	// indices above MinAvailable, as declared by the template. It materializes into one PodGang per
+	// indices at or above init.minReplicas, as declared by the template. It materializes into one PodGang per
 	// replica index.
 	PodGangEntryRoleTail PodGangEntryRole = "Tail"
 	// PodGangEntryRoleScaleOut marks the entry that holds PodCliqueScalingGroup replicas added by a

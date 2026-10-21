@@ -44,6 +44,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/util/retry"
@@ -1876,8 +1877,8 @@ func assertDefaultedMaxUnavailable(tc *testctx.TestContext, cliqueName string, w
 			if clique.RollingUpdate == nil || clique.RollingUpdate.MaxUnavailable == nil {
 				tc.T.Fatalf("clique %s has no defaulted RollingUpdate.MaxUnavailable", cliqueName)
 			}
-			if *clique.RollingUpdate.MaxUnavailable != want {
-				tc.T.Fatalf("defaulted MaxUnavailable for clique %s = %d, want %d", cliqueName, *clique.RollingUpdate.MaxUnavailable, want)
+			if *clique.RollingUpdate.MaxUnavailable != intstr.FromInt32(want) {
+				tc.T.Fatalf("defaulted MaxUnavailable for clique %s = %s, want %d", cliqueName, clique.RollingUpdate.MaxUnavailable.String(), want)
 			}
 			return
 		}

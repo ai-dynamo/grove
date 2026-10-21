@@ -22,6 +22,7 @@ import (
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	apiconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
+	"github.com/ai-dynamo/grove/operator/internal/constants"
 	"github.com/go-logr/logr"
 	"github.com/samber/lo"
 	"github.com/stretchr/testify/assert"
@@ -103,7 +104,9 @@ func TestGetMinAvailableBreachedPCSGInfoGangTerminationGate(t *testing.T) {
 			wantInList: false,
 		},
 		{
-			name: "breached but never healthy (initial startup) — skipped by wasHealthy gate",
+			// The PCSG reconciler reports a PCSG that has never been available as Unknown with
+			// AwaitingInitialAvailability, which replaces the former wasHealthy gate here.
+			name: "awaiting initial availability — skipped",
 			pcsg: grovecorev1beta1.PodCliqueScalingGroup{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:              "pcsg-initial-startup",
@@ -113,8 +116,8 @@ func TestGetMinAvailableBreachedPCSGInfoGangTerminationGate(t *testing.T) {
 					Conditions: []metav1.Condition{
 						{
 							Type:               apiconstants.ConditionTypeMinAvailableBreached,
-							Status:             metav1.ConditionTrue,
-							Reason:             apiconstants.ConditionReasonScheduledReplicasBelowMinAvailable,
+							Status:             metav1.ConditionUnknown,
+							Reason:             apiconstants.ConditionReasonAwaitingInitialAvailability,
 							LastTransitionTime: metav1.NewTime(now.Add(-1 * time.Second)),
 						},
 					},
@@ -178,7 +181,7 @@ func TestCreatePCSReplicaDeleteTaskIgnoresStaleSiblingFlag(t *testing.T) {
 		Build()
 	r := _resource{client: cl, eventRecorder: record.NewFakeRecorder(10)}
 
-	task := r.createPCSReplicaDeleteTask(logr.Discard(), pcs, 0, "sg-a regressed again")
+	task := r.createPCSReplicaDeleteTask(logr.Discard(), pcs, 0, constants.ReasonPodCliqueSetReplicaDeleteSuccessful, "sg-a regressed again")
 	require.NoError(t, task.Fn(context.Background()))
 
 	// The delete must have run despite sg-b's stale flag.
@@ -217,7 +220,7 @@ func TestCreatePCSReplicaDeleteTaskDeletesPodGangMap(t *testing.T) {
 		Build()
 	r := _resource{client: cl, eventRecorder: record.NewFakeRecorder(10)}
 
-	require.NoError(t, r.createPCSReplicaDeleteTask(logr.Discard(), pcs, 0, "full replica gang termination").Fn(context.Background()))
+	require.NoError(t, r.createPCSReplicaDeleteTask(logr.Discard(), pcs, 0, constants.ReasonPodCliqueSetReplicaDeleteSuccessful, "full replica gang termination").Fn(context.Background()))
 
 	// PodCliques of the replica are deleted.
 	pclqList := &grovecorev1beta1.PodCliqueList{}

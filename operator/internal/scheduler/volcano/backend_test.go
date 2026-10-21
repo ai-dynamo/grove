@@ -236,7 +236,7 @@ func TestBackend_ValidatePodCliqueSet(t *testing.T) {
 		Spec: grovecorev1beta1.PodCliqueSetSpec{
 			Template: grovecorev1beta1.PodCliqueSetTemplateSpec{
 				TopologyConstraint: &grovecorev1beta1.TopologyConstraint{
-					PackDomain: grovecorev1beta1.TopologyDomainZone,
+					Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: grovecorev1beta1.TopologyDomainZone},
 				},
 				Cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
 					{

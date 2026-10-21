@@ -553,17 +553,17 @@ func TestWasPCSGEverHealthy(t *testing.T) {
 	}
 }
 
-// TestGetMinAvailableBreachedPCLQInfoFiltersNeverScheduled pins the action-gate: PCLQs that
-// have MinAvailableBreached=True but were never PodCliqueScheduled=True are excluded from the
-// candidate list — gang-termination must not fire on them.
-func TestGetMinAvailableBreachedPCLQInfoFiltersNeverScheduled(t *testing.T) {
+// TestGetMinAvailableBreachedPCLQInfoSelectsOnlyBreached pins that only MinAvailableBreached=True PodCliques are
+// candidates. A never-scheduled PodClique reports Unknown with AwaitingInitialSchedule, so it is not a candidate.
+func TestGetMinAvailableBreachedPCLQInfoSelectsOnlyBreached(t *testing.T) {
 	scheduledAt := metav1.Now()
-	pclqBreachedNeverScheduled := grovecorev1beta1.PodClique{
+	pclqAwaitingInitialSchedule := grovecorev1beta1.PodClique{
 		ObjectMeta: metav1.ObjectMeta{Name: "never-scheduled"},
 		Status: grovecorev1beta1.PodCliqueStatus{
 			Conditions: []metav1.Condition{{
 				Type:   constants.ConditionTypeMinAvailableBreached,
-				Status: metav1.ConditionTrue,
+				Status: metav1.ConditionUnknown,
+				Reason: constants.ConditionReasonAwaitingInitialSchedule,
 			}},
 		},
 	}
@@ -578,9 +578,9 @@ func TestGetMinAvailableBreachedPCLQInfoFiltersNeverScheduled(t *testing.T) {
 		},
 	}
 
-	pclqs := []grovecorev1beta1.PodClique{pclqBreachedNeverScheduled, pclqBreachedAfterScheduled}
+	pclqs := []grovecorev1beta1.PodClique{pclqAwaitingInitialSchedule, pclqBreachedAfterScheduled}
 	actual, _ := GetMinAvailableBreachedPCLQInfo(pclqs, func(*grovecorev1beta1.PodClique) time.Duration { return time.Hour }, time.Now())
-	assert.Equal(t, []string{"scheduled-once"}, actual, "never-scheduled PodClique must be filtered out")
+	assert.Equal(t, []string{"scheduled-once"}, actual, "a PodClique awaiting its initial schedule must not be a candidate")
 }
 
 func TestGroupPCLQsByPCSReplicaIndex(t *testing.T) {

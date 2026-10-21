@@ -27,6 +27,7 @@ import (
 // +kubebuilder:subresource:status
 // +kubebuilder:subresource:scale:specpath=.spec.replicas,statuspath=.status.replicas,selectorpath=.status.hpaPodSelector
 // +kubebuilder:resource:shortName={pclq}
+// +kubebuilder:deprecatedversion:warning="grove.io/v1alpha1 is deprecated and will be removed two releases after grove.io/v1beta1 becomes the storage version; use grove.io/v1beta1"
 // +kubebuilder:printcolumn:name="MinAvail",type=integer,JSONPath=`.spec.minAvailable`
 // +kubebuilder:printcolumn:name="Replicas",type=integer,JSONPath=`.spec.replicas`
 // +kubebuilder:printcolumn:name="Ready",type=integer,JSONPath=`.status.readyReplicas`
@@ -83,6 +84,7 @@ type PodCliqueSpec struct {
 	// 1. If a StartsAfter has been defined and one or more cycles are detected in DAG's then it will be flagged as validation error.
 	// 2. If StartsAfter is defined and does not identify any PodClique then it will be flagged as a validation error.
 	// +optional
+	// +k8s:conversion-gen=false
 	StartsAfter []string `json:"startsAfter,omitempty"`
 	// ScaleConfig is the horizontal pod autoscaler configuration for a PodClique.
 	// +optional

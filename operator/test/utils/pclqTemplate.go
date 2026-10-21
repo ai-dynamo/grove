@@ -18,8 +18,11 @@ import (
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
 
+	"github.com/samber/lo"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
+	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/utils/ptr"
 )
 
 // PodCliqueTemplateSpecBuilder is a builder for creating PodCliqueTemplateSpec objects.
@@ -73,15 +76,50 @@ func (b *PodCliqueTemplateSpecBuilder) WithAnnotations(annotations map[string]st
 	return b
 }
 
-// WithStartsAfter sets the StartsAfter field for the PodCliqueTemplateSpec.
+// WithStartsAfter sets startsAfter for the PodCliqueTemplateSpec, with every dependency waiting on Ready.
 func (b *PodCliqueTemplateSpecBuilder) WithStartsAfter(startsAfter []string) *PodCliqueTemplateSpecBuilder {
-	b.pclqTemplateSpec.Spec.StartsAfter = startsAfter
+	if startsAfter == nil {
+		b.pclqTemplateSpec.Spec.StartsAfter = nil
+		return b
+	}
+	b.pclqTemplateSpec.Spec.StartsAfter = lo.Map(startsAfter, func(name string, _ int) grovecorev1beta1.StartupDependency {
+		return grovecorev1beta1.StartupDependency{Name: name, ConditionType: string(corev1.PodReady)}
+	})
 	return b
 }
 
-// WithMinAvailable sets the MinAvailable field for the PodCliqueTemplateSpec.
+// WithStartupDependencies sets startsAfter for the PodCliqueTemplateSpec.
+func (b *PodCliqueTemplateSpecBuilder) WithStartupDependencies(dependencies ...grovecorev1beta1.StartupDependency) *PodCliqueTemplateSpecBuilder {
+	b.pclqTemplateSpec.Spec.StartsAfter = dependencies
+	return b
+}
+
+// WithMinAvailable sets init.minReplicas and availability.minReplicas to minAvailable, the v1beta1 form of a
+// v1alpha1 minAvailable.
 func (b *PodCliqueTemplateSpecBuilder) WithMinAvailable(minAvailable int32) *PodCliqueTemplateSpecBuilder {
-	b.pclqTemplateSpec.Spec.MinAvailable = &minAvailable
+	b.pclqTemplateSpec.Spec.Init = NewInitSpec(minAvailable)
+	b.pclqTemplateSpec.Spec.Termination = NewAvailabilityTermination(minAvailable)
+	return b
+}
+
+// WithInitMinReplicas sets init.minReplicas for the PodCliqueTemplateSpec.
+func (b *PodCliqueTemplateSpecBuilder) WithInitMinReplicas(minReplicas int32) *PodCliqueTemplateSpecBuilder {
+	b.pclqTemplateSpec.Spec.Init = NewInitSpec(minReplicas)
+	return b
+}
+
+// WithAvailabilityMinReplicas sets availability.minReplicas for the PodCliqueTemplateSpec.
+func (b *PodCliqueTemplateSpecBuilder) WithAvailabilityMinReplicas(minReplicas int32) *PodCliqueTemplateSpecBuilder {
+	b.pclqTemplateSpec.Spec.Termination = NewAvailabilityTermination(minReplicas)
+	return b
+}
+
+// WithUpdateMinReplicas sets rollingUpdate.minReplicas for the PodCliqueTemplateSpec.
+func (b *PodCliqueTemplateSpecBuilder) WithUpdateMinReplicas(minReplicas int32) *PodCliqueTemplateSpecBuilder {
+	if b.pclqTemplateSpec.RollingUpdate == nil {
+		b.pclqTemplateSpec.RollingUpdate = &grovecorev1beta1.RollingUpdateConfiguration{}
+	}
+	b.pclqTemplateSpec.RollingUpdate.MinReplicas = &minReplicas
 	return b
 }
 
@@ -90,7 +128,7 @@ func (b *PodCliqueTemplateSpecBuilder) WithMaxUnavailable(maxUnavailable int32) 
 	if b.pclqTemplateSpec.RollingUpdate == nil {
 		b.pclqTemplateSpec.RollingUpdate = &grovecorev1beta1.RollingUpdateConfiguration{}
 	}
-	b.pclqTemplateSpec.RollingUpdate.MaxUnavailable = &maxUnavailable
+	b.pclqTemplateSpec.RollingUpdate.MaxUnavailable = ptr.To(intstr.FromInt32(maxUnavailable))
 	return b
 }
 

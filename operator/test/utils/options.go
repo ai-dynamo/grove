@@ -39,10 +39,10 @@ func WithPCSGMinAvailableBreached() PCSGOption {
 				Reason: constants.ConditionReasonInsufficientAvailablePCSGReplicas,
 			},
 		}
-		// Set AvailableReplicas to be less than MinAvailable to simulate breach
+		// Set AvailableReplicas to be less than the availability minimum to simulate breach
 		minAvailable := pcsg.Spec.Replicas
-		if pcsg.Spec.MinAvailable != nil {
-			minAvailable = *pcsg.Spec.MinAvailable
+		if t := pcsg.Spec.Termination; t != nil && t.Resource != nil && t.Resource.Availability != nil && t.Resource.Availability.MinReplicas != nil {
+			minAvailable = *t.Resource.Availability.MinReplicas
 		}
 		if minAvailable > 0 {
 			pcsg.Status.AvailableReplicas = minAvailable - 1
@@ -64,6 +64,20 @@ func WithPCSGUnknownCondition() PCSGOption {
 		}
 		// For unknown condition, set AvailableReplicas to 0 to simulate unavailable state
 		pcsg.Status.AvailableReplicas = 0
+	}
+}
+
+// WithPCSGPreviouslyAvailable sets MinAvailableBreached=False, which marks the PCSG as having been available
+// before, so breach evaluation applies instead of the awaiting-initial-availability state.
+func WithPCSGPreviouslyAvailable() PCSGOption {
+	return func(pcsg *grovecorev1beta1.PodCliqueScalingGroup) {
+		pcsg.Status.Conditions = []metav1.Condition{
+			{
+				Type:   constants.ConditionTypeMinAvailableBreached,
+				Status: metav1.ConditionFalse,
+				Reason: constants.ConditionReasonSufficientAvailablePCSGReplicas,
+			},
+		}
 	}
 }
 

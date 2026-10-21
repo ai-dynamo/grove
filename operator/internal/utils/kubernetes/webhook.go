@@ -15,6 +15,7 @@
 package kubernetes
 
 import (
+	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -34,4 +35,11 @@ func CreateObjectKeyForCreateWebhooks(obj client.Object, req admission.Request) 
 		name = obj.GetGenerateName()
 	}
 	return client.ObjectKey{Namespace: namespace, Name: name}
+}
+
+// IsV1Alpha1Request reports whether the admission request was sent as grove.io/v1alpha1. Webhooks match
+// v1beta1 with matchPolicy Equivalent, so the object arrives converted to v1beta1 and only RequestKind
+// records the version the client used.
+func IsV1Alpha1Request(req admission.Request) bool {
+	return req.RequestKind != nil && req.RequestKind.Group == grovecorev1alpha1.SchemeGroupVersion.Group && req.RequestKind.Version == grovecorev1alpha1.SchemeGroupVersion.Version
 }

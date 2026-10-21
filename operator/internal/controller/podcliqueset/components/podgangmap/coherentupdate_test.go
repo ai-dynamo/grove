@@ -31,6 +31,7 @@ import (
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	clocktesting "k8s.io/utils/clock/testing"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -867,7 +868,7 @@ func pcsgMemberPCLQ(name string, replicaIndex, scheduled, ready int32, terminati
 			},
 			OwnerReferences: []metav1.OwnerReference{{APIVersion: "grove.io/v1alpha1", Kind: constants.KindPodCliqueScalingGroup, Name: coherentTestPCSGObjName, Controller: ptr.To(true)}},
 		},
-		Spec:   grovecorev1beta1.PodCliqueSpec{MinAvailable: ptr.To(int32(1))},
+		Spec:   grovecorev1beta1.PodCliqueSpec{Init: &grovecorev1beta1.InitSpec{MinReplicas: ptr.To(int32(1))}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To(int32(1))}}}},
 		Status: grovecorev1beta1.PodCliqueStatus{ScheduledReplicas: scheduled, ReadyReplicas: ready},
 	}
 	if terminating {
@@ -942,10 +943,10 @@ func newCoherentTestSnapshot(pcsNameReplica apicommon.ResourceNameReplica, liveR
 				Cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
 					{
 						Name:          "frontend",
-						RollingUpdate: &grovecorev1beta1.RollingUpdateConfiguration{MaxUnavailable: maxUnavailable},
+						RollingUpdate: &grovecorev1beta1.RollingUpdateConfiguration{MaxUnavailable: intOrStringOf(maxUnavailable)},
 						Spec: grovecorev1beta1.PodCliqueSpec{
-							Replicas:     liveReplicas,
-							MinAvailable: ptr.To(minAvailable),
+							Replicas: liveReplicas,
+							Init:     &grovecorev1beta1.InitSpec{MinReplicas: ptr.To(minAvailable)}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To(minAvailable)}}},
 						},
 					},
 				},
@@ -1008,10 +1009,10 @@ func newCoherentPCSGTest(replicas, minAvailable int32, maxUnavailable *int32, co
 			Replicas: 1,
 			Template: grovecorev1beta1.PodCliqueSetTemplateSpec{
 				Cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
-					{Name: "m", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To(int32(1))}},
+					{Name: "m", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 1, Init: &grovecorev1beta1.InitSpec{MinReplicas: ptr.To(int32(1))}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To(int32(1))}}}}},
 				},
 				PodCliqueScalingGroupConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
-					{Name: "sga", CliqueNames: []string{"m"}, Replicas: ptr.To(replicas), MinAvailable: ptr.To(minAvailable), RollingUpdate: &grovecorev1beta1.RollingUpdateConfiguration{MaxUnavailable: maxUnavailable}},
+					{Name: "sga", CliqueNames: []string{"m"}, Replicas: ptr.To(replicas), Init: &grovecorev1beta1.InitSpec{MinReplicas: ptr.To(minAvailable)}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To(minAvailable)}}}, RollingUpdate: &grovecorev1beta1.RollingUpdateConfiguration{MaxUnavailable: intOrStringOf(maxUnavailable)}},
 				},
 			},
 		},
@@ -1062,4 +1063,11 @@ func TestBuildCoherentUpdateEntriesClaimsAbsentPCSGReplicaIntoWholeAnchor(t *tes
 	require.Len(t, entries, 1)
 	assert.Equal(t, grovecorev1beta1.PodGangEntryRoleAnchor, entries[0].Role)
 	assert.ElementsMatch(t, []int32{0, 1}, entries[0].PCSGReplicaIndices["sga"])
+}
+
+func intOrStringOf(value *int32) *intstr.IntOrString {
+	if value == nil {
+		return nil
+	}
+	return ptr.To(intstr.FromInt32(*value))
 }

@@ -400,7 +400,7 @@ func TestOrderPCSGReplicaIndicesForDisruption(t *testing.T) {
 // scheduled and ready status counts that ComputePCSGReplicaState reads.
 func pclqWithMinAvailableAndStatus(minAvailable, scheduled, ready int32) grovecorev1beta1.PodClique {
 	return grovecorev1beta1.PodClique{
-		Spec:   grovecorev1beta1.PodCliqueSpec{MinAvailable: ptr.To(minAvailable)},
+		Spec:   grovecorev1beta1.PodCliqueSpec{Init: &grovecorev1beta1.InitSpec{MinReplicas: ptr.To(minAvailable)}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To(minAvailable)}}}},
 		Status: grovecorev1beta1.PodCliqueStatus{ScheduledReplicas: scheduled, ReadyReplicas: ready},
 	}
 }

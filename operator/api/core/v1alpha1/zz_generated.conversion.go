@@ -29,6 +29,7 @@ import (
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	conversion "k8s.io/apimachinery/pkg/conversion"
 	runtime "k8s.io/apimachinery/pkg/runtime"
+	intstr "k8s.io/apimachinery/pkg/util/intstr"
 )
 
 func init() {
@@ -158,16 +159,6 @@ func RegisterConversions(s *runtime.Scheme) error {
 	}); err != nil {
 		return err
 	}
-	if err := s.AddGeneratedConversionFunc((*PodClique)(nil), (*v1beta1.PodClique)(nil), func(a, b interface{}, scope conversion.Scope) error {
-		return Convert_v1alpha1_PodClique_To_v1beta1_PodClique(a.(*PodClique), b.(*v1beta1.PodClique), scope)
-	}); err != nil {
-		return err
-	}
-	if err := s.AddGeneratedConversionFunc((*v1beta1.PodClique)(nil), (*PodClique)(nil), func(a, b interface{}, scope conversion.Scope) error {
-		return Convert_v1beta1_PodClique_To_v1alpha1_PodClique(a.(*v1beta1.PodClique), b.(*PodClique), scope)
-	}); err != nil {
-		return err
-	}
 	if err := s.AddGeneratedConversionFunc((*PodCliqueList)(nil), (*v1beta1.PodCliqueList)(nil), func(a, b interface{}, scope conversion.Scope) error {
 		return Convert_v1alpha1_PodCliqueList_To_v1beta1_PodCliqueList(a.(*PodCliqueList), b.(*v1beta1.PodCliqueList), scope)
 	}); err != nil {
@@ -178,26 +169,6 @@ func RegisterConversions(s *runtime.Scheme) error {
 	}); err != nil {
 		return err
 	}
-	if err := s.AddGeneratedConversionFunc((*PodCliqueScalingGroup)(nil), (*v1beta1.PodCliqueScalingGroup)(nil), func(a, b interface{}, scope conversion.Scope) error {
-		return Convert_v1alpha1_PodCliqueScalingGroup_To_v1beta1_PodCliqueScalingGroup(a.(*PodCliqueScalingGroup), b.(*v1beta1.PodCliqueScalingGroup), scope)
-	}); err != nil {
-		return err
-	}
-	if err := s.AddGeneratedConversionFunc((*v1beta1.PodCliqueScalingGroup)(nil), (*PodCliqueScalingGroup)(nil), func(a, b interface{}, scope conversion.Scope) error {
-		return Convert_v1beta1_PodCliqueScalingGroup_To_v1alpha1_PodCliqueScalingGroup(a.(*v1beta1.PodCliqueScalingGroup), b.(*PodCliqueScalingGroup), scope)
-	}); err != nil {
-		return err
-	}
-	if err := s.AddGeneratedConversionFunc((*PodCliqueScalingGroupConfig)(nil), (*v1beta1.PodCliqueScalingGroupConfig)(nil), func(a, b interface{}, scope conversion.Scope) error {
-		return Convert_v1alpha1_PodCliqueScalingGroupConfig_To_v1beta1_PodCliqueScalingGroupConfig(a.(*PodCliqueScalingGroupConfig), b.(*v1beta1.PodCliqueScalingGroupConfig), scope)
-	}); err != nil {
-		return err
-	}
-	if err := s.AddGeneratedConversionFunc((*v1beta1.PodCliqueScalingGroupConfig)(nil), (*PodCliqueScalingGroupConfig)(nil), func(a, b interface{}, scope conversion.Scope) error {
-		return Convert_v1beta1_PodCliqueScalingGroupConfig_To_v1alpha1_PodCliqueScalingGroupConfig(a.(*v1beta1.PodCliqueScalingGroupConfig), b.(*PodCliqueScalingGroupConfig), scope)
-	}); err != nil {
-		return err
-	}
 	if err := s.AddGeneratedConversionFunc((*PodCliqueScalingGroupList)(nil), (*v1beta1.PodCliqueScalingGroupList)(nil), func(a, b interface{}, scope conversion.Scope) error {
 		return Convert_v1alpha1_PodCliqueScalingGroupList_To_v1beta1_PodCliqueScalingGroupList(a.(*PodCliqueScalingGroupList), b.(*v1beta1.PodCliqueScalingGroupList), scope)
 	}); err != nil {
@@ -205,16 +176,6 @@ func RegisterConversions(s *runtime.Scheme) error {
 	}
 	if err := s.AddGeneratedConversionFunc((*v1beta1.PodCliqueScalingGroupList)(nil), (*PodCliqueScalingGroupList)(nil), func(a, b interface{}, scope conversion.Scope) error {
 		return Convert_v1beta1_PodCliqueScalingGroupList_To_v1alpha1_PodCliqueScalingGroupList(a.(*v1beta1.PodCliqueScalingGroupList), b.(*PodCliqueScalingGroupList), scope)
-	}); err != nil {
-		return err
-	}
-	if err := s.AddGeneratedConversionFunc((*PodCliqueScalingGroupSpec)(nil), (*v1beta1.PodCliqueScalingGroupSpec)(nil), func(a, b interface{}, scope conversion.Scope) error {
-		return Convert_v1alpha1_PodCliqueScalingGroupSpec_To_v1beta1_PodCliqueScalingGroupSpec(a.(*PodCliqueScalingGroupSpec), b.(*v1beta1.PodCliqueScalingGroupSpec), scope)
-	}); err != nil {
-		return err
-	}
-	if err := s.AddGeneratedConversionFunc((*v1beta1.PodCliqueScalingGroupSpec)(nil), (*PodCliqueScalingGroupSpec)(nil), func(a, b interface{}, scope conversion.Scope) error {
-		return Convert_v1beta1_PodCliqueScalingGroupSpec_To_v1alpha1_PodCliqueScalingGroupSpec(a.(*v1beta1.PodCliqueScalingGroupSpec), b.(*PodCliqueScalingGroupSpec), scope)
 	}); err != nil {
 		return err
 	}
@@ -235,16 +196,6 @@ func RegisterConversions(s *runtime.Scheme) error {
 	}
 	if err := s.AddGeneratedConversionFunc((*v1beta1.PodCliqueScalingGroupUpdateProgress)(nil), (*PodCliqueScalingGroupUpdateProgress)(nil), func(a, b interface{}, scope conversion.Scope) error {
 		return Convert_v1beta1_PodCliqueScalingGroupUpdateProgress_To_v1alpha1_PodCliqueScalingGroupUpdateProgress(a.(*v1beta1.PodCliqueScalingGroupUpdateProgress), b.(*PodCliqueScalingGroupUpdateProgress), scope)
-	}); err != nil {
-		return err
-	}
-	if err := s.AddGeneratedConversionFunc((*PodCliqueSet)(nil), (*v1beta1.PodCliqueSet)(nil), func(a, b interface{}, scope conversion.Scope) error {
-		return Convert_v1alpha1_PodCliqueSet_To_v1beta1_PodCliqueSet(a.(*PodCliqueSet), b.(*v1beta1.PodCliqueSet), scope)
-	}); err != nil {
-		return err
-	}
-	if err := s.AddGeneratedConversionFunc((*v1beta1.PodCliqueSet)(nil), (*PodCliqueSet)(nil), func(a, b interface{}, scope conversion.Scope) error {
-		return Convert_v1beta1_PodCliqueSet_To_v1alpha1_PodCliqueSet(a.(*v1beta1.PodCliqueSet), b.(*PodCliqueSet), scope)
 	}); err != nil {
 		return err
 	}
@@ -288,11 +239,6 @@ func RegisterConversions(s *runtime.Scheme) error {
 	}); err != nil {
 		return err
 	}
-	if err := s.AddGeneratedConversionFunc((*PodCliqueSetTemplateSpec)(nil), (*v1beta1.PodCliqueSetTemplateSpec)(nil), func(a, b interface{}, scope conversion.Scope) error {
-		return Convert_v1alpha1_PodCliqueSetTemplateSpec_To_v1beta1_PodCliqueSetTemplateSpec(a.(*PodCliqueSetTemplateSpec), b.(*v1beta1.PodCliqueSetTemplateSpec), scope)
-	}); err != nil {
-		return err
-	}
 	if err := s.AddGeneratedConversionFunc((*v1beta1.PodCliqueSetTemplateSpec)(nil), (*PodCliqueSetTemplateSpec)(nil), func(a, b interface{}, scope conversion.Scope) error {
 		return Convert_v1beta1_PodCliqueSetTemplateSpec_To_v1alpha1_PodCliqueSetTemplateSpec(a.(*v1beta1.PodCliqueSetTemplateSpec), b.(*PodCliqueSetTemplateSpec), scope)
 	}); err != nil {
@@ -315,16 +261,6 @@ func RegisterConversions(s *runtime.Scheme) error {
 	}
 	if err := s.AddGeneratedConversionFunc((*v1beta1.PodCliqueSetUpdateStrategy)(nil), (*PodCliqueSetUpdateStrategy)(nil), func(a, b interface{}, scope conversion.Scope) error {
 		return Convert_v1beta1_PodCliqueSetUpdateStrategy_To_v1alpha1_PodCliqueSetUpdateStrategy(a.(*v1beta1.PodCliqueSetUpdateStrategy), b.(*PodCliqueSetUpdateStrategy), scope)
-	}); err != nil {
-		return err
-	}
-	if err := s.AddGeneratedConversionFunc((*PodCliqueSpec)(nil), (*v1beta1.PodCliqueSpec)(nil), func(a, b interface{}, scope conversion.Scope) error {
-		return Convert_v1alpha1_PodCliqueSpec_To_v1beta1_PodCliqueSpec(a.(*PodCliqueSpec), b.(*v1beta1.PodCliqueSpec), scope)
-	}); err != nil {
-		return err
-	}
-	if err := s.AddGeneratedConversionFunc((*v1beta1.PodCliqueSpec)(nil), (*PodCliqueSpec)(nil), func(a, b interface{}, scope conversion.Scope) error {
-		return Convert_v1beta1_PodCliqueSpec_To_v1alpha1_PodCliqueSpec(a.(*v1beta1.PodCliqueSpec), b.(*PodCliqueSpec), scope)
 	}); err != nil {
 		return err
 	}
@@ -418,16 +354,6 @@ func RegisterConversions(s *runtime.Scheme) error {
 	}); err != nil {
 		return err
 	}
-	if err := s.AddGeneratedConversionFunc((*RollingUpdateConfiguration)(nil), (*v1beta1.RollingUpdateConfiguration)(nil), func(a, b interface{}, scope conversion.Scope) error {
-		return Convert_v1alpha1_RollingUpdateConfiguration_To_v1beta1_RollingUpdateConfiguration(a.(*RollingUpdateConfiguration), b.(*v1beta1.RollingUpdateConfiguration), scope)
-	}); err != nil {
-		return err
-	}
-	if err := s.AddGeneratedConversionFunc((*v1beta1.RollingUpdateConfiguration)(nil), (*RollingUpdateConfiguration)(nil), func(a, b interface{}, scope conversion.Scope) error {
-		return Convert_v1beta1_RollingUpdateConfiguration_To_v1alpha1_RollingUpdateConfiguration(a.(*v1beta1.RollingUpdateConfiguration), b.(*RollingUpdateConfiguration), scope)
-	}); err != nil {
-		return err
-	}
 	if err := s.AddGeneratedConversionFunc((*SchedulerTopologyBinding)(nil), (*v1beta1.SchedulerTopologyBinding)(nil), func(a, b interface{}, scope conversion.Scope) error {
 		return Convert_v1alpha1_SchedulerTopologyBinding_To_v1beta1_SchedulerTopologyBinding(a.(*SchedulerTopologyBinding), b.(*v1beta1.SchedulerTopologyBinding), scope)
 	}); err != nil {
@@ -445,11 +371,6 @@ func RegisterConversions(s *runtime.Scheme) error {
 	}
 	if err := s.AddGeneratedConversionFunc((*v1beta1.SchedulerTopologyStatus)(nil), (*SchedulerTopologyStatus)(nil), func(a, b interface{}, scope conversion.Scope) error {
 		return Convert_v1beta1_SchedulerTopologyStatus_To_v1alpha1_SchedulerTopologyStatus(a.(*v1beta1.SchedulerTopologyStatus), b.(*SchedulerTopologyStatus), scope)
-	}); err != nil {
-		return err
-	}
-	if err := s.AddGeneratedConversionFunc((*TopologyConstraint)(nil), (*v1beta1.TopologyConstraint)(nil), func(a, b interface{}, scope conversion.Scope) error {
-		return Convert_v1alpha1_TopologyConstraint_To_v1beta1_TopologyConstraint(a.(*TopologyConstraint), b.(*v1beta1.TopologyConstraint), scope)
 	}); err != nil {
 		return err
 	}
@@ -475,6 +396,106 @@ func RegisterConversions(s *runtime.Scheme) error {
 	}
 	if err := s.AddGeneratedConversionFunc((*v1beta1.TopologyPackConstraint)(nil), (*TopologyPackConstraint)(nil), func(a, b interface{}, scope conversion.Scope) error {
 		return Convert_v1beta1_TopologyPackConstraint_To_v1alpha1_TopologyPackConstraint(a.(*v1beta1.TopologyPackConstraint), b.(*TopologyPackConstraint), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddConversionFunc((**PodCliqueTemplateSpec)(nil), (**v1beta1.PodCliqueTemplateSpec)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_Pointer_v1alpha1_PodCliqueTemplateSpec_To_Pointer_v1beta1_PodCliqueTemplateSpec(a.(**PodCliqueTemplateSpec), b.(**v1beta1.PodCliqueTemplateSpec), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddConversionFunc((**v1beta1.PodCliqueTemplateSpec)(nil), (**PodCliqueTemplateSpec)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_Pointer_v1beta1_PodCliqueTemplateSpec_To_Pointer_v1alpha1_PodCliqueTemplateSpec(a.(**v1beta1.PodCliqueTemplateSpec), b.(**PodCliqueTemplateSpec), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddConversionFunc((*intstr.IntOrString)(nil), (*int32)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_intstr_IntOrString_To_int32(a.(*intstr.IntOrString), b.(*int32), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddConversionFunc((*PodCliqueScalingGroupConfig)(nil), (*v1beta1.PodCliqueScalingGroupConfig)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_v1alpha1_PodCliqueScalingGroupConfig_To_v1beta1_PodCliqueScalingGroupConfig(a.(*PodCliqueScalingGroupConfig), b.(*v1beta1.PodCliqueScalingGroupConfig), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddConversionFunc((*PodCliqueScalingGroupSpec)(nil), (*v1beta1.PodCliqueScalingGroupSpec)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_v1alpha1_PodCliqueScalingGroupSpec_To_v1beta1_PodCliqueScalingGroupSpec(a.(*PodCliqueScalingGroupSpec), b.(*v1beta1.PodCliqueScalingGroupSpec), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddConversionFunc((*PodCliqueScalingGroup)(nil), (*v1beta1.PodCliqueScalingGroup)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_v1alpha1_PodCliqueScalingGroup_To_v1beta1_PodCliqueScalingGroup(a.(*PodCliqueScalingGroup), b.(*v1beta1.PodCliqueScalingGroup), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddConversionFunc((*PodCliqueSetTemplateSpec)(nil), (*v1beta1.PodCliqueSetTemplateSpec)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_v1alpha1_PodCliqueSetTemplateSpec_To_v1beta1_PodCliqueSetTemplateSpec(a.(*PodCliqueSetTemplateSpec), b.(*v1beta1.PodCliqueSetTemplateSpec), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddConversionFunc((*PodCliqueSet)(nil), (*v1beta1.PodCliqueSet)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_v1alpha1_PodCliqueSet_To_v1beta1_PodCliqueSet(a.(*PodCliqueSet), b.(*v1beta1.PodCliqueSet), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddConversionFunc((*PodCliqueSpec)(nil), (*v1beta1.PodCliqueSpec)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_v1alpha1_PodCliqueSpec_To_v1beta1_PodCliqueSpec(a.(*PodCliqueSpec), b.(*v1beta1.PodCliqueSpec), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddConversionFunc((*PodClique)(nil), (*v1beta1.PodClique)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_v1alpha1_PodClique_To_v1beta1_PodClique(a.(*PodClique), b.(*v1beta1.PodClique), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddConversionFunc((*RollingUpdateConfiguration)(nil), (*v1beta1.RollingUpdateConfiguration)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_v1alpha1_RollingUpdateConfiguration_To_v1beta1_RollingUpdateConfiguration(a.(*RollingUpdateConfiguration), b.(*v1beta1.RollingUpdateConfiguration), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddConversionFunc((*TopologyConstraint)(nil), (*v1beta1.TopologyConstraint)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_v1alpha1_TopologyConstraint_To_v1beta1_TopologyConstraint(a.(*TopologyConstraint), b.(*v1beta1.TopologyConstraint), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddConversionFunc((*v1beta1.PodCliqueScalingGroupConfig)(nil), (*PodCliqueScalingGroupConfig)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_v1beta1_PodCliqueScalingGroupConfig_To_v1alpha1_PodCliqueScalingGroupConfig(a.(*v1beta1.PodCliqueScalingGroupConfig), b.(*PodCliqueScalingGroupConfig), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddConversionFunc((*v1beta1.PodCliqueScalingGroupSpec)(nil), (*PodCliqueScalingGroupSpec)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_v1beta1_PodCliqueScalingGroupSpec_To_v1alpha1_PodCliqueScalingGroupSpec(a.(*v1beta1.PodCliqueScalingGroupSpec), b.(*PodCliqueScalingGroupSpec), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddConversionFunc((*v1beta1.PodCliqueScalingGroup)(nil), (*PodCliqueScalingGroup)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_v1beta1_PodCliqueScalingGroup_To_v1alpha1_PodCliqueScalingGroup(a.(*v1beta1.PodCliqueScalingGroup), b.(*PodCliqueScalingGroup), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddConversionFunc((*v1beta1.PodCliqueSet)(nil), (*PodCliqueSet)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_v1beta1_PodCliqueSet_To_v1alpha1_PodCliqueSet(a.(*v1beta1.PodCliqueSet), b.(*PodCliqueSet), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddConversionFunc((*v1beta1.PodCliqueSpec)(nil), (*PodCliqueSpec)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_v1beta1_PodCliqueSpec_To_v1alpha1_PodCliqueSpec(a.(*v1beta1.PodCliqueSpec), b.(*PodCliqueSpec), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddConversionFunc((*v1beta1.PodClique)(nil), (*PodClique)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_v1beta1_PodClique_To_v1alpha1_PodClique(a.(*v1beta1.PodClique), b.(*PodClique), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddConversionFunc((*v1beta1.RollingUpdateConfiguration)(nil), (*RollingUpdateConfiguration)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_v1beta1_RollingUpdateConfiguration_To_v1alpha1_RollingUpdateConfiguration(a.(*v1beta1.RollingUpdateConfiguration), b.(*RollingUpdateConfiguration), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddConversionFunc((*v1beta1.StartupDependency)(nil), (*string)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_v1beta1_StartupDependency_To_string(a.(*v1beta1.StartupDependency), b.(*string), scope)
 	}); err != nil {
 		return err
 	}
@@ -780,11 +801,6 @@ func autoConvert_v1alpha1_PodClique_To_v1beta1_PodClique(in *PodClique, out *v1b
 	return nil
 }
 
-// Convert_v1alpha1_PodClique_To_v1beta1_PodClique is an autogenerated conversion function.
-func Convert_v1alpha1_PodClique_To_v1beta1_PodClique(in *PodClique, out *v1beta1.PodClique, s conversion.Scope) error {
-	return autoConvert_v1alpha1_PodClique_To_v1beta1_PodClique(in, out, s)
-}
-
 func autoConvert_v1beta1_PodClique_To_v1alpha1_PodClique(in *v1beta1.PodClique, out *PodClique, s conversion.Scope) error {
 	out.ObjectMeta = in.ObjectMeta
 	if err := Convert_v1beta1_PodCliqueSpec_To_v1alpha1_PodCliqueSpec(&in.Spec, &out.Spec, s); err != nil {
@@ -796,14 +812,19 @@ func autoConvert_v1beta1_PodClique_To_v1alpha1_PodClique(in *v1beta1.PodClique, 
 	return nil
 }
 
-// Convert_v1beta1_PodClique_To_v1alpha1_PodClique is an autogenerated conversion function.
-func Convert_v1beta1_PodClique_To_v1alpha1_PodClique(in *v1beta1.PodClique, out *PodClique, s conversion.Scope) error {
-	return autoConvert_v1beta1_PodClique_To_v1alpha1_PodClique(in, out, s)
-}
-
 func autoConvert_v1alpha1_PodCliqueList_To_v1beta1_PodCliqueList(in *PodCliqueList, out *v1beta1.PodCliqueList, s conversion.Scope) error {
 	out.ListMeta = in.ListMeta
-	out.Items = *(*[]v1beta1.PodClique)(unsafe.Pointer(&in.Items))
+	if in.Items != nil {
+		in, out := &in.Items, &out.Items
+		*out = make([]v1beta1.PodClique, len(*in))
+		for i := range *in {
+			if err := Convert_v1alpha1_PodClique_To_v1beta1_PodClique(&(*in)[i], &(*out)[i], s); err != nil {
+				return err
+			}
+		}
+	} else {
+		out.Items = nil
+	}
 	return nil
 }
 
@@ -814,7 +835,17 @@ func Convert_v1alpha1_PodCliqueList_To_v1beta1_PodCliqueList(in *PodCliqueList, 
 
 func autoConvert_v1beta1_PodCliqueList_To_v1alpha1_PodCliqueList(in *v1beta1.PodCliqueList, out *PodCliqueList, s conversion.Scope) error {
 	out.ListMeta = in.ListMeta
-	out.Items = *(*[]PodClique)(unsafe.Pointer(&in.Items))
+	if in.Items != nil {
+		in, out := &in.Items, &out.Items
+		*out = make([]PodClique, len(*in))
+		for i := range *in {
+			if err := Convert_v1beta1_PodClique_To_v1alpha1_PodClique(&(*in)[i], &(*out)[i], s); err != nil {
+				return err
+			}
+		}
+	} else {
+		out.Items = nil
+	}
 	return nil
 }
 
@@ -834,11 +865,6 @@ func autoConvert_v1alpha1_PodCliqueScalingGroup_To_v1beta1_PodCliqueScalingGroup
 	return nil
 }
 
-// Convert_v1alpha1_PodCliqueScalingGroup_To_v1beta1_PodCliqueScalingGroup is an autogenerated conversion function.
-func Convert_v1alpha1_PodCliqueScalingGroup_To_v1beta1_PodCliqueScalingGroup(in *PodCliqueScalingGroup, out *v1beta1.PodCliqueScalingGroup, s conversion.Scope) error {
-	return autoConvert_v1alpha1_PodCliqueScalingGroup_To_v1beta1_PodCliqueScalingGroup(in, out, s)
-}
-
 func autoConvert_v1beta1_PodCliqueScalingGroup_To_v1alpha1_PodCliqueScalingGroup(in *v1beta1.PodCliqueScalingGroup, out *PodCliqueScalingGroup, s conversion.Scope) error {
 	out.ObjectMeta = in.ObjectMeta
 	if err := Convert_v1beta1_PodCliqueScalingGroupSpec_To_v1alpha1_PodCliqueScalingGroupSpec(&in.Spec, &out.Spec, s); err != nil {
@@ -850,27 +876,33 @@ func autoConvert_v1beta1_PodCliqueScalingGroup_To_v1alpha1_PodCliqueScalingGroup
 	return nil
 }
 
-// Convert_v1beta1_PodCliqueScalingGroup_To_v1alpha1_PodCliqueScalingGroup is an autogenerated conversion function.
-func Convert_v1beta1_PodCliqueScalingGroup_To_v1alpha1_PodCliqueScalingGroup(in *v1beta1.PodCliqueScalingGroup, out *PodCliqueScalingGroup, s conversion.Scope) error {
-	return autoConvert_v1beta1_PodCliqueScalingGroup_To_v1alpha1_PodCliqueScalingGroup(in, out, s)
-}
-
 func autoConvert_v1alpha1_PodCliqueScalingGroupConfig_To_v1beta1_PodCliqueScalingGroupConfig(in *PodCliqueScalingGroupConfig, out *v1beta1.PodCliqueScalingGroupConfig, s conversion.Scope) error {
 	out.Name = in.Name
 	out.CliqueNames = *(*[]string)(unsafe.Pointer(&in.CliqueNames))
 	out.Annotations = *(*map[string]string)(unsafe.Pointer(&in.Annotations))
 	out.Replicas = (*int32)(unsafe.Pointer(in.Replicas))
-	out.MinAvailable = (*int32)(unsafe.Pointer(in.MinAvailable))
+	// WARNING: in.MinAvailable requires manual conversion: does not exist in peer-type
 	out.ScaleConfig = (*v1beta1.AutoScalingConfig)(unsafe.Pointer(in.ScaleConfig))
-	out.RollingUpdate = (*v1beta1.RollingUpdateConfiguration)(unsafe.Pointer(in.RollingUpdate))
+	if in.RollingUpdate != nil {
+		in, out := &in.RollingUpdate, &out.RollingUpdate
+		*out = new(v1beta1.RollingUpdateConfiguration)
+		if err := Convert_v1alpha1_RollingUpdateConfiguration_To_v1beta1_RollingUpdateConfiguration(*in, *out, s); err != nil {
+			return err
+		}
+	} else {
+		out.RollingUpdate = nil
+	}
 	out.ResourceSharing = *(*[]v1beta1.PCSGResourceSharingSpec)(unsafe.Pointer(&in.ResourceSharing))
-	out.TopologyConstraint = (*v1beta1.TopologyConstraint)(unsafe.Pointer(in.TopologyConstraint))
+	if in.TopologyConstraint != nil {
+		in, out := &in.TopologyConstraint, &out.TopologyConstraint
+		*out = new(v1beta1.TopologyConstraint)
+		if err := Convert_v1alpha1_TopologyConstraint_To_v1beta1_TopologyConstraint(*in, *out, s); err != nil {
+			return err
+		}
+	} else {
+		out.TopologyConstraint = nil
+	}
 	return nil
-}
-
-// Convert_v1alpha1_PodCliqueScalingGroupConfig_To_v1beta1_PodCliqueScalingGroupConfig is an autogenerated conversion function.
-func Convert_v1alpha1_PodCliqueScalingGroupConfig_To_v1beta1_PodCliqueScalingGroupConfig(in *PodCliqueScalingGroupConfig, out *v1beta1.PodCliqueScalingGroupConfig, s conversion.Scope) error {
-	return autoConvert_v1alpha1_PodCliqueScalingGroupConfig_To_v1beta1_PodCliqueScalingGroupConfig(in, out, s)
 }
 
 func autoConvert_v1beta1_PodCliqueScalingGroupConfig_To_v1alpha1_PodCliqueScalingGroupConfig(in *v1beta1.PodCliqueScalingGroupConfig, out *PodCliqueScalingGroupConfig, s conversion.Scope) error {
@@ -878,22 +910,44 @@ func autoConvert_v1beta1_PodCliqueScalingGroupConfig_To_v1alpha1_PodCliqueScalin
 	out.CliqueNames = *(*[]string)(unsafe.Pointer(&in.CliqueNames))
 	out.Annotations = *(*map[string]string)(unsafe.Pointer(&in.Annotations))
 	out.Replicas = (*int32)(unsafe.Pointer(in.Replicas))
-	out.MinAvailable = (*int32)(unsafe.Pointer(in.MinAvailable))
+	// WARNING: in.Init requires manual conversion: does not exist in peer-type
+	// WARNING: in.Termination requires manual conversion: does not exist in peer-type
 	out.ScaleConfig = (*AutoScalingConfig)(unsafe.Pointer(in.ScaleConfig))
-	out.RollingUpdate = (*RollingUpdateConfiguration)(unsafe.Pointer(in.RollingUpdate))
+	if in.RollingUpdate != nil {
+		in, out := &in.RollingUpdate, &out.RollingUpdate
+		*out = new(RollingUpdateConfiguration)
+		if err := Convert_v1beta1_RollingUpdateConfiguration_To_v1alpha1_RollingUpdateConfiguration(*in, *out, s); err != nil {
+			return err
+		}
+	} else {
+		out.RollingUpdate = nil
+	}
 	out.ResourceSharing = *(*[]PCSGResourceSharingSpec)(unsafe.Pointer(&in.ResourceSharing))
-	out.TopologyConstraint = (*TopologyConstraint)(unsafe.Pointer(in.TopologyConstraint))
+	if in.TopologyConstraint != nil {
+		in, out := &in.TopologyConstraint, &out.TopologyConstraint
+		*out = new(TopologyConstraint)
+		if err := Convert_v1beta1_TopologyConstraint_To_v1alpha1_TopologyConstraint(*in, *out, s); err != nil {
+			return err
+		}
+	} else {
+		out.TopologyConstraint = nil
+	}
 	return nil
-}
-
-// Convert_v1beta1_PodCliqueScalingGroupConfig_To_v1alpha1_PodCliqueScalingGroupConfig is an autogenerated conversion function.
-func Convert_v1beta1_PodCliqueScalingGroupConfig_To_v1alpha1_PodCliqueScalingGroupConfig(in *v1beta1.PodCliqueScalingGroupConfig, out *PodCliqueScalingGroupConfig, s conversion.Scope) error {
-	return autoConvert_v1beta1_PodCliqueScalingGroupConfig_To_v1alpha1_PodCliqueScalingGroupConfig(in, out, s)
 }
 
 func autoConvert_v1alpha1_PodCliqueScalingGroupList_To_v1beta1_PodCliqueScalingGroupList(in *PodCliqueScalingGroupList, out *v1beta1.PodCliqueScalingGroupList, s conversion.Scope) error {
 	out.ListMeta = in.ListMeta
-	out.Items = *(*[]v1beta1.PodCliqueScalingGroup)(unsafe.Pointer(&in.Items))
+	if in.Items != nil {
+		in, out := &in.Items, &out.Items
+		*out = make([]v1beta1.PodCliqueScalingGroup, len(*in))
+		for i := range *in {
+			if err := Convert_v1alpha1_PodCliqueScalingGroup_To_v1beta1_PodCliqueScalingGroup(&(*in)[i], &(*out)[i], s); err != nil {
+				return err
+			}
+		}
+	} else {
+		out.Items = nil
+	}
 	return nil
 }
 
@@ -904,7 +958,17 @@ func Convert_v1alpha1_PodCliqueScalingGroupList_To_v1beta1_PodCliqueScalingGroup
 
 func autoConvert_v1beta1_PodCliqueScalingGroupList_To_v1alpha1_PodCliqueScalingGroupList(in *v1beta1.PodCliqueScalingGroupList, out *PodCliqueScalingGroupList, s conversion.Scope) error {
 	out.ListMeta = in.ListMeta
-	out.Items = *(*[]PodCliqueScalingGroup)(unsafe.Pointer(&in.Items))
+	if in.Items != nil {
+		in, out := &in.Items, &out.Items
+		*out = make([]PodCliqueScalingGroup, len(*in))
+		for i := range *in {
+			if err := Convert_v1beta1_PodCliqueScalingGroup_To_v1alpha1_PodCliqueScalingGroup(&(*in)[i], &(*out)[i], s); err != nil {
+				return err
+			}
+		}
+	} else {
+		out.Items = nil
+	}
 	return nil
 }
 
@@ -915,26 +979,17 @@ func Convert_v1beta1_PodCliqueScalingGroupList_To_v1alpha1_PodCliqueScalingGroup
 
 func autoConvert_v1alpha1_PodCliqueScalingGroupSpec_To_v1beta1_PodCliqueScalingGroupSpec(in *PodCliqueScalingGroupSpec, out *v1beta1.PodCliqueScalingGroupSpec, s conversion.Scope) error {
 	out.Replicas = in.Replicas
-	out.MinAvailable = (*int32)(unsafe.Pointer(in.MinAvailable))
+	// WARNING: in.MinAvailable requires manual conversion: does not exist in peer-type
 	out.CliqueNames = *(*[]string)(unsafe.Pointer(&in.CliqueNames))
 	return nil
-}
-
-// Convert_v1alpha1_PodCliqueScalingGroupSpec_To_v1beta1_PodCliqueScalingGroupSpec is an autogenerated conversion function.
-func Convert_v1alpha1_PodCliqueScalingGroupSpec_To_v1beta1_PodCliqueScalingGroupSpec(in *PodCliqueScalingGroupSpec, out *v1beta1.PodCliqueScalingGroupSpec, s conversion.Scope) error {
-	return autoConvert_v1alpha1_PodCliqueScalingGroupSpec_To_v1beta1_PodCliqueScalingGroupSpec(in, out, s)
 }
 
 func autoConvert_v1beta1_PodCliqueScalingGroupSpec_To_v1alpha1_PodCliqueScalingGroupSpec(in *v1beta1.PodCliqueScalingGroupSpec, out *PodCliqueScalingGroupSpec, s conversion.Scope) error {
 	out.Replicas = in.Replicas
-	out.MinAvailable = (*int32)(unsafe.Pointer(in.MinAvailable))
+	// WARNING: in.Init requires manual conversion: does not exist in peer-type
+	// WARNING: in.Termination requires manual conversion: does not exist in peer-type
 	out.CliqueNames = *(*[]string)(unsafe.Pointer(&in.CliqueNames))
 	return nil
-}
-
-// Convert_v1beta1_PodCliqueScalingGroupSpec_To_v1alpha1_PodCliqueScalingGroupSpec is an autogenerated conversion function.
-func Convert_v1beta1_PodCliqueScalingGroupSpec_To_v1alpha1_PodCliqueScalingGroupSpec(in *v1beta1.PodCliqueScalingGroupSpec, out *PodCliqueScalingGroupSpec, s conversion.Scope) error {
-	return autoConvert_v1beta1_PodCliqueScalingGroupSpec_To_v1alpha1_PodCliqueScalingGroupSpec(in, out, s)
 }
 
 func autoConvert_v1alpha1_PodCliqueScalingGroupStatus_To_v1beta1_PodCliqueScalingGroupStatus(in *PodCliqueScalingGroupStatus, out *v1beta1.PodCliqueScalingGroupStatus, s conversion.Scope) error {
@@ -1016,11 +1071,6 @@ func autoConvert_v1alpha1_PodCliqueSet_To_v1beta1_PodCliqueSet(in *PodCliqueSet,
 	return nil
 }
 
-// Convert_v1alpha1_PodCliqueSet_To_v1beta1_PodCliqueSet is an autogenerated conversion function.
-func Convert_v1alpha1_PodCliqueSet_To_v1beta1_PodCliqueSet(in *PodCliqueSet, out *v1beta1.PodCliqueSet, s conversion.Scope) error {
-	return autoConvert_v1alpha1_PodCliqueSet_To_v1beta1_PodCliqueSet(in, out, s)
-}
-
 func autoConvert_v1beta1_PodCliqueSet_To_v1alpha1_PodCliqueSet(in *v1beta1.PodCliqueSet, out *PodCliqueSet, s conversion.Scope) error {
 	out.ObjectMeta = in.ObjectMeta
 	if err := Convert_v1beta1_PodCliqueSetSpec_To_v1alpha1_PodCliqueSetSpec(&in.Spec, &out.Spec, s); err != nil {
@@ -1032,14 +1082,19 @@ func autoConvert_v1beta1_PodCliqueSet_To_v1alpha1_PodCliqueSet(in *v1beta1.PodCl
 	return nil
 }
 
-// Convert_v1beta1_PodCliqueSet_To_v1alpha1_PodCliqueSet is an autogenerated conversion function.
-func Convert_v1beta1_PodCliqueSet_To_v1alpha1_PodCliqueSet(in *v1beta1.PodCliqueSet, out *PodCliqueSet, s conversion.Scope) error {
-	return autoConvert_v1beta1_PodCliqueSet_To_v1alpha1_PodCliqueSet(in, out, s)
-}
-
 func autoConvert_v1alpha1_PodCliqueSetList_To_v1beta1_PodCliqueSetList(in *PodCliqueSetList, out *v1beta1.PodCliqueSetList, s conversion.Scope) error {
 	out.ListMeta = in.ListMeta
-	out.Items = *(*[]v1beta1.PodCliqueSet)(unsafe.Pointer(&in.Items))
+	if in.Items != nil {
+		in, out := &in.Items, &out.Items
+		*out = make([]v1beta1.PodCliqueSet, len(*in))
+		for i := range *in {
+			if err := Convert_v1alpha1_PodCliqueSet_To_v1beta1_PodCliqueSet(&(*in)[i], &(*out)[i], s); err != nil {
+				return err
+			}
+		}
+	} else {
+		out.Items = nil
+	}
 	return nil
 }
 
@@ -1050,7 +1105,17 @@ func Convert_v1alpha1_PodCliqueSetList_To_v1beta1_PodCliqueSetList(in *PodClique
 
 func autoConvert_v1beta1_PodCliqueSetList_To_v1alpha1_PodCliqueSetList(in *v1beta1.PodCliqueSetList, out *PodCliqueSetList, s conversion.Scope) error {
 	out.ListMeta = in.ListMeta
-	out.Items = *(*[]PodCliqueSet)(unsafe.Pointer(&in.Items))
+	if in.Items != nil {
+		in, out := &in.Items, &out.Items
+		*out = make([]PodCliqueSet, len(*in))
+		for i := range *in {
+			if err := Convert_v1beta1_PodCliqueSet_To_v1alpha1_PodCliqueSet(&(*in)[i], &(*out)[i], s); err != nil {
+				return err
+			}
+		}
+	} else {
+		out.Items = nil
+	}
 	return nil
 }
 
@@ -1152,33 +1217,83 @@ func Convert_v1beta1_PodCliqueSetStatus_To_v1alpha1_PodCliqueSetStatus(in *v1bet
 }
 
 func autoConvert_v1alpha1_PodCliqueSetTemplateSpec_To_v1beta1_PodCliqueSetTemplateSpec(in *PodCliqueSetTemplateSpec, out *v1beta1.PodCliqueSetTemplateSpec, s conversion.Scope) error {
-	out.Cliques = *(*[]*v1beta1.PodCliqueTemplateSpec)(unsafe.Pointer(&in.Cliques))
+	if in.Cliques != nil {
+		in, out := &in.Cliques, &out.Cliques
+		*out = make([]*v1beta1.PodCliqueTemplateSpec, len(*in))
+		for i := range *in {
+			if err := Convert_Pointer_v1alpha1_PodCliqueTemplateSpec_To_Pointer_v1beta1_PodCliqueTemplateSpec(&(*in)[i], &(*out)[i], s); err != nil {
+				return err
+			}
+		}
+	} else {
+		out.Cliques = nil
+	}
 	out.StartupType = (*v1beta1.CliqueStartupType)(unsafe.Pointer(in.StartupType))
 	out.PriorityClassName = in.PriorityClassName
 	out.HeadlessServiceConfig = (*v1beta1.HeadlessServiceConfig)(unsafe.Pointer(in.HeadlessServiceConfig))
-	out.TopologyConstraint = (*v1beta1.TopologyConstraint)(unsafe.Pointer(in.TopologyConstraint))
-	out.TerminationDelay = (*v1.Duration)(unsafe.Pointer(in.TerminationDelay))
+	if in.TopologyConstraint != nil {
+		in, out := &in.TopologyConstraint, &out.TopologyConstraint
+		*out = new(v1beta1.TopologyConstraint)
+		if err := Convert_v1alpha1_TopologyConstraint_To_v1beta1_TopologyConstraint(*in, *out, s); err != nil {
+			return err
+		}
+	} else {
+		out.TopologyConstraint = nil
+	}
+	// WARNING: in.TerminationDelay requires manual conversion: does not exist in peer-type
 	out.ResourceClaimTemplates = *(*[]v1beta1.ResourceClaimTemplateConfig)(unsafe.Pointer(&in.ResourceClaimTemplates))
 	out.ResourceSharing = *(*[]v1beta1.PCSResourceSharingSpec)(unsafe.Pointer(&in.ResourceSharing))
-	out.PodCliqueScalingGroupConfigs = *(*[]v1beta1.PodCliqueScalingGroupConfig)(unsafe.Pointer(&in.PodCliqueScalingGroupConfigs))
+	if in.PodCliqueScalingGroupConfigs != nil {
+		in, out := &in.PodCliqueScalingGroupConfigs, &out.PodCliqueScalingGroupConfigs
+		*out = make([]v1beta1.PodCliqueScalingGroupConfig, len(*in))
+		for i := range *in {
+			if err := Convert_v1alpha1_PodCliqueScalingGroupConfig_To_v1beta1_PodCliqueScalingGroupConfig(&(*in)[i], &(*out)[i], s); err != nil {
+				return err
+			}
+		}
+	} else {
+		out.PodCliqueScalingGroupConfigs = nil
+	}
 	return nil
 }
 
-// Convert_v1alpha1_PodCliqueSetTemplateSpec_To_v1beta1_PodCliqueSetTemplateSpec is an autogenerated conversion function.
-func Convert_v1alpha1_PodCliqueSetTemplateSpec_To_v1beta1_PodCliqueSetTemplateSpec(in *PodCliqueSetTemplateSpec, out *v1beta1.PodCliqueSetTemplateSpec, s conversion.Scope) error {
-	return autoConvert_v1alpha1_PodCliqueSetTemplateSpec_To_v1beta1_PodCliqueSetTemplateSpec(in, out, s)
-}
-
 func autoConvert_v1beta1_PodCliqueSetTemplateSpec_To_v1alpha1_PodCliqueSetTemplateSpec(in *v1beta1.PodCliqueSetTemplateSpec, out *PodCliqueSetTemplateSpec, s conversion.Scope) error {
-	out.Cliques = *(*[]*PodCliqueTemplateSpec)(unsafe.Pointer(&in.Cliques))
+	if in.Cliques != nil {
+		in, out := &in.Cliques, &out.Cliques
+		*out = make([]*PodCliqueTemplateSpec, len(*in))
+		for i := range *in {
+			if err := Convert_Pointer_v1beta1_PodCliqueTemplateSpec_To_Pointer_v1alpha1_PodCliqueTemplateSpec(&(*in)[i], &(*out)[i], s); err != nil {
+				return err
+			}
+		}
+	} else {
+		out.Cliques = nil
+	}
 	out.StartupType = (*CliqueStartupType)(unsafe.Pointer(in.StartupType))
 	out.PriorityClassName = in.PriorityClassName
 	out.HeadlessServiceConfig = (*HeadlessServiceConfig)(unsafe.Pointer(in.HeadlessServiceConfig))
-	out.TopologyConstraint = (*TopologyConstraint)(unsafe.Pointer(in.TopologyConstraint))
-	out.TerminationDelay = (*v1.Duration)(unsafe.Pointer(in.TerminationDelay))
+	if in.TopologyConstraint != nil {
+		in, out := &in.TopologyConstraint, &out.TopologyConstraint
+		*out = new(TopologyConstraint)
+		if err := Convert_v1beta1_TopologyConstraint_To_v1alpha1_TopologyConstraint(*in, *out, s); err != nil {
+			return err
+		}
+	} else {
+		out.TopologyConstraint = nil
+	}
 	out.ResourceClaimTemplates = *(*[]ResourceClaimTemplateConfig)(unsafe.Pointer(&in.ResourceClaimTemplates))
 	out.ResourceSharing = *(*[]PCSResourceSharingSpec)(unsafe.Pointer(&in.ResourceSharing))
-	out.PodCliqueScalingGroupConfigs = *(*[]PodCliqueScalingGroupConfig)(unsafe.Pointer(&in.PodCliqueScalingGroupConfigs))
+	if in.PodCliqueScalingGroupConfigs != nil {
+		in, out := &in.PodCliqueScalingGroupConfigs, &out.PodCliqueScalingGroupConfigs
+		*out = make([]PodCliqueScalingGroupConfig, len(*in))
+		for i := range *in {
+			if err := Convert_v1beta1_PodCliqueScalingGroupConfig_To_v1alpha1_PodCliqueScalingGroupConfig(&(*in)[i], &(*out)[i], s); err != nil {
+				return err
+			}
+		}
+	} else {
+		out.PodCliqueScalingGroupConfigs = nil
+	}
 	return nil
 }
 
@@ -1247,30 +1362,31 @@ func autoConvert_v1alpha1_PodCliqueSpec_To_v1beta1_PodCliqueSpec(in *PodCliqueSp
 	out.RoleName = in.RoleName
 	out.PodSpec = in.PodSpec
 	out.Replicas = in.Replicas
-	out.MinAvailable = (*int32)(unsafe.Pointer(in.MinAvailable))
-	out.StartsAfter = *(*[]string)(unsafe.Pointer(&in.StartsAfter))
+	// WARNING: in.MinAvailable requires manual conversion: does not exist in peer-type
+	// INFO: in.StartsAfter opted out of conversion generation
 	out.ScaleConfig = (*v1beta1.AutoScalingConfig)(unsafe.Pointer(in.ScaleConfig))
 	return nil
-}
-
-// Convert_v1alpha1_PodCliqueSpec_To_v1beta1_PodCliqueSpec is an autogenerated conversion function.
-func Convert_v1alpha1_PodCliqueSpec_To_v1beta1_PodCliqueSpec(in *PodCliqueSpec, out *v1beta1.PodCliqueSpec, s conversion.Scope) error {
-	return autoConvert_v1alpha1_PodCliqueSpec_To_v1beta1_PodCliqueSpec(in, out, s)
 }
 
 func autoConvert_v1beta1_PodCliqueSpec_To_v1alpha1_PodCliqueSpec(in *v1beta1.PodCliqueSpec, out *PodCliqueSpec, s conversion.Scope) error {
 	out.RoleName = in.RoleName
 	out.PodSpec = in.PodSpec
 	out.Replicas = in.Replicas
-	out.MinAvailable = (*int32)(unsafe.Pointer(in.MinAvailable))
-	out.StartsAfter = *(*[]string)(unsafe.Pointer(&in.StartsAfter))
+	// WARNING: in.Init requires manual conversion: does not exist in peer-type
+	// WARNING: in.Termination requires manual conversion: does not exist in peer-type
+	if in.StartsAfter != nil {
+		in, out := &in.StartsAfter, &out.StartsAfter
+		*out = make([]string, len(*in))
+		for i := range *in {
+			if err := Convert_v1beta1_StartupDependency_To_string(&(*in)[i], &(*out)[i], s); err != nil {
+				return err
+			}
+		}
+	} else {
+		out.StartsAfter = nil
+	}
 	out.ScaleConfig = (*AutoScalingConfig)(unsafe.Pointer(in.ScaleConfig))
 	return nil
-}
-
-// Convert_v1beta1_PodCliqueSpec_To_v1alpha1_PodCliqueSpec is an autogenerated conversion function.
-func Convert_v1beta1_PodCliqueSpec_To_v1alpha1_PodCliqueSpec(in *v1beta1.PodCliqueSpec, out *PodCliqueSpec, s conversion.Scope) error {
-	return autoConvert_v1beta1_PodCliqueSpec_To_v1alpha1_PodCliqueSpec(in, out, s)
 }
 
 func autoConvert_v1alpha1_PodCliqueStatus_To_v1beta1_PodCliqueStatus(in *PodCliqueStatus, out *v1beta1.PodCliqueStatus, s conversion.Scope) error {
@@ -1321,9 +1437,25 @@ func autoConvert_v1alpha1_PodCliqueTemplateSpec_To_v1beta1_PodCliqueTemplateSpec
 	out.Name = in.Name
 	out.Labels = *(*map[string]string)(unsafe.Pointer(&in.Labels))
 	out.Annotations = *(*map[string]string)(unsafe.Pointer(&in.Annotations))
-	out.TopologyConstraint = (*v1beta1.TopologyConstraint)(unsafe.Pointer(in.TopologyConstraint))
+	if in.TopologyConstraint != nil {
+		in, out := &in.TopologyConstraint, &out.TopologyConstraint
+		*out = new(v1beta1.TopologyConstraint)
+		if err := Convert_v1alpha1_TopologyConstraint_To_v1beta1_TopologyConstraint(*in, *out, s); err != nil {
+			return err
+		}
+	} else {
+		out.TopologyConstraint = nil
+	}
 	out.ResourceSharing = *(*[]v1beta1.ResourceSharingSpec)(unsafe.Pointer(&in.ResourceSharing))
-	out.RollingUpdate = (*v1beta1.RollingUpdateConfiguration)(unsafe.Pointer(in.RollingUpdate))
+	if in.RollingUpdate != nil {
+		in, out := &in.RollingUpdate, &out.RollingUpdate
+		*out = new(v1beta1.RollingUpdateConfiguration)
+		if err := Convert_v1alpha1_RollingUpdateConfiguration_To_v1beta1_RollingUpdateConfiguration(*in, *out, s); err != nil {
+			return err
+		}
+	} else {
+		out.RollingUpdate = nil
+	}
 	if err := Convert_v1alpha1_PodCliqueSpec_To_v1beta1_PodCliqueSpec(&in.Spec, &out.Spec, s); err != nil {
 		return err
 	}
@@ -1339,9 +1471,25 @@ func autoConvert_v1beta1_PodCliqueTemplateSpec_To_v1alpha1_PodCliqueTemplateSpec
 	out.Name = in.Name
 	out.Labels = *(*map[string]string)(unsafe.Pointer(&in.Labels))
 	out.Annotations = *(*map[string]string)(unsafe.Pointer(&in.Annotations))
-	out.TopologyConstraint = (*TopologyConstraint)(unsafe.Pointer(in.TopologyConstraint))
+	if in.TopologyConstraint != nil {
+		in, out := &in.TopologyConstraint, &out.TopologyConstraint
+		*out = new(TopologyConstraint)
+		if err := Convert_v1beta1_TopologyConstraint_To_v1alpha1_TopologyConstraint(*in, *out, s); err != nil {
+			return err
+		}
+	} else {
+		out.TopologyConstraint = nil
+	}
 	out.ResourceSharing = *(*[]ResourceSharingSpec)(unsafe.Pointer(&in.ResourceSharing))
-	out.RollingUpdate = (*RollingUpdateConfiguration)(unsafe.Pointer(in.RollingUpdate))
+	if in.RollingUpdate != nil {
+		in, out := &in.RollingUpdate, &out.RollingUpdate
+		*out = new(RollingUpdateConfiguration)
+		if err := Convert_v1beta1_RollingUpdateConfiguration_To_v1alpha1_RollingUpdateConfiguration(*in, *out, s); err != nil {
+			return err
+		}
+	} else {
+		out.RollingUpdate = nil
+	}
 	if err := Convert_v1beta1_PodCliqueSpec_To_v1alpha1_PodCliqueSpec(&in.Spec, &out.Spec, s); err != nil {
 		return err
 	}
@@ -1530,25 +1678,24 @@ func Convert_v1beta1_ResourceSharingSpec_To_v1alpha1_ResourceSharingSpec(in *v1b
 }
 
 func autoConvert_v1alpha1_RollingUpdateConfiguration_To_v1beta1_RollingUpdateConfiguration(in *RollingUpdateConfiguration, out *v1beta1.RollingUpdateConfiguration, s conversion.Scope) error {
-	out.MaxUnavailable = (*int32)(unsafe.Pointer(in.MaxUnavailable))
+	// INFO: in.MaxUnavailable opted out of conversion generation
 	out.ProgressDeadline = (*v1.Duration)(unsafe.Pointer(in.ProgressDeadline))
 	return nil
-}
-
-// Convert_v1alpha1_RollingUpdateConfiguration_To_v1beta1_RollingUpdateConfiguration is an autogenerated conversion function.
-func Convert_v1alpha1_RollingUpdateConfiguration_To_v1beta1_RollingUpdateConfiguration(in *RollingUpdateConfiguration, out *v1beta1.RollingUpdateConfiguration, s conversion.Scope) error {
-	return autoConvert_v1alpha1_RollingUpdateConfiguration_To_v1beta1_RollingUpdateConfiguration(in, out, s)
 }
 
 func autoConvert_v1beta1_RollingUpdateConfiguration_To_v1alpha1_RollingUpdateConfiguration(in *v1beta1.RollingUpdateConfiguration, out *RollingUpdateConfiguration, s conversion.Scope) error {
-	out.MaxUnavailable = (*int32)(unsafe.Pointer(in.MaxUnavailable))
+	// WARNING: in.MinReplicas requires manual conversion: does not exist in peer-type
+	if in.MaxUnavailable != nil {
+		in, out := &in.MaxUnavailable, &out.MaxUnavailable
+		*out = new(int32)
+		if err := Convert_intstr_IntOrString_To_int32(*in, *out, s); err != nil {
+			return err
+		}
+	} else {
+		out.MaxUnavailable = nil
+	}
 	out.ProgressDeadline = (*v1.Duration)(unsafe.Pointer(in.ProgressDeadline))
 	return nil
-}
-
-// Convert_v1beta1_RollingUpdateConfiguration_To_v1alpha1_RollingUpdateConfiguration is an autogenerated conversion function.
-func Convert_v1beta1_RollingUpdateConfiguration_To_v1alpha1_RollingUpdateConfiguration(in *v1beta1.RollingUpdateConfiguration, out *RollingUpdateConfiguration, s conversion.Scope) error {
-	return autoConvert_v1beta1_RollingUpdateConfiguration_To_v1alpha1_RollingUpdateConfiguration(in, out, s)
 }
 
 func autoConvert_v1alpha1_SchedulerTopologyBinding_To_v1beta1_SchedulerTopologyBinding(in *SchedulerTopologyBinding, out *v1beta1.SchedulerTopologyBinding, s conversion.Scope) error {
@@ -1606,19 +1753,13 @@ func Convert_v1beta1_SchedulerTopologyStatus_To_v1alpha1_SchedulerTopologyStatus
 func autoConvert_v1alpha1_TopologyConstraint_To_v1beta1_TopologyConstraint(in *TopologyConstraint, out *v1beta1.TopologyConstraint, s conversion.Scope) error {
 	out.TopologyName = in.TopologyName
 	out.Pack = (*v1beta1.TopologyPackConstraint)(unsafe.Pointer(in.Pack))
-	out.PackDomain = v1beta1.TopologyDomain(in.PackDomain)
+	// WARNING: in.PackDomain requires manual conversion: does not exist in peer-type
 	return nil
-}
-
-// Convert_v1alpha1_TopologyConstraint_To_v1beta1_TopologyConstraint is an autogenerated conversion function.
-func Convert_v1alpha1_TopologyConstraint_To_v1beta1_TopologyConstraint(in *TopologyConstraint, out *v1beta1.TopologyConstraint, s conversion.Scope) error {
-	return autoConvert_v1alpha1_TopologyConstraint_To_v1beta1_TopologyConstraint(in, out, s)
 }
 
 func autoConvert_v1beta1_TopologyConstraint_To_v1alpha1_TopologyConstraint(in *v1beta1.TopologyConstraint, out *TopologyConstraint, s conversion.Scope) error {
 	out.TopologyName = in.TopologyName
 	out.Pack = (*TopologyPackConstraint)(unsafe.Pointer(in.Pack))
-	out.PackDomain = TopologyDomain(in.PackDomain)
 	return nil
 }
 

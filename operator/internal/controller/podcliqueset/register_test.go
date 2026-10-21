@@ -51,7 +51,7 @@ func TestMapClusterTopologyToPodCliqueSets(t *testing.T) {
 	pcsA := makePCS("default", "pcs-a", func(pcs *grovecorev1beta1.PodCliqueSet) {
 		pcs.Spec.Template.TopologyConstraint = &grovecorev1beta1.TopologyConstraint{
 			TopologyName: "selected-topology",
-			PackDomain:   grovecorev1beta1.TopologyDomainRack,
+			Pack:         &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: grovecorev1beta1.TopologyDomainRack},
 		}
 	})
 	pcsB := makePCS("team-b", "pcs-b", func(pcs *grovecorev1beta1.PodCliqueSet) {
@@ -60,7 +60,7 @@ func TestMapClusterTopologyToPodCliqueSets(t *testing.T) {
 				Name: "worker",
 				TopologyConstraint: &grovecorev1beta1.TopologyConstraint{
 					TopologyName: "selected-topology",
-					PackDomain:   grovecorev1beta1.TopologyDomainHost,
+					Pack:         &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: grovecorev1beta1.TopologyDomainHost},
 				},
 				Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 1},
 			},
@@ -69,7 +69,7 @@ func TestMapClusterTopologyToPodCliqueSets(t *testing.T) {
 	pcsOther := makePCS("default", "pcs-other", func(pcs *grovecorev1beta1.PodCliqueSet) {
 		pcs.Spec.Template.TopologyConstraint = &grovecorev1beta1.TopologyConstraint{
 			TopologyName: "other-topology",
-			PackDomain:   grovecorev1beta1.TopologyDomainRack,
+			Pack:         &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: grovecorev1beta1.TopologyDomainRack},
 		}
 	})
 	pcsWithoutTopology := makePCS("default", "pcs-no-topology", nil)

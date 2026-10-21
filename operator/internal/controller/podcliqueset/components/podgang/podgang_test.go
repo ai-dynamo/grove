@@ -20,6 +20,7 @@ import (
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	apicommonconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
+	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
@@ -100,6 +101,17 @@ func TestBuildResource(t *testing.T) {
 			name: "create path: mirrors PCS annotations onto empty podgang",
 			pcsAnnotations: map[string]string{
 				"nvidia.com/kai-scheduler-queue": "worker-queue",
+			},
+			expectedLabels: expectedDefaultLabels,
+			expectedAnnotations: map[string]string{
+				"nvidia.com/kai-scheduler-queue": "worker-queue",
+			},
+		},
+		{
+			name: "create path: does not mirror the v1alpha1 conversion stash annotation",
+			pcsAnnotations: map[string]string{
+				"nvidia.com/kai-scheduler-queue":           "worker-queue",
+				grovecorev1alpha1.ConversionDataAnnotation: `{"cliques":{}}`,
 			},
 			expectedLabels: expectedDefaultLabels,
 			expectedAnnotations: map[string]string{
@@ -259,7 +271,7 @@ func TestBuildResource(t *testing.T) {
 			},
 			pcsTopologyConstraint: &grovecorev1beta1.TopologyConstraint{
 				TopologyName: "cluster-topology",
-				PackDomain:   "rack",
+				Pack:         &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: "rack"},
 			},
 			pgiTopologyConstraint: &groveschedulerv1alpha1.TopologyConstraint{},
 			initialPodGangAnnotations: map[string]string{
@@ -280,7 +292,7 @@ func TestBuildResource(t *testing.T) {
 			},
 			pcsTopologyConstraint: &grovecorev1beta1.TopologyConstraint{
 				TopologyName: "cluster-topology",
-				PackDomain:   "rack",
+				Pack:         &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: "rack"},
 			},
 			pgiTopologyConstraint: nil,
 			initialPodGangAnnotations: map[string]string{

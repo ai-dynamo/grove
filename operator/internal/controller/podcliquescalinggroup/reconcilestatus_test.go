@@ -121,8 +121,11 @@ func TestComputeMinAvailableBreachedCondition(t *testing.T) {
 		replicas     int32
 		minAvailable *int32
 		pclqsMap     map[int][]grovecorev1beta1.PodClique
-		wantStatus   metav1.ConditionStatus
-		wantReason   string
+		// priorCondition is the PCSG's previous MinAvailableBreached condition. Unless a case sets it, the
+		// PCSG has been available before (False), so breach evaluation applies.
+		priorCondition *metav1.Condition
+		wantStatus     metav1.ConditionStatus
+		wantReason     string
 	}{
 		{
 			name:     "all replicas healthy, none breached",
@@ -191,14 +194,62 @@ func TestComputeMinAvailableBreachedCondition(t *testing.T) {
 			wantReason: "InsufficientAvailablePodCliqueScalingGroupReplicas",
 		},
 		{
-			// No replicas exist yet (mid-creation / scale-up). notInBreach=0 < min → breach.
-			// TerminationDelay (default 4h) absorbs the startup window before any action fires.
-			name:         "no replicas exist yet — in breach (startup)",
+			// A previously available PCSG whose replicas are all gone is in breach.
+			name:         "no replicas exist after having been available — in breach",
 			replicas:     3,
 			minAvailable: ptr.To(int32(2)),
 			pclqsMap:     map[int][]grovecorev1beta1.PodClique{},
 			wantStatus:   metav1.ConditionTrue,
 			wantReason:   "InsufficientAvailablePodCliqueScalingGroupReplicas",
+		},
+		{
+			// No replicas exist yet (mid-creation). The PCSG has never been available, so it is awaiting its
+			// initial availability, not in breach.
+			name:           "no replicas exist yet — awaiting initial availability",
+			replicas:       3,
+			minAvailable:   ptr.To(int32(2)),
+			pclqsMap:       map[int][]grovecorev1beta1.PodClique{},
+			priorCondition: &metav1.Condition{},
+			wantStatus:     metav1.ConditionUnknown,
+			wantReason:     constants.ConditionReasonAwaitingInitialAvailability,
+		},
+		{
+			name:         "still awaiting initial availability with too few healthy replicas",
+			replicas:     2,
+			minAvailable: ptr.To(int32(2)),
+			pclqsMap: map[int][]grovecorev1beta1.PodClique{
+				0: healthyPCSGReplica(),
+				1: breachedPCSGReplica(),
+			},
+			priorCondition: &metav1.Condition{Status: metav1.ConditionUnknown, Reason: constants.ConditionReasonAwaitingInitialAvailability},
+			wantStatus:     metav1.ConditionUnknown,
+			wantReason:     constants.ConditionReasonAwaitingInitialAvailability,
+		},
+		{
+			name:         "first availability leaves the awaiting state",
+			replicas:     2,
+			minAvailable: ptr.To(int32(2)),
+			pclqsMap: map[int][]grovecorev1beta1.PodClique{
+				0: healthyPCSGReplica(),
+				1: healthyPCSGReplica(),
+			},
+			priorCondition: &metav1.Condition{Status: metav1.ConditionUnknown, Reason: constants.ConditionReasonAwaitingInitialAvailability},
+			wantStatus:     metav1.ConditionFalse,
+			wantReason:     "SufficientAvailablePodCliqueScalingGroupReplicas",
+		},
+		{
+			// A True condition written by a release without the awaiting state, on a PCSG that was never
+			// healthy, is carried over as awaiting.
+			name:         "legacy True on a never-healthy PCSG is carried over as awaiting",
+			replicas:     2,
+			minAvailable: ptr.To(int32(1)),
+			pclqsMap: map[int][]grovecorev1beta1.PodClique{
+				0: breachedPCSGReplica(),
+				1: breachedPCSGReplica(),
+			},
+			priorCondition: &metav1.Condition{Status: metav1.ConditionTrue, Reason: constants.ConditionReasonInsufficientAvailablePCSGReplicas},
+			wantStatus:     metav1.ConditionUnknown,
+			wantReason:     constants.ConditionReasonAwaitingInitialAvailability,
 		},
 		{
 			// Replica 0 is incomplete (its pc-c was deleted and not yet recreated) so it has no
@@ -238,12 +289,20 @@ func TestComputeMinAvailableBreachedCondition(t *testing.T) {
 			}
 			pcsg := &grovecorev1beta1.PodCliqueScalingGroup{
 				Spec: grovecorev1beta1.PodCliqueScalingGroupSpec{
-					Replicas:     tt.replicas,
-					MinAvailable: minAvailable,
+					Replicas: tt.replicas,
+					Init:     &grovecorev1beta1.InitSpec{MinReplicas: minAvailable}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: minAvailable}}},
 					// Each fixture replica carries exactly one PodClique, so a single clique name
 					// makes healthy/breached replicas "complete" and empty ones "incomplete".
 					CliqueNames: []string{"pc"},
 				},
+			}
+			priorCondition := tt.priorCondition
+			if priorCondition == nil {
+				priorCondition = &metav1.Condition{Status: metav1.ConditionFalse, Reason: constants.ConditionReasonSufficientAvailablePCSGReplicas}
+			}
+			if priorCondition.Status != "" {
+				priorCondition.Type = constants.ConditionTypeMinAvailableBreached
+				pcsg.Status.Conditions = []metav1.Condition{*priorCondition}
 			}
 
 			condition := computeMinAvailableBreachedCondition(logr.Discard(), pcsg, tt.pclqsMap)
@@ -312,8 +371,10 @@ func TestComputeMinAvailableBreachedConditionUpdateInProgress(t *testing.T) {
 		minAvailable   *int32
 		updateProgress *grovecorev1beta1.PodCliqueScalingGroupUpdateProgress
 		pclqsMap       map[int][]grovecorev1beta1.PodClique
-		wantStatus     metav1.ConditionStatus
-		wantReason     string
+		// awaitingInitial is true when the PCSG has never been available.
+		awaitingInitial bool
+		wantStatus      metav1.ConditionStatus
+		wantReason      string
 	}{
 		{
 			name:         "update in progress overrides every-replica-breached",
@@ -331,18 +392,37 @@ func TestComputeMinAvailableBreachedConditionUpdateInProgress(t *testing.T) {
 			wantStatus: metav1.ConditionUnknown,
 			wantReason: constants.ConditionReasonUpdateInProgress,
 		},
+		{
+			name:         "update in progress before the first availability stays awaiting",
+			replicas:     2,
+			minAvailable: ptr.To(int32(1)),
+			updateProgress: &grovecorev1beta1.PodCliqueScalingGroupUpdateProgress{
+				UpdateStartedAt:            pastTransition,
+				PodCliqueSetGenerationHash: "gen-hash-1",
+			},
+			pclqsMap: map[int][]grovecorev1beta1.PodClique{
+				0: breachedPCSGReplica(),
+				1: breachedPCSGReplica(),
+			},
+			awaitingInitial: true,
+			wantStatus:      metav1.ConditionUnknown,
+			wantReason:      constants.ConditionReasonAwaitingInitialAvailability,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			pcsg := &grovecorev1beta1.PodCliqueScalingGroup{
 				Spec: grovecorev1beta1.PodCliqueScalingGroupSpec{
-					Replicas:     tt.replicas,
-					MinAvailable: tt.minAvailable,
+					Replicas: tt.replicas,
+					Init:     &grovecorev1beta1.InitSpec{MinReplicas: tt.minAvailable}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: tt.minAvailable}}},
 				},
 				Status: grovecorev1beta1.PodCliqueScalingGroupStatus{
 					UpdateProgress: tt.updateProgress,
 				},
+			}
+			if !tt.awaitingInitial {
+				pcsg.Status.Conditions = []metav1.Condition{{Type: constants.ConditionTypeMinAvailableBreached, Status: metav1.ConditionFalse, Reason: constants.ConditionReasonSufficientAvailablePCSGReplicas}}
 			}
 
 			condition := computeMinAvailableBreachedCondition(logr.Discard(), pcsg, tt.pclqsMap)
@@ -450,7 +530,7 @@ func TestReconcileStatus(t *testing.T) {
 					WithReplicas(3).
 					WithCliqueNames([]string{"worker"}).
 					WithMinAvailable(2).
-					WithOptions(testutils.WithPCSGObservedGeneration(1)).Build()
+					WithOptions(testutils.WithPCSGObservedGeneration(1), testutils.WithPCSGPreviouslyAvailable()).Build()
 				pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "test-ns", uuid.NewUUID()).
 					WithPodCliqueSetGenerationHash(&pcsGenerationHash).
 					WithScalingGroupConfig("compute", []string{"worker"}, 3, 2).
@@ -957,8 +1037,8 @@ func TestReconcileStatusRequeuesOnConflict(t *testing.T) {
 func TestMutateMinAvailableBreachedConditionClearsGangTerminationInProgress(t *testing.T) {
 	pcsg := &grovecorev1beta1.PodCliqueScalingGroup{
 		Spec: grovecorev1beta1.PodCliqueScalingGroupSpec{
-			Replicas:     2,
-			MinAvailable: ptr.To(int32(1)),
+			Replicas: 2,
+			Init:     &grovecorev1beta1.InitSpec{MinReplicas: ptr.To(int32(1))}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To(int32(1))}}},
 			// Each fixture replica carries one PodClique, so a single clique name makes the
 			// recovered replicas count as complete and not-in-breach.
 			CliqueNames: []string{"pc"},
@@ -1223,8 +1303,8 @@ func markPCSGPCLQConverged(t testing.TB, pcs *grovecorev1beta1.PodCliqueSet, pcs
 	pclq.Labels[apicommon.LabelPodTemplateHash] = expectedTemplateHash
 	pclq.Status.CurrentPodTemplateHash = ptr.To(expectedTemplateHash)
 	pclq.Status.CurrentPodCliqueSetGenerationHash = ptr.To(generationHash)
-	pclq.Status.ReadyReplicas = *pclq.Spec.MinAvailable
-	pclq.Status.UpdatedReplicas = *pclq.Spec.MinAvailable
+	pclq.Status.ReadyReplicas = *pclq.Spec.Init.MinReplicas
+	pclq.Status.UpdatedReplicas = *pclq.Spec.Init.MinReplicas
 	return pclq
 }
 
