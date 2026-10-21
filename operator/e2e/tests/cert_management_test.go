@@ -21,6 +21,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/pem"
 	"fmt"
 	"net"
@@ -39,10 +40,12 @@ import (
 	"github.com/ai-dynamo/grove/operator/e2e/setup"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
 	"github.com/ai-dynamo/grove/operator/e2e/waiter"
+	conversionwebhook "github.com/ai-dynamo/grove/operator/internal/webhook/conversion"
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/rest"
@@ -618,7 +621,8 @@ func waitForWebhookCABundlesToTrustServingCertificate(t *testing.T, ctx context.
 }
 
 // verifyWebhookCABundlesTrustCertificate verifies that every expected Grove admission webhook CA
-// bundle trusts certificate for the Grove webhook service DNS name.
+// bundle, and the conversion webhook CA bundle of every converted Grove CRD, trusts certificate for
+// the Grove webhook service DNS name.
 func verifyWebhookCABundlesTrustCertificate(ctx context.Context, k8sClient *k8sclient.Client, certificate *x509.Certificate) error {
 	for _, config := range webhookConfigs {
 		caBundles, err := getWebhookCABundles(ctx, k8sClient, config)
@@ -626,24 +630,59 @@ func verifyWebhookCABundlesTrustCertificate(ctx context.Context, k8sClient *k8sc
 			return err
 		}
 		for webhookName, caBundle := range caBundles {
-			if len(caBundle) == 0 {
-				return fmt.Errorf("webhook configuration %s entry %s has an empty caBundle", config.name, webhookName)
-			}
-
-			roots := x509.NewCertPool()
-			if !roots.AppendCertsFromPEM(caBundle) {
-				return fmt.Errorf("webhook configuration %s entry %s has an invalid PEM caBundle", config.name, webhookName)
-			}
-			if _, err := certificate.Verify(x509.VerifyOptions{
-				DNSName: "grove-operator.grove-system.svc",
-				Roots:   roots,
-			}); err != nil {
-				return fmt.Errorf("webhook configuration %s entry %s does not trust served certificate serial %s: %w",
-					config.name, webhookName, certificate.SerialNumber, err)
+			owner := fmt.Sprintf("webhook configuration %s entry %s", config.name, webhookName)
+			if err := verifyCABundleTrustsCertificate(owner, caBundle, certificate); err != nil {
+				return err
 			}
 		}
 	}
+	for _, crdName := range conversionwebhook.ConvertedCRDNames() {
+		caBundle, err := getCRDConversionCABundle(ctx, k8sClient, crdName)
+		if err != nil {
+			return err
+		}
+		if err := verifyCABundleTrustsCertificate("conversion webhook of CRD "+crdName, caBundle, certificate); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+// verifyCABundleTrustsCertificate verifies that the PEM caBundle of owner trusts certificate for the Grove
+// webhook service DNS name.
+func verifyCABundleTrustsCertificate(owner string, caBundle []byte, certificate *x509.Certificate) error {
+	if len(caBundle) == 0 {
+		return fmt.Errorf("%s has an empty caBundle", owner)
+	}
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(caBundle) {
+		return fmt.Errorf("%s has an invalid PEM caBundle", owner)
+	}
+	if _, err := certificate.Verify(x509.VerifyOptions{
+		DNSName: "grove-operator.grove-system.svc",
+		Roots:   roots,
+	}); err != nil {
+		return fmt.Errorf("%s does not trust served certificate serial %s: %w", owner, certificate.SerialNumber, err)
+	}
+	return nil
+}
+
+// getCRDConversionCABundle returns the decoded caBundle of the conversion webhook of the named CRD.
+func getCRDConversionCABundle(ctx context.Context, k8sClient *k8sclient.Client, crdName string) ([]byte, error) {
+	crd := &unstructured.Unstructured{}
+	crd.SetGroupVersionKind(schema.GroupVersionKind{Group: "apiextensions.k8s.io", Version: "v1", Kind: "CustomResourceDefinition"})
+	if err := k8sClient.Get(ctx, types.NamespacedName{Name: crdName}, crd); err != nil {
+		return nil, fmt.Errorf("failed to get CRD %s: %w", crdName, err)
+	}
+	encoded, _, err := unstructured.NestedString(crd.Object, "spec", "conversion", "webhook", "clientConfig", "caBundle")
+	if err != nil {
+		return nil, fmt.Errorf("failed to read the conversion caBundle of CRD %s: %w", crdName, err)
+	}
+	caBundle, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode the conversion caBundle of CRD %s: %w", crdName, err)
+	}
+	return caBundle, nil
 }
 
 // getWebhookCABundles returns each webhook entry name and CA bundle from the expected validating or
