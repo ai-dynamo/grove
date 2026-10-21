@@ -125,6 +125,26 @@ _Appears in:_
 
 
 
+#### GangShapeRecreateProgress
+
+
+
+GangShapeRecreateProgress captures the progress of recreating the PodCliqueSet replicas whose gang shape is stale.
+Replicas are recreated one at a time, and the next one only once every replica whose gang shape is current is
+available.
+
+
+
+_Appears in:_
+- [PodCliqueSetStatus](#podcliquesetstatus)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `startedAt` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#time-v1-meta)_ | StartedAt is the time at which the first stale replica was found. |  |  |
+| `gangShapeHash` _string_ | GangShapeHash is the gang-shape hash that the replicas are being recreated to. |  |  |
+| `currentlyRecreating` _integer_ | CurrentlyRecreating is the index of the replica that was deleted last. It is cleared once that replica is<br />available again. |  |  |
+
+
 #### HeadlessServiceConfig
 
 
@@ -479,6 +499,7 @@ _Appears in:_
 | `hpaPodSelector` _string_ | Selector is the label selector that determines which pods are part of the PodGang.<br />PodGang is a unit of scale and this selector is used by HPA to scale the PodGang based on metrics captured for<br />the pods that match this selector. |  |  |
 | `currentGenerationHash` _string_ | CurrentGenerationHash is a hash value generated out of a collection of fields in a PodCliqueSet.<br />Since only a subset of fields is taken into account when generating the hash, not every change in the PodCliqueSetSpec will<br />be accounted for when generating this hash value. A field in PodCliqueSetSpec is included if a change to it triggers<br />a rolling recreate of PodCliques and/or PodCliqueScalingGroups.<br />Only if this value is not nil and the newly computed hash value is different from the persisted CurrentGenerationHash value<br />then an update needs to be triggered. |  |  |
 | `updateProgress` _[PodCliqueSetUpdateProgress](#podcliquesetupdateprogress)_ | UpdateProgress represents the progress of an update. |  |  |
+| `gangShapeRecreate` _[GangShapeRecreateProgress](#gangshaperecreateprogress)_ | GangShapeRecreate is set while replicas whose gang shape is stale, after an init.minReplicas change in<br />grove.io/v1beta1, are being recreated, and is cleared once none is left. |  |  |
 
 
 #### PodCliqueSetTemplateSpec
@@ -1087,6 +1108,26 @@ _Appears in:_
 
 
 
+#### GangShapeRecreateProgress
+
+
+
+GangShapeRecreateProgress captures the progress of recreating the PodCliqueSet replicas whose gang shape is stale.
+Replicas are recreated one at a time, and the next one only once every replica whose gang shape is current is
+available.
+
+
+
+_Appears in:_
+- [PodCliqueSetStatus](#podcliquesetstatus)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `startedAt` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#time-v1-meta)_ | StartedAt is the time at which the first stale replica was found. |  |  |
+| `gangShapeHash` _string_ | GangShapeHash is the gang-shape hash that the replicas are being recreated to. |  |  |
+| `currentlyRecreating` _integer_ | CurrentlyRecreating is the index of the replica that was deleted last. It is cleared once that replica is<br />available again. |  |  |
+
+
 #### HeadlessServiceConfig
 
 
@@ -1462,6 +1503,7 @@ _Appears in:_
 | `hpaPodSelector` _string_ | Selector is the label selector that determines which pods are part of the PodGang.<br />PodGang is a unit of scale and this selector is used by HPA to scale the PodGang based on metrics captured for<br />the pods that match this selector. |  |  |
 | `currentGenerationHash` _string_ | CurrentGenerationHash is a hash value generated out of a collection of fields in a PodCliqueSet.<br />Since only a subset of fields is taken into account when generating the hash, not every change in the PodCliqueSetSpec will<br />be accounted for when generating this hash value. A field in PodCliqueSetSpec is included if a change to it triggers<br />a rolling recreate of PodCliques and/or PodCliqueScalingGroups.<br />Only if this value is not nil and the newly computed hash value is different from the persisted CurrentGenerationHash value<br />then an update needs to be triggered. |  |  |
 | `updateProgress` _[PodCliqueSetUpdateProgress](#podcliquesetupdateprogress)_ | UpdateProgress represents the progress of an update. |  |  |
+| `gangShapeRecreate` _[GangShapeRecreateProgress](#gangshaperecreateprogress)_ | GangShapeRecreate is set while replicas whose gang shape is stale, after an init.minReplicas change, are<br />being recreated, and is cleared once none is left. |  |  |
 
 
 #### PodCliqueSetTemplateSpec

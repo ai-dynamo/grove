@@ -18,15 +18,18 @@ import (
 	"context"
 	"testing"
 
+	apiconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 
 	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
@@ -134,7 +137,7 @@ func TestSync(t *testing.T) {
 
 			fakeClient := fake.NewClientBuilder().
 				WithScheme(scheme).
-				WithRuntimeObjects(tc.existingObjs...).
+				WithRuntimeObjects(append(tc.existingObjs, tc.pcs)...).
 				WithStatusSubresource(tc.pcs).
 				Build()
 
@@ -157,6 +160,11 @@ func TestSync(t *testing.T) {
 						t.Errorf("Unexpected error: %v", err)
 					}
 				}
+				got := &grovecorev1beta1.PodCliqueSet{}
+				require.NoError(t, fakeClient.Get(ctx, client.ObjectKeyFromObject(tc.pcs), got))
+				assert.Nil(t, got.Status.GangShapeRecreate)
+				assert.Nil(t, meta.FindStatusCondition(got.Status.Conditions, apiconstants.ConditionTypeGangShapeRecreateInProgress),
+					"a PodCliqueSet whose gang shape never changed gets no GangShapeRecreateInProgress condition")
 			}
 		})
 	}

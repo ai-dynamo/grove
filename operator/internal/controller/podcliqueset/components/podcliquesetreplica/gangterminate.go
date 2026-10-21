@@ -67,17 +67,23 @@ func (d deletionWork) hasPendingPCSReplicaDeletion() bool {
 }
 
 // getPCSReplicaDeletionWork identifies PCS replicas that need termination due to MinAvailable breaches.
+// The replica that the gang-shape recreate deleted last is skipped until it is available again, so it is never
+// deleted twice.
 func (r _resource) getPCSReplicaDeletionWork(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet) (*deletionWork, error) {
 	var (
-		now           = time.Now()
-		pcsObjectKey  = client.ObjectKeyFromObject(pcs)
-		deletionTasks = make([]utils.Task, 0, pcs.Spec.Replicas)
-		work          = &deletionWork{
+		now                 = time.Now()
+		pcsObjectKey        = client.ObjectKeyFromObject(pcs)
+		deletionTasks       = make([]utils.Task, 0, pcs.Spec.Replicas)
+		currentlyRecreating = getCurrentlyRecreating(pcs)
+		work                = &deletionWork{
 			minAvailableBreachedConstituents: make(map[int][]string),
 		}
 	)
 
 	for pcsReplicaIndex := range int(pcs.Spec.Replicas) {
+		if currentlyRecreating != nil && *currentlyRecreating == pcsReplicaIndex {
+			continue
+		}
 		breachedPCSGNames, minPCSGWaitFor, err := r.getMinAvailableBreachedPCSGs(ctx, pcs, pcsReplicaIndex, now)
 		if err != nil {
 			return nil, err
@@ -227,9 +233,9 @@ func getMinAvailableBreachedPCSGInfo(pcsgs []grovecorev1beta1.PodCliqueScalingGr
 // kept rare by retrying the flag writes inline (see markGangTerminationInProgress), and kept
 // harmless by the convergence property above.
 //
-// eventReason is the reason of the event recorded on success. For a gang-shape recreate (ReasonGangShapeChanged)
-// the task also writes the current gang-shape hash onto the replica's PCSGs, which are not deleted, so the
-// replica is no longer stale once its PodCliques are recreated.
+// eventReason is the reason of the event recorded on success. The task also writes the current gang-shape hash
+// onto the replica's PCSGs, which are not deleted, so the replica is no longer stale once its PodCliques are
+// recreated. That holds for gang termination too: a stale replica it deletes counts as recreated.
 func (r _resource) createPCSReplicaDeleteTask(logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, pcsReplicaIndex int, eventReason, reason string) utils.Task {
 	return utils.Task{
 		Name: fmt.Sprintf("DeletePCSReplicaPodCliques-%d", pcsReplicaIndex),
@@ -286,11 +292,9 @@ func (r _resource) createPCSReplicaDeleteTask(logger logr.Logger, pcs *grovecore
 					logger.Error(err, "failed to mark GangTerminationInProgress on PCSG", "pcsg", client.ObjectKeyFromObject(&pcsgList.Items[i]))
 					flagErrs = append(flagErrs, err)
 				}
-				if eventReason == constants.ReasonGangShapeChanged {
-					if err := r.setGangShapeHash(ctx, &pcsgList.Items[i], componentutils.ComputeGangShapeHash(pcs)); err != nil {
-						logger.Error(err, "failed to set the gang-shape hash on PCSG", "pcsg", client.ObjectKeyFromObject(&pcsgList.Items[i]))
-						flagErrs = append(flagErrs, err)
-					}
+				if err := r.setGangShapeHash(ctx, &pcsgList.Items[i], componentutils.ComputeGangShapeHash(pcs)); err != nil {
+					logger.Error(err, "failed to set the gang-shape hash on PCSG", "pcsg", client.ObjectKeyFromObject(&pcsgList.Items[i]))
+					flagErrs = append(flagErrs, err)
 				}
 			}
 			return errors.Join(flagErrs...)

@@ -83,9 +83,13 @@ func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev
 	}
 
 	// A changed init.minReplicas recreates the stale replicas one at a time, under every update strategy. It
-	// takes precedence over a rolling update, which starts no new replica while any replica is stale.
+	// takes precedence over a rolling update, which starts no new replica while any replica is stale or still
+	// recovering from its recreate.
 	shapeWork, err := r.getGangShapeWork(ctx, logger, pcs, delWork.pcsIndicesToTerminate)
 	if err != nil {
+		return err
+	}
+	if err = r.patchGangShapeRecreateStatus(ctx, logger, pcs, shapeWork); err != nil {
 		return err
 	}
 	if shapeWork.recreateTask != nil {
@@ -93,11 +97,11 @@ func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev
 			return groveerr.WrapError(runResult.GetAggregatedError(),
 				errCodeDeletePCSReplica,
 				component.OperationSync,
-				fmt.Sprintf("Error recreating replica %d of PodCliqueSet %v with a stale gang shape", shapeWork.recreateReplicaIndex, pcsObjectKey),
+				fmt.Sprintf("Error recreating replica %d of PodCliqueSet %v with a stale gang shape", *shapeWork.currentlyRecreating, pcsObjectKey),
 			)
 		}
 	}
-	if shapeWork.hasStaleReplicas() {
+	if shapeWork.inProgress() {
 		return groveerr.New(groveerr.ErrCodeContinueReconcileAndRequeue,
 			component.OperationSync,
 			fmt.Sprintf("Requeuing to recreate PodCliqueSet replicas %v whose gang shape is stale", shapeWork.staleReplicaIndices),

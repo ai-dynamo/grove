@@ -108,6 +108,24 @@ type PodCliqueSetStatus struct {
 	CurrentGenerationHash *string `json:"currentGenerationHash,omitempty"`
 	// UpdateProgress represents the progress of an update.
 	UpdateProgress *PodCliqueSetUpdateProgress `json:"updateProgress,omitempty"`
+	// GangShapeRecreate is set while replicas whose gang shape is stale, after an init.minReplicas change in
+	// grove.io/v1beta1, are being recreated, and is cleared once none is left.
+	// +optional
+	GangShapeRecreate *GangShapeRecreateProgress `json:"gangShapeRecreate,omitempty"`
+}
+
+// GangShapeRecreateProgress captures the progress of recreating the PodCliqueSet replicas whose gang shape is stale.
+// Replicas are recreated one at a time, and the next one only once every replica whose gang shape is current is
+// available.
+type GangShapeRecreateProgress struct {
+	// StartedAt is the time at which the first stale replica was found.
+	StartedAt metav1.Time `json:"startedAt"`
+	// GangShapeHash is the gang-shape hash that the replicas are being recreated to.
+	GangShapeHash string `json:"gangShapeHash"`
+	// CurrentlyRecreating is the index of the replica that was deleted last. It is cleared once that replica is
+	// available again.
+	// +optional
+	CurrentlyRecreating *int32 `json:"currentlyRecreating,omitempty"`
 }
 
 // PodCliqueSetUpdateStrategy defines the update strategy for a PodCliqueSet.

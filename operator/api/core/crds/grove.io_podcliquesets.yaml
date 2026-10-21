@@ -11175,6 +11175,30 @@ spec:
                   Only if this value is not nil and the newly computed hash value is different from the persisted CurrentGenerationHash value
                   then an update needs to be triggered.
                 type: string
+              gangShapeRecreate:
+                description: |-
+                  GangShapeRecreate is set while replicas whose gang shape is stale, after an init.minReplicas change in
+                  grove.io/v1beta1, are being recreated, and is cleared once none is left.
+                properties:
+                  currentlyRecreating:
+                    description: |-
+                      CurrentlyRecreating is the index of the replica that was deleted last. It is cleared once that replica is
+                      available again.
+                    format: int32
+                    type: integer
+                  gangShapeHash:
+                    description: GangShapeHash is the gang-shape hash that the replicas
+                      are being recreated to.
+                    type: string
+                  startedAt:
+                    description: StartedAt is the time at which the first stale replica
+                      was found.
+                    format: date-time
+                    type: string
+                required:
+                - gangShapeHash
+                - startedAt
+                type: object
               hpaPodSelector:
                 description: |-
                   Selector is the label selector that determines which pods are part of the PodGang.
@@ -22577,6 +22601,30 @@ spec:
                   Only if this value is not nil and the newly computed hash value is different from the persisted CurrentGenerationHash value
                   then an update needs to be triggered.
                 type: string
+              gangShapeRecreate:
+                description: |-
+                  GangShapeRecreate is set while replicas whose gang shape is stale, after an init.minReplicas change, are
+                  being recreated, and is cleared once none is left.
+                properties:
+                  currentlyRecreating:
+                    description: |-
+                      CurrentlyRecreating is the index of the replica that was deleted last. It is cleared once that replica is
+                      available again.
+                    format: int32
+                    type: integer
+                  gangShapeHash:
+                    description: GangShapeHash is the gang-shape hash that the replicas
+                      are being recreated to.
+                    type: string
+                  startedAt:
+                    description: StartedAt is the time at which the first stale replica
+                      was found.
+                    format: date-time
+                    type: string
+                required:
+                - gangShapeHash
+                - startedAt
+                type: object
               hpaPodSelector:
                 description: |-
                   Selector is the label selector that determines which pods are part of the PodGang.

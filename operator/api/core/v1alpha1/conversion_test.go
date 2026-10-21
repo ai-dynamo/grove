@@ -220,6 +220,20 @@ func TestConvertPodCliqueSetStashIgnoredAfterAlphaEdit(t *testing.T) {
 	assert.Equal(t, availabilityTermination(1, &metav1.Duration{Duration: defaultTerminationDelay}), model.Spec.Termination)
 }
 
+func TestConvertPodCliqueSetKeepsGangShapeRecreateStatus(t *testing.T) {
+	progress := &v1beta1.GangShapeRecreateProgress{
+		StartedAt:           metav1.NewTime(time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)),
+		GangShapeHash:       "h",
+		CurrentlyRecreating: ptr.To[int32](1),
+	}
+	beta := &v1beta1.PodCliqueSet{Status: v1beta1.PodCliqueSetStatus{GangShapeRecreate: progress}}
+
+	alpha := toAlpha(t, beta)
+	require.NotNil(t, alpha.Status.GangShapeRecreate)
+	assert.Equal(t, ptr.To[int32](1), alpha.Status.GangShapeRecreate.CurrentlyRecreating)
+	assert.Equal(t, progress, toBeta(t, alpha).Status.GangShapeRecreate)
+}
+
 func TestConvertPodCliqueSetWithoutLostValuesWritesNoStash(t *testing.T) {
 	alpha := &PodCliqueSet{Spec: PodCliqueSetSpec{Template: PodCliqueSetTemplateSpec{
 		Cliques: []*PodCliqueTemplateSpec{{Name: "model", Spec: PodCliqueSpec{Replicas: 2, MinAvailable: ptr.To[int32](2)}}},
