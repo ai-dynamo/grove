@@ -42,8 +42,8 @@
   - [Dependencies](#dependencies)
   - [Test Plan](#test-plan)
   - [Implementation Plan](#implementation-plan)
-    - [Phase 1: MinAvailable disaggregation and the <code>v1beta1</code> API](#phase-1-minavailable-disaggregation-and-the-v1beta1-api)
-    - [Phase 2: Terminal states and restart policies](#phase-2-terminal-states-and-restart-policies)
+    - [Phase 1: MinAvailable disaggregation and the <code>v1beta1</code> API (<em>Approved for implementation</em>)](#phase-1-minavailable-disaggregation-and-the-v1beta1-api-approved-for-implementation)
+    - [Phase 2: Terminal states and restart policies (<em>Currently under review -- may undergo changes</em>)](#phase-2-terminal-states-and-restart-policies-currently-under-review----may-undergo-changes)
 - [Alternatives](#alternatives)
 - [Appendix](#appendix)
 <!-- /toc -->
