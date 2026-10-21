@@ -51,7 +51,9 @@ func TestComputeGangShapeHash(t *testing.T) {
 	}{
 		{
 			description: "clique init.minReplicas change changes the hash",
-			mutate:      func(pcs *grovecorev1beta1.PodCliqueSet) { pcs.Spec.Template.Cliques[0].Spec.Init = initSpec(ptr.To[int32](4)) },
+			mutate: func(pcs *grovecorev1beta1.PodCliqueSet) {
+				pcs.Spec.Template.Cliques[0].Spec.Init = initSpec(ptr.To[int32](4))
+			},
 			wantChanged: true,
 		},
 		{
