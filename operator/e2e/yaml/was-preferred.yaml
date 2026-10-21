@@ -1,0 +1,47 @@
+# WAS ignores the preferred host constraint with a warning while enforcing
+# the required rack constraint (GREP-531).
+---
+apiVersion: grove.io/v1alpha1
+kind: PodCliqueSet
+metadata:
+  name: was-preferred
+  labels:
+    app: was-preferred
+spec:
+  replicas: 1
+  template:
+    topologyConstraint:
+      topologyName: grove-topology
+      pack:
+        required: rack
+        preferred: host
+    cliques:
+      - name: pc-a
+        spec:
+          roleName: role-a
+          replicas: 2
+          minAvailable: 2
+          podSpec:
+            terminationGracePeriodSeconds: 5
+            schedulerName: default-scheduler
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: node_role.e2e.grove.nvidia.com
+                          operator: In
+                          values:
+                            - agent
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: pc-a
+                image: registry:5001/busybox:latest
+                command: ["sleep", "infinity"]
+                resources:
+                  requests:
+                    memory: 80Mi

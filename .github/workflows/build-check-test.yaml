@@ -152,6 +152,9 @@ jobs:
           - test_name: kueue_update
             test_pattern: "^Test_KueueUpdate"
             make_target: "run-e2e-kueue-full"
+          - test_name: was
+            test_pattern: "^Test_WAS[0-9]"
+            make_target: "run-e2e-was-full"
     name: E2E - ${{ matrix.test_name }}
     steps:
       # print runner specs so we have a record in case of failures
@@ -227,6 +230,7 @@ jobs:
           - test_name: version_upgrade
           - test_name: kueue
           - test_name: kueue_update
+          - test_name: was
     name: E2E - ${{ matrix.test_name }}
     steps:
       - name: Skip E2E (no relevant changes)
@@ -248,6 +252,10 @@ jobs:
             k3s_image: "rancher/k3s:v1.34.11-k3s1"
           - kubernetes_version: "1.35"
             k3s_image: "rancher/k3s:v1.35.5-k3s1"
+          - kubernetes_version: "1.36"
+            k3s_image: "rancher/k3s:v1.36.4-k3s1"
+          - kubernetes_version: "1.37"
+            k3s_image: "rancher/k3s:v1.37.0-k3s1"
     name: Kubernetes compatibility - ${{ matrix.kubernetes_version }}
     env:
       KUBERNETES_COMPATIBILITY_TEST_PATTERN: >-
