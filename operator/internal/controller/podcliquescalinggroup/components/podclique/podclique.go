@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"maps"
 	"strconv"
-	"strings"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	apiconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
@@ -311,8 +310,9 @@ func (r _resource) doCreateOrUpdate(ctx context.Context, logger logr.Logger, ss 
 func (r _resource) buildResource(logger logr.Logger, ss *syncSnapshot, pcsgReplicaIndex int, pclq *grovecorev1alpha1.PodClique, pclqExists bool) error {
 	pcs, pcsg, pcsReplicaIndex := ss.pcs, ss.pcsg, ss.pcsReplicaIndex
 	pclqObjectKey, pcsObjectKey := client.ObjectKeyFromObject(pclq), client.ObjectKeyFromObject(pcs)
+	pcsgNameReplica := apicommon.ResourceNameReplica{Name: pcsg.Name, Replica: pcsgReplicaIndex}
 	pclqTemplateSpec, ok := lo.Find(pcs.Spec.Template.Cliques, func(pclqTemplateSpec *grovecorev1alpha1.PodCliqueTemplateSpec) bool {
-		return strings.HasSuffix(pclq.Name, pclqTemplateSpec.Name)
+		return apicommon.GeneratePodCliqueName(pcsgNameReplica, pclqTemplateSpec.Name) == pclq.Name
 	})
 	if !ok {
 		logger.Info("Error building PodClique resource, PodClique template spec not found in PodCliqueSet", "podCliqueObjectKey", pclqObjectKey, "podCliqueSetObjectKey", pcsObjectKey)
