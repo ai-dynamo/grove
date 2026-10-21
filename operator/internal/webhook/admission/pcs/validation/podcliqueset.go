@@ -383,6 +383,13 @@ func (v *pcsValidator) validatePodCliqueScalingGroupConfigs(fldPath *field.Path)
 			}
 		}
 
+		// validate ScaleConfig.MaxReplicas >= ScaleConfig.MinReplicas
+		if scalingGroupConfig.ScaleConfig != nil && scalingGroupConfig.ScaleConfig.MinReplicas != nil {
+			if scalingGroupConfig.ScaleConfig.MaxReplicas < *scalingGroupConfig.ScaleConfig.MinReplicas {
+				allErrs = append(allErrs, field.Invalid(fldPath.Index(i).Child("scaleConfig", "maxReplicas"), scalingGroupConfig.ScaleConfig.MaxReplicas, "scaleConfig.maxReplicas must be greater than or equal to scaleConfig.minReplicas"))
+			}
+		}
+
 		// validate RollingUpdate against the active update strategy.
 		allErrs = append(allErrs, v.validateRollingUpdateConfiguration(scalingGroupConfig.RollingUpdate, ptr.Deref(scalingGroupConfig.MinAvailable, 1), fldPath.Index(i).Child("rollingUpdate"))...)
 
