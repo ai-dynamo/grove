@@ -680,16 +680,14 @@ func TestSetupHealthAndReadinessEndpoints(t *testing.T) {
 // name identifies the scenario and is read during failure output for quick diagnosis.
 // controllerErr controls the simulated outcome of controller registration.
 // webhookErr controls the simulated outcome of webhook registration.
-// beforeControllersErr controls the simulated outcome of the hook that runs before controllers are registered.
 // expectedCalls lists the registration steps expected to run, in order.
 // expectedErrFrag, when set, should be contained in the returned error to ensure the correct failure path is exercised.
 type registerControllersAndWebhooksCase struct {
-	name                 string
-	controllerErr        error
-	webhookErr           error
-	beforeControllersErr error
-	expectedCalls        []string
-	expectedErrFrag      string
+	name            string
+	controllerErr   error
+	webhookErr      error
+	expectedCalls   []string
+	expectedErrFrag string
 }
 
 // TestRegisterControllersAndWebhooks verifies that certificate readiness is honored, that webhooks are registered
@@ -697,8 +695,8 @@ type registerControllersAndWebhooksCase struct {
 func TestRegisterControllersAndWebhooks(t *testing.T) {
 	testCases := []registerControllersAndWebhooksCase{
 		{
-			name:          "registers webhooks, runs the hook and then registers controllers",
-			expectedCalls: []string{"webhooks", "serverStarted", "beforeControllers", "controllers"},
+			name:          "registers webhooks and then registers controllers",
+			expectedCalls: []string{"webhooks", "serverStarted", "controllers"},
 		},
 		{
 			name:            "webhook registration failure short-circuits",
@@ -707,16 +705,10 @@ func TestRegisterControllersAndWebhooks(t *testing.T) {
 			expectedCalls:   []string{"webhooks"},
 		},
 		{
-			name:                 "hook failure short-circuits controller registration",
-			beforeControllersErr: errors.New("hook failure"),
-			expectedErrFrag:      "hook failure",
-			expectedCalls:        []string{"webhooks", "serverStarted", "beforeControllers"},
-		},
-		{
 			name:            "controller registration failure bubbles up",
 			controllerErr:   errors.New("controller failure"),
 			expectedErrFrag: "controller failure",
-			expectedCalls:   []string{"webhooks", "serverStarted", "beforeControllers", "controllers"},
+			expectedCalls:   []string{"webhooks", "serverStarted", "controllers"},
 		},
 	}
 
@@ -750,12 +742,7 @@ func TestRegisterControllersAndWebhooks(t *testing.T) {
 				calls = append(calls, "webhooks")
 				return tc.webhookErr
 			}
-			beforeControllers := func(context.Context) error {
-				calls = append(calls, "beforeControllers")
-				return tc.beforeControllersErr
-			}
-
-			err := RegisterControllersAndWebhooks(context.Background(), &mockManager{}, logr.Discard(), &configv1alpha1.OperatorConfiguration{}, make(chan struct{}), &testutils.FakeSchedulerRegistry{}, beforeControllers)
+			err := RegisterControllersAndWebhooks(context.Background(), &mockManager{}, logr.Discard(), &configv1alpha1.OperatorConfiguration{}, make(chan struct{}), &testutils.FakeSchedulerRegistry{})
 			if tc.expectedErrFrag != "" {
 				require.ErrorContains(t, err, tc.expectedErrFrag)
 			} else {

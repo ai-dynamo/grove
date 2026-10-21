@@ -61,20 +61,14 @@ func CreateManager(operatorCfg *configv1alpha1.OperatorConfiguration) (ctrl.Mana
 
 // RegisterControllersAndWebhooks adds all the controllers and webhooks to the controller-manager using the passed in Config.
 // Webhooks are registered first and served before the controllers are added, because the controllers read the
-// converted kinds through the conversion webhook while they are stored at another version. beforeControllers, if
-// set, runs once the webhook server is serving and before any controller is added.
-func RegisterControllersAndWebhooks(ctx context.Context, mgr ctrl.Manager, logger logr.Logger, operatorCfg *configv1alpha1.OperatorConfiguration, certsReady chan struct{}, schedRegistry scheduler.Registry, beforeControllers func(context.Context) error) error {
+// converted kinds through the conversion webhook while they are stored at another version.
+func RegisterControllersAndWebhooks(ctx context.Context, mgr ctrl.Manager, logger logr.Logger, operatorCfg *configv1alpha1.OperatorConfiguration, certsReady chan struct{}, schedRegistry scheduler.Registry) error {
 	waitTillWebhookCertsReady(logger, certsReady)
 	if err := registerWebhooksWithMgr(mgr, operatorCfg, schedRegistry); err != nil {
 		return err
 	}
 	if err := waitTillWebhookServerStarted(ctx, mgr); err != nil {
 		return err
-	}
-	if beforeControllers != nil {
-		if err := beforeControllers(ctx); err != nil {
-			return err
-		}
 	}
 	return registerControllersWithMgr(mgr, operatorCfg, schedRegistry)
 }
