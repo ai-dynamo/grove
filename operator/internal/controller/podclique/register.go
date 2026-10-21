@@ -64,6 +64,7 @@ func (r *Reconciler) RegisterWithManager(mgr ctrl.Manager) error {
 					predicate.Or(
 						predicate.GenerationChangedPredicate{},
 						predicate.AnnotationChangedPredicate{},
+						podCliqueTemplateHashChangedPredicate(),
 					),
 				),
 			),
@@ -71,7 +72,7 @@ func (r *Reconciler) RegisterWithManager(mgr ctrl.Manager) error {
 		Owns(&corev1.Pod{}, builder.WithPredicates(r.podPredicate())).
 		Watches(
 			&grovecorev1alpha1.PodCliqueSet{},
-			handler.EnqueueRequestsFromMapFunc(mapPodCliqueSetToPCLQs()),
+			handler.EnqueueRequestsFromMapFunc(mapPodCliqueSetToPCLQs(r.client)),
 			builder.WithPredicates(podCliqueSetPredicate()),
 		).
 		Watches(
@@ -90,6 +91,17 @@ func (r *Reconciler) RegisterWithManager(mgr ctrl.Manager) error {
 			builder.WithPredicates(podGangMapPredicate()),
 		).
 		Complete(r)
+}
+
+// podCliqueTemplateHashChangedPredicate admits owner updates that change only the selected pod template.
+func podCliqueTemplateHashChangedPredicate() predicate.Predicate {
+	return predicate.Funcs{
+		UpdateFunc: func(updateEvent event.UpdateEvent) bool {
+			oldHash := updateEvent.ObjectOld.GetLabels()[apicommon.LabelPodTemplateHash]
+			newHash := updateEvent.ObjectNew.GetLabels()[apicommon.LabelPodTemplateHash]
+			return oldHash != newHash
+		},
+	}
 }
 
 // managedPodCliquePredicate filters PodClique events to only process managed PodCliques owned by expected resources
@@ -203,18 +215,29 @@ func hasStartedAndReadyChangedForAnyContainer(oldContainerStatuses []corev1.Cont
 	return false
 }
 
-// mapPodCliqueSetToPCLQs maps a PodCliqueSet to one or more reconcile.Request(s) to its constituent standalone Podcliques.
-// These events are needed to keep the PodClique.Status.CurrentPodCliqueSetGenerationHash in sync with the PodCliqueSet.
-func mapPodCliqueSetToPCLQs() handler.MapFunc {
-	return func(_ context.Context, obj client.Object) []reconcile.Request {
+// mapPodCliqueSetToPCLQs maps a PodCliqueSet to all of its PodCliques. This includes PodCliques
+// managed through a PodCliqueScalingGroup so every PodClique observes PCS revision transitions.
+func mapPodCliqueSetToPCLQs(cl client.Client) handler.MapFunc {
+	return func(ctx context.Context, obj client.Object) []reconcile.Request {
 		pcs, ok := obj.(*grovecorev1alpha1.PodCliqueSet)
 		if !ok {
 			return nil
 		}
-		return lo.Map(componentutils.GetPodCliqueFQNsForPCSNotInPCSG(pcs), func(pclqFQN string, _ int) reconcile.Request {
+		pclqList := &grovecorev1alpha1.PodCliqueList{}
+		if err := cl.List(ctx, pclqList,
+			client.InNamespace(pcs.Namespace),
+			client.MatchingLabels{
+				apicommon.LabelManagedByKey: apicommon.LabelManagedByValue,
+				apicommon.LabelPartOfKey:    pcs.Name,
+			},
+		); err != nil {
+			ctrllogger.FromContext(ctx).Error(err, "Failed to list PodCliques for PodCliqueSet", "podCliqueSet", client.ObjectKeyFromObject(pcs))
+			return nil
+		}
+		return lo.Map(pclqList.Items, func(pclq grovecorev1alpha1.PodClique, _ int) reconcile.Request {
 			return reconcile.Request{NamespacedName: types.NamespacedName{
-				Namespace: pcs.Namespace,
-				Name:      pclqFQN,
+				Namespace: pclq.Namespace,
+				Name:      pclq.Name,
 			}}
 		})
 	}
@@ -231,7 +254,8 @@ func podCliqueSetPredicate() predicate.Predicate {
 			if !okOld || !okNew {
 				return false
 			}
-			return !stringPointersEqual(oldPCS.Status.CurrentGenerationHash, newPCS.Status.CurrentGenerationHash) ||
+			return oldPCS.Status.UpdateRevision != newPCS.Status.UpdateRevision ||
+				!stringPointersEqual(oldPCS.Status.CurrentGenerationHash, newPCS.Status.CurrentGenerationHash) ||
 				pcsCurrentlyUpdatingReplicaChanged(oldPCS.Status.UpdateProgress, newPCS.Status.UpdateProgress)
 		},
 		GenericFunc: func(_ event.GenericEvent) bool { return false },

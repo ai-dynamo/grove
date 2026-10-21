@@ -96,16 +96,14 @@ func mapPCSToPCSG() handler.MapFunc {
 		if !ok {
 			return nil
 		}
-		if pcs.Status.UpdateProgress == nil {
-			return nil
-		}
 		var pcsReplicaIndices []int32
-		if componentutils.IsRollingUpdateStrategy(pcs) &&
+		if pcs.Status.UpdateProgress != nil &&
+			componentutils.IsRollingUpdateStrategy(pcs) &&
 			len(pcs.Status.UpdateProgress.CurrentlyUpdating) > 0 {
 			// Rolling recreate needs to have a CurrentlyUpdating which is used to generate an event for the corresponding PCSG
 			pcsReplicaIndices = lo.RangeFrom(pcs.Status.UpdateProgress.CurrentlyUpdating[0].ReplicaIndex, 1)
 		} else {
-			// OnDelete will not have a specific CurrentlyUpdating, so PCSG resources of all PCS replicas are reconciled
+			// Stable and OnDelete workloads do not have a specific CurrentlyUpdating replica, so reconcile all PCSGs.
 			pcsReplicaIndices = lo.RangeFrom(int32(0), int(pcs.Spec.Replicas))
 		}
 		return pcsgReconcileRequestsForPCSReplicas(pcs, pcsReplicaIndices)
@@ -150,6 +148,9 @@ func shouldEnqueueOnPCSUpdate(event event.UpdateEvent) bool {
 	newPCS, okNew := event.ObjectNew.(*grovecorev1alpha1.PodCliqueSet)
 	if !okOld || !okNew {
 		return false
+	}
+	if oldPCS.Status.UpdateRevision != newPCS.Status.UpdateRevision {
+		return true
 	}
 
 	if oldPCS.Status.UpdateProgress != nil && newPCS.Status.UpdateProgress != nil {

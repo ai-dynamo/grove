@@ -26,6 +26,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
+	controllerrevision "github.com/ai-dynamo/grove/operator/internal/utils/controllerrevision"
 
 	"github.com/go-logr/logr"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -156,6 +157,10 @@ func findCurrentlyUpdatingReplicaInfo(pcs *grovecorev1alpha1.PodCliqueSet, repli
 // not maintained here.
 func (r _resource) markCurrentReplicaUpdateEnded(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) error {
 	original := pcs.DeepCopy()
+	replicaIndex := int(pcs.Status.UpdateProgress.CurrentlyUpdating[0].ReplicaIndex)
+	if err := controllerrevision.SetReplicaRevision(pcs, replicaIndex, pcs.Status.UpdateRevision); err != nil {
+		return err
+	}
 	pcs.Status.UpdateProgress.CurrentlyUpdating[0].UpdateEndedAt = ptr.To(metav1.Now())
 	if err := r.patchUpdateProgressStatus(ctx, logger, pcs, original); err != nil {
 		logger.Error(err, "failed to patch update progress", "replicaIndex", pcs.Status.UpdateProgress.CurrentlyUpdating[0].ReplicaIndex)
@@ -232,6 +237,7 @@ func (r _resource) updatePCSWithNextSelectedReplica(ctx context.Context, logger 
 		logger.Info("Rolling update has completed")
 		pcs.Status.UpdateProgress.UpdateEndedAt = ptr.To(metav1.Now())
 		pcs.Status.UpdateProgress.CurrentlyUpdating = nil
+		pcs.Status.CurrentRevision = pcs.Status.UpdateRevision
 	} else {
 		logger.Info("Initiating rolling update for next replica index", "nextReplicaIndex", *nextPCSReplicaToUpdate)
 		pcs.Status.UpdateProgress.CurrentlyUpdating = []grovecorev1alpha1.PodCliqueSetReplicaUpdateProgress{

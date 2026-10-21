@@ -71,12 +71,24 @@ type PodCliqueSetSpec struct {
 	UpdateStrategy *PodCliqueSetUpdateStrategy `json:"updateStrategy,omitempty"`
 	// Template describes the template spec for PodGangs that will be created in the PodCliqueSet.
 	Template PodCliqueSetTemplateSpec `json:"template"`
+	// RevisionHistoryLimit is the maximum number of revisions that will be maintained in PodCliqueSet's revision
+	// history. The history limit excludes all revisions actively referenced by a PodCliqueSet.
+	// +optional
+	// +kubebuilder:default=10
+	// +kubebuilder:validation:Minimum=0
+	RevisionHistoryLimit *int32 `json:"revisionHistoryLimit,omitempty"`
 }
 
 // PodCliqueSetStatus defines the status of a PodCliqueSet.
 type PodCliqueSetStatus struct {
 	// ObservedGeneration is the most recent generation observed by the controller.
 	ObservedGeneration *int64 `json:"observedGeneration,omitempty"`
+	// CurrentRevision is the last revision reached by the workload.
+	CurrentRevision string `json:"currentRevision,omitempty"`
+	// UpdateRevision is the desired revision.
+	UpdateRevision string `json:"updateRevision,omitempty"`
+	// CollisionCount disambiguates revision names.
+	CollisionCount *int32 `json:"collisionCount,omitempty"`
 	// Conditions represents the latest available observations of the PodCliqueSet by its controller.
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
@@ -176,6 +188,19 @@ type PodCliqueSetUpdateProgress struct {
 	// in-flight component's update is dropped. Only populated for the Coherent strategy.
 	// +optional
 	InScopePodCliqueScalingGroups []string `json:"inScopePodCliqueScalingGroups,omitempty"`
+	// ReplicaRevisions binds each PodCliqueSet replica to its source ControllerRevision.
+	// +optional
+	// +listType=map
+	// +listMapKey=replicaIndex
+	ReplicaRevisions []PodCliqueSetReplicaRevision `json:"replicaRevisions,omitempty"`
+}
+
+// PodCliqueSetReplicaRevision binds a PodCliqueSet replica to a ControllerRevision.
+type PodCliqueSetReplicaRevision struct {
+	// ReplicaIndex is the zero-based PodCliqueSet replica index.
+	ReplicaIndex int32 `json:"replicaIndex"`
+	// Revision is the name of the ControllerRevision selected for the replica.
+	Revision string `json:"revision"`
 }
 
 // PodCliqueSetReplicaUpdateProgress captures the progress of an update for a specific PodCliqueSet replica.

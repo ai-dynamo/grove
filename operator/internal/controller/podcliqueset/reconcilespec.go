@@ -44,6 +44,7 @@ func (r *Reconciler) reconcileSpec(ctx context.Context, logger logr.Logger, pcs 
 	rLog := logger.WithValues("operation", "spec-reconcile")
 	reconcileStepFns := []ctrlcommon.ReconcileStepFn[grovecorev1alpha1.PodCliqueSet]{
 		r.ensureFinalizer,
+		r.ensureCurrentControllerRevision,
 		r.processGenerationHashChange,
 		r.syncPodCliqueSetResources,
 		r.updateObservedGeneration,
@@ -144,8 +145,12 @@ func (r *Reconciler) setGenerationHashAndUpdateStatus(ctx context.Context, pcs *
 
 // initUpdateProgress initializes a new rolling update by resetting progress tracking.
 func (r *Reconciler) initUpdateProgress(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, pcsGenHashKey, newGenerationHash string) error {
+	if pcs.Status.CurrentRevision == "" {
+		return fmt.Errorf("PodCliqueSet %v has no current ControllerRevision", client.ObjectKeyFromObject(pcs))
+	}
 	updateProgress := &grovecorev1alpha1.PodCliqueSetUpdateProgress{
-		UpdateStartedAt: metav1.Now(),
+		UpdateStartedAt:  metav1.Now(),
+		ReplicaRevisions: replicaRevisionBindingsForUpdate(pcs),
 	}
 	// OnDelete strategy sets UpdateEndedAt too, since we do not know when all the pods will manually be deleted, and gang termination is disabled when an update is in progress
 	if pcs.Spec.UpdateStrategy != nil && pcs.Spec.UpdateStrategy.Type == grovecorev1alpha1.OnDeleteStrategy {
@@ -168,6 +173,33 @@ func (r *Reconciler) initUpdateProgress(ctx context.Context, pcs *grovecorev1alp
 		return fmt.Errorf("could not set UpdateProgress for PodCliqueSet: %v: %w", client.ObjectKeyFromObject(pcs), err)
 	}
 	return nil
+}
+
+// replicaRevisionBindingsForUpdate returns one durable revision binding per desired replica. Existing
+// valid bindings are preserved across a superseding update; replicas without a binding start from the
+// last fully converged CurrentRevision. Iterating replica indices keeps status output deterministic.
+func replicaRevisionBindingsForUpdate(pcs *grovecorev1alpha1.PodCliqueSet) []grovecorev1alpha1.PodCliqueSetReplicaRevision {
+	existing := make(map[int32]string)
+	if pcs.Status.UpdateProgress != nil {
+		for _, binding := range pcs.Status.UpdateProgress.ReplicaRevisions {
+			if binding.ReplicaIndex >= 0 && binding.ReplicaIndex < pcs.Spec.Replicas && binding.Revision != "" {
+				existing[binding.ReplicaIndex] = binding.Revision
+			}
+		}
+	}
+
+	bindings := make([]grovecorev1alpha1.PodCliqueSetReplicaRevision, 0, pcs.Spec.Replicas)
+	for replicaIndex := range pcs.Spec.Replicas {
+		revisionName := pcs.Status.CurrentRevision
+		if existingRevision, ok := existing[replicaIndex]; ok {
+			revisionName = existingRevision
+		}
+		bindings = append(bindings, grovecorev1alpha1.PodCliqueSetReplicaRevision{
+			ReplicaIndex: replicaIndex,
+			Revision:     revisionName,
+		})
+	}
+	return bindings
 }
 
 // syncPodCliqueSetResources synchronizes all managed child resources. Components are

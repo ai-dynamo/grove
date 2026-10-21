@@ -28,6 +28,24 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
+func TestPodCliqueSetRevisionChangeEnqueuesAllPCSGs(t *testing.T) {
+	pcs := testutils.NewPodCliqueSetBuilder("pcs", "default", types.UID("pcs-uid")).
+		WithReplicas(2).
+		WithScalingGroup("group", []string{"worker"}).
+		Build()
+	oldPCS := pcs.DeepCopy()
+	oldPCS.Status.UpdateRevision = "old-revision"
+	pcs.Status.UpdateRevision = "new-revision"
+
+	pred, ok := podCliqueSetPredicate().(predicate.Funcs)
+	require.True(t, ok)
+	assert.True(t, pred.UpdateFunc(event.UpdateEvent{ObjectOld: oldPCS, ObjectNew: pcs}))
+	assert.ElementsMatch(t, []reconcile.Request{
+		{NamespacedName: types.NamespacedName{Namespace: pcs.Namespace, Name: "pcs-0-group"}},
+		{NamespacedName: types.NamespacedName{Namespace: pcs.Namespace, Name: "pcs-1-group"}},
+	}, mapPCSToPCSG()(t.Context(), pcs))
+}
+
 // TestPodGangMapPredicate verifies the PodGangMap watch predicate. It must fire on Create so a
 // reconstructed PodGangMap that already carries a multi-anchor distribution is processed, and on an
 // Update that moves a PodCliqueScalingGroup replica index between entries or changes the indices an
