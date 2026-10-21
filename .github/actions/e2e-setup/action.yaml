@@ -59,7 +59,7 @@ runs:
 
     - name: Set up Go (fallback)
       if: env.NEED_GO_SETUP == 'true'
-      uses: actions/setup-go@v4
+      uses: actions/setup-go@v6
       with:
         go-version: ${{ inputs.go-version }}
         cache: true
