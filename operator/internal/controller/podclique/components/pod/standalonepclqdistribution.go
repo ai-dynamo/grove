@@ -119,10 +119,10 @@ func buildDesiredCountByPodGang(ss *syncSnapshot) map[string]int32 {
 // current generation hash is not known yet.
 func currentGenerationPodGangNames(ss *syncSnapshot) sets.Set[string] {
 	names := sets.New[string]()
-	if ss.pgm == nil || ss.pcs.Status.CurrentGenerationHash == nil {
+	if ss.pgm == nil || ss.generationHash == "" {
 		return names
 	}
-	currentHash := *ss.pcs.Status.CurrentGenerationHash
+	currentHash := ss.generationHash
 	rnr := apicommon.ResourceNameReplica{Name: ss.pcs.Name, Replica: ss.pcsReplicaIndex}
 	for _, entry := range ss.pgm.Spec.Entries {
 		if entry.PodCliqueSetGenerationHash != currentHash {

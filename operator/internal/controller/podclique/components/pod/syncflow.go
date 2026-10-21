@@ -62,7 +62,16 @@ func (r _resource) prepareSyncFlow(ctx context.Context, logger logr.Logger, pclq
 	ss.pcs = pcs
 	pcsObjectKey := client.ObjectKeyFromObject(pcs)
 
-	ss.expectedPodTemplateHash, err = componentutils.GetExpectedPCLQPodTemplateHash(ss.pcs, pclq.ObjectMeta)
+	revision, err := componentutils.GetPodCliqueSetRevision(ctx, r.client, ss.pcs)
+	if err != nil {
+		return nil, groveerr.WrapError(err,
+			errCodeGetPodCliqueTemplate,
+			component.OperationSync,
+			fmt.Sprintf("failed to get PodCliqueSet revision for PodClique: %v", client.ObjectKeyFromObject(pclq)),
+		)
+	}
+	ss.generationHash = revision.GenerationHash()
+	ss.expectedPodTemplateHash, err = componentutils.GetExpectedPCLQPodTemplateHash(revision, pclq.ObjectMeta)
 	if err != nil {
 		return nil, groveerr.WrapError(err,
 			errCodeGetPodCliqueTemplate,
@@ -309,16 +318,16 @@ func (r _resource) removeSchedulerFinalizersFromDeletingPods(ctx context.Context
 }
 
 // pclqUpdateProgressMatchesCurrentRevision reports whether the PCLQ update progress identifies the
-// same PCS generation and Pod template revision currently observed on the PCS and PCLQ resources.
+// selected PCS revision and the Pod template revision currently observed on the PCLQ.
 // The PCS controller updates these resources independently, so update-specific Pod replacement and
 // completion must wait until all revision markers agree.
 func pclqUpdateProgressMatchesCurrentRevision(ss *syncSnapshot) bool {
-	if ss.pcs.Status.CurrentGenerationHash == nil || ss.pclq.Status.UpdateProgress == nil {
+	if ss.generationHash == "" || ss.pclq.Status.UpdateProgress == nil {
 		return false
 	}
 
 	progress := ss.pclq.Status.UpdateProgress
-	return progress.PodCliqueSetGenerationHash == *ss.pcs.Status.CurrentGenerationHash &&
+	return progress.PodCliqueSetGenerationHash == ss.generationHash &&
 		progress.PodTemplateHash == ss.pclq.Labels[apicommon.LabelPodTemplateHash]
 }
 
@@ -452,8 +461,8 @@ func (r _resource) selectExcessPodsToDelete(ss *syncSnapshot, logger logr.Logger
 
 func (ss *syncSnapshot) getExpectedPodTemplateHash() string {
 	if ss.pclq.Status.UpdateProgress != nil &&
-		ss.pcs.Status.CurrentGenerationHash != nil &&
-		ss.pclq.Status.UpdateProgress.PodCliqueSetGenerationHash == *ss.pcs.Status.CurrentGenerationHash {
+		ss.generationHash != "" &&
+		ss.pclq.Status.UpdateProgress.PodCliqueSetGenerationHash == ss.generationHash {
 		return ss.pclq.Status.UpdateProgress.PodTemplateHash
 	}
 	return ss.pclq.Labels[apicommon.LabelPodTemplateHash]
@@ -684,6 +693,7 @@ func (r _resource) createPods(ctx context.Context, logger logr.Logger, ss *syncS
 // syncSnapshot holds the relevant state required during the sync flow run.
 type syncSnapshot struct {
 	pcs                     *grovecorev1alpha1.PodCliqueSet
+	generationHash          string
 	pclq                    *grovecorev1alpha1.PodClique
 	pcsReplicaIndex         int
 	pgm                     *grovecorev1alpha1.PodGangMap

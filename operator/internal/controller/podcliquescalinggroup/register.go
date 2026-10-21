@@ -28,6 +28,7 @@ import (
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 
 	"github.com/samber/lo"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
@@ -132,7 +133,7 @@ func pcsgReconcileRequestsForPCSReplicas(pcs *grovecorev1alpha1.PodCliqueSet, pc
 	return requests
 }
 
-// podCliqueSetPredicate filters PodCliqueSet events to only process rolling update status changes
+// podCliqueSetPredicate filters PodCliqueSet events to process selected revision and update progress changes.
 func podCliqueSetPredicate() predicate.Predicate {
 	return predicate.Funcs{
 		CreateFunc: func(_ event.CreateEvent) bool { return false },
@@ -144,12 +145,16 @@ func podCliqueSetPredicate() predicate.Predicate {
 	}
 }
 
-// shouldEnqueueOnPCSUpdate determines if a PodCliqueSet update event should trigger PodCliqueScalingGroup reconciliation based on rolling update progress changes
+// shouldEnqueueOnPCSUpdate enqueues when the selected revision or update progress requires reconciliation.
 func shouldEnqueueOnPCSUpdate(event event.UpdateEvent) bool {
 	oldPCS, okOld := event.ObjectOld.(*grovecorev1alpha1.PodCliqueSet)
 	newPCS, okNew := event.ObjectNew.(*grovecorev1alpha1.PodCliqueSet)
 	if !okOld || !okNew {
 		return false
+	}
+
+	if !ptr.Equal(oldPCS.Status.CurrentRevision, newPCS.Status.CurrentRevision) {
+		return true
 	}
 
 	if oldPCS.Status.UpdateProgress != nil && newPCS.Status.UpdateProgress != nil {

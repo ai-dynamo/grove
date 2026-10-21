@@ -157,7 +157,7 @@ func TestShouldAdvanceEntriesGenerationHash(t *testing.T) {
 			pcs := pcsBuilder.Build()
 			entries := entriesWithGenerationHashes(tt.entryHashes)
 
-			actual := shouldAdvanceEntriesGenerationHash(pcs, entries)
+			actual := shouldAdvanceEntriesGenerationHash(pcs, *pcs.Status.CurrentGenerationHash, entries)
 			assert.Equal(t, tt.expected, actual)
 		})
 	}

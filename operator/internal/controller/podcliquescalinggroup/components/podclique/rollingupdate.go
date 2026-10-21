@@ -258,8 +258,7 @@ func isReplicaUpdated(sc *syncSnapshot, replicaIndex int, members []grovecorev1a
 		expectedPodTemplateHash := sc.expectedPCLQPodTemplateHashMap[pclq.Name]
 		return expectedPodTemplateHash != "" &&
 			pclq.Status.CurrentPodTemplateHash != nil && *pclq.Status.CurrentPodTemplateHash == expectedPodTemplateHash &&
-			sc.pcs.Status.CurrentGenerationHash != nil &&
-			pclq.Status.CurrentPodCliqueSetGenerationHash != nil && *pclq.Status.CurrentPodCliqueSetGenerationHash == *sc.pcs.Status.CurrentGenerationHash &&
+			pclq.Status.CurrentPodCliqueSetGenerationHash != nil && *pclq.Status.CurrentPodCliqueSetGenerationHash == sc.revision.GenerationHash() &&
 			pclq.Status.UpdatedReplicas >= *pclq.Spec.MinAvailable
 	})
 }

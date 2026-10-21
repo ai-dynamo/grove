@@ -26,6 +26,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
+	commonrevision "github.com/ai-dynamo/grove/operator/internal/controller/common/revision"
 	pcsgexpectations "github.com/ai-dynamo/grove/operator/internal/controller/podcliquescalinggroup/expectations"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/resourceclaim"
@@ -49,6 +50,7 @@ type syncSnapshot struct {
 	existingPCLQNameSet            sets.Set[string]
 	expectationsStoreKey           string
 	expectedPCLQFQNsPerPCSGReplica map[int][]string
+	revision                       *commonrevision.Revision
 	expectedPCLQPodTemplateHashMap map[string]string
 }
 
@@ -110,7 +112,11 @@ func (r _resource) prepareSyncContext(ctx context.Context, pcsg *grovecorev1alph
 	syncSnap.existingPCLQNameSet = componentutils.PodCliqueNameSet(syncSnap.existingPCLQs)
 
 	// pre-compute expected PodTemplateHash for each PCLQ
-	syncSnap.expectedPCLQPodTemplateHashMap = getExpectedPCLQPodTemplateHashMap(syncSnap.pcs, pcsg)
+	syncSnap.revision, err = componentutils.GetPodCliqueSetRevision(ctx, r.client, syncSnap.pcs)
+	if err != nil {
+		return nil, err
+	}
+	syncSnap.expectedPCLQPodTemplateHashMap = componentutils.GetPCLQTemplateHashes(syncSnap.revision, syncSnap.pcs, pcsg)
 
 	return syncSnap, nil
 }
@@ -203,14 +209,14 @@ func (r _resource) reconcileInProgressUpdate(ctx context.Context, logger logr.Lo
 }
 
 // requeueIfPCSGUpdateTargetIsStale delays RollingRecreate and Coherent processing when the PCSG update
-// target differs from the current PCS generation. A new PCS revision replaces the PCS update progress
+// target differs from the selected PCS revision. A new PCS revision replaces the PCS update progress
 // immediately, while PCSG processUpdate can reset the child target only after the PCS selects this PCSG's
 // replica in UpdateProgress.CurrentlyUpdating. Requeueing gives processUpdate another opportunity to perform
 // that reset and prevents the superseded PCSG update from replacing replicas or being marked complete against
 // the new PCS template in the meantime.
 func requeueIfPCSGUpdateTargetIsStale(ss *syncSnapshot) error {
 	updateTarget := ss.pcsg.Status.UpdateProgress.PodCliqueSetGenerationHash
-	currentTarget := *ss.pcs.Status.CurrentGenerationHash
+	currentTarget := ss.revision.GenerationHash()
 	if updateTarget == currentTarget {
 		return nil
 	}
@@ -487,27 +493,6 @@ func (r _resource) getExistingPCLQs(ctx context.Context, pcsg *grovecorev1alpha1
 		)
 	}
 	return existingPCLQs, nil
-}
-
-// getExpectedPCLQPodTemplateHashMap computes the expected pod template hash for each PodClique in the PCSG
-func getExpectedPCLQPodTemplateHashMap(pcs *grovecorev1alpha1.PodCliqueSet, pcsg *grovecorev1alpha1.PodCliqueScalingGroup) map[string]string {
-	pclqFQNToHash := make(map[string]string)
-	pcsgPCLQNames := pcsg.Spec.CliqueNames
-	for _, pcsgCliqueName := range pcsgPCLQNames {
-		pclqTemplateSpec := componentutils.FindPodCliqueTemplateSpecByName(pcs, pcsgCliqueName)
-		if pclqTemplateSpec == nil {
-			continue
-		}
-		podTemplateHash := componentutils.ComputePCLQPodTemplateHash(pclqTemplateSpec, pcs.Spec.Template.PriorityClassName)
-		for pcsgReplicaIndex := range int(pcsg.Spec.Replicas) {
-			cliqueFQN := apicommon.GeneratePodCliqueName(apicommon.ResourceNameReplica{
-				Name:    pcsg.Name,
-				Replica: pcsgReplicaIndex,
-			}, pcsgCliqueName)
-			pclqFQNToHash[cliqueFQN] = podTemplateHash
-		}
-	}
-	return pclqFQNToHash
 }
 
 // refreshExistingPCLQs removes all the excess PCLQs that belong to any PCSG replica > expectedPCSGReplicas.

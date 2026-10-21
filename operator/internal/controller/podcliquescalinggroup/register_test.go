@@ -23,10 +23,44 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
+
+func TestPodCliqueSetPredicateRevisionChanges(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		revision *string
+		mirror   *string
+		want     bool
+	}{
+		{name: "revision changes with unchanged mirror", revision: ptr.To("new-revision"), mirror: ptr.To("old-hash"), want: true},
+		{name: "mirror repair alone", revision: ptr.To("old-revision"), mirror: ptr.To("repaired-hash")},
+		{name: "missing mirror", revision: ptr.To("old-revision")},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			oldPCS := testutils.NewPodCliqueSetBuilder("pcs", "default", "uid").
+				WithReplicas(2).
+				WithScalingGroup("worker", []string{"worker"}).
+				WithUpdateProgress(&grovecorev1alpha1.PodCliqueSetUpdateProgress{
+					CurrentlyUpdating: []grovecorev1alpha1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 1}},
+				}).Build()
+			oldPCS.Status.CurrentRevision = ptr.To("old-revision")
+			oldPCS.Status.CurrentGenerationHash = ptr.To("old-hash")
+			newPCS := oldPCS.DeepCopy()
+			newPCS.Status.CurrentRevision = tt.revision
+			newPCS.Status.CurrentGenerationHash = tt.mirror
+			got := podCliqueSetPredicate().Update(event.UpdateEvent{ObjectOld: oldPCS, ObjectNew: newPCS})
+			assert.Equal(t, tt.want, got)
+			if got {
+				assert.Equal(t, []reconcile.Request{{NamespacedName: types.NamespacedName{Namespace: "default", Name: "pcs-1-worker"}}},
+					mapPCSToPCSG()(t.Context(), newPCS))
+			}
+		})
+	}
+}
 
 // TestPodGangMapPredicate verifies the PodGangMap watch predicate. It must fire on Create so a
 // reconstructed PodGangMap that already carries a multi-anchor distribution is processed, and on an

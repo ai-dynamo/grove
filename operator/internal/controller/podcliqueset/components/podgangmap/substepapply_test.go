@@ -151,7 +151,7 @@ func TestApplySubStep(t *testing.T) {
 	}
 	for _, tc := range testCases {
 		t.Run(tc.description, func(t *testing.T) {
-			planner := &subStepPlanner{pcs: pcsWithCurrentHash("v2"), mvu: tc.mvu, entries: tc.entries}
+			planner := &subStepPlanner{pcs: pcsWithCurrentHash("v2"), generationHash: "v2", mvu: tc.mvu, entries: tc.entries}
 			got, err := planner.applySubStep(tc.ss)
 			require.NoError(t, err)
 			assert.Equal(t, tc.want, got)

@@ -212,7 +212,7 @@ func TestBuildBootstrapEntries(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			clk := clocktesting.NewFakeClock(time.Unix(0, 1000))
-			actual, _ := buildBootstrapEntries(clk, tt.pcs, tt.existingPodGangs)
+			actual, _ := buildBootstrapEntries(clk, tt.pcs, *tt.pcs.Status.CurrentGenerationHash, tt.existingPodGangs)
 			assert.Equal(t, tt.expectedRoles, testutils.RolesOf(actual))
 			tt.assertEntries(t, actual)
 		})
@@ -375,7 +375,7 @@ func TestSyncEntries(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			clk := clocktesting.NewFakeClock(time.Unix(0, 5000))
 			pgm := &grovecorev1alpha1.PodGangMap{Spec: grovecorev1alpha1.PodGangMapSpec{Entries: tt.existingEntries}}
-			actual, err := reconcileEntries(clk, tt.pcs, 0, pgm, nil, tt.standalonePCLQs, tt.pcsgs)
+			actual, err := reconcileEntries(clk, tt.pcs, *tt.pcs.Status.CurrentGenerationHash, 0, pgm, nil, tt.standalonePCLQs, tt.pcsgs)
 			require.NoError(t, err)
 			tt.assertResult(t, actual)
 		})
@@ -446,7 +446,7 @@ func TestEnsureScaleOutEntry(t *testing.T) {
 			{Role: grovecorev1alpha1.PodGangEntryRoleAnchor, Epoch: "100", PodCliqueSetGenerationHash: testGenHash, PCSGReplicaIndices: map[string][]int32{testPCSGName: {0, 1}}},
 		}
 
-		got, err := ensureScaleOutEntry(clk, entries, pcs, "")
+		got, err := ensureScaleOutEntry(clk, entries, pcs, *pcs.Status.CurrentGenerationHash, "")
 
 		require.NoError(t, err)
 		require.Len(t, got, 2)
@@ -460,7 +460,7 @@ func TestEnsureScaleOutEntry(t *testing.T) {
 			{Role: grovecorev1alpha1.PodGangEntryRoleAnchor, Epoch: "100", PodCliqueSetGenerationHash: "old-gen", PCSGReplicaIndices: map[string][]int32{testPCSGName: {0, 1}}},
 		}
 
-		got, err := ensureScaleOutEntry(clk, entries, pcs, "")
+		got, err := ensureScaleOutEntry(clk, entries, pcs, *pcs.Status.CurrentGenerationHash, "")
 
 		require.NoError(t, err)
 		assert.Equal(t, entries, got)

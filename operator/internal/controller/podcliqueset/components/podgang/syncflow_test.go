@@ -995,6 +995,7 @@ func TestComputeExpectedPodGangsWithTopologyConstraints(t *testing.T) {
 			r := &_resource{client: fakeClient, schedRegistry: defaultFakeSchedulerRegistry}
 			ss := &syncState{
 				pcs:            pcs,
+				generationHash: genHash,
 				logger:         ctrllogger.FromContext(t.Context()),
 				tasEnabled:     test.tasEnabled,
 				topologyLevels: clusterTopologyLevels,
@@ -1334,7 +1335,7 @@ func TestComputeExpectedPodGangs(t *testing.T) {
 
 			fakeClient := testutils.NewTestClientBuilder().WithObjects(objs...).Build()
 			r := &_resource{client: fakeClient, schedRegistry: defaultFakeSchedulerRegistry}
-			ss := &syncState{pcs: pcs, logger: ctrllogger.FromContext(t.Context())}
+			ss := &syncState{pcs: pcs, generationHash: genHash, logger: ctrllogger.FromContext(t.Context())}
 
 			actual, err := r.computeExpectedPodGangs(t.Context(), ss)
 			require.NoError(t, err)
@@ -1370,13 +1371,13 @@ func TestComputeExpectedPodGangsClampsNonMinAvailableAnchorMinReplicas(t *testin
 				},
 			},
 		},
-		Status: grovecorev1alpha1.PodCliqueSetStatus{CurrentGenerationHash: ptr.To(genHash)},
+		Status: grovecorev1alpha1.PodCliqueSetStatus{CurrentGenerationHash: ptr.To("old-hash")},
 	}
 	rnr := apicommon.ResourceNameReplica{Name: pcsName, Replica: 0}
 	entries := []grovecorev1alpha1.PodGangEntry{
 		testutils.NewPodGangEntryBuilder(genHash, lowEpoch).
 			WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).
-			WithPodCliques(map[string]int32{"worker": 2}).Build(),
+			WithPodCliques(map[string]int32{"worker": 1}).Build(),
 		testutils.NewPodGangEntryBuilder(genHash, highEpoch).
 			WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).
 			WithPodCliques(map[string]int32{"worker": 1}).
@@ -1385,7 +1386,7 @@ func TestComputeExpectedPodGangsClampsNonMinAvailableAnchorMinReplicas(t *testin
 	pgm := testutils.NewPodGangMapBuilder(pcsName, namespace, pcs.UID, 0).WithEntries(entries...).Build()
 	fakeClient := testutils.NewTestClientBuilder().WithObjects(pcs, pgm).Build()
 	r := &_resource{client: fakeClient, schedRegistry: defaultFakeSchedulerRegistry}
-	ss := &syncState{pcs: pcs, logger: ctrllogger.FromContext(t.Context())}
+	ss := &syncState{pcs: pcs, generationHash: genHash, logger: ctrllogger.FromContext(t.Context())}
 
 	actual, err := r.computeExpectedPodGangs(t.Context(), ss)
 	require.NoError(t, err)

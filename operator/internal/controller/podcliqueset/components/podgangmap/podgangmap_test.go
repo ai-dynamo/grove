@@ -47,13 +47,19 @@ func TestSyncBootstrapsPodGangMapForFreshReplica(t *testing.T) {
 		WithPodCliqueSetGenerationHash(ptr.To("hash1")).
 		Build()
 
-	cl := testutils.CreateDefaultFakeClient([]client.Object{pcs})
+	revision, err := testutils.NewPodCliqueSetControllerRevision(pcs)
+	require.NoError(t, err)
+	pcs.Status.CurrentGenerationHash = nil
+	cl := testutils.CreateDefaultFakeClient([]client.Object{pcs, revision})
 	operator := New(cl, groveclientscheme.Scheme, clocktesting.NewFakeClock(time.Unix(0, 1000)))
 
-	err := operator.Sync(context.Background(), logr.Discard(), pcs)
+	err = operator.Sync(context.Background(), logr.Discard(), pcs)
 	require.NoError(t, err)
 
 	pgm := getPodGangMap(t, cl, "pcs-0")
+	for _, entry := range pgm.Spec.Entries {
+		assert.Equal(t, "hash1", entry.PodCliqueSetGenerationHash)
+	}
 	assert.Equal(t, int32(0), pgm.Spec.PodCliqueSetReplicaIndex)
 	assert.Equal(t, []grovecorev1alpha1.PodGangEntryRole{
 		grovecorev1alpha1.PodGangEntryRoleAnchor,
@@ -84,11 +90,13 @@ func TestSyncReusesEpochFromExistingPodGangsWhenPodGangMapIsMissing(t *testing.T
 	// The PodGangMap for replica 0 is gone, but its anchor PodGang still carries the epoch its pods use.
 	anchorPodGang := podGangForReplica(t, "pcs-0-1500", 0, "1500", grovecorev1alpha1.PodGangEntryRoleAnchor)
 
-	cl := testutils.CreateDefaultFakeClient([]client.Object{pcs, anchorPodGang})
+	revision, err := testutils.NewPodCliqueSetControllerRevision(pcs)
+	require.NoError(t, err)
+	cl := testutils.CreateDefaultFakeClient([]client.Object{pcs, revision, anchorPodGang})
 	// A clock at 9999 would assign a different epoch, so reusing 1500 proves the epoch came from the PodGang.
 	operator := New(cl, groveclientscheme.Scheme, clocktesting.NewFakeClock(time.Unix(0, 9999)))
 
-	err := operator.Sync(context.Background(), logr.Discard(), pcs)
+	err = operator.Sync(context.Background(), logr.Discard(), pcs)
 	require.NoError(t, err)
 
 	pgm := getPodGangMap(t, cl, "pcs-0")
@@ -112,10 +120,12 @@ func TestSyncReconstructsScaledOutPCSGWhenPodGangMapIsMissing(t *testing.T) {
 	anchorPodGang := podGangForReplica(t, "pcs-0-1500", 0, "1500", grovecorev1alpha1.PodGangEntryRoleAnchor)
 	scaleOutPodGang := podGangForReplica(t, "pcs-0-1502-sg-1", 0, "1502", grovecorev1alpha1.PodGangEntryRoleScaleOut)
 
-	cl := testutils.CreateDefaultFakeClient([]client.Object{pcs, pcsg, anchorPodGang, scaleOutPodGang})
+	revision, err := testutils.NewPodCliqueSetControllerRevision(pcs)
+	require.NoError(t, err)
+	cl := testutils.CreateDefaultFakeClient([]client.Object{pcs, revision, pcsg, anchorPodGang, scaleOutPodGang})
 	operator := New(cl, groveclientscheme.Scheme, clocktesting.NewFakeClock(time.Unix(0, 9999)))
 
-	err := operator.Sync(context.Background(), logr.Discard(), pcs)
+	err = operator.Sync(context.Background(), logr.Discard(), pcs)
 	require.NoError(t, err)
 
 	pgm := getPodGangMap(t, cl, "pcs-0")
@@ -143,10 +153,12 @@ func TestSyncReconstructsScaledOutPCSGWithoutExistingScaleOutPodGang(t *testing.
 		Build()
 	anchorPodGang := podGangForReplica(t, "pcs-0-1500", 0, "1500", grovecorev1alpha1.PodGangEntryRoleAnchor)
 
-	cl := testutils.CreateDefaultFakeClient([]client.Object{pcs, pcsg, anchorPodGang})
+	revision, err := testutils.NewPodCliqueSetControllerRevision(pcs)
+	require.NoError(t, err)
+	cl := testutils.CreateDefaultFakeClient([]client.Object{pcs, revision, pcsg, anchorPodGang})
 	operator := New(cl, groveclientscheme.Scheme, clocktesting.NewFakeClock(time.Unix(0, 9999)))
 
-	err := operator.Sync(context.Background(), logr.Discard(), pcs)
+	err = operator.Sync(context.Background(), logr.Discard(), pcs)
 	require.NoError(t, err)
 
 	pgm := getPodGangMap(t, cl, "pcs-0")
@@ -169,10 +181,12 @@ func TestSyncReconstructsScaledStandalonePCLQWhenPodGangMapIsMissing(t *testing.
 		Build()
 	anchorPodGang := podGangForReplica(t, "pcs-0-1500", 0, "1500", grovecorev1alpha1.PodGangEntryRoleAnchor)
 
-	cl := testutils.CreateDefaultFakeClient([]client.Object{pcs, pclq, anchorPodGang})
+	revision, err := testutils.NewPodCliqueSetControllerRevision(pcs)
+	require.NoError(t, err)
+	cl := testutils.CreateDefaultFakeClient([]client.Object{pcs, revision, pclq, anchorPodGang})
 	operator := New(cl, groveclientscheme.Scheme, clocktesting.NewFakeClock(time.Unix(0, 9999)))
 
-	err := operator.Sync(context.Background(), logr.Discard(), pcs)
+	err = operator.Sync(context.Background(), logr.Discard(), pcs)
 	require.NoError(t, err)
 
 	pgm := getPodGangMap(t, cl, "pcs-0")
@@ -193,10 +207,12 @@ func TestSyncIgnoresLegacyPodGangsWithoutEpochLabelWhenPodGangMapIsMissing(t *te
 		WithLabels(componentutils.GetPodGangSelectorLabels(metav1.ObjectMeta{Name: "pcs"})).
 		Build()
 
-	cl := testutils.CreateDefaultFakeClient([]client.Object{pcs, legacyPodGang})
+	revision, err := testutils.NewPodCliqueSetControllerRevision(pcs)
+	require.NoError(t, err)
+	cl := testutils.CreateDefaultFakeClient([]client.Object{pcs, revision, legacyPodGang})
 	operator := New(cl, groveclientscheme.Scheme, clocktesting.NewFakeClock(time.Unix(0, 1000)))
 
-	err := operator.Sync(context.Background(), logr.Discard(), pcs)
+	err = operator.Sync(context.Background(), logr.Discard(), pcs)
 	require.NoError(t, err)
 
 	// The PodGangMap is created from the spec, assigning a new epoch since no epoch-scheme PodGang exists.
@@ -216,10 +232,12 @@ func TestSyncRebuildsAnchorWhenPodGangMapHasNoEntries(t *testing.T) {
 	// from the spec instead of failing, so the replica recovers.
 	emptyPGM := testutils.NewPodGangMapBuilder("pcs", "default", types.UID("uid"), 0).Build()
 
-	cl := testutils.CreateDefaultFakeClient([]client.Object{pcs, emptyPGM})
+	revision, err := testutils.NewPodCliqueSetControllerRevision(pcs)
+	require.NoError(t, err)
+	cl := testutils.CreateDefaultFakeClient([]client.Object{pcs, revision, emptyPGM})
 	operator := New(cl, groveclientscheme.Scheme, clocktesting.NewFakeClock(time.Unix(0, 1000)))
 
-	err := operator.Sync(context.Background(), logr.Discard(), pcs)
+	err = operator.Sync(context.Background(), logr.Discard(), pcs)
 	require.NoError(t, err)
 
 	pgm := getPodGangMap(t, cl, "pcs-0")
@@ -241,10 +259,12 @@ func TestSyncDeletesOrphanedPodGangMaps(t *testing.T) {
 			WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).Build()).
 		Build()
 
-	cl := testutils.CreateDefaultFakeClient([]client.Object{pcs, orphan})
+	revision, err := testutils.NewPodCliqueSetControllerRevision(pcs)
+	require.NoError(t, err)
+	cl := testutils.CreateDefaultFakeClient([]client.Object{pcs, revision, orphan})
 	operator := New(cl, groveclientscheme.Scheme, clocktesting.NewFakeClock(time.Unix(0, 1000)))
 
-	err := operator.Sync(context.Background(), logr.Discard(), pcs)
+	err = operator.Sync(context.Background(), logr.Discard(), pcs)
 	require.NoError(t, err)
 
 	assertPodGangMapExists(t, cl, "pcs-0")
@@ -266,10 +286,13 @@ func TestSyncAdvancesGenerationHashForAllReplicas(t *testing.T) {
 	existing0 := oldHashPodGangMap("pcs", "default", 0)
 	existing1 := oldHashPodGangMap("pcs", "default", 1)
 
-	cl := testutils.CreateDefaultFakeClient([]client.Object{pcs, existing0, existing1})
+	revision, err := testutils.NewPodCliqueSetControllerRevision(pcs)
+	require.NoError(t, err)
+	pcs.Status.CurrentGenerationHash = ptr.To("old-hash")
+	cl := testutils.CreateDefaultFakeClient([]client.Object{pcs, revision, existing0, existing1})
 	operator := New(cl, groveclientscheme.Scheme, clocktesting.NewFakeClock(time.Unix(0, 1000)))
 
-	err := operator.Sync(context.Background(), logr.Discard(), pcs)
+	err = operator.Sync(context.Background(), logr.Discard(), pcs)
 	require.NoError(t, err)
 
 	// RollingRecreate preserves PodGangs, so every replica's entries advance to the current hash,

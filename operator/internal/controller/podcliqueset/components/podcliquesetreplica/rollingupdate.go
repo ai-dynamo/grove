@@ -24,6 +24,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
+	commonrevision "github.com/ai-dynamo/grove/operator/internal/controller/common/revision"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 
@@ -36,17 +37,21 @@ import (
 // orchestrateRollingUpdate drives a rolling update (RollingRecreate or Coherent) for the PodCliqueSet
 // replicas, one replica at a time.
 func (r _resource) orchestrateRollingUpdate(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, pcsIndicesToTerminate, minAvailableBreachedPCSReplicaIndices []int) error {
+	revision, err := componentutils.GetPodCliqueSetRevision(ctx, r.client, pcs)
+	if err != nil {
+		return err
+	}
 	replicaInfos, err := r.getPCSReplicaInfos(ctx, pcs, pcsIndicesToTerminate)
 	if err != nil {
 		return err
 	}
 
 	if currentlyUpdating := findCurrentlyUpdatingReplicaInfo(pcs, replicaInfos); currentlyUpdating != nil {
-		if !currentlyUpdating.isUpdateComplete(pcs) {
+		if !currentlyUpdating.isUpdateComplete(pcs, revision) {
 			// A Coherent update records its in-flight epochs and the components it is still waiting on. The
 			// PodGangMap component owns the advance, so this only writes observability status.
 			if componentutils.IsCoherentStrategy(pcs) {
-				if err = r.updateCoherentReplicaProgress(ctx, logger, pcs, *currentlyUpdating); err != nil {
+				if err = r.updateCoherentReplicaProgress(ctx, logger, pcs, revision, *currentlyUpdating); err != nil {
 					return err
 				}
 			}
@@ -61,7 +66,7 @@ func (r _resource) orchestrateRollingUpdate(ctx context.Context, logger logr.Log
 		}
 	}
 
-	nextReplicaToUpdate := selectNextReplicaToUpdate(pcs, replicaInfos, minAvailableBreachedPCSReplicaIndices)
+	nextReplicaToUpdate := selectNextReplicaToUpdate(pcs, revision, replicaInfos, minAvailableBreachedPCSReplicaIndices)
 	if err = r.updatePCSWithNextSelectedReplica(ctx, logger, pcs, nextReplicaToUpdate); err != nil {
 		return err
 	}
@@ -180,10 +185,10 @@ func (r _resource) patchUpdateProgressStatus(ctx context.Context, logger logr.Lo
 
 // selectNextReplicaToUpdate returns the index of the highest-priority replica not yet converged to the
 // current generation hash, or nil when every replica is updated.
-func selectNextReplicaToUpdate(pcs *grovecorev1alpha1.PodCliqueSet, replicaInfos []pcsReplicaInfo, minAvailableBreachedPCSReplicaIndices []int) *int {
+func selectNextReplicaToUpdate(pcs *grovecorev1alpha1.PodCliqueSet, revision *commonrevision.Revision, replicaInfos []pcsReplicaInfo, minAvailableBreachedPCSReplicaIndices []int) *int {
 	pendingReplicaInfos := make([]pcsReplicaInfo, 0, len(replicaInfos))
 	for i := range replicaInfos {
-		if !replicaInfos[i].isUpdateComplete(pcs) {
+		if !replicaInfos[i].isUpdateComplete(pcs, revision) {
 			pendingReplicaInfos = append(pendingReplicaInfos, replicaInfos[i])
 		}
 	}
@@ -259,17 +264,17 @@ type pcsReplicaInfo struct {
 // count of converged PodCliques falls short of the expected count. Under a coherent update it also requires
 // the replica's PodGangMap to have reconverged to a single generation, so a mid-flight intermediate anchor
 // left by back-to-back updates is drained before the update is declared complete.
-func (pri *pcsReplicaInfo) isUpdateComplete(pcs *grovecorev1alpha1.PodCliqueSet) bool {
+func (pri *pcsReplicaInfo) isUpdateComplete(pcs *grovecorev1alpha1.PodCliqueSet, revision *commonrevision.Revision) bool {
 	completeStandalonePCLQs := 0
 	for i := range pri.pclqs {
-		if componentutils.IsPCLQUpdateComplete(pcs, &pri.pclqs[i]) {
+		if componentutils.IsPCLQUpdateComplete(revision, &pri.pclqs[i]) {
 			completeStandalonePCLQs++
 		}
 	}
 	if completeStandalonePCLQs != len(componentutils.GetPodCliqueFQNsForPCSReplicaNotInPCSG(pcs, pri.replicaIndex)) {
 		return false
 	}
-	currentGenerationHash := *pcs.Status.CurrentGenerationHash
+	currentGenerationHash := revision.GenerationHash()
 	completePCSGs := 0
 	for i := range pri.pcsgs {
 		if componentutils.IsPCSGUpdateComplete(&pri.pcsgs[i], currentGenerationHash) {

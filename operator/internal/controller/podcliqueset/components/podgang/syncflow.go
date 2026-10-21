@@ -54,6 +54,12 @@ func (r _resource) prepareSyncFlow(ctx context.Context, logger logr.Logger, pcs 
 		unassignedPodsByPCLQ: make(map[string][]corev1.Pod),
 	}
 
+	revision, err := componentutils.GetPodCliqueSetRevision(ctx, r.client, pcs)
+	if err != nil {
+		return nil, err
+	}
+	ss.generationHash = revision.GenerationHash()
+
 	existingPCLQs, err := r.getExistingPCLQsForPCS(ctx, pcs)
 	if err != nil {
 		return nil, groveerr.WrapError(err,
@@ -174,7 +180,7 @@ func (r _resource) computeExpectedPodGangs(ctx context.Context, ss *syncState) (
 		if err != nil {
 			return nil, err
 		}
-		baseAnchorEpoch, foundBaseAnchor, err := componentutils.BaseAnchorEpoch(pgm.Spec.Entries, ss.pcs.Status.CurrentGenerationHash)
+		baseAnchorEpoch, foundBaseAnchor, err := componentutils.BaseAnchorEpoch(pgm.Spec.Entries, &ss.generationHash)
 		if err != nil {
 			return nil, err
 		}
@@ -753,6 +759,7 @@ func (r _resource) createOrUpdatePodGang(ctx context.Context, ss *syncState, pgI
 // fallback because lazy mutation of syncState would race the moment the struct is shared
 // across goroutines.
 type syncState struct {
+	generationHash         string
 	logger                 logr.Logger
 	pcs                    *grovecorev1alpha1.PodCliqueSet
 	expectedPodGangs       []*podGangInfo

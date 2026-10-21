@@ -89,7 +89,7 @@ func TestMarkUpdateEndReturnsRequeueAfterPatch(t *testing.T) {
 // markUpdateEnd: a PCSG update cannot end, or publish its target as current, when its target differs
 // from the current PCS generation. Removing the common stale-target guard must make this test fail.
 func TestReconcileInProgressUpdateDoesNotCompleteStaleTarget(t *testing.T) {
-	sc := buildRollingUpdateSnapshot(1, 1, 1, []testReplica{updatedReadyReplica(0)})
+	sc := buildRollingUpdateSnapshot(t, 1, 1, 1, []testReplica{updatedReadyReplica(0)})
 	sc.pcsg.Status.CurrentPodCliqueSetGenerationHash = ptr.To(testRollingUpdateGenHash)
 	sc.pcsg.Status.UpdateProgress.PodCliqueSetGenerationHash = "superseded-generation"
 	cl := testutils.NewTestClientBuilder().
@@ -128,7 +128,7 @@ func TestComputePendingUpdateWork(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.description, func(t *testing.T) {
-			sc := buildRollingUpdateSnapshot(tt.replicas, 1, 1, tt.reps)
+			sc := buildRollingUpdateSnapshot(t, tt.replicas, 1, 1, tt.reps)
 			r := _resource{expectationsStore: expect.NewExpectationsStore()}
 			uw, err := r.computePendingUpdateWork(sc)
 			require.NoError(t, err)
@@ -141,7 +141,7 @@ func TestComputePendingUpdateWork(t *testing.T) {
 }
 
 func TestComputePendingUpdateWorkSkipsReplicaWithDeleteExpectation(t *testing.T) {
-	sc := buildRollingUpdateSnapshot(3, 1, 2, []testReplica{oldReadyReplica(0), oldReadyReplica(1), oldReadyReplica(2)})
+	sc := buildRollingUpdateSnapshot(t, 3, 1, 2, []testReplica{oldReadyReplica(0), oldReadyReplica(1), oldReadyReplica(2)})
 	// Simulate a disruption we already triggered for replica 0 whose deletion the informer cache has not
 	// yet observed, by recording a delete expectation for its member PodCliques.
 	store := expect.NewExpectationsStore()
@@ -163,7 +163,7 @@ func TestIsReplicaUpdatedRequiresNonEmptyExpectedHash(t *testing.T) {
 	// A member whose expected pod-template hash is unknown (empty) must never read as updated, even when
 	// its status hash is also empty, guarding against a "" == "" false positive. updatedReadyReplica is
 	// otherwise fully updated, so only the empty expected hash can flip the result.
-	sc := buildRollingUpdateSnapshot(1, 1, 1, []testReplica{updatedReadyReplica(0)})
+	sc := buildRollingUpdateSnapshot(t, 1, 1, 1, []testReplica{updatedReadyReplica(0)})
 	m := &sc.existingPCLQs[0]
 	sc.expectedPCLQPodTemplateHashMap[m.Name] = ""
 	m.Labels[apicommon.LabelPodTemplateHash] = ""
@@ -197,7 +197,7 @@ func TestProcessPendingUpdates(t *testing.T) {
 	requeueErr := &groveerr.GroveError{Code: groveerr.ErrCodeContinueReconcileAndRequeue, Operation: component.OperationSync}
 
 	t.Run("completes when all replicas are updated and ready", func(t *testing.T) {
-		sc := buildRollingUpdateSnapshot(2, 1, 1, []testReplica{updatedReadyReplica(0), updatedReadyReplica(1)})
+		sc := buildRollingUpdateSnapshot(t, 2, 1, 1, []testReplica{updatedReadyReplica(0), updatedReadyReplica(1)})
 		r, _ := newResource(sc)
 
 		err := r.processPendingUpdates(t.Context(), logr.Discard(), sc)
@@ -206,7 +206,7 @@ func TestProcessPendingUpdates(t *testing.T) {
 	})
 
 	t.Run("disrupts the lowest-index ready old replicas up to the budget", func(t *testing.T) {
-		sc := buildRollingUpdateSnapshot(3, 1, 2, []testReplica{oldReadyReplica(0), oldReadyReplica(1), oldReadyReplica(2)})
+		sc := buildRollingUpdateSnapshot(t, 3, 1, 2, []testReplica{oldReadyReplica(0), oldReadyReplica(1), oldReadyReplica(2)})
 		r, cl := newResource(sc)
 
 		err := r.processPendingUpdates(t.Context(), logr.Discard(), sc)
@@ -216,7 +216,7 @@ func TestProcessPendingUpdates(t *testing.T) {
 	})
 
 	t.Run("rolls one replica at a time when MinAvailable equals replicas", func(t *testing.T) {
-		sc := buildRollingUpdateSnapshot(3, 3, 1, []testReplica{oldReadyReplica(0), oldReadyReplica(1), oldReadyReplica(2)})
+		sc := buildRollingUpdateSnapshot(t, 3, 3, 1, []testReplica{oldReadyReplica(0), oldReadyReplica(1), oldReadyReplica(2)})
 		r, cl := newResource(sc)
 
 		err := r.processPendingUpdates(t.Context(), logr.Discard(), sc)
@@ -228,7 +228,7 @@ func TestProcessPendingUpdates(t *testing.T) {
 		// Two of three replicas are unavailable with MaxUnavailable=1. The old readiness-delta budget was 0
 		// here and blocked forever. The count-anchored budget is existing(3) - reserve(3-1=2) -
 		// newNotReady(0) = 1, so one worst-off (unavailable) replica is disrupted instead of stalling.
-		sc := buildRollingUpdateSnapshot(3, 1, 1, []testReplica{oldReadyReplica(0), oldUnavailableReplica(1), oldUnavailableReplica(2)})
+		sc := buildRollingUpdateSnapshot(t, 3, 1, 1, []testReplica{oldReadyReplica(0), oldUnavailableReplica(1), oldUnavailableReplica(2)})
 		r, cl := newResource(sc)
 
 		err := r.processPendingUpdates(t.Context(), logr.Discard(), sc)
@@ -239,7 +239,7 @@ func TestProcessPendingUpdates(t *testing.T) {
 	t.Run("disrupts worst-off replicas first up to the budget", func(t *testing.T) {
 		// Budget is existing(3) - reserve(3-2=1) - newNotReady(0) = 2. The unavailable replica 2 is worst-off
 		// and is selected before Ready replicas, and one Ready replica (0) fills the remaining budget.
-		sc := buildRollingUpdateSnapshot(3, 1, 2, []testReplica{oldReadyReplica(0), oldReadyReplica(1), oldUnavailableReplica(2)})
+		sc := buildRollingUpdateSnapshot(t, 3, 1, 2, []testReplica{oldReadyReplica(0), oldReadyReplica(1), oldUnavailableReplica(2)})
 		r, cl := newResource(sc)
 
 		err := r.processPendingUpdates(t.Context(), logr.Discard(), sc)
@@ -250,7 +250,7 @@ func TestProcessPendingUpdates(t *testing.T) {
 	t.Run("updates a pending replica whose own unavailability would have exhausted the budget", func(t *testing.T) {
 		// The single replica is pending. The reserve is 1-1=0, so the budget is existing(1) - 0 - 0 = 1 and the
 		// pending replica is updated rather than deadlocking.
-		sc := buildRollingUpdateSnapshot(1, 1, 1, []testReplica{oldPendingReplica(0)})
+		sc := buildRollingUpdateSnapshot(t, 1, 1, 1, []testReplica{oldPendingReplica(0)})
 		r, cl := newResource(sc)
 
 		err := r.processPendingUpdates(t.Context(), logr.Discard(), sc)
@@ -262,7 +262,7 @@ func TestProcessPendingUpdates(t *testing.T) {
 		// desired=5 but only 2 replicas are present (the rest deleted externally, awaiting recreation).
 		// The reserve is 5-2=3, so the budget is existing(2) - 3 - 0 = -1 <= 0: no disruption this reconcile
 		// until the missing replicas are recreated and availability recovers.
-		sc := buildRollingUpdateSnapshot(5, 1, 2, []testReplica{oldReadyReplica(0), oldReadyReplica(1)})
+		sc := buildRollingUpdateSnapshot(t, 5, 1, 2, []testReplica{oldReadyReplica(0), oldReadyReplica(1)})
 		r, cl := newResource(sc)
 
 		err := r.processPendingUpdates(t.Context(), logr.Discard(), sc)
@@ -297,11 +297,15 @@ func terminatingReplica(index int) testReplica {
 
 // buildRollingUpdateSnapshot builds a syncSnapshot with one member PodClique per replica, wiring the
 // expected hash and FQN maps so the rolling-update logic can classify each replica.
-func buildRollingUpdateSnapshot(replicas, minAvailable, maxUnavailable int32, reps []testReplica) *syncSnapshot {
+func buildRollingUpdateSnapshot(t *testing.T, replicas, minAvailable, maxUnavailable int32, reps []testReplica) *syncSnapshot {
+	t.Helper()
 	pcs := testutils.NewPodCliqueSetBuilder(testRollingUpdatePCSName, testRollingUpdateNamespace, "uid").
 		WithUpdateStrategy(&grovecorev1alpha1.PodCliqueSetUpdateStrategy{Type: grovecorev1alpha1.RollingRecreateStrategy}).
 		Build()
 	pcs.Status.CurrentGenerationHash = ptr.To(testRollingUpdateGenHash)
+	revision, err := testutils.NewRevision(pcs)
+	require.NoError(t, err)
+	pcs.Status.CurrentGenerationHash = nil
 	pcsg := testutils.NewPodCliqueScalingGroupBuilder(testRollingUpdatePCSGName, testRollingUpdateNamespace, testRollingUpdatePCSName, 0).
 		WithReplicas(replicas).
 		WithMinAvailable(minAvailable).
@@ -320,6 +324,7 @@ func buildRollingUpdateSnapshot(replicas, minAvailable, maxUnavailable int32, re
 	}
 	return &syncSnapshot{
 		pcs:                            pcs,
+		revision:                       revision,
 		pcsg:                           pcsg,
 		expectationsStoreKey:           pcsg.Namespace + "/" + pcsg.Name,
 		pcsgConfig:                     &grovecorev1alpha1.PodCliqueScalingGroupConfig{RollingUpdate: &grovecorev1alpha1.RollingUpdateConfiguration{MaxUnavailable: ptr.To(maxUnavailable)}},
