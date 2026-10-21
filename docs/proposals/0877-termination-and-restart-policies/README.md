@@ -1153,7 +1153,7 @@ A dedicated sub-issue of [#877](https://github.com/ai-dynamo/grove/issues/877) w
 
 The GREP is delivered in two phases. Phase 1 changes no behaviour for existing workloads. Phase 2 adds fields to the `v1beta1` API that Phase 1 introduces, without breaking it.
 
-#### Phase 1: MinAvailable disaggregation and the `v1beta1` API
+#### Phase 1: MinAvailable disaggregation and the `v1beta1` API (_Approved for implementation_)
 
 Phase 1 ships in a single release. Steps 1–8 and 10 may land as one PR whose commits follow the step order below, provided that each commit builds and passes the unit tests on its own. Keeping the steps as separate commits keeps the mechanical import switch (step 3) apart from the semantic changes, so the PR can be reviewed and bisected step by step. The release is cut once the PR merges.
 
@@ -1198,7 +1198,7 @@ Phase 1 ships in a single release. Steps 1–8 and 10 may land as one PR whose c
 
 **Exit criteria:** every existing `v1alpha1` workload behaves exactly as before: gang scheduling, gang termination, rolling updates and the scale guard, with no pod recreated by the upgrade. The one intended difference is that breach tolerance is measured from a PodClique's first schedule (clarification 15). New behaviour appears only through fields that `v1alpha1` cannot express.
 
-#### Phase 2: Terminal states and restart policies
+#### Phase 2: Terminal states and restart policies (_Currently under review -- may undergo changes_)
 
 1. **API.** Add to `v1beta1`:
    - `termination.resource.completion`;
