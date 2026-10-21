@@ -26,6 +26,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/conversion"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/utils/ptr"
 )
 
@@ -321,15 +322,23 @@ func Convert_v1alpha1_PodCliqueSet_To_v1beta1_PodCliqueSet(in *PodCliqueSet, out
 		breachTolerance:  breachTolerance,
 		toleranceChanged: !equality.Semantic.DeepEqual(in.Spec.Template.TerminationDelay, data.TerminationDelay),
 	}
+	memberCliqueNames := sets.New[string]()
+	for _, config := range in.Spec.Template.PodCliqueScalingGroupConfigs {
+		memberCliqueNames.Insert(config.CliqueNames...)
+	}
 	for i, clique := range in.Spec.Template.Cliques {
 		if clique == nil {
 			continue
 		}
 		outClique := out.Spec.Template.Cliques[i]
-		restoreBeta(
-			alphaComponent{minAvailable: &clique.Spec.MinAvailable, rollingUpdate: &clique.RollingUpdate, startsAfter: clique.Spec.StartsAfter},
-			betaComponent{init: &outClique.Spec.Init, termination: &outClique.Spec.Termination, rollingUpdate: &outClique.RollingUpdate, startsAfter: outClique.Spec.StartsAfter},
-			ctx, data.Cliques[clique.Name])
+		alpha := alphaComponent{minAvailable: &clique.Spec.MinAvailable, startsAfter: clique.Spec.StartsAfter}
+		beta := betaComponent{init: &outClique.Spec.Init, termination: &outClique.Spec.Termination, startsAfter: outClique.Spec.StartsAfter}
+		// A PodCliqueScalingGroup member clique gets its rolling update configuration from the scaling group.
+		if !memberCliqueNames.Has(clique.Name) {
+			alpha.rollingUpdate = &clique.RollingUpdate
+			beta.rollingUpdate = &outClique.RollingUpdate
+		}
+		restoreBeta(alpha, beta, ctx, data.Cliques[clique.Name])
 	}
 	for i := range in.Spec.Template.PodCliqueScalingGroupConfigs {
 		config := &in.Spec.Template.PodCliqueScalingGroupConfigs[i]
@@ -355,16 +364,23 @@ func Convert_v1beta1_PodCliqueSet_To_v1alpha1_PodCliqueSet(in *v1beta1.PodClique
 		breachTolerance = &metav1.Duration{Duration: defaultTerminationDelay}
 	}
 	strategy := strategyOf(out.Spec.UpdateStrategy)
+	memberCliqueNames := sets.New[string]()
+	for _, config := range in.Spec.Template.PodCliqueScalingGroupConfigs {
+		memberCliqueNames.Insert(config.CliqueNames...)
+	}
 	for i, clique := range in.Spec.Template.Cliques {
 		if clique == nil {
 			continue
 		}
 		outClique := out.Spec.Template.Cliques[i]
 		ctx := componentContext{template: true, strategy: strategy, breachTolerance: breachTolerance, replicas: clique.Spec.Replicas}
-		if d := convertComponentToAlpha(
-			betaComponent{init: &clique.Spec.Init, termination: &clique.Spec.Termination, rollingUpdate: &clique.RollingUpdate, startsAfter: clique.Spec.StartsAfter},
-			alphaComponent{minAvailable: &outClique.Spec.MinAvailable, rollingUpdate: &outClique.RollingUpdate, startsAfter: outClique.Spec.StartsAfter},
-			ctx); d != nil {
+		beta := betaComponent{init: &clique.Spec.Init, termination: &clique.Spec.Termination, startsAfter: clique.Spec.StartsAfter}
+		alpha := alphaComponent{minAvailable: &outClique.Spec.MinAvailable, startsAfter: outClique.Spec.StartsAfter}
+		if !memberCliqueNames.Has(clique.Name) {
+			beta.rollingUpdate = &clique.RollingUpdate
+			alpha.rollingUpdate = &outClique.RollingUpdate
+		}
+		if d := convertComponentToAlpha(beta, alpha, ctx); d != nil {
 			if data.Cliques == nil {
 				data.Cliques = map[string]*componentData{}
 			}

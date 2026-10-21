@@ -122,6 +122,31 @@ func TestConvertPodCliqueSetToBetaDerivesFields(t *testing.T) {
 	}
 }
 
+func TestConvertPodCliqueSetToBetaLeavesScalingGroupMembersWithoutRollingUpdate(t *testing.T) {
+	in := &PodCliqueSet{Spec: PodCliqueSetSpec{
+		UpdateStrategy: &PodCliqueSetUpdateStrategy{Type: CoherentStrategy},
+		Template: PodCliqueSetTemplateSpec{
+			Cliques: []*PodCliqueTemplateSpec{
+				{Name: "frontend", Spec: PodCliqueSpec{Replicas: 2, MinAvailable: ptr.To[int32](1)}},
+				{Name: "prefill", Spec: PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To[int32](1)}},
+			},
+			PodCliqueScalingGroupConfigs: []PodCliqueScalingGroupConfig{
+				{Name: "inference", CliqueNames: []string{"prefill"}, Replicas: ptr.To[int32](2), MinAvailable: ptr.To[int32](1)},
+			},
+		},
+	}}
+
+	out := toBeta(t, in)
+
+	assert.Equal(t, &v1beta1.RollingUpdateConfiguration{MinReplicas: ptr.To[int32](1)}, out.Spec.Template.Cliques[0].RollingUpdate)
+	assert.Nil(t, out.Spec.Template.Cliques[1].RollingUpdate, "a scaling group member gets its rolling update from the scaling group")
+	assert.Equal(t, &v1beta1.RollingUpdateConfiguration{MinReplicas: ptr.To[int32](1)}, out.Spec.Template.PodCliqueScalingGroupConfigs[0].RollingUpdate)
+
+	back := toAlpha(t, out)
+	assert.Nil(t, back.Spec.Template.Cliques[1].RollingUpdate)
+	assert.NotContains(t, back.Annotations, ConversionDataAnnotation)
+}
+
 func TestConvertPodCliqueSetRoundTripKeepsBetaValues(t *testing.T) {
 	const modelLoaded = "example.com/model-loaded"
 	halfHour := &metav1.Duration{Duration: 30 * time.Minute}
