@@ -705,13 +705,15 @@ Defaulting materializes explicit values into the stored object, so `kubectl get 
 | `rollingUpdate.minReplicas` (standalone PCLQ and PCSG only) | Under `Coherent`: `availability.minReplicas` if set, else `1`. Not allowed under other strategies | Under `Coherent`: `1` |
 | `rollingUpdate.maxUnavailable` (standalone PCLQ and PCSG only) | `rollingUpdate.minReplicas` under `Coherent`, `1` under `RollingRecreate` (as today); always an integer | Same as LR |
 | `updateStrategy.type` (PCS only) | `RollingRecreate` (unchanged) | `RollingRecreate` (unchanged) |
+| `autoScalingConfig.minReplicas` (standalone PCLQ and PCSG, when `autoScalingConfig` is set) | `availability.minReplicas` if set, else `1`. Requests made through `v1alpha1` keep today's default of `replicas` | — (CA resources reject `autoScalingConfig`) |
 | `resource.restart`, `replica.restart` | `{onSuccess: Always, onFailure: Always}` | `{onSuccess: {Limit, 0}, onFailure: {Limit, 0}}` |
 | `RestartPolicy.limit` | `0` | `0` |
 | `ttlAfterFinished` | Inherited from the parent; `0s` on PCS | Inherited from the parent; `0s` on PCS |
 
 ### Validation
 
-- `1 ≤ availability.minReplicas ≤ init.minReplicas ≤ replicas`, and `1 ≤ rollingUpdate.minReplicas ≤ replicas`.
+- `1 ≤ availability.minReplicas ≤ init.minReplicas ≤ replicas`, and `1 ≤ rollingUpdate.minReplicas ≤ min(init.minReplicas, replicas)`. `replicas` is the template's, and these rules hold on every write. A live PodClique or PCSG can still be scaled below `init.minReplicas` through `/scale`, down to the scale guard's floor.
+- `autoScalingConfig.minReplicas ≥ availability.minReplicas`, or `≥ 1` when `availability` is nil (today it is `≥ minAvailable`).
 - On a PCS, `availability.minReplicas` must be `1`.
 - The existing `RollingUpdateConfiguration` rules stay, with `minReplicas` taking the place of `minAvailable`:
   - `rollingUpdate` is rejected on a PodClique template that is a member of a PCSG.
@@ -729,9 +731,14 @@ Defaulting materializes explicit values into the stored object, so `kubectl get 
   - rejects `podSpec.restartPolicy: Always`.
 - **An LR PodClique** rejects `podSpec.restartPolicy` other than `Always`.
 - **Warnings:** a CA PCS whose resolved `resource.restart.onSuccess` is `Always` gets an admission warning that it will never complete. A CA child of an LR parent with `onSuccess: Always` at either scope gets a warning that it re-runs for as long as its parent runs.
-- **Immutable fields:** `init.minReplicas`, `rollingUpdate.minReplicas`, `availability.minReplicas` and `completion` are immutable, as `MinAvailable` is today. The PodGangMap layout, pod dependency names and in-flight Coherent plans are derived from them. Adding or removing `availability` is also rejected, because it switches gang termination on or off for the resource. The one exception: because `rollingUpdate.minReplicas` is only allowed under `Coherent`, a request that changes `updateStrategy.type` to `Coherent` may add it (otherwise the defaulting webhook fills it in), and a request that changes it away from `Coherent` must remove it.
+- **Mutable minimum fields.** `init.minReplicas`, `availability.minReplicas` and `rollingUpdate.minReplicas` can be changed in `v1beta1`. Each change is validated again against the rules above. So lowering `init.minReplicas` below `rollingUpdate.minReplicas` must lower the unit in the same edit. When `autoScalingConfig` is set, raising `availability.minReplicas` above its `minReplicas` must raise that too. When `autoScalingConfig` is nil, `availability.minReplicas` can change on its own.
+  - **`init.minReplicas`** fixes the gang shape: the PodGang minimums, the PodGangMap layout and the startup dependency counts in the pods. These cannot change in place. A change to a clique template or a PCSG config therefore recreates each PCS replica, one at a time, and starts the next only once the recreated replica is available again. This applies under every update strategy, including `OnDelete`, and is disruptive by design. Gang termination is suspended while it runs, and a recreated replica comes up at the newest pod templates.
+  - **`availability.minReplicas`** is updated in place on every PodClique and PCSG of the template, including replicas that a `Coherent` update has not reached yet. No pod is restarted. `MinAvailableBreached` is evaluated against the new floor: raising it above what is available sets the condition `True`, and gang termination follows after `breachTolerance`. Lowering it can clear a breach.
+  - **`rollingUpdate.minReplicas`** takes effect at the next `Coherent` update and is not part of any pod-template or generation hash, so changing it rolls no pods. It cannot be changed while a `Coherent` update is in progress, so that one update always uses one unit. For the same reason, `updateStrategy.type` cannot be changed away from `Coherent` while such an update is in progress.
+  - Requests made through `v1alpha1` cannot change these values, so `minAvailable` stays immutable for `v1alpha1` clients, as today.
+- **Immutable fields:** `completion` is immutable. Adding or removing `availability` is rejected, because it switches gang termination on or off for the resource. Because `rollingUpdate.minReplicas` is only allowed under `Coherent`, a request that changes `updateStrategy.type` to `Coherent` may add it (otherwise the defaulting webhook fills it in), and a request that changes it away from `Coherent` must remove it.
 - **Mutable fields:** restart specs, `breachTolerance` and `ttlAfterFinished`. `rollingUpdate.maxUnavailable` and `rollingUpdate.progressDeadline` stay mutable, as in `v1alpha1`.
-- **Scale guard:** `spec.replicas` must be `0` or `≥ availability.minReplicas` (today it is `≥ minAvailable`). The anchor `PodGroup.minReplicas` is clamped to `min(init.minReplicas, replicas)`, as non-base anchors already are.
+- **Scale guard:** `spec.replicas` must be `0` or `≥ availability.minReplicas` (today it is `≥ minAvailable`). When `availability` is nil, the floor is `1`, as for `autoScalingConfig.minReplicas`. The anchor `PodGroup.minReplicas` is clamped to `min(init.minReplicas, replicas)`, as non-base anchors already are.
 
 ### Replica state machine
 
@@ -1138,6 +1145,7 @@ A client waits for the outcome with `kubectl wait pcs/batch-infer --for=conditio
   - a PCS replica restart re-runs the warm-up;
   - LR pod replacements are scheduled after the warm-up's pods are deleted.
 - **Updates:** Coherent updates use `rollingUpdate.minReplicas` while availability uses a lower `availability.minReplicas`; percentage `maxUnavailable` is resolved and rounded correctly, including after scaling and after scaling during an update; `rollingUpdate.minReplicas` is rejected under `RollingRecreate` and `OnDelete`, is filled in when switching to `Coherent`, and must be removed when switching away from it; completed replicas are skipped.
+- **Mutable minimum fields:** changing `init.minReplicas` recreates PCS replicas one at a time under every strategy, and the new PodGangs and startup dependency counts use the new value; changing `availability.minReplicas` restarts no pod, and raising it above the ready pods gang-terminates after `breachTolerance`; changing `rollingUpdate.minReplicas` rolls no pods, applies to the next `Coherent` update, and is rejected while one is in progress; `v1alpha1` requests cannot change any of them; the upgrade recreates no replica.
 
 A dedicated sub-issue of [#877](https://github.com/ai-dynamo/grove/issues/877) will track the detailed e2e scenario matrix.
 
@@ -1169,6 +1177,7 @@ Phase 1 ships in a single release. Steps 1–8 and 10 may land as one PR whose c
 6. **Operator semantics.**
    - Re-implement the accessors on the new fields.
    - Port defaulting and validation, including the scale guard and immutability rules, to the new fields.
+   - Make the minimum fields mutable (see [Validation](#validation)): recreate PCS replicas one at a time when `init.minReplicas` changes, push `availability.minReplicas` to every child in place, and freeze `rollingUpdate.minReplicas` during a `Coherent` update. Existing objects must not be recreated by the upgrade.
    - Use each component's own `breachTolerance` in gang termination.
    - Track the start of breach evaluation in `MinAvailableBreached` with the awaiting reasons, including the upgrade carry-over (clarification 15).
    - Replace the `MinAvail` printer columns.
