@@ -172,6 +172,25 @@ func TestValidateCreate(t *testing.T) {
 			expectError:   true,
 			errorContains: "schedulerName must be an enabled scheduler backend",
 		},
+		{
+			name: "empty cliques reports the missing clique without panic",
+			obj: &grovecorev1alpha1.PodCliqueSet{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-pcs",
+					Namespace: "default",
+				},
+				Spec: grovecorev1alpha1.PodCliqueSetSpec{
+					Replicas: 1,
+					Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
+						TerminationDelay: ptr.To(metav1.Duration{Duration: 4 * time.Hour}),
+						StartupType:      ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder),
+						Cliques:          []*grovecorev1alpha1.PodCliqueTemplateSpec{},
+					},
+				},
+			},
+			expectError:   true,
+			errorContains: "at least one PodClique must be defined",
+		},
 	}
 
 	for _, tt := range tests {
