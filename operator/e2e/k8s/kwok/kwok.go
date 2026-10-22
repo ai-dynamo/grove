@@ -41,12 +41,21 @@ func ApplyStage(ctx context.Context, cl client.Client, yamlPath string) error {
 	if err != nil {
 		return fmt.Errorf("failed to read KWOK stage %s: %w", yamlPath, err)
 	}
+	if err := ApplyStageManifest(ctx, cl, string(data)); err != nil {
+		return fmt.Errorf("KWOK stage %s: %w", yamlPath, err)
+	}
+	return nil
+}
+
+// ApplyStageManifest applies a KWOK Stage given as a YAML or JSON manifest. An existing stage of the
+// same name is left in place.
+func ApplyStageManifest(ctx context.Context, cl client.Client, manifest string) error {
 	stage := &unstructured.Unstructured{}
-	if err := yamlutil.NewYAMLOrJSONDecoder(strings.NewReader(string(data)), 4096).Decode(stage); err != nil {
-		return fmt.Errorf("failed to decode KWOK stage %s: %w", yamlPath, err)
+	if err := yamlutil.NewYAMLOrJSONDecoder(strings.NewReader(manifest), 4096).Decode(stage); err != nil {
+		return fmt.Errorf("failed to decode KWOK stage: %w", err)
 	}
 	if err := cl.Create(ctx, stage); err != nil && !apierrors.IsAlreadyExists(err) {
-		return fmt.Errorf("failed to apply KWOK stage %s: %w", yamlPath, err)
+		return fmt.Errorf("failed to apply KWOK stage %s: %w", stage.GetName(), err)
 	}
 	return nil
 }

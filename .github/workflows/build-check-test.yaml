@@ -143,6 +143,12 @@ jobs:
             test_pattern: "^Test_RS"
           - test_name: podgangmap_reconstruct
             test_pattern: "^Test_PGMR"
+          - test_name: minreplicas_admission
+            test_pattern: "^Test_MRM([1-5]|19|20)_"
+          - test_name: minreplicas_recreate
+            test_pattern: "^Test_MRM([6-9]|1[01]|2[1-3])_"
+          - test_name: minreplicas_in_place
+            test_pattern: "^Test_MRM1[2-8]_"
           - test_name: version_upgrade
             test_pattern: "^Test_VUPG"
             make_target: "run-upgrade-e2e"
@@ -224,6 +230,9 @@ jobs:
           - test_name: crd_installer
           - test_name: resource_sharing
           - test_name: podgangmap_reconstruct
+          - test_name: minreplicas_admission
+          - test_name: minreplicas_recreate
+          - test_name: minreplicas_in_place
           - test_name: version_upgrade
           - test_name: kueue
           - test_name: kueue_update
