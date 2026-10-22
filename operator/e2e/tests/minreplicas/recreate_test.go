@@ -29,6 +29,7 @@ import (
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/ptr"
 )
 
 // newRecreatePCS returns a PodCliqueSet whose worker clique has replicas 2, init 1 and availability 1. It runs 2
@@ -66,7 +67,7 @@ func Test_MRM6_RaisingInitRecreatesReplicasOneAtATime(t *testing.T) {
 	tests.Logger.Info("2. Every replica was recreated once, in index order, and never more than one was unavailable")
 	require.NotEqual(t, hashBefore, componentutils.ComputeGangShapeHash(pcs), "the gang-shape hash must change")
 	requireAllChanged(t, uidsBefore, workerUIDs(t, tc, pcsName, 3))
-	require.Equal(t, onceEach(0, 1, 2), gangShapeDeletions(t, tc, pcsName), "each replica must be deleted once with reason GangShapeChanged")
+	require.Equal(t, onceEach(0, 1, 2), observer.workerDeletions(3), "each replica must be deleted once")
 	require.Equal(t, []int{0, 1, 2}, observer.order, "replicas must be recreated in index order")
 	require.LessOrEqual(t, observer.maxUnavailable, 1, "at most one replica may be unavailable at a time")
 
@@ -100,7 +101,7 @@ func Test_MRM7_LoweringScalingGroupInitRecreatesReplicas(t *testing.T) {
 
 	tests.Logger.Info("2. Every replica was recreated once and never more than one was unavailable")
 	requireAllChanged(t, uidsBefore, workerUIDs(t, tc, pcsName, 2))
-	require.Equal(t, onceEach(0, 1), gangShapeDeletions(t, tc, pcsName))
+	require.Equal(t, onceEach(0, 1), observer.workerDeletions(2))
 	require.LessOrEqual(t, observer.maxUnavailable, 1, "at most one replica may be unavailable at a time")
 	for i := range 2 {
 		require.Equal(t, int32(1), *getPCSG(t, tc, pcsgName(pcsName, i, scalingGroup)).Spec.Init.MinReplicas)
@@ -122,11 +123,13 @@ func Test_MRM8_RecreateUnderEveryUpdateStrategy(t *testing.T) {
 			deploy(t, tc, newRecreatePCS(pcsName, 2, strategy, 0))
 			uidsBefore := workerUIDs(t, tc, pcsName, 2)
 
+			observer := observeRecreate(tc, pcsName)
 			requireAccepted(t, tc, pcsName, "init.minReplicas 2", setWorkerInit(2))
 			waitForGangShapeCurrent(t, tc, pcsName)
+			observer.stop()
 
 			requireAllChanged(t, uidsBefore, workerUIDs(t, tc, pcsName, 2))
-			require.Equal(t, onceEach(0, 1), gangShapeDeletions(t, tc, pcsName))
+			require.Equal(t, onceEach(0, 1), observer.workerDeletions(2))
 		})
 	}
 }
@@ -176,7 +179,7 @@ func Test_MRM9_RecreateOrderAndPacing(t *testing.T) {
 	waitForGangShapeCurrent(t, tc, pcsName)
 	observer.stop()
 	require.Equal(t, []int{2, 0, 1, 3}, observer.order)
-	require.Equal(t, onceEach(0, 1, 2, 3), gangShapeDeletions(t, tc, pcsName))
+	require.Equal(t, onceEach(0, 1, 2, 3), observer.workerDeletions(4))
 	require.LessOrEqual(t, observer.maxUnavailable, 1, "at most one replica may be unavailable at a time")
 	requireAllChanged(t, uidsBefore, workerUIDs(t, tc, pcsName, 4))
 }
@@ -195,6 +198,7 @@ func Test_MRM10_GangTerminationDuringRecreate(t *testing.T) {
 	tests.Logger.Info("1. Make every fresh pod of replicas 0 and 1 crash-loop, then raise init.minReplicas")
 	crashLoop := crashLoopStage(pcsName, 0, 1)
 	crashLoop.apply(t, tc)
+	observer := observeRecreate(tc, pcsName)
 	requireAccepted(t, tc, pcsName, "init.minReplicas 2", setWorkerInit(2))
 
 	tests.Logger.Info("2. Recreated replica 0 breaches, but is not gang-terminated")
@@ -209,14 +213,15 @@ func Test_MRM10_GangTerminationDuringRecreate(t *testing.T) {
 	replica1 := waitForPCLQ(t, tc, pclqName(pcsName, 1, workerClique), "replica 1 to be gang-terminated", func(pclq *grovev1beta1.PodClique) bool {
 		return pclq.UID != uidsBefore[1]
 	})
-	require.GreaterOrEqual(t, gangTerminations(t, tc, pcsName)[1], 1, "replica 1 must be gang-terminated")
+	progress := getPCS(t, tc, pcsName).Status.GangShapeRecreate
+	require.True(t, progress != nil && ptr.Equal(progress.CurrentlyRecreating, ptr.To[int32](0)),
+		"replica 1 must have been deleted by gang termination, while the recreate was still on replica 0")
 	require.Equal(t, hash, replica1.Labels[common.LabelGangShapeHash], "gang termination must recreate replica 1 with the current gang shape")
 
 	tests.Logger.Info("4. Replica 0 has been breached for longer than the tolerance and was never gang-terminated")
 	pclq := getPCLQ(t, tc, replica0)
 	require.Equal(t, recreated.UID, pclq.UID, "the replica being recreated must not be gang-terminated")
 	require.Greater(t, time.Since(breachCondition(pclq).LastTransitionTime.Time), breachTolerance)
-	require.Zero(t, gangTerminations(t, tc, pcsName)[0])
 	pcs := getPCS(t, tc, pcsName)
 	require.NotNil(t, pcs.Status.GangShapeRecreate)
 	require.Equal(t, int32(0), *pcs.Status.GangShapeRecreate.CurrentlyRecreating)
@@ -224,7 +229,9 @@ func Test_MRM10_GangTerminationDuringRecreate(t *testing.T) {
 	tests.Logger.Info("5. Release replicas 0 and 1: only replica 2 is still recreated")
 	crashLoop.release(t, tc)
 	waitForGangShapeCurrent(t, tc, pcsName)
-	require.Equal(t, onceEach(0, 2), gangShapeDeletions(t, tc, pcsName), "replica 1 must not be recreated again after gang termination")
+	observer.stop()
+	require.Equal(t, []int{0, 2}, observer.order, "replica 1 must not be recreated again after gang termination")
+	require.Equal(t, onceEach(0, 1, 2), observer.workerDeletions(3), "replica 1 must only be deleted by its gang termination")
 }
 
 // Test_MRM11_InitAndPodTemplateChangedTogether verifies that when init.minReplicas and the pod template change in
@@ -244,9 +251,8 @@ func Test_MRM11_InitAndPodTemplateChangedTogether(t *testing.T) {
 			waitForRollingUpdateComplete(t, tc, pcsName, revision)
 			observer.stop()
 
-			require.Equal(t, onceEach(0, 1, 2), gangShapeDeletions(t, tc, pcsName))
+			require.Equal(t, onceEach(0, 1, 2), observer.workerDeletions(3), "each replica must be deleted once")
 			for i := range 3 {
-				require.Equal(t, 2, observer.distinctPCLQs(pclqName(pcsName, i, workerClique)), "the worker PodClique of replica %d must be deleted once", i)
 				require.LessOrEqual(t, observer.distinctPods(i), 4, "replica %d must only replace its 2 pods once", i)
 			}
 		})

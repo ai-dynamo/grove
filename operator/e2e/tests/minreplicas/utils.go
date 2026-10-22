@@ -34,7 +34,6 @@ import (
 	"github.com/ai-dynamo/grove/operator/e2e/setup"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
 	"github.com/ai-dynamo/grove/operator/e2e/tests"
-	"github.com/ai-dynamo/grove/operator/internal/constants"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
@@ -618,38 +617,6 @@ func staleChildren(ctx context.Context, tc *testctx.TestContext, pcs *grovev1bet
 	return stale, nil
 }
 
-// replicaDeletions returns how many times the operator deleted each replica of the PodCliqueSet pcsName for
-// reason, read from the events it emitted.
-func replicaDeletions(t *testing.T, tc *testctx.TestContext, pcsName, reason string) map[int]int {
-	t.Helper()
-	events := &corev1.EventList{}
-	require.NoError(t, tc.Client.List(tc.Ctx, events, client.InNamespace(testNamespace), &client.ListOptions{
-		Raw: &metav1.ListOptions{FieldSelector: "involvedObject.kind=PodCliqueSet,involvedObject.name=" + pcsName},
-	}))
-	deletions := map[int]int{}
-	for _, event := range events.Items {
-		if event.Reason != reason {
-			continue
-		}
-		var replicaIndex int
-		if _, err := fmt.Sscanf(event.Message, "PodCliqueSet replica %d deleted", &replicaIndex); err != nil {
-			continue
-		}
-		deletions[replicaIndex] += int(max(event.Count, 1))
-	}
-	return deletions
-}
-
-func gangShapeDeletions(t *testing.T, tc *testctx.TestContext, pcsName string) map[int]int {
-	t.Helper()
-	return replicaDeletions(t, tc, pcsName, constants.ReasonGangShapeChanged)
-}
-
-func gangTerminations(t *testing.T, tc *testctx.TestContext, pcsName string) map[int]int {
-	t.Helper()
-	return replicaDeletions(t, tc, pcsName, constants.ReasonPodCliqueSetReplicaDeleteSuccessful)
-}
-
 // onceEach returns the deletion count of each replica in replicaIndices as 1.
 func onceEach(replicaIndices ...int) map[int]int {
 	deletions := make(map[int]int, len(replicaIndices))
@@ -767,10 +734,20 @@ func (o *recreateObserver) sample(ctx context.Context) {
 	o.maxUnavailable = max(o.maxUnavailable, unavailableReplicas(pcs, children))
 }
 
-// distinctPCLQs returns how many PodCliques named name the observer saw, which is one more than the number of
-// times it was deleted.
-func (o *recreateObserver) distinctPCLQs(name string) int {
-	return o.pclqUIDs[name].Len()
+// workerDeletions returns how many times the observer saw the worker PodClique of each of the first replicas
+// replicas deleted, leaving out replicas that were never deleted. It counts every deletion, whether by a recreate
+// or by gang termination. The operator's events can't be counted instead, because the event recorder drops and
+// aggregates the events of a busy PodCliqueSet. It can be called while the observer is running.
+func (o *recreateObserver) workerDeletions(replicas int) map[int]int {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	deletions := map[int]int{}
+	for i := range replicas {
+		if n := o.pclqUIDs[pclqName(o.pcsName, i, workerClique)].Len() - 1; n > 0 {
+			deletions[i] = n
+		}
+	}
+	return deletions
 }
 
 // distinctPods returns how many pods the observer saw in the replica.

@@ -106,6 +106,7 @@ func Test_MRM22_InitChangedAgainDuringRecreate(t *testing.T) {
 	deploy(t, tc, newPCS(pcsName, 3, grovev1beta1.RollingRecreateStrategy, []cliqueSpec{{name: workerClique, replicas: 3, init: 1, availability: 1}}))
 
 	tests.Logger.Info("1. Raise init.minReplicas to 2 and hold the recreated replica 0")
+	observer := observeRecreate(tc, pcsName)
 	hold, firstHash := startHeldRecreate(t, tc, pcsName, 2)
 	waitForPCLQ(t, tc, pclqName(pcsName, 0, workerClique), "the first hash", func(pclq *grovev1beta1.PodClique) bool {
 		return pclq.Labels[common.LabelGangShapeHash] == firstHash
@@ -122,7 +123,8 @@ func Test_MRM22_InitChangedAgainDuringRecreate(t *testing.T) {
 	tests.Logger.Info("3. Release replica 0: every replica ends on the new hash, and replica 0 was recreated twice")
 	hold.release(t, tc)
 	waitForGangShapeCurrent(t, tc, pcsName)
-	require.Equal(t, map[int]int{0: 2, 1: 1, 2: 1}, gangShapeDeletions(t, tc, pcsName))
+	observer.stop()
+	require.Equal(t, map[int]int{0: 2, 1: 1, 2: 1}, observer.workerDeletions(3))
 }
 
 // Test_MRM23_StalledRecreateKeepsWaiting verifies that while the recreated replica cannot become available, the
@@ -134,6 +136,7 @@ func Test_MRM23_StalledRecreateKeepsWaiting(t *testing.T) {
 	deploy(t, tc, newRecreatePCS(pcsName, 3, grovev1beta1.RollingRecreateStrategy, 0))
 	uidsBefore := workerUIDs(t, tc, pcsName, 3)
 
+	observer := observeRecreate(tc, pcsName)
 	hold, hash := startHeldRecreate(t, tc, pcsName, 2)
 	requireStable(t, 30*time.Second, "a stalled recreate must keep waiting", func() error {
 		if !isWaitingOnReplica(getPCS(t, tc, pcsName), hash, 0) {
@@ -145,9 +148,10 @@ func Test_MRM23_StalledRecreateKeepsWaiting(t *testing.T) {
 		}
 		return nil
 	})
-	require.Equal(t, onceEach(0), gangShapeDeletions(t, tc, pcsName))
+	require.Equal(t, onceEach(0), observer.workerDeletions(3))
 
 	hold.release(t, tc)
 	waitForGangShapeCurrent(t, tc, pcsName)
-	require.Equal(t, onceEach(0, 1, 2), gangShapeDeletions(t, tc, pcsName))
+	observer.stop()
+	require.Equal(t, onceEach(0, 1, 2), observer.workerDeletions(3))
 }

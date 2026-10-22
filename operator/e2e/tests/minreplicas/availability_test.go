@@ -70,7 +70,6 @@ func Test_MRM12_RaisingAvailabilityBreachesInPlace(t *testing.T) {
 	waitForPCLQ(t, tc, pclq.Name, "replica 0 to be gang-terminated", func(current *grovev1beta1.PodClique) bool {
 		return current.UID != pclq.UID
 	})
-	require.GreaterOrEqual(t, gangTerminations(t, tc, pcsName)[0], 1)
 }
 
 // Test_MRM13_LoweringAvailabilityClearsBreach verifies that lowering availability.minReplicas to the available
@@ -90,7 +89,6 @@ func Test_MRM13_LoweringAvailabilityClearsBreach(t *testing.T) {
 	requireStable(t, time.Until(breachStart.Add(breachTolerance+15*time.Second)), "the replica must not be gang-terminated", func() error {
 		return requireSamePCLQ(t, tc, pclq.Name, pclq.UID)
 	})
-	require.Zero(t, gangTerminations(t, tc, pcsName)[0])
 }
 
 // Test_MRM14_AvailabilityReachesExistingChildren verifies that an availability.minReplicas change is written to
