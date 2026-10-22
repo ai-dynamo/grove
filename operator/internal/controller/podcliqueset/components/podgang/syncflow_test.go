@@ -1348,18 +1348,29 @@ func TestComputeExpectedPodGangs(t *testing.T) {
 	}
 }
 
-// TestComputeExpectedPodGangsClampsNonMinAvailableAnchorMinReplicas verifies that when a standalone
-// PodClique is split across more than one anchor, the MinAvailable anchor (the lowest-epoch anchor)
-// keeps its PodGroup MinReplicas at the template MinAvailable, while a higher-epoch anchor carrying
-// fewer than the template MinAvailable has its PodGroup MinReplicas clamped to the per-anchor count.
-func TestComputeExpectedPodGangsClampsNonMinAvailableAnchorMinReplicas(t *testing.T) {
+// TestComputeExpectedPodGangsClampsAnchorMinReplicasToPodCount verifies that when a standalone
+// PodClique is split across more than one anchor, every anchor's PodGroup MinReplicas is the template
+// init.minReplicas capped at the pods that anchor holds, whatever the anchor's epoch. The lowest-epoch
+// anchor holds fewer pods than init.minReplicas when a Coherent update opens it with
+// rollingUpdate.minReplicas pods.
+func TestComputeExpectedPodGangsClampsAnchorMinReplicasToPodCount(t *testing.T) {
 	const (
 		pcsName   = "test-pcs"
 		namespace = "default"
 		genHash   = "test-hash"
-		lowEpoch  = "1000" // MinAvailable anchor, drained last
-		highEpoch = "1001" // non-MinAvailable anchor, drained first
+		lowEpoch  = "1000"
+		highEpoch = "1001"
 	)
+	tests := []struct {
+		name                     string
+		lowEpochPods             int32
+		highEpochPods            int32
+		expectedLowMinAvailable  int32
+		expectedHighMinAvailable int32
+	}{
+		{"the lowest-epoch anchor at init.minReplicas keeps it", 2, 1, 2, 1},
+		{"the lowest-epoch anchor below init.minReplicas is clamped", 1, 2, 1, 2},
+	}
 	pcs := &grovecorev1beta1.PodCliqueSet{
 		ObjectMeta: metav1.ObjectMeta{Name: pcsName, Namespace: namespace, UID: "test-uid-123"},
 		Spec: grovecorev1beta1.PodCliqueSetSpec{
@@ -1373,39 +1384,43 @@ func TestComputeExpectedPodGangsClampsNonMinAvailableAnchorMinReplicas(t *testin
 		Status: grovecorev1beta1.PodCliqueSetStatus{CurrentGenerationHash: ptr.To(genHash)},
 	}
 	rnr := apicommon.ResourceNameReplica{Name: pcsName, Replica: 0}
-	entries := []grovecorev1beta1.PodGangEntry{
-		testutils.NewPodGangEntryBuilder(genHash, lowEpoch).
-			WithRole(grovecorev1beta1.PodGangEntryRoleAnchor).
-			WithPodCliques(map[string]int32{"worker": 2}).Build(),
-		testutils.NewPodGangEntryBuilder(genHash, highEpoch).
-			WithRole(grovecorev1beta1.PodGangEntryRoleAnchor).
-			WithPodCliques(map[string]int32{"worker": 1}).
-			WithDependsOn(lowEpoch).Build(),
-	}
-	pgm := testutils.NewPodGangMapBuilder(pcsName, namespace, pcs.UID, 0).WithEntries(entries...).Build()
-	fakeClient := testutils.NewTestClientBuilder().WithObjects(pcs, pgm).Build()
-	r := &_resource{client: fakeClient, schedRegistry: defaultFakeSchedulerRegistry}
-	ss := &syncState{pcs: pcs, logger: ctrllogger.FromContext(t.Context())}
-
-	actual, err := r.computeExpectedPodGangs(t.Context(), ss)
-	require.NoError(t, err)
-
-	byName := lo.SliceToMap(actual, func(pg *podGangInfo) (string, *podGangInfo) { return pg.fqn, pg })
-	workerMinAvailable := func(anchorEpoch string) int32 {
-		pg := byName[apicommon.GenerateAnchorPodGangName(rnr, anchorEpoch)]
-		require.NotNil(t, pg, "PodGang for epoch %s", anchorEpoch)
-		workerFQN := apicommon.GeneratePodCliqueName(rnr, "worker")
-		for _, pi := range pg.pclqs {
-			if pi.fqn == workerFQN {
-				return pi.minAvailable
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			entries := []grovecorev1beta1.PodGangEntry{
+				testutils.NewPodGangEntryBuilder(genHash, lowEpoch).
+					WithRole(grovecorev1beta1.PodGangEntryRoleAnchor).
+					WithPodCliques(map[string]int32{"worker": test.lowEpochPods}).Build(),
+				testutils.NewPodGangEntryBuilder(genHash, highEpoch).
+					WithRole(grovecorev1beta1.PodGangEntryRoleAnchor).
+					WithPodCliques(map[string]int32{"worker": test.highEpochPods}).
+					WithDependsOn(lowEpoch).Build(),
 			}
-		}
-		t.Fatalf("worker PodGroup not found on anchor %s", anchorEpoch)
-		return 0
-	}
+			pgm := testutils.NewPodGangMapBuilder(pcsName, namespace, pcs.UID, 0).WithEntries(entries...).Build()
+			fakeClient := testutils.NewTestClientBuilder().WithObjects(pcs, pgm).Build()
+			r := &_resource{client: fakeClient, schedRegistry: defaultFakeSchedulerRegistry}
+			ss := &syncState{pcs: pcs, logger: ctrllogger.FromContext(t.Context())}
 
-	assert.Equal(t, int32(2), workerMinAvailable(lowEpoch), "MinAvailable anchor keeps template MinAvailable")
-	assert.Equal(t, int32(1), workerMinAvailable(highEpoch), "non-MinAvailable anchor clamps to per-anchor count")
+			actual, err := r.computeExpectedPodGangs(t.Context(), ss)
+			require.NoError(t, err)
+
+			byName := lo.SliceToMap(actual, func(pg *podGangInfo) (string, *podGangInfo) { return pg.fqn, pg })
+			workerMinAvailable := func(anchorEpoch string) int32 {
+				pg := byName[apicommon.GenerateAnchorPodGangName(rnr, anchorEpoch)]
+				require.NotNil(t, pg, "PodGang for epoch %s", anchorEpoch)
+				workerFQN := apicommon.GeneratePodCliqueName(rnr, "worker")
+				for _, pi := range pg.pclqs {
+					if pi.fqn == workerFQN {
+						return pi.minAvailable
+					}
+				}
+				t.Fatalf("worker PodGroup not found on anchor %s", anchorEpoch)
+				return 0
+			}
+
+			assert.Equal(t, test.expectedLowMinAvailable, workerMinAvailable(lowEpoch), "lowest-epoch anchor")
+			assert.Equal(t, test.expectedHighMinAvailable, workerMinAvailable(highEpoch), "higher-epoch anchor")
+		})
+	}
 }
 
 // TestBuildStandalonePCLQInfosForAnchorEntry verifies the anchor entry's standalone PodClique counts
@@ -1434,47 +1449,27 @@ func TestBuildStandalonePCLQInfosForAnchorEntry(t *testing.T) {
 
 	tests := []struct {
 		name                 string
-		isBaseAnchor         bool
 		podCliques           map[string]int32
 		expectedFQN          []string
 		expectedReplicas     map[string]int32
 		expectedMinAvailable map[string]int32
 	}{
 		{
-			name:                 "min-available anchor keeps template min when counts are at or above min",
-			isBaseAnchor:         true,
+			name:                 "keeps template min when counts are at or above min",
 			podCliques:           map[string]int32{"worker": 3, "aux": 1},
 			expectedFQN:          []string{pclqName("worker"), pclqName("aux")},
 			expectedReplicas:     map[string]int32{"worker": 3, "aux": 1},
 			expectedMinAvailable: map[string]int32{"worker": 2, "aux": 1},
 		},
 		{
-			name:                 "non-min-available anchor keeps template min when counts are at or above min",
-			isBaseAnchor:         false,
-			podCliques:           map[string]int32{"worker": 3, "aux": 1},
-			expectedFQN:          []string{pclqName("worker"), pclqName("aux")},
-			expectedReplicas:     map[string]int32{"worker": 3, "aux": 1},
-			expectedMinAvailable: map[string]int32{"worker": 2, "aux": 1},
-		},
-		{
-			name:                 "non-min-available anchor clamps min replicas to the per-anchor count below template min",
-			isBaseAnchor:         false,
+			name:                 "clamps min replicas to the per-anchor count below template min",
 			podCliques:           map[string]int32{"worker": 1},
 			expectedFQN:          []string{pclqName("worker")},
 			expectedReplicas:     map[string]int32{"worker": 1},
 			expectedMinAvailable: map[string]int32{"worker": 1},
 		},
 		{
-			name:                 "min-available anchor does not clamp when count is below template min",
-			isBaseAnchor:         true,
-			podCliques:           map[string]int32{"worker": 1},
-			expectedFQN:          []string{pclqName("worker")},
-			expectedReplicas:     map[string]int32{"worker": 1},
-			expectedMinAvailable: map[string]int32{"worker": 2},
-		},
-		{
-			name:                 "non-min-available anchor clamps only the clique below its min",
-			isBaseAnchor:         false,
+			name:                 "clamps only the clique below its min",
 			podCliques:           map[string]int32{"worker": 1, "aux": 1},
 			expectedFQN:          []string{pclqName("worker"), pclqName("aux")},
 			expectedReplicas:     map[string]int32{"worker": 1, "aux": 1},
@@ -1482,7 +1477,6 @@ func TestBuildStandalonePCLQInfosForAnchorEntry(t *testing.T) {
 		},
 		{
 			name:                 "a clique absent from the entry is skipped",
-			isBaseAnchor:         true,
 			podCliques:           map[string]int32{"worker": 3},
 			expectedFQN:          []string{pclqName("worker")},
 			expectedReplicas:     map[string]int32{"worker": 3},
@@ -1490,7 +1484,6 @@ func TestBuildStandalonePCLQInfosForAnchorEntry(t *testing.T) {
 		},
 		{
 			name:                 "a zero-count clique is skipped",
-			isBaseAnchor:         false,
 			podCliques:           map[string]int32{"worker": 3, "aux": 0},
 			expectedFQN:          []string{pclqName("worker")},
 			expectedReplicas:     map[string]int32{"worker": 3},
@@ -1505,7 +1498,7 @@ func TestBuildStandalonePCLQInfosForAnchorEntry(t *testing.T) {
 				WithRole(grovecorev1beta1.PodGangEntryRoleAnchor).
 				WithPodCliques(test.podCliques).Build()
 
-			actual := buildStandalonePCLQInfosForAnchorEntry(ss, 0, entry, test.isBaseAnchor)
+			actual := buildStandalonePCLQInfosForAnchorEntry(ss, 0, entry)
 
 			actualFQNs := lo.Map(actual, func(pi pclqInfo, _ int) string { return pi.fqn })
 			assert.ElementsMatch(t, test.expectedFQN, actualFQNs)
@@ -2057,7 +2050,8 @@ func TestBuildAdditionalLabelsFromPodGangEntry(t *testing.T) {
 }
 
 // TestBuildPCLQInfosAndTopoConstraintsForPCSGReplica verifies that pclqInfo entries
-// for live PCLQs contain the correct number of replicas.
+// for live PCLQs contain the correct number of replicas, and that MinReplicas is the template
+// init.minReplicas capped at those replicas.
 func TestBuildPCLQInfosAndTopoConstraintsForPCSGReplica(t *testing.T) {
 	const (
 		pcsName   = "test-pcs"
@@ -2089,18 +2083,27 @@ func TestBuildPCLQInfosAndTopoConstraintsForPCSGReplica(t *testing.T) {
 	}
 
 	tests := []struct {
-		name             string
-		existingPCLQs    []grovecorev1beta1.PodClique
-		expectedReplicas []int32
+		name                 string
+		existingPCLQs        []grovecorev1beta1.PodClique
+		expectedReplicas     []int32
+		expectedMinAvailable []int32
 	}{
 		{
-			name:             "missing cliques sets replicas from template",
-			expectedReplicas: []int32{3},
+			name:                 "missing cliques sets replicas from template",
+			expectedReplicas:     []int32{3},
+			expectedMinAvailable: []int32{2},
 		},
 		{
-			name:             "present clique sets replica",
-			existingPCLQs:    []grovecorev1beta1.PodClique{makePCLQ("worker", 5)},
-			expectedReplicas: []int32{5},
+			name:                 "present clique sets replica",
+			existingPCLQs:        []grovecorev1beta1.PodClique{makePCLQ("worker", 5)},
+			expectedReplicas:     []int32{5},
+			expectedMinAvailable: []int32{2},
+		},
+		{
+			name:                 "present clique below init.minReplicas clamps min replicas to its replicas",
+			existingPCLQs:        []grovecorev1beta1.PodClique{makePCLQ("worker", 1)},
+			expectedReplicas:     []int32{1},
+			expectedMinAvailable: []int32{1},
 		},
 	}
 	for _, tt := range tests {
@@ -2116,6 +2119,8 @@ func TestBuildPCLQInfosAndTopoConstraintsForPCSGReplica(t *testing.T) {
 
 			actualReplicas := lo.Map(actual, func(p pclqInfo, _ int) int32 { return p.replicas })
 			assert.ElementsMatch(t, tt.expectedReplicas, actualReplicas)
+			actualMinAvailable := lo.Map(actual, func(p pclqInfo, _ int) int32 { return p.minAvailable })
+			assert.ElementsMatch(t, tt.expectedMinAvailable, actualMinAvailable)
 		})
 	}
 }

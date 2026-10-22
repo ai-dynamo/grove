@@ -174,13 +174,8 @@ func (r _resource) computeExpectedPodGangs(ctx context.Context, ss *syncState) (
 		if err != nil {
 			return nil, err
 		}
-		baseAnchorEpoch, foundBaseAnchor, err := componentutils.BaseAnchorEpoch(pgm.Spec.Entries, ss.pcs.Status.CurrentGenerationHash)
-		if err != nil {
-			return nil, err
-		}
 		for _, entry := range pgm.Spec.Entries {
-			isBaseAnchor := foundBaseAnchor && entry.Epoch == baseAnchorEpoch
-			pgInfos, err := r.buildPodGangInfosFromEntry(ss, pcsReplicaIndex, entry, isBaseAnchor)
+			pgInfos, err := r.buildPodGangInfosFromEntry(ss, pcsReplicaIndex, entry)
 			if err != nil {
 				return nil, fmt.Errorf("failed to build PodGang info from entry with epoch %q in PodGangMap %s: %w", entry.Epoch, pgm.Name, err)
 			}
@@ -193,10 +188,8 @@ func (r _resource) computeExpectedPodGangs(ctx context.Context, ss *syncState) (
 // buildPodGangInfosFromEntry translates a PodGangMap entry into the PodGangs it materializes into.
 // An Anchor entry yields a single PodGang carrying the standalone PodCliques and the PodCliqueScalingGroup
 // replica indices the entry holds. A non-anchor entry (Tail or ScaleOut) yields one PodGang per
-// (PodCliqueScalingGroup, replica index) it carries. isBaseAnchor is true only for the base anchor
-// entry and controls standalone PodGroup MinReplicas clamping, see
-// buildStandalonePCLQInfosForAnchorEntry.
-func (r _resource) buildPodGangInfosFromEntry(ss *syncState, pcsReplicaIndex int, pgEntry grovecorev1beta1.PodGangEntry, isBaseAnchor bool) ([]*podGangInfo, error) {
+// (PodCliqueScalingGroup, replica index) it carries.
+func (r _resource) buildPodGangInfosFromEntry(ss *syncState, pcsReplicaIndex int, pgEntry grovecorev1beta1.PodGangEntry) ([]*podGangInfo, error) {
 	if pgEntry.Role == grovecorev1beta1.PodGangEntryRoleAnchor {
 		rnr := apicommon.ResourceNameReplica{Name: ss.pcs.Name, Replica: pcsReplicaIndex}
 		pg := &podGangInfo{
@@ -205,7 +198,7 @@ func (r _resource) buildPodGangInfosFromEntry(ss *syncState, pcsReplicaIndex int
 			extraLabels:        buildAdditionalLabelsFromPodGangEntry(pgEntry),
 			topologyConstraint: createTopologyPackConstraint(ss, client.ObjectKeyFromObject(ss.pcs), ss.pcs.Spec.Template.TopologyConstraint),
 		}
-		pg.pclqs = buildStandalonePCLQInfosForAnchorEntry(ss, pcsReplicaIndex, pgEntry, isBaseAnchor)
+		pg.pclqs = buildStandalonePCLQInfosForAnchorEntry(ss, pcsReplicaIndex, pgEntry)
 		pcsgPCLQInfos, pcsgTopoConstraints, err := buildPCSGPCLQInfosAndTopoConstraintsFromAnchorEntry(ss, pcsReplicaIndex, pgEntry)
 		if err != nil {
 			return nil, err
@@ -231,9 +224,8 @@ func buildAdditionalLabelsFromPodGangEntry(pgEntry grovecorev1beta1.PodGangEntry
 
 // buildStandalonePCLQInfosForAnchorEntry builds pclqInfo entries for the standalone PodCliques the
 // anchor entry carries. The pod count comes from the entry, since the PodGangMap is the source of
-// truth. Iterates template cliques in order for deterministic output. isBaseAnchor is true
-// only for the base anchor and controls MinReplicas clamping, see the clamp comment below.
-func buildStandalonePCLQInfosForAnchorEntry(ss *syncState, pcsReplicaIndex int, pgEntry grovecorev1beta1.PodGangEntry, isBaseAnchor bool) []pclqInfo {
+// truth. Iterates template cliques in order for deterministic output.
+func buildStandalonePCLQInfosForAnchorEntry(ss *syncState, pcsReplicaIndex int, pgEntry grovecorev1beta1.PodGangEntry) []pclqInfo {
 	pclqInfos := make([]pclqInfo, 0, len(ss.pcs.Spec.Template.Cliques))
 	for _, cliqueTemplate := range ss.pcs.Spec.Template.Cliques {
 		desiredPCLQReplicas, ok := pgEntry.PodCliques[cliqueTemplate.Name]
@@ -243,18 +235,11 @@ func buildStandalonePCLQInfosForAnchorEntry(ss *syncState, pcsReplicaIndex int, 
 		if !ok || desiredPCLQReplicas == 0 {
 			continue
 		}
-		minAvailable := componentutils.PCLQInitMinReplicas(&cliqueTemplate.Spec)
-		if !isBaseAnchor {
-			// MinReplicas is the pod count the scheduler must gang schedule, and it decides gang termination.
-			// Only the base anchor carries the clique's guaranteed MinAvailable. Scale-in drains the newer
-			// anchors first, so a non-base anchor can hold fewer pods than MinAvailable even though the
-			// clique's total across all anchors is still at or above it, which is expected and not a
-			// breach. Set this anchor's MinReplicas to the pods it actually holds so the scheduler does not
-			// read it as under-provisioned and gang-terminate it, which would also take down the
-			// PodCliqueScalingGroup replicas co-located in this PodGang. The base anchor keeps MinAvailable,
-			// so a genuine drop below the clique's guarantee still gang-terminates there.
-			minAvailable = min(minAvailable, desiredPCLQReplicas)
-		}
+		// The PodGroup's MinReplicas is the clique's init.minReplicas, capped at the pods this anchor holds.
+		// An anchor can hold fewer: a Coherent update opens a new anchor with rollingUpdate.minReplicas pods
+		// and grows it sub-step by sub-step, and scale-in drains the newer anchors first. A PodGroup that
+		// asks for more pods than it has can never be scheduled.
+		minAvailable := min(componentutils.PCLQInitMinReplicas(&cliqueTemplate.Spec), desiredPCLQReplicas)
 		pclqFQN := apicommon.GeneratePodCliqueName(apicommon.ResourceNameReplica{Name: ss.pcs.Name, Replica: pcsReplicaIndex}, cliqueTemplate.Name)
 		pi := pclqInfo{
 			fqn:          pclqFQN,
@@ -347,7 +332,7 @@ func buildPCLQInfosAndTopoConstraintsForPCSGReplica(ss *syncState, pcsReplicaInd
 		pi := pclqInfo{
 			fqn:          pclqFQN,
 			replicas:     replicas,
-			minAvailable: componentutils.PCLQInitMinReplicas(&pclqTemplateSpec.Spec),
+			minAvailable: min(componentutils.PCLQInitMinReplicas(&pclqTemplateSpec.Spec), replicas),
 			isStandalone: false,
 		}
 		pi.topologyConstraint = createTopologyPackConstraint(ss, types.NamespacedName{Namespace: ss.pcs.Namespace, Name: pclqFQN}, pclqTemplateSpec.TopologyConstraint)

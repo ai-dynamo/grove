@@ -150,8 +150,7 @@ func BaseAnchorPodGangEpoch(pgm *grovecorev1beta1.PodGangMap) (string, error) {
 // The base anchor is the lowest-epoch anchor of the generation in question, the first one created. It
 // holds a PodCliqueSet replica's guaranteed MinAvailable for its standalone PodCliques. Steady-state
 // standalone scale-in drains from the highest-epoch anchor downward, so the base anchor is drained last
-// and always retains the final MinAvailable pods. Its standalone PodGroups keep MinReplicas at the
-// template MinAvailable, while every other anchor clamps MinReplicas to its per-anchor count.
+// and always retains the final MinAvailable pods.
 func BaseAnchorEpoch(entries []grovecorev1beta1.PodGangEntry, pcsGenerationHash *string) (string, bool, error) {
 	var (
 		lowestEpoch      string
