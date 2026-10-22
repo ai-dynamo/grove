@@ -115,13 +115,13 @@ kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 nodes:
 - role: control-plane
-  image: kindest/node:v1.35.1
+  image: kindest/node:v1.36.4
 EOF
   local worker_index
   for ((worker_index = 0; worker_index < WORKER_NODES; worker_index++)); do
     cat >>"${KIND_CONFIG_DIR}/cluster-config.yaml" <<EOF
 - role: worker
-  image: kindest/node:v1.35.1
+  image: kindest/node:v1.36.4
 EOF
   done
   if [ "${DEPLOY_REGISTRY}" = true ]; then
