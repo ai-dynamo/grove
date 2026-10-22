@@ -21,6 +21,7 @@ import (
 	apicommonconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
@@ -85,7 +86,7 @@ func TestBuildResource(t *testing.T) {
 		schedulerName              string
 		pcsLabels                  map[string]string
 		pcsAnnotations             map[string]string
-		pcsTopologyConstraint      *grovecorev1alpha1.TopologyConstraint
+		pcsTopologyConstraint      *grovecorev1beta1.TopologyConstraint
 		pgiTopologyConstraint      *groveschedulerv1alpha1.TopologyConstraint
 		pgiReplicaIndex            int
 		pgiExtraLabels             map[string]string
@@ -100,6 +101,17 @@ func TestBuildResource(t *testing.T) {
 			name: "create path: mirrors PCS annotations onto empty podgang",
 			pcsAnnotations: map[string]string{
 				"nvidia.com/kai-scheduler-queue": "worker-queue",
+			},
+			expectedLabels: expectedDefaultLabels,
+			expectedAnnotations: map[string]string{
+				"nvidia.com/kai-scheduler-queue": "worker-queue",
+			},
+		},
+		{
+			name: "create path: does not mirror the v1alpha1 conversion stash annotation",
+			pcsAnnotations: map[string]string{
+				"nvidia.com/kai-scheduler-queue":           "worker-queue",
+				grovecorev1alpha1.ConversionDataAnnotation: `{"cliques":{}}`,
 			},
 			expectedLabels: expectedDefaultLabels,
 			expectedAnnotations: map[string]string{
@@ -257,9 +269,9 @@ func TestBuildResource(t *testing.T) {
 			pcsAnnotations: map[string]string{
 				"nvidia.com/kai-scheduler-queue": "worker-queue",
 			},
-			pcsTopologyConstraint: &grovecorev1alpha1.TopologyConstraint{
+			pcsTopologyConstraint: &grovecorev1beta1.TopologyConstraint{
 				TopologyName: "cluster-topology",
-				PackDomain:   "rack",
+				Pack:         &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: "rack"},
 			},
 			pgiTopologyConstraint: &groveschedulerv1alpha1.TopologyConstraint{},
 			initialPodGangAnnotations: map[string]string{
@@ -278,9 +290,9 @@ func TestBuildResource(t *testing.T) {
 			pcsAnnotations: map[string]string{
 				"nvidia.com/kai-scheduler-queue": "worker-queue",
 			},
-			pcsTopologyConstraint: &grovecorev1alpha1.TopologyConstraint{
+			pcsTopologyConstraint: &grovecorev1beta1.TopologyConstraint{
 				TopologyName: "cluster-topology",
-				PackDomain:   "rack",
+				Pack:         &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: "rack"},
 			},
 			pgiTopologyConstraint: nil,
 			initialPodGangAnnotations: map[string]string{
@@ -316,7 +328,7 @@ func TestBuildResource(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			pcs := &grovecorev1alpha1.PodCliqueSet{
+			pcs := &grovecorev1beta1.PodCliqueSet{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:        pcsName,
 					Namespace:   namespace,
@@ -324,28 +336,28 @@ func TestBuildResource(t *testing.T) {
 					Labels:      test.pcsLabels,
 					Annotations: test.pcsAnnotations,
 				},
-				Spec: grovecorev1alpha1.PodCliqueSetSpec{
+				Spec: grovecorev1beta1.PodCliqueSetSpec{
 					Replicas: 1,
-					Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
+					Template: grovecorev1beta1.PodCliqueSetTemplateSpec{
 						PriorityClassName:  "default-priority",
 						TopologyConstraint: test.pcsTopologyConstraint,
-						Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+						Cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
 							{
 								Name: "test-clique",
-								Spec: grovecorev1alpha1.PodCliqueSpec{
+								Spec: grovecorev1beta1.PodCliqueSpec{
 									Replicas: 2,
 								},
 							},
 						},
 					},
 				},
-				Status: grovecorev1alpha1.PodCliqueSetStatus{
+				Status: grovecorev1beta1.PodCliqueSetStatus{
 					CurrentGenerationHash: ptr.To(generationHash),
 				},
 			}
 
 			scheme := runtime.NewScheme()
-			require.NoError(t, grovecorev1alpha1.AddToScheme(scheme))
+			require.NoError(t, grovecorev1beta1.AddToScheme(scheme))
 			require.NoError(t, groveschedulerv1alpha1.AddToScheme(scheme))
 
 			fakeClient := fake.NewClientBuilder().

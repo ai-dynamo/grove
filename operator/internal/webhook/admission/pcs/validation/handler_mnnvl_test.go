@@ -20,7 +20,7 @@ import (
 	"time"
 
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
 	"github.com/ai-dynamo/grove/operator/internal/webhook/admission/pcs/defaulting"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
@@ -38,7 +38,7 @@ import (
 func TestValidateCreate_MNNVL(t *testing.T) {
 	tests := []struct {
 		description      string
-		pcs              *grovecorev1alpha1.PodCliqueSet
+		pcs              *grovecorev1beta1.PodCliqueSet
 		autoMNNVLEnabled bool
 		expectError      bool
 		errorContains    string
@@ -147,8 +147,8 @@ func TestValidateCreate_MNNVL(t *testing.T) {
 func TestValidateUpdate_MNNVL(t *testing.T) {
 	tests := []struct {
 		description   string
-		oldPCS        *grovecorev1alpha1.PodCliqueSet
-		newPCS        *grovecorev1alpha1.PodCliqueSet
+		oldPCS        *grovecorev1beta1.PodCliqueSet
+		newPCS        *grovecorev1beta1.PodCliqueSet
 		expectError   bool
 		errorContains string
 	}{
@@ -307,11 +307,11 @@ func TestMNNVL_WebhookPipeline_LegacyPCSUpdate(t *testing.T) {
 }
 
 // createValidPCSWithGPU creates a fully valid PCS with GPU and PCS-level annotations.
-func createValidPCSWithGPU(annotations map[string]string) *grovecorev1alpha1.PodCliqueSet {
+func createValidPCSWithGPU(annotations map[string]string) *grovecorev1beta1.PodCliqueSet {
 	return testutils.NewPodCliqueSetBuilder("test-pcs", "default", "").
 		WithAnnotations(annotations).
-		WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder)).
-		WithTerminationDelay(4 * time.Hour).
+		WithCliqueStartupType(ptr.To(grovecorev1beta1.CliqueStartupTypeAnyOrder)).
+		WithBreachTolerance(4 * time.Hour).
 		WithPodCliqueTemplateSpec(
 			testutils.NewPodCliqueTemplateSpecBuilder("worker").
 				WithRoleName("worker").
@@ -324,10 +324,10 @@ func createValidPCSWithGPU(annotations map[string]string) *grovecorev1alpha1.Pod
 
 // createValidPCSWithCliqueAnnotations creates a fully valid PCS with
 // clique-level annotations for testing spec-level validation.
-func createValidPCSWithCliqueAnnotations(cliqueAnnotations map[string]string) *grovecorev1alpha1.PodCliqueSet {
+func createValidPCSWithCliqueAnnotations(cliqueAnnotations map[string]string) *grovecorev1beta1.PodCliqueSet {
 	return testutils.NewPodCliqueSetBuilder("test-pcs", "default", "").
-		WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder)).
-		WithTerminationDelay(4 * time.Hour).
+		WithCliqueStartupType(ptr.To(grovecorev1beta1.CliqueStartupTypeAnyOrder)).
+		WithBreachTolerance(4 * time.Hour).
 		WithPodCliqueTemplateSpec(
 			testutils.NewPodCliqueTemplateSpecBuilder("worker").
 				WithRoleName("worker").
@@ -341,10 +341,10 @@ func createValidPCSWithCliqueAnnotations(cliqueAnnotations map[string]string) *g
 
 // createValidPCSWithPCSGConfigAnnotations creates a fully valid PCS with a
 // PCSG config carrying the given annotations, for testing spec-level validation.
-func createValidPCSWithPCSGConfigAnnotations(pcsgAnnotations map[string]string) *grovecorev1alpha1.PodCliqueSet {
+func createValidPCSWithPCSGConfigAnnotations(pcsgAnnotations map[string]string) *grovecorev1beta1.PodCliqueSet {
 	return testutils.NewPodCliqueSetBuilder("test-pcs", "default", "").
-		WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder)).
-		WithTerminationDelay(4 * time.Hour).
+		WithCliqueStartupType(ptr.To(grovecorev1beta1.CliqueStartupTypeAnyOrder)).
+		WithBreachTolerance(4 * time.Hour).
 		WithPodCliqueTemplateSpec(
 			testutils.NewPodCliqueTemplateSpecBuilder("worker").
 				WithRoleName("worker").
@@ -352,7 +352,7 @@ func createValidPCSWithPCSGConfigAnnotations(pcsgAnnotations map[string]string) 
 				WithContainer(testutils.NewGPUContainer("train", "nvidia/cuda:latest", 8)).
 				Build(),
 		).
-		WithPodCliqueScalingGroupConfig(grovecorev1alpha1.PodCliqueScalingGroupConfig{
+		WithPodCliqueScalingGroupConfig(grovecorev1beta1.PodCliqueScalingGroupConfig{
 			Name:        "scaling-group-1",
 			CliqueNames: []string{"worker"},
 			Annotations: pcsgAnnotations,

@@ -22,9 +22,11 @@ import (
 // +genclient
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 // +kubebuilder:object:root=true
+// +kubebuilder:storageversion
 // +kubebuilder:subresource:status
 // +kubebuilder:subresource:scale:specpath=.spec.replicas,statuspath=.status.replicas,selectorpath=.status.hpaPodSelector
 // +kubebuilder:resource:shortName={pcs}
+// +kubebuilder:deprecatedversion:warning="grove.io/v1alpha1 is deprecated and will be removed two releases after grove.io/v1beta1 becomes the storage version; use grove.io/v1beta1"
 // +kubebuilder:printcolumn:name="Replicas",type=integer,JSONPath=`.spec.replicas`
 // +kubebuilder:printcolumn:name="Available",type=integer,JSONPath=`.status.availableReplicas`
 // +kubebuilder:printcolumn:name="Updated",type=integer,JSONPath=`.status.updatedReplicas`
@@ -97,8 +99,6 @@ type PodCliqueSetStatus struct {
 	// PodGang is a unit of scale and this selector is used by HPA to scale the PodGang based on metrics captured for
 	// the pods that match this selector.
 	Selector *string `json:"hpaPodSelector,omitempty"`
-	// PodGangStatuses captures the status for all the PodGang's that are part of the PodCliqueSet.
-	PodGangStatutes []PodGangStatus `json:"podGangStatuses,omitempty"`
 	// CurrentGenerationHash is a hash value generated out of a collection of fields in a PodCliqueSet.
 	// Since only a subset of fields is taken into account when generating the hash, not every change in the PodCliqueSetSpec will
 	// be accounted for when generating this hash value. A field in PodCliqueSetSpec is included if a change to it triggers
@@ -108,6 +108,24 @@ type PodCliqueSetStatus struct {
 	CurrentGenerationHash *string `json:"currentGenerationHash,omitempty"`
 	// UpdateProgress represents the progress of an update.
 	UpdateProgress *PodCliqueSetUpdateProgress `json:"updateProgress,omitempty"`
+	// GangShapeRecreate is set while replicas whose gang shape is stale, after an init.minReplicas change in
+	// grove.io/v1beta1, are being recreated, and is cleared once none is left.
+	// +optional
+	GangShapeRecreate *GangShapeRecreateProgress `json:"gangShapeRecreate,omitempty"`
+}
+
+// GangShapeRecreateProgress captures the progress of recreating the PodCliqueSet replicas whose gang shape is stale.
+// Replicas are recreated one at a time, and the next one only once every replica whose gang shape is current is
+// available.
+type GangShapeRecreateProgress struct {
+	// StartedAt is the time at which the first stale replica was found.
+	StartedAt metav1.Time `json:"startedAt"`
+	// GangShapeHash is the gang-shape hash that the replicas are being recreated to.
+	GangShapeHash string `json:"gangShapeHash"`
+	// CurrentlyRecreating is the index of the replica that was deleted last. It is cleared once that replica is
+	// available again.
+	// +optional
+	CurrentlyRecreating *int32 `json:"currentlyRecreating,omitempty"`
 }
 
 // PodCliqueSetUpdateStrategy defines the update strategy for a PodCliqueSet.
@@ -229,6 +247,7 @@ type RollingUpdateConfiguration struct {
 	//   - OnDelete: RollingUpdate must not be set. The PodCliqueSet validating webhook rejects a
 	//     RollingUpdateConfiguration on any component when the strategy is OnDelete.
 	// +optional
+	// +k8s:conversion-gen=false
 	MaxUnavailable *int32 `json:"maxUnavailable,omitempty"`
 	// ProgressDeadline tracks the progress of this component's rolling update. If the component,
 	// a PodClique or a PodCliqueScalingGroup, shows no observable progress within this duration, the
@@ -294,6 +313,8 @@ type PodCliqueSetTemplateSpec struct {
 }
 
 // PodCliqueTemplateSpec defines a template spec for a PodClique.
+// +kubebuilder:validation:XValidation:rule="!has(self.spec.minAvailable) || self.spec.minAvailable > 0",message="must be greater than 0",fieldPath=".spec.minAvailable"
+// +kubebuilder:validation:XValidation:rule="!has(self.spec.minAvailable) || self.spec.minAvailable <= self.spec.replicas",message="minAvailable must not be greater than replicas",fieldPath=".spec.minAvailable"
 type PodCliqueTemplateSpec struct {
 	// Name must be unique within a PodCliqueSet and is used to denote a role.
 	// Once set it cannot be updated.
@@ -425,6 +446,8 @@ func (tc *TopologyConstraint) ReferencedDomains() []TopologyDomain {
 // PodCliqueScalingGroupConfig is a group of PodClique's that are scaled together.
 // Each member PodClique.Replicas will be computed as a product of PodCliqueScalingGroupConfig.Replicas and PodCliqueTemplateSpec.Spec.Replicas.
 // NOTE: If a PodCliqueScalingGroupConfig is defined, then for the member PodClique's, individual AutoScalingConfig cannot be defined.
+// +kubebuilder:validation:XValidation:rule="!has(self.minAvailable) || self.minAvailable > 0",message="must be greater than 0",fieldPath=".minAvailable"
+// +kubebuilder:validation:XValidation:rule="!has(self.minAvailable) || !has(self.replicas) || self.minAvailable <= self.replicas",message="minAvailable must not be greater than replicas",fieldPath=".minAvailable"
 type PodCliqueScalingGroupConfig struct {
 	// Name is the name of the PodCliqueScalingGroupConfig. This should be unique within the PodCliqueSet.
 	// It allows consumers to give a semantic name to a group of PodCliques that needs to be scaled together.
@@ -601,35 +624,6 @@ const (
 	CliqueStartupTypeInOrder CliqueStartupType = "CliqueStartupTypeInOrder"
 	// CliqueStartupTypeExplicit defines that the cliques should be started after the cliques defined in PodClique.StartsAfter have started.
 	CliqueStartupTypeExplicit CliqueStartupType = "CliqueStartupTypeExplicit"
-)
-
-// PodGangStatus defines the status of a PodGang.
-type PodGangStatus struct {
-	// Name is the name of the PodGang.
-	Name string `json:"name"`
-	// Phase is the current phase of the PodGang.
-	Phase PodGangPhase `json:"phase"`
-	// Conditions represents the latest available observations of the PodGang by its controller.
-	Conditions []metav1.Condition `json:"conditions,omitempty"`
-}
-
-// PodGangPhase represents the phase of a PodGang.
-// +kubebuilder:validation:Enum={Pending,Starting,Running,Failed,Succeeded}
-type PodGangPhase string
-
-const (
-	// PodGangPending indicates that the pods in a PodGang have not yet been taken up for scheduling.
-	PodGangPending PodGangPhase = "Pending"
-	// PodGangStarting indicates that the pods are bound to nodes by the scheduler and are starting.
-	PodGangStarting PodGangPhase = "Starting"
-	// PodGangRunning indicates that the all the pods in a PodGang are running.
-	PodGangRunning PodGangPhase = "Running"
-	// PodGangFailed indicates that one or more pods in a PodGang have failed.
-	// This is a terminal state and is typically used for batch jobs.
-	PodGangFailed PodGangPhase = "Failed"
-	// PodGangSucceeded indicates that all the pods in a PodGang have succeeded.
-	// This is a terminal state and is typically used for batch jobs.
-	PodGangSucceeded PodGangPhase = "Succeeded"
 )
 
 // LastOperationType is a string alias for the type of the last operation.

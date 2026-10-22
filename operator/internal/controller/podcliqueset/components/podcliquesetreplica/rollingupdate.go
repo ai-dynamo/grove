@@ -22,7 +22,7 @@ import (
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
@@ -35,7 +35,7 @@ import (
 
 // orchestrateRollingUpdate drives a rolling update (RollingRecreate or Coherent) for the PodCliqueSet
 // replicas, one replica at a time.
-func (r _resource) orchestrateRollingUpdate(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, pcsIndicesToTerminate, minAvailableBreachedPCSReplicaIndices []int) error {
+func (r _resource) orchestrateRollingUpdate(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, pcsIndicesToTerminate, minAvailableBreachedPCSReplicaIndices []int) error {
 	replicaInfos, err := r.getPCSReplicaInfos(ctx, pcs, pcsIndicesToTerminate)
 	if err != nil {
 		return err
@@ -77,7 +77,7 @@ func (r _resource) orchestrateRollingUpdate(ctx context.Context, logger logr.Log
 }
 
 // getPCSReplicaInfos fetches the PCLQs and PCSGs for each PCS replica.
-func (r _resource) getPCSReplicaInfos(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, pcsIndicesToTerminate []int) ([]pcsReplicaInfo, error) {
+func (r _resource) getPCSReplicaInfos(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet, pcsIndicesToTerminate []int) ([]pcsReplicaInfo, error) {
 	pcsObjectKey := client.ObjectKeyFromObject(pcs)
 	pclqsByPCSIndex, err := componentutils.GetPCLQsByOwnerReplicaIndex(ctx, r.client, constants.KindPodCliqueSet, client.ObjectKeyFromObject(pcs), apicommon.GetDefaultLabelsForPodCliqueSetManagedResources(pcs.Name))
 	if err != nil {
@@ -97,7 +97,7 @@ func (r _resource) getPCSReplicaInfos(ctx context.Context, pcs *grovecorev1alpha
 	}
 	// A coherent update gates completion on the replica's PodGangMap having reconverged to a single
 	// generation, so its entries are gathered here. One list serves every replica.
-	var pgmEntriesByPCSIndex map[int]*grovecorev1alpha1.PodGangMap
+	var pgmEntriesByPCSIndex map[int]*grovecorev1beta1.PodGangMap
 	if componentutils.IsCoherentStrategy(pcs) {
 		pgms, listErr := componentutils.ListPodGangMapsForPCS(ctx, r.client, pcs.ObjectMeta)
 		if listErr != nil {
@@ -122,7 +122,7 @@ func (r _resource) getPCSReplicaInfos(ctx context.Context, pcs *grovecorev1alpha
 			continue
 		}
 		pcsReplicaIndexStr := strconv.Itoa(pcsReplicaIndex)
-		var pgmEntries []grovecorev1alpha1.PodGangEntry
+		var pgmEntries []grovecorev1beta1.PodGangEntry
 		if pgm := pgmEntriesByPCSIndex[pcsReplicaIndex]; pgm != nil {
 			pgmEntries = pgm.Spec.Entries
 		}
@@ -138,7 +138,7 @@ func (r _resource) getPCSReplicaInfos(ctx context.Context, pcs *grovecorev1alpha
 
 // findCurrentlyUpdatingReplicaInfo returns the gathered info for the replica the status marks as
 // currently updating, or nil when none is marked.
-func findCurrentlyUpdatingReplicaInfo(pcs *grovecorev1alpha1.PodCliqueSet, replicaInfos []pcsReplicaInfo) *pcsReplicaInfo {
+func findCurrentlyUpdatingReplicaInfo(pcs *grovecorev1beta1.PodCliqueSet, replicaInfos []pcsReplicaInfo) *pcsReplicaInfo {
 	if len(pcs.Status.UpdateProgress.CurrentlyUpdating) == 0 {
 		return nil
 	}
@@ -154,7 +154,7 @@ func findCurrentlyUpdatingReplicaInfo(pcs *grovecorev1alpha1.PodCliqueSet, repli
 // markCurrentReplicaUpdateEnded stamps UpdateEndedAt on the currently-updating replica once it has fully
 // converged. Aggregate update progress counts are derived in reconcileStatus each reconcile, so they are
 // not maintained here.
-func (r _resource) markCurrentReplicaUpdateEnded(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) error {
+func (r _resource) markCurrentReplicaUpdateEnded(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet) error {
 	original := pcs.DeepCopy()
 	pcs.Status.UpdateProgress.CurrentlyUpdating[0].UpdateEndedAt = ptr.To(metav1.Now())
 	if err := r.patchUpdateProgressStatus(ctx, logger, pcs, original); err != nil {
@@ -165,7 +165,7 @@ func (r _resource) markCurrentReplicaUpdateEnded(ctx context.Context, logger log
 }
 
 // patchUpdateProgressStatus persists update progress to the PCS status using a merge patch.
-func (r _resource) patchUpdateProgressStatus(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, original *grovecorev1alpha1.PodCliqueSet) error {
+func (r _resource) patchUpdateProgressStatus(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, original *grovecorev1beta1.PodCliqueSet) error {
 	if err := r.client.Status().Patch(ctx, pcs, client.MergeFrom(original)); err != nil {
 		return groveerr.WrapError(
 			err,
@@ -180,7 +180,7 @@ func (r _resource) patchUpdateProgressStatus(ctx context.Context, logger logr.Lo
 
 // selectNextReplicaToUpdate returns the index of the highest-priority replica not yet converged to the
 // current generation hash, or nil when every replica is updated.
-func selectNextReplicaToUpdate(pcs *grovecorev1alpha1.PodCliqueSet, replicaInfos []pcsReplicaInfo, minAvailableBreachedPCSReplicaIndices []int) *int {
+func selectNextReplicaToUpdate(pcs *grovecorev1beta1.PodCliqueSet, replicaInfos []pcsReplicaInfo, minAvailableBreachedPCSReplicaIndices []int) *int {
 	pendingReplicaInfos := make([]pcsReplicaInfo, 0, len(replicaInfos))
 	for i := range replicaInfos {
 		if !replicaInfos[i].isUpdateComplete(pcs) {
@@ -195,7 +195,7 @@ func selectNextReplicaToUpdate(pcs *grovecorev1alpha1.PodCliqueSet, replicaInfos
 }
 
 // orderPCSReplicaInfo returns a comparison function for prioritizing replica updates.
-func orderPCSReplicaInfo(pcs *grovecorev1alpha1.PodCliqueSet, minAvailableBreachedPCSReplicaIndices []int) func(a, b pcsReplicaInfo) int {
+func orderPCSReplicaInfo(pcs *grovecorev1beta1.PodCliqueSet, minAvailableBreachedPCSReplicaIndices []int) func(a, b pcsReplicaInfo) int {
 	return func(a, b pcsReplicaInfo) int {
 		scheduledPodsInA, scheduledPodsInB := a.getNumScheduledPods(pcs), b.getNumScheduledPods(pcs)
 		// 1. Pick the PCS Replica that has no scheduled pods.
@@ -225,7 +225,7 @@ func orderPCSReplicaInfo(pcs *grovecorev1alpha1.PodCliqueSet, minAvailableBreach
 }
 
 // updatePCSWithNextSelectedReplica initiates an update for the next replica or marks completion.
-func (r _resource) updatePCSWithNextSelectedReplica(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, nextPCSReplicaToUpdate *int) error {
+func (r _resource) updatePCSWithNextSelectedReplica(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, nextPCSReplicaToUpdate *int) error {
 	original := pcs.DeepCopy()
 
 	if nextPCSReplicaToUpdate == nil {
@@ -234,7 +234,7 @@ func (r _resource) updatePCSWithNextSelectedReplica(ctx context.Context, logger 
 		pcs.Status.UpdateProgress.CurrentlyUpdating = nil
 	} else {
 		logger.Info("Initiating rolling update for next replica index", "nextReplicaIndex", *nextPCSReplicaToUpdate)
-		pcs.Status.UpdateProgress.CurrentlyUpdating = []grovecorev1alpha1.PodCliqueSetReplicaUpdateProgress{
+		pcs.Status.UpdateProgress.CurrentlyUpdating = []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{
 			{
 				ReplicaIndex:    int32(*nextPCSReplicaToUpdate),
 				UpdateStartedAt: metav1.Now(),
@@ -246,12 +246,12 @@ func (r _resource) updatePCSWithNextSelectedReplica(ctx context.Context, logger 
 
 type pcsReplicaInfo struct {
 	replicaIndex int
-	pclqs        []grovecorev1alpha1.PodClique
-	pcsgs        []grovecorev1alpha1.PodCliqueScalingGroup
+	pclqs        []grovecorev1beta1.PodClique
+	pcsgs        []grovecorev1beta1.PodCliqueScalingGroup
 	// pgmEntries holds the replica's PodGangMap entries under a coherent update, used to gate completion
 	// on the map having reconverged to a single generation. It is nil for a non-coherent update or when
 	// the PodGangMap does not exist yet.
-	pgmEntries []grovecorev1alpha1.PodGangEntry
+	pgmEntries []grovecorev1beta1.PodGangEntry
 }
 
 // isUpdateComplete reports whether every expected PodClique and PodCliqueScalingGroup of the replica has
@@ -259,7 +259,7 @@ type pcsReplicaInfo struct {
 // count of converged PodCliques falls short of the expected count. Under a coherent update it also requires
 // the replica's PodGangMap to have reconverged to a single generation, so a mid-flight intermediate anchor
 // left by back-to-back updates is drained before the update is declared complete.
-func (pri *pcsReplicaInfo) isUpdateComplete(pcs *grovecorev1alpha1.PodCliqueSet) bool {
+func (pri *pcsReplicaInfo) isUpdateComplete(pcs *grovecorev1beta1.PodCliqueSet) bool {
 	completeStandalonePCLQs := 0
 	for i := range pri.pclqs {
 		if componentutils.IsPCLQUpdateComplete(pcs, &pri.pclqs[i]) {
@@ -286,7 +286,7 @@ func (pri *pcsReplicaInfo) isUpdateComplete(pcs *grovecorev1alpha1.PodCliqueSet)
 }
 
 // getNumScheduledPods calculates total scheduled pods across PCLQs and PCSGs for a replica.
-func (pri *pcsReplicaInfo) getNumScheduledPods(pcs *grovecorev1alpha1.PodCliqueSet) int {
+func (pri *pcsReplicaInfo) getNumScheduledPods(pcs *grovecorev1beta1.PodCliqueSet) int {
 	noScheduled := 0
 	for _, pclq := range pri.pclqs {
 		noScheduled += int(pclq.Status.ScheduledReplicas)
@@ -295,7 +295,7 @@ func (pri *pcsReplicaInfo) getNumScheduledPods(pcs *grovecorev1alpha1.PodCliqueS
 	for _, pcsg := range pri.pcsgs {
 		for _, cliqueName := range pcsg.Spec.CliqueNames {
 			pclqTemplateSpec := componentutils.FindPodCliqueTemplateSpecByName(pcs, cliqueName)
-			noScheduled += int(pcsg.Status.ScheduledReplicas * *pclqTemplateSpec.Spec.MinAvailable)
+			noScheduled += int(pcsg.Status.ScheduledReplicas * componentutils.PCLQInitMinReplicas(&pclqTemplateSpec.Spec))
 		}
 	}
 	return noScheduled

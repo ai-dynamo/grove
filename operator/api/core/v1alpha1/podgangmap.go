@@ -21,7 +21,9 @@ import (
 // +genclient
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 // +kubebuilder:object:root=true
+// +kubebuilder:storageversion
 // +kubebuilder:resource:shortName={pgm}
+// +kubebuilder:deprecatedversion:warning="grove.io/v1alpha1 is deprecated and will be removed two releases after grove.io/v1beta1 becomes the storage version; use grove.io/v1beta1"
 
 // PodGangMap is the desired-state mapping between PodGangs and their constituent
 // PodClique and PodCliqueScalingGroup pod counts for a single PodCliqueSet replica.

@@ -20,7 +20,7 @@ import (
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
@@ -124,9 +124,9 @@ func TestBackend_SyncPodGang_CreateAndUpdate(t *testing.T) {
 		},
 	}
 
-	ct := &grovecorev1alpha1.ClusterTopologyBinding{
+	ct := &grovecorev1beta1.ClusterTopologyBinding{
 		ObjectMeta: metav1.ObjectMeta{Name: "cluster-topology"},
-		Spec:       grovecorev1alpha1.ClusterTopologyBindingSpec{Levels: []grovecorev1alpha1.TopologyLevel{{Key: "zone"}}},
+		Spec:       grovecorev1beta1.ClusterTopologyBindingSpec{Levels: []grovecorev1beta1.TopologyLevel{{Key: "zone"}}},
 	}
 	cl := testutils.NewTestClientBuilder().
 		WithObjects(pcs, ct, podGang).
@@ -183,24 +183,24 @@ func TestBackend_SyncPodGang_CreateAndUpdate(t *testing.T) {
 }
 
 func TestBackend_ResolveTopologyName(t *testing.T) {
-	externallyManagedCT := &grovecorev1alpha1.ClusterTopologyBinding{
+	externallyManagedCT := &grovecorev1beta1.ClusterTopologyBinding{
 		ObjectMeta: metav1.ObjectMeta{Name: "externally-managed-binding"},
-		Spec: grovecorev1alpha1.ClusterTopologyBindingSpec{
-			Levels: []grovecorev1alpha1.TopologyLevel{{Key: "zone"}},
-			SchedulerTopologyBindings: []grovecorev1alpha1.SchedulerTopologyBinding{
+		Spec: grovecorev1beta1.ClusterTopologyBindingSpec{
+			Levels: []grovecorev1beta1.TopologyLevel{{Key: "zone"}},
+			SchedulerTopologyBindings: []grovecorev1beta1.SchedulerTopologyBinding{
 				{SchedulerName: string(configv1alpha1.SchedulerNameKai), TopologyReference: "external-kai-topology"},
 			},
 		},
 	}
-	groveManagedCT := &grovecorev1alpha1.ClusterTopologyBinding{
+	groveManagedCT := &grovecorev1beta1.ClusterTopologyBinding{
 		ObjectMeta: metav1.ObjectMeta{Name: "grove-managed-binding"},
-		Spec:       grovecorev1alpha1.ClusterTopologyBindingSpec{Levels: []grovecorev1alpha1.TopologyLevel{{Key: "zone"}}},
+		Spec:       grovecorev1beta1.ClusterTopologyBindingSpec{Levels: []grovecorev1beta1.TopologyLevel{{Key: "zone"}}},
 	}
-	otherSchedulerCT := &grovecorev1alpha1.ClusterTopologyBinding{
+	otherSchedulerCT := &grovecorev1beta1.ClusterTopologyBinding{
 		ObjectMeta: metav1.ObjectMeta{Name: "other-scheduler-binding"},
-		Spec: grovecorev1alpha1.ClusterTopologyBindingSpec{
-			Levels: []grovecorev1alpha1.TopologyLevel{{Key: "zone"}},
-			SchedulerTopologyBindings: []grovecorev1alpha1.SchedulerTopologyBinding{
+		Spec: grovecorev1beta1.ClusterTopologyBindingSpec{
+			Levels: []grovecorev1beta1.TopologyLevel{{Key: "zone"}},
+			SchedulerTopologyBindings: []grovecorev1beta1.SchedulerTopologyBinding{
 				{SchedulerName: "some-other-scheduler", TopologyReference: "some-other-topology"},
 			},
 		},
@@ -275,11 +275,11 @@ func TestBackend_SyncPodGang_ResolvesExternallyManagedTopologyName(t *testing.T)
 		"team-a",
 		podCliqueTemplateWithQueue("worker", "team-a"),
 	)
-	ct := &grovecorev1alpha1.ClusterTopologyBinding{
+	ct := &grovecorev1beta1.ClusterTopologyBinding{
 		ObjectMeta: metav1.ObjectMeta{Name: "mnnvl-topology-binding"},
-		Spec: grovecorev1alpha1.ClusterTopologyBindingSpec{
-			Levels: []grovecorev1alpha1.TopologyLevel{{Key: "zone"}},
-			SchedulerTopologyBindings: []grovecorev1alpha1.SchedulerTopologyBinding{
+		Spec: grovecorev1beta1.ClusterTopologyBindingSpec{
+			Levels: []grovecorev1beta1.TopologyLevel{{Key: "zone"}},
+			SchedulerTopologyBindings: []grovecorev1beta1.SchedulerTopologyBinding{
 				{SchedulerName: string(configv1alpha1.SchedulerNameKai), TopologyReference: "mnnvl-topology"},
 			},
 		},
@@ -408,7 +408,7 @@ func TestBackend_SyncPodGang_UsesUniquePodCliqueTemplateQueue(t *testing.T) {
 func TestBackend_ValidatePodCliqueSetQueues(t *testing.T) {
 	tests := []struct {
 		name          string
-		pcs           *grovecorev1alpha1.PodCliqueSet
+		pcs           *grovecorev1beta1.PodCliqueSet
 		wantErrSubstr string
 	}{
 		{
@@ -466,7 +466,7 @@ func TestBackend_ValidatePodCliqueSetQueues(t *testing.T) {
 		},
 		{
 			name: "labels override annotations",
-			pcs: func() *grovecorev1alpha1.PodCliqueSet {
+			pcs: func() *grovecorev1beta1.PodCliqueSet {
 				pcs := newPodCliqueSet(
 					"label-precedence-pcs",
 					"team-a",
@@ -479,7 +479,7 @@ func TestBackend_ValidatePodCliqueSetQueues(t *testing.T) {
 		},
 		{
 			name: "annotations are used when labels are absent",
-			pcs: func() *grovecorev1alpha1.PodCliqueSet {
+			pcs: func() *grovecorev1beta1.PodCliqueSet {
 				pcs := newPodCliqueSet(
 					"annotation-fallback-pcs",
 					"",
@@ -508,7 +508,7 @@ func TestBackend_ValidatePodCliqueSetQueues(t *testing.T) {
 func TestBackend_SyncPodGang_QueueResolutionFailuresDoNotCreatePodGroup(t *testing.T) {
 	tests := []struct {
 		name          string
-		pcs           *grovecorev1alpha1.PodCliqueSet
+		pcs           *grovecorev1beta1.PodCliqueSet
 		omitPCS       bool
 		wantErrSubstr string
 	}{
@@ -652,7 +652,7 @@ func TestUpdatePodGroup_CopiesDesiredMetadataAndPreservesTargetOnlyMetadata(t *t
 	assert.Equal(t, map[string]string{"source-annotation": "desired"}, existing.Annotations)
 }
 
-func newPodCliqueSet(name, queue string, cliques ...*grovecorev1alpha1.PodCliqueTemplateSpec) *grovecorev1alpha1.PodCliqueSet {
+func newPodCliqueSet(name, queue string, cliques ...*grovecorev1beta1.PodCliqueTemplateSpec) *grovecorev1beta1.PodCliqueSet {
 	builder := testutils.NewPodCliqueSetBuilder(name, "default", types.UID(name+"-uid"))
 	for _, clique := range cliques {
 		builder.WithPodCliqueTemplateSpec(clique)
@@ -664,7 +664,7 @@ func newPodCliqueSet(name, queue string, cliques ...*grovecorev1alpha1.PodClique
 	return pcs
 }
 
-func podCliqueTemplateWithQueue(name, queue string) *grovecorev1alpha1.PodCliqueTemplateSpec {
+func podCliqueTemplateWithQueue(name, queue string) *grovecorev1beta1.PodCliqueTemplateSpec {
 	labels := map[string]string{}
 	if queue != "" {
 		labels[labelKeyQueueName] = queue
@@ -672,9 +672,9 @@ func podCliqueTemplateWithQueue(name, queue string) *grovecorev1alpha1.PodClique
 	return testutils.NewPodCliqueTemplateSpecBuilder(name).WithLabels(labels).Build()
 }
 
-func setPodCliqueSetControllerOwner(podGang *groveschedulerv1alpha1.PodGang, pcs *grovecorev1alpha1.PodCliqueSet) {
+func setPodCliqueSetControllerOwner(podGang *groveschedulerv1alpha1.PodGang, pcs *grovecorev1beta1.PodCliqueSet) {
 	podGang.OwnerReferences = []metav1.OwnerReference{{
-		APIVersion: grovecorev1alpha1.SchemeGroupVersion.String(),
+		APIVersion: grovecorev1beta1.SchemeGroupVersion.String(),
 		Kind:       "PodCliqueSet",
 		Name:       pcs.Name,
 		UID:        pcs.UID,

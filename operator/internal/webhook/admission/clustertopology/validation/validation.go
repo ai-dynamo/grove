@@ -15,13 +15,13 @@
 package validation
 
 import (
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 
 	"k8s.io/apimachinery/pkg/util/validation/field"
 )
 
 func validateClusterTopology(
-	ct *grovecorev1alpha1.ClusterTopologyBinding,
+	ct *grovecorev1beta1.ClusterTopologyBinding,
 	enabledBackends map[string]struct{},
 	topologyAwareBackends map[string]struct{},
 ) field.ErrorList {
@@ -38,10 +38,10 @@ func validateClusterTopology(
 }
 
 // validateClusterTopologyLevels validates that domain and key values are unique across levels.
-func validateClusterTopologyLevels(levels []grovecorev1alpha1.TopologyLevel, fldPath *field.Path) field.ErrorList {
+func validateClusterTopologyLevels(levels []grovecorev1beta1.TopologyLevel, fldPath *field.Path) field.ErrorList {
 	var allErrs field.ErrorList
 
-	seenDomains := make(map[grovecorev1alpha1.TopologyDomain]bool)
+	seenDomains := make(map[grovecorev1beta1.TopologyDomain]bool)
 	seenKeys := make(map[string]bool)
 
 	for i, level := range levels {
@@ -64,7 +64,7 @@ func validateClusterTopologyLevels(levels []grovecorev1alpha1.TopologyLevel, fld
 // validateSchedulerTopologyReferences validates that each scheduler backend is referenced at most once
 // and that each referenced backend is enabled and topology-aware in the running Grove configuration.
 func validateSchedulerTopologyReferences(
-	refs []grovecorev1alpha1.SchedulerTopologyBinding,
+	refs []grovecorev1beta1.SchedulerTopologyBinding,
 	enabledBackends map[string]struct{},
 	topologyAwareBackends map[string]struct{},
 	fldPath *field.Path,

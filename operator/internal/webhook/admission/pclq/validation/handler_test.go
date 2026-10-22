@@ -20,7 +20,7 @@ import (
 	"testing"
 
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler/kueue"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
@@ -44,14 +44,14 @@ const (
 )
 
 // newPodClique returns a PodClique whose schedulerName resolves to the given backend.
-func newPodClique(schedulerName string, replicas int32) *grovecorev1alpha1.PodClique {
-	return &grovecorev1alpha1.PodClique{
+func newPodClique(schedulerName string, replicas int32) *grovecorev1beta1.PodClique {
+	return &grovecorev1beta1.PodClique{
 		TypeMeta: metav1.TypeMeta{
-			APIVersion: grovecorev1alpha1.SchemeGroupVersion.String(),
+			APIVersion: grovecorev1beta1.SchemeGroupVersion.String(),
 			Kind:       "PodClique",
 		},
 		ObjectMeta: metav1.ObjectMeta{Namespace: testNamespace, Name: testPCLQName},
-		Spec: grovecorev1alpha1.PodCliqueSpec{
+		Spec: grovecorev1beta1.PodCliqueSpec{
 			Replicas: replicas,
 			PodSpec:  corev1.PodSpec{SchedulerName: schedulerName},
 		},
@@ -257,9 +257,9 @@ func TestHandle_ScaleSubResourceMissingPodClique(t *testing.T) {
 // does not implement scheduler.PodCliqueScaleValidator).
 func TestHandle_FallsThroughToScaleguard(t *testing.T) {
 	pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "pcs-uid").
-		WithUpdateStrategy(&grovecorev1alpha1.PodCliqueSetUpdateStrategy{Type: grovecorev1alpha1.CoherentStrategy}).
-		WithUpdateProgress(&grovecorev1alpha1.PodCliqueSetUpdateProgress{
-			CurrentlyUpdating: []grovecorev1alpha1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 0}},
+		WithUpdateStrategy(&grovecorev1beta1.PodCliqueSetUpdateStrategy{Type: grovecorev1beta1.CoherentStrategy}).
+		WithUpdateProgress(&grovecorev1beta1.PodCliqueSetUpdateProgress{
+			CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 0}},
 		}).
 		Build()
 	pclq := testutils.NewPodCliqueBuilder(testPCSName, "pcs-uid", "worker", testNamespace, 0).Build()

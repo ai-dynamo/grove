@@ -19,15 +19,17 @@ import (
 	"strconv"
 	"strings"
 
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
+	"github.com/ai-dynamo/grove/operator/initc/internal"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 
 	"github.com/spf13/pflag"
+	corev1 "k8s.io/api/core/v1"
 )
 
 // Constants for error codes.
 const (
-	errCodeInvalidInput grovecorev1alpha1.ErrorCode = "ERR_INVALID_INPUT"
+	errCodeInvalidInput grovecorev1beta1.ErrorCode = "ERR_INVALID_INPUT"
 )
 
 const (
@@ -36,33 +38,34 @@ const (
 
 // CLIOptions defines the configuration that is passed to the init container.
 type CLIOptions struct {
-	podCliques []string // PodClique names with their minAvailable replicas in format "name:count"
+	podCliques []string // PodClique names with their required pod counts in format "name:count[:conditionType]"
 }
 
 // RegisterFlags registers all the flags that are defined for the init container.
 func (c *CLIOptions) RegisterFlags() {
-	// --podcliques=<podclique-fqn>:<minAvailable-replicas>
-	// --podcliques=podclique-a:3 --podcliques=podclique-b:4 and so on for each PodClique.
-	pflag.StringArrayVarP(&c.podCliques, "podcliques", "p", nil, "podclique name and minAvailable replicas seperated by comma, repeated for each podclique")
+	// --podcliques=<podclique-fqn>:<count>[:<conditionType>]
+	// --podcliques=podclique-a:3 --podcliques=podclique-b:4:example.com/model-loaded and so on for each PodClique.
+	// A missing conditionType means the Ready condition.
+	pflag.StringArrayVarP(&c.podCliques, "podcliques", "p", nil, "podclique name, required pod count and optional pod condition type separated by colons, repeated for each podclique")
 }
 
-// GetPodCliqueDependencies returns the PodClique information as a map with the minAvailable associated with each PodClique name.
-func (c *CLIOptions) GetPodCliqueDependencies() (map[string]int, error) {
-	podCliqueDependencies := make(map[string]int)
+// GetPodCliqueDependencies returns the startup dependency on each parent PodClique, keyed by the PodClique name.
+func (c *CLIOptions) GetPodCliqueDependencies() (map[string]internal.PodCliqueDependency, error) {
+	podCliqueDependencies := make(map[string]internal.PodCliqueDependency)
 
-	// Parse each "name:count" pair into the dependencies map
+	// Parse each "name:count[:conditionType]" value into the dependencies map
 	for _, pair := range c.podCliques {
 		pair = strings.TrimSpace(pair)
 		if pair == "" {
 			continue
 		}
 
-		nameAndMinAvailable := strings.Split(pair, ":")
-		if len(nameAndMinAvailable) != 2 {
-			return nil, groveerr.New(errCodeInvalidInput, operationParseFlag, fmt.Sprintf("expected two values per podclique, found %d", len(nameAndMinAvailable)))
+		parts := strings.Split(pair, ":")
+		if len(parts) != 2 && len(parts) != 3 {
+			return nil, groveerr.New(errCodeInvalidInput, operationParseFlag, fmt.Sprintf("expected two or three values per podclique, found %d", len(parts)))
 		}
 
-		replicas, err := strconv.Atoi(strings.TrimSpace(nameAndMinAvailable[1]))
+		replicas, err := strconv.Atoi(strings.TrimSpace(parts[1]))
 		if err != nil {
 			return nil, groveerr.WrapError(err, errCodeInvalidInput, operationParseFlag, "failed to convert replicas to int")
 		}
@@ -71,12 +74,20 @@ func (c *CLIOptions) GetPodCliqueDependencies() (map[string]int, error) {
 			return nil, groveerr.New(errCodeInvalidInput, operationParseFlag, fmt.Sprintf("replica count must be positive, got %d", replicas))
 		}
 
-		podCliqueName := strings.TrimSpace(nameAndMinAvailable[0])
+		podCliqueName := strings.TrimSpace(parts[0])
 		if podCliqueName == "" {
 			return nil, groveerr.New(errCodeInvalidInput, operationParseFlag, "podclique name cannot be empty")
 		}
 
-		podCliqueDependencies[podCliqueName] = replicas
+		conditionType := corev1.PodReady
+		if len(parts) == 3 {
+			conditionType = corev1.PodConditionType(strings.TrimSpace(parts[2]))
+			if conditionType == "" {
+				return nil, groveerr.New(errCodeInvalidInput, operationParseFlag, "pod condition type cannot be empty")
+			}
+		}
+
+		podCliqueDependencies[podCliqueName] = internal.PodCliqueDependency{MinReady: replicas, ConditionType: conditionType}
 	}
 
 	return podCliqueDependencies, nil

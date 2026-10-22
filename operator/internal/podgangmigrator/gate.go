@@ -19,12 +19,14 @@ import (
 	"fmt"
 	"time"
 
+	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	apiconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
-	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
 	"github.com/go-logr/logr"
+	"github.com/samber/lo"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -53,6 +55,10 @@ var gateWriteBackoff = wait.Backoff{Steps: 5, Duration: 50 * time.Millisecond, F
 // when the whole PodCliqueSet is migrated). So per PodCliqueSet: skip zero-replica PodCliqueSets, skip
 // those already carrying the condition, skip those that already have a PodGangMap, and set the
 // condition on the rest.
+//
+// PodCliqueSets and PodGangMaps are read and written at grove.io/v1alpha1, their storage version, so the API
+// server needs no conversion webhook. That lets the gate close before this replica serves its webhooks and
+// reports ready.
 func SetMigrationGateForLegacyPodCliqueSets(ctx context.Context, cl client.Client, logger logr.Logger) error {
 	pcsList := &grovecorev1alpha1.PodCliqueSetList{}
 	if err := cl.List(ctx, pcsList); err != nil {
@@ -71,7 +77,7 @@ func SetMigrationGateForLegacyPodCliqueSets(ctx context.Context, cl client.Clien
 			logger.V(4).Info("PodGang migration gate already set on PodCliqueSet", "podCliqueSet", client.ObjectKeyFromObject(pcs))
 			continue
 		}
-		pgms, err := componentutils.ListPodGangMapsForPCS(ctx, cl, pcs.ObjectMeta)
+		pgms, err := listPodGangMapsForPCS(ctx, cl, pcs.ObjectMeta)
 		if err != nil {
 			return fmt.Errorf("failed to list PodGangMaps for PodCliqueSet %v: %w", client.ObjectKeyFromObject(pcs), err)
 		}
@@ -103,10 +109,26 @@ func SetMigrationGateForLegacyPodCliqueSets(ctx context.Context, cl client.Clien
 	return nil
 }
 
+// listPodGangMapsForPCS returns the PodGangMaps controlled by the PodCliqueSet, read at grove.io/v1alpha1.
+func listPodGangMapsForPCS(ctx context.Context, cl client.Client, pcsObjMeta metav1.ObjectMeta) ([]grovecorev1alpha1.PodGangMap, error) {
+	pgmList := &grovecorev1alpha1.PodGangMapList{}
+	if err := cl.List(ctx, pgmList,
+		client.InNamespace(pcsObjMeta.Namespace),
+		client.MatchingLabels(lo.Assign(
+			apicommon.GetDefaultLabelsForPodCliqueSetManagedResources(pcsObjMeta.Name),
+			map[string]string{apicommon.LabelComponentKey: apicommon.LabelComponentNamePodGangMap},
+		))); err != nil {
+		return nil, err
+	}
+	return lo.Filter(pgmList.Items, func(pgm grovecorev1alpha1.PodGangMap, _ int) bool {
+		return metav1.IsControlledBy(&pgm, &pcsObjMeta)
+	}), nil
+}
+
 // IsMigrationInProgress reports whether the PodCliqueSet is being migrated to the epoch-based PodGang
 // scheme, i.e. its PodGangMigrationInProgress condition is True. While migration is in progress the
 // PodCliqueScalingGroup and PodClique reconcilers must not act on spec changes, so scaling does not
 // interleave with the migration.
-func IsMigrationInProgress(pcs *grovecorev1alpha1.PodCliqueSet) bool {
+func IsMigrationInProgress(pcs *grovecorev1beta1.PodCliqueSet) bool {
 	return meta.IsStatusConditionTrue(pcs.Status.Conditions, apiconstants.ConditionTypePodGangMigrationInProgress)
 }

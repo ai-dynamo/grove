@@ -20,7 +20,7 @@ import (
 
 	apicommonconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
 	ctrlcommon "github.com/ai-dynamo/grove/operator/internal/controller/common"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
@@ -45,7 +45,7 @@ type Reconciler struct {
 	eventRecorder           record.EventRecorder
 	reconcileStatusRecorder ctrlcommon.ReconcileErrorRecorder
 	expectationsStore       *expect.ExpectationsStore
-	operatorRegistry        component.OperatorRegistry[grovecorev1alpha1.PodClique]
+	operatorRegistry        component.OperatorRegistry[grovecorev1beta1.PodClique]
 	schedRegistry           scheduler.Registry
 }
 
@@ -78,7 +78,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	ctx = componentutils.WithPCLQPodsCache(ctx)
 	ctx = componentutils.WithPodCliqueSetCache(ctx)
 
-	pclq := &grovecorev1alpha1.PodClique{}
+	pclq := &grovecorev1beta1.PodClique{}
 	if result := ctrlutils.GetPodClique(ctx, r.client, logger, req.NamespacedName, pclq, true); ctrlcommon.ShortCircuitReconcileFlow(result) {
 		return result.Result()
 	}
@@ -121,16 +121,15 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 }
 
 // getStatusResyncInterval returns the requeue interval for a successful reconcile. It is the periodic
-// status resync bounded by the owner PodCliqueSet's TerminationDelay. Gang termination is armed off
-// the MinAvailableBreached condition this reconciler writes. A stale condition must be recomputed
-// before the delay expires, else the breach goes undetected past its termination deadline. It falls
-// back to the plain resync interval when the owner PodCliqueSet cannot be read or sets no
-// TerminationDelay.
-func (r *Reconciler) getStatusResyncInterval(ctx context.Context, pclq *grovecorev1alpha1.PodClique) time.Duration {
+// status resync bounded by the PodClique's breach tolerance. Gang termination is armed off the
+// MinAvailableBreached condition this reconciler writes. A stale condition must be recomputed before
+// the tolerance expires, else the breach goes undetected past its termination deadline. It falls back
+// to the plain resync interval when the owner PodCliqueSet cannot be read.
+func (r *Reconciler) getStatusResyncInterval(ctx context.Context, pclq *grovecorev1beta1.PodClique) time.Duration {
 	defaultResyncInterval := constants.PodCliqueStatusResyncInterval
 	pcs, err := componentutils.GetPodCliqueSet(ctx, r.client, pclq.ObjectMeta)
-	if err != nil || pcs.Spec.Template.TerminationDelay == nil {
+	if err != nil {
 		return defaultResyncInterval
 	}
-	return min(pcs.Spec.Template.TerminationDelay.Duration, defaultResyncInterval)
+	return min(componentutils.PCLQBreachTolerance(pcs, pclq), defaultResyncInterval)
 }

@@ -1,0 +1,631 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.17.3
+  name: podcliquescalinggroups.grove.io
+spec:
+  conversion:
+    strategy: Webhook
+    webhook:
+      clientConfig:
+        service:
+          name: grove-operator
+          namespace: default
+          path: /convert
+          port: 9443
+      conversionReviewVersions:
+      - v1
+  group: grove.io
+  names:
+    kind: PodCliqueScalingGroup
+    listKind: PodCliqueScalingGroupList
+    plural: podcliquescalinggroups
+    shortNames:
+    - pcsg
+    singular: podcliquescalinggroup
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.minAvailable
+      name: MinAvail
+      type: integer
+    - jsonPath: .spec.replicas
+      name: Replicas
+      type: integer
+    - jsonPath: .status.availableReplicas
+      name: Available
+      type: integer
+    - jsonPath: .status.scheduledReplicas
+      name: Scheduled
+      type: integer
+    - jsonPath: .status.updatedReplicas
+      name: Updated
+      type: integer
+    - jsonPath: .status.updateProgress.updatedPodCliquesCount
+      name: PCLQs-Updated
+      type: integer
+    - jsonPath: .status.updateProgress.totalPodCliquesCount
+      name: PCLQs-Total
+      type: integer
+    - jsonPath: .status.conditions[?(@.type=="MinAvailableBreached")].status
+      name: MinBreached
+      priority: 1
+      type: string
+    - jsonPath: .status.conditions[?(@.type=="UpdateInProgress")].reason
+      name: Update
+      priority: 1
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    deprecated: true
+    deprecationWarning: grove.io/v1alpha1 is deprecated and will be removed two releases
+      after grove.io/v1beta1 becomes the storage version; use grove.io/v1beta1
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          PodCliqueScalingGroup is the schema to define scaling groups that is used to scale a group of PodClique's.
+          An instance of this custom resource will be created for every pod clique scaling group defined as part of PodCliqueSet.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: Spec is the specification of the PodCliqueScalingGroup.
+            properties:
+              cliqueNames:
+                description: |-
+                  CliqueNames is the list of PodClique names that are configured in the
+                  matching PodCliqueScalingGroup in PodCliqueSet.Spec.Template.PodCliqueScalingGroupConfigs.
+                items:
+                  type: string
+                type: array
+              minAvailable:
+                default: 1
+                description: |-
+                  MinAvailable specifies the minimum number of ready replicas required for a PodCliqueScalingGroup to be considered operational.
+                  A PodCliqueScalingGroup replica is considered "ready" when its associated PodCliques have sufficient ready or starting pods.
+                  If MinAvailable is breached, it will be used to signal that the PodCliqueScalingGroup is no longer operating with the desired availability.
+                  MinAvailable cannot be greater than Replicas. If ScaleConfig is defined then its MinAvailable should not be less than ScaleConfig.MinReplicas.
+
+                  It serves two main purposes:
+                  1. Gang Scheduling: MinAvailable defines the minimum number of replicas that are guaranteed to be gang scheduled.
+                  2. Gang Termination: MinAvailable is used as a lower bound below which a PodGang becomes a candidate for Gang termination.
+                  If not specified, it defaults to 1.
+                format: int32
+                type: integer
+              replicas:
+                default: 1
+                description: |-
+                  Replicas is the desired number of replicas for the PodCliqueScalingGroup.
+                  If not specified, it defaults to 1.
+                format: int32
+                type: integer
+            required:
+            - cliqueNames
+            - replicas
+            type: object
+          status:
+            description: Status is the status of the PodCliqueScalingGroup.
+            properties:
+              availableReplicas:
+                default: 0
+                description: |-
+                  AvailableReplicas is the number of PodCliqueScalingGroup replicas that are available.
+                  A PodCliqueScalingGroup replica is considered available when all constituent PodClique's have
+                  PodClique.Status.ReadyReplicas greater than or equal to PodClique.Spec.MinAvailable
+                format: int32
+                type: integer
+              conditions:
+                description: Conditions represents the latest available observations
+                  of the PodCliqueScalingGroup by its controller.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              currentPodCliqueSetGenerationHash:
+                description: |-
+                  CurrentPodCliqueSetGenerationHash establishes a correlation to PodCliqueSet generation hash indicating
+                  that the spec of the PodCliqueSet at this generation is fully realized in the PodCliqueScalingGroup.
+                type: string
+              lastErrors:
+                description: LastErrors captures the last errors observed by the controller
+                  when reconciling the PodClique.
+                items:
+                  description: LastError captures the last error observed by the controller
+                    when reconciling an object.
+                  properties:
+                    code:
+                      description: Code is the error code that uniquely identifies
+                        the error.
+                      type: string
+                    description:
+                      description: Description is a human-readable description of
+                        the error.
+                      type: string
+                    observedAt:
+                      description: ObservedAt is the time at which the error was observed.
+                      format: date-time
+                      type: string
+                  required:
+                  - code
+                  - description
+                  - observedAt
+                  type: object
+                type: array
+              observedGeneration:
+                description: ObservedGeneration is the most recent generation observed
+                  by the controller.
+                format: int64
+                type: integer
+              replicas:
+                description: Replicas is the observed number of replicas for the PodCliqueScalingGroup.
+                format: int32
+                type: integer
+              scheduledReplicas:
+                default: 0
+                description: |-
+                  ScheduledReplicas is the number of replicas that are scheduled for the PodCliqueScalingGroup.
+                  A replica of PodCliqueScalingGroup is considered "scheduled" when at least MinAvailable number
+                  of pods in each constituent PodClique has been scheduled.
+                format: int32
+                type: integer
+              selector:
+                description: Selector is the selector used to identify the pods that
+                  belong to this scaling group.
+                type: string
+              updateProgress:
+                description: UpdateProgress provides details about the ongoing update
+                  of the PodCliqueScalingGroup.
+                properties:
+                  lastProgressedAt:
+                    description: |-
+                      LastProgressedAt is the time at which the rolling update last made progress, meaning the number of
+                      updated replicas increased. The ProgressDeadline is measured from it, and it is nil while no update is in
+                      progress.
+                    format: date-time
+                    type: string
+                  podCliqueSetGenerationHash:
+                    description: |-
+                      PodCliqueSetGenerationHash is the generation hash corresponding to the latest PodCliqueSet spec that this
+                      PodCliqueScalingGroup should converge to. PodCliqueScalingGroupStatus.CurrentPodCliqueSetGenerationHash is set to
+                      this hash once UpdateEndedAt is set, which marks the end of the update.
+                    type: string
+                  totalPodCliquesCount:
+                    default: 0
+                    description: |-
+                      TotalPodCliquesCount is the total number of PodCliques expected to exist for the PodCliqueScalingGroup
+                      at the current spec.
+                    format: int32
+                    type: integer
+                  updateEndedAt:
+                    description: |-
+                      UpdateEndedAt is the time at which Grove does not have any work pending to manifest the update according to the
+                      configured update strategy. For rolling update strategies where Grove handles the orchestration, while the update is
+                      still in progress it will be nil, and will be set once the update finishes where all PodCliques are replaced by
+                      Grove with the latest specification. For the OnDelete strategy, it is set to the same time as UpdateStartedAt, which
+                      implies that there is no work pending on Grove.
+                    format: date-time
+                    type: string
+                  updateStartedAt:
+                    description: UpdateStartedAt is the time at which the update started.
+                    format: date-time
+                    type: string
+                  updatedPodCliquesCount:
+                    default: 0
+                    description: |-
+                      UpdatedPodCliquesCount is the number of PodCliques that have been updated to the desired
+                      PodCliqueSet generation hash. Recomputed each reconcile from child generation-hash labels.
+                    format: int32
+                    type: integer
+                required:
+                - podCliqueSetGenerationHash
+                - updateStartedAt
+                type: object
+              updatedReplicas:
+                default: 0
+                description: UpdatedReplicas is the number of PodCliqueScalingGroup
+                  replicas that correspond with the latest PodCliqueSetGenerationHash.
+                format: int32
+                type: integer
+            required:
+            - availableReplicas
+            - scheduledReplicas
+            - updatedReplicas
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      scale:
+        labelSelectorPath: .status.selector
+        specReplicasPath: .spec.replicas
+        statusReplicasPath: .status.replicas
+      status: {}
+  - additionalPrinterColumns:
+    - jsonPath: .spec.init.minReplicas
+      name: InitMin
+      type: integer
+    - jsonPath: .spec.termination.resource.availability.minReplicas
+      name: AvailMin
+      type: integer
+    - jsonPath: .spec.replicas
+      name: Replicas
+      type: integer
+    - jsonPath: .status.availableReplicas
+      name: Available
+      type: integer
+    - jsonPath: .status.scheduledReplicas
+      name: Scheduled
+      type: integer
+    - jsonPath: .status.updatedReplicas
+      name: Updated
+      type: integer
+    - jsonPath: .status.updateProgress.updatedPodCliquesCount
+      name: PCLQs-Updated
+      type: integer
+    - jsonPath: .status.updateProgress.totalPodCliquesCount
+      name: PCLQs-Total
+      type: integer
+    - jsonPath: .status.conditions[?(@.type=="MinAvailableBreached")].status
+      name: MinBreached
+      priority: 1
+      type: string
+    - jsonPath: .status.conditions[?(@.type=="UpdateInProgress")].reason
+      name: Update
+      priority: 1
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1beta1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          PodCliqueScalingGroup is the schema to define scaling groups that is used to scale a group of PodClique's.
+          An instance of this custom resource will be created for every pod clique scaling group defined as part of PodCliqueSet.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: Spec is the specification of the PodCliqueScalingGroup.
+            properties:
+              cliqueNames:
+                description: |-
+                  CliqueNames is the list of PodClique names that are configured in the
+                  matching PodCliqueScalingGroup in PodCliqueSet.Spec.Template.PodCliqueScalingGroupConfigs.
+                items:
+                  type: string
+                type: array
+              init:
+                description: |-
+                  Init configures the gang scheduling of the PodCliqueScalingGroup's replicas. It is copied from the
+                  matching PodCliqueScalingGroupConfig.
+                properties:
+                  minReplicas:
+                    description: |-
+                      MinReplicas is the guaranteed minimum number of replicas gang-scheduled together when the
+                      resource is first deployed and whenever it, or one of its replicas, is recreated.
+                      Defaults to termination.resource.availability.minReplicas when availability is set, and to 1 otherwise.
+                      It must not be greater than the template's replicas, nor less than availability.minReplicas.
+                      Changing it changes the gang shape: every PodCliqueSet replica is recreated, one at a time.
+                    format: int32
+                    type: integer
+                type: object
+              replicas:
+                default: 1
+                description: |-
+                  Replicas is the desired number of replicas for the PodCliqueScalingGroup.
+                  If not specified, it defaults to 1.
+                format: int32
+                type: integer
+              termination:
+                description: |-
+                  Termination defines the terminal conditions of the PodCliqueScalingGroup. It is copied from the
+                  matching PodCliqueScalingGroupConfig.
+                properties:
+                  resource:
+                    description: Resource defines resource-scope terminal conditions.
+                    properties:
+                      availability:
+                        description: |-
+                          Availability defines the minimum requirement for a long-running resource to be available.
+                          Nil means MinAvailableBreached is permanently False, so the resource never triggers gang termination.
+                          It cannot be added or removed after creation.
+                        properties:
+                          breachTolerance:
+                            description: |-
+                              BreachTolerance is how long MinAvailableBreached may stay True before the PodCliqueSet replica that the
+                              resource belongs to (or, for a PodCliqueScalingGroup member PodClique, its PodCliqueScalingGroup replica)
+                              is gang-terminated. Defaults to 4h.
+                            type: string
+                          minReplicas:
+                            description: |-
+                              MinReplicas is the minimum number of available replicas. Defaults to 1.
+                              It must not be greater than init.minReplicas. It can be changed, and the new floor applies to every
+                              replica in place: raising it above the available replicas makes MinAvailableBreached True at once.
+                            format: int32
+                            type: integer
+                        type: object
+                    type: object
+                type: object
+            required:
+            - cliqueNames
+            - replicas
+            type: object
+          status:
+            description: Status is the status of the PodCliqueScalingGroup.
+            properties:
+              availableReplicas:
+                default: 0
+                description: |-
+                  AvailableReplicas is the number of PodCliqueScalingGroup replicas that are available.
+                  A PodCliqueScalingGroup replica is considered available when every constituent PodClique has
+                  PodClique.Status.ReadyReplicas of at least its ready threshold: termination.resource.availability.minReplicas
+                  when availability is set, and init.minReplicas otherwise.
+                format: int32
+                type: integer
+              conditions:
+                description: Conditions represents the latest available observations
+                  of the PodCliqueScalingGroup by its controller.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              currentPodCliqueSetGenerationHash:
+                description: |-
+                  CurrentPodCliqueSetGenerationHash establishes a correlation to PodCliqueSet generation hash indicating
+                  that the spec of the PodCliqueSet at this generation is fully realized in the PodCliqueScalingGroup.
+                type: string
+              lastErrors:
+                description: LastErrors captures the last errors observed by the controller
+                  when reconciling the PodClique.
+                items:
+                  description: LastError captures the last error observed by the controller
+                    when reconciling an object.
+                  properties:
+                    code:
+                      description: Code is the error code that uniquely identifies
+                        the error.
+                      type: string
+                    description:
+                      description: Description is a human-readable description of
+                        the error.
+                      type: string
+                    observedAt:
+                      description: ObservedAt is the time at which the error was observed.
+                      format: date-time
+                      type: string
+                  required:
+                  - code
+                  - description
+                  - observedAt
+                  type: object
+                type: array
+              observedGeneration:
+                description: ObservedGeneration is the most recent generation observed
+                  by the controller.
+                format: int64
+                type: integer
+              replicas:
+                description: Replicas mirrors spec.replicas of the PodCliqueScalingGroup.
+                format: int32
+                type: integer
+              scheduledReplicas:
+                default: 0
+                description: |-
+                  ScheduledReplicas is the number of replicas that are scheduled for the PodCliqueScalingGroup.
+                  A replica of PodCliqueScalingGroup is considered "scheduled" when at least init.minReplicas
+                  pods of each constituent PodClique have been scheduled.
+                format: int32
+                type: integer
+              selector:
+                description: Selector is the selector used to identify the pods that
+                  belong to this scaling group.
+                type: string
+              updateProgress:
+                description: UpdateProgress provides details about the ongoing update
+                  of the PodCliqueScalingGroup.
+                properties:
+                  lastProgressedAt:
+                    description: |-
+                      LastProgressedAt is the time at which the rolling update last made progress, meaning the number of
+                      updated replicas increased. The ProgressDeadline is measured from it, and it is nil while no update is in
+                      progress.
+                    format: date-time
+                    type: string
+                  podCliqueSetGenerationHash:
+                    description: |-
+                      PodCliqueSetGenerationHash is the generation hash corresponding to the latest PodCliqueSet spec that this
+                      PodCliqueScalingGroup should converge to. PodCliqueScalingGroupStatus.CurrentPodCliqueSetGenerationHash is set to
+                      this hash once UpdateEndedAt is set, which marks the end of the update.
+                    type: string
+                  totalPodCliquesCount:
+                    default: 0
+                    description: |-
+                      TotalPodCliquesCount is the total number of PodCliques expected to exist for the PodCliqueScalingGroup
+                      at the current spec.
+                    format: int32
+                    type: integer
+                  updateEndedAt:
+                    description: |-
+                      UpdateEndedAt is the time at which Grove does not have any work pending to manifest the update according to the
+                      configured update strategy. For rolling update strategies where Grove handles the orchestration, while the update is
+                      still in progress it will be nil, and will be set once the update finishes where all PodCliques are replaced by
+                      Grove with the latest specification. For the OnDelete strategy, it is set to the same time as UpdateStartedAt, which
+                      implies that there is no work pending on Grove.
+                    format: date-time
+                    type: string
+                  updateStartedAt:
+                    description: UpdateStartedAt is the time at which the update started.
+                    format: date-time
+                    type: string
+                  updatedPodCliquesCount:
+                    default: 0
+                    description: |-
+                      UpdatedPodCliquesCount is the number of PodCliques that have been updated to the desired
+                      PodCliqueSet generation hash. Recomputed each reconcile from child generation-hash labels.
+                    format: int32
+                    type: integer
+                required:
+                - podCliqueSetGenerationHash
+                - updateStartedAt
+                type: object
+              updatedReplicas:
+                default: 0
+                description: UpdatedReplicas is the number of PodCliqueScalingGroup
+                  replicas that correspond with the latest PodCliqueSetGenerationHash.
+                format: int32
+                type: integer
+            required:
+            - availableReplicas
+            - scheduledReplicas
+            - updatedReplicas
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: false
+    subresources:
+      scale:
+        labelSelectorPath: .status.selector
+        specReplicasPath: .spec.replicas
+        statusReplicasPath: .status.replicas
+      status: {}

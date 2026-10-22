@@ -24,7 +24,7 @@ import (
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	apicommonconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
 
@@ -164,7 +164,7 @@ func (b *schedulerBackend) PodGangMembershipAnnotations(newPodGangName string) m
 }
 
 // ValidatePodCliqueSet runs KAI-specific validations on the PodCliqueSet.
-func (b *schedulerBackend) ValidatePodCliqueSet(_ context.Context, pcs *grovecorev1alpha1.PodCliqueSet, _ ...scheduler.ValidateOption) error {
+func (b *schedulerBackend) ValidatePodCliqueSet(_ context.Context, pcs *grovecorev1beta1.PodCliqueSet, _ ...scheduler.ValidateOption) error {
 	_, err := resolveQueueNameForPodCliqueSet(pcs)
 	return err
 }
@@ -294,7 +294,7 @@ func (b *schedulerBackend) resolveTopologyName(ctx context.Context, bindingName 
 	if bindingName == "" {
 		return "", nil
 	}
-	ct := &grovecorev1alpha1.ClusterTopologyBinding{}
+	ct := &grovecorev1beta1.ClusterTopologyBinding{}
 	if err := b.client.Get(ctx, client.ObjectKey{Name: bindingName}, ct); err != nil {
 		return "", fmt.Errorf("get ClusterTopologyBinding %s: %w", bindingName, err)
 	}
@@ -332,11 +332,11 @@ func (b *schedulerBackend) resolveQueueName(ctx context.Context, podGang *groves
 	if owner == nil {
 		return "", fmt.Errorf("podgang %s/%s has no controlling PodCliqueSet", podGang.Namespace, podGang.Name)
 	}
-	if owner.APIVersion != grovecorev1alpha1.SchemeGroupVersion.String() || owner.Kind != "PodCliqueSet" {
+	if owner.APIVersion != grovecorev1beta1.SchemeGroupVersion.String() || owner.Kind != "PodCliqueSet" {
 		return "", fmt.Errorf("podgang %s/%s is controlled by %s %q, expected PodCliqueSet", podGang.Namespace, podGang.Name, owner.APIVersion, owner.Kind)
 	}
 
-	pcs := &grovecorev1alpha1.PodCliqueSet{}
+	pcs := &grovecorev1beta1.PodCliqueSet{}
 	if err := b.client.Get(ctx, client.ObjectKey{Namespace: podGang.Namespace, Name: owner.Name}, pcs); err != nil {
 		return "", fmt.Errorf("get controlling PodCliqueSet %s/%s: %w", podGang.Namespace, owner.Name, err)
 	}
@@ -347,7 +347,7 @@ func (b *schedulerBackend) resolveQueueName(ctx context.Context, podGang *groves
 // resolveQueueNameForPodCliqueSet returns the KAI queue configured by a PodCliqueSet.
 // A queue set on the PodCliqueSet establishes the queue for the scheduling unit, so
 // every explicitly configured PodClique template queue must resolve to the same value.
-func resolveQueueNameForPodCliqueSet(pcs *grovecorev1alpha1.PodCliqueSet) (string, error) {
+func resolveQueueNameForPodCliqueSet(pcs *grovecorev1beta1.PodCliqueSet) (string, error) {
 	if queueName := resolveQueueNameFromMetadata(pcs.Labels, pcs.Annotations); queueName != "" {
 		for _, clique := range pcs.Spec.Template.Cliques {
 			if clique == nil {

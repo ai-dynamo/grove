@@ -19,7 +19,7 @@ import (
 
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
 	groveconfigv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	ctrlcommon "github.com/ai-dynamo/grove/operator/internal/controller/common"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	pcsgcomponent "github.com/ai-dynamo/grove/operator/internal/controller/podcliquescalinggroup/components"
@@ -41,7 +41,7 @@ type Reconciler struct {
 	client                  ctrlclient.Client
 	eventRecorder           record.EventRecorder
 	reconcileStatusRecorder ctrlcommon.ReconcileErrorRecorder
-	operatorRegistry        component.OperatorRegistry[grovecorev1alpha1.PodCliqueScalingGroup]
+	operatorRegistry        component.OperatorRegistry[grovecorev1beta1.PodCliqueScalingGroup]
 	expectationStore        *expect.ExpectationsStore
 }
 
@@ -67,7 +67,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	// GetPodCliqueSet is called 3× per reconcile (spec, status, podclique sync) — memoize.
 	ctx = componentutils.WithPodCliqueSetCache(ctx)
 
-	pcsg := &grovecorev1alpha1.PodCliqueScalingGroup{}
+	pcsg := &grovecorev1beta1.PodCliqueScalingGroup{}
 	if result := ctrlutils.GetPodCliqueScalingGroup(ctx, r.client, logger, req.NamespacedName, pcsg); ctrlcommon.ShortCircuitReconcileFlow(result) {
 		return result.Result()
 	}

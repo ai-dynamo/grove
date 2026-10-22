@@ -20,7 +20,7 @@ import (
 
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	ctrlcommon "github.com/ai-dynamo/grove/operator/internal/controller/common"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	pcscomponent "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components"
@@ -40,7 +40,7 @@ type Reconciler struct {
 	tasConfig                     configv1alpha1.TopologyAwareSchedulingConfiguration
 	client                        ctrlclient.Client
 	reconcileStatusRecorder       ctrlcommon.ReconcileErrorRecorder
-	operatorRegistry              component.OperatorRegistry[grovecorev1alpha1.PodCliqueSet]
+	operatorRegistry              component.OperatorRegistry[grovecorev1beta1.PodCliqueSet]
 	pcsGenerationHashExpectations sync.Map
 }
 
@@ -62,7 +62,7 @@ func NewReconciler(mgr ctrl.Manager, controllerCfg configv1alpha1.PodCliqueSetCo
 func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := ctrllogger.FromContext(ctx).WithName(controllerName)
 
-	pcs := &grovecorev1alpha1.PodCliqueSet{}
+	pcs := &grovecorev1beta1.PodCliqueSet{}
 	if result := ctrlutils.GetPodCliqueSet(ctx, r.client, logger, req.NamespacedName, pcs); ctrlcommon.ShortCircuitReconcileFlow(result) {
 		return result.Result()
 	}
@@ -80,7 +80,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 }
 
 // reconcileDelete handles PodCliqueSet deletion when a deletion timestamp is set.
-func (r *Reconciler) reconcileDelete(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) ctrlcommon.ReconcileStepResult {
+func (r *Reconciler) reconcileDelete(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet) ctrlcommon.ReconcileStepResult {
 	if !pcs.DeletionTimestamp.IsZero() {
 		if !controllerutil.ContainsFinalizer(pcs, constants.FinalizerPodCliqueSet) {
 			return ctrlcommon.DoNotRequeue()

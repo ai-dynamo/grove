@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 
 	apicommonconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
@@ -31,7 +32,9 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
 	"github.com/ai-dynamo/grove/operator/internal/podgangmigrator"
 	schedulerregistry "github.com/ai-dynamo/grove/operator/internal/scheduler/registry"
+	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 	groveversion "github.com/ai-dynamo/grove/operator/internal/version"
+	conversionwebhook "github.com/ai-dynamo/grove/operator/internal/webhook/conversion"
 
 	"github.com/spf13/pflag"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -109,9 +112,31 @@ func main() {
 
 	// Close the PodGang migration gate on legacy PodCliqueSets before the controllers start, so that
 	// scaling reconcilers do not race the in-reconcile migration to the epoch-based PodGang scheme.
+	// The gate reads at the storage version, so it needs no conversion webhook and completes before
+	// this replica reports ready.
 	if err = podgangmigrator.SetMigrationGateForLegacyPodCliqueSets(ctx, cl, logger); err != nil {
 		logger.Error(err, "failed to set the PodGang migration gate on legacy PodCliqueSets")
 		handleErrorAndExit(err, cli.ExitErrSetPodGangMigrationGate)
+	}
+
+	// Point the CRDs' conversion webhook at this operator before any controller or client reads a converted kind.
+	operatorNamespace, err := k8sutils.OperatorNamespace()
+	if err != nil {
+		logger.Error(err, "failed to read the operator namespace")
+		handleErrorAndExit(err, cli.ExitErrConfigureCRDConversion)
+	}
+	if err = conversionwebhook.ConfigureCRDs(ctx, cl, logger, operatorNamespace, operatorConfig.Server.Webhooks.Port); err != nil {
+		logger.Error(err, "failed to configure the conversion webhook of the CRDs")
+		handleErrorAndExit(err, cli.ExitErrConfigureCRDConversion)
+	}
+	// cert-controller injects the CA in auto mode. In manual mode, the CA of the provided certificates is used.
+	caFile := ""
+	if operatorConfig.Server.Webhooks.CertProvisionMode == configv1alpha1.CertProvisionModeManual {
+		caFile = filepath.Join(operatorConfig.Server.Webhooks.ServerCertDir, "ca.crt")
+	}
+	if err = mgr.Add(conversionwebhook.NewCRDConversionKeeper(cl, logger, operatorNamespace, operatorConfig.Server.Webhooks.Port, caFile)); err != nil {
+		logger.Error(err, "failed to add the CRD conversion keeper")
+		handleErrorAndExit(err, cli.ExitErrConfigureCRDConversion)
 	}
 
 	webhookCertsReadyCh := make(chan struct{})
@@ -137,7 +162,7 @@ func main() {
 	// Certificates need to be generated before the webhooks are started, which can only happen once the manager is started.
 	// Block while generating the certificates, and then start the webhooks.
 	go func() {
-		if err = grovectrl.RegisterControllersAndWebhooks(mgr, logger, operatorConfig, webhookCertsReadyCh, schedRegistry); err != nil {
+		if err := grovectrl.RegisterControllersAndWebhooks(ctx, mgr, logger, operatorConfig, webhookCertsReadyCh, schedRegistry); err != nil {
 			logger.Error(err, "failed to initialize grove controller manager")
 			handleErrorAndExit(err, cli.ExitErrInitializeManager)
 		}

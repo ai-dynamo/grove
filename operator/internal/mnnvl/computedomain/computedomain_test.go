@@ -21,7 +21,7 @@ import (
 	"testing"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
@@ -51,7 +51,7 @@ const (
 var testScheme = func() *runtime.Scheme {
 	s := runtime.NewScheme()
 	// Add Grove scheme
-	_ = grovecorev1alpha1.AddToScheme(s)
+	_ = grovecorev1beta1.AddToScheme(s)
 	// Add core scheme
 	_ = corev1.AddToScheme(s)
 	// Register ComputeDomain types for unstructured List to work with fake client
@@ -114,7 +114,7 @@ func Test_generateComputeDomainName(t *testing.T) {
 func TestGetRequiredCDNames(t *testing.T) {
 	testCases := []struct {
 		description    string
-		pcs            *grovecorev1alpha1.PodCliqueSet
+		pcs            *grovecorev1beta1.PodCliqueSet
 		expectedGroups map[string]struct{}
 	}{
 		{
@@ -126,7 +126,7 @@ func TestGetRequiredCDNames(t *testing.T) {
 		},
 		{
 			description: "mnnvl-group on PCS, 2 replicas — named group",
-			pcs: func() *grovecorev1alpha1.PodCliqueSet {
+			pcs: func() *grovecorev1beta1.PodCliqueSet {
 				pcs := createPCSWithGPU(2)
 				pcs.Annotations = map[string]string{mnnvl.AnnotationMNNVLGroup: "workers"}
 				return pcs
@@ -137,12 +137,12 @@ func TestGetRequiredCDNames(t *testing.T) {
 		},
 		{
 			description: "clique-level groups — two distinct GPU groups",
-			pcs: func() *grovecorev1alpha1.PodCliqueSet {
+			pcs: func() *grovecorev1beta1.PodCliqueSet {
 				pcs := createPCSWithGPU(1)
-				pcs.Spec.Template.Cliques = append(pcs.Spec.Template.Cliques, &grovecorev1alpha1.PodCliqueTemplateSpec{
+				pcs.Spec.Template.Cliques = append(pcs.Spec.Template.Cliques, &grovecorev1beta1.PodCliqueTemplateSpec{
 					Name:        "clique2",
 					Annotations: map[string]string{mnnvl.AnnotationMNNVLGroup: "encoders"},
-					Spec: grovecorev1alpha1.PodCliqueSpec{
+					Spec: grovecorev1beta1.PodCliqueSpec{
 						PodSpec: corev1.PodSpec{
 							Containers: []corev1.Container{{
 								Name:  "encoder",
@@ -164,9 +164,9 @@ func TestGetRequiredCDNames(t *testing.T) {
 		},
 		{
 			description: "PCSG config group propagates to clique",
-			pcs: func() *grovecorev1alpha1.PodCliqueSet {
+			pcs: func() *grovecorev1beta1.PodCliqueSet {
 				pcs := createPCSWithGPU(1)
-				pcs.Spec.Template.PodCliqueScalingGroupConfigs = []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+				pcs.Spec.Template.PodCliqueScalingGroupConfigs = []grovecorev1beta1.PodCliqueScalingGroupConfig{
 					{
 						Name:        "sg1",
 						CliqueNames: []string{"clique1"},
@@ -181,12 +181,12 @@ func TestGetRequiredCDNames(t *testing.T) {
 		},
 		{
 			description: "PCS default group + clique named group — both collected",
-			pcs: func() *grovecorev1alpha1.PodCliqueSet {
+			pcs: func() *grovecorev1beta1.PodCliqueSet {
 				pcs := createPCSWithMNNVLEnabled(2)
 				pcs.Spec.Template.Cliques[0].Annotations = map[string]string{mnnvl.AnnotationMNNVLGroup: "workers"}
-				pcs.Spec.Template.Cliques = append(pcs.Spec.Template.Cliques, &grovecorev1alpha1.PodCliqueTemplateSpec{
+				pcs.Spec.Template.Cliques = append(pcs.Spec.Template.Cliques, &grovecorev1beta1.PodCliqueTemplateSpec{
 					Name: "clique2",
-					Spec: grovecorev1alpha1.PodCliqueSpec{
+					Spec: grovecorev1beta1.PodCliqueSpec{
 						PodSpec: corev1.PodSpec{
 							Containers: []corev1.Container{{
 								Name:  "gpu2",
@@ -217,7 +217,7 @@ func TestGetRequiredCDNames(t *testing.T) {
 		},
 		{
 			description: "PCS mnnvl-group set but only CPU cliques — no orphaned CD",
-			pcs: func() *grovecorev1alpha1.PodCliqueSet {
+			pcs: func() *grovecorev1beta1.PodCliqueSet {
 				pcs := createPCSWithoutGPU()
 				pcs.Annotations = map[string]string{mnnvl.AnnotationMNNVLGroup: "default"}
 				return pcs
@@ -364,7 +364,7 @@ func TestEmptyComputeDomain(t *testing.T) {
 func TestSyncSkipsWhenMNNVLNotEnabled(t *testing.T) {
 	testCases := []struct {
 		description string
-		pcs         *grovecorev1alpha1.PodCliqueSet
+		pcs         *grovecorev1beta1.PodCliqueSet
 	}{
 		{
 			description: "no annotation",
@@ -557,10 +557,10 @@ func TestSyncWithGroupAnnotation(t *testing.T) {
 func TestSyncMultipleGroups(t *testing.T) {
 	pcs := createPCSWithGPU(2)
 	pcs.Annotations = map[string]string{mnnvl.AnnotationMNNVLGroup: "default"}
-	pcs.Spec.Template.Cliques = append(pcs.Spec.Template.Cliques, &grovecorev1alpha1.PodCliqueTemplateSpec{
+	pcs.Spec.Template.Cliques = append(pcs.Spec.Template.Cliques, &grovecorev1beta1.PodCliqueTemplateSpec{
 		Name:        "clique2",
 		Annotations: map[string]string{mnnvl.AnnotationMNNVLGroup: "workers"},
-		Spec: grovecorev1alpha1.PodCliqueSpec{
+		Spec: grovecorev1beta1.PodCliqueSpec{
 			PodSpec: corev1.PodSpec{
 				Containers: []corev1.Container{{
 					Name:  "gpu2",
@@ -594,10 +594,10 @@ func TestSyncMultipleGroups(t *testing.T) {
 func TestSyncMultipleGroupsScaleDown(t *testing.T) {
 	pcs := createPCSWithGPU(1)
 	pcs.Annotations = map[string]string{mnnvl.AnnotationMNNVLGroup: "default"}
-	pcs.Spec.Template.Cliques = append(pcs.Spec.Template.Cliques, &grovecorev1alpha1.PodCliqueTemplateSpec{
+	pcs.Spec.Template.Cliques = append(pcs.Spec.Template.Cliques, &grovecorev1beta1.PodCliqueTemplateSpec{
 		Name:        "clique2",
 		Annotations: map[string]string{mnnvl.AnnotationMNNVLGroup: "workers"},
-		Spec: grovecorev1alpha1.PodCliqueSpec{
+		Spec: grovecorev1beta1.PodCliqueSpec{
 			PodSpec: corev1.PodSpec{
 				Containers: []corev1.Container{{
 					Name:  "gpu2",
@@ -678,20 +678,20 @@ func TestDeleteRemovesAllComputeDomains(t *testing.T) {
 // ================================
 
 // createPCSWithResources creates a PCS with specified container resources
-func createPCSWithResources(requests, limits corev1.ResourceList) *grovecorev1alpha1.PodCliqueSet {
-	return &grovecorev1alpha1.PodCliqueSet{
+func createPCSWithResources(requests, limits corev1.ResourceList) *grovecorev1beta1.PodCliqueSet {
+	return &grovecorev1beta1.PodCliqueSet{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      testPCSName,
 			Namespace: testPCSNamespace,
 			UID:       "pcs-uid-123",
 		},
-		Spec: grovecorev1alpha1.PodCliqueSetSpec{
+		Spec: grovecorev1beta1.PodCliqueSetSpec{
 			Replicas: 1,
-			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
-				Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+			Template: grovecorev1beta1.PodCliqueSetTemplateSpec{
+				Cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
 					{
 						Name: "clique1",
-						Spec: grovecorev1alpha1.PodCliqueSpec{
+						Spec: grovecorev1beta1.PodCliqueSpec{
 							PodSpec: corev1.PodSpec{
 								Containers: []corev1.Container{
 									{
@@ -713,26 +713,26 @@ func createPCSWithResources(requests, limits corev1.ResourceList) *grovecorev1al
 }
 
 // createPCSWithMNNVLEnabled creates a PCS with MNNVL enabled via mnnvl-group annotation
-func createPCSWithMNNVLEnabled(replicas int32) *grovecorev1alpha1.PodCliqueSet {
+func createPCSWithMNNVLEnabled(replicas int32) *grovecorev1beta1.PodCliqueSet {
 	pcs := createPCSWithGPU(replicas)
 	pcs.Annotations = map[string]string{mnnvl.AnnotationMNNVLGroup: "default"}
 	return pcs
 }
 
 // createPCSWithMNNVLDisabled creates a PCS with MNNVL explicitly opted out via mnnvl-group=none
-func createPCSWithMNNVLDisabled() *grovecorev1alpha1.PodCliqueSet {
+func createPCSWithMNNVLDisabled() *grovecorev1beta1.PodCliqueSet {
 	pcs := createPCSWithGPU(1)
 	pcs.Annotations = map[string]string{mnnvl.AnnotationMNNVLGroup: mnnvl.AnnotationMNNVLGroupOptOut}
 	return pcs
 }
 
 // createPCSWithoutGPU creates a PCS without GPU requirements
-func createPCSWithoutGPU() *grovecorev1alpha1.PodCliqueSet {
+func createPCSWithoutGPU() *grovecorev1beta1.PodCliqueSet {
 	return createPCSWithResources(nil, nil)
 }
 
 // createPCSWithGPU creates a PCS with GPU requirements and specified replicas
-func createPCSWithGPU(replicas int32) *grovecorev1alpha1.PodCliqueSet {
+func createPCSWithGPU(replicas int32) *grovecorev1beta1.PodCliqueSet {
 	pcs := createPCSWithResources(
 		corev1.ResourceList{constants.GPUResourceName: resource.MustParse("1")},
 		nil,

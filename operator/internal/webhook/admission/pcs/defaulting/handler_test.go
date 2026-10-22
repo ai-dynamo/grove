@@ -19,7 +19,7 @@ import (
 	"testing"
 	"time"
 
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/go-logr/logr"
@@ -69,8 +69,8 @@ func TestDefault(t *testing.T) {
 			name: "valid PodCliqueSet has defaults applied",
 			obj: testutils.NewPodCliqueSetBuilder("test-pcs", "default", uuid.NewUUID()).
 				WithReplicas(1).
-				WithTerminationDelay(4 * time.Hour).
-				WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder)).
+				WithBreachTolerance(4 * time.Hour).
+				WithCliqueStartupType(ptr.To(grovecorev1beta1.CliqueStartupTypeAnyOrder)).
 				WithPodCliqueTemplateSpec(
 					testutils.NewPodCliqueTemplateSpecBuilder("test").
 						WithReplicas(1).
@@ -92,7 +92,7 @@ func TestDefault(t *testing.T) {
 			},
 			expectError: false,
 			verify: func(t *testing.T, obj runtime.Object) {
-				pcs, ok := obj.(*grovecorev1alpha1.PodCliqueSet)
+				pcs, ok := obj.(*grovecorev1beta1.PodCliqueSet)
 				require.True(t, ok)
 				// Verify that some defaults are set (e.g., startup type should remain as set)
 				assert.NotNil(t, pcs.Spec.Template.StartupType)
@@ -100,19 +100,19 @@ func TestDefault(t *testing.T) {
 		},
 		{
 			name: "PodCliqueSet without startup type gets default",
-			obj: &grovecorev1alpha1.PodCliqueSet{
+			obj: &grovecorev1beta1.PodCliqueSet{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-pcs",
 					Namespace: "default",
 				},
-				Spec: grovecorev1alpha1.PodCliqueSetSpec{
+				Spec: grovecorev1beta1.PodCliqueSetSpec{
 					Replicas: 1,
-					Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
+					Template: grovecorev1beta1.PodCliqueSetTemplateSpec{
 						StartupType: nil,
-						Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+						Cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
 							{
 								Name: "test",
-								Spec: grovecorev1alpha1.PodCliqueSpec{
+								Spec: grovecorev1beta1.PodCliqueSpec{
 									Replicas: 1,
 									RoleName: "test-role",
 									PodSpec: corev1.PodSpec{
@@ -143,10 +143,11 @@ func TestDefault(t *testing.T) {
 			},
 			expectError: false,
 			verify: func(t *testing.T, obj runtime.Object) {
-				pcs, ok := obj.(*grovecorev1alpha1.PodCliqueSet)
+				pcs, ok := obj.(*grovecorev1beta1.PodCliqueSet)
 				require.True(t, ok)
-				// Verify that the termination delay is set (this is one of the defaults applied)
-				assert.NotNil(t, pcs.Spec.Template.TerminationDelay)
+				// Verify that the clique's init.minReplicas is set (this is one of the defaults applied)
+				require.NotNil(t, pcs.Spec.Template.Cliques[0].Spec.Init)
+				assert.NotNil(t, pcs.Spec.Template.Cliques[0].Spec.Init.MinReplicas)
 			},
 		},
 		{
@@ -171,8 +172,8 @@ func TestDefault(t *testing.T) {
 			name: "context without admission request returns error",
 			obj: testutils.NewPodCliqueSetBuilder("test-pcs", "default", uuid.NewUUID()).
 				WithReplicas(1).
-				WithTerminationDelay(4 * time.Hour).
-				WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder)).
+				WithBreachTolerance(4 * time.Hour).
+				WithCliqueStartupType(ptr.To(grovecorev1beta1.CliqueStartupTypeAnyOrder)).
 				WithPodCliqueTemplateSpec(
 					testutils.NewPodCliqueTemplateSpecBuilder("test").
 						WithReplicas(1).

@@ -678,101 +678,78 @@ func TestSetupHealthAndReadinessEndpoints(t *testing.T) {
 
 // registerControllersAndWebhooksCase documents how each field drives expectations in TestRegisterControllersAndWebhooks.
 // name identifies the scenario and is read during failure output for quick diagnosis.
-// waitFn supplies the behavior of certificate readiness waiting to avoid blocking on a real channel.
 // controllerErr controls the simulated outcome of controller registration.
 // webhookErr controls the simulated outcome of webhook registration.
-// expectWebhooksCalled indicates whether webhook registration should be invoked in the scenario.
-// expectError indicates whether the function under test should return an error.
+// expectedCalls lists the registration steps expected to run, in order.
 // expectedErrFrag, when set, should be contained in the returned error to ensure the correct failure path is exercised.
 type registerControllersAndWebhooksCase struct {
-	name                 string
-	waitFn               func(logr.Logger, chan struct{})
-	controllerErr        error
-	webhookErr           error
-	expectWebhooksCalled bool
-	expectError          bool
-	expectedErrFrag      string
+	name            string
+	controllerErr   error
+	webhookErr      error
+	expectedCalls   []string
+	expectedErrFrag string
 }
 
-// TestRegisterControllersAndWebhooks verifies that certificate readiness is honored and that controller and webhook
-// registration errors are surfaced appropriately.
+// TestRegisterControllersAndWebhooks verifies that certificate readiness is honored, that webhooks are registered
+// and served before the controllers, and that registration errors are surfaced appropriately.
 func TestRegisterControllersAndWebhooks(t *testing.T) {
 	testCases := []registerControllersAndWebhooksCase{
-		// name: ensures the happy path waits for readiness and registers controllers and webhooks
 		{
-			name: "registers controllers and webhooks after readiness",
-			waitFn: func(_ logr.Logger, ready chan struct{}) {
-				close(ready)
-			},
-			expectWebhooksCalled: true,
+			name:          "registers webhooks and then registers controllers",
+			expectedCalls: []string{"webhooks", "serverStarted", "controllers"},
 		},
-		// name: ensures controller registration failures are propagated and webhook registration is skipped
 		{
-			name: "controller registration failure short-circuits",
-			waitFn: func(_ logr.Logger, ready chan struct{}) {
-				close(ready)
-			},
-			controllerErr:        errors.New("controller failure"),
-			expectError:          true,
-			expectedErrFrag:      "controller failure",
-			expectWebhooksCalled: false,
+			name:            "webhook registration failure short-circuits",
+			webhookErr:      errors.New("webhook failure"),
+			expectedErrFrag: "webhook failure",
+			expectedCalls:   []string{"webhooks"},
 		},
-		// name: ensures webhook registration failures bubble up after controllers succeed
 		{
-			name: "webhook registration failure bubbles up",
-			waitFn: func(_ logr.Logger, ready chan struct{}) {
-				close(ready)
-			},
-			webhookErr:           errors.New("webhook failure"),
-			expectError:          true,
-			expectedErrFrag:      "webhook failure",
-			expectWebhooksCalled: true,
+			name:            "controller registration failure bubbles up",
+			controllerErr:   errors.New("controller failure"),
+			expectedErrFrag: "controller failure",
+			expectedCalls:   []string{"webhooks", "serverStarted", "controllers"},
 		},
 	}
 
 	for _, tc := range testCases {
-		originalWait := waitTillWebhookCertsReady
-		originalRegisterControllers := registerControllersWithMgr
-		originalRegisterWebhooks := registerWebhooksWithMgr
+		t.Run(tc.name, func(t *testing.T) {
+			originalWait := waitTillWebhookCertsReady
+			originalServerStarted := waitTillWebhookServerStarted
+			originalRegisterControllers := registerControllersWithMgr
+			originalRegisterWebhooks := registerWebhooksWithMgr
+			t.Cleanup(func() {
+				waitTillWebhookCertsReady = originalWait
+				waitTillWebhookServerStarted = originalServerStarted
+				registerControllersWithMgr = originalRegisterControllers
+				registerWebhooksWithMgr = originalRegisterWebhooks
+			})
 
-		readyCh := make(chan struct{})
-		waitCalled := false
-		controllersCalled := false
-		webhooksCalled := false
-
-		waitTillWebhookCertsReady = func(logger logr.Logger, ch chan struct{}) {
-			waitCalled = true
-			if tc.waitFn != nil {
-				tc.waitFn(logger, ch)
+			var calls []string
+			waitTillWebhookCertsReady = func(_ logr.Logger, ready chan struct{}) {
+				calls = append(calls, "certs")
+				close(ready)
 			}
-		}
-
-		registerControllersWithMgr = func(_ ctrl.Manager, _ *configv1alpha1.OperatorConfiguration, _ scheduler.Registry) error {
-			controllersCalled = true
-			return tc.controllerErr
-		}
-		registerWebhooksWithMgr = func(_ ctrl.Manager, _ *configv1alpha1.OperatorConfiguration, _ scheduler.Registry) error {
-			webhooksCalled = true
-			return tc.webhookErr
-		}
-
-		err := RegisterControllersAndWebhooks(&mockManager{}, logr.Discard(), &configv1alpha1.OperatorConfiguration{}, readyCh, &testutils.FakeSchedulerRegistry{})
-		if tc.expectError {
-			require.Error(t, err, tc.name)
+			waitTillWebhookServerStarted = func(_ context.Context, _ ctrl.Manager) error {
+				calls = append(calls, "serverStarted")
+				return nil
+			}
+			registerControllersWithMgr = func(_ ctrl.Manager, _ *configv1alpha1.OperatorConfiguration, _ scheduler.Registry) error {
+				calls = append(calls, "controllers")
+				return tc.controllerErr
+			}
+			registerWebhooksWithMgr = func(_ ctrl.Manager, _ *configv1alpha1.OperatorConfiguration, _ scheduler.Registry) error {
+				calls = append(calls, "webhooks")
+				return tc.webhookErr
+			}
+			err := RegisterControllersAndWebhooks(context.Background(), &mockManager{}, logr.Discard(), &configv1alpha1.OperatorConfiguration{}, make(chan struct{}), &testutils.FakeSchedulerRegistry{})
 			if tc.expectedErrFrag != "" {
-				assert.ErrorContains(t, err, tc.expectedErrFrag, tc.name)
+				require.ErrorContains(t, err, tc.expectedErrFrag)
+			} else {
+				require.NoError(t, err)
 			}
-		} else {
-			require.NoError(t, err, tc.name)
-		}
-
-		assert.True(t, waitCalled, tc.name)
-		assert.True(t, controllersCalled, tc.name)
-		assert.Equal(t, tc.expectWebhooksCalled, webhooksCalled, tc.name)
-
-		waitTillWebhookCertsReady = originalWait
-		registerControllersWithMgr = originalRegisterControllers
-		registerWebhooksWithMgr = originalRegisterWebhooks
+			assert.Equal(t, append([]string{"certs"}, tc.expectedCalls...), calls)
+		})
 	}
 }
 

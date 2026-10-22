@@ -18,7 +18,7 @@ import (
 	"context"
 	"maps"
 
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
@@ -101,7 +101,7 @@ func (s *FakeSchedulerBackend) SyncPodGang(_ context.Context, _ *groveschedulerv
 func (s *FakeSchedulerBackend) PreparePod(_ *corev1.Pod) error { return nil }
 
 // ValidatePodCliqueSet is a no-op for the fake backend.
-func (s *FakeSchedulerBackend) ValidatePodCliqueSet(_ context.Context, _ *grovecorev1alpha1.PodCliqueSet, _ ...scheduler.ValidateOption) error {
+func (s *FakeSchedulerBackend) ValidatePodCliqueSet(_ context.Context, _ *grovecorev1beta1.PodCliqueSet, _ ...scheduler.ValidateOption) error {
 	return nil
 }
 
@@ -123,22 +123,22 @@ func (s *FakeTopologyAwareBackend) TopologyGVR() schema.GroupVersionResource {
 }
 
 // TopologyResourceName returns an empty string for the fake topology-aware backend.
-func (s *FakeTopologyAwareBackend) TopologyResourceName(_ *grovecorev1alpha1.ClusterTopologyBinding) string {
+func (s *FakeTopologyAwareBackend) TopologyResourceName(_ *grovecorev1beta1.ClusterTopologyBinding) string {
 	return ""
 }
 
 // SyncTopology is a no-op for the fake topology-aware backend.
-func (s *FakeTopologyAwareBackend) SyncTopology(_ context.Context, _ client.Client, _ *grovecorev1alpha1.ClusterTopologyBinding) error {
+func (s *FakeTopologyAwareBackend) SyncTopology(_ context.Context, _ client.Client, _ *grovecorev1beta1.ClusterTopologyBinding) error {
 	return nil
 }
 
 // OnTopologyDelete is a no-op for the fake topology-aware backend.
-func (s *FakeTopologyAwareBackend) OnTopologyDelete(_ context.Context, _ client.Client, _ *grovecorev1alpha1.ClusterTopologyBinding) error {
+func (s *FakeTopologyAwareBackend) OnTopologyDelete(_ context.Context, _ client.Client, _ *grovecorev1beta1.ClusterTopologyBinding) error {
 	return nil
 }
 
 // CheckTopologyDrift is a no-op for the fake topology-aware backend.
-func (s *FakeTopologyAwareBackend) CheckTopologyDrift(_ context.Context, _ *grovecorev1alpha1.ClusterTopologyBinding, _ grovecorev1alpha1.SchedulerTopologyBinding) (bool, string, int64, error) {
+func (s *FakeTopologyAwareBackend) CheckTopologyDrift(_ context.Context, _ *grovecorev1beta1.ClusterTopologyBinding, _ grovecorev1beta1.SchedulerTopologyBinding) (bool, string, int64, error) {
 	return true, "", 0, nil
 }
 

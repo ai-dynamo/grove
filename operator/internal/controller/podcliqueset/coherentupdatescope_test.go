@@ -19,7 +19,7 @@ import (
 	"testing"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
@@ -80,10 +80,10 @@ func TestNewlyChangedInScope(t *testing.T) {
 
 func TestPreviousPendingInScope(t *testing.T) {
 	const currentHash = "v1"
-	pcs := &grovecorev1alpha1.PodCliqueSet{
-		Status: grovecorev1alpha1.PodCliqueSetStatus{
+	pcs := &grovecorev1beta1.PodCliqueSet{
+		Status: grovecorev1beta1.PodCliqueSetStatus{
 			CurrentGenerationHash: ptr.To(currentHash),
-			UpdateProgress: &grovecorev1alpha1.PodCliqueSetUpdateProgress{
+			UpdateProgress: &grovecorev1beta1.PodCliqueSetUpdateProgress{
 				InScopeStandalonePodCliques:   []string{"frontend"},
 				InScopePodCliqueScalingGroups: []string{"decode"},
 			},
@@ -91,28 +91,28 @@ func TestPreviousPendingInScope(t *testing.T) {
 	}
 	// An old-generation entry carrying an in-scope standalone (frontend) and PCSG (decode), plus components
 	// a pending replica happens to carry but that were never in scope (router, prefill).
-	oldEntry := grovecorev1alpha1.PodGangEntry{
+	oldEntry := grovecorev1beta1.PodGangEntry{
 		PodCliqueSetGenerationHash: "v0",
 		PodCliques:                 map[string]int32{"frontend": 1, "router": 1},
 		PCSGReplicaIndices:         map[string][]int32{"decode": {0}, "prefill": {0}},
 	}
-	currentEntry := grovecorev1alpha1.PodGangEntry{
+	currentEntry := grovecorev1beta1.PodGangEntry{
 		PodCliqueSetGenerationHash: currentHash,
 		PodCliques:                 map[string]int32{"frontend": 2},
 		PCSGReplicaIndices:         map[string][]int32{"decode": {0, 1}},
 	}
-	pgmWith := func(entries ...grovecorev1alpha1.PodGangEntry) grovecorev1alpha1.PodGangMap {
-		return grovecorev1alpha1.PodGangMap{Spec: grovecorev1alpha1.PodGangMapSpec{Entries: entries}}
+	pgmWith := func(entries ...grovecorev1beta1.PodGangEntry) grovecorev1beta1.PodGangMap {
+		return grovecorev1beta1.PodGangMap{Spec: grovecorev1beta1.PodGangMapSpec{Entries: entries}}
 	}
 
 	t.Run("previous-scope components still on old entries are pending, others are excluded", func(t *testing.T) {
-		pending := previousPendingInScope(pcs, []grovecorev1alpha1.PodGangMap{pgmWith(oldEntry, currentEntry)}, currentHash)
+		pending := previousPendingInScope(pcs, []grovecorev1beta1.PodGangMap{pgmWith(oldEntry, currentEntry)}, currentHash)
 		assert.Equal(t, []string{"frontend"}, sets.List(pending.standalonePCLQs))
 		assert.Equal(t, []string{"decode"}, sets.List(pending.podCliqueScalingGroups))
 	})
 
 	t.Run("a component fully migrated to the in-flight update's target is not carried forward", func(t *testing.T) {
-		pending := previousPendingInScope(pcs, []grovecorev1alpha1.PodGangMap{pgmWith(currentEntry)}, currentHash)
+		pending := previousPendingInScope(pcs, []grovecorev1beta1.PodGangMap{pgmWith(currentEntry)}, currentHash)
 		assert.Empty(t, sets.List(pending.standalonePCLQs))
 		assert.Empty(t, sets.List(pending.podCliqueScalingGroups))
 	})
@@ -138,10 +138,10 @@ func TestComputeCoherentUpdateScope(t *testing.T) {
 			WithStandaloneCliqueReplicas("frontend", 3).
 			WithStandaloneCliqueReplicas("router", 1)
 	}
-	hashOf := func(pcs *grovecorev1alpha1.PodCliqueSet, cliqueName string) string {
+	hashOf := func(pcs *grovecorev1beta1.PodCliqueSet, cliqueName string) string {
 		return componentutils.ComputePCLQPodTemplateHash(componentutils.FindPodCliqueTemplateSpecByName(pcs, cliqueName), pcs.Spec.Template.PriorityClassName)
 	}
-	pclqWithHash := func(cliqueName, podTemplateHash string) *grovecorev1alpha1.PodClique {
+	pclqWithHash := func(cliqueName, podTemplateHash string) *grovecorev1beta1.PodClique {
 		return testutils.NewPodCliqueBuilder(testPCSName, "uid", cliqueName, testNamespace, 0).
 			WithLabels(map[string]string{apicommon.LabelPodTemplateHash: podTemplateHash}).Build()
 	}
@@ -164,14 +164,14 @@ func TestComputeCoherentUpdateScope(t *testing.T) {
 		// A coherent update targeting v1 is in flight with frontend in scope and still migrating (it has a
 		// v0 entry). A new edit now changes router. The scope must carry frontend forward and add router.
 		pcs := pcsBuilder().
-			WithUpdateStrategy(&grovecorev1alpha1.PodCliqueSetUpdateStrategy{Type: grovecorev1alpha1.CoherentStrategy}).
+			WithUpdateStrategy(&grovecorev1beta1.PodCliqueSetUpdateStrategy{Type: grovecorev1beta1.CoherentStrategy}).
 			WithPodCliqueSetGenerationHash(ptr.To("v1")).
-			WithUpdateProgress(&grovecorev1alpha1.PodCliqueSetUpdateProgress{InScopeStandalonePodCliques: []string{"frontend"}}).
+			WithUpdateProgress(&grovecorev1beta1.PodCliqueSetUpdateProgress{InScopeStandalonePodCliques: []string{"frontend"}}).
 			Build()
 		pgm := testutils.NewPodGangMapBuilder(testPCSName, testNamespace, "uid", 0).
 			WithEntries(
-				grovecorev1alpha1.PodGangEntry{PodCliqueSetGenerationHash: "v0", PodCliques: map[string]int32{"frontend": 1}},
-				grovecorev1alpha1.PodGangEntry{PodCliqueSetGenerationHash: "v1", PodCliques: map[string]int32{"frontend": 2, "router": 1}},
+				grovecorev1beta1.PodGangEntry{PodCliqueSetGenerationHash: "v0", PodCliques: map[string]int32{"frontend": 1}},
+				grovecorev1beta1.PodGangEntry{PodCliqueSetGenerationHash: "v1", PodCliques: map[string]int32{"frontend": 2, "router": 1}},
 			).Build()
 		r := &Reconciler{client: testutils.SetupFakeClient(pcs, pgm,
 			pclqWithHash("frontend", hashOf(pcs, "frontend")), // unchanged by this edit, carried via pending

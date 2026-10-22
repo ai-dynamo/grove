@@ -15,14 +15,16 @@
 package component
 
 import (
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/utils/ptr"
 )
 
 // DefaultRollingRecreateMaxUnavailable is the MaxUnavailable applied to a component under the
 // RollingRecreate strategy when none is configured. It is shared by the defaulting webhook and by
-// EffectiveMaxUnavailable so both agree on the value.
+// ResolvedMaxUnavailable so both agree on the value.
 const DefaultRollingRecreateMaxUnavailable int32 = 1
 
 // CoherentMaxUnavailableByComponent returns, keyed by in-scope component name, the effective
@@ -30,59 +32,70 @@ const DefaultRollingRecreateMaxUnavailable int32 = 1
 // UpdateStrategyType value "Coherent"). It is consumed by the coherent step planner and the
 // per-sub-step MaxUnavailable budget gate, which run only when the PodCliqueSet uses the Coherent
 // update strategy.
-func CoherentMaxUnavailableByComponent(pcs *grovecorev1alpha1.PodCliqueSet, inScopeComponentNames []string) map[string]int32 {
+func CoherentMaxUnavailableByComponent(pcs *grovecorev1beta1.PodCliqueSet, inScopeComponentNames []string) map[string]int32 {
 	inScopeComponents := sets.New(inScopeComponentNames...)
 	maxUnavailableByComponent := make(map[string]int32, len(inScopeComponentNames))
 	for _, cliqueTemplate := range pcs.Spec.Template.Cliques {
 		if inScopeComponents.Has(cliqueTemplate.Name) && IsStandalonePCLQ(pcs, cliqueTemplate.Name) {
-			maxUnavailableByComponent[cliqueTemplate.Name] = int32(EffectiveMaxUnavailable(cliqueTemplate.RollingUpdate, grovecorev1alpha1.CoherentStrategy, *cliqueTemplate.Spec.MinAvailable))
+			maxUnavailableByComponent[cliqueTemplate.Name] = int32(ResolvedMaxUnavailable(cliqueTemplate.RollingUpdate, grovecorev1beta1.CoherentStrategy, CliqueTemplateUpdateMinReplicas(pcs, cliqueTemplate), cliqueTemplate.Spec.Replicas))
 		}
 	}
 	for _, pcsgConfig := range pcs.Spec.Template.PodCliqueScalingGroupConfigs {
 		if inScopeComponents.Has(pcsgConfig.Name) {
-			maxUnavailableByComponent[pcsgConfig.Name] = int32(EffectiveMaxUnavailable(pcsgConfig.RollingUpdate, grovecorev1alpha1.CoherentStrategy, *pcsgConfig.MinAvailable))
+			maxUnavailableByComponent[pcsgConfig.Name] = int32(ResolvedMaxUnavailable(pcsgConfig.RollingUpdate, grovecorev1beta1.CoherentStrategy, PCSGConfigUpdateMinReplicas(pcs, &pcsgConfig), ptr.Deref(pcsgConfig.Replicas, 1)))
 		}
 	}
 	return maxUnavailableByComponent
 }
 
-// EffectiveMaxUnavailable returns the MaxUnavailable to use for a component under the given update
-// strategy, tolerating a nil rollingUpdate or a nil MaxUnavailable by applying the strategy's
-// default: MinAvailable for Coherent, since the MVU sub-step takes down MinAvailable at once, and 1
-// for RollingRecreate. This mirrors the defaulting webhook so an in-flight object that predates the
-// RollingUpdate fields resolves to the same value the webhook would have written.
+// ResolvedMaxUnavailable returns the MaxUnavailable to use for a component under the given update
+// strategy, where replicas is the component's live replica count. A percentage is resolved against replicas,
+// rounding down with a minimum of 1, on every call, so scaling during an update changes the budget. Under
+// Coherent the result is at least the minimum update unit (updateMinReplicas), since the MVU sub-step takes
+// down that many at once. It tolerates a nil rollingUpdate or a nil MaxUnavailable by applying the
+// strategy's default: updateMinReplicas for Coherent and 1 for RollingRecreate. This mirrors the defaulting
+// webhook so an in-flight object that predates the RollingUpdate fields resolves to the same value the
+// webhook would have written.
 //
 // NOTE: the nil-tolerance exists only for PodCliqueSets created before the RollingUpdate fields
 // existed, which reconcile without re-admission and carry a nil MaxUnavailable. Once every
 // PodCliqueSet has been re-admitted and carries a MaxUnavailable populated by the defaulting webhook,
 // this can be simplified to reading the field directly.
-func EffectiveMaxUnavailable(rollingUpdate *grovecorev1alpha1.RollingUpdateConfiguration, updateStrategy grovecorev1alpha1.UpdateStrategyType, minAvailable int32) int {
+func ResolvedMaxUnavailable(rollingUpdate *grovecorev1beta1.RollingUpdateConfiguration, updateStrategy grovecorev1beta1.UpdateStrategyType, updateMinReplicas int32, replicas int32) int {
 	if rollingUpdate != nil && rollingUpdate.MaxUnavailable != nil {
-		return int(*rollingUpdate.MaxUnavailable)
+		resolved, err := intstr.GetScaledValueFromIntOrPercent(rollingUpdate.MaxUnavailable, int(replicas), false)
+		if err != nil {
+			resolved = int(DefaultRollingRecreateMaxUnavailable)
+		}
+		resolved = max(resolved, 1)
+		if updateStrategy == grovecorev1beta1.CoherentStrategy {
+			resolved = max(resolved, int(updateMinReplicas))
+		}
+		return resolved
 	}
-	if updateStrategy == grovecorev1alpha1.CoherentStrategy {
-		return int(minAvailable)
+	if updateStrategy == grovecorev1beta1.CoherentStrategy {
+		return int(updateMinReplicas)
 	}
 	return int(DefaultRollingRecreateMaxUnavailable)
 }
 
-// CoherentMinAvailableByComponent returns the MinAvailable of each in-scope component under the
+// CoherentMinAvailableByComponent returns the minimum update unit of each in-scope component under the
 // Coherent update strategy (the UpdateStrategyType value "Coherent"), split by kind:
-// standalonePCLQMinAvailable keys a standalone PodClique name to its MinAvailable pod count, and
-// pcsgMinAvailable keys a PodCliqueScalingGroup name to its MinAvailable replica count. A component
-// not named in inScopeComponentNames is excluded. It backs the coherent MVU template.
-func CoherentMinAvailableByComponent(pcs *grovecorev1alpha1.PodCliqueSet, inScopeComponentNames []string) (standalonePCLQMinAvailable, pcsgMinAvailable map[string]int32) {
+// standalonePCLQMinAvailable keys a standalone PodClique name to its pod count, and pcsgMinAvailable keys a
+// PodCliqueScalingGroup name to its replica count. A component not named in inScopeComponentNames is
+// excluded. It backs the coherent MVU template.
+func CoherentMinAvailableByComponent(pcs *grovecorev1beta1.PodCliqueSet, inScopeComponentNames []string) (standalonePCLQMinAvailable, pcsgMinAvailable map[string]int32) {
 	inScopeComponents := sets.New(inScopeComponentNames...)
 	standalonePCLQMinAvailable = make(map[string]int32)
 	pcsgMinAvailable = make(map[string]int32)
 	for _, cliqueTemplate := range pcs.Spec.Template.Cliques {
 		if inScopeComponents.Has(cliqueTemplate.Name) && IsStandalonePCLQ(pcs, cliqueTemplate.Name) {
-			standalonePCLQMinAvailable[cliqueTemplate.Name] = *cliqueTemplate.Spec.MinAvailable
+			standalonePCLQMinAvailable[cliqueTemplate.Name] = CliqueTemplateUpdateMinReplicas(pcs, cliqueTemplate)
 		}
 	}
 	for _, pcsgConfig := range pcs.Spec.Template.PodCliqueScalingGroupConfigs {
 		if inScopeComponents.Has(pcsgConfig.Name) {
-			pcsgMinAvailable[pcsgConfig.Name] = *pcsgConfig.MinAvailable
+			pcsgMinAvailable[pcsgConfig.Name] = PCSGConfigUpdateMinReplicas(pcs, &pcsgConfig)
 		}
 	}
 	return

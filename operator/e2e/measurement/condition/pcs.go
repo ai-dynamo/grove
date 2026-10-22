@@ -23,7 +23,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	corev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	corev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 )
 
 // PCSDeletedCondition checks if a PodCliqueSet no longer exists.
@@ -35,7 +35,7 @@ type PCSDeletedCondition struct {
 
 // Met returns true once the PodCliqueSet is not found.
 func (c *PCSDeletedCondition) Met(ctx context.Context) (bool, error) {
-	var pcs corev1alpha1.PodCliqueSet
+	var pcs corev1beta1.PodCliqueSet
 	err := c.Client.Get(ctx, types.NamespacedName{Name: c.Name, Namespace: c.Namespace}, &pcs)
 	if apierrors.IsNotFound(err) {
 		return true, nil
@@ -66,7 +66,7 @@ func (c *PCSAvailableCondition) Met(ctx context.Context) (bool, error) {
 		return false, errors.New("expected count cannot be negative")
 	}
 
-	var pcs corev1alpha1.PodCliqueSet
+	var pcs corev1beta1.PodCliqueSet
 	if err := c.Client.Get(ctx, types.NamespacedName{Name: c.Name, Namespace: c.Namespace}, &pcs); err != nil {
 		return false, fmt.Errorf("get PodCliqueSet: %w", err)
 	}

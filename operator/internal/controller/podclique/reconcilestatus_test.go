@@ -22,7 +22,7 @@ import (
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	internalconstants "github.com/ai-dynamo/grove/operator/internal/constants"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
@@ -45,15 +45,15 @@ import (
 func TestMutateUpdatedReplica(t *testing.T) {
 	tests := []struct {
 		name                    string
-		pclq                    *grovecorev1alpha1.PodClique
+		pclq                    *grovecorev1beta1.PodClique
 		existingPods            []*corev1.Pod
 		expectedUpdatedReplicas int32
 	}{
 		{
 			name: "rolling update in progress - count pods with new hash",
-			pclq: &grovecorev1alpha1.PodClique{
-				Status: grovecorev1alpha1.PodCliqueStatus{
-					UpdateProgress: &grovecorev1alpha1.PodCliqueUpdateProgress{
+			pclq: &grovecorev1beta1.PodClique{
+				Status: grovecorev1beta1.PodCliqueStatus{
+					UpdateProgress: &grovecorev1beta1.PodCliqueUpdateProgress{
 						PodTemplateHash: "new-hash-v2",
 						UpdateStartedAt: metav1.Time{Time: time.Now()},
 						UpdateEndedAt:   nil, // Still in progress
@@ -79,9 +79,9 @@ func TestMutateUpdatedReplica(t *testing.T) {
 		},
 		{
 			name: "update just completed - use UpdateProgress hash (edge case)",
-			pclq: &grovecorev1alpha1.PodClique{
-				Status: grovecorev1alpha1.PodCliqueStatus{
-					UpdateProgress: &grovecorev1alpha1.PodCliqueUpdateProgress{
+			pclq: &grovecorev1beta1.PodClique{
+				Status: grovecorev1beta1.PodCliqueStatus{
+					UpdateProgress: &grovecorev1beta1.PodCliqueUpdateProgress{
 						PodTemplateHash: "new-hash-v2",
 						UpdateStartedAt: metav1.Time{Time: time.Now().Add(-5 * time.Minute)},
 						UpdateEndedAt:   &metav1.Time{Time: time.Now()}, // Just completed
@@ -107,8 +107,8 @@ func TestMutateUpdatedReplica(t *testing.T) {
 		},
 		{
 			name: "steady state - no rolling update",
-			pclq: &grovecorev1alpha1.PodClique{
-				Status: grovecorev1alpha1.PodCliqueStatus{
+			pclq: &grovecorev1beta1.PodClique{
+				Status: grovecorev1beta1.PodCliqueStatus{
 					UpdateProgress:         nil, // No rolling update
 					CurrentPodTemplateHash: ptr.To("stable-hash"),
 				},
@@ -124,8 +124,8 @@ func TestMutateUpdatedReplica(t *testing.T) {
 		},
 		{
 			name: "never reconciled - empty hash",
-			pclq: &grovecorev1alpha1.PodClique{
-				Status: grovecorev1alpha1.PodCliqueStatus{
+			pclq: &grovecorev1beta1.PodClique{
+				Status: grovecorev1beta1.PodCliqueStatus{
 					UpdateProgress:         nil,
 					CurrentPodTemplateHash: nil, // Never set
 				},
@@ -138,8 +138,8 @@ func TestMutateUpdatedReplica(t *testing.T) {
 		},
 		{
 			name: "mixed state - some pods match, some don't",
-			pclq: &grovecorev1alpha1.PodClique{
-				Status: grovecorev1alpha1.PodCliqueStatus{
+			pclq: &grovecorev1beta1.PodClique{
+				Status: grovecorev1beta1.PodCliqueStatus{
 					UpdateProgress:         nil,
 					CurrentPodTemplateHash: ptr.To("current-hash"),
 				},
@@ -155,13 +155,13 @@ func TestMutateUpdatedReplica(t *testing.T) {
 		},
 		{
 			name: "desired metadata label overrides stale current status",
-			pclq: &grovecorev1alpha1.PodClique{
+			pclq: &grovecorev1beta1.PodClique{
 				ObjectMeta: metav1.ObjectMeta{
 					Labels: map[string]string{
 						apicommon.LabelPodTemplateHash: "desired-hash",
 					},
 				},
-				Status: grovecorev1alpha1.PodCliqueStatus{
+				Status: grovecorev1beta1.PodCliqueStatus{
 					UpdateProgress:         nil,
 					CurrentPodTemplateHash: ptr.To("stale-hash"),
 				},
@@ -174,8 +174,8 @@ func TestMutateUpdatedReplica(t *testing.T) {
 		},
 		{
 			name: "no pods exist",
-			pclq: &grovecorev1alpha1.PodClique{
-				Status: grovecorev1alpha1.PodCliqueStatus{
+			pclq: &grovecorev1beta1.PodClique{
+				Status: grovecorev1beta1.PodCliqueStatus{
 					CurrentPodTemplateHash: ptr.To("some-hash"),
 				},
 			},
@@ -184,9 +184,9 @@ func TestMutateUpdatedReplica(t *testing.T) {
 		},
 		{
 			name: "rolling update progress exists but pods have different hash",
-			pclq: &grovecorev1alpha1.PodClique{
-				Status: grovecorev1alpha1.PodCliqueStatus{
-					UpdateProgress: &grovecorev1alpha1.PodCliqueUpdateProgress{
+			pclq: &grovecorev1beta1.PodClique{
+				Status: grovecorev1beta1.PodCliqueStatus{
+					UpdateProgress: &grovecorev1beta1.PodCliqueUpdateProgress{
 						PodTemplateHash: "target-hash",
 						UpdateStartedAt: metav1.Time{Time: time.Now()},
 					},
@@ -217,9 +217,9 @@ func TestMutateUpdatedReplica(t *testing.T) {
 // UpdateProgress only while an update is in progress.
 func TestMutateUpdatedScheduledReplicas(t *testing.T) {
 	t.Run("counts only new-hash scheduled Pods while an update is in progress", func(t *testing.T) {
-		pclq := &grovecorev1alpha1.PodClique{
-			Status: grovecorev1alpha1.PodCliqueStatus{
-				UpdateProgress: &grovecorev1alpha1.PodCliqueUpdateProgress{PodTemplateHash: "new-hash-v2"},
+		pclq := &grovecorev1beta1.PodClique{
+			Status: grovecorev1beta1.PodCliqueStatus{
+				UpdateProgress: &grovecorev1beta1.PodCliqueUpdateProgress{PodTemplateHash: "new-hash-v2"},
 			},
 		}
 		existingPods := []*corev1.Pod{
@@ -242,8 +242,8 @@ func TestMutateUpdatedScheduledReplicas(t *testing.T) {
 	})
 
 	t.Run("leaves UpdatedScheduledReplicas unset when no update is in progress", func(t *testing.T) {
-		pclq := &grovecorev1alpha1.PodClique{
-			Status: grovecorev1alpha1.PodCliqueStatus{CurrentPodTemplateHash: ptr.To("stable-hash")},
+		pclq := &grovecorev1beta1.PodClique{
+			Status: grovecorev1beta1.PodCliqueStatus{CurrentPodTemplateHash: ptr.To("stable-hash")},
 		}
 		existingPods := []*corev1.Pod{createPodWithHash("pod-1", "stable-hash")}
 		scheduledPods := []*corev1.Pod{createPodWithHash("pod-1", "stable-hash")}
@@ -266,42 +266,42 @@ func TestMutateLastScheduled(t *testing.T) {
 
 	tests := []struct {
 		name           string
-		originalStatus grovecorev1alpha1.PodCliqueStatus
-		currentStatus  grovecorev1alpha1.PodCliqueStatus
+		originalStatus grovecorev1beta1.PodCliqueStatus
+		currentStatus  grovecorev1beta1.PodCliqueStatus
 		wantSet        bool
 		wantAdvanced   bool
 	}{
 		{
 			name:           "not scheduled before or now - stays nil",
-			originalStatus: grovecorev1alpha1.PodCliqueStatus{Conditions: schedCond(metav1.ConditionFalse)},
-			currentStatus:  grovecorev1alpha1.PodCliqueStatus{Conditions: schedCond(metav1.ConditionFalse)},
+			originalStatus: grovecorev1beta1.PodCliqueStatus{Conditions: schedCond(metav1.ConditionFalse)},
+			currentStatus:  grovecorev1beta1.PodCliqueStatus{Conditions: schedCond(metav1.ConditionFalse)},
 			wantSet:        false,
 		},
 		{
 			name:           "transitions to scheduled this reconcile - sets LastScheduled",
-			originalStatus: grovecorev1alpha1.PodCliqueStatus{Conditions: schedCond(metav1.ConditionFalse)},
-			currentStatus:  grovecorev1alpha1.PodCliqueStatus{Conditions: schedCond(metav1.ConditionTrue)},
+			originalStatus: grovecorev1beta1.PodCliqueStatus{Conditions: schedCond(metav1.ConditionFalse)},
+			currentStatus:  grovecorev1beta1.PodCliqueStatus{Conditions: schedCond(metav1.ConditionTrue)},
 			wantSet:        true,
 			wantAdvanced:   true,
 		},
 		{
 			name:           "stays scheduled - does not change existing LastScheduled",
-			originalStatus: grovecorev1alpha1.PodCliqueStatus{Conditions: schedCond(metav1.ConditionTrue)},
-			currentStatus:  grovecorev1alpha1.PodCliqueStatus{Conditions: schedCond(metav1.ConditionTrue), LastScheduled: &earlier},
+			originalStatus: grovecorev1beta1.PodCliqueStatus{Conditions: schedCond(metav1.ConditionTrue)},
+			currentStatus:  grovecorev1beta1.PodCliqueStatus{Conditions: schedCond(metav1.ConditionTrue), LastScheduled: &earlier},
 			wantSet:        true,
 			wantAdvanced:   false,
 		},
 		{
 			name:           "scheduled again after previously going unscheduled - advances LastScheduled",
-			originalStatus: grovecorev1alpha1.PodCliqueStatus{Conditions: schedCond(metav1.ConditionFalse)},
-			currentStatus:  grovecorev1alpha1.PodCliqueStatus{Conditions: schedCond(metav1.ConditionTrue), LastScheduled: &earlier},
+			originalStatus: grovecorev1beta1.PodCliqueStatus{Conditions: schedCond(metav1.ConditionFalse)},
+			currentStatus:  grovecorev1beta1.PodCliqueStatus{Conditions: schedCond(metav1.ConditionTrue), LastScheduled: &earlier},
 			wantSet:        true,
 			wantAdvanced:   true,
 		},
 		{
 			name:           "already scheduled with no LastScheduled - backfills on upgrade",
-			originalStatus: grovecorev1alpha1.PodCliqueStatus{Conditions: schedCond(metav1.ConditionTrue)},
-			currentStatus:  grovecorev1alpha1.PodCliqueStatus{Conditions: schedCond(metav1.ConditionTrue)},
+			originalStatus: grovecorev1beta1.PodCliqueStatus{Conditions: schedCond(metav1.ConditionTrue)},
+			currentStatus:  grovecorev1beta1.PodCliqueStatus{Conditions: schedCond(metav1.ConditionTrue)},
 			wantSet:        true,
 			wantAdvanced:   true,
 		},
@@ -309,7 +309,7 @@ func TestMutateLastScheduled(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			pclq := &grovecorev1alpha1.PodClique{Status: *tc.currentStatus.DeepCopy()}
+			pclq := &grovecorev1beta1.PodClique{Status: *tc.currentStatus.DeepCopy()}
 			mutateLastScheduled(pclq, &tc.originalStatus)
 			actual := pclq.Status.LastScheduled
 			if !tc.wantSet {
@@ -335,11 +335,11 @@ func TestReconcileStatusConvergesWhenReadyPodMatchesDesiredHash(t *testing.T) {
 	pcs, pclq, templateHash := newPodCliqueHashConvergenceFixture(t)
 	pclq.UID = types.UID("pclq-uid")
 	pclq.Generation = 2
-	pclq.Spec = grovecorev1alpha1.PodCliqueSpec{
-		Replicas:     1,
-		MinAvailable: ptr.To[int32](1),
+	pclq.Spec = grovecorev1beta1.PodCliqueSpec{
+		Replicas: 1,
+		Init:     &grovecorev1beta1.InitSpec{MinReplicas: ptr.To[int32](1)}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To[int32](1)}}},
 	}
-	pclq.Status = grovecorev1alpha1.PodCliqueStatus{
+	pclq.Status = grovecorev1beta1.PodCliqueStatus{
 		Replicas:                          1,
 		ReadyReplicas:                     1,
 		ScheduledReplicas:                 1,
@@ -360,7 +360,7 @@ func TestReconcileStatusConvergesWhenReadyPodMatchesDesiredHash(t *testing.T) {
 
 	_, err := result.Result()
 	require.NoError(t, err)
-	updatedPCLQ := &grovecorev1alpha1.PodClique{}
+	updatedPCLQ := &grovecorev1beta1.PodClique{}
 	require.NoError(t, cl.Get(context.Background(), types.NamespacedName{Name: pclq.Name, Namespace: pclq.Namespace}, updatedPCLQ))
 	assert.Equal(t, int32(1), updatedPCLQ.Status.UpdatedReplicas)
 	assert.Equal(t, templateHash, *updatedPCLQ.Status.CurrentPodTemplateHash)
@@ -374,8 +374,8 @@ func TestReconcileStatusConvergesWhenReadyPodMatchesDesiredHash(t *testing.T) {
 func TestReconcileStatusRequeuesWithoutPatchWhenStatusUnchanged(t *testing.T) {
 	pcs, pclq, templateHash := newPodCliqueHashConvergenceFixture(t)
 	pclq.Generation = 1
-	pclq.Spec = grovecorev1alpha1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To[int32](1)}
-	pclq.Status = grovecorev1alpha1.PodCliqueStatus{ObservedGeneration: ptr.To[int64](1)}
+	pclq.Spec = grovecorev1beta1.PodCliqueSpec{Replicas: 1, Init: &grovecorev1beta1.InitSpec{MinReplicas: ptr.To[int32](1)}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To[int32](1)}}}}
+	pclq.Status = grovecorev1beta1.PodCliqueStatus{ObservedGeneration: ptr.To[int64](1)}
 	pod := createReadyOwnedPodWithHash("ready-pod", pclq, templateHash)
 
 	cl := testutils.NewTestClientBuilder().
@@ -397,7 +397,7 @@ func TestReconcileStatusRequeuesWithoutPatchWhenStatusUnchanged(t *testing.T) {
 
 	// Re-fetch so the in-memory object matches what is persisted, then reconcile again. The mutators
 	// recompute an identical status, so the equality guard skips the patch.
-	refetched := &grovecorev1alpha1.PodClique{}
+	refetched := &grovecorev1beta1.PodClique{}
 	require.NoError(t, cl.Get(context.Background(), types.NamespacedName{Name: pclq.Name, Namespace: pclq.Namespace}, refetched))
 	rvBefore := refetched.ResourceVersion
 
@@ -409,7 +409,7 @@ func TestReconcileStatusRequeuesWithoutPatchWhenStatusUnchanged(t *testing.T) {
 	assert.Zero(t, res.RequeueAfter, "an unchanged status reconcile should not requeue from reconcileStatus")
 
 	// No patch was issued, so the resourceVersion is unchanged.
-	after := &grovecorev1alpha1.PodClique{}
+	after := &grovecorev1beta1.PodClique{}
 	require.NoError(t, cl.Get(context.Background(), types.NamespacedName{Name: pclq.Name, Namespace: pclq.Namespace}, after))
 	assert.Equal(t, rvBefore, after.ResourceVersion, "no status patch should be issued when the status is unchanged")
 }
@@ -456,8 +456,8 @@ func TestEmitAllScheduledReplicasLostIfNeeded(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			recorder := record.NewFakeRecorder(2)
 			r := &Reconciler{eventRecorder: recorder}
-			pclq := &grovecorev1alpha1.PodClique{
-				Status: grovecorev1alpha1.PodCliqueStatus{ScheduledReplicas: tt.nowScheduled},
+			pclq := &grovecorev1beta1.PodClique{
+				Status: grovecorev1beta1.PodCliqueStatus{ScheduledReplicas: tt.nowScheduled},
 			}
 
 			r.emitAllScheduledReplicasLostIfNeeded(pclq, tt.originalScheduled)
@@ -488,7 +488,7 @@ func TestComputeMinAvailableBreachedConditionPartialScheduleRegression(t *testin
 
 	tests := []struct {
 		name                                                string
-		pclq                                                *grovecorev1alpha1.PodClique
+		pclq                                                *grovecorev1beta1.PodClique
 		numPodsHavingAtleastOneContainerWithNonZeroExitCode int
 		numPodsStartedButNotReady                           int
 		wantStatus                                          metav1.ConditionStatus
@@ -496,16 +496,17 @@ func TestComputeMinAvailableBreachedConditionPartialScheduleRegression(t *testin
 	}{
 		{
 			name: "0 < scheduled < MinAvailable breaches",
-			pclq: &grovecorev1alpha1.PodClique{
-				Spec: grovecorev1alpha1.PodCliqueSpec{
-					Replicas:     3,
-					MinAvailable: ptr.To(int32(3)),
+			pclq: &grovecorev1beta1.PodClique{
+				Spec: grovecorev1beta1.PodCliqueSpec{
+					Replicas: 3,
+					Init:     &grovecorev1beta1.InitSpec{MinReplicas: ptr.To(int32(3))}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To(int32(3))}}},
 				},
-				Status: grovecorev1alpha1.PodCliqueStatus{
+				Status: grovecorev1beta1.PodCliqueStatus{
 					ObservedGeneration: ptr.To(int64(1)),
 					Replicas:           3,
 					ScheduledReplicas:  1,
 					ReadyReplicas:      1,
+					LastScheduled:      &pastTransition,
 					Conditions: []metav1.Condition{
 						{
 							Type:               constants.ConditionTypePodCliqueScheduled,
@@ -526,20 +527,21 @@ func TestComputeMinAvailableBreachedConditionPartialScheduleRegression(t *testin
 			wantReason: constants.ConditionReasonScheduledReplicasBelowMinAvailable,
 		},
 		{
-			// scheduled == 0 also breaches now. Gang termination is armed; the
-			// downstream TerminationDelay (default 4h) gives the cluster a
+			// scheduled == 0 also breaches. Gang termination is armed; the
+			// downstream breachTolerance (default 4h) gives the cluster a
 			// window to schedule before the workload is recycled.
 			name: "previously-healthy PCLQ loses all scheduled pods — breaches",
-			pclq: &grovecorev1alpha1.PodClique{
-				Spec: grovecorev1alpha1.PodCliqueSpec{
-					Replicas:     2,
-					MinAvailable: ptr.To(int32(2)),
+			pclq: &grovecorev1beta1.PodClique{
+				Spec: grovecorev1beta1.PodCliqueSpec{
+					Replicas: 2,
+					Init:     &grovecorev1beta1.InitSpec{MinReplicas: ptr.To(int32(2))}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To(int32(2))}}},
 				},
-				Status: grovecorev1alpha1.PodCliqueStatus{
+				Status: grovecorev1beta1.PodCliqueStatus{
 					ObservedGeneration: ptr.To(int64(1)),
 					Replicas:           2,
 					ScheduledReplicas:  0,
 					ReadyReplicas:      0,
+					LastScheduled:      &pastTransition,
 					Conditions: []metav1.Condition{
 						{
 							Type:               constants.ConditionTypePodCliqueScheduled,
@@ -554,25 +556,23 @@ func TestComputeMinAvailableBreachedConditionPartialScheduleRegression(t *testin
 			wantReason: constants.ConditionReasonScheduledReplicasBelowMinAvailable,
 		},
 		{
-			// A fresh PCLQ that has not yet scheduled any pods still breaches
-			// under the always-breach rule. TerminationDelay (4h) is the grace
-			// window: if pods schedule in time the breach resolves before any
-			// termination action.
-			name: "fresh PCLQ never scheduled — also breaches (TerminationDelay is the grace)",
-			pclq: &grovecorev1alpha1.PodClique{
-				Spec: grovecorev1alpha1.PodCliqueSpec{
-					Replicas:     3,
-					MinAvailable: ptr.To(int32(3)),
+			// A fresh PCLQ that has never been scheduled is awaiting its initial schedule, so it is not
+			// in breach and gang termination does not start its breach tolerance.
+			name: "fresh PCLQ never scheduled — awaiting initial schedule",
+			pclq: &grovecorev1beta1.PodClique{
+				Spec: grovecorev1beta1.PodCliqueSpec{
+					Replicas: 3,
+					Init:     &grovecorev1beta1.InitSpec{MinReplicas: ptr.To(int32(3))}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To(int32(3))}}},
 				},
-				Status: grovecorev1alpha1.PodCliqueStatus{
+				Status: grovecorev1beta1.PodCliqueStatus{
 					ObservedGeneration: ptr.To(int64(1)),
 					Replicas:           3,
 					ScheduledReplicas:  0,
 					ReadyReplicas:      0,
 				},
 			},
-			wantStatus: metav1.ConditionTrue,
-			wantReason: constants.ConditionReasonScheduledReplicasBelowMinAvailable,
+			wantStatus: metav1.ConditionUnknown,
+			wantReason: constants.ConditionReasonAwaitingInitialSchedule,
 		},
 	}
 
@@ -596,15 +596,15 @@ func TestComputeMinAvailableBreachedConditionPartialScheduleRegression(t *testin
 func TestReconcileStatusRequeuesOnConflict(t *testing.T) {
 	pcs, pclq, templateHash := newPodCliqueHashConvergenceFixture(t)
 	pclq.Generation = 1
-	pclq.Spec = grovecorev1alpha1.PodCliqueSpec{
-		Replicas:     1,
-		MinAvailable: ptr.To[int32](1),
+	pclq.Spec = grovecorev1beta1.PodCliqueSpec{
+		Replicas: 1,
+		Init:     &grovecorev1beta1.InitSpec{MinReplicas: ptr.To[int32](1)}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To[int32](1)}}},
 	}
-	pclq.Status = grovecorev1alpha1.PodCliqueStatus{ObservedGeneration: ptr.To[int64](1)}
+	pclq.Status = grovecorev1beta1.PodCliqueStatus{ObservedGeneration: ptr.To[int64](1)}
 	pod := createReadyOwnedPodWithHash("ready-pod", pclq, templateHash)
 
 	conflict := apierrors.NewConflict(
-		schema.GroupResource{Group: grovecorev1alpha1.SchemeGroupVersion.Group, Resource: "podcliques"},
+		schema.GroupResource{Group: grovecorev1beta1.SchemeGroupVersion.Group, Resource: "podcliques"},
 		pclq.Name, errors.New("object was modified"))
 	cl := testutils.NewTestClientBuilder().
 		WithObjects(pcs, pclq, pod).
@@ -639,13 +639,13 @@ func TestMutateSelector(t *testing.T) {
 		pcsgMemberFQN = "test-pcs-0-prefill-0-worker"
 		pcsgName      = "test-pcs-0-prefill"
 	)
-	withScale := &grovecorev1alpha1.AutoScalingConfig{MaxReplicas: 5}
+	withScale := &grovecorev1beta1.AutoScalingConfig{MaxReplicas: 5}
 
 	tests := []struct {
 		name             string
 		pclqName         string
 		pcsgMemberLabel  string // empty == standalone
-		scaleConfig      *grovecorev1alpha1.AutoScalingConfig
+		scaleConfig      *grovecorev1beta1.AutoScalingConfig
 		expectSelectorOK bool
 	}{
 		{name: "standalone, no ScaleConfig", pclqName: standaloneFQN, expectSelectorOK: true},
@@ -662,9 +662,9 @@ func TestMutateSelector(t *testing.T) {
 			if tt.pcsgMemberLabel != "" {
 				labels[apicommon.LabelPodCliqueScalingGroup] = tt.pcsgMemberLabel
 			}
-			pclq := &grovecorev1alpha1.PodClique{
+			pclq := &grovecorev1beta1.PodClique{
 				ObjectMeta: metav1.ObjectMeta{Name: tt.pclqName, Labels: labels},
-				Spec:       grovecorev1alpha1.PodCliqueSpec{ScaleConfig: tt.scaleConfig},
+				Spec:       grovecorev1beta1.PodCliqueSpec{ScaleConfig: tt.scaleConfig},
 			}
 
 			err := mutateSelector(pcsName, pclq)
@@ -685,7 +685,7 @@ func TestMutateUpdateInProgressCondition(t *testing.T) {
 	}
 	tests := []struct {
 		description          string
-		updateProgress       *grovecorev1alpha1.PodCliqueUpdateProgress
+		updateProgress       *grovecorev1beta1.PodCliqueUpdateProgress
 		updatedReplicas      int32
 		originalUpdated      int32
 		progressDeadline     *metav1.Duration
@@ -703,14 +703,14 @@ func TestMutateUpdateInProgressCondition(t *testing.T) {
 		},
 		{
 			description:        "completed update clears LastProgressedAt",
-			updateProgress:     &grovecorev1alpha1.PodCliqueUpdateProgress{UpdateEndedAt: ptr.To(metav1.Now()), LastProgressedAt: minutesAgo(5)},
+			updateProgress:     &grovecorev1beta1.PodCliqueUpdateProgress{UpdateEndedAt: ptr.To(metav1.Now()), LastProgressedAt: minutesAgo(5)},
 			wantStatus:         metav1.ConditionFalse,
 			wantReason:         constants.ConditionReasonNoActiveUpdate,
 			wantLastProgressed: false,
 		},
 		{
 			description:          "first in-progress reconcile sets LastProgressedAt",
-			updateProgress:       &grovecorev1alpha1.PodCliqueUpdateProgress{UpdateStartedAt: metav1.Now()},
+			updateProgress:       &grovecorev1beta1.PodCliqueUpdateProgress{UpdateStartedAt: metav1.Now()},
 			wantStatus:           metav1.ConditionTrue,
 			wantReason:           constants.ConditionReasonProgressing,
 			wantLastProgressed:   true,
@@ -718,7 +718,7 @@ func TestMutateUpdateInProgressCondition(t *testing.T) {
 		},
 		{
 			description:          "progress advances LastProgressedAt",
-			updateProgress:       &grovecorev1alpha1.PodCliqueUpdateProgress{LastProgressedAt: minutesAgo(5)},
+			updateProgress:       &grovecorev1beta1.PodCliqueUpdateProgress{LastProgressedAt: minutesAgo(5)},
 			updatedReplicas:      2,
 			originalUpdated:      1,
 			wantStatus:           metav1.ConditionTrue,
@@ -728,7 +728,7 @@ func TestMutateUpdateInProgressCondition(t *testing.T) {
 		},
 		{
 			description:        "no progress within deadline stays Progressing and keeps LastProgressedAt",
-			updateProgress:     &grovecorev1alpha1.PodCliqueUpdateProgress{LastProgressedAt: minutesAgo(1)},
+			updateProgress:     &grovecorev1beta1.PodCliqueUpdateProgress{LastProgressedAt: minutesAgo(1)},
 			updatedReplicas:    1,
 			originalUpdated:    1,
 			progressDeadline:   &metav1.Duration{Duration: 10 * time.Minute},
@@ -738,7 +738,7 @@ func TestMutateUpdateInProgressCondition(t *testing.T) {
 		},
 		{
 			description:        "no progress past deadline is Unknown",
-			updateProgress:     &grovecorev1alpha1.PodCliqueUpdateProgress{LastProgressedAt: minutesAgo(10)},
+			updateProgress:     &grovecorev1beta1.PodCliqueUpdateProgress{LastProgressedAt: minutesAgo(10)},
 			updatedReplicas:    1,
 			originalUpdated:    1,
 			progressDeadline:   &metav1.Duration{Duration: time.Minute},
@@ -748,7 +748,7 @@ func TestMutateUpdateInProgressCondition(t *testing.T) {
 		},
 		{
 			description:        "no deadline configured never goes Unknown",
-			updateProgress:     &grovecorev1alpha1.PodCliqueUpdateProgress{LastProgressedAt: minutesAgo(60)},
+			updateProgress:     &grovecorev1beta1.PodCliqueUpdateProgress{LastProgressedAt: minutesAgo(60)},
 			updatedReplicas:    1,
 			originalUpdated:    1,
 			wantStatus:         metav1.ConditionTrue,
@@ -758,13 +758,13 @@ func TestMutateUpdateInProgressCondition(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.description, func(t *testing.T) {
-			pclq := &grovecorev1alpha1.PodClique{
-				Status: grovecorev1alpha1.PodCliqueStatus{
+			pclq := &grovecorev1beta1.PodClique{
+				Status: grovecorev1beta1.PodCliqueStatus{
 					UpdatedReplicas: tc.updatedReplicas,
 					UpdateProgress:  tc.updateProgress,
 				},
 			}
-			originalStatus := &grovecorev1alpha1.PodCliqueStatus{UpdatedReplicas: tc.originalUpdated}
+			originalStatus := &grovecorev1beta1.PodCliqueStatus{UpdatedReplicas: tc.originalUpdated}
 			before := metav1.Now()
 
 			mutateUpdateInProgressCondition(pclq, originalStatus, tc.progressDeadline)
@@ -787,29 +787,29 @@ func TestMutateUpdateInProgressCondition(t *testing.T) {
 	}
 }
 
-func newPodCliqueHashConvergenceFixture(t *testing.T) (*grovecorev1alpha1.PodCliqueSet, *grovecorev1alpha1.PodClique, string) {
+func newPodCliqueHashConvergenceFixture(t *testing.T) (*grovecorev1beta1.PodCliqueSet, *grovecorev1beta1.PodClique, string) {
 	t.Helper()
-	template := &grovecorev1alpha1.PodCliqueTemplateSpec{
+	template := &grovecorev1beta1.PodCliqueTemplateSpec{
 		Name: "worker",
-		Spec: grovecorev1alpha1.PodCliqueSpec{
+		Spec: grovecorev1beta1.PodCliqueSpec{
 			PodSpec: corev1.PodSpec{
 				Containers: []corev1.Container{{Name: "main", Image: "main:v1"}},
 			},
 		},
 	}
 	generationHash := "current-generation-hash"
-	pcs := &grovecorev1alpha1.PodCliqueSet{
+	pcs := &grovecorev1beta1.PodCliqueSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "pcs", Namespace: "default"},
-		Spec: grovecorev1alpha1.PodCliqueSetSpec{
-			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
-				Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{template},
+		Spec: grovecorev1beta1.PodCliqueSetSpec{
+			Template: grovecorev1beta1.PodCliqueSetTemplateSpec{
+				Cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{template},
 			},
 		},
-		Status: grovecorev1alpha1.PodCliqueSetStatus{
+		Status: grovecorev1beta1.PodCliqueSetStatus{
 			CurrentGenerationHash: ptr.To(generationHash),
 		},
 	}
-	pclq := &grovecorev1alpha1.PodClique{
+	pclq := &grovecorev1beta1.PodClique{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "pcs-0-worker",
 			Namespace: "default",
@@ -837,12 +837,12 @@ func createPodWithHash(name string, templateHash string) *corev1.Pod {
 	}
 }
 
-func createReadyOwnedPodWithHash(name string, owner *grovecorev1alpha1.PodClique, templateHash string) *corev1.Pod {
+func createReadyOwnedPodWithHash(name string, owner *grovecorev1beta1.PodClique, templateHash string) *corev1.Pod {
 	pod := createPodWithHash(name, templateHash)
 	pod.Namespace = owner.Namespace
 	pod.Labels[apicommon.LabelPodClique] = owner.Name
 	pod.OwnerReferences = []metav1.OwnerReference{
-		*metav1.NewControllerRef(owner, grovecorev1alpha1.SchemeGroupVersion.WithKind("PodClique")),
+		*metav1.NewControllerRef(owner, grovecorev1beta1.SchemeGroupVersion.WithKind("PodClique")),
 	}
 	pod.Status.Conditions = []corev1.PodCondition{
 		{

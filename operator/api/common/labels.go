@@ -54,6 +54,10 @@ const (
 	LabelPodCliqueScalingGroupPodIndex = "grove.io/podcliquescalinggroup-pod-index"
 	// LabelPodCliquePodIndex is a key for a label that sets the index of a pod within its PodClique.
 	LabelPodCliquePodIndex = "grove.io/podclique-pod-index"
+	// LabelGangShapeHash is a key for a label that sets the hash of the init.minReplicas values of every clique template
+	// and PodCliqueScalingGroup config of the PodCliqueSet. It is set on the PodCliques and PodCliqueScalingGroups of
+	// each PodCliqueSet replica, and a replica whose children carry a different value is recreated.
+	LabelGangShapeHash = "grove.io/gang-shape-hash"
 	// LabelPodTemplateHash is a key for a label that sets the hash of the PodSpec. This label will be set on a PodClique and will be shared by all pods in the PodClique.
 	LabelPodTemplateHash = "grove.io/pod-template-hash"
 	// LabelSchedulerName is a label on PodGang that indicates which scheduler backend should sync this PodGang.

@@ -21,7 +21,7 @@ import (
 	"time"
 
 	apiconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	ctrlcommon "github.com/ai-dynamo/grove/operator/internal/controller/common"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
@@ -39,13 +39,13 @@ import (
 func TestUpdateObservedGeneration(t *testing.T) {
 	tests := []struct {
 		name               string
-		setupPCS           func() *grovecorev1alpha1.PodCliqueSet
+		setupPCS           func() *grovecorev1beta1.PodCliqueSet
 		expectPatchSkipped bool
 		expectedGeneration int64
 	}{
 		{
 			name: "patch_skipped_when_observed_equals_generation",
-			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
+			setupPCS: func() *grovecorev1beta1.PodCliqueSet {
 				pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, uuid.NewUUID()).
 					WithReplicas(1).
 					Build()
@@ -58,7 +58,7 @@ func TestUpdateObservedGeneration(t *testing.T) {
 		},
 		{
 			name: "patch_made_when_observed_is_nil",
-			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
+			setupPCS: func() *grovecorev1beta1.PodCliqueSet {
 				pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, uuid.NewUUID()).
 					WithReplicas(1).
 					Build()
@@ -71,7 +71,7 @@ func TestUpdateObservedGeneration(t *testing.T) {
 		},
 		{
 			name: "patch_made_when_observed_differs_from_generation",
-			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
+			setupPCS: func() *grovecorev1beta1.PodCliqueSet {
 				pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, uuid.NewUUID()).
 					WithReplicas(1).
 					Build()
@@ -101,7 +101,7 @@ func TestUpdateObservedGeneration(t *testing.T) {
 			assert.NoError(t, err)
 
 			// Fetch the updated object from the fake client
-			updatedPCS := &grovecorev1alpha1.PodCliqueSet{}
+			updatedPCS := &grovecorev1beta1.PodCliqueSet{}
 			err = fakeClient.Get(context.Background(), client.ObjectKeyFromObject(pcs), updatedPCS)
 			require.NoError(t, err)
 
@@ -158,17 +158,17 @@ func TestGetKindSyncGroups(t *testing.T) {
 func TestInitUpdateProgress(t *testing.T) {
 	tests := []struct {
 		name                   string
-		setupPCS               func() *grovecorev1alpha1.PodCliqueSet
+		setupPCS               func() *grovecorev1beta1.PodCliqueSet
 		expectUpdateEndedAtSet bool
 	}{
 		{
 			name: "rolling_recreate_strategy_does_not_set_update_ended_at",
-			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
+			setupPCS: func() *grovecorev1beta1.PodCliqueSet {
 				pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, uuid.NewUUID()).
 					WithReplicas(2).
 					WithPodCliqueParameters("worker", 1, nil).
-					WithUpdateStrategy(&grovecorev1alpha1.PodCliqueSetUpdateStrategy{
-						Type: grovecorev1alpha1.RollingRecreateStrategy,
+					WithUpdateStrategy(&grovecorev1beta1.PodCliqueSetUpdateStrategy{
+						Type: grovecorev1beta1.RollingRecreateStrategy,
 					}).
 					WithPodCliqueSetGenerationHash(ptr.To("old-hash")).
 					Build()
@@ -179,7 +179,7 @@ func TestInitUpdateProgress(t *testing.T) {
 		},
 		{
 			name: "nil_update_strategy_does_not_set_update_ended_at",
-			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
+			setupPCS: func() *grovecorev1beta1.PodCliqueSet {
 				pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, uuid.NewUUID()).
 					WithReplicas(2).
 					WithPodCliqueParameters("worker", 1, nil).
@@ -192,12 +192,12 @@ func TestInitUpdateProgress(t *testing.T) {
 		},
 		{
 			name: "on_delete_strategy_sets_update_ended_at_immediately",
-			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
+			setupPCS: func() *grovecorev1beta1.PodCliqueSet {
 				pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, uuid.NewUUID()).
 					WithReplicas(2).
 					WithPodCliqueParameters("worker", 1, nil).
-					WithUpdateStrategy(&grovecorev1alpha1.PodCliqueSetUpdateStrategy{
-						Type: grovecorev1alpha1.OnDeleteStrategy,
+					WithUpdateStrategy(&grovecorev1beta1.PodCliqueSetUpdateStrategy{
+						Type: grovecorev1beta1.OnDeleteStrategy,
 					}).
 					WithPodCliqueSetGenerationHash(ptr.To("old-hash")).
 					Build()
@@ -208,24 +208,24 @@ func TestInitUpdateProgress(t *testing.T) {
 		},
 		{
 			name: "existing_rollingrecreate_in_progress_is_reset_when_hash_changes",
-			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
+			setupPCS: func() *grovecorev1beta1.PodCliqueSet {
 				updateStartedAt := metav1.Now()
 				replicaUpdateStartedAt := metav1.Time{Time: updateStartedAt.Add(time.Second)}
 
 				pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, uuid.NewUUID()).
 					WithReplicas(3).
 					WithPodCliqueParameters("worker", 1, nil).
-					WithUpdateStrategy(&grovecorev1alpha1.PodCliqueSetUpdateStrategy{
-						Type: grovecorev1alpha1.RollingRecreateStrategy,
+					WithUpdateStrategy(&grovecorev1beta1.PodCliqueSetUpdateStrategy{
+						Type: grovecorev1beta1.RollingRecreateStrategy,
 					}).
 					WithPodCliqueSetGenerationHash(ptr.To("old-hash")).
-					WithUpdateProgress(&grovecorev1alpha1.PodCliqueSetUpdateProgress{
+					WithUpdateProgress(&grovecorev1beta1.PodCliqueSetUpdateProgress{
 						UpdateStartedAt:                    updateStartedAt,
 						UpdatedPodCliqueScalingGroupsCount: 2,
 						TotalPodCliqueScalingGroupsCount:   2,
 						UpdatedPodCliquesCount:             3,
 						TotalPodCliquesCount:               3,
-						CurrentlyUpdating: []grovecorev1alpha1.PodCliqueSetReplicaUpdateProgress{
+						CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{
 							{
 								ReplicaIndex:    1,
 								UpdateStartedAt: replicaUpdateStartedAt,
@@ -240,17 +240,17 @@ func TestInitUpdateProgress(t *testing.T) {
 		},
 		{
 			name: "existing_on_delete_update_is_reset_when_hash_changes",
-			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
+			setupPCS: func() *grovecorev1beta1.PodCliqueSet {
 				updateStartedAt := metav1.Now()
 
 				pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, uuid.NewUUID()).
 					WithReplicas(3).
 					WithPodCliqueParameters("worker", 1, nil).
-					WithUpdateStrategy(&grovecorev1alpha1.PodCliqueSetUpdateStrategy{
-						Type: grovecorev1alpha1.OnDeleteStrategy,
+					WithUpdateStrategy(&grovecorev1beta1.PodCliqueSetUpdateStrategy{
+						Type: grovecorev1beta1.OnDeleteStrategy,
 					}).
 					WithPodCliqueSetGenerationHash(ptr.To("old-hash")).
-					WithUpdateProgress(&grovecorev1alpha1.PodCliqueSetUpdateProgress{
+					WithUpdateProgress(&grovecorev1beta1.PodCliqueSetUpdateProgress{
 						UpdateStartedAt:                    updateStartedAt,
 						UpdateEndedAt:                      ptr.To(updateStartedAt),
 						UpdatedPodCliqueScalingGroupsCount: 1,
@@ -283,7 +283,7 @@ func TestInitUpdateProgress(t *testing.T) {
 			require.NoError(t, err, "initUpdateProgress should not return errors")
 
 			// Fetch the updated PCS from the fake client
-			updatedPCS := &grovecorev1alpha1.PodCliqueSet{}
+			updatedPCS := &grovecorev1beta1.PodCliqueSet{}
 			err = fakeClient.Get(context.Background(), client.ObjectKeyFromObject(pcs), updatedPCS)
 			require.NoError(t, err)
 
@@ -338,7 +338,7 @@ func TestProcessGenerationHashChangeNotBlockedByStaleSameNameExpectation(t *test
 	result := r.processGenerationHashChange(context.Background(), logr.Discard(), newPCS)
 
 	require.False(t, result.NeedsRequeue(), "a same-name recreate must not be blocked by a stale expectation")
-	updated := &grovecorev1alpha1.PodCliqueSet{}
+	updated := &grovecorev1beta1.PodCliqueSet{}
 	require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKeyFromObject(newPCS), updated))
 	assert.NotNil(t, updated.Status.CurrentGenerationHash, "generation hash should be set on the new PCS")
 }
@@ -352,7 +352,7 @@ func TestTriggerDeletionFlowClearsGenerationHashExpectation(t *testing.T) {
 	fakeClient := testutils.SetupFakeClient(pcs)
 	r := &Reconciler{
 		client:                        fakeClient,
-		operatorRegistry:              component.NewOperatorRegistry[grovecorev1alpha1.PodCliqueSet](),
+		operatorRegistry:              component.NewOperatorRegistry[grovecorev1beta1.PodCliqueSet](),
 		reconcileStatusRecorder:       ctrlcommon.NewReconcileErrorRecorder(fakeClient),
 		pcsGenerationHashExpectations: sync.Map{},
 	}

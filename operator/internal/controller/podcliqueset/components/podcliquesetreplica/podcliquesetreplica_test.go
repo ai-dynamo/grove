@@ -18,15 +18,18 @@ import (
 	"context"
 	"testing"
 
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	apiconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 
 	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
@@ -34,7 +37,7 @@ import (
 func TestNew(t *testing.T) {
 	// Tests creating a new operator instance
 	scheme := runtime.NewScheme()
-	require.NoError(t, grovecorev1alpha1.AddToScheme(scheme))
+	require.NoError(t, grovecorev1beta1.AddToScheme(scheme))
 
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 	eventRecorder := &record.FakeRecorder{}
@@ -84,7 +87,7 @@ func TestSync(t *testing.T) {
 	tests := []struct {
 		name string
 		// pcs is the PodCliqueSet to sync
-		pcs *grovecorev1alpha1.PodCliqueSet
+		pcs *grovecorev1beta1.PodCliqueSet
 		// existingObjs are the existing objects in the cluster
 		existingObjs []runtime.Object
 		// expectError indicates if an error is expected
@@ -93,16 +96,14 @@ func TestSync(t *testing.T) {
 		{
 			// Tests sync with no replicas
 			name: "no_replicas",
-			pcs: &grovecorev1alpha1.PodCliqueSet{
+			pcs: &grovecorev1beta1.PodCliqueSet{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-pcs",
 					Namespace: "default",
 				},
-				Spec: grovecorev1alpha1.PodCliqueSetSpec{
+				Spec: grovecorev1beta1.PodCliqueSetSpec{
 					Replicas: 0,
-					Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
-						TerminationDelay: &metav1.Duration{},
-					},
+					Template: grovecorev1beta1.PodCliqueSetTemplateSpec{},
 				},
 			},
 			existingObjs: []runtime.Object{},
@@ -111,16 +112,14 @@ func TestSync(t *testing.T) {
 		{
 			// Tests sync with replicas
 			name: "with_replicas",
-			pcs: &grovecorev1alpha1.PodCliqueSet{
+			pcs: &grovecorev1beta1.PodCliqueSet{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-pcs",
 					Namespace: "default",
 				},
-				Spec: grovecorev1alpha1.PodCliqueSetSpec{
+				Spec: grovecorev1beta1.PodCliqueSetSpec{
 					Replicas: 2,
-					Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
-						TerminationDelay: &metav1.Duration{},
-					},
+					Template: grovecorev1beta1.PodCliqueSetTemplateSpec{},
 				},
 			},
 			existingObjs: []runtime.Object{},
@@ -134,11 +133,11 @@ func TestSync(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			scheme := runtime.NewScheme()
-			require.NoError(t, grovecorev1alpha1.AddToScheme(scheme))
+			require.NoError(t, grovecorev1beta1.AddToScheme(scheme))
 
 			fakeClient := fake.NewClientBuilder().
 				WithScheme(scheme).
-				WithRuntimeObjects(tc.existingObjs...).
+				WithRuntimeObjects(append(tc.existingObjs, tc.pcs)...).
 				WithStatusSubresource(tc.pcs).
 				Build()
 
@@ -161,6 +160,11 @@ func TestSync(t *testing.T) {
 						t.Errorf("Unexpected error: %v", err)
 					}
 				}
+				got := &grovecorev1beta1.PodCliqueSet{}
+				require.NoError(t, fakeClient.Get(ctx, client.ObjectKeyFromObject(tc.pcs), got))
+				assert.Nil(t, got.Status.GangShapeRecreate)
+				assert.Nil(t, meta.FindStatusCondition(got.Status.Conditions, apiconstants.ConditionTypeGangShapeRecreateInProgress),
+					"a PodCliqueSet whose gang shape never changed gets no GangShapeRecreateInProgress condition")
 			}
 		})
 	}

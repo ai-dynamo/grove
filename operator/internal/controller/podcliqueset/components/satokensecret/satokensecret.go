@@ -19,7 +19,7 @@ import (
 	"fmt"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
@@ -35,12 +35,12 @@ import (
 )
 
 const (
-	errCodeGetSecret              grovecorev1alpha1.ErrorCode = "ERR_GET_SECRET"
-	errCodeSecretConflict         grovecorev1alpha1.ErrorCode = "ERR_SECRET_CONFLICT"
-	errCodeSetControllerReference grovecorev1alpha1.ErrorCode = "ERR_SET_CONTROLLER_REFERENCE"
-	errCodeCreateSecret           grovecorev1alpha1.ErrorCode = "ERR_CREATE_SECRET"
-	errCodeDeleteSecret           grovecorev1alpha1.ErrorCode = "ERR_DELETE_SECRET"
-	errCodeListPods               grovecorev1alpha1.ErrorCode = "ERR_LIST_PODS"
+	errCodeGetSecret              grovecorev1beta1.ErrorCode = "ERR_GET_SECRET"
+	errCodeSecretConflict         grovecorev1beta1.ErrorCode = "ERR_SECRET_CONFLICT"
+	errCodeSetControllerReference grovecorev1beta1.ErrorCode = "ERR_SET_CONTROLLER_REFERENCE"
+	errCodeCreateSecret           grovecorev1beta1.ErrorCode = "ERR_CREATE_SECRET"
+	errCodeDeleteSecret           grovecorev1beta1.ErrorCode = "ERR_DELETE_SECRET"
+	errCodeListPods               grovecorev1beta1.ErrorCode = "ERR_LIST_PODS"
 )
 
 type _resource struct {
@@ -49,7 +49,7 @@ type _resource struct {
 }
 
 // New creates an instance of Secret components operator.
-func New(client client.Client, scheme *runtime.Scheme) component.Operator[grovecorev1alpha1.PodCliqueSet] {
+func New(client client.Client, scheme *runtime.Scheme) component.Operator[grovecorev1beta1.PodCliqueSet] {
 	return &_resource{
 		client: client,
 		scheme: scheme,
@@ -79,7 +79,7 @@ func (r _resource) GetExistingResourceNames(ctx context.Context, _ logr.Logger, 
 }
 
 // Sync creates the service account token secret if it doesn't exist.
-func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) error {
+func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet) error {
 	pcsObjKey := client.ObjectKeyFromObject(pcs)
 	objKey := getObjectKey(pcs.ObjectMeta)
 	existingSecret, err := r.getSecret(ctx, objKey)
@@ -144,7 +144,7 @@ func (r _resource) Delete(ctx context.Context, logger logr.Logger, pcsObjMeta me
 }
 
 // buildResource configures the Secret as a ServiceAccountToken type.
-func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, secret *corev1.Secret) error {
+func (r _resource) buildResource(pcs *grovecorev1beta1.PodCliqueSet, secret *corev1.Secret) error {
 	secret.Labels = getLabels(pcs.Name, secret.Name)
 	if err := controllerutil.SetControllerReference(pcs, secret, r.scheme); err != nil {
 		return groveerr.WrapError(err,
@@ -195,7 +195,7 @@ func (r _resource) getSecret(ctx context.Context, objKey client.ObjectKey) (*cor
 	return secret, nil
 }
 
-func (r _resource) cleanupLegacySecret(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) error {
+func (r _resource) cleanupLegacySecret(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet) error {
 	pcsObjKey := client.ObjectKeyFromObject(pcs)
 	legacyObjKey := getLegacyObjectKey(pcs.ObjectMeta)
 	legacySecret, err := r.getSecret(ctx, legacyObjKey)
@@ -236,7 +236,7 @@ func (r _resource) cleanupLegacySecret(ctx context.Context, logger logr.Logger, 
 	return nil
 }
 
-func (r _resource) getPodsReferencingSecret(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, secretName string) ([]string, error) {
+func (r _resource) getPodsReferencingSecret(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet, secretName string) ([]string, error) {
 	podList := &corev1.PodList{}
 	if err := r.client.List(ctx,
 		podList,

@@ -20,7 +20,7 @@ import (
 	"testing"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/expect"
@@ -33,6 +33,7 @@ import (
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -59,13 +60,13 @@ type testReplica struct {
 
 func TestMarkUpdateEndReturnsRequeueAfterPatch(t *testing.T) {
 	pcsg := testutils.NewPodCliqueScalingGroupBuilder("test-pcsg", "test-ns", "test-pcs", 0).Build()
-	pcsg.Status.UpdateProgress = &grovecorev1alpha1.PodCliqueScalingGroupUpdateProgress{
+	pcsg.Status.UpdateProgress = &grovecorev1beta1.PodCliqueScalingGroupUpdateProgress{
 		UpdateStartedAt:            metav1.Now(),
 		PodCliqueSetGenerationHash: testRollingUpdateGenHash,
 	}
 	cl := testutils.NewTestClientBuilder().
 		WithObjects(pcsg).
-		WithStatusSubresource(&grovecorev1alpha1.PodCliqueScalingGroup{}).
+		WithStatusSubresource(&grovecorev1beta1.PodCliqueScalingGroup{}).
 		Build()
 	r := _resource{client: cl}
 
@@ -77,7 +78,7 @@ func TestMarkUpdateEndReturnsRequeueAfterPatch(t *testing.T) {
 	assert.Equal(t, groveerr.ErrCodeContinueReconcileAndRequeue, groveError.Code)
 	assert.Equal(t, component.OperationSync, groveError.Operation)
 
-	var updated grovecorev1alpha1.PodCliqueScalingGroup
+	var updated grovecorev1beta1.PodCliqueScalingGroup
 	require.NoError(t, cl.Get(t.Context(), client.ObjectKeyFromObject(pcsg), &updated))
 	require.NotNil(t, updated.Status.UpdateProgress)
 	assert.NotNil(t, updated.Status.UpdateProgress.UpdateEndedAt)
@@ -94,7 +95,7 @@ func TestReconcileInProgressUpdateDoesNotCompleteStaleTarget(t *testing.T) {
 	sc.pcsg.Status.UpdateProgress.PodCliqueSetGenerationHash = "superseded-generation"
 	cl := testutils.NewTestClientBuilder().
 		WithObjects(sc.pcsg).
-		WithStatusSubresource(&grovecorev1alpha1.PodCliqueScalingGroup{}).
+		WithStatusSubresource(&grovecorev1beta1.PodCliqueScalingGroup{}).
 		Build()
 	r := _resource{client: cl, expectationsStore: expect.NewExpectationsStore()}
 
@@ -147,7 +148,7 @@ func TestComputePendingUpdateWorkSkipsReplicaWithDeleteExpectation(t *testing.T)
 	store := expect.NewExpectationsStore()
 	membersByReplicaIndex, err := componentutils.GroupPCLQsByPCSGReplicaIndex(sc.existingPCLQs)
 	require.NoError(t, err)
-	replica0UIDs := lo.Map(membersByReplicaIndex[0], func(pclq grovecorev1alpha1.PodClique, _ int) types.UID {
+	replica0UIDs := lo.Map(membersByReplicaIndex[0], func(pclq grovecorev1beta1.PodClique, _ int) types.UID {
 		return pclq.GetUID()
 	})
 	require.NoError(t, store.ExpectDeletions(logr.Discard(), sc.expectationsStoreKey, replica0UIDs...))
@@ -181,12 +182,12 @@ func TestProcessPendingUpdates(t *testing.T) {
 		}
 		cl := testutils.NewTestClientBuilder().
 			WithObjects(objs...).
-			WithStatusSubresource(&grovecorev1alpha1.PodCliqueScalingGroup{}).
+			WithStatusSubresource(&grovecorev1beta1.PodCliqueScalingGroup{}).
 			Build()
 		return _resource{client: cl, eventRecorder: record.NewFakeRecorder(64), expectationsStore: expect.NewExpectationsStore()}, cl
 	}
 	remainingReplicaIndices := func(t *testing.T, cl client.Client) []string {
-		var list grovecorev1alpha1.PodCliqueList
+		var list grovecorev1beta1.PodCliqueList
 		require.NoError(t, cl.List(t.Context(), &list, client.InNamespace(testRollingUpdateNamespace)))
 		indices := make([]string, 0, len(list.Items))
 		for _, pclq := range list.Items {
@@ -299,17 +300,17 @@ func terminatingReplica(index int) testReplica {
 // expected hash and FQN maps so the rolling-update logic can classify each replica.
 func buildRollingUpdateSnapshot(replicas, minAvailable, maxUnavailable int32, reps []testReplica) *syncSnapshot {
 	pcs := testutils.NewPodCliqueSetBuilder(testRollingUpdatePCSName, testRollingUpdateNamespace, "uid").
-		WithUpdateStrategy(&grovecorev1alpha1.PodCliqueSetUpdateStrategy{Type: grovecorev1alpha1.RollingRecreateStrategy}).
+		WithUpdateStrategy(&grovecorev1beta1.PodCliqueSetUpdateStrategy{Type: grovecorev1beta1.RollingRecreateStrategy}).
 		Build()
 	pcs.Status.CurrentGenerationHash = ptr.To(testRollingUpdateGenHash)
 	pcsg := testutils.NewPodCliqueScalingGroupBuilder(testRollingUpdatePCSGName, testRollingUpdateNamespace, testRollingUpdatePCSName, 0).
 		WithReplicas(replicas).
 		WithMinAvailable(minAvailable).
 		Build()
-	pcsg.Status.UpdateProgress = &grovecorev1alpha1.PodCliqueScalingGroupUpdateProgress{
+	pcsg.Status.UpdateProgress = &grovecorev1beta1.PodCliqueScalingGroupUpdateProgress{
 		PodCliqueSetGenerationHash: testRollingUpdateGenHash,
 	}
-	members := make([]grovecorev1alpha1.PodClique, 0, len(reps))
+	members := make([]grovecorev1beta1.PodClique, 0, len(reps))
 	expectedHashByName := map[string]string{}
 	expectedFQNsByReplica := map[int][]string{}
 	for _, rep := range reps {
@@ -322,17 +323,17 @@ func buildRollingUpdateSnapshot(replicas, minAvailable, maxUnavailable int32, re
 		pcs:                            pcs,
 		pcsg:                           pcsg,
 		expectationsStoreKey:           pcsg.Namespace + "/" + pcsg.Name,
-		pcsgConfig:                     &grovecorev1alpha1.PodCliqueScalingGroupConfig{RollingUpdate: &grovecorev1alpha1.RollingUpdateConfiguration{MaxUnavailable: ptr.To(maxUnavailable)}},
+		pcsgConfig:                     &grovecorev1beta1.PodCliqueScalingGroupConfig{RollingUpdate: &grovecorev1beta1.RollingUpdateConfiguration{MaxUnavailable: ptr.To(intstr.FromInt32(maxUnavailable))}},
 		existingPCLQs:                  members,
 		expectedPCLQPodTemplateHashMap: expectedHashByName,
 		expectedPCLQFQNsPerPCSGReplica: expectedFQNsByReplica,
 	}
 }
 
-func newRollingUpdateMemberPCLQ(name string, rep testReplica) grovecorev1alpha1.PodClique {
+func newRollingUpdateMemberPCLQ(name string, rep testReplica) grovecorev1beta1.PodClique {
 	return *testutils.NewPCSGPodCliqueBuilder(name, testRollingUpdateNamespace, testRollingUpdatePCSName, testRollingUpdatePCSGName, 0, rep.index).
 		WithLabels(map[string]string{apicommon.LabelPodTemplateHash: rep.hash}).
-		WithOptions(func(p *grovecorev1alpha1.PodClique) {
+		WithOptions(func(p *grovecorev1beta1.PodClique) {
 			p.UID = types.UID(name)
 			p.Status.ScheduledReplicas = rep.scheduled
 			p.Status.ReadyReplicas = rep.ready

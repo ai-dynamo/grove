@@ -17,7 +17,7 @@ package component
 import (
 	"context"
 
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 
 	"github.com/samber/lo"
 	corev1 "k8s.io/api/core/v1"
@@ -87,7 +87,7 @@ func RegisterPodControllerUIDIndex(ctx context.Context, fieldIndexer client.Fiel
 // When ctx carries a cache from WithPCLQPodsCache, the first call populates the cache and
 // subsequent calls in the same reconcile return the cached slice without hitting the
 // informer.
-func GetPCLQPods(ctx context.Context, cl client.Client, _ string, pclq *grovecorev1alpha1.PodClique) ([]*corev1.Pod, error) {
+func GetPCLQPods(ctx context.Context, cl client.Client, _ string, pclq *grovecorev1beta1.PodClique) ([]*corev1.Pod, error) {
 	cache, _ := ctx.Value(pclqPodsCacheKey{}).(*pclqPodsCache)
 	if cache != nil {
 		if pods, ok := cache.byUID[pclq.UID]; ok {

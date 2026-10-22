@@ -16,12 +16,13 @@ package podgangmap
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strconv"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
@@ -36,10 +37,10 @@ import (
 // It is populated at the start of the synchronization and read-only thereafter.
 type syncSnapshot struct {
 	logger                           logr.Logger
-	pcs                              *grovecorev1alpha1.PodCliqueSet
-	existingStandalonePCLQsByReplica map[int][]grovecorev1alpha1.PodClique
-	existingPCSGsByReplica           map[int][]grovecorev1alpha1.PodCliqueScalingGroup
-	existingPGMByReplica             map[int]*grovecorev1alpha1.PodGangMap
+	pcs                              *grovecorev1beta1.PodCliqueSet
+	existingStandalonePCLQsByReplica map[int][]grovecorev1beta1.PodClique
+	existingPCSGsByReplica           map[int][]grovecorev1beta1.PodCliqueScalingGroup
+	existingPGMByReplica             map[int]*grovecorev1beta1.PodGangMap
 	existingPodGangsByReplica        map[int][]groveschedulerv1alpha1.PodGang
 	// mvuTemplate is the fixed Minimum Updateable Unit composition for a coherent update. It is computed
 	// once while a coherent update is in progress and is nil otherwise.
@@ -47,7 +48,7 @@ type syncSnapshot struct {
 }
 
 // takeSnapshot queries the live resources and creates a syncSnapshot.
-func (r _resource) takeSnapshot(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) (syncSnap *syncSnapshot, err error) {
+func (r _resource) takeSnapshot(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet) (syncSnap *syncSnapshot, err error) {
 	syncSnap = &syncSnapshot{
 		logger: logger,
 		pcs:    pcs,
@@ -75,7 +76,7 @@ func (r _resource) takeSnapshot(ctx context.Context, logger logr.Logger, pcs *gr
 }
 
 // getExistingStandalonePCLQsByReplica fetches all standalone PodCliques for the PCS and groups them by PCS replica index.
-func (r _resource) getExistingStandalonePCLQsByReplica(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet) (map[int][]grovecorev1alpha1.PodClique, error) {
+func (r _resource) getExistingStandalonePCLQsByReplica(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet) (map[int][]grovecorev1beta1.PodClique, error) {
 	existingStandalonePCLQs, err := componentutils.GetPodCliquesWithParentPCS(ctx, r.client, pcs.ObjectMeta)
 	if err != nil {
 		return nil, groveerr.WrapError(err,
@@ -96,7 +97,7 @@ func (r _resource) getExistingStandalonePCLQsByReplica(ctx context.Context, pcs 
 }
 
 // getExistingPCSGsByReplica fetches all PodCliqueScalingGroups for the PCS and groups them by PCS replica index.
-func (r _resource) getExistingPCSGsByReplica(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet) (map[int][]grovecorev1alpha1.PodCliqueScalingGroup, error) {
+func (r _resource) getExistingPCSGsByReplica(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet) (map[int][]grovecorev1beta1.PodCliqueScalingGroup, error) {
 	existingPCSGs, err := componentutils.GetPCSGsForPCS(ctx, r.client, pcs.ObjectMeta)
 	if err != nil {
 		return nil, groveerr.WrapError(err,
@@ -117,7 +118,7 @@ func (r _resource) getExistingPCSGsByReplica(ctx context.Context, pcs *grovecore
 }
 
 // getExistingPGMByReplica fetches all PodGangMaps for the PCS and groups them by PCS replica index.
-func (r _resource) getExistingPGMByReplica(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet) (map[int]*grovecorev1alpha1.PodGangMap, error) {
+func (r _resource) getExistingPGMByReplica(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet) (map[int]*grovecorev1beta1.PodGangMap, error) {
 	existingPGMs, err := componentutils.ListPodGangMapsForPCS(ctx, r.client, pcs.ObjectMeta)
 	if err != nil {
 		return nil, groveerr.WrapError(err,
@@ -141,7 +142,7 @@ func (r _resource) getExistingPGMByReplica(ctx context.Context, pcs *grovecorev1
 // replica index. Only PodGangs carrying the grove.io/epoch label are considered. Legacy PodGangs
 // created before the epoch scheme carry no epoch and are not a reconstruction source, so they are
 // skipped and are replaced by the PodGang component during migration.
-func (r _resource) getExistingPodGangsByReplica(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet) (map[int][]groveschedulerv1alpha1.PodGang, error) {
+func (r _resource) getExistingPodGangsByReplica(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet) (map[int][]groveschedulerv1alpha1.PodGang, error) {
 	existingPodGangs, err := componentutils.GetExistingPodGangs(ctx, r.client, pcs.ObjectMeta, pcs.Namespace)
 	if err != nil {
 		return nil, groveerr.WrapError(err,
@@ -187,7 +188,7 @@ type mvuTemplate struct {
 // computeMVUTemplate builds the mvuTemplate from the in-scope component set that
 // PCS.Status.UpdateProgress froze when the coherent update started. MinAvailable values are read
 // from the PCS spec, which the validating webhook holds unchanged for the duration of the update.
-func computeMVUTemplate(pcs *grovecorev1alpha1.PodCliqueSet) *mvuTemplate {
+func computeMVUTemplate(pcs *grovecorev1beta1.PodCliqueSet) *mvuTemplate {
 	progress := pcs.Status.UpdateProgress
 	inScopeComponentNames := slices.Concat(progress.InScopeStandalonePodCliques, progress.InScopePodCliqueScalingGroups)
 	standalonePCLQs, pcsgs := componentutils.CoherentMinAvailableByComponent(pcs, inScopeComponentNames)
@@ -207,7 +208,7 @@ func (r _resource) runSyncFlow(ctx context.Context, syncSnap *syncSnapshot) erro
 		pgm := syncSnap.existingPGMByReplica[pcsReplicaIndex]
 
 		var (
-			entries []grovecorev1alpha1.PodGangEntry
+			entries []grovecorev1beta1.PodGangEntry
 			err     error
 		)
 		// A coherent update advances an existing PodGangMap one sub-step per reconcile, and only for the
@@ -228,23 +229,38 @@ func (r _resource) runSyncFlow(ctx context.Context, syncSnap *syncSnapshot) erro
 		}
 
 		pgmName := apicommon.GeneratePodGangMapName(apicommon.ResourceNameReplica{Name: syncSnap.pcs.Name, Replica: pcsReplicaIndex})
-		if err = r.createOrPatchPodGangMap(ctx, syncSnap.pcs, pgmName, pcsReplicaIndex, entries); err != nil {
+		if err = r.createOrPatchPodGangMap(ctx, syncSnap.pcs, pgmName, pcsReplicaIndex, entries, pgm != nil); err != nil {
 			return err
 		}
 	}
 	return r.deleteOrphanedPodGangMaps(ctx, syncSnap)
 }
 
-// createOrPatchPodGangMap creates or patches the named PodGangMap with the given entries.
+// createOrPatchPodGangMap creates or patches the named PodGangMap with the given entries. inSnapshot
+// reports whether the snapshot the entries were authored from held the PodGangMap.
+//
+// A PodGangMap that was in the snapshot but no longer exists was deleted during this reconcile, by a gang
+// termination or a gang-shape recreate of its replica, after the snapshot was read from the cache. Its
+// entries were authored from the deleted PodGangMap, so it is not recreated from them. The reconcile is
+// requeued instead, and the next one bootstraps a fresh PodGangMap for the replica.
 func (r _resource) createOrPatchPodGangMap(ctx context.Context,
-	pcs *grovecorev1alpha1.PodCliqueSet,
+	pcs *grovecorev1beta1.PodCliqueSet,
 	pgmName string,
 	pcsReplicaIndex int,
-	entries []grovecorev1alpha1.PodGangEntry) error {
+	entries []grovecorev1beta1.PodGangEntry,
+	inSnapshot bool) error {
 	pgm := emptyPodGangMap(client.ObjectKey{Namespace: pcs.Namespace, Name: pgmName})
 	if _, err := k8sutils.CreateOrPatchSpec(ctx, r.client, pgm, func() error {
+		if inSnapshot && pgm.ResourceVersion == "" {
+			return groveerr.New(groveerr.ErrCodeRequeueAfter, component.OperationSync,
+				fmt.Sprintf("PodGangMap %s was deleted after the snapshot was taken, re-queueing to rebuild it", pgmName))
+		}
 		return r.buildResource(pgm, pcs, pcsReplicaIndex, entries)
 	}); err != nil {
+		var groveErr *groveerr.GroveError
+		if errors.As(err, &groveErr) && groveErr.Code == groveerr.ErrCodeRequeueAfter {
+			return err
+		}
 		return groveerr.WrapError(err, errCodeCreateOrPatchPodGangMap, component.OperationSync,
 			fmt.Sprintf("Error creating or updating PodGangMap %s for PodCliqueSet: %v", pgmName, client.ObjectKeyFromObject(pcs)))
 	}

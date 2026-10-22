@@ -21,6 +21,7 @@ import (
 
 	apiconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/go-logr/logr"
@@ -39,7 +40,7 @@ const testNamespace = "default"
 func TestSetMigrationGateForLegacyPodCliqueSets(t *testing.T) {
 	t.Run("sets the gate on a legacy PodCliqueSet with no PodGangMap", func(t *testing.T) {
 		pcs := testutils.NewPodCliqueSetBuilder("legacy", testNamespace, "uid").WithReplicas(1).Build()
-		cl := newClientWithPCSStatus(pcs)
+		cl := newClientWithPCSStatus(alphaPodCliqueSet(t, pcs))
 
 		err := SetMigrationGateForLegacyPodCliqueSets(context.Background(), cl, logr.Discard())
 		require.NoError(t, err)
@@ -48,7 +49,7 @@ func TestSetMigrationGateForLegacyPodCliqueSets(t *testing.T) {
 
 	t.Run("skips a zero-replica PodCliqueSet", func(t *testing.T) {
 		pcs := testutils.NewPodCliqueSetBuilder("zero", testNamespace, "uid").WithReplicas(0).Build()
-		cl := newClientWithPCSStatus(pcs)
+		cl := newClientWithPCSStatus(alphaPodCliqueSet(t, pcs))
 
 		err := SetMigrationGateForLegacyPodCliqueSets(context.Background(), cl, logr.Discard())
 		require.NoError(t, err)
@@ -62,7 +63,7 @@ func TestSetMigrationGateForLegacyPodCliqueSets(t *testing.T) {
 				Status: metav1.ConditionTrue,
 				Reason: "PreSet",
 			}).Build()
-		cl := newClientWithPCSStatus(pcs)
+		cl := newClientWithPCSStatus(alphaPodCliqueSet(t, pcs))
 
 		err := SetMigrationGateForLegacyPodCliqueSets(context.Background(), cl, logr.Discard())
 		require.NoError(t, err)
@@ -72,7 +73,7 @@ func TestSetMigrationGateForLegacyPodCliqueSets(t *testing.T) {
 	t.Run("skips an already-migrated PodCliqueSet that has a PodGangMap", func(t *testing.T) {
 		pcs := testutils.NewPodCliqueSetBuilder("migrated", testNamespace, "uid").WithReplicas(1).Build()
 		pgm := testutils.NewPodGangMapBuilder("migrated", testNamespace, types.UID("uid"), 0).Build()
-		cl := newClientWithPCSStatus(pcs, pgm)
+		cl := newClientWithPCSStatus(alphaPodCliqueSet(t, pcs), alphaPodGangMap(t, pgm))
 
 		err := SetMigrationGateForLegacyPodCliqueSets(context.Background(), cl, logr.Discard())
 		require.NoError(t, err)
@@ -82,12 +83,12 @@ func TestSetMigrationGateForLegacyPodCliqueSets(t *testing.T) {
 	t.Run("retries a transient status update failure then sets the gate", func(t *testing.T) {
 		pcs := testutils.NewPodCliqueSetBuilder("transient", testNamespace, "uid").WithReplicas(1).Build()
 		conflict := apierrors.NewConflict(
-			schema.GroupResource{Group: grovecorev1alpha1.SchemeGroupVersion.Group, Resource: "podcliques"},
+			schema.GroupResource{Group: grovecorev1beta1.SchemeGroupVersion.Group, Resource: "podcliques"},
 			"transient", errors.New("object was modified"))
 		// Fail the status update on the first two attempts, then succeed. gateWriteBackoff allows five
 		// attempts, so the gate is still set without an error.
 		cl := testutils.NewTestClientBuilder().
-			WithObjects(pcs).
+			WithObjects(alphaPodCliqueSet(t, pcs)).
 			WithStatusSubresource(&grovecorev1alpha1.PodCliqueSet{}).
 			RecordErrorForObjectsNTimes(testutils.ClientMethodStatusUpdate, conflict, 2,
 				client.ObjectKey{Namespace: testNamespace, Name: "transient"}).
@@ -101,11 +102,11 @@ func TestSetMigrationGateForLegacyPodCliqueSets(t *testing.T) {
 	t.Run("returns an error when the status update fails with a permanent error", func(t *testing.T) {
 		pcs := testutils.NewPodCliqueSetBuilder("permanent", testNamespace, "uid").WithReplicas(1).Build()
 		forbidden := apierrors.NewForbidden(
-			schema.GroupResource{Group: grovecorev1alpha1.SchemeGroupVersion.Group, Resource: "podcliques"},
+			schema.GroupResource{Group: grovecorev1beta1.SchemeGroupVersion.Group, Resource: "podcliques"},
 			"permanent", errors.New("not allowed"))
 		// A permanent error is not retriable, so the write fails on the first attempt without retrying.
 		cl := testutils.NewTestClientBuilder().
-			WithObjects(pcs).
+			WithObjects(alphaPodCliqueSet(t, pcs)).
 			WithStatusSubresource(&grovecorev1alpha1.PodCliqueSet{}).
 			RecordErrorForObjects(testutils.ClientMethodStatusUpdate, forbidden,
 				client.ObjectKey{Namespace: testNamespace, Name: "permanent"}).
@@ -119,12 +120,12 @@ func TestSetMigrationGateForLegacyPodCliqueSets(t *testing.T) {
 	t.Run("returns an error when the status update keeps failing past the retry budget", func(t *testing.T) {
 		pcs := testutils.NewPodCliqueSetBuilder("exhausted", testNamespace, "uid").WithReplicas(1).Build()
 		conflict := apierrors.NewConflict(
-			schema.GroupResource{Group: grovecorev1alpha1.SchemeGroupVersion.Group, Resource: "podcliques"},
+			schema.GroupResource{Group: grovecorev1beta1.SchemeGroupVersion.Group, Resource: "podcliques"},
 			"exhausted", errors.New("object was modified"))
 		// A retriable error that fires on every attempt exhausts gateWriteBackoff, so the gate is not
 		// set and an error is returned.
 		cl := testutils.NewTestClientBuilder().
-			WithObjects(pcs).
+			WithObjects(alphaPodCliqueSet(t, pcs)).
 			WithStatusSubresource(&grovecorev1alpha1.PodCliqueSet{}).
 			RecordErrorForObjects(testutils.ClientMethodStatusUpdate, conflict,
 				client.ObjectKey{Namespace: testNamespace, Name: "exhausted"}).
@@ -158,6 +159,22 @@ func newClientWithPCSStatus(objs ...client.Object) client.Client {
 		WithObjects(objs...).
 		WithStatusSubresource(&grovecorev1alpha1.PodCliqueSet{}).
 		Build()
+}
+
+// alphaPodCliqueSet returns pcs at grove.io/v1alpha1, the version the gate reads, since the fake client does
+// not convert between versions.
+func alphaPodCliqueSet(t *testing.T, pcs *grovecorev1beta1.PodCliqueSet) *grovecorev1alpha1.PodCliqueSet {
+	t.Helper()
+	out := &grovecorev1alpha1.PodCliqueSet{}
+	require.NoError(t, grovecorev1alpha1.Convert_v1beta1_PodCliqueSet_To_v1alpha1_PodCliqueSet(pcs, out, nil))
+	return out
+}
+
+func alphaPodGangMap(t *testing.T, pgm *grovecorev1beta1.PodGangMap) *grovecorev1alpha1.PodGangMap {
+	t.Helper()
+	out := &grovecorev1alpha1.PodGangMap{}
+	require.NoError(t, grovecorev1alpha1.Convert_v1beta1_PodGangMap_To_v1alpha1_PodGangMap(pgm, out, nil))
+	return out
 }
 
 func isGateSet(t *testing.T, cl client.Client, name string) bool {

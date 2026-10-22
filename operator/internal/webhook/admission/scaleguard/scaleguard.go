@@ -20,7 +20,7 @@ import (
 	"fmt"
 	"net/http"
 
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 
 	"github.com/go-logr/logr"
@@ -112,31 +112,32 @@ func denyReplicasChangeDuringCoherentUpdate(ctx context.Context, cl client.Clien
 	return admission.Allowed("owning PodCliqueSet has no coherent update in progress")
 }
 
-// denyReplicasBelowMinAvailable validates a spec.replicas change against the component's immutable
-// spec.minAvailable, read from the stored resource in target (which also covers a scale subresource).
+// denyReplicasBelowMinAvailable validates a spec.replicas change against the component's scale floor,
+// read from the stored resource in target (which also covers a scale subresource). The floor is
+// termination.resource.availability.minReplicas when availability is set, and 1 otherwise.
 // The allowed values are:
 //   - 0, so a component can be parked idle and scaled back up later.
-//   - minAvailable or above.
+//   - the floor or above.
 //
-// A value between 1 and minAvailable is rejected.
+// A value between 1 and the floor is rejected.
 func denyReplicasBelowMinAvailable(target client.Object, newReplicas int32) admission.Response {
-	minAvailable := minAvailableOf(target)
-	if minAvailable != nil && newReplicas > 0 && newReplicas < *minAvailable {
-		return admission.Denied(fmt.Sprintf("spec.replicas %d must be either 0 or at least spec.minAvailable %d", newReplicas, *minAvailable))
+	floor, ok := scaleFloorOf(target)
+	if ok && newReplicas > 0 && newReplicas < floor {
+		return admission.Denied(fmt.Sprintf("spec.replicas %d must be either 0 or at least termination.resource.availability.minReplicas %d", newReplicas, floor))
 	}
-	return admission.Allowed("spec.replicas is 0 or at least spec.minAvailable")
+	return admission.Allowed("spec.replicas is 0 or at least the scale floor")
 }
 
-// minAvailableOf returns spec.minAvailable of the fetched PodClique or PodCliqueScalingGroup, or nil for any
-// other type. minAvailable is immutable, so the stored value is also the value the request would produce
-// for a full update and for a scale subresource request.
-func minAvailableOf(target client.Object) *int32 {
+// scaleFloorOf returns the scale floor of the fetched PodClique or PodCliqueScalingGroup, and false for any
+// other type. A change to availability goes through the PodCliqueSet, so the stored value is also the value
+// the request would produce for a full update and for a scale subresource request.
+func scaleFloorOf(target client.Object) (int32, bool) {
 	switch resource := target.(type) {
-	case *grovecorev1alpha1.PodClique:
-		return resource.Spec.MinAvailable
-	case *grovecorev1alpha1.PodCliqueScalingGroup:
-		return resource.Spec.MinAvailable
+	case *grovecorev1beta1.PodClique:
+		return componentutils.ScaleFloor(resource.Spec.Termination), true
+	case *grovecorev1beta1.PodCliqueScalingGroup:
+		return componentutils.ScaleFloor(resource.Spec.Termination), true
 	default:
-		return nil
+		return 0, false
 	}
 }

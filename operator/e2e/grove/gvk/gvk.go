@@ -19,18 +19,18 @@ package gvk
 
 import (
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
-	corev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	corev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
 // Grove CRDs — derived from the API package's SchemeGroupVersion and Kind constants.
 var (
-	PodCliqueSet = corev1alpha1.SchemeGroupVersion.WithKind(constants.KindPodCliqueSet)
+	PodCliqueSet = corev1beta1.SchemeGroupVersion.WithKind(constants.KindPodCliqueSet)
 
-	PodClique = corev1alpha1.SchemeGroupVersion.WithKind(constants.KindPodClique)
+	PodClique = corev1beta1.SchemeGroupVersion.WithKind(constants.KindPodClique)
 
-	PodCliqueScalingGroup = corev1alpha1.SchemeGroupVersion.WithKind(constants.KindPodCliqueScalingGroup)
+	PodCliqueScalingGroup = corev1beta1.SchemeGroupVersion.WithKind(constants.KindPodCliqueScalingGroup)
 
 	// PodGang belongs to the scheduler API group which has no register.go in this repo.
 	PodGang = schema.GroupVersionKind{

@@ -101,6 +101,9 @@ const (
 const (
 	// ReasonPodCliqueSetReplicaDeleteSuccessful is an event reason which represents a successful deletion of a PodCliqueSet replica.
 	ReasonPodCliqueSetReplicaDeleteSuccessful = "PodCliqueSetReplicaDeleteSuccessful"
+	// ReasonGangShapeChanged is an event reason which represents that a PodCliqueSet replica was recreated because
+	// the init.minReplicas of one of its components changed.
+	ReasonGangShapeChanged = "GangShapeChanged"
 	// ReasonPodCliqueSetReplicaDeleteFailed is an event reason which represents that the deletion of a PodCliqueSet replica failed.
 	ReasonPodCliqueSetReplicaDeleteFailed = "PodCliqueSetReplicaDeleteFailed"
 )

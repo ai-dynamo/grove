@@ -28,6 +28,7 @@ import (
 	defaultingwebhook "github.com/ai-dynamo/grove/operator/internal/webhook/admission/pcs/defaulting"
 	validatingwebhook "github.com/ai-dynamo/grove/operator/internal/webhook/admission/pcs/validation"
 	pcsgvalidationwebhook "github.com/ai-dynamo/grove/operator/internal/webhook/admission/pcsg/validation"
+	conversionwebhook "github.com/ai-dynamo/grove/operator/internal/webhook/conversion"
 
 	"github.com/go-logr/logr"
 	cert "github.com/open-policy-agent/cert-controller/pkg/rotator"
@@ -40,7 +41,7 @@ import (
 )
 
 const (
-	serviceName                      = "grove-operator"
+	serviceName                      = conversionwebhook.ServiceName
 	certificateAuthorityName         = "Grove-CA"
 	certificateAuthorityOrganization = "Grove"
 )
@@ -144,6 +145,12 @@ func getWebhooks(authorizerEnabled bool) []cert.WebhookInfo {
 		webhooks = append(webhooks, cert.WebhookInfo{
 			Type: cert.Validating,
 			Name: authorizationwebhook.Name,
+		})
+	}
+	for _, crdName := range conversionwebhook.ConvertedCRDNames() {
+		webhooks = append(webhooks, cert.WebhookInfo{
+			Type: cert.CRDConversion,
+			Name: crdName,
 		})
 	}
 	return webhooks

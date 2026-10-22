@@ -24,7 +24,7 @@ import (
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	apiconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
@@ -67,19 +67,24 @@ func (d deletionWork) hasPendingPCSReplicaDeletion() bool {
 }
 
 // getPCSReplicaDeletionWork identifies PCS replicas that need termination due to MinAvailable breaches.
-func (r _resource) getPCSReplicaDeletionWork(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) (*deletionWork, error) {
+// The replica that the gang-shape recreate deleted last is skipped until it is available again, so it is never
+// deleted twice.
+func (r _resource) getPCSReplicaDeletionWork(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet) (*deletionWork, error) {
 	var (
-		now              = time.Now()
-		pcsObjectKey     = client.ObjectKeyFromObject(pcs)
-		terminationDelay = pcs.Spec.Template.TerminationDelay.Duration
-		deletionTasks    = make([]utils.Task, 0, pcs.Spec.Replicas)
-		work             = &deletionWork{
+		now                 = time.Now()
+		pcsObjectKey        = client.ObjectKeyFromObject(pcs)
+		deletionTasks       = make([]utils.Task, 0, pcs.Spec.Replicas)
+		currentlyRecreating = getCurrentlyRecreating(pcs)
+		work                = &deletionWork{
 			minAvailableBreachedConstituents: make(map[int][]string),
 		}
 	)
 
 	for pcsReplicaIndex := range int(pcs.Spec.Replicas) {
-		breachedPCSGNames, minPCSGWaitFor, err := r.getMinAvailableBreachedPCSGs(ctx, pcsObjectKey, pcsReplicaIndex, terminationDelay, now)
+		if currentlyRecreating != nil && *currentlyRecreating == pcsReplicaIndex {
+			continue
+		}
+		breachedPCSGNames, minPCSGWaitFor, err := r.getMinAvailableBreachedPCSGs(ctx, pcs, pcsReplicaIndex, now)
 		if err != nil {
 			return nil, err
 		}
@@ -93,8 +98,8 @@ func (r _resource) getPCSReplicaDeletionWork(ctx context.Context, logger logr.Lo
 		if (len(breachedPCSGNames) > 0 && minPCSGWaitFor <= 0) ||
 			(len(breachedPCLQNames) > 0 && minPCLQWaitFor <= 0) {
 			// terminate all PodCliques for this PCS replica index
-			reason := fmt.Sprintf("Delete all PodCliques for PodCliqueSet %v with replicaIndex :%d due to MinAvailable breached longer than TerminationDelay: %s", pcsObjectKey, pcsReplicaIndex, terminationDelay)
-			pclqGangTerminationTask := r.createPCSReplicaDeleteTask(logger, pcs, pcsReplicaIndex, reason)
+			reason := fmt.Sprintf("Delete all PodCliques for PodCliqueSet %v with replicaIndex :%d due to MinAvailable breached longer than the breach tolerance", pcsObjectKey, pcsReplicaIndex)
+			pclqGangTerminationTask := r.createPCSReplicaDeleteTask(logger, pcs, pcsReplicaIndex, constants.ReasonPodCliqueSetReplicaDeleteSuccessful, reason)
 			deletionTasks = append(deletionTasks, pclqGangTerminationTask)
 			work.pcsIndicesToTerminate = append(work.pcsIndicesToTerminate, pcsReplicaIndex)
 		} else if len(breachedPCSGNames) > 0 || len(breachedPCLQNames) > 0 {
@@ -107,8 +112,9 @@ func (r _resource) getPCSReplicaDeletionWork(ctx context.Context, logger logr.Lo
 }
 
 // getMinAvailableBreachedPCSGs retrieves PCSGs that have breached MinAvailable for a PCS replica.
-func (r _resource) getMinAvailableBreachedPCSGs(ctx context.Context, pcsObjKey client.ObjectKey, pcsReplicaIndex int, terminationDelay time.Duration, since time.Time) ([]string, time.Duration, error) {
-	pcsgList := &grovecorev1alpha1.PodCliqueScalingGroupList{}
+func (r _resource) getMinAvailableBreachedPCSGs(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet, pcsReplicaIndex int, since time.Time) ([]string, time.Duration, error) {
+	pcsObjKey := client.ObjectKeyFromObject(pcs)
+	pcsgList := &grovecorev1beta1.PodCliqueScalingGroupList{}
 	if err := r.client.List(ctx,
 		pcsgList,
 		client.InNamespace(pcsObjKey.Namespace),
@@ -121,12 +127,14 @@ func (r _resource) getMinAvailableBreachedPCSGs(ctx context.Context, pcsObjKey c
 	); err != nil {
 		return nil, 0, err
 	}
-	breachedPCSGNames, minWaitFor := getMinAvailableBreachedPCSGInfo(pcsgList.Items, terminationDelay, since)
+	breachedPCSGNames, minWaitFor := getMinAvailableBreachedPCSGInfo(pcsgList.Items, func(pcsg *grovecorev1beta1.PodCliqueScalingGroup) time.Duration {
+		return componentutils.PCSGBreachTolerance(pcs, pcsg)
+	}, since)
 	return breachedPCSGNames, minWaitFor, nil
 }
 
 // getMinAvailableBreachedPCLQsNotInPCSG retrieves standalone PCLQs that have breached MinAvailable.
-func (r _resource) getMinAvailableBreachedPCLQsNotInPCSG(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, pcsReplicaIndex int, since time.Time) (breachedPCLQNames []string, minWaitFor time.Duration, skipPCSReplica bool, err error) {
+func (r _resource) getMinAvailableBreachedPCLQsNotInPCSG(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, pcsReplicaIndex int, since time.Time) (breachedPCLQNames []string, minWaitFor time.Duration, skipPCSReplica bool, err error) {
 	pclqFQNsNotInPCSG := make([]string, 0, len(pcs.Spec.Template.Cliques))
 	for _, pclqTemplateSpec := range pcs.Spec.Template.Cliques {
 		if !isPCLQInPCSG(pclqTemplateSpec.Name, pcs.Spec.Template.PodCliqueScalingGroupConfigs) {
@@ -134,7 +142,7 @@ func (r _resource) getMinAvailableBreachedPCLQsNotInPCSG(ctx context.Context, lo
 		}
 	}
 	var (
-		pclqs            []grovecorev1alpha1.PodClique
+		pclqs            []grovecorev1beta1.PodClique
 		notFoundPCLQFQNs []string
 	)
 	pclqs, notFoundPCLQFQNs, err = r.getExistingPCLQsByNames(ctx, pcs.Namespace, pclqFQNsNotInPCSG)
@@ -146,14 +154,16 @@ func (r _resource) getMinAvailableBreachedPCLQsNotInPCSG(ctx context.Context, lo
 		skipPCSReplica = true
 		return
 	}
-	breachedPCLQNames, minWaitFor = componentutils.GetMinAvailableBreachedPCLQInfo(pclqs, pcs.Spec.Template.TerminationDelay.Duration, since)
+	breachedPCLQNames, minWaitFor = componentutils.GetMinAvailableBreachedPCLQInfo(pclqs, func(pclq *grovecorev1beta1.PodClique) time.Duration {
+		return componentutils.PCLQBreachTolerance(pcs, pclq)
+	}, since)
 	return
 }
 
 // getExistingPCLQsByNames fetches PodClique objects. It returns the PCLQ objects that it found and a slice of PCLQ FQNs for which no PCLQ object exists. If there is an error it just returns the error.
-func (r _resource) getExistingPCLQsByNames(ctx context.Context, namespace string, pclqFQNs []string) (pclqs []grovecorev1alpha1.PodClique, notFoundPCLQFQNs []string, err error) {
+func (r _resource) getExistingPCLQsByNames(ctx context.Context, namespace string, pclqFQNs []string) (pclqs []grovecorev1beta1.PodClique, notFoundPCLQFQNs []string, err error) {
 	for _, pclqFQN := range pclqFQNs {
-		pclq := grovecorev1alpha1.PodClique{}
+		pclq := grovecorev1beta1.PodClique{}
 		if err = r.client.Get(ctx, client.ObjectKey{Name: pclqFQN, Namespace: namespace}, &pclq); err != nil {
 			if apierrors.IsNotFound(err) {
 				notFoundPCLQFQNs = append(notFoundPCLQFQNs, pclqFQN)
@@ -166,19 +176,18 @@ func (r _resource) getExistingPCLQsByNames(ctx context.Context, namespace string
 	return pclqs, notFoundPCLQFQNs, nil
 }
 
-// getMinAvailableBreachedPCSGInfo filters PodCliqueScalingGroups that have grovecorev1alpha1.ConditionTypeMinAvailableBreached set to true.
+// getMinAvailableBreachedPCSGInfo filters PodCliqueScalingGroups that have grovecorev1beta1.ConditionTypeMinAvailableBreached set to true.
 // It returns the names of all such PodCliqueScalingGroups and minimum of all the waitDurations.
 //
-// Two gates run on top of the MinAvailableBreached=True check:
+// A PCSG that has never been available reports MinAvailableBreached=Unknown with reason
+// AwaitingInitialAvailability, never True, so initial startup is never a candidate. One gate runs on top of
+// the MinAvailableBreached=True check:
 //
-//  1. WasPCSGEverHealthy — a PCSG that has never reached MinAvailableBreached=False since
-//     creation is in initial-startup, not a regression. Gang termination would just churn-loop
-//     Pending pods against a cluster that already cannot schedule them.
-//  2. GangTerminationInProgress=True — a previous fire is already in flight; re-firing while
-//     it's still in flight would also churn-loop. The flag is set by createPCSReplicaDeleteTask
+//   - GangTerminationInProgress=True — a previous fire is already in flight; re-firing while
+//     it's still in flight would churn-loop Pending pods. The flag is set by createPCSReplicaDeleteTask
 //     after the DeleteAllOf succeeds, and cleared by the PCSG status reconciler once it
 //     observes MinAvailableBreached=False (recovery).
-func getMinAvailableBreachedPCSGInfo(pcsgs []grovecorev1alpha1.PodCliqueScalingGroup, terminationDelay time.Duration, since time.Time) ([]string, time.Duration) {
+func getMinAvailableBreachedPCSGInfo(pcsgs []grovecorev1beta1.PodCliqueScalingGroup, breachToleranceFor func(*grovecorev1beta1.PodCliqueScalingGroup) time.Duration, since time.Time) ([]string, time.Duration) {
 	pcsgCandidateNames := make([]string, 0, len(pcsgs))
 	waitForDurations := make([]time.Duration, 0, len(pcsgs))
 	for _, pcsg := range pcsgs {
@@ -189,14 +198,11 @@ func getMinAvailableBreachedPCSGInfo(pcsgs []grovecorev1alpha1.PodCliqueScalingG
 		if cond.Status != metav1.ConditionTrue {
 			continue
 		}
-		if !componentutils.WasPCSGEverHealthy(&pcsg) {
-			continue
-		}
 		if meta.IsStatusConditionTrue(pcsg.Status.Conditions, apiconstants.ConditionTypeGangTerminationInProgress) {
 			continue
 		}
 		pcsgCandidateNames = append(pcsgCandidateNames, pcsg.Name)
-		waitFor := terminationDelay - since.Sub(cond.LastTransitionTime.Time)
+		waitFor := breachToleranceFor(&pcsg) - since.Sub(cond.LastTransitionTime.Time)
 		waitForDurations = append(waitForDurations, waitFor)
 	}
 	if len(waitForDurations) == 0 {
@@ -226,7 +232,11 @@ func getMinAvailableBreachedPCSGInfo(pcsgs []grovecorev1alpha1.PodCliqueScalingG
 // new fire indefinitely. Re-running the delete after a partial flag-write failure is instead
 // kept rare by retrying the flag writes inline (see markGangTerminationInProgress), and kept
 // harmless by the convergence property above.
-func (r _resource) createPCSReplicaDeleteTask(logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, pcsReplicaIndex int, reason string) utils.Task {
+//
+// eventReason is the reason of the event recorded on success. The task also writes the current gang-shape hash
+// onto the replica's PCSGs, which are not deleted, so the replica is no longer stale once its PodCliques are
+// recreated. That holds for gang termination too: a stale replica it deletes counts as recreated.
+func (r _resource) createPCSReplicaDeleteTask(logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, pcsReplicaIndex int, eventReason, reason string) utils.Task {
 	return utils.Task{
 		Name: fmt.Sprintf("DeletePCSReplicaPodCliques-%d", pcsReplicaIndex),
 		Fn: func(ctx context.Context) error {
@@ -236,7 +246,7 @@ func (r _resource) createPCSReplicaDeleteTask(logger logr.Logger, pcs *grovecore
 					apicommon.LabelPodCliqueSetReplicaIndex: strconv.Itoa(pcsReplicaIndex),
 				},
 			)
-			pcsgList := &grovecorev1alpha1.PodCliqueScalingGroupList{}
+			pcsgList := &grovecorev1beta1.PodCliqueScalingGroupList{}
 			if err := r.client.List(ctx, pcsgList,
 				client.InNamespace(pcs.Namespace),
 				client.MatchingLabels(pcsReplicaLabels)); err != nil {
@@ -244,7 +254,7 @@ func (r _resource) createPCSReplicaDeleteTask(logger logr.Logger, pcs *grovecore
 				return err
 			}
 			if err := r.client.DeleteAllOf(ctx,
-				&grovecorev1alpha1.PodClique{},
+				&grovecorev1beta1.PodClique{},
 				client.InNamespace(pcs.Namespace),
 				client.MatchingLabels(pcsReplicaLabels)); err != nil {
 				logger.Error(err, "failed to delete PodCliques for PCS Replica index", "pcsReplicaIndex", pcsReplicaIndex, "reason", reason)
@@ -252,14 +262,14 @@ func (r _resource) createPCSReplicaDeleteTask(logger logr.Logger, pcs *grovecore
 				return err
 			}
 			logger.Info("Deleted PCS replica PodCliques", "pcsReplicaIndex", pcsReplicaIndex, "reason", reason)
-			r.eventRecorder.Eventf(pcs, corev1.EventTypeNormal, constants.ReasonPodCliqueSetReplicaDeleteSuccessful, "PodCliqueSet replica %d deleted", pcsReplicaIndex)
+			r.eventRecorder.Eventf(pcs, corev1.EventTypeNormal, eventReason, "PodCliqueSet replica %d deleted: %s", pcsReplicaIndex, reason)
 
 			// Deleting all PodCliques removes every pod of the replica, so it will be recreated as a fresh
 			// initial deployment whose PodGangMap is a single anchor with one tail and one scale-out. A past
 			// coherent update may have left this replica's PodGangMap with several anchor and tail entries, a
 			// structure the steady-state reconcile does not collapse back to the initial shape. Delete the
 			// PodGangMap so the next reconcile bootstraps a fresh map that matches the redeployed replica.
-			pgmToDelete := &grovecorev1alpha1.PodGangMap{
+			pgmToDelete := &grovecorev1beta1.PodGangMap{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      apicommon.GeneratePodGangMapName(apicommon.ResourceNameReplica{Name: pcs.Name, Replica: pcsReplicaIndex}),
 					Namespace: pcs.Namespace,
@@ -280,6 +290,10 @@ func (r _resource) createPCSReplicaDeleteTask(logger logr.Logger, pcs *grovecore
 			for i := range pcsgList.Items {
 				if err := r.markGangTerminationInProgress(ctx, client.ObjectKeyFromObject(&pcsgList.Items[i]), pcsReplicaIndex); err != nil {
 					logger.Error(err, "failed to mark GangTerminationInProgress on PCSG", "pcsg", client.ObjectKeyFromObject(&pcsgList.Items[i]))
+					flagErrs = append(flagErrs, err)
+				}
+				if err := r.setGangShapeHash(ctx, &pcsgList.Items[i], componentutils.ComputeGangShapeHash(pcs)); err != nil {
+					logger.Error(err, "failed to set the gang-shape hash on PCSG", "pcsg", client.ObjectKeyFromObject(&pcsgList.Items[i]))
 					flagErrs = append(flagErrs, err)
 				}
 			}
@@ -306,7 +320,7 @@ var flagWriteBackoff = wait.Backoff{Steps: 6, Duration: 25 * time.Millisecond, F
 // deleted concurrently and needs no suppression, so it counts as success.
 func (r _resource) markGangTerminationInProgress(ctx context.Context, pcsgObjectKey client.ObjectKey, pcsReplicaIndex int) error {
 	return retry.OnError(flagWriteBackoff, k8sutils.IsRetriableAPIError, func() error {
-		latest := &grovecorev1alpha1.PodCliqueScalingGroup{}
+		latest := &grovecorev1beta1.PodCliqueScalingGroup{}
 		if err := r.client.Get(ctx, pcsgObjectKey, latest); err != nil {
 			if apierrors.IsNotFound(err) {
 				return nil
@@ -331,8 +345,8 @@ func (r _resource) markGangTerminationInProgress(ctx context.Context, pcsgObject
 }
 
 // isPCLQInPCSG checks if a PodClique is part of any PCSG configuration.
-func isPCLQInPCSG(pclqName string, pcsgConfigs []grovecorev1alpha1.PodCliqueScalingGroupConfig) bool {
-	return lo.Reduce(pcsgConfigs, func(agg bool, pcsgConfig grovecorev1alpha1.PodCliqueScalingGroupConfig, _ int) bool {
+func isPCLQInPCSG(pclqName string, pcsgConfigs []grovecorev1beta1.PodCliqueScalingGroupConfig) bool {
+	return lo.Reduce(pcsgConfigs, func(agg bool, pcsgConfig grovecorev1beta1.PodCliqueScalingGroupConfig, _ int) bool {
 		return agg || slices.Contains(pcsgConfig.CliqueNames, pclqName)
 	}, false)
 }

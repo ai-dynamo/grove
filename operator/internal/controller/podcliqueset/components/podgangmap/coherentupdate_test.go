@@ -21,7 +21,7 @@ import (
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
@@ -31,6 +31,7 @@ import (
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	clocktesting "k8s.io/utils/clock/testing"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -51,12 +52,12 @@ const (
 func TestInScopeStandalonePCLQsByComponent(t *testing.T) {
 	pcsNameReplica := apicommon.ResourceNameReplica{Name: coherentTestPCSName, Replica: 0}
 	snap := &syncSnapshot{
-		pcs:         &grovecorev1alpha1.PodCliqueSet{ObjectMeta: metav1.ObjectMeta{Name: coherentTestPCSName}},
+		pcs:         &grovecorev1beta1.PodCliqueSet{ObjectMeta: metav1.ObjectMeta{Name: coherentTestPCSName}},
 		mvuTemplate: &mvuTemplate{standalonePCLQs: map[string]int32{"frontend": 2}},
-		existingStandalonePCLQsByReplica: map[int][]grovecorev1alpha1.PodClique{
+		existingStandalonePCLQsByReplica: map[int][]grovecorev1beta1.PodClique{
 			0: {
-				{ObjectMeta: metav1.ObjectMeta{Name: apicommon.GeneratePodCliqueName(pcsNameReplica, "frontend")}, Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 5}},
-				{ObjectMeta: metav1.ObjectMeta{Name: apicommon.GeneratePodCliqueName(pcsNameReplica, "router")}, Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 4}},
+				{ObjectMeta: metav1.ObjectMeta{Name: apicommon.GeneratePodCliqueName(pcsNameReplica, "frontend")}, Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 5}},
+				{ObjectMeta: metav1.ObjectMeta{Name: apicommon.GeneratePodCliqueName(pcsNameReplica, "router")}, Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 4}},
 			},
 		},
 	}
@@ -76,12 +77,12 @@ func TestInScopePCSGsByComponent(t *testing.T) {
 
 	t.Run("indexes in-scope PodCliqueScalingGroups only", func(t *testing.T) {
 		snap := &syncSnapshot{
-			pcs:         &grovecorev1alpha1.PodCliqueSet{ObjectMeta: metav1.ObjectMeta{Name: coherentTestPCSName}},
+			pcs:         &grovecorev1beta1.PodCliqueSet{ObjectMeta: metav1.ObjectMeta{Name: coherentTestPCSName}},
 			mvuTemplate: &mvuTemplate{pcsgs: map[string]int32{"decode": 3}},
-			existingPCSGsByReplica: map[int][]grovecorev1alpha1.PodCliqueScalingGroup{
+			existingPCSGsByReplica: map[int][]grovecorev1beta1.PodCliqueScalingGroup{
 				0: {
-					{ObjectMeta: metav1.ObjectMeta{Name: apicommon.GeneratePodCliqueScalingGroupName(pcsNameReplica, "decode")}, Spec: grovecorev1alpha1.PodCliqueScalingGroupSpec{Replicas: 6}},
-					{ObjectMeta: metav1.ObjectMeta{Name: apicommon.GeneratePodCliqueScalingGroupName(pcsNameReplica, "prefill")}, Spec: grovecorev1alpha1.PodCliqueScalingGroupSpec{Replicas: 2}},
+					{ObjectMeta: metav1.ObjectMeta{Name: apicommon.GeneratePodCliqueScalingGroupName(pcsNameReplica, "decode")}, Spec: grovecorev1beta1.PodCliqueScalingGroupSpec{Replicas: 6}},
+					{ObjectMeta: metav1.ObjectMeta{Name: apicommon.GeneratePodCliqueScalingGroupName(pcsNameReplica, "prefill")}, Spec: grovecorev1beta1.PodCliqueScalingGroupSpec{Replicas: 2}},
 				},
 			},
 		}
@@ -96,10 +97,10 @@ func TestInScopePCSGsByComponent(t *testing.T) {
 
 	t.Run("errors on a malformed PodCliqueScalingGroup name", func(t *testing.T) {
 		snap := &syncSnapshot{
-			pcs:         &grovecorev1alpha1.PodCliqueSet{ObjectMeta: metav1.ObjectMeta{Name: coherentTestPCSName}},
+			pcs:         &grovecorev1beta1.PodCliqueSet{ObjectMeta: metav1.ObjectMeta{Name: coherentTestPCSName}},
 			mvuTemplate: &mvuTemplate{pcsgs: map[string]int32{"decode": 3}},
-			existingPCSGsByReplica: map[int][]grovecorev1alpha1.PodCliqueScalingGroup{
-				0: {{ObjectMeta: metav1.ObjectMeta{Name: "malformed"}, Spec: grovecorev1alpha1.PodCliqueScalingGroupSpec{Replicas: 6}}},
+			existingPCSGsByReplica: map[int][]grovecorev1beta1.PodCliqueScalingGroup{
+				0: {{ObjectMeta: metav1.ObjectMeta{Name: "malformed"}, Spec: grovecorev1beta1.PodCliqueScalingGroupSpec{Replicas: 6}}},
 			},
 		}
 
@@ -116,15 +117,15 @@ func TestComputeDesiredReplicas(t *testing.T) {
 		frontendTemplateReplicas int32 = 4
 		decodeTemplateReplicas   int32 = 6
 	)
-	pcs := &grovecorev1alpha1.PodCliqueSet{
+	pcs := &grovecorev1beta1.PodCliqueSet{
 		ObjectMeta: metav1.ObjectMeta{Name: coherentTestPCSName, Namespace: coherentTestNamespace},
-		Spec: grovecorev1alpha1.PodCliqueSetSpec{
-			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
-				Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-					{Name: "frontend", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: frontendTemplateReplicas}},
-					{Name: "decode-worker", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1}},
+		Spec: grovecorev1beta1.PodCliqueSetSpec{
+			Template: grovecorev1beta1.PodCliqueSetTemplateSpec{
+				Cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
+					{Name: "frontend", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: frontendTemplateReplicas}},
+					{Name: "decode-worker", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 1}},
 				},
-				PodCliqueScalingGroupConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+				PodCliqueScalingGroupConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 					{Name: "decode", CliqueNames: []string{"decode-worker"}, Replicas: ptr.To(decodeTemplateReplicas)},
 				},
 			},
@@ -134,37 +135,37 @@ func TestComputeDesiredReplicas(t *testing.T) {
 		pcs:         pcs,
 		mvuTemplate: &mvuTemplate{standalonePCLQs: map[string]int32{"frontend": 2}, pcsgs: map[string]int32{"decode": 3}},
 	}
-	frontendObj := grovecorev1alpha1.PodClique{Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 5}}
-	decodeObj := grovecorev1alpha1.PodCliqueScalingGroup{Spec: grovecorev1alpha1.PodCliqueScalingGroupSpec{Replicas: 7}}
+	frontendObj := grovecorev1beta1.PodClique{Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 5}}
+	decodeObj := grovecorev1beta1.PodCliqueScalingGroup{Spec: grovecorev1beta1.PodCliqueScalingGroupSpec{Replicas: 7}}
 
 	tests := []struct {
 		name       string
-		standalone map[string]grovecorev1alpha1.PodClique
-		pcsg       map[string]grovecorev1alpha1.PodCliqueScalingGroup
+		standalone map[string]grovecorev1beta1.PodClique
+		pcsg       map[string]grovecorev1beta1.PodCliqueScalingGroup
 		want       map[string]int32
 	}{
 		{
 			name:       "both components present use the live spec replicas",
-			standalone: map[string]grovecorev1alpha1.PodClique{"frontend": frontendObj},
-			pcsg:       map[string]grovecorev1alpha1.PodCliqueScalingGroup{"decode": decodeObj},
+			standalone: map[string]grovecorev1beta1.PodClique{"frontend": frontendObj},
+			pcsg:       map[string]grovecorev1beta1.PodCliqueScalingGroup{"decode": decodeObj},
 			want:       map[string]int32{"frontend": 5, "decode": 7},
 		},
 		{
 			name:       "absent standalone falls back to the template replicas",
-			standalone: map[string]grovecorev1alpha1.PodClique{},
-			pcsg:       map[string]grovecorev1alpha1.PodCliqueScalingGroup{"decode": decodeObj},
+			standalone: map[string]grovecorev1beta1.PodClique{},
+			pcsg:       map[string]grovecorev1beta1.PodCliqueScalingGroup{"decode": decodeObj},
 			want:       map[string]int32{"frontend": frontendTemplateReplicas, "decode": 7},
 		},
 		{
 			name:       "absent scaling group falls back to the template replicas",
-			standalone: map[string]grovecorev1alpha1.PodClique{"frontend": frontendObj},
-			pcsg:       map[string]grovecorev1alpha1.PodCliqueScalingGroup{},
+			standalone: map[string]grovecorev1beta1.PodClique{"frontend": frontendObj},
+			pcsg:       map[string]grovecorev1beta1.PodCliqueScalingGroup{},
 			want:       map[string]int32{"frontend": 5, "decode": decodeTemplateReplicas},
 		},
 		{
 			name:       "both absent fall back to the template replicas",
-			standalone: map[string]grovecorev1alpha1.PodClique{},
-			pcsg:       map[string]grovecorev1alpha1.PodCliqueScalingGroup{},
+			standalone: map[string]grovecorev1beta1.PodClique{},
+			pcsg:       map[string]grovecorev1beta1.PodCliqueScalingGroup{},
 			want:       map[string]int32{"frontend": frontendTemplateReplicas, "decode": decodeTemplateReplicas},
 		},
 	}
@@ -182,37 +183,37 @@ func TestComputeDesiredReplicas(t *testing.T) {
 func TestSubsumedPodsScheduled(t *testing.T) {
 	testCases := []struct {
 		description                 string
-		standalonePCLQByComponent   map[string]grovecorev1alpha1.PodClique
+		standalonePCLQByComponent   map[string]grovecorev1beta1.PodClique
 		currentHashCountByComponent map[string]int32
 		want                        bool
 	}{
 		{
 			description:                 "every subsumed Pod is scheduled so the gate proceeds",
-			standalonePCLQByComponent:   map[string]grovecorev1alpha1.PodClique{"frontend": pclqWithUpdatedScheduledReplicas(5)},
+			standalonePCLQByComponent:   map[string]grovecorev1beta1.PodClique{"frontend": pclqWithUpdatedScheduledReplicas(5)},
 			currentHashCountByComponent: map[string]int32{"frontend": 5},
 			want:                        true,
 		},
 		{
 			description:                 "a component is still catching up so the gate holds",
-			standalonePCLQByComponent:   map[string]grovecorev1alpha1.PodClique{"frontend": pclqWithUpdatedScheduledReplicas(3)},
+			standalonePCLQByComponent:   map[string]grovecorev1beta1.PodClique{"frontend": pclqWithUpdatedScheduledReplicas(3)},
 			currentHashCountByComponent: map[string]int32{"frontend": 5},
 			want:                        false,
 		},
 		{
 			description:                 "nothing committed yet so there is nothing to wait on",
-			standalonePCLQByComponent:   map[string]grovecorev1alpha1.PodClique{"frontend": pclqWithUpdatedScheduledReplicas(0)},
+			standalonePCLQByComponent:   map[string]grovecorev1beta1.PodClique{"frontend": pclqWithUpdatedScheduledReplicas(0)},
 			currentHashCountByComponent: map[string]int32{"frontend": 0},
 			want:                        true,
 		},
 		{
 			description:                 "an entry is committed but UpdateProgress is not yet initialized so the gate holds",
-			standalonePCLQByComponent:   map[string]grovecorev1alpha1.PodClique{"frontend": {}},
+			standalonePCLQByComponent:   map[string]grovecorev1beta1.PodClique{"frontend": {}},
 			currentHashCountByComponent: map[string]int32{"frontend": 2},
 			want:                        false,
 		},
 		{
 			description:                 "a previously scheduled Pod regressed so the gate re-holds",
-			standalonePCLQByComponent:   map[string]grovecorev1alpha1.PodClique{"frontend": pclqWithUpdatedScheduledReplicas(7)},
+			standalonePCLQByComponent:   map[string]grovecorev1beta1.PodClique{"frontend": pclqWithUpdatedScheduledReplicas(7)},
 			currentHashCountByComponent: map[string]int32{"frontend": 8},
 			want:                        false,
 		},
@@ -370,19 +371,19 @@ func TestMaxUnavailableBudgetSatisfied(t *testing.T) {
 // true when no current-hash entry exists yet, and otherwise tracks whether the PodGangs at the latest
 // current-hash epoch have been scheduled at least once.
 func TestCurrentBatchScheduled(t *testing.T) {
-	pcs := &grovecorev1alpha1.PodCliqueSet{
+	pcs := &grovecorev1beta1.PodCliqueSet{
 		ObjectMeta: metav1.ObjectMeta{Name: coherentTestPCSName, Namespace: coherentTestNamespace},
-		Status:     grovecorev1alpha1.PodCliqueSetStatus{CurrentGenerationHash: ptr.To(coherentTestCurrentGen)},
+		Status:     grovecorev1beta1.PodCliqueSetStatus{CurrentGenerationHash: ptr.To(coherentTestCurrentGen)},
 	}
 	rnr := apicommon.ResourceNameReplica{Name: coherentTestPCSName, Replica: 0}
-	anchorEntry := grovecorev1alpha1.PodGangEntry{Epoch: "200", PodCliqueSetGenerationHash: coherentTestCurrentGen, Role: grovecorev1alpha1.PodGangEntryRoleAnchor, PodCliques: map[string]int32{"frontend": 2}}
-	tailEntry := grovecorev1alpha1.PodGangEntry{Epoch: "200", PodCliqueSetGenerationHash: coherentTestCurrentGen, Role: grovecorev1alpha1.PodGangEntryRoleTail, PCSGReplicaIndices: map[string][]int32{"inference": {0, 1}}}
+	anchorEntry := grovecorev1beta1.PodGangEntry{Epoch: "200", PodCliqueSetGenerationHash: coherentTestCurrentGen, Role: grovecorev1beta1.PodGangEntryRoleAnchor, PodCliques: map[string]int32{"frontend": 2}}
+	tailEntry := grovecorev1beta1.PodGangEntry{Epoch: "200", PodCliqueSetGenerationHash: coherentTestCurrentGen, Role: grovecorev1beta1.PodGangEntryRoleTail, PCSGReplicaIndices: map[string][]int32{"inference": {0, 1}}}
 	anchorPodGang := apicommon.GenerateAnchorPodGangName(rnr, "200")
 	tailPodGang0 := apicommon.GenerateNonAnchorPodGangName(rnr, "200", "inference", 0)
 	tailPodGang1 := apicommon.GenerateNonAnchorPodGangName(rnr, "200", "inference", 1)
 
 	t.Run("no current-hash entry yet so nothing to wait on", func(t *testing.T) {
-		entries := []grovecorev1alpha1.PodGangEntry{{Epoch: "50", PodCliqueSetGenerationHash: coherentTestOldGen, Role: grovecorev1alpha1.PodGangEntryRoleAnchor, PodCliques: map[string]int32{"frontend": 2}}}
+		entries := []grovecorev1beta1.PodGangEntry{{Epoch: "50", PodCliqueSetGenerationHash: coherentTestOldGen, Role: grovecorev1beta1.PodGangEntryRoleAnchor, PodCliques: map[string]int32{"frontend": 2}}}
 		r := _resource{client: testutils.NewTestClientBuilder().Build()}
 
 		ready, err := r.currentBatchScheduled(t.Context(), pcs, 0, entries)
@@ -394,7 +395,7 @@ func TestCurrentBatchScheduled(t *testing.T) {
 	t.Run("anchor batch is scheduled", func(t *testing.T) {
 		r := _resource{client: testutils.NewTestClientBuilder().WithObjects(podGangAtEpoch(anchorPodGang, true)).Build()}
 
-		ready, err := r.currentBatchScheduled(t.Context(), pcs, 0, []grovecorev1alpha1.PodGangEntry{anchorEntry})
+		ready, err := r.currentBatchScheduled(t.Context(), pcs, 0, []grovecorev1beta1.PodGangEntry{anchorEntry})
 
 		require.NoError(t, err)
 		assert.True(t, ready)
@@ -403,7 +404,7 @@ func TestCurrentBatchScheduled(t *testing.T) {
 	t.Run("anchor batch is not scheduled", func(t *testing.T) {
 		r := _resource{client: testutils.NewTestClientBuilder().WithObjects(podGangAtEpoch(anchorPodGang, false)).Build()}
 
-		ready, err := r.currentBatchScheduled(t.Context(), pcs, 0, []grovecorev1alpha1.PodGangEntry{anchorEntry})
+		ready, err := r.currentBatchScheduled(t.Context(), pcs, 0, []grovecorev1beta1.PodGangEntry{anchorEntry})
 
 		require.NoError(t, err)
 		assert.False(t, ready)
@@ -412,7 +413,7 @@ func TestCurrentBatchScheduled(t *testing.T) {
 	t.Run("tail batch fully materialized and scheduled", func(t *testing.T) {
 		r := _resource{client: testutils.NewTestClientBuilder().WithObjects(podGangAtEpoch(tailPodGang0, true), podGangAtEpoch(tailPodGang1, true)).Build()}
 
-		ready, err := r.currentBatchScheduled(t.Context(), pcs, 0, []grovecorev1alpha1.PodGangEntry{tailEntry})
+		ready, err := r.currentBatchScheduled(t.Context(), pcs, 0, []grovecorev1beta1.PodGangEntry{tailEntry})
 
 		require.NoError(t, err)
 		assert.True(t, ready)
@@ -423,7 +424,7 @@ func TestCurrentBatchScheduled(t *testing.T) {
 		// gang that happens to exist, since the executor has already taken down the old pods for index 1.
 		r := _resource{client: testutils.NewTestClientBuilder().WithObjects(podGangAtEpoch(tailPodGang0, true)).Build()}
 
-		ready, err := r.currentBatchScheduled(t.Context(), pcs, 0, []grovecorev1alpha1.PodGangEntry{tailEntry})
+		ready, err := r.currentBatchScheduled(t.Context(), pcs, 0, []grovecorev1beta1.PodGangEntry{tailEntry})
 
 		require.NoError(t, err)
 		assert.False(t, ready)
@@ -436,12 +437,12 @@ func TestCurrentBatchScheduled(t *testing.T) {
 // are held unchanged or advanced.
 func TestBuildCoherentUpdateEntries(t *testing.T) {
 	pcsNameReplica := apicommon.ResourceNameReplica{Name: coherentTestPCSName, Replica: 0}
-	anchorV1 := grovecorev1alpha1.PodGangEntry{Epoch: "50", PodCliqueSetGenerationHash: coherentTestOldGen, Role: grovecorev1alpha1.PodGangEntryRoleAnchor, PodCliques: map[string]int32{"frontend": 2}}
-	anchorV2 := grovecorev1alpha1.PodGangEntry{Epoch: "200", PodCliqueSetGenerationHash: coherentTestCurrentGen, Role: grovecorev1alpha1.PodGangEntryRoleAnchor, PodCliques: map[string]int32{"frontend": 2}}
+	anchorV1 := grovecorev1beta1.PodGangEntry{Epoch: "50", PodCliqueSetGenerationHash: coherentTestOldGen, Role: grovecorev1beta1.PodGangEntryRoleAnchor, PodCliques: map[string]int32{"frontend": 2}}
+	anchorV2 := grovecorev1beta1.PodGangEntry{Epoch: "200", PodCliqueSetGenerationHash: coherentTestCurrentGen, Role: grovecorev1beta1.PodGangEntryRoleAnchor, PodCliques: map[string]int32{"frontend": 2}}
 
 	t.Run("no sub-step remains so the entries are unchanged", func(t *testing.T) {
-		fullyRolledAnchor := grovecorev1alpha1.PodGangEntry{Epoch: "200", PodCliqueSetGenerationHash: coherentTestCurrentGen, Role: grovecorev1alpha1.PodGangEntryRoleAnchor, PodCliques: map[string]int32{"frontend": 4}}
-		pgm := &grovecorev1alpha1.PodGangMap{Spec: grovecorev1alpha1.PodGangMapSpec{Entries: []grovecorev1alpha1.PodGangEntry{fullyRolledAnchor}}}
+		fullyRolledAnchor := grovecorev1beta1.PodGangEntry{Epoch: "200", PodCliqueSetGenerationHash: coherentTestCurrentGen, Role: grovecorev1beta1.PodGangEntryRoleAnchor, PodCliques: map[string]int32{"frontend": 4}}
+		pgm := &grovecorev1beta1.PodGangMap{Spec: grovecorev1beta1.PodGangMapSpec{Entries: []grovecorev1beta1.PodGangEntry{fullyRolledAnchor}}}
 		snap := newCoherentTestSnapshot(pcsNameReplica, 4, 2, nil)
 		r := _resource{client: testutils.NewTestClientBuilder().WithPodControllerUIDIndex().Build(), clk: clocktesting.NewFakeClock(metav1.Now().Time)}
 
@@ -452,7 +453,7 @@ func TestBuildCoherentUpdateEntries(t *testing.T) {
 	})
 
 	t.Run("gate holds when the current batch is not ready so the entries are unchanged", func(t *testing.T) {
-		pgm := &grovecorev1alpha1.PodGangMap{Spec: grovecorev1alpha1.PodGangMapSpec{Entries: []grovecorev1alpha1.PodGangEntry{anchorV1, anchorV2}}}
+		pgm := &grovecorev1beta1.PodGangMap{Spec: grovecorev1beta1.PodGangMapSpec{Entries: []grovecorev1beta1.PodGangEntry{anchorV1, anchorV2}}}
 		snap := newCoherentTestSnapshot(pcsNameReplica, 4, 2, ptr.To[int32](2))
 		// No PodGang exists at the latest current-hash epoch, so currentBatchScheduled is false.
 		r := _resource{client: testutils.NewTestClientBuilder().WithPodControllerUIDIndex().Build(), clk: clocktesting.NewFakeClock(metav1.Now().Time)}
@@ -464,7 +465,7 @@ func TestBuildCoherentUpdateEntries(t *testing.T) {
 	})
 
 	t.Run("gate passes so the next sub-step is emitted", func(t *testing.T) {
-		pgm := &grovecorev1alpha1.PodGangMap{Spec: grovecorev1alpha1.PodGangMapSpec{Entries: []grovecorev1alpha1.PodGangEntry{anchorV1, anchorV2}}}
+		pgm := &grovecorev1beta1.PodGangMap{Spec: grovecorev1beta1.PodGangMapSpec{Entries: []grovecorev1beta1.PodGangEntry{anchorV1, anchorV2}}}
 		snap := newCoherentTestSnapshot(pcsNameReplica, 4, 2, ptr.To[int32](2))
 		r := _resource{client: testutils.NewTestClientBuilder().WithPodControllerUIDIndex().WithObjects(podGangAtEpoch(apicommon.GenerateAnchorPodGangName(pcsNameReplica, "200"), true)).Build(), clk: clocktesting.NewFakeClock(metav1.Now().Time)}
 
@@ -488,15 +489,15 @@ func TestEntryHoldsInScopeContent(t *testing.T) {
 	}
 	testCases := []struct {
 		description string
-		entry       grovecorev1alpha1.PodGangEntry
+		entry       grovecorev1beta1.PodGangEntry
 		want        bool
 	}{
-		{"holds an in-scope standalone clique", grovecorev1alpha1.PodGangEntry{PodCliques: map[string]int32{"frontend": 2}}, true},
-		{"holds in-scope PCSG replica indices", grovecorev1alpha1.PodGangEntry{PCSGReplicaIndices: map[string][]int32{"inference": {0}}}, true},
-		{"holds only out-of-scope standalone content", grovecorev1alpha1.PodGangEntry{PodCliques: map[string]int32{"router": 3}}, false},
-		{"in-scope standalone at zero count holds nothing", grovecorev1alpha1.PodGangEntry{PodCliques: map[string]int32{"frontend": 0}}, false},
-		{"in-scope PCSG with empty indices holds nothing", grovecorev1alpha1.PodGangEntry{PCSGReplicaIndices: map[string][]int32{"inference": {}}}, false},
-		{"empty entry holds nothing", grovecorev1alpha1.PodGangEntry{}, false},
+		{"holds an in-scope standalone clique", grovecorev1beta1.PodGangEntry{PodCliques: map[string]int32{"frontend": 2}}, true},
+		{"holds in-scope PCSG replica indices", grovecorev1beta1.PodGangEntry{PCSGReplicaIndices: map[string][]int32{"inference": {0}}}, true},
+		{"holds only out-of-scope standalone content", grovecorev1beta1.PodGangEntry{PodCliques: map[string]int32{"router": 3}}, false},
+		{"in-scope standalone at zero count holds nothing", grovecorev1beta1.PodGangEntry{PodCliques: map[string]int32{"frontend": 0}}, false},
+		{"in-scope PCSG with empty indices holds nothing", grovecorev1beta1.PodGangEntry{PCSGReplicaIndices: map[string][]int32{"inference": {}}}, false},
+		{"empty entry holds nothing", grovecorev1beta1.PodGangEntry{}, false},
 	}
 	for _, tc := range testCases {
 		t.Run(tc.description, func(t *testing.T) {
@@ -511,12 +512,12 @@ func TestEntryHoldsInScopeContent(t *testing.T) {
 // removeEmptyEntries to drop. frontend and inference are in scope, router is out of scope.
 func TestAdvanceFullyDrainedEntries(t *testing.T) {
 	mvu := &mvuTemplate{standalonePCLQs: map[string]int32{"frontend": 1}, pcsgs: map[string]int32{"inference": 1}}
-	entryAt := func(gen string, pclqs map[string]int32, pcsg map[string][]int32) grovecorev1alpha1.PodGangEntry {
-		return grovecorev1alpha1.PodGangEntry{Epoch: "50", PodCliqueSetGenerationHash: gen, Role: grovecorev1alpha1.PodGangEntryRoleAnchor, PodCliques: pclqs, PCSGReplicaIndices: pcsg}
+	entryAt := func(gen string, pclqs map[string]int32, pcsg map[string][]int32) grovecorev1beta1.PodGangEntry {
+		return grovecorev1beta1.PodGangEntry{Epoch: "50", PodCliqueSetGenerationHash: gen, Role: grovecorev1beta1.PodGangEntryRoleAnchor, PodCliques: pclqs, PCSGReplicaIndices: pcsg}
 	}
 	testCases := []struct {
 		description string
-		entry       grovecorev1alpha1.PodGangEntry
+		entry       grovecorev1beta1.PodGangEntry
 		wantGen     string
 	}{
 		{"advances an old-gen entry drained of in-scope content but holding out-of-scope content", entryAt(coherentTestOldGen, map[string]int32{"router": 2}, nil), coherentTestCurrentGen},
@@ -526,7 +527,7 @@ func TestAdvanceFullyDrainedEntries(t *testing.T) {
 	}
 	for _, tc := range testCases {
 		t.Run(tc.description, func(t *testing.T) {
-			got := advanceFullyDrainedEntries([]grovecorev1alpha1.PodGangEntry{tc.entry}, coherentTestCurrentGen, mvu)
+			got := advanceFullyDrainedEntries([]grovecorev1beta1.PodGangEntry{tc.entry}, coherentTestCurrentGen, mvu)
 			assert.Equal(t, tc.wantGen, got[0].PodCliqueSetGenerationHash)
 		})
 	}
@@ -631,48 +632,48 @@ func TestHeadroomByComponent(t *testing.T) {
 // PodClique: old-version anchor deficits are counted, current-version anchors and out-of-scope cliques are
 // ignored, running at or above committed yields none, and deficits sum across old anchors.
 func TestNumMissingOldVersionPodsByStandalonePCLQ(t *testing.T) {
-	anchor := func(gen, epoch string, pclqs map[string]int32) grovecorev1alpha1.PodGangEntry {
-		return grovecorev1alpha1.PodGangEntry{Role: grovecorev1alpha1.PodGangEntryRoleAnchor, PodCliqueSetGenerationHash: gen, Epoch: epoch, PodCliques: pclqs}
+	anchor := func(gen, epoch string, pclqs map[string]int32) grovecorev1beta1.PodGangEntry {
+		return grovecorev1beta1.PodGangEntry{Role: grovecorev1beta1.PodGangEntryRoleAnchor, PodCliqueSetGenerationHash: gen, Epoch: epoch, PodCliques: pclqs}
 	}
 	testCases := []struct {
 		description string
-		entries     []grovecorev1alpha1.PodGangEntry
+		entries     []grovecorev1beta1.PodGangEntry
 		running     map[string]map[string]int32
 		want        map[string]int32
 	}{
 		{
 			description: "an old-version anchor with fewer running Pods than committed yields the deficit",
-			entries:     []grovecorev1alpha1.PodGangEntry{anchor(coherentTestOldGen, "50", map[string]int32{"frontend": 3})},
+			entries:     []grovecorev1beta1.PodGangEntry{anchor(coherentTestOldGen, "50", map[string]int32{"frontend": 3})},
 			running:     map[string]map[string]int32{"frontend": {"50": 2}},
 			want:        map[string]int32{"frontend": 1},
 		},
 		{
 			description: "a current-version anchor is never a missing old-version Pod",
-			entries:     []grovecorev1alpha1.PodGangEntry{anchor(coherentTestCurrentGen, "200", map[string]int32{"frontend": 3})},
+			entries:     []grovecorev1beta1.PodGangEntry{anchor(coherentTestCurrentGen, "200", map[string]int32{"frontend": 3})},
 			running:     map[string]map[string]int32{"frontend": {"200": 0}},
 			want:        map[string]int32{},
 		},
 		{
 			description: "an out-of-scope clique on an old-version anchor is ignored",
-			entries:     []grovecorev1alpha1.PodGangEntry{anchor(coherentTestOldGen, "50", map[string]int32{"frontend": 2, "sidecar": 2})},
+			entries:     []grovecorev1beta1.PodGangEntry{anchor(coherentTestOldGen, "50", map[string]int32{"frontend": 2, "sidecar": 2})},
 			running:     map[string]map[string]int32{"frontend": {"50": 2}},
 			want:        map[string]int32{},
 		},
 		{
 			description: "running equal to committed yields no missing old-version Pod",
-			entries:     []grovecorev1alpha1.PodGangEntry{anchor(coherentTestOldGen, "50", map[string]int32{"frontend": 2})},
+			entries:     []grovecorev1beta1.PodGangEntry{anchor(coherentTestOldGen, "50", map[string]int32{"frontend": 2})},
 			running:     map[string]map[string]int32{"frontend": {"50": 2}},
 			want:        map[string]int32{},
 		},
 		{
 			description: "more running than committed clamps to zero",
-			entries:     []grovecorev1alpha1.PodGangEntry{anchor(coherentTestOldGen, "50", map[string]int32{"frontend": 2})},
+			entries:     []grovecorev1beta1.PodGangEntry{anchor(coherentTestOldGen, "50", map[string]int32{"frontend": 2})},
 			running:     map[string]map[string]int32{"frontend": {"50": 3}},
 			want:        map[string]int32{},
 		},
 		{
 			description: "deficits sum across multiple old-version anchors",
-			entries: []grovecorev1alpha1.PodGangEntry{
+			entries: []grovecorev1beta1.PodGangEntry{
 				anchor(coherentTestOldGen, "50", map[string]int32{"frontend": 2}),
 				anchor("v0", "40", map[string]int32{"frontend": 3}),
 			},
@@ -681,7 +682,7 @@ func TestNumMissingOldVersionPodsByStandalonePCLQ(t *testing.T) {
 		},
 		{
 			description: "a non-anchor entry is ignored",
-			entries:     []grovecorev1alpha1.PodGangEntry{{Role: grovecorev1alpha1.PodGangEntryRoleTail, PodCliqueSetGenerationHash: coherentTestOldGen, Epoch: "60", PodCliques: map[string]int32{"frontend": 5}}},
+			entries:     []grovecorev1beta1.PodGangEntry{{Role: grovecorev1beta1.PodGangEntryRoleTail, PodCliqueSetGenerationHash: coherentTestOldGen, Epoch: "60", PodCliques: map[string]int32{"frontend": 5}}},
 			running:     map[string]map[string]int32{"frontend": {}},
 			want:        map[string]int32{},
 		},
@@ -712,14 +713,14 @@ func TestNumMissingOldVersionPodsByStandalonePCLQ(t *testing.T) {
 // Pod off any anchor.
 func TestGatherStandalonePodCounts(t *testing.T) {
 	rnr := apicommon.ResourceNameReplica{Name: coherentTestPCSName, Replica: 0}
-	pcs := &grovecorev1alpha1.PodCliqueSet{
+	pcs := &grovecorev1beta1.PodCliqueSet{
 		ObjectMeta: metav1.ObjectMeta{Name: coherentTestPCSName, Namespace: coherentTestNamespace},
-		Status:     grovecorev1alpha1.PodCliqueSetStatus{CurrentGenerationHash: ptr.To("new")},
+		Status:     grovecorev1beta1.PodCliqueSetStatus{CurrentGenerationHash: ptr.To("new")},
 	}
-	pclq := grovecorev1alpha1.PodClique{ObjectMeta: metav1.ObjectMeta{Name: "frontend-pclq", Namespace: coherentTestNamespace, UID: "frontend-uid"}}
-	entries := []grovecorev1alpha1.PodGangEntry{
-		{Role: grovecorev1alpha1.PodGangEntryRoleAnchor, Epoch: "50", PodCliqueSetGenerationHash: "old"},
-		{Role: grovecorev1alpha1.PodGangEntryRoleAnchor, Epoch: "200", PodCliqueSetGenerationHash: "new"},
+	pclq := grovecorev1beta1.PodClique{ObjectMeta: metav1.ObjectMeta{Name: "frontend-pclq", Namespace: coherentTestNamespace, UID: "frontend-uid"}}
+	entries := []grovecorev1beta1.PodGangEntry{
+		{Role: grovecorev1beta1.PodGangEntryRoleAnchor, Epoch: "50", PodCliqueSetGenerationHash: "old"},
+		{Role: grovecorev1beta1.PodGangEntryRoleAnchor, Epoch: "200", PodCliqueSetGenerationHash: "new"},
 	}
 	oldGang := apicommon.GenerateAnchorPodGangName(rnr, "50")
 	currentGang := apicommon.GenerateAnchorPodGangName(rnr, "200")
@@ -749,7 +750,7 @@ func TestGatherStandalonePodCounts(t *testing.T) {
 	}
 	r := _resource{client: testutils.NewTestClientBuilder().WithPodControllerUIDIndex().WithObjects(objs...).Build()}
 
-	got, err := r.gatherStandalonePodCounts(t.Context(), pcs, 0, entries, map[string]grovecorev1alpha1.PodClique{"frontend": pclq})
+	got, err := r.gatherStandalonePodCounts(t.Context(), pcs, 0, entries, map[string]grovecorev1beta1.PodClique{"frontend": pclq})
 
 	require.NoError(t, err)
 	assert.Equal(t, map[cliqueAndEpochKey]anchorLivePods{
@@ -765,14 +766,14 @@ func TestGatherStandalonePodCounts(t *testing.T) {
 // ComputePCSGReplicaState over the members, and atCurrentHash is set when a current-hash entry commits the
 // index.
 func TestGatherPCSGReplicaInfos(t *testing.T) {
-	pcs := &grovecorev1alpha1.PodCliqueSet{
+	pcs := &grovecorev1beta1.PodCliqueSet{
 		ObjectMeta: metav1.ObjectMeta{Name: coherentTestPCSName, Namespace: coherentTestNamespace},
-		Status:     grovecorev1alpha1.PodCliqueSetStatus{CurrentGenerationHash: ptr.To("new")},
+		Status:     grovecorev1beta1.PodCliqueSetStatus{CurrentGenerationHash: ptr.To("new")},
 	}
-	pcsg := grovecorev1alpha1.PodCliqueScalingGroup{ObjectMeta: metav1.ObjectMeta{Name: coherentTestPCSGObjName, Namespace: coherentTestNamespace}, Spec: grovecorev1alpha1.PodCliqueScalingGroupSpec{Replicas: 4, CliqueNames: []string{"m"}}}
+	pcsg := grovecorev1beta1.PodCliqueScalingGroup{ObjectMeta: metav1.ObjectMeta{Name: coherentTestPCSGObjName, Namespace: coherentTestNamespace}, Spec: grovecorev1beta1.PodCliqueScalingGroupSpec{Replicas: 4, CliqueNames: []string{"m"}}}
 	// A current-hash entry commits replica index 0 of sga, so it is at the current hash.
-	entries := []grovecorev1alpha1.PodGangEntry{
-		{Role: grovecorev1alpha1.PodGangEntryRoleAnchor, Epoch: "100", PodCliqueSetGenerationHash: "new", PCSGReplicaIndices: map[string][]int32{"sga": {0}}},
+	entries := []grovecorev1beta1.PodGangEntry{
+		{Role: grovecorev1beta1.PodGangEntryRoleAnchor, Epoch: "100", PodCliqueSetGenerationHash: "new", PCSGReplicaIndices: map[string][]int32{"sga": {0}}},
 	}
 	objs := []client.Object{
 		pcsgMemberPCLQ("sga-0-m", 0, 1, 1, false), // committed to current hash, Ready
@@ -782,7 +783,7 @@ func TestGatherPCSGReplicaInfos(t *testing.T) {
 	}
 	r := _resource{client: testutils.NewTestClientBuilder().WithObjects(objs...).Build()}
 
-	got, err := r.gatherPCSGReplicaInfos(t.Context(), pcs, entries, map[string]grovecorev1alpha1.PodCliqueScalingGroup{"sga": pcsg})
+	got, err := r.gatherPCSGReplicaInfos(t.Context(), pcs, entries, map[string]grovecorev1beta1.PodCliqueScalingGroup{"sga": pcsg})
 
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []pcsgReplicaInfo{
@@ -798,11 +799,11 @@ func TestGatherPCSGReplicaInfos(t *testing.T) {
 // stray must be excluded too, so the drain can neither count it nor commit it into a current-hash entry the
 // PCSG controller would never recreate.
 func TestGatherPCSGReplicaInfosSkipsStrayReplicaIndices(t *testing.T) {
-	pcs := &grovecorev1alpha1.PodCliqueSet{
+	pcs := &grovecorev1beta1.PodCliqueSet{
 		ObjectMeta: metav1.ObjectMeta{Name: coherentTestPCSName, Namespace: coherentTestNamespace},
-		Status:     grovecorev1alpha1.PodCliqueSetStatus{CurrentGenerationHash: ptr.To("new")},
+		Status:     grovecorev1beta1.PodCliqueSetStatus{CurrentGenerationHash: ptr.To("new")},
 	}
-	pcsg := grovecorev1alpha1.PodCliqueScalingGroup{ObjectMeta: metav1.ObjectMeta{Name: coherentTestPCSGObjName, Namespace: coherentTestNamespace}, Spec: grovecorev1alpha1.PodCliqueScalingGroupSpec{Replicas: 2}}
+	pcsg := grovecorev1beta1.PodCliqueScalingGroup{ObjectMeta: metav1.ObjectMeta{Name: coherentTestPCSGObjName, Namespace: coherentTestNamespace}, Spec: grovecorev1beta1.PodCliqueScalingGroupSpec{Replicas: 2}}
 	objs := []client.Object{
 		pcsgMemberPCLQ("sga-0-m", 0, 1, 1, false), // in range, Ready
 		pcsgMemberPCLQ("sga-1-m", 1, 1, 1, false), // in range, Ready
@@ -810,7 +811,7 @@ func TestGatherPCSGReplicaInfosSkipsStrayReplicaIndices(t *testing.T) {
 	}
 	r := _resource{client: testutils.NewTestClientBuilder().WithObjects(objs...).Build()}
 
-	got, err := r.gatherPCSGReplicaInfos(t.Context(), pcs, nil, map[string]grovecorev1alpha1.PodCliqueScalingGroup{"sga": pcsg})
+	got, err := r.gatherPCSGReplicaInfos(t.Context(), pcs, nil, map[string]grovecorev1beta1.PodCliqueScalingGroup{"sga": pcsg})
 
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []pcsgReplicaInfo{
@@ -823,16 +824,16 @@ func TestGatherPCSGReplicaInfosSkipsStrayReplicaIndices(t *testing.T) {
 // inventoried: an index with no member PodCliques (absent) and an index whose members are all terminating (a
 // gang restart) are both classified Pending, so the anchor is never opened short of its replicas.
 func TestGatherPCSGReplicaInfosInventoriesAbsentReplicasAsPending(t *testing.T) {
-	pcs := &grovecorev1alpha1.PodCliqueSet{
+	pcs := &grovecorev1beta1.PodCliqueSet{
 		ObjectMeta: metav1.ObjectMeta{Name: coherentTestPCSName, Namespace: coherentTestNamespace},
-		Status:     grovecorev1alpha1.PodCliqueSetStatus{CurrentGenerationHash: ptr.To("new")},
+		Status:     grovecorev1beta1.PodCliqueSetStatus{CurrentGenerationHash: ptr.To("new")},
 	}
-	pcsg := grovecorev1alpha1.PodCliqueScalingGroup{
+	pcsg := grovecorev1beta1.PodCliqueScalingGroup{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      coherentTestPCSGObjName,
 			Namespace: coherentTestNamespace,
 		},
-		Spec: grovecorev1alpha1.PodCliqueScalingGroupSpec{
+		Spec: grovecorev1beta1.PodCliqueScalingGroupSpec{
 			Replicas:    3,
 			CliqueNames: []string{"m"},
 		},
@@ -844,7 +845,7 @@ func TestGatherPCSGReplicaInfosInventoriesAbsentReplicasAsPending(t *testing.T) 
 	}
 	r := _resource{client: testutils.NewTestClientBuilder().WithObjects(objs...).Build()}
 
-	got, err := r.gatherPCSGReplicaInfos(t.Context(), pcs, nil, map[string]grovecorev1alpha1.PodCliqueScalingGroup{"sga": pcsg})
+	got, err := r.gatherPCSGReplicaInfos(t.Context(), pcs, nil, map[string]grovecorev1beta1.PodCliqueScalingGroup{"sga": pcsg})
 
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []pcsgReplicaInfo{
@@ -856,8 +857,8 @@ func TestGatherPCSGReplicaInfosInventoriesAbsentReplicasAsPending(t *testing.T) 
 
 // pcsgMemberPCLQ builds a PodCliqueScalingGroup member PodClique at the given replica index with the owner
 // reference, labels, MinAvailable, and scheduled and ready status counts that gatherPCSGReplicaInfos reads.
-func pcsgMemberPCLQ(name string, replicaIndex, scheduled, ready int32, terminating bool) *grovecorev1alpha1.PodClique {
-	pclq := &grovecorev1alpha1.PodClique{
+func pcsgMemberPCLQ(name string, replicaIndex, scheduled, ready int32, terminating bool) *grovecorev1beta1.PodClique {
+	pclq := &grovecorev1beta1.PodClique{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: coherentTestNamespace,
@@ -867,8 +868,8 @@ func pcsgMemberPCLQ(name string, replicaIndex, scheduled, ready int32, terminati
 			},
 			OwnerReferences: []metav1.OwnerReference{{APIVersion: "grove.io/v1alpha1", Kind: constants.KindPodCliqueScalingGroup, Name: coherentTestPCSGObjName, Controller: ptr.To(true)}},
 		},
-		Spec:   grovecorev1alpha1.PodCliqueSpec{MinAvailable: ptr.To(int32(1))},
-		Status: grovecorev1alpha1.PodCliqueStatus{ScheduledReplicas: scheduled, ReadyReplicas: ready},
+		Spec:   grovecorev1beta1.PodCliqueSpec{Init: &grovecorev1beta1.InitSpec{MinReplicas: ptr.To(int32(1))}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To(int32(1))}}}},
+		Status: grovecorev1beta1.PodCliqueStatus{ScheduledReplicas: scheduled, ReadyReplicas: ready},
 	}
 	if terminating {
 		pclq.DeletionTimestamp = ptr.To(metav1.Now())
@@ -879,10 +880,10 @@ func pcsgMemberPCLQ(name string, replicaIndex, scheduled, ready int32, terminati
 
 // pclqWithUpdatedScheduledReplicas builds a standalone PodClique reporting the given new-hash scheduled
 // Pod count on its in-progress UpdateProgress.
-func pclqWithUpdatedScheduledReplicas(updatedReady int32) grovecorev1alpha1.PodClique {
-	return grovecorev1alpha1.PodClique{
-		Status: grovecorev1alpha1.PodCliqueStatus{
-			UpdateProgress: &grovecorev1alpha1.PodCliqueUpdateProgress{UpdatedScheduledReplicas: updatedReady},
+func pclqWithUpdatedScheduledReplicas(updatedReady int32) grovecorev1beta1.PodClique {
+	return grovecorev1beta1.PodClique{
+		Status: grovecorev1beta1.PodCliqueStatus{
+			UpdateProgress: &grovecorev1beta1.PodCliqueUpdateProgress{UpdatedScheduledReplicas: updatedReady},
 		},
 	}
 }
@@ -934,37 +935,37 @@ func podGangAtEpoch(name string, scheduled bool) *groveschedulerv1alpha1.PodGang
 // a Ready and UpdatedReady count equal to liveReplicas so the subsumed-Pods and budget gates pass unless a
 // case overrides them.
 func newCoherentTestSnapshot(pcsNameReplica apicommon.ResourceNameReplica, liveReplicas, minAvailable int32, maxUnavailable *int32) *syncSnapshot {
-	pcs := &grovecorev1alpha1.PodCliqueSet{
+	pcs := &grovecorev1beta1.PodCliqueSet{
 		ObjectMeta: metav1.ObjectMeta{Name: coherentTestPCSName, Namespace: coherentTestNamespace},
-		Spec: grovecorev1alpha1.PodCliqueSetSpec{
+		Spec: grovecorev1beta1.PodCliqueSetSpec{
 			Replicas: 1,
-			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
-				Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+			Template: grovecorev1beta1.PodCliqueSetTemplateSpec{
+				Cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
 					{
 						Name:          "frontend",
-						RollingUpdate: &grovecorev1alpha1.RollingUpdateConfiguration{MaxUnavailable: maxUnavailable},
-						Spec: grovecorev1alpha1.PodCliqueSpec{
-							Replicas:     liveReplicas,
-							MinAvailable: ptr.To(minAvailable),
+						RollingUpdate: &grovecorev1beta1.RollingUpdateConfiguration{MaxUnavailable: intOrStringOf(maxUnavailable)},
+						Spec: grovecorev1beta1.PodCliqueSpec{
+							Replicas: liveReplicas,
+							Init:     &grovecorev1beta1.InitSpec{MinReplicas: ptr.To(minAvailable)}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To(minAvailable)}}},
 						},
 					},
 				},
 			},
 		},
-		Status: grovecorev1alpha1.PodCliqueSetStatus{CurrentGenerationHash: ptr.To(coherentTestCurrentGen)},
+		Status: grovecorev1beta1.PodCliqueSetStatus{CurrentGenerationHash: ptr.To(coherentTestCurrentGen)},
 	}
-	frontendPCLQ := grovecorev1alpha1.PodClique{
+	frontendPCLQ := grovecorev1beta1.PodClique{
 		ObjectMeta: metav1.ObjectMeta{Name: apicommon.GeneratePodCliqueName(pcsNameReplica, "frontend")},
-		Spec:       grovecorev1alpha1.PodCliqueSpec{Replicas: liveReplicas},
-		Status: grovecorev1alpha1.PodCliqueStatus{
+		Spec:       grovecorev1beta1.PodCliqueSpec{Replicas: liveReplicas},
+		Status: grovecorev1beta1.PodCliqueStatus{
 			ReadyReplicas:  liveReplicas,
-			UpdateProgress: &grovecorev1alpha1.PodCliqueUpdateProgress{UpdatedScheduledReplicas: liveReplicas},
+			UpdateProgress: &grovecorev1beta1.PodCliqueUpdateProgress{UpdatedScheduledReplicas: liveReplicas},
 		},
 	}
 	return &syncSnapshot{
 		pcs:                              pcs,
 		mvuTemplate:                      &mvuTemplate{standalonePCLQs: map[string]int32{"frontend": minAvailable}},
-		existingStandalonePCLQsByReplica: map[int][]grovecorev1alpha1.PodClique{0: {frontendPCLQ}},
+		existingStandalonePCLQsByReplica: map[int][]grovecorev1beta1.PodClique{0: {frontendPCLQ}},
 	}
 }
 
@@ -981,7 +982,7 @@ const (
 )
 
 // memberPCLQ builds the member PodClique that realizes the replica condition at the given replica index.
-func (c pcsgReplicaCondition) memberPCLQ(replicaIndex int32) *grovecorev1alpha1.PodClique {
+func (c pcsgReplicaCondition) memberPCLQ(replicaIndex int32) *grovecorev1beta1.PodClique {
 	name := fmt.Sprintf("%s-%d-m", coherentTestPCSGObjName, replicaIndex)
 	switch c {
 	case replicaReady:
@@ -1000,26 +1001,26 @@ func (c pcsgReplicaCondition) memberPCLQ(replicaIndex int32) *grovecorev1alpha1.
 // each present replica's condition; a replica index omitted from the map has no member PodClique at all
 // (temporarily absent). scheduledAnchorEpochs lists anchor epochs whose PodGang is already scheduled, to
 // drive the emit gate.
-func newCoherentPCSGTest(replicas, minAvailable int32, maxUnavailable *int32, conditionByReplicaIndex map[int32]pcsgReplicaCondition, entries []grovecorev1alpha1.PodGangEntry, scheduledAnchorEpochs ...string) (_resource, *syncSnapshot, *grovecorev1alpha1.PodGangMap) {
+func newCoherentPCSGTest(replicas, minAvailable int32, maxUnavailable *int32, conditionByReplicaIndex map[int32]pcsgReplicaCondition, entries []grovecorev1beta1.PodGangEntry, scheduledAnchorEpochs ...string) (_resource, *syncSnapshot, *grovecorev1beta1.PodGangMap) {
 	pcsNameReplica := apicommon.ResourceNameReplica{Name: coherentTestPCSName, Replica: 0}
-	pcs := &grovecorev1alpha1.PodCliqueSet{
+	pcs := &grovecorev1beta1.PodCliqueSet{
 		ObjectMeta: metav1.ObjectMeta{Name: coherentTestPCSName, Namespace: coherentTestNamespace},
-		Spec: grovecorev1alpha1.PodCliqueSetSpec{
+		Spec: grovecorev1beta1.PodCliqueSetSpec{
 			Replicas: 1,
-			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
-				Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-					{Name: "m", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To(int32(1))}},
+			Template: grovecorev1beta1.PodCliqueSetTemplateSpec{
+				Cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
+					{Name: "m", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 1, Init: &grovecorev1beta1.InitSpec{MinReplicas: ptr.To(int32(1))}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To(int32(1))}}}}},
 				},
-				PodCliqueScalingGroupConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
-					{Name: "sga", CliqueNames: []string{"m"}, Replicas: ptr.To(replicas), MinAvailable: ptr.To(minAvailable), RollingUpdate: &grovecorev1alpha1.RollingUpdateConfiguration{MaxUnavailable: maxUnavailable}},
+				PodCliqueScalingGroupConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
+					{Name: "sga", CliqueNames: []string{"m"}, Replicas: ptr.To(replicas), Init: &grovecorev1beta1.InitSpec{MinReplicas: ptr.To(minAvailable)}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To(minAvailable)}}}, RollingUpdate: &grovecorev1beta1.RollingUpdateConfiguration{MaxUnavailable: intOrStringOf(maxUnavailable)}},
 				},
 			},
 		},
-		Status: grovecorev1alpha1.PodCliqueSetStatus{CurrentGenerationHash: ptr.To(coherentTestCurrentGen)},
+		Status: grovecorev1beta1.PodCliqueSetStatus{CurrentGenerationHash: ptr.To(coherentTestCurrentGen)},
 	}
-	pcsg := grovecorev1alpha1.PodCliqueScalingGroup{
+	pcsg := grovecorev1beta1.PodCliqueScalingGroup{
 		ObjectMeta: metav1.ObjectMeta{Name: coherentTestPCSGObjName, Namespace: coherentTestNamespace},
-		Spec:       grovecorev1alpha1.PodCliqueScalingGroupSpec{Replicas: replicas, CliqueNames: []string{"m"}},
+		Spec:       grovecorev1beta1.PodCliqueScalingGroupSpec{Replicas: replicas, CliqueNames: []string{"m"}},
 	}
 	objs := make([]client.Object, 0, len(conditionByReplicaIndex)+len(scheduledAnchorEpochs))
 	for replicaIndex, condition := range conditionByReplicaIndex {
@@ -1035,10 +1036,10 @@ func newCoherentPCSGTest(replicas, minAvailable int32, maxUnavailable *int32, co
 	snap := &syncSnapshot{
 		logger:                 logr.Discard(),
 		pcs:                    pcs,
-		existingPCSGsByReplica: map[int][]grovecorev1alpha1.PodCliqueScalingGroup{0: {pcsg}},
+		existingPCSGsByReplica: map[int][]grovecorev1beta1.PodCliqueScalingGroup{0: {pcsg}},
 		mvuTemplate:            &mvuTemplate{pcsgs: map[string]int32{"sga": minAvailable}},
 	}
-	pgm := &grovecorev1alpha1.PodGangMap{Spec: grovecorev1alpha1.PodGangMapSpec{Entries: entries}}
+	pgm := &grovecorev1beta1.PodGangMap{Spec: grovecorev1beta1.PodGangMapSpec{Entries: entries}}
 	return r, snap, pgm
 }
 
@@ -1048,18 +1049,25 @@ func newCoherentPCSGTest(replicas, minAvailable int32, maxUnavailable *int32, co
 // composition [0,1], claiming the absent replica as Pending and recreating it at the new generation, rather
 // than opening a smaller anchor that later splits replica 1 into a separate Tail entry.
 func TestBuildCoherentUpdateEntriesClaimsAbsentPCSGReplicaIntoWholeAnchor(t *testing.T) {
-	oldAnchor := grovecorev1alpha1.PodGangEntry{
+	oldAnchor := grovecorev1beta1.PodGangEntry{
 		Epoch: "50", PodCliqueSetGenerationHash: coherentTestOldGen,
-		Role: grovecorev1alpha1.PodGangEntryRoleAnchor, PCSGReplicaIndices: map[string][]int32{"sga": {0, 1}},
+		Role: grovecorev1beta1.PodGangEntryRoleAnchor, PCSGReplicaIndices: map[string][]int32{"sga": {0, 1}},
 	}
 	r, snap, pgm := newCoherentPCSGTest(2, 2, ptr.To[int32](2),
 		map[int32]pcsgReplicaCondition{0: replicaReady}, // replica 1 omitted => absent
-		[]grovecorev1alpha1.PodGangEntry{oldAnchor})
+		[]grovecorev1beta1.PodGangEntry{oldAnchor})
 
 	entries, err := r.buildCoherentUpdateEntries(t.Context(), snap, 0, pgm)
 	require.NoError(t, err)
 
 	require.Len(t, entries, 1)
-	assert.Equal(t, grovecorev1alpha1.PodGangEntryRoleAnchor, entries[0].Role)
+	assert.Equal(t, grovecorev1beta1.PodGangEntryRoleAnchor, entries[0].Role)
 	assert.ElementsMatch(t, []int32{0, 1}, entries[0].PCSGReplicaIndices["sga"])
+}
+
+func intOrStringOf(value *int32) *intstr.IntOrString {
+	if value == nil {
+		return nil
+	}
+	return ptr.To(intstr.FromInt32(*value))
 }

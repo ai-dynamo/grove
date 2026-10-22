@@ -21,7 +21,7 @@ import (
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	pcsgexpectations "github.com/ai-dynamo/grove/operator/internal/controller/podcliquescalinggroup/expectations"
 	ctrlutils "github.com/ai-dynamo/grove/operator/internal/controller/utils"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
@@ -52,21 +52,21 @@ func (r *Reconciler) RegisterWithManager(mgr manager.Manager) error {
 		WithOptions(controller.Options{
 			MaxConcurrentReconciles: *r.config.ConcurrentSyncs,
 		}).
-		For(&grovecorev1alpha1.PodCliqueScalingGroup{}, builder.WithPredicates(
+		For(&grovecorev1beta1.PodCliqueScalingGroup{}, builder.WithPredicates(
 			predicate.And(
 				predicate.GenerationChangedPredicate{},
 				podCliqueScalingGroupUpdatePredicate(),
 			)),
 		).
-		Watches(&grovecorev1alpha1.PodCliqueSet{},
+		Watches(&grovecorev1beta1.PodCliqueSet{},
 			handler.EnqueueRequestsFromMapFunc(mapPCSToPCSG()),
 			builder.WithPredicates(podCliqueSetPredicate()),
 		).
-		Watches(&grovecorev1alpha1.PodClique{},
+		Watches(&grovecorev1beta1.PodClique{},
 			handler.EnqueueRequestsFromMapFunc(mapPCLQToPCSG()),
 			builder.WithPredicates(r.podCliquePredicate()),
 		).
-		Watches(&grovecorev1alpha1.PodGangMap{},
+		Watches(&grovecorev1beta1.PodGangMap{},
 			handler.EnqueueRequestsFromMapFunc(mapPodGangMapToPCSGs()),
 			builder.WithPredicates(podGangMapPredicate()),
 		).
@@ -92,7 +92,7 @@ func podCliqueScalingGroupUpdatePredicate() predicate.Predicate {
 // mapPCSToPCSG maps PodCliqueSet rolling update events to PodCliqueScalingGroup reconcile requests for the currently updating replica
 func mapPCSToPCSG() handler.MapFunc {
 	return func(_ context.Context, obj client.Object) []reconcile.Request {
-		pcs, ok := obj.(*grovecorev1alpha1.PodCliqueSet)
+		pcs, ok := obj.(*grovecorev1beta1.PodCliqueSet)
 		if !ok {
 			return nil
 		}
@@ -112,7 +112,7 @@ func mapPCSToPCSG() handler.MapFunc {
 	}
 }
 
-func pcsgReconcileRequestsForPCSReplicas(pcs *grovecorev1alpha1.PodCliqueSet, pcsReplicaIndices []int32) []reconcile.Request {
+func pcsgReconcileRequestsForPCSReplicas(pcs *grovecorev1beta1.PodCliqueSet, pcsReplicaIndices []int32) []reconcile.Request {
 	pcsgConfigs := pcs.Spec.Template.PodCliqueScalingGroupConfigs
 	if len(pcsgConfigs) == 0 {
 		return nil
@@ -146,8 +146,8 @@ func podCliqueSetPredicate() predicate.Predicate {
 
 // shouldEnqueueOnPCSUpdate determines if a PodCliqueSet update event should trigger PodCliqueScalingGroup reconciliation based on rolling update progress changes
 func shouldEnqueueOnPCSUpdate(event event.UpdateEvent) bool {
-	oldPCS, okOld := event.ObjectOld.(*grovecorev1alpha1.PodCliqueSet)
-	newPCS, okNew := event.ObjectNew.(*grovecorev1alpha1.PodCliqueSet)
+	oldPCS, okOld := event.ObjectOld.(*grovecorev1beta1.PodCliqueSet)
+	newPCS, okNew := event.ObjectNew.(*grovecorev1beta1.PodCliqueSet)
 	if !okOld || !okNew {
 		return false
 	}
@@ -170,7 +170,7 @@ func shouldEnqueueOnPCSUpdate(event event.UpdateEvent) bool {
 // mapPCLQToPCSG maps PodClique events to their owning PodCliqueScalingGroup reconcile requests
 func mapPCLQToPCSG() handler.MapFunc {
 	return func(_ context.Context, obj client.Object) []reconcile.Request {
-		pclq, ok := obj.(*grovecorev1alpha1.PodClique)
+		pclq, ok := obj.(*grovecorev1beta1.PodClique)
 		if !ok {
 			return nil
 		}
@@ -203,7 +203,7 @@ func (r *Reconciler) podCliquePredicate() predicate.Predicate {
 // observeMemberPodCliqueDeletion lowers the PodCliqueScalingGroup's delete expectation for a deleted
 // member PodClique so a disrupted replica stops counting as unavailable once its PodCliques are gone.
 func (r *Reconciler) observeMemberPodCliqueDeletion(obj client.Object) {
-	pclq, ok := obj.(*grovecorev1alpha1.PodClique)
+	pclq, ok := obj.(*grovecorev1beta1.PodClique)
 	if !ok {
 		return
 	}
@@ -220,7 +220,7 @@ func (r *Reconciler) observeMemberPodCliqueDeletion(obj client.Object) {
 // only signal. The requests cover every PodCliqueScalingGroup config named across the entries.
 func mapPodGangMapToPCSGs() handler.MapFunc {
 	return func(_ context.Context, obj client.Object) []reconcile.Request {
-		pgm, ok := obj.(*grovecorev1alpha1.PodGangMap)
+		pgm, ok := obj.(*grovecorev1beta1.PodGangMap)
 		if !ok {
 			return nil
 		}
@@ -253,8 +253,8 @@ func podGangMapPredicate() predicate.Predicate {
 		DeleteFunc:  func(_ event.DeleteEvent) bool { return false },
 		GenericFunc: func(_ event.GenericEvent) bool { return false },
 		UpdateFunc: func(e event.UpdateEvent) bool {
-			oldPGM, okOld := e.ObjectOld.(*grovecorev1alpha1.PodGangMap)
-			newPGM, okNew := e.ObjectNew.(*grovecorev1alpha1.PodGangMap)
+			oldPGM, okOld := e.ObjectOld.(*grovecorev1beta1.PodGangMap)
+			newPGM, okNew := e.ObjectNew.(*grovecorev1beta1.PodGangMap)
 			if !okOld || !okNew {
 				return false
 			}
@@ -267,7 +267,7 @@ func podGangMapPredicate() predicate.Predicate {
 // two PodGangMaps. It compares the maps returned by pcsgPlacement. Because those maps key the indices
 // by both the entry epoch and the PodCliqueScalingGroup config name, moving a replica index from one
 // entry to another with the same total still counts as a change.
-func pcsgPlacementChanged(oldPGM, newPGM *grovecorev1alpha1.PodGangMap) bool {
+func pcsgPlacementChanged(oldPGM, newPGM *grovecorev1beta1.PodGangMap) bool {
 	return !maps.EqualFunc(pcsgPlacement(oldPGM), pcsgPlacement(newPGM), slices.Equal[[]int32])
 }
 
@@ -275,7 +275,7 @@ func pcsgPlacementChanged(oldPGM, newPGM *grovecorev1alpha1.PodGangMap) bool {
 // index slice is the entry epoch and the config name joined together, so the same config under two
 // different epochs yields two distinct keys. The indices are written in a stable sorted order by the
 // PodGangMap writer, so the slices are compared directly.
-func pcsgPlacement(pgm *grovecorev1alpha1.PodGangMap) map[string][]int32 {
+func pcsgPlacement(pgm *grovecorev1beta1.PodGangMap) map[string][]int32 {
 	placement := make(map[string][]int32)
 	for _, entry := range pgm.Spec.Entries {
 		for pcsgConfigName, indices := range entry.PCSGReplicaIndices {

@@ -15,7 +15,7 @@
 package validation
 
 import (
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
@@ -24,13 +24,13 @@ import (
 const (
 	// Name is the name of the validating webhook handler for ClusterTopologyBinding.
 	Name        = "clustertopology-validating-webhook"
-	webhookPath = "/webhooks/validate-clustertopology"
+	webhookPath = "/webhooks/v1beta1/validate-clustertopology"
 )
 
 // RegisterWithManager registers the webhook with the manager.
 func (h *Handler) RegisterWithManager(mgr manager.Manager) error {
 	webhook := admission.
-		WithCustomValidator(mgr.GetScheme(), &grovecorev1alpha1.ClusterTopologyBinding{}, h).
+		WithCustomValidator(mgr.GetScheme(), &grovecorev1beta1.ClusterTopologyBinding{}, h).
 		WithRecoverPanic(true)
 	mgr.GetWebhookServer().Register(webhookPath, webhook)
 	return nil

@@ -19,9 +19,10 @@ import (
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 
 	"github.com/samber/lo"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
@@ -32,7 +33,7 @@ import (
 type PodCliqueBuilder struct {
 	pcsName         string
 	pcsReplicaIndex int32
-	pclq            *grovecorev1alpha1.PodClique
+	pclq            *grovecorev1beta1.PodClique
 }
 
 // NewPodCliqueBuilder creates a new PodCliqueBuilder.
@@ -46,7 +47,7 @@ func NewPodCliqueBuilder(pcsName string, pcsUID types.UID, pclqTemplateName, nam
 
 // NewPCSGPodCliqueBuilder creates a PodClique that belongs to a PodCliqueScalingGroup.
 func NewPCSGPodCliqueBuilder(name, namespace, pcsName, pcsgName string, pcsReplicaIndex, pcsgReplicaIndex int) *PodCliqueBuilder {
-	pclq := &grovecorev1alpha1.PodClique{
+	pclq := &grovecorev1beta1.PodClique{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: namespace,
@@ -59,11 +60,12 @@ func NewPCSGPodCliqueBuilder(name, namespace, pcsName, pcsgName string, pcsRepli
 				apicommon.LabelPodCliqueScalingGroupReplicaIndex: strconv.Itoa(pcsgReplicaIndex),
 			},
 		},
-		Spec: grovecorev1alpha1.PodCliqueSpec{
-			Replicas:     1,
-			MinAvailable: ptr.To(int32(1)),
+		Spec: grovecorev1beta1.PodCliqueSpec{
+			Replicas:    1,
+			Init:        NewInitSpec(1),
+			Termination: NewAvailabilityTermination(1),
 		},
-		Status: grovecorev1alpha1.PodCliqueStatus{},
+		Status: grovecorev1beta1.PodCliqueStatus{},
 	}
 
 	return &PodCliqueBuilder{
@@ -87,16 +89,39 @@ func (b *PodCliqueBuilder) WithReplicas(replicas int32) *PodCliqueBuilder {
 	return b
 }
 
-// WithMinAvailable sets the MinAvailable for the PodClique.
+// WithMinAvailable sets init.minReplicas and availability.minReplicas to minAvailable, the v1beta1 form of a
+// v1alpha1 minAvailable.
 func (b *PodCliqueBuilder) WithMinAvailable(minAvailable int32) *PodCliqueBuilder {
-	b.pclq.Spec.MinAvailable = ptr.To(minAvailable)
+	b.pclq.Spec.Init = NewInitSpec(minAvailable)
+	b.pclq.Spec.Termination = NewAvailabilityTermination(minAvailable)
+	return b
+}
+
+// WithInitMinReplicas sets init.minReplicas for the PodClique.
+func (b *PodCliqueBuilder) WithInitMinReplicas(minReplicas int32) *PodCliqueBuilder {
+	b.pclq.Spec.Init = NewInitSpec(minReplicas)
+	return b
+}
+
+// WithAvailabilityMinReplicas sets availability.minReplicas for the PodClique.
+func (b *PodCliqueBuilder) WithAvailabilityMinReplicas(minReplicas int32) *PodCliqueBuilder {
+	b.pclq.Spec.Termination = NewAvailabilityTermination(minReplicas)
+	return b
+}
+
+// WithoutAvailability removes the availability requirement from the PodClique.
+func (b *PodCliqueBuilder) WithoutAvailability() *PodCliqueBuilder {
+	b.pclq.Spec.Termination = nil
 	return b
 }
 
 // WithStartsAfter sets the StartsAfter field for the PodClique.
 func (b *PodCliqueBuilder) WithStartsAfter(pclqTemplateNames []string) *PodCliqueBuilder {
-	pclqDependencies := lo.Map(pclqTemplateNames, func(pclqTemplateName string, _ int) string {
-		return apicommon.GeneratePodCliqueName(apicommon.ResourceNameReplica{Name: b.pcsName, Replica: int(b.pcsReplicaIndex)}, pclqTemplateName)
+	pclqDependencies := lo.Map(pclqTemplateNames, func(pclqTemplateName string, _ int) grovecorev1beta1.StartupDependency {
+		return grovecorev1beta1.StartupDependency{
+			Name:          apicommon.GeneratePodCliqueName(apicommon.ResourceNameReplica{Name: b.pcsName, Replica: int(b.pcsReplicaIndex)}, pclqTemplateName),
+			ConditionType: string(corev1.PodReady),
+		}
 	})
 	b.pclq.Spec.StartsAfter = pclqDependencies
 	return b
@@ -104,7 +129,7 @@ func (b *PodCliqueBuilder) WithStartsAfter(pclqTemplateNames []string) *PodCliqu
 
 // WithAutoScaleMaxReplicas sets the maximum replicas in ScaleConfig for the PodClique.
 func (b *PodCliqueBuilder) WithAutoScaleMaxReplicas(maximum int32) *PodCliqueBuilder {
-	b.pclq.Spec.ScaleConfig = &grovecorev1alpha1.AutoScalingConfig{
+	b.pclq.Spec.ScaleConfig = &grovecorev1beta1.AutoScalingConfig{
 		MaxReplicas: maximum,
 	}
 	return b
@@ -134,7 +159,7 @@ func (b *PodCliqueBuilder) WithOptions(opts ...PCLQOption) *PodCliqueBuilder {
 }
 
 // Build creates a PodClique object.
-func (b *PodCliqueBuilder) Build() *grovecorev1alpha1.PodClique {
+func (b *PodCliqueBuilder) Build() *grovecorev1beta1.PodClique {
 	_ = b.withDefaultPodSpec()
 	return b.pclq
 }
@@ -144,16 +169,16 @@ func (b *PodCliqueBuilder) withDefaultPodSpec() *PodCliqueBuilder {
 	return b
 }
 
-func createDefaultPodCliqueWithoutPodSpec(pcsName string, pcsUID types.UID, pclqTemplateName, namespace string, pcsReplicaIndex int32) *grovecorev1alpha1.PodClique {
+func createDefaultPodCliqueWithoutPodSpec(pcsName string, pcsUID types.UID, pclqTemplateName, namespace string, pcsReplicaIndex int32) *grovecorev1beta1.PodClique {
 	pclqName := apicommon.GeneratePodCliqueName(apicommon.ResourceNameReplica{Name: pcsName, Replica: int(pcsReplicaIndex)}, pclqTemplateName)
-	return &grovecorev1alpha1.PodClique{
+	return &grovecorev1beta1.PodClique{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      pclqName,
 			Namespace: namespace,
 			Labels:    getDefaultLabels(pcsName, pclqName, pcsReplicaIndex),
 			OwnerReferences: []metav1.OwnerReference{
 				{
-					APIVersion:         grovecorev1alpha1.SchemeGroupVersion.String(),
+					APIVersion:         grovecorev1beta1.SchemeGroupVersion.String(),
 					Kind:               constants.KindPodCliqueSet,
 					Name:               pcsName,
 					UID:                pcsUID,
@@ -162,9 +187,10 @@ func createDefaultPodCliqueWithoutPodSpec(pcsName string, pcsUID types.UID, pclq
 				},
 			},
 		},
-		Spec: grovecorev1alpha1.PodCliqueSpec{
-			Replicas:     1,
-			MinAvailable: ptr.To(int32(1)),
+		Spec: grovecorev1beta1.PodCliqueSpec{
+			Replicas:    1,
+			Init:        NewInitSpec(1),
+			Termination: NewAvailabilityTermination(1),
 		},
 	}
 }

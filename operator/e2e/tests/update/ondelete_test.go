@@ -22,7 +22,7 @@ import (
 	"testing"
 	"time"
 
-	grovev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/e2e/tests"
 	"k8s.io/apimachinery/pkg/types"
 )
@@ -136,7 +136,7 @@ func Test_OD2_ManualDeletionCreatesUpdatedPod(t *testing.T) {
 	tests.Logger.Info("5. Verify status fields accurately reflect the update state")
 	// Get PCLQ and verify UpdatedReplicas has increased
 	pclqName := fmt.Sprintf("%s-%d-%s", tc.Workload.Name, 0, "pc-a")
-	var pclq grovev1alpha1.PodClique
+	var pclq grovev1beta1.PodClique
 	if err = tc.Client.Get(tc.Ctx, types.NamespacedName{Namespace: tc.Namespace, Name: pclqName}, &pclq); err != nil {
 		t.Fatalf("Failed to get PodClique: %v", err)
 	}
@@ -473,7 +473,7 @@ func Test_OD7_MultipleReplicasPCS(t *testing.T) {
 	}
 	// Capture each replica's PodGangMap entries and the generation hash before the update.
 	oldHash := getPCSGenerationHash(t, tc)
-	entriesBefore := map[int][]grovev1alpha1.PodGangEntry{}
+	entriesBefore := map[int][]grovev1beta1.PodGangEntry{}
 	for _, pcsReplicaIndex := range []int{0, 1} {
 		entriesBefore[pcsReplicaIndex] = getPodGangMapEntries(t, tc, pcsReplicaIndex)
 	}
@@ -613,7 +613,7 @@ func Test_OD9_StrategyTransition(t *testing.T) {
 	verifyNoAutomaticDeletionAfterUpdate(tc, tracker, existingPodNames, 10, true)
 
 	tests.Logger.Info("4. Switch strategy from OnDelete to RollingRecreate")
-	if err = updatePCSUpdateStrategy(tc, grovev1alpha1.RollingRecreateStrategy); err != nil {
+	if err = updatePCSUpdateStrategy(tc, grovev1beta1.RollingRecreateStrategy); err != nil {
 		t.Fatalf("Failed to switch update strategy to RollingRecreate: %v", err)
 	}
 
@@ -662,7 +662,7 @@ func Test_OD9_StrategyTransition(t *testing.T) {
 	tests.Logger.Debugf("RollingRecreate automatically recreated %d pods", newPodsCreated)
 
 	tests.Logger.Info("6. Switch strategy back from RollingRecreate to OnDelete")
-	if err = updatePCSUpdateStrategy(tc, grovev1alpha1.OnDeleteStrategy); err != nil {
+	if err = updatePCSUpdateStrategy(tc, grovev1beta1.OnDeleteStrategy); err != nil {
 		t.Fatalf("Failed to switch update strategy back to OnDelete: %v", err)
 	}
 
@@ -718,14 +718,14 @@ func Test_OD10_ScaleOutAfterOnDeleteUpdateNoTail(t *testing.T) {
 	tests.Logger.Info("3. Assert the initial PodGangMap has an anchor and a scale-out entry, and no tail entry")
 	oldHash := getPCSGenerationHash(t, tc)
 	before := getPodGangMapEntries(t, tc, 0)
-	assertEntryRoles(t, before, grovev1alpha1.PodGangEntryRoleAnchor, grovev1alpha1.PodGangEntryRoleScaleOut)
+	assertEntryRoles(t, before, grovev1beta1.PodGangEntryRoleAnchor, grovev1beta1.PodGangEntryRoleScaleOut)
 
-	anchorEntry := requireSingleEntryByRole(t, before, grovev1alpha1.PodGangEntryRoleAnchor)
+	anchorEntry := requireSingleEntryByRole(t, before, grovev1beta1.PodGangEntryRoleAnchor)
 	assertStandalonePCLQPodCounts(t, anchorEntry, map[string]int32{"pc-a": 2})
 	assertPodGangEntryPCSGIndices(t, anchorEntry, "sg-x", []int32{0, 1})
 	assertPodGangEntryDependsOn(t, anchorEntry, nil)
 
-	scaleOutEntry := requireSingleEntryByRole(t, before, grovev1alpha1.PodGangEntryRoleScaleOut)
+	scaleOutEntry := requireSingleEntryByRole(t, before, grovev1beta1.PodGangEntryRoleScaleOut)
 	assertPodGangEntryPCSGIndices(t, scaleOutEntry, "sg-x", nil)
 	assertPodGangEntryDependsOn(t, scaleOutEntry, []string{anchorEntry.Epoch})
 
@@ -751,7 +751,7 @@ func Test_OD10_ScaleOutAfterOnDeleteUpdateNoTail(t *testing.T) {
 	tc.ScalePCSGAcrossAllReplicasAndWait(tc.Workload.Name, "sg-x", 1, 3, 14, 0)
 
 	afterScaleOut := getPodGangMapEntries(t, tc, 0)
-	scaleOutEntry = requireSingleEntryByRole(t, afterScaleOut, grovev1alpha1.PodGangEntryRoleScaleOut)
+	scaleOutEntry = requireSingleEntryByRole(t, afterScaleOut, grovev1beta1.PodGangEntryRoleScaleOut)
 	assertPodGangEntryPCSGIndices(t, scaleOutEntry, "sg-x", []int32{2})
 	assertPodGangEntryDependsOn(t, scaleOutEntry, []string{anchorEntry.Epoch})
 
@@ -790,20 +790,20 @@ func Test_OD11_ScaleOutAfterOnDeleteUpdateWithTail(t *testing.T) {
 	oldHash := getPCSGenerationHash(t, tc)
 	before := getPodGangMapEntries(t, tc, 0)
 	assertEntryRoles(t, before,
-		grovev1alpha1.PodGangEntryRoleAnchor,
-		grovev1alpha1.PodGangEntryRoleTail,
-		grovev1alpha1.PodGangEntryRoleScaleOut)
+		grovev1beta1.PodGangEntryRoleAnchor,
+		grovev1beta1.PodGangEntryRoleTail,
+		grovev1beta1.PodGangEntryRoleScaleOut)
 
-	anchorEntry := requireSingleEntryByRole(t, before, grovev1alpha1.PodGangEntryRoleAnchor)
+	anchorEntry := requireSingleEntryByRole(t, before, grovev1beta1.PodGangEntryRoleAnchor)
 	assertStandalonePCLQPodCounts(t, anchorEntry, map[string]int32{"pc-a": 2})
 	assertPodGangEntryPCSGIndices(t, anchorEntry, "sg-x", []int32{0})
 	assertPodGangEntryDependsOn(t, anchorEntry, nil)
 
-	tailEntry := requireSingleEntryByRole(t, before, grovev1alpha1.PodGangEntryRoleTail)
+	tailEntry := requireSingleEntryByRole(t, before, grovev1beta1.PodGangEntryRoleTail)
 	assertPodGangEntryPCSGIndices(t, tailEntry, "sg-x", []int32{1})
 	assertPodGangEntryDependsOn(t, tailEntry, []string{anchorEntry.Epoch})
 
-	scaleOutEntry := requireSingleEntryByRole(t, before, grovev1alpha1.PodGangEntryRoleScaleOut)
+	scaleOutEntry := requireSingleEntryByRole(t, before, grovev1beta1.PodGangEntryRoleScaleOut)
 	assertPodGangEntryPCSGIndices(t, scaleOutEntry, "sg-x", nil)
 	assertPodGangEntryDependsOn(t, scaleOutEntry, []string{anchorEntry.Epoch})
 
@@ -827,7 +827,7 @@ func Test_OD11_ScaleOutAfterOnDeleteUpdateWithTail(t *testing.T) {
 	tc.ScalePCSGAcrossAllReplicasAndWait(tc.Workload.Name, "sg-x", 1, 3, 14, 0)
 
 	afterScaleOut := getPodGangMapEntries(t, tc, 0)
-	scaleOutEntry = requireSingleEntryByRole(t, afterScaleOut, grovev1alpha1.PodGangEntryRoleScaleOut)
+	scaleOutEntry = requireSingleEntryByRole(t, afterScaleOut, grovev1beta1.PodGangEntryRoleScaleOut)
 	assertPodGangEntryPCSGIndices(t, scaleOutEntry, "sg-x", []int32{2})
 	assertPodGangEntryDependsOn(t, scaleOutEntry, []string{anchorEntry.Epoch})
 

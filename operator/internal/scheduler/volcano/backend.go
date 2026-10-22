@@ -20,7 +20,7 @@ import (
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
@@ -150,14 +150,14 @@ func (b *schedulerBackend) PodGangMembershipAnnotations(newPodGangName string) m
 	}
 }
 
-func (b *schedulerBackend) ValidatePodCliqueSet(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, _ ...scheduler.ValidateOption) error {
+func (b *schedulerBackend) ValidatePodCliqueSet(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet, _ ...scheduler.ValidateOption) error {
 	if err := validateTopologyConstraints(pcs); err != nil {
 		return err
 	}
 	return validateQueueAnnotations(ctx, b.client, pcs)
 }
 
-func validateTopologyConstraints(pcs *grovecorev1alpha1.PodCliqueSet) error {
+func validateTopologyConstraints(pcs *grovecorev1beta1.PodCliqueSet) error {
 	if pcs.Spec.Template.TopologyConstraint != nil {
 		return fmt.Errorf("volcano scheduler backend does not support topologyConstraint on PodCliqueSet")
 	}

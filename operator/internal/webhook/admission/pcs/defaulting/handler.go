@@ -18,7 +18,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	"github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
 	"github.com/go-logr/logr"
@@ -42,7 +42,7 @@ func NewHandler(mgr manager.Manager) *Handler {
 // Default applies default values to a PodCliqueSet object.
 func (h *Handler) Default(ctx context.Context, obj runtime.Object) error {
 	h.logger.Info("Defaulting webhook invoked for PodCliqueSet")
-	pcs, ok := obj.(*v1alpha1.PodCliqueSet)
+	pcs, ok := obj.(*v1beta1.PodCliqueSet)
 	if !ok {
 		return fmt.Errorf("expected an PodCliqueSet object but got %T", obj)
 	}
@@ -51,7 +51,7 @@ func (h *Handler) Default(ctx context.Context, obj runtime.Object) error {
 		return err
 	}
 	h.logger.Info("Applying defaults", "PodCliqueSet", k8sutils.CreateObjectKeyForCreateWebhooks(pcs, req))
-	defaultPodCliqueSet(pcs)
+	defaultPodCliqueSet(pcs, k8sutils.IsV1Alpha1Request(req))
 
 	return nil
 }

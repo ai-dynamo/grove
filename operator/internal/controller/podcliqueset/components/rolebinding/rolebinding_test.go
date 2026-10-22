@@ -19,7 +19,7 @@ import (
 	"testing"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 
 	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
@@ -37,7 +37,7 @@ import (
 // TestNew tests creating a new RoleBinding operator.
 func TestNew(t *testing.T) {
 	scheme := runtime.NewScheme()
-	_ = grovecorev1alpha1.AddToScheme(scheme)
+	_ = grovecorev1beta1.AddToScheme(scheme)
 	_ = rbacv1.AddToScheme(scheme)
 
 	cl := fake.NewClientBuilder().WithScheme(scheme).Build()
@@ -50,7 +50,7 @@ func TestNew(t *testing.T) {
 // TestGetExistingResourceNames tests getting existing rolebinding names.
 func TestGetExistingResourceNames(t *testing.T) {
 	scheme := runtime.NewScheme()
-	_ = grovecorev1alpha1.AddToScheme(scheme)
+	_ = grovecorev1beta1.AddToScheme(scheme)
 	_ = rbacv1.AddToScheme(scheme)
 
 	// Test with no existing rolebindings
@@ -149,7 +149,7 @@ func TestGetExistingResourceNames(t *testing.T) {
 // TestSync tests synchronizing rolebindings.
 func TestSync(t *testing.T) {
 	scheme := runtime.NewScheme()
-	_ = grovecorev1alpha1.AddToScheme(scheme)
+	_ = grovecorev1beta1.AddToScheme(scheme)
 	_ = rbacv1.AddToScheme(scheme)
 
 	// Test creating new rolebinding
@@ -157,7 +157,7 @@ func TestSync(t *testing.T) {
 		cl := fake.NewClientBuilder().WithScheme(scheme).Build()
 		operator := New(cl, scheme)
 
-		pcs := &grovecorev1alpha1.PodCliqueSet{
+		pcs := &grovecorev1beta1.PodCliqueSet{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-pcs",
 				Namespace: "default",
@@ -213,7 +213,7 @@ func TestSync(t *testing.T) {
 			Build()
 		operator := New(cl, scheme)
 
-		pcs := &grovecorev1alpha1.PodCliqueSet{
+		pcs := &grovecorev1beta1.PodCliqueSet{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-pcs",
 				Namespace: "default",
@@ -231,7 +231,7 @@ func TestSync(t *testing.T) {
 // TestDelete tests deleting rolebindings.
 func TestDelete(t *testing.T) {
 	scheme := runtime.NewScheme()
-	_ = grovecorev1alpha1.AddToScheme(scheme)
+	_ = grovecorev1beta1.AddToScheme(scheme)
 	_ = rbacv1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
 

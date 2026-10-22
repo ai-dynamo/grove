@@ -1,0 +1,17 @@
+apiVersion: grove.io/v1alpha1
+kind: PodCliqueSet
+metadata:
+  name: upgrade-minreplicas
+spec:
+  replicas: 2
+  template:
+    cliques:
+      - name: worker
+        spec:
+          roleName: worker
+          replicas: 2
+          minAvailable: 1
+          podSpec:
+            containers:
+              - name: worker
+                image: registry.k8s.io/pause:3.10

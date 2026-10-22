@@ -20,7 +20,7 @@ import (
 	"strings"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
@@ -35,7 +35,7 @@ import (
 // updateCoherentReplicaProgress records the observability fields for the replica currently under a
 // coherent update. InFlightEpochs mirrors the latest current-hash epoch on the replica's PodGangMap, and
 // Message summarizes the in-scope components that have not yet reached the current revision.
-func (r _resource) updateCoherentReplicaProgress(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, replicaInfo pcsReplicaInfo) error {
+func (r _resource) updateCoherentReplicaProgress(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, replicaInfo pcsReplicaInfo) error {
 	inFlightEpochs, err := r.inFlightEpochsForReplica(ctx, pcs, replicaInfo.replicaIndex)
 	if err != nil {
 		return err
@@ -50,7 +50,7 @@ func (r _resource) updateCoherentReplicaProgress(ctx context.Context, logger log
 // inFlightEpochsForReplica returns the latest current-hash epoch on the replica's PodGangMap, the batch
 // the coherent engine is currently rolling. It is a list to leave room for a future iteration that rolls
 // more than one batch at a time. It is empty when no PodGangMap or no current-hash entry exists yet.
-func (r _resource) inFlightEpochsForReplica(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, pcsReplicaIndex int) ([]string, error) {
+func (r _resource) inFlightEpochsForReplica(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet, pcsReplicaIndex int) ([]string, error) {
 	pgm, err := componentutils.GetPodGangMap(ctx, r.client, client.ObjectKeyFromObject(pcs), pcsReplicaIndex)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
@@ -73,7 +73,7 @@ func (r _resource) inFlightEpochsForReplica(ctx context.Context, pcs *grovecorev
 // coherentProgressMessage summarizes how many in-scope components of the replica have converged to the
 // current revision, or returns nil once all have. It reports counts rather than names so the message
 // stays bounded regardless of how many components an update touches.
-func coherentProgressMessage(pcs *grovecorev1alpha1.PodCliqueSet, replicaInfo pcsReplicaInfo) *string {
+func coherentProgressMessage(pcs *grovecorev1beta1.PodCliqueSet, replicaInfo pcsReplicaInfo) *string {
 	inScopeStandalone, updatedStandalone, inScopePCSG, updatedPCSG := inScopeUpdateCounts(pcs, replicaInfo)
 	if updatedStandalone == inScopeStandalone && updatedPCSG == inScopePCSG {
 		return nil
@@ -91,7 +91,7 @@ func coherentProgressMessage(pcs *grovecorev1alpha1.PodCliqueSet, replicaInfo pc
 // inScopeUpdateCounts returns, for the update's in-scope components, how many are in scope and how many
 // have converged to the current generation hash for the given replica, split by standalone PodCliques
 // and PodCliqueScalingGroups.
-func inScopeUpdateCounts(pcs *grovecorev1alpha1.PodCliqueSet, replicaInfo pcsReplicaInfo) (inScopeStandalone, updatedStandalone, inScopePCSG, updatedPCSG int) {
+func inScopeUpdateCounts(pcs *grovecorev1beta1.PodCliqueSet, replicaInfo pcsReplicaInfo) (inScopeStandalone, updatedStandalone, inScopePCSG, updatedPCSG int) {
 	inScopeStandaloneNames := sets.New(pcs.Status.UpdateProgress.InScopeStandalonePodCliques...)
 	inScopePCSGNames := sets.New(pcs.Status.UpdateProgress.InScopePodCliqueScalingGroups...)
 	inScopeStandalone = inScopeStandaloneNames.Len()

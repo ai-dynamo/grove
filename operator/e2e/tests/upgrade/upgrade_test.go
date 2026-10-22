@@ -29,19 +29,25 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"slices"
 	"testing"
 
+	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	apiconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
-	grovev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/e2e/grove/podgangmap"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/pods"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
+	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 	"github.com/google/go-github/v86/github"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/util/retry"
+	"k8s.io/utils/ptr"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 const (
@@ -127,6 +133,104 @@ func Test_VUPG2_RecoverPodGangMapAfterScaleBelowMinAvailable(t *testing.T) {
 	})
 }
 
+// gangShapeUpgrade holds the state shared between the pre-upgrade and post-upgrade steps of the gang-shape test.
+type gangShapeUpgrade struct {
+	workload          *testctx.WorkloadConfig
+	podsBeforeUpgrade *corev1.PodList
+}
+
+// Test_VUPG3_UpgradeDoesNotRecreateForGangShape verifies that upgrading to an operator that tracks the gang shape
+// recreates nothing: the existing PodCliques adopt the gang-shape hash label instead. A later init.minReplicas
+// change then recreates the replicas as usual.
+func Test_VUPG3_UpgradeDoesNotRecreateForGangShape(t *testing.T) {
+	fromVersion := os.Getenv("GROVE_UPGRADE_FROM_VERSION")
+	if fromVersion == "" {
+		fromVersion = latestGitHubRelease(t)
+	}
+	s := &gangShapeUpgrade{workload: &testctx.WorkloadConfig{
+		Name:         "upgrade-minreplicas",
+		YAMLPath:     "../../yaml/upgrade-minreplicas.yaml",
+		Namespace:    "default",
+		ExpectedPods: 4,
+	}}
+	runUpgradeTest(t, upgradeTest{
+		fromVersion:     fromVersion,
+		nodeWorkerCount: 1,
+		prepareOpts:     []testctx.TestOption{testctx.WithWorkload(s.workload)},
+		preUpgrade:      s.deployWorkload,
+		postUpgrade:     s.verifyNoRecreateThenRecreate,
+	})
+}
+
+func (s *gangShapeUpgrade) deployWorkload(t *testing.T, tc *testctx.TestContext) {
+	_, err := tc.DeployAndVerifyWorkload()
+	require.NoError(t, err, "applying workload")
+	s.podsBeforeUpgrade, err = tc.ListPods()
+	require.NoError(t, err, "listing workload pods")
+}
+
+func (s *gangShapeUpgrade) verifyNoRecreateThenRecreate(t *testing.T, tc *testctx.TestContext) {
+	pcsNsName := types.NamespacedName{Namespace: s.workload.Namespace, Name: s.workload.Name}
+
+	testctx.Logger.Info("1. The existing PodCliques adopt the gang-shape hash label")
+	var pclqsBefore []grovev1beta1.PodClique
+	err := wait.PollUntilContextTimeout(t.Context(), defaultPollInterval, defaultPollTimeout, true, func(ctx context.Context) (bool, error) {
+		pcs := &grovev1beta1.PodCliqueSet{}
+		if err := tc.Client.Get(ctx, pcsNsName, pcs); err != nil {
+			return false, client.IgnoreNotFound(err)
+		}
+		pclqs := &grovev1beta1.PodCliqueList{}
+		if err := tc.Client.List(ctx, pclqs, client.InNamespace(pcsNsName.Namespace), client.MatchingLabels{apicommon.LabelPartOfKey: pcsNsName.Name}); err != nil {
+			return false, err
+		}
+		hash := componentutils.ComputeGangShapeHash(pcs)
+		pclqsBefore = pclqs.Items
+		return len(pclqs.Items) == 2 && !slices.ContainsFunc(pclqs.Items, func(pclq grovev1beta1.PodClique) bool {
+			return pclq.Labels[apicommon.LabelGangShapeHash] != hash
+		}), nil
+	})
+	require.NoError(t, err, "PodCliques did not adopt the gang-shape hash label")
+
+	testctx.Logger.Info("2. Nothing is recreated and no recreate is reported")
+	pcs := &grovev1beta1.PodCliqueSet{}
+	require.NoError(t, tc.Client.Get(t.Context(), pcsNsName, pcs))
+	require.Nil(t, pcs.Status.GangShapeRecreate)
+	require.Nil(t, meta.FindStatusCondition(pcs.Status.Conditions, apiconstants.ConditionTypeGangShapeRecreateInProgress))
+	verifyPodUIDsUnchanged(t, tc, s.podsBeforeUpgrade)
+
+	testctx.Logger.Info("3. Raising init.minReplicas recreates every replica")
+	require.NoError(t, retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		pcs := &grovev1beta1.PodCliqueSet{}
+		if err := tc.Client.Get(t.Context(), pcsNsName, pcs); err != nil {
+			return err
+		}
+		pcs.Spec.Template.Cliques[0].Spec.Init = &grovev1beta1.InitSpec{MinReplicas: ptr.To[int32](2)}
+		return tc.Client.Update(t.Context(), pcs)
+	}), "raising init.minReplicas")
+	err = wait.PollUntilContextTimeout(t.Context(), defaultPollInterval, defaultPollTimeout, true, func(ctx context.Context) (bool, error) {
+		pcs := &grovev1beta1.PodCliqueSet{}
+		if err := tc.Client.Get(ctx, pcsNsName, pcs); err != nil {
+			return false, client.IgnoreNotFound(err)
+		}
+		cond := meta.FindStatusCondition(pcs.Status.Conditions, apiconstants.ConditionTypeGangShapeRecreateInProgress)
+		if pcs.Status.GangShapeRecreate != nil || cond == nil || cond.Reason != apiconstants.ConditionReasonGangShapeCurrent {
+			return false, nil
+		}
+		for _, before := range pclqsBefore {
+			pclq := &grovev1beta1.PodClique{}
+			if err := tc.Client.Get(ctx, types.NamespacedName{Namespace: before.Namespace, Name: before.Name}, pclq); err != nil {
+				return false, client.IgnoreNotFound(err)
+			}
+			if pclq.UID == before.UID {
+				return false, nil
+			}
+		}
+		return true, nil
+	})
+	require.NoError(t, err, "replicas were not recreated after raising init.minReplicas")
+	require.NoError(t, tc.WaitForRunningPods(4), "pods not running after the recreate")
+}
+
 // deployWorkloadOnFromVersion deploys the configured workload on the fromVersion operator.
 func deployWorkloadOnFromVersion(t *testing.T, tc *testctx.TestContext) {
 	_, err := tc.DeployAndVerifyWorkload()
@@ -169,7 +273,7 @@ func waitForMigrationComplete(t *testing.T, tc *testctx.TestContext, pcsNsName t
 	t.Helper()
 	err := wait.PollUntilContextTimeout(t.Context(), defaultPollInterval, defaultPollTimeout, true,
 		func(ctx context.Context) (bool, error) {
-			pcs := &grovev1alpha1.PodCliqueSet{}
+			pcs := &grovev1beta1.PodCliqueSet{}
 			if err := tc.Client.Get(ctx, pcsNsName, pcs); err != nil {
 				return false, err
 			}

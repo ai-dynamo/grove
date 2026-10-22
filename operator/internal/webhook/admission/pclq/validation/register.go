@@ -24,7 +24,7 @@ const (
 	// Name is the validating webhook handler name for PodClique.
 	Name = "podclique-validating-webhook"
 	// webhookPath is the path the PodClique validating webhook is registered at.
-	webhookPath = "/webhooks/validate-podclique"
+	webhookPath = "/webhooks/v1beta1/validate-podclique"
 	// scaleSubResource is the subresource through which kubectl scale and the HorizontalPodAutoscaler
 	// write a PodClique's replica count.
 	scaleSubResource = "scale"

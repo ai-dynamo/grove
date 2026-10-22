@@ -16,7 +16,7 @@ package utils
 
 import (
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	"github.com/samber/lo"
@@ -43,7 +43,7 @@ func IsManagedByGrove(labels map[string]string) bool {
 
 // IsManagedPodClique checks if the PodClique is managed by Grove.
 func IsManagedPodClique(obj client.Object, expectedOwnerKinds ...string) bool {
-	podClique, ok := obj.(*grovecorev1alpha1.PodClique)
+	podClique, ok := obj.(*grovecorev1beta1.PodClique)
 	if !ok {
 		return false
 	}

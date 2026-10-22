@@ -17,7 +17,7 @@ package podgangmap
 import (
 	"testing"
 
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/stretchr/testify/assert"
@@ -29,12 +29,12 @@ func TestComputeMVUTemplate(t *testing.T) {
 		WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("fe").WithReplicas(5).WithMinAvailable(2).Build()).
 		WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("other").WithReplicas(4).WithMinAvailable(1).Build()).
 		WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("pf-leader").WithReplicas(1).WithMinAvailable(1).Build()).
-		WithPodCliqueScalingGroupConfig(grovecorev1alpha1.PodCliqueScalingGroupConfig{
-			Name:         "pf",
-			CliqueNames:  []string{"pf-leader"},
-			MinAvailable: ptr.To[int32](3),
+		WithPodCliqueScalingGroupConfig(grovecorev1beta1.PodCliqueScalingGroupConfig{
+			Name:        "pf",
+			CliqueNames: []string{"pf-leader"},
+			Init:        &grovecorev1beta1.InitSpec{MinReplicas: ptr.To[int32](3)}, Termination: &grovecorev1beta1.TerminationSpec{Resource: &grovecorev1beta1.ResourceTerminationSpec{Availability: &grovecorev1beta1.AvailabilityPolicy{MinReplicas: ptr.To[int32](3)}}},
 		}).
-		WithUpdateProgress(&grovecorev1alpha1.PodCliqueSetUpdateProgress{
+		WithUpdateProgress(&grovecorev1beta1.PodCliqueSetUpdateProgress{
 			InScopeStandalonePodCliques:   []string{"fe"},
 			InScopePodCliqueScalingGroups: []string{"pf"},
 		}).

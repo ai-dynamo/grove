@@ -20,7 +20,7 @@ import (
 	"maps"
 	"slices"
 
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
@@ -33,13 +33,13 @@ import (
 )
 
 const (
-	errCodeComputingPCSReplicaDeletionWork grovecorev1alpha1.ErrorCode = "ERR_COMPUTE_PCS_REPLICA_DELETION_WORK"
-	errCodeDeletePCSReplica                grovecorev1alpha1.ErrorCode = "ERR_DELETE_PCS_REPLICA"
-	errCodeListPCLQs                       grovecorev1alpha1.ErrorCode = "ERR_LIST_PCLQs"
-	errCodeListPCSGs                       grovecorev1alpha1.ErrorCode = "ERR_LIST_PCGS"
-	errCodeUpdatePCSStatus                 grovecorev1alpha1.ErrorCode = "ERR_UPDATE_PCS_STATUS"
-	errCodeGetPodGangMap                   grovecorev1alpha1.ErrorCode = "ERR_GET_PODGANGMAP"
-	errCodeInvalidEpoch                    grovecorev1alpha1.ErrorCode = "ERR_INVALID_EPOCH"
+	errCodeComputingPCSReplicaDeletionWork grovecorev1beta1.ErrorCode = "ERR_COMPUTE_PCS_REPLICA_DELETION_WORK"
+	errCodeDeletePCSReplica                grovecorev1beta1.ErrorCode = "ERR_DELETE_PCS_REPLICA"
+	errCodeListPCLQs                       grovecorev1beta1.ErrorCode = "ERR_LIST_PCLQs"
+	errCodeListPCSGs                       grovecorev1beta1.ErrorCode = "ERR_LIST_PCGS"
+	errCodeUpdatePCSStatus                 grovecorev1beta1.ErrorCode = "ERR_UPDATE_PCS_STATUS"
+	errCodeGetPodGangMap                   grovecorev1beta1.ErrorCode = "ERR_GET_PODGANGMAP"
+	errCodeInvalidEpoch                    grovecorev1beta1.ErrorCode = "ERR_INVALID_EPOCH"
 )
 
 type _resource struct {
@@ -48,7 +48,7 @@ type _resource struct {
 }
 
 // New creates a new instance of the PodCliqueSetReplica operator.
-func New(client client.Client, eventRecorder record.EventRecorder) component.Operator[grovecorev1alpha1.PodCliqueSet] {
+func New(client client.Client, eventRecorder record.EventRecorder) component.Operator[grovecorev1beta1.PodCliqueSet] {
 	return &_resource{
 		client:        client,
 		eventRecorder: eventRecorder,
@@ -61,7 +61,7 @@ func (r _resource) GetExistingResourceNames(_ context.Context, _ logr.Logger, _ 
 }
 
 // Sync orchestrates replica deletion and rolling updates for the PodCliqueSet.
-func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) error {
+func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet) error {
 	pcsObjectKey := client.ObjectKeyFromObject(pcs)
 
 	delWork, err := r.getPCSReplicaDeletionWork(ctx, logger, pcs)
@@ -80,6 +80,32 @@ func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev
 				fmt.Sprintf("Error deleting PodCliques for PodCliqueSet: %v", pcsObjectKey),
 			)
 		}
+	}
+
+	// A changed init.minReplicas recreates the stale replicas one at a time, under every update strategy. It
+	// takes precedence over a rolling update, which starts no new replica while any replica is stale or still
+	// recovering from its recreate.
+	shapeWork, err := r.getGangShapeWork(ctx, logger, pcs, delWork.pcsIndicesToTerminate)
+	if err != nil {
+		return err
+	}
+	if err = r.patchGangShapeRecreateStatus(ctx, logger, pcs, shapeWork); err != nil {
+		return err
+	}
+	if shapeWork.recreateTask != nil {
+		if runResult := utils.RunConcurrently(ctx, logger, []utils.Task{*shapeWork.recreateTask}); runResult.HasErrors() {
+			return groveerr.WrapError(runResult.GetAggregatedError(),
+				errCodeDeletePCSReplica,
+				component.OperationSync,
+				fmt.Sprintf("Error recreating replica %d of PodCliqueSet %v with a stale gang shape", *shapeWork.currentlyRecreating, pcsObjectKey),
+			)
+		}
+	}
+	if shapeWork.inProgress() {
+		return groveerr.New(groveerr.ErrCodeContinueReconcileAndRequeue,
+			component.OperationSync,
+			fmt.Sprintf("Requeuing to recreate PodCliqueSet replicas %v whose gang shape is stale", shapeWork.staleReplicaIndices),
+		)
 	}
 
 	// Orchestrate the rolling update (RollingRecreate or Coherent) while one is in progress.
