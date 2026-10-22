@@ -24,6 +24,8 @@ import (
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	groveclientscheme "github.com/ai-dynamo/grove/operator/internal/client"
+	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
+	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
@@ -226,6 +228,31 @@ func TestSyncRebuildsAnchorWhenPodGangMapHasNoEntries(t *testing.T) {
 	anchor := testutils.EntryByRole(pgm.Spec.Entries, grovecorev1beta1.PodGangEntryRoleAnchor)
 	assert.Equal(t, "1000", anchor.Epoch)
 	assert.Equal(t, int32(1), anchor.PodCliques["clq-a"])
+}
+
+func TestSyncDoesNotRecreatePodGangMapDeletedAfterSnapshot(t *testing.T) {
+	pcs := testutils.NewPodCliqueSetBuilder("pcs", "default", "uid").
+		WithReplicas(1).
+		WithStandaloneCliqueReplicas("clq-a", 1).
+		WithPodCliqueSetGenerationHash(ptr.To("hash2")).
+		Build()
+
+	// The List behind the snapshot still returns the PodGangMap, while the Get before the write finds it gone.
+	// This is a replica recreate deleting the PodGangMap earlier in the same reconcile, seen through a stale cache.
+	stalePGM := testutils.NewPodGangMapBuilder("pcs", "default", types.UID("uid"), 0).
+		WithEntries(testutils.NewPodGangEntryBuilder("hash1", "100").
+			WithRole(grovecorev1beta1.PodGangEntryRoleAnchor).
+			WithPodCliques(map[string]int32{"clq-a": 1}).Build()).
+		Build()
+	cl := testutils.NewTestClientBuilder().
+		WithObjects(pcs, stalePGM).
+		RecordErrorForObjects(testutils.ClientMethodGet, apierrors.NewNotFound(grovecorev1beta1.Resource("podgangmaps"), "pcs-0"),
+			client.ObjectKey{Namespace: "default", Name: "pcs-0"}).
+		Build()
+	operator := New(cl, groveclientscheme.Scheme, clocktesting.NewFakeClock(time.Unix(0, 1000)))
+
+	err := operator.Sync(context.Background(), logr.Discard(), pcs)
+	testutils.AssertGroveError(t, &groveerr.GroveError{Code: groveerr.ErrCodeRequeueAfter, Operation: component.OperationSync}, err)
 }
 
 func TestSyncDeletesOrphanedPodGangMaps(t *testing.T) {
