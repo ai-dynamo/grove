@@ -27,7 +27,6 @@ spec:
           replicas: 1
           minAvailable: 1
           podSpec:
-            schedulerName: kai-scheduler
             terminationGracePeriodSeconds: 0
             nodeSelector:
               node_role.e2e.grove.nvidia.com: agent
