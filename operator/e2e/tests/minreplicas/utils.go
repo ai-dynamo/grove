@@ -402,7 +402,8 @@ func podRevision(pod *corev1.Pod) string {
 }
 
 // waitForRollingUpdateComplete waits until the update of the PodCliqueSet pcsName has ended with every replica
-// updated, and every live pod carries revision.
+// updated and every live pod ready, and every pod of workerClique, the clique whose pod template the tests
+// change, carries revision. Pods of the other cliques keep their own pod template.
 func waitForRollingUpdateComplete(t *testing.T, tc *testctx.TestContext, pcsName, revision string) {
 	t.Helper()
 	waitForPCS(t, tc, pcsName, "the rolling update to finish", func(pcs *grovev1beta1.PodCliqueSet) bool {
@@ -412,7 +413,10 @@ func waitForRollingUpdateComplete(t *testing.T, tc *testctx.TestContext, pcsName
 		}
 		pods, err := listLivePods(tc.Ctx, tc, pcsName)
 		return err == nil && len(pods) == expectedPods(pcs) &&
-			!slices.ContainsFunc(pods, func(pod corev1.Pod) bool { return podRevision(&pod) != revision || !isPodReady(&pod) })
+			!slices.ContainsFunc(pods, func(pod corev1.Pod) bool {
+				inClique := strings.HasSuffix(pod.Labels[common.LabelPodClique], "-"+workerClique)
+				return !isPodReady(&pod) || (inClique && podRevision(&pod) != revision)
+			})
 	})
 }
 
