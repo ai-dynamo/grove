@@ -36,6 +36,7 @@ type predicateTestCase struct {
 	managedNew              bool
 	generationChanged       bool
 	deletionStarted         bool
+	labelsChanged           bool
 	shouldAllowCreateEvent  bool
 	shouldAllowDeleteEvent  bool
 	shouldAllowGenericEvent bool
@@ -95,6 +96,16 @@ func TestPodGangChangePredicate(t *testing.T) {
 			shouldAllowUpdateEvent:  true,
 		},
 		{
+			name:                    "managed PodGang update with label-only change (generation unchanged)",
+			managedOld:              true,
+			managedNew:              true,
+			labelsChanged:           true,
+			shouldAllowCreateEvent:  true,
+			shouldAllowDeleteEvent:  true,
+			shouldAllowGenericEvent: false,
+			shouldAllowUpdateEvent:  true,
+		},
+		{
 			name:                    "update with old managed and new unmanaged",
 			managedOld:              true,
 			managedNew:              false,
@@ -148,6 +159,13 @@ func TestPodGangChangePredicate(t *testing.T) {
 					WithDeletionTimestamp().
 					Build()
 			}
+			if tc.labelsChanged {
+				newPG.SetLabels(map[string]string{"example.com/mirrored-from-pcs": "changed"})
+				for k, v := range oldPG.GetLabels() {
+					newPG.Labels[k] = v
+				}
+			}
+
 			assert.Equal(t, tc.shouldAllowCreateEvent, pred.Create(event.CreateEvent{Object: newPG}), "Create")
 			assert.Equal(t, tc.shouldAllowDeleteEvent, pred.Delete(event.DeleteEvent{Object: newPG}), "Delete")
 			assert.Equal(t, tc.shouldAllowGenericEvent, pred.Generic(event.GenericEvent{Object: newPG}), "Generic")
