@@ -63,6 +63,14 @@ func TestHasConditionsChanged(t *testing.T) {
 			expectedResult: true,
 		},
 		{
+			description: "should return true when only the observed generation changes",
+			existingConditions: []metav1.Condition{
+				{Type: "Cond1", Status: metav1.ConditionFalse, ObservedGeneration: 1},
+			},
+			newCondition:   metav1.Condition{Type: "Cond1", Status: metav1.ConditionFalse, ObservedGeneration: 2},
+			expectedResult: true,
+		},
+		{
 			description: "should return false when existing and new condition match",
 			existingConditions: []metav1.Condition{
 				{Type: "Cond1", Status: metav1.ConditionFalse, Reason: "Cond1 reason", Message: "Cond1 msg"},
