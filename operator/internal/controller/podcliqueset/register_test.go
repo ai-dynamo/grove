@@ -137,6 +137,24 @@ func TestPodCliqueSetPredicateUpdate(t *testing.T) {
 			}),
 			want: false,
 		},
+		{
+			name: "label change enqueues, so it is mirrored onto the PodGangs",
+			old:  podCliqueSetWithLabels(map[string]string{"kueue.x-k8s.io/priority-class": "low"}),
+			new:  podCliqueSetWithLabels(map[string]string{"kueue.x-k8s.io/priority-class": "high"}),
+			want: true,
+		},
+		{
+			name: "label added enqueues",
+			old:  podCliqueSetWithLabels(nil),
+			new:  podCliqueSetWithLabels(map[string]string{"kueue.x-k8s.io/priority-class": "high"}),
+			want: true,
+		},
+		{
+			name: "same labels do not enqueue",
+			old:  podCliqueSetWithLabels(map[string]string{"team": "a"}),
+			new:  podCliqueSetWithLabels(map[string]string{"team": "a"}),
+			want: false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -152,6 +170,12 @@ func podCliqueSetWithGenerationAndAnnotations(generation int64, annotations map[
 			Generation:  generation,
 			Annotations: annotations,
 		},
+	}
+}
+
+func podCliqueSetWithLabels(labels map[string]string) *grovecorev1alpha1.PodCliqueSet {
+	return &grovecorev1alpha1.PodCliqueSet{
+		ObjectMeta: metav1.ObjectMeta{Generation: 1, Labels: labels},
 	}
 }
 

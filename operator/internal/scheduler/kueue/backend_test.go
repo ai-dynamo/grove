@@ -1591,3 +1591,225 @@ func TestBackend_IsPodFinalized(t *testing.T) {
 		})
 	}
 }
+
+// newPriorityTestBackend returns a backend over a fake client holding the newTestPCSAndPodGang fixture and the
+// given WorkloadPriorityClasses, with podGang labeled for priorityClass ("" leaves it unlabeled).
+func newPriorityTestBackend(t *testing.T, priorityClass string, classes map[string]int32) (*schedulerBackend, client.Client, *groveschedulerv1alpha1.PodGang) {
+	t.Helper()
+	pcs, podGang := newTestPCSAndPodGang()
+	if priorityClass != "" {
+		pcs.Labels[priorityClassLabel] = priorityClass
+		podGang.Labels[priorityClassLabel] = priorityClass
+	}
+	cl := testutils.NewTestClientBuilder().WithObjects(pcs, newStandalonePodClique("demo-0-worker", "demo")).Build()
+	b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKueue})
+	// Init registers the Kueue APIs in the scheme, so it must run before any Kueue object is created.
+	require.NoError(t, b.Init(nil))
+	for name, value := range classes {
+		require.NoError(t, cl.Create(context.Background(), &kueuev1beta2.WorkloadPriorityClass{
+			ObjectMeta: metav1.ObjectMeta{Name: name}, Value: value,
+		}))
+	}
+	return b.(*schedulerBackend), cl, podGang
+}
+
+func TestBackend_SyncPodGang_WorkloadPriorityClass(t *testing.T) {
+	testCases := []struct {
+		description   string
+		priorityClass string
+		wantRef       *kueuev1beta2.PriorityClassRef
+		wantPriority  *int32
+		wantErrMsg    string
+	}{
+		{
+			description:   "the label resolves the WorkloadPriorityClass into priorityClassRef and priority",
+			priorityClass: "high",
+			wantRef:       kueuev1beta2.NewWorkloadPriorityClassRef("high"),
+			wantPriority:  ptr.To[int32](1000),
+		},
+		{
+			description: "without the label the Workload keeps Kueue's default priority",
+		},
+		{
+			description:   "a missing WorkloadPriorityClass fails the sync instead of creating the Workload at another priority",
+			priorityClass: "does-not-exist",
+			wantErrMsg:    `failed to get WorkloadPriorityClass "does-not-exist"`,
+		},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.description, func(t *testing.T) {
+			b, cl, podGang := newPriorityTestBackend(t, tc.priorityClass, map[string]int32{"high": 1000})
+
+			err := b.SyncPodGang(context.Background(), podGang)
+
+			got := &kueuev1beta2.Workload{}
+			getErr := cl.Get(context.Background(), client.ObjectKey{Namespace: "default", Name: "demo-0"}, got)
+			if tc.wantErrMsg != "" {
+				require.ErrorContains(t, err, tc.wantErrMsg)
+				assert.True(t, apierrors.IsNotFound(getErr), "no Workload may be created without its priority")
+				return
+			}
+			require.NoError(t, err)
+			require.NoError(t, getErr)
+			assert.Equal(t, tc.wantRef, got.Spec.PriorityClassRef)
+			assert.Equal(t, tc.wantPriority, got.Spec.Priority)
+		})
+	}
+}
+
+func TestBackend_SyncPodGang_SyncsWorkloadPriorityClassInPlace(t *testing.T) {
+	quotaReserved := []metav1.Condition{{Type: kueuev1beta2.WorkloadQuotaReserved, Status: metav1.ConditionTrue, Reason: "QuotaReserved", Message: "test"}}
+	testCases := []struct {
+		description string
+		// existingClass is the WorkloadPriorityClass the existing Workload references ("" for none).
+		existingClass string
+		reserved      bool
+		// desiredClass is the PodGang's priorityClassLabel ("" for none).
+		desiredClass string
+		wantRef      *kueuev1beta2.PriorityClassRef
+		wantPriority *int32
+	}{
+		{
+			description:   "changing the class moves a Workload that holds quota to the new class",
+			existingClass: "low",
+			reserved:      true,
+			desiredClass:  "high",
+			wantRef:       kueuev1beta2.NewWorkloadPriorityClassRef("high"),
+			wantPriority:  ptr.To[int32](1000),
+		},
+		{
+			description:   "an unchanged class is left to Kueue, which keeps priority in step with the class value",
+			existingClass: "low",
+			reserved:      true,
+			desiredClass:  "low",
+			wantRef:       kueuev1beta2.NewWorkloadPriorityClassRef("low"),
+			wantPriority:  ptr.To[int32](7),
+		},
+		{
+			description:  "a class is added to a Workload that has not reserved quota",
+			desiredClass: "high",
+			wantRef:      kueuev1beta2.NewWorkloadPriorityClassRef("high"),
+			wantPriority: ptr.To[int32](1000),
+		},
+		{
+			description:  "a class is not added to a Workload that has reserved quota, since Kueue rejects it",
+			reserved:     true,
+			desiredClass: "high",
+		},
+		{
+			description:   "a class is removed from a Workload that has not reserved quota",
+			existingClass: "low",
+		},
+		{
+			description:   "a class is not removed from a Workload that has reserved quota, since Kueue rejects it",
+			existingClass: "low",
+			reserved:      true,
+			wantRef:       kueuev1beta2.NewWorkloadPriorityClassRef("low"),
+			wantPriority:  ptr.To[int32](7),
+		},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.description, func(t *testing.T) {
+			b, cl, podGang := newPriorityTestBackend(t, tc.desiredClass, map[string]int32{"low": 100, "high": 1000})
+			existing := &kueuev1beta2.Workload{
+				ObjectMeta: metav1.ObjectMeta{Name: "demo-0", Namespace: "default"},
+				Spec:       kueuev1beta2.WorkloadSpec{QueueName: "grove-poc"},
+			}
+			if tc.existingClass != "" {
+				existing.Spec.PriorityClassRef = kueuev1beta2.NewWorkloadPriorityClassRef(tc.existingClass)
+				// Differs from the class's value, as if Kueue had not yet caught up with a class value change, so
+				// the test sees whether Grove rewrote it.
+				existing.Spec.Priority = ptr.To[int32](7)
+			}
+			if tc.reserved {
+				existing.Status.Conditions = quotaReserved
+			}
+			require.NoError(t, cl.Create(context.Background(), existing))
+			created := &kueuev1beta2.Workload{}
+			require.NoError(t, cl.Get(context.Background(), client.ObjectKeyFromObject(existing), created))
+
+			require.NoError(t, b.SyncPodGang(context.Background(), podGang))
+
+			got := &kueuev1beta2.Workload{}
+			require.NoError(t, cl.Get(context.Background(), client.ObjectKeyFromObject(existing), got))
+			assert.Equal(t, created.UID, got.UID, "the Workload must be updated in place, not rebuilt")
+			assert.Equal(t, tc.wantRef, got.Spec.PriorityClassRef)
+			assert.Equal(t, tc.wantPriority, got.Spec.Priority)
+		})
+	}
+}
+
+func TestBackend_SyncPodGang_LeavesPodPriorityClassRefAlone(t *testing.T) {
+	b, cl, podGang := newPriorityTestBackend(t, "high", map[string]int32{"high": 1000})
+	existing := &kueuev1beta2.Workload{
+		ObjectMeta: metav1.ObjectMeta{Name: "demo-0", Namespace: "default"},
+		Spec: kueuev1beta2.WorkloadSpec{
+			QueueName:        "grove-poc",
+			PriorityClassRef: kueuev1beta2.NewPodPriorityClassRef("system-cluster-critical"),
+			Priority:         ptr.To[int32](2000000000),
+		},
+	}
+	require.NoError(t, cl.Create(context.Background(), existing))
+
+	require.NoError(t, b.SyncPodGang(context.Background(), podGang))
+
+	got := &kueuev1beta2.Workload{}
+	require.NoError(t, cl.Get(context.Background(), client.ObjectKeyFromObject(existing), got))
+	assert.Equal(t, kueuev1beta2.NewPodPriorityClassRef("system-cluster-critical"), got.Spec.PriorityClassRef)
+}
+
+// TestBackend_ValidatePodCliqueSet_PriorityClassLabel verifies that the label is never a reason to reject a
+// PodCliqueSet: syncWorkloadPriorityClass leaves a Workload that holds quota alone where Kueue would refuse the change.
+func TestBackend_ValidatePodCliqueSet_PriorityClassLabel(t *testing.T) {
+	testCases := []struct {
+		description string
+		// oldClass is nil for a create.
+		oldClass *string
+		newClass string
+	}{
+		{
+			description: "create with the label is allowed",
+			newClass:    "high",
+		},
+		{
+			description: "create without the label is allowed",
+		},
+		{
+			description: "changing the value is allowed",
+			oldClass:    ptr.To("low"),
+			newClass:    "high",
+		},
+		{
+			// Tools that generate PodCliqueSets often set the label only for a non-zero priority setting.
+			description: "adding the label is allowed",
+			oldClass:    ptr.To(""),
+			newClass:    "high",
+		},
+		{
+			description: "removing the label is allowed",
+			oldClass:    ptr.To("low"),
+		},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.description, func(t *testing.T) {
+			cl := testutils.CreateDefaultFakeClient(nil)
+			b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKueue})
+			require.NoError(t, b.Init(nil))
+			withClass := func(class string) map[string]string {
+				labels := map[string]string{queueNameLabel: "grove-poc"}
+				if class != "" {
+					labels[priorityClassLabel] = class
+				}
+				return labels
+			}
+
+			var opts []scheduler.ValidateOption
+			if tc.oldClass != nil {
+				oldPCS := &grovecorev1alpha1.PodCliqueSet{ObjectMeta: metav1.ObjectMeta{Name: "demo", Namespace: "default", Labels: withClass(*tc.oldClass)}}
+				opts = append(opts, scheduler.WithOldPodCliqueSet(oldPCS))
+			}
+			pcs := &grovecorev1alpha1.PodCliqueSet{ObjectMeta: metav1.ObjectMeta{Name: "demo", Namespace: "default", Labels: withClass(tc.newClass)}}
+			require.NoError(t, b.ValidatePodCliqueSet(context.Background(), pcs, opts...))
+		})
+	}
+}
