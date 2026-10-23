@@ -160,6 +160,14 @@ rules:
   - patch
   - update
   - delete
+- apiGroups:
+  - kueue.x-k8s.io
+  resources:
+  - workloadpriorityclasses
+  verbs:
+  - get
+  - list
+  - watch
 {{- end }}
 # DRA (Dynamic Resource Allocation) integration for resource sharing
 - apiGroups:

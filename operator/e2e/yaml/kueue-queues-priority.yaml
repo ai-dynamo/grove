@@ -1,0 +1,51 @@
+# Copyright 2026 NVIDIA CORPORATION
+# SPDX-License-Identifier: Apache-2.0
+#
+# Dedicated queue and WorkloadPriorityClasses for Test_Kueue13_WorkloadPriorityPreemption: a
+# ClusterQueue/LocalQueue pair named "grove-e2e-priority", applied by the test itself. memory
+# nominalQuota (100Mi) fits exactly one of kueue-workload-priority-low.yaml and
+# kueue-workload-priority-high.yaml (2 pods x 50Mi each), and withinClusterQueue: LowerPriority lets
+# the higher-priority one preempt the other. Reuses the shared "default-flavor" from kueue-queues.yaml.
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: ClusterQueue
+metadata:
+  name: grove-e2e-priority
+spec:
+  namespaceSelector: {}
+  preemption:
+    withinClusterQueue: LowerPriority
+  resourceGroups:
+    - coveredResources: ["cpu", "memory"]
+      flavors:
+        - name: default-flavor
+          resources:
+            - name: cpu
+              nominalQuota: 1000
+            - name: memory
+              nominalQuota: 100Mi
+---
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: LocalQueue
+metadata:
+  name: grove-e2e-priority
+  namespace: default
+spec:
+  clusterQueue: grove-e2e-priority
+---
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: WorkloadPriorityClass
+metadata:
+  name: grove-e2e-low
+value: 100
+---
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: WorkloadPriorityClass
+metadata:
+  name: grove-e2e-mid
+value: 500
+---
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: WorkloadPriorityClass
+metadata:
+  name: grove-e2e-high
+value: 1000
