@@ -15,26 +15,27 @@
 package validation
 
 import (
+	"fmt"
+
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 
 	"k8s.io/apimachinery/pkg/util/validation/field"
+	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 )
 
 func validateClusterTopology(
 	ct *grovecorev1alpha1.ClusterTopologyBinding,
 	enabledBackends map[string]struct{},
 	topologyAwareBackends map[string]struct{},
-) field.ErrorList {
+) (admission.Warnings, field.ErrorList) {
 	allErrs := validateClusterTopologyLevels(ct.Spec.Levels, field.NewPath("spec", "levels"))
-	allErrs = append(allErrs,
-		validateSchedulerTopologyReferences(
-			ct.Spec.SchedulerTopologyBindings,
-			enabledBackends,
-			topologyAwareBackends,
-			field.NewPath("spec", "schedulerTopologyReferences"),
-		)...,
+	warnings, refErrs := validateSchedulerTopologyReferences(
+		ct.Spec.SchedulerTopologyBindings,
+		enabledBackends,
+		topologyAwareBackends,
+		field.NewPath("spec", "schedulerTopologyReferences"),
 	)
-	return allErrs
+	return warnings, append(allErrs, refErrs...)
 }
 
 // validateClusterTopologyLevels validates that domain and key values are unique across levels.
@@ -62,13 +63,20 @@ func validateClusterTopologyLevels(levels []grovecorev1alpha1.TopologyLevel, fld
 }
 
 // validateSchedulerTopologyReferences validates that each scheduler backend is referenced at most once
-// and that each referenced backend is enabled and topology-aware in the running Grove configuration.
+// and that each referenced backend that is enabled in the running Grove configuration is topology-aware.
+//
+// A reference to a backend that is not enabled yields a warning rather than an error. The running
+// operator ignores such a reference, but rejecting it deadlocks enabling a new backend: an operator
+// started with the new backend takes ownership of the scheduler topology of every binding that does
+// not already reference it, and fails if that topology is externally managed, so the reference must
+// be admitted by the operator that predates the backend.
 func validateSchedulerTopologyReferences(
 	refs []grovecorev1alpha1.SchedulerTopologyBinding,
 	enabledBackends map[string]struct{},
 	topologyAwareBackends map[string]struct{},
 	fldPath *field.Path,
-) field.ErrorList {
+) (admission.Warnings, field.ErrorList) {
+	var warnings admission.Warnings
 	var allErrs field.ErrorList
 	seenSchedulers := make(map[string]bool, len(refs))
 
@@ -82,10 +90,9 @@ func validateSchedulerTopologyReferences(
 		seenSchedulers[ref.SchedulerName] = true
 
 		if _, ok := enabledBackends[ref.SchedulerName]; !ok {
-			allErrs = append(allErrs, field.Invalid(
-				schedulerNamePath,
-				ref.SchedulerName,
-				"scheduler backend is not enabled in Grove",
+			warnings = append(warnings, fmt.Sprintf(
+				"%s: scheduler backend %q is not enabled in Grove; the reference is ignored until it is enabled",
+				schedulerNamePath, ref.SchedulerName,
 			))
 			continue
 		}
@@ -98,5 +105,5 @@ func validateSchedulerTopologyReferences(
 		}
 	}
 
-	return allErrs
+	return warnings, allErrs
 }

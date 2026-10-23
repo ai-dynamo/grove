@@ -1676,18 +1676,6 @@ func Test_TAS21_TopologyValidationWebhooks(t *testing.T) {
 			errContains: []string{"spec.schedulerTopologyReferences[1].schedulerName", "Duplicate value"},
 		},
 		{
-			name:   "unknown scheduler backend reference",
-			ctName: "tas22-unknown-backend",
-			levels: []corev1alpha1.TopologyLevel{
-				{Domain: corev1alpha1.TopologyDomainZone, Key: setup.TopologyLabelZone},
-				{Domain: corev1alpha1.TopologyDomainRack, Key: setup.TopologyLabelRack},
-			},
-			refs: []corev1alpha1.SchedulerTopologyBinding{
-				{SchedulerName: "unknown-scheduler", TopologyReference: "topology"},
-			},
-			errContains: []string{"spec.schedulerTopologyReferences[0].schedulerName", "scheduler backend is not enabled in Grove"},
-		},
-		{
 			name:   "non topology aware scheduler backend reference",
 			ctName: "tas22-non-tas-backend",
 			levels: []corev1alpha1.TopologyLevel{
@@ -1722,6 +1710,30 @@ func Test_TAS21_TopologyValidationWebhooks(t *testing.T) {
 			}
 		})
 	}
+
+	// Rejecting this would deadlock enabling a backend: an operator started with it takes ownership of the
+	// backend's topology for every binding that does not reference it, so the reference has to be admitted by the
+	// operator that predates the backend. The running operator ignores it until the backend is enabled.
+	t.Run("reference to a scheduler backend that is not enabled is admitted", func(t *testing.T) {
+		ct := &corev1alpha1.ClusterTopologyBinding{
+			ObjectMeta: metav1.ObjectMeta{Name: "tas22-unenabled-backend"},
+			Spec: corev1alpha1.ClusterTopologyBindingSpec{
+				Levels: []corev1alpha1.TopologyLevel{
+					{Domain: corev1alpha1.TopologyDomainZone, Key: setup.TopologyLabelZone},
+					{Domain: corev1alpha1.TopologyDomainRack, Key: setup.TopologyLabelRack},
+				},
+				SchedulerTopologyBindings: []corev1alpha1.SchedulerTopologyBinding{
+					{SchedulerName: "not-enabled-scheduler", TopologyReference: "topology"},
+				},
+			},
+		}
+		if err := tc.Client.Create(ctx, ct); err != nil {
+			t.Fatalf("Expected a reference to a scheduler backend that is not enabled to be admitted, got: %v", err)
+		}
+		if err := tc.Client.Delete(ctx, ct); err != nil {
+			t.Fatalf("Failed to delete ClusterTopologyBinding %s: %v", ct.Name, err)
+		}
+	})
 
 	topologyVerifier := topology.NewTopologyVerifier(tc.Client, Logger)
 
