@@ -697,6 +697,17 @@ func TestMutateTopologyLevelUnavailableConditions(t *testing.T) {
 				assert.Contains(t, cond.Message, tc.wantMsgContain, "condition message mismatch")
 			}
 			assert.Equal(t, pcs.Generation, cond.ObservedGeneration, "ObservedGeneration should match PCS generation")
+
+			// A spec update must refresh the observed generation even when the topology result is unchanged.
+			lastTransitionTime := cond.LastTransitionTime
+			pcs.Generation++
+			assert.NoError(t, r.mutateTopologyLevelUnavailableConditions(context.Background(), logr.Discard(), pcs))
+			cond = apimeta.FindStatusCondition(pcs.Status.Conditions, apicommonconstants.ConditionTopologyLevelsUnavailable)
+			if !assert.NotNil(t, cond) {
+				return
+			}
+			assert.Equal(t, pcs.Generation, cond.ObservedGeneration, "ObservedGeneration should follow spec updates")
+			assert.Equal(t, lastTransitionTime, cond.LastTransitionTime, "unchanged status should preserve transition time")
 		})
 	}
 }
