@@ -18,10 +18,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
-	"strconv"
 
-	apicommon "github.com/ai-dynamo/grove/operator/api/common"
-	"github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
@@ -35,8 +32,8 @@ import (
 
 // orchestrateRollingUpdate drives a rolling update (RollingRecreate or Coherent) for the PodCliqueSet
 // replicas, one replica at a time.
-func (r _resource) orchestrateRollingUpdate(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, pcsIndicesToTerminate, minAvailableBreachedPCSReplicaIndices []int) error {
-	replicaInfos, err := r.getPCSReplicaInfos(ctx, pcs, pcsIndicesToTerminate)
+func (r *_resource) orchestrateRollingUpdate(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, expectedPCSReplicaIndices, pcsReplicaIndicesToTerminate, minAvailableBreachedPCSReplicaIndices []int) error {
+	replicaInfos, err := r.getPCSReplicaInfos(ctx, pcs, expectedPCSReplicaIndices, pcsReplicaIndicesToTerminate)
 	if err != nil {
 		return err
 	}
@@ -50,8 +47,7 @@ func (r _resource) orchestrateRollingUpdate(ctx context.Context, logger logr.Log
 					return err
 				}
 			}
-			return groveerr.New(
-				groveerr.ErrCodeContinueReconcileAndRequeue,
+			return groveerr.NewContinueReconcileAndRequeue(
 				component.OperationSync,
 				fmt.Sprintf("rolling update of PodCliqueSet replica index %d is not completed", currentlyUpdating.replicaIndex),
 			)
@@ -67,8 +63,7 @@ func (r _resource) orchestrateRollingUpdate(ctx context.Context, logger logr.Log
 	}
 
 	if nextReplicaToUpdate != nil {
-		return groveerr.New(
-			groveerr.ErrCodeContinueReconcileAndRequeue,
+		return groveerr.NewContinueReconcileAndRequeue(
 			component.OperationSync,
 			fmt.Sprintf("commencing rolling update of PodCliqueSet replica index %d", *nextReplicaToUpdate),
 		)
@@ -77,9 +72,9 @@ func (r _resource) orchestrateRollingUpdate(ctx context.Context, logger logr.Log
 }
 
 // getPCSReplicaInfos fetches the PCLQs and PCSGs for each PCS replica.
-func (r _resource) getPCSReplicaInfos(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, pcsIndicesToTerminate []int) ([]pcsReplicaInfo, error) {
+func (r *_resource) getPCSReplicaInfos(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, expectedPCSReplicaIndices, pcsReplicaIndicesToTerminate []int) ([]pcsReplicaInfo, error) {
 	pcsObjectKey := client.ObjectKeyFromObject(pcs)
-	pclqsByPCSIndex, err := componentutils.GetPCLQsByOwnerReplicaIndex(ctx, r.client, constants.KindPodCliqueSet, client.ObjectKeyFromObject(pcs), apicommon.GetDefaultLabelsForPodCliqueSetManagedResources(pcs.Name))
+	pclqsByPCSReplicaIndex, err := componentutils.GetStandalonePCLQsByPCSReplicaIndex(ctx, r.client, pcs.ObjectMeta)
 	if err != nil {
 		return nil, groveerr.WrapError(err,
 			errCodeListPCLQs,
@@ -87,7 +82,7 @@ func (r _resource) getPCSReplicaInfos(ctx context.Context, pcs *grovecorev1alpha
 			fmt.Sprintf("could not list PCLQs for PCS: %v", pcsObjectKey),
 		)
 	}
-	pcsgsByPCSIndex, err := componentutils.GetPCSGsByPCSReplicaIndex(ctx, r.client, client.ObjectKeyFromObject(pcs))
+	pcsgsByPCSReplicaIndex, err := componentutils.GetPCSGsByPCSReplicaIndex(ctx, r.client, pcs.ObjectMeta)
 	if err != nil {
 		return nil, groveerr.WrapError(err,
 			errCodeListPCSGs,
@@ -97,7 +92,7 @@ func (r _resource) getPCSReplicaInfos(ctx context.Context, pcs *grovecorev1alpha
 	}
 	// A coherent update gates completion on the replica's PodGangMap having reconverged to a single
 	// generation, so its entries are gathered here. One list serves every replica.
-	var pgmEntriesByPCSIndex map[int]*grovecorev1alpha1.PodGangMap
+	var pgmsByPCSReplicaIndex map[int]*grovecorev1alpha1.PodGangMap
 	if componentutils.IsCoherentStrategy(pcs) {
 		pgms, listErr := componentutils.ListPodGangMapsForPCS(ctx, r.client, pcs.ObjectMeta)
 		if listErr != nil {
@@ -107,7 +102,7 @@ func (r _resource) getPCSReplicaInfos(ctx context.Context, pcs *grovecorev1alpha
 				fmt.Sprintf("could not list PodGangMaps for PCS: %v", pcsObjectKey),
 			)
 		}
-		pgmEntriesByPCSIndex, err = componentutils.PodGangMapByPCSReplicaIndex(pgms)
+		pgmsByPCSReplicaIndex, err = componentutils.PodGangMapByPCSReplicaIndex(pgms)
 		if err != nil {
 			return nil, groveerr.WrapError(err,
 				errCodeGetPodGangMap,
@@ -116,20 +111,19 @@ func (r _resource) getPCSReplicaInfos(ctx context.Context, pcs *grovecorev1alpha
 			)
 		}
 	}
-	replicaInfos := make([]pcsReplicaInfo, 0, pcs.Spec.Replicas)
-	for pcsReplicaIndex := range int(pcs.Spec.Replicas) {
-		if slices.Contains(pcsIndicesToTerminate, pcsReplicaIndex) {
+	replicaInfos := make([]pcsReplicaInfo, 0, len(expectedPCSReplicaIndices))
+	for _, pcsReplicaIndex := range expectedPCSReplicaIndices {
+		if slices.Contains(pcsReplicaIndicesToTerminate, pcsReplicaIndex) {
 			continue
 		}
-		pcsReplicaIndexStr := strconv.Itoa(pcsReplicaIndex)
 		var pgmEntries []grovecorev1alpha1.PodGangEntry
-		if pgm := pgmEntriesByPCSIndex[pcsReplicaIndex]; pgm != nil {
+		if pgm := pgmsByPCSReplicaIndex[pcsReplicaIndex]; pgm != nil {
 			pgmEntries = pgm.Spec.Entries
 		}
 		replicaInfos = append(replicaInfos, pcsReplicaInfo{
 			replicaIndex: pcsReplicaIndex,
-			pclqs:        pclqsByPCSIndex[pcsReplicaIndex],
-			pcsgs:        pcsgsByPCSIndex[pcsReplicaIndexStr],
+			pclqs:        pclqsByPCSReplicaIndex[pcsReplicaIndex],
+			pcsgs:        pcsgsByPCSReplicaIndex[pcsReplicaIndex],
 			pgmEntries:   pgmEntries,
 		})
 	}
@@ -154,7 +148,7 @@ func findCurrentlyUpdatingReplicaInfo(pcs *grovecorev1alpha1.PodCliqueSet, repli
 // markCurrentReplicaUpdateEnded stamps UpdateEndedAt on the currently-updating replica once it has fully
 // converged. Aggregate update progress counts are derived in reconcileStatus each reconcile, so they are
 // not maintained here.
-func (r _resource) markCurrentReplicaUpdateEnded(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) error {
+func (r *_resource) markCurrentReplicaUpdateEnded(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) error {
 	original := pcs.DeepCopy()
 	pcs.Status.UpdateProgress.CurrentlyUpdating[0].UpdateEndedAt = ptr.To(metav1.Now())
 	if err := r.patchUpdateProgressStatus(ctx, logger, pcs, original); err != nil {
@@ -165,7 +159,7 @@ func (r _resource) markCurrentReplicaUpdateEnded(ctx context.Context, logger log
 }
 
 // patchUpdateProgressStatus persists update progress to the PCS status using a merge patch.
-func (r _resource) patchUpdateProgressStatus(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, original *grovecorev1alpha1.PodCliqueSet) error {
+func (r *_resource) patchUpdateProgressStatus(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, original *grovecorev1alpha1.PodCliqueSet) error {
 	if err := r.client.Status().Patch(ctx, pcs, client.MergeFrom(original)); err != nil {
 		return groveerr.WrapError(
 			err,
@@ -225,7 +219,7 @@ func orderPCSReplicaInfo(pcs *grovecorev1alpha1.PodCliqueSet, minAvailableBreach
 }
 
 // updatePCSWithNextSelectedReplica initiates an update for the next replica or marks completion.
-func (r _resource) updatePCSWithNextSelectedReplica(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, nextPCSReplicaToUpdate *int) error {
+func (r *_resource) updatePCSWithNextSelectedReplica(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, nextPCSReplicaToUpdate *int) error {
 	original := pcs.DeepCopy()
 
 	if nextPCSReplicaToUpdate == nil {

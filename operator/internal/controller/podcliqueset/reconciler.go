@@ -16,7 +16,9 @@ package podcliqueset
 
 import (
 	"context"
+	"fmt"
 	"sync"
+	"time"
 
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
@@ -24,10 +26,12 @@ import (
 	ctrlcommon "github.com/ai-dynamo/grove/operator/internal/controller/common"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	pcscomponent "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components"
+	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/sync"
 	ctrlutils "github.com/ai-dynamo/grove/operator/internal/controller/utils"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 
 	"github.com/go-logr/logr"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -39,22 +43,27 @@ type Reconciler struct {
 	config                        configv1alpha1.PodCliqueSetControllerConfiguration
 	tasConfig                     configv1alpha1.TopologyAwareSchedulingConfiguration
 	client                        ctrlclient.Client
+	eventRecorder                 record.EventRecorder
 	reconcileStatusRecorder       ctrlcommon.ReconcileErrorRecorder
-	operatorRegistry              component.OperatorRegistry[grovecorev1alpha1.PodCliqueSet]
+	operatorRegistry              component.OperatorRegistry[grovecorev1alpha1.PodCliqueSet, pcssync.State, pcssync.Result]
 	pcsGenerationHashExpectations sync.Map
+	scalingProgressExpectations   *pcssync.ScalingProgressExpectations
 }
 
 // NewReconciler creates a new reconciler for PodCliqueSet.
 func NewReconciler(mgr ctrl.Manager, controllerCfg configv1alpha1.PodCliqueSetControllerConfiguration, topologyAwareSchedulingConfig configv1alpha1.TopologyAwareSchedulingConfiguration, networkConfig configv1alpha1.NetworkAcceleration, schedRegistry scheduler.Registry) *Reconciler {
 	eventRecorder := mgr.GetEventRecorderFor(controllerName)
 	client := mgr.GetClient()
+	scalingProgressExpectations := &pcssync.ScalingProgressExpectations{}
 	return &Reconciler{
 		config:                        controllerCfg,
 		tasConfig:                     topologyAwareSchedulingConfig,
 		client:                        client,
+		eventRecorder:                 eventRecorder,
 		reconcileStatusRecorder:       ctrlcommon.NewReconcileErrorRecorder(client),
-		operatorRegistry:              pcscomponent.CreateOperatorRegistry(mgr, eventRecorder, topologyAwareSchedulingConfig, networkConfig, schedRegistry),
+		operatorRegistry:              pcscomponent.CreateOperatorRegistry(mgr, eventRecorder, topologyAwareSchedulingConfig, networkConfig, schedRegistry, scalingProgressExpectations),
 		pcsGenerationHashExpectations: sync.Map{},
+		scalingProgressExpectations:   scalingProgressExpectations,
 	}
 }
 
@@ -70,13 +79,33 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	if result := r.reconcileDelete(ctx, logger, pcs); ctrlcommon.ShortCircuitReconcileFlow(result) {
 		return result.Result()
 	}
+	if result := r.ensureScalingProgressExpectationSatisfied(pcs); ctrlcommon.ShortCircuitReconcileFlow(result) {
+		return result.Result()
+	}
 
-	reconcileSpecFlowResult := r.reconcileSpec(ctx, logger, pcs)
-	if statusReconcileResult := r.reconcileStatus(ctx, logger, pcs); ctrlcommon.ShortCircuitReconcileFlow(statusReconcileResult) {
+	state := &pcssync.State{}
+	reconcileSpecFlowResult := r.reconcileSpec(ctx, logger, pcs, state)
+	if len(state.ExpectedReplicaIndices) != int(pcs.Spec.Replicas) {
+		return reconcileSpecFlowResult.Result()
+	}
+	if statusReconcileResult := r.reconcileStatus(ctx, logger, pcs, state); ctrlcommon.ShortCircuitReconcileFlow(statusReconcileResult) {
 		return statusReconcileResult.Result()
 	}
 
 	return reconcileSpecFlowResult.Result()
+}
+
+const scalingProgressCacheSyncRetryInterval = 500 * time.Millisecond
+
+// ensureScalingProgressExpectationSatisfied waits until the informer cache contains the last persisted scaling progress.
+func (r *Reconciler) ensureScalingProgressExpectationSatisfied(pcs *grovecorev1alpha1.PodCliqueSet) ctrlcommon.ReconcileStepResult {
+	if r.scalingProgressExpectations.ClearIfSatisfied(pcs.ObjectMeta, pcs.Status.ScalingProgress) {
+		return ctrlcommon.ContinueReconcile()
+	}
+	return ctrlcommon.ReconcileAfter(
+		scalingProgressCacheSyncRetryInterval,
+		fmt.Sprintf("PodCliqueSet scaling progress is not yet visible in the informer cache: %v", ctrlclient.ObjectKeyFromObject(pcs)),
+	)
 }
 
 // reconcileDelete handles PodCliqueSet deletion when a deletion timestamp is set.

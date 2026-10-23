@@ -21,6 +21,7 @@ import (
 	"sort"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
+	"github.com/ai-dynamo/grove/operator/internal/constants"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	pclqexp "github.com/ai-dynamo/grove/operator/internal/controller/podclique/expectations"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
@@ -50,8 +51,8 @@ func (r _resource) reconcileStandalonePCLQDistribution(ctx context.Context, logg
 	// is scoped to the replica under update, so a replica frozen on its old revision is unaffected.
 	if componentutils.IsPCSReplicaUnderCoherentUpdate(ss.pcs, ss.pcsReplicaIndex) &&
 		ss.pclq.Labels[apicommon.LabelPodTemplateHash] != ss.expectedPodTemplateHash {
-		return groveerr.New(groveerr.ErrCodeRequeueAfter, component.OperationSync,
-			fmt.Sprintf("PodClique %v template not yet propagated for its coherent update, re-queueing", client.ObjectKeyFromObject(ss.pclq)))
+		return groveerr.NewRequeueAfter(component.OperationSync,
+			fmt.Sprintf("PodClique %v template not yet propagated for its coherent update, re-queueing", client.ObjectKeyFromObject(ss.pclq)), constants.ComponentSyncRetryInterval)
 	}
 
 	desiredCountByPodGang := buildDesiredCountByPodGang(ss)
@@ -60,8 +61,8 @@ func (r _resource) reconcileStandalonePCLQDistribution(ctx context.Context, logg
 	// absorbed the anchor entry yet, so requeue and wait. When the PodClique is scaled to zero the empty
 	// desired count is correct, so fall through and let the delta computation delete the excess pods.
 	if len(desiredCountByPodGang) == 0 && ss.pclq.Spec.Replicas > 0 {
-		return groveerr.New(groveerr.ErrCodeRequeueAfter, component.OperationSync,
-			fmt.Sprintf("PodGangMap has no anchor entry for standalone PodClique %v yet, re-queueing", client.ObjectKeyFromObject(ss.pclq)))
+		return groveerr.NewRequeueAfter(component.OperationSync,
+			fmt.Sprintf("PodGangMap has no anchor entry for standalone PodClique %v yet, re-queueing", client.ObjectKeyFromObject(ss.pclq)), constants.ComponentSyncRetryInterval)
 	}
 
 	// Group the PodClique's pods by their PodGang once. Each group holds its non-terminating and
@@ -76,15 +77,15 @@ func (r _resource) reconcileStandalonePCLQDistribution(ctx context.Context, logg
 		return err
 	}
 	if repaired {
-		return groveerr.New(groveerr.ErrCodeRequeueAfter, component.OperationSync,
-			fmt.Sprintf("repaired pods missing the %s label for standalone PodClique %v, re-queueing", apicommon.LabelPodGang, client.ObjectKeyFromObject(ss.pclq)))
+		return groveerr.NewRequeueAfter(component.OperationSync,
+			fmt.Sprintf("repaired pods missing the %s label for standalone PodClique %v, re-queueing", apicommon.LabelPodGang, client.ObjectKeyFromObject(ss.pclq)), constants.ComponentSyncRetryInterval)
 	}
 
 	// With more than one anchor the PodGangMap decides which anchor a Spec.Replicas change lands on.
 	// Wait until it has absorbed the change. A single anchor has nothing to decide.
 	if len(desiredCountByPodGang) > 1 && sumCounts(desiredCountByPodGang) != ss.pclq.Spec.Replicas {
-		return groveerr.New(groveerr.ErrCodeRequeueAfter, component.OperationSync,
-			fmt.Sprintf("PodGangMap has not yet absorbed the replica change for standalone PodClique %v, re-queueing", client.ObjectKeyFromObject(ss.pclq)))
+		return groveerr.NewRequeueAfter(component.OperationSync,
+			fmt.Sprintf("PodGangMap has not yet absorbed the replica change for standalone PodClique %v, re-queueing", client.ObjectKeyFromObject(ss.pclq)), constants.ComponentSyncRetryInterval)
 	}
 
 	countDeltaByPodGang, err := r.computeCountDeltaByPodGang(ss, desiredCountByPodGang, podsByPodGang)
@@ -337,7 +338,7 @@ func (r _resource) buildPerPodGangCreationTasks(logger logr.Logger, ss *syncSnap
 	if totalToCreate == 0 {
 		return nil, nil
 	}
-	availableIndices, err := index.GetAvailableIndices(logger, ss.existingPCLQPods, int(totalToCreate))
+	availableIndices, err := index.GetAvailablePodIndices(logger, ss.existingPCLQPods, int(totalToCreate))
 	if err != nil {
 		return nil, groveerr.WrapError(err, errCodeGetAvailablePodHostNameIndices, component.OperationSync,
 			fmt.Sprintf("error getting available indices for Pods in PodClique %v", client.ObjectKeyFromObject(ss.pclq)))

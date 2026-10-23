@@ -47,6 +47,9 @@ const (
 	AnnotationDisableManagedResourceProtection = "grove.io/disable-managed-resource-protection"
 	// AnnotationReconcileTrigger is an annotation set on a PodCliqueSet to explicitly trigger a reconcile without changing its spec.
 	AnnotationReconcileTrigger = "grove.io/reconcile-trigger"
+	// AnnotationOnDeletePodCliqueSetGenerationHash records the parent PodCliqueSet generation hash
+	// that a managed resource must reconcile during an OnDelete update.
+	AnnotationOnDeletePodCliqueSetGenerationHash = "grove.io/on-delete-podcliqueset-generation-hash"
 	// AnnotationTopologyName is an annotation set on PodGang to allow KAI scheduler to discover which topology to use.
 	AnnotationTopologyName = "grove.io/topology-name"
 	// AnnotationPodCliqueScalingGroupPodIndexOffset stores the first group-wide pod index assigned to a PodClique.

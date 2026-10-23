@@ -18,11 +18,13 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strconv"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
+	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/sync"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
@@ -33,6 +35,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
@@ -49,7 +52,7 @@ type _resource struct {
 }
 
 // New creates an instance of HPA components operator.
-func New(client client.Client, scheme *runtime.Scheme) component.Operator[grovecorev1alpha1.PodCliqueSet] {
+func New(client client.Client, scheme *runtime.Scheme) component.Operator[grovecorev1alpha1.PodCliqueSet, pcssync.State, pcssync.Result] {
 	return &_resource{
 		client: client,
 		scheme: scheme,
@@ -59,43 +62,115 @@ func New(client client.Client, scheme *runtime.Scheme) component.Operator[grovec
 // GetExistingResourceNames returns the names of all the existing resources that the HPA Operator manages.
 func (r _resource) GetExistingResourceNames(ctx context.Context, logger logr.Logger, pcsObjMeta metav1.ObjectMeta) ([]string, error) {
 	logger.V(1).Info("Looking for existing HPA resources")
-	objMetaList := &metav1.PartialObjectMetadataList{}
-	objMetaList.SetGroupVersionKind(autoscalingv2.SchemeGroupVersion.WithKind("HorizontalPodAutoscaler"))
-	if err := r.client.List(ctx,
-		objMetaList,
-		client.InNamespace(pcsObjMeta.Namespace),
-		client.MatchingLabels(getPodCliqueHPASelectorLabels(pcsObjMeta)),
-	); err != nil {
-		return nil, groveerr.WrapError(err,
-			errListHPA,
-			component.OperationGetExistingResourceNames,
-			fmt.Sprintf("Error listing HorizontalPodAutoscaler for PodCliques belonging to PodCliqueSet: %s", k8sutils.GetObjectKeyFromObjectMeta(pcsObjMeta)),
-		)
+	existingHPAs, err := r.listExistingHPAs(ctx, pcsObjMeta)
+	if err != nil {
+		return nil, err
 	}
-	return k8sutils.FilterMapOwnedResourceNames(pcsObjMeta, objMetaList.Items), nil
+	return lo.Map(existingHPAs, func(hpa autoscalingv2.HorizontalPodAutoscaler, _ int) string { return hpa.Name }), nil
 }
 
 // Sync synchronizes all resources that the HPA Operator manages.
-func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) error {
-	existingHPANames, err := r.GetExistingResourceNames(ctx, logger, pcs.ObjectMeta)
+func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, state *pcssync.State) (pcssync.Result, error) {
+	existingHPAs, err := r.listExistingHPAs(ctx, pcs.ObjectMeta)
 	if err != nil {
-		return err
+		return pcssync.Result{}, err
 	}
+	existingHPANames := lo.Map(existingHPAs, func(hpa autoscalingv2.HorizontalPodAutoscaler, _ int) string { return hpa.Name })
 
-	expectedHPAInfos := r.computeExpectedHPAs(pcs)
-	tasks := make([]utils.Task, 0, (len(pcs.Spec.Template.Cliques)+len(pcs.Spec.Template.PodCliqueScalingGroupConfigs))*int(pcs.Spec.Replicas))
+	expectedHPAInfos := r.computeExpectedHPAs(pcs, state.ExpectedReplicaIndices)
+	replicaIndicesAwaitingResourceCleanup, err := r.getScaleInPCSReplicaIndicesAwaitingHPACleanup(ctx, existingHPAs, state.ScaleInReplicaIndices)
+	if err != nil {
+		return pcssync.Result{}, err
+	}
+	tasks := make([]utils.Task, 0, len(existingHPANames)+len(expectedHPAInfos))
 	tasks = append(tasks, r.deleteExcessHPATasks(logger, pcs, existingHPANames, expectedHPAInfos)...)
 	tasks = append(tasks, r.createOrUpdateHPATasks(logger, pcs, expectedHPAInfos)...)
 
 	if runResult := utils.RunConcurrentlyWithSlowStart(ctx, logger, 1, tasks); runResult.HasErrors() {
-		return groveerr.WrapError(runResult.GetAggregatedError(),
+		return pcssync.Result{}, groveerr.WrapError(runResult.GetAggregatedError(),
 			errSyncHPA,
 			component.OperationSync,
 			fmt.Sprintf("Error CreateOrUpdate HorizontalPodAutoscalers for PodCliqueSet: %v, run summary: %s", client.ObjectKeyFromObject(pcs), runResult.GetSummary()),
 		)
 	}
 	logger.V(1).Info("Successfully synced HorizontalPodAutoscalers for PodCliqueSet")
-	return nil
+	return pcssync.Result{
+		ScaleInReplicaIndicesAwaitingResourceCleanup: replicaIndicesAwaitingResourceCleanup,
+	}, nil
+}
+
+// listExistingHPAs lists HPAs controlled by the PodCliqueSet.
+func (r _resource) listExistingHPAs(ctx context.Context, pcsObjectMeta metav1.ObjectMeta) ([]autoscalingv2.HorizontalPodAutoscaler, error) {
+	hpaList := &autoscalingv2.HorizontalPodAutoscalerList{}
+	if err := r.client.List(ctx,
+		hpaList,
+		client.InNamespace(pcsObjectMeta.Namespace),
+		client.MatchingLabels(getPodCliqueHPASelectorLabels(pcsObjectMeta)),
+	); err != nil {
+		return nil, groveerr.WrapError(err,
+			errListHPA,
+			component.OperationGetExistingResourceNames,
+			fmt.Sprintf("Error listing HorizontalPodAutoscaler for PodCliques belonging to PodCliqueSet: %s", k8sutils.GetObjectKeyFromObjectMeta(pcsObjectMeta)),
+		)
+	}
+	return lo.Filter(hpaList.Items, func(hpa autoscalingv2.HorizontalPodAutoscaler, _ int) bool {
+		return metav1.IsControlledBy(&hpa, &pcsObjectMeta)
+	}), nil
+}
+
+// getScaleInPCSReplicaIndicesAwaitingHPACleanup returns scale-in PCS replica indices for which at least one HPA still exists.
+func (r _resource) getScaleInPCSReplicaIndicesAwaitingHPACleanup(ctx context.Context, existingHPAs []autoscalingv2.HorizontalPodAutoscaler, scaleInReplicaIndices []int) ([]int, error) {
+	scaleInPCSReplicaIndices := sets.New(scaleInReplicaIndices...)
+	pcsReplicaIndicesAwaitingResourceCleanup := sets.New[int]()
+	for i := range existingHPAs {
+		pcsReplicaIndex, found, err := r.pcsReplicaIndexForHPA(ctx, &existingHPAs[i])
+		if err != nil {
+			return nil, err
+		}
+		if found && scaleInPCSReplicaIndices.Has(pcsReplicaIndex) {
+			pcsReplicaIndicesAwaitingResourceCleanup.Insert(pcsReplicaIndex)
+		}
+	}
+	return sets.List(pcsReplicaIndicesAwaitingResourceCleanup), nil
+}
+
+// pcsReplicaIndexForHPA returns the PCS replica index associated with an HPA.
+func (r _resource) pcsReplicaIndexForHPA(ctx context.Context, hpa *autoscalingv2.HorizontalPodAutoscaler) (int, bool, error) {
+	if _, exists := hpa.Labels[apicommon.LabelPodCliqueSetReplicaIndex]; exists {
+		pcsReplicaIndex, err := k8sutils.GetPodCliqueSetReplicaIndex(hpa.ObjectMeta)
+		return pcsReplicaIndex, true, err
+	}
+	return r.pcsReplicaIndexFromScaleTarget(ctx, hpa)
+}
+
+// pcsReplicaIndexFromScaleTarget returns the PCS replica index from an HPA's scale target.
+// This compatibility function can be removed once all existing HPAs carry LabelPodCliqueSetReplicaIndex.
+func (r _resource) pcsReplicaIndexFromScaleTarget(ctx context.Context, hpa *autoscalingv2.HorizontalPodAutoscaler) (int, bool, error) {
+	targetObjectKey := client.ObjectKey{Namespace: hpa.Namespace, Name: hpa.Spec.ScaleTargetRef.Name}
+	switch hpa.Spec.ScaleTargetRef.Kind {
+	case constants.KindPodClique:
+		pclq := &grovecorev1alpha1.PodClique{}
+		if err := r.client.Get(ctx, targetObjectKey, pclq); err != nil {
+			if errors.IsNotFound(err) {
+				return 0, false, nil
+			}
+			return 0, false, err
+		}
+		pcsReplicaIndex, err := k8sutils.GetPodCliqueSetReplicaIndex(pclq.ObjectMeta)
+		return pcsReplicaIndex, true, err
+	case constants.KindPodCliqueScalingGroup:
+		pcsg := &grovecorev1alpha1.PodCliqueScalingGroup{}
+		if err := r.client.Get(ctx, targetObjectKey, pcsg); err != nil {
+			if errors.IsNotFound(err) {
+				return 0, false, nil
+			}
+			return 0, false, err
+		}
+		pcsReplicaIndex, err := k8sutils.GetPodCliqueSetReplicaIndex(pcsg.ObjectMeta)
+		return pcsReplicaIndex, true, err
+	default:
+		return 0, false, fmt.Errorf("unsupported scale target kind %q on HorizontalPodAutoscaler %v", hpa.Spec.ScaleTargetRef.Kind, client.ObjectKeyFromObject(hpa))
+	}
 }
 
 // Delete deletes all resources that the HPA Operator manages.
@@ -118,49 +193,50 @@ func (r _resource) Delete(ctx context.Context, logger logr.Logger, pcsObjMeta me
 
 // hpaInfo holds the state for a HPA resource. This will be used during sync run for HPA resources.
 type hpaInfo struct {
+	replicaIndex            int
 	objectKey               client.ObjectKey
 	targetScaleResourceKind string
 	targetScaleResourceName string
 	scaleConfig             grovecorev1alpha1.AutoScalingConfig
 }
 
-// computeExpectedHPAs calculates the set of HPAs that should exist for the PodCliqueSet.
-func (r _resource) computeExpectedHPAs(pcs *grovecorev1alpha1.PodCliqueSet) []hpaInfo {
-	expectedHPAInfos := make([]hpaInfo, 0, (len(pcs.Spec.Template.Cliques)+len(pcs.Spec.Template.PodCliqueScalingGroupConfigs))*int(pcs.Spec.Replicas))
-	for replicaIndex := range pcs.Spec.Replicas {
-		// compute expected HPA for PodCliques with individual HPAs attached to them
-		for _, pclqTemplateSpec := range pcs.Spec.Template.Cliques {
-			if pclqTemplateSpec.Spec.ScaleConfig == nil {
-				continue
-			}
-			pclqFQN := apicommon.GeneratePodCliqueName(apicommon.ResourceNameReplica{Name: pcs.Name, Replica: int(replicaIndex)}, pclqTemplateSpec.Name)
-			hpaObjectKey := client.ObjectKey{
-				Namespace: pcs.Namespace,
-				Name:      pclqFQN,
-			}
-			expectedHPAInfos = append(expectedHPAInfos, hpaInfo{
-				objectKey:               hpaObjectKey,
-				targetScaleResourceKind: constants.KindPodClique,
-				targetScaleResourceName: pclqFQN,
-				scaleConfig:             *pclqTemplateSpec.Spec.ScaleConfig,
-			})
+// computeExpectedHPAs calculates the HPAs that should exist for the given PCS replica indices.
+func (r _resource) computeExpectedHPAs(pcs *grovecorev1alpha1.PodCliqueSet, replicaIndices []int) []hpaInfo {
+	expectedHPAInfos := make([]hpaInfo, 0, (len(pcs.Spec.Template.Cliques)+len(pcs.Spec.Template.PodCliqueScalingGroupConfigs))*len(replicaIndices))
+	for _, replicaIndex := range replicaIndices {
+		expectedHPAInfos = append(expectedHPAInfos, computeExpectedHPAsForReplica(pcs, replicaIndex)...)
+	}
+	return expectedHPAInfos
+}
+
+// computeExpectedHPAsForReplica calculates the HPAs that should exist for one PCS replica index.
+func computeExpectedHPAsForReplica(pcs *grovecorev1alpha1.PodCliqueSet, replicaIndex int) []hpaInfo {
+	var expectedHPAInfos []hpaInfo
+	for _, pclqTemplateSpec := range pcs.Spec.Template.Cliques {
+		if pclqTemplateSpec.Spec.ScaleConfig == nil {
+			continue
 		}
-		for _, pcsgConfig := range pcs.Spec.Template.PodCliqueScalingGroupConfigs {
-			if pcsgConfig.ScaleConfig == nil {
-				continue
-			}
-			pcsgFQN := apicommon.GeneratePodCliqueScalingGroupName(apicommon.ResourceNameReplica{Name: pcs.Name, Replica: int(replicaIndex)}, pcsgConfig.Name)
-			hpaObjectKey := client.ObjectKey{
-				Namespace: pcs.Namespace,
-				Name:      pcsgFQN,
-			}
-			expectedHPAInfos = append(expectedHPAInfos, hpaInfo{
-				objectKey:               hpaObjectKey,
-				targetScaleResourceKind: constants.KindPodCliqueScalingGroup,
-				targetScaleResourceName: pcsgFQN,
-				scaleConfig:             *pcsgConfig.ScaleConfig,
-			})
+		pclqFQN := apicommon.GeneratePodCliqueName(apicommon.ResourceNameReplica{Name: pcs.Name, Replica: replicaIndex}, pclqTemplateSpec.Name)
+		expectedHPAInfos = append(expectedHPAInfos, hpaInfo{
+			replicaIndex:            replicaIndex,
+			objectKey:               client.ObjectKey{Namespace: pcs.Namespace, Name: pclqFQN},
+			targetScaleResourceKind: constants.KindPodClique,
+			targetScaleResourceName: pclqFQN,
+			scaleConfig:             *pclqTemplateSpec.Spec.ScaleConfig,
+		})
+	}
+	for _, pcsgConfig := range pcs.Spec.Template.PodCliqueScalingGroupConfigs {
+		if pcsgConfig.ScaleConfig == nil {
+			continue
 		}
+		pcsgFQN := apicommon.GeneratePodCliqueScalingGroupName(apicommon.ResourceNameReplica{Name: pcs.Name, Replica: replicaIndex}, pcsgConfig.Name)
+		expectedHPAInfos = append(expectedHPAInfos, hpaInfo{
+			replicaIndex:            replicaIndex,
+			objectKey:               client.ObjectKey{Namespace: pcs.Namespace, Name: pcsgFQN},
+			targetScaleResourceKind: constants.KindPodCliqueScalingGroup,
+			targetScaleResourceName: pcsgFQN,
+			scaleConfig:             *pcsgConfig.ScaleConfig,
+		})
 	}
 	return expectedHPAInfos
 }
@@ -254,7 +330,7 @@ func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, hpa *autos
 		APIVersion: grovecorev1alpha1.SchemeGroupVersion.String(),
 	}
 	hpa.Spec.Metrics = expectedHPAInfo.scaleConfig.Metrics
-	hpa.Labels = getLabels(pcs.Name, hpa.Name)
+	hpa.Labels = getLabels(pcs.Name, hpa.Name, expectedHPAInfo.replicaIndex)
 	if err := controllerutil.SetControllerReference(pcs, hpa, r.scheme); err != nil {
 		return groveerr.WrapError(err,
 			errSyncHPA,
@@ -266,10 +342,11 @@ func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, hpa *autos
 }
 
 // getLabels constructs labels for an HPA resource.
-func getLabels(pcsName, hpaName string) map[string]string {
+func getLabels(pcsName, hpaName string, replicaIndex int) map[string]string {
 	hpaComponentLabels := map[string]string{
-		apicommon.LabelAppNameKey:   hpaName,
-		apicommon.LabelComponentKey: apicommon.LabelComponentNameHorizontalPodAutoscaler,
+		apicommon.LabelAppNameKey:               hpaName,
+		apicommon.LabelComponentKey:             apicommon.LabelComponentNameHorizontalPodAutoscaler,
+		apicommon.LabelPodCliqueSetReplicaIndex: strconv.Itoa(replicaIndex),
 	}
 	return lo.Assign(
 		apicommon.GetDefaultLabelsForPodCliqueSetManagedResources(pcsName),

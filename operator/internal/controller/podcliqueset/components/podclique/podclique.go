@@ -25,6 +25,7 @@ import (
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
+	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/sync"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
@@ -57,7 +58,7 @@ type _resource struct {
 }
 
 // New creates an instance of PodClique components operator.
-func New(client client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder) component.Operator[grovecorev1alpha1.PodCliqueSet] {
+func New(client client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder) component.Operator[grovecorev1alpha1.PodCliqueSet, pcssync.State, pcssync.Result] {
 	return &_resource{
 		client:        client,
 		scheme:        scheme,
@@ -84,55 +85,69 @@ func (r _resource) GetExistingResourceNames(ctx context.Context, logger logr.Log
 }
 
 // Sync synchronizes all resources that the PodClique Operator manages.
-func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) error {
-	existingPCLQFQNs, err := r.GetExistingResourceNames(ctx, logger, pcs.ObjectMeta)
+func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, state *pcssync.State) (pcssync.Result, error) {
+	pclqsByReplicaIndex, err := componentutils.GetStandalonePCLQsByPCSReplicaIndex(ctx, r.client, pcs.ObjectMeta)
 	if err != nil {
-		return groveerr.WrapError(err,
+		return pcssync.Result{}, groveerr.WrapError(err,
 			errSyncPodClique,
 			component.OperationSync,
-			fmt.Sprintf("Unable to fetch existing PodClique names for PodCliqueSet: %v", client.ObjectKeyFromObject(pcs)),
+			fmt.Sprintf("Unable to fetch existing PodCliques for PodCliqueSet: %v", client.ObjectKeyFromObject(pcs)),
 		)
 	}
 
-	if err := r.triggerDeletionOfExcessPCLQs(ctx, logger, pcs, existingPCLQFQNs); err != nil {
-		return err
+	replicaIndicesAwaitingResourceCleanup, err := r.triggerDeletionOfScaleInPCLQs(ctx, logger, pcs, pclqsByReplicaIndex, state.ScaleInReplicaIndices)
+	if err != nil {
+		return pcssync.Result{}, err
 	}
-	if err := r.createOrUpdatePCLQs(ctx, logger, pcs, existingPCLQFQNs); err != nil {
-		return err
+	var existingPCLQFQNs []string
+	for _, pclqs := range pclqsByReplicaIndex {
+		for _, pclq := range pclqs {
+			existingPCLQFQNs = append(existingPCLQFQNs, pclq.Name)
+		}
+	}
+	if err := r.createOrUpdatePCLQs(ctx, logger, pcs, existingPCLQFQNs, state.ExpectedReplicaIndices); err != nil {
+		return pcssync.Result{}, err
 	}
 
-	return nil
+	return pcssync.Result{
+		ScaleInReplicaIndicesAwaitingResourceCleanup: replicaIndicesAwaitingResourceCleanup,
+	}, nil
 }
 
-// triggerDeletionOfExcessPCLQs deletes PodCliques that exceed the desired replica count.
-func (r _resource) triggerDeletionOfExcessPCLQs(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, existingPCLQFQNs []string) error {
-	expectedPCLQFQNs := componentutils.GetPodCliqueFQNsForPCSNotInPCSG(pcs)
-	// Check if the number of existing PodCliques is greater than expected, if so, we need to delete the extra ones.
-	diff := len(existingPCLQFQNs) - len(expectedPCLQFQNs)
-	if diff > 0 {
-		logger.Info("Found more PodCliques than expected", "expected", expectedPCLQFQNs, "existing", existingPCLQFQNs)
-		logger.Info("Triggering deletion of extra PodCliques", "count", diff)
-		// collect the names of the extra PodCliques to delete
-		deletionCandidateNames, err := getPodCliqueNamesToDelete(pcs.Name, int(pcs.Spec.Replicas), existingPCLQFQNs)
-		if err != nil {
-			return err
+// triggerDeletionOfScaleInPCLQs deletes PodCliques for scale-in replica indices and returns the indices that still have PodCliques.
+func (r _resource) triggerDeletionOfScaleInPCLQs(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, pclqsByReplicaIndex map[int][]grovecorev1alpha1.PodClique, scaleInReplicaIndices []int) ([]int, error) {
+	var (
+		deletionCandidateNames                []string
+		replicaIndicesAwaitingResourceCleanup []int
+	)
+	for _, replicaIndex := range scaleInReplicaIndices {
+		pclqs := pclqsByReplicaIndex[replicaIndex]
+		if len(pclqs) == 0 {
+			continue
 		}
-		deletePCLQTasks := r.createDeleteTasks(logger, pcs, deletionCandidateNames)
-		return r.triggerDeletionOfPodCliques(ctx, logger, client.ObjectKeyFromObject(pcs), deletePCLQTasks)
+		replicaIndicesAwaitingResourceCleanup = append(replicaIndicesAwaitingResourceCleanup, replicaIndex)
+		for _, pclq := range pclqs {
+			deletionCandidateNames = append(deletionCandidateNames, pclq.Name)
+		}
 	}
-	return nil
+
+	deletePCLQTasks := r.createDeleteTasks(logger, pcs, deletionCandidateNames)
+	if err := r.triggerDeletionOfPodCliques(ctx, logger, client.ObjectKeyFromObject(pcs), deletePCLQTasks); err != nil {
+		return nil, err
+	}
+	return replicaIndicesAwaitingResourceCleanup, nil
 }
 
 // createOrUpdatePCLQs creates or updates all expected PodCliques for the PodCliqueSet.
-func (r _resource) createOrUpdatePCLQs(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, existingPCLQFQNs []string) error {
+func (r _resource) createOrUpdatePCLQs(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, existingPCLQFQNs []string, expectedReplicaIndices []int) error {
 	expectedPCLQNames, _ := componentutils.GetExpectedPCLQNamesGroupByOwner(pcs)
-	tasks := make([]utils.Task, 0, len(expectedPCLQNames))
+	tasks := make([]utils.Task, 0, len(expectedReplicaIndices)*len(expectedPCLQNames))
 	existingPCLQNameSet := sets.New(existingPCLQFQNs...)
 
-	for pcsReplicaIndex := range pcs.Spec.Replicas {
+	for _, pcsReplicaIndex := range expectedReplicaIndices {
 		for expectedPCLQName := range expectedPCLQNames {
 			pclqObjectKey := client.ObjectKey{
-				Name:      apicommon.GeneratePodCliqueName(apicommon.ResourceNameReplica{Name: pcs.Name, Replica: int(pcsReplicaIndex)}, expectedPCLQName),
+				Name:      apicommon.GeneratePodCliqueName(apicommon.ResourceNameReplica{Name: pcs.Name, Replica: pcsReplicaIndex}, expectedPCLQName),
 				Namespace: pcs.Namespace,
 			}
 			pclqExists := existingPCLQNameSet.Has(pclqObjectKey.Name)
@@ -145,7 +160,7 @@ func (r _resource) createOrUpdatePCLQs(ctx context.Context, logger logr.Logger, 
 			tasks = append(tasks, createOrUpdateTask)
 		}
 	}
-	if runResult := utils.RunConcurrently(ctx, logger, tasks); runResult.HasErrors() {
+	if runResult := utils.RunConcurrentlyAndWait(ctx, logger, tasks); runResult.HasErrors() {
 		return groveerr.WrapError(runResult.GetAggregatedError(),
 			errSyncPodClique,
 			component.OperationSync,
@@ -160,7 +175,7 @@ func (r _resource) triggerDeletionOfPodCliques(ctx context.Context, logger logr.
 	if len(deletionTasks) == 0 {
 		return nil
 	}
-	if runResult := utils.RunConcurrently(ctx, logger, deletionTasks); runResult.HasErrors() {
+	if runResult := utils.RunConcurrentlyAndWait(ctx, logger, deletionTasks); runResult.HasErrors() {
 		return groveerr.WrapError(runResult.GetAggregatedError(),
 			errDeletePodClique,
 			component.OperationSync,
@@ -198,27 +213,6 @@ func (r _resource) createDeleteTasks(logger logr.Logger, pcs *grovecorev1alpha1.
 	return deletionTasks
 }
 
-// getPodCliqueNamesToDelete identifies PodCliques whose replica index exceeds the desired count.
-func getPodCliqueNamesToDelete(pcsName string, pcsReplicas int, existingPCLQNames []string) ([]string, error) {
-	pclqsToDelete := make([]string, 0, len(existingPCLQNames))
-	for _, pclqName := range existingPCLQNames {
-		extractedPCSReplica, err := componentutils.GetPodCliqueSetReplicaIndexFromPodCliqueFQN(pcsName, pclqName)
-		if err != nil {
-			return nil, groveerr.WrapError(err,
-				errSyncPodClique,
-				component.OperationSync,
-				fmt.Sprintf("Failed to extract PodCliqueSet replica index from PodClique name: %s", pclqName),
-			)
-		}
-		if extractedPCSReplica >= pcsReplicas {
-			// If the extracted replica index is greater than or equal to the number of replicas in the PodCliqueSet,
-			// then this PodClique is an extra one that should be deleted.
-			pclqsToDelete = append(pclqsToDelete, pclqName)
-		}
-	}
-	return pclqsToDelete, nil
-}
-
 // Delete deletes all resources that the PodClique Operator manages.
 func (r _resource) Delete(ctx context.Context, logger logr.Logger, pcsObjectMeta metav1.ObjectMeta) error {
 	logger.Info("Triggering deletion of PodCliques")
@@ -244,7 +238,7 @@ func (r _resource) Delete(ctx context.Context, logger logr.Logger, pcsObjectMeta
 		}
 		deleteTasks = append(deleteTasks, task)
 	}
-	if runResult := utils.RunConcurrently(ctx, logger, deleteTasks); runResult.HasErrors() {
+	if runResult := utils.RunConcurrentlyAndWait(ctx, logger, deleteTasks); runResult.HasErrors() {
 		logger.Error(runResult.GetAggregatedError(), "Error deleting PodCliques", "run summary", runResult.GetSummary())
 		return groveerr.WrapError(runResult.GetAggregatedError(),
 			errDeletePodClique,
@@ -258,13 +252,13 @@ func (r _resource) Delete(ctx context.Context, logger logr.Logger, pcsObjectMeta
 }
 
 // doCreateOrUpdate creates or updates a single PodClique resource.
-func (r _resource) doCreateOrUpdate(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, pcsReplica int32, pclqObjectKey client.ObjectKey, pclqExists bool) error {
+func (r _resource) doCreateOrUpdate(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, pcsReplica int, pclqObjectKey client.ObjectKey, pclqExists bool) error {
 	logger.V(1).Info("Running CreateOrUpdate PodClique", "pclqObjectKey", pclqObjectKey)
 	pclq := emptyPodClique(pclqObjectKey)
 	pcsObjKey := client.ObjectKeyFromObject(pcs)
 
 	opResult, err := k8sutils.CreateOrPatchSpec(ctx, r.client, pclq, func() error {
-		return r.buildResource(logger, pcs, int(pcsReplica), pclqExists, pclq)
+		return r.buildResource(logger, pcs, pcsReplica, pclqExists, pclq)
 	})
 	if err != nil {
 		r.eventRecorder.Eventf(pcs, corev1.EventTypeWarning, constants.ReasonPodCliqueCreateOrUpdateFailed, "PodClique %v creation or updation failed: %v", pclqObjectKey, err)

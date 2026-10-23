@@ -23,8 +23,9 @@ import (
 	"time"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
-	"github.com/ai-dynamo/grove/operator/api/common/constants"
+	apiconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	"github.com/ai-dynamo/grove/operator/internal/constants"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	pcsgexpectations "github.com/ai-dynamo/grove/operator/internal/controller/podcliquescalinggroup/expectations"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
@@ -160,9 +161,10 @@ func (r _resource) runSyncFlow(ctx context.Context, logger logr.Logger, ss *sync
 	// If there are any PCSG replicas which have minAvailableBreached but the terminationDelay has not yet expired, then
 	// requeue the event after a fixed delay.
 	if len(pcsgIndicesToRequeue) > 0 {
-		return groveerr.New(groveerr.ErrCodeRequeueAfter,
+		return groveerr.NewRequeueAfter(
 			component.OperationSync,
 			"Requeuing to re-process PCLQs that have breached MinAvailable but not crossed TerminationDelay",
+			constants.ComponentSyncRetryInterval,
 		)
 	}
 	return nil
@@ -215,8 +217,7 @@ func requeueIfPCSGUpdateTargetIsStale(ss *syncSnapshot) error {
 		return nil
 	}
 
-	return groveerr.New(
-		groveerr.ErrCodeContinueReconcileAndRequeue,
+	return groveerr.NewContinueReconcileAndRequeue(
 		component.OperationSync,
 		fmt.Sprintf("PodCliqueScalingGroup update target %q is stale; current PodCliqueSet generation is %q", updateTarget, currentTarget),
 	)
@@ -252,7 +253,7 @@ func (r _resource) syncPCSGPodIndexOffsets(ctx context.Context, ss *syncSnapshot
 			return groveerr.WrapError(err, errCodeSyncPCSGPodIndexOffsets, component.OperationSync, "failed to compute PodCliqueScalingGroup pod index offset")
 		}
 		expectedValue := strconv.Itoa(offset)
-		if pclq.Annotations[constants.AnnotationPodCliqueScalingGroupPodIndexOffset] == expectedValue {
+		if pclq.Annotations[apiconstants.AnnotationPodCliqueScalingGroupPodIndexOffset] == expectedValue {
 			continue
 		}
 
@@ -260,7 +261,7 @@ func (r _resource) syncPCSGPodIndexOffsets(ctx context.Context, ss *syncSnapshot
 		if pclq.Annotations == nil {
 			pclq.Annotations = make(map[string]string)
 		}
-		pclq.Annotations[constants.AnnotationPodCliqueScalingGroupPodIndexOffset] = expectedValue
+		pclq.Annotations[apiconstants.AnnotationPodCliqueScalingGroupPodIndexOffset] = expectedValue
 		if err = r.client.Patch(ctx, pclq, client.MergeFrom(pclqBeforePatch)); err != nil {
 			return groveerr.WrapError(
 				err,
@@ -366,7 +367,7 @@ func (r _resource) createExpectedPCLQs(ctx context.Context, logger logr.Logger, 
 			tasks = append(tasks, createTask)
 		}
 	}
-	if runResult := utils.RunConcurrently(ctx, logger, tasks); runResult.HasErrors() {
+	if runResult := utils.RunConcurrentlyAndWait(ctx, logger, tasks); runResult.HasErrors() {
 		return groveerr.WrapError(runResult.GetAggregatedError(),
 			errCodeCreatePodCliques,
 			component.OperationSync,
@@ -396,7 +397,7 @@ func (r _resource) createOrUpdatePCLQs(ctx context.Context, logger logr.Logger, 
 			tasks = append(tasks, createOrUpdateTask)
 		}
 	}
-	if runResult := utils.RunConcurrently(ctx, logger, tasks); runResult.HasErrors() {
+	if runResult := utils.RunConcurrentlyAndWait(ctx, logger, tasks); runResult.HasErrors() {
 		return groveerr.WrapError(runResult.GetAggregatedError(),
 			errCodeCreateOrUpdatePodCliques,
 			component.OperationSync,
@@ -426,9 +427,10 @@ func (r _resource) processMinAvailableBreachedPCSGReplicas(ctx context.Context, 
 		if err := r.triggerDeletionOfPodCliques(ctx, logger, client.ObjectKeyFromObject(ss.pcsg), pclqGangTerminationTasks); err != nil {
 			return err
 		}
-		return groveerr.New(groveerr.ErrCodeRequeueAfter,
+		return groveerr.NewRequeueAfter(
 			component.OperationSync,
 			fmt.Sprintf("Requeuing post gang termination of PodCliqueScalingGroup replicas: %v", pclqGangTerminationTasks),
+			constants.ComponentSyncRetryInterval,
 		)
 	}
 	return nil
@@ -478,7 +480,7 @@ func getExpectedPodCliqueFQNsByPCSGReplica(pcsg *grovecorev1alpha1.PodCliqueScal
 
 // getExistingPCLQs retrieves all PodCliques owned by the specified PodCliqueScalingGroup
 func (r _resource) getExistingPCLQs(ctx context.Context, pcsg *grovecorev1alpha1.PodCliqueScalingGroup) ([]grovecorev1alpha1.PodClique, error) {
-	existingPCLQs, err := componentutils.GetPCLQsByOwner(ctx, r.client, constants.KindPodCliqueScalingGroup, client.ObjectKeyFromObject(pcsg), getPodCliqueSelectorLabels(pcsg.ObjectMeta))
+	existingPCLQs, err := componentutils.GetPCLQsByOwner(ctx, r.client, apiconstants.KindPodCliqueScalingGroup, client.ObjectKeyFromObject(pcsg), getPodCliqueSelectorLabels(pcsg.ObjectMeta))
 	if err != nil {
 		return nil, groveerr.WrapError(err,
 			errCodeListPodCliquesForPCSG,

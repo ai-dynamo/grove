@@ -27,193 +27,73 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
-// TestGetExpectedPCSGFQNsForPCS tests the GetExpectedPCSGFQNsForPCS function
-func TestGetExpectedPCSGFQNsForPCS(t *testing.T) {
-	tests := []struct {
-		// Test case description
-		name string
-		// pcs is the PodCliqueSet
-		pcs *grovecorev1alpha1.PodCliqueSet
-		// expected are the expected PCSG FQNs
-		expected []string
-	}{
-		{
-			// Tests with one replica and one scaling group
-			name: "single_replica_single_scaling_group",
-			pcs: &grovecorev1alpha1.PodCliqueSet{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "test-pcs",
-				},
-				Spec: grovecorev1alpha1.PodCliqueSetSpec{
-					Replicas: 1,
-					Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
-						PodCliqueScalingGroupConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
-							{
-								Name:        "sg1",
-								CliqueNames: []string{"clique1", "clique2"},
-							},
-						},
-					},
+func TestGetPCSGFQNsForPCSReplica(t *testing.T) {
+	pcs := &grovecorev1alpha1.PodCliqueSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-pcs"},
+		Spec: grovecorev1alpha1.PodCliqueSetSpec{
+			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
+				PodCliqueScalingGroupConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+					{Name: "workers"},
+					{Name: "routers"},
 				},
 			},
-			expected: []string{"test-pcs-0-sg1"},
-		},
-		{
-			// Tests with multiple replicas and scaling groups
-			name: "multiple_replicas_multiple_scaling_groups",
-			pcs: &grovecorev1alpha1.PodCliqueSet{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "test-pcs",
-				},
-				Spec: grovecorev1alpha1.PodCliqueSetSpec{
-					Replicas: 2,
-					Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
-						PodCliqueScalingGroupConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
-							{
-								Name:        "sg1",
-								CliqueNames: []string{"clique1"},
-							},
-							{
-								Name:        "sg2",
-								CliqueNames: []string{"clique2"},
-							},
-						},
-					},
-				},
-			},
-			expected: []string{"test-pcs-0-sg1", "test-pcs-0-sg2", "test-pcs-1-sg1", "test-pcs-1-sg2"},
-		},
-		{
-			// Tests with zero replicas
-			name: "zero_replicas",
-			pcs: &grovecorev1alpha1.PodCliqueSet{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "test-pcs",
-				},
-				Spec: grovecorev1alpha1.PodCliqueSetSpec{
-					Replicas: 0,
-					Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
-						PodCliqueScalingGroupConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
-							{
-								Name:        "sg1",
-								CliqueNames: []string{"clique1"},
-							},
-						},
-					},
-				},
-			},
-			expected: []string{},
 		},
 	}
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			result := GetExpectedPCSGFQNsForPCS(tc.pcs)
-			// Sort both slices to ensure order-independent comparison
-			assert.ElementsMatch(t, tc.expected, result)
-		})
-	}
+	got := GetPCSGFQNsForPCSReplica(pcs, 3)
+	assert.Equal(t, []string{"test-pcs-3-workers", "test-pcs-3-routers"}, got)
 }
 
-// TestGetPodCliqueFQNsForPCSNotInPCSG tests the GetPodCliqueFQNsForPCSNotInPCSG function
-func TestGetPodCliqueFQNsForPCSNotInPCSG(t *testing.T) {
-	tests := []struct {
-		// Test case description
-		name string
-		// pcs is the PodCliqueSet
-		pcs *grovecorev1alpha1.PodCliqueSet
-		// expected are the expected PodClique FQNs
-		expected []string
-	}{
-		{
-			// Tests with standalone cliques only
-			name: "standalone_cliques_only",
-			pcs: &grovecorev1alpha1.PodCliqueSet{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "test-pcs",
-				},
-				Spec: grovecorev1alpha1.PodCliqueSetSpec{
-					Replicas: 2,
-					Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
-						Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-							{Name: "standalone1"},
-							{Name: "standalone2"},
-						},
-					},
+func TestGetPCSGFQNsForPCSReplicaIndices(t *testing.T) {
+	pcs := &grovecorev1alpha1.PodCliqueSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-pcs"},
+		Spec: grovecorev1alpha1.PodCliqueSetSpec{
+			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
+				PodCliqueScalingGroupConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+					{Name: "workers"},
+					{Name: "routers"},
 				},
 			},
-			expected: []string{
-				"test-pcs-0-standalone1",
-				"test-pcs-0-standalone2",
-				"test-pcs-1-standalone1",
-				"test-pcs-1-standalone2",
-			},
-		},
-		{
-			// Tests with mixed standalone and scaling group cliques
-			name: "mixed_standalone_and_scaling_group",
-			pcs: &grovecorev1alpha1.PodCliqueSet{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "test-pcs",
-				},
-				Spec: grovecorev1alpha1.PodCliqueSetSpec{
-					Replicas: 1,
-					Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
-						Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-							{Name: "standalone1"},
-							{Name: "in-sg1"},
-							{Name: "standalone2"},
-						},
-						PodCliqueScalingGroupConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
-							{
-								Name:        "sg1",
-								CliqueNames: []string{"in-sg1"},
-							},
-						},
-					},
-				},
-			},
-			expected: []string{
-				"test-pcs-0-standalone1",
-				"test-pcs-0-standalone2",
-			},
-		},
-		{
-			// Tests with all cliques in scaling groups
-			name: "all_cliques_in_scaling_groups",
-			pcs: &grovecorev1alpha1.PodCliqueSet{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "test-pcs",
-				},
-				Spec: grovecorev1alpha1.PodCliqueSetSpec{
-					Replicas: 1,
-					Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
-						Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-							{Name: "clique1"},
-							{Name: "clique2"},
-						},
-						PodCliqueScalingGroupConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
-							{
-								Name:        "sg1",
-								CliqueNames: []string{"clique1", "clique2"},
-							},
-						},
-					},
-				},
-			},
-			expected: []string{},
 		},
 	}
+	replicaIndices := []int{0, 2, 4}
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			result := GetPodCliqueFQNsForPCSNotInPCSG(tc.pcs)
-			assert.ElementsMatch(t, tc.expected, result)
-		})
+	got := GetPCSGFQNsForPCSReplicaIndices(pcs, replicaIndices)
+
+	assert.Equal(t, map[int][]string{
+		0: {"test-pcs-0-workers", "test-pcs-0-routers"},
+		2: {"test-pcs-2-workers", "test-pcs-2-routers"},
+		4: {"test-pcs-4-workers", "test-pcs-4-routers"},
+	}, got)
+	assert.Equal(t, []int{0, 2, 4}, replicaIndices)
+}
+
+func TestGetStandalonePCLQFQNsForPCSReplicaIndices(t *testing.T) {
+	pcs := &grovecorev1alpha1.PodCliqueSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-pcs"},
+		Spec: grovecorev1alpha1.PodCliqueSetSpec{
+			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
+				Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+					{Name: "worker"},
+					{Name: "router"},
+				},
+			},
+		},
 	}
+	pcsReplicaIndices := []int{0, 2, 4}
+
+	got := GetStandalonePCLQFQNsForPCSReplicaIndices(pcs, pcsReplicaIndices)
+
+	assert.Equal(t, map[int][]string{
+		0: {"test-pcs-0-worker", "test-pcs-0-router"},
+		2: {"test-pcs-2-worker", "test-pcs-2-router"},
+		4: {"test-pcs-4-worker", "test-pcs-4-router"},
+	}, got)
+	assert.Equal(t, []int{0, 2, 4}, pcsReplicaIndices)
 }
 
 // TestGetPodCliqueSetName tests the GetPodCliqueSetName function
@@ -699,6 +579,80 @@ func TestGetStandalonePCLQReplicasFromPCSTemplateSpec(t *testing.T) {
 	}
 }
 
+func TestIsPCSReplicaAvailable(t *testing.T) {
+	availablePCLQ := grovecorev1alpha1.PodClique{
+		Spec: grovecorev1alpha1.PodCliqueSpec{
+			Replicas:     1,
+			MinAvailable: ptr.To(int32(1)),
+		},
+		Status: grovecorev1alpha1.PodCliqueStatus{ReadyReplicas: 1},
+	}
+	availablePCSG := grovecorev1alpha1.PodCliqueScalingGroup{
+		Spec: grovecorev1alpha1.PodCliqueScalingGroupSpec{
+			Replicas:     1,
+			MinAvailable: ptr.To(int32(1)),
+		},
+		Status: grovecorev1alpha1.PodCliqueScalingGroupStatus{AvailableReplicas: 1},
+	}
+	terminatingPCLQ := availablePCLQ
+	terminatingPCLQ.DeletionTimestamp = ptr.To(metav1.Now())
+	terminatingPCLQ.Finalizers = []string{"test"}
+	terminatingPCSG := availablePCSG
+	terminatingPCSG.DeletionTimestamp = ptr.To(metav1.Now())
+	terminatingPCSG.Finalizers = []string{"test"}
+	unavailablePCLQ := availablePCLQ
+	unavailablePCLQ.Status.ReadyReplicas = 0
+	unavailablePCSG := availablePCSG
+	unavailablePCSG.Status.AvailableReplicas = 0
+	zeroPCLQ := unavailablePCLQ
+	zeroPCLQ.Spec.Replicas = 0
+	zeroPCSG := unavailablePCSG
+	zeroPCSG.Spec.Replicas = 0
+
+	tests := []struct {
+		name                        string
+		expectedStandalonePCLQCount int
+		expectedPCSGCount           int
+		standalonePCLQs             []grovecorev1alpha1.PodClique
+		pcsgs                       []grovecorev1alpha1.PodCliqueScalingGroup
+		want                        bool
+	}{
+		{
+			name:                        "all expected resources are available",
+			expectedStandalonePCLQCount: 1,
+			expectedPCSGCount:           1,
+			standalonePCLQs:             []grovecorev1alpha1.PodClique{availablePCLQ},
+			pcsgs:                       []grovecorev1alpha1.PodCliqueScalingGroup{availablePCSG},
+			want:                        true,
+		},
+		{name: "no resources are expected", want: true},
+		{name: "missing standalone PodClique", expectedStandalonePCLQCount: 1},
+		{name: "missing PodCliqueScalingGroup", expectedPCSGCount: 1},
+		{name: "terminating standalone PodClique", expectedStandalonePCLQCount: 1, standalonePCLQs: []grovecorev1alpha1.PodClique{terminatingPCLQ}},
+		{name: "terminating PodCliqueScalingGroup", expectedPCSGCount: 1, pcsgs: []grovecorev1alpha1.PodCliqueScalingGroup{terminatingPCSG}},
+		{name: "standalone PodClique is below min available", expectedStandalonePCLQCount: 1, standalonePCLQs: []grovecorev1alpha1.PodClique{unavailablePCLQ}},
+		{name: "PodCliqueScalingGroup is below min available", expectedPCSGCount: 1, pcsgs: []grovecorev1alpha1.PodCliqueScalingGroup{unavailablePCSG}},
+		{name: "standalone PodClique scaled to zero is available", expectedStandalonePCLQCount: 1, standalonePCLQs: []grovecorev1alpha1.PodClique{zeroPCLQ}, want: true},
+		{name: "PodCliqueScalingGroup scaled to zero is available", expectedPCSGCount: 1, pcsgs: []grovecorev1alpha1.PodCliqueScalingGroup{zeroPCSG}, want: true},
+		{name: "additional unavailable standalone PodClique makes the replica unavailable", expectedStandalonePCLQCount: 1, standalonePCLQs: []grovecorev1alpha1.PodClique{availablePCLQ, unavailablePCLQ}},
+		{name: "additional terminating standalone PodClique does not affect availability", expectedStandalonePCLQCount: 1, standalonePCLQs: []grovecorev1alpha1.PodClique{availablePCLQ, terminatingPCLQ}, want: true},
+		{name: "additional unavailable PodCliqueScalingGroup makes the replica unavailable", expectedPCSGCount: 1, pcsgs: []grovecorev1alpha1.PodCliqueScalingGroup{availablePCSG, unavailablePCSG}},
+		{name: "additional terminating PodCliqueScalingGroup does not affect availability", expectedPCSGCount: 1, pcsgs: []grovecorev1alpha1.PodCliqueScalingGroup{availablePCSG, terminatingPCSG}, want: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := IsPCSReplicaAvailable(
+				test.expectedStandalonePCLQCount,
+				test.expectedPCSGCount,
+				test.standalonePCLQs,
+				test.pcsgs,
+			)
+			assert.Equal(t, test.want, got)
+		})
+	}
+}
+
 func TestGetPCSGMinAvailableFromPCSTemplateSpec(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -755,7 +709,7 @@ func TestGetPCSGReplicasFromPCSTemplateSpec(t *testing.T) {
 
 // TestIsStandalonePCLQ verifies a PodClique is standalone unless it is a member of a
 // PodCliqueScalingGroup.
-func TestIsStandalonePCLQ(t *testing.T) {
+func TestIsStandalonePCLQTemplate(t *testing.T) {
 	pcs := testutils.NewPodCliqueSetBuilder("pcs", "default", "uid").
 		WithStandaloneClique("standalone-clq").
 		WithScalingGroupConfig("sg", []string{"member-clq"}, 4, 2).
@@ -770,7 +724,7 @@ func TestIsStandalonePCLQ(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			actual := IsStandalonePCLQ(pcs, tc.cliqueName)
+			actual := IsStandalonePCLQTemplate(pcs, tc.cliqueName)
 			assert.Equal(t, tc.expected, actual)
 		})
 	}

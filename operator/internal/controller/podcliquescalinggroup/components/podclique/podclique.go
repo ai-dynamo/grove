@@ -81,7 +81,7 @@ type _resource struct {
 }
 
 // New creates a new PodClique operator for managing PodClique resources within PodCliqueScalingGroups
-func New(client client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder, expStore *expect.ExpectationsStore) component.Operator[grovecorev1alpha1.PodCliqueScalingGroup] {
+func New(client client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder, expStore *expect.ExpectationsStore) component.Operator[grovecorev1alpha1.PodCliqueScalingGroup, component.EmptyState, component.NoResult] {
 	return &_resource{
 		client:            client,
 		scheme:            scheme,
@@ -111,17 +111,16 @@ func (r _resource) GetExistingResourceNames(ctx context.Context, logger logr.Log
 
 // Sync synchronizes all resources that the PodClique Operator manages.
 // Sync ensures that the desired PodCliques exist for the PodCliqueScalingGroup with proper scaling and dependencies
-func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcsg *grovecorev1alpha1.PodCliqueScalingGroup) error {
+func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcsg *grovecorev1alpha1.PodCliqueScalingGroup, _ *component.EmptyState) (component.NoResult, error) {
 	syncCtx, err := r.prepareSyncContext(ctx, pcsg)
 	if err != nil {
-		return err
+		return component.NoResult{}, err
 	}
 	logger.V(1).Info("Starting PodCliqueScalingGroup Sync", "pcsgObjectKey", client.ObjectKeyFromObject(syncCtx.pcsg))
-	// Run the sync flow
 	if err = r.runSyncFlow(ctx, logger, syncCtx); err != nil {
-		return err
+		return component.NoResult{}, err
 	}
-	return nil
+	return component.NoResult{}, nil
 }
 
 // Delete deletes all resources that the PodClique Operator manages.
@@ -154,7 +153,7 @@ func (r _resource) Delete(ctx context.Context, logger logr.Logger, pcsgObjectMet
 		}
 		deleteTasks = append(deleteTasks, task)
 	}
-	if runResult := utils.RunConcurrently(ctx, logger, deleteTasks); runResult.HasErrors() {
+	if runResult := utils.RunConcurrentlyAndWait(ctx, logger, deleteTasks); runResult.HasErrors() {
 		logger.Error(runResult.GetAggregatedError(), "Error deleting PodCliques", "run summary", runResult.GetSummary())
 		return groveerr.WrapError(runResult.GetAggregatedError(),
 			errCodeDeletePodClique,
@@ -172,7 +171,7 @@ func (r _resource) triggerDeletionOfPodCliques(ctx context.Context, logger logr.
 	if len(deletionTasks) == 0 {
 		return nil
 	}
-	if runResult := utils.RunConcurrently(ctx, logger, deletionTasks); runResult.HasErrors() {
+	if runResult := utils.RunConcurrentlyAndWait(ctx, logger, deletionTasks); runResult.HasErrors() {
 		return groveerr.WrapError(runResult.GetAggregatedError(),
 			errCodeDeletePodClique,
 			component.OperationSync,

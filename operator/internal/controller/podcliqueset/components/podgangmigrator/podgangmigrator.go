@@ -23,6 +23,7 @@ import (
 	apiconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
+	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/sync"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/podgangmigrator"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
@@ -59,7 +60,7 @@ type _resource struct {
 // New creates a new PodGang migration operator. It migrates a PodCliqueSet from the legacy PodGang
 // naming to the epoch-based PodGang naming and PodGangMap scheme. It uses the PodGangMap created
 // earlier in the same reconcile as the source of truth for the new names.
-func New(client client.Client, scheme *runtime.Scheme, schedRegistry scheduler.Registry) component.Operator[grovecorev1alpha1.PodCliqueSet] {
+func New(client client.Client, scheme *runtime.Scheme, schedRegistry scheduler.Registry) component.Operator[grovecorev1alpha1.PodCliqueSet, pcssync.State, pcssync.Result] {
 	return &_resource{
 		client:        client,
 		scheme:        scheme,
@@ -82,26 +83,26 @@ func (r _resource) GetExistingResourceNames(_ context.Context, _ logr.Logger, _ 
 // It creates no PodGang. The PodGang component in a later sync group creates them. Holding the gate
 // until they exist stops an unblocked rollout from deleting an old Pod whose replacement is gated on a
 // PodGang that does not exist yet.
-func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) error {
+func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, state *pcssync.State) (pcssync.Result, error) {
 	if !podgangmigrator.IsMigrationInProgress(pcs) {
-		return nil
+		return pcssync.Result{}, nil
 	}
-	for pcsReplicaIndex := range int(pcs.Spec.Replicas) {
+	for _, pcsReplicaIndex := range state.ExpectedReplicaIndices {
 		if err := r.migrateReplica(ctx, pcs, pcsReplicaIndex); err != nil {
-			return err
+			return pcssync.Result{}, err
 		}
 	}
-	allCreated, err := r.allEpochBasedPodGangsCreated(ctx, pcs)
+	allCreated, err := r.allEpochBasedPodGangsCreated(ctx, pcs, state.ExpectedReplicaIndices)
 	if err != nil {
-		return err
+		return pcssync.Result{}, err
 	}
 	if !allCreated {
 		// Continue the reconcile so the PodGang component creates the missing PodGangs, then requeue to
 		// re-check and lift the gate.
-		return groveerr.New(groveerr.ErrCodeContinueReconcileAndRequeue, component.OperationSync,
+		return pcssync.Result{}, groveerr.NewContinueReconcileAndRequeue(component.OperationSync,
 			fmt.Sprintf("All epoch-schemed PodGangs for PodCliqueSet %v are not yet created, holding the migration gate until they exist", client.ObjectKeyFromObject(pcs)))
 	}
-	return r.clearMigrationGate(ctx, logger, pcs)
+	return pcssync.Result{}, r.clearMigrationGate(ctx, logger, pcs)
 }
 
 // migrateReplica migrates one PodCliqueSet replica. It does the following:
@@ -294,9 +295,9 @@ func annotationsNeedUpdate(existing, desired map[string]string) bool {
 
 // allEpochBasedPodGangsCreated checks if all expected epoch-scheme based PodGangs are created for the PCS.
 // It derives the expected PodGang names using PodGangMap entries and anchor/non-anchor PodGang name generator functions.
-func (r _resource) allEpochBasedPodGangsCreated(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet) (bool, error) {
+func (r _resource) allEpochBasedPodGangsCreated(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, expectedPCSReplicaIndices []int) (bool, error) {
 	pcsObjectKey := client.ObjectKeyFromObject(pcs)
-	for pcsReplicaIndex := range int(pcs.Spec.Replicas) {
+	for _, pcsReplicaIndex := range expectedPCSReplicaIndices {
 		pgm, err := componentutils.GetPodGangMap(ctx, r.client, client.ObjectKeyFromObject(pcs), pcsReplicaIndex)
 		if err != nil {
 			return false, groveerr.WrapError(err, errCodeGetPodGangMap, component.OperationSync,

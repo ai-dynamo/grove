@@ -22,6 +22,7 @@ import (
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
+	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/sync"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
@@ -48,7 +49,7 @@ type _resource struct {
 }
 
 // New creates an instance of RoleBinding components operator.
-func New(client client.Client, scheme *runtime.Scheme) component.Operator[grovecorev1alpha1.PodCliqueSet] {
+func New(client client.Client, scheme *runtime.Scheme) component.Operator[grovecorev1alpha1.PodCliqueSet, pcssync.State, pcssync.Result] {
 	return &_resource{
 		client: client,
 		scheme: scheme,
@@ -77,10 +78,10 @@ func (r _resource) GetExistingResourceNames(ctx context.Context, _ logr.Logger, 
 }
 
 // Sync synchronizes all resources that the RoleBinding Operator manages.
-func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) error {
+func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, _ *pcssync.State) (pcssync.Result, error) {
 	existingRoleBindingNames, err := r.GetExistingResourceNames(ctx, logger, pcs.ObjectMeta)
 	if err != nil {
-		return groveerr.WrapError(err,
+		return pcssync.Result{}, groveerr.WrapError(err,
 			errSyncRoleBinding,
 			component.OperationSync,
 			fmt.Sprintf("Error getting existing RoleBinding names for PodCliqueSet: %v", client.ObjectKeyFromObject(pcs)),
@@ -88,27 +89,27 @@ func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev
 	}
 	if len(existingRoleBindingNames) > 0 {
 		logger.V(1).Info("RoleBinding already exists, skipping creation", "existingRoleBinding", existingRoleBindingNames[0])
-		return nil
+		return pcssync.Result{}, nil
 	}
 	objectKey := getObjectKey(pcs.ObjectMeta)
 	roleBinding := emptyRoleBinding(objectKey)
 	logger.V(1).Info("Running CreateOrUpdate RoleBinding", "objectKey", objectKey)
 	if err := r.buildResource(pcs, roleBinding); err != nil {
-		return groveerr.WrapError(err,
+		return pcssync.Result{}, groveerr.WrapError(err,
 			errSyncRoleBinding,
 			component.OperationSync,
 			fmt.Sprintf("Error building RoleBinding: %v for PodCliqueSet: %v", objectKey, client.ObjectKeyFromObject(pcs)),
 		)
 	}
 	if err := client.IgnoreAlreadyExists(r.client.Create(ctx, roleBinding)); err != nil {
-		return groveerr.WrapError(err,
+		return pcssync.Result{}, groveerr.WrapError(err,
 			errSyncRoleBinding,
 			component.OperationSync,
 			fmt.Sprintf("Error syncing RoleBinding: %v for PodCliqueSet: %v", objectKey, client.ObjectKeyFromObject(pcs)),
 		)
 	}
 	logger.Info("Created RoleBinding", "objectKey", objectKey)
-	return nil
+	return pcssync.Result{}, nil
 }
 
 // Delete removes the RoleBinding resource for the PodCliqueSet.

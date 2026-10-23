@@ -190,7 +190,7 @@ func countPodsAtTemplateHash(pods []*corev1.Pod, podTemplateHash string) int32 {
 // target the PodClique. PodCliques that belong to a PodCliqueScalingGroup are scaled via the PCSG
 // and must not advertise their own selector.
 func mutateSelector(pcsName string, pclq *grovecorev1alpha1.PodClique) error {
-	if _, isPCSGMember := pclq.Labels[apicommon.LabelPodCliqueScalingGroup]; isPCSGMember {
+	if !componentutils.IsStandalonePCLQ(pclq) {
 		return nil
 	}
 	labels := lo.Assign(

@@ -35,7 +35,7 @@ import (
 // updateCoherentReplicaProgress records the observability fields for the replica currently under a
 // coherent update. InFlightEpochs mirrors the latest current-hash epoch on the replica's PodGangMap, and
 // Message summarizes the in-scope components that have not yet reached the current revision.
-func (r _resource) updateCoherentReplicaProgress(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, replicaInfo pcsReplicaInfo) error {
+func (r *_resource) updateCoherentReplicaProgress(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, replicaInfo pcsReplicaInfo) error {
 	inFlightEpochs, err := r.inFlightEpochsForReplica(ctx, pcs, replicaInfo.replicaIndex)
 	if err != nil {
 		return err
@@ -50,7 +50,7 @@ func (r _resource) updateCoherentReplicaProgress(ctx context.Context, logger log
 // inFlightEpochsForReplica returns the latest current-hash epoch on the replica's PodGangMap, the batch
 // the coherent engine is currently rolling. It is a list to leave room for a future iteration that rolls
 // more than one batch at a time. It is empty when no PodGangMap or no current-hash entry exists yet.
-func (r _resource) inFlightEpochsForReplica(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, pcsReplicaIndex int) ([]string, error) {
+func (r *_resource) inFlightEpochsForReplica(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, pcsReplicaIndex int) ([]string, error) {
 	pgm, err := componentutils.GetPodGangMap(ctx, r.client, client.ObjectKeyFromObject(pcs), pcsReplicaIndex)
 	if err != nil {
 		if apierrors.IsNotFound(err) {

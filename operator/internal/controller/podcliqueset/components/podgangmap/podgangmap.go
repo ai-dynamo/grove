@@ -22,6 +22,7 @@ import (
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
+	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/sync"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
@@ -40,9 +41,7 @@ const (
 	errCodeCreateOrPatchPodGangMap grovecorev1alpha1.ErrorCode = "ERR_CREATE_OR_PATCH_PODGANGMAP"
 	errCodeSetControllerReference  grovecorev1alpha1.ErrorCode = "ERR_SET_CONTROLLER_REFERENCE"
 	errCodeListPCLQs               grovecorev1alpha1.ErrorCode = "ERR_LIST_PCLQS"
-	errCodeGroupPCLQsByReplica     grovecorev1alpha1.ErrorCode = "ERR_GROUP_PCLQS_BY_REPLICA"
 	errCodeListPCSGs               grovecorev1alpha1.ErrorCode = "ERR_LIST_PCSGS"
-	errCodeGroupPCSGsByReplica     grovecorev1alpha1.ErrorCode = "ERR_GROUP_PCSGS_BY_REPLICA"
 	errCodeListPodGangs            grovecorev1alpha1.ErrorCode = "ERR_LIST_PODGANGS"
 	errCodeGroupPodGangsByReplica  grovecorev1alpha1.ErrorCode = "ERR_GROUP_PODGANGS_BY_REPLICA"
 	errCodeInvalidEpoch            grovecorev1alpha1.ErrorCode = "ERR_INVALID_EPOCH"
@@ -57,7 +56,7 @@ type _resource struct {
 }
 
 // New creates a new instance of the PodGangMap component operator.
-func New(cl client.Client, scheme *runtime.Scheme, clk clock.Clock) component.Operator[grovecorev1alpha1.PodCliqueSet] {
+func New(cl client.Client, scheme *runtime.Scheme, clk clock.Clock) component.Operator[grovecorev1alpha1.PodCliqueSet, pcssync.State, pcssync.Result] {
 	return &_resource{
 		client: cl,
 		scheme: scheme,
@@ -85,13 +84,31 @@ func (r _resource) GetExistingResourceNames(ctx context.Context, _ logr.Logger, 
 // Sync reconciles the PodGangMap for every PCS replica. It takes a snapshot once, authors the
 // PodGangMap resources in the bootstrap and steady-state flows and cleans up PodGangMaps orphaned
 // by a PCS replica scale-in.
-func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) error {
+func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, state *pcssync.State) (pcssync.Result, error) {
 	logger.V(4).Info("Syncing PodGangMap resources")
-	syncSnap, err := r.takeSnapshot(ctx, logger, pcs)
+	syncSnap, err := r.takeSnapshot(ctx, logger, pcs, state)
 	if err != nil {
-		return err
+		return pcssync.Result{}, err
 	}
-	return r.runSyncFlow(ctx, syncSnap)
+
+	pcsReplicaIndicesAwaitingResourceCleanup := existingScaleInPCSReplicaIndices(syncSnap)
+	if err := r.runSyncFlow(ctx, syncSnap); err != nil {
+		return pcssync.Result{}, err
+	}
+	return pcssync.Result{
+		ScaleInReplicaIndicesAwaitingResourceCleanup: pcsReplicaIndicesAwaitingResourceCleanup,
+	}, nil
+}
+
+// existingScaleInPCSReplicaIndices returns scale-in PCS replica indices whose PodGangMap still exists.
+func existingScaleInPCSReplicaIndices(syncSnap *syncSnapshot) []int {
+	var pcsReplicaIndicesAwaitingResourceCleanup []int
+	for _, pcsReplicaIndex := range syncSnap.scaleInPCSReplicaIndices {
+		if syncSnap.existingPGMsByPCSReplicaIndex[pcsReplicaIndex] != nil {
+			pcsReplicaIndicesAwaitingResourceCleanup = append(pcsReplicaIndicesAwaitingResourceCleanup, pcsReplicaIndex)
+		}
+	}
+	return pcsReplicaIndicesAwaitingResourceCleanup
 }
 
 // Delete removes all PodGangMap resources owned by the PodCliqueSet.

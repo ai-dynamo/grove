@@ -370,7 +370,7 @@ func TestReconcileStandalonePCLQDistributionEarlyReturn(t *testing.T) {
 			r := &_resource{client: builder.Build()}
 
 			err := r.reconcileStandalonePCLQDistribution(context.Background(), logr.Discard(), tc.ss)
-			testutils.AssertGroveError(t, &groveerr.GroveError{Code: groveerr.ErrCodeRequeueAfter, Operation: component.OperationSync}, err)
+			assert.True(t, groveerr.IsRequeueAfter(err))
 		})
 	}
 }
@@ -436,10 +436,11 @@ func TestRunSyncFlowDelaysUpdateWorkUntilRevisionsMatch(t *testing.T) {
 	}
 	assertRequeue := func(t *testing.T, result syncFlowResult) {
 		t.Helper()
-		require.Error(t, result.getAggregatedError())
+		err := result.getAggregatedError()
+		require.Error(t, err)
+		assert.True(t, groveerr.IsContinueReconcileAndRequeue(err), "aggregated error: %v", err)
 		var requeueErr *groveerr.GroveError
-		require.True(t, errors.As(result.getAggregatedError(), &requeueErr))
-		assert.Equal(t, groveerr.ErrCodeContinueReconcileAndRequeue, requeueErr.Code, "aggregated error: %v", result.getAggregatedError())
+		require.ErrorAs(t, err, &requeueErr)
 		assert.Equal(t, component.OperationSync, requeueErr.Operation)
 	}
 

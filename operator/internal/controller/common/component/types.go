@@ -39,14 +39,25 @@ type GroveCustomResourceType interface {
 	grovecorev1alpha1.PodCliqueSet | grovecorev1alpha1.PodClique | grovecorev1alpha1.PodCliqueScalingGroup
 }
 
-// Operator is a facade that manages one or more resources that are provisioned for a PodCliqueSet.
-type Operator[T GroveCustomResourceType] interface {
+// EmptyState is used by reconcilers that do not share reconcile-scoped input with component operators.
+type EmptyState struct{}
+
+// NoResult is used by component operators that do not return observations to their reconciler.
+type NoResult struct{}
+
+// Operator manages one kind of component resource for a Grove custom resource.
+// - T is the custom resource being reconciled.
+// - S is reconciler-specific, reconcile-scoped input shared with the component-operators participating in that
+// reconciliation.
+// - R is the reconciler-specific result produced by an operator after synchronization. Reconcilers that need no
+// shared input or result should use EmptyState and NoResult.
+type Operator[T GroveCustomResourceType, S any, R any] interface {
 	// GetExistingResourceNames returns the names of all the existing resources that this Operator manages.
 	GetExistingResourceNames(ctx context.Context, logger logr.Logger, objMeta metav1.ObjectMeta) ([]string, error)
-	// Sync synchronizes all resources that this Operator manages. If a component does not exist then it will
-	// create it. If there are changes in the owning PodCliqueSet resource that transpires changes to one or more resources
-	// managed by this Operator then those resource(s) will be either be updated or a deletion is triggered.
-	Sync(ctx context.Context, logger logr.Logger, obj *T) error
+	// Sync synchronizes the resources managed by this Operator and returns what it observed. State is
+	// supplied by the reconciler and is valid only for the current reconciliation. Implementations may
+	// create, update, or delete managed resources to converge them with obj.
+	Sync(ctx context.Context, logger logr.Logger, obj *T, state *S) (R, error)
 	// Delete triggers the deletion of all resources that this Operator manages.
 	Delete(ctx context.Context, logger logr.Logger, objMeta metav1.ObjectMeta) error
 }
@@ -88,34 +99,36 @@ const (
 	KindPodGangMigrator Kind = "PodGangMigrator"
 )
 
-// OperatorRegistry is a facade that gives access to all components operators.
-type OperatorRegistry[T GroveCustomResourceType] interface {
+// OperatorRegistry stores the component operators used by one reconciler. T is the reconciled custom resource, S is the
+// reconcile-scoped input passed to every registered operator, and R is the result returned by every registered
+// operator.
+type OperatorRegistry[T GroveCustomResourceType, S any, R any] interface {
 	// Register registers a components operator against the kind of components it operates on.
-	Register(kind Kind, operator Operator[T])
+	Register(kind Kind, operator Operator[T, S, R])
 	// GetOperator gets a components operator that operates on the given kind.
-	GetOperator(kind Kind) (Operator[T], error)
+	GetOperator(kind Kind) (Operator[T, S, R], error)
 	// GetAllOperators returns all components operators.
-	GetAllOperators() map[Kind]Operator[T]
+	GetAllOperators() map[Kind]Operator[T, S, R]
 }
 
-type _registry[T GroveCustomResourceType] struct {
-	operators map[Kind]Operator[T]
+type _registry[T GroveCustomResourceType, S any, R any] struct {
+	operators map[Kind]Operator[T, S, R]
 }
 
-// NewOperatorRegistry creates a new OperatorRegistry.
-func NewOperatorRegistry[T GroveCustomResourceType]() OperatorRegistry[T] {
-	return &_registry[T]{
-		operators: make(map[Kind]Operator[T]),
+// NewOperatorRegistry creates an empty registry whose operators share the same T, S, and R contract.
+func NewOperatorRegistry[T GroveCustomResourceType, S any, R any]() OperatorRegistry[T, S, R] {
+	return &_registry[T, S, R]{
+		operators: make(map[Kind]Operator[T, S, R]),
 	}
 }
 
 // Register registers an operator with its associated kind in the registry.
-func (r *_registry[T]) Register(kind Kind, operator Operator[T]) {
+func (r *_registry[T, S, R]) Register(kind Kind, operator Operator[T, S, R]) {
 	r.operators[kind] = operator
 }
 
 // GetOperator gets the operator associated with a kind from the registry.
-func (r *_registry[T]) GetOperator(kind Kind) (Operator[T], error) {
+func (r *_registry[T, S, R]) GetOperator(kind Kind) (Operator[T, S, R], error) {
 	operator, ok := r.operators[kind]
 	if !ok {
 		return nil, fmt.Errorf("operator for kind %s not found", kind)
@@ -124,6 +137,6 @@ func (r *_registry[T]) GetOperator(kind Kind) (Operator[T], error) {
 }
 
 // GetAllOperators gets all operators registered.
-func (r *_registry[T]) GetAllOperators() map[Kind]Operator[T] {
+func (r *_registry[T, S, R]) GetAllOperators() map[Kind]Operator[T, S, R] {
 	return r.operators
 }

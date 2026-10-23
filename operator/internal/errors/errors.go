@@ -26,12 +26,14 @@ import (
 
 var _ error = (*GroveError)(nil)
 
-// ErrCodeRequeueAfter is a special error code that indicates that the current step should be re-queued after a certain time,
-const ErrCodeRequeueAfter grovecorev1alpha1.ErrorCode = "ERR_REQUEUE_AFTER"
-
-// ErrCodeContinueReconcileAndRequeue is a special error code that indicates that the Sync of a current component errored,
-// but the following components should be attempted to be synced, and then the current step should be re-queued after a certain time.
-const ErrCodeContinueReconcileAndRequeue grovecorev1alpha1.ErrorCode = "ERR_CONTINUE_RECONCILE_AND_REQUEUE"
+const (
+	// errCodeRequeueAfter identifies a control-flow error that stops the current reconciliation
+	// and requests another reconciliation after a specified duration.
+	errCodeRequeueAfter grovecorev1alpha1.ErrorCode = "ERR_REQUEUE_AFTER"
+	// errCodeContinueReconcileAndRequeue identifies a control-flow error that allows independent
+	// components to continue before another reconciliation is requested.
+	errCodeContinueReconcileAndRequeue grovecorev1alpha1.ErrorCode = "ERR_CONTINUE_RECONCILE_AND_REQUEUE"
+)
 
 // GroveError is a custom error type that should be used throughout grove which encapsulates
 // the underline error (cause), uniquely identifiable error code, contextual information captured
@@ -47,6 +49,8 @@ type GroveError struct {
 	Message string
 	// ObservedAt is the time at which the error was observed.
 	ObservedAt time.Time
+	// requeueAfter is the requested delay before the next reconciliation.
+	requeueAfter time.Duration
 }
 
 func (e *GroveError) Error() string {
@@ -62,6 +66,29 @@ func (e *GroveError) Error() string {
 func New(code grovecorev1alpha1.ErrorCode, operation string, message string) error {
 	return &GroveError{
 		Code:       code,
+		Operation:  operation,
+		Message:    message,
+		ObservedAt: time.Now().UTC(),
+	}
+}
+
+// NewRequeueAfter creates a control-flow error that stops the current reconciliation
+// and requests another reconciliation after requeueAfter.
+func NewRequeueAfter(operation string, message string, requeueAfter time.Duration) error {
+	return &GroveError{
+		Code:         errCodeRequeueAfter,
+		Operation:    operation,
+		Message:      message,
+		ObservedAt:   time.Now().UTC(),
+		requeueAfter: requeueAfter,
+	}
+}
+
+// NewContinueReconcileAndRequeue creates a control-flow error that allows independent
+// components to continue before another reconciliation is requested.
+func NewContinueReconcileAndRequeue(operation string, message string) error {
+	return &GroveError{
+		Code:       errCodeContinueReconcileAndRequeue,
 		Operation:  operation,
 		Message:    message,
 		ObservedAt: time.Now().UTC(),
@@ -98,4 +125,44 @@ func MapToLastErrors(errs []error) []grovecorev1alpha1.LastError {
 		}
 	}
 	return lastErrs
+}
+
+// GetRequeueAfter returns the requested retry duration when err is a requeue-after
+// control-flow error.
+func GetRequeueAfter(err error) (time.Duration, bool) {
+	var groveErr *GroveError
+	if !errors.As(err, &groveErr) || groveErr.Code != errCodeRequeueAfter {
+		return 0, false
+	}
+	return groveErr.requeueAfter, true
+}
+
+// GetLowestRequeueAfter returns the shortest requested retry duration in errs.
+func GetLowestRequeueAfter(errs []error) (time.Duration, bool) {
+	var lowest time.Duration
+	var found bool
+	for _, err := range errs {
+		requeueAfter, ok := GetRequeueAfter(err)
+		if !ok {
+			continue
+		}
+		if !found || requeueAfter < lowest {
+			lowest = requeueAfter
+			found = true
+		}
+	}
+	return lowest, found
+}
+
+// IsContinueReconcileAndRequeue reports whether err allows independent components
+// to continue before another reconciliation is requested.
+func IsContinueReconcileAndRequeue(err error) bool {
+	var groveErr *GroveError
+	return errors.As(err, &groveErr) && groveErr.Code == errCodeContinueReconcileAndRequeue
+}
+
+// IsRequeueAfter reports whether err requests another reconciliation after a specified duration.
+func IsRequeueAfter(err error) bool {
+	var groveErr *GroveError
+	return errors.As(err, &groveErr) && groveErr.Code == errCodeRequeueAfter
 }

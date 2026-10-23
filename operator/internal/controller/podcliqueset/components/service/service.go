@@ -17,13 +17,16 @@ package service
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strconv"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
+	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/sync"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
+	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
 	"github.com/go-logr/logr"
@@ -31,6 +34,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
@@ -46,7 +50,7 @@ type _resource struct {
 }
 
 // New creates a new Service operator for managing Service resources within PodCliqueSets
-func New(client client.Client, scheme *runtime.Scheme) component.Operator[grovecorev1alpha1.PodCliqueSet] {
+func New(client client.Client, scheme *runtime.Scheme) component.Operator[grovecorev1alpha1.PodCliqueSet, pcssync.State, pcssync.Result] {
 	return &_resource{
 		client: client,
 		scheme: scheme,
@@ -72,19 +76,76 @@ func (r _resource) GetExistingResourceNames(ctx context.Context, logger logr.Log
 }
 
 // Sync synchronizes all resources that the Service Operator manages.
-func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) error {
-	replicaIndexToObjectKeys := getObjectKeys(pcs)
-	tasks := make([]utils.Task, 0, len(replicaIndexToObjectKeys))
-	for replicaIndex, objectKey := range replicaIndexToObjectKeys {
-		createOrUpdateTask := utils.Task{
+func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, state *pcssync.State) (pcssync.Result, error) {
+	existingServicesByPCSReplicaIndex, err := componentutils.GetHeadlessServicesByPCSReplicaIndex(ctx, r.client, pcs.ObjectMeta)
+	if err != nil {
+		return pcssync.Result{}, err
+	}
+
+	pcsReplicaIndicesAwaitingResourceCleanup, err := r.triggerDeletionOfExcessServices(ctx, logger, pcs, existingServicesByPCSReplicaIndex, state)
+	if err != nil {
+		return pcssync.Result{}, err
+	}
+	if err := r.createOrUpdateServices(ctx, logger, pcs, state.ExpectedReplicaIndices); err != nil {
+		return pcssync.Result{}, err
+	}
+
+	return pcssync.Result{
+		ScaleInReplicaIndicesAwaitingResourceCleanup: pcsReplicaIndicesAwaitingResourceCleanup,
+	}, nil
+}
+
+// triggerDeletionOfExcessServices deletes Services outside the expected replica set and returns scale-in indices that still have Services.
+func (r _resource) triggerDeletionOfExcessServices(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, servicesByPCSReplicaIndex map[int][]corev1.Service, state *pcssync.State) ([]int, error) {
+	expectedPCSReplicaIndices := sets.New(state.ExpectedReplicaIndices...)
+	scaleInPCSReplicaIndices := sets.New(state.ScaleInReplicaIndices...)
+	var (
+		deleteTasks                              []utils.Task
+		pcsReplicaIndicesAwaitingResourceCleanup []int
+	)
+	for pcsReplicaIndex, services := range servicesByPCSReplicaIndex {
+		if scaleInPCSReplicaIndices.Has(pcsReplicaIndex) && len(services) > 0 {
+			pcsReplicaIndicesAwaitingResourceCleanup = append(pcsReplicaIndicesAwaitingResourceCleanup, pcsReplicaIndex)
+		}
+		if expectedPCSReplicaIndices.Has(pcsReplicaIndex) {
+			continue
+		}
+		for _, service := range services {
+			serviceObjectKey := client.ObjectKeyFromObject(&service)
+			deleteTasks = append(deleteTasks, utils.Task{
+				Name: fmt.Sprintf("DeletePodCliqueSetService-%s", serviceObjectKey),
+				Fn: func(ctx context.Context) error {
+					return client.IgnoreNotFound(r.client.Delete(ctx, emptyService(serviceObjectKey)))
+				},
+			})
+		}
+	}
+
+	if runResult := utils.RunConcurrentlyAndWait(ctx, logger, deleteTasks); runResult.HasErrors() {
+		return nil, groveerr.WrapError(runResult.GetAggregatedError(),
+			errDeletePodCliqueSetService,
+			component.OperationSync,
+			fmt.Sprintf("Error deleting Headless Services for PodCliqueSet: %v", client.ObjectKeyFromObject(pcs)),
+		)
+	}
+	slices.Sort(pcsReplicaIndicesAwaitingResourceCleanup)
+	return pcsReplicaIndicesAwaitingResourceCleanup, nil
+}
+
+// createOrUpdateServices creates or updates headless Services for the expected replica indices.
+func (r _resource) createOrUpdateServices(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, expectedReplicaIndices []int) error {
+	objectKeys := getObjectKeys(pcs, expectedReplicaIndices)
+	tasks := make([]utils.Task, 0, len(objectKeys))
+	for i, objectKey := range objectKeys {
+		replicaIndex := expectedReplicaIndices[i]
+		tasks = append(tasks, utils.Task{
 			Name: fmt.Sprintf("CreateOrUpdatePodCliqueSetService-%s", objectKey),
 			Fn: func(ctx context.Context) error {
 				return r.doCreateOrUpdate(ctx, logger, pcs, replicaIndex, objectKey)
 			},
-		}
-		tasks = append(tasks, createOrUpdateTask)
+		})
 	}
-	if runResult := utils.RunConcurrently(ctx, logger, tasks); runResult.HasErrors() {
+	if runResult := utils.RunConcurrentlyAndWait(ctx, logger, tasks); runResult.HasErrors() {
 		return groveerr.WrapError(runResult.GetAggregatedError(),
 			errSyncPodCliqueSetService,
 			component.OperationSync,
@@ -184,11 +245,11 @@ func getSelectorLabelsForAllHeadlessServices(pcsName string) map[string]string {
 	)
 }
 
-// getObjectKeys constructs object keys for all headless Services across PCS replicas.
-func getObjectKeys(pcs *grovecorev1alpha1.PodCliqueSet) []client.ObjectKey {
-	objectKeys := make([]client.ObjectKey, 0, pcs.Spec.Replicas)
-	for replicaIndex := range pcs.Spec.Replicas {
-		serviceName := apicommon.GenerateHeadlessServiceName(apicommon.ResourceNameReplica{Name: pcs.Name, Replica: int(replicaIndex)})
+// getObjectKeys constructs object keys for headless Services for the given PCS replica indices.
+func getObjectKeys(pcs *grovecorev1alpha1.PodCliqueSet, replicaIndices []int) []client.ObjectKey {
+	objectKeys := make([]client.ObjectKey, 0, len(replicaIndices))
+	for _, replicaIndex := range replicaIndices {
+		serviceName := apicommon.GenerateHeadlessServiceName(apicommon.ResourceNameReplica{Name: pcs.Name, Replica: replicaIndex})
 		objectKeys = append(objectKeys, client.ObjectKey{
 			Name:      serviceName,
 			Namespace: pcs.Namespace,

@@ -53,8 +53,7 @@ func (r _resource) reconcileReplicasToCommittedPodGangs(ctx context.Context, log
 		return err
 	}
 	logger.Info("Recreating PodCliqueScalingGroup replicas onto their committed PodGang", "pcsg", client.ObjectKeyFromObject(ss.pcsg), "replicaIndices", indicesToRecreate)
-	return groveerr.New(
-		groveerr.ErrCodeContinueReconcileAndRequeue,
+	return groveerr.NewContinueReconcileAndRequeue(
 		component.OperationSync,
 		fmt.Sprintf("recreating %d replica(s) of PodCliqueScalingGroup %v onto their committed PodGang, requeuing", len(indicesToRecreate), client.ObjectKeyFromObject(ss.pcsg)),
 	)
@@ -122,8 +121,7 @@ func (r _resource) markCoherentUpdateEndIfConverged(ctx context.Context, logger 
 			// The update has not converged. A replica is still draining, pending recreation, or not yet
 			// Ready. Requeue so the roll is re-driven until every replica settles on its committed PodGang
 			// at the current revision, rather than returning without rescheduling.
-			return groveerr.New(
-				groveerr.ErrCodeContinueReconcileAndRequeue,
+			return groveerr.NewContinueReconcileAndRequeue(
 				component.OperationSync,
 				fmt.Sprintf("coherent update of PodCliqueScalingGroup %v has not converged, requeuing", client.ObjectKeyFromObject(ss.pcsg)),
 			)

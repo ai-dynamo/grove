@@ -18,6 +18,7 @@ import (
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
+	"github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/computedomain"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/hpa"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/podclique"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/podcliquescalinggroup"
@@ -31,18 +32,24 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/satokensecret"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/service"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/serviceaccount"
-	"github.com/ai-dynamo/grove/operator/internal/mnnvl/computedomain"
+	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/sync"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 
 	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/clock"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 )
 
 // CreateOperatorRegistry initializes the operator registry for the PodCliqueSet reconciler
-func CreateOperatorRegistry(mgr manager.Manager, eventRecorder record.EventRecorder, topologyAwareSchedulingConfig configv1alpha1.TopologyAwareSchedulingConfiguration, networkConfig configv1alpha1.NetworkAcceleration, schedRegistry scheduler.Registry) component.OperatorRegistry[v1alpha1.PodCliqueSet] {
+func CreateOperatorRegistry(mgr manager.Manager,
+	eventRecorder record.EventRecorder,
+	topologyAwareSchedulingConfig configv1alpha1.TopologyAwareSchedulingConfiguration,
+	networkConfig configv1alpha1.NetworkAcceleration,
+	schedRegistry scheduler.Registry,
+	scalingProgressExpectations *pcssync.ScalingProgressExpectations) component.OperatorRegistry[v1alpha1.PodCliqueSet, pcssync.State, pcssync.Result] {
 	cl := mgr.GetClient()
-	reg := component.NewOperatorRegistry[v1alpha1.PodCliqueSet]()
+	reg := component.NewOperatorRegistry[v1alpha1.PodCliqueSet, pcssync.State, pcssync.Result]()
 	reg.Register(component.KindPodClique, podclique.New(cl, mgr.GetScheme(), eventRecorder))
 	reg.Register(component.KindHeadlessService, service.New(cl, mgr.GetScheme()))
 	reg.Register(component.KindRole, role.New(cl, mgr.GetScheme()))
@@ -55,11 +62,9 @@ func CreateOperatorRegistry(mgr manager.Manager, eventRecorder record.EventRecor
 	reg.Register(component.KindPodGang, podgang.New(cl, mgr.GetScheme(), eventRecorder, topologyAwareSchedulingConfig, schedRegistry))
 	reg.Register(component.KindPodGangMap, podgangmap.New(cl, mgr.GetScheme(), clock.RealClock{}))
 	reg.Register(component.KindPodGangMigrator, podgangmigrator.New(cl, mgr.GetScheme(), schedRegistry))
-	reg.Register(component.KindPodCliqueSetReplica, podcliquesetreplica.New(cl, eventRecorder))
-
-	// Only register ComputeDomain operator if MNNVL is enabled
-	if networkConfig.AutoMNNVLEnabled {
-		reg.Register(component.KindComputeDomain, computedomain.New(cl, mgr.GetScheme(), eventRecorder))
+	reg.Register(component.KindPodCliqueSetReplica, podcliquesetreplica.New(cl, eventRecorder, scalingProgressExpectations))
+	if computedomain.ShouldRegister(mgr.GetRESTMapper(), networkConfig.AutoMNNVLEnabled, ctrl.Log.WithName("computedomain")) {
+		reg.Register(component.KindComputeDomain, computedomain.New(cl, mgr.GetScheme(), eventRecorder, !networkConfig.AutoMNNVLEnabled))
 	}
 
 	return reg

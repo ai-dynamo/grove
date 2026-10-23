@@ -25,6 +25,7 @@ import (
 	groveclientscheme "github.com/ai-dynamo/grove/operator/internal/client"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
+	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/sync"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
@@ -122,6 +123,37 @@ func TestGetExistingResourceNames(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestSyncUsesSparseReplicaIndices(t *testing.T) {
+	pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testPCSNamespace, uuid.NewUUID()).
+		WithReplicas(3).
+		WithStandaloneClique("howl").
+		Build()
+	existingPCLQs := []client.Object{
+		testutils.NewPodCliqueBuilder(pcs.Name, pcs.UID, "howl", pcs.Namespace, 0).Build(),
+		testutils.NewPodCliqueBuilder(pcs.Name, pcs.UID, "howl", pcs.Namespace, 1).Build(),
+		testutils.NewPodCliqueBuilder(pcs.Name, pcs.UID, "howl", pcs.Namespace, 4).Build(),
+	}
+	cl := testutils.NewTestClientBuilder().WithObjects(existingPCLQs...).Build()
+	operator := New(cl, groveclientscheme.Scheme, record.NewFakeRecorder(10))
+	state := &pcssync.State{
+		ExpectedReplicaIndices: []int{0, 2, 4},
+		ScaleInReplicaIndices:  []int{1},
+	}
+
+	result, err := operator.Sync(context.Background(), logr.Discard(), pcs, state)
+
+	require.NoError(t, err)
+	assert.Equal(t, []int{1}, result.ScaleInReplicaIndicesAwaitingResourceCleanup)
+	pclqs := getExistingPodCliques(t, cl, pcs.ObjectMeta)
+	pclqNames := make([]string, 0, len(pclqs))
+	for _, pclq := range pclqs {
+		pclqNames = append(pclqNames, pclq.Name)
+	}
+	assert.ElementsMatch(t, []string{"coyote-0-howl", "coyote-2-howl", "coyote-4-howl"}, pclqNames)
+	assert.Equal(t, []int{0, 2, 4}, state.ExpectedReplicaIndices)
+	assert.Equal(t, []int{1}, state.ScaleInReplicaIndices)
 }
 
 func TestDelete(t *testing.T) {

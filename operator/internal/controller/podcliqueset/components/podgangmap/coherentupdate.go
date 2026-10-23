@@ -183,7 +183,7 @@ func (s *syncSnapshot) computeDesiredReplicas(
 func (s *syncSnapshot) inScopeStandalonePCLQsByComponent(pcsReplicaIndex int) map[string]grovecorev1alpha1.PodClique {
 	pcsNameReplica := apicommon.ResourceNameReplica{Name: s.pcs.Name, Replica: pcsReplicaIndex}
 	pclqByComponent := make(map[string]grovecorev1alpha1.PodClique)
-	for _, pclq := range s.existingStandalonePCLQsByReplica[pcsReplicaIndex] {
+	for _, pclq := range s.existingStandalonePCLQsByPCSReplicaIndex[pcsReplicaIndex] {
 		componentName := apicommon.ExtractPodCliqueNameFromStandalonePCLQFQN(pclq.Name, pcsNameReplica)
 		if _, inScope := s.mvuTemplate.standalonePCLQs[componentName]; inScope {
 			pclqByComponent[componentName] = pclq
@@ -197,7 +197,7 @@ func (s *syncSnapshot) inScopeStandalonePCLQsByComponent(pcsReplicaIndex int) ma
 func (s *syncSnapshot) inScopePCSGsByComponent(pcsReplicaIndex int) (map[string]grovecorev1alpha1.PodCliqueScalingGroup, error) {
 	pcsNameReplica := apicommon.ResourceNameReplica{Name: s.pcs.Name, Replica: pcsReplicaIndex}
 	pcsgByComponent := make(map[string]grovecorev1alpha1.PodCliqueScalingGroup)
-	for _, pcsg := range s.existingPCSGsByReplica[pcsReplicaIndex] {
+	for _, pcsg := range s.existingPCSGsByPCSReplicaIndex[pcsReplicaIndex] {
 		componentName, err := apicommon.ExtractScalingGroupNameFromPCSGFQN(pcsg.Name, pcsNameReplica)
 		if err != nil {
 			return nil, groveerr.WrapError(err, errCodeExtractPCSGName, component.OperationSync,

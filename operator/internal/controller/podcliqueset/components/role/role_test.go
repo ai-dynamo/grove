@@ -20,6 +20,7 @@ import (
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/sync"
 
 	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
@@ -164,7 +165,7 @@ func TestSync(t *testing.T) {
 			},
 		}
 
-		err := operator.Sync(context.Background(), logr.Discard(), pcs)
+		_, err := operator.Sync(context.Background(), logr.Discard(), pcs, &pcssync.State{})
 
 		require.NoError(t, err)
 
@@ -216,7 +217,7 @@ func TestSync(t *testing.T) {
 			},
 		}
 
-		err := operator.Sync(context.Background(), logr.Discard(), pcs)
+		_, err := operator.Sync(context.Background(), logr.Discard(), pcs, &pcssync.State{})
 
 		// Should not error when role already exists
 		require.NoError(t, err)

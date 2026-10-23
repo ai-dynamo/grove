@@ -203,15 +203,19 @@ func hasStartedAndReadyChangedForAnyContainer(oldContainerStatuses []corev1.Cont
 	return false
 }
 
-// mapPodCliqueSetToPCLQs maps a PodCliqueSet to one or more reconcile.Request(s) to its constituent standalone Podcliques.
-// These events are needed to keep the PodClique.Status.CurrentPodCliqueSetGenerationHash in sync with the PodCliqueSet.
+// mapPodCliqueSetToPCLQs maps the PCS replica newly selected for update to its standalone PodCliques.
 func mapPodCliqueSetToPCLQs() handler.MapFunc {
 	return func(_ context.Context, obj client.Object) []reconcile.Request {
 		pcs, ok := obj.(*grovecorev1alpha1.PodCliqueSet)
 		if !ok {
 			return nil
 		}
-		return lo.Map(componentutils.GetPodCliqueFQNsForPCSNotInPCSG(pcs), func(pclqFQN string, _ int) reconcile.Request {
+		pcsReplicaIndex, ok := currentPCSReplicaInUpdate(pcs.Status.UpdateProgress)
+		if !ok {
+			return nil
+		}
+		pclqFQNs := componentutils.GetPodCliqueFQNsForPCSReplicaNotInPCSG(pcs, int(pcsReplicaIndex))
+		return lo.Map(pclqFQNs, func(pclqFQN string, _ int) reconcile.Request {
 			return reconcile.Request{NamespacedName: types.NamespacedName{
 				Namespace: pcs.Namespace,
 				Name:      pclqFQN,
@@ -220,7 +224,7 @@ func mapPodCliqueSetToPCLQs() handler.MapFunc {
 	}
 }
 
-// podCliqueSetPredicate filters PodCliqueSet events to only process generation hash changes
+// podCliqueSetPredicate filters PodCliqueSet events to updates that select a new PCS replica for update.
 func podCliqueSetPredicate() predicate.Predicate {
 	return predicate.Funcs{
 		CreateFunc: func(_ event.CreateEvent) bool { return false },
@@ -231,21 +235,20 @@ func podCliqueSetPredicate() predicate.Predicate {
 			if !okOld || !okNew {
 				return false
 			}
-			return !stringPointersEqual(oldPCS.Status.CurrentGenerationHash, newPCS.Status.CurrentGenerationHash) ||
-				pcsCurrentlyUpdatingReplicaChanged(oldPCS.Status.UpdateProgress, newPCS.Status.UpdateProgress)
+			return hasNewPCSReplicaBeenSelectedForUpdate(oldPCS.Status.UpdateProgress, newPCS.Status.UpdateProgress)
 		},
 		GenericFunc: func(_ event.GenericEvent) bool { return false },
 	}
 }
 
-// pcsCurrentlyUpdatingReplicaChanged reports whether the replica currently being updated has changed between the old and new PodCliqueSet update progress.
-func pcsCurrentlyUpdatingReplicaChanged(oldProgress, newProgress *grovecorev1alpha1.PodCliqueSetUpdateProgress) bool {
+// hasNewPCSReplicaBeenSelectedForUpdate reports whether the PCS selected a new replica for update.
+func hasNewPCSReplicaBeenSelectedForUpdate(oldProgress, newProgress *grovecorev1alpha1.PodCliqueSetUpdateProgress) bool {
 	oldReplicaIndex, oldOK := currentPCSReplicaInUpdate(oldProgress)
 	newReplicaIndex, newOK := currentPCSReplicaInUpdate(newProgress)
-	if oldOK != newOK {
-		return true
+	if !newOK {
+		return false
 	}
-	return oldOK && oldReplicaIndex != newReplicaIndex
+	return !oldOK || oldReplicaIndex != newReplicaIndex
 }
 
 // currentPCSReplicaInUpdate returns the replica index of the PodCliqueSet replica currently being updated, if any.

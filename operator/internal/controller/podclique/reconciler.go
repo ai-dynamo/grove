@@ -45,7 +45,7 @@ type Reconciler struct {
 	eventRecorder           record.EventRecorder
 	reconcileStatusRecorder ctrlcommon.ReconcileErrorRecorder
 	expectationsStore       *expect.ExpectationsStore
-	operatorRegistry        component.OperatorRegistry[grovecorev1alpha1.PodClique]
+	operatorRegistry        component.OperatorRegistry[grovecorev1alpha1.PodClique, component.EmptyState, component.NoResult]
 	schedRegistry           scheduler.Registry
 }
 

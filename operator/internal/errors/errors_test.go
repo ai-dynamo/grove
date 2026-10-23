@@ -23,6 +23,7 @@ import (
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -89,6 +90,135 @@ func TestMapToLastErrors(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			lastErrs := MapToLastErrors(tc.errs)
 			assert.ElementsMatch(t, tc.expectedLastErrs, lastErrs)
+		})
+	}
+}
+
+func TestNewRequeueAfter(t *testing.T) {
+	const (
+		operation = "test-operation"
+		message   = "retry later"
+	)
+	const requeueAfter = 2 * time.Second
+
+	err := NewRequeueAfter(operation, message, requeueAfter)
+
+	var groveErr *GroveError
+	require.ErrorAs(t, err, &groveErr)
+	assert.Equal(t, errCodeRequeueAfter, groveErr.Code)
+	assert.Equal(t, operation, groveErr.Operation)
+	assert.Equal(t, message, groveErr.Message)
+	assert.False(t, groveErr.ObservedAt.IsZero())
+	got, ok := GetRequeueAfter(err)
+	require.True(t, ok)
+	assert.Equal(t, requeueAfter, got)
+}
+
+func TestGetRequeueAfter(t *testing.T) {
+	requeueErr := NewRequeueAfter("test-operation", "retry later", 3*time.Second)
+	tests := []struct {
+		name string
+		err  error
+		want time.Duration
+		ok   bool
+	}{
+		{name: "direct", err: requeueErr, want: 3 * time.Second, ok: true},
+		{name: "wrapped", err: fmt.Errorf("wrapped: %w", requeueErr), want: 3 * time.Second, ok: true},
+		{name: "ordinary Grove error", err: New(grovecorev1alpha1.ErrorCode("ERR_TEST"), "test-operation", "failed")},
+		{name: "plain error", err: errors.New("failed")},
+		{name: "continue reconcile", err: NewContinueReconcileAndRequeue("test-operation", "continue")},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := GetRequeueAfter(tt.err)
+			assert.Equal(t, tt.ok, ok)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestGetLowestRequeueAfter(t *testing.T) {
+	requeueAfter2s := NewRequeueAfter("test-operation", "retry in two seconds", 2*time.Second)
+	requeueAfter5s := NewRequeueAfter("test-operation", "retry in five seconds", 5*time.Second)
+	tests := []struct {
+		name string
+		errs []error
+		want time.Duration
+		ok   bool
+	}{
+		{name: "no errors"},
+		{name: "no requeue errors", errs: []error{errors.New("failed")}},
+		{name: "one requeue error", errs: []error{requeueAfter5s}, want: 5 * time.Second, ok: true},
+		{name: "lowest mixed duration", errs: []error{requeueAfter5s, errors.New("failed"), requeueAfter2s}, want: 2 * time.Second, ok: true},
+		{name: "wrapped requeue error", errs: []error{fmt.Errorf("wrapped: %w", requeueAfter2s)}, want: 2 * time.Second, ok: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := GetLowestRequeueAfter(tt.errs)
+			assert.Equal(t, tt.ok, ok)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestIsRequeueAfter(t *testing.T) {
+	requeueErr := NewRequeueAfter("test-operation", "retry later", 3*time.Second)
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{name: "direct", err: requeueErr, want: true},
+		{name: "wrapped", err: fmt.Errorf("wrapped: %w", requeueErr), want: true},
+		{name: "continue reconcile", err: NewContinueReconcileAndRequeue("test-operation", "continue")},
+		{name: "ordinary Grove error", err: New(grovecorev1alpha1.ErrorCode("ERR_TEST"), "test-operation", "failed")},
+		{name: "plain error", err: errors.New("failed")},
+		{name: "nil error"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, IsRequeueAfter(tt.err))
+		})
+	}
+}
+
+func TestNewContinueReconcileAndRequeue(t *testing.T) {
+	const (
+		operation = "test-operation"
+		message   = "continue and retry"
+	)
+
+	err := NewContinueReconcileAndRequeue(operation, message)
+
+	var groveErr *GroveError
+	require.ErrorAs(t, err, &groveErr)
+	assert.Equal(t, errCodeContinueReconcileAndRequeue, groveErr.Code)
+	assert.Equal(t, operation, groveErr.Operation)
+	assert.Equal(t, message, groveErr.Message)
+	assert.False(t, groveErr.ObservedAt.IsZero())
+	assert.True(t, IsContinueReconcileAndRequeue(err))
+}
+
+func TestIsContinueReconcileAndRequeue(t *testing.T) {
+	continueErr := NewContinueReconcileAndRequeue("test-operation", "continue")
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{name: "direct", err: continueErr, want: true},
+		{name: "wrapped", err: fmt.Errorf("wrapped: %w", continueErr), want: true},
+		{name: "requeue after", err: NewRequeueAfter("test-operation", "retry", time.Second), want: false},
+		{name: "ordinary Grove error", err: New(grovecorev1alpha1.ErrorCode("ERR_TEST"), "test-operation", "failed"), want: false},
+		{name: "plain error", err: errors.New("failed"), want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, IsContinueReconcileAndRequeue(tt.err))
 		})
 	}
 }

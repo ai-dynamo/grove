@@ -438,6 +438,23 @@ _Appears in:_
 | `message` _string_ | Message describes the current reason the orchestrator has not advanced<br />the coherent update this reconcile. Populated whenever any advance<br />precondition is not met: PodGangs at the current InFlightEpochs not yet<br />reporting LastReady, subsumed pods still coming up, or an availability<br />budget preventing further takedown. Cleared once all preconditions hold. |  |  |
 
 
+#### PodCliqueSetScalingProgress
+
+
+
+PodCliqueSetScalingProgress records replica-index selections while their managed child resources converge to the desired scaling state.
+
+
+
+_Appears in:_
+- [PodCliqueSetStatus](#podcliquesetstatus)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `scaleOutReplicaIndices` _integer array_ | ScaleOutReplicaIndices are replica indices selected for provisioning.<br />An index is added when allocated for scale-out and removed after all expected standalone PodCliques and<br />PodCliqueScalingGroups for it exist. Recording the index reserves it while provisioning is incomplete. |  |  |
+| `scaleInReplicaIndices` _integer array_ | ScaleInReplicaIndices are replica indices selected for removal.<br />Availability-aware selection may add indices in any order rather than removing only the highest indices.<br />An index is removed after no managed child resources remain for it, preventing premature reuse during deletion. |  |  |
+
+
 #### PodCliqueSetSpec
 
 
@@ -479,6 +496,7 @@ _Appears in:_
 | `podGangStatuses` _[PodGangStatus](#podgangstatus) array_ | PodGangStatuses captures the status for all the PodGang's that are part of the PodCliqueSet. |  |  |
 | `currentGenerationHash` _string_ | CurrentGenerationHash is a hash value generated out of a collection of fields in a PodCliqueSet.<br />Since only a subset of fields is taken into account when generating the hash, not every change in the PodCliqueSetSpec will<br />be accounted for when generating this hash value. A field in PodCliqueSetSpec is included if a change to it triggers<br />a rolling recreate of PodCliques and/or PodCliqueScalingGroups.<br />Only if this value is not nil and the newly computed hash value is different from the persisted CurrentGenerationHash value<br />then an update needs to be triggered. |  |  |
 | `updateProgress` _[PodCliqueSetUpdateProgress](#podcliquesetupdateprogress)_ | UpdateProgress represents the progress of an update. |  |  |
+| `scalingProgress` _[PodCliqueSetScalingProgress](#podcliquesetscalingprogress)_ | ScalingProgress records replica indices selected for scale-out or scale-in.<br />Availability-aware scale-in can remove replicas out of index order, so active replica indices may no longer<br />form the contiguous range [0, spec.replicas). Persisting selections ensures all components reconcile the same<br />sparse set of replica identities while scaling is in progress. It is nil when no scaling operation is in progress. |  |  |
 
 
 #### PodCliqueSetTemplateSpec

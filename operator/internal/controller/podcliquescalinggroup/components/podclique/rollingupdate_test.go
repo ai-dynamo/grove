@@ -74,7 +74,7 @@ func TestMarkUpdateEndReturnsRequeueAfterPatch(t *testing.T) {
 	require.Error(t, err)
 	var groveError *groveerr.GroveError
 	require.True(t, errors.As(err, &groveError))
-	assert.Equal(t, groveerr.ErrCodeContinueReconcileAndRequeue, groveError.Code)
+	assert.True(t, groveerr.IsContinueReconcileAndRequeue(err))
 	assert.Equal(t, component.OperationSync, groveError.Operation)
 
 	var updated grovecorev1alpha1.PodCliqueScalingGroup
@@ -103,7 +103,7 @@ func TestReconcileInProgressUpdateDoesNotCompleteStaleTarget(t *testing.T) {
 	require.Error(t, err)
 	var groveError *groveerr.GroveError
 	require.True(t, errors.As(err, &groveError))
-	assert.Equal(t, groveerr.ErrCodeContinueReconcileAndRequeue, groveError.Code)
+	assert.True(t, groveerr.IsContinueReconcileAndRequeue(err))
 	assert.Nil(t, sc.pcsg.Status.UpdateProgress.UpdateEndedAt)
 	require.NotNil(t, sc.pcsg.Status.CurrentPodCliqueSetGenerationHash)
 	assert.Equal(t, testRollingUpdateGenHash, *sc.pcsg.Status.CurrentPodCliqueSetGenerationHash)
@@ -194,14 +194,12 @@ func TestProcessPendingUpdates(t *testing.T) {
 		}
 		return indices
 	}
-	requeueErr := &groveerr.GroveError{Code: groveerr.ErrCodeContinueReconcileAndRequeue, Operation: component.OperationSync}
-
 	t.Run("completes when all replicas are updated and ready", func(t *testing.T) {
 		sc := buildRollingUpdateSnapshot(2, 1, 1, []testReplica{updatedReadyReplica(0), updatedReadyReplica(1)})
 		r, _ := newResource(sc)
 
 		err := r.processPendingUpdates(t.Context(), logr.Discard(), sc)
-		testutils.AssertGroveError(t, requeueErr, err)
+		assert.True(t, groveerr.IsContinueReconcileAndRequeue(err))
 		assert.NotNil(t, sc.pcsg.Status.UpdateProgress.UpdateEndedAt, "expected UpdateEndedAt to be set")
 	})
 
@@ -210,7 +208,7 @@ func TestProcessPendingUpdates(t *testing.T) {
 		r, cl := newResource(sc)
 
 		err := r.processPendingUpdates(t.Context(), logr.Discard(), sc)
-		testutils.AssertGroveError(t, requeueErr, err)
+		assert.True(t, groveerr.IsContinueReconcileAndRequeue(err))
 		// Budget of 2 and MinAvailable headroom of 2, so replicas 0 and 1 are deleted and 2 remains.
 		assert.ElementsMatch(t, []string{"2"}, remainingReplicaIndices(t, cl))
 	})
@@ -220,7 +218,7 @@ func TestProcessPendingUpdates(t *testing.T) {
 		r, cl := newResource(sc)
 
 		err := r.processPendingUpdates(t.Context(), logr.Discard(), sc)
-		testutils.AssertGroveError(t, requeueErr, err)
+		assert.True(t, groveerr.IsContinueReconcileAndRequeue(err))
 		assert.Len(t, remainingReplicaIndices(t, cl), 2, "MinAvailable equal to replicas must not block the roll; MaxUnavailable=1 disrupts one replica")
 	})
 
@@ -232,7 +230,7 @@ func TestProcessPendingUpdates(t *testing.T) {
 		r, cl := newResource(sc)
 
 		err := r.processPendingUpdates(t.Context(), logr.Discard(), sc)
-		testutils.AssertGroveError(t, requeueErr, err)
+		assert.True(t, groveerr.IsContinueReconcileAndRequeue(err))
 		assert.ElementsMatch(t, []string{"0", "2"}, remainingReplicaIndices(t, cl), "the lowest-index unavailable replica must be disrupted, not blocked")
 	})
 
@@ -243,7 +241,7 @@ func TestProcessPendingUpdates(t *testing.T) {
 		r, cl := newResource(sc)
 
 		err := r.processPendingUpdates(t.Context(), logr.Discard(), sc)
-		testutils.AssertGroveError(t, requeueErr, err)
+		assert.True(t, groveerr.IsContinueReconcileAndRequeue(err))
 		assert.ElementsMatch(t, []string{"1"}, remainingReplicaIndices(t, cl), "worst-off unavailable replica and one Ready replica disrupted, leaving one Ready")
 	})
 
@@ -254,7 +252,7 @@ func TestProcessPendingUpdates(t *testing.T) {
 		r, cl := newResource(sc)
 
 		err := r.processPendingUpdates(t.Context(), logr.Discard(), sc)
-		testutils.AssertGroveError(t, requeueErr, err)
+		assert.True(t, groveerr.IsContinueReconcileAndRequeue(err))
 		assert.Empty(t, remainingReplicaIndices(t, cl), "the pending replica must be disrupted for replacement")
 	})
 
@@ -266,7 +264,7 @@ func TestProcessPendingUpdates(t *testing.T) {
 		r, cl := newResource(sc)
 
 		err := r.processPendingUpdates(t.Context(), logr.Discard(), sc)
-		testutils.AssertGroveError(t, requeueErr, err)
+		assert.True(t, groveerr.IsContinueReconcileAndRequeue(err))
 		assert.ElementsMatch(t, []string{"0", "1"}, remainingReplicaIndices(t, cl), "no replica may be disrupted while below the availability reserve")
 	})
 }

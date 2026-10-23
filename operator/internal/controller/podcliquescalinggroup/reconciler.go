@@ -41,7 +41,7 @@ type Reconciler struct {
 	client                  ctrlclient.Client
 	eventRecorder           record.EventRecorder
 	reconcileStatusRecorder ctrlcommon.ReconcileErrorRecorder
-	operatorRegistry        component.OperatorRegistry[grovecorev1alpha1.PodCliqueScalingGroup]
+	operatorRegistry        component.OperatorRegistry[grovecorev1alpha1.PodCliqueScalingGroup, component.EmptyState, component.NoResult]
 	expectationStore        *expect.ExpectationsStore
 }
 

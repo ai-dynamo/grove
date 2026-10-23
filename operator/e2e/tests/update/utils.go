@@ -535,11 +535,23 @@ func scalePodCliqueInPCS(tc *testctx.TestContext, cliqueName string, replicas in
 		return fmt.Errorf("clique %s not found in PodCliqueSet %s template", cliqueName, pcsName)
 	}
 
-	// Scale each PodClique instance directly (one per PCS replica)
-	// PodClique naming convention: {pcsName}-{replicaIndex}-{cliqueName}
-	for replicaIndex := range pcs.Spec.Replicas {
-		pclqName := fmt.Sprintf("%s-%d-%s", pcsName, replicaIndex, cliqueName)
+	pclqs := &grovev1alpha1.PodCliqueList{}
+	if err := tc.Client.List(tc.Ctx, pclqs,
+		client.InNamespace(tc.Namespace),
+		client.MatchingLabels{common.LabelPartOfKey: pcsName},
+	); err != nil {
+		return fmt.Errorf("failed to list standalone PodCliques for %s: %w", cliqueName, err)
+	}
+	pclqs.Items = slices.DeleteFunc(pclqs.Items, func(pclq grovev1alpha1.PodClique) bool {
+		_, belongsToPCSG := pclq.Labels[common.LabelPodCliqueScalingGroup]
+		return belongsToPCSG || !strings.HasSuffix(pclq.Name, "-"+cliqueName)
+	})
+	if len(pclqs.Items) != int(pcs.Spec.Replicas) {
+		return fmt.Errorf("found %d standalone PodCliques for %s, want %d PCS replicas", len(pclqs.Items), cliqueName, pcs.Spec.Replicas)
+	}
 
+	for i := range pclqs.Items {
+		pclqName := pclqs.Items[i].Name
 		if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 			// Patch the PodClique's replicas directly
 			patch := map[string]interface{}{

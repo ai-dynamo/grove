@@ -15,7 +15,6 @@
 package podclique
 
 import (
-	"errors"
 	"testing"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
@@ -156,9 +155,7 @@ func TestReconcileInProgressUpdateRejectsStaleCoherentTarget(t *testing.T) {
 	err := _resource{}.reconcileInProgressUpdate(t.Context(), logr.Discard(), ss)
 
 	require.Error(t, err)
-	var groveError *groveerr.GroveError
-	require.True(t, errors.As(err, &groveError))
-	assert.Equal(t, groveerr.ErrCodeContinueReconcileAndRequeue, groveError.Code)
+	assert.True(t, groveerr.IsContinueReconcileAndRequeue(err))
 	assert.Nil(t, pcsg.Status.UpdateProgress.UpdateEndedAt)
 }
 
@@ -178,7 +175,5 @@ func TestMarkCoherentUpdateEndIfConvergedRequeuesWhenNotConverged(t *testing.T) 
 	err := _resource{}.markCoherentUpdateEndIfConverged(t.Context(), logr.Discard(), ss)
 
 	require.Error(t, err)
-	var groveError *groveerr.GroveError
-	require.True(t, errors.As(err, &groveError))
-	assert.Equal(t, groveerr.ErrCodeContinueReconcileAndRequeue, groveError.Code)
+	assert.True(t, groveerr.IsContinueReconcileAndRequeue(err))
 }

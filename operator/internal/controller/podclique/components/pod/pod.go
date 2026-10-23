@@ -21,8 +21,9 @@ import (
 	"strconv"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
-	"github.com/ai-dynamo/grove/operator/api/common/constants"
+	apiconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	"github.com/ai-dynamo/grove/operator/internal/constants"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podclique/expectations"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
@@ -89,7 +90,7 @@ func New(client client.Client,
 	scheme *runtime.Scheme,
 	eventRecorder record.EventRecorder,
 	expectationsStore *expect.ExpectationsStore,
-	schedRegistry scheduler.Registry) (component.Operator[grovecorev1alpha1.PodClique], error) {
+	schedRegistry scheduler.Registry) (component.Operator[grovecorev1alpha1.PodClique, component.EmptyState, component.NoResult], error) {
 	// The pod component groups its create and delete expectations by owning PodClique so it can clear
 	// them per PodClique in one call regardless of how many PodGangs a PodClique's pods span.
 	if err := expectationsStore.AddIndexers(expectations.PodCliqueExpectationsIndexers()); err != nil {
@@ -129,25 +130,26 @@ func (r _resource) GetExistingResourceNames(ctx context.Context, _ logr.Logger, 
 }
 
 // Sync ensures that the desired number of Pods exist for the PodClique with the correct configuration
-func (r _resource) Sync(ctx context.Context, logger logr.Logger, pclq *grovecorev1alpha1.PodClique) error {
+func (r _resource) Sync(ctx context.Context, logger logr.Logger, pclq *grovecorev1alpha1.PodClique, _ *component.EmptyState) (component.NoResult, error) {
 	sc, err := r.prepareSyncFlow(ctx, logger, pclq)
 	if err != nil {
-		return err
+		return component.NoResult{}, err
 	}
 	if err = r.syncPCSGPodIndexLabels(ctx, sc); err != nil {
-		return err
+		return component.NoResult{}, err
 	}
 	result := r.runSyncFlow(ctx, logger, sc)
 	if result.hasErrors() {
-		return result.getAggregatedError()
+		return component.NoResult{}, result.getAggregatedError()
 	}
 	if result.hasPendingScheduleGatedPods() {
-		return groveerr.New(groveerr.ErrCodeRequeueAfter,
+		return component.NoResult{}, groveerr.NewRequeueAfter(
 			component.OperationSync,
 			"some pods are still schedule gated. requeuing request to retry removal of scheduling gates",
+			constants.ComponentSyncRetryInterval,
 		)
 	}
-	return nil
+	return component.NoResult{}, nil
 }
 
 // buildResource constructs a Pod resource from PodClique specifications, setting up metadata, labels, scheduling gates, and dependencies
@@ -174,7 +176,7 @@ func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grov
 
 	labels := getLabels(pclq.ObjectMeta, pcsName, podGangName, pcsReplicaIndex, podIndex, pcsgPodIndex)
 	annotations := maps.Clone(pclq.Annotations)
-	delete(annotations, constants.AnnotationPodCliqueScalingGroupPodIndexOffset)
+	delete(annotations, apiconstants.AnnotationPodCliqueScalingGroupPodIndexOffset)
 	pod.ObjectMeta = metav1.ObjectMeta{
 		GenerateName: fmt.Sprintf("%s-", pclq.Name),
 		Namespace:    pclq.Namespace,
@@ -240,13 +242,13 @@ func getPCSGPodIndex(pclq *grovecorev1alpha1.PodClique, podIndex int) (*int, err
 		return nil, nil
 	}
 
-	offsetValue, ok := pclq.Annotations[constants.AnnotationPodCliqueScalingGroupPodIndexOffset]
+	offsetValue, ok := pclq.Annotations[apiconstants.AnnotationPodCliqueScalingGroupPodIndexOffset]
 	if !ok {
-		return nil, fmt.Errorf("PodClique is missing required annotation %q", constants.AnnotationPodCliqueScalingGroupPodIndexOffset)
+		return nil, fmt.Errorf("PodClique is missing required annotation %q", apiconstants.AnnotationPodCliqueScalingGroupPodIndexOffset)
 	}
 	offset, err := strconv.Atoi(offsetValue)
 	if err != nil || offset < 0 {
-		return nil, fmt.Errorf("PodClique has invalid %s value %q", constants.AnnotationPodCliqueScalingGroupPodIndexOffset, offsetValue)
+		return nil, fmt.Errorf("PodClique has invalid %s value %q", apiconstants.AnnotationPodCliqueScalingGroupPodIndexOffset, offsetValue)
 	}
 	index := offset + podIndex
 	return &index, nil
@@ -381,25 +383,25 @@ func getLabels(pclqObjectMeta metav1.ObjectMeta, pcsName, podGangName string, pc
 func addEnvironmentVariables(pod *corev1.Pod, pclq *grovecorev1alpha1.PodClique, pcsName string, pcsReplicaIndex int) {
 	groveEnvVars := []corev1.EnvVar{
 		{
-			Name:  constants.EnvVarPodCliqueSetName,
+			Name:  apiconstants.EnvVarPodCliqueSetName,
 			Value: pcsName,
 		},
 		{
-			Name:  constants.EnvVarPodCliqueSetIndex,
+			Name:  apiconstants.EnvVarPodCliqueSetIndex,
 			Value: strconv.Itoa(pcsReplicaIndex),
 		},
 		{
-			Name:  constants.EnvVarPodCliqueName,
+			Name:  apiconstants.EnvVarPodCliqueName,
 			Value: pclq.Name,
 		},
 		{
-			Name: constants.EnvVarHeadlessService,
+			Name: apiconstants.EnvVarHeadlessService,
 			Value: apicommon.GenerateHeadlessServiceAddress(
 				apicommon.ResourceNameReplica{Name: pcsName, Replica: pcsReplicaIndex},
 				pod.Namespace),
 		},
 		{
-			Name: constants.EnvVarPodIndex,
+			Name: apiconstants.EnvVarPodIndex,
 			ValueFrom: &corev1.EnvVarSource{
 				FieldRef: &corev1.ObjectFieldSelector{
 					FieldPath: fmt.Sprintf("metadata.labels['%s']", apicommon.LabelPodCliquePodIndex),
@@ -409,7 +411,7 @@ func addEnvironmentVariables(pod *corev1.Pod, pclq *grovecorev1alpha1.PodClique,
 	}
 	if pclq.Labels[apicommon.LabelPodCliqueScalingGroup] != "" {
 		groveEnvVars = append(groveEnvVars, corev1.EnvVar{
-			Name: constants.EnvVarPodCliqueScalingGroupPodIndex,
+			Name: apiconstants.EnvVarPodCliqueScalingGroupPodIndex,
 			ValueFrom: &corev1.EnvVarSource{
 				FieldRef: &corev1.ObjectFieldSelector{
 					FieldPath: fmt.Sprintf("metadata.labels['%s']", apicommon.LabelPodCliqueScalingGroupPodIndex),

@@ -25,8 +25,8 @@ import (
 )
 
 // CreateOperatorRegistry initializes the operator registry for the PodCliqueScalingGroup reconciler.
-func CreateOperatorRegistry(mgr manager.Manager, eventRecorder record.EventRecorder, expStore *expect.ExpectationsStore) component.OperatorRegistry[v1alpha1.PodCliqueScalingGroup] {
-	reg := component.NewOperatorRegistry[v1alpha1.PodCliqueScalingGroup]()
+func CreateOperatorRegistry(mgr manager.Manager, eventRecorder record.EventRecorder, expStore *expect.ExpectationsStore) component.OperatorRegistry[v1alpha1.PodCliqueScalingGroup, component.EmptyState, component.NoResult] {
+	reg := component.NewOperatorRegistry[v1alpha1.PodCliqueScalingGroup, component.EmptyState, component.NoResult]()
 	reg.Register(component.KindPodClique, podclique.New(mgr.GetClient(), mgr.GetScheme(), eventRecorder, expStore))
 	return reg
 }

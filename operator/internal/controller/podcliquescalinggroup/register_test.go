@@ -17,16 +17,105 @@ package podcliquescalinggroup
 import (
 	"testing"
 
+	"github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
+
+func TestPodCliqueScalingGroupReconcilePredicate(t *testing.T) {
+	pred, ok := podCliqueScalingGroupReconcilePredicate().(predicate.Funcs)
+	require.True(t, ok, "predicate must be predicate.Funcs")
+
+	newPCSG := func(generation int64, annotations map[string]string) *grovecorev1alpha1.PodCliqueScalingGroup {
+		return &grovecorev1alpha1.PodCliqueScalingGroup{
+			ObjectMeta: metav1.ObjectMeta{Generation: generation, Annotations: annotations},
+		}
+	}
+	tests := []struct {
+		name string
+		old  *grovecorev1alpha1.PodCliqueScalingGroup
+		new  *grovecorev1alpha1.PodCliqueScalingGroup
+		want bool
+	}{
+		{name: "spec generation changed", old: newPCSG(1, nil), new: newPCSG(2, nil), want: true},
+		{
+			name: "parent generation annotation changed",
+			old:  newPCSG(1, map[string]string{constants.AnnotationOnDeletePodCliqueSetGenerationHash: "old"}),
+			new:  newPCSG(1, map[string]string{constants.AnnotationOnDeletePodCliqueSetGenerationHash: "new"}),
+			want: true,
+		},
+		{
+			name: "unrelated annotation changed",
+			old:  newPCSG(1, map[string]string{"example.com/value": "old"}),
+			new:  newPCSG(1, map[string]string{"example.com/value": "new"}),
+			want: false,
+		},
+		{name: "status-only update", old: newPCSG(1, nil), new: newPCSG(1, nil), want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := pred.UpdateFunc(event.UpdateEvent{ObjectOld: tt.old, ObjectNew: tt.new})
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestMapPCSToPCSG(t *testing.T) {
+	mapFn := mapPCSToPCSG()
+	pcsgConfig := grovecorev1alpha1.PodCliqueScalingGroupConfig{Name: "workers"}
+	newPCS := func(strategy grovecorev1alpha1.UpdateStrategyType, progress *grovecorev1alpha1.PodCliqueSetUpdateProgress) *grovecorev1alpha1.PodCliqueSet {
+		return &grovecorev1alpha1.PodCliqueSet{
+			ObjectMeta: metav1.ObjectMeta{Name: "pcs", Namespace: "default"},
+			Spec: grovecorev1alpha1.PodCliqueSetSpec{
+				Replicas:       3,
+				UpdateStrategy: &grovecorev1alpha1.PodCliqueSetUpdateStrategy{Type: strategy},
+				Template:       grovecorev1alpha1.PodCliqueSetTemplateSpec{PodCliqueScalingGroupConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{pcsgConfig}},
+			},
+			Status: grovecorev1alpha1.PodCliqueSetStatus{UpdateProgress: progress},
+		}
+	}
+
+	t.Run("maps selected sparse replica", func(t *testing.T) {
+		pcs := newPCS(grovecorev1alpha1.RollingRecreateStrategy, &grovecorev1alpha1.PodCliqueSetUpdateProgress{
+			CurrentlyUpdating: []grovecorev1alpha1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 4}},
+		})
+		got := mapFn(t.Context(), pcs)
+		assert.Equal(t, []reconcile.Request{{NamespacedName: types.NamespacedName{Namespace: "default", Name: "pcs-4-workers"}}}, got)
+	})
+
+	t.Run("does not map OnDelete", func(t *testing.T) {
+		pcs := newPCS(grovecorev1alpha1.OnDeleteStrategy, &grovecorev1alpha1.PodCliqueSetUpdateProgress{})
+		assert.Empty(t, mapFn(t.Context(), pcs))
+	})
+
+	t.Run("does not map without selected replica", func(t *testing.T) {
+		pcs := newPCS(grovecorev1alpha1.RollingRecreateStrategy, &grovecorev1alpha1.PodCliqueSetUpdateProgress{})
+		assert.Empty(t, mapFn(t.Context(), pcs))
+	})
+}
+
+func TestHasNewPCSReplicaBeenSelectedForUpdate(t *testing.T) {
+	progress := func(indices ...int32) *grovecorev1alpha1.PodCliqueSetUpdateProgress {
+		result := &grovecorev1alpha1.PodCliqueSetUpdateProgress{}
+		for _, index := range indices {
+			result.CurrentlyUpdating = append(result.CurrentlyUpdating, grovecorev1alpha1.PodCliqueSetReplicaUpdateProgress{ReplicaIndex: index})
+		}
+		return result
+	}
+
+	assert.True(t, hasNewPCSReplicaBeenSelectedForUpdate(nil, progress(4)))
+	assert.True(t, hasNewPCSReplicaBeenSelectedForUpdate(progress(1), progress(4)))
+	assert.False(t, hasNewPCSReplicaBeenSelectedForUpdate(progress(4), progress(4)))
+	assert.False(t, hasNewPCSReplicaBeenSelectedForUpdate(progress(4), progress()))
+}
 
 // TestPodGangMapPredicate verifies the PodGangMap watch predicate. It must fire on Create so a
 // reconstructed PodGangMap that already carries a multi-anchor distribution is processed, and on an

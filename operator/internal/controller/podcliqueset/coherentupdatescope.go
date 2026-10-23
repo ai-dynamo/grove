@@ -85,7 +85,7 @@ func newlyChangedInScope(pcs *grovecorev1alpha1.PodCliqueSet, deployedHashByCliq
 		if deployedHashByClique[cliqueTemplate.Name] == newHash {
 			continue
 		}
-		if componentutils.IsStandalonePCLQ(pcs, cliqueTemplate.Name) {
+		if componentutils.IsStandalonePCLQTemplate(pcs, cliqueTemplate.Name) {
 			scope.standalonePCLQs.Insert(cliqueTemplate.Name)
 		} else {
 			changedPCSGPCLQs.Insert(cliqueTemplate.Name)

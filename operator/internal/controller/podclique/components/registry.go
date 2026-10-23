@@ -27,8 +27,8 @@ import (
 )
 
 // CreateOperatorRegistry initializes the operator registry for the PodClique reconciler.
-func CreateOperatorRegistry(mgr manager.Manager, eventRecorder record.EventRecorder, expectationsStore *expect.ExpectationsStore, schedRegistry scheduler.Registry) (component.OperatorRegistry[v1alpha1.PodClique], error) {
-	reg := component.NewOperatorRegistry[v1alpha1.PodClique]()
+func CreateOperatorRegistry(mgr manager.Manager, eventRecorder record.EventRecorder, expectationsStore *expect.ExpectationsStore, schedRegistry scheduler.Registry) (component.OperatorRegistry[v1alpha1.PodClique, component.EmptyState, component.NoResult], error) {
+	reg := component.NewOperatorRegistry[v1alpha1.PodClique, component.EmptyState, component.NoResult]()
 	reg.Register(component.KindResourceClaim, pclqresourceclaim.New(mgr.GetClient(), mgr.GetScheme()))
 	podOperator, err := pod.New(mgr.GetClient(), mgr.GetScheme(), eventRecorder, expectationsStore, schedRegistry)
 	if err != nil {

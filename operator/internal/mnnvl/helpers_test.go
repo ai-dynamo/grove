@@ -18,9 +18,7 @@ import (
 	"testing"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
-	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/stretchr/testify/assert"
 	corev1 "k8s.io/api/core/v1"
@@ -283,79 +281,6 @@ func TestValidateMNNVLGroupName(t *testing.T) {
 			}
 		})
 	}
-}
-
-// createPCSWithGPU creates a PCS with GPU using the builder for tests in this package.
-func createPCSWithGPU(annotations map[string]string) *grovecorev1alpha1.PodCliqueSet {
-	return testutils.NewPodCliqueSetBuilder("test-pcs", "default", "").
-		WithAnnotations(annotations).
-		WithPodCliqueTemplateSpec(
-			testutils.NewPodCliqueTemplateSpecBuilder("worker").
-				WithContainer(testutils.NewGPUContainer("train", "nvidia/cuda:latest", 8)).
-				Build(),
-		).
-		Build()
-}
-
-type cliqueAnnotation struct {
-	name        string
-	annotations map[string]string
-}
-
-// createPCSWithCliques creates a PCS with per-clique annotations.
-func createPCSWithCliques(cliques []cliqueAnnotation) *grovecorev1alpha1.PodCliqueSet {
-	builder := testutils.NewPodCliqueSetBuilder("test-pcs", "default", "")
-	for _, c := range cliques {
-		builder.WithPodCliqueTemplateSpec(
-			testutils.NewPodCliqueTemplateSpecBuilder(c.name).
-				WithAnnotations(c.annotations).
-				WithContainer(testutils.NewGPUContainer("train", "nvidia/cuda:latest", 8)).
-				Build(),
-		)
-	}
-	return builder.Build()
-}
-
-// createPCSWithPCSGConfigAnnotations creates a PCS with a single PCSG config carrying the given annotations.
-func createPCSWithPCSGConfigAnnotations(annotations map[string]string) *grovecorev1alpha1.PodCliqueSet {
-	builder := testutils.NewPodCliqueSetBuilder("test-pcs", "default", "").
-		WithPodCliqueTemplateSpec(
-			testutils.NewPodCliqueTemplateSpecBuilder("worker").
-				WithContainer(testutils.NewGPUContainer("train", "nvidia/cuda:latest", 8)).
-				Build(),
-		)
-	builder.WithPodCliqueScalingGroupConfig(grovecorev1alpha1.PodCliqueScalingGroupConfig{
-		Name:        "scaling-group-1",
-		CliqueNames: []string{"worker"},
-		Annotations: annotations,
-	})
-	return builder.Build()
-}
-
-// createPCSWithNonGPUCliqueAnnotations creates a PCS with a single non-GPU clique
-// carrying the given annotations.
-func createPCSWithNonGPUCliqueAnnotations(cliqueAnnotations map[string]string) *grovecorev1alpha1.PodCliqueSet {
-	return testutils.NewPodCliqueSetBuilder("test-pcs", "default", "").
-		WithPodCliqueTemplateSpec(
-			testutils.NewPodCliqueTemplateSpecBuilder("cpu-worker").
-				WithAnnotations(cliqueAnnotations).
-				WithContainer(testutils.NewContainer("app", "nginx:latest")).
-				Build(),
-		).
-		Build()
-}
-
-// createPCSWithGPUCliqueAnnotations creates a PCS with a single GPU clique
-// carrying the given annotations.
-func createPCSWithGPUCliqueAnnotations(cliqueAnnotations map[string]string) *grovecorev1alpha1.PodCliqueSet {
-	return testutils.NewPodCliqueSetBuilder("test-pcs", "default", "").
-		WithPodCliqueTemplateSpec(
-			testutils.NewPodCliqueTemplateSpecBuilder("gpu-worker").
-				WithAnnotations(cliqueAnnotations).
-				WithContainer(testutils.NewGPUContainer("train", "nvidia/cuda:latest", 8)).
-				Build(),
-		).
-		Build()
 }
 
 func TestHasGPUInPodSpec(t *testing.T) {

@@ -19,12 +19,14 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/clustertopology"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
+	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/sync"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
@@ -45,13 +47,15 @@ import (
 )
 
 // prepareSyncFlow computes the required state for synchronizing PodGang resources.
-func (r _resource) prepareSyncFlow(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) (ss *syncState, err error) {
+func (r _resource) prepareSyncFlow(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, state *pcssync.State) (ss *syncState, err error) {
 	pcsObjectKey := client.ObjectKeyFromObject(pcs)
 	ss = &syncState{
-		pcs:                  pcs,
-		logger:               logger,
-		existingPCLQPods:     make(map[string][]corev1.Pod),
-		unassignedPodsByPCLQ: make(map[string][]corev1.Pod),
+		pcs:                       pcs,
+		logger:                    logger,
+		expectedPCSReplicaIndices: state.ExpectedReplicaIndices,
+		scaleInPCSReplicaIndices:  state.ScaleInReplicaIndices,
+		existingPCLQPods:          make(map[string][]corev1.Pod),
+		unassignedPodsByPCLQ:      make(map[string][]corev1.Pod),
 	}
 
 	existingPCLQs, err := r.getExistingPCLQsForPCS(ctx, pcs)
@@ -92,6 +96,10 @@ func (r _resource) prepareSyncFlow(ctx context.Context, logger logr.Logger, pcs 
 		)
 	}
 	ss.existingPodGangByName = componentutils.PodGangByName(ss.existingPodGangs)
+	ss.existingPodGangsByPCSReplicaIndex, err = podGangsByPCSReplicaIndex(ss.existingPodGangs)
+	if err != nil {
+		return nil, err
+	}
 
 	ss.existingPCLQPods, err = r.getExistingPodsByPCLQForPCS(ctx, pcsObjectKey)
 	if err != nil {
@@ -120,6 +128,31 @@ func (r _resource) getExistingPCLQsForPCS(ctx context.Context, pcs *grovecorev1a
 	// 2. By PCSG (scaling group member pclqs) - PCSG itself is owned by PCS
 	// Label matching ensures they belong to this PCS, no ownership filter needed.
 	return pclqList.Items, nil
+}
+
+// podGangsByPCSReplicaIndex groups epoch-scheme PodGangs by their PCS replica-index label.
+func podGangsByPCSReplicaIndex(podGangs []groveschedulerv1alpha1.PodGang) (map[int][]groveschedulerv1alpha1.PodGang, error) {
+	podGangsByPCSReplicaIndex := make(map[int][]groveschedulerv1alpha1.PodGang)
+	for _, podGang := range podGangs {
+		if !metav1.HasLabel(podGang.ObjectMeta, apicommon.LabelEpoch) {
+			continue
+		}
+		pcsReplicaIndexValue, exists := podGang.Labels[apicommon.LabelPodCliqueSetReplicaIndex]
+		if !exists {
+			return nil, groveerr.New(errCodeListPodGangs, component.OperationSync,
+				fmt.Sprintf("PodGang %s has no %s label", podGang.Name, apicommon.LabelPodCliqueSetReplicaIndex))
+		}
+		pcsReplicaIndex, err := strconv.Atoi(pcsReplicaIndexValue)
+		if err != nil {
+			return nil, groveerr.WrapError(err,
+				errCodeListPodGangs,
+				component.OperationSync,
+				fmt.Sprintf("PodGang %s has invalid %s label %q", podGang.Name, apicommon.LabelPodCliqueSetReplicaIndex, pcsReplicaIndexValue),
+			)
+		}
+		podGangsByPCSReplicaIndex[pcsReplicaIndex] = append(podGangsByPCSReplicaIndex[pcsReplicaIndex], podGang)
+	}
+	return podGangsByPCSReplicaIndex, nil
 }
 
 // resolveTopologyLevels returns the cluster topology levels used to translate topology constraints.
@@ -169,7 +202,7 @@ func (r _resource) resolveTopologyLevels(ctx context.Context, logger logr.Logger
 // replica. The PodGangMap is the single source of truth for PodGang composition.
 func (r _resource) computeExpectedPodGangs(ctx context.Context, ss *syncState) ([]*podGangInfo, error) {
 	var expectedPodGangs []*podGangInfo
-	for pcsReplicaIndex := range int(ss.pcs.Spec.Replicas) {
+	for _, pcsReplicaIndex := range ss.expectedPCSReplicaIndices {
 		pgm, err := componentutils.GetPodGangMap(ctx, r.client, client.ObjectKeyFromObject(ss.pcs), pcsReplicaIndex)
 		if err != nil {
 			return nil, err
@@ -527,8 +560,8 @@ func (r _resource) reconcilePodGangStatus(ctx context.Context, ss *syncState, pg
 	}
 	if err = r.client.Status().Patch(ctx, pg, patch); err != nil {
 		if apierrors.IsConflict(err) {
-			return groveerr.New(groveerr.ErrCodeRequeueAfter, component.OperationSync,
-				fmt.Sprintf("conflict patching PodGang %s status from a stale cache, re-queueing", pgi.fqn))
+			return groveerr.NewRequeueAfter(component.OperationSync,
+				fmt.Sprintf("conflict patching PodGang %s status from a stale cache, re-queueing", pgi.fqn), constants.ComponentSyncRetryInterval)
 		}
 		return groveerr.WrapError(err, errCodeUpdatePodGangStatus, component.OperationSync,
 			fmt.Sprintf("failed to patch status for PodGang %s", pgi.fqn))
@@ -663,18 +696,20 @@ func (r _resource) verifyAllPodsCreated(ss *syncState, pgi *podGangInfo) error {
 	if len(pclqs) != len(pgi.pclqs) {
 		// Not all constituent PCLQs exist yet
 		ss.logger.V(1).Info("Not all constituent PCLQs exist yet", "podGang", pgi.fqn, "expected", len(pgi.pclqs), "actual", len(pclqs))
-		return groveerr.New(groveerr.ErrCodeRequeueAfter,
+		return groveerr.NewRequeueAfter(
 			component.OperationSync,
 			fmt.Sprintf("Waiting for all pods to be created for PodGang %s", pgi.fqn),
+			constants.ComponentSyncRetryInterval,
 		)
 	}
 	// check the health of each podclique
 	numPendingPods := r.getPodsPendingCreationOrAssociation(ss, pgi)
 	if numPendingPods > 0 {
 		ss.logger.V(1).Info("skipping creation of PodGang as all desired replicas have not yet been created or assigned", "podGang", pgi.fqn, "numPendingPodsToCreateOrAssociate", numPendingPods)
-		return groveerr.New(groveerr.ErrCodeRequeueAfter,
+		return groveerr.NewRequeueAfter(
 			component.OperationSync,
 			fmt.Sprintf("Waiting for all pods to be created or assigned for PodGang %s", pgi.fqn),
+			constants.ComponentSyncRetryInterval,
 		)
 	}
 	return nil
@@ -753,19 +788,33 @@ func (r _resource) createOrUpdatePodGang(ctx context.Context, ss *syncState, pgI
 // fallback because lazy mutation of syncState would race the moment the struct is shared
 // across goroutines.
 type syncState struct {
-	logger                 logr.Logger
-	pcs                    *grovecorev1alpha1.PodCliqueSet
-	expectedPodGangs       []*podGangInfo
-	existingPodGangs       []groveschedulerv1alpha1.PodGang
-	existingPodGangByName  map[string]groveschedulerv1alpha1.PodGang
-	deletedPodGangNames    []string
-	existingPCLQPods       map[string][]corev1.Pod
-	existingPCLQByName     map[string]grovecorev1alpha1.PodClique
-	expectedPodGangByName  map[string]*podGangInfo
-	expectedPodGangNameSet sets.Set[string]
-	unassignedPodsByPCLQ   map[string][]corev1.Pod
-	tasEnabled             bool
-	topologyLevels         []grovecorev1alpha1.TopologyLevel
+	logger                            logr.Logger
+	pcs                               *grovecorev1alpha1.PodCliqueSet
+	expectedPCSReplicaIndices         []int
+	scaleInPCSReplicaIndices          []int
+	existingPodGangsByPCSReplicaIndex map[int][]groveschedulerv1alpha1.PodGang
+	expectedPodGangs                  []*podGangInfo
+	existingPodGangs                  []groveschedulerv1alpha1.PodGang
+	existingPodGangByName             map[string]groveschedulerv1alpha1.PodGang
+	deletedPodGangNames               []string
+	existingPCLQPods                  map[string][]corev1.Pod
+	existingPCLQByName                map[string]grovecorev1alpha1.PodClique
+	expectedPodGangByName             map[string]*podGangInfo
+	expectedPodGangNameSet            sets.Set[string]
+	unassignedPodsByPCLQ              map[string][]corev1.Pod
+	tasEnabled                        bool
+	topologyLevels                    []grovecorev1alpha1.TopologyLevel
+}
+
+// getScaleInPCSReplicaIndicesAwaitingPodGangCleanup returns scale-in PCS replica indices for which at least one PodGang still exists.
+func (ss *syncState) getScaleInPCSReplicaIndicesAwaitingPodGangCleanup() []int {
+	var pcsReplicaIndicesAwaitingPodGangCleanup []int
+	for _, pcsReplicaIndex := range ss.scaleInPCSReplicaIndices {
+		if len(ss.existingPodGangsByPCSReplicaIndex[pcsReplicaIndex]) > 0 {
+			pcsReplicaIndicesAwaitingPodGangCleanup = append(pcsReplicaIndicesAwaitingPodGangCleanup, pcsReplicaIndex)
+		}
+	}
+	return pcsReplicaIndicesAwaitingPodGangCleanup
 }
 
 func (ss *syncState) isExistingPodGang(podGangName string) bool {

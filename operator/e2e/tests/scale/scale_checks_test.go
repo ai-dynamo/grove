@@ -33,6 +33,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -239,37 +240,46 @@ func checkExpectedObjectGraph(pods *corev1.PodList, pclqList *grovecorev1alpha1.
 	if len(pcsgList.Items) != 0 {
 		return fmt.Errorf("PCSG count = %d, want 0 for this fixture", len(pcsgList.Items))
 	}
-	for i := range pclqList.Items {
-		pclq := &pclqList.Items[i]
-		if err := assertReplicaIndexBelow(pclq.Labels, targetReplicas, "PodClique", pclq.Name); err != nil {
-			return err
-		}
+	pclqPCSReplicaIndices, err := pcsReplicaIndicesFromLabels(pclqList.Items, func(pclq *grovecorev1alpha1.PodClique) (map[string]string, string) {
+		return pclq.Labels, pclq.Name
+	})
+	if err != nil {
+		return err
 	}
-	for i := range pods.Items {
-		pod := &pods.Items[i]
-		if err := assertReplicaIndexBelow(pod.Labels, targetReplicas, "Pod", pod.Name); err != nil {
-			return err
-		}
+	expectedPCSReplicaIndices := sets.New[int]()
+	for pcsReplicaIndex := range targetReplicas {
+		expectedPCSReplicaIndices.Insert(pcsReplicaIndex)
+	}
+	if !pclqPCSReplicaIndices.Equal(expectedPCSReplicaIndices) {
+		return fmt.Errorf("PodClique PCS replica indices = %v, want %v", sets.List(pclqPCSReplicaIndices), sets.List(expectedPCSReplicaIndices))
+	}
+	podPCSReplicaIndices, err := pcsReplicaIndicesFromLabels(pods.Items, func(pod *corev1.Pod) (map[string]string, string) {
+		return pod.Labels, pod.Name
+	})
+	if err != nil {
+		return err
+	}
+	if !podPCSReplicaIndices.Equal(pclqPCSReplicaIndices) {
+		return fmt.Errorf("Pod PCS replica indices = %v, want PodClique indices %v", sets.List(podPCSReplicaIndices), sets.List(pclqPCSReplicaIndices))
 	}
 	return nil
 }
 
-// assertReplicaIndexBelow fails if an object carries a PCS-replica-index label
-// >= target, indicating it was created at a higher replica count and not cleaned
-// up. Objects without the label are skipped.
-func assertReplicaIndexBelow(labels map[string]string, target int, kind, name string) error {
-	raw, ok := labels[common.LabelPodCliqueSetReplicaIndex]
-	if !ok {
-		return nil
+func pcsReplicaIndicesFromLabels[T any](objects []T, objectMetadata func(*T) (map[string]string, string)) (sets.Set[int], error) {
+	pcsReplicaIndices := sets.New[int]()
+	for i := range objects {
+		labels, name := objectMetadata(&objects[i])
+		raw, ok := labels[common.LabelPodCliqueSetReplicaIndex]
+		if !ok {
+			return nil, fmt.Errorf("object %s is missing %s label", name, common.LabelPodCliqueSetReplicaIndex)
+		}
+		pcsReplicaIndex, err := strconv.Atoi(raw)
+		if err != nil {
+			return nil, fmt.Errorf("object %s has non-integer %s label %q: %w", name, common.LabelPodCliqueSetReplicaIndex, raw, err)
+		}
+		pcsReplicaIndices.Insert(pcsReplicaIndex)
 	}
-	idx, err := strconv.Atoi(raw)
-	if err != nil {
-		return fmt.Errorf("%s %s has non-integer %s label %q: %w", kind, name, common.LabelPodCliqueSetReplicaIndex, raw, err)
-	}
-	if idx >= target {
-		return fmt.Errorf("%s %s has stale replica index %d (>= target %d)", kind, name, idx, target)
-	}
-	return nil
+	return pcsReplicaIndices, nil
 }
 
 // checkNoStuckDeletions (check #2) asserts that no managed object still has a
@@ -325,6 +335,9 @@ func checkPCSStatusConvergence(pcs *grovecorev1alpha1.PodCliqueSet, targetReplic
 	}
 	if pcs.Status.UpdatedReplicas != target {
 		return fmt.Errorf("PCS Status.UpdatedReplicas = %d, want %d", pcs.Status.UpdatedReplicas, target)
+	}
+	if pcs.Status.ScalingProgress != nil {
+		return fmt.Errorf("PCS ScalingProgress = %+v, want nil", pcs.Status.ScalingProgress)
 	}
 	if og := pcs.Status.ObservedGeneration; og == nil || *og != pcs.Generation {
 		return fmt.Errorf("PCS ObservedGeneration = %v, want %d", og, pcs.Generation)

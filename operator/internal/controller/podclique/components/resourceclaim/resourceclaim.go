@@ -47,7 +47,7 @@ type _resource struct {
 }
 
 // New creates a new ResourceClaim operator for managing PCLQ-level ResourceClaims.
-func New(client client.Client, scheme *runtime.Scheme) component.Operator[grovecorev1alpha1.PodClique] {
+func New(client client.Client, scheme *runtime.Scheme) component.Operator[grovecorev1alpha1.PodClique, component.EmptyState, component.NoResult] {
 	return &_resource{
 		client: client,
 		scheme: scheme,
@@ -79,10 +79,10 @@ func (r _resource) GetExistingResourceNames(ctx context.Context, _ logr.Logger, 
 // and cleans up stale PerReplica RCs from previous scale-in operations.
 // The PodClique is the ownerReference target so that RCs are garbage-collected
 // when the PCLQ is deleted.
-func (r _resource) Sync(ctx context.Context, _ logr.Logger, pclq *grovecorev1alpha1.PodClique) error {
+func (r _resource) Sync(ctx context.Context, _ logr.Logger, pclq *grovecorev1alpha1.PodClique, _ *component.EmptyState) (component.NoResult, error) {
 	pcs, err := componentutils.GetPodCliqueSet(ctx, r.client, pclq.ObjectMeta)
 	if err != nil {
-		return groveerr.WrapError(err,
+		return component.NoResult{}, groveerr.WrapError(err,
 			errSyncPCLQLevelRC,
 			component.OperationSync,
 			fmt.Sprintf("failed to get PCS for PCLQ %s", client.ObjectKeyFromObject(pclq)),
@@ -91,7 +91,7 @@ func (r _resource) Sync(ctx context.Context, _ logr.Logger, pclq *grovecorev1alp
 
 	cliqueName, err := componentutils.GetPodCliqueNameFromPodCliqueFQN(pclq.ObjectMeta)
 	if err != nil {
-		return groveerr.WrapError(err,
+		return component.NoResult{}, groveerr.WrapError(err,
 			errSyncPCLQLevelRC,
 			component.OperationSync,
 			fmt.Sprintf("failed to extract clique name from PCLQ %s", client.ObjectKeyFromObject(pclq)),
@@ -99,7 +99,7 @@ func (r _resource) Sync(ctx context.Context, _ logr.Logger, pclq *grovecorev1alp
 	}
 	pclqTemplateSpec := componentutils.FindPodCliqueTemplateSpecByName(pcs, cliqueName)
 	if pclqTemplateSpec == nil || len(pclqTemplateSpec.ResourceSharing) == 0 {
-		return nil
+		return component.NoResult{}, nil
 	}
 	resourceSharers := resourceclaim.ResourceSharersFromPCLQ(pclqTemplateSpec.ResourceSharing)
 
@@ -107,18 +107,19 @@ func (r _resource) Sync(ctx context.Context, _ logr.Logger, pclq *grovecorev1alp
 	currentReplicas := int(pclq.Spec.Replicas)
 
 	if err := r.ensureAllReplicasRCs(ctx, pclq, pcs, resourceSharers, labels); err != nil {
-		return err
+		return component.NoResult{}, err
 	}
 	if err := r.ensurePerReplicaRCs(ctx, pclq, pcs, resourceSharers, labels, currentReplicas); err != nil {
-		return err
+		return component.NoResult{}, err
 	}
 
-	return resourceclaim.CleanupStalePerReplicaRCs(
+	err = resourceclaim.CleanupStalePerReplicaRCs(
 		ctx, r.client,
 		pclq.Namespace, labels,
 		currentReplicas,
 		apicommon.LabelPodCliquePodIndex,
 	)
+	return component.NoResult{}, err
 }
 
 func (r _resource) ensureAllReplicasRCs(

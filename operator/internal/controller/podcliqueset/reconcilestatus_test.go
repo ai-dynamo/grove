@@ -27,6 +27,7 @@ import (
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/go-logr/logr"
+	"github.com/samber/lo"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
@@ -326,13 +327,35 @@ func TestComputePCSAvailableReplicas(t *testing.T) {
 			cl := testutils.CreateDefaultFakeClient(existingObjects)
 			reconciler := &Reconciler{client: cl}
 			// Compute available replicas
-			standalonePCLQs, pcsgs, err := reconciler.listExpectedPCSChildren(context.Background(), pcs)
+			standalonePCLQs, pcsgs, err := reconciler.listExpectedPCSChildren(context.Background(), pcs, lo.Range(int(pcs.Spec.Replicas)))
 			assert.NoError(t, err)
-			stats, err := reconciler.computeAvailableAndUpdatedReplicas(logr.Discard(), pcs, standalonePCLQs, pcsgs)
+			stats := reconciler.computeAvailableAndUpdatedReplicas(logr.Discard(), pcs, lo.Range(int(pcs.Spec.Replicas)), standalonePCLQs, pcsgs)
 			assert.NoError(t, err)
 			assert.Equal(t, tt.expectedAvailable, stats.availableReplicas, "Available replicas mismatch")
 		})
 	}
+}
+
+func TestComputePCSAvailableReplicasUsesExpectedPCSReplicaIndices(t *testing.T) {
+	pcsGenerationHash := "generation-hash"
+	pcsUID := uuid.NewUUID()
+	pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, pcsUID).
+		WithReplicas(3).
+		WithStandaloneClique("worker").
+		WithPodCliqueSetGenerationHash(&pcsGenerationHash).
+		Build()
+	childResources := []client.Object{pcs}
+	for _, pcsReplicaIndex := range []int32{0, 2, 4} {
+		childResources = append(childResources, testutils.NewPodCliqueBuilder(testPCSName, pcsUID, "worker", testNamespace, pcsReplicaIndex).
+			WithOptions(testutils.WithPCLQReplicaReadyStatus(1), testutils.WithPCLQCurrentPCSGenerationHash(pcsGenerationHash)).Build())
+	}
+	reconciler := &Reconciler{client: testutils.CreateDefaultFakeClient(childResources)}
+	expectedPCSReplicaIndices := []int{0, 2, 4}
+	standalonePCLQs, pcsgs, err := reconciler.listExpectedPCSChildren(context.Background(), pcs, expectedPCSReplicaIndices)
+	require.NoError(t, err)
+
+	stats := reconciler.computeAvailableAndUpdatedReplicas(logr.Discard(), pcs, expectedPCSReplicaIndices, standalonePCLQs, pcsgs)
+	assert.Equal(t, int32(3), stats.availableReplicas)
 }
 
 func TestComputePCSUpdatedReplicasWithScaledToZeroComponent(t *testing.T) {
@@ -423,10 +446,9 @@ func TestComputePCSUpdatedReplicasWithScaledToZeroComponent(t *testing.T) {
 			existingObjects := append([]client.Object{pcs}, tt.childResources(pcs)...)
 			cl := testutils.CreateDefaultFakeClient(existingObjects)
 			reconciler := &Reconciler{client: cl}
-			standalonePCLQs, pcsgs, err := reconciler.listExpectedPCSChildren(context.Background(), pcs)
+			standalonePCLQs, pcsgs, err := reconciler.listExpectedPCSChildren(context.Background(), pcs, lo.Range(int(pcs.Spec.Replicas)))
 			require.NoError(t, err)
-			stats, err := reconciler.computeAvailableAndUpdatedReplicas(logr.Discard(), pcs, standalonePCLQs, pcsgs)
-			require.NoError(t, err)
+			stats := reconciler.computeAvailableAndUpdatedReplicas(logr.Discard(), pcs, lo.Range(int(pcs.Spec.Replicas)), standalonePCLQs, pcsgs)
 			assert.Equal(t, tt.expectedAvailable, stats.availableReplicas, "availableReplicas")
 			assert.Equal(t, tt.expectedUpdated, stats.updatedReplicas, "updatedReplicas")
 		})
@@ -934,10 +956,9 @@ func TestComputePCSUpdateProgressCounts(t *testing.T) {
 			cl := testutils.CreateDefaultFakeClient(objects)
 			r := &Reconciler{client: cl}
 
-			standalonePCLQs, pcsgs, err := r.listExpectedPCSChildren(context.Background(), pcs)
+			standalonePCLQs, pcsgs, err := r.listExpectedPCSChildren(context.Background(), pcs, lo.Range(int(pcs.Spec.Replicas)))
 			require.NoError(t, err)
-			stats, err := r.computeAvailableAndUpdatedReplicas(logr.Discard(), pcs, standalonePCLQs, pcsgs)
-			require.NoError(t, err)
+			stats := r.computeAvailableAndUpdatedReplicas(logr.Discard(), pcs, lo.Range(int(pcs.Spec.Replicas)), standalonePCLQs, pcsgs)
 			assert.Equal(t, tt.wantUpdatedPCLQs, stats.updatedPCLQs, "updatedPCLQs")
 			assert.Equal(t, tt.wantTotalPCLQs, stats.totalPCLQs, "totalPCLQs")
 			assert.Equal(t, tt.wantUpdatedPCSGs, stats.updatedPCSGs, "updatedPCSGs")
@@ -982,10 +1003,9 @@ func TestPCSMutateReplicasWritesUpdateProgressCounts(t *testing.T) {
 		pcs, children := build(false)
 		cl := testutils.CreateDefaultFakeClient(append([]client.Object{pcs}, children...))
 		r := &Reconciler{client: cl}
-		standalonePCLQs, pcsgs, err := r.listExpectedPCSChildren(context.Background(), pcs)
+		standalonePCLQs, pcsgs, err := r.listExpectedPCSChildren(context.Background(), pcs, lo.Range(int(pcs.Spec.Replicas)))
 		require.NoError(t, err)
-		stats, err := r.computeAvailableAndUpdatedReplicas(logr.Discard(), pcs, standalonePCLQs, pcsgs)
-		require.NoError(t, err)
+		stats := r.computeAvailableAndUpdatedReplicas(logr.Discard(), pcs, lo.Range(int(pcs.Spec.Replicas)), standalonePCLQs, pcsgs)
 		mutateReplicas(pcs, stats)
 		assert.Nil(t, pcs.Status.UpdateProgress, "UpdateProgress must remain nil when not initialized")
 	})
@@ -993,10 +1013,9 @@ func TestPCSMutateReplicasWritesUpdateProgressCounts(t *testing.T) {
 		pcs, children := build(true)
 		cl := testutils.CreateDefaultFakeClient(append([]client.Object{pcs}, children...))
 		r := &Reconciler{client: cl}
-		standalonePCLQs, pcsgs, err := r.listExpectedPCSChildren(context.Background(), pcs)
+		standalonePCLQs, pcsgs, err := r.listExpectedPCSChildren(context.Background(), pcs, lo.Range(int(pcs.Spec.Replicas)))
 		require.NoError(t, err)
-		stats, err := r.computeAvailableAndUpdatedReplicas(logr.Discard(), pcs, standalonePCLQs, pcsgs)
-		require.NoError(t, err)
+		stats := r.computeAvailableAndUpdatedReplicas(logr.Discard(), pcs, lo.Range(int(pcs.Spec.Replicas)), standalonePCLQs, pcsgs)
 		mutateReplicas(pcs, stats)
 		require.NotNil(t, pcs.Status.UpdateProgress)
 		assert.Equal(t, int32(2), pcs.Status.UpdateProgress.UpdatedPodCliquesCount)
@@ -1090,24 +1109,6 @@ func TestCountUpdatedPCSGs(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assert.Equal(t, tt.want, countUpdatedPCSGs(tt.hash, tt.in))
-		})
-	}
-}
-
-func TestFlattenNamesToSet(t *testing.T) {
-	tests := []struct {
-		name string
-		in   map[int][]string
-		want map[string]struct{}
-	}{
-		{"empty", map[int][]string{}, map[string]struct{}{}},
-		{"single replica", map[int][]string{0: {"a", "b"}}, map[string]struct{}{"a": {}, "b": {}}},
-		{"multi replica", map[int][]string{0: {"a", "b"}, 1: {"c"}}, map[string]struct{}{"a": {}, "b": {}, "c": {}}},
-		{"duplicates collapse to single entry", map[int][]string{0: {"a"}, 1: {"a"}}, map[string]struct{}{"a": {}}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, flattenNamesToSet(tt.in))
 		})
 	}
 }
@@ -1217,7 +1218,7 @@ func markStandalonePCLQConverged(t testing.TB, pcs *grovecorev1alpha1.PodCliqueS
 }
 
 // pcsgName returns the FQN for a PCSG owned by `testPCSName` at the given replica index, using
-// the same scheme that componentutils.GetExpectedPCSGFQNsPerPCSReplica produces.
+// the same naming scheme as the expected PodCliqueScalingGroups.
 func pcsgName(replicaIndex int) string {
 	switch replicaIndex {
 	case 0:

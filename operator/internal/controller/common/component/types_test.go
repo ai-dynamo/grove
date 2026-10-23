@@ -26,51 +26,56 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+type testSyncState struct{}
+
+type testSyncResult struct{}
+
 // TestNewOperatorRegistry tests creating a new operator registry.
 func TestNewOperatorRegistry(t *testing.T) {
 	// Test creating registry for PodCliqueSet
 	t.Run("PodCliqueSet registry", func(t *testing.T) {
-		registry := NewOperatorRegistry[grovecorev1alpha1.PodCliqueSet]()
+		registry := NewOperatorRegistry[grovecorev1alpha1.PodCliqueSet, testSyncState, testSyncResult]()
 		require.NotNil(t, registry)
 		assert.Empty(t, registry.GetAllOperators())
 	})
 
 	// Test creating registry for PodClique
 	t.Run("PodClique registry", func(t *testing.T) {
-		registry := NewOperatorRegistry[grovecorev1alpha1.PodClique]()
+		registry := NewOperatorRegistry[grovecorev1alpha1.PodClique, testSyncState, testSyncResult]()
 		require.NotNil(t, registry)
 		assert.Empty(t, registry.GetAllOperators())
 	})
 
 	// Test creating registry for PodCliqueScalingGroup
 	t.Run("PodCliqueScalingGroup registry", func(t *testing.T) {
-		registry := NewOperatorRegistry[grovecorev1alpha1.PodCliqueScalingGroup]()
+		registry := NewOperatorRegistry[grovecorev1alpha1.PodCliqueScalingGroup, testSyncState, testSyncResult]()
 		require.NotNil(t, registry)
 		assert.Empty(t, registry.GetAllOperators())
 	})
 }
 
 // Ensure mockOperatorImpl implements Operator interface at compile time
-var _ Operator[grovecorev1alpha1.PodCliqueSet] = (*mockOperatorImpl[grovecorev1alpha1.PodCliqueSet])(nil)
+var _ Operator[grovecorev1alpha1.PodCliqueSet, testSyncState, testSyncResult] = (*mockOperatorImpl[grovecorev1alpha1.PodCliqueSet, testSyncState, testSyncResult])(nil)
 
-type mockOperatorImpl[T GroveCustomResourceType] struct{}
+type mockOperatorImpl[T GroveCustomResourceType, S any, R any] struct{}
 
-func (m *mockOperatorImpl[T]) GetExistingResourceNames(_ context.Context, _ logr.Logger, _ metav1.ObjectMeta) ([]string, error) {
+func (m *mockOperatorImpl[T, S, R]) GetExistingResourceNames(_ context.Context, _ logr.Logger, _ metav1.ObjectMeta) ([]string, error) {
 	return []string{"resource1", "resource2"}, nil
 }
 
-func (m *mockOperatorImpl[T]) Sync(_ context.Context, _ logr.Logger, _ *T) error {
-	return nil
+func (m *mockOperatorImpl[T, S, R]) Sync(_ context.Context, _ logr.Logger, _ *T, _ *S) (R, error) {
+	var result R
+	return result, nil
 }
 
-func (m *mockOperatorImpl[T]) Delete(_ context.Context, _ logr.Logger, _ metav1.ObjectMeta) error {
+func (m *mockOperatorImpl[T, S, R]) Delete(_ context.Context, _ logr.Logger, _ metav1.ObjectMeta) error {
 	return nil
 }
 
 // TestOperatorRegistryRegister tests registering operators in the registry.
 func TestOperatorRegistryRegister(t *testing.T) {
-	registry := NewOperatorRegistry[grovecorev1alpha1.PodCliqueSet]()
-	operator := &mockOperatorImpl[grovecorev1alpha1.PodCliqueSet]{}
+	registry := NewOperatorRegistry[grovecorev1alpha1.PodCliqueSet, testSyncState, testSyncResult]()
+	operator := &mockOperatorImpl[grovecorev1alpha1.PodCliqueSet, testSyncState, testSyncResult]{}
 
 	// Register an operator
 	registry.Register(KindPodClique, operator)
@@ -83,8 +88,8 @@ func TestOperatorRegistryRegister(t *testing.T) {
 
 // TestOperatorRegistryGetOperator tests retrieving operators from the registry.
 func TestOperatorRegistryGetOperator(t *testing.T) {
-	registry := NewOperatorRegistry[grovecorev1alpha1.PodCliqueSet]()
-	operator := &mockOperatorImpl[grovecorev1alpha1.PodCliqueSet]{}
+	registry := NewOperatorRegistry[grovecorev1alpha1.PodCliqueSet, testSyncState, testSyncResult]()
+	operator := &mockOperatorImpl[grovecorev1alpha1.PodCliqueSet, testSyncState, testSyncResult]{}
 
 	// Test getting non-existent operator
 	t.Run("non-existent operator", func(t *testing.T) {
@@ -107,15 +112,15 @@ func TestOperatorRegistryGetOperator(t *testing.T) {
 
 // TestOperatorRegistryGetAllOperators tests retrieving all operators.
 func TestOperatorRegistryGetAllOperators(t *testing.T) {
-	registry := NewOperatorRegistry[grovecorev1alpha1.PodCliqueSet]()
+	registry := NewOperatorRegistry[grovecorev1alpha1.PodCliqueSet, testSyncState, testSyncResult]()
 
 	// Initially empty
 	assert.Empty(t, registry.GetAllOperators())
 
 	// Register multiple operators
-	op1 := &mockOperatorImpl[grovecorev1alpha1.PodCliqueSet]{}
-	op2 := &mockOperatorImpl[grovecorev1alpha1.PodCliqueSet]{}
-	op3 := &mockOperatorImpl[grovecorev1alpha1.PodCliqueSet]{}
+	op1 := &mockOperatorImpl[grovecorev1alpha1.PodCliqueSet, testSyncState, testSyncResult]{}
+	op2 := &mockOperatorImpl[grovecorev1alpha1.PodCliqueSet, testSyncState, testSyncResult]{}
+	op3 := &mockOperatorImpl[grovecorev1alpha1.PodCliqueSet, testSyncState, testSyncResult]{}
 
 	registry.Register(KindPodClique, op1)
 	registry.Register(KindServiceAccount, op2)
@@ -133,10 +138,10 @@ func TestOperatorRegistryGetAllOperators(t *testing.T) {
 
 // TestOperatorRegistryMultipleRegistrations tests that registering multiple times overwrites.
 func TestOperatorRegistryMultipleRegistrations(t *testing.T) {
-	registry := NewOperatorRegistry[grovecorev1alpha1.PodClique]()
+	registry := NewOperatorRegistry[grovecorev1alpha1.PodClique, testSyncState, testSyncResult]()
 
-	op1 := &mockOperatorImpl[grovecorev1alpha1.PodClique]{}
-	op2 := &mockOperatorImpl[grovecorev1alpha1.PodClique]{}
+	op1 := &mockOperatorImpl[grovecorev1alpha1.PodClique, testSyncState, testSyncResult]{}
+	op2 := &mockOperatorImpl[grovecorev1alpha1.PodClique, testSyncState, testSyncResult]{}
 
 	// Register first operator
 	registry.Register(KindPod, op1)

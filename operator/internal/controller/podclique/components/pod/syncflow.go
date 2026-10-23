@@ -24,6 +24,7 @@ import (
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	"github.com/ai-dynamo/grove/operator/internal/constants"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podclique/expectations"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
@@ -79,7 +80,7 @@ func (r _resource) prepareSyncFlow(ctx context.Context, logger logr.Logger, pclq
 			fmt.Sprintf("failed to extract clique name from PodClique: %v", pclqObjectKey),
 		)
 	}
-	ss.isStandalonePCLQ = componentutils.IsStandalonePCLQ(ss.pcs, ss.cliqueName)
+	ss.isStandalonePCLQ = componentutils.IsStandalonePCLQTemplate(ss.pcs, ss.cliqueName)
 
 	ss.pcsReplicaIndex, err = k8sutils.GetPodCliqueSetReplicaIndex(pclq.ObjectMeta)
 	if err != nil {
@@ -229,8 +230,8 @@ func (r _resource) runSyncFlow(ctx context.Context, logger logr.Logger, ss *sync
 			return result
 		}
 		if repaired {
-			result.recordError(groveerr.New(groveerr.ErrCodeRequeueAfter, component.OperationSync,
-				fmt.Sprintf("repaired pods missing the %s label for PodCliqueScalingGroup PodClique %v, re-queueing", apicommon.LabelPodGang, client.ObjectKeyFromObject(ss.pclq))))
+			result.recordError(groveerr.NewRequeueAfter(component.OperationSync,
+				fmt.Sprintf("repaired pods missing the %s label for PodCliqueScalingGroup PodClique %v, re-queueing", apicommon.LabelPodGang, client.ObjectKeyFromObject(ss.pclq)), constants.ComponentSyncRetryInterval))
 			return result
 		}
 
@@ -255,8 +256,7 @@ func (r _resource) runSyncFlow(ctx context.Context, logger logr.Logger, ss *sync
 
 	if componentutils.IsPCLQRollingUpdateInProgress(ss.pclq) {
 		if !pclqUpdateProgressMatchesCurrentRevision(ss) {
-			result.recordError(groveerr.New(
-				groveerr.ErrCodeContinueReconcileAndRequeue,
+			result.recordError(groveerr.NewContinueReconcileAndRequeue(
 				component.OperationSync,
 				fmt.Sprintf("PodClique %v update progress does not match the current PCS and PCLQ revisions, requeuing", client.ObjectKeyFromObject(ss.pclq)),
 			))
@@ -648,7 +648,7 @@ func removePodGangSchedulingGate(pod *corev1.Pod) bool {
 // createPods creates the specified number of new pods for the PodClique with proper indexing and concurrency control
 func (r _resource) createPods(ctx context.Context, logger logr.Logger, ss *syncSnapshot, numPods int) (int, error) {
 	// Pre-calculate all needed indices to avoid race conditions
-	availableIndices, err := index.GetAvailableIndices(logger, ss.existingPCLQPods, numPods)
+	availableIndices, err := index.GetAvailablePodIndices(logger, ss.existingPCLQPods, numPods)
 	if err != nil {
 		return 0, groveerr.WrapError(err,
 			errCodeGetAvailablePodHostNameIndices,

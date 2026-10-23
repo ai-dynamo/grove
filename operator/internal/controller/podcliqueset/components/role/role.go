@@ -22,6 +22,7 @@ import (
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
+	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/sync"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
@@ -47,7 +48,7 @@ type _resource struct {
 }
 
 // New creates an instance of Role components operator.
-func New(client client.Client, scheme *runtime.Scheme) component.Operator[grovecorev1alpha1.PodCliqueSet] {
+func New(client client.Client, scheme *runtime.Scheme) component.Operator[grovecorev1alpha1.PodCliqueSet, pcssync.State, pcssync.Result] {
 	return &_resource{
 		client: client,
 		scheme: scheme,
@@ -76,10 +77,10 @@ func (r _resource) GetExistingResourceNames(ctx context.Context, _ logr.Logger, 
 }
 
 // Sync synchronizes all resources that the Role Operator manages.
-func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) error {
+func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, _ *pcssync.State) (pcssync.Result, error) {
 	existingRoleNames, err := r.GetExistingResourceNames(ctx, logger, pcs.ObjectMeta)
 	if err != nil {
-		return groveerr.WrapError(err,
+		return pcssync.Result{}, groveerr.WrapError(err,
 			errCodeGetRole,
 			component.OperationSync,
 			fmt.Sprintf("Error getting existing Role names for PodCliqueSet: %v", client.ObjectKeyFromObject(pcs)),
@@ -87,27 +88,27 @@ func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev
 	}
 	if len(existingRoleNames) > 0 {
 		logger.V(1).Info("Role already exists, skipping creation", "existingRole", existingRoleNames[0])
-		return nil
+		return pcssync.Result{}, nil
 	}
 	objectKey := getObjectKey(pcs.ObjectMeta)
 	role := emptyRole(objectKey)
 	logger.V(1).Info("Running CreateOrUpdate Role", "objectKey", objectKey)
 	if err := r.buildResource(pcs, role); err != nil {
-		return groveerr.WrapError(err,
+		return pcssync.Result{}, groveerr.WrapError(err,
 			errSyncRole,
 			component.OperationSync,
 			fmt.Sprintf("Error building Role: %v for PodCliqueSet: %v", objectKey, client.ObjectKeyFromObject(pcs)),
 		)
 	}
 	if err := client.IgnoreAlreadyExists(r.client.Create(ctx, role)); err != nil {
-		return groveerr.WrapError(err,
+		return pcssync.Result{}, groveerr.WrapError(err,
 			errSyncRole,
 			component.OperationSync,
 			fmt.Sprintf("Error syncing Role: %v for PodCliqueSet: %v", objectKey, client.ObjectKeyFromObject(pcs)),
 		)
 	}
 	logger.Info("Created Role", "objectKey", objectKey)
-	return nil
+	return pcssync.Result{}, nil
 }
 
 // Delete removes the Role resource for the PodCliqueSet.

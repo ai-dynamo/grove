@@ -53,7 +53,7 @@ func TestInScopeStandalonePCLQsByComponent(t *testing.T) {
 	snap := &syncSnapshot{
 		pcs:         &grovecorev1alpha1.PodCliqueSet{ObjectMeta: metav1.ObjectMeta{Name: coherentTestPCSName}},
 		mvuTemplate: &mvuTemplate{standalonePCLQs: map[string]int32{"frontend": 2}},
-		existingStandalonePCLQsByReplica: map[int][]grovecorev1alpha1.PodClique{
+		existingStandalonePCLQsByPCSReplicaIndex: map[int][]grovecorev1alpha1.PodClique{
 			0: {
 				{ObjectMeta: metav1.ObjectMeta{Name: apicommon.GeneratePodCliqueName(pcsNameReplica, "frontend")}, Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 5}},
 				{ObjectMeta: metav1.ObjectMeta{Name: apicommon.GeneratePodCliqueName(pcsNameReplica, "router")}, Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 4}},
@@ -78,7 +78,7 @@ func TestInScopePCSGsByComponent(t *testing.T) {
 		snap := &syncSnapshot{
 			pcs:         &grovecorev1alpha1.PodCliqueSet{ObjectMeta: metav1.ObjectMeta{Name: coherentTestPCSName}},
 			mvuTemplate: &mvuTemplate{pcsgs: map[string]int32{"decode": 3}},
-			existingPCSGsByReplica: map[int][]grovecorev1alpha1.PodCliqueScalingGroup{
+			existingPCSGsByPCSReplicaIndex: map[int][]grovecorev1alpha1.PodCliqueScalingGroup{
 				0: {
 					{ObjectMeta: metav1.ObjectMeta{Name: apicommon.GeneratePodCliqueScalingGroupName(pcsNameReplica, "decode")}, Spec: grovecorev1alpha1.PodCliqueScalingGroupSpec{Replicas: 6}},
 					{ObjectMeta: metav1.ObjectMeta{Name: apicommon.GeneratePodCliqueScalingGroupName(pcsNameReplica, "prefill")}, Spec: grovecorev1alpha1.PodCliqueScalingGroupSpec{Replicas: 2}},
@@ -98,7 +98,7 @@ func TestInScopePCSGsByComponent(t *testing.T) {
 		snap := &syncSnapshot{
 			pcs:         &grovecorev1alpha1.PodCliqueSet{ObjectMeta: metav1.ObjectMeta{Name: coherentTestPCSName}},
 			mvuTemplate: &mvuTemplate{pcsgs: map[string]int32{"decode": 3}},
-			existingPCSGsByReplica: map[int][]grovecorev1alpha1.PodCliqueScalingGroup{
+			existingPCSGsByPCSReplicaIndex: map[int][]grovecorev1alpha1.PodCliqueScalingGroup{
 				0: {{ObjectMeta: metav1.ObjectMeta{Name: "malformed"}, Spec: grovecorev1alpha1.PodCliqueScalingGroupSpec{Replicas: 6}}},
 			},
 		}
@@ -962,9 +962,9 @@ func newCoherentTestSnapshot(pcsNameReplica apicommon.ResourceNameReplica, liveR
 		},
 	}
 	return &syncSnapshot{
-		pcs:                              pcs,
-		mvuTemplate:                      &mvuTemplate{standalonePCLQs: map[string]int32{"frontend": minAvailable}},
-		existingStandalonePCLQsByReplica: map[int][]grovecorev1alpha1.PodClique{0: {frontendPCLQ}},
+		pcs:                                      pcs,
+		mvuTemplate:                              &mvuTemplate{standalonePCLQs: map[string]int32{"frontend": minAvailable}},
+		existingStandalonePCLQsByPCSReplicaIndex: map[int][]grovecorev1alpha1.PodClique{0: {frontendPCLQ}},
 	}
 }
 
@@ -1033,10 +1033,10 @@ func newCoherentPCSGTest(replicas, minAvailable int32, maxUnavailable *int32, co
 		clk:    clocktesting.NewFakeClock(metav1.Now().Time),
 	}
 	snap := &syncSnapshot{
-		logger:                 logr.Discard(),
-		pcs:                    pcs,
-		existingPCSGsByReplica: map[int][]grovecorev1alpha1.PodCliqueScalingGroup{0: {pcsg}},
-		mvuTemplate:            &mvuTemplate{pcsgs: map[string]int32{"sga": minAvailable}},
+		logger:                         logr.Discard(),
+		pcs:                            pcs,
+		existingPCSGsByPCSReplicaIndex: map[int][]grovecorev1alpha1.PodCliqueScalingGroup{0: {pcsg}},
+		mvuTemplate:                    &mvuTemplate{pcsgs: map[string]int32{"sga": minAvailable}},
 	}
 	pgm := &grovecorev1alpha1.PodGangMap{Spec: grovecorev1alpha1.PodGangMapSpec{Entries: entries}}
 	return r, snap, pgm

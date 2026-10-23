@@ -35,8 +35,9 @@ const (
 	LabelBasePodGang = "grove.io/base-podgang"
 	// LabelPodCliqueSetReplicaIndex is a key for a label that sets the replica index of a PodCliqueSet.
 	LabelPodCliqueSetReplicaIndex = "grove.io/podcliqueset-replica-index"
-	// LabelPodCliqueSetGenerationHash is set on PodGang resources to record the PodCliqueSet generation
-	// hash they were created for.
+	// LabelPodCliqueSetGenerationHash is set only on PodGang resources to record the PodCliqueSet
+	// generation hash they were created for.
+	// Deprecated: This label is not used for selection and will be removed in favor of an annotation.
 	LabelPodCliqueSetGenerationHash = "grove.io/podcliqueset-generation-hash"
 	// LabelEpoch is set on PodGang resources to record the batch in which the PodGang was created.
 	// The value is a monotonic unix-nano integer used as a distinct orderable key. PodGangs created

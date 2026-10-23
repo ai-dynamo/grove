@@ -85,8 +85,7 @@ func (r _resource) processPendingUpdates(ctx context.Context, logger logr.Logger
 	// No Ready old-hash Pods to disrupt this reconcile means replacements are still in flight. Requeue
 	// and wait for them to become Ready.
 	if len(uw.oldTemplateHashReadyPods) == 0 {
-		return groveerr.New(
-			groveerr.ErrCodeContinueReconcileAndRequeue,
+		return groveerr.NewContinueReconcileAndRequeue(
 			component.OperationSync,
 			fmt.Sprintf("rolling update of PodClique %v waiting for in-flight replacement Pods to become Ready, requeuing", client.ObjectKeyFromObject(ss.pclq)),
 		)
@@ -98,8 +97,7 @@ func (r _resource) processPendingUpdates(ctx context.Context, logger logr.Logger
 	effectiveMaxUnavailable := componentutils.EffectiveMaxUnavailable(rollingUpdateConfigForPCLQ(ss), componentutils.ResolveUpdateStrategyType(ss.pcs), lo.FromPtrOr(ss.pclq.Spec.MinAvailable, 1))
 	allowedBudget := componentutils.ComputeAllowedBudget(desiredNumPods, numReadyPods, effectiveMaxUnavailable)
 	if allowedBudget == 0 {
-		return groveerr.New(
-			groveerr.ErrCodeContinueReconcileAndRequeue,
+		return groveerr.NewContinueReconcileAndRequeue(
 			component.OperationSync,
 			fmt.Sprintf("rolling update of PodClique %v paused, disruption budget exhausted, requeuing", client.ObjectKeyFromObject(ss.pclq)),
 		)
@@ -110,7 +108,7 @@ func (r _resource) processPendingUpdates(ctx context.Context, logger logr.Logger
 	deletionTasks := r.createPodDeletionTasks(logger, ss.pclq, podsToUpdate)
 	logger.Info("triggering deletion of Ready Pods with old pod template hash for rolling update",
 		"pods", componentutils.PodsToObjectNames(podsToUpdate))
-	if runResult := utils.RunConcurrently(ctx, logger, deletionTasks); runResult.HasErrors() {
+	if runResult := utils.RunConcurrentlyAndWait(ctx, logger, deletionTasks); runResult.HasErrors() {
 		err := runResult.GetAggregatedError()
 		logger.Error(err, "failed to delete Ready Pods selected for rolling update", "runSummary", runResult.GetSummary())
 		return groveerr.WrapError(err,
@@ -119,8 +117,7 @@ func (r _resource) processPendingUpdates(ctx context.Context, logger logr.Logger
 			fmt.Sprintf("failed to delete Ready Pods selected for rolling update of PodClique %v", client.ObjectKeyFromObject(ss.pclq)),
 		)
 	}
-	return groveerr.New(
-		groveerr.ErrCodeContinueReconcileAndRequeue,
+	return groveerr.NewContinueReconcileAndRequeue(
 		component.OperationSync,
 		fmt.Sprintf("deleted %d Ready Pod(s) for rolling update of PodClique %v, requeuing", len(podsToUpdate), client.ObjectKeyFromObject(ss.pclq)),
 	)

@@ -12,12 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package mnnvl
+package validation
 
 import (
 	"fmt"
 
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
 	kubeutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
 	"k8s.io/apimachinery/pkg/util/validation/field"
@@ -25,18 +26,18 @@ import (
 
 const mnnvlNotEnabledMsgFormat = "MNNVL is not enabled in the operator configuration. Either enable MNNVL globally or remove the %s annotation"
 
-// ValidatePCSOnCreate validates all MNNVL annotations on a PodCliqueSet during creation:
+// validateMNNVLOnCreate validates all MNNVL annotations on a PodCliqueSet during creation:
 // PCS-level metadata and each PodCliqueTemplateSpec in the spec.
-func ValidatePCSOnCreate(pcs *grovecorev1alpha1.PodCliqueSet, autoMNNVLEnabled bool) field.ErrorList {
+func validateMNNVLOnCreate(pcs *grovecorev1alpha1.PodCliqueSet, autoMNNVLEnabled bool) field.ErrorList {
 	allErrs := field.ErrorList{}
 	allErrs = append(allErrs, validateMetadataOnCreate(pcs, autoMNNVLEnabled)...)
 	allErrs = append(allErrs, validateSpecOnCreate(pcs, autoMNNVLEnabled)...)
 	return allErrs
 }
 
-// ValidatePCSOnUpdate validates MNNVL annotation immutability on a PodCliqueSet during update:
+// validateMNNVLOnUpdate validates MNNVL annotation immutability on a PodCliqueSet during update:
 // PCS-level metadata and each PodCliqueTemplateSpec in the spec.
-func ValidatePCSOnUpdate(oldPCS, newPCS *grovecorev1alpha1.PodCliqueSet) field.ErrorList {
+func validateMNNVLOnUpdate(oldPCS, newPCS *grovecorev1alpha1.PodCliqueSet) field.ErrorList {
 	allErrs := field.ErrorList{}
 	allErrs = append(allErrs, validateMetadataOnUpdate(oldPCS, newPCS)...)
 	allErrs = append(allErrs, validateSpecOnUpdate(oldPCS, newPCS)...)
@@ -64,15 +65,15 @@ func validateSpecOnUpdate(oldPCS, newPCS *grovecorev1alpha1.PodCliqueSet) field.
 func validateMNNVLAnnotationsOnCreate(annotations map[string]string, autoMNNVLEnabled bool, basePath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 
-	if value, exists := annotations[AnnotationMNNVLGroup]; exists {
-		path := basePath.Child(AnnotationMNNVLGroup)
-		if err := ValidateMNNVLGroupName(value); err != nil {
+	if value, exists := annotations[mnnvl.AnnotationMNNVLGroup]; exists {
+		path := basePath.Child(mnnvl.AnnotationMNNVLGroup)
+		if err := mnnvl.ValidateMNNVLGroupName(value); err != nil {
 			allErrs = append(allErrs, field.Invalid(path, value, err.Error()))
 		}
 		// Opt-out ("none") is always allowed, even when the feature is disabled.
-		if !autoMNNVLEnabled && value != AnnotationMNNVLGroupOptOut {
+		if !autoMNNVLEnabled && value != mnnvl.AnnotationMNNVLGroupOptOut {
 			allErrs = append(allErrs, field.Invalid(path, value,
-				fmt.Sprintf(mnnvlNotEnabledMsgFormat, AnnotationMNNVLGroup)))
+				fmt.Sprintf(mnnvlNotEnabledMsgFormat, mnnvl.AnnotationMNNVLGroup)))
 		}
 	}
 
@@ -106,7 +107,7 @@ func validatePodCliqueTemplateSpecOnCreate(clique *grovecorev1alpha1.PodCliqueTe
 // CliqueStartupTypeAnyOrder allows reordering cliques, and PCS validation already pairs by name.
 // Adding, removing, or renaming cliques is not allowed on update; that is enforced by the
 // PodCliqueSet validating admission path (validatePodCliqueUpdate), which runs after this
-// package’s ValidatePCSOnUpdate. A new clique name with no counterpart in oldTemplate is
+// package's validateMNNVLOnUpdate. A new clique name with no counterpart in oldTemplate is
 // therefore skipped here. Field paths use the index in newTemplate so errors point at the
 // object being admitted.
 func validatePodCliqueSetTemplateSpecOnUpdate(oldTemplate, newTemplate *grovecorev1alpha1.PodCliqueSetTemplateSpec, fldPath *field.Path) field.ErrorList {
@@ -155,7 +156,7 @@ func validatePodCliqueTemplateSpecOnUpdate(oldClique, newClique *grovecorev1alph
 	return validateMNNVLAnnotationsImmutability(oldClique.Annotations, newClique.Annotations, fldPath.Child("annotations"))
 }
 
-var mnnvlImmutableKeys = []string{AnnotationMNNVLGroup}
+var mnnvlImmutableKeys = []string{mnnvl.AnnotationMNNVLGroup}
 
 func validateMNNVLAnnotationsImmutability(oldAnnotations, newAnnotations map[string]string, basePath *field.Path) field.ErrorList {
 	return kubeutils.ValidateAnnotationsImmutability(oldAnnotations, newAnnotations, mnnvlImmutableKeys, basePath)

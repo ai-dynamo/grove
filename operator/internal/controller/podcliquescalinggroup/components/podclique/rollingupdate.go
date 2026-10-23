@@ -95,8 +95,7 @@ func selectReplicasToUpdate(sc *syncSnapshot, uw *updateWork) ([]int, error) {
 	effectiveMaxUnavailable := componentutils.EffectiveMaxUnavailable(rollingUpdateConfigForPCSG(sc), componentutils.ResolveUpdateStrategyType(sc.pcs), lo.FromPtrOr(sc.pcsg.Spec.MinAvailable, 1))
 	disruptionBudget := computeDisruptionBudget(uw.existingReplicas, int(sc.pcsg.Spec.Replicas), effectiveMaxUnavailable, uw.newNotReadyReplicas)
 	if disruptionBudget <= 0 {
-		return nil, groveerr.New(
-			groveerr.ErrCodeContinueReconcileAndRequeue,
+		return nil, groveerr.NewContinueReconcileAndRequeue(
 			component.OperationSync,
 			fmt.Sprintf("rolling update of PodCliqueScalingGroup %v has no disruption headroom this reconcile (availability minimum or in-flight replacements), re-queuing", client.ObjectKeyFromObject(sc.pcsg)),
 		)
@@ -107,8 +106,7 @@ func selectReplicasToUpdate(sc *syncSnapshot, uw *updateWork) ([]int, error) {
 	replicaIndicesToUpdate := componentutils.OrderPCSGReplicaIndicesForDisruption(uw.oldReplicaDisruptionInfos)
 	if len(replicaIndicesToUpdate) == 0 {
 		// Every old-configuration replica is an in-flight replacement. Requeue and wait for them to become Ready.
-		return nil, groveerr.New(
-			groveerr.ErrCodeContinueReconcileAndRequeue,
+		return nil, groveerr.NewContinueReconcileAndRequeue(
 			component.OperationSync,
 			fmt.Sprintf("rolling update of PodCliqueScalingGroup %v waiting for in-flight replacement replicas to become Ready, requeuing", client.ObjectKeyFromObject(sc.pcsg)),
 		)
@@ -131,8 +129,7 @@ func (r _resource) deleteSelectedReplicasForUpdate(ctx context.Context, logger l
 	if err := r.triggerDeletionOfPodCliques(ctx, logger, client.ObjectKeyFromObject(sc.pcsg), deleteTasks); err != nil {
 		return err
 	}
-	return groveerr.New(
-		groveerr.ErrCodeContinueReconcileAndRequeue,
+	return groveerr.NewContinueReconcileAndRequeue(
 		component.OperationSync,
 		fmt.Sprintf("deleted %d replica(s) for rolling update of PodCliqueScalingGroup %v, requeuing", len(replicaIndicesToUpdate), client.ObjectKeyFromObject(sc.pcsg)),
 	)
@@ -176,8 +173,7 @@ func (r _resource) markUpdateEnd(ctx context.Context, logger logr.Logger, pcsg *
 		)
 	}
 	logger.Info("Marked the end of rolling update of PodCliqueScalingGroup")
-	return groveerr.New(
-		groveerr.ErrCodeContinueReconcileAndRequeue,
+	return groveerr.NewContinueReconcileAndRequeue(
 		component.OperationSync,
 		fmt.Sprintf("rolling update of PodCliqueScalingGroup %v has ended, requeuing for status convergence", client.ObjectKeyFromObject(pcsg)),
 	)

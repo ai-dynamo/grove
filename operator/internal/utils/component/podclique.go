@@ -33,6 +33,14 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
+// IsStandalonePCLQ reports whether the PodClique is controlled by a PodCliqueSet.
+func IsStandalonePCLQ(pclq *grovecorev1alpha1.PodClique) bool {
+	controllerRef := metav1.GetControllerOfNoCopy(pclq)
+	return controllerRef != nil &&
+		controllerRef.APIVersion == grovecorev1alpha1.SchemeGroupVersion.String() &&
+		controllerRef.Kind == constants.KindPodCliqueSet
+}
+
 // GetPCLQsByOwner retrieves PodClique objects that are owned by the specified owner kind and object key, and match the provided selector labels.
 func GetPCLQsByOwner(ctx context.Context, cl client.Client, ownerKind string, ownerObjectKey client.ObjectKey, selectorLabels map[string]string) ([]grovecorev1alpha1.PodClique, error) {
 	pclqs, err := ListPCLQsMatchingLabels(ctx, cl, ownerObjectKey.Namespace, selectorLabels)
@@ -46,15 +54,6 @@ func GetPCLQsByOwner(ctx context.Context, cl client.Client, ownerKind string, ow
 		return pclq.OwnerReferences[0].Kind == ownerKind && pclq.OwnerReferences[0].Name == ownerObjectKey.Name
 	})
 	return filteredPCLQs, nil
-}
-
-// GetPCLQsByOwnerReplicaIndex retrieves PodClique objects per replica of the owner resource matching provided selector labels.
-func GetPCLQsByOwnerReplicaIndex(ctx context.Context, cl client.Client, ownerKind string, ownerObjectKey client.ObjectKey, selectorLabels map[string]string) (map[int][]grovecorev1alpha1.PodClique, error) {
-	pclqs, err := GetPCLQsByOwner(ctx, cl, ownerKind, ownerObjectKey, selectorLabels)
-	if err != nil {
-		return nil, err
-	}
-	return groupPCLQsByLabelValue(pclqs, apicommon.LabelPodCliqueSetReplicaIndex, strconv.Atoi)
 }
 
 // ListPCLQsMatchingLabels lists all the PodClique's in a given namespace matching selectorLabels.
@@ -79,6 +78,15 @@ func GroupPCLQsByPodGangName(pclqs []grovecorev1alpha1.PodClique) map[string][]g
 // GroupPCLQsByPCSGReplicaIndex filters PCLQs that have a PodCliqueScalingGroupReplicaIndex label and groups them by the PCSG replica.
 func GroupPCLQsByPCSGReplicaIndex(pclqs []grovecorev1alpha1.PodClique) (map[int][]grovecorev1alpha1.PodClique, error) {
 	return groupPCLQsByLabelValue[int](pclqs, apicommon.LabelPodCliqueScalingGroupReplicaIndex, strconv.Atoi)
+}
+
+// GetStandalonePCLQsByPCSReplicaIndex lists standalone PodCliques controlled by the PCS and groups them by PCS replica index.
+func GetStandalonePCLQsByPCSReplicaIndex(ctx context.Context, cl client.Client, pcsObjMeta metav1.ObjectMeta) (map[int][]grovecorev1alpha1.PodClique, error) {
+	pclqs, err := GetPodCliquesWithParentPCS(ctx, cl, pcsObjMeta)
+	if err != nil {
+		return nil, err
+	}
+	return GroupPCLQsByPCSReplicaIndex(pclqs)
 }
 
 // GroupPCLQsByPCSReplicaIndex filters PCLQs that have a PodCliqueSetReplicaIndex label and groups them by the PCS replica index.

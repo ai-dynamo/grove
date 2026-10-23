@@ -23,6 +23,7 @@ import (
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
 	"github.com/samber/lo"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -30,65 +31,44 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// GetExpectedPCSGFQNsForPCS computes the FQNs for all PodCliqueScalingGroups defined in PCS for the given replica.
-func GetExpectedPCSGFQNsForPCS(pcs *grovecorev1alpha1.PodCliqueSet) []string {
-	pcsgFQNsPerPCSReplica := GetExpectedPCSGFQNsPerPCSReplica(pcs)
-	return lo.Flatten(lo.Values(pcsgFQNsPerPCSReplica))
-}
-
-// GetPodCliqueFQNsForPCSNotInPCSG computes the FQNs for all PodCliques for all PCS replicas which are not part of any PCSG.
-func GetPodCliqueFQNsForPCSNotInPCSG(pcs *grovecorev1alpha1.PodCliqueSet) []string {
-	pclqFQNs := make([]string, 0, int(pcs.Spec.Replicas)*len(pcs.Spec.Template.Cliques))
-	for pcsReplicaIndex := range int(pcs.Spec.Replicas) {
-		pclqFQNs = append(pclqFQNs, GetPodCliqueFQNsForPCSReplicaNotInPCSG(pcs, pcsReplicaIndex)...)
-	}
-	return pclqFQNs
-}
-
 // GetPodCliqueFQNsForPCSReplicaNotInPCSG computes the FQNs for all PodCliques for a PCS replica which are not part of any PCSG.
 func GetPodCliqueFQNsForPCSReplicaNotInPCSG(pcs *grovecorev1alpha1.PodCliqueSet, pcsReplicaIndex int) []string {
 	pclqNames := make([]string, 0, len(pcs.Spec.Template.Cliques))
 	for _, pclqTemplateSpec := range pcs.Spec.Template.Cliques {
-		if IsStandalonePCLQ(pcs, pclqTemplateSpec.Name) {
+		if IsStandalonePCLQTemplate(pcs, pclqTemplateSpec.Name) {
 			pclqNames = append(pclqNames, apicommon.GeneratePodCliqueName(apicommon.ResourceNameReplica{Name: pcs.Name, Replica: pcsReplicaIndex}, pclqTemplateSpec.Name))
 		}
 	}
 	return pclqNames
 }
 
-// IsStandalonePCLQ reports whether the named PodClique is standalone, that is not a member of any
+// IsStandalonePCLQTemplate reports whether the named PodClique template is not a member of any
 // PodCliqueScalingGroup of the PodCliqueSet.
-func IsStandalonePCLQ(pcs *grovecorev1alpha1.PodCliqueSet, pclqName string) bool {
+func IsStandalonePCLQTemplate(pcs *grovecorev1alpha1.PodCliqueSet, pclqName string) bool {
 	return !lo.SomeBy(pcs.Spec.Template.PodCliqueScalingGroupConfigs, func(pcsgConfig grovecorev1alpha1.PodCliqueScalingGroupConfig) bool {
 		return slices.Contains(pcsgConfig.CliqueNames, pclqName)
 	})
 }
 
 // pcsCacheKey is a context key for per-reconcile memoization of GetPodCliqueSet results.
-// In the PodClique reconcile flow alone we Get the same PCS up to 4 times (reconcileSpec,
-// reconcileStatus, pod.prepareSyncFlow, resourceClaim) — each DeepCopying the full template.
 type pcsCacheKey struct{}
 
-// pcsCache holds one slot keyed by "namespace/name".
 type pcsCache struct {
 	byKey map[string]*grovecorev1alpha1.PodCliqueSet
 }
 
-// WithPodCliqueSetCache returns a context that memoizes GetPodCliqueSet results for the
-// lifetime of one reconcile. Call this once at the top of Reconcile and propagate the ctx.
+// WithPodCliqueSetCache returns a context that memoizes GetPodCliqueSet results for one reconciliation.
 func WithPodCliqueSetCache(ctx context.Context) context.Context {
 	return context.WithValue(ctx, pcsCacheKey{}, &pcsCache{byKey: make(map[string]*grovecorev1alpha1.PodCliqueSet, 1)})
 }
 
-// GetPodCliqueSet gets the owner PodCliqueSet object. When the context carries a cache from
-// WithPodCliqueSetCache, the first lookup populates it and subsequent calls skip the Get.
-// The returned pointer is the cached instance — callers must not mutate it in place.
+// GetPodCliqueSet gets the owner PodCliqueSet object.
 func GetPodCliqueSet(ctx context.Context, cl client.Client, objectMeta metav1.ObjectMeta) (*grovecorev1alpha1.PodCliqueSet, error) {
 	pcsName := GetPodCliqueSetName(objectMeta)
 	key := objectMeta.Namespace + "/" + pcsName
-	cache, _ := ctx.Value(pcsCacheKey{}).(*pcsCache)
-	if cache != nil {
-		if pcs, ok := cache.byKey[key]; ok {
+	pcsCache, _ := ctx.Value(pcsCacheKey{}).(*pcsCache)
+	if pcsCache != nil {
+		if pcs, ok := pcsCache.byKey[key]; ok {
 			return pcs, nil
 		}
 	}
@@ -101,8 +81,8 @@ func GetPodCliqueSet(ctx context.Context, cl client.Client, objectMeta metav1.Ob
 	if err := cl.Get(ctx, client.ObjectKeyFromObject(pcs), pcs); err != nil {
 		return pcs, err
 	}
-	if cache != nil {
-		cache.byKey[key] = pcs
+	if pcsCache != nil {
+		pcsCache.byKey[key] = pcs
 	}
 	return pcs, nil
 }
@@ -198,31 +178,71 @@ func GetExpectedPCLQNamesGroupByOwner(pcs *grovecorev1alpha1.PodCliqueSet) (expe
 	return
 }
 
-// GetExpectedPCSGFQNsPerPCSReplica computes the FQNs for all PodCliqueScalingGroups defined in PCS for each replica.
-func GetExpectedPCSGFQNsPerPCSReplica(pcs *grovecorev1alpha1.PodCliqueSet) map[int][]string {
-	pcsgFQNsByPCSReplica := make(map[int][]string)
-	for pcsReplicaIndex := range int(pcs.Spec.Replicas) {
-		for _, pcsgConfig := range pcs.Spec.Template.PodCliqueScalingGroupConfigs {
-			pcsgName := apicommon.GeneratePodCliqueScalingGroupName(apicommon.ResourceNameReplica{Name: pcs.Name, Replica: pcsReplicaIndex}, pcsgConfig.Name)
-			pcsgFQNsByPCSReplica[pcsReplicaIndex] = append(pcsgFQNsByPCSReplica[pcsReplicaIndex], pcsgName)
-		}
+// GetPCSGFQNsForPCSReplica returns the names of all PodCliqueScalingGroups defined by the PCS template for the given PCS replica index.
+func GetPCSGFQNsForPCSReplica(pcs *grovecorev1alpha1.PodCliqueSet, pcsReplicaIndex int) []string {
+	pcsgNames := make([]string, 0, len(pcs.Spec.Template.PodCliqueScalingGroupConfigs))
+	pcsNameReplica := apicommon.ResourceNameReplica{
+		Name:    pcs.Name,
+		Replica: pcsReplicaIndex,
+	}
+	for _, pcsgConfig := range pcs.Spec.Template.PodCliqueScalingGroupConfigs {
+		pcsgNames = append(pcsgNames, apicommon.GeneratePodCliqueScalingGroupName(pcsNameReplica, pcsgConfig.Name))
+	}
+	return pcsgNames
+}
+
+// GetPCSGFQNsForPCSReplicaIndices returns the expected PodCliqueScalingGroup names grouped by the given PCS replica indices.
+func GetPCSGFQNsForPCSReplicaIndices(pcs *grovecorev1alpha1.PodCliqueSet, replicaIndices []int) map[int][]string {
+	pcsgFQNsByPCSReplica := make(map[int][]string, len(replicaIndices))
+	for _, replicaIndex := range replicaIndices {
+		pcsgFQNsByPCSReplica[replicaIndex] = GetPCSGFQNsForPCSReplica(pcs, replicaIndex)
 	}
 	return pcsgFQNsByPCSReplica
 }
 
-// GetExpectedStandAlonePCLQFQNsPerPCSReplica computes the FQNs for all standalone PodCliques defined in PCS for each replica.
-func GetExpectedStandAlonePCLQFQNsPerPCSReplica(pcs *grovecorev1alpha1.PodCliqueSet) map[int][]string {
-	pclqFQNsByPCSReplica := make(map[int][]string)
-	for pcsReplicaIndex := range int(pcs.Spec.Replicas) {
-		pclqFQNsByPCSReplica[pcsReplicaIndex] = GetPodCliqueFQNsForPCSReplicaNotInPCSG(pcs, pcsReplicaIndex)
+// GetStandalonePCLQFQNsForPCSReplicaIndices returns the expected standalone PodClique names grouped by the given PCS replica indices.
+func GetStandalonePCLQFQNsForPCSReplicaIndices(pcs *grovecorev1alpha1.PodCliqueSet, pcsReplicaIndices []int) map[int][]string {
+	pclqFQNsByPCSReplicaIndex := make(map[int][]string, len(pcsReplicaIndices))
+	for _, pcsReplicaIndex := range pcsReplicaIndices {
+		pclqFQNsByPCSReplicaIndex[pcsReplicaIndex] = GetPodCliqueFQNsForPCSReplicaNotInPCSG(pcs, pcsReplicaIndex)
 	}
-	return pclqFQNsByPCSReplica
+	return pclqFQNsByPCSReplicaIndex
+}
+
+// IsPCSReplicaAvailable reports whether all expected standalone PodCliques and PodCliqueScalingGroups for one PCS replica exist and satisfy their availability requirements.
+// Resources with a deletion timestamp do not count toward availability.
+func IsPCSReplicaAvailable(expectedStandalonePCLQCount int, expectedPCSGCount int, standalonePCLQs []grovecorev1alpha1.PodClique, pcsgs []grovecorev1alpha1.PodCliqueScalingGroup) bool {
+	nonTerminatingPCLQCount := 0
+	for _, pclq := range standalonePCLQs {
+		if k8sutils.IsResourceTerminating(pclq.ObjectMeta) {
+			continue
+		}
+		nonTerminatingPCLQCount++
+		if pclq.Spec.Replicas != 0 && pclq.Status.ReadyReplicas < *pclq.Spec.MinAvailable {
+			return false
+		}
+	}
+	if nonTerminatingPCLQCount != expectedStandalonePCLQCount {
+		return false
+	}
+
+	nonTerminatingPCSGCount := 0
+	for _, pcsg := range pcsgs {
+		if k8sutils.IsResourceTerminating(pcsg.ObjectMeta) {
+			continue
+		}
+		nonTerminatingPCSGCount++
+		if pcsg.Spec.Replicas != 0 && pcsg.Status.AvailableReplicas < *pcsg.Spec.MinAvailable {
+			return false
+		}
+	}
+	return nonTerminatingPCSGCount == expectedPCSGCount
 }
 
 // CountStandalonePCLQs returns the number of standalone PodCliques declared in the PCS template.
 func CountStandalonePCLQs(pcs *grovecorev1alpha1.PodCliqueSet) int {
 	return lo.CountBy(pcs.Spec.Template.Cliques, func(pclqTemplateSpec *grovecorev1alpha1.PodCliqueTemplateSpec) bool {
-		return IsStandalonePCLQ(pcs, pclqTemplateSpec.Name)
+		return IsStandalonePCLQTemplate(pcs, pclqTemplateSpec.Name)
 	})
 }
 
@@ -230,7 +250,7 @@ func CountStandalonePCLQs(pcs *grovecorev1alpha1.PodCliqueSet) int {
 func GetStandalonePCLQReplicasFromPCSTemplateSpec(pcs *grovecorev1alpha1.PodCliqueSet) map[string]int32 {
 	result := make(map[string]int32)
 	for _, cliqueTemplate := range pcs.Spec.Template.Cliques {
-		if IsStandalonePCLQ(pcs, cliqueTemplate.Name) {
+		if IsStandalonePCLQTemplate(pcs, cliqueTemplate.Name) {
 			result[cliqueTemplate.Name] = cliqueTemplate.Spec.Replicas
 		}
 	}

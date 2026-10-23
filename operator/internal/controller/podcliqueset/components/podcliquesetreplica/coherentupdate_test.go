@@ -24,9 +24,11 @@ import (
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/go-logr/logr"
+	"github.com/samber/lo"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 )
 
 const (
@@ -88,6 +90,21 @@ func TestCoherentProgressMessage(t *testing.T) {
 		require.NotNil(t, coherentProgressMessage(pcs, replicaInfo))
 		assert.Equal(t, "0/1 PodCliqueScalingGroups updated to the current revision", *coherentProgressMessage(pcs, replicaInfo))
 	})
+}
+
+func TestGetPCSReplicaInfos(t *testing.T) {
+	pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "default", types.UID("test-pcs-uid")).Build()
+	r := &_resource{client: newScalingTestClient(t)}
+	expectedPCSReplicaIndices := []int{0, 2, 4}
+	pcsReplicaIndicesToTerminate := []int{2}
+
+	got, err := r.getPCSReplicaInfos(context.Background(), pcs, expectedPCSReplicaIndices, pcsReplicaIndicesToTerminate)
+
+	require.NoError(t, err)
+	gotPCSReplicaIndices := lo.Map(got, func(info pcsReplicaInfo, _ int) int { return info.replicaIndex })
+	assert.Equal(t, []int{0, 4}, gotPCSReplicaIndices)
+	assert.Equal(t, []int{0, 2, 4}, expectedPCSReplicaIndices)
+	assert.Equal(t, []int{2}, pcsReplicaIndicesToTerminate)
 }
 
 func TestInFlightEpochsForReplica(t *testing.T) {

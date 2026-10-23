@@ -21,7 +21,6 @@ import (
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/errors"
-	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 
 	"github.com/go-logr/logr"
@@ -81,7 +80,7 @@ func (h *Handler) ValidateCreate(ctx context.Context, obj runtime.Object) (admis
 	allErrs = append(allErrs, errs...)
 
 	// Validate MNNVL annotations on PCS metadata and spec (clique templates)
-	allErrs = append(allErrs, mnnvl.ValidatePCSOnCreate(pcs, h.networkConfig.AutoMNNVLEnabled)...)
+	allErrs = append(allErrs, validateMNNVLOnCreate(pcs, h.networkConfig.AutoMNNVLEnabled)...)
 
 	// Scheduler-backend-specific validation
 	if err := h.validatePodCliqueSetWithBackend(ctx, pcs); err != nil {
@@ -107,7 +106,7 @@ func (h *Handler) ValidateUpdate(ctx context.Context, oldObj, newObj runtime.Obj
 	warnings, errs := v.validate()
 
 	// Validate MNNVL annotation immutability on PCS metadata and spec (clique templates)
-	errs = append(errs, mnnvl.ValidatePCSOnUpdate(oldPCS, newPCS)...)
+	errs = append(errs, validateMNNVLOnUpdate(oldPCS, newPCS)...)
 
 	// Scheduler-backend-specific validation
 	if err := h.validatePodCliqueSetWithBackend(ctx, newPCS, scheduler.WithOldPodCliqueSet(oldPCS)); err != nil {

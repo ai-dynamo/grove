@@ -137,6 +137,26 @@ func TestGetMinAvailableBreachedPCSGInfoGangTerminationGate(t *testing.T) {
 	}
 }
 
+func TestGetPCSReplicaDeletionWork(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, grovecorev1alpha1.AddToScheme(scheme))
+	pcs := &grovecorev1alpha1.PodCliqueSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "pcs", Namespace: "default"},
+		Spec: grovecorev1alpha1.PodCliqueSetSpec{
+			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{TerminationDelay: &metav1.Duration{}},
+		},
+	}
+	cl := fake.NewClientBuilder().WithScheme(scheme).Build()
+	r := &_resource{client: cl}
+	expectedPCSReplicaIndices := []int{0, 2, 4}
+
+	work, err := r.getPCSReplicaDeletionWork(context.Background(), logr.Discard(), pcs, expectedPCSReplicaIndices)
+
+	require.NoError(t, err)
+	assert.Empty(t, work.deletionTasks)
+	assert.Equal(t, []int{0, 2, 4}, expectedPCSReplicaIndices)
+}
+
 // TestCreatePCSReplicaDeleteTaskIgnoresStaleSiblingFlag pins the cross-episode overlap case:
 // sg-b still carries GangTerminationInProgress from an earlier fire (its recycled pods have
 // not recovered yet) while a NEW fire targets the replica because sg-a regressed again. The

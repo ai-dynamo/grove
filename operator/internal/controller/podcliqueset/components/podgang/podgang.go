@@ -26,6 +26,7 @@ import (
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
+	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/sync"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
@@ -63,7 +64,7 @@ type _resource struct {
 }
 
 // New creates a new instance of PodGang components operator.
-func New(client client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder, tasConfig configv1alpha1.TopologyAwareSchedulingConfiguration, schedRegistry scheduler.Registry) component.Operator[grovecorev1alpha1.PodCliqueSet] {
+func New(client client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder, tasConfig configv1alpha1.TopologyAwareSchedulingConfiguration, schedRegistry scheduler.Registry) component.Operator[grovecorev1alpha1.PodCliqueSet, pcssync.State, pcssync.Result] {
 	return &_resource{
 		client:        client,
 		scheme:        scheme,
@@ -93,17 +94,21 @@ func (r _resource) GetExistingResourceNames(ctx context.Context, logger logr.Log
 
 // Sync creates, updates, or deletes PodGang resources to match the desired state.
 // NEW FLOW: PodGangs are created with empty podReferences before Pods are created.
-func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) error {
+func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, state *pcssync.State) (pcssync.Result, error) {
 	logger.V(1).Info("Syncing PodGang resources")
-	sc, err := r.prepareSyncFlow(ctx, logger, pcs)
+	ss, err := r.prepareSyncFlow(ctx, logger, pcs, state)
 	if err != nil {
-		return err
+		return pcssync.Result{}, err
 	}
-	result := r.runSyncFlow(ctx, sc)
-	if result.hasErrors() {
-		return result.getAggregatedError()
+
+	pcsReplicaIndicesAwaitingResourceCleanup := ss.getScaleInPCSReplicaIndicesAwaitingPodGangCleanup()
+	syncResult := r.runSyncFlow(ctx, ss)
+	if syncResult.hasErrors() {
+		return pcssync.Result{}, syncResult.getAggregatedError()
 	}
-	return nil
+	return pcssync.Result{
+		ScaleInReplicaIndicesAwaitingResourceCleanup: pcsReplicaIndicesAwaitingResourceCleanup,
+	}, nil
 }
 
 // Delete removes all PodGang resources managed by the PodCliqueSet.

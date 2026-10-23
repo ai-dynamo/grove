@@ -21,6 +21,7 @@ import (
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/sync"
 
 	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
@@ -45,6 +46,23 @@ func TestNew(t *testing.T) {
 	operator := New(cl, scheme)
 
 	assert.NotNil(t, operator)
+}
+
+func serviceForReplica(pcsName, namespace string, replicaIndex int, ownerReference metav1.OwnerReference) *corev1.Service {
+	serviceName := fmt.Sprintf("%s-%d", pcsName, replicaIndex)
+	return &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      serviceName,
+			Namespace: namespace,
+			Labels: map[string]string{
+				apicommon.LabelManagedByKey:             apicommon.LabelManagedByValue,
+				apicommon.LabelPartOfKey:                pcsName,
+				apicommon.LabelComponentKey:             apicommon.LabelComponentNamePodCliqueSetReplicaHeadlessService,
+				apicommon.LabelPodCliqueSetReplicaIndex: fmt.Sprintf("%d", replicaIndex),
+			},
+			OwnerReferences: []metav1.OwnerReference{ownerReference},
+		},
+	}
 }
 
 // TestGetExistingResourceNames tests getting existing service names.
@@ -202,7 +220,7 @@ func TestSync(t *testing.T) {
 			},
 		}
 
-		err := operator.Sync(context.Background(), logr.Discard(), pcs)
+		_, err := operator.Sync(context.Background(), logr.Discard(), pcs, &pcssync.State{ExpectedReplicaIndices: []int{0, 1}})
 
 		require.NoError(t, err)
 
@@ -247,7 +265,7 @@ func TestSync(t *testing.T) {
 			},
 		}
 
-		err := operator.Sync(context.Background(), logr.Discard(), pcs)
+		_, err := operator.Sync(context.Background(), logr.Discard(), pcs, &pcssync.State{ExpectedReplicaIndices: []int{0}})
 
 		require.NoError(t, err)
 
@@ -298,7 +316,7 @@ func TestSync(t *testing.T) {
 			},
 		}
 
-		err := operator.Sync(context.Background(), logr.Discard(), pcs)
+		_, err := operator.Sync(context.Background(), logr.Discard(), pcs, &pcssync.State{ExpectedReplicaIndices: []int{0}})
 
 		require.NoError(t, err)
 
@@ -308,6 +326,45 @@ func TestSync(t *testing.T) {
 		require.NoError(t, err)
 		assert.True(t, updatedSvc.Spec.PublishNotReadyAddresses)
 	})
+}
+
+func TestSyncUsesSparseReplicaIndices(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, grovecorev1alpha1.AddToScheme(scheme))
+	require.NoError(t, corev1.AddToScheme(scheme))
+	pcs := &grovecorev1alpha1.PodCliqueSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-pcs", Namespace: "default", UID: "pcs-uid"},
+		Spec:       grovecorev1alpha1.PodCliqueSetSpec{Replicas: 3},
+	}
+	ownerReference := metav1.OwnerReference{
+		APIVersion: grovecorev1alpha1.SchemeGroupVersion.String(),
+		Kind:       "PodCliqueSet",
+		Name:       pcs.Name,
+		UID:        pcs.UID,
+		Controller: ptr.To(true),
+	}
+	existingServices := []client.Object{
+		serviceForReplica("test-pcs", "default", 0, ownerReference),
+		serviceForReplica("test-pcs", "default", 1, ownerReference),
+		serviceForReplica("test-pcs", "default", 4, ownerReference),
+	}
+	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(existingServices...).Build()
+	operator := New(cl, scheme)
+	state := &pcssync.State{ExpectedReplicaIndices: []int{0, 2, 4}, ScaleInReplicaIndices: []int{1}}
+
+	result, err := operator.Sync(context.Background(), logr.Discard(), pcs, state)
+
+	require.NoError(t, err)
+	assert.Equal(t, []int{1}, result.ScaleInReplicaIndicesAwaitingResourceCleanup)
+	serviceList := &corev1.ServiceList{}
+	require.NoError(t, cl.List(context.Background(), serviceList, client.InNamespace(pcs.Namespace)))
+	serviceNames := make([]string, 0, len(serviceList.Items))
+	for _, service := range serviceList.Items {
+		serviceNames = append(serviceNames, service.Name)
+	}
+	assert.ElementsMatch(t, []string{"test-pcs-0", "test-pcs-2", "test-pcs-4"}, serviceNames)
+	assert.Equal(t, []int{0, 2, 4}, state.ExpectedReplicaIndices)
+	assert.Equal(t, []int{1}, state.ScaleInReplicaIndices)
 }
 
 // TestDelete tests deleting services.

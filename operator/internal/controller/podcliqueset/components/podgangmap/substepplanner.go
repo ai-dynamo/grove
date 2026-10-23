@@ -21,6 +21,7 @@ import (
 	"strconv"
 
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	"github.com/ai-dynamo/grove/operator/internal/constants"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
@@ -478,8 +479,8 @@ func (p *subStepPlanner) buildAnchorBearingSubStep() (*subStep, error) {
 		// available to roll. If the live inventory can no longer supply it then requeue, so the next reconcile
 		// recomputes the plan rather than opening an anchor that violates the MinAvailable anchor contract.
 		if len(indices) < int(minAvailable) {
-			return nil, groveerr.New(groveerr.ErrCodeRequeueAfter, component.OperationSync,
-				fmt.Sprintf("step plan expects an anchor-bearing step but PodCliqueScalingGroup %q has only %d of %d old replica indices available, requeuing to recompute the plan", pcsgName, len(indices), minAvailable))
+			return nil, groveerr.NewRequeueAfter(component.OperationSync,
+				fmt.Sprintf("step plan expects an anchor-bearing step but PodCliqueScalingGroup %q has only %d of %d old replica indices available, requeuing to recompute the plan", pcsgName, len(indices), minAvailable), constants.ComponentSyncRetryInterval)
 		}
 		anchorPCSGIndices[pcsgName] = indices
 	}

@@ -21,9 +21,11 @@ import (
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/sync"
 	"github.com/ai-dynamo/grove/operator/internal/resourceclaim"
 
 	"github.com/go-logr/logr"
+	"github.com/samber/lo"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	resourcev1 "k8s.io/api/resource/v1"
@@ -149,7 +151,7 @@ func TestSync(t *testing.T) {
 		cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pcs).Build()
 		r := _resource{client: cl, scheme: scheme}
 
-		err := r.Sync(context.Background(), logr.Discard(), pcs)
+		_, err := r.Sync(context.Background(), logr.Discard(), pcs, &pcssync.State{ExpectedReplicaIndices: lo.Range(int(pcs.Spec.Replicas))})
 		require.NoError(t, err)
 
 		rc := &resourcev1.ResourceClaim{}
@@ -174,7 +176,8 @@ func TestSync(t *testing.T) {
 		cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pcs).Build()
 		r := _resource{client: cl, scheme: scheme}
 
-		require.NoError(t, r.Sync(context.Background(), logr.Discard(), pcs))
+		_, err := r.Sync(context.Background(), logr.Discard(), pcs, &pcssync.State{ExpectedReplicaIndices: lo.Range(int(pcs.Spec.Replicas))})
+		require.NoError(t, err)
 
 		rc := &resourcev1.ResourceClaim{}
 		require.NoError(t, cl.Get(context.Background(), types.NamespacedName{
@@ -195,7 +198,8 @@ func TestSync(t *testing.T) {
 		cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pcs, staleRC).Build()
 		r := _resource{client: cl, scheme: scheme}
 
-		require.NoError(t, r.Sync(context.Background(), logr.Discard(), pcs))
+		_, err := r.Sync(context.Background(), logr.Discard(), pcs, &pcssync.State{ExpectedReplicaIndices: lo.Range(int(pcs.Spec.Replicas))})
+		require.NoError(t, err)
 
 		rc := &resourcev1.ResourceClaim{}
 		assert.Error(t, cl.Get(context.Background(), types.NamespacedName{
@@ -208,7 +212,7 @@ func TestSync(t *testing.T) {
 		cl := fake.NewClientBuilder().WithScheme(scheme).Build()
 		r := _resource{client: cl, scheme: scheme}
 
-		err := r.Sync(context.Background(), logr.Discard(), pcs)
+		_, err := r.Sync(context.Background(), logr.Discard(), pcs, &pcssync.State{ExpectedReplicaIndices: lo.Range(int(pcs.Spec.Replicas))})
 		require.NoError(t, err)
 
 		rcList := &resourcev1.ResourceClaimList{}
@@ -224,7 +228,8 @@ func TestSync(t *testing.T) {
 		cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pcs).Build()
 		r := _resource{client: cl, scheme: scheme}
 
-		require.NoError(t, r.Sync(context.Background(), logr.Discard(), pcs))
+		_, err := r.Sync(context.Background(), logr.Discard(), pcs, &pcssync.State{ExpectedReplicaIndices: lo.Range(int(pcs.Spec.Replicas))})
+		require.NoError(t, err)
 
 		rcList := &resourcev1.ResourceClaimList{}
 		require.NoError(t, cl.List(context.Background(), rcList))
@@ -246,7 +251,8 @@ func TestSync(t *testing.T) {
 		cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pcs).Build()
 		r := _resource{client: cl, scheme: scheme}
 
-		require.NoError(t, r.Sync(context.Background(), logr.Discard(), pcs))
+		_, err := r.Sync(context.Background(), logr.Discard(), pcs, &pcssync.State{ExpectedReplicaIndices: lo.Range(int(pcs.Spec.Replicas))})
+		require.NoError(t, err)
 
 		rc := &resourcev1.ResourceClaim{}
 		for i := range 3 {
@@ -255,6 +261,38 @@ func TestSync(t *testing.T) {
 			}, rc))
 		}
 	})
+}
+
+func TestSyncUsesSparseReplicaIndices(t *testing.T) {
+	scheme := newTestScheme()
+	refs := []grovecorev1alpha1.PCSResourceSharingSpec{
+		{ResourceSharingSpec: grovecorev1alpha1.ResourceSharingSpec{Name: "gpu-mps", Scope: grovecorev1alpha1.ResourceSharingScopePerReplica}},
+	}
+	pcs := newPCS(3, refs, []grovecorev1alpha1.ResourceClaimTemplateConfig{gpuTemplate})
+	staleLabels := pcsRCLabels()
+	staleLabels[apicommon.LabelPodCliqueSetReplicaIndex] = "1"
+	staleRC := newRC(pcsName+"-1-gpu-mps", staleLabels)
+	highIndexLabels := pcsRCLabels()
+	highIndexLabels[apicommon.LabelPodCliqueSetReplicaIndex] = "4"
+	highIndexRC := newRC(pcsName+"-4-gpu-mps", highIndexLabels)
+	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pcs, staleRC, highIndexRC).Build()
+	r := _resource{client: cl, scheme: scheme}
+	state := &pcssync.State{ExpectedReplicaIndices: []int{0, 2, 4}, ScaleInReplicaIndices: []int{1}}
+
+	result, err := r.Sync(context.Background(), logr.Discard(), pcs, state)
+
+	require.NoError(t, err)
+	assert.Equal(t, []int{1}, result.ScaleInReplicaIndicesAwaitingResourceCleanup)
+	for _, replicaIndex := range []int{0, 2, 4} {
+		rc := &resourcev1.ResourceClaim{}
+		require.NoError(t, cl.Get(context.Background(), types.NamespacedName{
+			Name: pcsName + "-" + strconv.Itoa(replicaIndex) + "-gpu-mps", Namespace: namespace,
+		}, rc))
+	}
+	staleClaim := &resourcev1.ResourceClaim{}
+	assert.Error(t, cl.Get(context.Background(), types.NamespacedName{Name: staleRC.Name, Namespace: namespace}, staleClaim))
+	assert.Equal(t, []int{0, 2, 4}, state.ExpectedReplicaIndices)
+	assert.Equal(t, []int{1}, state.ScaleInReplicaIndices)
 }
 
 // --- Delete ---

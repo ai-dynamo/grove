@@ -119,6 +119,8 @@ jobs:
             test_pattern: "^Test_GS"
           - test_name: gang_termination
             test_pattern: "^Test_GT"
+          - test_name: pcs_scaling
+            test_pattern: "^Test_PCSS"
           - test_name: rolling_updates
             test_pattern: "^Test_RU"
           - test_name: ondelete_updates
@@ -213,6 +215,7 @@ jobs:
         include:
           - test_name: gang_scheduling
           - test_name: gang_termination
+          - test_name: pcs_scaling
           - test_name: rolling_updates
           - test_name: coherent_updates
           - test_name: ondelete_updates
@@ -233,7 +236,7 @@ jobs:
         run: echo "E2E skipped — no changes to operator/ or .github/"
 
   kubernetes-compatibility:
-    needs: [test, build, check, changes]
+    needs: [test, build, check, changes, e2e]
     # Run only from copy-pr-bot's trusted branch.
     if: |
       startsWith(github.ref, 'refs/heads/pull-request/') &&
@@ -244,14 +247,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Regular E2E jobs provide full coverage on Kubernetes 1.35. The compatibility
+          # job only needs a representative smoke suite on the minimum supported version.
           - kubernetes_version: "1.34"
             k3s_image: "rancher/k3s:v1.34.11-k3s1"
-          - kubernetes_version: "1.35"
-            k3s_image: "rancher/k3s:v1.35.5-k3s1"
     name: Kubernetes compatibility - ${{ matrix.kubernetes_version }}
     env:
       KUBERNETES_COMPATIBILITY_TEST_PATTERN: >-
-        ^Test_(GS|GT|RU|OD|CU|PCUS|TAS|CM|CD|CRD_Installer|RS|PGMR)
+        ^Test_(CRD_Installer_AllCRDsExist|GS1_|CD1_|RU7_|CU2_|TAS1_|RS1_)
       # Test packages modify the same cluster.
       E2E_GO_TEST_FLAGS: "-p 1"
     steps:

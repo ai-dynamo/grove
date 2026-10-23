@@ -103,6 +103,12 @@ const (
 	ReasonPodCliqueSetReplicaDeleteSuccessful = "PodCliqueSetReplicaDeleteSuccessful"
 	// ReasonPodCliqueSetReplicaDeleteFailed is an event reason which represents that the deletion of a PodCliqueSet replica failed.
 	ReasonPodCliqueSetReplicaDeleteFailed = "PodCliqueSetReplicaDeleteFailed"
+	// ReasonPodCliqueSetReplicaIndicesSelectedForScaleIn indicates that PodCliqueSet replica indices were selected for scale-in.
+	ReasonPodCliqueSetReplicaIndicesSelectedForScaleIn = "PodCliqueSetReplicaIndicesSelectedForScaleIn"
+	// ReasonPodCliqueSetReplicaIndicesReservedForScaleOut indicates that PodCliqueSet replica indices were reserved for scale-out.
+	ReasonPodCliqueSetReplicaIndicesReservedForScaleOut = "PodCliqueSetReplicaIndicesReservedForScaleOut"
+	// ReasonPodCliqueSetReplicaScaleInCompleted indicates that resource cleanup completed for one scaled-in PodCliqueSet replica.
+	ReasonPodCliqueSetReplicaScaleInCompleted = "PodCliqueSetReplicaScaleInCompleted"
 )
 
 // constants for ClusterTopologyBinding lifecycle events

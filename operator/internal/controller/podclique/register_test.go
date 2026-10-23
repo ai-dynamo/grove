@@ -15,6 +15,7 @@
 package podclique
 
 import (
+	"context"
 	"testing"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
@@ -158,10 +159,27 @@ func TestPodPredicateUpdate(t *testing.T) {
 	})
 }
 
-// TestPodCliqueSetPredicateCurrentlyUpdatingReplicaChanges verifies that the PodCliqueSet
-// watch predicate enqueues PodClique reconciles when the replica currently being rolled out
-// changes.
-func TestPodCliqueSetPredicateCurrentlyUpdatingReplicaChanges(t *testing.T) {
+func TestMapPodCliqueSetToPCLQs(t *testing.T) {
+	pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "default", "test-uid").
+		WithReplicas(3).
+		WithStandaloneClique("worker").
+		WithPodCliqueScalingGroupConfig(grovecorev1alpha1.PodCliqueScalingGroupConfig{
+			Name:        "group",
+			CliqueNames: []string{"member"},
+		}).
+		WithUpdateProgress(&grovecorev1alpha1.PodCliqueSetUpdateProgress{
+			CurrentlyUpdating: []grovecorev1alpha1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 4}},
+		}).
+		Build()
+
+	requests := mapPodCliqueSetToPCLQs()(context.Background(), pcs)
+
+	assert.Equal(t, []reconcile.Request{{NamespacedName: types.NamespacedName{Namespace: "default", Name: "test-pcs-4-worker"}}}, requests)
+}
+
+// TestPodCliqueSetPredicateSelectedReplicaChanges verifies that the PodCliqueSet watch predicate
+// enqueues PodClique reconciles only when a new PCS replica is selected for update.
+func TestPodCliqueSetPredicateSelectedReplicaChanges(t *testing.T) {
 	pred, ok := podCliqueSetPredicate().(predicate.Funcs)
 	require.True(t, ok, "predicate must be predicate.Funcs")
 
@@ -184,7 +202,7 @@ func TestPodCliqueSetPredicateCurrentlyUpdatingReplicaChanges(t *testing.T) {
 				CurrentlyUpdating: []grovecorev1alpha1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 0}},
 			},
 			newProgress: &grovecorev1alpha1.PodCliqueSetUpdateProgress{},
-			want:        true,
+			want:        false,
 		},
 		{
 			name: "currently updating moves",

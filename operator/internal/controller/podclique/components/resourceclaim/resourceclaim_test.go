@@ -20,6 +20,7 @@ import (
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	"github.com/ai-dynamo/grove/operator/internal/resourceclaim"
 
 	"github.com/go-logr/logr"
@@ -234,7 +235,7 @@ func TestSync(t *testing.T) {
 		cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pcs).Build()
 		r := _resource{client: cl, scheme: scheme}
 
-		err := r.Sync(context.Background(), logr.Discard(), pclq)
+		_, err := r.Sync(context.Background(), logr.Discard(), pclq, &component.EmptyState{})
 		require.NoError(t, err)
 
 		rc := &resourcev1.ResourceClaim{}
@@ -265,7 +266,8 @@ func TestSync(t *testing.T) {
 		cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pcs).Build()
 		r := _resource{client: cl, scheme: scheme}
 
-		require.NoError(t, r.Sync(context.Background(), logr.Discard(), pclq))
+		_, err := r.Sync(context.Background(), logr.Discard(), pclq, &component.EmptyState{})
+		require.NoError(t, err)
 
 		rc := &resourcev1.ResourceClaim{}
 		require.NoError(t, cl.Get(context.Background(), types.NamespacedName{
@@ -292,7 +294,8 @@ func TestSync(t *testing.T) {
 		cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pcs, staleRC).Build()
 		r := _resource{client: cl, scheme: scheme}
 
-		require.NoError(t, r.Sync(context.Background(), logr.Discard(), pclq))
+		_, err := r.Sync(context.Background(), logr.Discard(), pclq, &component.EmptyState{})
+		require.NoError(t, err)
 
 		rc := &resourcev1.ResourceClaim{}
 		assert.Error(t, cl.Get(context.Background(), types.NamespacedName{
@@ -306,7 +309,7 @@ func TestSync(t *testing.T) {
 		cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pcs).Build()
 		r := _resource{client: cl, scheme: scheme}
 
-		err := r.Sync(context.Background(), logr.Discard(), pclq)
+		_, err := r.Sync(context.Background(), logr.Discard(), pclq, &component.EmptyState{})
 		require.NoError(t, err)
 
 		rcList := &resourcev1.ResourceClaimList{}
@@ -331,7 +334,7 @@ func TestSync(t *testing.T) {
 		cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pcs).Build()
 		r := _resource{client: cl, scheme: scheme}
 
-		err := r.Sync(context.Background(), logr.Discard(), pclq)
+		_, err := r.Sync(context.Background(), logr.Discard(), pclq, &component.EmptyState{})
 		require.NoError(t, err)
 
 		rcList := &resourcev1.ResourceClaimList{}
@@ -344,7 +347,7 @@ func TestSync(t *testing.T) {
 		cl := fake.NewClientBuilder().WithScheme(scheme).Build()
 		r := _resource{client: cl, scheme: scheme}
 
-		err := r.Sync(context.Background(), logr.Discard(), pclq)
+		_, err := r.Sync(context.Background(), logr.Discard(), pclq, &component.EmptyState{})
 		assert.Error(t, err)
 	})
 }

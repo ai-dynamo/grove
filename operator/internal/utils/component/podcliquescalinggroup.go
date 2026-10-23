@@ -99,26 +99,13 @@ func groupPCSGsByLabel(pcsgs []grovecorev1alpha1.PodCliqueScalingGroup, label st
 	return result
 }
 
-// GetPCSGsByPCSReplicaIndex groups the PodCliqueScalingGroups per PodCliqueSet replica index and returns a map with the key being the PodCliqueSet replica index and the value
-// being the slice of PodCliqueScalingGroup objects.
-func GetPCSGsByPCSReplicaIndex(ctx context.Context, cl client.Client, pcsObjKey client.ObjectKey) (map[string][]grovecorev1alpha1.PodCliqueScalingGroup, error) {
-	pcsgList := &grovecorev1alpha1.PodCliqueScalingGroupList{}
-	if err := cl.List(ctx,
-		pcsgList,
-		client.InNamespace(pcsObjKey.Namespace),
-		client.MatchingLabels(apicommon.GetDefaultLabelsForPodCliqueSetManagedResources(pcsObjKey.Name)),
-	); err != nil {
+// GetPCSGsByPCSReplicaIndex lists PodCliqueScalingGroups controlled by the PCS and groups them by PCS replica index.
+func GetPCSGsByPCSReplicaIndex(ctx context.Context, cl client.Client, pcsObjMeta metav1.ObjectMeta) (map[int][]grovecorev1alpha1.PodCliqueScalingGroup, error) {
+	pcsgs, err := GetPCSGsForPCS(ctx, cl, pcsObjMeta)
+	if err != nil {
 		return nil, err
 	}
-	pcsgsByPCSReplicaIndex := make(map[string][]grovecorev1alpha1.PodCliqueScalingGroup)
-	for _, pcsg := range pcsgList.Items {
-		pcsReplicaIndex, ok := pcsg.Labels[apicommon.LabelPodCliqueSetReplicaIndex]
-		if !ok {
-			continue
-		}
-		pcsgsByPCSReplicaIndex[pcsReplicaIndex] = append(pcsgsByPCSReplicaIndex[pcsReplicaIndex], pcsg)
-	}
-	return pcsgsByPCSReplicaIndex, nil
+	return GroupPCSGsByPCSReplicaIndex(pcsgs)
 }
 
 // GetPCLQTemplateHashes generates the Pod template hash for all PCLQs in a PCSG. Returns a map of [PCLQ Name : PodTemplateHas]

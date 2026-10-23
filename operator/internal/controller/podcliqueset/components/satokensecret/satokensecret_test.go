@@ -22,6 +22,7 @@ import (
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/sync"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 
 	"github.com/go-logr/logr"
@@ -206,9 +207,9 @@ func TestSync(t *testing.T) {
 			},
 		}
 
-		err := operator.Sync(context.Background(), logr.Discard(), pcs)
+		_, err := operator.Sync(context.Background(), logr.Discard(), pcs, &pcssync.State{})
 
-		assertRequeueAfter(t, err)
+		assert.True(t, groveerr.IsRequeueAfter(err))
 
 		// Verify secret was created
 		secret := &corev1.Secret{}
@@ -237,9 +238,9 @@ func TestSync(t *testing.T) {
 			},
 		}
 
-		err := operator.Sync(context.Background(), logr.Discard(), pcs)
+		_, err := operator.Sync(context.Background(), logr.Discard(), pcs, &pcssync.State{})
 
-		assertRequeueAfter(t, err)
+		assert.True(t, groveerr.IsRequeueAfter(err))
 
 		secret := &corev1.Secret{}
 		secretName := apicommon.GenerateInitContainerSATokenSecretName(pcsName)
@@ -291,9 +292,9 @@ func TestSync(t *testing.T) {
 			},
 		}
 
-		err := operator.Sync(context.Background(), logr.Discard(), pcs)
+		_, err := operator.Sync(context.Background(), logr.Discard(), pcs, &pcssync.State{})
 
-		assertRequeueAfter(t, err)
+		assert.True(t, groveerr.IsRequeueAfter(err))
 
 		secret := &corev1.Secret{}
 		secretName := apicommon.GenerateInitContainerSATokenSecretName("test-pcs")
@@ -341,9 +342,9 @@ func TestSync(t *testing.T) {
 			},
 		}
 
-		err := operator.Sync(context.Background(), logr.Discard(), pcs)
+		_, err := operator.Sync(context.Background(), logr.Discard(), pcs, &pcssync.State{})
 
-		assertRequeueAfter(t, err)
+		assert.True(t, groveerr.IsRequeueAfter(err))
 
 		secret := &corev1.Secret{}
 		secretName := apicommon.GenerateInitContainerSATokenSecretName("test-pcs")
@@ -380,7 +381,7 @@ func TestSync(t *testing.T) {
 			},
 		}
 
-		err := operator.Sync(context.Background(), logr.Discard(), pcs)
+		_, err := operator.Sync(context.Background(), logr.Discard(), pcs, &pcssync.State{})
 
 		require.Error(t, err)
 		var groveErr *groveerr.GroveError
@@ -432,7 +433,7 @@ func TestSync(t *testing.T) {
 			},
 		}
 
-		err := operator.Sync(context.Background(), logr.Discard(), pcs)
+		_, err := operator.Sync(context.Background(), logr.Discard(), pcs, &pcssync.State{})
 
 		// Should not error when secret already exists
 		require.NoError(t, err)
@@ -491,10 +492,10 @@ func TestSync(t *testing.T) {
 				Build()
 			operator := New(cl, scheme)
 
-			err := operator.Sync(context.Background(), logr.Discard(), pcs)
+			_, err := operator.Sync(context.Background(), logr.Discard(), pcs, &pcssync.State{})
 
 			if tc.expectRequeue {
-				assertRequeueAfter(t, err)
+				assert.True(t, groveerr.IsRequeueAfter(err))
 			} else {
 				require.NoError(t, err)
 			}
@@ -513,21 +514,14 @@ func TestSync(t *testing.T) {
 
 			if tc.retryAfterReferenceRemoval {
 				require.NoError(t, cl.Delete(context.Background(), referencingPod))
-				require.NoError(t, operator.Sync(context.Background(), logr.Discard(), pcs))
+				_, err := operator.Sync(context.Background(), logr.Discard(), pcs, &pcssync.State{})
+				require.NoError(t, err)
 
 				err = cl.Get(context.Background(), client.ObjectKeyFromObject(legacySecret), &corev1.Secret{})
 				assert.True(t, apierrors.IsNotFound(err))
 			}
 		})
 	}
-}
-
-func assertRequeueAfter(t *testing.T, err error) {
-	t.Helper()
-
-	var groveErr *groveerr.GroveError
-	require.True(t, errors.As(err, &groveErr))
-	assert.Equal(t, groveerr.ErrCodeRequeueAfter, groveErr.Code)
 }
 
 func newOwnedSecret(name string, pcs *grovecorev1alpha1.PodCliqueSet) *corev1.Secret {

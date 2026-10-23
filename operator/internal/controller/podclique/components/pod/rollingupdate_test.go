@@ -24,7 +24,6 @@ import (
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
-	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/expect"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
@@ -250,8 +249,6 @@ func TestProcessPendingUpdates(t *testing.T) {
 		}
 		return names
 	}
-	requeueErr := &groveerr.GroveError{Code: groveerr.ErrCodeContinueReconcileAndRequeue, Operation: component.OperationSync}
-
 	t.Run("completes when no old pods remain and desired new pods are ready", func(t *testing.T) {
 		pclq := pclqUpdating(2, 1)
 		pods := []*corev1.Pod{readyPod("new-0", testNewHash, 2), readyPod("new-1", testNewHash, 1)}
@@ -289,7 +286,7 @@ func TestProcessPendingUpdates(t *testing.T) {
 		ss := &syncSnapshot{pcs: pcsWithMaxUnavailable(1), pclq: pclq, cliqueName: testCliqueName, expectedPodTemplateHash: testNewHash, existingPCLQPods: pods}
 
 		err := r.processPendingUpdates(context.Background(), logr.Discard(), ss)
-		testutils.AssertGroveError(t, requeueErr, err)
+		assert.True(t, groveerr.IsContinueReconcileAndRequeue(err))
 		assert.Nil(t, pclq.Status.UpdateProgress.UpdateEndedAt)
 		assert.Len(t, remainingPodNames(t, cl), 1)
 	})
@@ -305,7 +302,7 @@ func TestProcessPendingUpdates(t *testing.T) {
 		ss := &syncSnapshot{pcs: pcsWithMaxUnavailable(2), pclq: pclq, cliqueName: testCliqueName, expectedPodTemplateHash: testNewHash, existingPCLQPods: pods}
 
 		err := r.processPendingUpdates(context.Background(), logr.Discard(), ss)
-		testutils.AssertGroveError(t, requeueErr, err)
+		assert.True(t, groveerr.IsContinueReconcileAndRequeue(err))
 		// Budget of 2 and MinAvailable headroom of 2, so the two oldest are deleted and the newest remains.
 		assert.ElementsMatch(t, []string{"old-2"}, remainingPodNames(t, cl))
 	})
@@ -321,7 +318,7 @@ func TestProcessPendingUpdates(t *testing.T) {
 		ss := &syncSnapshot{pcs: pcsWithMaxUnavailable(1), pclq: pclq, cliqueName: testCliqueName, expectedPodTemplateHash: testNewHash, existingPCLQPods: pods}
 
 		err := r.processPendingUpdates(context.Background(), logr.Discard(), ss)
-		testutils.AssertGroveError(t, requeueErr, err)
+		assert.True(t, groveerr.IsContinueReconcileAndRequeue(err))
 		assert.Len(t, remainingPodNames(t, cl), 2, "MinAvailable equal to replicas must not block the roll; MaxUnavailable=1 disrupts one pod")
 	})
 }

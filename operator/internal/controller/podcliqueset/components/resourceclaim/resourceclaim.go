@@ -18,11 +18,13 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"slices"
 	"strconv"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
+	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/sync"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/resourceclaim"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
@@ -32,6 +34,7 @@ import (
 	resourcev1 "k8s.io/api/resource/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -46,7 +49,7 @@ type _resource struct {
 }
 
 // New creates a new ResourceClaim operator for managing PCS-level ResourceClaims.
-func New(client client.Client, scheme *runtime.Scheme) component.Operator[grovecorev1alpha1.PodCliqueSet] {
+func New(client client.Client, scheme *runtime.Scheme) component.Operator[grovecorev1alpha1.PodCliqueSet, pcssync.State, pcssync.Result] {
 	return &_resource{
 		client: client,
 		scheme: scheme,
@@ -72,89 +75,130 @@ func (r _resource) GetExistingResourceNames(ctx context.Context, logger logr.Log
 	return names, nil
 }
 
-// Sync creates or patches PCS-level ResourceClaims (AllReplicas + PerReplica)
-// and cleans up stale RCs from previous scale-in operations.
-func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) error {
+// Sync creates or patches PCS-level ResourceClaims and deletes claims for excess replica indices.
+func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, state *pcssync.State) (pcssync.Result, error) {
 	if len(pcs.Spec.Template.ResourceSharing) == 0 {
-		return nil
+		return pcssync.Result{}, nil
 	}
+
+	resourceClaimsByPCSReplicaIndex, err := r.getResourceClaimsByPCSReplicaIndex(ctx, pcs)
+	if err != nil {
+		return pcssync.Result{}, err
+	}
+	replicaIndicesAwaitingResourceCleanup, err := r.triggerDeletionOfExcessResourceClaims(ctx, logger, pcs, resourceClaimsByPCSReplicaIndex, state)
+	if err != nil {
+		return pcssync.Result{}, err
+	}
+	if err := r.createOrUpdateResourceClaims(ctx, logger, pcs, state.ExpectedReplicaIndices); err != nil {
+		return pcssync.Result{}, err
+	}
+
+	return pcssync.Result{
+		ScaleInReplicaIndicesAwaitingResourceCleanup: replicaIndicesAwaitingResourceCleanup,
+	}, nil
+}
+
+// getResourceClaimsByPCSReplicaIndex lists owned PCS-level per-replica ResourceClaims and groups them by replica index.
+func (r _resource) getResourceClaimsByPCSReplicaIndex(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet) (map[int][]resourcev1.ResourceClaim, error) {
+	claimList := &resourcev1.ResourceClaimList{}
+	if err := r.client.List(ctx, claimList, client.InNamespace(pcs.Namespace), client.MatchingLabels(resourceclaim.ResourceClaimLabels(pcs.Name))); err != nil {
+		return nil, groveerr.WrapError(err,
+			errSyncPCSResourceClaim,
+			component.OperationSync,
+			fmt.Sprintf("Error listing ResourceClaims for PCS: %v", client.ObjectKeyFromObject(pcs)),
+		)
+	}
+
+	resourceClaimsByPCSReplicaIndex := make(map[int][]resourcev1.ResourceClaim)
+	for _, claim := range claimList.Items {
+		if !metav1.IsControlledBy(&claim, pcs) {
+			continue
+		}
+		replicaIndexValue, exists := claim.Labels[apicommon.LabelPodCliqueSetReplicaIndex]
+		if !exists {
+			continue
+		}
+		replicaIndex, err := strconv.Atoi(replicaIndexValue)
+		if err != nil {
+			return nil, groveerr.WrapError(err,
+				errSyncPCSResourceClaim,
+				component.OperationSync,
+				fmt.Sprintf("Invalid PCS replica index label on ResourceClaim: %v", client.ObjectKeyFromObject(&claim)),
+			)
+		}
+		resourceClaimsByPCSReplicaIndex[replicaIndex] = append(resourceClaimsByPCSReplicaIndex[replicaIndex], claim)
+	}
+	return resourceClaimsByPCSReplicaIndex, nil
+}
+
+// triggerDeletionOfExcessResourceClaims deletes per-replica claims outside the expected replica set and returns scale-in indices that still have claims.
+func (r _resource) triggerDeletionOfExcessResourceClaims(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, resourceClaimsByReplicaIndex map[int][]resourcev1.ResourceClaim, state *pcssync.State) ([]int, error) {
+	expectedReplicaIndices := sets.New(state.ExpectedReplicaIndices...)
+	scaleInReplicaIndices := sets.New(state.ScaleInReplicaIndices...)
+	var (
+		deleteTasks                           []utils.Task
+		replicaIndicesAwaitingResourceCleanup []int
+	)
+	for replicaIndex, claims := range resourceClaimsByReplicaIndex {
+		if scaleInReplicaIndices.Has(replicaIndex) && len(claims) > 0 {
+			replicaIndicesAwaitingResourceCleanup = append(replicaIndicesAwaitingResourceCleanup, replicaIndex)
+		}
+		if expectedReplicaIndices.Has(replicaIndex) {
+			continue
+		}
+		for _, claim := range claims {
+			claimName := claim.Name
+			deleteTasks = append(deleteTasks, utils.Task{
+				Name: "DeletePCSPerReplicaResourceClaim-" + claimName,
+				Fn: func(ctx context.Context) error {
+					return resourceclaim.DeleteResourceClaim(ctx, r.client, claimName, pcs.Namespace)
+				},
+			})
+		}
+	}
+
+	if runResult := utils.RunConcurrentlyAndWait(ctx, logger, deleteTasks); runResult.HasErrors() {
+		return nil, groveerr.WrapError(runResult.GetAggregatedError(),
+			errSyncPCSResourceClaim,
+			component.OperationSync,
+			fmt.Sprintf("Error deleting excess ResourceClaims for %s", client.ObjectKeyFromObject(pcs)),
+		)
+	}
+	slices.Sort(replicaIndicesAwaitingResourceCleanup)
+	return replicaIndicesAwaitingResourceCleanup, nil
+}
+
+// createOrUpdateResourceClaims creates or updates PCS-level ResourceClaims for the expected replica indices.
+func (r _resource) createOrUpdateResourceClaims(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, expectedReplicaIndices []int) error {
 	resourceSharers := resourceclaim.ResourceSharersFromPCS(pcs.Spec.Template.ResourceSharing)
-
 	labels := resourceclaim.ResourceClaimLabels(pcs.Name)
-	tasks := make([]utils.Task, 0, int(pcs.Spec.Replicas)+1)
-
-	// AllReplicas-scope: one set of RCs per PCS (not per replica)
+	tasks := make([]utils.Task, 0, len(expectedReplicaIndices)+1)
 	tasks = append(tasks, utils.Task{
 		Name: "EnsurePCSAllReplicasRCs",
 		Fn: func(ctx context.Context) error {
-			return resourceclaim.EnsureResourceClaims(
-				ctx, r.client,
-				pcs.Name, pcs.Namespace,
-				resourceSharers,
-				pcs.Spec.Template.ResourceClaimTemplates,
-				labels,
-				pcs, r.scheme,
-				nil,
-			)
+			return resourceclaim.EnsureResourceClaims(ctx, r.client, pcs.Name, pcs.Namespace, resourceSharers, pcs.Spec.Template.ResourceClaimTemplates, labels, pcs, r.scheme, nil)
 		},
 	})
 
-	// PerReplica-scope: one set of RCs per PCS replica
-	for replica := range pcs.Spec.Replicas {
-		replicaIdx := int(replica)
+	for _, replicaIndex := range expectedReplicaIndices {
 		replicaLabels := maps.Clone(labels)
-		replicaLabels[apicommon.LabelPodCliqueSetReplicaIndex] = strconv.Itoa(replicaIdx)
+		replicaLabels[apicommon.LabelPodCliqueSetReplicaIndex] = strconv.Itoa(replicaIndex)
 		tasks = append(tasks, utils.Task{
-			Name: fmt.Sprintf("EnsurePCSPerReplicaRCs-rep-%d", replicaIdx),
+			Name: fmt.Sprintf("EnsurePCSPerReplicaRCs-rep-%d", replicaIndex),
 			Fn: func(ctx context.Context) error {
-				return resourceclaim.EnsureResourceClaims(
-					ctx, r.client,
-					pcs.Name, pcs.Namespace,
-					resourceSharers,
-					pcs.Spec.Template.ResourceClaimTemplates,
-					replicaLabels,
-					pcs, r.scheme,
-					&replicaIdx,
-				)
+				return resourceclaim.EnsureResourceClaims(ctx, r.client, pcs.Name, pcs.Namespace, resourceSharers, pcs.Spec.Template.ResourceClaimTemplates, replicaLabels, pcs, r.scheme, &replicaIndex)
 			},
 		})
 	}
 
-	if runResult := utils.RunConcurrently(ctx, logger, tasks); runResult.HasErrors() {
+	if runResult := utils.RunConcurrentlyAndWait(ctx, logger, tasks); runResult.HasErrors() {
 		return groveerr.WrapError(runResult.GetAggregatedError(),
 			errSyncPCSResourceClaim,
 			component.OperationSync,
 			fmt.Sprintf("Error syncing PCS-level ResourceClaims for %s", client.ObjectKeyFromObject(pcs)),
 		)
 	}
-
-	// Clean up stale RCs from previous replicas (e.g. after scale-in)
-	if err := r.cleanupStaleResourceClaims(ctx, logger, pcs); err != nil {
-		return err
-	}
-
 	logger.V(4).Info("Successfully synced PCS-level ResourceClaims")
-	return nil
-}
-
-// cleanupStaleResourceClaims deletes PCS-level PerReplica ResourceClaims that
-// belong to PCS replicas that no longer exist after a scale-in.
-// Uses LabelPodCliqueSetReplicaIndex for the NotIn selector, which only matches
-// PCS-level RCs (PCSG/PCLQ-level RCs use different label keys).
-func (r _resource) cleanupStaleResourceClaims(ctx context.Context, _ logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) error {
-	labels := resourceclaim.ResourceClaimLabels(pcs.Name)
-	if err := resourceclaim.CleanupStalePerReplicaRCs(
-		ctx, r.client,
-		pcs.Namespace, labels,
-		int(pcs.Spec.Replicas),
-		apicommon.LabelPodCliqueSetReplicaIndex,
-	); err != nil {
-		return groveerr.WrapError(err,
-			errSyncPCSResourceClaim,
-			component.OperationSync,
-			fmt.Sprintf("Error cleaning up stale ResourceClaims for %s", client.ObjectKeyFromObject(pcs)),
-		)
-	}
 	return nil
 }
 

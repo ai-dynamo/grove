@@ -28,19 +28,15 @@ import (
 )
 
 // pclqPodsCacheKey is a context key for per-reconcile memoization of GetPCLQPods results.
-// A PodClique reconcile calls GetPCLQPods from both reconcileSpec and reconcileStatus;
-// without the cache we list+filter the informer cache twice per reconcile. Stash the result
-// on a fresh ctx via WithPCLQPodsCache and the second call reuses it.
+// A PodClique reconcile calls GetPCLQPods from both reconcileSpec and reconcileStatus.
 type pclqPodsCacheKey struct{}
 
-// pclqPodsCache holds one slot per PodClique UID. UIDs are used rather than names so a
-// stale cache entry can never bleed into a recreated object with the same name.
+// pclqPodsCache holds one slot per PodClique UID.
 type pclqPodsCache struct {
 	byUID map[types.UID][]*corev1.Pod
 }
 
-// WithPCLQPodsCache returns a context that memoizes GetPCLQPods results for the lifetime of
-// one reconcile. Call this once at the top of Reconcile and propagate the returned context.
+// WithPCLQPodsCache returns a context that memoizes GetPCLQPods results for one reconciliation.
 func WithPCLQPodsCache(ctx context.Context) context.Context {
 	return context.WithValue(ctx, pclqPodsCacheKey{}, &pclqPodsCache{byUID: make(map[types.UID][]*corev1.Pod, 1)})
 }
@@ -83,14 +79,12 @@ func RegisterPodControllerUIDIndex(ctx context.Context, fieldIndexer client.Fiel
 // RegisterPodControllerUIDIndex) keyed on the PodClique UID. That key is the controller
 // owner-reference UID, exactly the ownership relation metav1.IsControlledBy used to verify
 // in-memory, so no post-filter is needed.
-//
-// When ctx carries a cache from WithPCLQPodsCache, the first call populates the cache and
-// subsequent calls in the same reconcile return the cached slice without hitting the
-// informer.
+// When the context carries a cache from WithPCLQPodsCache, the first call populates it and
+// subsequent calls in the same reconciliation return the cached slice.
 func GetPCLQPods(ctx context.Context, cl client.Client, _ string, pclq *grovecorev1alpha1.PodClique) ([]*corev1.Pod, error) {
-	cache, _ := ctx.Value(pclqPodsCacheKey{}).(*pclqPodsCache)
-	if cache != nil {
-		if pods, ok := cache.byUID[pclq.UID]; ok {
+	pclqPodsCache, _ := ctx.Value(pclqPodsCacheKey{}).(*pclqPodsCache)
+	if pclqPodsCache != nil {
+		if pods, ok := pclqPodsCache.byUID[pclq.UID]; ok {
 			return pods, nil
 		}
 	}
@@ -103,8 +97,8 @@ func GetPCLQPods(ctx context.Context, cl client.Client, _ string, pclq *grovecor
 		return nil, err
 	}
 	ownedPods := lo.ToSlicePtr(podList.Items)
-	if cache != nil {
-		cache.byUID[pclq.UID] = ownedPods
+	if pclqPodsCache != nil {
+		pclqPodsCache.byUID[pclq.UID] = ownedPods
 	}
 	return ownedPods, nil
 }

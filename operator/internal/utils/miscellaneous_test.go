@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/utils/ptr"
 )
 
@@ -228,6 +229,48 @@ func TestOnlyOneIsNilWithDifferentTypes(t *testing.T) {
 		t.Run(tc.description, func(t *testing.T) {
 			result := tc.testFunc()
 			assert.Equal(t, tc.expected, result)
+		})
+	}
+}
+
+func TestGetAvailableIndices(t *testing.T) {
+	tests := []struct {
+		name            string
+		occupiedIndices sets.Set[int]
+		count           int
+		want            []int
+	}{
+		{
+			name:            "empty occupied indices",
+			occupiedIndices: sets.New[int](),
+			count:           3,
+			want:            []int{0, 1, 2},
+		},
+		{
+			name:            "fills holes before extending the sequence",
+			occupiedIndices: sets.New(0, 2, 4),
+			count:           3,
+			want:            []int{1, 3, 5},
+		},
+		{
+			name:            "continues after contiguous occupied indices",
+			occupiedIndices: sets.New(0, 1, 2),
+			count:           2,
+			want:            []int{3, 4},
+		},
+		{
+			name:            "zero count",
+			occupiedIndices: sets.New(0, 1, 2),
+			want:            []int{},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			occupiedBefore := test.occupiedIndices.Clone()
+			got := GetAvailableIndices(test.occupiedIndices, test.count)
+			assert.Equal(t, test.want, got)
+			assert.Equal(t, occupiedBefore, test.occupiedIndices)
 		})
 	}
 }

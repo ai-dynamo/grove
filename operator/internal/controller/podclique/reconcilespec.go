@@ -17,8 +17,8 @@ package podclique
 import (
 	"context"
 	"fmt"
-	"slices"
 	"strconv"
+	"time"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	apiconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
@@ -27,6 +27,7 @@ import (
 	ctrlcommon "github.com/ai-dynamo/grove/operator/internal/controller/common"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	ctrlutils "github.com/ai-dynamo/grove/operator/internal/controller/utils"
+	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 
 	"github.com/go-logr/logr"
@@ -66,6 +67,8 @@ func (r *Reconciler) ensureFinalizer(ctx context.Context, logger logr.Logger, pc
 	return ctrlcommon.ContinueReconcile()
 }
 
+const updateProgressCacheSyncRetryInterval = 500 * time.Millisecond
+
 // processUpdate handles update logic for PodClique when the owner PodCliqueSet has changes
 func (r *Reconciler) processUpdate(ctx context.Context, logger logr.Logger, pclq *grovecorev1alpha1.PodClique) ctrlcommon.ReconcileStepResult {
 	pclqObjectKey := client.ObjectKeyFromObject(pclq)
@@ -100,6 +103,10 @@ func (r *Reconciler) processUpdate(ctx context.Context, logger logr.Logger, pclq
 		if err = r.initOrResetUpdate(ctx, pcs, pclq); err != nil {
 			return ctrlcommon.ReconcileWithErrors("could not initialize RollingRecreate update", err)
 		}
+		return ctrlcommon.ReconcileAfter(
+			updateProgressCacheSyncRetryInterval,
+			fmt.Sprintf("waiting for PodClique update progress to become visible in the informer cache: %v", pclqObjectKey),
+		)
 	}
 
 	return ctrlcommon.ContinueReconcile()
@@ -107,10 +114,9 @@ func (r *Reconciler) processUpdate(ctx context.Context, logger logr.Logger, pclq
 
 // shouldCheckPendingUpdatesForPCLQ determines if this PodClique should be evaluated for updates based on its owner, and the currently updating PodCliqueSet replica index
 func shouldCheckPendingUpdatesForPCLQ(logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, pclq *grovecorev1alpha1.PodClique) (bool, error) {
-	// Only if PCLQ does not belong to any PCSG should an update be triggered for the PCLQ. For PCLQs that belong to
-	// a PCSG, the PCSG controller will handle the updates by deleting the PCLQ resources instead of updating PCLQ pods
-	// individually.
-	if !slices.Contains(componentutils.GetPodCliqueFQNsForPCSNotInPCSG(pcs), pclq.Name) {
+	// PCSG-owned PodCliques are updated by the PCSG controller, which replaces
+	// their resources instead of updating their Pods individually.
+	if !componentutils.IsStandalonePCLQ(pclq) {
 		return false, nil
 	}
 
@@ -209,15 +215,20 @@ func (r *Reconciler) initOrResetUpdate(ctx context.Context, pcs *grovecorev1alph
 
 // syncPCLQResources synchronizes all managed resources for the PodClique using registered operators
 func (r *Reconciler) syncPCLQResources(ctx context.Context, logger logr.Logger, pclq *grovecorev1alpha1.PodClique) ctrlcommon.ReconcileStepResult {
+	state := &component.EmptyState{}
 	for _, kind := range getOrderedKindsForSync() {
 		operator, err := r.operatorRegistry.GetOperator(kind)
 		if err != nil {
 			return ctrlcommon.ReconcileWithErrors(fmt.Sprintf("error getting operator for kind: %s", kind), err)
 		}
 		logger.V(1).Info("Syncing PodClique resources", "kind", kind)
-		if err = operator.Sync(ctx, logger, pclq); err != nil {
-			if shouldRequeue := ctrlutils.ShouldRequeueAfter(err) || ctrlutils.ShouldContinueReconcileAndRequeue(err); shouldRequeue {
-				logger.V(1).Info("retrying sync due to components", "kind", kind, "syncRetryInterval", constants.ComponentSyncRetryInterval, "message", err.Error())
+		if _, err = operator.Sync(ctx, logger, pclq, state); err != nil {
+			if requeueAfter, shouldRequeue := groveerr.GetRequeueAfter(err); shouldRequeue {
+				logger.V(1).Info("Retrying sync due to component", "kind", kind, "requeueAfter", requeueAfter, "message", err.Error())
+				return ctrlcommon.ReconcileAfter(requeueAfter, err.Error())
+			}
+			if groveerr.IsContinueReconcileAndRequeue(err) {
+				logger.V(1).Info("Retrying sync due to component", "kind", kind, "requeueAfter", constants.ComponentSyncRetryInterval, "message", err.Error())
 				return ctrlcommon.ReconcileAfter(constants.ComponentSyncRetryInterval, err.Error())
 			}
 			logger.Error(err, "failed to sync PodClique resources", "kind", kind)

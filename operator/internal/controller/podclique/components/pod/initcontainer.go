@@ -158,8 +158,8 @@ func generateArgsForInitContainer(pcs *grovecorev1alpha1.PodCliqueSet, pclq *gro
 	podGangName := pod.Labels[apicommon.LabelPodGang]
 	entry := entryForPodGangName(pgm, rnr, podGangName)
 	if entry == nil {
-		return nil, groveerr.New(groveerr.ErrCodeRequeueAfter, component.OperationSync,
-			fmt.Sprintf("PodGang %q for PodClique %v has no committed PodGangMap entry yet, requeuing", podGangName, client.ObjectKeyFromObject(pclq)))
+		return nil, groveerr.NewRequeueAfter(component.OperationSync,
+			fmt.Sprintf("PodGang %q for PodClique %v has no committed PodGangMap entry yet, requeuing", podGangName, client.ObjectKeyFromObject(pclq)), constants.ComponentSyncRetryInterval)
 	}
 	args := make([]string, 0, len(parentCliqueNames))
 	for _, target := range componentutils.StartupDependencyTargetsInEntry(pcs, pcsReplicaIndex, entry, podGangName, parentCliqueNames) {

@@ -34,7 +34,7 @@ func CoherentMaxUnavailableByComponent(pcs *grovecorev1alpha1.PodCliqueSet, inSc
 	inScopeComponents := sets.New(inScopeComponentNames...)
 	maxUnavailableByComponent := make(map[string]int32, len(inScopeComponentNames))
 	for _, cliqueTemplate := range pcs.Spec.Template.Cliques {
-		if inScopeComponents.Has(cliqueTemplate.Name) && IsStandalonePCLQ(pcs, cliqueTemplate.Name) {
+		if inScopeComponents.Has(cliqueTemplate.Name) && IsStandalonePCLQTemplate(pcs, cliqueTemplate.Name) {
 			maxUnavailableByComponent[cliqueTemplate.Name] = int32(EffectiveMaxUnavailable(cliqueTemplate.RollingUpdate, grovecorev1alpha1.CoherentStrategy, *cliqueTemplate.Spec.MinAvailable))
 		}
 	}
@@ -76,7 +76,7 @@ func CoherentMinAvailableByComponent(pcs *grovecorev1alpha1.PodCliqueSet, inScop
 	standalonePCLQMinAvailable = make(map[string]int32)
 	pcsgMinAvailable = make(map[string]int32)
 	for _, cliqueTemplate := range pcs.Spec.Template.Cliques {
-		if inScopeComponents.Has(cliqueTemplate.Name) && IsStandalonePCLQ(pcs, cliqueTemplate.Name) {
+		if inScopeComponents.Has(cliqueTemplate.Name) && IsStandalonePCLQTemplate(pcs, cliqueTemplate.Name) {
 			standalonePCLQMinAvailable[cliqueTemplate.Name] = *cliqueTemplate.Spec.MinAvailable
 		}
 	}

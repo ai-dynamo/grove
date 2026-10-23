@@ -29,9 +29,36 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
+
+func TestIsStandalonePCLQ(t *testing.T) {
+	pcsOwnerRef := metav1.OwnerReference{
+		APIVersion: grovecorev1alpha1.SchemeGroupVersion.String(),
+		Kind:       constants.KindPodCliqueSet,
+		Controller: ptr.To(true),
+	}
+	tests := []struct {
+		name            string
+		ownerReferences []metav1.OwnerReference
+		want            bool
+	}{
+		{name: "PodCliqueSet controller owner", ownerReferences: []metav1.OwnerReference{pcsOwnerRef}, want: true},
+		{name: "PodCliqueScalingGroup controller owner", ownerReferences: []metav1.OwnerReference{{APIVersion: grovecorev1alpha1.SchemeGroupVersion.String(), Kind: constants.KindPodCliqueScalingGroup, Controller: ptr.To(true)}}},
+		{name: "missing owner"},
+		{name: "non-controller PodCliqueSet owner", ownerReferences: []metav1.OwnerReference{{APIVersion: grovecorev1alpha1.SchemeGroupVersion.String(), Kind: constants.KindPodCliqueSet}}},
+		{name: "wrong API version", ownerReferences: []metav1.OwnerReference{{APIVersion: "other.io/v1", Kind: constants.KindPodCliqueSet, Controller: ptr.To(true)}}},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			pclq := &grovecorev1alpha1.PodClique{ObjectMeta: metav1.ObjectMeta{OwnerReferences: test.ownerReferences}}
+			assert.Equal(t, test.want, IsStandalonePCLQ(pclq))
+		})
+	}
+}
 
 // TestGetPCLQsByOwner tests the GetPCLQsByOwner function
 func TestGetPCLQsByOwner(t *testing.T) {

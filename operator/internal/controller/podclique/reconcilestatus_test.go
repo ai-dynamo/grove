@@ -662,9 +662,21 @@ func TestMutateSelector(t *testing.T) {
 			if tt.pcsgMemberLabel != "" {
 				labels[apicommon.LabelPodCliqueScalingGroup] = tt.pcsgMemberLabel
 			}
+			ownerKind := constants.KindPodCliqueSet
+			if tt.pcsgMemberLabel != "" {
+				ownerKind = constants.KindPodCliqueScalingGroup
+			}
 			pclq := &grovecorev1alpha1.PodClique{
-				ObjectMeta: metav1.ObjectMeta{Name: tt.pclqName, Labels: labels},
-				Spec:       grovecorev1alpha1.PodCliqueSpec{ScaleConfig: tt.scaleConfig},
+				ObjectMeta: metav1.ObjectMeta{
+					Name:   tt.pclqName,
+					Labels: labels,
+					OwnerReferences: []metav1.OwnerReference{{
+						APIVersion: grovecorev1alpha1.SchemeGroupVersion.String(),
+						Kind:       ownerKind,
+						Controller: ptr.To(true),
+					}},
+				},
+				Spec: grovecorev1alpha1.PodCliqueSpec{ScaleConfig: tt.scaleConfig},
 			}
 
 			err := mutateSelector(pcsName, pclq)

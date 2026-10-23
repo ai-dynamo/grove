@@ -284,8 +284,9 @@ func TestProcessUpdateInitializesProgressWithoutActivePCSUpdate(t *testing.T) {
 
 	result := reconciler.processUpdate(context.Background(), logr.Discard(), pclq)
 
-	_, err := result.Result()
+	ctrlResult, err := result.Result()
 	require.NoError(t, err)
+	assert.Equal(t, updateProgressCacheSyncRetryInterval, ctrlResult.RequeueAfter)
 	updatedPCLQ := &grovecorev1alpha1.PodClique{}
 	require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKeyFromObject(pclq), updatedPCLQ))
 	require.NotNil(t, updatedPCLQ.Status.UpdateProgress)
@@ -340,6 +341,9 @@ func TestProcessUpdateResetsPCLQProgressToSelectedPCSGeneration(t *testing.T) {
 	result := reconciler.processUpdate(t.Context(), logr.Discard(), pclq)
 
 	require.False(t, result.HasErrors())
+	ctrlResult, err := result.Result()
+	require.NoError(t, err)
+	assert.Equal(t, updateProgressCacheSyncRetryInterval, ctrlResult.RequeueAfter)
 	updatedPCLQ := &grovecorev1alpha1.PodClique{}
 	require.NoError(t, fakeClient.Get(t.Context(), client.ObjectKeyFromObject(pclq), updatedPCLQ))
 	require.NotNil(t, updatedPCLQ.Status.UpdateProgress)
