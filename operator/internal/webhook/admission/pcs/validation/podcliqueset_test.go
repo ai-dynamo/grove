@@ -35,6 +35,7 @@ import (
 	resourcev1 "k8s.io/api/resource/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/uuid"
+	k8svalidation "k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -2072,4 +2073,66 @@ func TestValidateRollingUpdateOnPCSGMemberRejected(t *testing.T) {
 		}
 	}
 	assert.True(t, found, "expected a Forbidden error on a PCSG-member clique's rollingUpdate, got: %v", errs)
+}
+
+func TestValidatePodNameConstraints(t *testing.T) {
+	// name returns a valid name of exactly n characters.
+	name := func(n int) string { return strings.Repeat("a", n) }
+	testCases := []struct {
+		description string
+		pcsName     string
+		pcsgName    string
+		pclqName    string
+		wantErr     bool
+	}{
+		{
+			description: "standalone PodClique at the 54-character limit",
+			pcsName:     name(50),
+			pclqName:    name(4),
+		},
+		{
+			description: "standalone PodClique one character over the limit",
+			pcsName:     name(50),
+			pclqName:    name(5),
+			wantErr:     true,
+		},
+		{
+			description: "PodClique in a PodCliqueScalingGroup at the 49-character limit",
+			pcsName:     name(45),
+			pcsgName:    name(2),
+			pclqName:    name(2),
+		},
+		{
+			description: "PodClique in a PodCliqueScalingGroup one character over the limit",
+			pcsName:     name(45),
+			pcsgName:    name(2),
+			pclqName:    name(3),
+			wantErr:     true,
+		},
+		{
+			description: "generated 45-character <prefix>-<uuid>-<n> PodCliqueSet name with one-character scaling group and clique names",
+			pcsName:     "deploy-836ff669-1616-4f05-ac06-a0b1702a612a-0",
+			pcsgName:    "w",
+			pclqName:    "w",
+		},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.description, func(t *testing.T) {
+			err := validatePodNameConstraints(tc.pcsName, tc.pcsgName, tc.pclqName)
+			if tc.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+
+			// The hostname of the pod with the highest index the budget reserves room for must be a valid DNS label.
+			maxIndex := strings.Repeat("9", reservedReplicaIndexDigits)
+			parts := []string{tc.pcsName, maxIndex}
+			if tc.pcsgName != "" {
+				parts = append(parts, tc.pcsgName, maxIndex)
+			}
+			hostname := strings.Join(append(parts, tc.pclqName, maxIndex), "-")
+			assert.Empty(t, k8svalidation.IsDNS1123Label(hostname), "hostname %q", hostname)
+		})
+	}
 }
