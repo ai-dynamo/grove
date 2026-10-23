@@ -128,17 +128,6 @@ func TestValidateCreate(t *testing.T) {
 			errContains: "spec.schedulerTopologyReferences[1].schedulerName",
 		},
 		{
-			name: "unknown scheduler backend reference",
-			levels: []grovecorev1alpha1.TopologyLevel{
-				{Domain: grovecorev1alpha1.TopologyDomainZone, Key: "topology.kubernetes.io/zone"},
-			},
-			refs: []grovecorev1alpha1.SchedulerTopologyBinding{
-				{SchedulerName: "unknown-scheduler", TopologyReference: "topology"},
-			},
-			expectError: true,
-			errContains: "scheduler backend is not enabled in Grove",
-		},
-		{
 			name: "non topology aware scheduler backend reference",
 			levels: []grovecorev1alpha1.TopologyLevel{
 				{Domain: grovecorev1alpha1.TopologyDomainZone, Key: "topology.kubernetes.io/zone"},
@@ -204,20 +193,56 @@ func TestValidateUpdate_DuplicateDomain(t *testing.T) {
 	assert.Contains(t, err.Error(), "spec.levels[1].domain")
 }
 
+func TestValidateCreate_UnknownSchedulerBackendWarns(t *testing.T) {
+	handler := newTestHandler()
+	ct := newTestClusterTopology([]grovecorev1alpha1.TopologyLevel{
+		{Domain: grovecorev1alpha1.TopologyDomainZone, Key: "topology.kubernetes.io/zone"},
+	}, []grovecorev1alpha1.SchedulerTopologyBinding{
+		{SchedulerName: string(configv1alpha1.SchedulerNameKai), TopologyReference: "kai-topology"},
+		{SchedulerName: "unknown-scheduler", TopologyReference: "topology"},
+	})
+
+	warnings, err := handler.ValidateCreate(context.Background(), ct)
+	require.NoError(t, err)
+	require.Len(t, warnings, 1)
+	assert.Contains(t, warnings[0], "spec.schedulerTopologyReferences[1].schedulerName")
+	assert.Contains(t, warnings[0], `scheduler backend "unknown-scheduler" is not enabled in Grove`)
+}
+
+func TestValidateCreate_DuplicateUnknownSchedulerBackend(t *testing.T) {
+	handler := newTestHandler()
+	ct := newTestClusterTopology([]grovecorev1alpha1.TopologyLevel{
+		{Domain: grovecorev1alpha1.TopologyDomainZone, Key: "topology.kubernetes.io/zone"},
+	}, []grovecorev1alpha1.SchedulerTopologyBinding{
+		{SchedulerName: "unknown-scheduler", TopologyReference: "topology-a"},
+		{SchedulerName: "unknown-scheduler", TopologyReference: "topology-b"},
+	})
+
+	_, err := handler.ValidateCreate(context.Background(), ct)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "spec.schedulerTopologyReferences[1].schedulerName")
+}
+
+// TestValidateUpdate_UnknownSchedulerBackend covers enabling a new scheduler backend: the
+// operator running before the rollout must admit a binding that already references it.
 func TestValidateUpdate_UnknownSchedulerBackend(t *testing.T) {
 	handler := newTestHandler()
 	oldCT := newTestClusterTopology([]grovecorev1alpha1.TopologyLevel{
 		{Domain: grovecorev1alpha1.TopologyDomainRegion, Key: "topology.kubernetes.io/region"},
-	}, nil)
+	}, []grovecorev1alpha1.SchedulerTopologyBinding{
+		{SchedulerName: string(configv1alpha1.SchedulerNameKai), TopologyReference: "kai-topology"},
+	})
 	newCT := newTestClusterTopology([]grovecorev1alpha1.TopologyLevel{
 		{Domain: grovecorev1alpha1.TopologyDomainRegion, Key: "topology.kubernetes.io/region"},
 	}, []grovecorev1alpha1.SchedulerTopologyBinding{
-		{SchedulerName: "unknown-scheduler", TopologyReference: "topology"},
+		{SchedulerName: string(configv1alpha1.SchedulerNameKai), TopologyReference: "kai-topology"},
+		{SchedulerName: "unknown-scheduler", TopologyReference: "kai-topology"},
 	})
 
-	_, err := handler.ValidateUpdate(context.Background(), oldCT, newCT)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "scheduler backend is not enabled in Grove")
+	warnings, err := handler.ValidateUpdate(context.Background(), oldCT, newCT)
+	require.NoError(t, err)
+	require.Len(t, warnings, 1)
+	assert.Contains(t, warnings[0], `scheduler backend "unknown-scheduler" is not enabled in Grove`)
 }
 
 func TestValidateDelete(t *testing.T) {
