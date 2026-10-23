@@ -28,7 +28,8 @@ func HasConditionChanged(existingConditions []metav1.Condition, newCondition met
 	}
 	return existingCond.Status != newCondition.Status ||
 		existingCond.Reason != newCondition.Reason ||
-		existingCond.Message != newCondition.Message
+		existingCond.Message != newCondition.Message ||
+		existingCond.ObservedGeneration != newCondition.ObservedGeneration
 }
 
 // IsConditionTrue checks for a specific Condition amongst a list of Conditions and returns if the Condition.Status is true otherwise false is returned.
