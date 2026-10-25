@@ -107,6 +107,14 @@ type PodCliqueSetStatus struct {
 	// Only if this value is not nil and the newly computed hash value is different from the persisted CurrentGenerationHash value
 	// then an update needs to be triggered.
 	CurrentGenerationHash *string `json:"currentGenerationHash,omitempty"`
+	// AppliedSchedulingConfigurationHash identifies the scheduling configuration
+	// fully realized by all expected PodCliqueSet replicas. The scheduling
+	// configuration currently comprises the effective MinAvailable values of all
+	// PodClique templates and PodCliqueScalingGroup configs.
+	// A nil value identifies an object created before scheduling-configuration
+	// hashing was introduced.
+	// +optional
+	AppliedSchedulingConfigurationHash *string `json:"appliedSchedulingConfigurationHash,omitempty"`
 	// UpdateProgress represents the progress of an update.
 	UpdateProgress *PodCliqueSetUpdateProgress `json:"updateProgress,omitempty"`
 	// ScalingProgress records replica indices selected for scale-out or scale-in.
@@ -145,6 +153,13 @@ type PodCliqueSetUpdateStrategy struct {
 
 // PodCliqueSetUpdateProgress captures the progress of an update of the PodCliqueSet.
 type PodCliqueSetUpdateProgress struct {
+	// TargetSchedulingConfigurationHash identifies the scheduling configuration
+	// that this update must realize across all relevant PodCliqueSet replicas. The
+	// scheduling configuration currently comprises the effective MinAvailable
+	// values of all PodClique templates and PodCliqueScalingGroup configs.
+	// On successful completion, it is copied to
+	// PodCliqueSetStatus.AppliedSchedulingConfigurationHash.
+	TargetSchedulingConfigurationHash string `json:"targetSchedulingConfigurationHash"`
 	// UpdateStartedAt is the time at which the update started for the PodCliqueSet.
 	UpdateStartedAt metav1.Time `json:"updateStartedAt,omitempty"`
 	// UpdateEndedAt is the time at which Grove does not have any work pending to manifest the update according to the
