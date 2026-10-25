@@ -86,7 +86,8 @@ function add_conversion_webhook() {
       conversionReviewVersions:
       - v1
 EOF
-  for crd in grove.io_podcliquesets.yaml grove.io_podcliques.yaml grove.io_podcliquescalinggroups.yaml; do
+  # The other grove.io kinds have the same schema in every version and use the None strategy.
+  for crd in grove.io_podcliquesets.yaml; do
     sed -i.bak "/^spec:$/r ${conversion_block}" "${output_dir}/${crd}"
     rm -f "${output_dir}/${crd}.bak"
   done

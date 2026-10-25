@@ -22,6 +22,7 @@ import (
 // +genclient
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 // +kubebuilder:object:root=true
+// +kubebuilder:storageversion
 // +kubebuilder:subresource:status
 // +kubebuilder:subresource:scale:specpath=.spec.replicas,statuspath=.status.replicas,selectorpath=.status.hpaPodSelector
 // +kubebuilder:resource:shortName={pcs}
@@ -34,9 +35,6 @@ import (
 // +kubebuilder:printcolumn:name="PCSGs-Total",type=integer,JSONPath=`.status.updateProgress.totalPodCliqueScalingGroupsCount`
 // +kubebuilder:printcolumn:name="Update",type=string,JSONPath=`.status.conditions[?(@.type=="UpdateInProgress")].reason`,priority=1
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
-// +kubebuilder:validation:XValidation:rule="oldSelf.hasValue() || !has(self.spec.template.topologyConstraint) || !has(self.spec.template.topologyConstraint.packDomain)",message="packDomain is deprecated and cannot be used on new workloads; use pack.required",fieldPath=".spec.template.topologyConstraint.packDomain",optionalOldSelf=true,reason=FieldValueForbidden
-// +kubebuilder:validation:XValidation:rule="oldSelf.hasValue() || !has(self.spec.template.cliques) || self.spec.template.cliques.all(c, !has(c.topologyConstraint) || !has(c.topologyConstraint.packDomain))",message="packDomain is deprecated and cannot be used on new workloads; use pack.required",fieldPath=".spec.template.cliques",optionalOldSelf=true,reason=FieldValueForbidden
-// +kubebuilder:validation:XValidation:rule="oldSelf.hasValue() || !has(self.spec.template.podCliqueScalingGroups) || self.spec.template.podCliqueScalingGroups.all(g, !has(g.topologyConstraint) || !has(g.topologyConstraint.packDomain))",message="packDomain is deprecated and cannot be used on new workloads; use pack.required",fieldPath=".spec.template.podCliqueScalingGroups",optionalOldSelf=true,reason=FieldValueForbidden
 
 // PodCliqueSet is a set of PodGangs defining specification on how to spread and manage a gang of pods and monitoring their status.
 type PodCliqueSet struct {
@@ -106,6 +104,28 @@ type PodCliqueSetStatus struct {
 	CurrentGenerationHash *string `json:"currentGenerationHash,omitempty"`
 	// UpdateProgress represents the progress of an update.
 	UpdateProgress *PodCliqueSetUpdateProgress `json:"updateProgress,omitempty"`
+	// ScalingProgress records replica indices selected for scale-out or scale-in.
+	// Availability-aware scale-in can remove replicas out of index order, so active replica indices may no longer
+	// form the contiguous range [0, spec.replicas). Persisting selections ensures all components reconcile the same
+	// sparse set of replica identities while scaling is in progress. It is nil when no scaling operation is in progress.
+	// +optional
+	ScalingProgress *PodCliqueSetScalingProgress `json:"scalingProgress,omitempty"`
+}
+
+// PodCliqueSetScalingProgress records replica-index selections while their managed child resources converge to the desired scaling state.
+type PodCliqueSetScalingProgress struct {
+	// ScaleOutReplicaIndices are replica indices selected for provisioning.
+	// An index is added when allocated for scale-out and removed after all expected standalone PodCliques and
+	// PodCliqueScalingGroups for it exist. Recording the index reserves it while provisioning is incomplete.
+	// +optional
+	// +listType=set
+	ScaleOutReplicaIndices []int32 `json:"scaleOutReplicaIndices,omitempty"`
+	// ScaleInReplicaIndices are replica indices selected for removal.
+	// Availability-aware selection may add indices in any order rather than removing only the highest indices.
+	// An index is removed after no managed child resources remain for it, preventing premature reuse during deletion.
+	// +optional
+	// +listType=set
+	ScaleInReplicaIndices []int32 `json:"scaleInReplicaIndices,omitempty"`
 }
 
 // PodCliqueSetUpdateStrategy defines the update strategy for a PodCliqueSet.
@@ -336,8 +356,7 @@ type PodCliqueTemplateSpec struct {
 }
 
 // TopologyConstraint defines topology placement requirements.
-// +kubebuilder:validation:XValidation:rule="has(self.pack) || has(self.packDomain)",message="topologyConstraint must specify pack or deprecated packDomain",fieldPath=".pack",reason=FieldValueRequired
-// +kubebuilder:validation:XValidation:rule="!(has(self.packDomain) && has(self.pack) && has(self.pack.required))",message="must not set both pack.required and deprecated packDomain",fieldPath=".pack.required"
+// +kubebuilder:validation:XValidation:rule="has(self.pack)",message="topologyConstraint must specify pack",fieldPath=".pack",reason=FieldValueRequired
 type TopologyConstraint struct {
 	// TopologyName is the name of the ClusterTopologyBinding resource to use for topology-aware scheduling.
 	// Setting TopologyName may be optional if the name can be inherited from a higher level scope.
@@ -353,16 +372,6 @@ type TopologyConstraint struct {
 	// Pack specifies topology packing constraints for each replica of the resource.
 	// +optional
 	Pack *TopologyPackConstraint `json:"pack,omitempty"`
-
-	// PackDomain specifies the required topology domain using the legacy field name.
-	// Controls placement constraint for EACH individual replica instance.
-	// Must reference a domain in the topology levels defined in the ClusterTopologyBinding named by TopologyName.
-	// Example: "rack" means each replica independently placed within one rack.
-	// Note: Does NOT constrain all replicas to the same rack together.
-	// Different replicas can be in different topology domains.
-	// Deprecated: use Pack.RequiredDomain.
-	// +optional
-	PackDomain TopologyDomain `json:"packDomain,omitempty"`
 }
 
 // TopologyPackConstraint defines topology pack placement requirements.
@@ -385,15 +394,12 @@ func (tc *TopologyConstraint) HasAnyPackDomain() bool {
 	return tc != nil && (tc.RequiredDomain() != "" || tc.PreferredDomain() != "")
 }
 
-// RequiredDomain returns the required pack domain, falling back to legacy packDomain.
+// RequiredDomain returns the required pack domain.
 func (tc *TopologyConstraint) RequiredDomain() TopologyDomain {
-	if tc == nil {
+	if tc == nil || tc.Pack == nil {
 		return ""
 	}
-	if tc.Pack != nil && tc.Pack.RequiredDomain != "" {
-		return tc.Pack.RequiredDomain
-	}
-	return tc.PackDomain
+	return tc.Pack.RequiredDomain
 }
 
 // PreferredDomain returns the preferred pack domain.
@@ -600,40 +606,6 @@ const (
 	// CliqueStartupTypeExplicit defines that the cliques should be started after the cliques defined in PodClique.StartsAfter have started.
 	CliqueStartupTypeExplicit CliqueStartupType = "CliqueStartupTypeExplicit"
 )
-
-// LastOperationType is a string alias for the type of the last operation.
-type LastOperationType string
-
-const (
-	// LastOperationTypeReconcile indicates that the last operation was a reconcile operation.
-	LastOperationTypeReconcile LastOperationType = "Reconcile"
-	// LastOperationTypeDelete indicates that the last operation was a delete operation.
-	LastOperationTypeDelete LastOperationType = "Delete"
-)
-
-// LastOperationState is a string alias for the state of the last operation.
-type LastOperationState string
-
-const (
-	// LastOperationStateProcessing indicates that the last operation is in progress.
-	LastOperationStateProcessing LastOperationState = "Processing"
-	// LastOperationStateSucceeded indicates that the last operation succeeded.
-	LastOperationStateSucceeded LastOperationState = "Succeeded"
-	// LastOperationStateError indicates that the last operation completed with errors and will be retried.
-	LastOperationStateError LastOperationState = "Error"
-)
-
-// LastOperation captures the last operation done by the respective reconciler on the PodCliqueSet.
-type LastOperation struct {
-	// Type is the type of the last operation.
-	Type LastOperationType `json:"type"`
-	// State is the state of the last operation.
-	State LastOperationState `json:"state"`
-	// Description is a human-readable description of the last operation.
-	Description string `json:"description"`
-	// LastUpdateTime is the time at which the last operation was updated.
-	LastUpdateTime metav1.Time `json:"lastUpdateTime"`
-}
 
 // ErrorCode is a custom error code that uniquely identifies an error.
 type ErrorCode string

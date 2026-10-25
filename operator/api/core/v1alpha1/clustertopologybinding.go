@@ -22,7 +22,7 @@ import (
 // +genclient:nonNamespaced
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 // +kubebuilder:object:root=true
-// +kubebuilder:storageversion
+// +kubebuilder:deprecatedversion:warning="grove.io/v1alpha1 is deprecated; use grove.io/v1beta1"
 // +kubebuilder:resource:scope=Cluster,shortName=ctb
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="Domains",type=string,JSONPath=`.spec.levels[*].domain`

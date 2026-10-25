@@ -6,17 +6,6 @@ metadata:
     controller-gen.kubebuilder.io/version: v0.17.3
   name: podcliques.grove.io
 spec:
-  conversion:
-    strategy: Webhook
-    webhook:
-      clientConfig:
-        service:
-          name: grove-operator
-          namespace: default
-          path: /convert
-          port: 9443
-      conversionReviewVersions:
-      - v1
   group: grove.io
   names:
     kind: PodClique
@@ -58,6 +47,8 @@ spec:
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
+    deprecated: true
+    deprecationWarning: grove.io/v1alpha1 is deprecated; use grove.io/v1beta1
     name: v1alpha1
     schema:
       openAPIV3Schema:
@@ -9197,7 +9188,7 @@ spec:
                       PodTemplateHash is the template hash of the PodClique that the Pods of this PodClique should converge to.
                       This hash is used to segregate Pods which are up to date with the specification, and ones which are outdated for
                       preferential deletions in rolling update strategies, and in all strategies for scale-ins.
-                      PodCliqueStatus.PodTemplateHash is set to this hash once UpdateEndedAt is set, which marks the end of the update.
+                      PodCliqueStatus.CurrentPodTemplateHash is set to this hash once UpdateEndedAt is set, which marks the end of the update.
                     type: string
                   updateEndedAt:
                     description: |-
@@ -9243,7 +9234,7 @@ spec:
         - spec
         type: object
     served: true
-    storage: true
+    storage: false
     subresources:
       scale:
         labelSelectorPath: .status.hpaPodSelector
@@ -18420,7 +18411,7 @@ spec:
                       PodTemplateHash is the template hash of the PodClique that the Pods of this PodClique should converge to.
                       This hash is used to segregate Pods which are up to date with the specification, and ones which are outdated for
                       preferential deletions in rolling update strategies, and in all strategies for scale-ins.
-                      PodCliqueStatus.PodTemplateHash is set to this hash once UpdateEndedAt is set, which marks the end of the update.
+                      PodCliqueStatus.CurrentPodTemplateHash is set to this hash once UpdateEndedAt is set, which marks the end of the update.
                     type: string
                   updateEndedAt:
                     description: |-
@@ -18466,7 +18457,7 @@ spec:
         - spec
         type: object
     served: true
-    storage: false
+    storage: true
     subresources:
       scale:
         labelSelectorPath: .status.hpaPodSelector

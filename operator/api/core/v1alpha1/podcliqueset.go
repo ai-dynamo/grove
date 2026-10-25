@@ -22,7 +22,7 @@ import (
 // +genclient
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 // +kubebuilder:object:root=true
-// +kubebuilder:storageversion
+// +kubebuilder:deprecatedversion:warning="grove.io/v1alpha1 is deprecated; use grove.io/v1beta1"
 // +kubebuilder:subresource:status
 // +kubebuilder:subresource:scale:specpath=.spec.replicas,statuspath=.status.replicas,selectorpath=.status.hpaPodSelector
 // +kubebuilder:resource:shortName={pcs}
@@ -623,40 +623,6 @@ const (
 	// CliqueStartupTypeExplicit defines that the cliques should be started after the cliques defined in PodClique.StartsAfter have started.
 	CliqueStartupTypeExplicit CliqueStartupType = "CliqueStartupTypeExplicit"
 )
-
-// LastOperationType is a string alias for the type of the last operation.
-type LastOperationType string
-
-const (
-	// LastOperationTypeReconcile indicates that the last operation was a reconcile operation.
-	LastOperationTypeReconcile LastOperationType = "Reconcile"
-	// LastOperationTypeDelete indicates that the last operation was a delete operation.
-	LastOperationTypeDelete LastOperationType = "Delete"
-)
-
-// LastOperationState is a string alias for the state of the last operation.
-type LastOperationState string
-
-const (
-	// LastOperationStateProcessing indicates that the last operation is in progress.
-	LastOperationStateProcessing LastOperationState = "Processing"
-	// LastOperationStateSucceeded indicates that the last operation succeeded.
-	LastOperationStateSucceeded LastOperationState = "Succeeded"
-	// LastOperationStateError indicates that the last operation completed with errors and will be retried.
-	LastOperationStateError LastOperationState = "Error"
-)
-
-// LastOperation captures the last operation done by the respective reconciler on the PodCliqueSet.
-type LastOperation struct {
-	// Type is the type of the last operation.
-	Type LastOperationType `json:"type"`
-	// State is the state of the last operation.
-	State LastOperationState `json:"state"`
-	// Description is a human-readable description of the last operation.
-	Description string `json:"description"`
-	// LastUpdateTime is the time at which the last operation was updated.
-	LastUpdateTime metav1.Time `json:"lastUpdateTime"`
-}
 
 // ErrorCode is a custom error code that uniquely identifies an error.
 type ErrorCode string
