@@ -146,6 +146,13 @@ run-upgrade-e2e: $(GOTESTSUM)
 	@echo "> Tests passed, cleaning up cluster..."
 	@$(MAKE) e2e-cluster-down
 
+# Run the downgrade tests: upgrade from the latest published GitHub release to the operator built from the
+# current checkout, run grove-install-crds prepare-downgrade, and roll back to the release. They share the
+# package and the cluster setup of the upgrade tests.
+.PHONY: run-downgrade-e2e
+run-downgrade-e2e:
+	@$(MAKE) run-upgrade-e2e TEST_PATTERN='$(or $(TEST_PATTERN),^Test_VDGR)'
+
 # Create a k3d cluster for e2e testing (with Grove and Kai scheduler deployed)
 # This is optional - tests work with any Kubernetes cluster that has the required components
 .PHONY: e2e-cluster-up

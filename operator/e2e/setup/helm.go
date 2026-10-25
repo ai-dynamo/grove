@@ -176,6 +176,38 @@ func UpgradeHelmChart(config *HelmInstallConfig) (*release.Release, error) {
 	return rel, nil
 }
 
+// RollbackHelmChart rolls the release back to the given revision. Only RestConfig, ReleaseName, Namespace,
+// Wait, Timeout and HelmLoggerFunc of config are used.
+func RollbackHelmChart(config *HelmInstallConfig, revision int) error {
+	if config.ReleaseName == "" {
+		return fmt.Errorf("release name is required for rollback")
+	}
+	if config.Namespace == "" {
+		return fmt.Errorf("namespace is required for rollback")
+	}
+	if config.HelmLoggerFunc == nil {
+		config.HelmLoggerFunc = func(_ string, _ ...interface{}) {}
+	}
+	actionConfig, err := setupHelmAction(config)
+	if err != nil {
+		return err
+	}
+
+	config.HelmLoggerFunc("Rolling back release %s in namespace %s to revision %d...", config.ReleaseName, config.Namespace, revision)
+	rollbackClient := action.NewRollback(actionConfig)
+	rollbackClient.Version = revision
+	rollbackClient.Wait = config.Wait
+	if config.Timeout > 0 {
+		rollbackClient.Timeout = config.Timeout
+	}
+	if err := rollbackClient.Run(config.ReleaseName); err != nil {
+		return fmt.Errorf("helm rollback failed: %w", err)
+	}
+
+	config.HelmLoggerFunc("✅ Release '%s' rolled back to revision %d", config.ReleaseName, revision)
+	return nil
+}
+
 // UninstallHelmChart uninstalls a Helm release.
 func UninstallHelmChart(config *HelmInstallConfig) error {
 	if config.ReleaseName == "" {

@@ -148,6 +148,9 @@ jobs:
           - test_name: version_upgrade
             test_pattern: "^Test_VUPG"
             make_target: "run-upgrade-e2e"
+          - test_name: version_downgrade
+            test_pattern: "^Test_VDGR"
+            make_target: "run-downgrade-e2e"
           - test_name: kueue
             test_pattern: "^Test_Kueue[0-9]"
             make_target: "run-e2e-kueue-full"
@@ -175,7 +178,7 @@ jobs:
 
       - name: Run e2e tests - ${{ matrix.test_name }}
         env:
-          GITHUB_TOKEN: ${{ matrix.test_name == 'version_upgrade' && secrets.GITHUB_TOKEN || '' }}
+          GITHUB_TOKEN: ${{ (matrix.test_name == 'version_upgrade' || matrix.test_name == 'version_downgrade') && secrets.GITHUB_TOKEN || '' }}
         run: |
           make ${{ matrix.make_target || 'run-e2e-full' }} TEST_PATTERN='${{ matrix.test_pattern }}' E2E_CREATE_FLAGS='--dind-memory-mode'
         working-directory: operator
@@ -228,6 +231,7 @@ jobs:
           - test_name: resource_sharing
           - test_name: podgangmap_reconstruct
           - test_name: version_upgrade
+          - test_name: version_downgrade
           - test_name: kueue
           - test_name: kueue_update
     name: E2E - ${{ matrix.test_name }}

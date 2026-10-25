@@ -109,6 +109,7 @@ func (cfg upgradeTest) validate(t *testing.T) {
 func installReleasedGrove(t *testing.T, tc *testctx.TestContext, version string) {
 	t.Helper()
 
+	deleteGroveCRDs(t, tc)
 	testctx.Logger.Infof("installing released Grove operator %s", version)
 	_, err := setup.InstallHelmChart(&setup.HelmInstallConfig{
 		RestConfig:      tc.Client.RestConfig,
@@ -127,6 +128,23 @@ func installReleasedGrove(t *testing.T, tc *testctx.TestContext, version string)
 	podsManager := pods.NewPodManager(tc.Client, testctx.Logger)
 	require.NoError(t, podsManager.WaitForReadyInNamespace(t.Context(), groveNamespace, 1, defaultPollTimeout, defaultPollInterval),
 		"waiting for Grove to become ready")
+}
+
+// rollbackGrove rolls the Grove release back to the given revision and waits for the operator to become ready.
+func rollbackGrove(t *testing.T, tc *testctx.TestContext, revision int) {
+	t.Helper()
+	require.NoError(t, setup.RollbackHelmChart(&setup.HelmInstallConfig{
+		RestConfig:     tc.Client.RestConfig,
+		ReleaseName:    groveReleaseName,
+		Namespace:      groveNamespace,
+		Wait:           true,
+		Timeout:        defaultPollTimeout,
+		HelmLoggerFunc: testctx.Logger.Infof,
+	}, revision), "roll back Grove chart")
+
+	podsManager := pods.NewPodManager(tc.Client, testctx.Logger)
+	require.NoError(t, podsManager.WaitForReadyInNamespace(t.Context(), groveNamespace, 1, defaultPollTimeout, defaultPollInterval),
+		"waiting for the rolled back Grove to become ready")
 }
 
 // uninstallGrove removes the Grove release so the shared cluster is clean for the next upgrade test.
