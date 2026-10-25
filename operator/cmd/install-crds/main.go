@@ -15,35 +15,56 @@
 // grove-install-crds is a standalone binary that applies all Grove CRDs via
 // server-side apply. It is intended to run as the operator Deployment's init
 // container so that CRDs are present before the operator process starts.
+//
+// Run as "grove-install-crds prepare-downgrade", it instead prepares the grove.io
+// CRDs for a downgrade to a release that serves only grove.io/v1alpha1. The
+// operator of this release must still be running, because PodCliqueSets are
+// converted by its conversion webhook.
 package main
 
 import (
+	"context"
+	"flag"
+	"fmt"
 	"os"
 
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	operatorcrds "github.com/ai-dynamo/grove/operator/api/core/crds"
+	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/crdinstaller"
 	grovelogger "github.com/ai-dynamo/grove/operator/internal/logger"
+	"github.com/ai-dynamo/grove/operator/internal/storageversion"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
+	"github.com/go-logr/logr"
 	schedulercrds "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1/crds"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
+
+const prepareDowngradeCommand = "prepare-downgrade"
 
 func main() {
 	log := grovelogger.MustNewLogger(false, configv1alpha1.InfoLevel, configv1alpha1.LogFormatJSON)
 	ctrl.SetLogger(log)
 	logger := ctrl.Log.WithName("grove-install-crds")
 
+	flag.Parse()
+	command := flag.Arg(0)
+	if command != "" && command != prepareDowngradeCommand {
+		logger.Error(fmt.Errorf("unknown command %q", command), "usage: grove-install-crds [prepare-downgrade]")
+		os.Exit(2)
+	}
+
 	ctx := ctrl.SetupSignalHandler()
 
-	cfg, err := rest.InClusterConfig()
+	// The in-cluster config is used when running as a Pod, and a kubeconfig otherwise.
+	cfg, err := ctrl.GetConfig()
 	if err != nil {
-		logger.Error(err, "failed to get in-cluster config")
+		logger.Error(err, "failed to get the API server config")
 		os.Exit(1)
 	}
 
@@ -59,6 +80,15 @@ func main() {
 		os.Exit(1)
 	}
 
+	if command == prepareDowngradeCommand {
+		if err = prepareDowngrade(ctx, cl, logger); err != nil {
+			logger.Error(err, "failed to prepare the CRDs for the downgrade")
+			os.Exit(1)
+		}
+		logger.Info("The grove.io CRDs serve and store only grove.io/v1alpha1; the release can now be downgraded")
+		return
+	}
+
 	namespace, err := k8sutils.OperatorNamespace()
 	if err != nil {
 		logger.Error(err, "failed to read the operator namespace")
@@ -71,6 +101,22 @@ func main() {
 		os.Exit(1)
 	}
 	logger.Info("All Grove CRDs installed successfully")
+}
+
+// prepareDowngrade makes grove.io/v1alpha1 the only stored and served version of the grove.io CRDs, so that
+// the CRDs of a release that knows only v1alpha1 can replace them. It first makes v1alpha1 the storage version
+// while both versions are served, then rewrites every object so that it is stored at v1alpha1, and finally
+// removes v1beta1 and the conversion webhook. Every step is idempotent, so a failed run can be repeated.
+func prepareDowngrade(ctx context.Context, cl client.Client, logger logr.Logger) error {
+	alpha := grovecorev1alpha1.SchemeGroupVersion.Version
+	beta := grovecorev1beta1.SchemeGroupVersion.Version
+	if err := storageversion.SetStorageVersion(ctx, cl, logger, storageversion.CRDNames, alpha); err != nil {
+		return err
+	}
+	if err := storageversion.Migrate(ctx, cl, logger, storageversion.CRDNames, alpha); err != nil {
+		return err
+	}
+	return storageversion.RemoveVersion(ctx, cl, logger, storageversion.CRDNames, beta)
 }
 
 // allCRDs returns all Grove CRD YAML definitions to be applied at startup.

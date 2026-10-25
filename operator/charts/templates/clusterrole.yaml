@@ -280,7 +280,7 @@ rules:
   - update
   - patch
 # The storage migration removes v1alpha1 from status.storedVersions of every grove.io CRD once their objects are
-# rewritten at grove.io/v1beta1.
+# rewritten at grove.io/v1beta1. grove-install-crds prepare-downgrade does the reverse.
 - apiGroups:
   - apiextensions.k8s.io
   resources:
