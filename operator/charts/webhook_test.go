@@ -68,7 +68,7 @@ func TestWebhookRulesMatchHubVersion(t *testing.T) {
 }
 
 // TestClusterRoleConversionCRDAccess verifies that the operator can configure the conversion webhook of the
-// converted CRDs whether or not the CRD installer is enabled.
+// converted CRD and update the storedVersions of every grove.io CRD whether or not the CRD installer is enabled.
 func TestClusterRoleConversionCRDAccess(t *testing.T) {
 	for _, crdInstallerEnabled := range []bool{false, true} {
 		manifests := renderChart(t, map[string]interface{}{
@@ -79,18 +79,24 @@ func TestClusterRoleConversionCRDAccess(t *testing.T) {
 		clusterRole := &rbacv1.ClusterRole{}
 		require.NoError(t, yaml.UnmarshalStrict([]byte(clusterRoleYAML), clusterRole))
 
-		for _, crd := range []string{"podcliquesets.grove.io", "podcliques.grove.io", "podcliquescalinggroups.grove.io"} {
-			for _, verb := range []string{"get", "list", "watch", "update", "patch"} {
-				assert.True(t, allowsCRD(clusterRole, crd, verb), "crdInstaller.enabled=%t: %s on %s", crdInstallerEnabled, verb, crd)
+		for _, verb := range []string{"get", "list", "watch", "update", "patch"} {
+			assert.True(t, allowsCRD(clusterRole, "customresourcedefinitions", "podcliquesets.grove.io", verb),
+				"crdInstaller.enabled=%t: %s on podcliquesets.grove.io", crdInstallerEnabled, verb)
+		}
+		for _, crd := range []string{"podcliquesets.grove.io", "podcliques.grove.io", "podcliquescalinggroups.grove.io",
+			"clustertopologybindings.grove.io", "podgangmaps.grove.io"} {
+			for _, verb := range []string{"update", "patch"} {
+				assert.True(t, allowsCRD(clusterRole, "customresourcedefinitions/status", crd, verb),
+					"crdInstaller.enabled=%t: %s on %s status", crdInstallerEnabled, verb, crd)
 			}
 		}
 	}
 }
 
-func allowsCRD(clusterRole *rbacv1.ClusterRole, name, verb string) bool {
+func allowsCRD(clusterRole *rbacv1.ClusterRole, resource, name, verb string) bool {
 	for _, rule := range clusterRole.Rules {
 		if slices.Contains(rule.APIGroups, "apiextensions.k8s.io") &&
-			slices.Contains(rule.Resources, "customresourcedefinitions") &&
+			slices.Contains(rule.Resources, resource) &&
 			slices.Contains(rule.Verbs, verb) &&
 			(len(rule.ResourceNames) == 0 || slices.Contains(rule.ResourceNames, name)) {
 			return true

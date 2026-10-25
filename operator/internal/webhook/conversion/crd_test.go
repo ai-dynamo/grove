@@ -158,14 +158,33 @@ func generatedCRDs(t *testing.T) []*apiextensionsv1.CustomResourceDefinition {
 	var crds []*apiextensionsv1.CustomResourceDefinition
 	for _, crdYAML := range []string{
 		operatorcrds.PodCliqueSetCRD(),
-		operatorcrds.PodCliqueCRD(),
-		operatorcrds.PodCliqueScalingGroupCRD(),
 	} {
-		crd := &apiextensionsv1.CustomResourceDefinition{}
-		require.NoError(t, yaml.Unmarshal([]byte(crdYAML), crd))
-		crds = append(crds, crd)
+		crds = append(crds, unmarshalCRD(t, crdYAML))
 	}
 	return crds
+}
+
+func unmarshalCRD(t *testing.T, crdYAML string) *apiextensionsv1.CustomResourceDefinition {
+	t.Helper()
+	crd := &apiextensionsv1.CustomResourceDefinition{}
+	require.NoError(t, yaml.Unmarshal([]byte(crdYAML), crd))
+	return crd
+}
+
+func TestGeneratedCRDsConversionStrategy(t *testing.T) {
+	for _, crd := range generatedCRDs(t) {
+		require.NotNil(t, crd.Spec.Conversion, crd.Name)
+		assert.Equal(t, apiextensionsv1.WebhookConverter, crd.Spec.Conversion.Strategy, crd.Name)
+	}
+	for _, crdYAML := range []string{
+		operatorcrds.PodCliqueCRD(),
+		operatorcrds.PodCliqueScalingGroupCRD(),
+		operatorcrds.PodGangMapCRD(),
+		operatorcrds.ClusterTopologyCRD(),
+	} {
+		crd := unmarshalCRD(t, crdYAML)
+		assert.True(t, crd.Spec.Conversion == nil || crd.Spec.Conversion.Strategy == apiextensionsv1.NoneConverter, crd.Name)
+	}
 }
 
 func newCRDClient(t *testing.T, crds ...*apiextensionsv1.CustomResourceDefinition) client.Client {

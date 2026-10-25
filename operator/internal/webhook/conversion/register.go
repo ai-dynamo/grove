@@ -45,8 +45,8 @@ type converterFactory struct {
 }
 
 // Register registers a hub-and-spoke converter for every converted kind with the manager's converter
-// registry, and serves the conversion webhook at WebhookPath. PodGangMap and ClusterTopologyBinding use the
-// None conversion strategy and are not registered.
+// registry, and serves the conversion webhook at WebhookPath. The other grove.io kinds have the same schema in
+// every version, use the None conversion strategy and are not registered.
 func Register(mgr manager.Manager) error {
 	registry := mgr.GetConverterRegistry()
 	for _, factory := range converterFactories() {
@@ -94,30 +94,6 @@ func converterFactories() []converterFactory {
 					},
 					func(_ context.Context, spoke *grovecorev1alpha1.PodCliqueSet, hub *grovecorev1beta1.PodCliqueSet) error {
 						return grovecorev1alpha1.Convert_v1alpha1_PodCliqueSet_To_v1beta1_PodCliqueSet(spoke, hub, nil)
-					})),
-		},
-		{
-			groupKind: grovecorev1beta1.Kind("PodClique"),
-			resource:  "podcliques",
-			newConverter: ctrlconversion.NewHubSpokeConverter(&grovecorev1beta1.PodClique{},
-				ctrlconversion.NewSpokeConverter(&grovecorev1alpha1.PodClique{},
-					func(_ context.Context, hub *grovecorev1beta1.PodClique, spoke *grovecorev1alpha1.PodClique) error {
-						return grovecorev1alpha1.Convert_v1beta1_PodClique_To_v1alpha1_PodClique(hub, spoke, nil)
-					},
-					func(_ context.Context, spoke *grovecorev1alpha1.PodClique, hub *grovecorev1beta1.PodClique) error {
-						return grovecorev1alpha1.Convert_v1alpha1_PodClique_To_v1beta1_PodClique(spoke, hub, nil)
-					})),
-		},
-		{
-			groupKind: grovecorev1beta1.Kind("PodCliqueScalingGroup"),
-			resource:  "podcliquescalinggroups",
-			newConverter: ctrlconversion.NewHubSpokeConverter(&grovecorev1beta1.PodCliqueScalingGroup{},
-				ctrlconversion.NewSpokeConverter(&grovecorev1alpha1.PodCliqueScalingGroup{},
-					func(_ context.Context, hub *grovecorev1beta1.PodCliqueScalingGroup, spoke *grovecorev1alpha1.PodCliqueScalingGroup) error {
-						return grovecorev1alpha1.Convert_v1beta1_PodCliqueScalingGroup_To_v1alpha1_PodCliqueScalingGroup(hub, spoke, nil)
-					},
-					func(_ context.Context, spoke *grovecorev1alpha1.PodCliqueScalingGroup, hub *grovecorev1beta1.PodCliqueScalingGroup) error {
-						return grovecorev1alpha1.Convert_v1alpha1_PodCliqueScalingGroup_To_v1beta1_PodCliqueScalingGroup(spoke, hub, nil)
 					})),
 		},
 	}

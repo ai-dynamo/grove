@@ -81,20 +81,38 @@ func TestRegisterServesConvertedKinds(t *testing.T) {
 		_, ok := mgr.GetConverterRegistry().GetConverter(groupKind)
 		assert.True(t, ok, "expected a converter for %s", groupKind)
 	}
-	for _, kind := range []string{"PodGangMap", "ClusterTopologyBinding"} {
+	for _, kind := range []string{"PodClique", "PodCliqueScalingGroup", "PodGangMap", "ClusterTopologyBinding"} {
 		_, ok := mgr.GetConverterRegistry().GetConverter(grovecorev1beta1.Kind(kind))
 		assert.False(t, ok, "%s uses the None conversion strategy and must not have a converter", kind)
 	}
 }
 
+func alphaPodCliqueSet(topologyConstraint *grovecorev1alpha1.TopologyConstraint) *grovecorev1alpha1.PodCliqueSet {
+	return &grovecorev1alpha1.PodCliqueSet{
+		TypeMeta:   metav1.TypeMeta{APIVersion: grovecorev1alpha1.SchemeGroupVersion.String(), Kind: "PodCliqueSet"},
+		ObjectMeta: metav1.ObjectMeta{Name: "pcs", Namespace: "default"},
+		Spec: grovecorev1alpha1.PodCliqueSetSpec{
+			Replicas: 2,
+			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
+				TopologyConstraint: topologyConstraint,
+				Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{{
+					Name: "worker",
+					Spec: grovecorev1alpha1.PodCliqueSpec{RoleName: "worker", Replicas: 3, MinAvailable: ptr.To[int32](2)},
+				}},
+				PodCliqueScalingGroupConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{{
+					Name: "sg", CliqueNames: []string{"worker"}, Replicas: ptr.To[int32](4), MinAvailable: ptr.To[int32](2),
+				}},
+			},
+		},
+	}
+}
+
 func TestConvertPodCliqueSetRoundTrip(t *testing.T) {
 	handler, _ := registeredHandler(t)
-	original := testutils.NewPodCliqueSetBuilder("pcs", "default", types.UID("uid")).
-		WithReplicas(2).
-		WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("worker").WithReplicas(3).WithMinAvailable(2).Build()).
-		WithScalingGroupConfig("sg", []string{"worker"}, 4, 2).
-		Build()
-	original.TypeMeta = metav1.TypeMeta{APIVersion: grovecorev1alpha1.SchemeGroupVersion.String(), Kind: "PodCliqueSet"}
+	original := alphaPodCliqueSet(&grovecorev1alpha1.TopologyConstraint{
+		TopologyName: "topo",
+		Pack:         &grovecorev1alpha1.TopologyPackConstraint{RequiredDomain: grovecorev1alpha1.TopologyDomainRack},
+	})
 
 	toHub := convert(t, handler, grovecorev1beta1.SchemeGroupVersion.String(), original)
 	require.Equal(t, metav1.StatusSuccess, toHub.Result.Status, toHub.Result.Message)
@@ -111,32 +129,15 @@ func TestConvertPodCliqueSetRoundTrip(t *testing.T) {
 	assert.Equal(t, original, roundTripped)
 }
 
-func TestConvertPodCliqueAndPodCliqueScalingGroup(t *testing.T) {
+func TestConvertPodCliqueSetNormalizesPackDomain(t *testing.T) {
 	handler, _ := registeredHandler(t)
-	objects := []runtime.Object{
-		&grovecorev1alpha1.PodClique{
-			TypeMeta:   metav1.TypeMeta{APIVersion: grovecorev1alpha1.SchemeGroupVersion.String(), Kind: "PodClique"},
-			ObjectMeta: metav1.ObjectMeta{Name: "pclq", Namespace: "default"},
-			Spec:       grovecorev1alpha1.PodCliqueSpec{Replicas: 3, MinAvailable: ptr.To[int32](2), StartsAfter: []string{"a"}},
-		},
-		&grovecorev1alpha1.PodCliqueScalingGroup{
-			TypeMeta:   metav1.TypeMeta{APIVersion: grovecorev1alpha1.SchemeGroupVersion.String(), Kind: "PodCliqueScalingGroup"},
-			ObjectMeta: metav1.ObjectMeta{Name: "pcsg", Namespace: "default"},
-			Spec:       grovecorev1alpha1.PodCliqueScalingGroupSpec{Replicas: 4, MinAvailable: ptr.To[int32](2), CliqueNames: []string{"a"}},
-		},
-	}
-	for _, obj := range objects {
-		t.Run(obj.GetObjectKind().GroupVersionKind().Kind, func(t *testing.T) {
-			response := convert(t, handler, grovecorev1beta1.SchemeGroupVersion.String(), obj)
-			require.Equal(t, metav1.StatusSuccess, response.Result.Status, response.Result.Message)
-			var converted map[string]any
-			require.NoError(t, json.Unmarshal(response.ConvertedObjects[0].Raw, &converted))
-			assert.Equal(t, grovecorev1beta1.SchemeGroupVersion.String(), converted["apiVersion"])
-			var want map[string]any
-			raw, err := json.Marshal(obj)
-			require.NoError(t, err)
-			require.NoError(t, json.Unmarshal(raw, &want))
-			assert.Equal(t, want["spec"], converted["spec"])
-		})
-	}
+	original := alphaPodCliqueSet(&grovecorev1alpha1.TopologyConstraint{TopologyName: "topo", PackDomain: grovecorev1alpha1.TopologyDomainRack})
+
+	response := convert(t, handler, grovecorev1beta1.SchemeGroupVersion.String(), original)
+	require.Equal(t, metav1.StatusSuccess, response.Result.Status, response.Result.Message)
+	var converted map[string]any
+	require.NoError(t, json.Unmarshal(response.ConvertedObjects[0].Raw, &converted))
+	topologyConstraint := converted["spec"].(map[string]any)["template"].(map[string]any)["topologyConstraint"].(map[string]any)
+	assert.NotContains(t, topologyConstraint, "packDomain")
+	assert.Equal(t, map[string]any{"required": "rack"}, topologyConstraint["pack"])
 }

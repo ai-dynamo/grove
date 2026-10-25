@@ -113,9 +113,7 @@ func TestInstallCRDs_ConversionServiceNamespace(t *testing.T) {
 	ctx := context.Background()
 
 	crds := map[string]string{
-		"podcliques.grove.io":             operatorcrds.PodCliqueCRD(),
-		"podcliquesets.grove.io":          operatorcrds.PodCliqueSetCRD(),
-		"podcliquescalinggroups.grove.io": operatorcrds.PodCliqueScalingGroupCRD(),
+		"podcliquesets.grove.io": operatorcrds.PodCliqueSetCRD(),
 	}
 	for name, crdYAML := range crds {
 		require.NoError(t, crdinstaller.InstallCRDs(ctx, cl, logr.Discard(), []string{crdYAML}, testNamespace))
@@ -134,7 +132,7 @@ func TestInstallCRDs_ConversionServiceNamespace(t *testing.T) {
 		assert.Empty(t, crd.Spec.Conversion.Webhook.ClientConfig.CABundle, name)
 	}
 
-	err := crdinstaller.InstallCRDs(ctx, cl, logr.Discard(), []string{operatorcrds.PodCliqueCRD()}, "")
+	err := crdinstaller.InstallCRDs(ctx, cl, logr.Discard(), []string{operatorcrds.PodCliqueSetCRD()}, "")
 	assert.Error(t, err, "a Service-addressed conversion webhook requires a namespace")
 }
 

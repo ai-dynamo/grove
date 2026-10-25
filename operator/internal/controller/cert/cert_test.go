@@ -40,8 +40,8 @@ func TestGetWebhooks(t *testing.T) {
 		webhooks := getWebhooks(false)
 
 		// Expect 5 admission webhooks: podcliqueset-defaulting, podcliqueset-validating, clustertopology-validating,
-		// podclique-validating, podcliquescalinggroup-validating, plus the 3 converted CRDs.
-		require.Len(t, webhooks, 8)
+		// podclique-validating, podcliquescalinggroup-validating, plus the converted PodCliqueSet CRD.
+		require.Len(t, webhooks, 6)
 		assert.Equal(t, cert.Mutating, webhooks[0].Type)   // podcliqueset-defaulting-webhook
 		assert.Equal(t, cert.Validating, webhooks[1].Type) // podcliqueset-validating-webhook
 		assert.Equal(t, cert.Validating, webhooks[2].Type) // clustertopology-validating-webhook
@@ -54,8 +54,8 @@ func TestGetWebhooks(t *testing.T) {
 	t.Run("authorizer enabled", func(t *testing.T) {
 		webhooks := getWebhooks(true)
 
-		// Expect 9 webhooks: the 5 base webhooks, the authorizer-webhook and the 3 converted CRDs
-		require.Len(t, webhooks, 9)
+		// Expect 7 webhooks: the 5 base webhooks, the authorizer-webhook and the converted PodCliqueSet CRD
+		require.Len(t, webhooks, 7)
 		assert.Equal(t, cert.Mutating, webhooks[0].Type)   // podcliqueset-defaulting-webhook
 		assert.Equal(t, cert.Validating, webhooks[1].Type) // podcliqueset-validating-webhook
 		assert.Equal(t, cert.Validating, webhooks[2].Type) // clustertopology-validating-webhook
@@ -71,8 +71,6 @@ func assertConversionCRDs(t *testing.T, webhooks []cert.WebhookInfo) {
 	t.Helper()
 	assert.Equal(t, []cert.WebhookInfo{
 		{Type: cert.CRDConversion, Name: "podcliquesets.grove.io"},
-		{Type: cert.CRDConversion, Name: "podcliques.grove.io"},
-		{Type: cert.CRDConversion, Name: "podcliquescalinggroups.grove.io"},
 	}, webhooks)
 }
 
