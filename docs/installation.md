@@ -123,6 +123,12 @@ Follow the instructions in the [quickstart guide](quickstart.md) to deploy a Pod
 
 ## Upgrade Notes
 
+### v0.2.0-beta1: grove.io/v1beta1
+
+v0.2.0-beta1 stores Grove objects as `grove.io/v1beta1` and deprecates `grove.io/v1alpha1`. The operator migrates
+existing objects when it starts. See [Upgrading to v0.2.0-beta1](user-guide/upgrading-to-v0.2.0-beta1.md) for the
+upgrade, its verification, and the downgrade procedure.
+
 ### ClusterTopology renamed to ClusterTopologyBinding
 
 Grove does not provide automatic migration for existing `ClusterTopology`
