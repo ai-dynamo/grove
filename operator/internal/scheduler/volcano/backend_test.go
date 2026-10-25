@@ -20,7 +20,7 @@ import (
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 	schedulertest "github.com/ai-dynamo/grove/operator/test/utils/scheduler"
 
@@ -232,16 +232,16 @@ func TestBackend_ValidatePodCliqueSet(t *testing.T) {
 	profile := configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameVolcano}
 	b := New(cl, cl.Scheme(), recorder, profile)
 
-	pcs := &grovecorev1alpha1.PodCliqueSet{
-		Spec: grovecorev1alpha1.PodCliqueSetSpec{
-			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
-				TopologyConstraint: &grovecorev1alpha1.TopologyConstraint{
-					PackDomain: grovecorev1alpha1.TopologyDomainZone,
+	pcs := &grovecorev1beta1.PodCliqueSet{
+		Spec: grovecorev1beta1.PodCliqueSetSpec{
+			Template: grovecorev1beta1.PodCliqueSetTemplateSpec{
+				TopologyConstraint: &grovecorev1beta1.TopologyConstraint{
+					Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: grovecorev1beta1.TopologyDomainZone},
 				},
-				Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+				Cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
 					{
 						Name: "worker",
-						Spec: grovecorev1alpha1.PodCliqueSpec{
+						Spec: grovecorev1beta1.PodCliqueSpec{
 							PodSpec: corev1.PodSpec{},
 						},
 					},
@@ -256,7 +256,7 @@ func TestBackend_ValidatePodCliqueSet(t *testing.T) {
 }
 
 func TestBackend_ValidatePodCliqueSetQueues(t *testing.T) {
-	makePCS := func() *grovecorev1alpha1.PodCliqueSet {
+	makePCS := func() *grovecorev1beta1.PodCliqueSet {
 		return testutils.NewPodCliqueSetBuilder("volcano", "default", "test-uid").
 			WithReplicas(1).
 			WithPodCliqueTemplateSpec(
@@ -293,7 +293,7 @@ func TestBackend_ValidatePodCliqueSetQueues(t *testing.T) {
 
 	testCases := []struct {
 		description      string
-		mutate           func(*grovecorev1alpha1.PodCliqueSet)
+		mutate           func(*grovecorev1beta1.PodCliqueSet)
 		existingObjs     []client.Object
 		errorContains    string
 		errorNotContains string
@@ -301,14 +301,14 @@ func TestBackend_ValidatePodCliqueSetQueues(t *testing.T) {
 	}{
 		{
 			description: "global queue is used when cliques do not override",
-			mutate: func(pcs *grovecorev1alpha1.PodCliqueSet) {
+			mutate: func(pcs *grovecorev1beta1.PodCliqueSet) {
 				pcs.Annotations = map[string]string{QueueAnnotationKey: "gpu-training"}
 			},
 			existingObjs: []client.Object{makeQueue("gpu-training", volcanov1beta1.QueueStateOpen)},
 		},
 		{
 			description: "cliques can repeat the same queue as metadata",
-			mutate: func(pcs *grovecorev1alpha1.PodCliqueSet) {
+			mutate: func(pcs *grovecorev1beta1.PodCliqueSet) {
 				pcs.Annotations = map[string]string{QueueAnnotationKey: "gpu-training"}
 				pcs.Spec.Template.Cliques[0].Annotations = map[string]string{QueueAnnotationKey: "gpu-training"}
 			},
@@ -316,7 +316,7 @@ func TestBackend_ValidatePodCliqueSetQueues(t *testing.T) {
 		},
 		{
 			description: "conflicting metadata and clique queues are rejected",
-			mutate: func(pcs *grovecorev1alpha1.PodCliqueSet) {
+			mutate: func(pcs *grovecorev1beta1.PodCliqueSet) {
 				pcs.Annotations = map[string]string{QueueAnnotationKey: "gpu-training"}
 				pcs.Spec.Template.Cliques[0].Annotations = map[string]string{QueueAnnotationKey: "high-priority"}
 			},
@@ -324,7 +324,7 @@ func TestBackend_ValidatePodCliqueSetQueues(t *testing.T) {
 		},
 		{
 			description: "all cliques must resolve to the same queue",
-			mutate: func(pcs *grovecorev1alpha1.PodCliqueSet) {
+			mutate: func(pcs *grovecorev1beta1.PodCliqueSet) {
 				pcs.Spec.Template.Cliques[0].Annotations = map[string]string{QueueAnnotationKey: "gpu-training"}
 				pcs.Spec.Template.Cliques[1].Annotations = map[string]string{QueueAnnotationKey: "high-priority"}
 			},
@@ -332,21 +332,21 @@ func TestBackend_ValidatePodCliqueSetQueues(t *testing.T) {
 		},
 		{
 			description: "missing queue defaults to default",
-			mutate:      func(_ *grovecorev1alpha1.PodCliqueSet) {},
+			mutate:      func(_ *grovecorev1beta1.PodCliqueSet) {},
 			existingObjs: []client.Object{
 				makeQueue(DefaultQueue, volcanov1beta1.QueueStateOpen),
 			},
 		},
 		{
 			description: "queue name must be valid",
-			mutate: func(pcs *grovecorev1alpha1.PodCliqueSet) {
+			mutate: func(pcs *grovecorev1beta1.PodCliqueSet) {
 				pcs.Annotations = map[string]string{QueueAnnotationKey: "Invalid_Queue"}
 			},
 			errorContains: "metadata.annotations[scheduling.grove.io/volcano-queue]",
 		},
 		{
 			description: "invalid global queue returns before checking queue object",
-			mutate: func(pcs *grovecorev1alpha1.PodCliqueSet) {
+			mutate: func(pcs *grovecorev1beta1.PodCliqueSet) {
 				pcs.Annotations = map[string]string{QueueAnnotationKey: "Invalid_Queue"}
 			},
 			errorContains:    "metadata.annotations[scheduling.grove.io/volcano-queue]",
@@ -354,14 +354,14 @@ func TestBackend_ValidatePodCliqueSetQueues(t *testing.T) {
 		},
 		{
 			description: "queue must exist",
-			mutate: func(pcs *grovecorev1alpha1.PodCliqueSet) {
+			mutate: func(pcs *grovecorev1beta1.PodCliqueSet) {
 				pcs.Annotations = map[string]string{QueueAnnotationKey: "missing"}
 			},
 			errorContains: `volcano queue "missing" does not exist`,
 		},
 		{
 			description: "queue must be open",
-			mutate: func(pcs *grovecorev1alpha1.PodCliqueSet) {
+			mutate: func(pcs *grovecorev1beta1.PodCliqueSet) {
 				pcs.Annotations = map[string]string{QueueAnnotationKey: "closed"}
 			},
 			existingObjs:  []client.Object{makeQueue("closed", "Closed")},

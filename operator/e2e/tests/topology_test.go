@@ -28,6 +28,7 @@ import (
 	apicommonconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
 	corev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	corev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/e2e/grove/podgroup"
 	"github.com/ai-dynamo/grove/operator/e2e/grove/topology"
 	"github.com/ai-dynamo/grove/operator/e2e/setup"
@@ -46,11 +47,11 @@ import (
 
 // groveTopologyLevels is the standard 4-level topology used by TAS1-TAS16.
 // These levels match the node labels applied by the e2e cluster setup.
-var groveTopologyLevels = []corev1alpha1.TopologyLevel{
-	{Domain: corev1alpha1.TopologyDomainZone, Key: setup.TopologyLabelZone},
-	{Domain: corev1alpha1.TopologyDomainBlock, Key: setup.TopologyLabelBlock},
-	{Domain: corev1alpha1.TopologyDomainRack, Key: setup.TopologyLabelRack},
-	{Domain: corev1alpha1.TopologyDomainHost, Key: setup.TopologyLabelHostname},
+var groveTopologyLevels = []corev1beta1.TopologyLevel{
+	{Domain: corev1beta1.TopologyDomainZone, Key: setup.TopologyLabelZone},
+	{Domain: corev1beta1.TopologyDomainBlock, Key: setup.TopologyLabelBlock},
+	{Domain: corev1beta1.TopologyDomainRack, Key: setup.TopologyLabelRack},
+	{Domain: corev1beta1.TopologyDomainHost, Key: setup.TopologyLabelHostname},
 }
 
 // ensureGroveTopology creates the shared "grove-topology" ClusterTopologyBinding if it does not already
@@ -108,7 +109,7 @@ func getAnchorPodGangOrFail(ctx context.Context, t *testing.T, tc *testctx.TestC
 	}
 	for i := range podGangList.Items {
 		labels := podGangList.Items[i].Labels
-		if labels[nameutils.LabelPodGangRole] == string(corev1alpha1.PodGangEntryRoleAnchor) &&
+		if labels[nameutils.LabelPodGangRole] == string(corev1beta1.PodGangEntryRoleAnchor) &&
 			labels[nameutils.LabelPodCliqueSetReplicaIndex] == strconv.Itoa(pcsReplica) {
 			return &podGangList.Items[i]
 		}
@@ -182,8 +183,8 @@ func Test_TAS1_TopologyInfrastructure(t *testing.T) {
 
 // Test_TAS2_MultipleCliquesWithDifferentConstraints tests PCS with multiple cliques having different topology constraints
 // 1. Deploy workload with PCS (no constraint) containing 2 cliques:
-//   - worker-rack: packDomain=rack (3 pods)
-//   - worker-block: packDomain=block (4 pods)
+//   - worker-rack: pack.required=rack (3 pods)
+//   - worker-block: pack.required=block (4 pods)
 //
 // 2. Verify all 7 pods are scheduled successfully
 // 3. Verify worker-rack pods (3) are in the same rack
@@ -715,8 +716,8 @@ func Test_TAS10_PCSGScalingWithTopologyConstraints(t *testing.T) {
 	lo.ForEach([]int{1, 2}, func(pcsgReplica int, _ int) {
 		if err := podGroupVerifier.VerifyScaledPCSGReplicaTopology(tc.Ctx, tc.Namespace, tc.Workload.Name, 0,
 			podgroup.ScaledPCSGConfig{
-				PCSGName:     "inference-group",
-				PCSGReplica:  pcsgReplica,
+				PCSGName:    "inference-group",
+				PCSGReplica: pcsgReplica,
 				CliqueConfigs: []podgroup.PCSGCliqueConfig{
 					{Name: "worker", PodCount: 2, Constraint: ""},
 				},
@@ -1063,8 +1064,8 @@ func Test_TAS15_DisaggregatedInferenceMultiplePCSGs(t *testing.T) {
 	// Define PCSG configurations (minAvailable=1, totalReplicas=2 for each)
 	pcsgConfigs := []podgroup.ScaledPCSGConfig{
 		{
-			PCSGName:     "decoder",
-			PCSGReplica:  1,
+			PCSGName:    "decoder",
+			PCSGReplica: 1,
 			CliqueConfigs: []podgroup.PCSGCliqueConfig{
 				{Name: "dworker", PodCount: 1, Constraint: ""},
 				{Name: "dleader", PodCount: 1, Constraint: ""},
@@ -1072,8 +1073,8 @@ func Test_TAS15_DisaggregatedInferenceMultiplePCSGs(t *testing.T) {
 			Constraint: setup.TopologyLabelRack,
 		},
 		{
-			PCSGName:     "prefill",
-			PCSGReplica:  1,
+			PCSGName:    "prefill",
+			PCSGReplica: 1,
 			CliqueConfigs: []podgroup.PCSGCliqueConfig{
 				{Name: "pworker", PodCount: 1, Constraint: ""},
 				{Name: "pleader", PodCount: 1, Constraint: ""},
@@ -1239,9 +1240,9 @@ func Test_TAS17_HeterogeneousGPUCluster(t *testing.T) {
 	defer labelCleanup()
 
 	Logger.Info("4. Create h100-topology (block→kubernetes.io/rack, host→kubernetes.io/hostname)")
-	h100Levels := []corev1alpha1.TopologyLevel{
-		{Domain: corev1alpha1.TopologyDomainBlock, Key: setup.TopologyLabelRack},
-		{Domain: corev1alpha1.TopologyDomainHost, Key: setup.TopologyLabelHostname},
+	h100Levels := []corev1beta1.TopologyLevel{
+		{Domain: corev1beta1.TopologyDomainBlock, Key: setup.TopologyLabelRack},
+		{Domain: corev1beta1.TopologyDomainHost, Key: setup.TopologyLabelHostname},
 	}
 	if err := tv.CreateClusterTopology(ctx, "h100-topology", h100Levels); err != nil {
 		t.Fatalf("Failed to create h100-topology: %v", err)
@@ -1253,10 +1254,10 @@ func Test_TAS17_HeterogeneousGPUCluster(t *testing.T) {
 	}()
 
 	Logger.Info("5. Create gb200-topology (block→example.com/nvl-block, rack→example.com/nvlink-domain, host→kubernetes.io/hostname)")
-	gb200Levels := []corev1alpha1.TopologyLevel{
-		{Domain: corev1alpha1.TopologyDomainBlock, Key: "example.com/nvl-block"},
-		{Domain: corev1alpha1.TopologyDomainRack, Key: "example.com/nvlink-domain"},
-		{Domain: corev1alpha1.TopologyDomainHost, Key: setup.TopologyLabelHostname},
+	gb200Levels := []corev1beta1.TopologyLevel{
+		{Domain: corev1beta1.TopologyDomainBlock, Key: "example.com/nvl-block"},
+		{Domain: corev1beta1.TopologyDomainRack, Key: "example.com/nvlink-domain"},
+		{Domain: corev1beta1.TopologyDomainHost, Key: setup.TopologyLabelHostname},
 	}
 	if err := tv.CreateClusterTopology(ctx, "gb200-topology", gb200Levels); err != nil {
 		t.Fatalf("Failed to create gb200-topology: %v", err)
@@ -1387,12 +1388,12 @@ func Test_TAS18_ClusterTopologyDriftDetection(t *testing.T) {
 	tv := topology.NewTopologyVerifier(tc.Client, Logger)
 
 	Logger.Info("2. Create CT with schedulerTopologyReferences pointing to non-existent KAI Topology")
-	levels := []corev1alpha1.TopologyLevel{
-		{Domain: corev1alpha1.TopologyDomainZone, Key: setup.TopologyLabelZone},
-		{Domain: corev1alpha1.TopologyDomainRack, Key: setup.TopologyLabelRack},
-		{Domain: corev1alpha1.TopologyDomainHost, Key: setup.TopologyLabelHostname},
+	levels := []corev1beta1.TopologyLevel{
+		{Domain: corev1beta1.TopologyDomainZone, Key: setup.TopologyLabelZone},
+		{Domain: corev1beta1.TopologyDomainRack, Key: setup.TopologyLabelRack},
+		{Domain: corev1beta1.TopologyDomainHost, Key: setup.TopologyLabelHostname},
 	}
-	refs := []corev1alpha1.SchedulerTopologyBinding{
+	refs := []corev1beta1.SchedulerTopologyBinding{
 		{SchedulerName: "kai-scheduler", TopologyReference: kaiTopoRef},
 	}
 	if err := tv.CreateClusterTopologyWithSchedulerReferences(ctx, ctName, levels, refs); err != nil {
@@ -1446,9 +1447,9 @@ func Test_TAS19_AutoManagedCTLifecycle(t *testing.T) {
 	tv := topology.NewTopologyVerifier(tc.Client, Logger)
 
 	Logger.Info("2. Create CT with 2 levels (zone, host) — no schedulerTopologyReferences")
-	levels2 := []corev1alpha1.TopologyLevel{
-		{Domain: corev1alpha1.TopologyDomainZone, Key: setup.TopologyLabelZone},
-		{Domain: corev1alpha1.TopologyDomainHost, Key: setup.TopologyLabelHostname},
+	levels2 := []corev1beta1.TopologyLevel{
+		{Domain: corev1beta1.TopologyDomainZone, Key: setup.TopologyLabelZone},
+		{Domain: corev1beta1.TopologyDomainHost, Key: setup.TopologyLabelHostname},
 	}
 	if err := tv.CreateClusterTopology(ctx, ctName, levels2); err != nil {
 		t.Fatalf("Failed to create %s: %v", ctName, err)
@@ -1476,10 +1477,10 @@ func Test_TAS19_AutoManagedCTLifecycle(t *testing.T) {
 	}
 
 	Logger.Info("5. Update CT to 3 levels (add rack)")
-	levels3 := []corev1alpha1.TopologyLevel{
-		{Domain: corev1alpha1.TopologyDomainZone, Key: setup.TopologyLabelZone},
-		{Domain: corev1alpha1.TopologyDomainRack, Key: setup.TopologyLabelRack},
-		{Domain: corev1alpha1.TopologyDomainHost, Key: setup.TopologyLabelHostname},
+	levels3 := []corev1beta1.TopologyLevel{
+		{Domain: corev1beta1.TopologyDomainZone, Key: setup.TopologyLabelZone},
+		{Domain: corev1beta1.TopologyDomainRack, Key: setup.TopologyLabelRack},
+		{Domain: corev1beta1.TopologyDomainHost, Key: setup.TopologyLabelHostname},
 	}
 	if err := tv.UpdateClusterTopologyLevels(ctx, ctName, levels3); err != nil {
 		t.Fatalf("Failed to update %s to 3 levels: %v", ctName, err)
@@ -1532,10 +1533,10 @@ func Test_TAS20_PCSTopologyLevelsUnavailableCondition(t *testing.T) {
 	tv := topology.NewTopologyVerifier(tc.Client, Logger)
 	podGroupVerifier := podgroup.NewPodGroupVerifier(tc.Client, Logger)
 
-	levels := []corev1alpha1.TopologyLevel{
-		{Domain: corev1alpha1.TopologyDomainZone, Key: setup.TopologyLabelZone},
-		{Domain: corev1alpha1.TopologyDomainRack, Key: setup.TopologyLabelRack},
-		{Domain: corev1alpha1.TopologyDomainHost, Key: setup.TopologyLabelHostname},
+	levels := []corev1beta1.TopologyLevel{
+		{Domain: corev1beta1.TopologyDomainZone, Key: setup.TopologyLabelZone},
+		{Domain: corev1beta1.TopologyDomainRack, Key: setup.TopologyLabelRack},
+		{Domain: corev1beta1.TopologyDomainHost, Key: setup.TopologyLabelHostname},
 	}
 
 	Logger.Info("2. Create tas20-topology ClusterTopologyBinding")
@@ -1593,7 +1594,7 @@ func Test_TAS20_PCSTopologyLevelsUnavailableCondition(t *testing.T) {
 	}
 
 	workerPCLQName := nameutils.GeneratePodCliqueName(nameutils.ResourceNameReplica{Name: tc.Workload.Name, Replica: 0}, "worker")
-	workerPCLQ := &corev1alpha1.PodClique{}
+	workerPCLQ := &corev1beta1.PodClique{}
 	if err := tc.Client.Get(ctx, client.ObjectKey{Namespace: tc.Namespace, Name: workerPCLQName}, workerPCLQ); err != nil {
 		t.Fatalf("Failed to get PodClique after scaling PCS without topology: %v", err)
 	}
@@ -1649,27 +1650,27 @@ func Test_TAS21_TopologyValidationWebhooks(t *testing.T) {
 	tests := []struct {
 		name        string
 		ctName      string
-		levels      []corev1alpha1.TopologyLevel
-		refs        []corev1alpha1.SchedulerTopologyBinding
+		levels      []corev1beta1.TopologyLevel
+		refs        []corev1beta1.SchedulerTopologyBinding
 		errContains []string
 	}{
 		{
 			name:   "duplicate topology domains",
 			ctName: "tas21-invalid-topology",
-			levels: []corev1alpha1.TopologyLevel{
-				{Domain: corev1alpha1.TopologyDomainZone, Key: setup.TopologyLabelZone},
-				{Domain: corev1alpha1.TopologyDomainZone, Key: setup.TopologyLabelRack},
+			levels: []corev1beta1.TopologyLevel{
+				{Domain: corev1beta1.TopologyDomainZone, Key: setup.TopologyLabelZone},
+				{Domain: corev1beta1.TopologyDomainZone, Key: setup.TopologyLabelRack},
 			},
 			errContains: []string{"spec.levels[1].domain", "Duplicate value"},
 		},
 		{
 			name:   "duplicate scheduler backend references",
 			ctName: "tas22-duplicate-backend",
-			levels: []corev1alpha1.TopologyLevel{
-				{Domain: corev1alpha1.TopologyDomainZone, Key: setup.TopologyLabelZone},
-				{Domain: corev1alpha1.TopologyDomainRack, Key: setup.TopologyLabelRack},
+			levels: []corev1beta1.TopologyLevel{
+				{Domain: corev1beta1.TopologyDomainZone, Key: setup.TopologyLabelZone},
+				{Domain: corev1beta1.TopologyDomainRack, Key: setup.TopologyLabelRack},
 			},
-			refs: []corev1alpha1.SchedulerTopologyBinding{
+			refs: []corev1beta1.SchedulerTopologyBinding{
 				{SchedulerName: string(configv1alpha1.SchedulerNameKai), TopologyReference: "kai-topology-a"},
 				{SchedulerName: string(configv1alpha1.SchedulerNameKai), TopologyReference: "kai-topology-b"},
 			},
@@ -1678,11 +1679,11 @@ func Test_TAS21_TopologyValidationWebhooks(t *testing.T) {
 		{
 			name:   "unknown scheduler backend reference",
 			ctName: "tas22-unknown-backend",
-			levels: []corev1alpha1.TopologyLevel{
-				{Domain: corev1alpha1.TopologyDomainZone, Key: setup.TopologyLabelZone},
-				{Domain: corev1alpha1.TopologyDomainRack, Key: setup.TopologyLabelRack},
+			levels: []corev1beta1.TopologyLevel{
+				{Domain: corev1beta1.TopologyDomainZone, Key: setup.TopologyLabelZone},
+				{Domain: corev1beta1.TopologyDomainRack, Key: setup.TopologyLabelRack},
 			},
-			refs: []corev1alpha1.SchedulerTopologyBinding{
+			refs: []corev1beta1.SchedulerTopologyBinding{
 				{SchedulerName: "unknown-scheduler", TopologyReference: "topology"},
 			},
 			errContains: []string{"spec.schedulerTopologyReferences[0].schedulerName", "scheduler backend is not enabled in Grove"},
@@ -1690,11 +1691,11 @@ func Test_TAS21_TopologyValidationWebhooks(t *testing.T) {
 		{
 			name:   "non topology aware scheduler backend reference",
 			ctName: "tas22-non-tas-backend",
-			levels: []corev1alpha1.TopologyLevel{
-				{Domain: corev1alpha1.TopologyDomainZone, Key: setup.TopologyLabelZone},
-				{Domain: corev1alpha1.TopologyDomainRack, Key: setup.TopologyLabelRack},
+			levels: []corev1beta1.TopologyLevel{
+				{Domain: corev1beta1.TopologyDomainZone, Key: setup.TopologyLabelZone},
+				{Domain: corev1beta1.TopologyDomainRack, Key: setup.TopologyLabelRack},
 			},
-			refs: []corev1alpha1.SchedulerTopologyBinding{
+			refs: []corev1beta1.SchedulerTopologyBinding{
 				{SchedulerName: string(configv1alpha1.SchedulerNameKube), TopologyReference: "default-topology"},
 			},
 			errContains: []string{"spec.schedulerTopologyReferences[0].schedulerName", "scheduler backend does not implement topology-aware scheduling"},
@@ -1703,9 +1704,9 @@ func Test_TAS21_TopologyValidationWebhooks(t *testing.T) {
 
 	for _, tcData := range tests {
 		t.Run(tcData.name, func(t *testing.T) {
-			invalidCT := &corev1alpha1.ClusterTopologyBinding{
+			invalidCT := &corev1beta1.ClusterTopologyBinding{
 				ObjectMeta: metav1.ObjectMeta{Name: tcData.ctName},
-				Spec: corev1alpha1.ClusterTopologyBindingSpec{
+				Spec: corev1beta1.ClusterTopologyBindingSpec{
 					Levels:                    tcData.levels,
 					SchedulerTopologyBindings: tcData.refs,
 				},
@@ -1731,10 +1732,10 @@ func Test_TAS21_TopologyValidationWebhooks(t *testing.T) {
 	Logger.Info("3. Create PodCliqueSet with PCS topologyName and child inherited topology constraint")
 	pcs := testutils.NewPodCliqueSetBuilder("tas21-pcs-optional-topology-name", "default", uuid.NewUUID()).
 		WithReplicas(1).
-		WithTopologyConstraint(&corev1alpha1.TopologyConstraint{
+		WithTopologyConstraint(&corev1beta1.TopologyConstraint{
 			TopologyName: "grove-topology",
-			Pack: &corev1alpha1.TopologyPackConstraint{
-				RequiredDomain: corev1alpha1.TopologyDomainZone,
+			Pack: &corev1beta1.TopologyPackConstraint{
+				RequiredDomain: corev1beta1.TopologyDomainZone,
 			},
 		}).
 		WithPodCliqueTemplateSpec(
@@ -1742,9 +1743,9 @@ func Test_TAS21_TopologyValidationWebhooks(t *testing.T) {
 				WithReplicas(1).
 				WithRoleName("worker-role").
 				WithMinAvailable(1).
-				WithTopologyConstraint(&corev1alpha1.TopologyConstraint{
-					Pack: &corev1alpha1.TopologyPackConstraint{
-						RequiredDomain: corev1alpha1.TopologyDomainHost,
+				WithTopologyConstraint(&corev1beta1.TopologyConstraint{
+					Pack: &corev1beta1.TopologyPackConstraint{
+						RequiredDomain: corev1beta1.TopologyDomainHost,
 					},
 				}).
 				Build(),
@@ -1773,7 +1774,7 @@ func Test_TAS22_PodCliqueSetTopologyCELValidation(t *testing.T) {
 	Logger.Info("2. Ensure grove-topology ClusterTopologyBinding exists for PodCliqueSet CEL validation")
 	ensureGroveTopology(ctx, t, topologyVerifier)
 
-	newPCS := func(name string, topologyConstraint *corev1alpha1.TopologyConstraint) *corev1alpha1.PodCliqueSet {
+	newPCS := func(name string, topologyConstraint *corev1beta1.TopologyConstraint) *corev1beta1.PodCliqueSet {
 		pcs := testutils.NewPodCliqueSetBuilder(name, "default", uuid.NewUUID()).
 			WithReplicas(0).
 			WithTopologyConstraint(topologyConstraint).
@@ -1788,86 +1789,78 @@ func Test_TAS22_PodCliqueSetTopologyCELValidation(t *testing.T) {
 		return pcs
 	}
 
+	// legacyPCS returns the grove.io/v1alpha1 form of a PodCliqueSet, on which the deprecated packDomain is still
+	// served and rejected for new workloads by the v1alpha1 schema.
+	legacyPCS := func(pcs *corev1beta1.PodCliqueSet, setPackDomain func(*corev1alpha1.PodCliqueSet)) *corev1alpha1.PodCliqueSet {
+		out := &corev1alpha1.PodCliqueSet{}
+		if err := corev1alpha1.Convert_v1beta1_PodCliqueSet_To_v1alpha1_PodCliqueSet(pcs, out, nil); err != nil {
+			t.Fatalf("Failed to convert PodCliqueSet %s to v1alpha1: %v", pcs.Name, err)
+		}
+		setPackDomain(out)
+		return out
+	}
+	withScalingGroup := func(pcs *corev1beta1.PodCliqueSet) *corev1beta1.PodCliqueSet {
+		replicas := int32(1)
+		minAvailable := int32(1)
+		pcs.Spec.Template.PodCliqueScalingGroupConfigs = []corev1beta1.PodCliqueScalingGroupConfig{
+			{Name: "workers", CliqueNames: []string{"worker"}, Replicas: &replicas, MinAvailable: &minAvailable},
+		}
+		return pcs
+	}
+	rackConstraint := &corev1beta1.TopologyConstraint{
+		TopologyName: "grove-topology",
+		Pack:         &corev1beta1.TopologyPackConstraint{RequiredDomain: corev1beta1.TopologyDomainRack},
+	}
+	deprecatedPackDomainMsg := "packDomain is deprecated and cannot be used on new workloads; use pack.required"
+
 	tests := []struct {
 		name        string
-		pcs         *corev1alpha1.PodCliqueSet
+		pcs         client.Object
 		errContains []string
 	}{
 		{
-			name: "deprecated packDomain on PCS create",
-			pcs: newPCS("tas22-legacy-pcs", &corev1alpha1.TopologyConstraint{
-				TopologyName: "grove-topology",
-				PackDomain:   corev1alpha1.TopologyDomainHost,
-			}),
-			errContains: []string{"packDomain is deprecated and cannot be used on new workloads; use pack.required"},
-		},
-		{
 			name: "topologyConstraint without pack",
-			pcs: newPCS("tas22-missing-pack", &corev1alpha1.TopologyConstraint{
+			pcs: newPCS("tas22-missing-pack", &corev1beta1.TopologyConstraint{
 				TopologyName: "grove-topology",
 			}),
-			errContains: []string{"topologyConstraint must specify pack or deprecated packDomain"},
+			errContains: []string{"topologyConstraint must specify pack"},
 		},
 		{
 			name: "empty pack",
-			pcs: newPCS("tas22-empty-pack", &corev1alpha1.TopologyConstraint{
+			pcs: newPCS("tas22-empty-pack", &corev1beta1.TopologyConstraint{
 				TopologyName: "grove-topology",
-				Pack:         &corev1alpha1.TopologyPackConstraint{},
+				Pack:         &corev1beta1.TopologyPackConstraint{},
 			}),
 			errContains: []string{"pack must specify at least one of required or preferred"},
 		},
 		{
-			name: "deprecated packDomain with pack.required",
-			pcs: newPCS("tas22-ambiguous-pack", &corev1alpha1.TopologyConstraint{
-				TopologyName: "grove-topology",
-				PackDomain:   corev1alpha1.TopologyDomainHost,
-				Pack: &corev1alpha1.TopologyPackConstraint{
-					RequiredDomain: corev1alpha1.TopologyDomainHost,
-				},
+			name: "deprecated packDomain on v1alpha1 PCS create",
+			pcs: legacyPCS(newPCS("tas22-legacy-pcs", &corev1beta1.TopologyConstraint{TopologyName: "grove-topology"}),
+				func(pcs *corev1alpha1.PodCliqueSet) {
+					pcs.Spec.Template.TopologyConstraint.PackDomain = corev1alpha1.TopologyDomainHost
+				}),
+			errContains: []string{deprecatedPackDomainMsg},
+		},
+		{
+			name: "deprecated packDomain with pack.required on v1alpha1",
+			pcs: legacyPCS(newPCS("tas22-ambiguous-pack", rackConstraint.DeepCopy()), func(pcs *corev1alpha1.PodCliqueSet) {
+				pcs.Spec.Template.TopologyConstraint.PackDomain = corev1alpha1.TopologyDomainHost
 			}),
 			errContains: []string{"must not set both pack.required and deprecated packDomain"},
 		},
 		{
-			name: "deprecated packDomain on PodClique create",
-			pcs: func() *corev1alpha1.PodCliqueSet {
-				pcs := newPCS("tas22-legacy-pclq", &corev1alpha1.TopologyConstraint{
-					TopologyName: "grove-topology",
-					Pack: &corev1alpha1.TopologyPackConstraint{
-						RequiredDomain: corev1alpha1.TopologyDomainRack,
-					},
-				})
-				pcs.Spec.Template.Cliques[0].TopologyConstraint = &corev1alpha1.TopologyConstraint{
-					PackDomain: corev1alpha1.TopologyDomainHost,
-				}
-				return pcs
-			}(),
-			errContains: []string{"packDomain is deprecated and cannot be used on new workloads; use pack.required"},
+			name: "deprecated packDomain on v1alpha1 PodClique create",
+			pcs: legacyPCS(newPCS("tas22-legacy-pclq", rackConstraint.DeepCopy()), func(pcs *corev1alpha1.PodCliqueSet) {
+				pcs.Spec.Template.Cliques[0].TopologyConstraint = &corev1alpha1.TopologyConstraint{PackDomain: corev1alpha1.TopologyDomainHost}
+			}),
+			errContains: []string{deprecatedPackDomainMsg},
 		},
 		{
-			name: "deprecated packDomain on PodCliqueScalingGroup create",
-			pcs: func() *corev1alpha1.PodCliqueSet {
-				pcs := newPCS("tas22-legacy-pcsg", &corev1alpha1.TopologyConstraint{
-					TopologyName: "grove-topology",
-					Pack: &corev1alpha1.TopologyPackConstraint{
-						RequiredDomain: corev1alpha1.TopologyDomainRack,
-					},
-				})
-				replicas := int32(1)
-				minAvailable := int32(1)
-				pcs.Spec.Template.PodCliqueScalingGroupConfigs = []corev1alpha1.PodCliqueScalingGroupConfig{
-					{
-						Name:         "workers",
-						CliqueNames:  []string{"worker"},
-						Replicas:     &replicas,
-						MinAvailable: &minAvailable,
-						TopologyConstraint: &corev1alpha1.TopologyConstraint{
-							PackDomain: corev1alpha1.TopologyDomainHost,
-						},
-					},
-				}
-				return pcs
-			}(),
-			errContains: []string{"packDomain is deprecated and cannot be used on new workloads; use pack.required"},
+			name: "deprecated packDomain on v1alpha1 PodCliqueScalingGroup create",
+			pcs: legacyPCS(withScalingGroup(newPCS("tas22-legacy-pcsg", rackConstraint.DeepCopy())), func(pcs *corev1alpha1.PodCliqueSet) {
+				pcs.Spec.Template.PodCliqueScalingGroupConfigs[0].TopologyConstraint = &corev1alpha1.TopologyConstraint{PackDomain: corev1alpha1.TopologyDomainHost}
+			}),
+			errContains: []string{deprecatedPackDomainMsg},
 		},
 	}
 
@@ -1887,10 +1880,10 @@ func Test_TAS22_PodCliqueSetTopologyCELValidation(t *testing.T) {
 	}
 
 	Logger.Info("4. Verify preferred-only pack passes CEL validation")
-	validPreferredOnlyPCS := newPCS("tas22-valid-preferred-only", &corev1alpha1.TopologyConstraint{
+	validPreferredOnlyPCS := newPCS("tas22-valid-preferred-only", &corev1beta1.TopologyConstraint{
 		TopologyName: "grove-topology",
-		Pack: &corev1alpha1.TopologyPackConstraint{
-			PreferredDomain: corev1alpha1.TopologyDomainHost,
+		Pack: &corev1beta1.TopologyPackConstraint{
+			PreferredDomain: corev1beta1.TopologyDomainHost,
 		},
 	})
 	if err := tc.Client.Create(ctx, validPreferredOnlyPCS); err != nil {
@@ -1978,16 +1971,16 @@ func Test_TAS23_PreferredPackConstraintPropagation(t *testing.T) {
 // Test_TAS24_ExternallyManagedTopologyNameResolution tests that the KAI backend resolves an
 // externally-managed ClusterTopologyBinding's SchedulerTopologyBindings TopologyReference before
 // sending a topology name to KAI, instead of sending the ClusterTopologyBinding's own name.
-// 1. Create a KAI Topology CR directly (simulating a topology object managed outside Grove) under
-//    a name distinct from the ClusterTopologyBinding that will reference it
-// 2. Create a ClusterTopologyBinding whose schedulerTopologyReferences binds kai-scheduler to that
-//    externally-managed KAI Topology
-// 3. Deploy a workload whose clique topologyConstraint.topologyName is the ClusterTopologyBinding's
-//    own name (not the KAI Topology name)
-// 4. Verify pods schedule successfully and land on the same host: if the KAI backend sent the
-//    ClusterTopologyBinding's own name to KAI instead of resolving TopologyReference, KAI would
-//    reject the PodGroup because no Topology CR exists under that name
-// 5. Verify the KAI PodGroup's SubGroup TopologyConstraint carries the resolved TopologyReference
+//  1. Create a KAI Topology CR directly (simulating a topology object managed outside Grove) under
+//     a name distinct from the ClusterTopologyBinding that will reference it
+//  2. Create a ClusterTopologyBinding whose schedulerTopologyReferences binds kai-scheduler to that
+//     externally-managed KAI Topology
+//  3. Deploy a workload whose clique topologyConstraint.topologyName is the ClusterTopologyBinding's
+//     own name (not the KAI Topology name)
+//  4. Verify pods schedule successfully and land on the same host: if the KAI backend sent the
+//     ClusterTopologyBinding's own name to KAI instead of resolving TopologyReference, KAI would
+//     reject the PodGroup because no Topology CR exists under that name
+//  5. Verify the KAI PodGroup's SubGroup TopologyConstraint carries the resolved TopologyReference
 func Test_TAS24_ExternallyManagedTopologyNameResolution(t *testing.T) {
 	const ctBindingName = "tas24-ct-binding"
 	const kaiTopologyName = "tas24-ext-kai-topology"
@@ -2024,10 +2017,10 @@ func Test_TAS24_ExternallyManagedTopologyNameResolution(t *testing.T) {
 	}()
 
 	Logger.Info("3. Create ClusterTopologyBinding bound to the externally-managed KAI Topology under a different name")
-	levels := []corev1alpha1.TopologyLevel{
-		{Domain: corev1alpha1.TopologyDomainHost, Key: setup.TopologyLabelHostname},
+	levels := []corev1beta1.TopologyLevel{
+		{Domain: corev1beta1.TopologyDomainHost, Key: setup.TopologyLabelHostname},
 	}
-	refs := []corev1alpha1.SchedulerTopologyBinding{
+	refs := []corev1beta1.SchedulerTopologyBinding{
 		{SchedulerName: "kai-scheduler", TopologyReference: kaiTopologyName},
 	}
 	if err := topologyVerifier.CreateClusterTopologyWithSchedulerReferences(ctx, ctBindingName, levels, refs); err != nil {

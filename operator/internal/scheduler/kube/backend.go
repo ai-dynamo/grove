@@ -18,7 +18,7 @@ import (
 	"context"
 
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
@@ -77,6 +77,6 @@ func (b *schedulerBackend) PreparePod(pod *corev1.Pod) error {
 }
 
 // ValidatePodCliqueSet runs default-scheduler-specific validations on the PodCliqueSet.
-func (b *schedulerBackend) ValidatePodCliqueSet(_ context.Context, _ *grovecorev1alpha1.PodCliqueSet, _ ...scheduler.ValidateOption) error {
+func (b *schedulerBackend) ValidatePodCliqueSet(_ context.Context, _ *grovecorev1beta1.PodCliqueSet, _ ...scheduler.ValidateOption) error {
 	return nil
 }

@@ -18,7 +18,7 @@ import (
 	"testing"
 
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/stretchr/testify/assert"
@@ -34,15 +34,15 @@ func TestPodCliqueScalingGroupReconcilePredicate(t *testing.T) {
 	pred, ok := podCliqueScalingGroupReconcilePredicate().(predicate.Funcs)
 	require.True(t, ok, "predicate must be predicate.Funcs")
 
-	newPCSG := func(generation int64, annotations map[string]string) *grovecorev1alpha1.PodCliqueScalingGroup {
-		return &grovecorev1alpha1.PodCliqueScalingGroup{
+	newPCSG := func(generation int64, annotations map[string]string) *grovecorev1beta1.PodCliqueScalingGroup {
+		return &grovecorev1beta1.PodCliqueScalingGroup{
 			ObjectMeta: metav1.ObjectMeta{Generation: generation, Annotations: annotations},
 		}
 	}
 	tests := []struct {
 		name string
-		old  *grovecorev1alpha1.PodCliqueScalingGroup
-		new  *grovecorev1alpha1.PodCliqueScalingGroup
+		old  *grovecorev1beta1.PodCliqueScalingGroup
+		new  *grovecorev1beta1.PodCliqueScalingGroup
 		want bool
 	}{
 		{name: "spec generation changed", old: newPCSG(1, nil), new: newPCSG(2, nil), want: true},
@@ -70,43 +70,43 @@ func TestPodCliqueScalingGroupReconcilePredicate(t *testing.T) {
 
 func TestMapPCSToPCSG(t *testing.T) {
 	mapFn := mapPCSToPCSG()
-	pcsgConfig := grovecorev1alpha1.PodCliqueScalingGroupConfig{Name: "workers"}
-	newPCS := func(strategy grovecorev1alpha1.UpdateStrategyType, progress *grovecorev1alpha1.PodCliqueSetUpdateProgress) *grovecorev1alpha1.PodCliqueSet {
-		return &grovecorev1alpha1.PodCliqueSet{
+	pcsgConfig := grovecorev1beta1.PodCliqueScalingGroupConfig{Name: "workers"}
+	newPCS := func(strategy grovecorev1beta1.UpdateStrategyType, progress *grovecorev1beta1.PodCliqueSetUpdateProgress) *grovecorev1beta1.PodCliqueSet {
+		return &grovecorev1beta1.PodCliqueSet{
 			ObjectMeta: metav1.ObjectMeta{Name: "pcs", Namespace: "default"},
-			Spec: grovecorev1alpha1.PodCliqueSetSpec{
+			Spec: grovecorev1beta1.PodCliqueSetSpec{
 				Replicas:       3,
-				UpdateStrategy: &grovecorev1alpha1.PodCliqueSetUpdateStrategy{Type: strategy},
-				Template:       grovecorev1alpha1.PodCliqueSetTemplateSpec{PodCliqueScalingGroupConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{pcsgConfig}},
+				UpdateStrategy: &grovecorev1beta1.PodCliqueSetUpdateStrategy{Type: strategy},
+				Template:       grovecorev1beta1.PodCliqueSetTemplateSpec{PodCliqueScalingGroupConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{pcsgConfig}},
 			},
-			Status: grovecorev1alpha1.PodCliqueSetStatus{UpdateProgress: progress},
+			Status: grovecorev1beta1.PodCliqueSetStatus{UpdateProgress: progress},
 		}
 	}
 
 	t.Run("maps selected sparse replica", func(t *testing.T) {
-		pcs := newPCS(grovecorev1alpha1.RollingRecreateStrategy, &grovecorev1alpha1.PodCliqueSetUpdateProgress{
-			CurrentlyUpdating: []grovecorev1alpha1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 4}},
+		pcs := newPCS(grovecorev1beta1.RollingRecreateStrategy, &grovecorev1beta1.PodCliqueSetUpdateProgress{
+			CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 4}},
 		})
 		got := mapFn(t.Context(), pcs)
 		assert.Equal(t, []reconcile.Request{{NamespacedName: types.NamespacedName{Namespace: "default", Name: "pcs-4-workers"}}}, got)
 	})
 
 	t.Run("does not map OnDelete", func(t *testing.T) {
-		pcs := newPCS(grovecorev1alpha1.OnDeleteStrategy, &grovecorev1alpha1.PodCliqueSetUpdateProgress{})
+		pcs := newPCS(grovecorev1beta1.OnDeleteStrategy, &grovecorev1beta1.PodCliqueSetUpdateProgress{})
 		assert.Empty(t, mapFn(t.Context(), pcs))
 	})
 
 	t.Run("does not map without selected replica", func(t *testing.T) {
-		pcs := newPCS(grovecorev1alpha1.RollingRecreateStrategy, &grovecorev1alpha1.PodCliqueSetUpdateProgress{})
+		pcs := newPCS(grovecorev1beta1.RollingRecreateStrategy, &grovecorev1beta1.PodCliqueSetUpdateProgress{})
 		assert.Empty(t, mapFn(t.Context(), pcs))
 	})
 }
 
 func TestHasNewPCSReplicaBeenSelectedForUpdate(t *testing.T) {
-	progress := func(indices ...int32) *grovecorev1alpha1.PodCliqueSetUpdateProgress {
-		result := &grovecorev1alpha1.PodCliqueSetUpdateProgress{}
+	progress := func(indices ...int32) *grovecorev1beta1.PodCliqueSetUpdateProgress {
+		result := &grovecorev1beta1.PodCliqueSetUpdateProgress{}
 		for _, index := range indices {
-			result.CurrentlyUpdating = append(result.CurrentlyUpdating, grovecorev1alpha1.PodCliqueSetReplicaUpdateProgress{ReplicaIndex: index})
+			result.CurrentlyUpdating = append(result.CurrentlyUpdating, grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{ReplicaIndex: index})
 		}
 		return result
 	}
@@ -127,12 +127,12 @@ func TestPodGangMapPredicate(t *testing.T) {
 	pred, ok := podGangMapPredicate().(predicate.Funcs)
 	require.True(t, ok, "predicate must be predicate.Funcs")
 
-	pgmWith := func(entries ...grovecorev1alpha1.PodGangEntry) *grovecorev1alpha1.PodGangMap {
+	pgmWith := func(entries ...grovecorev1beta1.PodGangEntry) *grovecorev1beta1.PodGangMap {
 		return testutils.NewPodGangMapBuilder(pcsName, ns, "pcs-uid", 0).WithEntries(entries...).Build()
 	}
-	anchor := func(epoch string, indices map[string][]int32) grovecorev1alpha1.PodGangEntry {
+	anchor := func(epoch string, indices map[string][]int32) grovecorev1beta1.PodGangEntry {
 		return testutils.NewPodGangEntryBuilder(hash, epoch).
-			WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).
+			WithRole(grovecorev1beta1.PodGangEntryRoleAnchor).
 			WithPCSGReplicaIndices(indices).
 			Build()
 	}
@@ -140,8 +140,8 @@ func TestPodGangMapPredicate(t *testing.T) {
 	tests := []struct {
 		name     string
 		isCreate bool
-		old      *grovecorev1alpha1.PodGangMap
-		new      *grovecorev1alpha1.PodGangMap
+		old      *grovecorev1beta1.PodGangMap
+		new      *grovecorev1beta1.PodGangMap
 		want     bool
 	}{
 		{
@@ -180,11 +180,11 @@ func TestPodGangMapPredicate(t *testing.T) {
 		{
 			name: "only standalone PodClique counts change does not fire",
 			old: pgmWith(testutils.NewPodGangEntryBuilder(hash, "100").
-				WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).
+				WithRole(grovecorev1beta1.PodGangEntryRoleAnchor).
 				WithPodCliques(map[string]int32{"frontend": 6}).
 				WithPCSGReplicaIndices(map[string][]int32{"sga": {0, 1, 2}}).Build()),
 			new: pgmWith(testutils.NewPodGangEntryBuilder(hash, "100").
-				WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).
+				WithRole(grovecorev1beta1.PodGangEntryRoleAnchor).
 				WithPodCliques(map[string]int32{"frontend": 3}).
 				WithPCSGReplicaIndices(map[string][]int32{"sga": {0, 1, 2}}).Build()),
 			want: false,
@@ -212,10 +212,10 @@ func TestMapPodGangMapToPCSGs(t *testing.T) {
 
 	pgm := testutils.NewPodGangMapBuilder(pcsName, ns, "pcs-uid", 0).WithEntries(
 		testutils.NewPodGangEntryBuilder(hash, "100").
-			WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).
+			WithRole(grovecorev1beta1.PodGangEntryRoleAnchor).
 			WithPCSGReplicaIndices(map[string][]int32{"sga": {0, 1}, "sgb": {0}}).Build(),
 		testutils.NewPodGangEntryBuilder(hash, "200").
-			WithRole(grovecorev1alpha1.PodGangEntryRoleTail).
+			WithRole(grovecorev1beta1.PodGangEntryRoleTail).
 			WithPCSGReplicaIndices(map[string][]int32{"sga": {2}}).Build(),
 	).Build()
 

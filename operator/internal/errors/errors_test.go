@@ -20,7 +20,7 @@ import (
 	"testing"
 	"time"
 
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -45,14 +45,14 @@ func TestWrapError(t *testing.T) {
 
 func TestMapToLastErrors(t *testing.T) {
 	err1 := &GroveError{
-		Code:       grovecorev1alpha1.ErrorCode("ERR_TEST1"),
+		Code:       grovecorev1beta1.ErrorCode("ERR_TEST1"),
 		Cause:      fmt.Errorf("test-error1"),
 		Operation:  "test-op",
 		Message:    "test-message1",
 		ObservedAt: time.Now().UTC(),
 	}
 	err2 := &GroveError{
-		Code:       grovecorev1alpha1.ErrorCode("ERR_TEST2"),
+		Code:       grovecorev1beta1.ErrorCode("ERR_TEST2"),
 		Cause:      fmt.Errorf("test-error2"),
 		Operation:  "test-op",
 		Message:    "test-message2",
@@ -61,17 +61,17 @@ func TestMapToLastErrors(t *testing.T) {
 	testCases := []struct {
 		name             string
 		errs             []error
-		expectedLastErrs []grovecorev1alpha1.LastError
+		expectedLastErrs []grovecorev1beta1.LastError
 	}{
 		{
 			name:             "No errors",
 			errs:             []error{},
-			expectedLastErrs: []grovecorev1alpha1.LastError{},
+			expectedLastErrs: []grovecorev1beta1.LastError{},
 		},
 		{
 			name: "A slice of Grove errors",
 			errs: []error{err1, err2},
-			expectedLastErrs: []grovecorev1alpha1.LastError{
+			expectedLastErrs: []grovecorev1beta1.LastError{
 				{Code: err1.Code, Description: err1.Error(), ObservedAt: metav1.NewTime(err1.ObservedAt)},
 				{Code: err2.Code, Description: err2.Error(), ObservedAt: metav1.NewTime(err2.ObservedAt)},
 			},
@@ -79,7 +79,7 @@ func TestMapToLastErrors(t *testing.T) {
 		{
 			name: "A slice of Grove errors and other errors",
 			errs: []error{err1, err2, fmt.Errorf("test-error3")},
-			expectedLastErrs: []grovecorev1alpha1.LastError{
+			expectedLastErrs: []grovecorev1beta1.LastError{
 				{Code: err1.Code, Description: err1.Error(), ObservedAt: metav1.NewTime(err1.ObservedAt)},
 				{Code: err2.Code, Description: err2.Error(), ObservedAt: metav1.NewTime(err2.ObservedAt)},
 			},
@@ -124,7 +124,7 @@ func TestGetRequeueAfter(t *testing.T) {
 	}{
 		{name: "direct", err: requeueErr, want: 3 * time.Second, ok: true},
 		{name: "wrapped", err: fmt.Errorf("wrapped: %w", requeueErr), want: 3 * time.Second, ok: true},
-		{name: "ordinary Grove error", err: New(grovecorev1alpha1.ErrorCode("ERR_TEST"), "test-operation", "failed")},
+		{name: "ordinary Grove error", err: New(grovecorev1beta1.ErrorCode("ERR_TEST"), "test-operation", "failed")},
 		{name: "plain error", err: errors.New("failed")},
 		{name: "continue reconcile", err: NewContinueReconcileAndRequeue("test-operation", "continue")},
 	}
@@ -173,7 +173,7 @@ func TestIsRequeueAfter(t *testing.T) {
 		{name: "direct", err: requeueErr, want: true},
 		{name: "wrapped", err: fmt.Errorf("wrapped: %w", requeueErr), want: true},
 		{name: "continue reconcile", err: NewContinueReconcileAndRequeue("test-operation", "continue")},
-		{name: "ordinary Grove error", err: New(grovecorev1alpha1.ErrorCode("ERR_TEST"), "test-operation", "failed")},
+		{name: "ordinary Grove error", err: New(grovecorev1beta1.ErrorCode("ERR_TEST"), "test-operation", "failed")},
 		{name: "plain error", err: errors.New("failed")},
 		{name: "nil error"},
 	}
@@ -212,7 +212,7 @@ func TestIsContinueReconcileAndRequeue(t *testing.T) {
 		{name: "direct", err: continueErr, want: true},
 		{name: "wrapped", err: fmt.Errorf("wrapped: %w", continueErr), want: true},
 		{name: "requeue after", err: NewRequeueAfter("test-operation", "retry", time.Second), want: false},
-		{name: "ordinary Grove error", err: New(grovecorev1alpha1.ErrorCode("ERR_TEST"), "test-operation", "failed"), want: false},
+		{name: "ordinary Grove error", err: New(grovecorev1beta1.ErrorCode("ERR_TEST"), "test-operation", "failed"), want: false},
 		{name: "plain error", err: errors.New("failed"), want: false},
 	}
 

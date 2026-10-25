@@ -27,7 +27,7 @@ import (
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 
@@ -174,7 +174,7 @@ func (b *schedulerBackend) ensureWorkload(ctx context.Context, podGang *grovesch
 		return nil
 	}
 
-	pcs := &grovecorev1alpha1.PodCliqueSet{}
+	pcs := &grovecorev1beta1.PodCliqueSet{}
 	if err := b.client.Get(ctx, client.ObjectKey{Namespace: podGang.Namespace, Name: pcsName}, pcs); err != nil {
 		return fmt.Errorf("failed to get PodCliqueSet %s/%s for PodGang %s: %w", podGang.Namespace, pcsName, podGang.Name, err)
 	}
@@ -214,7 +214,7 @@ func workloadNeedsReplacement(wl *kueuev1beta2.Workload) bool {
 // podSet. The podSet name is the PodGroup FQN so scaling-group replicas of the same clique stay unique. count
 // is the clique replicas; minCount is the PodGroup minReplicas for standalone cliques and is forced to count
 // for scaling-group cliques.
-func (b *schedulerBackend) buildPrebuiltWorkload(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, podGang *groveschedulerv1alpha1.PodGang) (*kueuev1beta2.Workload, error) {
+func (b *schedulerBackend) buildPrebuiltWorkload(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet, podGang *groveschedulerv1alpha1.PodGang) (*kueuev1beta2.Workload, error) {
 	queueName, err := queueNameForPodCliqueSet(pcs)
 	if err != nil {
 		return nil, err
@@ -287,7 +287,7 @@ func (b *schedulerBackend) buildPrebuiltWorkload(ctx context.Context, pcs *grove
 
 // queueNameForPodCliqueSet returns the Kueue local queue name for the given PodCliqueSet, derived from
 // its queueNameLabel label.
-func queueNameForPodCliqueSet(pcs *grovecorev1alpha1.PodCliqueSet) (string, error) {
+func queueNameForPodCliqueSet(pcs *grovecorev1beta1.PodCliqueSet) (string, error) {
 	queueName := pcs.Labels[queueNameLabel]
 	if queueName == "" {
 		return "", fmt.Errorf("PodCliqueSet %s/%s must set label %q for Kueue queue selection", pcs.Namespace, pcs.Name, queueNameLabel)
@@ -296,7 +296,7 @@ func queueNameForPodCliqueSet(pcs *grovecorev1alpha1.PodCliqueSet) (string, erro
 }
 
 // isCliqueInScalingGroup reports whether the named clique is a member of any PodCliqueScalingGroup.
-func isCliqueInScalingGroup(pcs *grovecorev1alpha1.PodCliqueSet, cliqueName string) bool {
+func isCliqueInScalingGroup(pcs *grovecorev1beta1.PodCliqueSet, cliqueName string) bool {
 	for _, config := range pcs.Spec.Template.PodCliqueScalingGroupConfigs {
 		for _, name := range config.CliqueNames {
 			if name == cliqueName {
@@ -309,7 +309,7 @@ func isCliqueInScalingGroup(pcs *grovecorev1alpha1.PodCliqueSet, cliqueName stri
 
 // basePodGangPodGroupCount returns how many PodGroups pcs's base PodGang has: one per standalone clique, plus one per
 // clique for each of a scaling group's minAvailable replicas (see buildBootstrapAnchorEntry).
-func basePodGangPodGroupCount(pcs *grovecorev1alpha1.PodCliqueSet) int {
+func basePodGangPodGroupCount(pcs *grovecorev1beta1.PodCliqueSet) int {
 	count := 0
 	for _, cliqueTemplate := range pcs.Spec.Template.Cliques {
 		if cliqueTemplate != nil && !isCliqueInScalingGroup(pcs, cliqueTemplate.Name) {
@@ -322,8 +322,8 @@ func basePodGangPodGroupCount(pcs *grovecorev1alpha1.PodCliqueSet) int {
 	return count
 }
 
-func (b *schedulerBackend) resolveCliqueTemplate(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, podCliqueName string) (*grovecorev1alpha1.PodCliqueTemplateSpec, error) {
-	pclq := &grovecorev1alpha1.PodClique{}
+func (b *schedulerBackend) resolveCliqueTemplate(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet, podCliqueName string) (*grovecorev1beta1.PodCliqueTemplateSpec, error) {
+	pclq := &grovecorev1beta1.PodClique{}
 	if err := b.client.Get(ctx, client.ObjectKey{Namespace: pcs.Namespace, Name: podCliqueName}, pclq); err != nil {
 		return nil, fmt.Errorf("failed to get PodClique %s/%s: %w", pcs.Namespace, podCliqueName, err)
 	}
@@ -351,7 +351,7 @@ func (b *schedulerBackend) PreparePod(pod *corev1.Pod) error {
 	if podGangName == "" {
 		return fmt.Errorf("kueue backend requires pod label %q", apicommon.LabelPodGang)
 	}
-	pcs := &grovecorev1alpha1.PodCliqueSet{}
+	pcs := &grovecorev1beta1.PodCliqueSet{}
 	if err := b.client.Get(context.Background(), client.ObjectKey{Namespace: pod.Namespace, Name: pcsName}, pcs); err != nil {
 		return fmt.Errorf("failed to get PodCliqueSet %s/%s when preparing Pod: %w", pod.Namespace, pcsName, err)
 	}
@@ -436,7 +436,7 @@ func (b *schedulerBackend) topologyRequestForPodGroup(podGang *groveschedulerv1a
 	return &resolvedTopologyRequest{request: request, annotations: annotations}
 }
 
-func (b *schedulerBackend) podGangTotalPodCount(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, podGang *groveschedulerv1alpha1.PodGang) (int, error) {
+func (b *schedulerBackend) podGangTotalPodCount(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet, podGang *groveschedulerv1alpha1.PodGang) (int, error) {
 	total := 0
 	for _, podGroup := range podGang.Spec.PodGroups {
 		cliqueTemplate, err := b.resolveCliqueTemplate(ctx, pcs, podGroup.Name)
@@ -454,7 +454,7 @@ func (b *schedulerBackend) podGangTotalPodCount(ctx context.Context, pcs *grovec
 // Workload to set minCount, so at most one standalone PodClique may declare partial-gang
 // (minAvailable < replicas) semantics. The PodCliques that belong to a PodCliqueScalingGroup are
 // always all-or-nothing and must not declare minAvailable < replicas.
-func (b *schedulerBackend) ValidatePodCliqueSet(_ context.Context, pcs *grovecorev1alpha1.PodCliqueSet, opts ...scheduler.ValidateOption) error {
+func (b *schedulerBackend) ValidatePodCliqueSet(_ context.Context, pcs *grovecorev1beta1.PodCliqueSet, opts ...scheduler.ValidateOption) error {
 	queueName, err := queueNameForPodCliqueSet(pcs)
 	if err != nil {
 		return err
@@ -544,7 +544,7 @@ func (b *schedulerBackend) ValidatePodCliqueSet(_ context.Context, pcs *grovecor
 
 // podGangTopologyPreview lays out pcs's topology constraints the way the PodCliqueSet controller lays them out on a
 // PodGang, with clique names for PodGroup names and topology domains for node label keys.
-func podGangTopologyPreview(pcs *grovecorev1alpha1.PodCliqueSet) *groveschedulerv1alpha1.PodGang {
+func podGangTopologyPreview(pcs *grovecorev1beta1.PodCliqueSet) *groveschedulerv1alpha1.PodGang {
 	preview := &groveschedulerv1alpha1.PodGang{}
 	preview.Spec.TopologyConstraint = packConstraintForDomains(pcs.Spec.Template.TopologyConstraint)
 	for _, cliqueTemplate := range pcs.Spec.Template.Cliques {
@@ -570,7 +570,7 @@ func podGangTopologyPreview(pcs *grovecorev1alpha1.PodCliqueSet) *grovescheduler
 
 // packConstraintForDomains returns constraint's required and preferred domains as a PodGang topology constraint,
 // or nil if it sets neither.
-func packConstraintForDomains(constraint *grovecorev1alpha1.TopologyConstraint) *groveschedulerv1alpha1.TopologyConstraint {
+func packConstraintForDomains(constraint *grovecorev1beta1.TopologyConstraint) *groveschedulerv1alpha1.TopologyConstraint {
 	required, preferred := string(constraint.RequiredDomain()), string(constraint.PreferredDomain())
 	if required == "" && preferred == "" {
 		return nil

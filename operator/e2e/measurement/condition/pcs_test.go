@@ -22,12 +22,12 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	corev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	corev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 )
 
 func newTestScheme() *runtime.Scheme {
 	s := runtime.NewScheme()
-	_ = corev1alpha1.AddToScheme(s)
+	_ = corev1beta1.AddToScheme(s)
 	return s
 }
 
@@ -47,7 +47,7 @@ func TestPCSDeletedCondition(t *testing.T) {
 		},
 		{
 			name: "not met when PCS still exists",
-			objs: []runtime.Object{&corev1alpha1.PodCliqueSet{
+			objs: []runtime.Object{&corev1beta1.PodCliqueSet{
 				ObjectMeta: metav1.ObjectMeta{Name: "my-pcs", Namespace: "default"},
 			}},
 			want: false,
@@ -128,9 +128,9 @@ func TestPCSAvailableCondition(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			pcs := &corev1alpha1.PodCliqueSet{
+			pcs := &corev1beta1.PodCliqueSet{
 				ObjectMeta: metav1.ObjectMeta{Name: "my-pcs", Namespace: "default"},
-				Status:     corev1alpha1.PodCliqueSetStatus{AvailableReplicas: tc.available},
+				Status:     corev1beta1.PodCliqueSetStatus{AvailableReplicas: tc.available},
 			}
 
 			cl := fake.NewClientBuilder().

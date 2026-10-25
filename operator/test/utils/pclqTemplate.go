@@ -15,7 +15,7 @@
 package utils
 
 import (
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
 
 	corev1 "k8s.io/api/core/v1"
@@ -24,7 +24,7 @@ import (
 
 // PodCliqueTemplateSpecBuilder is a builder for creating PodCliqueTemplateSpec objects.
 type PodCliqueTemplateSpecBuilder struct {
-	pclqTemplateSpec *grovecorev1alpha1.PodCliqueTemplateSpec
+	pclqTemplateSpec *grovecorev1beta1.PodCliqueTemplateSpec
 }
 
 // NewPodCliqueTemplateSpecBuilder creates a new PodCliqueTemplateSpecBuilder.
@@ -36,10 +36,10 @@ func NewPodCliqueTemplateSpecBuilder(name string) *PodCliqueTemplateSpecBuilder 
 
 // NewBasicPodCliqueTemplateSpec creates a basic PodClique template without topology constraints.
 // This is a convenience function for tests that need a simple PodClique with default configuration.
-func NewBasicPodCliqueTemplateSpec(name string) *grovecorev1alpha1.PodCliqueTemplateSpec {
-	return &grovecorev1alpha1.PodCliqueTemplateSpec{
+func NewBasicPodCliqueTemplateSpec(name string) *grovecorev1beta1.PodCliqueTemplateSpec {
+	return &grovecorev1beta1.PodCliqueTemplateSpec{
 		Name: name,
-		Spec: grovecorev1alpha1.PodCliqueSpec{
+		Spec: grovecorev1beta1.PodCliqueSpec{
 			Replicas: 1,
 			RoleName: name + "-role",
 		},
@@ -47,7 +47,7 @@ func NewBasicPodCliqueTemplateSpec(name string) *grovecorev1alpha1.PodCliqueTemp
 }
 
 // Build creates a PodCliqueTemplateSpec object.
-func (b *PodCliqueTemplateSpecBuilder) Build() *grovecorev1alpha1.PodCliqueTemplateSpec {
+func (b *PodCliqueTemplateSpecBuilder) Build() *grovecorev1beta1.PodCliqueTemplateSpec {
 	// Only apply default PodSpec if no containers were configured
 	if len(b.pclqTemplateSpec.Spec.PodSpec.Containers) == 0 && len(b.pclqTemplateSpec.Spec.PodSpec.InitContainers) == 0 {
 		b.withDefaultPodSpec()
@@ -88,7 +88,7 @@ func (b *PodCliqueTemplateSpecBuilder) WithMinAvailable(minAvailable int32) *Pod
 // WithMaxUnavailable sets the RollingUpdate MaxUnavailable for the PodCliqueTemplateSpec.
 func (b *PodCliqueTemplateSpecBuilder) WithMaxUnavailable(maxUnavailable int32) *PodCliqueTemplateSpecBuilder {
 	if b.pclqTemplateSpec.RollingUpdate == nil {
-		b.pclqTemplateSpec.RollingUpdate = &grovecorev1alpha1.RollingUpdateConfiguration{}
+		b.pclqTemplateSpec.RollingUpdate = &grovecorev1beta1.RollingUpdateConfiguration{}
 	}
 	b.pclqTemplateSpec.RollingUpdate.MaxUnavailable = &maxUnavailable
 	return b
@@ -96,7 +96,7 @@ func (b *PodCliqueTemplateSpecBuilder) WithMaxUnavailable(maxUnavailable int32) 
 
 // WithScaleConfig sets the complete ScaleConfig for the PodCliqueTemplateSpec.
 func (b *PodCliqueTemplateSpecBuilder) WithScaleConfig(minReplicas *int32, maxReplicas int32) *PodCliqueTemplateSpecBuilder {
-	b.pclqTemplateSpec.Spec.ScaleConfig = &grovecorev1alpha1.AutoScalingConfig{
+	b.pclqTemplateSpec.Spec.ScaleConfig = &grovecorev1beta1.AutoScalingConfig{
 		MinReplicas: minReplicas,
 		MaxReplicas: maxReplicas,
 	}
@@ -106,7 +106,7 @@ func (b *PodCliqueTemplateSpecBuilder) WithScaleConfig(minReplicas *int32, maxRe
 // WithAutoScaleMinReplicas sets the minimum replicas in ScaleConfig for the PodClique.
 func (b *PodCliqueTemplateSpecBuilder) WithAutoScaleMinReplicas(minimum int32) *PodCliqueTemplateSpecBuilder {
 	if b.pclqTemplateSpec.Spec.ScaleConfig == nil {
-		b.pclqTemplateSpec.Spec.ScaleConfig = &grovecorev1alpha1.AutoScalingConfig{}
+		b.pclqTemplateSpec.Spec.ScaleConfig = &grovecorev1beta1.AutoScalingConfig{}
 	}
 	b.pclqTemplateSpec.Spec.ScaleConfig.MinReplicas = &minimum
 	return b
@@ -115,7 +115,7 @@ func (b *PodCliqueTemplateSpecBuilder) WithAutoScaleMinReplicas(minimum int32) *
 // WithAutoScaleMaxReplicas sets the maximum replicas in ScaleConfig for the PodClique.
 func (b *PodCliqueTemplateSpecBuilder) WithAutoScaleMaxReplicas(maximum int32) *PodCliqueTemplateSpecBuilder {
 	if b.pclqTemplateSpec.Spec.ScaleConfig == nil {
-		b.pclqTemplateSpec.Spec.ScaleConfig = &grovecorev1alpha1.AutoScalingConfig{}
+		b.pclqTemplateSpec.Spec.ScaleConfig = &grovecorev1beta1.AutoScalingConfig{}
 	}
 	b.pclqTemplateSpec.Spec.ScaleConfig.MaxReplicas = maximum
 	return b
@@ -134,7 +134,7 @@ func (b *PodCliqueTemplateSpecBuilder) WithPodSpec(podSpec corev1.PodSpec) *PodC
 }
 
 // WithTopologyConstraint sets the TopologyConstraint for the PodCliqueTemplateSpec.
-func (b *PodCliqueTemplateSpecBuilder) WithTopologyConstraint(constraint *grovecorev1alpha1.TopologyConstraint) *PodCliqueTemplateSpecBuilder {
+func (b *PodCliqueTemplateSpecBuilder) WithTopologyConstraint(constraint *grovecorev1beta1.TopologyConstraint) *PodCliqueTemplateSpecBuilder {
 	b.pclqTemplateSpec.TopologyConstraint = constraint
 	return b
 }
@@ -187,10 +187,10 @@ func (b *PodCliqueTemplateSpecBuilder) withDefaultPodSpec() *PodCliqueTemplateSp
 	return b
 }
 
-func createDefaultPodCliqueTemplateSpec(name string) *grovecorev1alpha1.PodCliqueTemplateSpec {
-	return &grovecorev1alpha1.PodCliqueTemplateSpec{
+func createDefaultPodCliqueTemplateSpec(name string) *grovecorev1beta1.PodCliqueTemplateSpec {
+	return &grovecorev1beta1.PodCliqueTemplateSpec{
 		Name: name,
-		Spec: grovecorev1alpha1.PodCliqueSpec{
+		Spec: grovecorev1beta1.PodCliqueSpec{
 			Replicas: 1,
 		},
 	}

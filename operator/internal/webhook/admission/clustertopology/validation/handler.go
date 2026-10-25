@@ -16,10 +16,10 @@ package validation
 
 import (
 	"context"
+	"fmt"
 
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
-	"github.com/ai-dynamo/grove/operator/internal/webhook/admission/v1alpha1bridge"
 
 	"github.com/go-logr/logr"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -84,8 +84,12 @@ func (h *Handler) ValidateDelete(_ context.Context, _ runtime.Object) (admission
 }
 
 // castToClusterTopology attempts to cast a runtime.Object to a ClusterTopologyBinding.
-func castToClusterTopology(obj runtime.Object) (*grovecorev1alpha1.ClusterTopologyBinding, error) {
-	return v1alpha1bridge.ClusterTopologyBinding(obj)
+func castToClusterTopology(obj runtime.Object) (*grovecorev1beta1.ClusterTopologyBinding, error) {
+	ct, ok := obj.(*grovecorev1beta1.ClusterTopologyBinding)
+	if !ok {
+		return nil, fmt.Errorf("expected a ClusterTopologyBinding object but got %T", obj)
+	}
+	return ct, nil
 }
 
 // logValidation logs details about the validation request.

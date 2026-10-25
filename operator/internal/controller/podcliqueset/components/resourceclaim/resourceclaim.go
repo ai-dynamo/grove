@@ -22,7 +22,7 @@ import (
 	"strconv"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/sync"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
@@ -39,8 +39,8 @@ import (
 )
 
 const (
-	errSyncPCSResourceClaim   grovecorev1alpha1.ErrorCode = "ERR_SYNC_PCS_RESOURCE_CLAIM"
-	errDeletePCSResourceClaim grovecorev1alpha1.ErrorCode = "ERR_DELETE_PCS_RESOURCE_CLAIM"
+	errSyncPCSResourceClaim   grovecorev1beta1.ErrorCode = "ERR_SYNC_PCS_RESOURCE_CLAIM"
+	errDeletePCSResourceClaim grovecorev1beta1.ErrorCode = "ERR_DELETE_PCS_RESOURCE_CLAIM"
 )
 
 type _resource struct {
@@ -49,7 +49,7 @@ type _resource struct {
 }
 
 // New creates a new ResourceClaim operator for managing PCS-level ResourceClaims.
-func New(client client.Client, scheme *runtime.Scheme) component.Operator[grovecorev1alpha1.PodCliqueSet, pcssync.State, pcssync.Result] {
+func New(client client.Client, scheme *runtime.Scheme) component.Operator[grovecorev1beta1.PodCliqueSet, pcssync.State, pcssync.Result] {
 	return &_resource{
 		client: client,
 		scheme: scheme,
@@ -76,7 +76,7 @@ func (r _resource) GetExistingResourceNames(ctx context.Context, logger logr.Log
 }
 
 // Sync creates or patches PCS-level ResourceClaims and deletes claims for excess replica indices.
-func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, state *pcssync.State) (pcssync.Result, error) {
+func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, state *pcssync.State) (pcssync.Result, error) {
 	if len(pcs.Spec.Template.ResourceSharing) == 0 {
 		return pcssync.Result{}, nil
 	}
@@ -99,7 +99,7 @@ func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev
 }
 
 // getResourceClaimsByPCSReplicaIndex lists owned PCS-level per-replica ResourceClaims and groups them by replica index.
-func (r _resource) getResourceClaimsByPCSReplicaIndex(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet) (map[int][]resourcev1.ResourceClaim, error) {
+func (r _resource) getResourceClaimsByPCSReplicaIndex(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet) (map[int][]resourcev1.ResourceClaim, error) {
 	claimList := &resourcev1.ResourceClaimList{}
 	if err := r.client.List(ctx, claimList, client.InNamespace(pcs.Namespace), client.MatchingLabels(resourceclaim.ResourceClaimLabels(pcs.Name))); err != nil {
 		return nil, groveerr.WrapError(err,
@@ -132,7 +132,7 @@ func (r _resource) getResourceClaimsByPCSReplicaIndex(ctx context.Context, pcs *
 }
 
 // triggerDeletionOfExcessResourceClaims deletes per-replica claims outside the expected replica set and returns scale-in indices that still have claims.
-func (r _resource) triggerDeletionOfExcessResourceClaims(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, resourceClaimsByReplicaIndex map[int][]resourcev1.ResourceClaim, state *pcssync.State) ([]int, error) {
+func (r _resource) triggerDeletionOfExcessResourceClaims(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, resourceClaimsByReplicaIndex map[int][]resourcev1.ResourceClaim, state *pcssync.State) ([]int, error) {
 	expectedReplicaIndices := sets.New(state.ExpectedReplicaIndices...)
 	scaleInReplicaIndices := sets.New(state.ScaleInReplicaIndices...)
 	var (
@@ -169,7 +169,7 @@ func (r _resource) triggerDeletionOfExcessResourceClaims(ctx context.Context, lo
 }
 
 // createOrUpdateResourceClaims creates or updates PCS-level ResourceClaims for the expected replica indices.
-func (r _resource) createOrUpdateResourceClaims(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, expectedReplicaIndices []int) error {
+func (r _resource) createOrUpdateResourceClaims(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, expectedReplicaIndices []int) error {
 	resourceSharers := resourceclaim.ResourceSharersFromPCS(pcs.Spec.Template.ResourceSharing)
 	labels := resourceclaim.ResourceClaimLabels(pcs.Name)
 	tasks := make([]utils.Task, 0, len(expectedReplicaIndices)+1)

@@ -483,7 +483,7 @@ func TestGetParentPCSPartialObjectMetadata(t *testing.T) {
 			pcsObjectMetadata: &metav1.PartialObjectMetadata{
 				TypeMeta: metav1.TypeMeta{
 					Kind:       "PodCliqueSet",
-					APIVersion: "grove.io/v1alpha1",
+					APIVersion: "grove.io/v1beta1",
 				},
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-pcs",
@@ -505,7 +505,7 @@ func TestGetParentPCSPartialObjectMetadata(t *testing.T) {
 			pcsObjectMetadata: &metav1.PartialObjectMetadata{
 				TypeMeta: metav1.TypeMeta{
 					Kind:       "PodCliqueSet",
-					APIVersion: "grove.io/v1alpha1",
+					APIVersion: "grove.io/v1beta1",
 				},
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-pcs",

@@ -22,7 +22,7 @@ import (
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	apiconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/sync"
@@ -44,11 +44,11 @@ import (
 )
 
 const (
-	errListPodClique               grovecorev1alpha1.ErrorCode = "ERR_LIST_PODCLIQUE"
-	errSyncPodClique               grovecorev1alpha1.ErrorCode = "ERR_SYNC_PODCLIQUE"
-	errDeletePodClique             grovecorev1alpha1.ErrorCode = "ERR_DELETE_PODCLIQUE"
-	errCodeListPodCliques          grovecorev1alpha1.ErrorCode = "ERR_LIST_PODCLIQUES"
-	errCodeCreateOrUpdatePodClique grovecorev1alpha1.ErrorCode = "ERR_CREATE_OR_UPDATE_PODCLIQUE"
+	errListPodClique               grovecorev1beta1.ErrorCode = "ERR_LIST_PODCLIQUE"
+	errSyncPodClique               grovecorev1beta1.ErrorCode = "ERR_SYNC_PODCLIQUE"
+	errDeletePodClique             grovecorev1beta1.ErrorCode = "ERR_DELETE_PODCLIQUE"
+	errCodeListPodCliques          grovecorev1beta1.ErrorCode = "ERR_LIST_PODCLIQUES"
+	errCodeCreateOrUpdatePodClique grovecorev1beta1.ErrorCode = "ERR_CREATE_OR_UPDATE_PODCLIQUE"
 )
 
 type _resource struct {
@@ -58,7 +58,7 @@ type _resource struct {
 }
 
 // New creates an instance of PodClique components operator.
-func New(client client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder) component.Operator[grovecorev1alpha1.PodCliqueSet, pcssync.State, pcssync.Result] {
+func New(client client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder) component.Operator[grovecorev1beta1.PodCliqueSet, pcssync.State, pcssync.Result] {
 	return &_resource{
 		client:        client,
 		scheme:        scheme,
@@ -69,7 +69,7 @@ func New(client client.Client, scheme *runtime.Scheme, eventRecorder record.Even
 // GetExistingResourceNames returns the names of all the existing resources that the PodClique Operator manages.
 func (r _resource) GetExistingResourceNames(ctx context.Context, logger logr.Logger, pcsObjMeta metav1.ObjectMeta) ([]string, error) {
 	logger.V(1).Info("Looking for existing PodCliques")
-	pclqList := &grovecorev1alpha1.PodCliqueList{}
+	pclqList := &grovecorev1beta1.PodCliqueList{}
 	if err := r.client.List(ctx,
 		pclqList,
 		client.InNamespace(pcsObjMeta.Namespace),
@@ -85,7 +85,7 @@ func (r _resource) GetExistingResourceNames(ctx context.Context, logger logr.Log
 }
 
 // Sync synchronizes all resources that the PodClique Operator manages.
-func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, state *pcssync.State) (pcssync.Result, error) {
+func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, state *pcssync.State) (pcssync.Result, error) {
 	pclqsByReplicaIndex, err := componentutils.GetStandalonePCLQsByPCSReplicaIndex(ctx, r.client, pcs.ObjectMeta)
 	if err != nil {
 		return pcssync.Result{}, groveerr.WrapError(err,
@@ -115,7 +115,7 @@ func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev
 }
 
 // triggerDeletionOfScaleInPCLQs deletes PodCliques for scale-in replica indices and returns the indices that still have PodCliques.
-func (r _resource) triggerDeletionOfScaleInPCLQs(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, pclqsByReplicaIndex map[int][]grovecorev1alpha1.PodClique, scaleInReplicaIndices []int) ([]int, error) {
+func (r _resource) triggerDeletionOfScaleInPCLQs(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, pclqsByReplicaIndex map[int][]grovecorev1beta1.PodClique, scaleInReplicaIndices []int) ([]int, error) {
 	var (
 		deletionCandidateNames                []string
 		replicaIndicesAwaitingResourceCleanup []int
@@ -139,7 +139,7 @@ func (r _resource) triggerDeletionOfScaleInPCLQs(ctx context.Context, logger log
 }
 
 // createOrUpdatePCLQs creates or updates all expected PodCliques for the PodCliqueSet.
-func (r _resource) createOrUpdatePCLQs(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, existingPCLQFQNs []string, expectedReplicaIndices []int) error {
+func (r _resource) createOrUpdatePCLQs(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, existingPCLQFQNs []string, expectedReplicaIndices []int) error {
 	expectedPCLQNames, _ := componentutils.GetExpectedPCLQNamesGroupByOwner(pcs)
 	tasks := make([]utils.Task, 0, len(expectedReplicaIndices)*len(expectedPCLQNames))
 	existingPCLQNameSet := sets.New(existingPCLQFQNs...)
@@ -187,7 +187,7 @@ func (r _resource) triggerDeletionOfPodCliques(ctx context.Context, logger logr.
 }
 
 // createDeleteTasks generates deletion tasks for the specified PodCliques.
-func (r _resource) createDeleteTasks(logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, targetPCLQNames []string) []utils.Task {
+func (r _resource) createDeleteTasks(logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, targetPCLQNames []string) []utils.Task {
 	deletionTasks := make([]utils.Task, 0, len(targetPCLQNames))
 	for _, pclqName := range targetPCLQNames {
 		pclqObjectKey := client.ObjectKey{
@@ -252,7 +252,7 @@ func (r _resource) Delete(ctx context.Context, logger logr.Logger, pcsObjectMeta
 }
 
 // doCreateOrUpdate creates or updates a single PodClique resource.
-func (r _resource) doCreateOrUpdate(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, pcsReplica int, pclqObjectKey client.ObjectKey, pclqExists bool) error {
+func (r _resource) doCreateOrUpdate(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, pcsReplica int, pclqObjectKey client.ObjectKey, pclqExists bool) error {
 	logger.V(1).Info("Running CreateOrUpdate PodClique", "pclqObjectKey", pclqObjectKey)
 	pclq := emptyPodClique(pclqObjectKey)
 	pcsObjKey := client.ObjectKeyFromObject(pcs)
@@ -277,7 +277,7 @@ func (r _resource) doCreateOrUpdate(ctx context.Context, logger logr.Logger, pcs
 // buildResource configures a PodClique with the desired state from its template. During a coherent update
 // it applies the new template only to the replica under update and preserves the running revision on every
 // other replica (see preserveRunningRevision).
-func (r _resource) buildResource(logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, pcsReplica int, pclqExists bool, pclq *grovecorev1alpha1.PodClique) error {
+func (r _resource) buildResource(logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, pcsReplica int, pclqExists bool, pclq *grovecorev1beta1.PodClique) error {
 	cliqueName := apicommon.ExtractPodCliqueNameFromStandalonePCLQFQN(pclq.Name, apicommon.ResourceNameReplica{Name: pcs.Name, Replica: pcsReplica})
 	pclqTemplate := componentutils.FindPodCliqueTemplateSpecByName(pcs, cliqueName)
 	if pclqTemplate == nil {
@@ -300,7 +300,7 @@ func (r _resource) buildResource(logger logr.Logger, pcs *grovecorev1alpha1.PodC
 // setPodCliqueObjectMeta sets the controller reference, finalizer, labels, and annotations on the
 // PodClique. A preserved replica keeps its running pod-template-hash label so its pods stay on the old
 // revision.
-func (r _resource) setPodCliqueObjectMeta(pcs *grovecorev1alpha1.PodCliqueSet, pcsReplica int, pclqTemplate *grovecorev1alpha1.PodCliqueTemplateSpec, preserveRevision bool, pclq *grovecorev1alpha1.PodClique) error {
+func (r _resource) setPodCliqueObjectMeta(pcs *grovecorev1beta1.PodCliqueSet, pcsReplica int, pclqTemplate *grovecorev1beta1.PodCliqueTemplateSpec, preserveRevision bool, pclq *grovecorev1beta1.PodClique) error {
 	pclqObjectKey := client.ObjectKeyFromObject(pclq)
 	if err := controllerutil.SetControllerReference(pcs, pclq, r.scheme); err != nil {
 		return groveerr.WrapError(err, errSyncPodClique, component.OperationSync,
@@ -332,7 +332,7 @@ func (r _resource) setPodCliqueObjectMeta(pcs *grovecorev1alpha1.PodCliqueSet, p
 // untouched. StartsAfter is user-declared desired state carried through the template, so the controller does
 // not write it. MNNVL claims are injected only when a fresh template is applied, since a preserved revision
 // already carries them.
-func setPodCliqueSpec(logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, pcsReplica int, pclqTemplate *grovecorev1alpha1.PodCliqueTemplateSpec, pclqExists, preserveRevision bool, pclq *grovecorev1alpha1.PodClique) error {
+func setPodCliqueSpec(logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, pcsReplica int, pclqTemplate *grovecorev1beta1.PodCliqueTemplateSpec, pclqExists, preserveRevision bool, pclq *grovecorev1beta1.PodClique) error {
 	if pclqExists {
 		// If an HPA is mutating the number of replicas, then it should not be overwritten by the template spec replicas.
 		preservedReplicas := pclq.Spec.Replicas
@@ -369,7 +369,7 @@ func getPodCliqueSelectorLabels(pcsObjectMeta metav1.ObjectMeta) map[string]stri
 }
 
 // getLabels constructs labels for a PodClique resource including pod template hash.
-func getLabels(pcs *grovecorev1alpha1.PodCliqueSet, pcsReplica int, pclqObjectKey client.ObjectKey, pclqTemplateSpec *grovecorev1alpha1.PodCliqueTemplateSpec) map[string]string {
+func getLabels(pcs *grovecorev1beta1.PodCliqueSet, pcsReplica int, pclqObjectKey client.ObjectKey, pclqTemplateSpec *grovecorev1beta1.PodCliqueTemplateSpec) map[string]string {
 	// A standalone PodClique carries no grove.io/podgang label on its resource. Its pods can span several
 	// anchor PodGangs, so the binding lives on each pod and is set by the standalone distribution flow. See
 	// the PodGang label preservation contract in GREP-393.
@@ -387,8 +387,8 @@ func getLabels(pcs *grovecorev1alpha1.PodCliqueSet, pcsReplica int, pclqObjectKe
 }
 
 // emptyPodClique creates an empty PodClique with only metadata set.
-func emptyPodClique(objKey client.ObjectKey) *grovecorev1alpha1.PodClique {
-	return &grovecorev1alpha1.PodClique{
+func emptyPodClique(objKey client.ObjectKey) *grovecorev1beta1.PodClique {
+	return &grovecorev1beta1.PodClique{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      objKey.Name,
 			Namespace: objKey.Namespace,

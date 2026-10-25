@@ -22,7 +22,7 @@ import (
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	apicommonconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
@@ -49,13 +49,13 @@ func TestComputePCSAvailableReplicas(t *testing.T) {
 	pcsUID := uuid.NewUUID()
 	testCases := []struct {
 		name              string
-		setupPCS          func() *grovecorev1alpha1.PodCliqueSet
+		setupPCS          func() *grovecorev1beta1.PodCliqueSet
 		childResources    func() []client.Object
 		expectedAvailable int32
 	}{
 		{
 			name: "all healthy - 2 replicas with standalone and scaling groups",
-			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
+			setupPCS: func() *grovecorev1beta1.PodCliqueSet {
 				return testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, pcsUID).
 					WithReplicas(2).
 					WithStandaloneClique("worker").
@@ -83,7 +83,7 @@ func TestComputePCSAvailableReplicas(t *testing.T) {
 		},
 		{
 			name: "mixed health - 1 healthy, 1 unhealthy",
-			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
+			setupPCS: func() *grovecorev1beta1.PodCliqueSet {
 				return testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, pcsUID).
 					WithReplicas(2).
 					WithStandaloneClique("worker").
@@ -108,7 +108,7 @@ func TestComputePCSAvailableReplicas(t *testing.T) {
 		},
 		{
 			name: "count mismatch - missing resources",
-			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
+			setupPCS: func() *grovecorev1beta1.PodCliqueSet {
 				return testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, pcsUID).
 					WithReplicas(1).
 					WithStandaloneClique("worker").
@@ -128,7 +128,7 @@ func TestComputePCSAvailableReplicas(t *testing.T) {
 		},
 		{
 			name: "empty configuration",
-			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
+			setupPCS: func() *grovecorev1beta1.PodCliqueSet {
 				return testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, pcsUID).
 					WithReplicas(1).
 					Build()
@@ -138,7 +138,7 @@ func TestComputePCSAvailableReplicas(t *testing.T) {
 		},
 		{
 			name: "only standalone cliques - all healthy",
-			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
+			setupPCS: func() *grovecorev1beta1.PodCliqueSet {
 				return testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, pcsUID).
 					WithReplicas(2).
 					WithStandaloneClique("worker").
@@ -162,7 +162,7 @@ func TestComputePCSAvailableReplicas(t *testing.T) {
 		},
 		{
 			name: "only scaling groups - all healthy",
-			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
+			setupPCS: func() *grovecorev1beta1.PodCliqueSet {
 				return testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, pcsUID).
 					WithReplicas(2).
 					WithScalingGroup("compute", []string{"frontend", "backend"}).
@@ -190,7 +190,7 @@ func TestComputePCSAvailableReplicas(t *testing.T) {
 		},
 		{
 			name: "terminating resources",
-			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
+			setupPCS: func() *grovecorev1beta1.PodCliqueSet {
 				return testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, pcsUID).
 					WithReplicas(1).
 					WithStandaloneClique("worker").
@@ -207,7 +207,7 @@ func TestComputePCSAvailableReplicas(t *testing.T) {
 		},
 		{
 			name: "unknown condition status",
-			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
+			setupPCS: func() *grovecorev1beta1.PodCliqueSet {
 				return testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, pcsUID).
 					WithReplicas(1).
 					WithScalingGroup("compute", []string{"frontend"}).
@@ -225,7 +225,7 @@ func TestComputePCSAvailableReplicas(t *testing.T) {
 		},
 		{
 			name: "no conditions set",
-			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
+			setupPCS: func() *grovecorev1beta1.PodCliqueSet {
 				return testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, pcsUID).
 					WithReplicas(1).
 					WithStandaloneClique("worker").
@@ -243,7 +243,7 @@ func TestComputePCSAvailableReplicas(t *testing.T) {
 		// Edge cases
 		{
 			name: "no child resources when expected",
-			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
+			setupPCS: func() *grovecorev1beta1.PodCliqueSet {
 				return testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, pcsUID).
 					WithReplicas(1).
 					WithScalingGroup("compute", []string{"frontend"}).
@@ -255,7 +255,7 @@ func TestComputePCSAvailableReplicas(t *testing.T) {
 		},
 		{
 			name: "extra unexpected resources",
-			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
+			setupPCS: func() *grovecorev1beta1.PodCliqueSet {
 				return testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, pcsUID).
 					WithReplicas(1).
 					WithStandaloneClique("worker").
@@ -275,7 +275,7 @@ func TestComputePCSAvailableReplicas(t *testing.T) {
 		},
 		{
 			name: "scaled-to-zero scaling group counts as available alongside a healthy standalone",
-			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
+			setupPCS: func() *grovecorev1beta1.PodCliqueSet {
 				return testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, pcsUID).
 					WithReplicas(1).
 					WithStandaloneClique("worker").
@@ -297,7 +297,7 @@ func TestComputePCSAvailableReplicas(t *testing.T) {
 		},
 		{
 			name: "scaled-to-zero standalone PodClique counts as available alongside a healthy standalone",
-			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
+			setupPCS: func() *grovecorev1beta1.PodCliqueSet {
 				return testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, pcsUID).
 					WithReplicas(1).
 					WithStandaloneClique("worker").
@@ -365,7 +365,7 @@ func TestComputePCSUpdatedReplicasWithScaledToZeroComponent(t *testing.T) {
 	// scaledToZeroPCLQ builds a 0-replica standalone PodClique with no ready pods, whose recorded template
 	// and generation hashes are set to the given values. Ready stays 0 so the case genuinely depends on the
 	// scale-to-zero availability exemption rather than on ready pods.
-	scaledToZeroPCLQ := func(cliqueName, templateHash, genHash string) *grovecorev1alpha1.PodClique {
+	scaledToZeroPCLQ := func(cliqueName, templateHash, genHash string) *grovecorev1beta1.PodClique {
 		pclq := testutils.NewPodCliqueBuilder(testPCSName, pcsUID, cliqueName, testNamespace, 0).WithReplicas(0).Build()
 		if pclq.Labels == nil {
 			pclq.Labels = map[string]string{}
@@ -378,20 +378,20 @@ func TestComputePCSUpdatedReplicasWithScaledToZeroComponent(t *testing.T) {
 
 	testCases := []struct {
 		name              string
-		setupPCS          func() *grovecorev1alpha1.PodCliqueSet
-		childResources    func(pcs *grovecorev1alpha1.PodCliqueSet) []client.Object
+		setupPCS          func() *grovecorev1beta1.PodCliqueSet
+		childResources    func(pcs *grovecorev1beta1.PodCliqueSet) []client.Object
 		expectedAvailable int32
 		expectedUpdated   int32
 	}{
 		{
 			name: "scaled-to-zero scaling group at the current revision is counted available and updated",
-			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
+			setupPCS: func() *grovecorev1beta1.PodCliqueSet {
 				return testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, pcsUID).
 					WithReplicas(1).WithStandaloneClique("worker").
 					WithScalingGroup("compute", []string{"frontend"}).
 					WithPodCliqueSetGenerationHash(&pcsGenerationHash).Build()
 			},
-			childResources: func(pcs *grovecorev1alpha1.PodCliqueSet) []client.Object {
+			childResources: func(pcs *grovecorev1beta1.PodCliqueSet) []client.Object {
 				worker := testutils.NewPodCliqueBuilder(testPCSName, pcsUID, "worker", testNamespace, 0).Build()
 				markStandalonePCLQConverged(t, pcs, worker, pcsGenerationHash)
 				return []client.Object{
@@ -407,12 +407,12 @@ func TestComputePCSUpdatedReplicasWithScaledToZeroComponent(t *testing.T) {
 		},
 		{
 			name: "scaled-to-zero standalone PodClique at the current revision is counted available and updated",
-			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
+			setupPCS: func() *grovecorev1beta1.PodCliqueSet {
 				return testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, pcsUID).
 					WithReplicas(1).WithStandaloneClique("worker").WithStandaloneClique("monitor").
 					WithPodCliqueSetGenerationHash(&pcsGenerationHash).Build()
 			},
-			childResources: func(pcs *grovecorev1alpha1.PodCliqueSet) []client.Object {
+			childResources: func(pcs *grovecorev1beta1.PodCliqueSet) []client.Object {
 				worker := testutils.NewPodCliqueBuilder(testPCSName, pcsUID, "worker", testNamespace, 0).Build()
 				markStandalonePCLQConverged(t, pcs, worker, pcsGenerationHash)
 				monitor := testutils.NewPodCliqueBuilder(testPCSName, pcsUID, "monitor", testNamespace, 0).WithReplicas(0).Build()
@@ -425,12 +425,12 @@ func TestComputePCSUpdatedReplicasWithScaledToZeroComponent(t *testing.T) {
 		},
 		{
 			name: "scaled-to-zero standalone PodClique still on the old revision is available but not updated",
-			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
+			setupPCS: func() *grovecorev1beta1.PodCliqueSet {
 				return testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, pcsUID).
 					WithReplicas(1).WithStandaloneClique("worker").WithStandaloneClique("monitor").
 					WithPodCliqueSetGenerationHash(&pcsGenerationHash).Build()
 			},
-			childResources: func(pcs *grovecorev1alpha1.PodCliqueSet) []client.Object {
+			childResources: func(pcs *grovecorev1beta1.PodCliqueSet) []client.Object {
 				worker := testutils.NewPodCliqueBuilder(testPCSName, pcsUID, "worker", testNamespace, 0).Build()
 				markStandalonePCLQConverged(t, pcs, worker, pcsGenerationHash)
 				return []client.Object{worker, scaledToZeroPCLQ("monitor", "stale-hash", "old-gen")}
@@ -460,28 +460,28 @@ func TestComputePCSUpdatedReplicasWithScaledToZeroComponent(t *testing.T) {
 // ClusterTopologyBinding paths (not found, unavailable domains, all available).
 func TestMutateTopologyLevelUnavailableConditions(t *testing.T) {
 	// basePCS returns a PodCliqueSet with a PCS-level TopologyConstraint pointing at "my-topology".
-	basePCS := func(topologyName string) *grovecorev1alpha1.PodCliqueSet {
-		var tc *grovecorev1alpha1.TopologyConstraint
+	basePCS := func(topologyName string) *grovecorev1beta1.PodCliqueSet {
+		var tc *grovecorev1beta1.TopologyConstraint
 		if topologyName != "" {
-			tc = &grovecorev1alpha1.TopologyConstraint{
+			tc = &grovecorev1beta1.TopologyConstraint{
 				TopologyName: topologyName,
-				PackDomain:   grovecorev1alpha1.TopologyDomainRack,
+				Pack:         &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: grovecorev1beta1.TopologyDomainRack},
 			}
 		}
-		return &grovecorev1alpha1.PodCliqueSet{
+		return &grovecorev1beta1.PodCliqueSet{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:       testPCSName,
 				Namespace:  testNamespace,
 				Generation: 1,
 			},
-			Spec: grovecorev1alpha1.PodCliqueSetSpec{
+			Spec: grovecorev1beta1.PodCliqueSetSpec{
 				Replicas: 1,
-				Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
+				Template: grovecorev1beta1.PodCliqueSetTemplateSpec{
 					TopologyConstraint: tc,
-					Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+					Cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
 						{
 							Name: "worker",
-							Spec: grovecorev1alpha1.PodCliqueSpec{
+							Spec: grovecorev1beta1.PodCliqueSpec{
 								Replicas:     1,
 								MinAvailable: ptr.To(int32(1)),
 							},
@@ -493,24 +493,24 @@ func TestMutateTopologyLevelUnavailableConditions(t *testing.T) {
 	}
 
 	// clusterTopology builds a ClusterTopologyBinding with the given levels.
-	clusterTopology := func(name string, levels []grovecorev1alpha1.TopologyLevel) *grovecorev1alpha1.ClusterTopologyBinding {
-		return &grovecorev1alpha1.ClusterTopologyBinding{
+	clusterTopology := func(name string, levels []grovecorev1beta1.TopologyLevel) *grovecorev1beta1.ClusterTopologyBinding {
+		return &grovecorev1beta1.ClusterTopologyBinding{
 			ObjectMeta: metav1.ObjectMeta{Name: name},
-			Spec: grovecorev1alpha1.ClusterTopologyBindingSpec{
+			Spec: grovecorev1beta1.ClusterTopologyBindingSpec{
 				Levels: levels,
 			},
 		}
 	}
 
-	standardLevels := []grovecorev1alpha1.TopologyLevel{
-		{Domain: grovecorev1alpha1.TopologyDomainZone, Key: "topology.kubernetes.io/zone"},
-		{Domain: grovecorev1alpha1.TopologyDomainRack, Key: "topology.kubernetes.io/rack"},
+	standardLevels := []grovecorev1beta1.TopologyLevel{
+		{Domain: grovecorev1beta1.TopologyDomainZone, Key: "topology.kubernetes.io/zone"},
+		{Domain: grovecorev1beta1.TopologyDomainRack, Key: "topology.kubernetes.io/rack"},
 	}
 
 	testCases := []struct {
 		name           string
 		tasEnabled     bool
-		setupPCS       func() *grovecorev1alpha1.PodCliqueSet
+		setupPCS       func() *grovecorev1beta1.PodCliqueSet
 		extraObjects   []client.Object
 		wantErr        bool
 		wantCondNil    bool // true when we expect the condition to be absent
@@ -521,7 +521,7 @@ func TestMutateTopologyLevelUnavailableConditions(t *testing.T) {
 		{
 			name:       "TAS disabled, no topology constraints — condition removed",
 			tasEnabled: false,
-			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
+			setupPCS: func() *grovecorev1beta1.PodCliqueSet {
 				return basePCS("") // no TopologyConstraint at any level
 			},
 			wantCondNil: true,
@@ -529,11 +529,11 @@ func TestMutateTopologyLevelUnavailableConditions(t *testing.T) {
 		{
 			name:       "TAS disabled, PCS has topology constraints — Unknown/TopologyAwareSchedulingDisabled",
 			tasEnabled: false,
-			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
+			setupPCS: func() *grovecorev1beta1.PodCliqueSet {
 				pcs := basePCS("")
 				// Add a clique-level constraint so getUniqueTopologyDomainsInPodCliqueSet returns domains.
-				pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
-					PackDomain: grovecorev1alpha1.TopologyDomainRack,
+				pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1beta1.TopologyConstraint{
+					Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: grovecorev1beta1.TopologyDomainRack},
 				}
 				return pcs
 			},
@@ -544,7 +544,7 @@ func TestMutateTopologyLevelUnavailableConditions(t *testing.T) {
 		{
 			name:       "TAS enabled, topologyName set, CT exists, all domains available — False/AllClusterTopologyLevelsAvailable",
 			tasEnabled: true,
-			setupPCS:   func() *grovecorev1alpha1.PodCliqueSet { return basePCS("my-topology") },
+			setupPCS:   func() *grovecorev1beta1.PodCliqueSet { return basePCS("my-topology") },
 			extraObjects: []client.Object{
 				clusterTopology("my-topology", standardLevels),
 			},
@@ -555,12 +555,11 @@ func TestMutateTopologyLevelUnavailableConditions(t *testing.T) {
 		{
 			name:       "TAS enabled, required and preferred domains available - False/AllClusterTopologyLevelsAvailable",
 			tasEnabled: true,
-			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
+			setupPCS: func() *grovecorev1beta1.PodCliqueSet {
 				pcs := basePCS("my-topology")
-				pcs.Spec.Template.TopologyConstraint.PackDomain = ""
-				pcs.Spec.Template.TopologyConstraint.Pack = &grovecorev1alpha1.TopologyPackConstraint{
-					RequiredDomain:  grovecorev1alpha1.TopologyDomainRack,
-					PreferredDomain: grovecorev1alpha1.TopologyDomainZone,
+				pcs.Spec.Template.TopologyConstraint.Pack = &grovecorev1beta1.TopologyPackConstraint{
+					RequiredDomain:  grovecorev1beta1.TopologyDomainRack,
+					PreferredDomain: grovecorev1beta1.TopologyDomainZone,
 				}
 				return pcs
 			},
@@ -574,11 +573,11 @@ func TestMutateTopologyLevelUnavailableConditions(t *testing.T) {
 		{
 			name:       "TAS enabled, named ClusterTopologyBinding is used instead of another available topology",
 			tasEnabled: true,
-			setupPCS:   func() *grovecorev1alpha1.PodCliqueSet { return basePCS("selected-topology") },
+			setupPCS:   func() *grovecorev1beta1.PodCliqueSet { return basePCS("selected-topology") },
 			extraObjects: []client.Object{
 				clusterTopology("selected-topology", standardLevels),
-				clusterTopology("other-topology", []grovecorev1alpha1.TopologyLevel{
-					{Domain: grovecorev1alpha1.TopologyDomainZone, Key: "topology.kubernetes.io/zone"},
+				clusterTopology("other-topology", []grovecorev1beta1.TopologyLevel{
+					{Domain: grovecorev1beta1.TopologyDomainZone, Key: "topology.kubernetes.io/zone"},
 				}),
 			},
 			wantStatus:     metav1.ConditionFalse,
@@ -588,12 +587,12 @@ func TestMutateTopologyLevelUnavailableConditions(t *testing.T) {
 		{
 			name:       "TAS enabled, topologyName set, CT exists, some domains unavailable — True/ClusterTopologyLevelsUnavailable",
 			tasEnabled: true,
-			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
+			setupPCS: func() *grovecorev1beta1.PodCliqueSet {
 				pcs := basePCS("my-topology")
 				// Add a clique-level constraint with a domain not present in the CT levels.
-				pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
+				pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1beta1.TopologyConstraint{
 					TopologyName: "my-topology",
-					PackDomain:   grovecorev1alpha1.TopologyDomainHost, // "host" is not in standardLevels
+					Pack:         &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: grovecorev1beta1.TopologyDomainHost}, // "host" is not in standardLevels
 				}
 				return pcs
 			},
@@ -608,12 +607,11 @@ func TestMutateTopologyLevelUnavailableConditions(t *testing.T) {
 		{
 			name:       "TAS enabled, preferred domain unavailable - True/ClusterTopologyLevelsUnavailable",
 			tasEnabled: true,
-			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
+			setupPCS: func() *grovecorev1beta1.PodCliqueSet {
 				pcs := basePCS("my-topology")
-				pcs.Spec.Template.TopologyConstraint.PackDomain = ""
-				pcs.Spec.Template.TopologyConstraint.Pack = &grovecorev1alpha1.TopologyPackConstraint{
-					RequiredDomain:  grovecorev1alpha1.TopologyDomainRack,
-					PreferredDomain: grovecorev1alpha1.TopologyDomainHost,
+				pcs.Spec.Template.TopologyConstraint.Pack = &grovecorev1beta1.TopologyPackConstraint{
+					RequiredDomain:  grovecorev1beta1.TopologyDomainRack,
+					PreferredDomain: grovecorev1beta1.TopologyDomainHost,
 				}
 				return pcs
 			},
@@ -627,7 +625,7 @@ func TestMutateTopologyLevelUnavailableConditions(t *testing.T) {
 		{
 			name:         "TAS enabled, topologyName set, CT not found — Unknown/ClusterTopologyNotFound",
 			tasEnabled:   true,
-			setupPCS:     func() *grovecorev1alpha1.PodCliqueSet { return basePCS("missing-topology") },
+			setupPCS:     func() *grovecorev1beta1.PodCliqueSet { return basePCS("missing-topology") },
 			extraObjects: nil, // no CT in fake store
 			wantStatus:   metav1.ConditionUnknown,
 			wantReason:   apicommonconstants.ConditionReasonClusterTopologyNotFound,
@@ -635,11 +633,11 @@ func TestMutateTopologyLevelUnavailableConditions(t *testing.T) {
 		{
 			name:       "TAS enabled, no topologyName, clique has constraints (backward compat) — Unknown/TopologyNameMissing",
 			tasEnabled: true,
-			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
+			setupPCS: func() *grovecorev1beta1.PodCliqueSet {
 				pcs := basePCS("") // PCS-level TopologyConstraint is nil
 				// Only a clique-level constraint is present, but it is incomplete.
-				pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
-					PackDomain: grovecorev1alpha1.TopologyDomainRack,
+				pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1beta1.TopologyConstraint{
+					Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: grovecorev1beta1.TopologyDomainRack},
 				}
 				return pcs
 			},
@@ -650,7 +648,7 @@ func TestMutateTopologyLevelUnavailableConditions(t *testing.T) {
 		{
 			name:           "TAS enabled, no constraints at all — False/AllClusterTopologyLevelsAvailable with no-constraints message",
 			tasEnabled:     true,
-			setupPCS:       func() *grovecorev1alpha1.PodCliqueSet { return basePCS("") },
+			setupPCS:       func() *grovecorev1beta1.PodCliqueSet { return basePCS("") },
 			extraObjects:   nil,
 			wantStatus:     metav1.ConditionFalse,
 			wantReason:     apicommonconstants.ConditionReasonAllTopologyLevelsAvailable,
@@ -659,18 +657,18 @@ func TestMutateTopologyLevelUnavailableConditions(t *testing.T) {
 		{
 			name:       "TAS enabled, incomplete PCS topology constraint with valid PCSG constraint — False/AllClusterTopologyLevelsAvailable",
 			tasEnabled: true,
-			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
+			setupPCS: func() *grovecorev1beta1.PodCliqueSet {
 				pcs := basePCS("")
-				pcs.Spec.Template.TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
+				pcs.Spec.Template.TopologyConstraint = &grovecorev1beta1.TopologyConstraint{
 					TopologyName: "my-topology",
 				}
-				pcs.Spec.Template.PodCliqueScalingGroupConfigs = []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+				pcs.Spec.Template.PodCliqueScalingGroupConfigs = []grovecorev1beta1.PodCliqueScalingGroupConfig{
 					{
 						Name:        "workers",
 						CliqueNames: []string{"worker"},
-						TopologyConstraint: &grovecorev1alpha1.TopologyConstraint{
+						TopologyConstraint: &grovecorev1beta1.TopologyConstraint{
 							TopologyName: "my-topology",
-							PackDomain:   grovecorev1alpha1.TopologyDomainRack,
+							Pack:         &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: grovecorev1beta1.TopologyDomainRack},
 						},
 					},
 				}
@@ -724,11 +722,11 @@ func TestMutateTopologyLevelUnavailableConditions(t *testing.T) {
 }
 
 func TestGetUniqueTopologyDomainsInPodCliqueSet(t *testing.T) {
-	makePCS := func(pcsTCFn func(*grovecorev1alpha1.PodCliqueSetTemplateSpec)) *grovecorev1alpha1.PodCliqueSet {
-		pcs := &grovecorev1alpha1.PodCliqueSet{
-			Spec: grovecorev1alpha1.PodCliqueSetSpec{
-				Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
-					Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+	makePCS := func(pcsTCFn func(*grovecorev1beta1.PodCliqueSetTemplateSpec)) *grovecorev1beta1.PodCliqueSet {
+		pcs := &grovecorev1beta1.PodCliqueSet{
+			Spec: grovecorev1beta1.PodCliqueSetSpec{
+				Template: grovecorev1beta1.PodCliqueSetTemplateSpec{
+					Cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
 						{Name: "worker"},
 					},
 				},
@@ -742,88 +740,88 @@ func TestGetUniqueTopologyDomainsInPodCliqueSet(t *testing.T) {
 
 	tests := []struct {
 		name        string
-		setupPCS    func() *grovecorev1alpha1.PodCliqueSet
-		wantDomains []grovecorev1alpha1.TopologyDomain
+		setupPCS    func() *grovecorev1beta1.PodCliqueSet
+		wantDomains []grovecorev1beta1.TopologyDomain
 	}{
 		{
 			name:        "no constraints — empty result",
-			setupPCS:    func() *grovecorev1alpha1.PodCliqueSet { return makePCS(nil) },
+			setupPCS:    func() *grovecorev1beta1.PodCliqueSet { return makePCS(nil) },
 			wantDomains: nil,
 		},
 		{
-			name: "PCS-level topologyName only, empty packDomain — empty result",
-			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
-				return makePCS(func(tmpl *grovecorev1alpha1.PodCliqueSetTemplateSpec) {
-					tmpl.TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
+			name: "PCS-level topologyName only, no pack — empty result",
+			setupPCS: func() *grovecorev1beta1.PodCliqueSet {
+				return makePCS(func(tmpl *grovecorev1beta1.PodCliqueSetTemplateSpec) {
+					tmpl.TopologyConstraint = &grovecorev1beta1.TopologyConstraint{
 						TopologyName: "my-topology",
-						// PackDomain intentionally empty
+						// Pack intentionally empty
 					}
 				})
 			},
 			wantDomains: nil,
 		},
 		{
-			name: "PCS-level topologyName and non-empty packDomain — packDomain included",
-			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
-				return makePCS(func(tmpl *grovecorev1alpha1.PodCliqueSetTemplateSpec) {
-					tmpl.TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
+			name: "PCS-level topologyName and pack.required — required domain included",
+			setupPCS: func() *grovecorev1beta1.PodCliqueSet {
+				return makePCS(func(tmpl *grovecorev1beta1.PodCliqueSetTemplateSpec) {
+					tmpl.TopologyConstraint = &grovecorev1beta1.TopologyConstraint{
 						TopologyName: "my-topology",
-						PackDomain:   grovecorev1alpha1.TopologyDomainRack,
+						Pack:         &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: grovecorev1beta1.TopologyDomainRack},
 					}
 				})
 			},
-			wantDomains: []grovecorev1alpha1.TopologyDomain{grovecorev1alpha1.TopologyDomainRack},
+			wantDomains: []grovecorev1beta1.TopologyDomain{grovecorev1beta1.TopologyDomainRack},
 		},
 		{
 			name: "PCS-level required and preferred pack domains - both domains included",
-			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
-				return makePCS(func(tmpl *grovecorev1alpha1.PodCliqueSetTemplateSpec) {
-					tmpl.TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
+			setupPCS: func() *grovecorev1beta1.PodCliqueSet {
+				return makePCS(func(tmpl *grovecorev1beta1.PodCliqueSetTemplateSpec) {
+					tmpl.TopologyConstraint = &grovecorev1beta1.TopologyConstraint{
 						TopologyName: "my-topology",
-						Pack: &grovecorev1alpha1.TopologyPackConstraint{
-							RequiredDomain:  grovecorev1alpha1.TopologyDomainRack,
-							PreferredDomain: grovecorev1alpha1.TopologyDomainHost,
+						Pack: &grovecorev1beta1.TopologyPackConstraint{
+							RequiredDomain:  grovecorev1beta1.TopologyDomainRack,
+							PreferredDomain: grovecorev1beta1.TopologyDomainHost,
 						},
 					}
 				})
 			},
-			wantDomains: []grovecorev1alpha1.TopologyDomain{grovecorev1alpha1.TopologyDomainRack, grovecorev1alpha1.TopologyDomainHost},
+			wantDomains: []grovecorev1beta1.TopologyDomain{grovecorev1beta1.TopologyDomainRack, grovecorev1beta1.TopologyDomainHost},
 		},
 		{
 			name: "PCS-level matching required and preferred pack domains - domain included once",
-			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
-				return makePCS(func(tmpl *grovecorev1alpha1.PodCliqueSetTemplateSpec) {
-					tmpl.TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
+			setupPCS: func() *grovecorev1beta1.PodCliqueSet {
+				return makePCS(func(tmpl *grovecorev1beta1.PodCliqueSetTemplateSpec) {
+					tmpl.TopologyConstraint = &grovecorev1beta1.TopologyConstraint{
 						TopologyName: "my-topology",
-						Pack: &grovecorev1alpha1.TopologyPackConstraint{
-							RequiredDomain:  grovecorev1alpha1.TopologyDomainRack,
-							PreferredDomain: grovecorev1alpha1.TopologyDomainRack,
+						Pack: &grovecorev1beta1.TopologyPackConstraint{
+							RequiredDomain:  grovecorev1beta1.TopologyDomainRack,
+							PreferredDomain: grovecorev1beta1.TopologyDomainRack,
 						},
 					}
 				})
 			},
-			wantDomains: []grovecorev1alpha1.TopologyDomain{grovecorev1alpha1.TopologyDomainRack},
+			wantDomains: []grovecorev1beta1.TopologyDomain{grovecorev1beta1.TopologyDomainRack},
 		},
 		{
-			name: "PCS empty packDomain + PCSG non-empty packDomain — only PCSG domain included",
-			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
-				return makePCS(func(tmpl *grovecorev1alpha1.PodCliqueSetTemplateSpec) {
-					tmpl.TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
+			name: "PCS without pack + PCSG pack.required — only PCSG domain included",
+			setupPCS: func() *grovecorev1beta1.PodCliqueSet {
+				return makePCS(func(tmpl *grovecorev1beta1.PodCliqueSetTemplateSpec) {
+					tmpl.TopologyConstraint = &grovecorev1beta1.TopologyConstraint{
 						TopologyName: "my-topology",
-						// PackDomain intentionally empty
+						// Pack intentionally empty
 					}
-					tmpl.PodCliqueScalingGroupConfigs = []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+					tmpl.PodCliqueScalingGroupConfigs = []grovecorev1beta1.PodCliqueScalingGroupConfig{
 						{
 							Name:        "workers",
 							CliqueNames: []string{"worker"},
-							TopologyConstraint: &grovecorev1alpha1.TopologyConstraint{
-								PackDomain: grovecorev1alpha1.TopologyDomainRack,
+							TopologyConstraint: &grovecorev1beta1.TopologyConstraint{
+								Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: grovecorev1beta1.TopologyDomainRack},
 							},
 						},
 					}
 				})
 			},
-			wantDomains: []grovecorev1alpha1.TopologyDomain{grovecorev1alpha1.TopologyDomainRack},
+			wantDomains: []grovecorev1beta1.TopologyDomain{grovecorev1beta1.TopologyDomainRack},
 		},
 	}
 
@@ -844,26 +842,26 @@ func TestComputePCSUpdateProgressCounts(t *testing.T) {
 	oldHash := "gen-hash-old"
 	pcsUID := uuid.NewUUID()
 
-	standalonePCLQ := func(t *testing.T, pcs *grovecorev1alpha1.PodCliqueSet, replicaIndex int32, hash string) *grovecorev1alpha1.PodClique {
+	standalonePCLQ := func(t *testing.T, pcs *grovecorev1beta1.PodCliqueSet, replicaIndex int32, hash string) *grovecorev1beta1.PodClique {
 		pclq := testutils.NewPodCliqueBuilder(testPCSName, pcsUID, "worker", testNamespace, replicaIndex).Build()
 		return markStandalonePCLQConverged(t, pcs, pclq, hash)
 	}
-	standalonePCLQNoHash := func(replicaIndex int32) *grovecorev1alpha1.PodClique {
+	standalonePCLQNoHash := func(replicaIndex int32) *grovecorev1beta1.PodClique {
 		return testutils.NewPodCliqueBuilder(testPCSName, pcsUID, "worker", testNamespace, replicaIndex).Build()
 	}
-	standaloneTerminatingPCLQ := func(t *testing.T, pcs *grovecorev1alpha1.PodCliqueSet, replicaIndex int32, hash string) *grovecorev1alpha1.PodClique {
+	standaloneTerminatingPCLQ := func(t *testing.T, pcs *grovecorev1beta1.PodCliqueSet, replicaIndex int32, hash string) *grovecorev1beta1.PodClique {
 		pclq := testutils.NewPodCliqueBuilder(testPCSName, pcsUID, "worker", testNamespace, replicaIndex).
 			WithOptions(testutils.WithPCLQTerminating()).Build()
 		return markStandalonePCLQConverged(t, pcs, pclq, hash)
 	}
 	// makePCSG builds a PCSG whose CurrentPodCliqueSetGenerationHash equals `hash` (i.e. updated).
-	makePCSG := func(replicaIndex int, hash string) *grovecorev1alpha1.PodCliqueScalingGroup {
+	makePCSG := func(replicaIndex int, hash string) *grovecorev1beta1.PodCliqueScalingGroup {
 		return testutils.NewPodCliqueScalingGroupBuilder(
 			pcsgName(replicaIndex), testNamespace, testPCSName, replicaIndex,
 		).WithOwnerReference(apicommonconstants.KindPodCliqueSet, testPCSName, pcsUID).WithOptions(testutils.WithPCSGCurrentPCSGenerationHash(hash)).Build()
 	}
 	// makePCSGNoHash builds a PCSG with no CurrentPodCliqueSetGenerationHash (not yet updated).
-	makePCSGNoHash := func(replicaIndex int) *grovecorev1alpha1.PodCliqueScalingGroup {
+	makePCSGNoHash := func(replicaIndex int) *grovecorev1beta1.PodCliqueScalingGroup {
 		return testutils.NewPodCliqueScalingGroupBuilder(
 			pcsgName(replicaIndex), testNamespace, testPCSName, replicaIndex,
 		).WithOwnerReference(apicommonconstants.KindPodCliqueSet, testPCSName, pcsUID).Build()
@@ -871,8 +869,8 @@ func TestComputePCSUpdateProgressCounts(t *testing.T) {
 
 	testCases := []struct {
 		name             string
-		setupPCS         func() *grovecorev1alpha1.PodCliqueSet
-		childResources   func(*testing.T, *grovecorev1alpha1.PodCliqueSet) []client.Object
+		setupPCS         func() *grovecorev1beta1.PodCliqueSet
+		childResources   func(*testing.T, *grovecorev1beta1.PodCliqueSet) []client.Object
 		wantUpdatedPCLQs int32
 		wantTotalPCLQs   int32
 		wantUpdatedPCSGs int32
@@ -880,14 +878,14 @@ func TestComputePCSUpdateProgressCounts(t *testing.T) {
 	}{
 		{
 			name: "all standalone PCLQs and PCSGs at current hash",
-			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
+			setupPCS: func() *grovecorev1beta1.PodCliqueSet {
 				return testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, pcsUID).
 					WithReplicas(2).
 					WithStandaloneClique("worker").
 					WithScalingGroup("compute", []string{"frontend"}).
 					WithPodCliqueSetGenerationHash(&pcsHash).Build()
 			},
-			childResources: func(t *testing.T, pcs *grovecorev1alpha1.PodCliqueSet) []client.Object {
+			childResources: func(t *testing.T, pcs *grovecorev1beta1.PodCliqueSet) []client.Object {
 				return []client.Object{
 					makePCSG(0, pcsHash), makePCSG(1, pcsHash),
 					standalonePCLQ(t, pcs, 0, pcsHash), standalonePCLQ(t, pcs, 1, pcsHash),
@@ -898,14 +896,14 @@ func TestComputePCSUpdateProgressCounts(t *testing.T) {
 		},
 		{
 			name: "one PCLQ at old hash, one PCSG missing hash",
-			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
+			setupPCS: func() *grovecorev1beta1.PodCliqueSet {
 				return testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, pcsUID).
 					WithReplicas(2).
 					WithStandaloneClique("worker").
 					WithScalingGroup("compute", []string{"frontend"}).
 					WithPodCliqueSetGenerationHash(&pcsHash).Build()
 			},
-			childResources: func(t *testing.T, pcs *grovecorev1alpha1.PodCliqueSet) []client.Object {
+			childResources: func(t *testing.T, pcs *grovecorev1beta1.PodCliqueSet) []client.Object {
 				return []client.Object{
 					makePCSG(0, pcsHash),               // updated
 					makePCSGNoHash(1),                  // not updated — no current hash
@@ -918,13 +916,13 @@ func TestComputePCSUpdateProgressCounts(t *testing.T) {
 		},
 		{
 			name: "terminating standalone PCLQ excluded from updated count",
-			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
+			setupPCS: func() *grovecorev1beta1.PodCliqueSet {
 				return testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, pcsUID).
 					WithReplicas(2).
 					WithStandaloneClique("worker").
 					WithPodCliqueSetGenerationHash(&pcsHash).Build()
 			},
-			childResources: func(t *testing.T, pcs *grovecorev1alpha1.PodCliqueSet) []client.Object {
+			childResources: func(t *testing.T, pcs *grovecorev1beta1.PodCliqueSet) []client.Object {
 				return []client.Object{
 					standalonePCLQ(t, pcs, 0, pcsHash),            // counted
 					standaloneTerminatingPCLQ(t, pcs, 1, pcsHash), // skipped — terminating
@@ -935,13 +933,13 @@ func TestComputePCSUpdateProgressCounts(t *testing.T) {
 		},
 		{
 			name: "PCLQ with no generation hash is not counted as updated",
-			setupPCS: func() *grovecorev1alpha1.PodCliqueSet {
+			setupPCS: func() *grovecorev1beta1.PodCliqueSet {
 				return testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, pcsUID).
 					WithReplicas(1).
 					WithStandaloneClique("worker").
 					WithPodCliqueSetGenerationHash(&pcsHash).Build()
 			},
-			childResources: func(_ *testing.T, _ *grovecorev1alpha1.PodCliqueSet) []client.Object {
+			childResources: func(_ *testing.T, _ *grovecorev1beta1.PodCliqueSet) []client.Object {
 				return []client.Object{standalonePCLQNoHash(0)}
 			},
 			wantUpdatedPCLQs: 0, wantTotalPCLQs: 1,
@@ -974,14 +972,14 @@ func TestPCSMutateReplicasWritesUpdateProgressCounts(t *testing.T) {
 	pcsHash := "gen-hash-current"
 	pcsUID := uuid.NewUUID()
 
-	build := func(withProgress bool) (*grovecorev1alpha1.PodCliqueSet, []client.Object) {
+	build := func(withProgress bool) (*grovecorev1beta1.PodCliqueSet, []client.Object) {
 		b := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, pcsUID).
 			WithReplicas(2).
 			WithStandaloneClique("worker").
 			WithScalingGroup("compute", []string{"frontend"}).
 			WithPodCliqueSetGenerationHash(&pcsHash)
 		if withProgress {
-			b = b.WithUpdateProgress(&grovecorev1alpha1.PodCliqueSetUpdateProgress{
+			b = b.WithUpdateProgress(&grovecorev1beta1.PodCliqueSetUpdateProgress{
 				UpdateStartedAt: metav1.Now(),
 			})
 		}
@@ -1054,20 +1052,20 @@ func TestCountUpdatedPCLQs(t *testing.T) {
 
 	tests := []struct {
 		name string
-		pcs  *grovecorev1alpha1.PodCliqueSet
-		in   []grovecorev1alpha1.PodClique
+		pcs  *grovecorev1beta1.PodCliqueSet
+		in   []grovecorev1beta1.PodClique
 		want int32
 	}{
-		{"nil hash -> 0 (early return guards against uninitialized PCS)", testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, pcsUID).WithStandaloneClique("worker").Build(), []grovecorev1alpha1.PodClique{matching}, 0},
+		{"nil hash -> 0 (early return guards against uninitialized PCS)", testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, pcsUID).WithStandaloneClique("worker").Build(), []grovecorev1beta1.PodClique{matching}, 0},
 		{"empty input -> 0", pcs, nil, 0},
-		{"all matching", pcs, []grovecorev1alpha1.PodClique{matching, matching}, 2},
-		{"none matching", pcs, []grovecorev1alpha1.PodClique{nonMatching, noHash}, 0},
-		{"stale label hash is not counted", pcs, []grovecorev1alpha1.PodClique{staleLabel}, 0},
-		{"stale current template hash is not counted", pcs, []grovecorev1alpha1.PodClique{staleCurrentTemplate}, 0},
-		{"not ready is not counted", pcs, []grovecorev1alpha1.PodClique{notReady}, 0},
-		{"not updated is not counted", pcs, []grovecorev1alpha1.PodClique{notUpdated}, 0},
-		{"mixed", pcs, []grovecorev1alpha1.PodClique{matching, nonMatching, matching, noHash}, 2},
-		{"terminating excluded even if hash matches", pcs, []grovecorev1alpha1.PodClique{matching, terminatingMatching}, 1},
+		{"all matching", pcs, []grovecorev1beta1.PodClique{matching, matching}, 2},
+		{"none matching", pcs, []grovecorev1beta1.PodClique{nonMatching, noHash}, 0},
+		{"stale label hash is not counted", pcs, []grovecorev1beta1.PodClique{staleLabel}, 0},
+		{"stale current template hash is not counted", pcs, []grovecorev1beta1.PodClique{staleCurrentTemplate}, 0},
+		{"not ready is not counted", pcs, []grovecorev1beta1.PodClique{notReady}, 0},
+		{"not updated is not counted", pcs, []grovecorev1beta1.PodClique{notUpdated}, 0},
+		{"mixed", pcs, []grovecorev1beta1.PodClique{matching, nonMatching, matching, noHash}, 2},
+		{"terminating excluded even if hash matches", pcs, []grovecorev1beta1.PodClique{matching, terminatingMatching}, 1},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1080,15 +1078,15 @@ func TestCountUpdatedPCSGs(t *testing.T) {
 	hash := "h"
 	otherHash := "old"
 
-	matching := grovecorev1alpha1.PodCliqueScalingGroup{}
+	matching := grovecorev1beta1.PodCliqueScalingGroup{}
 	matching.Name = "m"
 	matching.Status.CurrentPodCliqueSetGenerationHash = &hash
 
-	nonMatching := grovecorev1alpha1.PodCliqueScalingGroup{}
+	nonMatching := grovecorev1beta1.PodCliqueScalingGroup{}
 	nonMatching.Name = "n"
 	nonMatching.Status.CurrentPodCliqueSetGenerationHash = &otherHash
 
-	terminatingMatching := grovecorev1alpha1.PodCliqueScalingGroup{}
+	terminatingMatching := grovecorev1beta1.PodCliqueScalingGroup{}
 	terminatingMatching.Name = "t"
 	terminatingMatching.Status.CurrentPodCliqueSetGenerationHash = &hash
 	now := metav1.NewTime(time.Now())
@@ -1098,13 +1096,13 @@ func TestCountUpdatedPCSGs(t *testing.T) {
 	tests := []struct {
 		name string
 		hash *string
-		in   []grovecorev1alpha1.PodCliqueScalingGroup
+		in   []grovecorev1beta1.PodCliqueScalingGroup
 		want int32
 	}{
-		{"nil hash → 0", nil, []grovecorev1alpha1.PodCliqueScalingGroup{matching}, 0},
-		{"all matching", &hash, []grovecorev1alpha1.PodCliqueScalingGroup{matching, matching}, 2},
-		{"mixed", &hash, []grovecorev1alpha1.PodCliqueScalingGroup{matching, nonMatching}, 1},
-		{"terminating excluded", &hash, []grovecorev1alpha1.PodCliqueScalingGroup{matching, terminatingMatching}, 1},
+		{"nil hash → 0", nil, []grovecorev1beta1.PodCliqueScalingGroup{matching}, 0},
+		{"all matching", &hash, []grovecorev1beta1.PodCliqueScalingGroup{matching, matching}, 2},
+		{"mixed", &hash, []grovecorev1beta1.PodCliqueScalingGroup{matching, nonMatching}, 1},
+		{"terminating excluded", &hash, []grovecorev1beta1.PodCliqueScalingGroup{matching, terminatingMatching}, 1},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1130,9 +1128,9 @@ func TestMutateSelector(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			pcs := &grovecorev1alpha1.PodCliqueSet{
+			pcs := &grovecorev1beta1.PodCliqueSet{
 				ObjectMeta: metav1.ObjectMeta{Name: testPCSName},
-				Status:     grovecorev1alpha1.PodCliqueSetStatus{Selector: tt.existingSelector},
+				Status:     grovecorev1beta1.PodCliqueSetStatus{Selector: tt.existingSelector},
 			}
 
 			err := mutateSelector(pcs)
@@ -1202,7 +1200,7 @@ func TestUpdateInProgressState(t *testing.T) {
 	}
 }
 
-func markStandalonePCLQConverged(t testing.TB, pcs *grovecorev1alpha1.PodCliqueSet, pclq *grovecorev1alpha1.PodClique, generationHash string) *grovecorev1alpha1.PodClique {
+func markStandalonePCLQConverged(t testing.TB, pcs *grovecorev1beta1.PodCliqueSet, pclq *grovecorev1beta1.PodClique, generationHash string) *grovecorev1beta1.PodClique {
 	t.Helper()
 	expectedTemplateHash, err := componentutils.GetExpectedPCLQPodTemplateHash(pcs, pclq.ObjectMeta)
 	require.NoError(t, err)

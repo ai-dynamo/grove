@@ -20,7 +20,7 @@ import (
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
@@ -35,7 +35,7 @@ import (
 // remains and the sub-step gate holds, emits the next one. It returns the entry set that should exist after
 // this reconcile, which is the current set unchanged when nothing remains to emit or the gate holds. It
 // does not report update completion, which the orchestrator determines from live child status.
-func (r _resource) buildCoherentUpdateEntries(ctx context.Context, syncSnap *syncSnapshot, pcsReplicaIndex int, pgm *grovecorev1alpha1.PodGangMap) ([]grovecorev1alpha1.PodGangEntry, error) {
+func (r _resource) buildCoherentUpdateEntries(ctx context.Context, syncSnap *syncSnapshot, pcsReplicaIndex int, pgm *grovecorev1beta1.PodGangMap) ([]grovecorev1beta1.PodGangEntry, error) {
 	standalonePCLQByComponent := syncSnap.inScopeStandalonePCLQsByComponent(pcsReplicaIndex)
 	pcsgByComponent, err := syncSnap.inScopePCSGsByComponent(pcsReplicaIndex)
 	if err != nil {
@@ -102,7 +102,7 @@ func (r _resource) buildCoherentUpdateEntries(ctx context.Context, syncSnap *syn
 
 // heldEntries returns the current entries for a reconcile that emits no sub-step, advancing any fully
 // drained old entry to the current generation. The committed content is otherwise unchanged.
-func (p *subStepPlanner) heldEntries() []grovecorev1alpha1.PodGangEntry {
+func (p *subStepPlanner) heldEntries() []grovecorev1beta1.PodGangEntry {
 	return advanceFullyDrainedEntries(clonePodGangEntries(p.entries), *p.pcs.Status.CurrentGenerationHash, p.mvu)
 }
 
@@ -112,7 +112,7 @@ func (p *subStepPlanner) heldEntries() []grovecorev1alpha1.PodGangEntry {
 // and the map is single-generation by the time the update completes. Empty entries are left for
 // removeEmptyEntries to drop, and entries still holding in-scope content keep their generation so the
 // engine keeps draining them.
-func advanceFullyDrainedEntries(entries []grovecorev1alpha1.PodGangEntry, pcsCurrentGenerationHash string, mvu *mvuTemplate) []grovecorev1alpha1.PodGangEntry {
+func advanceFullyDrainedEntries(entries []grovecorev1beta1.PodGangEntry, pcsCurrentGenerationHash string, mvu *mvuTemplate) []grovecorev1beta1.PodGangEntry {
 	for i := range entries {
 		if entries[i].PodCliqueSetGenerationHash == pcsCurrentGenerationHash || isPodGangEntryEmpty(entries[i]) || entryHoldsInScopeContent(entries[i], mvu) {
 			continue
@@ -124,7 +124,7 @@ func advanceFullyDrainedEntries(entries []grovecorev1alpha1.PodGangEntry, pcsCur
 
 // entryHoldsInScopeContent reports whether the entry still carries content for any in-scope component,
 // meaning the coherent roll has more to drain from it.
-func entryHoldsInScopeContent(entry grovecorev1alpha1.PodGangEntry, mvu *mvuTemplate) bool {
+func entryHoldsInScopeContent(entry grovecorev1beta1.PodGangEntry, mvu *mvuTemplate) bool {
 	for cliqueName := range mvu.standalonePCLQs {
 		if entry.PodCliques[cliqueName] > 0 {
 			return true
@@ -139,7 +139,7 @@ func entryHoldsInScopeContent(entry grovecorev1alpha1.PodGangEntry, mvu *mvuTemp
 }
 
 // formatPodGangEntries renders PodGangMap entries in a compact one per entry form for tracing.
-func formatPodGangEntries(entries []grovecorev1alpha1.PodGangEntry) []string {
+func formatPodGangEntries(entries []grovecorev1beta1.PodGangEntry) []string {
 	out := make([]string, 0, len(entries))
 	for i := range entries {
 		entry := entries[i]
@@ -155,8 +155,8 @@ func formatPodGangEntries(entries []grovecorev1alpha1.PodGangEntry) []string {
 // every in-scope component this way keeps each count at or above MinAvailable, so the step plan is always
 // well-defined and numAnchorBearingSteps is never zero.
 func (s *syncSnapshot) computeDesiredReplicas(
-	standalonePCLQByComponent map[string]grovecorev1alpha1.PodClique,
-	pcsgByComponent map[string]grovecorev1alpha1.PodCliqueScalingGroup,
+	standalonePCLQByComponent map[string]grovecorev1beta1.PodClique,
+	pcsgByComponent map[string]grovecorev1beta1.PodCliqueScalingGroup,
 ) map[string]int32 {
 	standaloneTemplateReplicas := componentutils.GetStandalonePCLQReplicasFromPCSTemplateSpec(s.pcs)
 	pcsgTemplateReplicas := componentutils.GetPCSGReplicasFromPCSTemplateSpec(s.pcs)
@@ -180,9 +180,9 @@ func (s *syncSnapshot) computeDesiredReplicas(
 
 // inScopeStandalonePCLQsByComponent indexes the standalone PodCliques under a coherent update for one PCS
 // replica by component name, keeping only components in the update scope.
-func (s *syncSnapshot) inScopeStandalonePCLQsByComponent(pcsReplicaIndex int) map[string]grovecorev1alpha1.PodClique {
+func (s *syncSnapshot) inScopeStandalonePCLQsByComponent(pcsReplicaIndex int) map[string]grovecorev1beta1.PodClique {
 	pcsNameReplica := apicommon.ResourceNameReplica{Name: s.pcs.Name, Replica: pcsReplicaIndex}
-	pclqByComponent := make(map[string]grovecorev1alpha1.PodClique)
+	pclqByComponent := make(map[string]grovecorev1beta1.PodClique)
 	for _, pclq := range s.existingStandalonePCLQsByPCSReplicaIndex[pcsReplicaIndex] {
 		componentName := apicommon.ExtractPodCliqueNameFromStandalonePCLQFQN(pclq.Name, pcsNameReplica)
 		if _, inScope := s.mvuTemplate.standalonePCLQs[componentName]; inScope {
@@ -194,9 +194,9 @@ func (s *syncSnapshot) inScopeStandalonePCLQsByComponent(pcsReplicaIndex int) ma
 
 // inScopePCSGsByComponent indexes the PodCliqueScalingGroups under a coherent update for one PCS replica by
 // component name, keeping only components in the update scope.
-func (s *syncSnapshot) inScopePCSGsByComponent(pcsReplicaIndex int) (map[string]grovecorev1alpha1.PodCliqueScalingGroup, error) {
+func (s *syncSnapshot) inScopePCSGsByComponent(pcsReplicaIndex int) (map[string]grovecorev1beta1.PodCliqueScalingGroup, error) {
 	pcsNameReplica := apicommon.ResourceNameReplica{Name: s.pcs.Name, Replica: pcsReplicaIndex}
-	pcsgByComponent := make(map[string]grovecorev1alpha1.PodCliqueScalingGroup)
+	pcsgByComponent := make(map[string]grovecorev1beta1.PodCliqueScalingGroup)
 	for _, pcsg := range s.existingPCSGsByPCSReplicaIndex[pcsReplicaIndex] {
 		componentName, err := apicommon.ExtractScalingGroupNameFromPCSGFQN(pcsg.Name, pcsNameReplica)
 		if err != nil {
@@ -242,7 +242,7 @@ func (r _resource) canEmitNextSubStep(ctx context.Context, planner *subStepPlann
 // pass. When no current-hash entry exists yet the first sub-step has nothing to wait on, so it reports true.
 // Readiness is not required to advance because MaxUnavailable, checked separately, bounds availability
 // across both revisions.
-func (r _resource) currentBatchScheduled(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, pcsReplicaIndex int, entries []grovecorev1alpha1.PodGangEntry) (bool, error) {
+func (r _resource) currentBatchScheduled(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet, pcsReplicaIndex int, entries []grovecorev1beta1.PodGangEntry) (bool, error) {
 	latestEntry, err := componentutils.LatestEntryForGenerationHash(entries, *pcs.Status.CurrentGenerationHash)
 	if err != nil {
 		return false, groveerr.WrapError(err, errCodeInvalidEpoch, component.OperationSync,
@@ -261,7 +261,7 @@ func (r _resource) currentBatchScheduled(ctx context.Context, pcs *grovecorev1al
 // anchor rather than getting their own PodGang, so their placement is tracked through the PodClique's
 // UpdatedScheduledReplicas rather than the anchor PodGang. PodCliqueScalingGroups are not checked here
 // because they roll through their own tail PodGangs, whose placement currentBatchScheduled covers.
-func subsumedPodsScheduled(standalonePCLQByComponent map[string]grovecorev1alpha1.PodClique, planPos planPosition) bool {
+func subsumedPodsScheduled(standalonePCLQByComponent map[string]grovecorev1beta1.PodClique, planPos planPosition) bool {
 	for componentName, pclq := range standalonePCLQByComponent {
 		scheduledAtCurrentHash := int32(0)
 		if pclq.Status.UpdateProgress != nil {
@@ -422,7 +422,7 @@ type standalonePCLQPodCounts struct {
 // If the cache is stale it can only show a dead Pod as still running, which lowers the missing old-version
 // count, never raises it, so a drain never exceeds budget. This holds because old anchors are delete-only
 // during the update, so their Pod set only shrinks and a creation can never be missed.
-func (r _resource) gatherStandalonePodCounts(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, pcsReplicaIndex int, entries []grovecorev1alpha1.PodGangEntry, standalonePCLQByComponent map[string]grovecorev1alpha1.PodClique) (standalonePCLQPodCounts, error) {
+func (r _resource) gatherStandalonePodCounts(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet, pcsReplicaIndex int, entries []grovecorev1beta1.PodGangEntry, standalonePCLQByComponent map[string]grovecorev1beta1.PodClique) (standalonePCLQPodCounts, error) {
 	rnr := apicommon.ResourceNameReplica{Name: pcs.Name, Replica: pcsReplicaIndex}
 	epochByAnchorPodGangName := componentutils.EpochByAnchorPodGangName(entries, rnr)
 	currentHashAnchorEpochs := currentHashAnchorEpochSet(entries, *pcs.Status.CurrentGenerationHash)
@@ -472,10 +472,10 @@ func (r _resource) gatherStandalonePodCounts(ctx context.Context, pcs *grovecore
 
 // currentHashAnchorEpochSet returns the epochs of the current-hash anchor entries, the anchors that carry
 // new-revision content.
-func currentHashAnchorEpochSet(entries []grovecorev1alpha1.PodGangEntry, currentHash string) sets.Set[string] {
+func currentHashAnchorEpochSet(entries []grovecorev1beta1.PodGangEntry, currentHash string) sets.Set[string] {
 	epochs := sets.New[string]()
 	for i := range entries {
-		if entries[i].Role == grovecorev1alpha1.PodGangEntryRoleAnchor && entries[i].PodCliqueSetGenerationHash == currentHash {
+		if entries[i].Role == grovecorev1beta1.PodGangEntryRoleAnchor && entries[i].PodCliqueSetGenerationHash == currentHash {
 			epochs.Insert(entries[i].Epoch)
 		}
 	}
@@ -501,7 +501,7 @@ type pcsgReplicaInfo struct {
 // member PodCliques, or whose members are all terminating during a gang restart, is classified Pending by
 // ComputePCSGReplicaState rather than dropped. Dropping it would let the anchor open with fewer than
 // MinAvailable replicas. atCurrentHash is set when a current-hash entry commits the index.
-func (r _resource) gatherPCSGReplicaInfos(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, entries []grovecorev1alpha1.PodGangEntry, pcsgByComponent map[string]grovecorev1alpha1.PodCliqueScalingGroup) (map[string][]pcsgReplicaInfo, error) {
+func (r _resource) gatherPCSGReplicaInfos(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet, entries []grovecorev1beta1.PodGangEntry, pcsgByComponent map[string]grovecorev1beta1.PodCliqueScalingGroup) (map[string][]pcsgReplicaInfo, error) {
 	currentHash := *pcs.Status.CurrentGenerationHash
 	infosByComponent := make(map[string][]pcsgReplicaInfo, len(pcsgByComponent))
 	for componentName, pcsg := range pcsgByComponent {
@@ -536,7 +536,7 @@ func (r _resource) gatherPCSGReplicaInfos(ctx context.Context, pcs *grovecorev1a
 // current-hash entries commit, meaning the plan has moved them to the current generation. Membership in a
 // current-hash entry is a commitment in the PodGangMap, not an assertion that the replica's Pods have rolled
 // or are Ready.
-func currentHashCommittedPCSGReplicaIndices(entries []grovecorev1alpha1.PodGangEntry, pcsgName, currentHash string) sets.Set[int] {
+func currentHashCommittedPCSGReplicaIndices(entries []grovecorev1beta1.PodGangEntry, pcsgName, currentHash string) sets.Set[int] {
 	indices := sets.New[int]()
 	for i := range entries {
 		if entries[i].PodCliqueSetGenerationHash != currentHash {
@@ -563,11 +563,11 @@ func currentHashCommittedPCSGReplicaIndices(entries []grovecorev1alpha1.PodGangE
 //
 // Example. An old-version anchor assigns 3 Pods to a clique but only 2 are running because 1 died. That
 // anchor contributes 1 missing old-version Pod. The counts are summed over all old-version anchors.
-func numMissingOldVersionPodsByStandalonePCLQ(entries []grovecorev1alpha1.PodGangEntry, currentHash string, counts standalonePCLQPodCounts) map[string]int32 {
+func numMissingOldVersionPodsByStandalonePCLQ(entries []grovecorev1beta1.PodGangEntry, currentHash string, counts standalonePCLQPodCounts) map[string]int32 {
 	missingOldVersionPodsByClique := make(map[string]int32)
 	for i := range entries {
 		entry := entries[i]
-		if entry.Role != grovecorev1alpha1.PodGangEntryRoleAnchor || entry.PodCliqueSetGenerationHash == currentHash {
+		if entry.Role != grovecorev1beta1.PodGangEntryRoleAnchor || entry.PodCliqueSetGenerationHash == currentHash {
 			continue
 		}
 		for cliqueName, committedPodCount := range entry.PodCliques {

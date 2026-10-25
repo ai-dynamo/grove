@@ -22,7 +22,7 @@ import (
 
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	ctrlcommon "github.com/ai-dynamo/grove/operator/internal/controller/common"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	pcscomponent "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components"
@@ -45,7 +45,7 @@ type Reconciler struct {
 	client                        ctrlclient.Client
 	eventRecorder                 record.EventRecorder
 	reconcileStatusRecorder       ctrlcommon.ReconcileErrorRecorder
-	operatorRegistry              component.OperatorRegistry[grovecorev1alpha1.PodCliqueSet, pcssync.State, pcssync.Result]
+	operatorRegistry              component.OperatorRegistry[grovecorev1beta1.PodCliqueSet, pcssync.State, pcssync.Result]
 	pcsGenerationHashExpectations sync.Map
 	scalingProgressExpectations   *pcssync.ScalingProgressExpectations
 }
@@ -71,7 +71,7 @@ func NewReconciler(mgr ctrl.Manager, controllerCfg configv1alpha1.PodCliqueSetCo
 func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := ctrllogger.FromContext(ctx).WithName(controllerName)
 
-	pcs := &grovecorev1alpha1.PodCliqueSet{}
+	pcs := &grovecorev1beta1.PodCliqueSet{}
 	if result := ctrlutils.GetPodCliqueSet(ctx, r.client, logger, req.NamespacedName, pcs); ctrlcommon.ShortCircuitReconcileFlow(result) {
 		return result.Result()
 	}
@@ -98,7 +98,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 const scalingProgressCacheSyncRetryInterval = 500 * time.Millisecond
 
 // ensureScalingProgressExpectationSatisfied waits until the informer cache contains the last persisted scaling progress.
-func (r *Reconciler) ensureScalingProgressExpectationSatisfied(pcs *grovecorev1alpha1.PodCliqueSet) ctrlcommon.ReconcileStepResult {
+func (r *Reconciler) ensureScalingProgressExpectationSatisfied(pcs *grovecorev1beta1.PodCliqueSet) ctrlcommon.ReconcileStepResult {
 	if r.scalingProgressExpectations.ClearIfSatisfied(pcs.ObjectMeta, pcs.Status.ScalingProgress) {
 		return ctrlcommon.ContinueReconcile()
 	}
@@ -109,7 +109,7 @@ func (r *Reconciler) ensureScalingProgressExpectationSatisfied(pcs *grovecorev1a
 }
 
 // reconcileDelete handles PodCliqueSet deletion when a deletion timestamp is set.
-func (r *Reconciler) reconcileDelete(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) ctrlcommon.ReconcileStepResult {
+func (r *Reconciler) reconcileDelete(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet) ctrlcommon.ReconcileStepResult {
 	if !pcs.DeletionTimestamp.IsZero() {
 		if !controllerutil.ContainsFinalizer(pcs, constants.FinalizerPodCliqueSet) {
 			return ctrlcommon.DoNotRequeue()

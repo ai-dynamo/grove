@@ -20,7 +20,7 @@ import (
 	"time"
 
 	groveconfigv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler/kueue"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler/lpx"
@@ -76,7 +76,7 @@ func TestValidateCreate(t *testing.T) {
 			obj: testutils.NewPodCliqueSetBuilder("test-pcs", "default", uuid.NewUUID()).
 				WithReplicas(1).
 				WithTerminationDelay(4 * time.Hour).
-				WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder)).
+				WithCliqueStartupType(ptr.To(grovecorev1beta1.CliqueStartupTypeAnyOrder)).
 				WithPodCliqueTemplateSpec(
 					testutils.NewPodCliqueTemplateSpecBuilder("test").
 						WithReplicas(1).
@@ -88,18 +88,18 @@ func TestValidateCreate(t *testing.T) {
 		},
 		{
 			name: "invalid PodCliqueSet with nil startup type fails validation",
-			obj: &grovecorev1alpha1.PodCliqueSet{
+			obj: &grovecorev1beta1.PodCliqueSet{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-pcs",
 					Namespace: "default",
 				},
-				Spec: grovecorev1alpha1.PodCliqueSetSpec{
-					Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
+				Spec: grovecorev1beta1.PodCliqueSetSpec{
+					Template: grovecorev1beta1.PodCliqueSetTemplateSpec{
 						StartupType: nil,
-						Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+						Cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
 							{
 								Name: "test-pclq",
-								Spec: grovecorev1alpha1.PodCliqueSpec{
+								Spec: grovecorev1beta1.PodCliqueSpec{
 									RoleName: "test-pclq",
 									PodSpec:  testutils.NewPodWithBuilderWithDefaultSpec("test-pclq-xs345", "default").Build().Spec,
 									Replicas: 1,
@@ -123,7 +123,7 @@ func TestValidateCreate(t *testing.T) {
 			obj: testutils.NewPodCliqueSetBuilder("test-pcs", "default", uuid.NewUUID()).
 				WithReplicas(1).
 				WithTerminationDelay(4 * time.Hour).
-				WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder)).
+				WithCliqueStartupType(ptr.To(grovecorev1beta1.CliqueStartupTypeAnyOrder)).
 				WithPodCliqueTemplateSpec(
 					testutils.NewPodCliqueTemplateSpecBuilder("test").
 						WithReplicas(1).
@@ -139,20 +139,20 @@ func TestValidateCreate(t *testing.T) {
 		},
 		{
 			name: "unknown scheduler name returns error without panic",
-			obj: &grovecorev1alpha1.PodCliqueSet{
+			obj: &grovecorev1beta1.PodCliqueSet{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-pcs",
 					Namespace: "default",
 				},
-				Spec: grovecorev1alpha1.PodCliqueSetSpec{
+				Spec: grovecorev1beta1.PodCliqueSetSpec{
 					Replicas: 1,
-					Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
+					Template: grovecorev1beta1.PodCliqueSetTemplateSpec{
 						TerminationDelay: ptr.To(metav1.Duration{Duration: 4 * time.Hour}),
-						StartupType:      ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder),
-						Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+						StartupType:      ptr.To(grovecorev1beta1.CliqueStartupTypeAnyOrder),
+						Cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
 							{
 								Name: "test-pclq",
-								Spec: grovecorev1alpha1.PodCliqueSpec{
+								Spec: grovecorev1beta1.PodCliqueSpec{
 									RoleName:     "test-role",
 									Replicas:     1,
 									MinAvailable: ptr.To(int32(1)),
@@ -242,7 +242,7 @@ func TestValidatePodCliqueSetWithLPXBackend(t *testing.T) {
 
 	require.NoError(t, handler.validatePodCliqueSetWithBackend(context.Background(), pcs))
 
-	pcs.Spec.Template.TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{}
+	pcs.Spec.Template.TopologyConstraint = &grovecorev1beta1.TopologyConstraint{}
 	err := handler.validatePodCliqueSetWithBackend(context.Background(), pcs)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "does not support Grove topology constraints")
@@ -263,11 +263,11 @@ func TestValidateUpdatePassesOldPodCliqueSetToBackend(t *testing.T) {
 		Backends:       map[string]scheduler.Backend{string(groveconfigv1alpha1.SchedulerNameKueue): kueueBackend},
 		DefaultBackend: string(groveconfigv1alpha1.SchedulerNameKueue),
 	})
-	newPCS := func(queueName string) *grovecorev1alpha1.PodCliqueSet {
+	newPCS := func(queueName string) *grovecorev1beta1.PodCliqueSet {
 		pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "default", uuid.NewUUID()).
 			WithReplicas(1).
 			WithTerminationDelay(4 * time.Hour).
-			WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder)).
+			WithCliqueStartupType(ptr.To(grovecorev1beta1.CliqueStartupTypeAnyOrder)).
 			WithPodCliqueTemplateSpec(
 				testutils.NewPodCliqueTemplateSpecBuilder("test").
 					WithReplicas(1).
@@ -287,7 +287,7 @@ func TestValidateUpdatePassesOldPodCliqueSetToBackend(t *testing.T) {
 
 // TestValidateUpdate tests validation of PodCliqueSet update requests.
 func TestValidateUpdate(t *testing.T) {
-	startupType := ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder)
+	startupType := ptr.To(grovecorev1beta1.CliqueStartupTypeAnyOrder)
 	tests := []struct {
 		// name identifies this test case
 		name string
@@ -332,7 +332,7 @@ func TestValidateUpdate(t *testing.T) {
 			newObj: testutils.NewPodCliqueSetBuilder("test", "default", uuid.NewUUID()).
 				WithReplicas(1).
 				WithTerminationDelay(4 * time.Hour).
-				WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder)).
+				WithCliqueStartupType(ptr.To(grovecorev1beta1.CliqueStartupTypeAnyOrder)).
 				WithPodCliqueTemplateSpec(
 					testutils.NewPodCliqueTemplateSpecBuilder("test").
 						WithReplicas(1).
@@ -348,7 +348,7 @@ func TestValidateUpdate(t *testing.T) {
 			oldObj: testutils.NewPodCliqueSetBuilder("test", "default", uuid.NewUUID()).
 				WithReplicas(1).
 				WithTerminationDelay(4 * time.Hour).
-				WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder)).
+				WithCliqueStartupType(ptr.To(grovecorev1beta1.CliqueStartupTypeAnyOrder)).
 				WithPodCliqueTemplateSpec(
 					testutils.NewPodCliqueTemplateSpecBuilder("test").
 						WithReplicas(1).
@@ -365,7 +365,7 @@ func TestValidateUpdate(t *testing.T) {
 			oldObj: testutils.NewPodCliqueSetBuilder("test-pcs", "default", uuid.NewUUID()).
 				WithReplicas(1).
 				WithTerminationDelay(4 * time.Hour).
-				WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeInOrder)).
+				WithCliqueStartupType(ptr.To(grovecorev1beta1.CliqueStartupTypeInOrder)).
 				WithPodCliqueTemplateSpec(
 					testutils.NewPodCliqueTemplateSpecBuilder("test").
 						WithReplicas(1).
@@ -376,7 +376,7 @@ func TestValidateUpdate(t *testing.T) {
 			newObj: testutils.NewPodCliqueSetBuilder("test-pcs", "default", uuid.NewUUID()).
 				WithReplicas(1).
 				WithTerminationDelay(4 * time.Hour).
-				WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder)).
+				WithCliqueStartupType(ptr.To(grovecorev1beta1.CliqueStartupTypeAnyOrder)).
 				WithPodCliqueTemplateSpec(
 					testutils.NewPodCliqueTemplateSpecBuilder("test").
 						WithReplicas(1).
@@ -447,7 +447,7 @@ func TestValidateDelete(t *testing.T) {
 	pcs := testutils.NewPodCliqueSetBuilder("test", "default", uuid.NewUUID()).
 		WithReplicas(1).
 		WithTerminationDelay(4 * time.Hour).
-		WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder)).
+		WithCliqueStartupType(ptr.To(grovecorev1beta1.CliqueStartupTypeAnyOrder)).
 		WithPodCliqueTemplateSpec(
 			testutils.NewPodCliqueTemplateSpecBuilder("test").
 				WithReplicas(1).
@@ -475,7 +475,7 @@ func TestCastToPodCliqueSet(t *testing.T) {
 			obj: testutils.NewPodCliqueSetBuilder("test", "default", uuid.NewUUID()).
 				WithReplicas(1).
 				WithTerminationDelay(4 * time.Hour).
-				WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder)).
+				WithCliqueStartupType(ptr.To(grovecorev1beta1.CliqueStartupTypeAnyOrder)).
 				WithPodCliqueTemplateSpec(
 					testutils.NewPodCliqueTemplateSpecBuilder("test").
 						WithReplicas(1).

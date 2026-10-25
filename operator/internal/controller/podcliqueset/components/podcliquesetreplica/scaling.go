@@ -20,7 +20,7 @@ import (
 	"fmt"
 	"slices"
 
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/sync"
@@ -36,7 +36,7 @@ import (
 )
 
 // syncScalingProgress computes and persists replica-index selections and populates the state shared with later components.
-func (r *_resource) syncScalingProgress(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, state *pcssync.State) (bool, error) {
+func (r *_resource) syncScalingProgress(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, state *pcssync.State) (bool, error) {
 	snapshot, err := r.takeReplicaResourceSnapshot(ctx, pcs)
 	if err != nil {
 		return false, err
@@ -58,7 +58,7 @@ func (r *_resource) syncScalingProgress(ctx context.Context, logger logr.Logger,
 }
 
 // recordNewScalingSelectionEvents records newly selected scale-in indices and newly reserved scale-out indices.
-func (r *_resource) recordNewScalingSelectionEvents(logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, previousScaleOutReplicaIndices, previousScaleInReplicaIndices []int, computedState pcssync.State) {
+func (r *_resource) recordNewScalingSelectionEvents(logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, previousScaleOutReplicaIndices, previousScaleInReplicaIndices []int, computedState pcssync.State) {
 	newScaleOutReplicaIndices := sets.New(computedState.ScaleOutReplicaIndices...).Difference(sets.New(previousScaleOutReplicaIndices...))
 	if newScaleOutReplicaIndices.Len() > 0 {
 		pcsReplicaIndices := sets.List(newScaleOutReplicaIndices)
@@ -87,7 +87,7 @@ func (r *_resource) recordNewScalingSelectionEvents(logger logr.Logger, pcs *gro
 }
 
 // takeReplicaResourceSnapshot lists standalone PodCliques and PodCliqueScalingGroups owned by the PCS and groups them by PCS replica index.
-func (r *_resource) takeReplicaResourceSnapshot(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet) (*replicaResourceSnapshot, error) {
+func (r *_resource) takeReplicaResourceSnapshot(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet) (*replicaResourceSnapshot, error) {
 	standalonePCLQsByPCSReplicaIndex, err := componentutils.GetStandalonePCLQsByPCSReplicaIndex(ctx, r.client, pcs.ObjectMeta)
 	if err != nil {
 		return nil, groveerr.WrapError(err,
@@ -126,8 +126,8 @@ func (r *_resource) takeReplicaResourceSnapshot(ctx context.Context, pcs *grovec
 // replicaResourceSnapshot contains the standalone PodCliques and PodCliqueScalingGroups observed for each PCS replica
 // index during one reconciliation.
 type replicaResourceSnapshot struct {
-	standalonePCLQsByReplicaIndex     map[int][]grovecorev1alpha1.PodClique
-	pcsgsByReplicaIndex               map[int][]grovecorev1alpha1.PodCliqueScalingGroup
+	standalonePCLQsByReplicaIndex     map[int][]grovecorev1beta1.PodClique
+	pcsgsByReplicaIndex               map[int][]grovecorev1beta1.PodCliqueScalingGroup
 	headlessServicesByPCSReplicaIndex map[int][]corev1.Service
 }
 
@@ -183,7 +183,7 @@ func (r *replicaResourceSnapshot) reservedReplicaIndices(scaleOutReplicaIndices 
 }
 
 // replicaIndicesFromScalingProgress converts API scaling-progress indices to reconcile-local indices.
-func replicaIndicesFromScalingProgress(progress *grovecorev1alpha1.PodCliqueSetScalingProgress) ([]int, []int) {
+func replicaIndicesFromScalingProgress(progress *grovecorev1beta1.PodCliqueSetScalingProgress) ([]int, []int) {
 	if progress == nil {
 		return nil, nil
 	}
@@ -196,7 +196,7 @@ func replicaIndicesFromScalingProgress(progress *grovecorev1alpha1.PodCliqueSetS
 
 // computeReplicaIndices determines which replica indices must exist and which are being added or removed.
 // It uses the observed resources, the recorded scaling progress, and the desired replica count. All returned slices are sorted.
-func computeReplicaIndices(pcs *grovecorev1alpha1.PodCliqueSet, snapshot *replicaResourceSnapshot, scaleOutReplicaIndices []int, scaleInReplicaIndices []int) pcssync.State {
+func computeReplicaIndices(pcs *grovecorev1beta1.PodCliqueSet, snapshot *replicaResourceSnapshot, scaleOutReplicaIndices []int, scaleInReplicaIndices []int) pcssync.State {
 	// An unobserved PCS is still being provisioned for the first time. Its initial
 	// identities are not scale-out work and therefore do not require reservations.
 	if pcs.Status.ObservedGeneration == nil {
@@ -238,7 +238,7 @@ func computeReplicaIndices(pcs *grovecorev1alpha1.PodCliqueSet, snapshot *replic
 // PodClique and PodCliqueScalingGroup resource exists.
 // NOTE: Only existence of these resources is checked and not their readiness as that is sufficient.
 func findMaterializedScaleOutReplicaIndices(
-	pcs *grovecorev1alpha1.PodCliqueSet,
+	pcs *grovecorev1beta1.PodCliqueSet,
 	scaleOutReplicaIndices []int,
 	snapshot *replicaResourceSnapshot,
 ) []int {
@@ -264,7 +264,7 @@ func findMaterializedScaleOutReplicaIndices(
 // scheduled but insufficient available capacity, replicas with scale-out in progress, and then established
 // available replicas. Higher indices are selected first within each group.
 func selectReplicaIndicesForScaleIn(
-	pcs *grovecorev1alpha1.PodCliqueSet,
+	pcs *grovecorev1beta1.PodCliqueSet,
 	snapshot *replicaResourceSnapshot,
 	projectedReplicaIndices sets.Set[int],
 	scaleOutReplicaIndices sets.Set[int],
@@ -341,12 +341,12 @@ func sortedReplicaIndices(replicaIndices sets.Set[int]) []int {
 }
 
 // scalingProgressFromState converts reconcile-local scaling progress to its API representation.
-func scalingProgressFromState(state pcssync.State) *grovecorev1alpha1.PodCliqueSetScalingProgress {
+func scalingProgressFromState(state pcssync.State) *grovecorev1beta1.PodCliqueSetScalingProgress {
 	if len(state.ScaleOutReplicaIndices) == 0 && len(state.ScaleInReplicaIndices) == 0 {
 		return nil
 	}
 
-	progress := &grovecorev1alpha1.PodCliqueSetScalingProgress{}
+	progress := &grovecorev1beta1.PodCliqueSetScalingProgress{}
 	if len(state.ScaleOutReplicaIndices) > 0 {
 		progress.ScaleOutReplicaIndices = make([]int32, len(state.ScaleOutReplicaIndices))
 		for i, replicaIndex := range state.ScaleOutReplicaIndices {
@@ -363,7 +363,7 @@ func scalingProgressFromState(state pcssync.State) *grovecorev1alpha1.PodCliqueS
 }
 
 // patchScalingProgress persists scaling progress and records the value that must be observed through the informer cache.
-func (r *_resource) patchScalingProgress(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, progress *grovecorev1alpha1.PodCliqueSetScalingProgress) error {
+func (r *_resource) patchScalingProgress(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet, progress *grovecorev1beta1.PodCliqueSetScalingProgress) error {
 	r.scalingProgressExpectations.Record(pcs.ObjectMeta, progress)
 
 	patchedPCS := pcs.DeepCopy()

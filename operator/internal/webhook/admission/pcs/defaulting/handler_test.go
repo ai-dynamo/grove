@@ -19,7 +19,6 @@ import (
 	"testing"
 	"time"
 
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
@@ -71,7 +70,7 @@ func TestDefault(t *testing.T) {
 			obj: testutils.NewPodCliqueSetBuilder("test-pcs", "default", uuid.NewUUID()).
 				WithReplicas(1).
 				WithTerminationDelay(4 * time.Hour).
-				WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder)).
+				WithCliqueStartupType(ptr.To(grovecorev1beta1.CliqueStartupTypeAnyOrder)).
 				WithPodCliqueTemplateSpec(
 					testutils.NewPodCliqueTemplateSpecBuilder("test").
 						WithReplicas(1).
@@ -93,7 +92,7 @@ func TestDefault(t *testing.T) {
 			},
 			expectError: false,
 			verify: func(t *testing.T, obj runtime.Object) {
-				pcs, ok := obj.(*grovecorev1alpha1.PodCliqueSet)
+				pcs, ok := obj.(*grovecorev1beta1.PodCliqueSet)
 				require.True(t, ok)
 				// Verify that some defaults are set (e.g., startup type should remain as set)
 				assert.NotNil(t, pcs.Spec.Template.StartupType)
@@ -101,19 +100,19 @@ func TestDefault(t *testing.T) {
 		},
 		{
 			name: "PodCliqueSet without startup type gets default",
-			obj: &grovecorev1alpha1.PodCliqueSet{
+			obj: &grovecorev1beta1.PodCliqueSet{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-pcs",
 					Namespace: "default",
 				},
-				Spec: grovecorev1alpha1.PodCliqueSetSpec{
+				Spec: grovecorev1beta1.PodCliqueSetSpec{
 					Replicas: 1,
-					Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
+					Template: grovecorev1beta1.PodCliqueSetTemplateSpec{
 						StartupType: nil,
-						Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+						Cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
 							{
 								Name: "test",
-								Spec: grovecorev1alpha1.PodCliqueSpec{
+								Spec: grovecorev1beta1.PodCliqueSpec{
 									Replicas: 1,
 									RoleName: "test-role",
 									PodSpec: corev1.PodSpec{
@@ -144,7 +143,7 @@ func TestDefault(t *testing.T) {
 			},
 			expectError: false,
 			verify: func(t *testing.T, obj runtime.Object) {
-				pcs, ok := obj.(*grovecorev1alpha1.PodCliqueSet)
+				pcs, ok := obj.(*grovecorev1beta1.PodCliqueSet)
 				require.True(t, ok)
 				// Verify that the termination delay is set (this is one of the defaults applied)
 				assert.NotNil(t, pcs.Spec.Template.TerminationDelay)
@@ -166,14 +165,14 @@ func TestDefault(t *testing.T) {
 				})
 			},
 			expectError:   true,
-			errorContains: "expected a PodCliqueSet object",
+			errorContains: "expected an PodCliqueSet object",
 		},
 		{
 			name: "context without admission request returns error",
 			obj: testutils.NewPodCliqueSetBuilder("test-pcs", "default", uuid.NewUUID()).
 				WithReplicas(1).
 				WithTerminationDelay(4 * time.Hour).
-				WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder)).
+				WithCliqueStartupType(ptr.To(grovecorev1beta1.CliqueStartupTypeAnyOrder)).
 				WithPodCliqueTemplateSpec(
 					testutils.NewPodCliqueTemplateSpecBuilder("test").
 						WithReplicas(1).
@@ -218,31 +217,4 @@ func TestDefault(t *testing.T) {
 			}
 		})
 	}
-}
-
-// TestDefaultV1beta1 tests that a v1beta1 PodCliqueSet, as the API server sends it for both served versions,
-// is defaulted in place and stays a v1beta1 object.
-func TestDefaultV1beta1(t *testing.T) {
-	v1alpha1PCS := testutils.NewPodCliqueSetBuilder("test-pcs", "default", uuid.NewUUID()).
-		WithReplicas(1).
-		WithPodCliqueTemplateSpec(
-			testutils.NewPodCliqueTemplateSpecBuilder("test").
-				WithReplicas(1).
-				WithRoleName("test-role").
-				Build()).
-		Build()
-	pcs := &grovecorev1beta1.PodCliqueSet{}
-	require.NoError(t, grovecorev1alpha1.Convert_v1alpha1_PodCliqueSet_To_v1beta1_PodCliqueSet(v1alpha1PCS, pcs, nil))
-	require.Nil(t, pcs.Spec.UpdateStrategy)
-
-	cl := testutils.NewTestClientBuilder().Build()
-	handler := NewHandler(&testutils.FakeManager{Client: cl, Scheme: cl.Scheme(), Logger: logr.Discard()})
-	ctx := admission.NewContextWithRequest(context.Background(), admission.Request{
-		AdmissionRequest: admissionv1.AdmissionRequest{Name: "test-pcs", Namespace: "default", Operation: admissionv1.Create},
-	})
-
-	require.NoError(t, handler.Default(ctx, pcs))
-	require.NotNil(t, pcs.Spec.UpdateStrategy)
-	assert.Equal(t, grovecorev1beta1.RollingRecreateStrategy, pcs.Spec.UpdateStrategy.Type)
-	assert.Equal(t, &metav1.Duration{Duration: 4 * time.Hour}, pcs.Spec.Template.TerminationDelay)
 }

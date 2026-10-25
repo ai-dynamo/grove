@@ -17,7 +17,7 @@ package defaulting
 import (
 	"time"
 
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 
@@ -34,7 +34,7 @@ const (
 )
 
 // defaultPodCliqueSet adds defaults to a PodCliqueSet.
-func defaultPodCliqueSet(pcs *grovecorev1alpha1.PodCliqueSet) {
+func defaultPodCliqueSet(pcs *grovecorev1beta1.PodCliqueSet) {
 	if utils.IsEmptyStringType(pcs.Namespace) {
 		pcs.Namespace = metav1.NamespaceDefault
 	}
@@ -43,7 +43,7 @@ func defaultPodCliqueSet(pcs *grovecorev1alpha1.PodCliqueSet) {
 }
 
 // defaultPodCliqueSetSpec adds defaults to the specification of a PodCliqueSet.
-func defaultPodCliqueSetSpec(spec *grovecorev1alpha1.PodCliqueSetSpec, pcsgOwnedCliqueNames sets.Set[string]) {
+func defaultPodCliqueSetSpec(spec *grovecorev1beta1.PodCliqueSetSpec, pcsgOwnedCliqueNames sets.Set[string]) {
 	defaultUpdateStrategy(spec)
 	defaultPodCliqueSetTemplateSpec(&spec.Template, spec.UpdateStrategy.Type, pcsgOwnedCliqueNames)
 }
@@ -52,17 +52,17 @@ func defaultPodCliqueSetSpec(spec *grovecorev1alpha1.PodCliqueSetSpec, pcsgOwned
 // strategy is behind a pointer, so the kubebuilder default on Type only fires when the pointer is
 // already non-nil. This guarantees a non-nil UpdateStrategy with a concrete Type so that downstream
 // defaulting and validation always observe the active strategy. The default Type is RollingRecreate.
-func defaultUpdateStrategy(pcsSpec *grovecorev1alpha1.PodCliqueSetSpec) {
+func defaultUpdateStrategy(pcsSpec *grovecorev1beta1.PodCliqueSetSpec) {
 	if pcsSpec.UpdateStrategy == nil {
-		pcsSpec.UpdateStrategy = &grovecorev1alpha1.PodCliqueSetUpdateStrategy{}
+		pcsSpec.UpdateStrategy = &grovecorev1beta1.PodCliqueSetUpdateStrategy{}
 	}
 	if pcsSpec.UpdateStrategy.Type == "" {
-		pcsSpec.UpdateStrategy.Type = grovecorev1alpha1.RollingRecreateStrategy
+		pcsSpec.UpdateStrategy.Type = grovecorev1beta1.RollingRecreateStrategy
 	}
 }
 
 // defaultPodCliqueSetTemplateSpec applies defaults to the template specification including cliques, scaling groups, and service configuration.
-func defaultPodCliqueSetTemplateSpec(spec *grovecorev1alpha1.PodCliqueSetTemplateSpec, updateStrategy grovecorev1alpha1.UpdateStrategyType, pcsgOwnedCliqueNames sets.Set[string]) {
+func defaultPodCliqueSetTemplateSpec(spec *grovecorev1beta1.PodCliqueSetTemplateSpec, updateStrategy grovecorev1beta1.UpdateStrategyType, pcsgOwnedCliqueNames sets.Set[string]) {
 	spec.Cliques = defaultPodCliqueTemplateSpecs(spec.Cliques, updateStrategy, pcsgOwnedCliqueNames)
 	spec.PodCliqueScalingGroupConfigs = defaultPodCliqueScalingGroupConfigs(spec.PodCliqueScalingGroupConfigs, updateStrategy)
 	if spec.TerminationDelay == nil {
@@ -73,9 +73,9 @@ func defaultPodCliqueSetTemplateSpec(spec *grovecorev1alpha1.PodCliqueSetTemplat
 }
 
 // defaultHeadlessServiceConfig applies defaults to the headless service configuration.
-func defaultHeadlessServiceConfig(headlessServiceConfig *grovecorev1alpha1.HeadlessServiceConfig) *grovecorev1alpha1.HeadlessServiceConfig {
+func defaultHeadlessServiceConfig(headlessServiceConfig *grovecorev1beta1.HeadlessServiceConfig) *grovecorev1beta1.HeadlessServiceConfig {
 	if headlessServiceConfig == nil {
-		headlessServiceConfig = &grovecorev1alpha1.HeadlessServiceConfig{
+		headlessServiceConfig = &grovecorev1beta1.HeadlessServiceConfig{
 			PublishNotReadyAddresses: true,
 		}
 	}
@@ -83,8 +83,8 @@ func defaultHeadlessServiceConfig(headlessServiceConfig *grovecorev1alpha1.Headl
 }
 
 // defaultPodCliqueTemplateSpecs applies defaults to each PodClique template including replicas, minAvailable, and autoscaling configuration.
-func defaultPodCliqueTemplateSpecs(cliqueSpecs []*grovecorev1alpha1.PodCliqueTemplateSpec, updateStrategy grovecorev1alpha1.UpdateStrategyType, pcsgOwnedCliqueNames sets.Set[string]) []*grovecorev1alpha1.PodCliqueTemplateSpec {
-	defaultedCliqueSpecs := make([]*grovecorev1alpha1.PodCliqueTemplateSpec, 0, len(cliqueSpecs))
+func defaultPodCliqueTemplateSpecs(cliqueSpecs []*grovecorev1beta1.PodCliqueTemplateSpec, updateStrategy grovecorev1beta1.UpdateStrategyType, pcsgOwnedCliqueNames sets.Set[string]) []*grovecorev1beta1.PodCliqueTemplateSpec {
+	defaultedCliqueSpecs := make([]*grovecorev1beta1.PodCliqueTemplateSpec, 0, len(cliqueSpecs))
 	for _, cliqueSpec := range cliqueSpecs {
 		defaultedCliqueSpec := cliqueSpec.DeepCopy()
 		defaultedCliqueSpec.Spec.PodSpec = *defaultPodSpec(&cliqueSpec.Spec.PodSpec)
@@ -107,8 +107,8 @@ func defaultPodCliqueTemplateSpecs(cliqueSpecs []*grovecorev1alpha1.PodCliqueTem
 	return defaultedCliqueSpecs
 }
 
-func defaultPodCliqueScalingGroupConfigs(scalingGroupConfigs []grovecorev1alpha1.PodCliqueScalingGroupConfig, updateStrategy grovecorev1alpha1.UpdateStrategyType) []grovecorev1alpha1.PodCliqueScalingGroupConfig {
-	defaultedScalingGroupConfigs := make([]grovecorev1alpha1.PodCliqueScalingGroupConfig, 0, len(scalingGroupConfigs))
+func defaultPodCliqueScalingGroupConfigs(scalingGroupConfigs []grovecorev1beta1.PodCliqueScalingGroupConfig, updateStrategy grovecorev1beta1.UpdateStrategyType) []grovecorev1beta1.PodCliqueScalingGroupConfig {
+	defaultedScalingGroupConfigs := make([]grovecorev1beta1.PodCliqueScalingGroupConfig, 0, len(scalingGroupConfigs))
 	for _, scalingGroupConfig := range scalingGroupConfigs {
 		defaultedScalingGroupConfig := scalingGroupConfig.DeepCopy()
 		// Replicas is already set by kubebuilder default (API server runs before defaulting webhook)
@@ -129,21 +129,21 @@ func defaultPodCliqueScalingGroupConfigs(scalingGroupConfigs []grovecorev1alpha1
 // defaults MaxUnavailable to minAvailable, since the MVU sub-step takes down MinAvailable of the
 // component at once and that is the smallest internally consistent budget; RollingRecreate defaults
 // it to 1. ProgressDeadline is never defaulted, a nil value opts out of the deadline.
-func defaultRollingUpdateConfiguration(existing *grovecorev1alpha1.RollingUpdateConfiguration, updateStrategy grovecorev1alpha1.UpdateStrategyType, minAvailable int32) *grovecorev1alpha1.RollingUpdateConfiguration {
+func defaultRollingUpdateConfiguration(existing *grovecorev1beta1.RollingUpdateConfiguration, updateStrategy grovecorev1beta1.UpdateStrategyType, minAvailable int32) *grovecorev1beta1.RollingUpdateConfiguration {
 	if existing != nil && existing.MaxUnavailable != nil {
 		return existing
 	}
 	var maxUnavailable int32
 	switch updateStrategy {
-	case grovecorev1alpha1.CoherentStrategy:
+	case grovecorev1beta1.CoherentStrategy:
 		maxUnavailable = minAvailable
-	case grovecorev1alpha1.RollingRecreateStrategy:
+	case grovecorev1beta1.RollingRecreateStrategy:
 		maxUnavailable = componentutils.DefaultRollingRecreateMaxUnavailable
 	default: // OnDelete or unknown, no defaulting
 		return existing
 	}
 	if existing == nil {
-		existing = &grovecorev1alpha1.RollingUpdateConfiguration{}
+		existing = &grovecorev1beta1.RollingUpdateConfiguration{}
 	}
 	existing.MaxUnavailable = ptr.To(maxUnavailable)
 	return existing

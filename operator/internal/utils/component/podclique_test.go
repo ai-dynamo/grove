@@ -21,7 +21,7 @@ import (
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/stretchr/testify/assert"
@@ -36,7 +36,7 @@ import (
 
 func TestIsStandalonePCLQ(t *testing.T) {
 	pcsOwnerRef := metav1.OwnerReference{
-		APIVersion: grovecorev1alpha1.SchemeGroupVersion.String(),
+		APIVersion: grovecorev1beta1.SchemeGroupVersion.String(),
 		Kind:       constants.KindPodCliqueSet,
 		Controller: ptr.To(true),
 	}
@@ -46,15 +46,15 @@ func TestIsStandalonePCLQ(t *testing.T) {
 		want            bool
 	}{
 		{name: "PodCliqueSet controller owner", ownerReferences: []metav1.OwnerReference{pcsOwnerRef}, want: true},
-		{name: "PodCliqueScalingGroup controller owner", ownerReferences: []metav1.OwnerReference{{APIVersion: grovecorev1alpha1.SchemeGroupVersion.String(), Kind: constants.KindPodCliqueScalingGroup, Controller: ptr.To(true)}}},
+		{name: "PodCliqueScalingGroup controller owner", ownerReferences: []metav1.OwnerReference{{APIVersion: grovecorev1beta1.SchemeGroupVersion.String(), Kind: constants.KindPodCliqueScalingGroup, Controller: ptr.To(true)}}},
 		{name: "missing owner"},
-		{name: "non-controller PodCliqueSet owner", ownerReferences: []metav1.OwnerReference{{APIVersion: grovecorev1alpha1.SchemeGroupVersion.String(), Kind: constants.KindPodCliqueSet}}},
+		{name: "non-controller PodCliqueSet owner", ownerReferences: []metav1.OwnerReference{{APIVersion: grovecorev1beta1.SchemeGroupVersion.String(), Kind: constants.KindPodCliqueSet}}},
 		{name: "wrong API version", ownerReferences: []metav1.OwnerReference{{APIVersion: "other.io/v1", Kind: constants.KindPodCliqueSet, Controller: ptr.To(true)}}},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			pclq := &grovecorev1alpha1.PodClique{ObjectMeta: metav1.ObjectMeta{OwnerReferences: test.ownerReferences}}
+			pclq := &grovecorev1beta1.PodClique{ObjectMeta: metav1.ObjectMeta{OwnerReferences: test.ownerReferences}}
 			assert.Equal(t, test.want, IsStandalonePCLQ(pclq))
 		})
 	}
@@ -72,7 +72,7 @@ func TestGetPCLQsByOwner(t *testing.T) {
 		// selectorLabels are the labels to match
 		selectorLabels map[string]string
 		// existingPCLQs are the existing PodCliques
-		existingPCLQs []grovecorev1alpha1.PodClique
+		existingPCLQs []grovecorev1beta1.PodClique
 		// expectedPCLQs are the expected PodCliques
 		expectedPCLQs []string
 		// expectError indicates if an error is expected
@@ -89,7 +89,7 @@ func TestGetPCLQsByOwner(t *testing.T) {
 			selectorLabels: map[string]string{
 				apicommon.LabelPartOfKey: "test-pcs",
 			},
-			existingPCLQs: []grovecorev1alpha1.PodClique{
+			existingPCLQs: []grovecorev1beta1.PodClique{
 				{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "test-pclq-1",
@@ -150,7 +150,7 @@ func TestGetPCLQsByOwner(t *testing.T) {
 			selectorLabels: map[string]string{
 				apicommon.LabelPartOfKey: "test-pcs",
 			},
-			existingPCLQs: []grovecorev1alpha1.PodClique{
+			existingPCLQs: []grovecorev1beta1.PodClique{
 				{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "test-pclq-1",
@@ -181,7 +181,7 @@ func TestGetPCLQsByOwner(t *testing.T) {
 			selectorLabels: map[string]string{
 				apicommon.LabelPartOfKey: "test-pcs",
 			},
-			existingPCLQs: []grovecorev1alpha1.PodClique{
+			existingPCLQs: []grovecorev1beta1.PodClique{
 				{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "test-pclq-1",
@@ -201,7 +201,7 @@ func TestGetPCLQsByOwner(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			// Setup scheme
 			scheme := runtime.NewScheme()
-			require.NoError(t, grovecorev1alpha1.AddToScheme(scheme))
+			require.NoError(t, grovecorev1beta1.AddToScheme(scheme))
 
 			// Build runtime objects
 			runtimeObjs := []runtime.Object{}
@@ -239,14 +239,14 @@ func TestGroupPCLQsByPodGangName(t *testing.T) {
 		// Test case description
 		name string
 		// pclqs is the list of PodCliques to group
-		pclqs []grovecorev1alpha1.PodClique
+		pclqs []grovecorev1beta1.PodClique
 		// expected is the expected grouping
-		expected map[string][]grovecorev1alpha1.PodClique
+		expected map[string][]grovecorev1beta1.PodClique
 	}{
 		{
 			// Tests grouping PodCliques by PodGang name
 			name: "groups_by_podgang_name",
-			pclqs: []grovecorev1alpha1.PodClique{
+			pclqs: []grovecorev1beta1.PodClique{
 				{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: "pclq-1",
@@ -272,7 +272,7 @@ func TestGroupPCLQsByPodGangName(t *testing.T) {
 					},
 				},
 			},
-			expected: map[string][]grovecorev1alpha1.PodClique{
+			expected: map[string][]grovecorev1beta1.PodClique{
 				"podgang-1": {
 					{
 						ObjectMeta: metav1.ObjectMeta{
@@ -306,13 +306,13 @@ func TestGroupPCLQsByPodGangName(t *testing.T) {
 		{
 			// Tests with empty list
 			name:     "empty_list",
-			pclqs:    []grovecorev1alpha1.PodClique{},
-			expected: map[string][]grovecorev1alpha1.PodClique{},
+			pclqs:    []grovecorev1beta1.PodClique{},
+			expected: map[string][]grovecorev1beta1.PodClique{},
 		},
 		{
 			// Tests with PodCliques missing PodGang label
 			name: "missing_podgang_label",
-			pclqs: []grovecorev1alpha1.PodClique{
+			pclqs: []grovecorev1beta1.PodClique{
 				{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:   "pclq-1",
@@ -320,7 +320,7 @@ func TestGroupPCLQsByPodGangName(t *testing.T) {
 					},
 				},
 			},
-			expected: map[string][]grovecorev1alpha1.PodClique{},
+			expected: map[string][]grovecorev1beta1.PodClique{},
 		},
 	}
 
@@ -338,15 +338,15 @@ func TestIsPCLQRollingUpdateInProgress(t *testing.T) {
 		// Test case description
 		name string
 		// pclq is the PodClique to check
-		pclq *grovecorev1alpha1.PodClique
+		pclq *grovecorev1beta1.PodClique
 		// expected is the expected result
 		expected bool
 	}{
 		{
 			// Tests when no rolling update progress exists
 			name: "no_rolling_update_progress",
-			pclq: &grovecorev1alpha1.PodClique{
-				Status: grovecorev1alpha1.PodCliqueStatus{
+			pclq: &grovecorev1beta1.PodClique{
+				Status: grovecorev1beta1.PodCliqueStatus{
 					UpdateProgress: nil,
 				},
 			},
@@ -355,9 +355,9 @@ func TestIsPCLQRollingUpdateInProgress(t *testing.T) {
 		{
 			// Tests when rolling update is in progress
 			name: "update_in_progress",
-			pclq: &grovecorev1alpha1.PodClique{
-				Status: grovecorev1alpha1.PodCliqueStatus{
-					UpdateProgress: &grovecorev1alpha1.PodCliqueUpdateProgress{
+			pclq: &grovecorev1beta1.PodClique{
+				Status: grovecorev1beta1.PodCliqueStatus{
+					UpdateProgress: &grovecorev1beta1.PodCliqueUpdateProgress{
 						UpdateStartedAt: metav1.Now(),
 					},
 				},
@@ -367,9 +367,9 @@ func TestIsPCLQRollingUpdateInProgress(t *testing.T) {
 		{
 			// Tests when rolling update is completed
 			name: "update_completed",
-			pclq: &grovecorev1alpha1.PodClique{
-				Status: grovecorev1alpha1.PodCliqueStatus{
-					UpdateProgress: &grovecorev1alpha1.PodCliqueUpdateProgress{
+			pclq: &grovecorev1beta1.PodClique{
+				Status: grovecorev1beta1.PodCliqueStatus{
+					UpdateProgress: &grovecorev1beta1.PodCliqueUpdateProgress{
 						UpdateStartedAt: metav1.Now(),
 						UpdateEndedAt:   &metav1.Time{Time: metav1.Now().Time},
 					},
@@ -393,15 +393,15 @@ func TestIsLastPCLQUpdateCompleted(t *testing.T) {
 		// Test case description
 		name string
 		// pclq is the PodClique to check
-		pclq *grovecorev1alpha1.PodClique
+		pclq *grovecorev1beta1.PodClique
 		// expected is the expected result
 		expected bool
 	}{
 		{
 			// Tests when no rolling update progress exists
 			name: "no_rolling_update_progress",
-			pclq: &grovecorev1alpha1.PodClique{
-				Status: grovecorev1alpha1.PodCliqueStatus{
+			pclq: &grovecorev1beta1.PodClique{
+				Status: grovecorev1beta1.PodCliqueStatus{
 					UpdateProgress: nil,
 				},
 			},
@@ -410,9 +410,9 @@ func TestIsLastPCLQUpdateCompleted(t *testing.T) {
 		{
 			// Tests when rolling update is in progress
 			name: "update_in_progress",
-			pclq: &grovecorev1alpha1.PodClique{
-				Status: grovecorev1alpha1.PodCliqueStatus{
-					UpdateProgress: &grovecorev1alpha1.PodCliqueUpdateProgress{
+			pclq: &grovecorev1beta1.PodClique{
+				Status: grovecorev1beta1.PodCliqueStatus{
+					UpdateProgress: &grovecorev1beta1.PodCliqueUpdateProgress{
 						UpdateStartedAt: metav1.Now(),
 					},
 				},
@@ -422,9 +422,9 @@ func TestIsLastPCLQUpdateCompleted(t *testing.T) {
 		{
 			// Tests when rolling update is completed
 			name: "update_completed",
-			pclq: &grovecorev1alpha1.PodClique{
-				Status: grovecorev1alpha1.PodCliqueStatus{
-					UpdateProgress: &grovecorev1alpha1.PodCliqueUpdateProgress{
+			pclq: &grovecorev1beta1.PodClique{
+				Status: grovecorev1beta1.PodCliqueStatus{
+					UpdateProgress: &grovecorev1beta1.PodCliqueUpdateProgress{
 						UpdateStartedAt: metav1.Now(),
 						UpdateEndedAt:   &metav1.Time{Time: metav1.Now().Time},
 					},
@@ -472,7 +472,7 @@ func TestIsPCLQUpdateCompleteRejectsActiveUpdate(t *testing.T) {
 	pclq.Status.ReadyReplicas = 1
 	// A later generation-2 update started but did not complete before the PCS was changed back to
 	// generation-1.
-	pclq.Status.UpdateProgress = &grovecorev1alpha1.PodCliqueUpdateProgress{
+	pclq.Status.UpdateProgress = &grovecorev1beta1.PodCliqueUpdateProgress{
 		PodCliqueSetGenerationHash: "generation-2",
 		PodTemplateHash:            "template-2",
 	}
@@ -493,18 +493,18 @@ func TestWasPCLQEverScheduled(t *testing.T) {
 	scheduledAt := metav1.Now()
 	tests := []struct {
 		name string
-		pclq *grovecorev1alpha1.PodClique
+		pclq *grovecorev1beta1.PodClique
 		want bool
 	}{
 		{
 			name: "LastScheduled nil (never scheduled)",
-			pclq: &grovecorev1alpha1.PodClique{},
+			pclq: &grovecorev1beta1.PodClique{},
 			want: false,
 		},
 		{
 			name: "LastScheduled set (scheduled at least once)",
-			pclq: &grovecorev1alpha1.PodClique{
-				Status: grovecorev1alpha1.PodCliqueStatus{LastScheduled: &scheduledAt},
+			pclq: &grovecorev1beta1.PodClique{
+				Status: grovecorev1beta1.PodCliqueStatus{LastScheduled: &scheduledAt},
 			},
 			want: true,
 		},
@@ -527,19 +527,19 @@ func TestWasPCSGEverHealthy(t *testing.T) {
 
 	tests := []struct {
 		name string
-		pcsg *grovecorev1alpha1.PodCliqueScalingGroup
+		pcsg *grovecorev1beta1.PodCliqueScalingGroup
 		want bool
 	}{
 		{
 			name: "no MinAvailableBreached condition (fresh) — never healthy",
-			pcsg: &grovecorev1alpha1.PodCliqueScalingGroup{ObjectMeta: metav1.ObjectMeta{CreationTimestamp: created}},
+			pcsg: &grovecorev1beta1.PodCliqueScalingGroup{ObjectMeta: metav1.ObjectMeta{CreationTimestamp: created}},
 			want: false,
 		},
 		{
 			name: "MinAvailableBreached=True set near creation — never healthy",
-			pcsg: &grovecorev1alpha1.PodCliqueScalingGroup{
+			pcsg: &grovecorev1beta1.PodCliqueScalingGroup{
 				ObjectMeta: metav1.ObjectMeta{CreationTimestamp: created},
-				Status: grovecorev1alpha1.PodCliqueScalingGroupStatus{Conditions: []metav1.Condition{{
+				Status: grovecorev1beta1.PodCliqueScalingGroupStatus{Conditions: []metav1.Condition{{
 					Type:               constants.ConditionTypeMinAvailableBreached,
 					Status:             metav1.ConditionTrue,
 					LastTransitionTime: withinGraceOfCreate,
@@ -549,9 +549,9 @@ func TestWasPCSGEverHealthy(t *testing.T) {
 		},
 		{
 			name: "MinAvailableBreached=False now — currently healthy",
-			pcsg: &grovecorev1alpha1.PodCliqueScalingGroup{
+			pcsg: &grovecorev1beta1.PodCliqueScalingGroup{
 				ObjectMeta: metav1.ObjectMeta{CreationTimestamp: created},
-				Status: grovecorev1alpha1.PodCliqueScalingGroupStatus{Conditions: []metav1.Condition{{
+				Status: grovecorev1beta1.PodCliqueScalingGroupStatus{Conditions: []metav1.Condition{{
 					Type:               constants.ConditionTypeMinAvailableBreached,
 					Status:             metav1.ConditionFalse,
 					LastTransitionTime: wellAfterCreate,
@@ -561,9 +561,9 @@ func TestWasPCSGEverHealthy(t *testing.T) {
 		},
 		{
 			name: "MinAvailableBreached=True but flipped well after create — was healthy, regressed",
-			pcsg: &grovecorev1alpha1.PodCliqueScalingGroup{
+			pcsg: &grovecorev1beta1.PodCliqueScalingGroup{
 				ObjectMeta: metav1.ObjectMeta{CreationTimestamp: created},
-				Status: grovecorev1alpha1.PodCliqueScalingGroupStatus{Conditions: []metav1.Condition{{
+				Status: grovecorev1beta1.PodCliqueScalingGroupStatus{Conditions: []metav1.Condition{{
 					Type:               constants.ConditionTypeMinAvailableBreached,
 					Status:             metav1.ConditionTrue,
 					LastTransitionTime: wellAfterCreate,
@@ -585,18 +585,18 @@ func TestWasPCSGEverHealthy(t *testing.T) {
 // candidate list — gang-termination must not fire on them.
 func TestGetMinAvailableBreachedPCLQInfoFiltersNeverScheduled(t *testing.T) {
 	scheduledAt := metav1.Now()
-	pclqBreachedNeverScheduled := grovecorev1alpha1.PodClique{
+	pclqBreachedNeverScheduled := grovecorev1beta1.PodClique{
 		ObjectMeta: metav1.ObjectMeta{Name: "never-scheduled"},
-		Status: grovecorev1alpha1.PodCliqueStatus{
+		Status: grovecorev1beta1.PodCliqueStatus{
 			Conditions: []metav1.Condition{{
 				Type:   constants.ConditionTypeMinAvailableBreached,
 				Status: metav1.ConditionTrue,
 			}},
 		},
 	}
-	pclqBreachedAfterScheduled := grovecorev1alpha1.PodClique{
+	pclqBreachedAfterScheduled := grovecorev1beta1.PodClique{
 		ObjectMeta: metav1.ObjectMeta{Name: "scheduled-once"},
-		Status: grovecorev1alpha1.PodCliqueStatus{
+		Status: grovecorev1beta1.PodCliqueStatus{
 			LastScheduled: &scheduledAt,
 			Conditions: []metav1.Condition{{
 				Type:   constants.ConditionTypeMinAvailableBreached,
@@ -605,7 +605,7 @@ func TestGetMinAvailableBreachedPCLQInfoFiltersNeverScheduled(t *testing.T) {
 		},
 	}
 
-	pclqs := []grovecorev1alpha1.PodClique{pclqBreachedNeverScheduled, pclqBreachedAfterScheduled}
+	pclqs := []grovecorev1beta1.PodClique{pclqBreachedNeverScheduled, pclqBreachedAfterScheduled}
 	actual, _ := GetMinAvailableBreachedPCLQInfo(pclqs, time.Hour, time.Now())
 	assert.Equal(t, []string{"scheduled-once"}, actual, "never-scheduled PodClique must be filtered out")
 }
@@ -618,13 +618,13 @@ func TestGroupPCLQsByPCSReplicaIndex(t *testing.T) {
 	)
 	tests := []struct {
 		name          string
-		pclqs         []grovecorev1alpha1.PodClique
+		pclqs         []grovecorev1beta1.PodClique
 		expectErr     bool
 		expectedIndex map[int]int // replica index -> number of PodCliques in that group
 	}{
 		{
 			name: "groups PodCliques by replica index",
-			pclqs: []grovecorev1alpha1.PodClique{
+			pclqs: []grovecorev1beta1.PodClique{
 				*testutils.NewPodCliqueBuilder(pcsName, pcsUID, "clq-a", namespace, 0).Build(),
 				*testutils.NewPodCliqueBuilder(pcsName, pcsUID, "clq-b", namespace, 0).Build(),
 				*testutils.NewPodCliqueBuilder(pcsName, pcsUID, "clq-a", namespace, 1).Build(),
@@ -633,7 +633,7 @@ func TestGroupPCLQsByPCSReplicaIndex(t *testing.T) {
 		},
 		{
 			name: "non-integer replica-index label is an error",
-			pclqs: []grovecorev1alpha1.PodClique{
+			pclqs: []grovecorev1beta1.PodClique{
 				*testutils.NewPodCliqueBuilder(pcsName, pcsUID, "clq-a", namespace, 0).
 					WithLabels(map[string]string{apicommon.LabelPodCliqueSetReplicaIndex: "abc"}).Build(),
 			},

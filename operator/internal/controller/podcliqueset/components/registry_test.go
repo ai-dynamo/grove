@@ -18,7 +18,7 @@ import (
 	"testing"
 
 	groveconfigv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/sync"
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
@@ -42,7 +42,7 @@ import (
 // TestCreateOperatorRegistry tests creating the operator registry for PodCliqueSet reconciler.
 func TestCreateOperatorRegistry(t *testing.T) {
 	scheme := runtime.NewScheme()
-	_ = grovecorev1alpha1.AddToScheme(scheme)
+	_ = grovecorev1beta1.AddToScheme(scheme)
 	_ = groveschedulerv1alpha1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
 	_ = rbacv1.AddToScheme(scheme)

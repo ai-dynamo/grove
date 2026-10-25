@@ -18,7 +18,7 @@ import (
 	"testing"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
@@ -42,7 +42,7 @@ func TestReplicaIndicesToRecreate(t *testing.T) {
 	committedForReplica0 := apicommon.GenerateAnchorPodGangName(rnr, epochA)
 	committedForReplica1 := apicommon.GenerateAnchorPodGangName(rnr, epochB)
 
-	pcs := &grovecorev1alpha1.PodCliqueSet{ObjectMeta: metav1.ObjectMeta{Name: pcsName, Namespace: namespace}}
+	pcs := &grovecorev1beta1.PodCliqueSet{ObjectMeta: metav1.ObjectMeta{Name: pcsName, Namespace: namespace}}
 	pcsg := testutils.NewPodCliqueScalingGroupBuilder(pcsgFQN, namespace, pcsName, 0).
 		WithReplicas(2).
 		WithCliqueNames([]string{"worker"}).
@@ -50,20 +50,20 @@ func TestReplicaIndicesToRecreate(t *testing.T) {
 	// The PodGangMap commits replica index 0 to anchor A and replica index 1 to anchor B.
 	pgm := testutils.NewPodGangMapBuilder(pcsName, namespace, "uid", 0).WithEntries(
 		testutils.NewPodGangEntryBuilder("hash", epochA).
-			WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).
+			WithRole(grovecorev1beta1.PodGangEntryRoleAnchor).
 			WithPCSGReplicaIndices(map[string][]int32{pcsgConfig: {0}}).Build(),
 		testutils.NewPodGangEntryBuilder("hash", epochB).
-			WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).
+			WithRole(grovecorev1beta1.PodGangEntryRoleAnchor).
 			WithPCSGReplicaIndices(map[string][]int32{pcsgConfig: {1}}).Build(),
 	).Build()
 
-	memberOnPodGang := func(pcsgReplicaIndex int, cliqueName, podGangName string) grovecorev1alpha1.PodClique {
+	memberOnPodGang := func(pcsgReplicaIndex int, cliqueName, podGangName string) grovecorev1beta1.PodClique {
 		name := apicommon.GeneratePodCliqueName(apicommon.ResourceNameReplica{Name: pcsgFQN, Replica: pcsgReplicaIndex}, cliqueName)
 		return *testutils.NewPCSGPodCliqueBuilder(name, namespace, pcsName, pcsgFQN, 0, pcsgReplicaIndex).
 			WithLabels(map[string]string{apicommon.LabelPodGang: podGangName}).
 			Build()
 	}
-	terminatingMemberOnPodGang := func(pcsgReplicaIndex int, cliqueName, podGangName string) grovecorev1alpha1.PodClique {
+	terminatingMemberOnPodGang := func(pcsgReplicaIndex int, cliqueName, podGangName string) grovecorev1beta1.PodClique {
 		pclq := memberOnPodGang(pcsgReplicaIndex, cliqueName, podGangName)
 		now := metav1.Now()
 		pclq.DeletionTimestamp = &now
@@ -72,12 +72,12 @@ func TestReplicaIndicesToRecreate(t *testing.T) {
 
 	tests := []struct {
 		name          string
-		existingPCLQs []grovecorev1alpha1.PodClique
+		existingPCLQs []grovecorev1beta1.PodClique
 		want          []string
 	}{
 		{
 			name: "a replica on a superseded PodGang is selected for recreation",
-			existingPCLQs: []grovecorev1alpha1.PodClique{
+			existingPCLQs: []grovecorev1beta1.PodClique{
 				memberOnPodGang(0, "worker", committedForReplica0),
 				memberOnPodGang(1, "worker", apicommon.GenerateAnchorPodGangName(rnr, "999")),
 			},
@@ -85,7 +85,7 @@ func TestReplicaIndicesToRecreate(t *testing.T) {
 		},
 		{
 			name: "every replica on its committed PodGang is untouched",
-			existingPCLQs: []grovecorev1alpha1.PodClique{
+			existingPCLQs: []grovecorev1beta1.PodClique{
 				memberOnPodGang(0, "worker", committedForReplica0),
 				memberOnPodGang(1, "worker", committedForReplica1),
 			},
@@ -93,14 +93,14 @@ func TestReplicaIndicesToRecreate(t *testing.T) {
 		},
 		{
 			name: "a replica with no members is skipped",
-			existingPCLQs: []grovecorev1alpha1.PodClique{
+			existingPCLQs: []grovecorev1beta1.PodClique{
 				memberOnPodGang(0, "worker", committedForReplica0),
 			},
 			want: nil,
 		},
 		{
 			name: "a replica on a superseded PodGang with a terminating member is not recreated while it drains",
-			existingPCLQs: []grovecorev1alpha1.PodClique{
+			existingPCLQs: []grovecorev1beta1.PodClique{
 				memberOnPodGang(0, "worker", committedForReplica0),
 				terminatingMemberOnPodGang(1, "worker", apicommon.GenerateAnchorPodGangName(rnr, "999")),
 			},
@@ -108,7 +108,7 @@ func TestReplicaIndicesToRecreate(t *testing.T) {
 		},
 		{
 			name: "a replica with a live sibling on the committed PodGang is not recreated while another member is terminating",
-			existingPCLQs: []grovecorev1alpha1.PodClique{
+			existingPCLQs: []grovecorev1beta1.PodClique{
 				memberOnPodGang(0, "worker", committedForReplica0),
 				memberOnPodGang(0, "leader", committedForReplica0),
 				// Replica 1 was recreated: its worker already came back on the committed PodGang, but its
@@ -136,18 +136,18 @@ func TestReplicaIndicesToRecreate(t *testing.T) {
 // TestReconcileInProgressUpdateRejectsStaleCoherentTarget verifies that Coherent updates obey the
 // same target-generation guard as RollingRecreate and cannot complete a superseded PCSG update.
 func TestReconcileInProgressUpdateRejectsStaleCoherentTarget(t *testing.T) {
-	pcs := &grovecorev1alpha1.PodCliqueSet{
-		Status: grovecorev1alpha1.PodCliqueSetStatus{
+	pcs := &grovecorev1beta1.PodCliqueSet{
+		Status: grovecorev1beta1.PodCliqueSetStatus{
 			CurrentGenerationHash: ptr.To("generation-a"),
 		},
-		Spec: grovecorev1alpha1.PodCliqueSetSpec{
-			UpdateStrategy: &grovecorev1alpha1.PodCliqueSetUpdateStrategy{
-				Type: grovecorev1alpha1.CoherentStrategy,
+		Spec: grovecorev1beta1.PodCliqueSetSpec{
+			UpdateStrategy: &grovecorev1beta1.PodCliqueSetUpdateStrategy{
+				Type: grovecorev1beta1.CoherentStrategy,
 			},
 		},
 	}
 	pcsg := testutils.NewPodCliqueScalingGroupBuilder("test-pcsg", "test-ns", "test-pcs", 0).Build()
-	pcsg.Status.UpdateProgress = &grovecorev1alpha1.PodCliqueScalingGroupUpdateProgress{
+	pcsg.Status.UpdateProgress = &grovecorev1beta1.PodCliqueScalingGroupUpdateProgress{
 		PodCliqueSetGenerationHash: "generation-b",
 	}
 	ss := &syncSnapshot{pcs: pcs, pcsg: pcsg}
@@ -164,7 +164,7 @@ func TestMarkCoherentUpdateEndIfConvergedRequeuesWhenNotConverged(t *testing.T) 
 		WithReplicas(1).
 		WithCliqueNames([]string{"worker"}).
 		Build()
-	pcs := &grovecorev1alpha1.PodCliqueSet{ObjectMeta: metav1.ObjectMeta{Name: "test-pcs", Namespace: "test-ns"}}
+	pcs := &grovecorev1beta1.PodCliqueSet{ObjectMeta: metav1.ObjectMeta{Name: "test-pcs", Namespace: "test-ns"}}
 	// Replica 0 is expected but has no members yet, so it is neither updated nor Ready.
 	ss := &syncSnapshot{
 		pcs:                            pcs,

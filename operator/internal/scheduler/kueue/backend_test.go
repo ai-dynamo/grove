@@ -24,7 +24,7 @@ import (
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
@@ -48,16 +48,16 @@ func TestBackend_PreparePod_Defaults(t *testing.T) {
 	b := New(cl, cl.Scheme(), recorder, profile)
 	assert.NoError(t, b.Init(nil))
 
-	pcs := &grovecorev1alpha1.PodCliqueSet{
+	pcs := &grovecorev1beta1.PodCliqueSet{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-pcs",
 			Namespace: "default",
 			Labels:    map[string]string{queueNameLabel: "test-queue"},
 		},
-		Spec: grovecorev1alpha1.PodCliqueSetSpec{
-			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
-				Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-					{Name: "worker", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 2}},
+		Spec: grovecorev1beta1.PodCliqueSetSpec{
+			Template: grovecorev1beta1.PodCliqueSetTemplateSpec{
+				Cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
+					{Name: "worker", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 2}},
 				},
 			},
 		},
@@ -148,16 +148,16 @@ func TestBackend_PreparePod_ConfigAndExistingMetadata(t *testing.T) {
 	b := New(cl, cl.Scheme(), recorder, profile)
 	assert.NoError(t, b.Init(nil))
 
-	pcs := &grovecorev1alpha1.PodCliqueSet{
+	pcs := &grovecorev1beta1.PodCliqueSet{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-pcs",
 			Namespace: "default",
 			Labels:    map[string]string{queueNameLabel: "configured-queue"},
 		},
-		Spec: grovecorev1alpha1.PodCliqueSetSpec{
-			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
-				Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-					{Name: "worker", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 7}},
+		Spec: grovecorev1beta1.PodCliqueSetSpec{
+			Template: grovecorev1beta1.PodCliqueSetTemplateSpec{
+				Cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
+					{Name: "worker", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 7}},
 				},
 			},
 		},
@@ -206,20 +206,20 @@ func TestBackend_PreparePod_PCSGAndTopology(t *testing.T) {
 	require.NoError(t, b.Init(nil))
 
 	pcsgReplicas := int32(2)
-	pcs := &grovecorev1alpha1.PodCliqueSet{
+	pcs := &grovecorev1beta1.PodCliqueSet{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "demo",
 			Namespace: "default",
 			Labels:    map[string]string{queueNameLabel: "grove-poc"},
 		},
-		Spec: grovecorev1alpha1.PodCliqueSetSpec{
-			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
-				TopologyConstraint: &grovecorev1alpha1.TopologyConstraint{},
-				Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-					{Name: "leader", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1}},
-					{Name: "worker", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 2}},
+		Spec: grovecorev1beta1.PodCliqueSetSpec{
+			Template: grovecorev1beta1.PodCliqueSetTemplateSpec{
+				TopologyConstraint: &grovecorev1beta1.TopologyConstraint{},
+				Cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
+					{Name: "leader", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 1}},
+					{Name: "worker", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 2}},
 				},
-				PodCliqueScalingGroupConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+				PodCliqueScalingGroupConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 					{Name: "decode", CliqueNames: []string{"leader", "worker"}, Replicas: &pcsgReplicas},
 				},
 			},
@@ -304,17 +304,17 @@ func TestBackend_PreparePod_RequiresPodGangForTopology(t *testing.T) {
 	b := New(cl, cl.Scheme(), recorder, profile)
 	require.NoError(t, b.Init(nil))
 
-	pcs := &grovecorev1alpha1.PodCliqueSet{
+	pcs := &grovecorev1beta1.PodCliqueSet{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "demo",
 			Namespace: "default",
 			Labels:    map[string]string{queueNameLabel: "grove-poc"},
 		},
-		Spec: grovecorev1alpha1.PodCliqueSetSpec{
-			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
-				TopologyConstraint: &grovecorev1alpha1.TopologyConstraint{},
-				Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-					{Name: "worker", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1}},
+		Spec: grovecorev1beta1.PodCliqueSetSpec{
+			Template: grovecorev1beta1.PodCliqueSetTemplateSpec{
+				TopologyConstraint: &grovecorev1beta1.TopologyConstraint{},
+				Cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
+					{Name: "worker", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 1}},
 				},
 			},
 		},
@@ -346,12 +346,12 @@ func TestBackend_SyncPodGang_RequiresPodCliqueSetLabel(t *testing.T) {
 }
 
 func TestBackend_SyncPodGang_RequiresPodCliqueSetQueueLabel(t *testing.T) {
-	pcs := &grovecorev1alpha1.PodCliqueSet{
+	pcs := &grovecorev1beta1.PodCliqueSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "demo", Namespace: "default"},
-		Spec: grovecorev1alpha1.PodCliqueSetSpec{
-			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
-				Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-					{Name: "worker", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1}},
+		Spec: grovecorev1beta1.PodCliqueSetSpec{
+			Template: grovecorev1beta1.PodCliqueSetTemplateSpec{
+				Cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
+					{Name: "worker", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 1}},
 				},
 			},
 		},
@@ -376,16 +376,16 @@ func TestBackend_SyncPodGang_RequiresPodCliqueSetQueueLabel(t *testing.T) {
 }
 
 func TestBackend_SyncPodGang_CreatesPrebuiltWorkloadForSimplePCS(t *testing.T) {
-	pcs := &grovecorev1alpha1.PodCliqueSet{
+	pcs := &grovecorev1beta1.PodCliqueSet{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "demo",
 			Namespace: "default",
 			Labels:    map[string]string{queueNameLabel: "grove-poc"},
 		},
-		Spec: grovecorev1alpha1.PodCliqueSetSpec{
-			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
-				Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-					{Name: "worker", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 4}},
+		Spec: grovecorev1beta1.PodCliqueSetSpec{
+			Template: grovecorev1beta1.PodCliqueSetTemplateSpec{
+				Cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
+					{Name: "worker", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 4}},
 				},
 			},
 		},
@@ -448,17 +448,17 @@ func TestBackend_SyncPodGang_CreatesPrebuiltWorkloadForSimplePCS(t *testing.T) {
 // ensureWorkload repair tests: a Workload named after the PodGang, and a PodCliqueSet whose
 // queueNameLabel differs from the "stale-queue" value the repair tests seed onto a pre-existing
 // Workload, so a rebuilt Workload is distinguishable from an untouched one by QueueName alone.
-func newTestPCSAndPodGang() (*grovecorev1alpha1.PodCliqueSet, *groveschedulerv1alpha1.PodGang) {
-	pcs := &grovecorev1alpha1.PodCliqueSet{
+func newTestPCSAndPodGang() (*grovecorev1beta1.PodCliqueSet, *groveschedulerv1alpha1.PodGang) {
+	pcs := &grovecorev1beta1.PodCliqueSet{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "demo",
 			Namespace: "default",
 			Labels:    map[string]string{queueNameLabel: "grove-poc"},
 		},
-		Spec: grovecorev1alpha1.PodCliqueSetSpec{
-			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
-				Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-					{Name: "worker", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 2}},
+		Spec: grovecorev1beta1.PodCliqueSetSpec{
+			Template: grovecorev1beta1.PodCliqueSetTemplateSpec{
+				Cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
+					{Name: "worker", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 2}},
 				},
 			},
 		},
@@ -717,12 +717,12 @@ func TestBackend_SyncPodGang_WaitsForDeletedWorkloadToGo(t *testing.T) {
 // until the anchor is scheduled.
 func TestBackend_TailWorkloadWaitsForAnchor(t *testing.T) {
 	const anchorEpoch, tailEpoch = "1000", "1001"
-	pcs := &grovecorev1alpha1.PodCliqueSet{
+	pcs := &grovecorev1beta1.PodCliqueSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "demo", Namespace: "default", Labels: map[string]string{queueNameLabel: "grove-poc"}},
-		Spec: grovecorev1alpha1.PodCliqueSetSpec{
-			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
-				Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{{Name: "worker", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1}}},
-				PodCliqueScalingGroupConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+		Spec: grovecorev1beta1.PodCliqueSetSpec{
+			Template: grovecorev1beta1.PodCliqueSetTemplateSpec{
+				Cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{{Name: "worker", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 1}}},
+				PodCliqueScalingGroupConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 					{Name: "decode", CliqueNames: []string{"worker"}, Replicas: ptr.To[int32](2), MinAvailable: ptr.To[int32](1)},
 				},
 			},
@@ -732,7 +732,7 @@ func TestBackend_TailWorkloadWaitsForAnchor(t *testing.T) {
 		WithEntries(
 			testutils.NewAnchorEntry("hash", anchorEpoch, "decode", 0),
 			testutils.NewPodGangEntryBuilder("hash", tailEpoch).
-				WithRole(grovecorev1alpha1.PodGangEntryRoleTail).
+				WithRole(grovecorev1beta1.PodGangEntryRoleTail).
 				WithPCSGReplicaIndices(map[string][]int32{"decode": {1}}).
 				WithDependsOn(anchorEpoch).
 				Build(),
@@ -750,7 +750,7 @@ func TestBackend_TailWorkloadWaitsForAnchor(t *testing.T) {
 	}
 	anchor := podGangAtEpoch("demo-0-1000", anchorEpoch, "demo-0-decode-0-worker")
 	tail := podGangAtEpoch("demo-0-1001-decode-1", tailEpoch, "demo-0-decode-1-worker")
-	tailPCLQ := &grovecorev1alpha1.PodClique{ObjectMeta: metav1.ObjectMeta{
+	tailPCLQ := &grovecorev1beta1.PodClique{ObjectMeta: metav1.ObjectMeta{
 		Namespace: "default",
 		Name:      "demo-0-decode-1-worker",
 		Labels: map[string]string{
@@ -798,16 +798,16 @@ func TestBackend_SyncPodGang_RejectsInvalidMinReplicas(t *testing.T) {
 
 	for _, tt := range testCases {
 		t.Run(tt.name, func(t *testing.T) {
-			pcs := &grovecorev1alpha1.PodCliqueSet{
+			pcs := &grovecorev1beta1.PodCliqueSet{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "demo",
 					Namespace: "default",
 					Labels:    map[string]string{queueNameLabel: "grove-poc"},
 				},
-				Spec: grovecorev1alpha1.PodCliqueSetSpec{
-					Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
-						Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-							{Name: "worker", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 4}},
+				Spec: grovecorev1beta1.PodCliqueSetSpec{
+					Template: grovecorev1beta1.PodCliqueSetTemplateSpec{
+						Cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
+							{Name: "worker", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 4}},
 						},
 					},
 				},
@@ -837,17 +837,17 @@ func TestBackend_SyncPodGang_RejectsInvalidMinReplicas(t *testing.T) {
 }
 
 func TestBackend_SyncPodGang_RejectsMultiplePartiallyAdmittedPodGroups(t *testing.T) {
-	pcs := &grovecorev1alpha1.PodCliqueSet{
+	pcs := &grovecorev1beta1.PodCliqueSet{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "demo",
 			Namespace: "default",
 			Labels:    map[string]string{queueNameLabel: "grove-poc"},
 		},
-		Spec: grovecorev1alpha1.PodCliqueSetSpec{
-			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
-				Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-					{Name: "worker", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 4}},
-					{Name: "frontend", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 3}},
+		Spec: grovecorev1beta1.PodCliqueSetSpec{
+			Template: grovecorev1beta1.PodCliqueSetTemplateSpec{
+				Cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
+					{Name: "worker", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 4}},
+					{Name: "frontend", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 3}},
 				},
 			},
 		},
@@ -878,19 +878,19 @@ func TestBackend_SyncPodGang_RejectsMultiplePartiallyAdmittedPodGroups(t *testin
 
 func TestBackend_SyncPodGang_CreatesPrebuiltWorkloadForPCSGWithMinCountEqualsCount(t *testing.T) {
 	pcsgReplicas := int32(2)
-	pcs := &grovecorev1alpha1.PodCliqueSet{
+	pcs := &grovecorev1beta1.PodCliqueSet{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "demo",
 			Namespace: "default",
 			Labels:    map[string]string{queueNameLabel: "grove-poc"},
 		},
-		Spec: grovecorev1alpha1.PodCliqueSetSpec{
-			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
-				Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-					{Name: "leader", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1}},
-					{Name: "worker", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 2}},
+		Spec: grovecorev1beta1.PodCliqueSetSpec{
+			Template: grovecorev1beta1.PodCliqueSetTemplateSpec{
+				Cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
+					{Name: "leader", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 1}},
+					{Name: "worker", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 2}},
 				},
-				PodCliqueScalingGroupConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+				PodCliqueScalingGroupConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 					{Name: "decode", CliqueNames: []string{"leader", "worker"}, Replicas: &pcsgReplicas},
 				},
 			},
@@ -951,19 +951,19 @@ func TestBackend_SyncPodGang_CreatesPrebuiltWorkloadForPCSGWithMinCountEqualsCou
 // though neither member PodGroup carries a per-PodGroup TopologyConstraint of its own.
 func TestBackend_SyncPodGang_UsesTopologyConstraintGroupConfig(t *testing.T) {
 	pcsgReplicas := int32(2)
-	pcs := &grovecorev1alpha1.PodCliqueSet{
+	pcs := &grovecorev1beta1.PodCliqueSet{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "demo",
 			Namespace: "default",
 			Labels:    map[string]string{queueNameLabel: "grove-poc"},
 		},
-		Spec: grovecorev1alpha1.PodCliqueSetSpec{
-			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
-				Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-					{Name: "leader", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1}},
-					{Name: "worker", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 2}},
+		Spec: grovecorev1beta1.PodCliqueSetSpec{
+			Template: grovecorev1beta1.PodCliqueSetTemplateSpec{
+				Cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
+					{Name: "leader", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 1}},
+					{Name: "worker", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 2}},
 				},
-				PodCliqueScalingGroupConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+				PodCliqueScalingGroupConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 					{Name: "decode", CliqueNames: []string{"leader", "worker"}, Replicas: &pcsgReplicas},
 				},
 			},
@@ -1022,17 +1022,17 @@ func TestBackend_SyncPodGang_UsesTopologyConstraintGroupConfig(t *testing.T) {
 // TestBackend_SyncPodGang_SortsPodSetsByName proves the Workload lists its PodSets in name order (the order
 // Kueue checks them in), not in the PodGang's order.
 func TestBackend_SyncPodGang_SortsPodSetsByName(t *testing.T) {
-	pcs := &grovecorev1alpha1.PodCliqueSet{
+	pcs := &grovecorev1beta1.PodCliqueSet{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "demo",
 			Namespace: "default",
 			Labels:    map[string]string{queueNameLabel: "grove-poc"},
 		},
-		Spec: grovecorev1alpha1.PodCliqueSetSpec{
-			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
-				Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-					{Name: "prefill", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 2}},
-					{Name: "decode", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1}},
+		Spec: grovecorev1beta1.PodCliqueSetSpec{
+			Template: grovecorev1beta1.PodCliqueSetTemplateSpec{
+				Cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
+					{Name: "prefill", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 2}},
+					{Name: "decode", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 1}},
 				},
 			},
 		},
@@ -1072,50 +1072,50 @@ func TestBackend_SyncPodGang_SortsPodSetsByName(t *testing.T) {
 func TestBackend_ValidatePodCliqueSet_MinCount(t *testing.T) {
 	testCases := []struct {
 		description string
-		cliques     []*grovecorev1alpha1.PodCliqueTemplateSpec
-		pcsgConfigs []grovecorev1alpha1.PodCliqueScalingGroupConfig
+		cliques     []*grovecorev1beta1.PodCliqueTemplateSpec
+		pcsgConfigs []grovecorev1beta1.PodCliqueScalingGroupConfig
 		wantErr     bool
 		wantErrMsg  string
 	}{
 		{
 			description: "no partial-gang standalone clique is valid",
-			cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-				{Name: "worker", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 4, MinAvailable: ptr.To[int32](4)}},
+			cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
+				{Name: "worker", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 4, MinAvailable: ptr.To[int32](4)}},
 			},
 		},
 		{
 			description: "single partial-gang standalone clique is valid",
-			cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-				{Name: "worker", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 4, MinAvailable: ptr.To[int32](2)}},
-				{Name: "frontend", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 2, MinAvailable: ptr.To[int32](2)}},
+			cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
+				{Name: "worker", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 4, MinAvailable: ptr.To[int32](2)}},
+				{Name: "frontend", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 2, MinAvailable: ptr.To[int32](2)}},
 			},
 		},
 		{
 			description: "two partial-gang standalone cliques are rejected",
-			cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-				{Name: "worker", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 4, MinAvailable: ptr.To[int32](2)}},
-				{Name: "frontend", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 3, MinAvailable: ptr.To[int32](1)}},
+			cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
+				{Name: "worker", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 4, MinAvailable: ptr.To[int32](2)}},
+				{Name: "frontend", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 3, MinAvailable: ptr.To[int32](1)}},
 			},
 			wantErr:    true,
 			wantErrMsg: "at most one standalone PodClique with minAvailable < replicas",
 		},
 		{
 			description: "scaling-group cliques with minAvailable == replicas are valid",
-			cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-				{Name: "leader", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To[int32](1)}},
-				{Name: "worker", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 4, MinAvailable: ptr.To[int32](4)}},
+			cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
+				{Name: "leader", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To[int32](1)}},
+				{Name: "worker", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 4, MinAvailable: ptr.To[int32](4)}},
 			},
-			pcsgConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+			pcsgConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{Name: "decode", CliqueNames: []string{"leader", "worker"}},
 			},
 		},
 		{
 			description: "scaling-group clique with minAvailable < replicas is rejected",
-			cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-				{Name: "leader", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To[int32](1)}},
-				{Name: "worker", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 4, MinAvailable: ptr.To[int32](3)}},
+			cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
+				{Name: "leader", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To[int32](1)}},
+				{Name: "worker", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 4, MinAvailable: ptr.To[int32](3)}},
 			},
-			pcsgConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+			pcsgConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{Name: "decode", CliqueNames: []string{"leader", "worker"}},
 			},
 			wantErr:    true,
@@ -1123,36 +1123,36 @@ func TestBackend_ValidatePodCliqueSet_MinCount(t *testing.T) {
 		},
 		{
 			description: "nil minAvailable is treated as full gang",
-			cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-				{Name: "worker", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 4}},
-				{Name: "frontend", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 3, MinAvailable: ptr.To[int32](1)}},
+			cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
+				{Name: "worker", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 4}},
+				{Name: "frontend", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 3, MinAvailable: ptr.To[int32](1)}},
 			},
 		},
 		{
 			description: "PCSG with minAvailable == replicas is valid",
-			cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-				{Name: "leader", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 4, MinAvailable: ptr.To[int32](4)}},
+			cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
+				{Name: "leader", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 4, MinAvailable: ptr.To[int32](4)}},
 			},
-			pcsgConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+			pcsgConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{Name: "decode", CliqueNames: []string{"leader"}, Replicas: ptr.To[int32](4), MinAvailable: ptr.To[int32](4)},
 			},
 		},
 		{
 			description: "PCSG with minAvailable < replicas is valid because each extra replica gets its own PodGang",
-			cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-				{Name: "leader", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To[int32](1)}},
-				{Name: "worker", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 4, MinAvailable: ptr.To[int32](4)}},
+			cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
+				{Name: "leader", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To[int32](1)}},
+				{Name: "worker", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 4, MinAvailable: ptr.To[int32](4)}},
 			},
-			pcsgConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+			pcsgConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{Name: "decode", CliqueNames: []string{"leader", "worker"}, Replicas: ptr.To[int32](5), MinAvailable: ptr.To[int32](1)},
 			},
 		},
 		{
 			description: "PCSG with nil replicas or minAvailable defers to CRD defaulting",
-			cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-				{Name: "leader", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To[int32](1)}},
+			cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
+				{Name: "leader", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To[int32](1)}},
 			},
-			pcsgConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+			pcsgConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{Name: "decode", CliqueNames: []string{"leader"}},
 			},
 		},
@@ -1166,10 +1166,10 @@ func TestBackend_ValidatePodCliqueSet_MinCount(t *testing.T) {
 			b := New(cl, cl.Scheme(), recorder, profile)
 			require.NoError(t, b.Init(nil))
 
-			pcs := &grovecorev1alpha1.PodCliqueSet{
+			pcs := &grovecorev1beta1.PodCliqueSet{
 				ObjectMeta: metav1.ObjectMeta{Name: "demo", Namespace: "default", Labels: map[string]string{queueNameLabel: "grove-poc"}},
-				Spec: grovecorev1alpha1.PodCliqueSetSpec{
-					Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
+				Spec: grovecorev1beta1.PodCliqueSetSpec{
+					Template: grovecorev1beta1.PodCliqueSetTemplateSpec{
 						Cliques:                      tc.cliques,
 						PodCliqueScalingGroupConfigs: tc.pcsgConfigs,
 					},
@@ -1186,8 +1186,8 @@ func TestBackend_ValidatePodCliqueSet_MinCount(t *testing.T) {
 	}
 }
 
-func newStandalonePodClique(name, pcsName string) *grovecorev1alpha1.PodClique {
-	return &grovecorev1alpha1.PodClique{ObjectMeta: metav1.ObjectMeta{
+func newStandalonePodClique(name, pcsName string) *grovecorev1beta1.PodClique {
+	return &grovecorev1beta1.PodClique{ObjectMeta: metav1.ObjectMeta{
 		Namespace: "default",
 		Name:      name,
 		Labels: map[string]string{
@@ -1197,8 +1197,8 @@ func newStandalonePodClique(name, pcsName string) *grovecorev1alpha1.PodClique {
 	}}
 }
 
-func newPCSGPodClique(name string) *grovecorev1alpha1.PodClique {
-	return &grovecorev1alpha1.PodClique{ObjectMeta: metav1.ObjectMeta{
+func newPCSGPodClique(name string) *grovecorev1beta1.PodClique {
+	return &grovecorev1beta1.PodClique{ObjectMeta: metav1.ObjectMeta{
 		Namespace: "default",
 		Name:      name,
 		Labels: map[string]string{
@@ -1286,10 +1286,10 @@ func TestBackend_ValidatePodCliqueSet_QueueLabel(t *testing.T) {
 
 			var opts []scheduler.ValidateOption
 			if tc.oldLabels != nil {
-				oldPCS := &grovecorev1alpha1.PodCliqueSet{ObjectMeta: metav1.ObjectMeta{Name: "demo", Namespace: "default", Labels: tc.oldLabels}}
+				oldPCS := &grovecorev1beta1.PodCliqueSet{ObjectMeta: metav1.ObjectMeta{Name: "demo", Namespace: "default", Labels: tc.oldLabels}}
 				opts = append(opts, scheduler.WithOldPodCliqueSet(oldPCS))
 			}
-			pcs := &grovecorev1alpha1.PodCliqueSet{ObjectMeta: metav1.ObjectMeta{Name: "demo", Namespace: "default", Labels: tc.newLabels}}
+			pcs := &grovecorev1beta1.PodCliqueSet{ObjectMeta: metav1.ObjectMeta{Name: "demo", Namespace: "default", Labels: tc.newLabels}}
 			err := b.ValidatePodCliqueSet(context.Background(), pcs, opts...)
 			if tc.wantErrMsg != "" {
 				require.ErrorContains(t, err, tc.wantErrMsg)
@@ -1303,38 +1303,38 @@ func TestBackend_ValidatePodCliqueSet_QueueLabel(t *testing.T) {
 func TestBackend_ValidatePodCliqueSet_AutoScalingConfig(t *testing.T) {
 	testCases := []struct {
 		description string
-		cliques     []*grovecorev1alpha1.PodCliqueTemplateSpec
-		pcsgConfigs []grovecorev1alpha1.PodCliqueScalingGroupConfig
+		cliques     []*grovecorev1beta1.PodCliqueTemplateSpec
+		pcsgConfigs []grovecorev1beta1.PodCliqueScalingGroupConfig
 		wantErr     bool
 	}{
 		{
 			description: "cliques without autoScalingConfig are valid",
-			cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-				{Name: "worker", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 4, MinAvailable: ptr.To[int32](4)}},
+			cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
+				{Name: "worker", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 4, MinAvailable: ptr.To[int32](4)}},
 			},
 		},
 		{
 			description: "clique declaring autoScalingConfig is rejected",
-			cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-				{Name: "worker", Spec: grovecorev1alpha1.PodCliqueSpec{
+			cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
+				{Name: "worker", Spec: grovecorev1beta1.PodCliqueSpec{
 					Replicas:     4,
 					MinAvailable: ptr.To[int32](4),
-					ScaleConfig:  &grovecorev1alpha1.AutoScalingConfig{MaxReplicas: 10},
+					ScaleConfig:  &grovecorev1beta1.AutoScalingConfig{MaxReplicas: 10},
 				}},
 			},
 			wantErr: true,
 		},
 		{
 			description: "autoScalingConfig on a PodCliqueScalingGroup is allowed",
-			cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-				{Name: "leader", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To[int32](1)}},
-				{Name: "worker", Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 4, MinAvailable: ptr.To[int32](4)}},
+			cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
+				{Name: "leader", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To[int32](1)}},
+				{Name: "worker", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 4, MinAvailable: ptr.To[int32](4)}},
 			},
-			pcsgConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+			pcsgConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{
 					Name:        "decode",
 					CliqueNames: []string{"leader", "worker"},
-					ScaleConfig: &grovecorev1alpha1.AutoScalingConfig{MaxReplicas: 10},
+					ScaleConfig: &grovecorev1beta1.AutoScalingConfig{MaxReplicas: 10},
 				},
 			},
 		},
@@ -1348,10 +1348,10 @@ func TestBackend_ValidatePodCliqueSet_AutoScalingConfig(t *testing.T) {
 			b := New(cl, cl.Scheme(), recorder, profile)
 			require.NoError(t, b.Init(nil))
 
-			pcs := &grovecorev1alpha1.PodCliqueSet{
+			pcs := &grovecorev1beta1.PodCliqueSet{
 				ObjectMeta: metav1.ObjectMeta{Name: "demo", Namespace: "default", Labels: map[string]string{queueNameLabel: "grove-poc"}},
-				Spec: grovecorev1alpha1.PodCliqueSetSpec{
-					Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
+				Spec: grovecorev1beta1.PodCliqueSetSpec{
+					Template: grovecorev1beta1.PodCliqueSetTemplateSpec{
 						Cliques:                      tc.cliques,
 						PodCliqueScalingGroupConfigs: tc.pcsgConfigs,
 					},
@@ -1369,15 +1369,15 @@ func TestBackend_ValidatePodCliqueSet_AutoScalingConfig(t *testing.T) {
 }
 
 func TestBackend_ValidatePodCliqueSet_TopologyRequiredAndPreferred(t *testing.T) {
-	requiredRack := &grovecorev1alpha1.TopologyConstraint{Pack: &grovecorev1alpha1.TopologyPackConstraint{RequiredDomain: "rack"}}
-	preferredHost := &grovecorev1alpha1.TopologyConstraint{Pack: &grovecorev1alpha1.TopologyPackConstraint{PreferredDomain: "host"}}
-	requiredRackPreferredHost := &grovecorev1alpha1.TopologyConstraint{Pack: &grovecorev1alpha1.TopologyPackConstraint{RequiredDomain: "rack", PreferredDomain: "host"}}
+	requiredRack := &grovecorev1beta1.TopologyConstraint{Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: "rack"}}
+	preferredHost := &grovecorev1beta1.TopologyConstraint{Pack: &grovecorev1beta1.TopologyPackConstraint{PreferredDomain: "host"}}
+	requiredRackPreferredHost := &grovecorev1beta1.TopologyConstraint{Pack: &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: "rack", PreferredDomain: "host"}}
 
 	testCases := []struct {
 		description      string
-		pcsConstraint    *grovecorev1alpha1.TopologyConstraint
-		pcsgConstraint   *grovecorev1alpha1.TopologyConstraint
-		cliqueConstraint *grovecorev1alpha1.TopologyConstraint
+		pcsConstraint    *grovecorev1beta1.TopologyConstraint
+		pcsgConstraint   *grovecorev1beta1.TopologyConstraint
+		cliqueConstraint *grovecorev1beta1.TopologyConstraint
 		// wantRejected is the list of cliques the error names, in template order; empty means the PodCliqueSet is valid.
 		wantRejected string
 	}{
@@ -1439,20 +1439,20 @@ func TestBackend_ValidatePodCliqueSet_TopologyRequiredAndPreferred(t *testing.T)
 			b := New(cl, cl.Scheme(), recorder, profile)
 			require.NoError(t, b.Init(nil))
 
-			pcs := &grovecorev1alpha1.PodCliqueSet{
+			pcs := &grovecorev1beta1.PodCliqueSet{
 				ObjectMeta: metav1.ObjectMeta{Name: "demo", Namespace: "default", Labels: map[string]string{queueNameLabel: "grove-poc"}},
-				Spec: grovecorev1alpha1.PodCliqueSetSpec{
-					Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
+				Spec: grovecorev1beta1.PodCliqueSetSpec{
+					Template: grovecorev1beta1.PodCliqueSetTemplateSpec{
 						TopologyConstraint: tc.pcsConstraint,
-						Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+						Cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
 							{
 								Name:               "worker",
-								Spec:               grovecorev1alpha1.PodCliqueSpec{Replicas: 4, MinAvailable: ptr.To[int32](4)},
+								Spec:               grovecorev1beta1.PodCliqueSpec{Replicas: 4, MinAvailable: ptr.To[int32](4)},
 								TopologyConstraint: tc.cliqueConstraint,
 							},
 							{
 								Name: "leader",
-								Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To[int32](1)},
+								Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To[int32](1)},
 							},
 						},
 					},
@@ -1460,7 +1460,7 @@ func TestBackend_ValidatePodCliqueSet_TopologyRequiredAndPreferred(t *testing.T)
 			}
 			// "worker" joins a scaling group when the case sets one; "leader" always stays standalone.
 			if tc.pcsgConstraint != nil {
-				pcs.Spec.Template.PodCliqueScalingGroupConfigs = []grovecorev1alpha1.PodCliqueScalingGroupConfig{{
+				pcs.Spec.Template.PodCliqueScalingGroupConfigs = []grovecorev1beta1.PodCliqueScalingGroupConfig{{
 					Name:               "sg",
 					CliqueNames:        []string{"worker"},
 					Replicas:           ptr.To[int32](1),
@@ -1481,10 +1481,10 @@ func TestBackend_ValidatePodCliqueSet_TopologyRequiredAndPreferred(t *testing.T)
 }
 
 func TestBackend_ValidatePodCliqueSet_PodSetLimit(t *testing.T) {
-	cliques := func(names ...string) []*grovecorev1alpha1.PodCliqueTemplateSpec {
-		result := make([]*grovecorev1alpha1.PodCliqueTemplateSpec, 0, len(names))
+	cliques := func(names ...string) []*grovecorev1beta1.PodCliqueTemplateSpec {
+		result := make([]*grovecorev1beta1.PodCliqueTemplateSpec, 0, len(names))
 		for _, name := range names {
-			result = append(result, &grovecorev1alpha1.PodCliqueTemplateSpec{Name: name, Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To[int32](1)}})
+			result = append(result, &grovecorev1beta1.PodCliqueTemplateSpec{Name: name, Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To[int32](1)}})
 		}
 		return result
 	}
@@ -1495,14 +1495,14 @@ func TestBackend_ValidatePodCliqueSet_PodSetLimit(t *testing.T) {
 		}
 		return names
 	}
-	scalingGroup := func(name string, replicas int32, cliqueNames ...string) grovecorev1alpha1.PodCliqueScalingGroupConfig {
-		return grovecorev1alpha1.PodCliqueScalingGroupConfig{Name: name, CliqueNames: cliqueNames, Replicas: ptr.To(replicas), MinAvailable: ptr.To(replicas)}
+	scalingGroup := func(name string, replicas int32, cliqueNames ...string) grovecorev1beta1.PodCliqueScalingGroupConfig {
+		return grovecorev1beta1.PodCliqueScalingGroupConfig{Name: name, CliqueNames: cliqueNames, Replicas: ptr.To(replicas), MinAvailable: ptr.To(replicas)}
 	}
 
 	testCases := []struct {
 		description   string
-		cliques       []*grovecorev1alpha1.PodCliqueTemplateSpec
-		scalingGroups []grovecorev1alpha1.PodCliqueScalingGroupConfig
+		cliques       []*grovecorev1beta1.PodCliqueTemplateSpec
+		scalingGroups []grovecorev1beta1.PodCliqueScalingGroupConfig
 		// wantErr is a substring of the expected error; empty means the PodCliqueSet is valid.
 		wantErr string
 	}{
@@ -1518,18 +1518,18 @@ func TestBackend_ValidatePodCliqueSet_PodSetLimit(t *testing.T) {
 		{
 			description:   "a 2-clique scaling group with 9 replicas fills the limit",
 			cliques:       cliques("leader", "worker"),
-			scalingGroups: []grovecorev1alpha1.PodCliqueScalingGroupConfig{scalingGroup("decode", 9, "leader", "worker")},
+			scalingGroups: []grovecorev1beta1.PodCliqueScalingGroupConfig{scalingGroup("decode", 9, "leader", "worker")},
 		},
 		{
 			description:   "a standalone clique plus a 2-clique scaling group with 9 replicas exceeds the limit",
 			cliques:       cliques("router", "leader", "worker"),
-			scalingGroups: []grovecorev1alpha1.PodCliqueScalingGroupConfig{scalingGroup("decode", 9, "leader", "worker")},
+			scalingGroups: []grovecorev1beta1.PodCliqueScalingGroupConfig{scalingGroup("decode", 9, "leader", "worker")},
 			wantErr:       "base PodGang would have 19",
 		},
 		{
 			description: "scaling groups add up",
 			cliques:     cliques("router", "p-leader", "p-worker", "d-leader", "d-worker"),
-			scalingGroups: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+			scalingGroups: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				scalingGroup("prefill", 4, "p-leader", "p-worker"),
 				scalingGroup("decode", 5, "d-leader", "d-worker"),
 			},
@@ -1538,7 +1538,7 @@ func TestBackend_ValidatePodCliqueSet_PodSetLimit(t *testing.T) {
 		{
 			description: "scaling-group replicas above minAvailable get their own PodGangs",
 			cliques:     cliques("router", "leader", "worker"),
-			scalingGroups: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+			scalingGroups: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{Name: "decode", CliqueNames: []string{"leader", "worker"}, Replicas: ptr.To[int32](20), MinAvailable: ptr.To[int32](1)},
 			},
 		},
@@ -1550,10 +1550,10 @@ func TestBackend_ValidatePodCliqueSet_PodSetLimit(t *testing.T) {
 			b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKueue})
 			require.NoError(t, b.Init(nil))
 
-			pcs := &grovecorev1alpha1.PodCliqueSet{
+			pcs := &grovecorev1beta1.PodCliqueSet{
 				ObjectMeta: metav1.ObjectMeta{Name: "demo", Namespace: "default", Labels: map[string]string{queueNameLabel: "grove-poc"}},
-				Spec: grovecorev1alpha1.PodCliqueSetSpec{
-					Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
+				Spec: grovecorev1beta1.PodCliqueSetSpec{
+					Template: grovecorev1beta1.PodCliqueSetTemplateSpec{
 						Cliques:                      tc.cliques,
 						PodCliqueScalingGroupConfigs: tc.scalingGroups,
 					},

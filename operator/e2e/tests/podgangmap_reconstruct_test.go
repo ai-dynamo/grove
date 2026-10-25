@@ -22,7 +22,7 @@ import (
 	"time"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
-	grovev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/e2e/grove/podgang"
 	"github.com/ai-dynamo/grove/operator/e2e/grove/podgangmap"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
@@ -450,7 +450,7 @@ func Test_PGMR6_RecoverAfterScalingStandalonePCLQToZero(t *testing.T) {
 // deletePodGangMap deletes the named PodGangMap, failing the test on error.
 func deletePodGangMap(t *testing.T, tc *testctx.TestContext, name string) {
 	t.Helper()
-	pgm := &grovev1alpha1.PodGangMap{ObjectMeta: metav1.ObjectMeta{Namespace: tc.Namespace, Name: name}}
+	pgm := &grovev1beta1.PodGangMap{ObjectMeta: metav1.ObjectMeta{Namespace: tc.Namespace, Name: name}}
 	if err := tc.Client.Delete(tc.Ctx, pgm); err != nil {
 		t.Fatalf("Failed to delete PodGangMap %s: %v", name, err)
 	}
@@ -459,17 +459,17 @@ func deletePodGangMap(t *testing.T, tc *testctx.TestContext, name string) {
 // scaleOutEpochOf returns the epoch of replica 0's single ScaleOut entry.
 func scaleOutEpochOf(t *testing.T, ctx context.Context, v *podgangmap.Verifier, pcsNsName types.NamespacedName) string {
 	t.Helper()
-	return epochOfRole(t, ctx, v, pcsNsName, grovev1alpha1.PodGangEntryRoleScaleOut)
+	return epochOfRole(t, ctx, v, pcsNsName, grovev1beta1.PodGangEntryRoleScaleOut)
 }
 
 // anchorEpochOf returns the epoch of replica 0's single anchor entry.
 func anchorEpochOf(t *testing.T, ctx context.Context, v *podgangmap.Verifier, pcsNsName types.NamespacedName) string {
 	t.Helper()
-	return epochOfRole(t, ctx, v, pcsNsName, grovev1alpha1.PodGangEntryRoleAnchor)
+	return epochOfRole(t, ctx, v, pcsNsName, grovev1beta1.PodGangEntryRoleAnchor)
 }
 
 // epochOfRole returns the epoch of replica 0's single entry with the given role.
-func epochOfRole(t *testing.T, ctx context.Context, v *podgangmap.Verifier, pcsNsName types.NamespacedName, role grovev1alpha1.PodGangEntryRole) string {
+func epochOfRole(t *testing.T, ctx context.Context, v *podgangmap.Verifier, pcsNsName types.NamespacedName, role grovev1beta1.PodGangEntryRole) string {
 	t.Helper()
 	pgm, err := v.Get(ctx, pcsNsName, 0)
 	if err != nil {

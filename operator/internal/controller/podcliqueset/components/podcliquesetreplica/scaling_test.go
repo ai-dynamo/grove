@@ -25,7 +25,7 @@ import (
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	apiconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/sync"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
@@ -48,7 +48,7 @@ import (
 )
 
 func TestReplicaIndicesFromScalingProgress(t *testing.T) {
-	progress := &grovecorev1alpha1.PodCliqueSetScalingProgress{
+	progress := &grovecorev1beta1.PodCliqueSetScalingProgress{
 		ScaleOutReplicaIndices: []int32{1, 3},
 		ScaleInReplicaIndices:  []int32{2, 4},
 	}
@@ -69,7 +69,7 @@ func TestScalingProgressFromState(t *testing.T) {
 		ScaleInReplicaIndices:  []int{2, 4},
 	}
 
-	assert.Equal(t, &grovecorev1alpha1.PodCliqueSetScalingProgress{
+	assert.Equal(t, &grovecorev1beta1.PodCliqueSetScalingProgress{
 		ScaleOutReplicaIndices: []int32{1, 3},
 		ScaleInReplicaIndices:  []int32{2, 4},
 	}, scalingProgressFromState(state))
@@ -78,7 +78,7 @@ func TestScalingProgressFromState(t *testing.T) {
 
 func TestPatchScalingProgress(t *testing.T) {
 	pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "default", types.UID("test-uid")).Build()
-	progress := &grovecorev1alpha1.PodCliqueSetScalingProgress{ScaleOutReplicaIndices: []int32{1}}
+	progress := &grovecorev1beta1.PodCliqueSetScalingProgress{ScaleOutReplicaIndices: []int32{1}}
 	clientBuilder := testutils.NewTestClientBuilder().
 		WithObjects(pcs).
 		WithStatusSubresource(pcs)
@@ -92,14 +92,14 @@ func TestPatchScalingProgress(t *testing.T) {
 	assert.Equal(t, progress, pcs.Status.ScalingProgress)
 	assert.True(t, expectations.ClearIfSatisfied(pcs.ObjectMeta, progress))
 
-	persistedPCS := &grovecorev1alpha1.PodCliqueSet{}
+	persistedPCS := &grovecorev1beta1.PodCliqueSet{}
 	require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKeyFromObject(pcs), persistedPCS))
 	assert.Equal(t, progress, persistedPCS.Status.ScalingProgress)
 }
 
 func TestPatchScalingProgressClearsProgress(t *testing.T) {
 	pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "default", types.UID("test-uid")).Build()
-	pcs.Status.ScalingProgress = &grovecorev1alpha1.PodCliqueSetScalingProgress{ScaleInReplicaIndices: []int32{1}}
+	pcs.Status.ScalingProgress = &grovecorev1beta1.PodCliqueSetScalingProgress{ScaleInReplicaIndices: []int32{1}}
 	fakeClient := testutils.NewTestClientBuilder().
 		WithObjects(pcs).
 		WithStatusSubresource(pcs).
@@ -128,7 +128,7 @@ func TestPatchScalingProgressRemovesExpectationOnPatchFailure(t *testing.T) {
 		Build()
 	expectations := &pcssync.ScalingProgressExpectations{}
 	r := &_resource{client: fakeClient, scalingProgressExpectations: expectations}
-	progress := &grovecorev1alpha1.PodCliqueSetScalingProgress{ScaleOutReplicaIndices: []int32{1}}
+	progress := &grovecorev1beta1.PodCliqueSetScalingProgress{ScaleOutReplicaIndices: []int32{1}}
 
 	err := r.patchScalingProgress(context.Background(), pcs, progress)
 
@@ -182,7 +182,7 @@ func TestReservedReplicaIndices(t *testing.T) {
 }
 
 func TestComputeReplicaIndices(t *testing.T) {
-	newPCS := func(replicas int32) *grovecorev1alpha1.PodCliqueSet {
+	newPCS := func(replicas int32) *grovecorev1beta1.PodCliqueSet {
 		pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "default", types.UID("test-pcs-uid")).
 			WithReplicas(replicas).
 			WithStandaloneClique("worker").
@@ -191,15 +191,15 @@ func TestComputeReplicaIndices(t *testing.T) {
 		pcs.Status.ObservedGeneration = &observedGeneration
 		return pcs
 	}
-	newUnobservedPCS := func(replicas int32) *grovecorev1alpha1.PodCliqueSet {
+	newUnobservedPCS := func(replicas int32) *grovecorev1beta1.PodCliqueSet {
 		pcs := newPCS(replicas)
 		pcs.Status.ObservedGeneration = nil
 		return pcs
 	}
-	newSnapshot := func(pcs *grovecorev1alpha1.PodCliqueSet, availabilityByIndex map[int]bool) *replicaResourceSnapshot {
-		pclqsByReplicaIndex := make(map[int][]grovecorev1alpha1.PodClique, len(availabilityByIndex))
+	newSnapshot := func(pcs *grovecorev1beta1.PodCliqueSet, availabilityByIndex map[int]bool) *replicaResourceSnapshot {
+		pclqsByReplicaIndex := make(map[int][]grovecorev1beta1.PodClique, len(availabilityByIndex))
 		for replicaIndex, isAvailable := range availabilityByIndex {
-			pclqsByReplicaIndex[replicaIndex] = []grovecorev1alpha1.PodClique{
+			pclqsByReplicaIndex[replicaIndex] = []grovecorev1beta1.PodClique{
 				pclqWithAvailability(pcs, replicaIndex, isAvailable),
 			}
 		}
@@ -208,7 +208,7 @@ func TestComputeReplicaIndices(t *testing.T) {
 
 	tests := []struct {
 		name                   string
-		pcs                    *grovecorev1alpha1.PodCliqueSet
+		pcs                    *grovecorev1beta1.PodCliqueSet
 		snapshot               *replicaResourceSnapshot
 		scaleOutReplicaIndices []int
 		scaleInReplicaIndices  []int
@@ -235,7 +235,7 @@ func TestComputeReplicaIndices(t *testing.T) {
 			name: "headless Service preserves standalone-only replica identity during gang termination",
 			pcs:  newPCS(3),
 			snapshot: &replicaResourceSnapshot{
-				standalonePCLQsByReplicaIndex:     map[int][]grovecorev1alpha1.PodClique{0: {{}}, 2: {{}}},
+				standalonePCLQsByReplicaIndex:     map[int][]grovecorev1beta1.PodClique{0: {{}}, 2: {{}}},
 				headlessServicesByPCSReplicaIndex: map[int][]corev1.Service{0: {{}}, 2: {{}}, 4: {{}}},
 			},
 			want: pcssync.State{ExpectedReplicaIndices: []int{0, 2, 4}},
@@ -330,13 +330,13 @@ func TestSelectReplicaIndicesForScaleIn(t *testing.T) {
 	pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "default", types.UID("test-pcs-uid")).
 		WithStandaloneClique("worker").
 		Build()
-	insufficientAvailablePCLQ := func(replicaIndex int) grovecorev1alpha1.PodClique {
+	insufficientAvailablePCLQ := func(replicaIndex int) grovecorev1beta1.PodClique {
 		pclq := pclqWithAvailability(pcs, replicaIndex, false)
 		pclq.Status.ScheduledReplicas = *pclq.Spec.MinAvailable
 		return pclq
 	}
 	snapshot := &replicaResourceSnapshot{
-		standalonePCLQsByReplicaIndex: map[int][]grovecorev1alpha1.PodClique{
+		standalonePCLQsByReplicaIndex: map[int][]grovecorev1beta1.PodClique{
 			0: {pclqWithAvailability(pcs, 0, false)},
 			2: {pclqWithAvailability(pcs, 2, true)},
 			3: {insufficientAvailablePCLQ(3)},
@@ -392,7 +392,7 @@ func TestSelectReplicaIndicesForScaleIn(t *testing.T) {
 		warmingPCLQ := pclqWithAvailability(pcs, 4, false)
 		warmingPCLQ.Status.ScheduledReplicas = *warmingPCLQ.Spec.MinAvailable
 		snapshot := &replicaResourceSnapshot{
-			standalonePCLQsByReplicaIndex: map[int][]grovecorev1alpha1.PodClique{
+			standalonePCLQsByReplicaIndex: map[int][]grovecorev1beta1.PodClique{
 				1: {pclqWithAvailability(pcs, 1, false)},
 				4: {warmingPCLQ},
 			},
@@ -430,10 +430,10 @@ func TestFindMaterializedScaleOutReplicaIndices(t *testing.T) {
 		WithScalingGroup("workers", []string{"worker"}).
 		Build()
 
-	pclq := func(replicaIndex int, cliqueName string) grovecorev1alpha1.PodClique {
+	pclq := func(replicaIndex int, cliqueName string) grovecorev1beta1.PodClique {
 		return *testutils.NewPodCliqueBuilder(pcs.Name, pcs.UID, cliqueName, pcs.Namespace, int32(replicaIndex)).Build()
 	}
-	pcsg := func(replicaIndex int, groupName string) grovecorev1alpha1.PodCliqueScalingGroup {
+	pcsg := func(replicaIndex int, groupName string) grovecorev1beta1.PodCliqueScalingGroup {
 		name := apicommon.GeneratePodCliqueScalingGroupName(
 			apicommon.ResourceNameReplica{Name: pcs.Name, Replica: replicaIndex},
 			groupName,
@@ -444,8 +444,8 @@ func TestFindMaterializedScaleOutReplicaIndices(t *testing.T) {
 	tests := []struct {
 		name                   string
 		scaleOutReplicaIndices []int
-		pclqsByReplica         map[int][]grovecorev1alpha1.PodClique
-		pcsgsByReplica         map[int][]grovecorev1alpha1.PodCliqueScalingGroup
+		pclqsByReplica         map[int][]grovecorev1beta1.PodClique
+		pcsgsByReplica         map[int][]grovecorev1beta1.PodCliqueScalingGroup
 		want                   []int
 	}{
 		{
@@ -458,27 +458,27 @@ func TestFindMaterializedScaleOutReplicaIndices(t *testing.T) {
 		{
 			name:                   "recorded index is missing a standalone PodClique",
 			scaleOutReplicaIndices: []int{1},
-			pclqsByReplica: map[int][]grovecorev1alpha1.PodClique{
+			pclqsByReplica: map[int][]grovecorev1beta1.PodClique{
 				1: {pclq(1, "router")},
 			},
-			pcsgsByReplica: map[int][]grovecorev1alpha1.PodCliqueScalingGroup{
+			pcsgsByReplica: map[int][]grovecorev1beta1.PodCliqueScalingGroup{
 				1: {pcsg(1, "workers")},
 			},
 		},
 		{
 			name:                   "recorded index is missing a PodCliqueScalingGroup",
 			scaleOutReplicaIndices: []int{1},
-			pclqsByReplica: map[int][]grovecorev1alpha1.PodClique{
+			pclqsByReplica: map[int][]grovecorev1beta1.PodClique{
 				1: {pclq(1, "router"), pclq(1, "metrics")},
 			},
 		},
 		{
 			name:                   "recorded index has every expected resource",
 			scaleOutReplicaIndices: []int{1},
-			pclqsByReplica: map[int][]grovecorev1alpha1.PodClique{
+			pclqsByReplica: map[int][]grovecorev1beta1.PodClique{
 				1: {pclq(1, "router"), pclq(1, "metrics")},
 			},
-			pcsgsByReplica: map[int][]grovecorev1alpha1.PodCliqueScalingGroup{
+			pcsgsByReplica: map[int][]grovecorev1beta1.PodCliqueScalingGroup{
 				1: {pcsg(1, "workers")},
 			},
 			want: []int{1},
@@ -486,22 +486,22 @@ func TestFindMaterializedScaleOutReplicaIndices(t *testing.T) {
 		{
 			name:                   "unexpected resources do not replace missing expected resources",
 			scaleOutReplicaIndices: []int{1},
-			pclqsByReplica: map[int][]grovecorev1alpha1.PodClique{
+			pclqsByReplica: map[int][]grovecorev1beta1.PodClique{
 				1: {pclq(1, "router"), pclq(1, "unexpected")},
 			},
-			pcsgsByReplica: map[int][]grovecorev1alpha1.PodCliqueScalingGroup{
+			pcsgsByReplica: map[int][]grovecorev1beta1.PodCliqueScalingGroup{
 				1: {pcsg(1, "workers")},
 			},
 		},
 		{
 			name:                   "indices materialize independently and return in ascending order",
 			scaleOutReplicaIndices: []int{3, 1, 2},
-			pclqsByReplica: map[int][]grovecorev1alpha1.PodClique{
+			pclqsByReplica: map[int][]grovecorev1beta1.PodClique{
 				1: {pclq(1, "router"), pclq(1, "metrics")},
 				2: {pclq(2, "router")},
 				3: {pclq(3, "router"), pclq(3, "metrics")},
 			},
-			pcsgsByReplica: map[int][]grovecorev1alpha1.PodCliqueScalingGroup{
+			pcsgsByReplica: map[int][]grovecorev1beta1.PodCliqueScalingGroup{
 				1: {pcsg(1, "workers")},
 				2: {pcsg(2, "workers")},
 				3: {pcsg(3, "workers")},
@@ -616,16 +616,16 @@ func TestTakeReplicaResourceSnapshotWrapsListErrors(t *testing.T) {
 	tests := []struct {
 		name      string
 		failedGVK runtime.Object
-		wantCode  grovecorev1alpha1.ErrorCode
+		wantCode  grovecorev1beta1.ErrorCode
 	}{
 		{
 			name:      "PodClique list",
-			failedGVK: &grovecorev1alpha1.PodCliqueList{},
+			failedGVK: &grovecorev1beta1.PodCliqueList{},
 			wantCode:  errCodeListPCLQs,
 		},
 		{
 			name:      "PodCliqueScalingGroup list",
-			failedGVK: &grovecorev1alpha1.PodCliqueScalingGroupList{},
+			failedGVK: &grovecorev1beta1.PodCliqueScalingGroupList{},
 			wantCode:  errCodeListPCSGs,
 		},
 		{
@@ -650,7 +650,7 @@ func TestTakeReplicaResourceSnapshotWrapsListErrors(t *testing.T) {
 	}
 }
 
-func headlessServiceForPCSReplica(t *testing.T, pcs *grovecorev1alpha1.PodCliqueSet, pcsReplicaIndex int) *corev1.Service {
+func headlessServiceForPCSReplica(t *testing.T, pcs *grovecorev1beta1.PodCliqueSet, pcsReplicaIndex int) *corev1.Service {
 	t.Helper()
 	service := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
@@ -665,13 +665,13 @@ func headlessServiceForPCSReplica(t *testing.T, pcs *grovecorev1alpha1.PodClique
 		},
 	}
 	scheme := runtime.NewScheme()
-	require.NoError(t, grovecorev1alpha1.AddToScheme(scheme))
+	require.NoError(t, grovecorev1beta1.AddToScheme(scheme))
 	require.NoError(t, corev1.AddToScheme(scheme))
 	require.NoError(t, controllerutil.SetControllerReference(pcs, service, scheme))
 	return service
 }
 
-func pclqWithAvailability(pcs *grovecorev1alpha1.PodCliqueSet, replicaIndex int, isAvailable bool) grovecorev1alpha1.PodClique {
+func pclqWithAvailability(pcs *grovecorev1beta1.PodCliqueSet, replicaIndex int, isAvailable bool) grovecorev1beta1.PodClique {
 	pclq := testutils.NewPodCliqueBuilder(pcs.Name, pcs.UID, "worker", pcs.Namespace, int32(replicaIndex)).Build()
 	if isAvailable {
 		pclq.Status.ReadyReplicas = *pclq.Spec.MinAvailable
@@ -681,11 +681,11 @@ func pclqWithAvailability(pcs *grovecorev1alpha1.PodCliqueSet, replicaIndex int,
 
 func replicaResourceSnapshotForIndexTests() *replicaResourceSnapshot {
 	return &replicaResourceSnapshot{
-		standalonePCLQsByReplicaIndex: map[int][]grovecorev1alpha1.PodClique{
+		standalonePCLQsByReplicaIndex: map[int][]grovecorev1beta1.PodClique{
 			0: {{}},
 			1: {{}},
 		},
-		pcsgsByReplicaIndex: map[int][]grovecorev1alpha1.PodCliqueScalingGroup{
+		pcsgsByReplicaIndex: map[int][]grovecorev1beta1.PodCliqueScalingGroup{
 			1: {{}},
 			4: {{}},
 		},
@@ -707,7 +707,7 @@ func (c *failingListClient) List(ctx context.Context, list client.ObjectList, op
 func newScalingTestClient(t *testing.T, objects ...client.Object) client.Client {
 	t.Helper()
 	scheme := runtime.NewScheme()
-	require.NoError(t, grovecorev1alpha1.AddToScheme(scheme))
+	require.NoError(t, grovecorev1beta1.AddToScheme(scheme))
 	require.NoError(t, corev1.AddToScheme(scheme))
 	return fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).Build()
 }
@@ -725,7 +725,7 @@ func runtimeObjectTypesEqual(a, b runtime.Object) bool {
 	return reflect.TypeOf(a) == reflect.TypeOf(b)
 }
 
-func assertGroveErrorCode(t *testing.T, err error, wantCode grovecorev1alpha1.ErrorCode) {
+func assertGroveErrorCode(t *testing.T, err error, wantCode grovecorev1beta1.ErrorCode) {
 	t.Helper()
 	require.Error(t, err)
 	var groveErr *groveerr.GroveError

@@ -22,7 +22,7 @@ import (
 	"time"
 
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/e2e/grove/gvk"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/k8sclient"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/resources"
@@ -77,7 +77,7 @@ func (wm *WorkloadManager) ScalePCSG(ctx context.Context, namespace, name string
 // of a no-op pass. triggerID is embedded in the annotation value so repeated calls always
 // produce a new watch event.
 func (wm *WorkloadManager) TriggerPCSReconcile(ctx context.Context, namespace, name, triggerID string) error {
-	pcs := &grovecorev1alpha1.PodCliqueSet{
+	pcs := &grovecorev1beta1.PodCliqueSet{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: namespace,
@@ -92,7 +92,7 @@ func (wm *WorkloadManager) TriggerPCSReconcile(ctx context.Context, namespace, n
 
 // DeletePCS deletes a PodCliqueSet by name. NotFound errors are ignored.
 func (wm *WorkloadManager) DeletePCS(ctx context.Context, namespace, name string) error {
-	pcs := &grovecorev1alpha1.PodCliqueSet{
+	pcs := &grovecorev1beta1.PodCliqueSet{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: namespace,
@@ -114,11 +114,11 @@ func (wm *WorkloadManager) DeletePCSAndWait(ctx context.Context, namespace, name
 }
 
 // WaitForPCSG polls until a PodCliqueScalingGroup exists and returns it.
-func (wm *WorkloadManager) WaitForPCSG(ctx context.Context, namespace, name string, timeout, interval time.Duration) (*grovecorev1alpha1.PodCliqueScalingGroup, error) {
+func (wm *WorkloadManager) WaitForPCSG(ctx context.Context, namespace, name string, timeout, interval time.Duration) (*grovecorev1beta1.PodCliqueScalingGroup, error) {
 	return WaitForPodCliqueScalingGroup(ctx, wm.k8s, namespace, name, timeout, interval)
 }
 
 // WaitForPodClique polls until a PodClique exists and returns it.
-func (wm *WorkloadManager) WaitForPodClique(ctx context.Context, namespace, name string, timeout, interval time.Duration) (*grovecorev1alpha1.PodClique, error) {
+func (wm *WorkloadManager) WaitForPodClique(ctx context.Context, namespace, name string, timeout, interval time.Duration) (*grovecorev1beta1.PodClique, error) {
 	return WaitForPodCliqueStandalone(ctx, wm.k8s, namespace, name, timeout, interval)
 }

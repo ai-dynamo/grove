@@ -19,10 +19,9 @@ import (
 	"fmt"
 
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
-	"github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	"github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
-	"github.com/ai-dynamo/grove/operator/internal/webhook/admission/v1alpha1bridge"
 
 	"github.com/go-logr/logr"
 	admissionv1 "k8s.io/api/admission/v1"
@@ -35,9 +34,9 @@ import (
 
 const (
 	// ErrValidateCreatePodCliqueSet is the error code returned where the request to create a PodCliqueSet is invalid.
-	ErrValidateCreatePodCliqueSet v1alpha1.ErrorCode = "ERR_VALIDATE_CREATE_PODCLIQUESET"
+	ErrValidateCreatePodCliqueSet v1beta1.ErrorCode = "ERR_VALIDATE_CREATE_PODCLIQUESET"
 	// ErrValidateUpdatePodCliqueSet is the error code returned where the request to update a PodCliqueSet is invalid.
-	ErrValidateUpdatePodCliqueSet v1alpha1.ErrorCode = "ERR_VALIDATE_UPDATE_PODCLIQUESET"
+	ErrValidateUpdatePodCliqueSet v1beta1.ErrorCode = "ERR_VALIDATE_UPDATE_PODCLIQUESET"
 )
 
 // Handler is a handler for validating PodCliqueSet resources.
@@ -117,8 +116,6 @@ func (h *Handler) ValidateUpdate(ctx context.Context, oldObj, newObj runtime.Obj
 	if len(errs) > 0 {
 		return warnings, errs.ToAggregate()
 	}
-	updateWarnings := newTopologyConstraintsValidator(newPCS, h.tasConfig.Enabled, nil).updateWarnings()
-	warnings = append(warnings, updateWarnings...)
 	return warnings, v.validateUpdate(oldPCS)
 }
 
@@ -129,7 +126,7 @@ func (h *Handler) ValidateDelete(_ context.Context, _ runtime.Object) (admission
 
 // validatePodCliqueSetWithBackend resolves the scheduler backend for the PCS and runs backend-specific validation.
 // All cliques share the same (resolved) schedulerName after validateSchedulerNames, so we use the first clique.
-func (h *Handler) validatePodCliqueSetWithBackend(ctx context.Context, pcs *v1alpha1.PodCliqueSet, opts ...scheduler.ValidateOption) error {
+func (h *Handler) validatePodCliqueSetWithBackend(ctx context.Context, pcs *v1beta1.PodCliqueSet, opts ...scheduler.ValidateOption) error {
 	schedulerName := ""
 	if len(pcs.Spec.Template.Cliques) > 0 && pcs.Spec.Template.Cliques[0] != nil {
 		schedulerName = pcs.Spec.Template.Cliques[0].Spec.PodSpec.SchedulerName
@@ -146,8 +143,12 @@ func (h *Handler) validatePodCliqueSetWithBackend(ctx context.Context, pcs *v1al
 }
 
 // castToPodCliqueSet attempts to cast a runtime.Object to a PodCliqueSet.
-func castToPodCliqueSet(obj runtime.Object) (*v1alpha1.PodCliqueSet, error) {
-	return v1alpha1bridge.PodCliqueSet(obj)
+func castToPodCliqueSet(obj runtime.Object) (*v1beta1.PodCliqueSet, error) {
+	pcs, ok := obj.(*v1beta1.PodCliqueSet)
+	if !ok {
+		return nil, fmt.Errorf("expected an PodCliqueSet object but got %T", obj)
+	}
+	return pcs, nil
 }
 
 // logValidatorFunctionInvocation logs details about the validation request including user and operation information.

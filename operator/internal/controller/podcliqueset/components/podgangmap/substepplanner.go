@@ -20,7 +20,7 @@ import (
 	"math"
 	"strconv"
 
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
@@ -133,14 +133,14 @@ type subStepPlanner struct {
 	// clk supplies the epoch for a newly emitted sub-step.
 	clk clock.Clock
 	// pcs is the PodCliqueSet being updated, read for its name and generation hash.
-	pcs *grovecorev1alpha1.PodCliqueSet
+	pcs *grovecorev1beta1.PodCliqueSet
 	// pcsReplicaIndex is the PCS replica this planner works on.
 	pcsReplicaIndex int
 	// mvu is the Minimum Updateable Unit template frozen at update start, holding the in-scope
 	// components and their MinAvailable.
 	mvu *mvuTemplate
 	// entries is the current PodGangMap entry set, read-only during planning.
-	entries []grovecorev1alpha1.PodGangEntry
+	entries []grovecorev1beta1.PodGangEntry
 	// desiredReplicas is the child replica count per component (sourced from spec.Replicas), read fresh every
 	// reconcile so a scale operation on a non-updating boundary is absorbed.
 	desiredReplicas map[string]int32
@@ -148,7 +148,7 @@ type subStepPlanner struct {
 	// current template.
 	maxUnavailableByComponent map[string]int32
 	// standalonePCLQByComponent are the in-scope standalone PodCliques of the replica under update.
-	standalonePCLQByComponent map[string]grovecorev1alpha1.PodClique
+	standalonePCLQByComponent map[string]grovecorev1beta1.PodClique
 	// pcsgReplicaInfos are the per-replica facts of each in-scope PodCliqueScalingGroup under update, keyed
 	// by PCSG component name. The count-anchored budget and the drain ordering both read it.
 	pcsgReplicaInfos map[string][]pcsgReplicaInfo
@@ -167,7 +167,7 @@ type subStepPlanner struct {
 
 // newSubStepPlanner builds the planner for one PCS replica from the in-scope live replica counts and the
 // current-template maxUnavailable, and computes the step plan the planner works against.
-func newSubStepPlanner(syncSnap *syncSnapshot, pcsReplicaIndex int, entries []grovecorev1alpha1.PodGangEntry, clk clock.Clock, desiredReplicas map[string]int32, standalonePCLQByComponent map[string]grovecorev1alpha1.PodClique, pcsgReplicaInfos map[string][]pcsgReplicaInfo, pclqPodCounts standalonePCLQPodCounts) *subStepPlanner {
+func newSubStepPlanner(syncSnap *syncSnapshot, pcsReplicaIndex int, entries []grovecorev1beta1.PodGangEntry, clk clock.Clock, desiredReplicas map[string]int32, standalonePCLQByComponent map[string]grovecorev1beta1.PodClique, pcsgReplicaInfos map[string][]pcsgReplicaInfo, pclqPodCounts standalonePCLQPodCounts) *subStepPlanner {
 	mvu := syncSnap.mvuTemplate
 	minAvailableByComponent := lo.Assign(mvu.standalonePCLQs, mvu.pcsgs)
 	return &subStepPlanner{
@@ -375,7 +375,7 @@ func (p *subStepPlanner) mostRecentAnchorEpoch() (string, error) {
 	)
 	for i := range p.entries {
 		entry := p.entries[i]
-		if entry.PodCliqueSetGenerationHash != pcsCurrentGenerationHash || entry.Role != grovecorev1alpha1.PodGangEntryRoleAnchor {
+		if entry.PodCliqueSetGenerationHash != pcsCurrentGenerationHash || entry.Role != grovecorev1beta1.PodGangEntryRoleAnchor {
 			continue
 		}
 		epochNanos, err := entryEpochNanos(entry)

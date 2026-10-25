@@ -21,7 +21,7 @@ import (
 	"strconv"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/resourceclaim"
@@ -37,8 +37,8 @@ import (
 )
 
 const (
-	errSyncPCLQLevelRC   grovecorev1alpha1.ErrorCode = "ERR_SYNC_PCLQ_RESOURCE_CLAIM"
-	errDeletePCLQLevelRC grovecorev1alpha1.ErrorCode = "ERR_DELETE_PCLQ_RESOURCE_CLAIM"
+	errSyncPCLQLevelRC   grovecorev1beta1.ErrorCode = "ERR_SYNC_PCLQ_RESOURCE_CLAIM"
+	errDeletePCLQLevelRC grovecorev1beta1.ErrorCode = "ERR_DELETE_PCLQ_RESOURCE_CLAIM"
 )
 
 type _resource struct {
@@ -47,7 +47,7 @@ type _resource struct {
 }
 
 // New creates a new ResourceClaim operator for managing PCLQ-level ResourceClaims.
-func New(client client.Client, scheme *runtime.Scheme) component.Operator[grovecorev1alpha1.PodClique, component.EmptyState, component.NoResult] {
+func New(client client.Client, scheme *runtime.Scheme) component.Operator[grovecorev1beta1.PodClique, component.EmptyState, component.NoResult] {
 	return &_resource{
 		client: client,
 		scheme: scheme,
@@ -79,7 +79,7 @@ func (r _resource) GetExistingResourceNames(ctx context.Context, _ logr.Logger, 
 // and cleans up stale PerReplica RCs from previous scale-in operations.
 // The PodClique is the ownerReference target so that RCs are garbage-collected
 // when the PCLQ is deleted.
-func (r _resource) Sync(ctx context.Context, _ logr.Logger, pclq *grovecorev1alpha1.PodClique, _ *component.EmptyState) (component.NoResult, error) {
+func (r _resource) Sync(ctx context.Context, _ logr.Logger, pclq *grovecorev1beta1.PodClique, _ *component.EmptyState) (component.NoResult, error) {
 	pcs, err := componentutils.GetPodCliqueSet(ctx, r.client, pclq.ObjectMeta)
 	if err != nil {
 		return component.NoResult{}, groveerr.WrapError(err,
@@ -124,8 +124,8 @@ func (r _resource) Sync(ctx context.Context, _ logr.Logger, pclq *grovecorev1alp
 
 func (r _resource) ensureAllReplicasRCs(
 	ctx context.Context,
-	pclq *grovecorev1alpha1.PodClique,
-	pcs *grovecorev1alpha1.PodCliqueSet,
+	pclq *grovecorev1beta1.PodClique,
+	pcs *grovecorev1beta1.PodCliqueSet,
 	resourceSharers []resourceclaim.ResourceSharer,
 	labels map[string]string,
 ) error {
@@ -149,8 +149,8 @@ func (r _resource) ensureAllReplicasRCs(
 
 func (r _resource) ensurePerReplicaRCs(
 	ctx context.Context,
-	pclq *grovecorev1alpha1.PodClique,
-	pcs *grovecorev1alpha1.PodCliqueSet,
+	pclq *grovecorev1beta1.PodClique,
+	pcs *grovecorev1beta1.PodCliqueSet,
 	resourceSharers []resourceclaim.ResourceSharer,
 	labels map[string]string,
 	currentReplicas int,
