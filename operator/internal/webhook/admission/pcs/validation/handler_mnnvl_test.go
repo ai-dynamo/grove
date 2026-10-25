@@ -19,7 +19,7 @@ import (
 	"testing"
 	"time"
 
-	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
+	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
 	"github.com/ai-dynamo/grove/operator/internal/webhook/admission/pcs/defaulting"
@@ -113,17 +113,17 @@ func TestValidateCreate_MNNVL(t *testing.T) {
 				Logger: logr.Discard(),
 			}
 
-			networkConfig := configv1alpha1.NetworkAcceleration{
+			networkConfig := configv1beta1.NetworkAcceleration{
 				AutoMNNVLEnabled: tt.autoMNNVLEnabled,
 			}
-			cfg := configv1alpha1.OperatorConfiguration{
+			cfg := configv1beta1.OperatorConfiguration{
 				TopologyAwareScheduling: getDefaultTASConfig(),
 				Network:                 networkConfig,
-				Scheduler: configv1alpha1.SchedulerConfiguration{
-					Profiles: []configv1alpha1.SchedulerProfile{
-						{Name: configv1alpha1.SchedulerNameKube},
+				Scheduler: configv1beta1.SchedulerConfiguration{
+					Profiles: []configv1beta1.SchedulerProfile{
+						{Name: configv1beta1.SchedulerNameKube},
 					},
-					DefaultProfileName: string(configv1alpha1.SchedulerNameKube),
+					DefaultProfileName: string(configv1beta1.SchedulerNameKube),
 				},
 			}
 			handler := NewHandler(mgr, &cfg, testutils.NewDefaultFakeRegistry())
@@ -232,10 +232,10 @@ func TestValidateUpdate_MNNVL(t *testing.T) {
 			}
 
 			// MNNVL validation on update doesn't depend on feature flag
-			cfg := configv1alpha1.OperatorConfiguration{
+			cfg := configv1beta1.OperatorConfiguration{
 				TopologyAwareScheduling: getDefaultTASConfig(),
 				Network:                 getDefaultNetworkConfig(),
-				Scheduler:               configv1alpha1.SchedulerConfiguration{Profiles: []configv1alpha1.SchedulerProfile{{Name: configv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(configv1alpha1.SchedulerNameKube)},
+				Scheduler:               configv1beta1.SchedulerConfiguration{Profiles: []configv1beta1.SchedulerProfile{{Name: configv1beta1.SchedulerNameKube}}, DefaultProfileName: string(configv1beta1.SchedulerNameKube)},
 			}
 			handler := NewHandler(mgr, &cfg, testutils.NewDefaultFakeRegistry())
 
@@ -286,10 +286,10 @@ func TestMNNVL_WebhookPipeline_LegacyPCSUpdate(t *testing.T) {
 		require.NoError(t, err, "defaulting webhook should not error on update")
 
 		// Step 2: Simulate the validating webhook running with oldPCS vs newPCS.
-		validationCfg := configv1alpha1.OperatorConfiguration{
+		validationCfg := configv1beta1.OperatorConfiguration{
 			TopologyAwareScheduling: getDefaultTASConfig(),
 			Network:                 getDefaultNetworkConfig(),
-			Scheduler:               configv1alpha1.SchedulerConfiguration{Profiles: []configv1alpha1.SchedulerProfile{{Name: configv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(configv1alpha1.SchedulerNameKube)},
+			Scheduler:               configv1beta1.SchedulerConfiguration{Profiles: []configv1beta1.SchedulerProfile{{Name: configv1beta1.SchedulerNameKube}}, DefaultProfileName: string(configv1beta1.SchedulerNameKube)},
 		}
 		validationHandler := NewHandler(mgr, &validationCfg, testutils.NewDefaultFakeRegistry())
 

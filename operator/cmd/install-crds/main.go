@@ -28,7 +28,7 @@ import (
 	"fmt"
 	"os"
 
-	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
+	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 	operatorcrds "github.com/ai-dynamo/grove/operator/api/core/crds"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
@@ -37,8 +37,8 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/storageversion"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
-	"github.com/go-logr/logr"
 	schedulercrds "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1/crds"
+	"github.com/go-logr/logr"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -48,7 +48,7 @@ import (
 const prepareDowngradeCommand = "prepare-downgrade"
 
 func main() {
-	log := grovelogger.MustNewLogger(false, configv1alpha1.InfoLevel, configv1alpha1.LogFormatJSON)
+	log := grovelogger.MustNewLogger(false, configv1beta1.InfoLevel, configv1beta1.LogFormatJSON)
 	ctrl.SetLogger(log)
 	logger := ctrl.Log.WithName("grove-install-crds")
 

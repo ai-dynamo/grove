@@ -21,7 +21,7 @@ import (
 	"time"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
-	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
+	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/podclique/expectations"
@@ -384,7 +384,7 @@ func TestRunSyncFlowDelaysUpdateWorkUntilRevisionsMatch(t *testing.T) {
 	anchor := podGangNameForEpoch(testAnchor0Epoch)
 	newSnapshot := func(strategy grovecorev1beta1.UpdateStrategyType, replicas int32, existingPods []*corev1.Pod) (*syncSnapshot, _resource, client.Client) {
 		podSpec := corev1.PodSpec{
-			SchedulerName: string(configv1alpha1.SchedulerNameKube),
+			SchedulerName: string(configv1beta1.SchedulerNameKube),
 			Containers:    []corev1.Container{{Name: "worker", Image: "worker"}},
 		}
 		pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "uid").
@@ -511,7 +511,7 @@ func TestReconcileStandalonePCLQDistributionCreateAndDelete(t *testing.T) {
 	anchor0 := podGangNameForEpoch(testAnchor0Epoch)
 	registry := testutils.NewDefaultFakeRegistry()
 	podSpec := corev1.PodSpec{
-		SchedulerName: string(configv1alpha1.SchedulerNameKube),
+		SchedulerName: string(configv1beta1.SchedulerNameKube),
 		Containers:    []corev1.Container{{Name: "worker", Image: "worker"}},
 	}
 	testPCS := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "uid").

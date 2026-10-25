@@ -21,7 +21,7 @@ import (
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	apicommonconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
-	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
+	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
@@ -692,7 +692,7 @@ func TestMutateTopologyLevelUnavailableConditions(t *testing.T) {
 
 			r := &Reconciler{
 				client:    fakeClient,
-				tasConfig: configv1alpha1.TopologyAwareSchedulingConfiguration{Enabled: tc.tasEnabled},
+				tasConfig: configv1beta1.TopologyAwareSchedulingConfiguration{Enabled: tc.tasEnabled},
 			}
 
 			err := r.mutateTopologyLevelUnavailableConditions(context.Background(), logr.Discard(), pcs)

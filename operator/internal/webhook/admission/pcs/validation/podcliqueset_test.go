@@ -21,7 +21,7 @@ import (
 	"testing"
 	"time"
 
-	groveconfigv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
+	groveconfigv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler/kai"
@@ -139,11 +139,11 @@ func TestResourceNamingValidation(t *testing.T) {
 
 			pcs := pcsBuilder.Build()
 
-			validator := newPCSValidator(pcs, admissionv1.Create, defaultTASConfig(), groveconfigv1alpha1.SchedulerConfiguration{
-				Profiles: []groveconfigv1alpha1.SchedulerProfile{
-					{Name: groveconfigv1alpha1.SchedulerNameKube},
+			validator := newPCSValidator(pcs, admissionv1.Create, defaultTASConfig(), groveconfigv1beta1.SchedulerConfiguration{
+				Profiles: []groveconfigv1beta1.SchedulerProfile{
+					{Name: groveconfigv1beta1.SchedulerNameKube},
 				},
-				DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube),
+				DefaultProfileName: string(groveconfigv1beta1.SchedulerNameKube),
 			}, nil, testutils.NewDefaultFakeRegistry())
 			warnings, errs := validator.validate()
 
@@ -162,7 +162,7 @@ func TestValidateSchedulerNames(t *testing.T) {
 	specPath := field.NewPath("cliques").Child("spec").Child("podSpec").Child("schedulerName")
 	tests := []struct {
 		name                 string
-		schedulerConfig      groveconfigv1alpha1.SchedulerConfiguration
+		schedulerConfig      groveconfigv1beta1.SchedulerConfiguration
 		schedulerNames       []string
 		expectErrors         int
 		expectInvalidSame    bool
@@ -170,60 +170,60 @@ func TestValidateSchedulerNames(t *testing.T) {
 	}{
 		{
 			name: "all same default-scheduler (kube default)",
-			schedulerConfig: groveconfigv1alpha1.SchedulerConfiguration{
-				Profiles: []groveconfigv1alpha1.SchedulerProfile{
-					{Name: groveconfigv1alpha1.SchedulerNameKube},
-					{Name: groveconfigv1alpha1.SchedulerNameKai},
+			schedulerConfig: groveconfigv1beta1.SchedulerConfiguration{
+				Profiles: []groveconfigv1beta1.SchedulerProfile{
+					{Name: groveconfigv1beta1.SchedulerNameKube},
+					{Name: groveconfigv1beta1.SchedulerNameKai},
 				},
-				DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube),
+				DefaultProfileName: string(groveconfigv1beta1.SchedulerNameKube),
 			},
 			schedulerNames: []string{"default-scheduler", "default-scheduler"},
 			expectErrors:   0,
 		},
 		{
 			name: "all empty with default default-scheduler",
-			schedulerConfig: groveconfigv1alpha1.SchedulerConfiguration{
-				Profiles: []groveconfigv1alpha1.SchedulerProfile{
-					{Name: groveconfigv1alpha1.SchedulerNameKube},
-					{Name: groveconfigv1alpha1.SchedulerNameKai},
+			schedulerConfig: groveconfigv1beta1.SchedulerConfiguration{
+				Profiles: []groveconfigv1beta1.SchedulerProfile{
+					{Name: groveconfigv1beta1.SchedulerNameKube},
+					{Name: groveconfigv1beta1.SchedulerNameKai},
 				},
-				DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube),
+				DefaultProfileName: string(groveconfigv1beta1.SchedulerNameKube),
 			},
 			schedulerNames: []string{"", ""},
 			expectErrors:   0,
 		},
 		{
 			name: "all empty with default kai-scheduler (kai default)",
-			schedulerConfig: groveconfigv1alpha1.SchedulerConfiguration{
-				Profiles: []groveconfigv1alpha1.SchedulerProfile{
-					{Name: groveconfigv1alpha1.SchedulerNameKube},
-					{Name: groveconfigv1alpha1.SchedulerNameKai},
+			schedulerConfig: groveconfigv1beta1.SchedulerConfiguration{
+				Profiles: []groveconfigv1beta1.SchedulerProfile{
+					{Name: groveconfigv1beta1.SchedulerNameKube},
+					{Name: groveconfigv1beta1.SchedulerNameKai},
 				},
-				DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKai),
+				DefaultProfileName: string(groveconfigv1beta1.SchedulerNameKai),
 			},
 			schedulerNames: []string{"", ""},
 			expectErrors:   0,
 		},
 		{
 			name: "mixed empty and default-scheduler",
-			schedulerConfig: groveconfigv1alpha1.SchedulerConfiguration{
-				Profiles: []groveconfigv1alpha1.SchedulerProfile{
-					{Name: groveconfigv1alpha1.SchedulerNameKube},
-					{Name: groveconfigv1alpha1.SchedulerNameKai},
+			schedulerConfig: groveconfigv1beta1.SchedulerConfiguration{
+				Profiles: []groveconfigv1beta1.SchedulerProfile{
+					{Name: groveconfigv1beta1.SchedulerNameKube},
+					{Name: groveconfigv1beta1.SchedulerNameKai},
 				},
-				DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube),
+				DefaultProfileName: string(groveconfigv1beta1.SchedulerNameKube),
 			},
 			schedulerNames: []string{"", "default-scheduler"},
 			expectErrors:   0,
 		},
 		{
 			name: "mixed default-scheduler and kai-scheduler",
-			schedulerConfig: groveconfigv1alpha1.SchedulerConfiguration{
-				Profiles: []groveconfigv1alpha1.SchedulerProfile{
-					{Name: groveconfigv1alpha1.SchedulerNameKube},
-					{Name: groveconfigv1alpha1.SchedulerNameKai},
+			schedulerConfig: groveconfigv1beta1.SchedulerConfiguration{
+				Profiles: []groveconfigv1beta1.SchedulerProfile{
+					{Name: groveconfigv1beta1.SchedulerNameKube},
+					{Name: groveconfigv1beta1.SchedulerNameKai},
 				},
-				DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube),
+				DefaultProfileName: string(groveconfigv1beta1.SchedulerNameKube),
 			},
 			schedulerNames:       []string{"default-scheduler", "kai-scheduler"},
 			expectErrors:         1,
@@ -232,33 +232,33 @@ func TestValidateSchedulerNames(t *testing.T) {
 		},
 		{
 			name: "single kai-scheduler when enabled (kube+kai)",
-			schedulerConfig: groveconfigv1alpha1.SchedulerConfiguration{
-				Profiles: []groveconfigv1alpha1.SchedulerProfile{
-					{Name: groveconfigv1alpha1.SchedulerNameKube},
-					{Name: groveconfigv1alpha1.SchedulerNameKai},
+			schedulerConfig: groveconfigv1beta1.SchedulerConfiguration{
+				Profiles: []groveconfigv1beta1.SchedulerProfile{
+					{Name: groveconfigv1beta1.SchedulerNameKube},
+					{Name: groveconfigv1beta1.SchedulerNameKai},
 				},
-				DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube),
+				DefaultProfileName: string(groveconfigv1beta1.SchedulerNameKube),
 			},
 			schedulerNames: []string{"kai-scheduler"},
 			expectErrors:   0,
 		},
 		{
 			name: "single lpx-scheduler when enabled",
-			schedulerConfig: groveconfigv1alpha1.SchedulerConfiguration{
-				Profiles: []groveconfigv1alpha1.SchedulerProfile{
-					{Name: groveconfigv1alpha1.SchedulerNameKube},
-					{Name: groveconfigv1alpha1.SchedulerNameLPX},
+			schedulerConfig: groveconfigv1beta1.SchedulerConfiguration{
+				Profiles: []groveconfigv1beta1.SchedulerProfile{
+					{Name: groveconfigv1beta1.SchedulerNameKube},
+					{Name: groveconfigv1beta1.SchedulerNameLPX},
 				},
-				DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube),
+				DefaultProfileName: string(groveconfigv1beta1.SchedulerNameKube),
 			},
 			schedulerNames: []string{"lpx-scheduler"},
 			expectErrors:   0,
 		},
 		{
 			name: "single default-scheduler when enabled (kube only)",
-			schedulerConfig: groveconfigv1alpha1.SchedulerConfiguration{
-				Profiles:           []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube}},
-				DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube),
+			schedulerConfig: groveconfigv1beta1.SchedulerConfiguration{
+				Profiles:           []groveconfigv1beta1.SchedulerProfile{{Name: groveconfigv1beta1.SchedulerNameKube}},
+				DefaultProfileName: string(groveconfigv1beta1.SchedulerNameKube),
 			},
 			schedulerNames:       []string{"kai-scheduler"},
 			expectErrors:         1,
@@ -267,12 +267,12 @@ func TestValidateSchedulerNames(t *testing.T) {
 		},
 		{
 			name: "unknown scheduler not enabled",
-			schedulerConfig: groveconfigv1alpha1.SchedulerConfiguration{
-				Profiles: []groveconfigv1alpha1.SchedulerProfile{
-					{Name: groveconfigv1alpha1.SchedulerNameKube},
-					{Name: groveconfigv1alpha1.SchedulerNameKai},
+			schedulerConfig: groveconfigv1beta1.SchedulerConfiguration{
+				Profiles: []groveconfigv1beta1.SchedulerProfile{
+					{Name: groveconfigv1beta1.SchedulerNameKube},
+					{Name: groveconfigv1beta1.SchedulerNameKai},
 				},
-				DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube),
+				DefaultProfileName: string(groveconfigv1beta1.SchedulerNameKube),
 			},
 			schedulerNames:       []string{"volcano"},
 			expectErrors:         1,
@@ -281,12 +281,12 @@ func TestValidateSchedulerNames(t *testing.T) {
 		},
 		{
 			name: "mixed empty and kai when default is default-scheduler",
-			schedulerConfig: groveconfigv1alpha1.SchedulerConfiguration{
-				Profiles: []groveconfigv1alpha1.SchedulerProfile{
-					{Name: groveconfigv1alpha1.SchedulerNameKube},
-					{Name: groveconfigv1alpha1.SchedulerNameKai},
+			schedulerConfig: groveconfigv1beta1.SchedulerConfiguration{
+				Profiles: []groveconfigv1beta1.SchedulerProfile{
+					{Name: groveconfigv1beta1.SchedulerNameKube},
+					{Name: groveconfigv1beta1.SchedulerNameKai},
 				},
-				DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube),
+				DefaultProfileName: string(groveconfigv1beta1.SchedulerNameKube),
 			},
 			schedulerNames:       []string{"", "kai-scheduler"},
 			expectErrors:         1,
@@ -505,11 +505,11 @@ func TestPodCliqueScalingGroupConfigValidation(t *testing.T) {
 			pcs.Spec.Template.PodCliqueScalingGroupConfigs = tc.scalingGroups
 
 			validator := newPCSValidator(pcs, admissionv1.Create, defaultTASConfig(),
-				groveconfigv1alpha1.SchedulerConfiguration{
-					Profiles: []groveconfigv1alpha1.SchedulerProfile{
-						{Name: groveconfigv1alpha1.SchedulerNameKube},
+				groveconfigv1beta1.SchedulerConfiguration{
+					Profiles: []groveconfigv1beta1.SchedulerProfile{
+						{Name: groveconfigv1beta1.SchedulerNameKube},
 					},
-					DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube),
+					DefaultProfileName: string(groveconfigv1beta1.SchedulerNameKube),
 				}, nil, testutils.NewDefaultFakeRegistry())
 			warnings, errs := validator.validate()
 
@@ -633,7 +633,7 @@ func TestPodCliqueUpdateValidation(t *testing.T) {
 			newPCS.Spec.Template.Cliques = tc.newCliques
 
 			// Create validator and validate update
-			validator := newPCSValidator(newPCS, admissionv1.Update, defaultTASConfig(), groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube)}, nil, testutils.NewDefaultFakeRegistry())
+			validator := newPCSValidator(newPCS, admissionv1.Update, defaultTASConfig(), groveconfigv1beta1.SchedulerConfiguration{Profiles: []groveconfigv1beta1.SchedulerProfile{{Name: groveconfigv1beta1.SchedulerNameKube}}, DefaultProfileName: string(groveconfigv1beta1.SchedulerNameKube)}, nil, testutils.NewDefaultFakeRegistry())
 			fldPath := field.NewPath("spec").Child("template").Child("cliques")
 			validationErrors := validator.validatePodCliqueUpdate(oldPCS.Spec.Template.Cliques, fldPath)
 
@@ -841,7 +841,7 @@ func TestImmutableFieldsValidation(t *testing.T) {
 			oldPCS := tc.setupOldPCS()
 			newPCS := tc.setupNewPCS()
 
-			validator := newPCSValidator(newPCS, admissionv1.Update, defaultTASConfig(), groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube)}, nil, testutils.NewDefaultFakeRegistry())
+			validator := newPCSValidator(newPCS, admissionv1.Update, defaultTASConfig(), groveconfigv1beta1.SchedulerConfiguration{Profiles: []groveconfigv1beta1.SchedulerProfile{{Name: groveconfigv1beta1.SchedulerNameKube}}, DefaultProfileName: string(groveconfigv1beta1.SchedulerNameKube)}, nil, testutils.NewDefaultFakeRegistry())
 			err := validator.validateUpdate(oldPCS)
 
 			if tc.expectError {
@@ -1060,7 +1060,7 @@ func TestPodCliqueScalingGroupConfigsUpdateValidation(t *testing.T) {
 			newPCS.Spec.Template.PodCliqueScalingGroupConfigs = tc.newConfigs
 
 			// Create validator and validate update
-			validator := newPCSValidator(newPCS, admissionv1.Update, defaultTASConfig(), groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube)}, nil, testutils.NewDefaultFakeRegistry())
+			validator := newPCSValidator(newPCS, admissionv1.Update, defaultTASConfig(), groveconfigv1beta1.SchedulerConfiguration{Profiles: []groveconfigv1beta1.SchedulerProfile{{Name: groveconfigv1beta1.SchedulerNameKube}}, DefaultProfileName: string(groveconfigv1beta1.SchedulerNameKube)}, nil, testutils.NewDefaultFakeRegistry())
 			fldPath := field.NewPath("spec", "template", "podCliqueScalingGroupConfigs")
 			validationErrors := validator.validatePodCliqueScalingGroupConfigsUpdate(tc.oldConfigs, fldPath)
 
@@ -1391,7 +1391,7 @@ func TestEnvVarValidation(t *testing.T) {
 				WithPodCliqueTemplateSpec(clique.Build()).
 				Build()
 
-			validator := newPCSValidator(pcs, admissionv1.Create, defaultTASConfig(), groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube)}, nil, testutils.NewDefaultFakeRegistry())
+			validator := newPCSValidator(pcs, admissionv1.Create, defaultTASConfig(), groveconfigv1beta1.SchedulerConfiguration{Profiles: []groveconfigv1beta1.SchedulerProfile{{Name: groveconfigv1beta1.SchedulerNameKube}}, DefaultProfileName: string(groveconfigv1beta1.SchedulerNameKube)}, nil, testutils.NewDefaultFakeRegistry())
 			_, errs := validator.validate()
 
 			if tc.errorMatchers != nil {
@@ -1456,7 +1456,7 @@ func TestValidateResourceClaimTemplates(t *testing.T) {
 			pcs := createTestPodCliqueSet("my-pcs")
 			pcs.Spec.Template.ResourceClaimTemplates = tc.templates
 
-			validator := newPCSValidator(pcs, admissionv1.Create, defaultTASConfig(), groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube)}, nil, testutils.NewDefaultFakeRegistry())
+			validator := newPCSValidator(pcs, admissionv1.Create, defaultTASConfig(), groveconfigv1beta1.SchedulerConfiguration{Profiles: []groveconfigv1beta1.SchedulerProfile{{Name: groveconfigv1beta1.SchedulerNameKube}}, DefaultProfileName: string(groveconfigv1beta1.SchedulerNameKube)}, nil, testutils.NewDefaultFakeRegistry())
 			fldPath := field.NewPath("spec", "template", "resourceClaimTemplates")
 			errs := validator.validateResourceClaimTemplates(fldPath)
 
@@ -1534,7 +1534,7 @@ func TestValidateResourceSharingSpecs(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			pcs := createTestPodCliqueSet("my-pcs")
 			pcs.Spec.Template.ResourceClaimTemplates = tc.templates
-			validator := newPCSValidator(pcs, admissionv1.Create, defaultTASConfig(), groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube)}, nil, testutils.NewDefaultFakeRegistry())
+			validator := newPCSValidator(pcs, admissionv1.Create, defaultTASConfig(), groveconfigv1beta1.SchedulerConfiguration{Profiles: []groveconfigv1beta1.SchedulerProfile{{Name: groveconfigv1beta1.SchedulerNameKube}}, DefaultProfileName: string(groveconfigv1beta1.SchedulerNameKube)}, nil, testutils.NewDefaultFakeRegistry())
 			fldPath := field.NewPath("spec", "template", "resourceSharing")
 			errs := validator.validateResourceSharingSpecs(tc.refs, fldPath)
 
@@ -1629,7 +1629,7 @@ func TestValidatePCSResourceSharing(t *testing.T) {
 			pcs.Spec.Template.PodCliqueScalingGroupConfigs = tc.groupConfigs
 			pcs.Spec.Template.ResourceSharing = tc.refs
 
-			validator := newPCSValidator(pcs, admissionv1.Create, defaultTASConfig(), groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube)}, nil, testutils.NewDefaultFakeRegistry())
+			validator := newPCSValidator(pcs, admissionv1.Create, defaultTASConfig(), groveconfigv1beta1.SchedulerConfiguration{Profiles: []groveconfigv1beta1.SchedulerProfile{{Name: groveconfigv1beta1.SchedulerNameKube}}, DefaultProfileName: string(groveconfigv1beta1.SchedulerNameKube)}, nil, testutils.NewDefaultFakeRegistry())
 			fldPath := field.NewPath("spec", "template", "resourceSharing")
 			errs := validator.validatePCSResourceSharing(tc.refs, fldPath)
 
@@ -1691,7 +1691,7 @@ func TestValidatePCSGResourceSharing(t *testing.T) {
 				pcs.Spec.Template.Cliques = append(pcs.Spec.Template.Cliques, createPodCliqueTemplate(cn))
 			}
 
-			validator := newPCSValidator(pcs, admissionv1.Create, defaultTASConfig(), groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube)}, nil, testutils.NewDefaultFakeRegistry())
+			validator := newPCSValidator(pcs, admissionv1.Create, defaultTASConfig(), groveconfigv1beta1.SchedulerConfiguration{Profiles: []groveconfigv1beta1.SchedulerProfile{{Name: groveconfigv1beta1.SchedulerNameKube}}, DefaultProfileName: string(groveconfigv1beta1.SchedulerNameKube)}, nil, testutils.NewDefaultFakeRegistry())
 			fldPath := field.NewPath("spec", "template", "podCliqueScalingGroups").Index(0).Child("resourceSharing")
 			errs := validator.validatePCSGResourceSharing(tc.cfg, fldPath)
 
@@ -1705,11 +1705,11 @@ func TestValidatePCSGResourceSharing(t *testing.T) {
 }
 
 func TestValidateTopologyConstraintsPCSTopologyName(t *testing.T) {
-	schedulerConfig := groveconfigv1alpha1.SchedulerConfiguration{
-		Profiles:           []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube}},
-		DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube),
+	schedulerConfig := groveconfigv1beta1.SchedulerConfiguration{
+		Profiles:           []groveconfigv1beta1.SchedulerProfile{{Name: groveconfigv1beta1.SchedulerNameKube}},
+		DefaultProfileName: string(groveconfigv1beta1.SchedulerNameKube),
 	}
-	tasConfig := groveconfigv1alpha1.TopologyAwareSchedulingConfiguration{Enabled: true}
+	tasConfig := groveconfigv1beta1.TopologyAwareSchedulingConfiguration{Enabled: true}
 
 	tests := []struct {
 		name          string
@@ -1901,8 +1901,8 @@ func TestValidateTopologyConstraintsPCSTopologyName(t *testing.T) {
 			newPCS := tc.setupNewPCS()
 			localRegistry := &testutils.FakeSchedulerRegistry{
 				Backends: map[string]scheduler.Backend{
-					"default-scheduler":                          testutils.NewFakeSchedulerBackend("default-scheduler"),
-					string(groveconfigv1alpha1.SchedulerNameKai): kai.New(fakeClient, fakeClient.Scheme(), nil, groveconfigv1alpha1.SchedulerProfile{Name: groveconfigv1alpha1.SchedulerNameKai}),
+					"default-scheduler":                         testutils.NewFakeSchedulerBackend("default-scheduler"),
+					string(groveconfigv1beta1.SchedulerNameKai): kai.New(fakeClient, fakeClient.Scheme(), nil, groveconfigv1beta1.SchedulerProfile{Name: groveconfigv1beta1.SchedulerNameKai}),
 				},
 				DefaultBackend: "default-scheduler",
 			}
@@ -1940,8 +1940,8 @@ func TestValidateTopologyConstraintsPCSTopologyName(t *testing.T) {
 // defaultTASConfig returns a default TAS configuration with TAS disabled.
 // This is used for all podcliqueset validation tests since topology constraint
 // validation is tested separately in topologyconstraints_v1_test.go.
-func defaultTASConfig() groveconfigv1alpha1.TopologyAwareSchedulingConfiguration {
-	return groveconfigv1alpha1.TopologyAwareSchedulingConfiguration{
+func defaultTASConfig() groveconfigv1beta1.TopologyAwareSchedulingConfiguration {
+	return groveconfigv1beta1.TopologyAwareSchedulingConfiguration{
 		Enabled: false,
 	}
 }
@@ -2115,9 +2115,9 @@ func TestValidateRollingUpdateOnPCSGMemberRejected(t *testing.T) {
 	}
 
 	validator := newPCSValidator(pcs, admissionv1.Create, defaultTASConfig(),
-		groveconfigv1alpha1.SchedulerConfiguration{
-			Profiles:           []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube}},
-			DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube),
+		groveconfigv1beta1.SchedulerConfiguration{
+			Profiles:           []groveconfigv1beta1.SchedulerProfile{{Name: groveconfigv1beta1.SchedulerNameKube}},
+			DefaultProfileName: string(groveconfigv1beta1.SchedulerNameKube),
 		}, nil, testutils.NewDefaultFakeRegistry())
 	_, errs := validator.validate()
 

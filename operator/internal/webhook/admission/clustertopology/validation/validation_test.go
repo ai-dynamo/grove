@@ -18,7 +18,7 @@ import (
 	"context"
 	"testing"
 
-	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
+	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 
 	"github.com/stretchr/testify/assert"
@@ -30,11 +30,11 @@ import (
 func newTestHandler() *Handler {
 	return &Handler{
 		enabledBackends: map[string]struct{}{
-			string(configv1alpha1.SchedulerNameKai):  {},
-			string(configv1alpha1.SchedulerNameKube): {},
+			string(configv1beta1.SchedulerNameKai):  {},
+			string(configv1beta1.SchedulerNameKube): {},
 		},
 		topologyAwareBackends: map[string]struct{}{
-			string(configv1alpha1.SchedulerNameKai): {},
+			string(configv1beta1.SchedulerNameKai): {},
 		},
 	}
 }
@@ -84,7 +84,7 @@ func TestValidateCreate(t *testing.T) {
 				{Domain: grovecorev1beta1.TopologyDomainZone, Key: "topology.kubernetes.io/zone"},
 			},
 			refs: []grovecorev1beta1.SchedulerTopologyBinding{
-				{SchedulerName: string(configv1alpha1.SchedulerNameKai), TopologyReference: "kai-topology"},
+				{SchedulerName: string(configv1beta1.SchedulerNameKai), TopologyReference: "kai-topology"},
 			},
 			expectError: false,
 		},
@@ -121,8 +121,8 @@ func TestValidateCreate(t *testing.T) {
 				{Domain: grovecorev1beta1.TopologyDomainZone, Key: "topology.kubernetes.io/zone"},
 			},
 			refs: []grovecorev1beta1.SchedulerTopologyBinding{
-				{SchedulerName: string(configv1alpha1.SchedulerNameKai), TopologyReference: "kai-topology-a"},
-				{SchedulerName: string(configv1alpha1.SchedulerNameKai), TopologyReference: "kai-topology-b"},
+				{SchedulerName: string(configv1beta1.SchedulerNameKai), TopologyReference: "kai-topology-a"},
+				{SchedulerName: string(configv1beta1.SchedulerNameKai), TopologyReference: "kai-topology-b"},
 			},
 			expectError: true,
 			errContains: "spec.schedulerTopologyReferences[1].schedulerName",
@@ -144,7 +144,7 @@ func TestValidateCreate(t *testing.T) {
 				{Domain: grovecorev1beta1.TopologyDomainZone, Key: "topology.kubernetes.io/zone"},
 			},
 			refs: []grovecorev1beta1.SchedulerTopologyBinding{
-				{SchedulerName: string(configv1alpha1.SchedulerNameKube), TopologyReference: "kube-topology"},
+				{SchedulerName: string(configv1beta1.SchedulerNameKube), TopologyReference: "kube-topology"},
 			},
 			expectError: true,
 			errContains: "scheduler backend does not implement topology-aware scheduling",
@@ -182,7 +182,7 @@ func TestValidateUpdate_Valid(t *testing.T) {
 		{Domain: grovecorev1beta1.TopologyDomainRegion, Key: "topology.kubernetes.io/region"},
 		{Domain: grovecorev1beta1.TopologyDomainZone, Key: "topology.kubernetes.io/zone"},
 	}, []grovecorev1beta1.SchedulerTopologyBinding{
-		{SchedulerName: string(configv1alpha1.SchedulerNameKai), TopologyReference: "kai-topology"},
+		{SchedulerName: string(configv1beta1.SchedulerNameKai), TopologyReference: "kai-topology"},
 	})
 
 	_, err := handler.ValidateUpdate(context.Background(), oldCT, newCT)

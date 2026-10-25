@@ -26,7 +26,7 @@ import (
 
 	nameutils "github.com/ai-dynamo/grove/operator/api/common"
 	apicommonconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
-	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
+	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 	corev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	corev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/e2e/grove/podgroup"
@@ -1671,8 +1671,8 @@ func Test_TAS21_TopologyValidationWebhooks(t *testing.T) {
 				{Domain: corev1beta1.TopologyDomainRack, Key: setup.TopologyLabelRack},
 			},
 			refs: []corev1beta1.SchedulerTopologyBinding{
-				{SchedulerName: string(configv1alpha1.SchedulerNameKai), TopologyReference: "kai-topology-a"},
-				{SchedulerName: string(configv1alpha1.SchedulerNameKai), TopologyReference: "kai-topology-b"},
+				{SchedulerName: string(configv1beta1.SchedulerNameKai), TopologyReference: "kai-topology-a"},
+				{SchedulerName: string(configv1beta1.SchedulerNameKai), TopologyReference: "kai-topology-b"},
 			},
 			errContains: []string{"spec.schedulerTopologyReferences[1].schedulerName", "Duplicate value"},
 		},
@@ -1696,7 +1696,7 @@ func Test_TAS21_TopologyValidationWebhooks(t *testing.T) {
 				{Domain: corev1beta1.TopologyDomainRack, Key: setup.TopologyLabelRack},
 			},
 			refs: []corev1beta1.SchedulerTopologyBinding{
-				{SchedulerName: string(configv1alpha1.SchedulerNameKube), TopologyReference: "default-topology"},
+				{SchedulerName: string(configv1beta1.SchedulerNameKube), TopologyReference: "default-topology"},
 			},
 			errContains: []string{"spec.schedulerTopologyReferences[0].schedulerName", "scheduler backend does not implement topology-aware scheduling"},
 		},

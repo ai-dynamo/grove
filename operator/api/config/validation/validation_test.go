@@ -18,7 +18,7 @@ import (
 	"testing"
 	"time"
 
-	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
+	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 
 	"github.com/stretchr/testify/assert"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -29,28 +29,28 @@ func TestValidatePodCliqueControllerConfiguration(t *testing.T) {
 	fldPath := field.NewPath("controllers").Child("podClique")
 	tests := []struct {
 		name           string
-		config         configv1alpha1.PodCliqueControllerConfiguration
+		config         configv1beta1.PodCliqueControllerConfiguration
 		expectErrors   int
 		expectedFields []string
 		expectedTypes  []field.ErrorType
 	}{
 		{
 			name: "valid: concurrentSyncs set to 1",
-			config: configv1alpha1.PodCliqueControllerConfiguration{
+			config: configv1beta1.PodCliqueControllerConfiguration{
 				ConcurrentSyncs: intPtr(1),
 			},
 			expectErrors: 0,
 		},
 		{
 			name: "valid: concurrentSyncs set to a large value",
-			config: configv1alpha1.PodCliqueControllerConfiguration{
+			config: configv1beta1.PodCliqueControllerConfiguration{
 				ConcurrentSyncs: intPtr(10),
 			},
 			expectErrors: 0,
 		},
 		{
 			name: "invalid: concurrentSyncs is nil (defaults to 0, must be > 0)",
-			config: configv1alpha1.PodCliqueControllerConfiguration{
+			config: configv1beta1.PodCliqueControllerConfiguration{
 				ConcurrentSyncs: nil,
 			},
 			expectErrors:   1,
@@ -59,7 +59,7 @@ func TestValidatePodCliqueControllerConfiguration(t *testing.T) {
 		},
 		{
 			name: "invalid: concurrentSyncs set to 0",
-			config: configv1alpha1.PodCliqueControllerConfiguration{
+			config: configv1beta1.PodCliqueControllerConfiguration{
 				ConcurrentSyncs: intPtr(0),
 			},
 			expectErrors:   1,
@@ -68,7 +68,7 @@ func TestValidatePodCliqueControllerConfiguration(t *testing.T) {
 		},
 		{
 			name: "invalid: concurrentSyncs set to negative value",
-			config: configv1alpha1.PodCliqueControllerConfiguration{
+			config: configv1beta1.PodCliqueControllerConfiguration{
 				ConcurrentSyncs: intPtr(-1),
 			},
 			expectErrors:   1,
@@ -101,28 +101,28 @@ func TestValidatePodGangControllerConfiguration(t *testing.T) {
 	fldPath := field.NewPath("controllers").Child("podGang")
 	tests := []struct {
 		name           string
-		config         configv1alpha1.PodGangControllerConfiguration
+		config         configv1beta1.PodGangControllerConfiguration
 		expectErrors   int
 		expectedFields []string
 		expectedTypes  []field.ErrorType
 	}{
 		{
 			name: "valid: concurrentSyncs set to 1",
-			config: configv1alpha1.PodGangControllerConfiguration{
+			config: configv1beta1.PodGangControllerConfiguration{
 				ConcurrentSyncs: intPtr(1),
 			},
 			expectErrors: 0,
 		},
 		{
 			name: "valid: concurrentSyncs set to a large value",
-			config: configv1alpha1.PodGangControllerConfiguration{
+			config: configv1beta1.PodGangControllerConfiguration{
 				ConcurrentSyncs: intPtr(10),
 			},
 			expectErrors: 0,
 		},
 		{
 			name: "invalid: concurrentSyncs is nil (defaults to 0, must be > 0)",
-			config: configv1alpha1.PodGangControllerConfiguration{
+			config: configv1beta1.PodGangControllerConfiguration{
 				ConcurrentSyncs: nil,
 			},
 			expectErrors:   1,
@@ -131,7 +131,7 @@ func TestValidatePodGangControllerConfiguration(t *testing.T) {
 		},
 		{
 			name: "invalid: concurrentSyncs set to 0",
-			config: configv1alpha1.PodGangControllerConfiguration{
+			config: configv1beta1.PodGangControllerConfiguration{
 				ConcurrentSyncs: intPtr(0),
 			},
 			expectErrors:   1,
@@ -140,7 +140,7 @@ func TestValidatePodGangControllerConfiguration(t *testing.T) {
 		},
 		{
 			name: "invalid: concurrentSyncs set to negative value",
-			config: configv1alpha1.PodGangControllerConfiguration{
+			config: configv1beta1.PodGangControllerConfiguration{
 				ConcurrentSyncs: intPtr(-1),
 			},
 			expectErrors:   1,
@@ -171,7 +171,7 @@ func TestValidateSchedulerConfiguration(t *testing.T) {
 	fldPath := field.NewPath("scheduler")
 	tests := []struct {
 		name           string
-		scheduler      *configv1alpha1.SchedulerConfiguration
+		scheduler      *configv1beta1.SchedulerConfiguration
 		expectErrors   int
 		expectedFields []string
 		expectedTypes  []field.ErrorType
@@ -179,8 +179,8 @@ func TestValidateSchedulerConfiguration(t *testing.T) {
 		// Here we test pre-defaulting: empty profiles + empty defaultProfileName → Required for profiles, kube profile, and defaultProfileName
 		{
 			name: "invalid: empty profiles and empty defaultProfileName",
-			scheduler: &configv1alpha1.SchedulerConfiguration{
-				Profiles:           []configv1alpha1.SchedulerProfile{},
+			scheduler: &configv1beta1.SchedulerConfiguration{
+				Profiles:           []configv1beta1.SchedulerProfile{},
 				DefaultProfileName: "",
 			},
 			expectErrors:   3,
@@ -190,9 +190,9 @@ func TestValidateSchedulerConfiguration(t *testing.T) {
 		// empty profiles with defaultProfileName set
 		{
 			name: "invalid: empty profiles with defaultProfileName set",
-			scheduler: &configv1alpha1.SchedulerConfiguration{
-				Profiles:           []configv1alpha1.SchedulerProfile{},
-				DefaultProfileName: string(configv1alpha1.SchedulerNameKube),
+			scheduler: &configv1beta1.SchedulerConfiguration{
+				Profiles:           []configv1beta1.SchedulerProfile{},
+				DefaultProfileName: string(configv1beta1.SchedulerNameKube),
 			},
 			expectErrors:   3,
 			expectedFields: []string{"scheduler.profiles", "scheduler.profiles", "scheduler.defaultProfileName"},
@@ -201,18 +201,18 @@ func TestValidateSchedulerConfiguration(t *testing.T) {
 		// single kube
 		{
 			name: "valid: single kube default",
-			scheduler: &configv1alpha1.SchedulerConfiguration{
-				Profiles:           []configv1alpha1.SchedulerProfile{{Name: configv1alpha1.SchedulerNameKube}},
-				DefaultProfileName: string(configv1alpha1.SchedulerNameKube),
+			scheduler: &configv1beta1.SchedulerConfiguration{
+				Profiles:           []configv1beta1.SchedulerProfile{{Name: configv1beta1.SchedulerNameKube}},
+				DefaultProfileName: string(configv1beta1.SchedulerNameKube),
 			},
 			expectErrors: 0,
 		},
 		// single kai without kube → invalid because default-scheduler profile is always required
 		{
 			name: "invalid: single kai without kube profile",
-			scheduler: &configv1alpha1.SchedulerConfiguration{
-				Profiles:           []configv1alpha1.SchedulerProfile{{Name: configv1alpha1.SchedulerNameKai}},
-				DefaultProfileName: string(configv1alpha1.SchedulerNameKai),
+			scheduler: &configv1beta1.SchedulerConfiguration{
+				Profiles:           []configv1beta1.SchedulerProfile{{Name: configv1beta1.SchedulerNameKai}},
+				DefaultProfileName: string(configv1beta1.SchedulerNameKai),
 			},
 			expectErrors:   1,
 			expectedFields: []string{"scheduler.profiles"},
@@ -221,81 +221,81 @@ func TestValidateSchedulerConfiguration(t *testing.T) {
 		// kai with kube
 		{
 			name: "valid: kai and kube profiles with kai default",
-			scheduler: &configv1alpha1.SchedulerConfiguration{
-				Profiles: []configv1alpha1.SchedulerProfile{
-					{Name: configv1alpha1.SchedulerNameKai},
-					{Name: configv1alpha1.SchedulerNameKube},
+			scheduler: &configv1beta1.SchedulerConfiguration{
+				Profiles: []configv1beta1.SchedulerProfile{
+					{Name: configv1beta1.SchedulerNameKai},
+					{Name: configv1beta1.SchedulerNameKube},
 				},
-				DefaultProfileName: string(configv1alpha1.SchedulerNameKai),
+				DefaultProfileName: string(configv1beta1.SchedulerNameKai),
 			},
 			expectErrors: 0,
 		},
 		// multiple schedulers, kube default
 		{
 			name: "valid: multiple schedulers kube default",
-			scheduler: &configv1alpha1.SchedulerConfiguration{
-				Profiles: []configv1alpha1.SchedulerProfile{
-					{Name: configv1alpha1.SchedulerNameKube},
-					{Name: configv1alpha1.SchedulerNameKai},
-					{Name: configv1alpha1.SchedulerNameLPX},
+			scheduler: &configv1beta1.SchedulerConfiguration{
+				Profiles: []configv1beta1.SchedulerProfile{
+					{Name: configv1beta1.SchedulerNameKube},
+					{Name: configv1beta1.SchedulerNameKai},
+					{Name: configv1beta1.SchedulerNameLPX},
 				},
-				DefaultProfileName: string(configv1alpha1.SchedulerNameKube),
+				DefaultProfileName: string(configv1beta1.SchedulerNameKube),
 			},
 			expectErrors: 0,
 		},
 		{
 			name: "valid: lpx enabled without kai",
-			scheduler: &configv1alpha1.SchedulerConfiguration{
-				Profiles: []configv1alpha1.SchedulerProfile{
-					{Name: configv1alpha1.SchedulerNameKube},
-					{Name: configv1alpha1.SchedulerNameLPX},
+			scheduler: &configv1beta1.SchedulerConfiguration{
+				Profiles: []configv1beta1.SchedulerProfile{
+					{Name: configv1beta1.SchedulerNameKube},
+					{Name: configv1beta1.SchedulerNameLPX},
 				},
-				DefaultProfileName: string(configv1alpha1.SchedulerNameLPX),
+				DefaultProfileName: string(configv1beta1.SchedulerNameLPX),
 			},
 			expectErrors: 0,
 		},
 		{
 			name: "valid: lpx enabled with kai",
-			scheduler: &configv1alpha1.SchedulerConfiguration{
-				Profiles: []configv1alpha1.SchedulerProfile{
-					{Name: configv1alpha1.SchedulerNameKube},
-					{Name: configv1alpha1.SchedulerNameKai},
-					{Name: configv1alpha1.SchedulerNameLPX},
+			scheduler: &configv1beta1.SchedulerConfiguration{
+				Profiles: []configv1beta1.SchedulerProfile{
+					{Name: configv1beta1.SchedulerNameKube},
+					{Name: configv1beta1.SchedulerNameKai},
+					{Name: configv1beta1.SchedulerNameLPX},
 				},
-				DefaultProfileName: string(configv1alpha1.SchedulerNameKai),
+				DefaultProfileName: string(configv1beta1.SchedulerNameKai),
 			},
 			expectErrors: 0,
 		},
 		// multiple schedulers, kai default
 		{
 			name: "valid: multiple schedulers kai default",
-			scheduler: &configv1alpha1.SchedulerConfiguration{
-				Profiles: []configv1alpha1.SchedulerProfile{
-					{Name: configv1alpha1.SchedulerNameKube},
-					{Name: configv1alpha1.SchedulerNameKai},
+			scheduler: &configv1beta1.SchedulerConfiguration{
+				Profiles: []configv1beta1.SchedulerProfile{
+					{Name: configv1beta1.SchedulerNameKube},
+					{Name: configv1beta1.SchedulerNameKai},
 				},
-				DefaultProfileName: string(configv1alpha1.SchedulerNameKai),
+				DefaultProfileName: string(configv1beta1.SchedulerNameKai),
 			},
 			expectErrors: 0,
 		},
 		{
 			name: "valid: volcano and kube profiles with volcano default",
-			scheduler: &configv1alpha1.SchedulerConfiguration{
-				Profiles: []configv1alpha1.SchedulerProfile{
-					{Name: configv1alpha1.SchedulerNameVolcano},
-					{Name: configv1alpha1.SchedulerNameKube},
+			scheduler: &configv1beta1.SchedulerConfiguration{
+				Profiles: []configv1beta1.SchedulerProfile{
+					{Name: configv1beta1.SchedulerNameVolcano},
+					{Name: configv1beta1.SchedulerNameKube},
 				},
-				DefaultProfileName: string(configv1alpha1.SchedulerNameVolcano),
+				DefaultProfileName: string(configv1beta1.SchedulerNameVolcano),
 			},
 			expectErrors: 0,
 		},
 		// defaultProfileName omitted (pre-defaulting → Required)
 		{
 			name: "invalid: defaultProfileName omitted",
-			scheduler: &configv1alpha1.SchedulerConfiguration{
-				Profiles: []configv1alpha1.SchedulerProfile{
-					{Name: configv1alpha1.SchedulerNameKube},
-					{Name: configv1alpha1.SchedulerNameKai},
+			scheduler: &configv1beta1.SchedulerConfiguration{
+				Profiles: []configv1beta1.SchedulerProfile{
+					{Name: configv1beta1.SchedulerNameKube},
+					{Name: configv1beta1.SchedulerNameKai},
 				},
 				DefaultProfileName: "",
 			},
@@ -306,10 +306,10 @@ func TestValidateSchedulerConfiguration(t *testing.T) {
 		// invalid defaultProfileName (not in supported list; not in profiles → Invalid)
 		{
 			name: "invalid: defaultProfileName not in profiles (e.g. invalid-scheduler)",
-			scheduler: &configv1alpha1.SchedulerConfiguration{
-				Profiles: []configv1alpha1.SchedulerProfile{
-					{Name: configv1alpha1.SchedulerNameKube},
-					{Name: configv1alpha1.SchedulerNameKai},
+			scheduler: &configv1beta1.SchedulerConfiguration{
+				Profiles: []configv1beta1.SchedulerProfile{
+					{Name: configv1beta1.SchedulerNameKube},
+					{Name: configv1beta1.SchedulerNameKai},
 				},
 				DefaultProfileName: "invalid-scheduler",
 			},
@@ -320,9 +320,9 @@ func TestValidateSchedulerConfiguration(t *testing.T) {
 		// defaultProfileName is kube but kube not in profiles
 		{
 			name: "invalid: defaultProfileName not in profiles (default-scheduler but only kai in profiles)",
-			scheduler: &configv1alpha1.SchedulerConfiguration{
-				Profiles:           []configv1alpha1.SchedulerProfile{{Name: configv1alpha1.SchedulerNameKai}},
-				DefaultProfileName: string(configv1alpha1.SchedulerNameKube),
+			scheduler: &configv1beta1.SchedulerConfiguration{
+				Profiles:           []configv1beta1.SchedulerProfile{{Name: configv1beta1.SchedulerNameKai}},
+				DefaultProfileName: string(configv1beta1.SchedulerNameKube),
 			},
 			expectErrors:   2,
 			expectedFields: []string{"scheduler.profiles", "scheduler.defaultProfileName"},
@@ -331,8 +331,8 @@ func TestValidateSchedulerConfiguration(t *testing.T) {
 		// empty name in profile
 		{
 			name: "invalid: profile with empty name",
-			scheduler: &configv1alpha1.SchedulerConfiguration{
-				Profiles: []configv1alpha1.SchedulerProfile{
+			scheduler: &configv1beta1.SchedulerConfiguration{
+				Profiles: []configv1beta1.SchedulerProfile{
 					{Name: ""},
 				},
 				DefaultProfileName: "default-scheduler",
@@ -344,10 +344,10 @@ func TestValidateSchedulerConfiguration(t *testing.T) {
 		// unsupported profile name
 		{
 			name: "invalid: unsupported profile name",
-			scheduler: &configv1alpha1.SchedulerConfiguration{
-				Profiles: []configv1alpha1.SchedulerProfile{
-					{Name: configv1alpha1.SchedulerName("unknown-scheduler")},
-					{Name: configv1alpha1.SchedulerNameKube},
+			scheduler: &configv1beta1.SchedulerConfiguration{
+				Profiles: []configv1beta1.SchedulerProfile{
+					{Name: configv1beta1.SchedulerName("unknown-scheduler")},
+					{Name: configv1beta1.SchedulerNameKube},
 				},
 				DefaultProfileName: "unknown-scheduler",
 			},
@@ -358,12 +358,12 @@ func TestValidateSchedulerConfiguration(t *testing.T) {
 		// duplicate profile names
 		{
 			name: "invalid: duplicate profile names",
-			scheduler: &configv1alpha1.SchedulerConfiguration{
-				Profiles: []configv1alpha1.SchedulerProfile{
-					{Name: configv1alpha1.SchedulerNameKube},
-					{Name: configv1alpha1.SchedulerNameKube},
+			scheduler: &configv1beta1.SchedulerConfiguration{
+				Profiles: []configv1beta1.SchedulerProfile{
+					{Name: configv1beta1.SchedulerNameKube},
+					{Name: configv1beta1.SchedulerNameKube},
 				},
-				DefaultProfileName: string(configv1alpha1.SchedulerNameKube),
+				DefaultProfileName: string(configv1beta1.SchedulerNameKube),
 			},
 			expectErrors:   1,
 			expectedFields: []string{"scheduler.profiles[1].name"},
@@ -391,7 +391,7 @@ func TestValidateSchedulerConfiguration(t *testing.T) {
 
 func TestValidateLeaderElectionConfiguration(t *testing.T) {
 	fldPath := field.NewPath("leaderElection")
-	validCfg := configv1alpha1.LeaderElectionConfiguration{
+	validCfg := configv1beta1.LeaderElectionConfiguration{
 		Enabled:       true,
 		LeaseDuration: metav1.Duration{Duration: 15 * time.Second},
 		RenewDeadline: metav1.Duration{Duration: 10 * time.Second},
@@ -401,14 +401,14 @@ func TestValidateLeaderElectionConfiguration(t *testing.T) {
 	}
 	tests := []struct {
 		name           string
-		config         configv1alpha1.LeaderElectionConfiguration
+		config         configv1beta1.LeaderElectionConfiguration
 		expectErrors   int
 		expectedFields []string
 		expectedTypes  []field.ErrorType
 	}{
 		{
 			name:         "valid: disabled - skips all checks",
-			config:       configv1alpha1.LeaderElectionConfiguration{Enabled: false},
+			config:       configv1beta1.LeaderElectionConfiguration{Enabled: false},
 			expectErrors: 0,
 		},
 		{
@@ -418,7 +418,7 @@ func TestValidateLeaderElectionConfiguration(t *testing.T) {
 		},
 		{
 			name: "invalid: leaseDuration is zero",
-			config: func() configv1alpha1.LeaderElectionConfiguration {
+			config: func() configv1beta1.LeaderElectionConfiguration {
 				c := validCfg
 				c.LeaseDuration = metav1.Duration{}
 				return c
@@ -429,7 +429,7 @@ func TestValidateLeaderElectionConfiguration(t *testing.T) {
 		},
 		{
 			name: "invalid: renewDeadline is zero",
-			config: func() configv1alpha1.LeaderElectionConfiguration {
+			config: func() configv1beta1.LeaderElectionConfiguration {
 				c := validCfg
 				c.RenewDeadline = metav1.Duration{}
 				return c
@@ -440,7 +440,7 @@ func TestValidateLeaderElectionConfiguration(t *testing.T) {
 		},
 		{
 			name: "invalid: retryPeriod is zero",
-			config: func() configv1alpha1.LeaderElectionConfiguration {
+			config: func() configv1beta1.LeaderElectionConfiguration {
 				c := validCfg
 				c.RetryPeriod = metav1.Duration{}
 				return c
@@ -451,7 +451,7 @@ func TestValidateLeaderElectionConfiguration(t *testing.T) {
 		},
 		{
 			name: "invalid: leaseDuration equal to renewDeadline",
-			config: func() configv1alpha1.LeaderElectionConfiguration {
+			config: func() configv1beta1.LeaderElectionConfiguration {
 				c := validCfg
 				c.LeaseDuration = metav1.Duration{Duration: 10 * time.Second}
 				c.RenewDeadline = metav1.Duration{Duration: 10 * time.Second}
@@ -463,7 +463,7 @@ func TestValidateLeaderElectionConfiguration(t *testing.T) {
 		},
 		{
 			name: "invalid: leaseDuration less than renewDeadline",
-			config: func() configv1alpha1.LeaderElectionConfiguration {
+			config: func() configv1beta1.LeaderElectionConfiguration {
 				c := validCfg
 				c.LeaseDuration = metav1.Duration{Duration: 5 * time.Second}
 				c.RenewDeadline = metav1.Duration{Duration: 10 * time.Second}
@@ -475,7 +475,7 @@ func TestValidateLeaderElectionConfiguration(t *testing.T) {
 		},
 		{
 			name: "invalid: empty resourceLock",
-			config: func() configv1alpha1.LeaderElectionConfiguration {
+			config: func() configv1beta1.LeaderElectionConfiguration {
 				c := validCfg
 				c.ResourceLock = ""
 				return c
@@ -486,7 +486,7 @@ func TestValidateLeaderElectionConfiguration(t *testing.T) {
 		},
 		{
 			name: "invalid: empty resourceName",
-			config: func() configv1alpha1.LeaderElectionConfiguration {
+			config: func() configv1beta1.LeaderElectionConfiguration {
 				c := validCfg
 				c.ResourceName = ""
 				return c
@@ -497,7 +497,7 @@ func TestValidateLeaderElectionConfiguration(t *testing.T) {
 		},
 		{
 			name: "invalid: all durations zero, missing resourceLock and resourceName",
-			config: configv1alpha1.LeaderElectionConfiguration{
+			config: configv1beta1.LeaderElectionConfiguration{
 				Enabled: true,
 			},
 			expectErrors: 6,
@@ -542,29 +542,29 @@ func TestValidateClientConnectionConfiguration(t *testing.T) {
 	fldPath := field.NewPath("clientConnection")
 	tests := []struct {
 		name           string
-		config         configv1alpha1.ClientConnectionConfiguration
+		config         configv1beta1.ClientConnectionConfiguration
 		expectErrors   int
 		expectedFields []string
 		expectedTypes  []field.ErrorType
 	}{
 		{
 			name:         "valid: zero burst",
-			config:       configv1alpha1.ClientConnectionConfiguration{Burst: 0},
+			config:       configv1beta1.ClientConnectionConfiguration{Burst: 0},
 			expectErrors: 0,
 		},
 		{
 			name:         "valid: positive burst",
-			config:       configv1alpha1.ClientConnectionConfiguration{Burst: 120},
+			config:       configv1beta1.ClientConnectionConfiguration{Burst: 120},
 			expectErrors: 0,
 		},
 		{
 			name:         "valid: positive QPS and burst",
-			config:       configv1alpha1.ClientConnectionConfiguration{QPS: 100.0, Burst: 120},
+			config:       configv1beta1.ClientConnectionConfiguration{QPS: 100.0, Burst: 120},
 			expectErrors: 0,
 		},
 		{
 			name:           "invalid: negative burst",
-			config:         configv1alpha1.ClientConnectionConfiguration{Burst: -1},
+			config:         configv1beta1.ClientConnectionConfiguration{Burst: -1},
 			expectErrors:   1,
 			expectedFields: []string{"clientConnection.burst"},
 			expectedTypes:  []field.ErrorType{field.ErrorTypeInvalid},
@@ -591,15 +591,15 @@ func TestValidateClientConnectionConfiguration(t *testing.T) {
 
 func TestValidateControllerConfiguration(t *testing.T) {
 	fldPath := field.NewPath("controllers")
-	validCfg := configv1alpha1.ControllerConfiguration{
-		PodCliqueSet:          configv1alpha1.PodCliqueSetControllerConfiguration{ConcurrentSyncs: intPtr(10)},
-		PodClique:             configv1alpha1.PodCliqueControllerConfiguration{ConcurrentSyncs: intPtr(10)},
-		PodCliqueScalingGroup: configv1alpha1.PodCliqueScalingGroupControllerConfiguration{ConcurrentSyncs: intPtr(5)},
-		PodGang:               configv1alpha1.PodGangControllerConfiguration{ConcurrentSyncs: intPtr(5)},
+	validCfg := configv1beta1.ControllerConfiguration{
+		PodCliqueSet:          configv1beta1.PodCliqueSetControllerConfiguration{ConcurrentSyncs: intPtr(10)},
+		PodClique:             configv1beta1.PodCliqueControllerConfiguration{ConcurrentSyncs: intPtr(10)},
+		PodCliqueScalingGroup: configv1beta1.PodCliqueScalingGroupControllerConfiguration{ConcurrentSyncs: intPtr(5)},
+		PodGang:               configv1beta1.PodGangControllerConfiguration{ConcurrentSyncs: intPtr(5)},
 	}
 	tests := []struct {
 		name           string
-		config         configv1alpha1.ControllerConfiguration
+		config         configv1beta1.ControllerConfiguration
 		expectErrors   int
 		expectedFields []string
 		expectedTypes  []field.ErrorType
@@ -611,11 +611,11 @@ func TestValidateControllerConfiguration(t *testing.T) {
 		},
 		{
 			name: "invalid: all concurrentSyncs nil",
-			config: configv1alpha1.ControllerConfiguration{
-				PodCliqueSet:          configv1alpha1.PodCliqueSetControllerConfiguration{},
-				PodClique:             configv1alpha1.PodCliqueControllerConfiguration{},
-				PodCliqueScalingGroup: configv1alpha1.PodCliqueScalingGroupControllerConfiguration{},
-				PodGang:               configv1alpha1.PodGangControllerConfiguration{},
+			config: configv1beta1.ControllerConfiguration{
+				PodCliqueSet:          configv1beta1.PodCliqueSetControllerConfiguration{},
+				PodClique:             configv1beta1.PodCliqueControllerConfiguration{},
+				PodCliqueScalingGroup: configv1beta1.PodCliqueScalingGroupControllerConfiguration{},
+				PodGang:               configv1beta1.PodGangControllerConfiguration{},
 			},
 			expectErrors: 4,
 			expectedFields: []string{
@@ -633,7 +633,7 @@ func TestValidateControllerConfiguration(t *testing.T) {
 		},
 		{
 			name: "invalid: only podCliqueSet has invalid concurrentSyncs",
-			config: func() configv1alpha1.ControllerConfiguration {
+			config: func() configv1beta1.ControllerConfiguration {
 				c := validCfg
 				c.PodCliqueSet.ConcurrentSyncs = intPtr(0)
 				return c
@@ -644,7 +644,7 @@ func TestValidateControllerConfiguration(t *testing.T) {
 		},
 		{
 			name: "invalid: only podGang has invalid concurrentSyncs",
-			config: func() configv1alpha1.ControllerConfiguration {
+			config: func() configv1beta1.ControllerConfiguration {
 				c := validCfg
 				c.PodGang.ConcurrentSyncs = intPtr(-1)
 				return c
@@ -674,15 +674,15 @@ func TestValidateControllerConfiguration(t *testing.T) {
 }
 
 func TestValidateOperatorConfiguration(t *testing.T) {
-	validConfig := func() *configv1alpha1.OperatorConfiguration {
-		return &configv1alpha1.OperatorConfiguration{
-			LogLevel:  configv1alpha1.InfoLevel,
-			LogFormat: configv1alpha1.LogFormatJSON,
-			Scheduler: configv1alpha1.SchedulerConfiguration{
-				Profiles:           []configv1alpha1.SchedulerProfile{{Name: configv1alpha1.SchedulerNameKube}},
-				DefaultProfileName: string(configv1alpha1.SchedulerNameKube),
+	validConfig := func() *configv1beta1.OperatorConfiguration {
+		return &configv1beta1.OperatorConfiguration{
+			LogLevel:  configv1beta1.InfoLevel,
+			LogFormat: configv1beta1.LogFormatJSON,
+			Scheduler: configv1beta1.SchedulerConfiguration{
+				Profiles:           []configv1beta1.SchedulerProfile{{Name: configv1beta1.SchedulerNameKube}},
+				DefaultProfileName: string(configv1beta1.SchedulerNameKube),
 			},
-			LeaderElection: configv1alpha1.LeaderElectionConfiguration{
+			LeaderElection: configv1beta1.LeaderElectionConfiguration{
 				Enabled:       true,
 				LeaseDuration: metav1.Duration{Duration: 15 * time.Second},
 				RenewDeadline: metav1.Duration{Duration: 10 * time.Second},
@@ -690,23 +690,23 @@ func TestValidateOperatorConfiguration(t *testing.T) {
 				ResourceLock:  "leases",
 				ResourceName:  "grove-operator-leader-election",
 			},
-			ClientConnection: configv1alpha1.ClientConnectionConfiguration{
+			ClientConnection: configv1beta1.ClientConnectionConfiguration{
 				QPS:   100.0,
 				Burst: 120,
 			},
-			Controllers: configv1alpha1.ControllerConfiguration{
-				PodCliqueSet:          configv1alpha1.PodCliqueSetControllerConfiguration{ConcurrentSyncs: intPtr(10)},
-				PodClique:             configv1alpha1.PodCliqueControllerConfiguration{ConcurrentSyncs: intPtr(10)},
-				PodCliqueScalingGroup: configv1alpha1.PodCliqueScalingGroupControllerConfiguration{ConcurrentSyncs: intPtr(5)},
-				PodGang:               configv1alpha1.PodGangControllerConfiguration{ConcurrentSyncs: intPtr(5)},
+			Controllers: configv1beta1.ControllerConfiguration{
+				PodCliqueSet:          configv1beta1.PodCliqueSetControllerConfiguration{ConcurrentSyncs: intPtr(10)},
+				PodClique:             configv1beta1.PodCliqueControllerConfiguration{ConcurrentSyncs: intPtr(10)},
+				PodCliqueScalingGroup: configv1beta1.PodCliqueScalingGroupControllerConfiguration{ConcurrentSyncs: intPtr(5)},
+				PodGang:               configv1beta1.PodGangControllerConfiguration{ConcurrentSyncs: intPtr(5)},
 			},
-			TopologyAwareScheduling: configv1alpha1.TopologyAwareSchedulingConfiguration{Enabled: false},
+			TopologyAwareScheduling: configv1beta1.TopologyAwareSchedulingConfiguration{Enabled: false},
 		}
 	}
 
 	tests := []struct {
 		name         string
-		config       *configv1alpha1.OperatorConfiguration
+		config       *configv1beta1.OperatorConfiguration
 		expectErrors int
 	}{
 		{
@@ -716,16 +716,16 @@ func TestValidateOperatorConfiguration(t *testing.T) {
 		},
 		{
 			name: "valid: leader election disabled",
-			config: func() *configv1alpha1.OperatorConfiguration {
+			config: func() *configv1beta1.OperatorConfiguration {
 				c := validConfig()
-				c.LeaderElection = configv1alpha1.LeaderElectionConfiguration{Enabled: false}
+				c.LeaderElection = configv1beta1.LeaderElectionConfiguration{Enabled: false}
 				return c
 			}(),
 			expectErrors: 0,
 		},
 		{
 			name: "valid: empty log level and format (skipped)",
-			config: func() *configv1alpha1.OperatorConfiguration {
+			config: func() *configv1beta1.OperatorConfiguration {
 				c := validConfig()
 				c.LogLevel = ""
 				c.LogFormat = ""
@@ -735,7 +735,7 @@ func TestValidateOperatorConfiguration(t *testing.T) {
 		},
 		{
 			name: "invalid: unsupported log level",
-			config: func() *configv1alpha1.OperatorConfiguration {
+			config: func() *configv1beta1.OperatorConfiguration {
 				c := validConfig()
 				c.LogLevel = "verbose"
 				return c
@@ -744,7 +744,7 @@ func TestValidateOperatorConfiguration(t *testing.T) {
 		},
 		{
 			name: "invalid: unsupported log format",
-			config: func() *configv1alpha1.OperatorConfiguration {
+			config: func() *configv1beta1.OperatorConfiguration {
 				c := validConfig()
 				c.LogFormat = "yaml"
 				return c
@@ -753,7 +753,7 @@ func TestValidateOperatorConfiguration(t *testing.T) {
 		},
 		{
 			name: "invalid: errors from multiple sections",
-			config: func() *configv1alpha1.OperatorConfiguration {
+			config: func() *configv1beta1.OperatorConfiguration {
 				c := validConfig()
 				c.LogLevel = "verbose"
 				c.ClientConnection.Burst = -1
@@ -764,11 +764,11 @@ func TestValidateOperatorConfiguration(t *testing.T) {
 		},
 		{
 			name: "invalid: scheduler missing kube profile and controller nil syncs",
-			config: func() *configv1alpha1.OperatorConfiguration {
+			config: func() *configv1beta1.OperatorConfiguration {
 				c := validConfig()
-				c.Scheduler = configv1alpha1.SchedulerConfiguration{
-					Profiles:           []configv1alpha1.SchedulerProfile{{Name: configv1alpha1.SchedulerNameKai}},
-					DefaultProfileName: string(configv1alpha1.SchedulerNameKai),
+				c.Scheduler = configv1beta1.SchedulerConfiguration{
+					Profiles:           []configv1beta1.SchedulerProfile{{Name: configv1beta1.SchedulerNameKai}},
+					DefaultProfileName: string(configv1beta1.SchedulerNameKai),
 				}
 				c.Controllers.PodGang.ConcurrentSyncs = nil
 				return c

@@ -19,7 +19,7 @@ import (
 	"testing"
 	"time"
 
-	groveconfigv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
+	groveconfigv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler/kueue"
@@ -49,10 +49,10 @@ func TestNewHandler(t *testing.T) {
 		Logger: logr.Discard(),
 	}
 
-	cfg := groveconfigv1alpha1.OperatorConfiguration{
+	cfg := groveconfigv1beta1.OperatorConfiguration{
 		TopologyAwareScheduling: getDefaultTASConfig(),
 		Network:                 getDefaultNetworkConfig(),
-		Scheduler:               groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube)},
+		Scheduler:               groveconfigv1beta1.SchedulerConfiguration{Profiles: []groveconfigv1beta1.SchedulerProfile{{Name: groveconfigv1beta1.SchedulerNameKube}}, DefaultProfileName: string(groveconfigv1beta1.SchedulerNameKube)},
 	}
 	handler := NewHandler(mgr, &cfg, testutils.NewDefaultFakeRegistry())
 	require.NotNil(t, handler)
@@ -130,7 +130,7 @@ func TestValidateCreate(t *testing.T) {
 						WithRoleName("test-role").
 						WithMinAvailable(1).
 						WithPodSpec(testutils.NewPodWithBuilderWithDefaultSpec("test-pod", "default").
-							WithSchedulerName(string(groveconfigv1alpha1.SchedulerNameVolcano)).
+							WithSchedulerName(string(groveconfigv1beta1.SchedulerNameVolcano)).
 							Build().Spec).
 						Build()).
 				Build(),
@@ -183,14 +183,14 @@ func TestValidateCreate(t *testing.T) {
 				Logger: logr.Discard(),
 			}
 
-			cfg := groveconfigv1alpha1.OperatorConfiguration{
+			cfg := groveconfigv1beta1.OperatorConfiguration{
 				TopologyAwareScheduling: getDefaultTASConfig(),
 				Network:                 getDefaultNetworkConfig(),
-				Scheduler: groveconfigv1alpha1.SchedulerConfiguration{
-					Profiles: []groveconfigv1alpha1.SchedulerProfile{
-						{Name: groveconfigv1alpha1.SchedulerNameKube},
+				Scheduler: groveconfigv1beta1.SchedulerConfiguration{
+					Profiles: []groveconfigv1beta1.SchedulerProfile{
+						{Name: groveconfigv1beta1.SchedulerNameKube},
 					},
-					DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube),
+					DefaultProfileName: string(groveconfigv1beta1.SchedulerNameKube),
 				},
 			}
 			handler := NewHandler(mgr, &cfg, testutils.NewDefaultFakeRegistry())
@@ -212,16 +212,16 @@ func TestValidateCreate(t *testing.T) {
 }
 
 func TestValidatePodCliqueSetWithLPXBackend(t *testing.T) {
-	profile := groveconfigv1alpha1.SchedulerProfile{Name: groveconfigv1alpha1.SchedulerNameLPX}
+	profile := groveconfigv1beta1.SchedulerProfile{Name: groveconfigv1beta1.SchedulerNameLPX}
 	registry := &testutils.FakeSchedulerRegistry{
 		Backends: map[string]scheduler.Backend{
-			string(groveconfigv1alpha1.SchedulerNameKube): testutils.NewFakeSchedulerBackend(
-				string(groveconfigv1alpha1.SchedulerNameKube),
+			string(groveconfigv1beta1.SchedulerNameKube): testutils.NewFakeSchedulerBackend(
+				string(groveconfigv1beta1.SchedulerNameKube),
 			),
-			string(groveconfigv1alpha1.SchedulerNameLPX): lpx.New(nil, profile,
-				testutils.NewFakeSchedulerBackend(string(groveconfigv1alpha1.SchedulerNameKai))),
+			string(groveconfigv1beta1.SchedulerNameLPX): lpx.New(nil, profile,
+				testutils.NewFakeSchedulerBackend(string(groveconfigv1beta1.SchedulerNameKai))),
 		},
-		DefaultBackend: string(groveconfigv1alpha1.SchedulerNameKube),
+		DefaultBackend: string(groveconfigv1beta1.SchedulerNameKube),
 	}
 	handler := &Handler{schedRegistry: registry}
 	pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "default", uuid.NewUUID()).
@@ -230,7 +230,7 @@ func TestValidatePodCliqueSetWithLPXBackend(t *testing.T) {
 				WithRoleName("worker").
 				WithReplicas(1).
 				WithPodSpec(corev1.PodSpec{
-					SchedulerName: string(groveconfigv1alpha1.SchedulerNameLPX),
+					SchedulerName: string(groveconfigv1beta1.SchedulerNameLPX),
 					Containers: []corev1.Container{{
 						Name:  "worker",
 						Image: "worker",
@@ -253,15 +253,15 @@ func TestValidateUpdatePassesOldPodCliqueSetToBackend(t *testing.T) {
 	cl := testutils.NewTestClientBuilder().Build()
 	mgr := &testutils.FakeManager{Client: cl, Scheme: cl.Scheme(), Logger: logr.Discard()}
 	kueueBackend := kueue.New(cl, cl.Scheme(), record.NewFakeRecorder(10),
-		groveconfigv1alpha1.SchedulerProfile{Name: groveconfigv1alpha1.SchedulerNameKueue})
+		groveconfigv1beta1.SchedulerProfile{Name: groveconfigv1beta1.SchedulerNameKueue})
 	require.NoError(t, kueueBackend.Init(nil))
-	cfg := groveconfigv1alpha1.OperatorConfiguration{
+	cfg := groveconfigv1beta1.OperatorConfiguration{
 		TopologyAwareScheduling: getDefaultTASConfig(),
 		Network:                 getDefaultNetworkConfig(),
 	}
 	handler := NewHandler(mgr, &cfg, &testutils.FakeSchedulerRegistry{
-		Backends:       map[string]scheduler.Backend{string(groveconfigv1alpha1.SchedulerNameKueue): kueueBackend},
-		DefaultBackend: string(groveconfigv1alpha1.SchedulerNameKueue),
+		Backends:       map[string]scheduler.Backend{string(groveconfigv1beta1.SchedulerNameKueue): kueueBackend},
+		DefaultBackend: string(groveconfigv1beta1.SchedulerNameKueue),
 	})
 	newPCS := func(queueName string) *grovecorev1beta1.PodCliqueSet {
 		pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "default", uuid.NewUUID()).
@@ -398,14 +398,14 @@ func TestValidateUpdate(t *testing.T) {
 				Logger: logr.Discard(),
 			}
 
-			cfg := groveconfigv1alpha1.OperatorConfiguration{
+			cfg := groveconfigv1beta1.OperatorConfiguration{
 				TopologyAwareScheduling: getDefaultTASConfig(),
 				Network:                 getDefaultNetworkConfig(),
-				Scheduler: groveconfigv1alpha1.SchedulerConfiguration{
-					Profiles: []groveconfigv1alpha1.SchedulerProfile{
-						{Name: groveconfigv1alpha1.SchedulerNameKube},
+				Scheduler: groveconfigv1beta1.SchedulerConfiguration{
+					Profiles: []groveconfigv1beta1.SchedulerProfile{
+						{Name: groveconfigv1beta1.SchedulerNameKube},
 					},
-					DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube),
+					DefaultProfileName: string(groveconfigv1beta1.SchedulerNameKube),
 				},
 			}
 			handler := NewHandler(mgr, &cfg, testutils.NewDefaultFakeRegistry())
@@ -435,10 +435,10 @@ func TestValidateDelete(t *testing.T) {
 		Logger: logr.Discard(),
 	}
 
-	cfg := groveconfigv1alpha1.OperatorConfiguration{
+	cfg := groveconfigv1beta1.OperatorConfiguration{
 		TopologyAwareScheduling: getDefaultTASConfig(),
 		Network:                 getDefaultNetworkConfig(),
-		Scheduler:               groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube)},
+		Scheduler:               groveconfigv1beta1.SchedulerConfiguration{Profiles: []groveconfigv1beta1.SchedulerProfile{{Name: groveconfigv1beta1.SchedulerNameKube}}, DefaultProfileName: string(groveconfigv1beta1.SchedulerNameKube)},
 	}
 	handler := NewHandler(mgr, &cfg, testutils.NewDefaultFakeRegistry())
 
@@ -551,10 +551,10 @@ func TestLogValidatorFunctionInvocation(t *testing.T) {
 				Logger: logr.Discard(),
 			}
 
-			cfg := groveconfigv1alpha1.OperatorConfiguration{
+			cfg := groveconfigv1beta1.OperatorConfiguration{
 				TopologyAwareScheduling: getDefaultTASConfig(),
 				Network:                 getDefaultNetworkConfig(),
-				Scheduler:               groveconfigv1alpha1.SchedulerConfiguration{Profiles: []groveconfigv1alpha1.SchedulerProfile{{Name: groveconfigv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(groveconfigv1alpha1.SchedulerNameKube)},
+				Scheduler:               groveconfigv1beta1.SchedulerConfiguration{Profiles: []groveconfigv1beta1.SchedulerProfile{{Name: groveconfigv1beta1.SchedulerNameKube}}, DefaultProfileName: string(groveconfigv1beta1.SchedulerNameKube)},
 			}
 			handler := NewHandler(mgr, &cfg, testutils.NewDefaultFakeRegistry())
 
@@ -569,15 +569,15 @@ func TestLogValidatorFunctionInvocation(t *testing.T) {
 // ---------------------------- Helper Functions ----------------------------
 
 // getDefaultTASConfig returns a default TAS configuration with TAS disabled.
-func getDefaultTASConfig() groveconfigv1alpha1.TopologyAwareSchedulingConfiguration {
-	return groveconfigv1alpha1.TopologyAwareSchedulingConfiguration{
+func getDefaultTASConfig() groveconfigv1beta1.TopologyAwareSchedulingConfiguration {
+	return groveconfigv1beta1.TopologyAwareSchedulingConfiguration{
 		Enabled: false,
 	}
 }
 
 // getDefaultNetworkConfig returns a default network configuration with MNNVL disabled.
-func getDefaultNetworkConfig() groveconfigv1alpha1.NetworkAcceleration {
-	return groveconfigv1alpha1.NetworkAcceleration{
+func getDefaultNetworkConfig() groveconfigv1beta1.NetworkAcceleration {
+	return groveconfigv1beta1.NetworkAcceleration{
 		AutoMNNVLEnabled: false,
 	}
 }

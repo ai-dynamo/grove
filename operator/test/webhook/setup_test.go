@@ -18,7 +18,7 @@ import (
 	"net/http"
 	"testing"
 
-	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
+	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/go-logr/logr"
@@ -29,7 +29,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 )
 
-var _ func(ctrl.Manager, *configv1alpha1.OperatorConfiguration) error = Setup
+var _ func(ctrl.Manager, *configv1beta1.OperatorConfiguration) error = Setup
 
 func TestSetup(t *testing.T) {
 	cl := testutils.NewTestClientBuilder().Build()
@@ -47,16 +47,16 @@ func TestSetup(t *testing.T) {
 		config: &rest.Config{Host: "https://127.0.0.1"},
 	}
 
-	operatorCfg := &configv1alpha1.OperatorConfiguration{
-		Scheduler: configv1alpha1.SchedulerConfiguration{
-			Profiles: []configv1alpha1.SchedulerProfile{
-				{Name: configv1alpha1.SchedulerNameKai},
-				{Name: configv1alpha1.SchedulerNameLPX},
+	operatorCfg := &configv1beta1.OperatorConfiguration{
+		Scheduler: configv1beta1.SchedulerConfiguration{
+			Profiles: []configv1beta1.SchedulerProfile{
+				{Name: configv1beta1.SchedulerNameKai},
+				{Name: configv1beta1.SchedulerNameLPX},
 			},
-			DefaultProfileName: string(configv1alpha1.SchedulerNameKai),
+			DefaultProfileName: string(configv1beta1.SchedulerNameKai),
 		},
 	}
-	configv1alpha1.SetObjectDefaults_OperatorConfiguration(operatorCfg)
+	configv1beta1.SetObjectDefaults_OperatorConfiguration(operatorCfg)
 
 	require.NoError(t, Setup(mgr, operatorCfg))
 	require.ElementsMatch(t, []string{

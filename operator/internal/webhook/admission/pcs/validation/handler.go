@@ -18,7 +18,7 @@ import (
 	"context"
 	"fmt"
 
-	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
+	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 	"github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
@@ -43,16 +43,16 @@ const (
 type Handler struct {
 	logger          logr.Logger
 	client          client.Client
-	tasConfig       configv1alpha1.TopologyAwareSchedulingConfiguration
-	networkConfig   configv1alpha1.NetworkAcceleration
-	schedulerConfig configv1alpha1.SchedulerConfiguration
+	tasConfig       configv1beta1.TopologyAwareSchedulingConfiguration
+	networkConfig   configv1beta1.NetworkAcceleration
+	schedulerConfig configv1beta1.SchedulerConfiguration
 	schedRegistry   scheduler.Registry
 }
 
 // NewHandler creates a new handler for PodCliqueSet Webhook.
 // It reads TopologyAwareScheduling, Network, and Scheduler from the operator configuration.
 // operatorCfg must not be nil.
-func NewHandler(mgr manager.Manager, operatorCfg *configv1alpha1.OperatorConfiguration, schedRegistry scheduler.Registry) *Handler {
+func NewHandler(mgr manager.Manager, operatorCfg *configv1beta1.OperatorConfiguration, schedRegistry scheduler.Registry) *Handler {
 	return &Handler{
 		logger:          mgr.GetLogger().WithName("webhook").WithName(Name),
 		client:          mgr.GetClient(),

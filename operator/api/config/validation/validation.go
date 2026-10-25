@@ -19,7 +19,7 @@ import (
 	"slices"
 	"strings"
 
-	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
+	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -28,7 +28,7 @@ import (
 )
 
 // ValidateOperatorConfiguration validates the operator configuration.
-func ValidateOperatorConfiguration(config *configv1alpha1.OperatorConfiguration) field.ErrorList {
+func ValidateOperatorConfiguration(config *configv1beta1.OperatorConfiguration) field.ErrorList {
 	allErrs := field.ErrorList{}
 	allErrs = append(allErrs, validateLogConfiguration(config)...)
 	allErrs = append(allErrs, validateSchedulerConfiguration(&config.Scheduler, field.NewPath("scheduler"))...)
@@ -38,31 +38,31 @@ func ValidateOperatorConfiguration(config *configv1alpha1.OperatorConfiguration)
 	return allErrs
 }
 
-func validateLogConfiguration(config *configv1alpha1.OperatorConfiguration) field.ErrorList {
+func validateLogConfiguration(config *configv1beta1.OperatorConfiguration) field.ErrorList {
 	allErrs := field.ErrorList{}
-	if len(strings.TrimSpace(string(config.LogLevel))) > 0 && !sets.New(configv1alpha1.AllLogLevels...).Has(config.LogLevel) {
-		allErrs = append(allErrs, field.NotSupported(field.NewPath("logLevel"), config.LogLevel, configv1alpha1.AllLogLevels))
+	if len(strings.TrimSpace(string(config.LogLevel))) > 0 && !sets.New(configv1beta1.AllLogLevels...).Has(config.LogLevel) {
+		allErrs = append(allErrs, field.NotSupported(field.NewPath("logLevel"), config.LogLevel, configv1beta1.AllLogLevels))
 	}
-	if len(strings.TrimSpace(string(config.LogFormat))) > 0 && !sets.New(configv1alpha1.AllLogFormats...).Has(config.LogFormat) {
-		allErrs = append(allErrs, field.NotSupported(field.NewPath("logFormat"), config.LogFormat, configv1alpha1.AllLogFormats))
+	if len(strings.TrimSpace(string(config.LogFormat))) > 0 && !sets.New(configv1beta1.AllLogFormats...).Has(config.LogFormat) {
+		allErrs = append(allErrs, field.NotSupported(field.NewPath("logFormat"), config.LogFormat, configv1beta1.AllLogFormats))
 	}
 	return allErrs
 }
 
-func validateSchedulerConfiguration(scheduler *configv1alpha1.SchedulerConfiguration, fldPath *field.Path) field.ErrorList {
+func validateSchedulerConfiguration(scheduler *configv1beta1.SchedulerConfiguration, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 	profilesPath := fldPath.Child("profiles")
 	defaultProfileNamePath := fldPath.Child("defaultProfileName")
 	if len(scheduler.Profiles) == 0 {
 		allErrs = append(allErrs, field.Required(profilesPath, "at least one scheduler profile is required"))
 	}
-	seenNames := sets.New[configv1alpha1.SchedulerName]()
+	seenNames := sets.New[configv1beta1.SchedulerName]()
 	for i, p := range scheduler.Profiles {
 		idxPath := profilesPath.Index(i)
 		if len(strings.TrimSpace(string(p.Name))) == 0 {
 			allErrs = append(allErrs, field.Required(idxPath.Child("name"), "scheduler profile name is required"))
-		} else if !slices.Contains(configv1alpha1.SupportedSchedulerNames, p.Name) {
-			allErrs = append(allErrs, field.NotSupported(idxPath.Child("name"), p.Name, configv1alpha1.SupportedSchedulerNames))
+		} else if !slices.Contains(configv1beta1.SupportedSchedulerNames, p.Name) {
+			allErrs = append(allErrs, field.NotSupported(idxPath.Child("name"), p.Name, configv1beta1.SupportedSchedulerNames))
 		} else {
 			if seenNames.Has(p.Name) {
 				allErrs = append(allErrs, field.Duplicate(idxPath.Child("name"), p.Name))
@@ -70,18 +70,18 @@ func validateSchedulerConfiguration(scheduler *configv1alpha1.SchedulerConfigura
 			seenNames.Insert(p.Name)
 		}
 	}
-	if !seenNames.Has(configv1alpha1.SchedulerNameKube) {
-		allErrs = append(allErrs, field.Required(profilesPath, fmt.Sprintf("the %q scheduler profile is required", configv1alpha1.SchedulerNameKube)))
+	if !seenNames.Has(configv1beta1.SchedulerNameKube) {
+		allErrs = append(allErrs, field.Required(profilesPath, fmt.Sprintf("the %q scheduler profile is required", configv1beta1.SchedulerNameKube)))
 	}
 	if strings.TrimSpace(scheduler.DefaultProfileName) == "" {
 		allErrs = append(allErrs, field.Required(defaultProfileNamePath, "default scheduler profile name is required"))
-	} else if !seenNames.Has(configv1alpha1.SchedulerName(scheduler.DefaultProfileName)) {
+	} else if !seenNames.Has(configv1beta1.SchedulerName(scheduler.DefaultProfileName)) {
 		allErrs = append(allErrs, field.Invalid(defaultProfileNamePath, scheduler.DefaultProfileName, "default profile must be one of the configured profiles"))
 	}
 	return allErrs
 }
 
-func validateLeaderElectionConfiguration(cfg configv1alpha1.LeaderElectionConfiguration, fldPath *field.Path) field.ErrorList {
+func validateLeaderElectionConfiguration(cfg configv1beta1.LeaderElectionConfiguration, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 	if !cfg.Enabled {
 		return allErrs
@@ -102,7 +102,7 @@ func validateLeaderElectionConfiguration(cfg configv1alpha1.LeaderElectionConfig
 	return allErrs
 }
 
-func validateClientConnectionConfiguration(cfg configv1alpha1.ClientConnectionConfiguration, fldPath *field.Path) field.ErrorList {
+func validateClientConnectionConfiguration(cfg configv1beta1.ClientConnectionConfiguration, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 	if cfg.Burst < 0 {
 		allErrs = append(allErrs, field.Invalid(fldPath.Child("burst"), cfg.Burst, "must be non-negative"))
@@ -110,7 +110,7 @@ func validateClientConnectionConfiguration(cfg configv1alpha1.ClientConnectionCo
 	return allErrs
 }
 
-func validateControllerConfiguration(controllerCfg configv1alpha1.ControllerConfiguration, fldPath *field.Path) field.ErrorList {
+func validateControllerConfiguration(controllerCfg configv1beta1.ControllerConfiguration, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 	allErrs = append(allErrs, validatePodCliqueSetControllerConfiguration(controllerCfg.PodCliqueSet, fldPath.Child("podCliqueSet"))...)
 	allErrs = append(allErrs, validatePodCliqueScalingGroupConfiguration(controllerCfg.PodCliqueScalingGroup, fldPath.Child("podCliqueScalingGroup"))...)
@@ -119,25 +119,25 @@ func validateControllerConfiguration(controllerCfg configv1alpha1.ControllerConf
 	return allErrs
 }
 
-func validatePodCliqueSetControllerConfiguration(pcsControllerCfg configv1alpha1.PodCliqueSetControllerConfiguration, fldPath *field.Path) field.ErrorList {
+func validatePodCliqueSetControllerConfiguration(pcsControllerCfg configv1beta1.PodCliqueSetControllerConfiguration, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 	allErrs = append(allErrs, validateConcurrentSyncs(pcsControllerCfg.ConcurrentSyncs, fldPath)...)
 	return allErrs
 }
 
-func validatePodCliqueScalingGroupConfiguration(pcsgControllerCfg configv1alpha1.PodCliqueScalingGroupControllerConfiguration, fldPath *field.Path) field.ErrorList {
+func validatePodCliqueScalingGroupConfiguration(pcsgControllerCfg configv1beta1.PodCliqueScalingGroupControllerConfiguration, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 	allErrs = append(allErrs, validateConcurrentSyncs(pcsgControllerCfg.ConcurrentSyncs, fldPath)...)
 	return allErrs
 }
 
-func validatePodCliqueControllerConfiguration(pclqControllerConfig configv1alpha1.PodCliqueControllerConfiguration, fldPath *field.Path) field.ErrorList {
+func validatePodCliqueControllerConfiguration(pclqControllerConfig configv1beta1.PodCliqueControllerConfiguration, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 	allErrs = append(allErrs, validateConcurrentSyncs(pclqControllerConfig.ConcurrentSyncs, fldPath)...)
 	return allErrs
 }
 
-func validatePodGangControllerConfiguration(pgControllerCfg configv1alpha1.PodGangControllerConfiguration, fldPath *field.Path) field.ErrorList {
+func validatePodGangControllerConfiguration(pgControllerCfg configv1beta1.PodGangControllerConfiguration, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 	allErrs = append(allErrs, validateConcurrentSyncs(pgControllerCfg.ConcurrentSyncs, fldPath)...)
 	return allErrs

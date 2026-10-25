@@ -23,7 +23,7 @@ import (
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	apicommonconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
-	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
+	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
@@ -48,7 +48,7 @@ type schedulerBackend struct {
 	scheme        *runtime.Scheme
 	name          string
 	eventRecorder record.EventRecorder
-	profile       configv1alpha1.SchedulerProfile
+	profile       configv1beta1.SchedulerProfile
 }
 
 var _ scheduler.Backend = (*schedulerBackend)(nil)
@@ -64,7 +64,7 @@ const (
 
 // New creates a new KAI backend instance. profile is the scheduler profile for kai-scheduler;
 // schedulerBackend uses profile.Name and may unmarshal profile.Config for kai-specific options.
-func New(cl client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder, profile configv1alpha1.SchedulerProfile) scheduler.Backend {
+func New(cl client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder, profile configv1beta1.SchedulerProfile) scheduler.Backend {
 	return &schedulerBackend{
 		client:        cl,
 		scheme:        scheme,

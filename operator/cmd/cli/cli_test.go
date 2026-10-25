@@ -19,7 +19,7 @@ import (
 	"testing"
 
 	apicommonconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
-	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
+	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
@@ -110,15 +110,16 @@ func TestLoadAndValidateOperatorConfig(t *testing.T) {
 		name          string
 		configFile    string
 		expectedError error
-		validateFunc  func(t *testing.T, config *configv1alpha1.OperatorConfiguration)
+		wantWarnings  int
+		validateFunc  func(t *testing.T, config *configv1beta1.OperatorConfiguration)
 	}{
 		{
 			name:       "valid config",
 			configFile: "testdata/valid-config.yaml",
-			validateFunc: func(t *testing.T, config *configv1alpha1.OperatorConfiguration) {
+			validateFunc: func(t *testing.T, config *configv1beta1.OperatorConfiguration) {
 				require.NotNil(t, config)
-				assert.Equal(t, configv1alpha1.LogLevel("info"), config.LogLevel)
-				assert.Equal(t, configv1alpha1.LogFormat("json"), config.LogFormat)
+				assert.Equal(t, configv1beta1.LogLevel("info"), config.LogLevel)
+				assert.Equal(t, configv1beta1.LogFormat("json"), config.LogFormat)
 				assert.Equal(t, float32(100), config.ClientConnection.QPS)
 				assert.Equal(t, 150, config.ClientConnection.Burst)
 				assert.Equal(t, 9443, config.Server.Webhooks.Port)
@@ -132,9 +133,21 @@ func TestLoadAndValidateOperatorConfig(t *testing.T) {
 			},
 		},
 		{
+			name:         "deprecated v1alpha1 config is converted, with a warning",
+			configFile:   "testdata/valid-config-v1alpha1.yaml",
+			wantWarnings: 1,
+			validateFunc: func(t *testing.T, config *configv1beta1.OperatorConfiguration) {
+				require.NotNil(t, config)
+				assert.Equal(t, 150, config.ClientConnection.Burst)
+				assert.Equal(t, 9443, config.Server.Webhooks.Port)
+				require.NotNil(t, config.Controllers.PodCliqueSet.ConcurrentSyncs)
+				assert.Equal(t, 3, *config.Controllers.PodCliqueSet.ConcurrentSyncs)
+			},
+		},
+		{
 			name:       "valid config with MNNVL enabled",
 			configFile: "testdata/valid-config-mnnvl-enabled.yaml",
-			validateFunc: func(t *testing.T, config *configv1alpha1.OperatorConfiguration) {
+			validateFunc: func(t *testing.T, config *configv1beta1.OperatorConfiguration) {
 				require.NotNil(t, config)
 				assert.True(t, config.Network.AutoMNNVLEnabled, "MNNVL should be enabled")
 			},
@@ -157,7 +170,7 @@ func TestLoadAndValidateOperatorConfig(t *testing.T) {
 				ConfigFile: test.configFile,
 			}
 
-			config, err := opts.LoadAndValidateOperatorConfig()
+			config, warnings, err := opts.LoadAndValidateOperatorConfig()
 
 			if test.expectedError != nil {
 				require.Error(t, err)
@@ -169,6 +182,7 @@ func TestLoadAndValidateOperatorConfig(t *testing.T) {
 			} else {
 				require.NoError(t, err)
 				require.NotNil(t, config)
+				assert.Len(t, warnings, test.wantWarnings)
 				if test.validateFunc != nil {
 					test.validateFunc(t, config)
 				}

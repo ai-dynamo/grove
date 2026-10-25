@@ -26,7 +26,7 @@ import (
 	"strings"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
-	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
+	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
@@ -72,8 +72,8 @@ type schedulerBackend struct {
 	scheme        *runtime.Scheme
 	name          string
 	eventRecorder record.EventRecorder
-	profile       configv1alpha1.SchedulerProfile
-	config        configv1alpha1.KueueSchedulerConfiguration
+	profile       configv1beta1.SchedulerProfile
+	config        configv1beta1.KueueSchedulerConfiguration
 }
 
 var (
@@ -84,7 +84,7 @@ var (
 
 // New creates a new Kueue backend instance. profile is the scheduler profile for kueue; schedulerBackend
 // uses profile.Name and may unmarshal profile.Config into KueueSchedulerConfiguration.
-func New(cl client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder, profile configv1alpha1.SchedulerProfile) scheduler.Backend {
+func New(cl client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder, profile configv1beta1.SchedulerProfile) scheduler.Backend {
 	return &schedulerBackend{
 		client:        cl,
 		scheme:        scheme,
@@ -598,13 +598,13 @@ func (b *schedulerBackend) ValidatePodCliqueScale(_ context.Context, oldReplicas
 	return fmt.Errorf("kueue backend does not support scaling a PodClique (%d -> %d) because its Kueue Workload podSets are fixed when the PodGang is created and are never updated; scale the PodCliqueScalingGroup that owns it instead", oldReplicas, newReplicas)
 }
 
-func defaultConfig() configv1alpha1.KueueSchedulerConfiguration {
-	return configv1alpha1.KueueSchedulerConfiguration{
-		UnderlyingSchedulerName: string(configv1alpha1.SchedulerNameKube),
+func defaultConfig() configv1beta1.KueueSchedulerConfiguration {
+	return configv1beta1.KueueSchedulerConfiguration{
+		UnderlyingSchedulerName: string(configv1beta1.SchedulerNameKube),
 	}
 }
 
-func withDefaults(cfg configv1alpha1.KueueSchedulerConfiguration) configv1alpha1.KueueSchedulerConfiguration {
+func withDefaults(cfg configv1beta1.KueueSchedulerConfiguration) configv1beta1.KueueSchedulerConfiguration {
 	defaults := defaultConfig()
 	if cfg.UnderlyingSchedulerName == "" {
 		cfg.UnderlyingSchedulerName = defaults.UnderlyingSchedulerName

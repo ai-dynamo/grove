@@ -20,7 +20,7 @@ import (
 	"os"
 	"path/filepath"
 
-	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
+	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	ctvalidation "github.com/ai-dynamo/grove/operator/internal/webhook/admission/clustertopology/validation"
@@ -35,7 +35,7 @@ import (
 )
 
 // Register registers the webhooks with the controller manager.
-func Register(mgr manager.Manager, operatorCfg *configv1alpha1.OperatorConfiguration, schedRegistry scheduler.Registry) error {
+func Register(mgr manager.Manager, operatorCfg *configv1beta1.OperatorConfiguration, schedRegistry scheduler.Registry) error {
 	if operatorCfg == nil {
 		return fmt.Errorf("operator configuration must not be nil")
 	}

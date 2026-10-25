@@ -17,7 +17,7 @@ package kube
 import (
 	"context"
 
-	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
+	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 
@@ -35,14 +35,14 @@ type schedulerBackend struct {
 	scheme        *runtime.Scheme
 	name          string
 	eventRecorder record.EventRecorder
-	profile       configv1alpha1.SchedulerProfile
+	profile       configv1beta1.SchedulerProfile
 }
 
 var _ scheduler.Backend = (*schedulerBackend)(nil)
 
 // New creates a new Kube backend instance. profile is the scheduler profile for default-scheduler;
-// schedulerBackend uses profile.Name and may unmarshal profile.Config into KubeSchedulerConfig.
-func New(cl client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder, profile configv1alpha1.SchedulerProfile) scheduler.Backend {
+// schedulerBackend uses profile.Name and ignores profile.Config.
+func New(cl client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder, profile configv1beta1.SchedulerProfile) scheduler.Backend {
 	return &schedulerBackend{
 		client:        cl,
 		scheme:        scheme,

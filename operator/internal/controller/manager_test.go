@@ -25,7 +25,7 @@ import (
 	"time"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
-	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
+	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 	groveclientscheme "github.com/ai-dynamo/grove/operator/internal/client"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
@@ -54,32 +54,31 @@ import (
 func TestCreateManagerOptions(t *testing.T) {
 	// Test with minimal configuration
 	t.Run("minimal configuration", func(t *testing.T) {
-		cfg := &configv1alpha1.OperatorConfiguration{
-			Server: configv1alpha1.ServerConfiguration{
-				Metrics: &configv1alpha1.Server{
+		cfg := &configv1beta1.OperatorConfiguration{
+			Server: configv1beta1.ServerConfiguration{
+				Metrics: &configv1beta1.Server{
 					BindAddress: "0.0.0.0",
 					Port:        8080,
 				},
-				HealthProbes: &configv1alpha1.Server{
+				HealthProbes: &configv1beta1.Server{
 					BindAddress: "0.0.0.0",
 					Port:        8081,
 				},
-				Webhooks: configv1alpha1.WebhookServer{
-					Server: configv1alpha1.Server{
+				Webhooks: configv1beta1.WebhookServer{
+					Server: configv1beta1.Server{
 						BindAddress: "0.0.0.0",
 						Port:        9443,
 					},
 					ServerCertDir: "/tmp/certs",
 				},
 			},
-			LeaderElection: configv1alpha1.LeaderElectionConfiguration{
-				Enabled:           false,
-				ResourceName:      "operator-lock",
-				ResourceLock:      "leases",
-				LeaseDuration:     metav1.Duration{Duration: 15 * time.Second},
-				RenewDeadline:     metav1.Duration{Duration: 10 * time.Second},
-				RetryPeriod:       metav1.Duration{Duration: 2 * time.Second},
-				ResourceNamespace: "default",
+			LeaderElection: configv1beta1.LeaderElectionConfiguration{
+				Enabled:       false,
+				ResourceName:  "operator-lock",
+				ResourceLock:  "leases",
+				LeaseDuration: metav1.Duration{Duration: 15 * time.Second},
+				RenewDeadline: metav1.Duration{Duration: 10 * time.Second},
+				RetryPeriod:   metav1.Duration{Duration: 2 * time.Second},
 			},
 		}
 
@@ -101,32 +100,31 @@ func TestCreateManagerOptions(t *testing.T) {
 
 	// Test with leader election enabled
 	t.Run("leader election enabled", func(t *testing.T) {
-		cfg := &configv1alpha1.OperatorConfiguration{
-			Server: configv1alpha1.ServerConfiguration{
-				Metrics: &configv1alpha1.Server{
+		cfg := &configv1beta1.OperatorConfiguration{
+			Server: configv1beta1.ServerConfiguration{
+				Metrics: &configv1beta1.Server{
 					BindAddress: "127.0.0.1",
 					Port:        9090,
 				},
-				HealthProbes: &configv1alpha1.Server{
+				HealthProbes: &configv1beta1.Server{
 					BindAddress: "127.0.0.1",
 					Port:        9091,
 				},
-				Webhooks: configv1alpha1.WebhookServer{
-					Server: configv1alpha1.Server{
+				Webhooks: configv1beta1.WebhookServer{
+					Server: configv1beta1.Server{
 						BindAddress: "0.0.0.0",
 						Port:        9443,
 					},
 					ServerCertDir: "/tmp/certs",
 				},
 			},
-			LeaderElection: configv1alpha1.LeaderElectionConfiguration{
-				Enabled:           true,
-				ResourceName:      "grove-operator-leader",
-				ResourceLock:      "leases",
-				LeaseDuration:     metav1.Duration{Duration: 30 * time.Second},
-				RenewDeadline:     metav1.Duration{Duration: 20 * time.Second},
-				RetryPeriod:       metav1.Duration{Duration: 5 * time.Second},
-				ResourceNamespace: "grove-system",
+			LeaderElection: configv1beta1.LeaderElectionConfiguration{
+				Enabled:       true,
+				ResourceName:  "grove-operator-leader",
+				ResourceLock:  "leases",
+				LeaseDuration: metav1.Duration{Duration: 30 * time.Second},
+				RenewDeadline: metav1.Duration{Duration: 20 * time.Second},
+				RetryPeriod:   metav1.Duration{Duration: 5 * time.Second},
 			},
 		}
 
@@ -144,30 +142,30 @@ func TestCreateManagerOptions(t *testing.T) {
 
 	// Test with profiling enabled (default port)
 	t.Run("profiling enabled", func(t *testing.T) {
-		cfg := &configv1alpha1.OperatorConfiguration{
-			Server: configv1alpha1.ServerConfiguration{
-				Metrics: &configv1alpha1.Server{
+		cfg := &configv1beta1.OperatorConfiguration{
+			Server: configv1beta1.ServerConfiguration{
+				Metrics: &configv1beta1.Server{
 					BindAddress: "0.0.0.0",
 					Port:        8080,
 				},
-				HealthProbes: &configv1alpha1.Server{
+				HealthProbes: &configv1beta1.Server{
 					BindAddress: "0.0.0.0",
 					Port:        8081,
 				},
-				Webhooks: configv1alpha1.WebhookServer{
-					Server: configv1alpha1.Server{
+				Webhooks: configv1beta1.WebhookServer{
+					Server: configv1beta1.Server{
 						BindAddress: "0.0.0.0",
 						Port:        9443,
 					},
 					ServerCertDir: "/tmp/certs",
 				},
 			},
-			LeaderElection: configv1alpha1.LeaderElectionConfiguration{
+			LeaderElection: configv1beta1.LeaderElectionConfiguration{
 				Enabled:      false,
 				ResourceName: "operator-lock",
 				ResourceLock: "leases",
 			},
-			Debugging: &configv1alpha1.DebuggingConfiguration{
+			Debugging: &configv1beta1.DebuggingConfiguration{
 				EnableProfiling: ptr.To(true),
 				PprofBindHost:   ptr.To("127.0.0.1"),
 				PprofBindPort:   ptr.To(2753),
@@ -180,30 +178,30 @@ func TestCreateManagerOptions(t *testing.T) {
 	})
 
 	t.Run("profiling enabled with custom bind address", func(t *testing.T) {
-		cfg := &configv1alpha1.OperatorConfiguration{
-			Server: configv1alpha1.ServerConfiguration{
-				Metrics: &configv1alpha1.Server{
+		cfg := &configv1beta1.OperatorConfiguration{
+			Server: configv1beta1.ServerConfiguration{
+				Metrics: &configv1beta1.Server{
 					BindAddress: "0.0.0.0",
 					Port:        8080,
 				},
-				HealthProbes: &configv1alpha1.Server{
+				HealthProbes: &configv1beta1.Server{
 					BindAddress: "0.0.0.0",
 					Port:        8081,
 				},
-				Webhooks: configv1alpha1.WebhookServer{
-					Server: configv1alpha1.Server{
+				Webhooks: configv1beta1.WebhookServer{
+					Server: configv1beta1.Server{
 						BindAddress: "0.0.0.0",
 						Port:        9443,
 					},
 					ServerCertDir: "/tmp/certs",
 				},
 			},
-			LeaderElection: configv1alpha1.LeaderElectionConfiguration{
+			LeaderElection: configv1beta1.LeaderElectionConfiguration{
 				Enabled:      false,
 				ResourceName: "operator-lock",
 				ResourceLock: "leases",
 			},
-			Debugging: &configv1alpha1.DebuggingConfiguration{
+			Debugging: &configv1beta1.DebuggingConfiguration{
 				EnableProfiling: ptr.To(true),
 				PprofBindHost:   ptr.To("127.0.0.1"),
 				PprofBindPort:   ptr.To(9999),
@@ -216,30 +214,30 @@ func TestCreateManagerOptions(t *testing.T) {
 	})
 
 	t.Run("profiling enabled with IPv6 bind host", func(t *testing.T) {
-		cfg := &configv1alpha1.OperatorConfiguration{
-			Server: configv1alpha1.ServerConfiguration{
-				Metrics: &configv1alpha1.Server{
+		cfg := &configv1beta1.OperatorConfiguration{
+			Server: configv1beta1.ServerConfiguration{
+				Metrics: &configv1beta1.Server{
 					BindAddress: "0.0.0.0",
 					Port:        8080,
 				},
-				HealthProbes: &configv1alpha1.Server{
+				HealthProbes: &configv1beta1.Server{
 					BindAddress: "0.0.0.0",
 					Port:        8081,
 				},
-				Webhooks: configv1alpha1.WebhookServer{
-					Server: configv1alpha1.Server{
+				Webhooks: configv1beta1.WebhookServer{
+					Server: configv1beta1.Server{
 						BindAddress: "0.0.0.0",
 						Port:        9443,
 					},
 					ServerCertDir: "/tmp/certs",
 				},
 			},
-			LeaderElection: configv1alpha1.LeaderElectionConfiguration{
+			LeaderElection: configv1beta1.LeaderElectionConfiguration{
 				Enabled:      false,
 				ResourceName: "operator-lock",
 				ResourceLock: "leases",
 			},
-			Debugging: &configv1alpha1.DebuggingConfiguration{
+			Debugging: &configv1beta1.DebuggingConfiguration{
 				EnableProfiling: ptr.To(true),
 				PprofBindHost:   ptr.To("::1"),
 				PprofBindPort:   ptr.To(2753),
@@ -252,30 +250,30 @@ func TestCreateManagerOptions(t *testing.T) {
 	})
 
 	t.Run("profiling enabled with defaults", func(t *testing.T) {
-		cfg := &configv1alpha1.OperatorConfiguration{
-			Server: configv1alpha1.ServerConfiguration{
-				Metrics: &configv1alpha1.Server{
+		cfg := &configv1beta1.OperatorConfiguration{
+			Server: configv1beta1.ServerConfiguration{
+				Metrics: &configv1beta1.Server{
 					BindAddress: "0.0.0.0",
 					Port:        8080,
 				},
-				HealthProbes: &configv1alpha1.Server{
+				HealthProbes: &configv1beta1.Server{
 					BindAddress: "0.0.0.0",
 					Port:        8081,
 				},
-				Webhooks: configv1alpha1.WebhookServer{
-					Server: configv1alpha1.Server{
+				Webhooks: configv1beta1.WebhookServer{
+					Server: configv1beta1.Server{
 						BindAddress: "0.0.0.0",
 						Port:        9443,
 					},
 					ServerCertDir: "/tmp/certs",
 				},
 			},
-			LeaderElection: configv1alpha1.LeaderElectionConfiguration{
+			LeaderElection: configv1beta1.LeaderElectionConfiguration{
 				Enabled:      false,
 				ResourceName: "operator-lock",
 				ResourceLock: "leases",
 			},
-			Debugging: &configv1alpha1.DebuggingConfiguration{
+			Debugging: &configv1beta1.DebuggingConfiguration{
 				EnableProfiling: ptr.To(true),
 				PprofBindHost:   ptr.To("127.0.0.1"),
 				PprofBindPort:   ptr.To(2753),
@@ -289,30 +287,30 @@ func TestCreateManagerOptions(t *testing.T) {
 
 	// Test with profiling explicitly disabled
 	t.Run("profiling disabled", func(t *testing.T) {
-		cfg := &configv1alpha1.OperatorConfiguration{
-			Server: configv1alpha1.ServerConfiguration{
-				Metrics: &configv1alpha1.Server{
+		cfg := &configv1beta1.OperatorConfiguration{
+			Server: configv1beta1.ServerConfiguration{
+				Metrics: &configv1beta1.Server{
 					BindAddress: "0.0.0.0",
 					Port:        8080,
 				},
-				HealthProbes: &configv1alpha1.Server{
+				HealthProbes: &configv1beta1.Server{
 					BindAddress: "0.0.0.0",
 					Port:        8081,
 				},
-				Webhooks: configv1alpha1.WebhookServer{
-					Server: configv1alpha1.Server{
+				Webhooks: configv1beta1.WebhookServer{
+					Server: configv1beta1.Server{
 						BindAddress: "0.0.0.0",
 						Port:        9443,
 					},
 					ServerCertDir: "/tmp/certs",
 				},
 			},
-			LeaderElection: configv1alpha1.LeaderElectionConfiguration{
+			LeaderElection: configv1beta1.LeaderElectionConfiguration{
 				Enabled:      false,
 				ResourceName: "operator-lock",
 				ResourceLock: "leases",
 			},
-			Debugging: &configv1alpha1.DebuggingConfiguration{
+			Debugging: &configv1beta1.DebuggingConfiguration{
 				EnableProfiling: ptr.To(false),
 			},
 		}
@@ -324,25 +322,25 @@ func TestCreateManagerOptions(t *testing.T) {
 
 	// Test that cache is configured with managed-by label selectors for all core types
 	t.Run("core types filtered by managed-by label", func(t *testing.T) {
-		cfg := &configv1alpha1.OperatorConfiguration{
-			Server: configv1alpha1.ServerConfiguration{
-				Metrics: &configv1alpha1.Server{
+		cfg := &configv1beta1.OperatorConfiguration{
+			Server: configv1beta1.ServerConfiguration{
+				Metrics: &configv1beta1.Server{
 					BindAddress: "0.0.0.0",
 					Port:        8080,
 				},
-				HealthProbes: &configv1alpha1.Server{
+				HealthProbes: &configv1beta1.Server{
 					BindAddress: "0.0.0.0",
 					Port:        8081,
 				},
-				Webhooks: configv1alpha1.WebhookServer{
-					Server: configv1alpha1.Server{
+				Webhooks: configv1beta1.WebhookServer{
+					Server: configv1beta1.Server{
 						BindAddress: "0.0.0.0",
 						Port:        9443,
 					},
 					ServerCertDir: "/tmp/certs",
 				},
 			},
-			LeaderElection: configv1alpha1.LeaderElectionConfiguration{
+			LeaderElection: configv1beta1.LeaderElectionConfiguration{
 				Enabled:      false,
 				ResourceName: "operator-lock",
 				ResourceLock: "leases",
@@ -390,25 +388,25 @@ func TestCreateManagerOptions(t *testing.T) {
 
 	// Test with no debugging configuration
 	t.Run("no debugging configuration", func(t *testing.T) {
-		cfg := &configv1alpha1.OperatorConfiguration{
-			Server: configv1alpha1.ServerConfiguration{
-				Metrics: &configv1alpha1.Server{
+		cfg := &configv1beta1.OperatorConfiguration{
+			Server: configv1beta1.ServerConfiguration{
+				Metrics: &configv1beta1.Server{
 					BindAddress: "0.0.0.0",
 					Port:        8080,
 				},
-				HealthProbes: &configv1alpha1.Server{
+				HealthProbes: &configv1beta1.Server{
 					BindAddress: "0.0.0.0",
 					Port:        8081,
 				},
-				Webhooks: configv1alpha1.WebhookServer{
-					Server: configv1alpha1.Server{
+				Webhooks: configv1beta1.WebhookServer{
+					Server: configv1beta1.Server{
 						BindAddress: "0.0.0.0",
 						Port:        9443,
 					},
 					ServerCertDir: "/tmp/certs",
 				},
 			},
-			LeaderElection: configv1alpha1.LeaderElectionConfiguration{
+			LeaderElection: configv1beta1.LeaderElectionConfiguration{
 				Enabled:      false,
 				ResourceName: "operator-lock",
 				ResourceLock: "leases",
@@ -437,8 +435,8 @@ func TestGetRestConfig(t *testing.T) {
 			}
 		}
 
-		cfg := &configv1alpha1.OperatorConfiguration{
-			ClientConnection: configv1alpha1.ClientConnectionConfiguration{
+		cfg := &configv1beta1.OperatorConfiguration{
+			ClientConnection: configv1beta1.ClientConnectionConfiguration{
 				QPS:                100.0,
 				Burst:              200,
 				ContentType:        "application/json",
@@ -566,30 +564,30 @@ func TestCreateManager(t *testing.T) {
 			return rest.CopyConfig(envCfg)
 		}
 
-		cfg := &configv1alpha1.OperatorConfiguration{
-			Server: configv1alpha1.ServerConfiguration{
-				Metrics: &configv1alpha1.Server{
+		cfg := &configv1beta1.OperatorConfiguration{
+			Server: configv1beta1.ServerConfiguration{
+				Metrics: &configv1beta1.Server{
 					BindAddress: "0.0.0.0",
 					Port:        8080,
 				},
-				HealthProbes: &configv1alpha1.Server{
+				HealthProbes: &configv1beta1.Server{
 					BindAddress: "0.0.0.0",
 					Port:        8081,
 				},
-				Webhooks: configv1alpha1.WebhookServer{
-					Server: configv1alpha1.Server{
+				Webhooks: configv1beta1.WebhookServer{
+					Server: configv1beta1.Server{
 						BindAddress: "0.0.0.0",
 						Port:        9443,
 					},
 					ServerCertDir: "/tmp/certs",
 				},
 			},
-			LeaderElection: configv1alpha1.LeaderElectionConfiguration{
+			LeaderElection: configv1beta1.LeaderElectionConfiguration{
 				Enabled:      false,
 				ResourceName: "operator-lock",
 				ResourceLock: "leases",
 			},
-			ClientConnection: configv1alpha1.ClientConnectionConfiguration{
+			ClientConnection: configv1beta1.ClientConnectionConfiguration{
 				QPS:   100.0,
 				Burst: 200,
 			},
@@ -742,11 +740,11 @@ func TestRegisterControllersAndWebhooks(t *testing.T) {
 				calls = append(calls, "serverStarted")
 				return nil
 			}
-			registerControllersWithMgr = func(_ ctrl.Manager, _ *configv1alpha1.OperatorConfiguration, _ scheduler.Registry) error {
+			registerControllersWithMgr = func(_ ctrl.Manager, _ *configv1beta1.OperatorConfiguration, _ scheduler.Registry) error {
 				calls = append(calls, "controllers")
 				return tc.controllerErr
 			}
-			registerWebhooksWithMgr = func(_ ctrl.Manager, _ *configv1alpha1.OperatorConfiguration, _ scheduler.Registry) error {
+			registerWebhooksWithMgr = func(_ ctrl.Manager, _ *configv1beta1.OperatorConfiguration, _ scheduler.Registry) error {
 				calls = append(calls, "webhooks")
 				return tc.webhookErr
 			}
@@ -755,7 +753,7 @@ func TestRegisterControllersAndWebhooks(t *testing.T) {
 				return tc.beforeControllersErr
 			}
 
-			err := RegisterControllersAndWebhooks(context.Background(), &mockManager{}, logr.Discard(), &configv1alpha1.OperatorConfiguration{}, make(chan struct{}), &testutils.FakeSchedulerRegistry{}, beforeControllers)
+			err := RegisterControllersAndWebhooks(context.Background(), &mockManager{}, logr.Discard(), &configv1beta1.OperatorConfiguration{}, make(chan struct{}), &testutils.FakeSchedulerRegistry{}, beforeControllers)
 			if tc.expectedErrFrag != "" {
 				require.ErrorContains(t, err, tc.expectedErrFrag)
 			} else {

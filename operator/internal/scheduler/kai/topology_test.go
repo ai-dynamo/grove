@@ -20,7 +20,7 @@ import (
 	"testing"
 
 	apicommonconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
-	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
+	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
@@ -398,7 +398,7 @@ func TestIsKAITopologyChanged(t *testing.T) {
 func newTASBackend(t *testing.T, cl client.Client) scheduler.TopologyAwareBackend {
 	t.Helper()
 	recorder := record.NewFakeRecorder(10)
-	profile := configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKai}
+	profile := configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameKai}
 	b := New(cl, cl.Scheme(), recorder, profile)
 	require.NoError(t, b.Init(cl))
 	return b.(scheduler.TopologyAwareBackend)

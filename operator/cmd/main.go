@@ -25,7 +25,7 @@ import (
 	"time"
 
 	apicommonconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
-	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
+	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/cmd/cli"
 	"github.com/ai-dynamo/grove/operator/internal/clustertopology"
@@ -51,7 +51,7 @@ var (
 )
 
 func main() {
-	ctrl.SetLogger(grovelogger.MustNewLogger(false, configv1alpha1.InfoLevel, configv1alpha1.LogFormatJSON))
+	ctrl.SetLogger(grovelogger.MustNewLogger(false, configv1beta1.InfoLevel, configv1beta1.LogFormatJSON))
 	groveInfo := groveversion.New()
 
 	launchOpts, err := cli.ParseLaunchOptions(os.Args[1:])
@@ -62,10 +62,13 @@ func main() {
 		_, _ = fmt.Fprintf(io.Writer(os.Stdout), "%s %v\n", apicommonconstants.OperatorName, groveInfo)
 		os.Exit(cli.ExitSuccess)
 	}
-	operatorConfig, err := launchOpts.LoadAndValidateOperatorConfig()
+	operatorConfig, configWarnings, err := launchOpts.LoadAndValidateOperatorConfig()
 	if err != nil {
 		logger.Error(err, "failed to load operator config")
 		handleErrorAndExit(err, cli.ExitErrLoadOperatorConfig)
+	}
+	for _, warning := range configWarnings {
+		logger.Info("Operator config uses a deprecated version", "warning", warning)
 	}
 
 	logger.Info("Starting grove operator", "grove-info", groveInfo.Verbose())
@@ -127,7 +130,7 @@ func main() {
 	}
 	// cert-controller injects the CA in auto mode. In manual mode, the CA of the provided certificates is used.
 	caFile := ""
-	if operatorConfig.Server.Webhooks.CertProvisionMode == configv1alpha1.CertProvisionModeManual {
+	if operatorConfig.Server.Webhooks.CertProvisionMode == configv1beta1.CertProvisionModeManual {
 		caFile = filepath.Join(operatorConfig.Server.Webhooks.ServerCertDir, "ca.crt")
 	}
 	if err = mgr.Add(conversionwebhook.NewCRDConversionKeeper(cl, logger, operatorNamespace, operatorConfig.Server.Webhooks.Port, caFile)); err != nil {

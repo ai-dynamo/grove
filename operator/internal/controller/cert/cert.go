@@ -20,7 +20,7 @@ import (
 	"os"
 	"strings"
 
-	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
+	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
 	clustertopologyvalidationwebhook "github.com/ai-dynamo/grove/operator/internal/webhook/admission/clustertopology/validation"
 	pclqvalidationwebhook "github.com/ai-dynamo/grove/operator/internal/webhook/admission/pclq/validation"
@@ -50,18 +50,18 @@ const (
 // When mode=auto: uses cert-controller for automatic certificate generation and management.
 // When mode=manual: waits for externally provided certificates (e.g., from cert-manager, cluster admin).
 // Returns an error for unrecognized modes to ensure new modes are explicitly handled.
-func ManageWebhookCerts(ctx context.Context, mgr ctrl.Manager, cl client.Client, certDir string, secretName string, authorizerEnabled bool, certProvisionMode configv1alpha1.CertProvisionMode, certsReadyCh chan struct{}) error {
+func ManageWebhookCerts(ctx context.Context, mgr ctrl.Manager, cl client.Client, certDir string, secretName string, authorizerEnabled bool, certProvisionMode configv1beta1.CertProvisionMode, certsReadyCh chan struct{}) error {
 	logger := ctrl.Log.WithName("cert-management")
 
 	switch certProvisionMode {
-	case configv1alpha1.CertProvisionModeManual:
+	case configv1beta1.CertProvisionModeManual:
 		logger.Info("Using externally provided certificates (manual mode)",
 			"certDir", certDir, "secretName", secretName)
 		// Certificates are managed externally, signal ready immediately
 		close(certsReadyCh)
 		return nil
 
-	case configv1alpha1.CertProvisionModeAuto:
+	case configv1beta1.CertProvisionModeAuto:
 		return setupAutoCertProvisioning(ctx, mgr, cl, certDir, secretName, authorizerEnabled, certsReadyCh, logger)
 
 	default:

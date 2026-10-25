@@ -23,7 +23,7 @@ import (
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	apicommonconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
-	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
+	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/sync"
@@ -59,12 +59,12 @@ type _resource struct {
 	client        client.Client
 	scheme        *runtime.Scheme
 	eventRecorder record.EventRecorder
-	tasConfig     configv1alpha1.TopologyAwareSchedulingConfiguration
+	tasConfig     configv1beta1.TopologyAwareSchedulingConfiguration
 	schedRegistry scheduler.Registry
 }
 
 // New creates a new instance of PodGang components operator.
-func New(client client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder, tasConfig configv1alpha1.TopologyAwareSchedulingConfiguration, schedRegistry scheduler.Registry) component.Operator[grovecorev1beta1.PodCliqueSet, pcssync.State, pcssync.Result] {
+func New(client client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder, tasConfig configv1beta1.TopologyAwareSchedulingConfiguration, schedRegistry scheduler.Registry) component.Operator[grovecorev1beta1.PodCliqueSet, pcssync.State, pcssync.Result] {
 	return &_resource{
 		client:        client,
 		scheme:        scheme,

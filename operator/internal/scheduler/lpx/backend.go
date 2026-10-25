@@ -20,7 +20,7 @@ import (
 	"fmt"
 	"slices"
 
-	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
+	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 
@@ -47,7 +47,7 @@ var (
 )
 
 // New creates an LPX scheduler backend.
-func New(cl client.Client, profile configv1alpha1.SchedulerProfile, secondaryBackend scheduler.Backend) scheduler.Backend {
+func New(cl client.Client, profile configv1beta1.SchedulerProfile, secondaryBackend scheduler.Backend) scheduler.Backend {
 	return &schedulerBackend{
 		client:           cl,
 		name:             string(profile.Name),

@@ -29,7 +29,7 @@ import (
 	"path/filepath"
 	"runtime"
 
-	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
+	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/k8sclient"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/pods"
@@ -50,9 +50,9 @@ type GroveConfig struct {
 // WebhooksConfig holds configuration for Grove's webhook server.
 type WebhooksConfig struct {
 	// CertProvisionMode controls how webhook certificates are provisioned.
-	// Use configv1alpha1.CertProvisionModeAuto for automatic provisioning,
-	// configv1alpha1.CertProvisionModeManual for external cert management.
-	CertProvisionMode configv1alpha1.CertProvisionMode
+	// Use configv1beta1.CertProvisionModeAuto for automatic provisioning,
+	// configv1beta1.CertProvisionModeManual for external cert management.
+	CertProvisionMode configv1beta1.CertProvisionMode
 	// SecretName is the name of the Kubernetes secret containing TLS certificates.
 	SecretName string
 	// Annotations to apply to webhook configurations (e.g., for cert-manager CA injection).
@@ -60,7 +60,7 @@ type WebhooksConfig struct {
 	Annotations map[string]string
 }
 
-// helmValues mirrors the Helm values.yaml structure, using configv1alpha1 types
+// helmValues mirrors the Helm values.yaml structure, using configv1beta1 types
 // where the chart configuration matches the operator API.
 type helmValues struct {
 	CRDInstaller helmCRDInstallerValues `json:"crdInstaller"`
@@ -78,7 +78,7 @@ type helmConfigValues struct {
 }
 
 type helmServerValues struct {
-	Webhooks     configv1alpha1.WebhookServer `json:"webhooks"`
+	Webhooks     configv1beta1.WebhookServer `json:"webhooks"`
 	HealthProbes helmHealthProbeValues        `json:"healthProbes"`
 }
 
@@ -112,8 +112,8 @@ func (c *GroveConfig) toHelmValues() (map[string]interface{}, error) {
 		CRDInstaller: helmCRDInstallerValues{Enabled: c.InstallCRDs},
 		Config: helmConfigValues{
 			Server: helmServerValues{
-				Webhooks: configv1alpha1.WebhookServer{
-					Server: configv1alpha1.Server{
+				Webhooks: configv1beta1.WebhookServer{
+					Server: configv1beta1.Server{
 						Port: DefaultWebhookPort,
 					},
 					ServerCertDir:     DefaultWebhookServerCertDir,

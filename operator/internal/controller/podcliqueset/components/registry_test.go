@@ -17,7 +17,7 @@ package components
 import (
 	"testing"
 
-	groveconfigv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
+	groveconfigv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/sync"
@@ -55,7 +55,7 @@ func TestCreateOperatorRegistry(t *testing.T) {
 		mgr := &mockManager{client: cl, scheme: scheme, restMapper: computeDomainRESTMapper()}
 		eventRecorder := record.NewFakeRecorder(10)
 
-		registry := CreateOperatorRegistry(mgr, eventRecorder, groveconfigv1alpha1.TopologyAwareSchedulingConfiguration{}, groveconfigv1alpha1.NetworkAcceleration{
+		registry := CreateOperatorRegistry(mgr, eventRecorder, groveconfigv1beta1.TopologyAwareSchedulingConfiguration{}, groveconfigv1beta1.NetworkAcceleration{
 			AutoMNNVLEnabled: false,
 		}, schedRegistry, &pcssync.ScalingProgressExpectations{})
 
@@ -95,7 +95,7 @@ func TestCreateOperatorRegistry(t *testing.T) {
 		mgr := &mockManager{client: cl, scheme: scheme, restMapper: computeDomainRESTMapper()}
 		eventRecorder := record.NewFakeRecorder(10)
 
-		registry := CreateOperatorRegistry(mgr, eventRecorder, groveconfigv1alpha1.TopologyAwareSchedulingConfiguration{}, groveconfigv1alpha1.NetworkAcceleration{
+		registry := CreateOperatorRegistry(mgr, eventRecorder, groveconfigv1beta1.TopologyAwareSchedulingConfiguration{}, groveconfigv1beta1.NetworkAcceleration{
 			AutoMNNVLEnabled: true,
 		}, schedRegistry, &pcssync.ScalingProgressExpectations{})
 
@@ -135,7 +135,7 @@ func TestCreateOperatorRegistry(t *testing.T) {
 		mgr := &mockManager{client: cl, scheme: scheme, restMapper: computeDomainRESTMapper()}
 		eventRecorder := record.NewFakeRecorder(10)
 
-		registry := CreateOperatorRegistry(mgr, eventRecorder, groveconfigv1alpha1.TopologyAwareSchedulingConfiguration{}, groveconfigv1alpha1.NetworkAcceleration{
+		registry := CreateOperatorRegistry(mgr, eventRecorder, groveconfigv1beta1.TopologyAwareSchedulingConfiguration{}, groveconfigv1beta1.NetworkAcceleration{
 			AutoMNNVLEnabled: false,
 		}, schedRegistry, &pcssync.ScalingProgressExpectations{})
 

@@ -20,7 +20,7 @@ import (
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
-	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
+	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler/kai"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
@@ -39,7 +39,7 @@ import (
 
 func TestBackendPreparePod(t *testing.T) {
 	t.Run("without secondary backend", func(t *testing.T) {
-		backend := New(nil, configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameLPX}, nil)
+		backend := New(nil, configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameLPX}, nil)
 
 		pod := testutils.NewPodWithBuilderWithDefaultSpec("test-pod", "default").
 			WithSchedulerName("lpx-scheduler").
@@ -50,8 +50,8 @@ func TestBackendPreparePod(t *testing.T) {
 	})
 
 	t.Run("with secondary backend", func(t *testing.T) {
-		kaiBackend := kai.New(nil, nil, nil, configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKai})
-		backend := New(nil, configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameLPX}, kaiBackend)
+		kaiBackend := kai.New(nil, nil, nil, configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameKai})
+		backend := New(nil, configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameLPX}, kaiBackend)
 
 		pod := testutils.NewPodWithBuilderWithDefaultSpec("test-pod", "default").
 			WithSchedulerName("default-scheduler").
@@ -61,7 +61,7 @@ func TestBackendPreparePod(t *testing.T) {
 		}
 
 		require.NoError(t, backend.PreparePod(pod))
-		assert.Equal(t, string(configv1alpha1.SchedulerNameLPX), pod.Spec.SchedulerName)
+		assert.Equal(t, string(configv1beta1.SchedulerNameLPX), pod.Spec.SchedulerName)
 
 		pod = testutils.NewPodWithBuilderWithDefaultSpec("test-pod", "default").
 			WithSchedulerName("lpx-scheduler").
@@ -72,7 +72,7 @@ func TestBackendPreparePod(t *testing.T) {
 			Build()
 
 		require.NoError(t, backend.PreparePod(pod))
-		assert.Equal(t, string(configv1alpha1.SchedulerNameKai), pod.Spec.SchedulerName)
+		assert.Equal(t, string(configv1beta1.SchedulerNameKai), pod.Spec.SchedulerName)
 	})
 }
 
@@ -95,8 +95,8 @@ func TestBackendSyncPodGangLPXOnly(t *testing.T) {
 
 	cl := testutils.NewTestClientBuilder().WithScheme(scheme).WithObjects(pcs, lpxPodClique, podGang).Build()
 
-	kaiBackend := kai.New(cl, scheme, nil, configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKai})
-	backend := New(cl, configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameLPX}, kaiBackend)
+	kaiBackend := kai.New(cl, scheme, nil, configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameKai})
+	backend := New(cl, configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameLPX}, kaiBackend)
 	require.NoError(t, backend.Init(cl))
 
 	require.NoError(t, backend.SyncPodGang(t.Context(), podGang))
@@ -132,8 +132,8 @@ func TestBackendSyncPodGangMixedWorkload(t *testing.T) {
 
 	cl := testutils.NewTestClientBuilder().WithScheme(scheme).WithObjects(pcs, lpxPodClique, kaiPodClique, podGang).Build()
 
-	kaiBackend := kai.New(cl, scheme, nil, configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKai})
-	backend := New(cl, configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameLPX}, kaiBackend)
+	kaiBackend := kai.New(cl, scheme, nil, configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameKai})
+	backend := New(cl, configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameLPX}, kaiBackend)
 	require.NoError(t, backend.Init(cl))
 
 	require.NoError(t, backend.SyncPodGang(t.Context(), podGang))
@@ -205,8 +205,8 @@ func TestBackendValidatePodCliqueSet(t *testing.T) {
 		},
 	}
 
-	kaiBackend := kai.New(nil, nil, nil, configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKai})
-	backend := New(nil, configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameLPX}, kaiBackend)
+	kaiBackend := kai.New(nil, nil, nil, configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameKai})
+	backend := New(nil, configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameLPX}, kaiBackend)
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

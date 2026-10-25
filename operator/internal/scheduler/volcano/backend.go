@@ -19,7 +19,7 @@ import (
 	"fmt"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
-	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
+	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
@@ -43,17 +43,17 @@ type schedulerBackend struct {
 	scheme        *runtime.Scheme
 	name          string
 	eventRecorder record.EventRecorder
-	profile       configv1alpha1.SchedulerProfile
+	profile       configv1beta1.SchedulerProfile
 }
 
 var _ scheduler.Backend = (*schedulerBackend)(nil)
 
 // New creates a Volcano scheduler backend from the given scheduler profile.
-func New(cl client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder, profile configv1alpha1.SchedulerProfile) scheduler.Backend {
+func New(cl client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder, profile configv1beta1.SchedulerProfile) scheduler.Backend {
 	return &schedulerBackend{
 		client:        cl,
 		scheme:        scheme,
-		name:          string(configv1alpha1.SchedulerNameVolcano),
+		name:          string(configv1beta1.SchedulerNameVolcano),
 		eventRecorder: eventRecorder,
 		profile:       profile,
 	}

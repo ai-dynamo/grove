@@ -21,7 +21,7 @@ import (
 	"slices"
 	"strings"
 
-	groveconfigv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
+	groveconfigv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/clustertopology"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
@@ -52,7 +52,7 @@ type pcsValidator struct {
 	operation       admissionv1.Operation
 	pcs             *grovecorev1beta1.PodCliqueSet
 	tasEnabled      bool
-	schedulerConfig groveconfigv1alpha1.SchedulerConfiguration
+	schedulerConfig groveconfigv1beta1.SchedulerConfiguration
 	client          client.Client
 	schedRegistry   scheduler.Registry
 }
@@ -60,7 +60,7 @@ type pcsValidator struct {
 // newPCSValidator creates a new PodCliqueSet validator for the given operation.
 // schedulerConfig is the full scheduler configuration; the validator uses it for
 // scheduler-name matching and may use per-scheduler config for future validations.
-func newPCSValidator(pcs *grovecorev1beta1.PodCliqueSet, operation admissionv1.Operation, tasConfig groveconfigv1alpha1.TopologyAwareSchedulingConfiguration, schedulerConfig groveconfigv1alpha1.SchedulerConfiguration, cl client.Client, schedRegistry scheduler.Registry) *pcsValidator {
+func newPCSValidator(pcs *grovecorev1beta1.PodCliqueSet, operation admissionv1.Operation, tasConfig groveconfigv1beta1.TopologyAwareSchedulingConfiguration, schedulerConfig groveconfigv1beta1.SchedulerConfiguration, cl client.Client, schedRegistry scheduler.Registry) *pcsValidator {
 	return &pcsValidator{
 		operation:       operation,
 		pcs:             pcs,

@@ -1,4 +1,4 @@
-apiVersion: operator.config.grove.io/v1alpha1
+apiVersion: operator.config.grove.io/v1beta1
 kind: OperatorConfiguration
 runtimeClientConnection:
   qps: 100
@@ -10,7 +10,6 @@ leaderElection:
   retryPeriod: 2s
   resourceLock: leases
   resourceName: grove-operator-leader-election
-  resourceNamespace: default
 server:
   webhooks:
     bindAddress: 0.0.0.0

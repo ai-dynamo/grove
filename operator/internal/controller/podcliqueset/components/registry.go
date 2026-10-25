@@ -15,7 +15,7 @@
 package components
 
 import (
-	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
+	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 	"github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/computedomain"
@@ -44,8 +44,8 @@ import (
 // CreateOperatorRegistry initializes the operator registry for the PodCliqueSet reconciler
 func CreateOperatorRegistry(mgr manager.Manager,
 	eventRecorder record.EventRecorder,
-	topologyAwareSchedulingConfig configv1alpha1.TopologyAwareSchedulingConfiguration,
-	networkConfig configv1alpha1.NetworkAcceleration,
+	topologyAwareSchedulingConfig configv1beta1.TopologyAwareSchedulingConfiguration,
+	networkConfig configv1beta1.NetworkAcceleration,
 	schedRegistry scheduler.Registry,
 	scalingProgressExpectations *pcssync.ScalingProgressExpectations) component.OperatorRegistry[v1beta1.PodCliqueSet, pcssync.State, pcssync.Result] {
 	cl := mgr.GetClient()

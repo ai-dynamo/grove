@@ -18,7 +18,7 @@ import (
 	"context"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
-	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
+	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
@@ -32,12 +32,12 @@ import (
 type Reconciler struct {
 	client.Client
 	scheme        *runtime.Scheme
-	config        configv1alpha1.PodGangControllerConfiguration
+	config        configv1beta1.PodGangControllerConfiguration
 	schedRegistry scheduler.Registry
 }
 
 // NewReconciler creates a new Reconciler. Backend is resolved per PodGang from the grove.io/scheduler-name label or default.
-func NewReconciler(mgr ctrl.Manager, config configv1alpha1.PodGangControllerConfiguration, schedRegistry scheduler.Registry) *Reconciler {
+func NewReconciler(mgr ctrl.Manager, config configv1beta1.PodGangControllerConfiguration, schedRegistry scheduler.Registry) *Reconciler {
 	return &Reconciler{
 		Client:        mgr.GetClient(),
 		scheme:        mgr.GetScheme(),

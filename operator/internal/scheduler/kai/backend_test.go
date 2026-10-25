@@ -19,7 +19,7 @@ import (
 	"testing"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
-	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
+	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
@@ -38,7 +38,7 @@ import (
 func TestBackend_PreparePod(t *testing.T) {
 	cl := testutils.CreateDefaultFakeClient(nil)
 	recorder := record.NewFakeRecorder(10)
-	profile := configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKai}
+	profile := configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameKai}
 	b := New(cl, cl.Scheme(), recorder, profile)
 
 	pod := testutils.NewPodBuilder("test-pod", "default").
@@ -62,7 +62,7 @@ func TestBackend_PreparePod(t *testing.T) {
 func TestBackend_PreparePod_PreservesExistingSkipAnnotation(t *testing.T) {
 	cl := testutils.CreateDefaultFakeClient(nil)
 	recorder := record.NewFakeRecorder(10)
-	profile := configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKai}
+	profile := configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameKai}
 	b := New(cl, cl.Scheme(), recorder, profile)
 
 	pod := testutils.NewPodBuilder("test-pod", "default").
@@ -86,7 +86,7 @@ func TestBackend_SyncPodGang_CreateAndUpdate(t *testing.T) {
 		podCliqueTemplateWithQueue("decoder-template", "team-a"),
 	)
 	podGang := testutils.NewPodGangBuilder("test-podgang", "default").
-		WithSchedulerName(string(configv1alpha1.SchedulerNameKai)).
+		WithSchedulerName(string(configv1beta1.SchedulerNameKai)).
 		Build()
 	setPodCliqueSetControllerOwner(podGang, pcs)
 	podGang.Labels[labelKeyQueueName] = "legacy-queue"
@@ -132,7 +132,7 @@ func TestBackend_SyncPodGang_CreateAndUpdate(t *testing.T) {
 		WithObjects(pcs, ct, podGang).
 		Build()
 	recorder := record.NewFakeRecorder(10)
-	profile := configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKai}
+	profile := configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameKai}
 	b := New(cl, cl.Scheme(), recorder, profile)
 	require.NoError(t, b.Init(cl))
 
@@ -188,7 +188,7 @@ func TestBackend_ResolveTopologyName(t *testing.T) {
 		Spec: grovecorev1beta1.ClusterTopologyBindingSpec{
 			Levels: []grovecorev1beta1.TopologyLevel{{Key: "zone"}},
 			SchedulerTopologyBindings: []grovecorev1beta1.SchedulerTopologyBinding{
-				{SchedulerName: string(configv1alpha1.SchedulerNameKai), TopologyReference: "external-kai-topology"},
+				{SchedulerName: string(configv1beta1.SchedulerNameKai), TopologyReference: "external-kai-topology"},
 			},
 		},
 	}
@@ -209,7 +209,7 @@ func TestBackend_ResolveTopologyName(t *testing.T) {
 	cl := testutils.NewTestClientBuilder().
 		WithObjects(externallyManagedCT, groveManagedCT, otherSchedulerCT).
 		Build()
-	b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKai}).(*schedulerBackend)
+	b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameKai}).(*schedulerBackend)
 
 	tests := []struct {
 		name        string
@@ -242,7 +242,7 @@ func TestBackend_SyncPodGang_MissingClusterTopologyBindingFailsLoudly(t *testing
 		podCliqueTemplateWithQueue("worker", "team-a"),
 	)
 	podGang := testutils.NewPodGangBuilder("missing-ct-podgang", "default").
-		WithSchedulerName(string(configv1alpha1.SchedulerNameKai)).
+		WithSchedulerName(string(configv1beta1.SchedulerNameKai)).
 		Build()
 	setPodCliqueSetControllerOwner(podGang, pcs)
 	// No ClusterTopologyBinding named "deleted-binding" exists; normally the admission webhook
@@ -258,7 +258,7 @@ func TestBackend_SyncPodGang_MissingClusterTopologyBindingFailsLoudly(t *testing
 	}
 
 	cl := testutils.NewTestClientBuilder().WithObjects(pcs, podGang).Build()
-	b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKai})
+	b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameKai})
 	require.NoError(t, b.Init(cl))
 
 	err := b.SyncPodGang(context.Background(), podGang)
@@ -280,12 +280,12 @@ func TestBackend_SyncPodGang_ResolvesExternallyManagedTopologyName(t *testing.T)
 		Spec: grovecorev1beta1.ClusterTopologyBindingSpec{
 			Levels: []grovecorev1beta1.TopologyLevel{{Key: "zone"}},
 			SchedulerTopologyBindings: []grovecorev1beta1.SchedulerTopologyBinding{
-				{SchedulerName: string(configv1alpha1.SchedulerNameKai), TopologyReference: "mnnvl-topology"},
+				{SchedulerName: string(configv1beta1.SchedulerNameKai), TopologyReference: "mnnvl-topology"},
 			},
 		},
 	}
 	podGang := testutils.NewPodGangBuilder("topology-podgang", "default").
-		WithSchedulerName(string(configv1alpha1.SchedulerNameKai)).
+		WithSchedulerName(string(configv1beta1.SchedulerNameKai)).
 		Build()
 	setPodCliqueSetControllerOwner(podGang, pcs)
 	podGang.Annotations = map[string]string{"grove.io/topology-name": ct.Name}
@@ -299,7 +299,7 @@ func TestBackend_SyncPodGang_ResolvesExternallyManagedTopologyName(t *testing.T)
 	}
 
 	cl := testutils.NewTestClientBuilder().WithObjects(pcs, ct, podGang).Build()
-	b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKai})
+	b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameKai})
 	require.NoError(t, b.Init(cl))
 
 	ctx := context.Background()
@@ -317,7 +317,7 @@ func TestBackend_SyncPodGang_SkipsEmptyTopologyConstraintGroups(t *testing.T) {
 		podCliqueTemplateWithQueue("worker-template", "team-a"),
 	)
 	podGang := testutils.NewPodGangBuilder("empty-group-podgang", "default").
-		WithSchedulerName(string(configv1alpha1.SchedulerNameKai)).
+		WithSchedulerName(string(configv1beta1.SchedulerNameKai)).
 		Build()
 	setPodCliqueSetControllerOwner(podGang, pcs)
 	podGang.Spec.TopologyConstraintGroupConfigs = []groveschedulerv1alpha1.TopologyConstraintGroupConfig{
@@ -335,7 +335,7 @@ func TestBackend_SyncPodGang_SkipsEmptyTopologyConstraintGroups(t *testing.T) {
 	}
 
 	cl := testutils.NewTestClientBuilder().WithObjects(pcs, podGang).Build()
-	b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKai})
+	b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameKai})
 	require.NoError(t, b.Init(cl))
 
 	ctx := context.Background()
@@ -356,13 +356,13 @@ func TestBackend_SyncPodGangSetsOwnerReferenceAndSkipAnnotation(t *testing.T) {
 	)
 	podGang := testutils.NewPodGangBuilder("owned", "default").
 		WithPodGroup("worker-template", 1).
-		WithSchedulerName(string(configv1alpha1.SchedulerNameKai)).
+		WithSchedulerName(string(configv1beta1.SchedulerNameKai)).
 		Build()
 	setPodCliqueSetControllerOwner(podGang, pcs)
 
 	cl := testutils.NewTestClientBuilder().WithObjects(pcs, podGang).Build()
 	recorder := record.NewFakeRecorder(10)
-	profile := configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKai}
+	profile := configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameKai}
 	b := New(cl, cl.Scheme(), recorder, profile)
 	require.NoError(t, b.Init(cl))
 
@@ -389,12 +389,12 @@ func TestBackend_SyncPodGang_UsesUniquePodCliqueTemplateQueue(t *testing.T) {
 	podGang := testutils.NewPodGangBuilder("template-queue-podgang", "default").
 		WithPodGroup("worker-a", 1).
 		WithPodGroup("worker-b", 1).
-		WithSchedulerName(string(configv1alpha1.SchedulerNameKai)).
+		WithSchedulerName(string(configv1beta1.SchedulerNameKai)).
 		Build()
 	setPodCliqueSetControllerOwner(podGang, pcs)
 
 	cl := testutils.NewTestClientBuilder().WithObjects(pcs, podGang).Build()
-	b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKai})
+	b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameKai})
 	require.NoError(t, b.Init(cl))
 
 	ctx := context.Background()
@@ -551,7 +551,7 @@ func TestBackend_SyncPodGang_QueueResolutionFailuresDoNotCreatePodGroup(t *testi
 		t.Run(tt.name, func(t *testing.T) {
 			podGang := testutils.NewPodGangBuilder("test-podgang", "default").
 				WithPodGroup("worker", 1).
-				WithSchedulerName(string(configv1alpha1.SchedulerNameKai)).
+				WithSchedulerName(string(configv1beta1.SchedulerNameKai)).
 				Build()
 			objects := []client.Object{podGang}
 			if tt.pcs != nil {
@@ -562,7 +562,7 @@ func TestBackend_SyncPodGang_QueueResolutionFailuresDoNotCreatePodGroup(t *testi
 			}
 
 			cl := testutils.NewTestClientBuilder().WithObjects(objects...).Build()
-			b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKai})
+			b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameKai})
 			require.NoError(t, b.Init(cl))
 
 			err := b.SyncPodGang(context.Background(), podGang)
@@ -582,7 +582,7 @@ func TestBackend_SyncPodGang_RemovesPodGroupOnEmptyInput(t *testing.T) {
 		podCliqueTemplateWithQueue("worker-template", "team-a"),
 	)
 	podGang := testutils.NewPodGangBuilder("empty-group-podgang", "default").
-		WithSchedulerName(string(configv1alpha1.SchedulerNameKai)).
+		WithSchedulerName(string(configv1beta1.SchedulerNameKai)).
 		Build()
 	setPodCliqueSetControllerOwner(podGang, pcs)
 	podGang.Spec.PodGroups = []groveschedulerv1alpha1.PodGroup{
@@ -590,7 +590,7 @@ func TestBackend_SyncPodGang_RemovesPodGroupOnEmptyInput(t *testing.T) {
 	}
 
 	cl := testutils.NewTestClientBuilder().WithObjects(pcs, podGang).Build()
-	b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKai})
+	b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameKai})
 	require.NoError(t, b.Init(cl))
 
 	require.NoError(t, b.SyncPodGang(t.Context(), podGang))

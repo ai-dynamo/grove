@@ -20,7 +20,7 @@ import (
 	"testing"
 	"time"
 
-	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
+	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 
 	"github.com/go-logr/logr"
 	cert "github.com/open-policy-agent/cert-controller/pkg/rotator"
@@ -191,7 +191,7 @@ func TestManageWebhookCerts(t *testing.T) {
 
 		// Call ManageWebhookCerts with manual mode
 		// Note: mgr and cl are nil because manual mode doesn't use them
-		err := ManageWebhookCerts(context.Background(), nil, nil, "/tmp/certs", "test-secret", false, configv1alpha1.CertProvisionModeManual, certsReady)
+		err := ManageWebhookCerts(context.Background(), nil, nil, "/tmp/certs", "test-secret", false, configv1beta1.CertProvisionModeManual, certsReady)
 
 		// Should return no error
 		require.NoError(t, err)
@@ -209,7 +209,7 @@ func TestManageWebhookCerts(t *testing.T) {
 	t.Run("manual mode with authorizer enabled", func(t *testing.T) {
 		certsReady := make(chan struct{})
 
-		err := ManageWebhookCerts(context.Background(), nil, nil, "/tmp/certs", "test-secret", true, configv1alpha1.CertProvisionModeManual, certsReady)
+		err := ManageWebhookCerts(context.Background(), nil, nil, "/tmp/certs", "test-secret", true, configv1beta1.CertProvisionModeManual, certsReady)
 
 		require.NoError(t, err)
 
@@ -228,7 +228,7 @@ func TestManageWebhookCerts(t *testing.T) {
 
 		// Call ManageWebhookCerts with auto mode
 		// This should fail because the namespace file doesn't exist in the test environment
-		err := ManageWebhookCerts(context.Background(), nil, nil, "/tmp/certs", "test-secret", false, configv1alpha1.CertProvisionModeAuto, certsReady)
+		err := ManageWebhookCerts(context.Background(), nil, nil, "/tmp/certs", "test-secret", false, configv1beta1.CertProvisionModeAuto, certsReady)
 
 		// Should return an error because namespace file doesn't exist
 		require.Error(t, err)
@@ -248,7 +248,7 @@ func TestManageWebhookCerts(t *testing.T) {
 		certsReady := make(chan struct{})
 
 		// Even though namespace file doesn't exist, manual mode should succeed
-		err := ManageWebhookCerts(context.Background(), nil, nil, "/tmp/certs", "test-secret", false, configv1alpha1.CertProvisionModeManual, certsReady)
+		err := ManageWebhookCerts(context.Background(), nil, nil, "/tmp/certs", "test-secret", false, configv1beta1.CertProvisionModeManual, certsReady)
 
 		// Should succeed without needing namespace
 		require.NoError(t, err)
@@ -259,7 +259,7 @@ func TestManageWebhookCerts(t *testing.T) {
 	t.Run("unknown mode returns explicit error", func(t *testing.T) {
 		certsReady := make(chan struct{})
 
-		err := ManageWebhookCerts(context.Background(), nil, nil, "/tmp/certs", "test-secret", false, configv1alpha1.CertProvisionMode("unknown"), certsReady)
+		err := ManageWebhookCerts(context.Background(), nil, nil, "/tmp/certs", "test-secret", false, configv1beta1.CertProvisionMode("unknown"), certsReady)
 
 		// Should return an explicit error about unsupported mode
 		require.Error(t, err)
@@ -279,7 +279,7 @@ func TestManageWebhookCerts(t *testing.T) {
 	t.Run("empty mode returns explicit error", func(t *testing.T) {
 		certsReady := make(chan struct{})
 
-		err := ManageWebhookCerts(context.Background(), nil, nil, "/tmp/certs", "test-secret", false, configv1alpha1.CertProvisionMode(""), certsReady)
+		err := ManageWebhookCerts(context.Background(), nil, nil, "/tmp/certs", "test-secret", false, configv1beta1.CertProvisionMode(""), certsReady)
 
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "unsupported cert provision mode")

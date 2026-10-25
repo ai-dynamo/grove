@@ -23,7 +23,7 @@ import (
 
 	"github.com/ai-dynamo/grove/operator/api/common"
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
-	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
+	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler/lpx"
@@ -70,7 +70,7 @@ func TestBuildResourceWithLPXBackend(t *testing.T) {
 
 	uid := types.UID("test-uid")
 	podSpec := corev1.PodSpec{
-		SchedulerName: string(configv1alpha1.SchedulerNameLPX),
+		SchedulerName: string(configv1beta1.SchedulerNameLPX),
 		Containers: []corev1.Container{{
 			Name:  "worker",
 			Image: "worker",
@@ -102,20 +102,20 @@ func TestBuildResourceWithLPXBackend(t *testing.T) {
 	require.NoError(t, grovecorev1beta1.AddToScheme(scheme))
 	registry := &testutils.FakeSchedulerRegistry{
 		Backends: map[string]scheduler.Backend{
-			string(configv1alpha1.SchedulerNameLPX): lpx.New(
+			string(configv1beta1.SchedulerNameLPX): lpx.New(
 				nil,
-				configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameLPX},
-				testutils.NewFakeSchedulerBackend(string(configv1alpha1.SchedulerNameKai)),
+				configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameLPX},
+				testutils.NewFakeSchedulerBackend(string(configv1beta1.SchedulerNameKai)),
 			),
 		},
-		DefaultBackend: string(configv1alpha1.SchedulerNameLPX),
+		DefaultBackend: string(configv1beta1.SchedulerNameLPX),
 	}
 	resource := &_resource{scheme: scheme, schedRegistry: registry}
 	pod := &corev1.Pod{}
 
 	require.NoError(t, resource.buildResource(pcs, pclq, podGangName, pod, 0, nil))
 
-	assert.Equal(t, string(configv1alpha1.SchedulerNameLPX), pod.Spec.SchedulerName)
+	assert.Equal(t, string(configv1beta1.SchedulerNameLPX), pod.Spec.SchedulerName)
 	assert.Equal(t, pclq.Name+"-", pod.GenerateName)
 	assert.Equal(t, podGangName, pod.Labels[common.LabelPodGang])
 	require.Len(t, pod.Spec.SchedulingGates, 1)
@@ -1054,13 +1054,13 @@ func newInitContainerTestResource(t *testing.T) *_resource {
 	require.NoError(t, grovecorev1beta1.AddToScheme(scheme))
 	registry := &testutils.FakeSchedulerRegistry{
 		Backends: map[string]scheduler.Backend{
-			string(configv1alpha1.SchedulerNameLPX): lpx.New(
+			string(configv1beta1.SchedulerNameLPX): lpx.New(
 				nil,
-				configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameLPX},
-				testutils.NewFakeSchedulerBackend(string(configv1alpha1.SchedulerNameKai)),
+				configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameLPX},
+				testutils.NewFakeSchedulerBackend(string(configv1beta1.SchedulerNameKai)),
 			),
 		},
-		DefaultBackend: string(configv1alpha1.SchedulerNameLPX),
+		DefaultBackend: string(configv1beta1.SchedulerNameLPX),
 	}
 	return &_resource{scheme: scheme, schedRegistry: registry}
 }

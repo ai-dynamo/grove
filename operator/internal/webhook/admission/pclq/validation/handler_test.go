@@ -19,7 +19,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
+	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler/kueue"
@@ -79,17 +79,17 @@ func newHandler(t *testing.T, existing ...client.Object) *Handler {
 	t.Helper()
 	cl := testutils.CreateDefaultFakeClient(existing)
 	kueueBackend := kueue.New(cl, cl.Scheme(), record.NewFakeRecorder(10),
-		configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKueue})
+		configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameKueue})
 	require.NoError(t, kueueBackend.Init(nil))
 	return &Handler{
 		client:  cl,
 		decoder: admission.NewDecoder(cl.Scheme()),
 		schedRegistry: &testutils.FakeSchedulerRegistry{
 			Backends: map[string]scheduler.Backend{
-				string(configv1alpha1.SchedulerNameKube):  testutils.NewFakeSchedulerBackend(string(configv1alpha1.SchedulerNameKube)),
-				string(configv1alpha1.SchedulerNameKueue): kueueBackend,
+				string(configv1beta1.SchedulerNameKube):  testutils.NewFakeSchedulerBackend(string(configv1beta1.SchedulerNameKube)),
+				string(configv1beta1.SchedulerNameKueue): kueueBackend,
 			},
-			DefaultBackend: string(configv1alpha1.SchedulerNameKube),
+			DefaultBackend: string(configv1beta1.SchedulerNameKube),
 		},
 	}
 }
@@ -104,26 +104,26 @@ func TestHandle_PodCliqueResource(t *testing.T) {
 	}{
 		{
 			description:   "kueue backend allows an update that does not change replicas",
-			schedulerName: string(configv1alpha1.SchedulerNameKueue),
+			schedulerName: string(configv1beta1.SchedulerNameKueue),
 			oldReplicas:   4,
 			newReplicas:   4,
 			wantAllowed:   true,
 		},
 		{
 			description:   "kueue backend denies a scale out",
-			schedulerName: string(configv1alpha1.SchedulerNameKueue),
+			schedulerName: string(configv1beta1.SchedulerNameKueue),
 			oldReplicas:   4,
 			newReplicas:   7,
 		},
 		{
 			description:   "kueue backend denies a scale in",
-			schedulerName: string(configv1alpha1.SchedulerNameKueue),
+			schedulerName: string(configv1beta1.SchedulerNameKueue),
 			oldReplicas:   4,
 			newReplicas:   1,
 		},
 		{
 			description:   "backend that does not restrict scaling allows a scale out",
-			schedulerName: string(configv1alpha1.SchedulerNameKube),
+			schedulerName: string(configv1beta1.SchedulerNameKube),
 			oldReplicas:   4,
 			newReplicas:   7,
 			wantAllowed:   true,
@@ -161,20 +161,20 @@ func TestHandle_ScaleSubResource(t *testing.T) {
 	}{
 		{
 			description:   "kueue backend denies a scale through the scale subresource",
-			schedulerName: string(configv1alpha1.SchedulerNameKueue),
+			schedulerName: string(configv1beta1.SchedulerNameKueue),
 			oldReplicas:   4,
 			newReplicas:   7,
 		},
 		{
 			description:   "kueue backend allows an unchanged replica count",
-			schedulerName: string(configv1alpha1.SchedulerNameKueue),
+			schedulerName: string(configv1beta1.SchedulerNameKueue),
 			oldReplicas:   4,
 			newReplicas:   4,
 			wantAllowed:   true,
 		},
 		{
 			description:   "backend that does not restrict scaling allows a scale",
-			schedulerName: string(configv1alpha1.SchedulerNameKube),
+			schedulerName: string(configv1beta1.SchedulerNameKube),
 			oldReplicas:   4,
 			newReplicas:   7,
 			wantAllowed:   true,
@@ -211,8 +211,8 @@ func TestHandle_SchedulerNameSwitchDoesNotBypass(t *testing.T) {
 			Operation: admissionv1.Update,
 			Namespace: testNamespace,
 			Name:      testPCLQName,
-			OldObject: rawOf(t, newPodClique(string(configv1alpha1.SchedulerNameKueue), 4)),
-			Object:    rawOf(t, newPodClique(string(configv1alpha1.SchedulerNameKube), 7)),
+			OldObject: rawOf(t, newPodClique(string(configv1beta1.SchedulerNameKueue), 4)),
+			Object:    rawOf(t, newPodClique(string(configv1beta1.SchedulerNameKube), 7)),
 		},
 	})
 	assert.False(t, resp.Allowed)
@@ -264,7 +264,7 @@ func TestHandle_FallsThroughToScaleguard(t *testing.T) {
 		Build()
 	pclq := testutils.NewPodCliqueBuilder(testPCSName, "pcs-uid", "worker", testNamespace, 0).Build()
 	pclq.Name = testPCLQName
-	pclq.Spec.PodSpec.SchedulerName = string(configv1alpha1.SchedulerNameKube)
+	pclq.Spec.PodSpec.SchedulerName = string(configv1beta1.SchedulerNameKube)
 	pclq.Spec.Replicas = 4
 
 	h := newHandler(t, pcs, pclq)
@@ -274,7 +274,7 @@ func TestHandle_FallsThroughToScaleguard(t *testing.T) {
 			Namespace: testNamespace,
 			Name:      testPCLQName,
 			OldObject: rawOf(t, pclq),
-			Object:    rawOf(t, newPodClique(string(configv1alpha1.SchedulerNameKube), 7)),
+			Object:    rawOf(t, newPodClique(string(configv1beta1.SchedulerNameKube), 7)),
 		},
 	})
 	assert.False(t, resp.Allowed, "scaleguard must deny a replica change while a coherent update is in progress")

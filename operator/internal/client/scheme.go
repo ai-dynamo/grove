@@ -15,7 +15,7 @@
 package client
 
 import (
-	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
+	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 
@@ -34,7 +34,7 @@ var Scheme = runtime.NewScheme()
 // Init into the scheme passed to it and should not be added here.
 func init() {
 	localSchemeBuilder := runtime.NewSchemeBuilder(
-		configv1alpha1.AddToScheme,
+		configv1beta1.AddToScheme,
 		grovecorev1alpha1.AddToScheme,
 		grovecorev1beta1.AddToScheme,
 		schedv1alpha1.AddToScheme,

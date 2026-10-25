@@ -19,7 +19,7 @@ import (
 	"testing"
 
 	apicommonconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
-	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
+	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler/kai"
@@ -296,7 +296,7 @@ func TestBuildSchedulerReferenceMap(t *testing.T) {
 
 func newKAIBackendMap(t *testing.T, cl client.Client) map[string]scheduler.TopologyAwareBackend {
 	t.Helper()
-	profile := configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKai}
+	profile := configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameKai}
 	b := kai.New(cl, cl.Scheme(), nil, profile)
 	require.NoError(t, b.Init(cl))
 	return map[string]scheduler.TopologyAwareBackend{b.Name(): b.(scheduler.TopologyAwareBackend)}
