@@ -11083,6 +11083,15 @@ spec:
           status:
             description: Status defines the status of the PodCliqueSet.
             properties:
+              appliedSchedulingConfigurationHash:
+                description: |-
+                  AppliedSchedulingConfigurationHash identifies the scheduling configuration
+                  fully realized by all expected PodCliqueSet replicas. The scheduling
+                  configuration currently comprises the effective MinAvailable values of all
+                  PodClique templates and PodCliqueScalingGroup configs.
+                  A nil value identifies an object created before scheduling-configuration
+                  hashing was introduced.
+                type: string
               availableReplicas:
                 default: 0
                 description: |-
@@ -11386,6 +11395,15 @@ spec:
                     items:
                       type: string
                     type: array
+                  targetSchedulingConfigurationHash:
+                    description: |-
+                      TargetSchedulingConfigurationHash identifies the scheduling configuration
+                      that this update must realize across all relevant PodCliqueSet replicas. The
+                      scheduling configuration currently comprises the effective MinAvailable
+                      values of all PodClique templates and PodCliqueScalingGroup configs.
+                      On successful completion, it is copied to
+                      PodCliqueSetStatus.AppliedSchedulingConfigurationHash.
+                    type: string
                   totalPodCliqueScalingGroupsCount:
                     default: 0
                     description: |-
@@ -11431,6 +11449,8 @@ spec:
                       generation hash. Recomputed each reconcile from child generation-hash labels.
                     format: int32
                     type: integer
+                required:
+                - targetSchedulingConfigurationHash
                 type: object
               updatedReplicas:
                 default: 0

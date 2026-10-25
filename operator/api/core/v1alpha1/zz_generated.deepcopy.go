@@ -773,6 +773,11 @@ func (in *PodCliqueSetStatus) DeepCopyInto(out *PodCliqueSetStatus) {
 		*out = new(string)
 		**out = **in
 	}
+	if in.AppliedSchedulingConfigurationHash != nil {
+		in, out := &in.AppliedSchedulingConfigurationHash, &out.AppliedSchedulingConfigurationHash
+		*out = new(string)
+		**out = **in
+	}
 	if in.UpdateProgress != nil {
 		in, out := &in.UpdateProgress, &out.UpdateProgress
 		*out = new(PodCliqueSetUpdateProgress)
