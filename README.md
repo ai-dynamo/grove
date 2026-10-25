@@ -8,6 +8,8 @@
 
 Grove is a Kubernetes API that provides a single declarative interface for orchestrating any AI inference workload — from simple, single-pod deployments to complex multi-node, disaggregated systems. Grove lets you scale your multinode inference deployment from a single replica to data center scale, supporting tens of thousands of GPUs. It allows you to describe your whole inference serving system in Kubernetes - e.g. prefill, decode, routing or any other component - as a single Custom Resource (CR). From that one spec, the platform coordinates hierarchical gang scheduling, topology‑aware placement, multi-level autoscaling and explicit startup ordering. You get precise control of how the system behaves without stitching together scripts, YAML files, or custom controllers.
 
+
+
 ## Quick Start on Local Kind Cluster
 
 Get Grove running in 5 minutes on a local [kind](https://kind.sigs.k8s.io/) cluster.
