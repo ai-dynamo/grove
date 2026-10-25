@@ -2,7 +2,7 @@
 # frontend: standalone PodClique (1 replica).
 # sg-prefill, sg-decode: PodCliqueScalingGroups over prefill and decode (2 replicas, minAvailable 2).
 ---
-apiVersion: grove.io/v1alpha1
+apiVersion: grove.io/v1beta1
 kind: PodCliqueSet
 metadata:
   name: kueue-update-coherent

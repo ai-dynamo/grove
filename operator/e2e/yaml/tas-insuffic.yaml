@@ -1,7 +1,7 @@
 # Workload 10: EC-1 - Insufficient Nodes for Constraint
 # Test scenario: PCS with rack constraint requesting more pods than can fit in any single rack
 ---
-apiVersion: grove.io/v1alpha1
+apiVersion: grove.io/v1beta1
 kind: PodCliqueSet
 metadata:
   name: tas-insuffic

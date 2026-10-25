@@ -4,7 +4,7 @@
 # deploying this fixture), simulating a container stuck in CrashLoopBackOff. Both pods fit
 # comfortably within the shared grove-e2e ClusterQueue's quota, so the Workload is Admitted
 # immediately; only PodsReady never completes.
-apiVersion: grove.io/v1alpha1
+apiVersion: grove.io/v1beta1
 kind: PodCliqueSet
 metadata:
   name: kueue-allornothing-notready

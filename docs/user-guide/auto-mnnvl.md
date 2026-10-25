@@ -102,7 +102,7 @@ Group names are scoped to the PCS — different PCS resources can reuse the same
 Add `grove.io/mnnvl-group` at the PCS level. All GPU PodCliques share a single ComputeDomain per replica:
 
 ```yaml
-apiVersion: grove.io/v1alpha1
+apiVersion: grove.io/v1beta1
 kind: PodCliqueSet
 metadata:
   name: my-workload
@@ -131,7 +131,7 @@ In this example, `spec.replicas: 2` produces two PCS replicas, `my-workload-0` a
 Assign different PodCliques to separate groups. Each group gets its own ComputeDomain per PodCliqueSet replica:
 
 ```yaml
-apiVersion: grove.io/v1alpha1
+apiVersion: grove.io/v1beta1
 kind: PodCliqueSet
 metadata:
   name: inference-deployment
@@ -185,7 +185,7 @@ Result per PCS replica:
 Set a default group at the PCS level and override on a specific PodClique:
 
 ```yaml
-apiVersion: grove.io/v1alpha1
+apiVersion: grove.io/v1beta1
 kind: PodCliqueSet
 metadata:
   name: my-workload
@@ -227,7 +227,7 @@ spec:
 A PCS-level group propagates through PodCliqueScalingGroups down to PodCliques. Each layer can override or opt out:
 
 ```yaml
-apiVersion: grove.io/v1alpha1
+apiVersion: grove.io/v1beta1
 kind: PodCliqueSet
 metadata:
   name: my-workload

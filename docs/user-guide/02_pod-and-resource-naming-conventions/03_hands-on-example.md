@@ -10,7 +10,7 @@ Let's deploy an example with the structure of a multi-node disaggregated inferen
 - A decode PodCliqueScalingGroup with leader and workers
 
 ```yaml
-apiVersion: grove.io/v1alpha1
+apiVersion: grove.io/v1beta1
 kind: PodCliqueSet
 metadata:
   name: mn-disagg

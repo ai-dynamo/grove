@@ -141,6 +141,8 @@ jobs:
             make_target: "run-e2e-mnnvl-full"
           - test_name: crd_installer
             test_pattern: "^Test_CRD_Installer"
+          - test_name: api_conversion
+            test_pattern: "^Test_CONV"
           - test_name: resource_sharing
             test_pattern: "^Test_RS"
           - test_name: podgangmap_reconstruct
@@ -228,6 +230,7 @@ jobs:
           - test_name: cascade_delete
           - test_name: auto_mnnvl
           - test_name: crd_installer
+          - test_name: api_conversion
           - test_name: resource_sharing
           - test_name: podgangmap_reconstruct
           - test_name: version_upgrade

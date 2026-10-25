@@ -2,7 +2,7 @@
 # Mirrors a multi-node worker DGD (one PodCliqueScalingGroup spanning a leader and a worker clique)
 # so scaling the group below MinAvailable drains the anchor entry to empty.
 ---
-apiVersion: grove.io/v1alpha1
+apiVersion: grove.io/v1beta1
 kind: PodCliqueSet
 metadata:
   name: workload-pcsg-only

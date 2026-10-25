@@ -1,7 +1,7 @@
 # Workload 7: BP-1 - PCS with Multiple PodCliques Having Different Constraints
 # Test scenario: PCS with no constraint, but individual cliques have different constraints (rack vs block)
 ---
-apiVersion: grove.io/v1alpha1
+apiVersion: grove.io/v1beta1
 kind: PodCliqueSet
 metadata:
   name: tas-indep-clq

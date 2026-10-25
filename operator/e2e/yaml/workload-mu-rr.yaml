@@ -9,7 +9,7 @@
 # live count, then scales it back in to 1 and checks the rollout disrupts at most the single remaining
 # replica even though maxUnavailable is still 2.
 ---
-apiVersion: grove.io/v1alpha1
+apiVersion: grove.io/v1beta1
 kind: PodCliqueSet
 metadata:
   name: wl-mu-rr

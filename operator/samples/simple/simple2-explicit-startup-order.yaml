@@ -10,7 +10,7 @@
 #   The `LastTransitionTime` should reflect the order in which the Pods became ready.
 # - In addition, you can check the logs of the last `InitContainer` of each Pod to get the details of dependency handling.
 ---
-apiVersion: grove.io/v1alpha1
+apiVersion: grove.io/v1beta1
 kind: PodCliqueSet
 metadata:
   name: simple2

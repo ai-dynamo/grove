@@ -70,7 +70,7 @@ The topology name also follows this hierarchy: a child `topologyConstraint` can 
 
 > **Note:** Topology constraints are immutable after PCS creation. Any attempt to add, modify, or remove `topologyName`, `pack.required`, or `pack.preferred` on an existing PCS, PCSG, or PCLQ is rejected. To change topology placement, delete the PCS and recreate it.
 
-> **Note:** The legacy `packDomain` field is deprecated. Use `pack.required` for new workloads.
+> **Note:** `grove.io/v1beta1` has no `packDomain` field. A `packDomain` stored by an earlier release is converted to `pack.required`. See [Upgrading to v0.2.0-beta1](upgrading-to-v0.2.0-beta1.md).
 
 ## Topology Domain Requirements
 
@@ -95,7 +95,7 @@ The workload examples below assume Grove's default scheduler profile is a topolo
 Create one ClusterTopologyBinding for each hardware topology that you want workloads to target. The following example defines a GPU fabric with zones, racks, and hosts:
 
 ```yaml
-apiVersion: grove.io/v1alpha1
+apiVersion: grove.io/v1beta1
 kind: ClusterTopologyBinding
 metadata:
   name: gpu-fabric
@@ -120,7 +120,7 @@ kubectl apply -f gpu-fabric.yaml
 Add `topologyConstraint` at the PCS level to constrain each PCS replica. This example requires each PCS replica to fit within one rack in the `gpu-fabric` topology:
 
 ```yaml
-apiVersion: grove.io/v1alpha1
+apiVersion: grove.io/v1beta1
 kind: PodCliqueSet
 metadata:
   name: my-inference
@@ -186,7 +186,7 @@ The `decode` PodClique inherits `topologyName: gpu-fabric` from the PCS-level co
 If a scheduler backend topology resource is managed outside Grove, reference it with `schedulerTopologyBindings`. For example, in a KAI-backed installation where an existing KAI `Topology` named `existing-gpu-fabric` is managed outside Grove:
 
 ```yaml
-apiVersion: grove.io/v1alpha1
+apiVersion: grove.io/v1beta1
 kind: ClusterTopologyBinding
 metadata:
   name: gpu-fabric
