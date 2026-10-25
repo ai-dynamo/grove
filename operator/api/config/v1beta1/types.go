@@ -111,6 +111,14 @@ type KueueSchedulerConfiguration struct {
 	UnderlyingSchedulerName string `json:"underlyingSchedulerName,omitempty"`
 }
 
+// KubeSchedulerConfig holds the configuration for the default scheduler.
+// Used when unmarshalling SchedulerProfile.Config for default-scheduler.
+type KubeSchedulerConfig struct {
+	// GangScheduling indicates if Gang scheduling capability is enabled.
+	// +optional
+	GangScheduling bool `json:"gangScheduling,omitempty"`
+}
+
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
 // OperatorConfiguration defines the configuration for the Grove operator.
@@ -159,6 +167,10 @@ type LeaderElectionConfiguration struct {
 	// will use for holding the leader lock.
 	// This is only applicable if leader election is enabled.
 	ResourceName string `json:"resourceName"`
+	// ResourceNamespace determines the namespace in which the leader
+	// election resource will be created.
+	// This is only applicable if leader election is enabled.
+	ResourceNamespace string `json:"resourceNamespace"`
 }
 
 // ClientConnectionConfiguration defines the configuration for constructing a client.

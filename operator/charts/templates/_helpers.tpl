@@ -12,6 +12,7 @@ config.yaml: |
     retryPeriod: {{ .Values.config.leaderElection.retryPeriod }}
     resourceLock: {{ .Values.config.leaderElection.resourceLock }}
     resourceName: {{ .Values.config.leaderElection.resourceName }}
+    resourceNamespace: {{ .Release.Namespace }}
   server:
     webhooks:
       port: {{ .Values.config.server.webhooks.port }}

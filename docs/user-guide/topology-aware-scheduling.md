@@ -70,7 +70,7 @@ The topology name also follows this hierarchy: a child `topologyConstraint` can 
 
 > **Note:** Topology constraints are immutable after PCS creation. Any attempt to add, modify, or remove `topologyName`, `pack.required`, or `pack.preferred` on an existing PCS, PCSG, or PCLQ is rejected. To change topology placement, delete the PCS and recreate it.
 
-> **Note:** `grove.io/v1beta1` has no `packDomain` field. A `packDomain` stored by an earlier release is converted to `pack.required`. See [Upgrading to v0.2.0-beta1](upgrading-to-v0.2.0-beta1.md).
+> **Note:** `grove.io/v1beta1` has no `packDomain` field. A `packDomain` stored by an earlier release is converted to `pack.required`. See [Upgrading to v0.2.0-beta1](upgrading-to-v1beta1-v0.2.0-beta1.md).
 
 ## Topology Domain Requirements
 

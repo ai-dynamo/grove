@@ -41,7 +41,7 @@ type schedulerBackend struct {
 var _ scheduler.Backend = (*schedulerBackend)(nil)
 
 // New creates a new Kube backend instance. profile is the scheduler profile for default-scheduler;
-// schedulerBackend uses profile.Name and ignores profile.Config.
+// schedulerBackend uses profile.Name and may unmarshal profile.Config into KubeSchedulerConfig.
 func New(cl client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder, profile configv1beta1.SchedulerProfile) scheduler.Backend {
 	return &schedulerBackend{
 		client:        cl,

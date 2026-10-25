@@ -79,6 +79,7 @@ func TestCreateManagerOptions(t *testing.T) {
 				LeaseDuration: metav1.Duration{Duration: 15 * time.Second},
 				RenewDeadline: metav1.Duration{Duration: 10 * time.Second},
 				RetryPeriod:   metav1.Duration{Duration: 2 * time.Second},
+				ResourceNamespace: "default",
 			},
 		}
 
@@ -125,6 +126,7 @@ func TestCreateManagerOptions(t *testing.T) {
 				LeaseDuration: metav1.Duration{Duration: 30 * time.Second},
 				RenewDeadline: metav1.Duration{Duration: 20 * time.Second},
 				RetryPeriod:   metav1.Duration{Duration: 5 * time.Second},
+				ResourceNamespace: "grove-system",
 			},
 		}
 

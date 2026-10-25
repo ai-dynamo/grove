@@ -15,7 +15,7 @@ Grove v0.2.0-beta1 introduces `grove.io/v1beta1`, which replaces `grove.io/v1alp
 - **`topologyConstraint.packDomain` is removed.** Use `topologyConstraint.pack.required`. Grove converts a `packDomain` stored by an earlier release to `pack.required`, so existing workloads keep their placement.
 - **`status.podGangStatuses` of the PCS is removed.** Grove never set it.
 
-`operator.config.grove.io/v1beta1` drops `leaderElection.resourceNamespace`, which the operator never used. The leader election lock is always created in the operator's namespace.
+`operator.config.grove.io/v1beta1` has the same fields as `operator.config.grove.io/v1alpha1`.
 
 ## Prerequisites and Constraints
 
@@ -123,14 +123,11 @@ spec:
 
 The Helm chart renders the operator configuration as `operator.config.grove.io/v1beta1`, so no action is needed when you configure the operator through Helm values.
 
-If you provide your own configuration file, the operator still accepts `operator.config.grove.io/v1alpha1` and logs a deprecation warning. To move it to `v1beta1`, change its `apiVersion` and remove `leaderElection.resourceNamespace`:
+If you provide your own configuration file, the operator still accepts `operator.config.grove.io/v1alpha1` and logs a deprecation warning. To move it to `v1beta1`, change its `apiVersion`:
 
 ```yaml
 apiVersion: operator.config.grove.io/v1beta1
 kind: OperatorConfiguration
-leaderElection:
-  enabled: true
-  resourceName: grove-operator-leader-election
 ```
 
 ## Downgrading

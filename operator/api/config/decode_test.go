@@ -100,7 +100,7 @@ leaderElection:
   enabled: true
   leaseDuration: 30s
   resourceName: my-lock
-  resourceNamespace: ignored
+  resourceNamespace: grove-system
 server:
   webhooks:
     port: 9443
@@ -120,6 +120,7 @@ topologyAwareScheduling:
 				assert.Equal(t, 30*time.Second, cfg.LeaderElection.LeaseDuration.Duration)
 				assert.Equal(t, 10*time.Second, cfg.LeaderElection.RenewDeadline.Duration)
 				assert.Equal(t, "my-lock", cfg.LeaderElection.ResourceName)
+				assert.Equal(t, "grove-system", cfg.LeaderElection.ResourceNamespace)
 				assert.Equal(t, 9443, cfg.Server.Webhooks.Port)
 				assert.Equal(t, 2751, cfg.Server.HealthProbes.Port)
 				assert.Equal(t, string(configv1beta1.SchedulerNameKai), cfg.Scheduler.DefaultProfileName)
