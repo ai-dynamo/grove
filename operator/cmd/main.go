@@ -26,6 +26,7 @@ import (
 
 	apicommonconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/cmd/cli"
 	"github.com/ai-dynamo/grove/operator/internal/clustertopology"
 	grovectrl "github.com/ai-dynamo/grove/operator/internal/controller"
@@ -34,6 +35,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
 	"github.com/ai-dynamo/grove/operator/internal/podgangmigrator"
 	schedulerregistry "github.com/ai-dynamo/grove/operator/internal/scheduler/registry"
+	"github.com/ai-dynamo/grove/operator/internal/storageversion"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 	groveversion "github.com/ai-dynamo/grove/operator/internal/version"
 	conversionwebhook "github.com/ai-dynamo/grove/operator/internal/webhook/conversion"
@@ -156,8 +158,17 @@ func main() {
 	// Certificates need to be generated before the webhooks are started, which can only happen once the manager is started.
 	// Block while generating the certificates, and then start the webhooks.
 	go func() {
-		if err := grovectrl.RegisterControllersAndWebhooks(ctx, mgr, logger, operatorConfig, webhookCertsReadyCh, schedRegistry, setPodGangMigrationGate(cl)); err != nil {
+		beforeControllers := func(ctx context.Context) error {
+			if err := migrateStorageVersion(ctx, cl); err != nil {
+				return err
+			}
+			return setPodGangMigrationGate(cl)(ctx)
+		}
+		if err := grovectrl.RegisterControllersAndWebhooks(ctx, mgr, logger, operatorConfig, webhookCertsReadyCh, schedRegistry, beforeControllers); err != nil {
 			logger.Error(err, "failed to initialize grove controller manager")
+			if errors.Is(err, errMigrateStorageVersion) {
+				handleErrorAndExit(err, cli.ExitErrMigrateStorageVersion)
+			}
 			if errors.Is(err, errSetPodGangMigrationGate) {
 				handleErrorAndExit(err, cli.ExitErrSetPodGangMigrationGate)
 			}
@@ -170,6 +181,31 @@ func main() {
 		logger.Error(err, "Error starting controller manager")
 		handleErrorAndExit(err, cli.ExitErrStart)
 	}
+}
+
+var errMigrateStorageVersion = errors.New("failed to migrate the grove.io objects to the storage version")
+
+// migrateStorageVersion rewrites the grove.io objects stored at grove.io/v1alpha1 so they are stored at
+// grove.io/v1beta1, and then removes v1alpha1 from the storedVersions of the CRDs. PodCliqueSets are rewritten
+// through the conversion webhook, which becomes reachable only once this replica is ready and the CRDs carry
+// its CA, so the migration is retried. Objects that are rejected when rewritten do not block the controllers:
+// their CRDs keep v1alpha1 in storedVersions, which v1alpha1 still serves, and the next start retries them.
+func migrateStorageVersion(ctx context.Context, cl client.Client) error {
+	var lastErr error
+	if err := wait.PollUntilContextTimeout(ctx, 2*time.Second, 5*time.Minute, true, func(ctx context.Context) (bool, error) {
+		lastErr = storageversion.Migrate(ctx, cl, logger, storageversion.CRDNames, grovecorev1beta1.SchemeGroupVersion.Version)
+		if errors.Is(lastErr, storageversion.ErrIncomplete) {
+			logger.Error(lastErr, "Some grove.io objects are still stored at an earlier version")
+			lastErr = nil
+		}
+		if lastErr != nil {
+			logger.Info("Retrying the storage version migration", "error", lastErr.Error())
+		}
+		return lastErr == nil, nil
+	}); err != nil {
+		return fmt.Errorf("%w: %w", errMigrateStorageVersion, errors.Join(err, lastErr))
+	}
+	return nil
 }
 
 var errSetPodGangMigrationGate = errors.New("failed to set the PodGang migration gate on legacy PodCliqueSets")

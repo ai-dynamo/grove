@@ -49,6 +49,9 @@ const (
 	// ExitErrConfigureCRDConversion indicates that the application exited because the conversion webhook of the
 	// CRDs could not be configured, including when the installed CRDs do not serve the hub version.
 	ExitErrConfigureCRDConversion
+	// ExitErrMigrateStorageVersion indicates that the application exited because the objects of the grove.io
+	// CRDs could not be migrated to the storage version before the controllers started.
+	ExitErrMigrateStorageVersion
 )
 
 var (
