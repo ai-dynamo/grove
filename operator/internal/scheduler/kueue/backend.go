@@ -32,6 +32,7 @@ import (
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
+	"github.com/samber/lo"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
@@ -54,8 +55,12 @@ const (
 	podFinalizer                      = "kueue.x-k8s.io/managed"
 	podSetRequiredTopologyAnnotation  = "kueue.x-k8s.io/podset-required-topology"
 	podSetPreferredTopologyAnnotation = "kueue.x-k8s.io/podset-preferred-topology"
-	roleHashAnnotation                = "kueue.x-k8s.io/role-hash"
-	isGroupWorkloadAnnotation         = "kueue.x-k8s.io/is-group-workload"
+	podSetUnconstrainedAnnotation     = "kueue.x-k8s.io/podset-unconstrained-topology"
+	// maxPodSetsPerTopologyGroup is how many PodSets of one podSetGroupName Kueue TAS places together: it reads only
+	// the first two as leader and workers (findLeaderAndWorkers) and ignores the rest (ai-dynamo/grove#867).
+	maxPodSetsPerTopologyGroup = 2
+	roleHashAnnotation         = "kueue.x-k8s.io/role-hash"
+	isGroupWorkloadAnnotation  = "kueue.x-k8s.io/is-group-workload"
 	// maxWorkloadPodSets is the maxItems of a Workload's spec.podSets in Kueue v0.20.1, the version this backend
 	// supports (v0.17 caps it at 8).
 	maxWorkloadPodSets = 18
@@ -226,6 +231,7 @@ func (b *schedulerBackend) buildPrebuiltWorkload(ctx context.Context, pcs *grove
 	// minCount, which Kueue defaults to count.
 	minCountUsed := false
 	podSets := make([]kueuev1beta2.PodSet, 0, len(podGang.Spec.PodGroups))
+	podSetGroups := make(map[kueuev1beta2.PodSetReference]string, len(podGang.Spec.PodGroups))
 	for _, podGroup := range podGang.Spec.PodGroups {
 		cliqueTemplate, err := b.resolveCliqueTemplate(ctx, pcs, podGroup.Name)
 		if err != nil {
@@ -258,9 +264,15 @@ func (b *schedulerBackend) buildPrebuiltWorkload(ctx context.Context, pcs *grove
 		}
 		if topologyRequest != nil {
 			podSet.TopologyRequest = topologyRequest.request
+		} else if cliqueTemplate.Annotations[podSetUnconstrainedAnnotation] == "true" {
+			// Kueue derives this request from the Pod annotation only for Workloads it builds itself.
+			podSet.TopologyRequest = &kueuev1beta2.PodSetTopologyRequest{Unconstrained: ptr.To(true)}
+			podSet.Template.Annotations = map[string]string{podSetUnconstrainedAnnotation: "true"}
 		}
 		podSets = append(podSets, podSet)
+		podSetGroups[podSet.Name] = topologyGroupNameForPodGroup(podGang, podGroup.Name)
 	}
+	setPodSetGroupNames(podSets, podSetGroups)
 	// Kueue checks a prebuilt Workload against its pods' PodSets sorted by name, and finishes it as OutOfSync
 	// if the Workload lists them in another order.
 	slices.SortFunc(podSets, func(a, b kueuev1beta2.PodSet) int { return cmp.Compare(a.Name, b.Name) })
@@ -283,6 +295,58 @@ func (b *schedulerBackend) buildPrebuiltWorkload(ctx context.Context, pcs *grove
 		return nil, fmt.Errorf("failed to set owner reference on prebuilt kueue Workload %s/%s: %w", podGang.Namespace, podGang.Name, err)
 	}
 	return workload, nil
+}
+
+// topologyGroupNameForPodGroup returns the topology group a PodGroup must be placed with: its
+// TopologyConstraintGroupConfig (one per PodCliqueScalingGroup replica, e.g. a leader and its workers), or the whole
+// PodGang when only a PodGang-wide constraint is required. It returns "" when the PodGroup has no group constraint.
+func topologyGroupNameForPodGroup(podGang *groveschedulerv1alpha1.PodGang, podGroupName string) string {
+	if group := topologyConstraintGroupConfig(podGang, podGroupName); group != nil {
+		return group.Name
+	}
+	if constraint := podGang.Spec.TopologyConstraint; constraint != nil && constraint.PackConstraint != nil &&
+		ptr.Deref(constraint.PackConstraint.Required, "") != "" {
+		return podGang.Name
+	}
+	return ""
+}
+
+func topologyConstraintGroupConfig(podGang *groveschedulerv1alpha1.PodGang, podGroupName string) *groveschedulerv1alpha1.TopologyConstraintGroupConfig {
+	for i := range podGang.Spec.TopologyConstraintGroupConfigs {
+		group := &podGang.Spec.TopologyConstraintGroupConfigs[i]
+		if slices.Contains(group.PodGroupNames, podGroupName) && group.TopologyConstraint != nil && group.TopologyConstraint.PackConstraint != nil {
+			return group
+		}
+	}
+	return nil
+}
+
+// setPodSetGroupNames sets podSetGroupName so Kueue TAS places each topology group (e.g. a tensor-parallel leader and
+// its workers) in one domain instead of placing each PodSet independently. A group is emitted only when every member
+// carries a required or preferred topology (Kueue rejects the name otherwise) and it has at most
+// maxPodSetsPerTopologyGroup members, since Kueue would silently ignore the rest.
+func setPodSetGroupNames(podSets []kueuev1beta2.PodSet, groupByPodSet map[kueuev1beta2.PodSetReference]string) {
+	members := map[string][]int{}
+	for i := range podSets {
+		if group := groupByPodSet[podSets[i].Name]; group != "" {
+			members[group] = append(members[group], i)
+		}
+	}
+	for group, idxs := range members {
+		if len(idxs) > maxPodSetsPerTopologyGroup {
+			continue
+		}
+		if !lo.EveryBy(idxs, func(i int) bool { return hasTopologyDomain(podSets[i].TopologyRequest) }) {
+			continue
+		}
+		for _, i := range idxs {
+			podSets[i].TopologyRequest.PodSetGroupName = ptr.To(group)
+		}
+	}
+}
+
+func hasTopologyDomain(request *kueuev1beta2.PodSetTopologyRequest) bool {
+	return request != nil && (ptr.Deref(request.Required, "") != "" || ptr.Deref(request.Preferred, "") != "")
 }
 
 // queueNameForPodCliqueSet returns the Kueue local queue name for the given PodCliqueSet, derived from
