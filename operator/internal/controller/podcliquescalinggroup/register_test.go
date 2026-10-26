@@ -17,6 +17,7 @@ package podcliquescalinggroup
 import (
 	"testing"
 
+	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
@@ -69,11 +70,11 @@ func TestPodCliqueScalingGroupReconcilePredicate(t *testing.T) {
 }
 
 func TestMapPCSToPCSG(t *testing.T) {
-	mapFn := mapPCSToPCSG()
+	pcsUID := types.UID("pcs-uid")
 	pcsgConfig := grovecorev1alpha1.PodCliqueScalingGroupConfig{Name: "workers"}
 	newPCS := func(strategy grovecorev1alpha1.UpdateStrategyType, progress *grovecorev1alpha1.PodCliqueSetUpdateProgress) *grovecorev1alpha1.PodCliqueSet {
 		return &grovecorev1alpha1.PodCliqueSet{
-			ObjectMeta: metav1.ObjectMeta{Name: "pcs", Namespace: "default"},
+			ObjectMeta: metav1.ObjectMeta{Name: "pcs", Namespace: "default", UID: pcsUID},
 			Spec: grovecorev1alpha1.PodCliqueSetSpec{
 				Replicas:       3,
 				UpdateStrategy: &grovecorev1alpha1.PodCliqueSetUpdateStrategy{Type: strategy},
@@ -82,23 +83,37 @@ func TestMapPCSToPCSG(t *testing.T) {
 			Status: grovecorev1alpha1.PodCliqueSetStatus{UpdateProgress: progress},
 		}
 	}
+	newPCSG := func(replicaIndex int) *grovecorev1alpha1.PodCliqueScalingGroup {
+		return testutils.NewPodCliqueScalingGroupBuilder(
+			apicommon.GeneratePodCliqueScalingGroupName(apicommon.ResourceNameReplica{Name: "pcs", Replica: replicaIndex}, pcsgConfig.Name),
+			"default", "pcs", replicaIndex,
+		).WithOwnerReference(constants.KindPodCliqueSet, "pcs", pcsUID).Build()
+	}
 
 	t.Run("maps selected sparse replica", func(t *testing.T) {
 		pcs := newPCS(grovecorev1alpha1.RollingRecreateStrategy, &grovecorev1alpha1.PodCliqueSetUpdateProgress{
 			CurrentlyUpdating: []grovecorev1alpha1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 4}},
 		})
-		got := mapFn(t.Context(), pcs)
+		got := mapPCSToPCSG(testutils.SetupFakeClient(pcs, newPCSG(0), newPCSG(4)))(t.Context(), pcs)
 		assert.Equal(t, []reconcile.Request{{NamespacedName: types.NamespacedName{Namespace: "default", Name: "pcs-4-workers"}}}, got)
 	})
 
-	t.Run("does not map OnDelete", func(t *testing.T) {
+	t.Run("maps all sparse replicas for OnDelete", func(t *testing.T) {
 		pcs := newPCS(grovecorev1alpha1.OnDeleteStrategy, &grovecorev1alpha1.PodCliqueSetUpdateProgress{})
-		assert.Empty(t, mapFn(t.Context(), pcs))
+		got := mapPCSToPCSG(testutils.SetupFakeClient(pcs, newPCSG(0), newPCSG(4)))(t.Context(), pcs)
+		assert.ElementsMatch(t, []reconcile.Request{
+			{NamespacedName: types.NamespacedName{Namespace: "default", Name: "pcs-0-workers"}},
+			{NamespacedName: types.NamespacedName{Namespace: "default", Name: "pcs-4-workers"}},
+		}, got)
 	})
 
-	t.Run("does not map without selected replica", func(t *testing.T) {
+	t.Run("maps all sparse replicas without a selected replica", func(t *testing.T) {
 		pcs := newPCS(grovecorev1alpha1.RollingRecreateStrategy, &grovecorev1alpha1.PodCliqueSetUpdateProgress{})
-		assert.Empty(t, mapFn(t.Context(), pcs))
+		got := mapPCSToPCSG(testutils.SetupFakeClient(pcs, newPCSG(0), newPCSG(4)))(t.Context(), pcs)
+		assert.ElementsMatch(t, []reconcile.Request{
+			{NamespacedName: types.NamespacedName{Namespace: "default", Name: "pcs-0-workers"}},
+			{NamespacedName: types.NamespacedName{Namespace: "default", Name: "pcs-4-workers"}},
+		}, got)
 	})
 }
 
@@ -115,6 +130,31 @@ func TestHasNewPCSReplicaBeenSelectedForUpdate(t *testing.T) {
 	assert.True(t, hasNewPCSReplicaBeenSelectedForUpdate(progress(1), progress(4)))
 	assert.False(t, hasNewPCSReplicaBeenSelectedForUpdate(progress(4), progress(4)))
 	assert.False(t, hasNewPCSReplicaBeenSelectedForUpdate(progress(4), progress()))
+}
+
+func TestPodCliqueSetRevisionChangeEnqueuesAllPCSGs(t *testing.T) {
+	pcs := testutils.NewPodCliqueSetBuilder("pcs", "default", types.UID("pcs-uid")).
+		WithReplicas(2).
+		WithScalingGroup("group", []string{"worker"}).
+		Build()
+	oldPCS := pcs.DeepCopy()
+	oldPCS.Status.UpdateRevision = "old-revision"
+	pcs.Status.UpdateRevision = "new-revision"
+	pcsg0 := testutils.NewPodCliqueScalingGroupBuilder("pcs-0-group", pcs.Namespace, pcs.Name, 0).
+		WithOwnerReference(constants.KindPodCliqueSet, pcs.Name, pcs.UID).
+		Build()
+	pcsg4 := testutils.NewPodCliqueScalingGroupBuilder("pcs-4-group", pcs.Namespace, pcs.Name, 4).
+		WithOwnerReference(constants.KindPodCliqueSet, pcs.Name, pcs.UID).
+		Build()
+	cl := testutils.SetupFakeClient(pcs, pcsg0, pcsg4)
+
+	pred, ok := podCliqueSetPredicate().(predicate.Funcs)
+	require.True(t, ok)
+	assert.True(t, pred.UpdateFunc(event.UpdateEvent{ObjectOld: oldPCS, ObjectNew: pcs}))
+	assert.ElementsMatch(t, []reconcile.Request{
+		{NamespacedName: types.NamespacedName{Namespace: pcs.Namespace, Name: "pcs-0-group"}},
+		{NamespacedName: types.NamespacedName{Namespace: pcs.Namespace, Name: "pcs-4-group"}},
+	}, mapPCSToPCSG(cl)(t.Context(), pcs))
 }
 
 // TestPodGangMapPredicate verifies the PodGangMap watch predicate. It must fire on Create so a

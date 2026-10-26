@@ -30,6 +30,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
+	controllerrevision "github.com/ai-dynamo/grove/operator/internal/utils/controllerrevision"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
 	"github.com/go-logr/logr"
@@ -207,7 +208,18 @@ func (r _resource) doCreateOrUpdate(ctx context.Context, logger logr.Logger, pcs
 	pcsg := emptyPodCliqueScalingGroup(pcsgObjectKey)
 
 	if _, err := k8sutils.CreateOrPatchSpec(ctx, r.client, pcsg, func() error {
-		if err := r.buildResource(pcsg, pcs, pcsReplica, pcsgConfig, pcsgExists); err != nil {
+		resolved, resolveErr := controllerrevision.ResolveForReplica(ctx, r.client, pcs, pcsReplica)
+		if resolveErr != nil {
+			return resolveErr
+		}
+		revisionPCS := controllerrevision.PodCliqueSetWithTemplate(pcs, resolved.Template)
+		revisionConfig, ok := lo.Find(revisionPCS.Spec.Template.PodCliqueScalingGroupConfigs, func(config grovecorev1alpha1.PodCliqueScalingGroupConfig) bool {
+			return config.Name == pcsgConfig.Name
+		})
+		if !ok {
+			return fmt.Errorf("PodCliqueScalingGroupConfig %q not found in ControllerRevision %q", pcsgConfig.Name, resolved.Name)
+		}
+		if err := r.buildResourceForRevision(pcsg, revisionPCS, pcsReplica, revisionConfig, pcsgExists); err != nil {
 			return groveerr.WrapError(err,
 				errCodeCreatePodCliqueScalingGroup,
 				component.OperationSync,
@@ -242,8 +254,8 @@ func (r _resource) doDelete(ctx context.Context, logger logr.Logger, pcs *grovec
 	return nil
 }
 
-// buildResource configures a PCSG with the desired state from the template.
-func (r _resource) buildResource(pcsg *grovecorev1alpha1.PodCliqueScalingGroup, pcs *grovecorev1alpha1.PodCliqueSet, pcsReplica int, pcsgConfig grovecorev1alpha1.PodCliqueScalingGroupConfig, pcsgExists bool) error {
+// buildResourceForRevision configures a PCSG with the desired state from the revision template.
+func (r _resource) buildResourceForRevision(pcsg *grovecorev1alpha1.PodCliqueScalingGroup, pcs *grovecorev1alpha1.PodCliqueSet, pcsReplica int, pcsgConfig grovecorev1alpha1.PodCliqueScalingGroupConfig, pcsgExists bool) error {
 	if err := controllerutil.SetControllerReference(pcs, pcsg, r.scheme); err != nil {
 		return groveerr.WrapError(err,
 			errSyncPodCliqueScalingGroup,

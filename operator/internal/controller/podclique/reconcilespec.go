@@ -181,8 +181,14 @@ func shouldResetOrTriggerUpdate(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grove
 	inProgressPCLQUpdateNotStale := componentutils.IsPCLQRollingUpdateInProgress(pclq) && pclq.Status.UpdateProgress.PodCliqueSetGenerationHash == *pcs.Status.CurrentGenerationHash
 	// PCLQ had an update in the past but that was for an older PCS generation hash.
 	lastCompletedUpdateIsNotStale := componentutils.IsLastPCLQUpdateCompleted(pclq) && pclq.Status.UpdateProgress.PodCliqueSetGenerationHash == *pcs.Status.CurrentGenerationHash
-	if inProgressPCLQUpdateNotStale || lastCompletedUpdateIsNotStale {
+	if inProgressPCLQUpdateNotStale {
 		return false
+	}
+	if lastCompletedUpdateIsNotStale {
+		// A rolling update is complete only when every desired Pod carries the target template
+		// hash. Recover if an earlier reconcile ended the update against a stale revision before
+		// status could report convergence. OnDelete intentionally ends tracking immediately.
+		return componentutils.IsRollingUpdateStrategy(pcs) && pclq.Status.UpdatedReplicas != pclq.Status.Replicas
 	}
 
 	return true

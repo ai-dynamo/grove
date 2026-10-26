@@ -28,15 +28,19 @@ import (
 	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/sync"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
+	controllerrevision "github.com/ai-dynamo/grove/operator/internal/utils/controllerrevision"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/ptr"
@@ -130,10 +134,21 @@ func TestSyncUsesSparseReplicaIndices(t *testing.T) {
 		WithReplicas(3).
 		WithStandaloneClique("howl").
 		Build()
+	revision := podCliqueTestRevision(t, pcs, "test-revision", &pcs.Spec.Template)
+	pcs.Status.CurrentRevision = revision.Name
+	pcs.Status.UpdateRevision = revision.Name
+	pcs.Status.UpdateProgress = &grovecorev1alpha1.PodCliqueSetUpdateProgress{
+		ReplicaRevisions: []grovecorev1alpha1.PodCliqueSetReplicaRevision{
+			{ReplicaIndex: 0, Revision: revision.Name},
+			{ReplicaIndex: 2, Revision: revision.Name},
+			{ReplicaIndex: 4, Revision: revision.Name},
+		},
+	}
 	existingPCLQs := []client.Object{
 		testutils.NewPodCliqueBuilder(pcs.Name, pcs.UID, "howl", pcs.Namespace, 0).Build(),
 		testutils.NewPodCliqueBuilder(pcs.Name, pcs.UID, "howl", pcs.Namespace, 1).Build(),
 		testutils.NewPodCliqueBuilder(pcs.Name, pcs.UID, "howl", pcs.Namespace, 4).Build(),
+		revision,
 	}
 	cl := testutils.NewTestClientBuilder().WithObjects(existingPCLQs...).Build()
 	operator := New(cl, groveclientscheme.Scheme, record.NewFakeRecorder(10))
@@ -490,7 +505,7 @@ func TestBuildResource_MNNVLInjection(t *testing.T) {
 				eventRecorder: record.NewFakeRecorder(10),
 			}
 
-			err := operator.buildResource(logr.Discard(), pcs, pcsReplica, false, pclq)
+			err := operator.buildResourceForRevision(logr.Discard(), pcs, pcsReplica, false, pclq)
 			require.NoError(t, err)
 
 			// Verify pod-level claims
@@ -544,7 +559,7 @@ func TestBuildResource_StripsTopologyAnnotation(t *testing.T) {
 	}
 
 	operator := &_resource{scheme: groveclientscheme.Scheme}
-	err := operator.buildResource(logr.Discard(), pcs, 0, false, pclq)
+	err := operator.buildResourceForRevision(logr.Discard(), pcs, 0, false, pclq)
 	require.NoError(t, err)
 	require.NotNil(t, pclq.Annotations)
 	assert.Equal(t, "yes", pclq.Annotations["example.com/keep"])
@@ -598,7 +613,7 @@ func TestBuildResource_PreservesRevisionForReplicaNotUnderCoherentUpdate(t *test
 
 			operator := &_resource{scheme: groveclientscheme.Scheme}
 
-			err := operator.buildResource(logr.Discard(), pcs, tc.pcsReplica, true, pclq)
+			err := operator.buildResourceForRevision(logr.Discard(), pcs, tc.pcsReplica, true, pclq)
 			require.NoError(t, err)
 
 			if tc.expectPreserved {
@@ -609,6 +624,60 @@ func TestBuildResource_PreservesRevisionForReplicaNotUnderCoherentUpdate(t *test
 				assert.NotEqual(t, "old-hash", pclq.Labels[apicommon.LabelPodTemplateHash], "hash label must adopt the new revision")
 			}
 		})
+	}
+}
+
+func TestDeletedPodCliqueIsRecreatedFromReplicaRevision(t *testing.T) {
+	const cliqueName = "worker"
+	oldTemplate := testutils.NewPodCliqueTemplateSpecBuilder(cliqueName).
+		WithPodSpec(corev1.PodSpec{Containers: []corev1.Container{{Name: "worker", Image: "old"}}}).
+		Build()
+	newTemplate := oldTemplate.DeepCopy()
+	newTemplate.Spec.PodSpec.Containers[0].Image = "new"
+	pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testPCSNamespace, uuid.NewUUID()).
+		WithReplicas(2).
+		WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder)).
+		WithUpdateStrategy(&grovecorev1alpha1.PodCliqueSetUpdateStrategy{Type: grovecorev1alpha1.CoherentStrategy}).
+		WithPodCliqueTemplateSpec(newTemplate).
+		WithUpdateProgress(&grovecorev1alpha1.PodCliqueSetUpdateProgress{
+			CurrentlyUpdating: []grovecorev1alpha1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 0}},
+		}).
+		Build()
+	oldRevision := podCliqueTestRevision(t, pcs, "revision-old", &grovecorev1alpha1.PodCliqueSetTemplateSpec{
+		StartupType: pcs.Spec.Template.StartupType,
+		Cliques:     []*grovecorev1alpha1.PodCliqueTemplateSpec{oldTemplate},
+	})
+	newRevision := podCliqueTestRevision(t, pcs, "revision-new", &pcs.Spec.Template)
+	pcs.Status.CurrentRevision = oldRevision.Name
+	pcs.Status.UpdateRevision = newRevision.Name
+	pcs.Status.UpdateProgress.ReplicaRevisions = []grovecorev1alpha1.PodCliqueSetReplicaRevision{
+		{ReplicaIndex: 0, Revision: newRevision.Name},
+		{ReplicaIndex: 1, Revision: oldRevision.Name},
+	}
+	cl := testutils.SetupFakeClient(pcs, oldRevision, newRevision)
+	r := &_resource{client: cl, scheme: groveclientscheme.Scheme, eventRecorder: &record.FakeRecorder{}}
+	pclqKey := client.ObjectKey{Name: fmt.Sprintf("%s-1-%s", pcs.Name, cliqueName), Namespace: pcs.Namespace}
+
+	require.NoError(t, r.doCreateOrUpdate(t.Context(), logr.Discard(), pcs, 1, pclqKey, false))
+	recreated := &grovecorev1alpha1.PodClique{}
+	require.NoError(t, cl.Get(t.Context(), pclqKey, recreated))
+	assert.Equal(t, "old", recreated.Spec.PodSpec.Containers[0].Image)
+	assert.NotContains(t, recreated.Labels, "controller-revision-hash")
+}
+
+func podCliqueTestRevision(t *testing.T, pcs *grovecorev1alpha1.PodCliqueSet, name string, template *grovecorev1alpha1.PodCliqueSetTemplateSpec) *appsv1.ControllerRevision {
+	t.Helper()
+	data, err := controllerrevision.EncodeTemplate(template)
+	require.NoError(t, err)
+	return &appsv1.ControllerRevision{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: pcs.Namespace,
+			OwnerReferences: []metav1.OwnerReference{*metav1.NewControllerRef(pcs, schema.GroupVersionKind{
+				Group: grovecorev1alpha1.SchemeGroupVersion.Group, Version: grovecorev1alpha1.SchemeGroupVersion.Version, Kind: apiconstants.KindPodCliqueSet,
+			})},
+		},
+		Data: runtime.RawExtension{Raw: data},
 	}
 }
 
@@ -650,7 +719,7 @@ func TestBuildResource_DoesNotWriteStartsAfter(t *testing.T) {
 	// pcsReplica 1 is not the replica under update, so it is preserved. Reconcile twice; the controller must
 	// leave StartsAfter untouched both times.
 	for i := range 2 {
-		err := operator.buildResource(logr.Discard(), pcs, pcsReplica, true, pclq)
+		err := operator.buildResourceForRevision(logr.Discard(), pcs, pcsReplica, true, pclq)
 		require.NoError(t, err, "reconcile %d", i)
 		assert.Equal(t, staleStartsAfter, pclq.Spec.StartsAfter, "reconcile %d", i)
 	}

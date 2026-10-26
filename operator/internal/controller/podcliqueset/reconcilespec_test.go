@@ -489,6 +489,8 @@ func TestInitUpdateProgress(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			pcs := tt.setupPCS()
+			pcs.Status.CurrentRevision = "revision-a"
+			pcs.Status.UpdateRevision = "revision-b"
 
 			fakeClient := testutils.SetupFakeClient(pcs)
 			reconciler := &Reconciler{
@@ -520,6 +522,11 @@ func TestInitUpdateProgress(t *testing.T) {
 
 			assert.Equal(t, int32(0), updatedPCS.Status.UpdateProgress.UpdatedPodCliqueScalingGroupsCount, "UpdatedPodCliqueScalingGroupsCount should be reset to 0")
 			assert.Equal(t, int32(0), updatedPCS.Status.UpdateProgress.UpdatedPodCliquesCount, "UpdatedPodCliquesCount should be reset to 0")
+			require.Len(t, updatedPCS.Status.UpdateProgress.ReplicaRevisions, int(updatedPCS.Spec.Replicas))
+			for replicaIndex, binding := range updatedPCS.Status.UpdateProgress.ReplicaRevisions {
+				assert.Equal(t, int32(replicaIndex), binding.ReplicaIndex)
+				assert.Equal(t, "revision-a", binding.Revision)
+			}
 			// Currently updating is not set by the initUpdateProgress function
 			assert.Nil(t, updatedPCS.Status.UpdateProgress.CurrentlyUpdating, "CurrentlyUpdating should be nil")
 			assert.Equal(t, int32(0), updatedPCS.Status.UpdatedReplicas, "UpdatedReplicas should be reset to 0")
@@ -527,6 +534,24 @@ func TestInitUpdateProgress(t *testing.T) {
 			assert.Equal(t, newGenerationHash, *updatedPCS.Status.CurrentGenerationHash)
 		})
 	}
+}
+
+func TestReplicaRevisionBindingsForUpdatePreservesExistingBindings(t *testing.T) {
+	pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, uuid.NewUUID()).WithReplicas(3).Build()
+	pcs.Status.CurrentRevision = "revision-a"
+	pcs.Status.UpdateProgress = &grovecorev1alpha1.PodCliqueSetUpdateProgress{
+		ReplicaRevisions: []grovecorev1alpha1.PodCliqueSetReplicaRevision{
+			{ReplicaIndex: 0, Revision: "revision-b"},
+			{ReplicaIndex: 1, Revision: "revision-a"},
+			{ReplicaIndex: 4, Revision: "stale"},
+		},
+	}
+
+	assert.Equal(t, []grovecorev1alpha1.PodCliqueSetReplicaRevision{
+		{ReplicaIndex: 0, Revision: "revision-b"},
+		{ReplicaIndex: 1, Revision: "revision-a"},
+		{ReplicaIndex: 2, Revision: "revision-a"},
+	}, replicaRevisionBindingsForUpdate(pcs))
 }
 
 // TestPCSGenerationHashKey verifies the generation-hash expectation key includes the PCS UID so two

@@ -76,6 +76,14 @@ spec:
                 description: Replicas is the number of desired replicas of the PodCliqueSet.
                 format: int32
                 type: integer
+              revisionHistoryLimit:
+                default: 10
+                description: |-
+                  RevisionHistoryLimit is the maximum number of revisions that will be maintained in PodCliqueSet's revision
+                  history. The history limit excludes all revisions actively referenced by a PodCliqueSet.
+                format: int32
+                minimum: 0
+                type: integer
               template:
                 description: Template describes the template spec for PodGangs that
                   will be created in the PodCliqueSet.
@@ -11077,6 +11085,10 @@ spec:
                   have MinAvailableBreached condition = False.
                 format: int32
                 type: integer
+              collisionCount:
+                description: CollisionCount disambiguates revision names.
+                format: int32
+                type: integer
               conditions:
                 description: Conditions represents the latest available observations
                   of the PodCliqueSet by its controller.
@@ -11143,6 +11155,9 @@ spec:
                   a rolling recreate of PodCliques and/or PodCliqueScalingGroups.
                   Only if this value is not nil and the newly computed hash value is different from the persisted CurrentGenerationHash value
                   then an update needs to be triggered.
+                type: string
+              currentRevision:
+                description: CurrentRevision is the last revision reached by the workload.
                 type: string
               hpaPodSelector:
                 description: |-
@@ -11371,6 +11386,30 @@ spec:
                     items:
                       type: string
                     type: array
+                  replicaRevisions:
+                    description: ReplicaRevisions binds each PodCliqueSet replica
+                      to its source ControllerRevision.
+                    items:
+                      description: PodCliqueSetReplicaRevision binds a PodCliqueSet
+                        replica to a ControllerRevision.
+                      properties:
+                        replicaIndex:
+                          description: ReplicaIndex is the zero-based PodCliqueSet
+                            replica index.
+                          format: int32
+                          type: integer
+                        revision:
+                          description: Revision is the name of the ControllerRevision
+                            selected for the replica.
+                          type: string
+                      required:
+                      - replicaIndex
+                      - revision
+                      type: object
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - replicaIndex
+                    x-kubernetes-list-type: map
                   totalPodCliqueScalingGroupsCount:
                     default: 0
                     description: |-
@@ -11417,6 +11456,9 @@ spec:
                     format: int32
                     type: integer
                 type: object
+              updateRevision:
+                description: UpdateRevision is the desired revision.
+                type: string
               updatedReplicas:
                 default: 0
                 description: UpdatedReplicas is the number of replicas that have been

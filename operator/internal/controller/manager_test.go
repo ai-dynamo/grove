@@ -33,6 +33,7 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -355,7 +356,7 @@ func TestCreateManagerOptions(t *testing.T) {
 			apicommon.LabelManagedByKey: apicommon.LabelManagedByValue,
 		})
 
-		// All core Kubernetes types managed by the operator should be filtered.
+		// Shared Kubernetes types managed by the operator should be filtered.
 		// Secret is intentionally excluded — the webhook TLS secret may be created
 		// by Helm without the managed-by label.
 		expectedTypes := []client.Object{
@@ -365,6 +366,7 @@ func TestCreateManagerOptions(t *testing.T) {
 			&rbacv1.Role{},
 			&rbacv1.RoleBinding{},
 			&autoscalingv2.HorizontalPodAutoscaler{},
+			&appsv1.ControllerRevision{},
 		}
 
 		require.NotNil(t, opts.Cache.ByObject)

@@ -418,6 +418,23 @@ PodCliqueSet is a set of PodGangs defining specification on how to spread and ma
 | `status` _[PodCliqueSetStatus](#podcliquesetstatus)_ | Status defines the status of the PodCliqueSet. |  |  |
 
 
+#### PodCliqueSetReplicaRevision
+
+
+
+PodCliqueSetReplicaRevision binds a PodCliqueSet replica to a ControllerRevision.
+
+
+
+_Appears in:_
+- [PodCliqueSetUpdateProgress](#podcliquesetupdateprogress)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `replicaIndex` _integer_ | ReplicaIndex is the zero-based PodCliqueSet replica index. |  |  |
+| `revision` _string_ | Revision is the name of the ControllerRevision selected for the replica. |  |  |
+
+
 #### PodCliqueSetReplicaUpdateProgress
 
 
@@ -471,6 +488,7 @@ _Appears in:_
 | `replicas` _integer_ | Replicas is the number of desired replicas of the PodCliqueSet. | 0 |  |
 | `updateStrategy` _[PodCliqueSetUpdateStrategy](#podcliquesetupdatestrategy)_ | UpdateStrategy defines the strategy for updating replicas when<br />templates change. This applies to both standalone PodCliques and<br />PodCliqueScalingGroups. |  |  |
 | `template` _[PodCliqueSetTemplateSpec](#podcliquesettemplatespec)_ | Template describes the template spec for PodGangs that will be created in the PodCliqueSet. |  |  |
+| `revisionHistoryLimit` _integer_ | RevisionHistoryLimit is the maximum number of revisions that will be maintained in PodCliqueSet's revision<br />history. The history limit excludes all revisions actively referenced by a PodCliqueSet. | 10 | Minimum: 0 <br /> |
 
 
 #### PodCliqueSetStatus
@@ -487,6 +505,9 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `observedGeneration` _integer_ | ObservedGeneration is the most recent generation observed by the controller. |  |  |
+| `currentRevision` _string_ | CurrentRevision is the last revision reached by the workload. |  |  |
+| `updateRevision` _string_ | UpdateRevision is the desired revision. |  |  |
+| `collisionCount` _integer_ | CollisionCount disambiguates revision names. |  |  |
 | `conditions` _[Condition](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#condition-v1-meta) array_ | Conditions represents the latest available observations of the PodCliqueSet by its controller. |  |  |
 | `lastErrors` _[LastError](#lasterror) array_ | LastErrors captures the last errors observed by the controller when reconciling the PodCliqueSet. |  |  |
 | `replicas` _integer_ | Replicas is the total number of PodCliqueSet replicas created. |  |  |
@@ -541,6 +562,7 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
+| `replicaRevisions` _[PodCliqueSetReplicaRevision](#podcliquesetreplicarevision) array_ | ReplicaRevisions binds each PodCliqueSet replica to its source ControllerRevision. |  |  |
 | `updateStartedAt` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#time-v1-meta)_ | UpdateStartedAt is the time at which the update started for the PodCliqueSet. |  |  |
 | `updateEndedAt` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#time-v1-meta)_ | UpdateEndedAt is the time at which Grove does not have any work pending to manifest the update according to the<br />configured update strategy.<br /> - For rolling update strategies where Grove handles the orchestration, while the update is still in progress<br />   it will be nil, and will be set once the update finishes where all child resources are updated by Grove with<br />   the latest specification.<br /> - For the OnDelete strategy, it is set to the same time as UpdateStartedAt, which implies that there is no work<br />	  pending on Grove. |  |  |
 | `updatedPodCliquesCount` _integer_ | UpdatedPodCliquesCount is the number of PodCliques that have been updated to the desired PodCliqueSet<br />generation hash. Recomputed each reconcile from child generation-hash labels. | 0 |  |

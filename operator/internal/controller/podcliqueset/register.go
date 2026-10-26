@@ -25,6 +25,7 @@ import (
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
+	appsv1 "k8s.io/api/apps/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -52,6 +53,12 @@ func (r *Reconciler) RegisterWithManager(mgr manager.Manager) error {
 		For(&grovecorev1alpha1.PodCliqueSet{}, builder.WithPredicates(podCliqueSetPredicate())).
 		Owns(&grovecorev1alpha1.PodGangMap{}, builder.WithPredicates(deleteOnlyPredicate())).
 		Owns(&groveschedulerv1alpha1.PodGang{}, builder.WithPredicates(deleteOnlyPredicate())).
+		// TODO: @renormalize verify the predicate is sufficient.
+		// - CREATE: this can be filtered out since the podcliqueset controller itself creates the resource
+		// - UPDATE: the podcliqueset controller itself updates the ControllerRevision if the revision has to be fast forwarded
+		// - DELETE: the podcliqueset controller should reconcile for deletes since it needs to ensure the right number of revisions are maintained
+		// - GENERIC: this has to be checked
+		Owns(&appsv1.ControllerRevision{}, builder.WithPredicates(deleteOnlyPredicate())).
 		Watches(
 			&grovecorev1alpha1.ClusterTopologyBinding{},
 			handler.EnqueueRequestsFromMapFunc(mapClusterTopologyToPodCliqueSets(r.client)),

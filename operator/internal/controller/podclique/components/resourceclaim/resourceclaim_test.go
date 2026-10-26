@@ -22,10 +22,12 @@ import (
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	"github.com/ai-dynamo/grove/operator/internal/resourceclaim"
+	controllerrevision "github.com/ai-dynamo/grove/operator/internal/utils/controllerrevision"
 
 	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	appsv1 "k8s.io/api/apps/v1"
 	resourcev1 "k8s.io/api/resource/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -52,6 +54,7 @@ func newTestScheme() *runtime.Scheme {
 	scheme := runtime.NewScheme()
 	_ = grovecorev1alpha1.AddToScheme(scheme)
 	_ = resourcev1.AddToScheme(scheme)
+	_ = appsv1.AddToScheme(scheme)
 	return scheme
 }
 
@@ -78,6 +81,7 @@ func newPCS(refs []grovecorev1alpha1.ResourceSharingSpec, templates []grovecorev
 				ResourceClaimTemplates: templates,
 			},
 		},
+		Status: grovecorev1alpha1.PodCliqueSetStatus{UpdateRevision: "test-revision"},
 	}
 }
 
@@ -98,6 +102,27 @@ func newPCLQ(replicas int32) *grovecorev1alpha1.PodClique {
 			Replicas: replicas,
 			RoleName: "worker",
 		},
+	}
+}
+
+func newControllerRevision(t *testing.T, pcs *grovecorev1alpha1.PodCliqueSet) *appsv1.ControllerRevision {
+	t.Helper()
+	data, err := controllerrevision.EncodeTemplate(&pcs.Spec.Template)
+	require.NoError(t, err)
+	controller := true
+	return &appsv1.ControllerRevision{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-revision",
+			Namespace: pcs.Namespace,
+			OwnerReferences: []metav1.OwnerReference{{
+				APIVersion: grovecorev1alpha1.SchemeGroupVersion.String(),
+				Kind:       "PodCliqueSet",
+				Name:       pcs.Name,
+				UID:        pcs.UID,
+				Controller: &controller,
+			}},
+		},
+		Data: runtime.RawExtension{Raw: data},
 	}
 }
 
@@ -232,7 +257,7 @@ func TestSync(t *testing.T) {
 	t.Run("creates AllReplicas and PerReplica RCs", func(t *testing.T) {
 		pcs := newPCS(refs, templates)
 		pclq := newPCLQ(2)
-		cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pcs).Build()
+		cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pcs, newControllerRevision(t, pcs)).Build()
 		r := _resource{client: cl, scheme: scheme}
 
 		_, err := r.Sync(context.Background(), logr.Discard(), pclq, &component.EmptyState{})
@@ -263,7 +288,7 @@ func TestSync(t *testing.T) {
 	t.Run("PerReplica RCs have ownerRef pointing to PCLQ", func(t *testing.T) {
 		pcs := newPCS(refs, templates)
 		pclq := newPCLQ(1)
-		cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pcs).Build()
+		cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pcs, newControllerRevision(t, pcs)).Build()
 		r := _resource{client: cl, scheme: scheme}
 
 		_, err := r.Sync(context.Background(), logr.Discard(), pclq, &component.EmptyState{})
@@ -291,7 +316,7 @@ func TestSync(t *testing.T) {
 		staleLabels[apicommon.LabelPodCliquePodIndex] = "2"
 		staleRC := newRC(pclqName+"-2-gpu-mps", staleLabels, pclqName, "pclq-uid")
 
-		cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pcs, staleRC).Build()
+		cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pcs, newControllerRevision(t, pcs), staleRC).Build()
 		r := _resource{client: cl, scheme: scheme}
 
 		_, err := r.Sync(context.Background(), logr.Discard(), pclq, &component.EmptyState{})
@@ -306,7 +331,7 @@ func TestSync(t *testing.T) {
 	t.Run("no-op when no ResourceSharing specs", func(t *testing.T) {
 		pcs := newPCS(nil, nil)
 		pclq := newPCLQ(2)
-		cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pcs).Build()
+		cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pcs, newControllerRevision(t, pcs)).Build()
 		r := _resource{client: cl, scheme: scheme}
 
 		_, err := r.Sync(context.Background(), logr.Discard(), pclq, &component.EmptyState{})
@@ -329,9 +354,10 @@ func TestSync(t *testing.T) {
 					ResourceClaimTemplates: templates,
 				},
 			},
+			Status: grovecorev1alpha1.PodCliqueSetStatus{UpdateRevision: "test-revision"},
 		}
 		pclq := newPCLQ(2)
-		cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pcs).Build()
+		cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pcs, newControllerRevision(t, pcs)).Build()
 		r := _resource{client: cl, scheme: scheme}
 
 		_, err := r.Sync(context.Background(), logr.Discard(), pclq, &component.EmptyState{})

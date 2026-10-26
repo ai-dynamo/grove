@@ -19,20 +19,26 @@ import (
 	"testing"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
-	apicommonconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
+	apiconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	groveclientscheme "github.com/ai-dynamo/grove/operator/internal/client"
 	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/sync"
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
+	controllerrevision "github.com/ai-dynamo/grove/operator/internal/utils/controllerrevision"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/go-logr/logr"
 	"github.com/samber/lo"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/client-go/tools/record"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
@@ -53,6 +59,52 @@ func TestNew(t *testing.T) {
 	assert.Equal(t, client, resource.client)
 	assert.Equal(t, scheme, resource.scheme)
 	assert.Equal(t, eventRecorder, resource.eventRecorder)
+}
+
+func TestDeletedPCSGIsRecreatedFromReplicaRevision(t *testing.T) {
+	oldConfig := grovecorev1alpha1.PodCliqueScalingGroupConfig{
+		Name: "group", MinAvailable: ptr.To(int32(1)), Replicas: ptr.To(int32(1)), CliqueNames: []string{"worker"},
+	}
+	newConfig := oldConfig
+	newConfig.MinAvailable = ptr.To(int32(2))
+	pcs := testutils.NewPodCliqueSetBuilder("test", "default", uuid.NewUUID()).WithReplicas(2).Build()
+	pcs.Spec.Template.PodCliqueScalingGroupConfigs = []grovecorev1alpha1.PodCliqueScalingGroupConfig{newConfig}
+	oldTemplate := pcs.Spec.Template.DeepCopy()
+	oldTemplate.PodCliqueScalingGroupConfigs = []grovecorev1alpha1.PodCliqueScalingGroupConfig{oldConfig}
+	oldRevision := pcsgTestRevision(t, pcs, "revision-old", oldTemplate)
+	newRevision := pcsgTestRevision(t, pcs, "revision-new", &pcs.Spec.Template)
+	pcs.Status.CurrentRevision = oldRevision.Name
+	pcs.Status.UpdateRevision = newRevision.Name
+	pcs.Status.UpdateProgress = &grovecorev1alpha1.PodCliqueSetUpdateProgress{}
+	pcs.Status.UpdateProgress.ReplicaRevisions = []grovecorev1alpha1.PodCliqueSetReplicaRevision{
+		{ReplicaIndex: 0, Revision: newRevision.Name},
+		{ReplicaIndex: 1, Revision: oldRevision.Name},
+	}
+	cl := testutils.SetupFakeClient(pcs, oldRevision, newRevision)
+	r := &_resource{client: cl, scheme: groveclientscheme.Scheme, eventRecorder: &record.FakeRecorder{}}
+	pcsgKey := client.ObjectKey{Name: "test-1-group", Namespace: pcs.Namespace}
+
+	require.NoError(t, r.doCreateOrUpdate(t.Context(), logr.Discard(), pcs, 1, pcsgKey, newConfig, false))
+	recreated := &grovecorev1alpha1.PodCliqueScalingGroup{}
+	require.NoError(t, cl.Get(t.Context(), pcsgKey, recreated))
+	assert.Equal(t, int32(1), *recreated.Spec.MinAvailable)
+	assert.NotContains(t, recreated.Labels, "controller-revision-hash")
+}
+
+func pcsgTestRevision(t *testing.T, pcs *grovecorev1alpha1.PodCliqueSet, name string, template *grovecorev1alpha1.PodCliqueSetTemplateSpec) *appsv1.ControllerRevision {
+	t.Helper()
+	data, err := controllerrevision.EncodeTemplate(template)
+	require.NoError(t, err)
+	return &appsv1.ControllerRevision{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: pcs.Namespace,
+			OwnerReferences: []metav1.OwnerReference{*metav1.NewControllerRef(pcs, schema.GroupVersionKind{
+				Group: grovecorev1alpha1.SchemeGroupVersion.Group, Version: grovecorev1alpha1.SchemeGroupVersion.Version, Kind: apiconstants.KindPodCliqueSet,
+			})},
+		},
+		Data: runtime.RawExtension{Raw: data},
+	}
 }
 
 // TestGetExistingResourceNames tests getting existing PodCliqueScalingGroup names
@@ -274,10 +326,26 @@ func TestSync(t *testing.T) {
 			scheme := runtime.NewScheme()
 			require.NoError(t, grovecorev1alpha1.AddToScheme(scheme))
 			require.NoError(t, corev1.AddToScheme(scheme))
+			require.NoError(t, appsv1.AddToScheme(scheme))
+
+			revision := pcsgTestRevision(t, tc.pcs, "test-revision", &tc.pcs.Spec.Template)
+			tc.pcs.Status.CurrentRevision = revision.Name
+			tc.pcs.Status.UpdateRevision = revision.Name
+			if tc.pcs.Status.UpdateProgress == nil {
+				tc.pcs.Status.UpdateProgress = &grovecorev1alpha1.PodCliqueSetUpdateProgress{}
+			}
+			tc.pcs.Status.UpdateProgress.ReplicaRevisions = nil
+			for replicaIndex := range tc.pcs.Spec.Replicas {
+				tc.pcs.Status.UpdateProgress.ReplicaRevisions = append(tc.pcs.Status.UpdateProgress.ReplicaRevisions, grovecorev1alpha1.PodCliqueSetReplicaRevision{
+					ReplicaIndex: replicaIndex, Revision: revision.Name,
+				})
+			}
+			existingObjs := append([]runtime.Object{}, tc.existingObjs...)
+			existingObjs = append(existingObjs, revision)
 
 			fakeClient := fake.NewClientBuilder().
 				WithScheme(scheme).
-				WithRuntimeObjects(tc.existingObjs...).
+				WithRuntimeObjects(existingObjs...).
 				Build()
 
 			r := &_resource{
@@ -316,10 +384,10 @@ func TestBuildResourceSetsGenerationHashAnnotationForOnDelete(t *testing.T) {
 	require.NoError(t, grovecorev1alpha1.AddToScheme(scheme))
 	r := &_resource{scheme: scheme}
 
-	err := r.buildResource(pcsg, pcs, 3, pcsgConfig, false)
+	err := r.buildResourceForRevision(pcsg, pcs, 3, pcsgConfig, false)
 
 	require.NoError(t, err)
-	assert.Equal(t, generationHash, pcsg.Annotations[apicommonconstants.AnnotationOnDeletePodCliqueSetGenerationHash])
+	assert.Equal(t, generationHash, pcsg.Annotations[apiconstants.AnnotationOnDeletePodCliqueSetGenerationHash])
 }
 
 func TestBuildResourceOmitsGenerationHashAnnotationForAutomaticUpdate(t *testing.T) {
@@ -336,10 +404,10 @@ func TestBuildResourceOmitsGenerationHashAnnotationForAutomaticUpdate(t *testing
 	require.NoError(t, grovecorev1alpha1.AddToScheme(scheme))
 	r := &_resource{scheme: scheme}
 
-	err := r.buildResource(pcsg, pcs, 3, pcsgConfig, false)
+	err := r.buildResourceForRevision(pcsg, pcs, 3, pcsgConfig, false)
 
 	require.NoError(t, err)
-	assert.NotContains(t, pcsg.Annotations, apicommonconstants.AnnotationOnDeletePodCliqueSetGenerationHash)
+	assert.NotContains(t, pcsg.Annotations, apiconstants.AnnotationOnDeletePodCliqueSetGenerationHash)
 }
 
 func TestSyncUsesSparseReplicaIndices(t *testing.T) {
@@ -352,6 +420,16 @@ func TestSyncUsesSparseReplicaIndices(t *testing.T) {
 					{Name: "workers", Replicas: new(int32(1)), MinAvailable: new(int32(1)), CliqueNames: []string{"worker"}},
 				},
 			},
+		},
+	}
+	revision := pcsgTestRevision(t, pcs, "test-revision", &pcs.Spec.Template)
+	pcs.Status.CurrentRevision = revision.Name
+	pcs.Status.UpdateRevision = revision.Name
+	pcs.Status.UpdateProgress = &grovecorev1alpha1.PodCliqueSetUpdateProgress{
+		ReplicaRevisions: []grovecorev1alpha1.PodCliqueSetReplicaRevision{
+			{ReplicaIndex: 0, Revision: revision.Name},
+			{ReplicaIndex: 2, Revision: revision.Name},
+			{ReplicaIndex: 4, Revision: revision.Name},
 		},
 	}
 	existingPCSGs := []client.Object{
@@ -367,9 +445,11 @@ func TestSyncUsesSparseReplicaIndices(t *testing.T) {
 		testutils.NewPodCliqueScalingGroupBuilder("test-pcs-2-obsolete", "default", pcs.Name, 2).WithOwnerReference("PodCliqueSet", pcs.Name, pcs.UID).WithOptions(func(pcsg *grovecorev1alpha1.PodCliqueScalingGroup) {
 			pcsg.OwnerReferences[0].APIVersion = grovecorev1alpha1.SchemeGroupVersion.String()
 		}).Build(),
+		revision,
 	}
 	scheme := runtime.NewScheme()
 	require.NoError(t, grovecorev1alpha1.AddToScheme(scheme))
+	require.NoError(t, appsv1.AddToScheme(scheme))
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(existingPCSGs...).Build()
 	r := &_resource{client: fakeClient, scheme: scheme, eventRecorder: &record.FakeRecorder{}}
 	state := &pcssync.State{ExpectedReplicaIndices: []int{0, 2, 4}, ScaleInReplicaIndices: []int{1}}
@@ -618,7 +698,7 @@ func TestBuildResource(t *testing.T) {
 				},
 			}
 
-			err := r.buildResource(pcsg, tc.pcs, tc.pcsReplica, *tc.pcsgCfg, false)
+			err := r.buildResourceForRevision(pcsg, tc.pcs, tc.pcsReplica, *tc.pcsgCfg, false)
 			assert.NoError(t, err)
 
 			if tc.validate != nil {
@@ -733,7 +813,7 @@ func TestBuildResource_MNNVLAnnotationPropagation(t *testing.T) {
 				},
 			}
 
-			err := r.buildResource(pcsg, pcs, 0, pcsgCfg, false)
+			err := r.buildResourceForRevision(pcsg, pcs, 0, pcsgCfg, false)
 			require.NoError(t, err)
 
 			if tc.expectedAnnotations != nil {

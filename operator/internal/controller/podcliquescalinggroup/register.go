@@ -58,7 +58,7 @@ func (r *Reconciler) RegisterWithManager(mgr manager.Manager) error {
 			)),
 		).
 		Watches(&grovecorev1alpha1.PodCliqueSet{},
-			handler.EnqueueRequestsFromMapFunc(mapPCSToPCSG()),
+			handler.EnqueueRequestsFromMapFunc(mapPCSToPCSG(r.client)),
 			builder.WithPredicates(podCliqueSetPredicate()),
 		).
 		Watches(&grovecorev1alpha1.PodClique{},
@@ -107,43 +107,32 @@ func podCliqueScalingGroupUpdatePredicate() predicate.Predicate {
 	}
 }
 
-// mapPCSToPCSG maps the PCS replica selected for an automatic update to its PodCliqueScalingGroups.
-// OnDelete propagation is triggered by AnnotationOnDeletePodCliqueSetGenerationHash on each actual PCSG.
-func mapPCSToPCSG() handler.MapFunc {
-	return func(_ context.Context, obj client.Object) []reconcile.Request {
+// mapPCSToPCSG maps a PCS revision change to its actual PodCliqueScalingGroups. During an automatic
+// update, it limits the requests to the selected replica. Listing the actual resources preserves
+// sparse replica identities.
+func mapPCSToPCSG(cl client.Client) handler.MapFunc {
+	return func(ctx context.Context, obj client.Object) []reconcile.Request {
 		pcs, ok := obj.(*grovecorev1alpha1.PodCliqueSet)
-		if !ok || !componentutils.IsRollingUpdateStrategy(pcs) {
-			return nil
-		}
-		pcsReplicaIndex, ok := currentPCSReplicaInUpdate(pcs.Status.UpdateProgress)
 		if !ok {
 			return nil
 		}
-		return pcsgReconcileRequestsForPCSReplicas(pcs, []int32{pcsReplicaIndex})
-	}
-}
-
-func pcsgReconcileRequestsForPCSReplicas(pcs *grovecorev1alpha1.PodCliqueSet, pcsReplicaIndices []int32) []reconcile.Request {
-	pcsgConfigs := pcs.Spec.Template.PodCliqueScalingGroupConfigs
-	if len(pcsgConfigs) == 0 {
-		return nil
-	}
-	requests := make([]reconcile.Request, 0, len(pcsReplicaIndices)*len(pcsgConfigs))
-	for _, pcsReplicaIndex := range pcsReplicaIndices {
-		for _, pcsgConfig := range pcsgConfigs {
-			pcsgName := apicommon.GeneratePodCliqueScalingGroupName(apicommon.ResourceNameReplica{Name: pcs.Name, Replica: int(pcsReplicaIndex)}, pcsgConfig.Name)
-			requests = append(requests, reconcile.Request{
-				NamespacedName: client.ObjectKey{
-					Name:      pcsgName,
-					Namespace: pcs.Namespace,
-				},
-			})
+		pcsgsByReplicaIndex, err := componentutils.GetPCSGsByPCSReplicaIndex(ctx, cl, pcs.ObjectMeta)
+		if err != nil {
+			ctrllogger.FromContext(ctx).Error(err, "Failed to list PodCliqueScalingGroups for PodCliqueSet", "podCliqueSet", client.ObjectKeyFromObject(pcs))
+			return nil
 		}
+
+		pcsgs := lo.Flatten(lo.Values(pcsgsByReplicaIndex))
+		if replicaIndex, selected := currentPCSReplicaInUpdate(pcs.Status.UpdateProgress); componentutils.IsRollingUpdateStrategy(pcs) && selected {
+			pcsgs = pcsgsByReplicaIndex[int(replicaIndex)]
+		}
+		return lo.Map(pcsgs, func(pcsg grovecorev1alpha1.PodCliqueScalingGroup, _ int) reconcile.Request {
+			return reconcile.Request{NamespacedName: client.ObjectKeyFromObject(&pcsg)}
+		})
 	}
-	return requests
 }
 
-// podCliqueSetPredicate filters PodCliqueSet events to updates that select a new PCS replica for an automatic update.
+// podCliqueSetPredicate filters PodCliqueSet events to revision changes and updates that select a new PCS replica.
 func podCliqueSetPredicate() predicate.Predicate {
 	return predicate.Funcs{
 		CreateFunc: func(_ event.CreateEvent) bool { return false },
@@ -151,10 +140,12 @@ func podCliqueSetPredicate() predicate.Predicate {
 		UpdateFunc: func(updateEvent event.UpdateEvent) bool {
 			oldPCS, okOld := updateEvent.ObjectOld.(*grovecorev1alpha1.PodCliqueSet)
 			newPCS, okNew := updateEvent.ObjectNew.(*grovecorev1alpha1.PodCliqueSet)
-			if !okOld || !okNew || !componentutils.IsRollingUpdateStrategy(newPCS) {
+			if !okOld || !okNew {
 				return false
 			}
-			return hasNewPCSReplicaBeenSelectedForUpdate(oldPCS.Status.UpdateProgress, newPCS.Status.UpdateProgress)
+			return oldPCS.Status.UpdateRevision != newPCS.Status.UpdateRevision ||
+				componentutils.IsRollingUpdateStrategy(newPCS) &&
+					hasNewPCSReplicaBeenSelectedForUpdate(oldPCS.Status.UpdateProgress, newPCS.Status.UpdateProgress)
 		},
 		GenericFunc: func(_ event.GenericEvent) bool { return false },
 	}

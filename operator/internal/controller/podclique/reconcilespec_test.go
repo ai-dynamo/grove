@@ -220,10 +220,55 @@ func TestShouldResetOrTriggerUpdate(t *testing.T) {
 			},
 			pclq: &grovecorev1alpha1.PodClique{
 				Status: grovecorev1alpha1.PodCliqueStatus{
+					Replicas:        3,
+					UpdatedReplicas: 3,
 					UpdateProgress: &grovecorev1alpha1.PodCliqueUpdateProgress{
 						PodCliqueSetGenerationHash: "current-hash",
 						UpdateStartedAt:            metav1.Now(),
 						UpdateEndedAt:              ptr.To(metav1.Now()), // completed
+					},
+				},
+			},
+			expected: false,
+		},
+		{
+			name: "completed_update_without_replica_convergence_is_restarted",
+			pcs: &grovecorev1alpha1.PodCliqueSet{
+				Status: grovecorev1alpha1.PodCliqueSetStatus{
+					CurrentGenerationHash: ptr.To("current-hash"),
+				},
+			},
+			pclq: &grovecorev1alpha1.PodClique{
+				Status: grovecorev1alpha1.PodCliqueStatus{
+					Replicas:        3,
+					UpdatedReplicas: 0,
+					UpdateProgress: &grovecorev1alpha1.PodCliqueUpdateProgress{
+						PodCliqueSetGenerationHash: "current-hash",
+						UpdateStartedAt:            metav1.Now(),
+						UpdateEndedAt:              ptr.To(metav1.Now()),
+					},
+				},
+			},
+			expected: true,
+		},
+		{
+			name: "completed_on_delete_update_is_not_restarted_for_old_pods",
+			pcs: &grovecorev1alpha1.PodCliqueSet{
+				Spec: grovecorev1alpha1.PodCliqueSetSpec{
+					UpdateStrategy: &grovecorev1alpha1.PodCliqueSetUpdateStrategy{Type: grovecorev1alpha1.OnDeleteStrategy},
+				},
+				Status: grovecorev1alpha1.PodCliqueSetStatus{
+					CurrentGenerationHash: ptr.To("current-hash"),
+				},
+			},
+			pclq: &grovecorev1alpha1.PodClique{
+				Status: grovecorev1alpha1.PodCliqueStatus{
+					Replicas:        3,
+					UpdatedReplicas: 0,
+					UpdateProgress: &grovecorev1alpha1.PodCliqueUpdateProgress{
+						PodCliqueSetGenerationHash: "current-hash",
+						UpdateStartedAt:            metav1.Now(),
+						UpdateEndedAt:              ptr.To(metav1.Now()),
 					},
 				},
 			},

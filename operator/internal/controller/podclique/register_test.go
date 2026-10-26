@@ -15,7 +15,6 @@
 package podclique
 
 import (
-	"context"
 	"testing"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
@@ -159,26 +158,35 @@ func TestPodPredicateUpdate(t *testing.T) {
 	})
 }
 
-func TestMapPodCliqueSetToPCLQs(t *testing.T) {
-	pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "default", "test-uid").
-		WithReplicas(3).
-		WithStandaloneClique("worker").
-		WithPodCliqueScalingGroupConfig(grovecorev1alpha1.PodCliqueScalingGroupConfig{
-			Name:        "group",
-			CliqueNames: []string{"member"},
-		}).
-		WithUpdateProgress(&grovecorev1alpha1.PodCliqueSetUpdateProgress{
-			CurrentlyUpdating: []grovecorev1alpha1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 4}},
-		}).
-		Build()
+func TestPodCliqueTemplateHashChangedPredicate(t *testing.T) {
+	pred := podCliqueTemplateHashChangedPredicate()
+	oldPCLQ := &grovecorev1alpha1.PodClique{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{apicommon.LabelPodTemplateHash: "old"}}}
+	newPCLQ := oldPCLQ.DeepCopy()
+	newPCLQ.Labels[apicommon.LabelPodTemplateHash] = "new"
 
-	requests := mapPodCliqueSetToPCLQs()(context.Background(), pcs)
-
-	assert.Equal(t, []reconcile.Request{{NamespacedName: types.NamespacedName{Namespace: "default", Name: "test-pcs-4-worker"}}}, requests)
+	assert.True(t, pred.Update(event.UpdateEvent{ObjectOld: oldPCLQ, ObjectNew: newPCLQ}))
+	assert.False(t, pred.Update(event.UpdateEvent{ObjectOld: newPCLQ, ObjectNew: newPCLQ.DeepCopy()}))
 }
 
-// TestPodCliqueSetPredicateSelectedReplicaChanges verifies that the PodCliqueSet watch predicate
-// enqueues PodClique reconciles only when a new PCS replica is selected for update.
+func TestMapPodCliqueSetToPCLQsIncludesGroupedPodCliques(t *testing.T) {
+	pcsUID := types.UID("pcs-uid")
+	pcs := testutils.NewPodCliqueSetBuilder("pcs", "default", pcsUID).Build()
+	standalone := testutils.NewPodCliqueBuilder(pcs.Name, pcsUID, "standalone", pcs.Namespace, 0).Build()
+	grouped := testutils.NewPCSGPodCliqueBuilder("pcs-0-worker-0", pcs.Namespace, pcs.Name, "pcs-0-group", 0, 0).Build()
+	other := testutils.NewPodCliqueBuilder("other", types.UID("other-uid"), "worker", pcs.Namespace, 0).Build()
+	cl := testutils.SetupFakeClient(pcs, standalone, grouped, other)
+
+	requests := mapPodCliqueSetToPCLQs(cl)(t.Context(), pcs)
+
+	assert.ElementsMatch(t, []reconcile.Request{
+		{NamespacedName: types.NamespacedName{Namespace: standalone.Namespace, Name: standalone.Name}},
+		{NamespacedName: types.NamespacedName{Namespace: grouped.Namespace, Name: grouped.Name}},
+	}, requests)
+}
+
+// TestPodCliqueSetPredicateCurrentlyUpdatingReplicaChanges verifies that the PodCliqueSet
+// watch predicate enqueues PodClique reconciles when the replica currently being rolled out
+// changes.
 func TestPodCliqueSetPredicateSelectedReplicaChanges(t *testing.T) {
 	pred, ok := podCliqueSetPredicate().(predicate.Funcs)
 	require.True(t, ok, "predicate must be predicate.Funcs")
@@ -235,6 +243,16 @@ func TestPodCliqueSetPredicateSelectedReplicaChanges(t *testing.T) {
 			assert.Equal(t, tt.want, got)
 		})
 	}
+}
+
+func TestPodCliqueSetPredicateUpdateRevisionChanges(t *testing.T) {
+	pred, ok := podCliqueSetPredicate().(predicate.Funcs)
+	require.True(t, ok, "predicate must be predicate.Funcs")
+
+	oldPCS := &grovecorev1alpha1.PodCliqueSet{Status: grovecorev1alpha1.PodCliqueSetStatus{UpdateRevision: "old"}}
+	newPCS := oldPCS.DeepCopy()
+	newPCS.Status.UpdateRevision = "new"
+	assert.True(t, pred.UpdateFunc(event.UpdateEvent{ObjectOld: oldPCS, ObjectNew: newPCS}))
 }
 
 // TestPodCliqueScalingGroupPredicateGenerationStatusChanges verifies that the
