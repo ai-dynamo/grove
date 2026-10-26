@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	"sigs.k8s.io/yaml"
 )
 
@@ -30,11 +31,18 @@ func TestSchedulerProfileConfig(t *testing.T) {
 	tests := []struct {
 		name     string
 		profiles []interface{}
+		was      bool
 	}{
 		{
 			name: "omitted config",
 			profiles: []interface{}{
 				map[string]interface{}{"name": "default-scheduler"},
+			},
+		},
+		{
+			name: "null config",
+			profiles: []interface{}{
+				map[string]interface{}{"name": "default-scheduler", "config": nil},
 			},
 		},
 		{
@@ -45,8 +53,15 @@ func TestSchedulerProfileConfig(t *testing.T) {
 		},
 		{
 			name: "configured profile",
+			was:  true,
 			profiles: []interface{}{
 				map[string]interface{}{"name": "default-scheduler", "config": map[string]interface{}{"gangScheduling": true}},
+			},
+		},
+		{
+			name: "another backend with gang scheduling",
+			profiles: []interface{}{
+				map[string]interface{}{"name": "kai-scheduler", "config": map[string]interface{}{"gangScheduling": true}},
 			},
 		},
 		{
@@ -82,7 +97,7 @@ func TestSchedulerProfileConfig(t *testing.T) {
 				require.True(t, ok)
 				assert.Equal(t, expected["name"], string(profile.Name))
 				expectedConfig, configured := expected["config"]
-				if !configured {
+				if !configured || expectedConfig == nil {
 					assert.Nil(t, profile.Config)
 					continue
 				}
@@ -90,6 +105,24 @@ func TestSchedulerProfileConfig(t *testing.T) {
 				var actualConfig map[string]interface{}
 				require.NoError(t, json.Unmarshal(profile.Config.Raw, &actualConfig))
 				assert.Equal(t, expectedConfig, actualConfig)
+			}
+
+			var role rbacv1.ClusterRole
+			require.NoError(t, yaml.UnmarshalStrict([]byte(manifests["grove-charts/templates/clusterrole.yaml"]), &role))
+			var wasRules []rbacv1.PolicyRule
+			for _, rule := range role.Rules {
+				for _, group := range rule.APIGroups {
+					if group == "scheduling.k8s.io" {
+						wasRules = append(wasRules, rule)
+					}
+				}
+			}
+			if tt.was {
+				require.Len(t, wasRules, 1)
+				assert.ElementsMatch(t, []string{"workloads", "podgroups", "compositepodgroups"}, wasRules[0].Resources)
+				assert.ElementsMatch(t, []string{"get", "list", "watch", "create", "patch", "update", "delete"}, wasRules[0].Verbs)
+			} else {
+				assert.Empty(t, wasRules)
 			}
 		})
 	}

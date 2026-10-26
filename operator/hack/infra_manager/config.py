@@ -47,7 +47,7 @@ logger = logging.getLogger(__name__)
 
 
 class ClusterConfig(BaseModel):
-    """k3d cluster lifecycle: creation, registry, sizing, and retry config.
+    """k3d cluster lifecycle and native scheduling test environment settings.
 
     Attributes:
         create: Whether to create the k3d cluster.
@@ -58,6 +58,8 @@ class ClusterConfig(BaseModel):
         api_port: Kubernetes API server port.
         lb_port: Load balancer port mapping (host:container).
         k3s_image: K3s Docker image to use.
+        was_enabled: Enable the WAS test environment: native scheduling APIs on new clusters
+            and gang scheduling in Grove, including when reusing an existing cluster.
         max_retries: Maximum cluster creation retry attempts.
         worker_nodes: Number of worker nodes to create.
         worker_memory: Memory limit per worker node.
@@ -75,6 +77,7 @@ class ClusterConfig(BaseModel):
     api_port: int = Field(default=DEFAULT_API_PORT, ge=1, le=65535)
     lb_port: str = DEFAULT_LB_PORT
     k3s_image: str = DEFAULT_K3S_IMAGE
+    was_enabled: bool = False
     max_retries: int = Field(default=DEFAULT_CLUSTER_CREATE_MAX_RETRIES, ge=1, le=10)
     worker_nodes: int = Field(default=DEFAULT_WORKER_NODES, ge=0, le=100)
     worker_memory: str = Field(default=DEFAULT_WORKER_MEMORY, pattern=r"^\d+[mMgG]?$")
@@ -222,6 +225,7 @@ class SetupConfig(BaseSettings):
       E2E_CLUSTER__CREATE=false
       E2E_CLUSTER__WORKER_NODES=10
       E2E_CLUSTER__REGISTRY=myregistry.io
+      E2E_CLUSTER__WAS_ENABLED=true
       E2E_GROVE__PROFILING=true
       E2E_GROVE__LOCAL__SKAFFOLD_PROFILE=my-profile
       E2E_GROVE__NAMESPACE=grove-system
@@ -239,7 +243,7 @@ class SetupConfig(BaseSettings):
     See Env Var Migration table in the plan for the full mapping.
 
     Attributes:
-        cluster: k3d cluster creation, registry/prepull, and sizing config.
+        cluster: k3d cluster creation, registry/prepull, sizing, and WAS test environment config.
         scheduler: Scheduler backend group (kai, kueue).
         grove: Grove operator behavior and deployment config.
         kwok: KWOK simulated nodes config.

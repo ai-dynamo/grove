@@ -216,6 +216,16 @@ run-e2e-kueue-full: e2e-cluster-up
 	@echo "> Tests passed, cleaning up cluster..."
 	@$(MAKE) e2e-cluster-down
 
+# Run native Workload API scheduling tests on KWOK nodes with Kubernetes 1.37+.
+.PHONY: run-e2e-was-full
+run-e2e-was-full: TEST_PATTERN ?= ^Test_WAS[0-9]
+run-e2e-was-full: export E2E_KWOK__NODE_MEMORY = 256Mi
+run-e2e-was-full: export E2E_CLUSTER__WAS_ENABLED = true
+run-e2e-was-full: export E2E_SCHEDULER__KAI__ENABLED = false
+run-e2e-was-full: export GROVE_E2E_REQUIRE_WAS = true
+run-e2e-was-full:
+	@$(MAKE) run-e2e-full TEST_PATTERN='$(TEST_PATTERN)' E2E_GO_TEST_FLAGS='$(E2E_GO_TEST_FLAGS) -p 1'
+
 # Create a real-node k3d cluster for e2e testing (no KWOK virtual nodes)
 # Uses 30 actual k3d worker containers with 150m memory each.
 # Delegates to e2e-cluster-up with worker/KWOK overrides.
