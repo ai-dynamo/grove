@@ -156,7 +156,7 @@ def _apply_grove_helm_overrides(
     Args:
         operator_dir: Root directory of the Grove operator source tree.
         helm_overrides: List of ``(helm_flag, "key=value")`` tuples, where
-            ``helm_flag`` is ``"--set"`` or ``"--set-string"``.
+            ``helm_flag`` is ``"--set"``, ``"--set-json"``, or ``"--set-string"``.
         grove_namespace: Kubernetes namespace where Grove is installed.
     """
     if not helm_overrides:
@@ -207,15 +207,18 @@ def deploy_grove_operator(
 
     Args:
         grove_cfg: Grove operator configuration with namespace, mode, and profiling settings.
-        cluster_cfg: Cluster configuration for registry resolution.
+        cluster_cfg: Cluster configuration for registry resolution and the WAS test environment.
         operator_dir: Root directory of the Grove operator source tree.
         kueue_enabled: Whether to register the "kueue" scheduler profile via a helm override.
 
     Raises:
         NotImplementedError: If grove_cfg.mode is not "local".
+        ValueError: If WAS and Kueue are both enabled in this test setup.
     """
     if grove_cfg.mode != "local":
         raise NotImplementedError(f"Grove deploy mode {grove_cfg.mode!r} is not yet implemented")
+
+    helm_overrides = collect_grove_helm_overrides(grove_cfg, kueue_enabled, cluster_cfg.was_enabled)
 
     console.print(Panel.fit("Deploying Grove operator", style="bold blue"))
     try:
@@ -247,7 +250,6 @@ def deploy_grove_operator(
 
     _deploy_grove_charts(grove_cfg.local.skaffold_profile, grove_cfg.namespace, operator_dir, images, pull_repo)
 
-    helm_overrides = collect_grove_helm_overrides(grove_cfg, kueue_enabled)
     _apply_grove_helm_overrides(operator_dir, helm_overrides, grove_cfg.namespace)
 
     # Helm overrides (e.g. registering the kueue scheduler profile) change the Deployment spec via
