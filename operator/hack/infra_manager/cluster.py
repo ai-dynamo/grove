@@ -190,12 +190,21 @@ def create_cluster(cfg: ClusterConfig) -> None:
     """Create a k3d cluster with retry logic.
 
     Args:
-        cfg: k3d cluster configuration including retry count.
+        cfg: k3d cluster configuration including retry count and WAS feature gates.
 
     Raises:
         RetryError: If the cluster cannot be created after all retries.
     """
     console.print(Panel.fit("Creating k3d cluster", style="bold blue"))
+    was_args: list[str] = []
+    if cfg.was_enabled:
+        gates = "GenericWorkload=true,CompositePodGroup=true,TopologyAwareWorkloadScheduling=true"
+        was_args = [
+            "--k3s-arg", f"--kube-apiserver-arg=feature-gates={gates}@server:*",
+            "--k3s-arg", f"--kube-scheduler-arg=feature-gates={gates}@server:*",
+            "--k3s-arg", "--kube-controller-manager-arg=feature-gates=GenericWorkload=true@server:*",
+            "--k3s-arg", "--kube-apiserver-arg=runtime-config=scheduling.k8s.io/v1beta1=true,scheduling.k8s.io/v1alpha3=true@server:*",
+        ]
 
     # In DinD, --agents-memory is broken (DinD bind-mounts /proc/meminfo from the host,
     # so k3d sees the full host RAM and ignores the flag). Use kubelet system-reserved
@@ -271,6 +280,7 @@ def create_cluster(cfg: ClusterConfig) -> None:
             "--k3s-node-label",
             "nvidia.com/gpu.deploy.operands=false@agent:*",
             *memory_args,
+            *was_args,
             "--timeout",
             CLUSTER_TIMEOUT,
             "--wait",

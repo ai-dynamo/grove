@@ -209,3 +209,20 @@ def test_env_var_beats_set_override(monkeypatch):
     )
 
     assert cfg.cluster.worker_nodes == 5
+
+
+def test_was_opt_in(monkeypatch):
+    """The WAS test environment is opt-in through cluster config and environment overrides."""
+    cfg = load_setup_config(_E2E_YAML)
+    assert cfg.cluster.was_enabled is False
+
+    cfg = load_setup_config(_E2E_YAML, set_overrides=["cluster.was_enabled=true"])
+    assert cfg.cluster.was_enabled is True
+
+    monkeypatch.setenv("E2E_CLUSTER__WAS_ENABLED", "false")
+    cfg = load_setup_config(_E2E_YAML, set_overrides=["cluster.was_enabled=true"])
+    assert cfg.cluster.was_enabled is False
+
+    monkeypatch.setenv("E2E_CLUSTER__WAS_ENABLED", "true")
+    cfg = load_setup_config(_E2E_YAML, set_overrides=["cluster.was_enabled=false"])
+    assert cfg.cluster.was_enabled is True
