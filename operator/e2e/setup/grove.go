@@ -79,7 +79,7 @@ type helmConfigValues struct {
 
 type helmServerValues struct {
 	Webhooks     configv1beta1.WebhookServer `json:"webhooks"`
-	HealthProbes helmHealthProbeValues        `json:"healthProbes"`
+	HealthProbes helmHealthProbeValues       `json:"healthProbes"`
 }
 
 // helmHealthProbeValues includes the chart-only enable switch in addition to

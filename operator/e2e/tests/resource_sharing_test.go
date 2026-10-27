@@ -43,7 +43,6 @@ const (
 	rsNamespace    = "default"
 )
 
-
 // --- RC name inventories ---
 //
 // Naming convention:

@@ -39,13 +39,13 @@ const pgmReconstructTimeout = 1 * time.Minute
 // PodCliqueScalingGroup was scaled beyond its template is reconstructed from the live scaled replicas,
 // reuses the scale-out epoch so the scaled-out PodGang keeps its name, and leaves running pods intact.
 // Scenario PGMR-1:
-// 1. Initialize a 14-node Grove cluster
-// 2. Deploy workload WL1 (standalone pc-a=2, PCSG sg-x=2 over pc-b+pc-c), verify 10 pods
-// 3. Scale sg-x from 2 to 3, verify 14 pods, and capture the scale-out entry epoch
-// 4. Delete the PodGangMap for replica 0
-// 5. Verify the recreated PodGangMap has anchor sg-x indices [0,1], scale-out sg-x index [2] with the
-//    same epoch, and the standalone pc-a count 2
-// 6. Verify the scaled-out PodGang was not recreated (stable UID) and all 14 pods remain running
+//  1. Initialize a 14-node Grove cluster
+//  2. Deploy workload WL1 (standalone pc-a=2, PCSG sg-x=2 over pc-b+pc-c), verify 10 pods
+//  3. Scale sg-x from 2 to 3, verify 14 pods, and capture the scale-out entry epoch
+//  4. Delete the PodGangMap for replica 0
+//  5. Verify the recreated PodGangMap has anchor sg-x indices [0,1], scale-out sg-x index [2] with the
+//     same epoch, and the standalone pc-a count 2
+//  6. Verify the scaled-out PodGang was not recreated (stable UID) and all 14 pods remain running
 func Test_PGMR1_ReconstructScaledPCSGAfterPodGangMapDelete(t *testing.T) {
 	ctx := t.Context()
 
@@ -181,13 +181,13 @@ func Test_PGMR2_ReconstructScaledStandalonePCLQAfterPodGangMapDelete(t *testing.
 // prior scaling is reconstructed to the same template shape, reusing the anchor epoch from the live
 // anchor PodGang so pods are not stranded.
 // Scenario PGMR-3:
-// 1. Initialize a 14-node Grove cluster
-// 2. Deploy workload WL1, verify 10 pods
-// 3. Capture the anchor epoch
-// 4. Delete the PodGangMap for replica 0
-// 5. Verify the recreated PodGangMap has anchor sg-x indices [0,1], pc-a count 2, an empty scale-out,
-//    and the anchor epoch is reused
-// 6. Verify all 10 pods remain running
+//  1. Initialize a 14-node Grove cluster
+//  2. Deploy workload WL1, verify 10 pods
+//  3. Capture the anchor epoch
+//  4. Delete the PodGangMap for replica 0
+//  5. Verify the recreated PodGangMap has anchor sg-x indices [0,1], pc-a count 2, an empty scale-out,
+//     and the anchor epoch is reused
+//  6. Verify all 10 pods remain running
 func Test_PGMR3_ReconstructFreshBootstrapAfterPodGangMapDelete(t *testing.T) {
 	ctx := t.Context()
 
@@ -301,13 +301,13 @@ func Test_PGMR4_ReconstructAfterScaleInThenPodGangMapDelete(t *testing.T) {
 // both return when the group is scaled back up, so the worker pods schedule again. This is the
 // regression behind an all-PCSG workload that could not scale back from zero.
 // Scenario PGMR-5:
-// 1. Initialize a 4-node Grove cluster
-// 2. Deploy workload WL-PCSG-ONLY (one PCSG worker=1 over worker-ldr+worker-wkr), verify 2 pods
-// 3. Verify the PodGangMap starts with an anchor holding worker index 0 and an empty ScaleOut entry
-// 4. Scale the worker group to 0, below MinAvailable, and verify both entries vanish
-// 5. Scale the worker group back to 1, and verify the anchor holding worker index 0 and the empty
-//    ScaleOut entry are both present again
-// 6. Verify both worker pods are running again
+//  1. Initialize a 4-node Grove cluster
+//  2. Deploy workload WL-PCSG-ONLY (one PCSG worker=1 over worker-ldr+worker-wkr), verify 2 pods
+//  3. Verify the PodGangMap starts with an anchor holding worker index 0 and an empty ScaleOut entry
+//  4. Scale the worker group to 0, below MinAvailable, and verify both entries vanish
+//  5. Scale the worker group back to 1, and verify the anchor holding worker index 0 and the empty
+//     ScaleOut entry are both present again
+//  6. Verify both worker pods are running again
 func Test_PGMR5_RecoverAfterScalingPCSGBelowMinAvailable(t *testing.T) {
 	ctx := t.Context()
 
