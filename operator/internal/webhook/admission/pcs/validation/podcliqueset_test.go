@@ -523,6 +523,73 @@ func TestPodCliqueScalingGroupConfigValidation(t *testing.T) {
 	}
 }
 
+func TestScaleConfigMaxReplicasValidationOnUpdate(t *testing.T) {
+	scalingGroup := func(name string, maxReplicas int32) grovecorev1beta1.PodCliqueScalingGroupConfig {
+		return grovecorev1beta1.PodCliqueScalingGroupConfig{
+			Name:         name,
+			CliqueNames:  []string{name + "-clique"},
+			Replicas:     ptr.To(int32(4)),
+			MinAvailable: ptr.To(int32(1)),
+			ScaleConfig: &grovecorev1beta1.AutoScalingConfig{
+				MinReplicas: ptr.To(int32(4)),
+				MaxReplicas: maxReplicas,
+			},
+		}
+	}
+	newPCS := func(groups ...grovecorev1beta1.PodCliqueScalingGroupConfig) *grovecorev1beta1.PodCliqueSet {
+		pcs := createTestPodCliqueSet("inference")
+		for _, g := range groups {
+			pcs.Spec.Template.Cliques = append(pcs.Spec.Template.Cliques, createPodCliqueTemplate(g.CliqueNames[0]))
+		}
+		pcs.Spec.Template.PodCliqueScalingGroupConfigs = groups
+		return pcs
+	}
+	oldPCS := newPCS(scalingGroup("workers", 2))
+
+	testCases := []struct {
+		description   string
+		pcs           *grovecorev1beta1.PodCliqueSet
+		errorMatchers []testutils.ErrorMatcher
+	}{
+		{
+			description: "unchanged invalid scaleConfig is allowed",
+			pcs:         newPCS(scalingGroup("workers", 2)),
+		},
+		{
+			description: "changed scaleConfig that is still invalid is rejected",
+			pcs:         newPCS(scalingGroup("workers", 3)),
+			errorMatchers: []testutils.ErrorMatcher{
+				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.podCliqueScalingGroups[0].scaleConfig.maxReplicas"},
+			},
+		},
+		{
+			description: "added scaling group with an invalid scaleConfig is rejected",
+			pcs:         newPCS(scalingGroup("workers", 2), scalingGroup("decoders", 2)),
+			errorMatchers: []testutils.ErrorMatcher{
+				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.podCliqueScalingGroups[1].scaleConfig.maxReplicas"},
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.description, func(t *testing.T) {
+			validator := newPCSValidator(tc.pcs, admissionv1.Update, defaultTASConfig(),
+				groveconfigv1beta1.SchedulerConfiguration{
+					Profiles:           []groveconfigv1beta1.SchedulerProfile{{Name: groveconfigv1beta1.SchedulerNameKube}},
+					DefaultProfileName: string(groveconfigv1beta1.SchedulerNameKube),
+				}, nil, testutils.NewDefaultFakeRegistry())
+			validator.oldPCS = oldPCS
+			_, errs := validator.validate()
+
+			if tc.errorMatchers != nil {
+				testutils.AssertErrorMatches(t, errs, tc.errorMatchers)
+			} else {
+				assert.NoError(t, errs.ToAggregate())
+			}
+		})
+	}
+}
+
 func TestPodCliqueUpdateValidation(t *testing.T) {
 	testCases := []struct {
 		name           string

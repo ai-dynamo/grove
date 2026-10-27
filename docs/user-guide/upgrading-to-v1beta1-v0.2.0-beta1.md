@@ -85,6 +85,8 @@ If an object is rejected, its CRD keeps `v1alpha1` in `status.storedVersions` an
 kubectl rollout restart -n <namespace> deploy/grove-operator
 ```
 
+The rewrite does not change the object, so validation rules added after the object was created do not reject it. For example, a PCS whose scaling group has `scaleConfig.maxReplicas` below `scaleConfig.minReplicas` is rewritten, but any change to that `scaleConfig` must fix it.
+
 ## Moving Your Manifests to v1beta1
 
 `kubectl` reads and writes Grove objects as `grove.io/v1beta1` by default. Manifests that still use `grove.io/v1alpha1` keep working, and the API server returns a warning for each request:

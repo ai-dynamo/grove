@@ -103,6 +103,7 @@ func (h *Handler) ValidateUpdate(ctx context.Context, oldObj, newObj runtime.Obj
 	}
 
 	v := newPCSValidator(newPCS, admissionv1.Update, h.tasConfig, h.schedulerConfig, h.client, h.schedRegistry)
+	v.oldPCS = oldPCS
 	warnings, errs := v.validate()
 
 	// Validate MNNVL annotation immutability on PCS metadata and spec (clique templates)
