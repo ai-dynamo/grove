@@ -153,8 +153,7 @@ func main() {
 		handleErrorAndExit(err, cli.ExitErrInitializeManager)
 	}
 
-	setupDoneCh := make(chan struct{})
-	if err = grovectrl.SetupHealthAndReadinessEndpoints(mgr, webhookCertsReadyCh, setupDoneCh); err != nil {
+	if err = grovectrl.SetupHealthAndReadinessEndpoints(mgr, webhookCertsReadyCh); err != nil {
 		logger.Error(err, "failed to set up health and readiness for grove controller manager")
 		handleErrorAndExit(err, cli.ExitErrInitializeManager)
 	}
@@ -162,15 +161,12 @@ func main() {
 	// Certificates need to be generated before the webhooks are started, which can only happen once the manager is started.
 	// Block while generating the certificates, and then start the webhooks.
 	go func() {
+		// The gate is set before the storage migration, so storedVersions of ["v1beta1"] implies that the gate is set.
 		beforeControllers := func(ctx context.Context) error {
-			if err := migrateStorageVersion(ctx, cl); err != nil {
-				return err
-			}
 			if err := setPodGangMigrationGate(cl)(ctx); err != nil {
 				return err
 			}
-			close(setupDoneCh)
-			return nil
+			return migrateStorageVersion(ctx, cl)
 		}
 		if err := grovectrl.RegisterControllersAndWebhooks(ctx, mgr, logger, operatorConfig, webhookCertsReadyCh, schedRegistry, beforeControllers); err != nil {
 			logger.Error(err, "failed to initialize grove controller manager")
@@ -195,10 +191,9 @@ var errMigrateStorageVersion = errors.New("failed to migrate the grove.io object
 
 // migrateStorageVersion rewrites the grove.io objects stored at grove.io/v1alpha1 so they are stored at
 // grove.io/v1beta1, and then removes v1alpha1 from the storedVersions of the CRDs. PodCliqueSets are rewritten
-// through the conversion webhook. The operator Service routes to this replica before it is ready, but the webhook
-// is reachable only once its webhook server serves and the CRDs carry its CA, so the migration is retried.
-// Objects that are rejected when rewritten do not block the controllers: their CRDs keep v1alpha1 in
-// storedVersions, which v1alpha1 still serves, and the next start retries them.
+// through the conversion webhook, which becomes reachable only once this replica is ready and the CRDs carry
+// its CA, so the migration is retried. Objects that are rejected when rewritten do not block the controllers:
+// their CRDs keep v1alpha1 in storedVersions, which v1alpha1 still serves, and the next start retries them.
 func migrateStorageVersion(ctx context.Context, cl client.Client) error {
 	var lastErr error
 	if err := wait.PollUntilContextTimeout(ctx, 2*time.Second, 5*time.Minute, true, func(ctx context.Context) (bool, error) {
@@ -221,8 +216,8 @@ var errSetPodGangMigrationGate = errors.New("failed to set the PodGang migration
 
 // setPodGangMigrationGate closes the PodGang migration gate on legacy PodCliqueSets before the controllers
 // start, so that scaling reconcilers do not race the in-reconcile migration to the epoch-based PodGang scheme.
-// PodCliqueSets are read through the conversion webhook, which becomes reachable once the webhook server of this
-// replica serves and the CRDs carry its CA, so the gate is retried.
+// PodCliqueSets are read through the conversion webhook, which becomes reachable only once this replica is
+// ready and the CRDs carry its CA, so the gate is retried.
 func setPodGangMigrationGate(cl client.Client) func(context.Context) error {
 	return func(ctx context.Context) error {
 		var lastErr error

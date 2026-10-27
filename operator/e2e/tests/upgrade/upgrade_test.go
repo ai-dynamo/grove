@@ -243,6 +243,9 @@ func verifyPodGangMapRecoversAfterScaleBelowMinAvailable(t *testing.T, tc *testc
 // cleared, which the operator does once every replica has migrated to the epoch-based PodGang scheme.
 func waitForMigrationComplete(t *testing.T, tc *testctx.TestContext, pcsNsName types.NamespacedName) {
 	t.Helper()
+	// The condition is also absent before the new operator sets the gate. The operator sets the gate before it
+	// prunes storedVersions, so wait for storedVersions first.
+	waitForStoredVersions(t, tc, grovev1beta1.SchemeGroupVersion.Version)
 	err := wait.PollUntilContextTimeout(t.Context(), defaultPollInterval, defaultPollTimeout, true,
 		func(ctx context.Context) (bool, error) {
 			pcs := &grovev1beta1.PodCliqueSet{}

@@ -90,27 +90,17 @@ func waitForWebhookServer(ctx context.Context, mgr ctrl.Manager) error {
 	return nil
 }
 
-// SetupHealthAndReadinessEndpoints sets up the health and readiness endpoints for the operator. The operator is
-// ready once the webhook server serves and setupDoneCh is closed, which happens after the storage version migration
-// and the PodGang migration gate, so that a rollout does not continue before both are done.
-func SetupHealthAndReadinessEndpoints(mgr ctrl.Manager, webhookCertsReadyCh, setupDoneCh <-chan struct{}) error {
+// SetupHealthAndReadinessEndpoints sets up the health and readiness endpoints for the operator.
+func SetupHealthAndReadinessEndpoints(mgr ctrl.Manager, webhookCertsReadyCh chan struct{}) error {
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
 		return fmt.Errorf("could not setup health check :%w", err)
 	}
 	if err := mgr.AddReadyzCheck("readyz", func(req *http.Request) error {
 		select {
 		case <-webhookCertsReadyCh:
+			return mgr.GetWebhookServer().StartedChecker()(req)
 		default:
 			return errors.New("certificates are not ready yet")
-		}
-		if err := mgr.GetWebhookServer().StartedChecker()(req); err != nil {
-			return err
-		}
-		select {
-		case <-setupDoneCh:
-			return nil
-		default:
-			return errors.New("the storage version migration and the PodGang migration gate are not done yet")
 		}
 	}); err != nil {
 		return fmt.Errorf("could not setup ready check :%w", err)

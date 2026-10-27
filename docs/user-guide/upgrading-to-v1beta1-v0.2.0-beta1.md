@@ -57,9 +57,7 @@ When the new operator starts, it:
 
 The rewrite changes no spec, so no Pod is recreated.
 
-The operator reports ready only after these steps complete, so a rollout does not continue before the stored objects are migrated. The operator Service sets `publishNotReadyAddresses: true`, so the API server can reach the conversion webhook of a pod that is not ready yet.
-
-> **Note:** Between applying the new CRDs and the new operator serving its webhook, requests for PCS objects that need conversion fail, because the operator that serves the conversion webhook is not running yet. With `crdInstaller.enabled=true`, this window is the operator restart.
+> **Note:** Between applying the new CRDs and the new operator becoming ready, requests for PCS objects that need conversion fail, because the operator that serves the conversion webhook is not running yet. With `crdInstaller.enabled=true`, this window is the operator restart.
 
 ## Verifying the Upgrade
 
