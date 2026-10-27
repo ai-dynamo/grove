@@ -657,6 +657,47 @@ func TestBuildResource_StripsTopologyAnnotation(t *testing.T) {
 	assert.False(t, hasTopologyAnnotation)
 }
 
+func TestBuildResource_PicksTemplateByExactName(t *testing.T) {
+	tests := []struct {
+		description string
+		cliqueNames []string
+	}{
+		{
+			description: "standalone clique whose name is a suffix of the member clique name",
+			cliqueNames: []string{"prefill-worker"},
+		},
+		{
+			description: "two member cliques where one name is a suffix of the other",
+			cliqueNames: []string{"worker", "prefill-worker"},
+		},
+	}
+
+	operator := &_resource{scheme: groveclientscheme.Scheme}
+	for _, tc := range tests {
+		t.Run(tc.description, func(t *testing.T) {
+			worker := testutils.NewPodCliqueTemplateSpecBuilder("worker").WithReplicas(5).WithMinAvailable(1).
+				WithPodSpec(corev1.PodSpec{Containers: []corev1.Container{{Name: "main", Image: "worker-image"}}}).Build()
+			prefillWorker := testutils.NewPodCliqueTemplateSpecBuilder("prefill-worker").WithReplicas(2).WithMinAvailable(1).
+				WithPodSpec(corev1.PodSpec{Containers: []corev1.Container{{Name: "main", Image: "prefill-worker-image"}}}).Build()
+			pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "default", "uid").
+				WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder)).
+				WithPodCliqueTemplateSpec(worker).
+				WithPodCliqueTemplateSpec(prefillWorker).
+				Build()
+			pcsg := testutils.NewPodCliqueScalingGroupBuilder("test-pcs-0-sg", "default", "test-pcs", 0).
+				WithMinAvailable(1).
+				WithCliqueNames(tc.cliqueNames).
+				Build()
+			pclq := emptyMemberPodClique("test-pcs-0-sg-0-prefill-worker")
+			ss := &syncSnapshot{pcs: pcs, pcsg: pcsg, pcsReplicaIndex: 0, pgm: newAnchorPodGangMap()}
+
+			require.NoError(t, operator.buildResource(logr.Discard(), ss, 0, pclq, false))
+			assert.Equal(t, int32(2), pclq.Spec.Replicas)
+			assert.Equal(t, "prefill-worker-image", pclq.Spec.PodSpec.Containers[0].Image)
+		})
+	}
+}
+
 func TestSyncPCSGPodIndexOffsetsUsesCurrentReplicaCounts(t *testing.T) {
 	pcs := &grovecorev1alpha1.PodCliqueSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-pcs", Namespace: "default"},
