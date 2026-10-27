@@ -117,7 +117,7 @@ func TestDefaultPodCliqueTemplateSpecs(t *testing.T) {
 			},
 		},
 		{
-			name: "scaleConfig minReplicas defaults to the defaulted replicas when minAvailable is nil and replicas is 0",
+			name: "scaleConfig minReplicas defaults to 0 when minAvailable is nil and replicas is 0",
 			input: []*grovecorev1beta1.PodCliqueTemplateSpec{
 				{
 					Name: "clique1",
@@ -138,7 +138,7 @@ func TestDefaultPodCliqueTemplateSpecs(t *testing.T) {
 				assert.Equal(t, int32(1), result[0].Spec.Replicas)
 				require.NotNil(t, result[0].Spec.ScaleConfig)
 				require.NotNil(t, result[0].Spec.ScaleConfig.MinReplicas)
-				assert.Equal(t, int32(1), *result[0].Spec.ScaleConfig.MinReplicas)
+				assert.Equal(t, int32(0), *result[0].Spec.ScaleConfig.MinReplicas)
 			},
 		},
 		{
@@ -185,7 +185,7 @@ func TestDefaultPodCliqueTemplateSpecs(t *testing.T) {
 			},
 		},
 		{
-			name: "scaleConfig minReplicas defaults to replicas when minAvailable is nil",
+			name: "scaleConfig minReplicas defaults to 0 when minAvailable is nil",
 			input: []*grovecorev1beta1.PodCliqueTemplateSpec{
 				{
 					Name: "clique1",
@@ -204,7 +204,7 @@ func TestDefaultPodCliqueTemplateSpecs(t *testing.T) {
 				require.Len(t, result, 1)
 				require.NotNil(t, result[0].Spec.ScaleConfig)
 				require.NotNil(t, result[0].Spec.ScaleConfig.MinReplicas)
-				assert.Equal(t, int32(5), *result[0].Spec.ScaleConfig.MinReplicas)
+				assert.Equal(t, int32(0), *result[0].Spec.ScaleConfig.MinReplicas)
 			},
 		},
 		{
@@ -309,7 +309,7 @@ func TestDefaultPodCliqueScalingGroupConfigs(t *testing.T) {
 			},
 		},
 		{
-			name: "scaleConfig minReplicas defaults to 1 when minAvailable is nil",
+			name: "scaleConfig minReplicas defaults to 0 when minAvailable is nil",
 			input: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{
 					Name:        "sg1",
@@ -325,7 +325,7 @@ func TestDefaultPodCliqueScalingGroupConfigs(t *testing.T) {
 				require.Len(t, result, 1)
 				require.NotNil(t, result[0].ScaleConfig)
 				require.NotNil(t, result[0].ScaleConfig.MinReplicas)
-				assert.Equal(t, int32(1), *result[0].ScaleConfig.MinReplicas)
+				assert.Equal(t, int32(0), *result[0].ScaleConfig.MinReplicas)
 			},
 		},
 		{

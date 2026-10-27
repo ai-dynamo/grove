@@ -93,7 +93,7 @@ func defaultPodCliqueTemplateSpecs(cliqueSpecs []*grovecorev1beta1.PodCliqueTemp
 		}
 		if cliqueSpec.Spec.ScaleConfig != nil {
 			if cliqueSpec.Spec.ScaleConfig.MinReplicas == nil {
-				defaultedCliqueSpec.Spec.ScaleConfig.MinReplicas = ptr.To(ptr.Deref(defaultedCliqueSpec.Spec.MinAvailable, defaultedCliqueSpec.Spec.Replicas))
+				defaultedCliqueSpec.Spec.ScaleConfig.MinReplicas = ptr.To(ptr.Deref(defaultedCliqueSpec.Spec.MinAvailable, 0))
 			}
 		}
 		// A standalone PodClique carries its own RollingUpdate. A PCSG-owned PodClique is governed by
@@ -114,7 +114,7 @@ func defaultPodCliqueScalingGroupConfigs(scalingGroupConfigs []grovecorev1beta1.
 		// Replicas is already set by kubebuilder default (API server runs before defaulting webhook)
 		if scalingGroupConfig.ScaleConfig != nil {
 			if scalingGroupConfig.ScaleConfig.MinReplicas == nil {
-				defaultedScalingGroupConfig.ScaleConfig.MinReplicas = ptr.To(ptr.Deref(defaultedScalingGroupConfig.MinAvailable, 1))
+				defaultedScalingGroupConfig.ScaleConfig.MinReplicas = ptr.To(ptr.Deref(defaultedScalingGroupConfig.MinAvailable, 0))
 			}
 		}
 		defaultedScalingGroupConfig.RollingUpdate = defaultRollingUpdateConfiguration(defaultedScalingGroupConfig.RollingUpdate, updateStrategy, ptr.Deref(defaultedScalingGroupConfig.MinAvailable, 1))
