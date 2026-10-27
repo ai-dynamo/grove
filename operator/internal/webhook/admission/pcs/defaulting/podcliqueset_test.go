@@ -117,7 +117,7 @@ func TestDefaultPodCliqueTemplateSpecs(t *testing.T) {
 			},
 		},
 		{
-			name: "scaleConfig minReplicas defaults to the defaulted replicas when replicas is 0",
+			name: "scaleConfig minReplicas defaults to the defaulted replicas when minAvailable is nil and replicas is 0",
 			input: []*grovecorev1beta1.PodCliqueTemplateSpec{
 				{
 					Name: "clique1",
@@ -161,7 +161,31 @@ func TestDefaultPodCliqueTemplateSpecs(t *testing.T) {
 			},
 		},
 		{
-			name: "scaleConfig minReplicas defaults to replicas when nil",
+			name: "scaleConfig minReplicas defaults to minAvailable when nil",
+			input: []*grovecorev1beta1.PodCliqueTemplateSpec{
+				{
+					Name: "clique1",
+					Spec: grovecorev1beta1.PodCliqueSpec{
+						Replicas:     5,
+						RoleName:     "role1",
+						MinAvailable: ptr.To(int32(2)),
+						PodSpec:      corev1.PodSpec{},
+						ScaleConfig: &grovecorev1beta1.AutoScalingConfig{
+							MinReplicas: nil,
+							MaxReplicas: 10,
+						},
+					},
+				},
+			},
+			verify: func(t *testing.T, result []*grovecorev1beta1.PodCliqueTemplateSpec) {
+				require.Len(t, result, 1)
+				require.NotNil(t, result[0].Spec.ScaleConfig)
+				require.NotNil(t, result[0].Spec.ScaleConfig.MinReplicas)
+				assert.Equal(t, int32(2), *result[0].Spec.ScaleConfig.MinReplicas)
+			},
+		},
+		{
+			name: "scaleConfig minReplicas defaults to replicas when minAvailable is nil",
 			input: []*grovecorev1beta1.PodCliqueTemplateSpec{
 				{
 					Name: "clique1",
@@ -264,7 +288,28 @@ func TestDefaultPodCliqueScalingGroupConfigs(t *testing.T) {
 		verify func(*testing.T, []grovecorev1beta1.PodCliqueScalingGroupConfig)
 	}{
 		{
-			name: "scaleConfig minReplicas defaults to replicas when nil",
+			name: "scaleConfig minReplicas defaults to minAvailable when nil",
+			input: []grovecorev1beta1.PodCliqueScalingGroupConfig{
+				{
+					Name:         "sg1",
+					CliqueNames:  []string{"clique1", "clique2"},
+					Replicas:     ptr.To(int32(3)),
+					MinAvailable: ptr.To(int32(2)),
+					ScaleConfig: &grovecorev1beta1.AutoScalingConfig{
+						MinReplicas: nil,
+						MaxReplicas: 10,
+					},
+				},
+			},
+			verify: func(t *testing.T, result []grovecorev1beta1.PodCliqueScalingGroupConfig) {
+				require.Len(t, result, 1)
+				require.NotNil(t, result[0].ScaleConfig)
+				require.NotNil(t, result[0].ScaleConfig.MinReplicas)
+				assert.Equal(t, int32(2), *result[0].ScaleConfig.MinReplicas)
+			},
+		},
+		{
+			name: "scaleConfig minReplicas defaults to 1 when minAvailable is nil",
 			input: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{
 					Name:        "sg1",
@@ -280,7 +325,7 @@ func TestDefaultPodCliqueScalingGroupConfigs(t *testing.T) {
 				require.Len(t, result, 1)
 				require.NotNil(t, result[0].ScaleConfig)
 				require.NotNil(t, result[0].ScaleConfig.MinReplicas)
-				assert.Equal(t, int32(3), *result[0].ScaleConfig.MinReplicas)
+				assert.Equal(t, int32(1), *result[0].ScaleConfig.MinReplicas)
 			},
 		},
 		{
@@ -336,18 +381,20 @@ func TestDefaultPodCliqueScalingGroupConfigs(t *testing.T) {
 			name: "multiple scaling groups are all defaulted correctly",
 			input: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{
-					Name:        "sg1",
-					CliqueNames: []string{"clique1"},
-					Replicas:    ptr.To(int32(2)),
+					Name:         "sg1",
+					CliqueNames:  []string{"clique1"},
+					Replicas:     ptr.To(int32(2)),
+					MinAvailable: ptr.To(int32(1)),
 					ScaleConfig: &grovecorev1beta1.AutoScalingConfig{
 						MinReplicas: nil,
 						MaxReplicas: 5,
 					},
 				},
 				{
-					Name:        "sg2",
-					CliqueNames: []string{"clique2"},
-					Replicas:    ptr.To(int32(4)),
+					Name:         "sg2",
+					CliqueNames:  []string{"clique2"},
+					Replicas:     ptr.To(int32(4)),
+					MinAvailable: ptr.To(int32(3)),
 					ScaleConfig: &grovecorev1beta1.AutoScalingConfig{
 						MinReplicas: nil,
 						MaxReplicas: 8,
@@ -357,9 +404,9 @@ func TestDefaultPodCliqueScalingGroupConfigs(t *testing.T) {
 			verify: func(t *testing.T, result []grovecorev1beta1.PodCliqueScalingGroupConfig) {
 				require.Len(t, result, 2)
 				require.NotNil(t, result[0].ScaleConfig.MinReplicas)
-				assert.Equal(t, int32(2), *result[0].ScaleConfig.MinReplicas)
+				assert.Equal(t, int32(1), *result[0].ScaleConfig.MinReplicas)
 				require.NotNil(t, result[1].ScaleConfig.MinReplicas)
-				assert.Equal(t, int32(4), *result[1].ScaleConfig.MinReplicas)
+				assert.Equal(t, int32(3), *result[1].ScaleConfig.MinReplicas)
 			},
 		},
 	}

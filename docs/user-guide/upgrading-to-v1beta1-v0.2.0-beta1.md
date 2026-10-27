@@ -17,6 +17,8 @@ Grove v0.2.0-beta1 introduces `grove.io/v1beta1`, which replaces `grove.io/v1alp
 
 `operator.config.grove.io/v1beta1` has the same fields as `operator.config.grove.io/v1alpha1`.
 
+In both versions, an unset `scaleConfig.minReplicas` of a PodClique or PodCliqueScalingGroup now defaults to its `minAvailable` instead of its `replicas`. Existing PodCliqueSets already have `minReplicas` set, so they keep their value. To keep the old behavior for new PodCliqueSets, set `minReplicas` to `replicas` explicitly.
+
 ## Prerequisites and Constraints
 
 1. Grove v0.1.x is installed. Upgrades from the latest v0.1.x release, v0.1.0-alpha.16, are tested in CI.
