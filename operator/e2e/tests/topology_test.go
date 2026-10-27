@@ -1790,7 +1790,7 @@ func Test_TAS22_PodCliqueSetTopologyCELValidation(t *testing.T) {
 	}
 
 	// legacyPCS returns the grove.io/v1alpha1 form of a PodCliqueSet, on which the deprecated packDomain is still
-	// served and rejected for new workloads by the v1alpha1 schema.
+	// served.
 	legacyPCS := func(pcs *corev1beta1.PodCliqueSet, setPackDomain func(*corev1alpha1.PodCliqueSet)) *corev1alpha1.PodCliqueSet {
 		out := &corev1alpha1.PodCliqueSet{}
 		if err := corev1alpha1.Convert_v1beta1_PodCliqueSet_To_v1alpha1_PodCliqueSet(pcs, out, nil); err != nil {
@@ -1811,8 +1811,6 @@ func Test_TAS22_PodCliqueSetTopologyCELValidation(t *testing.T) {
 		TopologyName: "grove-topology",
 		Pack:         &corev1beta1.TopologyPackConstraint{RequiredDomain: corev1beta1.TopologyDomainRack},
 	}
-	deprecatedPackDomainMsg := "packDomain is deprecated and cannot be used on new workloads; use pack.required"
-
 	tests := []struct {
 		name        string
 		pcs         client.Object
@@ -1832,35 +1830,6 @@ func Test_TAS22_PodCliqueSetTopologyCELValidation(t *testing.T) {
 				Pack:         &corev1beta1.TopologyPackConstraint{},
 			}),
 			errContains: []string{"pack must specify at least one of required or preferred"},
-		},
-		{
-			name: "deprecated packDomain on v1alpha1 PCS create",
-			pcs: legacyPCS(newPCS("tas22-legacy-pcs", &corev1beta1.TopologyConstraint{TopologyName: "grove-topology"}),
-				func(pcs *corev1alpha1.PodCliqueSet) {
-					pcs.Spec.Template.TopologyConstraint.PackDomain = corev1alpha1.TopologyDomainHost
-				}),
-			errContains: []string{deprecatedPackDomainMsg},
-		},
-		{
-			name: "deprecated packDomain with pack.required on v1alpha1",
-			pcs: legacyPCS(newPCS("tas22-ambiguous-pack", rackConstraint.DeepCopy()), func(pcs *corev1alpha1.PodCliqueSet) {
-				pcs.Spec.Template.TopologyConstraint.PackDomain = corev1alpha1.TopologyDomainHost
-			}),
-			errContains: []string{"must not set both pack.required and deprecated packDomain"},
-		},
-		{
-			name: "deprecated packDomain on v1alpha1 PodClique create",
-			pcs: legacyPCS(newPCS("tas22-legacy-pclq", rackConstraint.DeepCopy()), func(pcs *corev1alpha1.PodCliqueSet) {
-				pcs.Spec.Template.Cliques[0].TopologyConstraint = &corev1alpha1.TopologyConstraint{PackDomain: corev1alpha1.TopologyDomainHost}
-			}),
-			errContains: []string{deprecatedPackDomainMsg},
-		},
-		{
-			name: "deprecated packDomain on v1alpha1 PodCliqueScalingGroup create",
-			pcs: legacyPCS(withScalingGroup(newPCS("tas22-legacy-pcsg", rackConstraint.DeepCopy())), func(pcs *corev1alpha1.PodCliqueSet) {
-				pcs.Spec.Template.PodCliqueScalingGroupConfigs[0].TopologyConstraint = &corev1alpha1.TopologyConstraint{PackDomain: corev1alpha1.TopologyDomainHost}
-			}),
-			errContains: []string{deprecatedPackDomainMsg},
 		},
 	}
 
@@ -1888,6 +1857,72 @@ func Test_TAS22_PodCliqueSetTopologyCELValidation(t *testing.T) {
 	})
 	if err := tc.Client.Create(ctx, validPreferredOnlyPCS); err != nil {
 		t.Fatalf("Expected preferred-only pack PodCliqueSet create to pass CEL validation, got: %v", err)
+	}
+
+	Logger.Info("5. Verify the deprecated packDomain set through grove.io/v1alpha1 is stored as pack.required")
+	legacyTests := []struct {
+		name string
+		pcs  *corev1alpha1.PodCliqueSet
+		// packOf returns the topology constraint that carries the converted packDomain.
+		packOf       func(*corev1beta1.PodCliqueSet) *corev1beta1.TopologyConstraint
+		wantRequired corev1beta1.TopologyDomain
+	}{
+		{
+			name: "packDomain on the PodCliqueSet",
+			pcs: legacyPCS(newPCS("tas22-legacy-pcs", &corev1beta1.TopologyConstraint{TopologyName: "grove-topology"}),
+				func(pcs *corev1alpha1.PodCliqueSet) {
+					pcs.Spec.Template.TopologyConstraint.PackDomain = corev1alpha1.TopologyDomainHost
+				}),
+			packOf: func(pcs *corev1beta1.PodCliqueSet) *corev1beta1.TopologyConstraint {
+				return pcs.Spec.Template.TopologyConstraint
+			},
+			wantRequired: corev1beta1.TopologyDomainHost,
+		},
+		{
+			name: "packDomain together with pack.required keeps pack.required",
+			pcs: legacyPCS(newPCS("tas22-ambiguous-pack", rackConstraint.DeepCopy()), func(pcs *corev1alpha1.PodCliqueSet) {
+				pcs.Spec.Template.TopologyConstraint.PackDomain = corev1alpha1.TopologyDomainHost
+			}),
+			packOf: func(pcs *corev1beta1.PodCliqueSet) *corev1beta1.TopologyConstraint {
+				return pcs.Spec.Template.TopologyConstraint
+			},
+			wantRequired: corev1beta1.TopologyDomainRack,
+		},
+		{
+			name: "packDomain on a PodClique",
+			pcs: legacyPCS(newPCS("tas22-legacy-pclq", rackConstraint.DeepCopy()), func(pcs *corev1alpha1.PodCliqueSet) {
+				pcs.Spec.Template.Cliques[0].TopologyConstraint = &corev1alpha1.TopologyConstraint{PackDomain: corev1alpha1.TopologyDomainHost}
+			}),
+			packOf: func(pcs *corev1beta1.PodCliqueSet) *corev1beta1.TopologyConstraint {
+				return pcs.Spec.Template.Cliques[0].TopologyConstraint
+			},
+			wantRequired: corev1beta1.TopologyDomainHost,
+		},
+		{
+			name: "packDomain on a PodCliqueScalingGroup",
+			pcs: legacyPCS(withScalingGroup(newPCS("tas22-legacy-pcsg", rackConstraint.DeepCopy())), func(pcs *corev1alpha1.PodCliqueSet) {
+				pcs.Spec.Template.PodCliqueScalingGroupConfigs[0].TopologyConstraint = &corev1alpha1.TopologyConstraint{PackDomain: corev1alpha1.TopologyDomainHost}
+			}),
+			packOf: func(pcs *corev1beta1.PodCliqueSet) *corev1beta1.TopologyConstraint {
+				return pcs.Spec.Template.PodCliqueScalingGroupConfigs[0].TopologyConstraint
+			},
+			wantRequired: corev1beta1.TopologyDomainHost,
+		},
+	}
+	for _, tcData := range legacyTests {
+		t.Run(tcData.name, func(t *testing.T) {
+			if err := tc.Client.Create(ctx, tcData.pcs); err != nil {
+				t.Fatalf("Expected v1alpha1 PodCliqueSet with packDomain to be accepted, got: %v", err)
+			}
+			stored := &corev1beta1.PodCliqueSet{}
+			if err := tc.Client.Get(ctx, client.ObjectKeyFromObject(tcData.pcs), stored); err != nil {
+				t.Fatalf("Failed to get PodCliqueSet %s at v1beta1: %v", tcData.pcs.Name, err)
+			}
+			constraint := tcData.packOf(stored)
+			if constraint == nil || constraint.Pack == nil || constraint.Pack.RequiredDomain != tcData.wantRequired {
+				t.Fatalf("Expected pack.required %q, got topologyConstraint %+v", tcData.wantRequired, constraint)
+			}
+		})
 	}
 
 	Logger.Info("TAS22: PodCliqueSet topology CEL validation test completed successfully!")

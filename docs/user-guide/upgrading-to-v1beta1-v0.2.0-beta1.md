@@ -57,7 +57,9 @@ When the new operator starts, it:
 
 The rewrite changes no spec, so no Pod is recreated.
 
-> **Note:** Between applying the new CRDs and the new operator becoming ready, requests for PCS objects that need conversion fail, because the operator that serves the conversion webhook is not running yet. With `crdInstaller.enabled=true`, this window is the operator restart.
+The operator reports ready only after these steps complete, so a rollout does not continue before the stored objects are migrated. The operator Service sets `publishNotReadyAddresses: true`, so the API server can reach the conversion webhook of a pod that is not ready yet.
+
+> **Note:** Between applying the new CRDs and the new operator serving its webhook, requests for PCS objects that need conversion fail, because the operator that serves the conversion webhook is not running yet. With `crdInstaller.enabled=true`, this window is the operator restart.
 
 ## Verifying the Upgrade
 
@@ -154,6 +156,8 @@ cd operator
 go run ./cmd/install-crds prepare-downgrade
 ```
 
+The command uses the cluster of `--kubeconfig`, then of `KUBECONFIG`, then the in-cluster config when it runs in a Pod, and finally `~/.kube/config`. When you run it from inside a Pod against another cluster, pass `--kubeconfig <path>` before `prepare-downgrade`.
+
 Alternatively, if the release was installed with `crdInstaller.enabled=true`, run the command in the cluster as the operator's ServiceAccount, which then has the required permissions:
 
 ```yaml
@@ -206,7 +210,6 @@ Each line shows `v1alpha1 ["v1alpha1"]`. Any `packDomain` that existed before th
 
 ## Limitations
 
-- **`packDomain` cannot be set on new objects.** As in v0.1.x, a new `grove.io/v1alpha1` PCS with `packDomain` is rejected. Use `pack.required`.
-- **Re-applying a manifest that sets `packDomain` fails.** After the upgrade, an existing PCS reads with `pack.required` instead of `packDomain`, so `kubectl apply` of a `grove.io/v1alpha1` manifest that still sets `packDomain` produces an object with both fields, which is rejected. Replace `packDomain` with `pack.required` in your manifests.
+- **`packDomain` is converted, not stored.** A `grove.io/v1alpha1` PCS that sets `packDomain` is accepted, and Grove stores the value as `pack.required`. If both are set, `pack.required` is kept and `packDomain` is dropped. Reading the PCS back at `v1alpha1` shows `pack.required`, so tools that compare the applied manifest with the live object report a difference until you replace `packDomain` with `pack.required` in your manifests.
 - **The deprecated versions are removed in a later release.** A future release stops serving `grove.io/v1alpha1` and stops accepting `operator.config.grove.io/v1alpha1`. Move your manifests and configuration to `v1beta1` before then.
 - **A downgrade needs the v0.2.0-beta1 operator.** `prepare-downgrade` cannot run after the operator is removed, because PCS objects are converted by its conversion webhook.

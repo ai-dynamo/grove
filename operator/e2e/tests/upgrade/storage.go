@@ -20,6 +20,7 @@ import (
 	"context"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"testing"
 
@@ -142,8 +143,17 @@ func runPrepareDowngrade(t *testing.T) {
 	rootDir, err := setup.GetOperatorRootDir()
 	require.NoError(t, err, "locate current root directory")
 
+	// The test cluster is the one in the kubeconfig. Without an explicit --kubeconfig, a run inside a Pod, such as a
+	// CI runner, would prefer the in-cluster config of that Pod.
+	kubeconfig := os.Getenv("KUBECONFIG")
+	if kubeconfig == "" {
+		home, err := os.UserHomeDir()
+		require.NoError(t, err, "locate the home directory")
+		kubeconfig = filepath.Join(home, ".kube", "config")
+	}
+
 	testctx.Logger.Info("running grove-install-crds prepare-downgrade")
-	cmd := exec.CommandContext(t.Context(), "go", "run", "./cmd/install-crds", "prepare-downgrade")
+	cmd := exec.CommandContext(t.Context(), "go", "run", "./cmd/install-crds", "--kubeconfig", kubeconfig, "prepare-downgrade")
 	cmd.Dir = rootDir
 	cmd.Env = os.Environ()
 	output, err := cmd.CombinedOutput()

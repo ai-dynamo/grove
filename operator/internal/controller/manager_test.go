@@ -609,8 +609,10 @@ func TestSetupHealthAndReadinessEndpoints(t *testing.T) {
 		mgr := &mockManager{}
 		certsReadyCh := make(chan struct{})
 		close(certsReadyCh) // Certificates are ready
+		setupDoneCh := make(chan struct{})
+		close(setupDoneCh)
 
-		err := SetupHealthAndReadinessEndpoints(mgr, certsReadyCh)
+		err := SetupHealthAndReadinessEndpoints(mgr, certsReadyCh, setupDoneCh)
 		require.NoError(t, err)
 
 		// Verify healthz check was added
@@ -641,7 +643,7 @@ func TestSetupHealthAndReadinessEndpoints(t *testing.T) {
 		mgr := &mockManager{}
 		certsReadyCh := make(chan struct{}) // Not closed, certificates not ready
 
-		err := SetupHealthAndReadinessEndpoints(mgr, certsReadyCh)
+		err := SetupHealthAndReadinessEndpoints(mgr, certsReadyCh, make(chan struct{}))
 		require.NoError(t, err)
 
 		readyCheck := mgr.readyChecks["readyz"]
@@ -660,7 +662,7 @@ func TestSetupHealthAndReadinessEndpoints(t *testing.T) {
 		certsReadyCh := make(chan struct{})
 		close(certsReadyCh) // Certificates are ready
 
-		err := SetupHealthAndReadinessEndpoints(mgr, certsReadyCh)
+		err := SetupHealthAndReadinessEndpoints(mgr, certsReadyCh, make(chan struct{}))
 		require.NoError(t, err)
 
 		readyCheck := mgr.readyChecks["readyz"]
@@ -673,6 +675,25 @@ func TestSetupHealthAndReadinessEndpoints(t *testing.T) {
 		err = readyCheck(req)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "webhook server not started")
+	})
+
+	// Test readiness check while the storage version migration and the PodGang migration gate are not done
+	t.Run("setup not done", func(t *testing.T) {
+		mgr := &mockManager{}
+		certsReadyCh := make(chan struct{})
+		close(certsReadyCh)
+
+		err := SetupHealthAndReadinessEndpoints(mgr, certsReadyCh, make(chan struct{}))
+		require.NoError(t, err)
+
+		readyCheck := mgr.readyChecks["readyz"]
+		require.NotNil(t, readyCheck)
+
+		webhookServer := mgr.GetWebhookServer().(*mockWebhookServer)
+		webhookServer.started = true
+		err = readyCheck(httptest.NewRequest(http.MethodGet, "/readyz", nil))
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "not done yet")
 	})
 }
 

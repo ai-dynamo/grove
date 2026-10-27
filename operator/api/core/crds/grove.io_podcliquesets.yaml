@@ -9461,7 +9461,7 @@ spec:
                                 Example: "rack" means each replica independently placed within one rack.
                                 Note: Does NOT constrain all replicas to the same rack together.
                                 Different replicas can be in different topology domains.
-                                Deprecated: use Pack.RequiredDomain.
+                                Deprecated: use Pack.RequiredDomain. It is stored as Pack.RequiredDomain, which takes precedence when both are set.
                               maxLength: 63
                               minLength: 1
                               pattern: ^[a-z][a-z0-9-]*$
@@ -9484,10 +9484,6 @@ spec:
                               packDomain
                             reason: FieldValueRequired
                             rule: has(self.pack) || has(self.packDomain)
-                          - fieldPath: .pack.required
-                            message: must not set both pack.required and deprecated
-                              packDomain
-                            rule: '!(has(self.packDomain) && has(self.pack) && has(self.pack.required))'
                       required:
                       - name
                       - spec
@@ -10194,7 +10190,7 @@ spec:
                                 Example: "rack" means each replica independently placed within one rack.
                                 Note: Does NOT constrain all replicas to the same rack together.
                                 Different replicas can be in different topology domains.
-                                Deprecated: use Pack.RequiredDomain.
+                                Deprecated: use Pack.RequiredDomain. It is stored as Pack.RequiredDomain, which takes precedence when both are set.
                               maxLength: 63
                               minLength: 1
                               pattern: ^[a-z][a-z0-9-]*$
@@ -10217,10 +10213,6 @@ spec:
                               packDomain
                             reason: FieldValueRequired
                             rule: has(self.pack) || has(self.packDomain)
-                          - fieldPath: .pack.required
-                            message: must not set both pack.required and deprecated
-                              packDomain
-                            rule: '!(has(self.packDomain) && has(self.pack) && has(self.pack.required))'
                       required:
                       - cliqueNames
                       - name
@@ -11029,7 +11021,7 @@ spec:
                           Example: "rack" means each replica independently placed within one rack.
                           Note: Does NOT constrain all replicas to the same rack together.
                           Different replicas can be in different topology domains.
-                          Deprecated: use Pack.RequiredDomain.
+                          Deprecated: use Pack.RequiredDomain. It is stored as Pack.RequiredDomain, which takes precedence when both are set.
                         maxLength: 63
                         minLength: 1
                         pattern: ^[a-z][a-z0-9-]*$
@@ -11052,9 +11044,6 @@ spec:
                         packDomain
                       reason: FieldValueRequired
                       rule: has(self.pack) || has(self.packDomain)
-                    - fieldPath: .pack.required
-                      message: must not set both pack.required and deprecated packDomain
-                      rule: '!(has(self.packDomain) && has(self.pack) && has(self.pack.required))'
                 required:
                 - cliques
                 type: object
@@ -11363,29 +11352,6 @@ spec:
         required:
         - spec
         type: object
-        x-kubernetes-validations:
-        - fieldPath: .spec.template.topologyConstraint.packDomain
-          message: packDomain is deprecated and cannot be used on new workloads; use
-            pack.required
-          optionalOldSelf: true
-          reason: FieldValueForbidden
-          rule: oldSelf.hasValue() || !has(self.spec.template.topologyConstraint)
-            || !has(self.spec.template.topologyConstraint.packDomain)
-        - fieldPath: .spec.template.cliques
-          message: packDomain is deprecated and cannot be used on new workloads; use
-            pack.required
-          optionalOldSelf: true
-          reason: FieldValueForbidden
-          rule: oldSelf.hasValue() || !has(self.spec.template.cliques) || self.spec.template.cliques.all(c,
-            !has(c.topologyConstraint) || !has(c.topologyConstraint.packDomain))
-        - fieldPath: .spec.template.podCliqueScalingGroups
-          message: packDomain is deprecated and cannot be used on new workloads; use
-            pack.required
-          optionalOldSelf: true
-          reason: FieldValueForbidden
-          rule: oldSelf.hasValue() || !has(self.spec.template.podCliqueScalingGroups)
-            || self.spec.template.podCliqueScalingGroups.all(g, !has(g.topologyConstraint)
-            || !has(g.topologyConstraint.packDomain))
     served: true
     storage: false
     subresources:

@@ -11,6 +11,8 @@ metadata:
   {{- end }}
 spec:
   type: {{ .Values.service.type }}
+  {{- /* The operator is ready only after it migrates the stored objects, which needs its conversion webhook. */}}
+  publishNotReadyAddresses: true
   selector:
 {{- include "operator.deployment.matchLabels" . | nindent 4 }}
   ports:
