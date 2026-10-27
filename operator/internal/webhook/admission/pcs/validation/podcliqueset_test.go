@@ -424,13 +424,13 @@ func TestPodCliqueScalingGroupConfigValidation(t *testing.T) {
 		{
 			description: "Valid ScaleConfig.MaxReplicas == MinReplicas",
 			pcsName:     "inference",
-			scalingGroups: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+			scalingGroups: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{
 					Name:         "workers",
 					CliqueNames:  []string{"prefill"},
 					Replicas:     ptr.To(int32(4)),
 					MinAvailable: ptr.To(int32(1)),
-					ScaleConfig: &grovecorev1alpha1.AutoScalingConfig{
+					ScaleConfig: &grovecorev1beta1.AutoScalingConfig{
 						MinReplicas: ptr.To(int32(4)),
 						MaxReplicas: 4,
 					},
@@ -441,13 +441,13 @@ func TestPodCliqueScalingGroupConfigValidation(t *testing.T) {
 		{
 			description: "Invalid ScaleConfig.MaxReplicas < MinReplicas",
 			pcsName:     "inference",
-			scalingGroups: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+			scalingGroups: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{
 					Name:         "workers",
 					CliqueNames:  []string{"prefill"},
 					Replicas:     ptr.To(int32(4)),
 					MinAvailable: ptr.To(int32(1)),
-					ScaleConfig: &grovecorev1alpha1.AutoScalingConfig{
+					ScaleConfig: &grovecorev1beta1.AutoScalingConfig{
 						MinReplicas: ptr.To(int32(4)),
 						MaxReplicas: 2,
 					},
@@ -461,13 +461,13 @@ func TestPodCliqueScalingGroupConfigValidation(t *testing.T) {
 		{
 			description: "Invalid ScaleConfig.MaxReplicas of zero",
 			pcsName:     "inference",
-			scalingGroups: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+			scalingGroups: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{
 					Name:         "workers",
 					CliqueNames:  []string{"prefill"},
 					Replicas:     ptr.To(int32(1)),
 					MinAvailable: ptr.To(int32(1)),
-					ScaleConfig: &grovecorev1alpha1.AutoScalingConfig{
+					ScaleConfig: &grovecorev1beta1.AutoScalingConfig{
 						MinReplicas: ptr.To(int32(1)),
 						MaxReplicas: 0,
 					},
