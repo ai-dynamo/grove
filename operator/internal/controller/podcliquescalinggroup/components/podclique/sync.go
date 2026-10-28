@@ -300,50 +300,51 @@ func getPCSGPodIndexOffset(ss *syncSnapshot, pcsgReplicaIndex int, cliqueName st
 
 // triggerDeletionOfExcessPCSGReplicas removes PCSG replicas that exceed the desired replica count due to scale-down
 func (r _resource) triggerDeletionOfExcessPCSGReplicas(ctx context.Context, logger logr.Logger, ss *syncSnapshot) error {
-	existingPCSGReplicas := getExistingNonTerminatingPCSGReplicas(ss.existingPCLQs)
-	// Check if the number of existing PodCliques is greater than expected, if so, we need to delete the extra ones.
-	diff := existingPCSGReplicas - int(ss.pcsg.Spec.Replicas)
-	if diff > 0 {
-		pcsgObjectKey := client.ObjectKeyFromObject(ss.pcsg)
-		logger.Info("Found more PodCliques than expected, triggering deletion of excess PodCliques", "expected", int(ss.pcsg.Spec.Replicas), "existing", existingPCSGReplicas, "diff", diff)
-		reason := "Delete excess PodCliqueScalingGroup replicas"
-		replicaIndicesToDelete := computePCSGReplicasToDelete(existingPCSGReplicas, int(ss.pcsg.Spec.Replicas))
-		deletionTasks, err := r.createDeleteTasks(logger, ss, replicaIndicesToDelete, reason)
-		if err != nil {
-			return err
-		}
-		if err := r.triggerDeletionOfPodCliques(ctx, logger, pcsgObjectKey, deletionTasks); err != nil {
-			return err
-		}
-
-		return ss.refreshExistingPCLQs(ss.pcsg)
+	replicaIndicesToDelete := computeExcessPCSGReplicaIndices(ss.existingPCLQs, int(ss.pcsg.Spec.Replicas))
+	if len(replicaIndicesToDelete) == 0 {
+		return nil
 	}
-	return nil
+	pcsgObjectKey := client.ObjectKeyFromObject(ss.pcsg)
+	logger.Info("Found PodCliques whose replica index is at or above the desired replica count, triggering deletion of excess PodCliques", "expected", int(ss.pcsg.Spec.Replicas), "excessReplicaIndices", replicaIndicesToDelete)
+	reason := "Delete excess PodCliqueScalingGroup replicas"
+	deletionTasks, err := r.createDeleteTasks(logger, ss, replicaIndicesToDelete, reason)
+	if err != nil {
+		return err
+	}
+	if err := r.triggerDeletionOfPodCliques(ctx, logger, pcsgObjectKey, deletionTasks); err != nil {
+		return err
+	}
+
+	return ss.refreshExistingPCLQs(ss.pcsg)
 }
 
-// getExistingNonTerminatingPCSGReplicas counts the number of unique PCSG replica indices from non-terminating PodCliques
-func getExistingNonTerminatingPCSGReplicas(existingPCLQs []grovecorev1alpha1.PodClique) int {
-	existingIndices := make([]string, 0, len(existingPCLQs))
+// computeExcessPCSGReplicaIndices returns the distinct replica indices of non-terminating PodCliques whose index is at
+// or above the desired replica count. The desired PCSG replicas always occupy indices [0, expectedReplicas), so any
+// index at or above that bound is excess and must be deleted on scale-down. Selecting by the actual index, rather than
+// by a count of live replicas, keeps a terminating lower replica from shifting which indices look excess: a sparse set
+// such as {0, 2, 3} scaling down to 2 still deletes 2 and 3 instead of leaving a high replica behind.
+func computeExcessPCSGReplicaIndices(existingPCLQs []grovecorev1alpha1.PodClique, expectedReplicas int) []string {
+	seen := make(map[string]struct{})
+	excessIndices := make([]string, 0, len(existingPCLQs))
 	for _, pclq := range existingPCLQs {
 		if k8sutils.IsResourceTerminating(pclq.ObjectMeta) {
 			continue
 		}
-		pcsgReplicaIndex, ok := pclq.Labels[apicommon.LabelPodCliqueScalingGroupReplicaIndex]
+		replicaIndexValue, ok := pclq.Labels[apicommon.LabelPodCliqueScalingGroupReplicaIndex]
 		if !ok {
 			continue
 		}
-		existingIndices = append(existingIndices, pcsgReplicaIndex)
+		replicaIndex, err := strconv.Atoi(replicaIndexValue)
+		if err != nil || replicaIndex < expectedReplicas {
+			continue
+		}
+		if _, alreadySeen := seen[replicaIndexValue]; alreadySeen {
+			continue
+		}
+		seen[replicaIndexValue] = struct{}{}
+		excessIndices = append(excessIndices, replicaIndexValue)
 	}
-	return len(lo.Uniq(existingIndices))
-}
-
-// computePCSGReplicasToDelete generates the replica indices that should be deleted when scaling down
-func computePCSGReplicasToDelete(existingReplicas, expectedReplicas int) []string {
-	indices := make([]string, 0, existingReplicas-expectedReplicas)
-	for i := expectedReplicas; i < existingReplicas; i++ {
-		indices = append(indices, strconv.Itoa(i))
-	}
-	return indices
+	return excessIndices
 }
 
 // createExpectedPCLQs creates any missing PodCliques needed to satisfy the desired PCSG replica configuration
