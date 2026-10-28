@@ -33,7 +33,8 @@ require (
 )
 
 require (
-	go.opentelemetry.io/otel/sdk v1.45.0 // indirect
+	github.com/onsi/ginkgo/v2 v2.32.1 // indirect
+	github.com/onsi/gomega v1.43.0 // indirect
 	go.opentelemetry.io/otel/sdk/metric v1.45.0 // indirect
 )
 
