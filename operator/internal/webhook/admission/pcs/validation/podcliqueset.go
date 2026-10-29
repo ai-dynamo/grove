@@ -31,7 +31,6 @@ import (
 	"github.com/samber/lo"
 	admissionv1 "k8s.io/api/admission/v1"
 	corev1 "k8s.io/api/core/v1"
-	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apivalidation "k8s.io/apimachinery/pkg/api/validation"
 	metav1validation "k8s.io/apimachinery/pkg/apis/meta/v1/validation"
@@ -50,10 +49,8 @@ var allowedStartupTypes = sets.New(grovecorev1beta1.CliqueStartupTypeInOrder, gr
 
 // pcsValidator validates PodCliqueSet resources for create and update operations.
 type pcsValidator struct {
-	operation admissionv1.Operation
-	pcs       *grovecorev1beta1.PodCliqueSet
-	// oldPCS is the existing object on update, and nil on create.
-	oldPCS          *grovecorev1beta1.PodCliqueSet
+	operation       admissionv1.Operation
+	pcs             *grovecorev1beta1.PodCliqueSet
 	tasEnabled      bool
 	schedulerConfig groveconfigv1beta1.SchedulerConfiguration
 	client          client.Client
@@ -386,9 +383,8 @@ func (v *pcsValidator) validatePodCliqueScalingGroupConfigs(fldPath *field.Path)
 			}
 		}
 
-		// validate ScaleConfig.MaxReplicas >= ScaleConfig.MinReplicas. Objects admitted before this rule was added
-		// must stay updatable, for example by the storage version migration, so an unchanged scaleConfig is not checked.
-		if scalingGroupConfig.ScaleConfig != nil && scalingGroupConfig.ScaleConfig.MinReplicas != nil && !v.isScaleConfigUnchanged(scalingGroupConfig) {
+		// validate ScaleConfig.MaxReplicas >= ScaleConfig.MinReplicas
+		if scalingGroupConfig.ScaleConfig != nil && scalingGroupConfig.ScaleConfig.MinReplicas != nil {
 			if scalingGroupConfig.ScaleConfig.MaxReplicas < *scalingGroupConfig.ScaleConfig.MinReplicas {
 				allErrs = append(allErrs, field.Invalid(fldPath.Index(i).Child("scaleConfig", "maxReplicas"), scalingGroupConfig.ScaleConfig.MaxReplicas, "scaleConfig.maxReplicas must be greater than or equal to scaleConfig.minReplicas"))
 			}
@@ -415,18 +411,6 @@ func (v *pcsValidator) validatePodCliqueScalingGroupConfigs(fldPath *field.Path)
 	}
 
 	return allErrs
-}
-
-// isScaleConfigUnchanged reports whether the scaling group with the name of scalingGroupConfig exists in the old
-// object of an update with an equal scaleConfig.
-func (v *pcsValidator) isScaleConfigUnchanged(scalingGroupConfig grovecorev1beta1.PodCliqueScalingGroupConfig) bool {
-	if v.oldPCS == nil {
-		return false
-	}
-	oldConfig, found := lo.Find(v.oldPCS.Spec.Template.PodCliqueScalingGroupConfigs, func(c grovecorev1beta1.PodCliqueScalingGroupConfig) bool {
-		return c.Name == scalingGroupConfig.Name
-	})
-	return found && apiequality.Semantic.DeepEqual(oldConfig.ScaleConfig, scalingGroupConfig.ScaleConfig)
 }
 
 // validateTerminationDelay validates that terminationDelay is set and greater than zero.
