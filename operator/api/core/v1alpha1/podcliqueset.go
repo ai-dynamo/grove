@@ -35,6 +35,9 @@ import (
 // +kubebuilder:printcolumn:name="PCSGs-Total",type=integer,JSONPath=`.status.updateProgress.totalPodCliqueScalingGroupsCount`
 // +kubebuilder:printcolumn:name="Update",type=string,JSONPath=`.status.conditions[?(@.type=="UpdateInProgress")].reason`,priority=1
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
+// +kubebuilder:validation:XValidation:rule="oldSelf.hasValue() || !has(self.spec.template.topologyConstraint) || !has(self.spec.template.topologyConstraint.packDomain)",message="packDomain is deprecated and cannot be used on new workloads; use pack.required",fieldPath=".spec.template.topologyConstraint.packDomain",optionalOldSelf=true,reason=FieldValueForbidden
+// +kubebuilder:validation:XValidation:rule="oldSelf.hasValue() || !has(self.spec.template.cliques) || self.spec.template.cliques.all(c, !has(c.topologyConstraint) || !has(c.topologyConstraint.packDomain))",message="packDomain is deprecated and cannot be used on new workloads; use pack.required",fieldPath=".spec.template.cliques",optionalOldSelf=true,reason=FieldValueForbidden
+// +kubebuilder:validation:XValidation:rule="oldSelf.hasValue() || !has(self.spec.template.podCliqueScalingGroups) || self.spec.template.podCliqueScalingGroups.all(g, !has(g.topologyConstraint) || !has(g.topologyConstraint.packDomain))",message="packDomain is deprecated and cannot be used on new workloads; use pack.required",fieldPath=".spec.template.podCliqueScalingGroups",optionalOldSelf=true,reason=FieldValueForbidden
 
 // PodCliqueSet is a set of PodGangs defining specification on how to spread and manage a gang of pods and monitoring their status.
 type PodCliqueSet struct {
@@ -95,6 +98,8 @@ type PodCliqueSetStatus struct {
 	// PodGang is a unit of scale and this selector is used by HPA to scale the PodGang based on metrics captured for
 	// the pods that match this selector.
 	Selector *string `json:"hpaPodSelector,omitempty"`
+	// PodGangStatuses captures the status for all the PodGang's that are part of the PodCliqueSet.
+	PodGangStatutes []PodGangStatus `json:"podGangStatuses,omitempty"`
 	// CurrentGenerationHash is a hash value generated out of a collection of fields in a PodCliqueSet.
 	// Since only a subset of fields is taken into account when generating the hash, not every change in the PodCliqueSetSpec will
 	// be accounted for when generating this hash value. A field in PodCliqueSetSpec is included if a change to it triggers
@@ -357,6 +362,7 @@ type PodCliqueTemplateSpec struct {
 
 // TopologyConstraint defines topology placement requirements.
 // +kubebuilder:validation:XValidation:rule="has(self.pack) || has(self.packDomain)",message="topologyConstraint must specify pack or deprecated packDomain",fieldPath=".pack",reason=FieldValueRequired
+// +kubebuilder:validation:XValidation:rule="!(has(self.packDomain) && has(self.pack) && has(self.pack.required))",message="must not set both pack.required and deprecated packDomain",fieldPath=".pack.required"
 type TopologyConstraint struct {
 	// TopologyName is the name of the ClusterTopologyBinding resource to use for topology-aware scheduling.
 	// Setting TopologyName may be optional if the name can be inherited from a higher level scope.
@@ -379,7 +385,7 @@ type TopologyConstraint struct {
 	// Example: "rack" means each replica independently placed within one rack.
 	// Note: Does NOT constrain all replicas to the same rack together.
 	// Different replicas can be in different topology domains.
-	// Deprecated: use Pack.RequiredDomain. It is stored as Pack.RequiredDomain, which takes precedence when both are set.
+	// Deprecated: use Pack.RequiredDomain.
 	// +optional
 	PackDomain TopologyDomain `json:"packDomain,omitempty"`
 }
@@ -619,6 +625,69 @@ const (
 	// CliqueStartupTypeExplicit defines that the cliques should be started after the cliques defined in PodClique.StartsAfter have started.
 	CliqueStartupTypeExplicit CliqueStartupType = "CliqueStartupTypeExplicit"
 )
+
+// PodGangStatus defines the status of a PodGang.
+type PodGangStatus struct {
+	// Name is the name of the PodGang.
+	Name string `json:"name"`
+	// Phase is the current phase of the PodGang.
+	Phase PodGangPhase `json:"phase"`
+	// Conditions represents the latest available observations of the PodGang by its controller.
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
+}
+
+// PodGangPhase represents the phase of a PodGang.
+// +kubebuilder:validation:Enum={Pending,Starting,Running,Failed,Succeeded}
+type PodGangPhase string
+
+const (
+	// PodGangPending indicates that the pods in a PodGang have not yet been taken up for scheduling.
+	PodGangPending PodGangPhase = "Pending"
+	// PodGangStarting indicates that the pods are bound to nodes by the scheduler and are starting.
+	PodGangStarting PodGangPhase = "Starting"
+	// PodGangRunning indicates that the all the pods in a PodGang are running.
+	PodGangRunning PodGangPhase = "Running"
+	// PodGangFailed indicates that one or more pods in a PodGang have failed.
+	// This is a terminal state and is typically used for batch jobs.
+	PodGangFailed PodGangPhase = "Failed"
+	// PodGangSucceeded indicates that all the pods in a PodGang have succeeded.
+	// This is a terminal state and is typically used for batch jobs.
+	PodGangSucceeded PodGangPhase = "Succeeded"
+)
+
+// LastOperationType is a string alias for the type of the last operation.
+type LastOperationType string
+
+const (
+	// LastOperationTypeReconcile indicates that the last operation was a reconcile operation.
+	LastOperationTypeReconcile LastOperationType = "Reconcile"
+	// LastOperationTypeDelete indicates that the last operation was a delete operation.
+	LastOperationTypeDelete LastOperationType = "Delete"
+)
+
+// LastOperationState is a string alias for the state of the last operation.
+type LastOperationState string
+
+const (
+	// LastOperationStateProcessing indicates that the last operation is in progress.
+	LastOperationStateProcessing LastOperationState = "Processing"
+	// LastOperationStateSucceeded indicates that the last operation succeeded.
+	LastOperationStateSucceeded LastOperationState = "Succeeded"
+	// LastOperationStateError indicates that the last operation completed with errors and will be retried.
+	LastOperationStateError LastOperationState = "Error"
+)
+
+// LastOperation captures the last operation done by the respective reconciler on the PodCliqueSet.
+type LastOperation struct {
+	// Type is the type of the last operation.
+	Type LastOperationType `json:"type"`
+	// State is the state of the last operation.
+	State LastOperationState `json:"state"`
+	// Description is a human-readable description of the last operation.
+	Description string `json:"description"`
+	// LastUpdateTime is the time at which the last operation was updated.
+	LastUpdateTime metav1.Time `json:"lastUpdateTime"`
+}
 
 // ErrorCode is a custom error code that uniquely identifies an error.
 type ErrorCode string

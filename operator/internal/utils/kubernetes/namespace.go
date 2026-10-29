@@ -27,11 +27,19 @@ import (
 
 // OperatorNamespace returns the namespace of the operator Pod from its mounted service account volume.
 func OperatorNamespace() (string, error) {
-	return NamespaceFromFile(constants.OperatorNamespaceFile)
+	return namespaceFromFile(constants.OperatorNamespaceFile)
 }
 
-// NamespaceFromFile returns the trimmed namespace stored in the file at path.
-func NamespaceFromFile(path string) (string, error) {
+// OperatorServiceName returns the name of the Service in front of the operator's webhook server.
+func OperatorServiceName() string {
+	if name := strings.TrimSpace(os.Getenv(constants.EnvVarServiceName)); name != "" {
+		return name
+	}
+	return constants.DefaultServiceName
+}
+
+// namespaceFromFile returns the trimmed namespace stored in the file at path.
+func namespaceFromFile(path string) (string, error) {
 	data, err := os.ReadFile(filepath.Clean(path))
 	if err != nil {
 		return "", err

@@ -54,6 +54,9 @@ spec:
           securityContext:
             {{- toYaml . | nindent 12 }}
           {{- end }}
+          env:
+            - name: GROVE_OPERATOR_SERVICE_NAME
+              value: {{ required ".Values.service.name is required" .Values.service.name | quote }}
           volumeMounts:
             - name: kube-api-access-grove
               mountPath: /var/run/secrets/kubernetes.io/serviceaccount
@@ -109,6 +112,8 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: spec.serviceAccountName
+            - name: GROVE_OPERATOR_SERVICE_NAME
+              value: {{ required ".Values.service.name is required" .Values.service.name | quote }}
 {{- toYaml .Values.deployment.env | nindent 12 }}
       volumes:
         - name: kube-api-access-grove

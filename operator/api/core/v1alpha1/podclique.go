@@ -177,7 +177,7 @@ type PodCliqueUpdateProgress struct {
 	// PodTemplateHash is the template hash of the PodClique that the Pods of this PodClique should converge to.
 	// This hash is used to segregate Pods which are up to date with the specification, and ones which are outdated for
 	// preferential deletions in rolling update strategies, and in all strategies for scale-ins.
-	// PodCliqueStatus.CurrentPodTemplateHash is set to this hash once UpdateEndedAt is set, which marks the end of the update.
+	// PodCliqueStatus.PodTemplateHash is set to this hash once UpdateEndedAt is set, which marks the end of the update.
 	PodTemplateHash string `json:"podTemplateHash"`
 	// UpdatedScheduledReplicas is the number of Pods at PodTemplateHash (the target hash of this update) that
 	// have been scheduled. It is maintained only while the update is in progress. The coherent update engine

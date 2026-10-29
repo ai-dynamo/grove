@@ -100,17 +100,13 @@ func migrateCRD(ctx context.Context, cl client.Client, log logr.Logger, name, ve
 	}
 	if slices.Equal(crd.Status.StoredVersions, []string{version}) {
 		log.V(1).Info("Objects of CRD are already stored at the storage version", "crd", name, "version", version)
-		setMigrated(name, version, true)
 		return nil
 	}
-	setMigrated(name, version, false)
 	log.Info("Migrating the objects of CRD to the storage version", "crd", name, "version", version,
 		"storedVersions", crd.Status.StoredVersions)
 
 	gvk := schema.GroupVersionKind{Group: crd.Spec.Group, Version: version, Kind: crd.Spec.Names.Kind}
 	rewritten, rejected, err := rewriteAll(ctx, cl, log, gvk)
-	objectsRewrittenTotal.WithLabelValues(name, version).Add(float64(rewritten))
-	objectsRejectedTotal.WithLabelValues(name, version).Add(float64(len(rejected)))
 	if err != nil {
 		return fmt.Errorf("failed to rewrite the objects of CRD %q: %w", name, err)
 	}
@@ -122,7 +118,6 @@ func migrateCRD(ctx context.Context, cl client.Client, log logr.Logger, name, ve
 	if err := setStoredVersions(ctx, cl, name, version); err != nil {
 		return err
 	}
-	setMigrated(name, version, true)
 	log.Info("Migrated the objects of CRD to the storage version", "crd", name, "version", version, "rewritten", rewritten)
 	return nil
 }

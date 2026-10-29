@@ -34,7 +34,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
-const testNamespace = "grove-test"
+const (
+	testNamespace = "grove-test"
+	// testServiceName differs from the name in the generated CRDs, so that the tests catch a name that is not set.
+	testServiceName = "my-grove"
+)
 
 // buildFakeClient creates a fake client with apiextensionsv1 scheme registered.
 func buildFakeClient(objects ...client.Object) client.Client {
@@ -87,7 +91,7 @@ func TestInstallCRDs_AllApplied(t *testing.T) {
 		operatorcrds.PodGangMapCRD(),
 		schedulercrds.PodGangCRD(),
 	}
-	err := crdinstaller.InstallCRDs(ctx, cl, logr.Discard(), allCRDs, testNamespace)
+	err := crdinstaller.InstallCRDs(ctx, cl, logr.Discard(), allCRDs, testServiceName, testNamespace)
 	require.NoError(t, err)
 
 	// Verify all 6 CRDs exist by name.
@@ -107,7 +111,7 @@ func TestInstallCRDs_AllApplied(t *testing.T) {
 }
 
 // TestInstallCRDs_ConversionServiceNamespace verifies that the conversion webhook of each converted
-// Grove CRD is pointed at the Service in the given namespace and that the caBundle is not applied.
+// Grove CRD is pointed at the given Service and that the caBundle is not applied.
 func TestInstallCRDs_ConversionServiceNamespace(t *testing.T) {
 	cl := buildFakeClient()
 	ctx := context.Background()
@@ -116,7 +120,7 @@ func TestInstallCRDs_ConversionServiceNamespace(t *testing.T) {
 		"podcliquesets.grove.io": operatorcrds.PodCliqueSetCRD(),
 	}
 	for name, crdYAML := range crds {
-		require.NoError(t, crdinstaller.InstallCRDs(ctx, cl, logr.Discard(), []string{crdYAML}, testNamespace))
+		require.NoError(t, crdinstaller.InstallCRDs(ctx, cl, logr.Discard(), []string{crdYAML}, testServiceName, testNamespace))
 
 		crd := &apiextensionsv1.CustomResourceDefinition{}
 		require.NoError(t, cl.Get(ctx, client.ObjectKey{Name: name}, crd))
@@ -126,14 +130,14 @@ func TestInstallCRDs_ConversionServiceNamespace(t *testing.T) {
 		require.NotNil(t, crd.Spec.Conversion.Webhook.ClientConfig, name)
 		service := crd.Spec.Conversion.Webhook.ClientConfig.Service
 		require.NotNil(t, service, name)
-		assert.Equal(t, "grove-operator", service.Name, name)
+		assert.Equal(t, testServiceName, service.Name, name)
 		assert.Equal(t, testNamespace, service.Namespace, name)
 		assert.Equal(t, "/convert", *service.Path, name)
 		assert.Empty(t, crd.Spec.Conversion.Webhook.ClientConfig.CABundle, name)
 	}
 
-	err := crdinstaller.InstallCRDs(ctx, cl, logr.Discard(), []string{operatorcrds.PodCliqueSetCRD()}, "")
-	assert.Error(t, err, "a Service-addressed conversion webhook requires a namespace")
+	err := crdinstaller.InstallCRDs(ctx, cl, logr.Discard(), []string{operatorcrds.PodCliqueSetCRD()}, testServiceName, "")
+	assert.Error(t, err, "a Service-addressed conversion webhook requires a Service namespace")
 }
 
 // TestInstallCRDs_CreatesByName verifies that InstallCRDs creates the CRD with
@@ -149,7 +153,7 @@ func TestInstallCRDs_CreatesByName(t *testing.T) {
 
 	err := crdinstaller.InstallCRDs(ctx, cl, logr.Discard(),
 		[]string{minimalCRDYAML("testthings.test.io", "test.io", "testthings", "TestThing")},
-		testNamespace,
+		testServiceName, testNamespace,
 	)
 	require.NoError(t, err)
 
@@ -173,10 +177,10 @@ func TestInstallCRDs_Idempotent(t *testing.T) {
 	ctx := context.Background()
 	crds := []string{minimalCRDYAML("testthings.test.io", "test.io", "testthings", "TestThing")}
 
-	err := crdinstaller.InstallCRDs(ctx, cl, logr.Discard(), crds, testNamespace)
+	err := crdinstaller.InstallCRDs(ctx, cl, logr.Discard(), crds, testServiceName, testNamespace)
 	require.NoError(t, err)
 
-	err = crdinstaller.InstallCRDs(ctx, cl, logr.Discard(), crds, testNamespace)
+	err = crdinstaller.InstallCRDs(ctx, cl, logr.Discard(), crds, testServiceName, testNamespace)
 	require.NoError(t, err)
 }
 
@@ -221,7 +225,7 @@ spec:
 `
 	}
 
-	err := crdinstaller.InstallCRDs(ctx, cl, logr.Discard(), []string{crdYAML("1")}, testNamespace)
+	err := crdinstaller.InstallCRDs(ctx, cl, logr.Discard(), []string{crdYAML("1")}, testServiceName, testNamespace)
 	require.NoError(t, err)
 
 	obj := &unstructured.Unstructured{}
@@ -229,7 +233,7 @@ spec:
 	require.NoError(t, cl.Get(ctx, client.ObjectKey{Name: crdName}, obj))
 	assert.Equal(t, "1", obj.GetLabels()["test-version"], "initial label should be 1")
 
-	err = crdinstaller.InstallCRDs(ctx, cl, logr.Discard(), []string{crdYAML("2")}, testNamespace)
+	err = crdinstaller.InstallCRDs(ctx, cl, logr.Discard(), []string{crdYAML("2")}, testServiceName, testNamespace)
 	require.NoError(t, err)
 
 	obj2 := &unstructured.Unstructured{}
@@ -249,7 +253,7 @@ func TestInstallCRDs_ReturnsErrorOnInvalidYAML(t *testing.T) {
 	cl := buildFakeClient()
 	ctx := context.Background()
 
-	err := crdinstaller.InstallCRDs(ctx, cl, logr.Discard(), []string{"not: valid: yaml: [[["}, testNamespace)
+	err := crdinstaller.InstallCRDs(ctx, cl, logr.Discard(), []string{"not: valid: yaml: [[["}, testServiceName, testNamespace)
 	assert.Error(t, err)
 }
 
@@ -264,7 +268,7 @@ func TestInstallCRDs_ClusterTopologyBindingShortName(t *testing.T) {
 	cl := buildFakeClient()
 	ctx := context.Background()
 
-	err := crdinstaller.InstallCRDs(ctx, cl, logr.Discard(), []string{operatorcrds.ClusterTopologyCRD()}, testNamespace)
+	err := crdinstaller.InstallCRDs(ctx, cl, logr.Discard(), []string{operatorcrds.ClusterTopologyCRD()}, testServiceName, testNamespace)
 	require.NoError(t, err)
 
 	crd := &apiextensionsv1.CustomResourceDefinition{}
@@ -281,7 +285,7 @@ func TestInstallCRDs_DeletesEmptyLegacyClusterTopologyCRD(t *testing.T) {
 	legacyCRD.Name = "clustertopologies.grove.io"
 	cl := buildFakeClient(legacyCRD)
 
-	err := crdinstaller.InstallCRDs(context.Background(), cl, logr.Discard(), nil, testNamespace)
+	err := crdinstaller.InstallCRDs(context.Background(), cl, logr.Discard(), nil, testServiceName, testNamespace)
 	require.NoError(t, err)
 
 	err = cl.Get(context.Background(), client.ObjectKey{Name: legacyCRD.Name}, &apiextensionsv1.CustomResourceDefinition{})
@@ -296,7 +300,7 @@ func TestInstallCRDs_RetainsLegacyClusterTopologyCRDWithResources(t *testing.T) 
 	legacyTopology.SetName("existing-topology")
 	cl := buildFakeClient(legacyCRD, legacyTopology)
 
-	err := crdinstaller.InstallCRDs(context.Background(), cl, logr.Discard(), nil, testNamespace)
+	err := crdinstaller.InstallCRDs(context.Background(), cl, logr.Discard(), nil, testServiceName, testNamespace)
 	require.NoError(t, err)
 
 	err = cl.Get(context.Background(), client.ObjectKey{Name: legacyCRD.Name}, &apiextensionsv1.CustomResourceDefinition{})

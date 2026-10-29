@@ -35,9 +35,17 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 )
 
+// Service is the address of the operator's webhook server, at which the conversion webhook is served.
+type Service struct {
+	// Name is the name of the Service in front of the webhook server.
+	Name string
+	// Namespace is the namespace of the Service.
+	Namespace string
+	// Port is the port of the webhook server.
+	Port int
+}
+
 const (
-	// ServiceName is the name of the Service in front of the operator's webhook server.
-	ServiceName = "grove-operator"
 	// keepInterval bounds how long a reverted conversion webhook or a rotated CA in manual certificate mode
 	// takes to be corrected in the CRDs.
 	keepInterval = 30 * time.Second
@@ -48,10 +56,9 @@ var (
 	clientConfigPath = []string{"spec", "conversion", "webhook", "clientConfig"}
 )
 
-// ConfigureCRDs points the conversion webhook of every converted CRD at the webhook port of the Service in the
-// given namespace. The caBundle is left to its injector. It fails when a CRD does not serve grove.io/v1beta1, as
+// ConfigureCRDs points the conversion webhook of every converted CRD at service. The caBundle is left to its injector. It fails when a CRD does not serve grove.io/v1beta1, as
 // the CRDs of an earlier release would leave the v1beta1 admission webhooks unmatched.
-func ConfigureCRDs(ctx context.Context, cl client.Client, log logr.Logger, namespace string, port int) error {
+func ConfigureCRDs(ctx context.Context, cl client.Client, log logr.Logger, service Service) error {
 	for _, name := range ConvertedCRDNames() {
 		crd, err := getCRD(ctx, cl, name)
 		if err != nil {
@@ -60,7 +67,7 @@ func ConfigureCRDs(ctx context.Context, cl client.Client, log logr.Logger, names
 		if err := checkServesHub(crd); err != nil {
 			return err
 		}
-		if err := configureCRD(ctx, cl, log, crd, namespace, port, ""); err != nil {
+		if err := configureCRD(ctx, cl, log, crd, service, ""); err != nil {
 			return err
 		}
 	}
@@ -71,24 +78,22 @@ func ConfigureCRDs(ctx context.Context, cl client.Client, log logr.Logger, names
 // the CRD manifests, which carry the default Service address, does not leave conversion broken. When caFile is
 // set, it also keeps the caBundle equal to the file's contents. That is needed when certificates are provided
 // externally, where cert-controller does not inject the CA. Every replica runs it, since the patch is idempotent.
-func NewCRDConversionKeeper(cl client.Client, log logr.Logger, namespace string, port int, caFile string) manager.Runnable {
+func NewCRDConversionKeeper(cl client.Client, log logr.Logger, service Service, caFile string) manager.Runnable {
 	return &crdConversionKeeper{
-		client:    cl,
-		log:       log,
-		namespace: namespace,
-		port:      port,
-		caFile:    caFile,
-		interval:  keepInterval,
+		client:   cl,
+		log:      log,
+		service:  service,
+		caFile:   caFile,
+		interval: keepInterval,
 	}
 }
 
 type crdConversionKeeper struct {
-	client    client.Client
-	log       logr.Logger
-	namespace string
-	port      int
-	caFile    string
-	interval  time.Duration
+	client   client.Client
+	log      logr.Logger
+	service  Service
+	caFile   string
+	interval time.Duration
 }
 
 // NeedLeaderElection implements manager.LeaderElectionRunnable.
@@ -129,7 +134,7 @@ func (k *crdConversionKeeper) keep(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		if err := configureCRD(ctx, k.client, k.log, crd, k.namespace, k.port, caBundle); err != nil {
+		if err := configureCRD(ctx, k.client, k.log, crd, k.service, caBundle); err != nil {
 			return err
 		}
 	}
@@ -138,9 +143,9 @@ func (k *crdConversionKeeper) keep(ctx context.Context) error {
 
 // configureCRD patches the conversion webhook of crd when it differs from the wanted one. An empty caBundle
 // leaves the caBundle unchanged.
-func configureCRD(ctx context.Context, cl client.Client, log logr.Logger, crd *unstructured.Unstructured, namespace string, port int, caBundle string) error {
+func configureCRD(ctx context.Context, cl client.Client, log logr.Logger, crd *unstructured.Unstructured, service Service, caBundle string) error {
 	desired := crd.DeepCopy()
-	if err := setWebhookConversion(desired, namespace, port); err != nil {
+	if err := setWebhookConversion(desired, service); err != nil {
 		return fmt.Errorf("failed to set the conversion webhook of CRD %q: %w", crd.GetName(), err)
 	}
 	if caBundle != "" {
@@ -156,8 +161,8 @@ func configureCRD(ctx context.Context, cl client.Client, log logr.Logger, crd *u
 	if err := cl.Patch(ctx, desired, client.MergeFrom(crd)); err != nil {
 		return fmt.Errorf("failed to patch the conversion webhook of CRD %q: %w", crd.GetName(), err)
 	}
-	log.Info("Configured conversion webhook of CRD", "name", crd.GetName(), "serviceNamespace", namespace, "port", port,
-		"caBundleUpdated", caBundle != "")
+	log.Info("Configured conversion webhook of CRD", "name", crd.GetName(), "service", service.Name,
+		"serviceNamespace", service.Namespace, "port", service.Port, "caBundleUpdated", caBundle != "")
 	return nil
 }
 
@@ -191,16 +196,16 @@ func checkServesHub(crd *unstructured.Unstructured) error {
 		crd.GetName(), grovecorev1beta1.SchemeGroupVersion)
 }
 
-func setWebhookConversion(crd *unstructured.Unstructured, namespace string, port int) error {
+func setWebhookConversion(crd *unstructured.Unstructured, service Service) error {
 	fields := []struct {
 		value any
 		path  []string
 	}{
 		{string(apiextensionsv1.WebhookConverter), append(conversionPath, "strategy")},
-		{ServiceName, append(clientConfigPath, "service", "name")},
-		{namespace, append(clientConfigPath, "service", "namespace")},
+		{service.Name, append(clientConfigPath, "service", "name")},
+		{service.Namespace, append(clientConfigPath, "service", "namespace")},
 		{WebhookPath, append(clientConfigPath, "service", "path")},
-		{int64(port), append(clientConfigPath, "service", "port")},
+		{int64(service.Port), append(clientConfigPath, "service", "port")},
 		{[]any{"v1"}, append(conversionPath, "webhook", "conversionReviewVersions")},
 	}
 	for _, f := range fields {

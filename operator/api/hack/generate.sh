@@ -64,34 +64,19 @@ function generate_crds() {
   add_conversion_webhook "${output_dir}"
 }
 
-# add_conversion_webhook sets spec.conversion on the CRDs whose versions are converted by the operator's
-# conversion webhook. controller-gen has no marker for it. The service address is the default install
-# (release "grove" in namespace "default", webhook port 9443). The crd-installer rewrites the namespace to the
-# operator's own, the operator sets the namespace and its configured port, and the caBundle is injected at run time. Until then conversion requests fail rather than
-# silently pruning fields, as the None strategy would.
+# add_conversion_webhook inserts crd-conversion.yaml as spec.conversion of the CRDs whose versions are converted
+# by the operator's conversion webhook. controller-gen has no marker for it. The service address is the default
+# install (Service "grove-operator" in namespace "default", webhook port 9443). The crd-installer and the operator
+# set the configured Service name, namespace and port, and the caBundle is injected at run time. Until then
+# conversion requests fail rather than silently pruning fields, as the None strategy would. The block is inserted
+# with sed rather than yq, because yq re-indents every list of the controller-gen output.
 function add_conversion_webhook() {
   local output_dir="$1"
-  local conversion_block
-  conversion_block="$(mktemp)"
-  cat > "${conversion_block}" <<'EOF'
-  conversion:
-    strategy: Webhook
-    webhook:
-      clientConfig:
-        service:
-          name: grove-operator
-          namespace: default
-          path: /convert
-          port: 9443
-      conversionReviewVersions:
-      - v1
-EOF
   # The other grove.io kinds have the same schema in every version and use the None strategy.
   for crd in grove.io_podcliquesets.yaml; do
-    sed -i.bak "/^spec:$/r ${conversion_block}" "${output_dir}/${crd}"
+    sed -i.bak "/^spec:$/r ${SCRIPT_DIR}/crd-conversion.yaml" "${output_dir}/${crd}"
     rm -f "${output_dir}/${crd}.bak"
   done
-  rm -f "${conversion_block}"
 }
 
 function generate_clientset() {

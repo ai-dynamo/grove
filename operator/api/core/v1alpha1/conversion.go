@@ -44,6 +44,12 @@ func Convert_v1beta1_TopologyConstraint_To_v1alpha1_TopologyConstraint(in *v1bet
 	return autoConvert_v1beta1_TopologyConstraint_To_v1alpha1_TopologyConstraint(in, out, s)
 }
 
+// Convert_v1alpha1_PodCliqueSetStatus_To_v1beta1_PodCliqueSetStatus converts a v1alpha1 PodCliqueSetStatus. v1beta1
+// has no podGangStatuses, which Grove never set, so it is dropped.
+func Convert_v1alpha1_PodCliqueSetStatus_To_v1beta1_PodCliqueSetStatus(in *PodCliqueSetStatus, out *v1beta1.PodCliqueSetStatus, s conversion.Scope) error {
+	return autoConvert_v1alpha1_PodCliqueSetStatus_To_v1beta1_PodCliqueSetStatus(in, out, s)
+}
+
 // Convert_Pointer_v1alpha1_PodCliqueTemplateSpec_To_Pointer_v1beta1_PodCliqueTemplateSpec converts an element of
 // the template's clique list.
 func Convert_Pointer_v1alpha1_PodCliqueTemplateSpec_To_Pointer_v1beta1_PodCliqueTemplateSpec(in **PodCliqueTemplateSpec, out **v1beta1.PodCliqueTemplateSpec, s conversion.Scope) error {

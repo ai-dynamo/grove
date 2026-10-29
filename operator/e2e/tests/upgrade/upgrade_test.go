@@ -71,11 +71,11 @@ func (s *podSurvivalUpgrade) deployWorkload(t *testing.T, tc *testctx.TestContex
 	require.NoError(t, err, "listing workload pods")
 }
 
-// verifyPodsSurvive checks that the grove.io objects were migrated to the v1beta1 storage version and are
+// verifyPodsSurvive checks that the grove.io CRDs store v1beta1 next to v1alpha1 and that the workload is
 // readable at both versions, scales the workload, then asserts the pre-upgrade pods were not recreated and
 // the init containers were updated.
 func (s *podSurvivalUpgrade) verifyPodsSurvive(t *testing.T, tc *testctx.TestContext) {
-	waitForStoredVersions(t, tc, grovev1beta1.SchemeGroupVersion.Version)
+	waitForStoredVersions(t, tc, corev1alpha1.SchemeGroupVersion.Version, grovev1beta1.SchemeGroupVersion.Version)
 	requirePCSReadableAtBothVersions(t, tc, types.NamespacedName{Namespace: s.workload.Namespace, Name: s.workload.Name})
 	verifyPodUIDsUnchanged(t, tc, s.podsBeforeUpgrade)
 
@@ -145,7 +145,7 @@ func Test_VDGR1_DowngradeToLatestGitHubRelease(t *testing.T) {
 	})
 }
 
-// downgradeAndVerify waits for the upgrade's storage migration, prepares the downgrade, rolls the release
+// downgradeAndVerify checks the stored versions after the upgrade, prepares the downgrade, rolls the release
 // back to the installed version, and checks the CRDs, the workload and its pods on the released operator.
 // It deletes the workload itself, because the shared cleanup reads grove.io/v1beta1, which the released
 // CRDs no longer serve.
@@ -153,7 +153,7 @@ func (s *podSurvivalUpgrade) downgradeAndVerify(t *testing.T, tc *testctx.TestCo
 	alpha := corev1alpha1.SchemeGroupVersion.Version
 	pcsKey := types.NamespacedName{Namespace: s.workload.Namespace, Name: s.workload.Name}
 
-	waitForStoredVersions(t, tc, grovev1beta1.SchemeGroupVersion.Version)
+	waitForStoredVersions(t, tc, alpha, grovev1beta1.SchemeGroupVersion.Version)
 	verifyPodUIDsUnchanged(t, tc, s.podsBeforeUpgrade)
 	pcsBeforeDowngrade := &corev1alpha1.PodCliqueSet{}
 	require.NoError(t, tc.Client.Get(t.Context(), pcsKey, pcsBeforeDowngrade), "get PodCliqueSet at v1alpha1")
@@ -216,13 +216,15 @@ func verifyPodGangMapRecoversAfterScaleBelowMinAvailable(t *testing.T, tc *testc
 	verifier := podgangmap.NewVerifier(tc.Client, testctx.Logger)
 	pcsNsName := types.NamespacedName{Namespace: upgradePCSGWorkloadNamespace, Name: upgradePCSGWorkloadName}
 
-	testctx.Logger.Info("waiting for the legacy workload to finish migrating to the epoch-based scheme")
-	waitForMigrationComplete(t, tc, pcsNsName)
-
+	// The legacy workload has no PodGangMap, and the new operator creates one only after it set the migration
+	// gate, so the PodGangMap is waited for before the gate is waited to clear.
 	testctx.Logger.Info("verifying the migrated PodGangMap has an anchor holding worker index 0")
 	require.NoError(t, podgangmap.WaitUntilVerified(t.Context(), verifier, pcsNsName, 0, pgmRecoverTimeout, defaultPollInterval,
 		podgangmap.AnchorPCSGReplicaIndicesCheckFn("worker", []int32{0}),
 	), "migrated PodGangMap not in expected state")
+
+	testctx.Logger.Info("waiting for the legacy workload to finish migrating to the epoch-based scheme")
+	waitForMigrationComplete(t, tc, pcsNsName)
 
 	testctx.Logger.Info("scaling the worker group to 0 and verifying the PodGangMap holds no entries")
 	tc.ScalePCSGAcrossAllReplicasAndWait(upgradePCSGWorkloadName, "worker", 1, 0, 0, 0)
@@ -243,9 +245,6 @@ func verifyPodGangMapRecoversAfterScaleBelowMinAvailable(t *testing.T, tc *testc
 // cleared, which the operator does once every replica has migrated to the epoch-based PodGang scheme.
 func waitForMigrationComplete(t *testing.T, tc *testctx.TestContext, pcsNsName types.NamespacedName) {
 	t.Helper()
-	// The condition is also absent before the new operator sets the gate. The operator sets the gate before it
-	// prunes storedVersions, so wait for storedVersions first.
-	waitForStoredVersions(t, tc, grovev1beta1.SchemeGroupVersion.Version)
 	err := wait.PollUntilContextTimeout(t.Context(), defaultPollInterval, defaultPollTimeout, true,
 		func(ctx context.Context) (bool, error) {
 			pcs := &grovev1beta1.PodCliqueSet{}

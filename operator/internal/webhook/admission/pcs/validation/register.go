@@ -24,7 +24,7 @@ import (
 const (
 	// Name is the name of the validating webhook handler for PodCliqueSet.
 	Name        = "podcliqueset-validating-webhook"
-	webhookPath = "/webhooks/v1beta1/validate-podcliqueset"
+	webhookPath = "/webhooks/validate-podcliqueset"
 )
 
 // RegisterWithManager registers the webhook with the manager.

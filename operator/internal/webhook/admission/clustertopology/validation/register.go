@@ -24,7 +24,7 @@ import (
 const (
 	// Name is the name of the validating webhook handler for ClusterTopologyBinding.
 	Name        = "clustertopology-validating-webhook"
-	webhookPath = "/webhooks/v1beta1/validate-clustertopology"
+	webhookPath = "/webhooks/validate-clustertopology"
 )
 
 // RegisterWithManager registers the webhook with the manager.

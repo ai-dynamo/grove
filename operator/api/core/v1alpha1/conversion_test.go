@@ -158,8 +158,8 @@ func TestRoundTripFromBeta(t *testing.T) {
 	}
 }
 
-// TestRoundTripFromAlpha checks that a v1alpha1 PodCliqueSet without the deprecated packDomain survives a
-// conversion to v1beta1 and back unchanged.
+// TestRoundTripFromAlpha checks that a v1alpha1 PodCliqueSet without the deprecated packDomain and the unused
+// podGangStatuses survives a conversion to v1beta1 and back unchanged.
 func TestRoundTripFromAlpha(t *testing.T) {
 	f := randfill.New().NilChance(0.2).NumElements(0, 2).MaxDepth(12)
 	for i := 0; i < roundTripIterations; i++ {
@@ -167,6 +167,7 @@ func TestRoundTripFromAlpha(t *testing.T) {
 		f.Fill(pcs)
 		pcs.TypeMeta = metav1.TypeMeta{}
 		clearPackDomain(pcs)
+		pcs.Status.PodGangStatutes = nil
 
 		beta := &v1beta1.PodCliqueSet{}
 		require.NoError(t, Convert_v1alpha1_PodCliqueSet_To_v1beta1_PodCliqueSet(pcs, beta, nil))

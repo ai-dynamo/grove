@@ -39,14 +39,14 @@ const (
 
 // InstallCRDs applies the given CRD YAML definitions via server-side apply and
 // logs each applied name. A CRD whose conversion webhook is addressed by a Service is pointed
-// at the Service in serviceNamespace. It returns an error if any CRD fails to apply.
-func InstallCRDs(ctx context.Context, cl client.Client, log logr.Logger, crds []string, serviceNamespace string) error {
+// at the Service serviceName in serviceNamespace. It returns an error if any CRD fails to apply.
+func InstallCRDs(ctx context.Context, cl client.Client, log logr.Logger, crds []string, serviceName, serviceNamespace string) error {
 	if err := deleteEmptyLegacyClusterTopologyCRD(ctx, cl, log); err != nil {
 		return err
 	}
 
 	for _, crdYAML := range crds {
-		name, err := applyCRD(ctx, cl, []byte(crdYAML), serviceNamespace)
+		name, err := applyCRD(ctx, cl, []byte(crdYAML), serviceName, serviceNamespace)
 		if err != nil {
 			return fmt.Errorf("failed to apply CRD %q: %w", name, err)
 		}
@@ -91,7 +91,7 @@ func deleteEmptyLegacyClusterTopologyCRD(ctx context.Context, cl client.Client, 
 
 // applyCRD applies a single CRD yaml via server-side apply.
 // It returns the CRD name and any error.
-func applyCRD(ctx context.Context, cl client.Client, data []byte, serviceNamespace string) (name string, err error) {
+func applyCRD(ctx context.Context, cl client.Client, data []byte, serviceName, serviceNamespace string) (name string, err error) {
 	obj := &unstructured.Unstructured{}
 	if err := yaml.Unmarshal(data, &obj.Object); err != nil {
 		return "", fmt.Errorf("failed to unmarshal CRD yaml: %w", err)
@@ -99,7 +99,7 @@ func applyCRD(ctx context.Context, cl client.Client, data []byte, serviceNamespa
 
 	name = obj.GetName()
 
-	if err := setConversionServiceNamespace(obj, serviceNamespace); err != nil {
+	if err := setConversionService(obj, serviceName, serviceNamespace); err != nil {
 		return name, err
 	}
 
@@ -111,9 +111,9 @@ func applyCRD(ctx context.Context, cl client.Client, data []byte, serviceNamespa
 	return name, nil
 }
 
-// setConversionServiceNamespace points a Service-addressed conversion webhook at the given namespace.
+// setConversionService points a Service-addressed conversion webhook at the Service name in namespace.
 // The caBundle is left out of the applied configuration so that the field stays owned by its injector.
-func setConversionServiceNamespace(obj *unstructured.Unstructured, namespace string) error {
+func setConversionService(obj *unstructured.Unstructured, name, namespace string) error {
 	servicePath := []string{"spec", "conversion", "webhook", "clientConfig", "service"}
 	_, found, err := unstructured.NestedMap(obj.Object, servicePath...)
 	if err != nil {
@@ -122,8 +122,11 @@ func setConversionServiceNamespace(obj *unstructured.Unstructured, namespace str
 	if !found {
 		return nil
 	}
-	if namespace == "" {
-		return fmt.Errorf("conversion webhook service namespace is required")
+	if name == "" || namespace == "" {
+		return fmt.Errorf("conversion webhook service name and namespace are required")
+	}
+	if err := unstructured.SetNestedField(obj.Object, name, append(servicePath, "name")...); err != nil {
+		return err
 	}
 	return unstructured.SetNestedField(obj.Object, namespace, append(servicePath, "namespace")...)
 }

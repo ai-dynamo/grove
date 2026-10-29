@@ -20,7 +20,7 @@ webhooks:
       service:
         name: {{ required ".Values.service.name is required" .Values.service.name }}
         namespace: {{ .Release.Namespace }}
-        path: /webhooks/v1beta1/default-podcliqueset
+        path: /webhooks/default-podcliqueset
         port: {{ required ".Values.config.server.webhooks.port" .Values.config.server.webhooks.port }}
     failurePolicy: Fail
     matchPolicy: Equivalent

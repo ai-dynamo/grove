@@ -48,20 +48,13 @@ helm upgrade grove oci://ghcr.io/ai-dynamo/grove/grove-charts \
   --reuse-values
 ```
 
-When the new operator starts, it:
-
-1. Points the PCS CRD's conversion webhook at itself.
-2. Rewrites every PCS, PCLQ, PCSG, ClusterTopologyBinding, and PodGangMap without changes, so the API server stores it as `grove.io/v1beta1`.
-3. Sets `status.storedVersions` of each CRD to `["v1beta1"]`.
-4. Starts its controllers.
-
-The rewrite changes no spec, so no Pod is recreated.
+When the new operator starts, it points the PCS CRD's conversion webhook at itself and then starts its controllers. Existing objects are not rewritten: the API server stores an object as `grove.io/v1beta1` the next time it is written, and the operator writes the status of most Grove objects as it reconciles them. Objects that are not written stay stored as `grove.io/v1alpha1`, which the API server converts when they are read. A later release, before `grove.io/v1alpha1` is removed, migrates the remaining objects.
 
 > **Note:** Between applying the new CRDs and the new operator becoming ready, requests for PCS objects that need conversion fail, because the operator that serves the conversion webhook is not running yet. With `crdInstaller.enabled=true`, this window is the operator restart.
 
 ## Verifying the Upgrade
 
-Check that every Grove CRD stores only `v1beta1`:
+Check that every Grove CRD stores `v1beta1`:
 
 ```bash
 for crd in podcliquesets podcliques podcliquescalinggroups clustertopologybindings podgangmaps; do
@@ -69,25 +62,12 @@ for crd in podcliquesets podcliques podcliquescalinggroups clustertopologybindin
 done
 ```
 
-Each line shows `["v1beta1"]` once the migration is complete. The operator also reports the migration in its logs and metrics:
+Each line shows `["v1alpha1","v1beta1"]`: objects written before the upgrade can still be stored as `v1alpha1`. Then check that your workloads read at both versions:
 
 ```bash
-kubectl logs -n <namespace> deploy/grove-operator | grep "storage version"
+kubectl get podcliquesets.v1beta1.grove.io -A
+kubectl get podcliquesets.v1alpha1.grove.io -A
 ```
-
-| Metric | Meaning |
-|--------|---------|
-| `grove_storage_migration_complete{crd, version}` | `1` once every object of the CRD is stored at `version`. |
-| `grove_storage_migration_objects_rewritten_total{crd, version}` | Number of objects rewritten. |
-| `grove_storage_migration_objects_rejected_total{crd, version}` | Number of objects that an admission webhook rejected when rewritten. |
-
-If an object is rejected, its CRD keeps `v1alpha1` in `status.storedVersions` and the operator logs the object's name. The operator starts its controllers anyway, and the next operator start retries the object. Fix or delete the object, then restart the operator:
-
-```bash
-kubectl rollout restart -n <namespace> deploy/grove-operator
-```
-
-The rewrite does not change the object, so validation rules added after the object was created do not reject it. For example, a PCS whose scaling group has `scaleConfig.maxReplicas` below `scaleConfig.minReplicas` is rewritten, but any change to that `scaleConfig` must fix it.
 
 ## Moving Your Manifests to v1beta1
 
@@ -136,7 +116,7 @@ kind: OperatorConfiguration
 
 ## Downgrading
 
-After the upgrade, the API server stores Grove objects as `grove.io/v1beta1`, which v0.1.x does not know. A plain `helm rollback` leaves the operator unable to read them, so you must first move the objects back to `grove.io/v1alpha1` with `grove-install-crds prepare-downgrade`. The command:
+After the upgrade, the API server stores every Grove object that is written as `grove.io/v1beta1`, which v0.1.x does not know, and the CRDs list `v1beta1` in `status.storedVersions`. A plain `helm rollback` fails, because the API server rejects CRDs that drop a stored version, so you must first move the objects back to `grove.io/v1alpha1` with `grove-install-crds prepare-downgrade`. The command:
 
 1. Makes `v1alpha1` the storage version of the Grove CRDs, keeping both versions served.
 2. Rewrites every Grove object so that it is stored as `grove.io/v1alpha1`.
@@ -183,7 +163,7 @@ kubectl wait -n <namespace> --for=condition=complete job/grove-prepare-downgrade
 kubectl logs -n <namespace> job/grove-prepare-downgrade
 ```
 
-The command is idempotent. If it fails, for example because an admission webhook rejects an object, fix the object and run it again.
+The command is idempotent. If it fails, for example because an admission webhook rejects an object, fix the object and run it again. A PCS admitted by an earlier release with a scaling group whose `scaleConfig.maxReplicas` is less than its `scaleConfig.minReplicas` is rejected this way.
 
 ### Step 2: Roll back the release
 
@@ -194,7 +174,7 @@ helm history grove -n <namespace>
 helm rollback grove <revision-of-v0.1.0-alpha.16> -n <namespace>
 ```
 
-> **Note:** If the v0.2.0-beta1 operator restarts before the rollback with `crdInstaller.enabled=true`, its init container applies the v0.2.0-beta1 CRDs again and the operator migrates the objects back to `grove.io/v1beta1`. Run `prepare-downgrade` again in that case.
+> **Note:** If the v0.2.0-beta1 operator restarts before the rollback with `crdInstaller.enabled=true`, its init container applies the v0.2.0-beta1 CRDs again, and the objects that the operator writes are stored as `grove.io/v1beta1` again. Run `prepare-downgrade` again in that case.
 
 ### Step 3: Verify the downgrade
 
@@ -208,6 +188,6 @@ Each line shows `v1alpha1 ["v1alpha1"]`. Any `packDomain` that existed before th
 
 ## Limitations
 
-- **`packDomain` is converted, not stored.** A `grove.io/v1alpha1` PCS that sets `packDomain` is accepted, and Grove stores the value as `pack.required`. If both are set, `pack.required` is kept and `packDomain` is dropped. Reading the PCS back at `v1alpha1` shows `pack.required`, so tools that compare the applied manifest with the live object report a difference until you replace `packDomain` with `pack.required` in your manifests.
+- **`packDomain` is converted, not stored.** As in v0.1.x, `grove.io/v1alpha1` rejects `packDomain` on a new PCS, and accepts it on an existing one. Grove stores the value as `pack.required`, so reading the PCS back at `v1alpha1` shows `pack.required`, so tools that compare the applied manifest with the live object report a difference until you replace `packDomain` with `pack.required` in your manifests.
 - **The deprecated versions are removed in a later release.** A future release stops serving `grove.io/v1alpha1` and stops accepting `operator.config.grove.io/v1alpha1`. Move your manifests and configuration to `v1beta1` before then.
 - **A downgrade needs the v0.2.0-beta1 operator.** `prepare-downgrade` cannot run after the operator is removed, because PCS objects are converted by its conversion webhook.

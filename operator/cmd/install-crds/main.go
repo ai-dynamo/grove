@@ -95,8 +95,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	logger.Info("Installing Grove CRDs", "conversionServiceNamespace", namespace)
-	if err = crdinstaller.InstallCRDs(ctx, cl, logger, allCRDs(), namespace); err != nil {
+	logger.Info("Installing Grove CRDs", "conversionService", k8sutils.OperatorServiceName(), "conversionServiceNamespace", namespace)
+	if err = crdinstaller.InstallCRDs(ctx, cl, logger, allCRDs(), k8sutils.OperatorServiceName(), namespace); err != nil {
 		logger.Error(err, "failed to install CRDs")
 		os.Exit(1)
 	}

@@ -162,6 +162,43 @@ _Appears in:_
 | `observedAt` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#time-v1-meta)_ | ObservedAt is the time at which the error was observed. |  |  |
 
 
+
+
+#### LastOperationState
+
+_Underlying type:_ _string_
+
+LastOperationState is a string alias for the state of the last operation.
+
+
+
+_Appears in:_
+- [LastOperation](#lastoperation)
+
+| Field | Description |
+| --- | --- |
+| `Processing` | LastOperationStateProcessing indicates that the last operation is in progress.<br /> |
+| `Succeeded` | LastOperationStateSucceeded indicates that the last operation succeeded.<br /> |
+| `Error` | LastOperationStateError indicates that the last operation completed with errors and will be retried.<br /> |
+
+
+#### LastOperationType
+
+_Underlying type:_ _string_
+
+LastOperationType is a string alias for the type of the last operation.
+
+
+
+_Appears in:_
+- [LastOperation](#lastoperation)
+
+| Field | Description |
+| --- | --- |
+| `Reconcile` | LastOperationTypeReconcile indicates that the last operation was a reconcile operation.<br /> |
+| `Delete` | LastOperationTypeDelete indicates that the last operation was a delete operation.<br /> |
+
+
 #### PCSGResourceSharingFilter
 
 
@@ -458,6 +495,7 @@ _Appears in:_
 | `updatedReplicas` _integer_ | UpdatedReplicas is the number of replicas that have been updated to the desired revision of the PodCliqueSet. | 0 |  |
 | `availableReplicas` _integer_ | AvailableReplicas is the number of PodCliqueSet replicas that are available.<br />A PodCliqueSet replica is considered available when all standalone PodCliques within that replica<br />have MinAvailableBreached condition = False AND all PodCliqueScalingGroups (PCSG) within that replica<br />have MinAvailableBreached condition = False. | 0 |  |
 | `hpaPodSelector` _string_ | Selector is the label selector that determines which pods are part of the PodGang.<br />PodGang is a unit of scale and this selector is used by HPA to scale the PodGang based on metrics captured for<br />the pods that match this selector. |  |  |
+| `podGangStatuses` _[PodGangStatus](#podgangstatus) array_ | PodGangStatuses captures the status for all the PodGang's that are part of the PodCliqueSet. |  |  |
 | `currentGenerationHash` _string_ | CurrentGenerationHash is a hash value generated out of a collection of fields in a PodCliqueSet.<br />Since only a subset of fields is taken into account when generating the hash, not every change in the PodCliqueSetSpec will<br />be accounted for when generating this hash value. A field in PodCliqueSetSpec is included if a change to it triggers<br />a rolling recreate of PodCliques and/or PodCliqueScalingGroups.<br />Only if this value is not nil and the newly computed hash value is different from the persisted CurrentGenerationHash value<br />then an update needs to be triggered. |  |  |
 | `updateProgress` _[PodCliqueSetUpdateProgress](#podcliquesetupdateprogress)_ | UpdateProgress represents the progress of an update. |  |  |
 | `scalingProgress` _[PodCliqueSetScalingProgress](#podcliquesetscalingprogress)_ | ScalingProgress records replica indices selected for scale-out or scale-in.<br />Availability-aware scale-in can remove replicas out of index order, so active replica indices may no longer<br />form the contiguous range [0, spec.replicas). Persisting selections ensures all components reconcile the same<br />sparse set of replica identities while scaling is in progress. It is nil when no scaling operation is in progress. |  |  |
@@ -621,7 +659,7 @@ _Appears in:_
 | `updateEndedAt` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#time-v1-meta)_ | UpdateEndedAt is the time at which Grove does not have any work pending to manifest the update according to the<br />configured update strategy. For rolling update strategies where Grove handles the orchestration, while the update is<br />still in progress it will be nil, and will be set once the update finishes where all Pods are replaced by Grove with<br />the latest specification. For the OnDelete strategy, it is set to the same time as UpdateStartedAt, which implies<br />that there is no work pending on Grove. As can be observed with the OnDelete strategy, UpdateEndedAt being set does<br />not necessarily mean that all Pods are running with the latest specifications. |  |  |
 | `lastProgressedAt` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#time-v1-meta)_ | LastProgressedAt is the time at which the rolling update last made progress, meaning the number of<br />updated replicas increased. The ProgressDeadline is measured from it, and it is nil while no update is in<br />progress. |  |  |
 | `podCliqueSetGenerationHash` _string_ | PodCliqueSetGenerationHash is the generation hash corresponding to the latest PodCliqueSet spec that this<br />PodClique should converge to. PodCliqueStatus.CurrentPodCliqueSetGenerationHash is set to this hash once<br />UpdateEndedAt is set, which marks the end of the update. |  |  |
-| `podTemplateHash` _string_ | PodTemplateHash is the template hash of the PodClique that the Pods of this PodClique should converge to.<br />This hash is used to segregate Pods which are up to date with the specification, and ones which are outdated for<br />preferential deletions in rolling update strategies, and in all strategies for scale-ins.<br />PodCliqueStatus.CurrentPodTemplateHash is set to this hash once UpdateEndedAt is set, which marks the end of the update. |  |  |
+| `podTemplateHash` _string_ | PodTemplateHash is the template hash of the PodClique that the Pods of this PodClique should converge to.<br />This hash is used to segregate Pods which are up to date with the specification, and ones which are outdated for<br />preferential deletions in rolling update strategies, and in all strategies for scale-ins.<br />PodCliqueStatus.PodTemplateHash is set to this hash once UpdateEndedAt is set, which marks the end of the update. |  |  |
 | `updatedScheduledReplicas` _integer_ | UpdatedScheduledReplicas is the number of Pods at PodTemplateHash (the target hash of this update) that<br />have been scheduled. It is maintained only while the update is in progress. The coherent update engine<br />reads it to confirm that Pods subsumed in the current sub-step are placed before the next sub-step takes<br />more Pods down, since MaxUnavailable rather than readiness bounds availability. Once UpdateEndedAt is<br />set it carries no further meaning. |  |  |
 
 
@@ -702,6 +740,45 @@ _Appears in:_
 | --- | --- | --- | --- |
 | `podCliqueSetReplicaIndex` _integer_ | PodCliqueSetReplicaIndex is the index of the PodCliqueSet replica this map belongs to. |  |  |
 | `entries` _[PodGangEntry](#podgangentry) array_ | Entries is the ordered list of desired PodGang entries for this PodCliqueSet replica. An Anchor<br />entry materializes into one PodGang. A Tail or ScaleOut entry materializes into one PodGang per<br />PodCliqueScalingGroup replica index it carries. |  |  |
+
+
+#### PodGangPhase
+
+_Underlying type:_ _string_
+
+PodGangPhase represents the phase of a PodGang.
+
+_Validation:_
+- Enum: [Pending Starting Running Failed Succeeded]
+
+_Appears in:_
+- [PodGangStatus](#podgangstatus)
+
+| Field | Description |
+| --- | --- |
+| `Pending` | PodGangPending indicates that the pods in a PodGang have not yet been taken up for scheduling.<br /> |
+| `Starting` | PodGangStarting indicates that the pods are bound to nodes by the scheduler and are starting.<br /> |
+| `Running` | PodGangRunning indicates that the all the pods in a PodGang are running.<br /> |
+| `Failed` | PodGangFailed indicates that one or more pods in a PodGang have failed.<br />This is a terminal state and is typically used for batch jobs.<br /> |
+| `Succeeded` | PodGangSucceeded indicates that all the pods in a PodGang have succeeded.<br />This is a terminal state and is typically used for batch jobs.<br /> |
+
+
+#### PodGangStatus
+
+
+
+PodGangStatus defines the status of a PodGang.
+
+
+
+_Appears in:_
+- [PodCliqueSetStatus](#podcliquesetstatus)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `name` _string_ | Name is the name of the PodGang. |  |  |
+| `phase` _[PodGangPhase](#podgangphase)_ | Phase is the current phase of the PodGang. |  | Enum: [Pending Starting Running Failed Succeeded] <br /> |
+| `conditions` _[Condition](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#condition-v1-meta) array_ | Conditions represents the latest available observations of the PodGang by its controller. |  |  |
 
 
 #### ResourceClaimTemplateConfig
@@ -846,7 +923,7 @@ _Appears in:_
 | --- | --- | --- | --- |
 | `topologyName` _string_ | TopologyName is the name of the ClusterTopologyBinding resource to use for topology-aware scheduling.<br />Setting TopologyName may be optional if the name can be inherited from a higher level scope.<br />When TopologyName is specified at a PCS/PCSG/PCLQ resource constraint, it will also be inherited<br />as the default ClusterTopologyBinding name on all sub-resources, unless overridden by another TopologyName<br />at a sub-resource.<br />For example, setting TopologyName at a PCS level makes it optional for child PCSG or PCLQ levels<br />when the sub-resources reuse the same ClusterTopologyBinding.<br />Immutable after creation. |  |  |
 | `pack` _[TopologyPackConstraint](#topologypackconstraint)_ | Pack specifies topology packing constraints for each replica of the resource. |  |  |
-| `packDomain` _[TopologyDomain](#topologydomain)_ | PackDomain specifies the required topology domain using the legacy field name.<br />Controls placement constraint for EACH individual replica instance.<br />Must reference a domain in the topology levels defined in the ClusterTopologyBinding named by TopologyName.<br />Example: "rack" means each replica independently placed within one rack.<br />Note: Does NOT constrain all replicas to the same rack together.<br />Different replicas can be in different topology domains.<br />Deprecated: use Pack.RequiredDomain. It is stored as Pack.RequiredDomain, which takes precedence when both are set. |  | MaxLength: 63 <br />MinLength: 1 <br />Pattern: `^[a-z][a-z0-9-]*$` <br /> |
+| `packDomain` _[TopologyDomain](#topologydomain)_ | PackDomain specifies the required topology domain using the legacy field name.<br />Controls placement constraint for EACH individual replica instance.<br />Must reference a domain in the topology levels defined in the ClusterTopologyBinding named by TopologyName.<br />Example: "rack" means each replica independently placed within one rack.<br />Note: Does NOT constrain all replicas to the same rack together.<br />Different replicas can be in different topology domains.<br />Deprecated: use Pack.RequiredDomain. |  | MaxLength: 63 <br />MinLength: 1 <br />Pattern: `^[a-z][a-z0-9-]*$` <br /> |
 
 
 #### TopologyDomain

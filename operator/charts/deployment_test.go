@@ -108,6 +108,21 @@ func TestOperatorImagePullSecrets(t *testing.T) {
 	}
 }
 
+// TestDeploymentServiceName verifies that the operator and the CRD installer get the name of the operator Service,
+// which the webhook certificates and the conversion webhook of the CRDs refer to.
+func TestDeploymentServiceName(t *testing.T) {
+	deployment := renderOperatorDeployment(t, map[string]interface{}{
+		"service":      map[string]interface{}{"name": "my-grove"},
+		"crdInstaller": map[string]interface{}{"enabled": true},
+	})
+	podSpec := deployment.Spec.Template.Spec
+	containers := append(append([]corev1.Container{}, podSpec.InitContainers...), podSpec.Containers...)
+	require.Len(t, containers, 2)
+	for _, container := range containers {
+		assert.Contains(t, container.Env, corev1.EnvVar{Name: "GROVE_OPERATOR_SERVICE_NAME", Value: "my-grove"}, container.Name)
+	}
+}
+
 func renderOperatorDeployment(t *testing.T, values map[string]interface{}) *appsv1.Deployment {
 	t.Helper()
 

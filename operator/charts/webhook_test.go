@@ -28,8 +28,6 @@ import (
 
 // TestWebhookRulesMatchHubVersion verifies that every grove.io admission rule matches only the hub version
 // with matchPolicy Equivalent, so that requests for any served version reach the handlers as v1beta1 objects.
-// The handlers are served on v1beta1 paths, so that an operator of an earlier release, which decodes v1alpha1,
-// answers 404 instead of mis-decoding them during a rolling update.
 func TestWebhookRulesMatchHubVersion(t *testing.T) {
 	manifests := renderChart(t, map[string]interface{}{
 		"config": map[string]interface{}{
@@ -50,7 +48,7 @@ func TestWebhookRulesMatchHubVersion(t *testing.T) {
 		for _, webhook := range config.Webhooks {
 			require.NotNil(t, webhook.ClientConfig.Service, webhook.Name)
 			require.NotNil(t, webhook.ClientConfig.Service.Path, webhook.Name)
-			assert.True(t, strings.HasPrefix(*webhook.ClientConfig.Service.Path, "/webhooks/v1beta1/"), "%s: %s", webhook.Name, *webhook.ClientConfig.Service.Path)
+			assert.True(t, strings.HasPrefix(*webhook.ClientConfig.Service.Path, "/webhooks/"), "%s: %s", webhook.Name, *webhook.ClientConfig.Service.Path)
 			require.NotNil(t, webhook.MatchPolicy, webhook.Name)
 			assert.Equal(t, admissionregistrationv1.Equivalent, *webhook.MatchPolicy, webhook.Name)
 			for _, rule := range webhook.Rules {
@@ -68,7 +66,8 @@ func TestWebhookRulesMatchHubVersion(t *testing.T) {
 }
 
 // TestClusterRoleConversionCRDAccess verifies that the operator can configure the conversion webhook of the
-// converted CRD and update the storedVersions of every grove.io CRD whether or not the CRD installer is enabled.
+// converted CRD, and prepare-downgrade can update the storedVersions of every grove.io CRD, whether or not the CRD
+// installer is enabled.
 func TestClusterRoleConversionCRDAccess(t *testing.T) {
 	for _, crdInstallerEnabled := range []bool{false, true} {
 		manifests := renderChart(t, map[string]interface{}{

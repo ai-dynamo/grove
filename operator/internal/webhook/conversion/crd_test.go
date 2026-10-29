@@ -39,6 +39,9 @@ const (
 	testPort      = 8443
 )
 
+// testService uses a Service name other than the chart default, so that the tests catch a hard-coded name.
+var testService = Service{Name: "my-grove", Namespace: testNamespace, Port: testPort}
+
 func TestConfigureCRDs(t *testing.T) {
 	ctx := context.Background()
 
@@ -46,14 +49,14 @@ func TestConfigureCRDs(t *testing.T) {
 		cl := newCRDClient(t, generatedCRDs(t)...)
 		setCABundle(t, cl, []byte("existing-ca"))
 
-		require.NoError(t, ConfigureCRDs(ctx, cl, logr.Discard(), testNamespace, testPort))
+		require.NoError(t, ConfigureCRDs(ctx, cl, logr.Discard(), testService))
 
 		for _, name := range ConvertedCRDNames() {
 			conversion := getConversion(t, cl, name)
 			assert.Equal(t, apiextensionsv1.WebhookConverter, conversion.Strategy, name)
 			service := conversion.Webhook.ClientConfig.Service
 			require.NotNil(t, service, name)
-			assert.Equal(t, ServiceName, service.Name, name)
+			assert.Equal(t, testService.Name, service.Name, name)
 			assert.Equal(t, testNamespace, service.Namespace, name)
 			assert.Equal(t, WebhookPath, *service.Path, name)
 			assert.Equal(t, int32(testPort), *service.Port, name)
@@ -69,7 +72,7 @@ func TestConfigureCRDs(t *testing.T) {
 		}
 		cl := newCRDClient(t, crds...)
 
-		require.NoError(t, ConfigureCRDs(ctx, cl, logr.Discard(), testNamespace, testPort))
+		require.NoError(t, ConfigureCRDs(ctx, cl, logr.Discard(), testService))
 
 		for _, name := range ConvertedCRDNames() {
 			conversion := getConversion(t, cl, name)
@@ -89,7 +92,7 @@ func TestConfigureCRDs(t *testing.T) {
 		crds[0].Spec.Versions = versions
 		cl := newCRDClient(t, crds...)
 
-		err := ConfigureCRDs(ctx, cl, logr.Discard(), testNamespace, testPort)
+		err := ConfigureCRDs(ctx, cl, logr.Discard(), testService)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "does not serve grove.io/v1beta1")
 	})
@@ -97,7 +100,7 @@ func TestConfigureCRDs(t *testing.T) {
 	t.Run("fails when a CRD is not installed", func(t *testing.T) {
 		cl := newCRDClient(t, generatedCRDs(t)[1:]...)
 
-		err := ConfigureCRDs(ctx, cl, logr.Discard(), testNamespace, testPort)
+		err := ConfigureCRDs(ctx, cl, logr.Discard(), testService)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "is not installed")
 	})
@@ -108,7 +111,7 @@ func TestCRDConversionKeeper(t *testing.T) {
 
 	t.Run("restores a reverted service address", func(t *testing.T) {
 		cl := newCRDClient(t, generatedCRDs(t)...)
-		keeper := NewCRDConversionKeeper(cl, logr.Discard(), testNamespace, testPort, "").(*crdConversionKeeper)
+		keeper := NewCRDConversionKeeper(cl, logr.Discard(), testService, "").(*crdConversionKeeper)
 		require.NoError(t, keeper.keep(ctx))
 		setCABundle(t, cl, []byte("injected-ca"))
 
@@ -132,7 +135,7 @@ func TestCRDConversionKeeper(t *testing.T) {
 	t.Run("injects and rotates the CA from the CA file", func(t *testing.T) {
 		cl := newCRDClient(t, generatedCRDs(t)...)
 		caFile := filepath.Join(t.TempDir(), "ca.crt")
-		keeper := NewCRDConversionKeeper(cl, logr.Discard(), testNamespace, testPort, caFile).(*crdConversionKeeper)
+		keeper := NewCRDConversionKeeper(cl, logr.Discard(), testService, caFile).(*crdConversionKeeper)
 		assert.False(t, keeper.NeedLeaderElection())
 
 		assert.Error(t, keeper.keep(ctx), "a missing CA file is reported")

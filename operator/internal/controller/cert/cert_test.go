@@ -16,7 +16,6 @@ package cert
 
 import (
 	"context"
-	"os"
 	"testing"
 	"time"
 
@@ -72,59 +71,6 @@ func assertConversionCRDs(t *testing.T, webhooks []cert.WebhookInfo) {
 	assert.Equal(t, []cert.WebhookInfo{
 		{Type: cert.CRDConversion, Name: "podcliquesets.grove.io"},
 	}, webhooks)
-}
-
-// TestGetOperatorNamespace tests reading the operator namespace from a file.
-// Note: This function uses a hardcoded file path, so we test with the actual constant.
-// In practice, the file should exist in the operator's pod environment.
-func TestGetOperatorNamespace(t *testing.T) {
-	// Test with non-existent file (expected in test environment)
-	t.Run("file does not exist in test environment", func(t *testing.T) {
-		// Since constants.OperatorNamespaceFile is a constant pointing to
-		// /var/run/secrets/kubernetes.io/serviceaccount/namespace,
-		// which won't exist in a test environment, we expect an error
-		_, err := getOperatorNamespace()
-
-		// This is expected to fail in test environment
-		if err != nil {
-			assert.Error(t, err)
-		}
-	})
-}
-
-// TestGetOperatorNamespaceFromFile tests the namespace file reading logic with various inputs.
-func TestGetOperatorNamespaceFromFile(t *testing.T) {
-	t.Run("file does not exist", func(t *testing.T) {
-		_, err := getOperatorNamespaceFromFile("/nonexistent/path/to/namespace")
-		require.Error(t, err)
-	})
-
-	t.Run("file contains valid namespace", func(t *testing.T) {
-		// Create a temp file with a valid namespace
-		tmpFile, err := os.CreateTemp("", "namespace-test")
-		require.NoError(t, err)
-		defer os.Remove(tmpFile.Name())
-
-		_, err = tmpFile.WriteString("test-namespace")
-		require.NoError(t, err)
-		tmpFile.Close()
-
-		namespace, err := getOperatorNamespaceFromFile(tmpFile.Name())
-		require.NoError(t, err)
-		assert.Equal(t, "test-namespace", namespace)
-	})
-
-	t.Run("file is empty", func(t *testing.T) {
-		// Create an empty temp file
-		tmpFile, err := os.CreateTemp("", "namespace-test")
-		require.NoError(t, err)
-		defer os.Remove(tmpFile.Name())
-		tmpFile.Close()
-
-		_, err = getOperatorNamespaceFromFile(tmpFile.Name())
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "operator namespace is empty")
-	})
 }
 
 // TestWaitTillWebhookCertsReady tests waiting for webhook certificates to be ready.
