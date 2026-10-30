@@ -15,9 +15,11 @@
 package v1alpha1
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/ai-dynamo/grove/operator/api/core/v1beta1"
+	"github.com/google/go-cmp/cmp"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -105,56 +107,65 @@ func TestConvertPodCliqueSetNormalizesPackDomainAtEveryLevel(t *testing.T) {
 func TestRoundTripFromBeta(t *testing.T) {
 	f := randfill.New().NilChance(0.2).NumElements(0, 2).MaxDepth(12)
 	for i := 0; i < roundTripIterations; i++ {
-		pcs := &v1beta1.PodCliqueSet{}
-		f.Fill(pcs)
-		pcs.TypeMeta = metav1.TypeMeta{}
+		t.Run(fmt.Sprintf("iteration-%d", i), func(t *testing.T) {
+			t.Run("PodCliqueSet", func(t *testing.T) {
+				in := &v1beta1.PodCliqueSet{}
+				f.Fill(in)
+				in.TypeMeta = metav1.TypeMeta{}
 
-		alpha := &PodCliqueSet{}
-		require.NoError(t, Convert_v1beta1_PodCliqueSet_To_v1alpha1_PodCliqueSet(pcs, alpha, nil))
-		back := &v1beta1.PodCliqueSet{}
-		require.NoError(t, Convert_v1alpha1_PodCliqueSet_To_v1beta1_PodCliqueSet(alpha, back, nil))
-		require.True(t, equality.Semantic.DeepEqual(pcs, back), "PodCliqueSet changed in a v1beta1 round trip")
-
-		for _, roundTrip := range []func() bool{
-			func() bool {
+				alpha := &PodCliqueSet{}
+				require.NoError(t, Convert_v1beta1_PodCliqueSet_To_v1alpha1_PodCliqueSet(in, alpha, nil))
+				out := &v1beta1.PodCliqueSet{}
+				require.NoError(t, Convert_v1alpha1_PodCliqueSet_To_v1beta1_PodCliqueSet(alpha, out, nil))
+				if !equality.Semantic.DeepEqual(in, out) {
+					t.Fatalf("round trip mismatch (-want +got): \n%s", cmp.Diff(in, out))
+				}
+			})
+			t.Run("PodClique", func(t *testing.T) {
 				in := &v1beta1.PodClique{}
 				f.Fill(in)
 				in.TypeMeta = metav1.TypeMeta{}
 				mid, out := &PodClique{}, &v1beta1.PodClique{}
 				require.NoError(t, Convert_v1beta1_PodClique_To_v1alpha1_PodClique(in, mid, nil))
 				require.NoError(t, Convert_v1alpha1_PodClique_To_v1beta1_PodClique(mid, out, nil))
-				return equality.Semantic.DeepEqual(in, out)
-			},
-			func() bool {
+				if !equality.Semantic.DeepEqual(in, out) {
+					t.Fatalf("round trip mismatch (-want +got): \n%s", cmp.Diff(in, out))
+				}
+			})
+			t.Run("PodCliqueScalingGroup", func(t *testing.T) {
 				in := &v1beta1.PodCliqueScalingGroup{}
 				f.Fill(in)
 				in.TypeMeta = metav1.TypeMeta{}
 				mid, out := &PodCliqueScalingGroup{}, &v1beta1.PodCliqueScalingGroup{}
 				require.NoError(t, Convert_v1beta1_PodCliqueScalingGroup_To_v1alpha1_PodCliqueScalingGroup(in, mid, nil))
 				require.NoError(t, Convert_v1alpha1_PodCliqueScalingGroup_To_v1beta1_PodCliqueScalingGroup(mid, out, nil))
-				return equality.Semantic.DeepEqual(in, out)
-			},
-			func() bool {
+				if !equality.Semantic.DeepEqual(in, out) {
+					t.Fatalf("round trip mismatch (-want +got): \n%s", cmp.Diff(in, out))
+				}
+			})
+			t.Run("ClusterTopologyBinding", func(t *testing.T) {
 				in := &v1beta1.ClusterTopologyBinding{}
 				f.Fill(in)
 				in.TypeMeta = metav1.TypeMeta{}
 				mid, out := &ClusterTopologyBinding{}, &v1beta1.ClusterTopologyBinding{}
 				require.NoError(t, Convert_v1beta1_ClusterTopologyBinding_To_v1alpha1_ClusterTopologyBinding(in, mid, nil))
 				require.NoError(t, Convert_v1alpha1_ClusterTopologyBinding_To_v1beta1_ClusterTopologyBinding(mid, out, nil))
-				return equality.Semantic.DeepEqual(in, out)
-			},
-			func() bool {
+				if !equality.Semantic.DeepEqual(in, out) {
+					t.Fatalf("round trip mismatch (-want +got): \n%s", cmp.Diff(in, out))
+				}
+			})
+			t.Run("PodGangMap", func(t *testing.T) {
 				in := &v1beta1.PodGangMap{}
 				f.Fill(in)
 				in.TypeMeta = metav1.TypeMeta{}
 				mid, out := &PodGangMap{}, &v1beta1.PodGangMap{}
 				require.NoError(t, Convert_v1beta1_PodGangMap_To_v1alpha1_PodGangMap(in, mid, nil))
 				require.NoError(t, Convert_v1alpha1_PodGangMap_To_v1beta1_PodGangMap(mid, out, nil))
-				return equality.Semantic.DeepEqual(in, out)
-			},
-		} {
-			require.True(t, roundTrip(), "object changed in a v1beta1 round trip")
-		}
+				if !equality.Semantic.DeepEqual(in, out) {
+					t.Fatalf("round trip mismatch (-want +got): \n%s", cmp.Diff(in, out))
+				}
+			})
+		})
 	}
 }
 

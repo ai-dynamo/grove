@@ -73,10 +73,8 @@ function generate_crds() {
 function add_conversion_webhook() {
   local output_dir="$1"
   # The other grove.io kinds have the same schema in every version and use the None strategy.
-  for crd in grove.io_podcliquesets.yaml; do
-    sed -i.bak "/^spec:$/r ${SCRIPT_DIR}/crd-conversion.yaml" "${output_dir}/${crd}"
-    rm -f "${output_dir}/${crd}.bak"
-  done
+    sed -i.bak "/^spec:$/r ${SCRIPT_DIR}/crd-conversion.yaml" "${output_dir}/grove.io_podcliquesets.yaml"
+    rm -f "${output_dir}/grove.io_podcliquesets.yaml.bak"
 }
 
 function generate_clientset() {
