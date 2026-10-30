@@ -18,40 +18,46 @@
 package main
 
 import (
-	"flag"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 
 	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 	operatorcrds "github.com/ai-dynamo/grove/operator/api/core/crds"
+	"github.com/ai-dynamo/grove/operator/cmd/cli"
 	"github.com/ai-dynamo/grove/operator/internal/crdinstaller"
 	grovelogger "github.com/ai-dynamo/grove/operator/internal/logger"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
+	groveversion "github.com/ai-dynamo/grove/operator/internal/version"
 
 	schedulercrds "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1/crds"
+	"github.com/spf13/pflag"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-const defaultConversionWebhookPort = 9443
+const crdInstallerName = "grove-install-crds"
+
+var logger = ctrl.Log.WithName(crdInstallerName)
 
 func main() {
-	log := grovelogger.MustNewLogger(false, configv1beta1.InfoLevel, configv1beta1.LogFormatJSON)
-	ctrl.SetLogger(log)
-	logger := ctrl.Log.WithName("grove-install-crds")
+	ctrl.SetLogger(grovelogger.MustNewLogger(false, configv1beta1.InfoLevel, configv1beta1.LogFormatJSON))
+	groveInfo := groveversion.New()
 
-	upgradeCRDs := flag.Bool("upgrade-crds", false, "upgrade CRDs from the bundle shipped with this release")
-	conversionWebhookPort := flag.Int("conversion-webhook-port", defaultConversionWebhookPort, "port of the conversion webhook Service")
-	// This is only relevant when manual certificate management is done by the user
-	conversionWebhookCAFile := flag.String("conversion-webhook-ca-file", "", "file containing the conversion webhook CA certificate")
-	flag.Parse()
-	if flag.NArg() != 0 {
-		logger.Error(fmt.Errorf("unexpected arguments %q", flag.Args()), "usage: grove-install-crds")
-		os.Exit(2)
+	launchOpts, err := cli.ParseCRDInstallerOptions(os.Args[1:])
+	if err != nil {
+		handleErrorAndExit(err, cli.ExitErrParseCLIArgs)
 	}
+	if launchOpts.Version {
+		_, _ = fmt.Fprintf(io.Writer(os.Stdout), "%s %v\n", crdInstallerName, groveInfo)
+		os.Exit(cli.ExitSuccess)
+	}
+
+	logger.Info("Starting grove CRD installer", "grove-info", groveInfo.Verbose())
 
 	ctx := ctrl.SetupSignalHandler()
 
@@ -59,53 +65,54 @@ func main() {
 	cfg, err := ctrl.GetConfig()
 	if err != nil {
 		logger.Error(err, "failed to get the API server config")
-		os.Exit(1)
+		handleErrorAndExit(err, cli.ExitErrInitializeCRDInstaller)
 	}
 
 	scheme := runtime.NewScheme()
 	if err = apiextensionsv1.AddToScheme(scheme); err != nil {
 		logger.Error(err, "failed to add apiextensionsv1 to scheme")
-		os.Exit(1)
+		handleErrorAndExit(err, cli.ExitErrInitializeCRDInstaller)
 	}
 
 	cl, err := client.New(cfg, client.Options{Scheme: scheme})
 	if err != nil {
 		logger.Error(err, "failed to create API client")
-		os.Exit(1)
+		handleErrorAndExit(err, cli.ExitErrInitializeCRDInstaller)
 	}
 
 	namespace, err := k8sutils.OperatorNamespace()
 	if err != nil {
 		logger.Error(err, "failed to read the operator namespace")
-		os.Exit(1)
+		handleErrorAndExit(err, cli.ExitErrLoadCRDInstallerConfig)
 	}
 	// In manual provisioning mode, the init container injects this CA bundle into the conversion webhook config.
 	var caBundle []byte
-	if *conversionWebhookCAFile != "" {
-		caBundle, err = os.ReadFile(filepath.Clean(*conversionWebhookCAFile))
+	if launchOpts.ConversionWebhookCAFile != "" {
+		caBundle, err = os.ReadFile(filepath.Clean(launchOpts.ConversionWebhookCAFile))
 		if err != nil {
-			logger.Error(err, "failed to read the conversion webhook CA file", "path", *conversionWebhookCAFile)
-			os.Exit(1)
+			logger.Error(err, "failed to read the conversion webhook CA file", "path", launchOpts.ConversionWebhookCAFile)
+			handleErrorAndExit(err, cli.ExitErrLoadCRDInstallerConfig)
 		}
 		if len(caBundle) == 0 {
-			logger.Error(fmt.Errorf("CA file is empty"), "failed to read the conversion webhook CA file", "path", *conversionWebhookCAFile)
-			os.Exit(1)
+			err = errors.New("CA file is empty")
+			logger.Error(err, "failed to read the conversion webhook CA file", "path", launchOpts.ConversionWebhookCAFile)
+			handleErrorAndExit(err, cli.ExitErrLoadCRDInstallerConfig)
 		}
 	}
 
 	conversion := crdinstaller.ConversionWebhookConfig{
 		ServiceName:      k8sutils.OperatorServiceName(),
 		ServiceNamespace: namespace,
-		ServicePort:      *conversionWebhookPort,
+		ServicePort:      launchOpts.ConversionWebhookPort,
 		CABundle:         caBundle,
 	}
-	logger.Info("Configuring Grove CRDs", "upgradeCRDs", *upgradeCRDs,
+	logger.Info("Configuring Grove CRDs", "upgradeCRDs", launchOpts.UpgradeCRDs,
 		"conversionService", conversion.ServiceName, "conversionServiceNamespace", conversion.ServiceNamespace,
 		"conversionServicePort", conversion.ServicePort)
-	if *upgradeCRDs {
+	if launchOpts.UpgradeCRDs {
 		if err = crdinstaller.InstallCRDs(ctx, cl, logger, allCRDs(), conversion); err != nil {
 			logger.Error(err, "failed to upgrade CRDs")
-			os.Exit(1)
+			handleErrorAndExit(err, cli.ExitErrUpgradeCRDs)
 		}
 		logger.Info("All Grove CRDs upgraded successfully")
 		return
@@ -113,7 +120,7 @@ func main() {
 
 	if err = crdinstaller.ConfigureConversionWebhook(ctx, cl, logger, operatorcrds.PodCliqueSetCRD(), conversion); err != nil {
 		logger.Error(err, "failed to configure the PodCliqueSet conversion webhook")
-		os.Exit(1)
+		handleErrorAndExit(err, cli.ExitErrConfigureCRDConversion)
 	}
 }
 
@@ -127,4 +134,13 @@ func allCRDs() []string {
 		operatorcrds.PodGangMapCRD(),
 		schedulercrds.PodGangCRD(),
 	}
+}
+
+// handleErrorAndExit gracefully handles errors before exiting the program.
+func handleErrorAndExit(err error, exitCode int) {
+	if errors.Is(err, pflag.ErrHelp) {
+		os.Exit(cli.ExitSuccess)
+	}
+	_, _ = fmt.Fprintf(os.Stderr, "Err: %v\n", err)
+	os.Exit(exitCode)
 }

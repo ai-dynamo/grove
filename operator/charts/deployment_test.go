@@ -135,7 +135,7 @@ func TestCRDInstallerAlwaysRuns(t *testing.T) {
 		values      map[string]interface{}
 		wantUpgrade string
 	}{
-		{name: "unset", wantUpgrade: "--upgrade-crds=false"},
+		{name: "unset", wantUpgrade: "--upgrade-crds=true"},
 		{name: "disabled", values: map[string]interface{}{"crdInstaller": map[string]interface{}{"upgradeCRDs": false}}, wantUpgrade: "--upgrade-crds=false"},
 		{name: "enabled", values: map[string]interface{}{"crdInstaller": map[string]interface{}{"upgradeCRDs": true}}, wantUpgrade: "--upgrade-crds=true"},
 		{
@@ -143,7 +143,7 @@ func TestCRDInstallerAlwaysRuns(t *testing.T) {
 			values: map[string]interface{}{
 				"crdInstaller": map[string]interface{}{"enabled": false},
 			},
-			wantUpgrade: "--upgrade-crds=false",
+			wantUpgrade: "--upgrade-crds=true",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

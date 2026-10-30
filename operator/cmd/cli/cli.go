@@ -47,6 +47,14 @@ const (
 	// ExitErrSetPodGangMigrationGate indicates that the application exited due to an error setting the
 	// PodGang migration gate condition on legacy PodCliqueSets before the controllers started.
 	ExitErrSetPodGangMigrationGate
+	// ExitErrInitializeCRDInstaller indicates that the CRD installer could not initialize its API client.
+	ExitErrInitializeCRDInstaller
+	// ExitErrLoadCRDInstallerConfig indicates that the CRD installer could not load its runtime configuration.
+	ExitErrLoadCRDInstallerConfig
+	// ExitErrUpgradeCRDs indicates that the CRD installer could not upgrade the CRDs.
+	ExitErrUpgradeCRDs
+	// ExitErrConfigureCRDConversion indicates that the CRD installer could not configure CRD conversion.
+	ExitErrConfigureCRDConversion
 )
 
 var (
