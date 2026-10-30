@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	apiconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
@@ -25,6 +26,7 @@ import (
 	groveclientscheme "github.com/ai-dynamo/grove/operator/internal/client"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
+	pgmcomponent "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/podgangmap"
 	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/sync"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
@@ -39,6 +41,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/client-go/tools/record"
+	clocktesting "k8s.io/utils/clock/testing"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -154,6 +157,79 @@ func TestSyncUsesSparseReplicaIndices(t *testing.T) {
 	assert.ElementsMatch(t, []string{"coyote-0-howl", "coyote-2-howl", "coyote-4-howl"}, pclqNames)
 	assert.Equal(t, []int{0, 2, 4}, state.ExpectedReplicaIndices)
 	assert.Equal(t, []int{1}, state.ScaleInReplicaIndices)
+}
+
+// TestSyncUpdatesStandaloneTemplateAfterScaleToZero covers the component-level failure in #917:
+// an empty PodGangMap must not prevent an idle standalone PodClique from adopting a new template.
+func TestSyncUpdatesStandaloneTemplateAfterScaleToZero(t *testing.T) {
+	ctx := context.Background()
+	pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testPCSNamespace, uuid.NewUUID()).
+		WithStandaloneCliqueReplicas("frontend", 1).
+		WithUpdateStrategy(&grovecorev1alpha1.PodCliqueSetUpdateStrategy{Type: grovecorev1alpha1.RollingRecreateStrategy}).
+		WithScalingGroupConfig("decode", []string{"worker"}, 1, 1).
+		WithPodCliqueSetGenerationHash(ptr.To("old-generation")).Build()
+	frontendTemplate := pcs.Spec.Template.Cliques[0]
+	frontendTemplate.Spec.PodSpec.Containers = []corev1.Container{{Name: "frontend", Image: "frontend:old"}}
+	pclq := testutils.NewPodCliqueBuilder(pcs.Name, pcs.UID, "frontend", pcs.Namespace, 0).Build()
+	pclq.UID = uuid.NewUUID()
+	pclq.Spec.PodSpec = *frontendTemplate.Spec.PodSpec.DeepCopy()
+	originalUID := pclq.UID
+	pcsg := testutils.NewPodCliqueScalingGroupBuilder(pcs.Name+"-0-decode", pcs.Namespace, pcs.Name, 0).
+		WithReplicas(1).WithOwnerReference(apiconstants.KindPodCliqueSet, pcs.Name, pcs.UID).Build()
+	cl := testutils.CreateDefaultFakeClient([]client.Object{pcs, pclq, pcsg})
+	pgmOperator := pgmcomponent.New(cl, groveclientscheme.Scheme, clocktesting.NewFakeClock(time.Unix(0, 1000)))
+	pclqOperator := New(cl, groveclientscheme.Scheme, record.NewFakeRecorder(20))
+	state := &pcssync.State{ExpectedReplicaIndices: []int{0}}
+	pgmKey := client.ObjectKey{Namespace: pcs.Namespace, Name: pcs.Name + "-0"}
+	pgm := &grovecorev1alpha1.PodGangMap{}
+	syncMap := func() {
+		t.Helper()
+		_, err := pgmOperator.Sync(ctx, logr.Discard(), pcs, state)
+		require.NoError(t, err)
+		require.NoError(t, cl.Get(ctx, pgmKey, pgm))
+	}
+	syncClique := func() {
+		t.Helper()
+		_, err := pclqOperator.Sync(ctx, logr.Discard(), pcs, state)
+		require.NoError(t, err)
+		require.NoError(t, cl.Get(ctx, client.ObjectKeyFromObject(pclq), pclq))
+	}
+	syncMap()
+	require.NotEmpty(t, pgm.Spec.Entries)
+	syncClique()
+
+	// Scale the live components, as an autoscaler does, while retaining the standalone PodClique.
+	pclq.Spec.Replicas = 0
+	pcsg.Spec.Replicas = 0
+	require.NoError(t, cl.Update(ctx, pclq))
+	require.NoError(t, cl.Update(ctx, pcsg))
+	syncMap()
+	require.Empty(t, pgm.Spec.Entries)
+
+	frontendTemplate.Spec.PodSpec.Containers[0].Image = "frontend:new"
+	pcs.Status.CurrentGenerationHash = ptr.To("new-generation")
+	syncMap()
+	require.Empty(t, pgm.Spec.Entries)
+	syncClique()
+	assert.Equal(t, originalUID, pclq.UID)
+	assert.Zero(t, pclq.Spec.Replicas, "a template update must not undo scale-to-zero")
+	assert.Equal(t, "frontend:new", pclq.Spec.PodSpec.Containers[0].Image)
+
+	// Waking the components rebuilds the anchor from the live counts and retains the new template.
+	pclq.Spec.Replicas = 1
+	pcsg.Spec.Replicas = 1
+	require.NoError(t, cl.Update(ctx, pclq))
+	require.NoError(t, cl.Update(ctx, pcsg))
+	syncMap()
+	anchor := testutils.EntryByRole(pgm.Spec.Entries, grovecorev1alpha1.PodGangEntryRoleAnchor)
+	require.Equal(t, grovecorev1alpha1.PodGangEntryRoleAnchor, anchor.Role)
+	assert.Equal(t, int32(1), anchor.PodCliques["frontend"])
+	assert.Equal(t, []int32{0}, anchor.PCSGReplicaIndices["decode"])
+	assert.Equal(t, "new-generation", anchor.PodCliqueSetGenerationHash)
+	syncClique()
+	assert.Equal(t, originalUID, pclq.UID)
+	assert.Equal(t, int32(1), pclq.Spec.Replicas)
+	assert.Equal(t, "frontend:new", pclq.Spec.PodSpec.Containers[0].Image)
 }
 
 func TestDelete(t *testing.T) {
