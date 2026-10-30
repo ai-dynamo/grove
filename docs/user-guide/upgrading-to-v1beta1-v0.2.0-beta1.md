@@ -129,9 +129,13 @@ The script uses your current `kubectl` context. Set `KUBECONFIG` before running 
 Roll back right after the script completes:
 
 ```bash
-helm history grove -n <namespace>
-helm rollback grove <revision-of-v0.1.0-alpha.16> -n <namespace>
+helm history grove --namespace <namespace>
+helm rollback grove <revision-of-v0.1.0-alpha.16> \
+  --namespace <namespace> \
+  --server-side=false
 ```
+
+Use client-side apply for the rollback, even if you normally use server-side apply for Helm releases. Server-side apply can conflict with the Grove operator, which manages the webhook certificate Secret. Helm 3 uses client-side apply by default, so omit `--server-side=false` if your Helm version does not support it. Include any other options that your environment normally passes to Helm, such as `--kube-context` or `--timeout`. Helm restores the values recorded in the selected revision, so you do not need to pass value overrides again.
 
 > **Note:** If the v0.2.0-beta1 operator restarts with `crdInstaller.upgradeCRDs=true` before the rollback, its init container applies the v0.2.0-beta1 CRDs again, and the objects that the operator writes are stored as `grove.io/v1beta1` again. Run the downgrade script again in that case.
 
