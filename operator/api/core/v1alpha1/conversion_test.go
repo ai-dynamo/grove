@@ -19,8 +19,8 @@ import (
 	"testing"
 
 	"github.com/ai-dynamo/grove/operator/api/core/v1beta1"
-	"github.com/google/go-cmp/cmp"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/api/equality"
