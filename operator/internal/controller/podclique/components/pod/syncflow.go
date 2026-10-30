@@ -215,6 +215,11 @@ func (r _resource) runSyncFlow(ctx context.Context, logger logr.Logger, ss *sync
 	if err := r.removeSchedulerFinalizersFromDeletingPods(ctx, ss); err != nil {
 		result.recordError(err)
 	}
+	// Runs before both the standalone distribution and the PodCliqueScalingGroup delta so either path
+	// sees the delete expectation and creates the replacement in the same reconcile.
+	if err := r.deleteTerminalPods(ctx, logger, ss); err != nil {
+		result.recordError(err)
+	}
 	if ss.isStandalonePCLQ {
 		// A standalone PodClique's pods are distributed across one or more anchor PodGangs, so its
 		// pods are reconciled per PodGang against the PodGangMap counts.
@@ -388,6 +393,40 @@ func (r _resource) computePodCountDelta(ss *syncSnapshot) (int, error) {
 	}
 	delta, err := r.withholdReplacementsOfUnfinalizedPods(ss, ss.pcsgReplicaPodGangName, group.terminating, ss.pclq.Spec.Replicas-reconciledCount)
 	return int(delta), err
+}
+
+// deleteTerminalPods deletes Pods that have reached a terminal phase. Such a Pod can
+// never run again, yet it still counts towards Spec.Replicas, so leaving it in place
+// keeps the PodClique permanently one replica short. Deleting it lets the usual
+// count reconciliation create a replacement.
+func (r _resource) deleteTerminalPods(ctx context.Context, logger logr.Logger, ss *syncSnapshot) error {
+	deleteTasks := make([]utils.Task, 0, len(ss.existingPCLQPods))
+	for _, pod := range ss.existingPCLQPods {
+		if k8sutils.IsResourceTerminating(pod.ObjectMeta) || !isPodTerminal(pod) {
+			continue
+		}
+		deleteTasks = append(deleteTasks, r.createPodDeletionTask(logger, ss.pclq, pod))
+	}
+	if len(deleteTasks) == 0 {
+		return nil
+	}
+	if runResult := utils.RunConcurrentlyWithSlowStart(ctx, logger, 1, deleteTasks); runResult.HasErrors() {
+		err := runResult.GetAggregatedError()
+		pclqObjectKey := client.ObjectKeyFromObject(ss.pclq)
+		logger.Error(err, "failed to delete terminal pods for PCLQ", "runSummary", runResult.GetSummary())
+		return groveerr.WrapError(err,
+			errCodeDeletePod,
+			component.OperationSync,
+			fmt.Sprintf("failed to delete terminal Pods for PodClique %v", pclqObjectKey),
+		)
+	}
+	logger.Info("deleted terminal pods", "numPodsDeleted", len(deleteTasks))
+	return nil
+}
+
+// isPodTerminal reports whether the Pod has reached a phase it cannot leave.
+func isPodTerminal(pod *corev1.Pod) bool {
+	return pod.Status.Phase == corev1.PodFailed || pod.Status.Phase == corev1.PodSucceeded
 }
 
 // deleteExcessPods deletes `diff` number of excess Pods from this PodClique concurrently.
