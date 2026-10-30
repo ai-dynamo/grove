@@ -26,11 +26,7 @@ import (
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 	groveclientscheme "github.com/ai-dynamo/grove/operator/internal/client"
-	"github.com/ai-dynamo/grove/operator/internal/controller/cert"
-	"github.com/ai-dynamo/grove/operator/internal/scheduler"
-	"github.com/ai-dynamo/grove/operator/internal/webhook"
 
-	"github.com/go-logr/logr"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -47,40 +43,13 @@ import (
 	ctrlwebhook "sigs.k8s.io/controller-runtime/pkg/webhook"
 )
 
-var (
-	waitTillWebhookCertsReady    = cert.WaitTillWebhookCertsReady
-	waitTillWebhookServerStarted = waitForWebhookServer
-	registerControllersWithMgr   = RegisterControllers
-	registerWebhooksWithMgr      = webhook.Register
-)
-
 // CreateManager creates the manager.
 func CreateManager(operatorCfg *configv1beta1.OperatorConfiguration) (ctrl.Manager, error) {
 	return ctrl.NewManager(getRestConfig(operatorCfg), createManagerOptions(operatorCfg))
 }
 
-// RegisterControllersAndWebhooks adds all the controllers and webhooks to the controller-manager using the passed in Config.
-// Webhooks are registered first and served before the controllers are added, because the controllers read the
-// converted kinds through the conversion webhook while they are stored at another version. beforeControllers, if
-// set, runs once the webhook server is serving and before any controller is added.
-func RegisterControllersAndWebhooks(ctx context.Context, mgr ctrl.Manager, logger logr.Logger, operatorCfg *configv1beta1.OperatorConfiguration, certsReady chan struct{}, schedRegistry scheduler.Registry, beforeControllers func(context.Context) error) error {
-	waitTillWebhookCertsReady(logger, certsReady)
-	if err := registerWebhooksWithMgr(mgr, operatorCfg, schedRegistry); err != nil {
-		return err
-	}
-	if err := waitTillWebhookServerStarted(ctx, mgr); err != nil {
-		return err
-	}
-	if beforeControllers != nil {
-		if err := beforeControllers(ctx); err != nil {
-			return err
-		}
-	}
-	return registerControllersWithMgr(mgr, operatorCfg, schedRegistry)
-}
-
-// waitForWebhookServer blocks until the manager's webhook server accepts TLS connections.
-func waitForWebhookServer(ctx context.Context, mgr ctrl.Manager) error {
+// WaitForLocalWebhookServer blocks until the manager's local webhook server accepts TLS connections.
+func WaitForLocalWebhookServer(ctx context.Context, mgr ctrl.Manager) error {
 	started := mgr.GetWebhookServer().StartedChecker()
 	if err := wait.PollUntilContextCancel(ctx, 200*time.Millisecond, true, func(context.Context) (bool, error) {
 		return started(&http.Request{}) == nil, nil

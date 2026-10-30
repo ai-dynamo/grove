@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"time"
 
 	apicommonconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
@@ -34,9 +33,8 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
 	"github.com/ai-dynamo/grove/operator/internal/podgangmigrator"
 	schedulerregistry "github.com/ai-dynamo/grove/operator/internal/scheduler/registry"
-	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 	groveversion "github.com/ai-dynamo/grove/operator/internal/version"
-	conversionwebhook "github.com/ai-dynamo/grove/operator/internal/webhook/conversion"
+	"github.com/ai-dynamo/grove/operator/internal/webhook"
 
 	"github.com/spf13/pflag"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -116,31 +114,6 @@ func main() {
 		handleErrorAndExit(err, cli.ExitErrSynchronizeTopology)
 	}
 
-	// Point the CRDs' conversion webhook at this operator before any controller or client reads a converted kind.
-	operatorNamespace, err := k8sutils.OperatorNamespace()
-	if err != nil {
-		logger.Error(err, "failed to read the operator namespace")
-		handleErrorAndExit(err, cli.ExitErrConfigureCRDConversion)
-	}
-	conversionService := conversionwebhook.Service{
-		Name:      k8sutils.OperatorServiceName(),
-		Namespace: operatorNamespace,
-		Port:      operatorConfig.Server.Webhooks.Port,
-	}
-	if err = conversionwebhook.ConfigureCRDs(ctx, cl, logger, conversionService); err != nil {
-		logger.Error(err, "failed to configure the conversion webhook of the CRDs")
-		handleErrorAndExit(err, cli.ExitErrConfigureCRDConversion)
-	}
-	// cert-controller injects the CA in auto mode. In manual mode, the CA of the provided certificates is used.
-	caFile := ""
-	if operatorConfig.Server.Webhooks.CertProvisionMode == configv1beta1.CertProvisionModeManual {
-		caFile = filepath.Join(operatorConfig.Server.Webhooks.ServerCertDir, "ca.crt")
-	}
-	if err = mgr.Add(conversionwebhook.NewCRDConversionKeeper(cl, logger, conversionService, caFile)); err != nil {
-		logger.Error(err, "failed to add the CRD conversion keeper")
-		handleErrorAndExit(err, cli.ExitErrConfigureCRDConversion)
-	}
-
 	webhookCertsReadyCh := make(chan struct{})
 	if err = cert.ManageWebhookCerts(
 		ctx,
@@ -156,19 +129,31 @@ func main() {
 		handleErrorAndExit(err, cli.ExitErrInitializeManager)
 	}
 
+	// Register webhook handlers before the manager starts. The manager starts the webhook server before its
+	// caches, and controllers are registered only after the server can handle converted PodCliqueSets.
+	if err = webhook.Register(mgr, operatorConfig, schedRegistry); err != nil {
+		logger.Error(err, "failed to register webhooks")
+		handleErrorAndExit(err, cli.ExitErrInitializeManager)
+	}
+
 	if err = grovectrl.SetupHealthAndReadinessEndpoints(mgr, webhookCertsReadyCh); err != nil {
 		logger.Error(err, "failed to set up health and readiness for grove controller manager")
 		handleErrorAndExit(err, cli.ExitErrInitializeManager)
 	}
 
-	// Certificates need to be generated before the webhooks are started, which can only happen once the manager is started.
-	// Block while generating the certificates, and then start the webhooks.
+	// The manager starts the webhook server. Once it is ready, set the migration gate before adding controllers.
 	go func() {
-		if err := grovectrl.RegisterControllersAndWebhooks(ctx, mgr, logger, operatorConfig, webhookCertsReadyCh, schedRegistry, setPodGangMigrationGate(cl)); err != nil {
-			logger.Error(err, "failed to initialize grove controller manager")
-			if errors.Is(err, errSetPodGangMigrationGate) {
-				handleErrorAndExit(err, cli.ExitErrSetPodGangMigrationGate)
-			}
+		cert.WaitTillWebhookCertsReady(logger, webhookCertsReadyCh)
+		if err := grovectrl.WaitForLocalWebhookServer(ctx, mgr); err != nil {
+			logger.Error(err, "failed waiting for the webhook server")
+			handleErrorAndExit(err, cli.ExitErrInitializeManager)
+		}
+		if err := setPodGangMigrationGate(ctx, cl); err != nil {
+			logger.Error(err, "failed to set the PodGang migration gate on legacy PodCliqueSets")
+			handleErrorAndExit(err, cli.ExitErrSetPodGangMigrationGate)
+		}
+		if err := grovectrl.RegisterControllers(mgr, operatorConfig, schedRegistry); err != nil {
+			logger.Error(err, "failed to register controllers")
 			handleErrorAndExit(err, cli.ExitErrInitializeManager)
 		}
 	}()
@@ -180,26 +165,22 @@ func main() {
 	}
 }
 
-var errSetPodGangMigrationGate = errors.New("failed to set the PodGang migration gate on legacy PodCliqueSets")
-
 // setPodGangMigrationGate closes the PodGang migration gate on legacy PodCliqueSets before the controllers
 // start, so that scaling reconcilers do not race the in-reconcile migration to the epoch-based PodGang scheme.
 // PodCliqueSets are read through the conversion webhook, which becomes reachable only once this replica is
 // ready and the CRDs carry its CA, so the gate is retried.
-func setPodGangMigrationGate(cl client.Client) func(context.Context) error {
-	return func(ctx context.Context) error {
-		var lastErr error
-		if err := wait.PollUntilContextTimeout(ctx, 2*time.Second, 5*time.Minute, true, func(ctx context.Context) (bool, error) {
-			lastErr = podgangmigrator.SetMigrationGateForLegacyPodCliqueSets(ctx, cl, logger)
-			if lastErr != nil {
-				logger.Info("Retrying the PodGang migration gate", "error", lastErr.Error())
-			}
-			return lastErr == nil, nil
-		}); err != nil {
-			return fmt.Errorf("%w: %w", errSetPodGangMigrationGate, errors.Join(err, lastErr))
+func setPodGangMigrationGate(ctx context.Context, cl client.Client) error {
+	var lastErr error
+	if err := wait.PollUntilContextTimeout(ctx, 2*time.Second, 5*time.Minute, true, func(ctx context.Context) (bool, error) {
+		lastErr = podgangmigrator.SetMigrationGateForLegacyPodCliqueSets(ctx, cl, logger)
+		if lastErr != nil {
+			logger.Info("Retrying the PodGang migration gate", "error", lastErr.Error())
 		}
-		return nil
+		return lastErr == nil, nil
+	}); err != nil {
+		return fmt.Errorf("failed to set the PodGang migration gate on legacy PodCliqueSets: %w", errors.Join(err, lastErr))
 	}
+	return nil
 }
 
 func printFlags() {

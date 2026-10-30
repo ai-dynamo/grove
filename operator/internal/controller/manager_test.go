@@ -27,10 +27,7 @@ import (
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 	groveclientscheme "github.com/ai-dynamo/grove/operator/internal/client"
-	"github.com/ai-dynamo/grove/operator/internal/scheduler"
-	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
-	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
@@ -676,94 +673,19 @@ func TestSetupHealthAndReadinessEndpoints(t *testing.T) {
 	})
 }
 
-// registerControllersAndWebhooksCase documents how each field drives expectations in TestRegisterControllersAndWebhooks.
-// name identifies the scenario and is read during failure output for quick diagnosis.
-// controllerErr controls the simulated outcome of controller registration.
-// webhookErr controls the simulated outcome of webhook registration.
-// beforeControllersErr controls the simulated outcome of the hook that runs before controllers are registered.
-// expectedCalls lists the registration steps expected to run, in order.
-// expectedErrFrag, when set, should be contained in the returned error to ensure the correct failure path is exercised.
-type registerControllersAndWebhooksCase struct {
-	name                 string
-	controllerErr        error
-	webhookErr           error
-	beforeControllersErr error
-	expectedCalls        []string
-	expectedErrFrag      string
-}
+func TestWaitForLocalWebhookServer(t *testing.T) {
+	t.Run("server started", func(t *testing.T) {
+		mgr := &mockManager{webhookServer: &mockWebhookServer{started: true}}
+		require.NoError(t, WaitForLocalWebhookServer(context.Background(), mgr))
+	})
 
-// TestRegisterControllersAndWebhooks verifies that certificate readiness is honored, that webhooks are registered
-// and served before the controllers, and that registration errors are surfaced appropriately.
-func TestRegisterControllersAndWebhooks(t *testing.T) {
-	testCases := []registerControllersAndWebhooksCase{
-		{
-			name:          "registers webhooks, runs the hook and then registers controllers",
-			expectedCalls: []string{"webhooks", "serverStarted", "beforeControllers", "controllers"},
-		},
-		{
-			name:            "webhook registration failure short-circuits",
-			webhookErr:      errors.New("webhook failure"),
-			expectedErrFrag: "webhook failure",
-			expectedCalls:   []string{"webhooks"},
-		},
-		{
-			name:                 "hook failure short-circuits controller registration",
-			beforeControllersErr: errors.New("hook failure"),
-			expectedErrFrag:      "hook failure",
-			expectedCalls:        []string{"webhooks", "serverStarted", "beforeControllers"},
-		},
-		{
-			name:            "controller registration failure bubbles up",
-			controllerErr:   errors.New("controller failure"),
-			expectedErrFrag: "controller failure",
-			expectedCalls:   []string{"webhooks", "serverStarted", "beforeControllers", "controllers"},
-		},
-	}
+	t.Run("context canceled", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
 
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			originalWait := waitTillWebhookCertsReady
-			originalServerStarted := waitTillWebhookServerStarted
-			originalRegisterControllers := registerControllersWithMgr
-			originalRegisterWebhooks := registerWebhooksWithMgr
-			t.Cleanup(func() {
-				waitTillWebhookCertsReady = originalWait
-				waitTillWebhookServerStarted = originalServerStarted
-				registerControllersWithMgr = originalRegisterControllers
-				registerWebhooksWithMgr = originalRegisterWebhooks
-			})
-
-			var calls []string
-			waitTillWebhookCertsReady = func(_ logr.Logger, ready chan struct{}) {
-				calls = append(calls, "certs")
-				close(ready)
-			}
-			waitTillWebhookServerStarted = func(_ context.Context, _ ctrl.Manager) error {
-				calls = append(calls, "serverStarted")
-				return nil
-			}
-			registerControllersWithMgr = func(_ ctrl.Manager, _ *configv1beta1.OperatorConfiguration, _ scheduler.Registry) error {
-				calls = append(calls, "controllers")
-				return tc.controllerErr
-			}
-			registerWebhooksWithMgr = func(_ ctrl.Manager, _ *configv1beta1.OperatorConfiguration, _ scheduler.Registry) error {
-				calls = append(calls, "webhooks")
-				return tc.webhookErr
-			}
-			beforeControllers := func(context.Context) error {
-				calls = append(calls, "beforeControllers")
-				return tc.beforeControllersErr
-			}
-
-			err := RegisterControllersAndWebhooks(context.Background(), &mockManager{}, logr.Discard(), &configv1beta1.OperatorConfiguration{}, make(chan struct{}), &testutils.FakeSchedulerRegistry{}, beforeControllers)
-			if tc.expectedErrFrag != "" {
-				require.ErrorContains(t, err, tc.expectedErrFrag)
-			} else {
-				require.NoError(t, err)
-			}
-			assert.Equal(t, append([]string{"certs"}, tc.expectedCalls...), calls)
-		})
-	}
+		err := WaitForLocalWebhookServer(ctx, &mockManager{})
+		require.ErrorContains(t, err, "webhook server did not start")
+	})
 }
 
 // TestPodCacheFiltering verifies that the manager's cache only stores pods with the
