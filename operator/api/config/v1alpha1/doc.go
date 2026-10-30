@@ -14,6 +14,9 @@
 
 // +k8s:deepcopy-gen=package
 // +k8s:defaulter-gen=TypeMeta
+// +k8s:conversion-gen=github.com/ai-dynamo/grove/operator/api/config/v1beta1
 // +groupName=operator.config.grove.io
 
+// Package v1alpha1 is the deprecated operator.config.grove.io/v1alpha1 configuration API. The operator still
+// accepts it and converts it to operator.config.grove.io/v1beta1.
 package v1alpha1

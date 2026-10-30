@@ -18,7 +18,7 @@ import (
 	"context"
 
 	apicommonconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -37,7 +37,7 @@ const (
 func (r *Reconciler) RegisterWithManager(mgr ctrl.Manager) error {
 	b := ctrl.NewControllerManagedBy(mgr).
 		Named(controllerName).
-		For(&grovecorev1alpha1.ClusterTopologyBinding{}, builder.WithPredicates(predicate.GenerationChangedPredicate{}))
+		For(&grovecorev1beta1.ClusterTopologyBinding{}, builder.WithPredicates(predicate.GenerationChangedPredicate{}))
 
 	// Register a dynamic watch on each TAS backend's topology CRD.
 	// When a backend topology resource is created/updated/deleted, map the event
@@ -66,14 +66,14 @@ func (r *Reconciler) RegisterWithManager(mgr ctrl.Manager) error {
 func (r *Reconciler) mapBackendTopologyToCT(backendName string) handler.MapFunc {
 	return func(ctx context.Context, obj client.Object) []ctrl.Request {
 		for _, ref := range obj.GetOwnerReferences() {
-			if ref.Kind == apicommonconstants.KindClusterTopology && ref.APIVersion == grovecorev1alpha1.SchemeGroupVersion.String() {
+			if ref.Kind == apicommonconstants.KindClusterTopology && ref.APIVersion == grovecorev1beta1.SchemeGroupVersion.String() {
 				return []ctrl.Request{{
 					NamespacedName: client.ObjectKey{Name: ref.Name},
 				}}
 			}
 		}
 
-		ctList := &grovecorev1alpha1.ClusterTopologyBindingList{}
+		ctList := &grovecorev1beta1.ClusterTopologyBindingList{}
 		if err := r.List(ctx, ctList); err != nil {
 			log.FromContext(ctx).Error(err, "Failed to list ClusterTopologies for backend topology watch mapping")
 			return nil

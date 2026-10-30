@@ -23,7 +23,7 @@ import (
 	"time"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/expect"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
@@ -49,14 +49,14 @@ func TestPCLQUpdateProgressMatchesCurrentRevision(t *testing.T) {
 	tests := []struct {
 		name         string
 		pcsHash      *string
-		progress     *grovecorev1alpha1.PodCliqueUpdateProgress
+		progress     *grovecorev1beta1.PodCliqueUpdateProgress
 		pclqHash     string
 		wantMatching bool
 	}{
 		{
 			name:    "matches when generation and template revisions agree",
 			pcsHash: ptr.To(generation),
-			progress: &grovecorev1alpha1.PodCliqueUpdateProgress{
+			progress: &grovecorev1beta1.PodCliqueUpdateProgress{
 				PodCliqueSetGenerationHash: generation,
 				PodTemplateHash:            testNewHash,
 			},
@@ -66,7 +66,7 @@ func TestPCLQUpdateProgressMatchesCurrentRevision(t *testing.T) {
 		{
 			name:    "does not match when progress targets another PCS generation",
 			pcsHash: ptr.To(generation),
-			progress: &grovecorev1alpha1.PodCliqueUpdateProgress{
+			progress: &grovecorev1beta1.PodCliqueUpdateProgress{
 				PodCliqueSetGenerationHash: "generation-2",
 				PodTemplateHash:            testNewHash,
 			},
@@ -75,7 +75,7 @@ func TestPCLQUpdateProgressMatchesCurrentRevision(t *testing.T) {
 		{
 			name:    "does not match before the PCLQ template update is observed",
 			pcsHash: ptr.To(generation),
-			progress: &grovecorev1alpha1.PodCliqueUpdateProgress{
+			progress: &grovecorev1beta1.PodCliqueUpdateProgress{
 				PodCliqueSetGenerationHash: generation,
 				PodTemplateHash:            testNewHash,
 			},
@@ -88,7 +88,7 @@ func TestPCLQUpdateProgressMatchesCurrentRevision(t *testing.T) {
 		},
 		{
 			name:     "does not match without a PCS generation",
-			progress: &grovecorev1alpha1.PodCliqueUpdateProgress{PodTemplateHash: testNewHash},
+			progress: &grovecorev1beta1.PodCliqueUpdateProgress{PodTemplateHash: testNewHash},
 			pclqHash: testNewHash,
 		},
 	}
@@ -96,10 +96,10 @@ func TestPCLQUpdateProgressMatchesCurrentRevision(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ss := &syncSnapshot{
-				pcs: &grovecorev1alpha1.PodCliqueSet{Status: grovecorev1alpha1.PodCliqueSetStatus{CurrentGenerationHash: tt.pcsHash}},
-				pclq: &grovecorev1alpha1.PodClique{
+				pcs: &grovecorev1beta1.PodCliqueSet{Status: grovecorev1beta1.PodCliqueSetStatus{CurrentGenerationHash: tt.pcsHash}},
+				pclq: &grovecorev1beta1.PodClique{
 					ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{apicommon.LabelPodTemplateHash: tt.pclqHash}},
-					Status:     grovecorev1alpha1.PodCliqueStatus{UpdateProgress: tt.progress},
+					Status:     grovecorev1beta1.PodCliqueStatus{UpdateProgress: tt.progress},
 				},
 			}
 
@@ -135,7 +135,7 @@ func TestComputeUpdateWork(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			sc := &syncSnapshot{
-				pclq:                    &grovecorev1alpha1.PodClique{ObjectMeta: metav1.ObjectMeta{Name: "pclq-1", Namespace: testNamespace}},
+				pclq:                    &grovecorev1beta1.PodClique{ObjectMeta: metav1.ObjectMeta{Name: "pclq-1", Namespace: testNamespace}},
 				existingPCLQPods:        []*corev1.Pod{tt.pod},
 				expectedPodTemplateHash: testNewHash,
 			}
@@ -203,18 +203,18 @@ func TestSelectOldestPods(t *testing.T) {
 }
 
 func TestProcessPendingUpdates(t *testing.T) {
-	pcsWithMaxUnavailable := func(maxUnavailable int32) *grovecorev1alpha1.PodCliqueSet {
+	pcsWithMaxUnavailable := func(maxUnavailable int32) *grovecorev1beta1.PodCliqueSet {
 		return testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "uid").
-			WithUpdateStrategy(&grovecorev1alpha1.PodCliqueSetUpdateStrategy{Type: grovecorev1alpha1.RollingRecreateStrategy}).
+			WithUpdateStrategy(&grovecorev1beta1.PodCliqueSetUpdateStrategy{Type: grovecorev1beta1.RollingRecreateStrategy}).
 			WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder(testCliqueName).WithMaxUnavailable(maxUnavailable).Build()).
 			Build()
 	}
-	pclqUpdating := func(replicas, minAvailable int32) *grovecorev1alpha1.PodClique {
+	pclqUpdating := func(replicas, minAvailable int32) *grovecorev1beta1.PodClique {
 		return testutils.NewPodCliqueBuilder(testPCSName, "uid", testCliqueName, testNamespace, 0).
 			WithReplicas(replicas).
 			WithMinAvailable(minAvailable).
-			WithOptions(func(p *grovecorev1alpha1.PodClique) {
-				p.Status.UpdateProgress = &grovecorev1alpha1.PodCliqueUpdateProgress{
+			WithOptions(func(p *grovecorev1beta1.PodClique) {
+				p.Status.UpdateProgress = &grovecorev1beta1.PodCliqueUpdateProgress{
 					PodCliqueSetGenerationHash: "generation-1",
 					PodTemplateHash:            testNewHash,
 				}
@@ -224,14 +224,14 @@ func TestProcessPendingUpdates(t *testing.T) {
 	readyPod := func(name, hash string, ageMinutes int) *corev1.Pod {
 		return newTestPod(name, hash, withPhase(corev1.PodRunning), withReadyCondition(), withAgeMinutes(ageMinutes))
 	}
-	newResource := func(pclq *grovecorev1alpha1.PodClique, pods []*corev1.Pod) (_resource, client.Client) {
+	newResource := func(pclq *grovecorev1beta1.PodClique, pods []*corev1.Pod) (_resource, client.Client) {
 		objs := []client.Object{pclq}
 		for _, p := range pods {
 			objs = append(objs, p)
 		}
 		cl := testutils.NewTestClientBuilder().
 			WithObjects(objs...).
-			WithStatusSubresource(&grovecorev1alpha1.PodClique{}).
+			WithStatusSubresource(&grovecorev1beta1.PodClique{}).
 			Build()
 		return _resource{
 			client:            cl,
@@ -256,7 +256,7 @@ func TestProcessPendingUpdates(t *testing.T) {
 		ss := &syncSnapshot{pcs: pcsWithMaxUnavailable(1), pclq: pclq, cliqueName: testCliqueName, expectedPodTemplateHash: testNewHash, existingPCLQPods: pods}
 
 		require.NoError(t, r.processPendingUpdates(context.Background(), logr.Discard(), ss))
-		persistedPCLQ := &grovecorev1alpha1.PodClique{}
+		persistedPCLQ := &grovecorev1beta1.PodClique{}
 		require.NoError(t, cl.Get(t.Context(), client.ObjectKeyFromObject(pclq), persistedPCLQ))
 		require.NotNil(t, persistedPCLQ.Status.UpdateProgress)
 		assert.NotNil(t, persistedPCLQ.Status.UpdateProgress.UpdateEndedAt, "expected UpdateEndedAt to be persisted")

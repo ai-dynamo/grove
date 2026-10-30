@@ -3,7 +3,7 @@
 # regardless of whether the feature is enabled or disabled at the operator level.
 # Used by: testNoMNNVLArtifactsWhenDisabled (shared_cases.go)
 ---
-apiVersion: grove.io/v1alpha1
+apiVersion: grove.io/v1beta1
 kind: PodCliqueSet
 metadata:
   name: mnnvl-comprehensive-bare

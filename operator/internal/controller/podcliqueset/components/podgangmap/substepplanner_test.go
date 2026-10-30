@@ -18,7 +18,7 @@ import (
 	"testing"
 	"time"
 
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 
 	"github.com/stretchr/testify/assert"
@@ -151,10 +151,10 @@ func TestCountReplicasAtCurrentHash(t *testing.T) {
 	p := &subStepPlanner{
 		pcs: pcsWithCurrentHash("v2"),
 		mvu: &mvuTemplate{standalonePCLQs: map[string]int32{"frontend": 2}, pcsgs: map[string]int32{"decode": 3}},
-		entries: []grovecorev1alpha1.PodGangEntry{
-			{Epoch: "50", PodCliqueSetGenerationHash: "v1", Role: grovecorev1alpha1.PodGangEntryRoleAnchor, PodCliques: map[string]int32{"frontend": 5}},
-			{Epoch: "100", PodCliqueSetGenerationHash: "v2", Role: grovecorev1alpha1.PodGangEntryRoleAnchor, PodCliques: map[string]int32{"frontend": 3}, PCSGReplicaIndices: map[string][]int32{"decode": {0, 1, 2}}},
-			{Epoch: "200", PodCliqueSetGenerationHash: "v2", Role: grovecorev1alpha1.PodGangEntryRoleAnchor, PodCliques: map[string]int32{"frontend": 2}},
+		entries: []grovecorev1beta1.PodGangEntry{
+			{Epoch: "50", PodCliqueSetGenerationHash: "v1", Role: grovecorev1beta1.PodGangEntryRoleAnchor, PodCliques: map[string]int32{"frontend": 5}},
+			{Epoch: "100", PodCliqueSetGenerationHash: "v2", Role: grovecorev1beta1.PodGangEntryRoleAnchor, PodCliques: map[string]int32{"frontend": 3}, PCSGReplicaIndices: map[string][]int32{"decode": {0, 1, 2}}},
+			{Epoch: "200", PodCliqueSetGenerationHash: "v2", Role: grovecorev1beta1.PodGangEntryRoleAnchor, PodCliques: map[string]int32{"frontend": 2}},
 		},
 	}
 	// The old-hash anchor is ignored. Standalone PodClique "frontend" sums its pod counts (3+2), PCSG "decode" counts
@@ -166,11 +166,11 @@ func TestMostRecentAnchorEpoch(t *testing.T) {
 	t.Run("returns the epoch of the highest-epoch current-hash anchor", func(t *testing.T) {
 		p := &subStepPlanner{
 			pcs: pcsWithCurrentHash("v2"),
-			entries: []grovecorev1alpha1.PodGangEntry{
-				{Epoch: "100", PodCliqueSetGenerationHash: "v2", Role: grovecorev1alpha1.PodGangEntryRoleAnchor},
-				{Epoch: "200", PodCliqueSetGenerationHash: "v2", Role: grovecorev1alpha1.PodGangEntryRoleAnchor},
-				{Epoch: "300", PodCliqueSetGenerationHash: "v2", Role: grovecorev1alpha1.PodGangEntryRoleTail},
-				{Epoch: "400", PodCliqueSetGenerationHash: "v1", Role: grovecorev1alpha1.PodGangEntryRoleAnchor},
+			entries: []grovecorev1beta1.PodGangEntry{
+				{Epoch: "100", PodCliqueSetGenerationHash: "v2", Role: grovecorev1beta1.PodGangEntryRoleAnchor},
+				{Epoch: "200", PodCliqueSetGenerationHash: "v2", Role: grovecorev1beta1.PodGangEntryRoleAnchor},
+				{Epoch: "300", PodCliqueSetGenerationHash: "v2", Role: grovecorev1beta1.PodGangEntryRoleTail},
+				{Epoch: "400", PodCliqueSetGenerationHash: "v1", Role: grovecorev1beta1.PodGangEntryRoleAnchor},
 			},
 		}
 		// The v2 tail is not an anchor and the v1 anchor is a different hash despite its higher epoch,
@@ -182,8 +182,8 @@ func TestMostRecentAnchorEpoch(t *testing.T) {
 	t.Run("returns empty when there is no current-hash anchor", func(t *testing.T) {
 		p := &subStepPlanner{
 			pcs: pcsWithCurrentHash("v2"),
-			entries: []grovecorev1alpha1.PodGangEntry{
-				{Epoch: "400", PodCliqueSetGenerationHash: "v1", Role: grovecorev1alpha1.PodGangEntryRoleAnchor},
+			entries: []grovecorev1beta1.PodGangEntry{
+				{Epoch: "400", PodCliqueSetGenerationHash: "v1", Role: grovecorev1beta1.PodGangEntryRoleAnchor},
 			},
 		}
 		epoch, err := p.mostRecentAnchorEpoch()
@@ -198,9 +198,9 @@ func TestAscertainPlanPosition(t *testing.T) {
 		mvu:             &mvuTemplate{standalonePCLQs: map[string]int32{"frontend": 2}, pcsgs: map[string]int32{"decode": 3}},
 		desiredReplicas: map[string]int32{"frontend": 10, "decode": 9},
 		plan:            computeStepPlan(map[string]int32{"frontend": 10, "decode": 9}, &mvuTemplate{standalonePCLQs: map[string]int32{"frontend": 2}, pcsgs: map[string]int32{"decode": 3}}),
-		entries: []grovecorev1alpha1.PodGangEntry{
-			{Epoch: "100", PodCliqueSetGenerationHash: "v2", Role: grovecorev1alpha1.PodGangEntryRoleAnchor, PodCliques: map[string]int32{"frontend": 3}, PCSGReplicaIndices: map[string][]int32{"decode": {0, 1, 2}}},
-			{Epoch: "200", PodCliqueSetGenerationHash: "v2", Role: grovecorev1alpha1.PodGangEntryRoleAnchor, PodCliques: map[string]int32{"frontend": 2}},
+		entries: []grovecorev1beta1.PodGangEntry{
+			{Epoch: "100", PodCliqueSetGenerationHash: "v2", Role: grovecorev1beta1.PodGangEntryRoleAnchor, PodCliques: map[string]int32{"frontend": 3}, PCSGReplicaIndices: map[string][]int32{"decode": {0, 1, 2}}},
+			{Epoch: "200", PodCliqueSetGenerationHash: "v2", Role: grovecorev1beta1.PodGangEntryRoleAnchor, PodCliques: map[string]int32{"frontend": 2}},
 		},
 	}
 	// Step plan is numAnchorBearingSteps 3, target {frontend:3, decode:3}, leftover {frontend:1, decode:0}. The
@@ -225,8 +225,8 @@ func TestAscertainPlanPositionSkipsZeroTargetComponent(t *testing.T) {
 		mvu:             mvu,
 		desiredReplicas: desiredReplicas,
 		plan:            computeStepPlan(desiredReplicas, mvu),
-		entries: []grovecorev1alpha1.PodGangEntry{
-			{Epoch: "100", PodCliqueSetGenerationHash: "v2", Role: grovecorev1alpha1.PodGangEntryRoleAnchor, PodCliques: map[string]int32{"frontend": 1}},
+		entries: []grovecorev1beta1.PodGangEntry{
+			{Epoch: "100", PodCliqueSetGenerationHash: "v2", Role: grovecorev1beta1.PodGangEntryRoleAnchor, PodCliques: map[string]int32{"frontend": 1}},
 		},
 	}
 	require.Zero(t, p.plan.anchorBearingStepTarget["decode"])
@@ -324,7 +324,7 @@ func TestBuildNonAnchorSubStep(t *testing.T) {
 	// decode     20            3             3               PCSG
 	//
 	// decode indices 0 and 1 are already committed to the current hash, so its old indices start at 2.
-	entries := []grovecorev1alpha1.PodGangEntry{{Epoch: "100", PodCliqueSetGenerationHash: "v2", PCSGReplicaIndices: map[string][]int32{"decode": {0, 1}}}}
+	entries := []grovecorev1beta1.PodGangEntry{{Epoch: "100", PodCliqueSetGenerationHash: "v2", PCSGReplicaIndices: map[string][]int32{"decode": {0, 1}}}}
 	planner := newTestPlanner(testingclock.NewFakeClock(time.Unix(0, 12345)), "v2", entries, map[string]testComponent{
 		"frontend": {liveReplicas: 10, minAvailable: 2, maxUnavailable: 5, standalone: true},
 		"decode":   {liveReplicas: 20, minAvailable: 3, maxUnavailable: 3},
@@ -361,7 +361,7 @@ func TestBuildAnchorBearingSubStep(t *testing.T) {
 	// Opening step k=1: indices [0,3) of prefill and [0,6) of decode are already committed to the current
 	// hash, so the worst-off (here all Ready, so ascending) MinAvailable old indices are prefill [3,4,5] and
 	// decode [6,7,8]. frontend is standalone, drained by its MinAvailable count 2.
-	entries := []grovecorev1alpha1.PodGangEntry{{Epoch: "100", PodCliqueSetGenerationHash: "v2", PCSGReplicaIndices: map[string][]int32{"prefill": {0, 1, 2}, "decode": {0, 1, 2, 3, 4, 5}}}}
+	entries := []grovecorev1beta1.PodGangEntry{{Epoch: "100", PodCliqueSetGenerationHash: "v2", PCSGReplicaIndices: map[string][]int32{"prefill": {0, 1, 2}, "decode": {0, 1, 2, 3, 4, 5}}}}
 	planner := newTestPlanner(testingclock.NewFakeClock(time.Unix(0, 999)), "v2", entries, map[string]testComponent{
 		"frontend": {liveReplicas: 10, minAvailable: 2, maxUnavailable: 2, standalone: true},
 		"prefill":  {liveReplicas: 10, minAvailable: 3, maxUnavailable: 3},
@@ -381,7 +381,7 @@ func TestBuildAnchorBearingSubStepPicksWorstOffFirst(t *testing.T) {
 	// decode has 3 old replicas, index 1 unavailable and 0 and 2 Ready. The anchor rolls MinAvailable 1, so it
 	// must pick the unavailable index 1 before either Ready one.
 	planner := newTestPlanner(testingclock.NewFakeClock(time.Unix(0, 5)), "v2",
-		[]grovecorev1alpha1.PodGangEntry{{Epoch: "100", PodCliqueSetGenerationHash: "v2"}},
+		[]grovecorev1beta1.PodGangEntry{{Epoch: "100", PodCliqueSetGenerationHash: "v2"}},
 		map[string]testComponent{"decode": {liveReplicas: 3, minAvailable: 1, maxUnavailable: 1}})
 	planner.pcsgReplicaInfos["decode"] = []pcsgReplicaInfo{
 		{index: 0, state: componentutils.PCSGReplicaStateReady},
@@ -399,7 +399,7 @@ func TestBuildAnchorBearingSubStepPicksWorstOffFirst(t *testing.T) {
 // buildAnchorBearingSubStep requeues to recompute the plan rather than opening a short anchor.
 func TestBuildAnchorBearingSubStepRequeuesWhenPCSGShortOfMinAvailable(t *testing.T) {
 	planner := newTestPlanner(testingclock.NewFakeClock(time.Unix(0, 5)), "v2",
-		[]grovecorev1alpha1.PodGangEntry{{Epoch: "100", PodCliqueSetGenerationHash: "v2"}},
+		[]grovecorev1beta1.PodGangEntry{{Epoch: "100", PodCliqueSetGenerationHash: "v2"}},
 		map[string]testComponent{"decode": {liveReplicas: 3, minAvailable: 2, maxUnavailable: 1}})
 	// Opening the anchor needs MinAvailable 2 old replicas, but only one remains old.
 	planner.pcsgReplicaInfos["decode"] = []pcsgReplicaInfo{
@@ -489,7 +489,7 @@ func TestBuildTailSubStep(t *testing.T) {
 	// indices [0,2) are current-hash. This tail sub-step rolls each component's remaining toward its target:
 	// frontend 2 (subsumed, within MaxUnavailable 2), prefill 0 (done), decode min(MaxUnavailable 3, 4)=3
 	// worst-off old indices (all Ready, so ascending from 2) -> [2,3,4].
-	entries := []grovecorev1alpha1.PodGangEntry{currentHashEntryWithCommittedPCSGIndices(map[string]int32{"prefill": 2, "decode": 2})}
+	entries := []grovecorev1beta1.PodGangEntry{currentHashEntryWithCommittedPCSGIndices(map[string]int32{"prefill": 2, "decode": 2})}
 	planner := newTestPlanner(testingclock.NewFakeClock(time.Unix(0, 7)), "v2", entries, map[string]testComponent{
 		"frontend": {liveReplicas: 8, minAvailable: 2, maxUnavailable: 2, standalone: true},
 		"prefill":  {liveReplicas: 4, minAvailable: 2, maxUnavailable: 2},
@@ -509,7 +509,7 @@ func TestBuildLeftoverSubStep(t *testing.T) {
 	// This gives leftover {frontend:1, decode:2} (see TestAnyLeftoverRemaining for the derivation). All
 	// anchor-phase steps have committed decode's indices [0,20), so the leftover step rolls decode
 	// min(MaxUnavailable 4, 2)=2 worst-off old indices (all Ready, so [20,21]) and subsumes frontend 1.
-	entries := []grovecorev1alpha1.PodGangEntry{currentHashEntryWithCommittedPCSGIndices(map[string]int32{"decode": 20})}
+	entries := []grovecorev1beta1.PodGangEntry{currentHashEntryWithCommittedPCSGIndices(map[string]int32{"decode": 20})}
 	planner := newTestPlanner(testingclock.NewFakeClock(time.Unix(0, 7)), "v2", entries, map[string]testComponent{
 		"frontend": {liveReplicas: 9, minAvailable: 2, maxUnavailable: 2, standalone: true},
 		"decode":   {liveReplicas: 22, minAvailable: 3, maxUnavailable: 4},
@@ -530,7 +530,7 @@ func TestNext(t *testing.T) {
 	//	leftover                = {frontend:1, prefill:1, decode:2}, anchor-phase totals = {frontend:9, prefill:9, decode:18}
 	newPlanner := func() *subStepPlanner {
 		return newTestPlanner(testingclock.NewFakeClock(time.Unix(0, 1)), "v2",
-			[]grovecorev1alpha1.PodGangEntry{{Epoch: "100", PodCliqueSetGenerationHash: "v2"}},
+			[]grovecorev1beta1.PodGangEntry{{Epoch: "100", PodCliqueSetGenerationHash: "v2"}},
 			map[string]testComponent{
 				"frontend": {liveReplicas: 10, minAvailable: 2, maxUnavailable: 2, standalone: true},
 				"prefill":  {liveReplicas: 10, minAvailable: 3, maxUnavailable: 3},
@@ -576,7 +576,7 @@ func TestNextForStandaloneOnlyMVU(t *testing.T) {
 	// same anchor, each at most its own MaxUnavailable per sub-step.
 	newPlanner := func() *subStepPlanner {
 		return newTestPlanner(testingclock.NewFakeClock(time.Unix(0, 1)), "v2",
-			[]grovecorev1alpha1.PodGangEntry{{Epoch: "100", PodCliqueSetGenerationHash: "v2"}},
+			[]grovecorev1beta1.PodGangEntry{{Epoch: "100", PodCliqueSetGenerationHash: "v2"}},
 			map[string]testComponent{
 				"frontend": {liveReplicas: 10, minAvailable: 2, maxUnavailable: 3, standalone: true},
 				"router":   {liveReplicas: 6, minAvailable: 1, maxUnavailable: 2, standalone: true},
@@ -650,7 +650,7 @@ func TestNextForPCSGOnlyMVU(t *testing.T) {
 	// PodGangs at most MaxUnavailable at a time, and nothing subsumes since there is no standalone PodClique.
 	newPlanner := func(committed map[string]int32) *subStepPlanner {
 		return newTestPlanner(testingclock.NewFakeClock(time.Unix(0, 1)), "v2",
-			[]grovecorev1alpha1.PodGangEntry{currentHashEntryWithCommittedPCSGIndices(committed)},
+			[]grovecorev1beta1.PodGangEntry{currentHashEntryWithCommittedPCSGIndices(committed)},
 			map[string]testComponent{
 				"prefill": {liveReplicas: 10, minAvailable: 3, maxUnavailable: 3},
 				"decode":  {liveReplicas: 20, minAvailable: 3, maxUnavailable: 4},
@@ -719,7 +719,7 @@ func TestDependsOnLatestEpoch(t *testing.T) {
 	// dependsOnLatestEpoch depends only on the entries and the current generation hash, so no component scenario
 	// is needed. It returns the single latest current-hash epoch, or nil when no current-hash entry exists yet.
 	t.Run("returns the latest current-hash epoch", func(t *testing.T) {
-		planner := newTestPlanner(nil, "v2", []grovecorev1alpha1.PodGangEntry{
+		planner := newTestPlanner(nil, "v2", []grovecorev1beta1.PodGangEntry{
 			{Epoch: "100", PodCliqueSetGenerationHash: "v2"},
 			{Epoch: "200", PodCliqueSetGenerationHash: "v2"},
 			{Epoch: "300", PodCliqueSetGenerationHash: "v1"},
@@ -729,7 +729,7 @@ func TestDependsOnLatestEpoch(t *testing.T) {
 		assert.Equal(t, []string{"200"}, dependsOn)
 	})
 	t.Run("returns nil when no current-hash entry exists", func(t *testing.T) {
-		planner := newTestPlanner(nil, "v2", []grovecorev1alpha1.PodGangEntry{{Epoch: "300", PodCliqueSetGenerationHash: "v1"}}, nil)
+		planner := newTestPlanner(nil, "v2", []grovecorev1beta1.PodGangEntry{{Epoch: "300", PodCliqueSetGenerationHash: "v1"}}, nil)
 		dependsOn, err := planner.dependsOnLatestEpoch()
 		require.NoError(t, err)
 		assert.Nil(t, dependsOn)
@@ -739,7 +739,7 @@ func TestDependsOnLatestEpoch(t *testing.T) {
 func TestBuildNonAnchorSubStepCapsByHeadroom(t *testing.T) {
 	// frontend standalone MaxUnavailable 5, decode PCSG MaxUnavailable 3. Remaining 4/4 would roll 4/3, but
 	// headroom 1/2 caps them to 1/2. decode indices [0,2) are already committed, so its old indices start at 2.
-	entries := []grovecorev1alpha1.PodGangEntry{currentHashEntryWithCommittedPCSGIndices(map[string]int32{"decode": 2})}
+	entries := []grovecorev1beta1.PodGangEntry{currentHashEntryWithCommittedPCSGIndices(map[string]int32{"decode": 2})}
 	planner := newTestPlanner(testingclock.NewFakeClock(time.Unix(0, 12345)), "v2", entries, map[string]testComponent{
 		"frontend": {liveReplicas: 10, minAvailable: 2, maxUnavailable: 5, standalone: true},
 		"decode":   {liveReplicas: 20, minAvailable: 3, maxUnavailable: 3},
@@ -757,7 +757,7 @@ func TestBuildNonAnchorSubStepCapsByHeadroom(t *testing.T) {
 
 func TestBuildNonAnchorSubStepHeadroomZeroDrainsNothing(t *testing.T) {
 	// With zero headroom on every component the sub-step rolls nothing this reconcile.
-	entries := []grovecorev1alpha1.PodGangEntry{{Epoch: "100", PodCliqueSetGenerationHash: "v2"}}
+	entries := []grovecorev1beta1.PodGangEntry{{Epoch: "100", PodCliqueSetGenerationHash: "v2"}}
 	planner := newTestPlanner(testingclock.NewFakeClock(time.Unix(0, 12345)), "v2", entries, map[string]testComponent{
 		"frontend": {liveReplicas: 10, minAvailable: 2, maxUnavailable: 5, standalone: true},
 		"decode":   {liveReplicas: 20, minAvailable: 3, maxUnavailable: 3},
@@ -780,8 +780,8 @@ func TestSubStepDrainCountAndDrainsNothing(t *testing.T) {
 	assert.True(t, subStep{}.drainsNothing())
 }
 
-func pcsWithCurrentHash(currentGenerationHash string) *grovecorev1alpha1.PodCliqueSet {
-	pcs := &grovecorev1alpha1.PodCliqueSet{}
+func pcsWithCurrentHash(currentGenerationHash string) *grovecorev1beta1.PodCliqueSet {
+	pcs := &grovecorev1beta1.PodCliqueSet{}
 	pcs.Status.CurrentGenerationHash = ptr.To(currentGenerationHash)
 	return pcs
 }
@@ -796,7 +796,7 @@ type testComponent struct {
 // currentHashEntryWithCommittedPCSGIndices builds a current-hash entry committing indices [0, count) of each
 // listed PodCliqueScalingGroup, the already-rolled set a scenario starts from. newTestPlanner derives
 // pcsgReplicaInfos from it, marking those indices atCurrentHash and the rest old.
-func currentHashEntryWithCommittedPCSGIndices(committedCountByPCSG map[string]int32) grovecorev1alpha1.PodGangEntry {
+func currentHashEntryWithCommittedPCSGIndices(committedCountByPCSG map[string]int32) grovecorev1beta1.PodGangEntry {
 	indicesByPCSG := make(map[string][]int32, len(committedCountByPCSG))
 	for name, count := range committedCountByPCSG {
 		indices := make([]int32, count)
@@ -805,14 +805,14 @@ func currentHashEntryWithCommittedPCSGIndices(committedCountByPCSG map[string]in
 		}
 		indicesByPCSG[name] = indices
 	}
-	return grovecorev1alpha1.PodGangEntry{Epoch: "100", PodCliqueSetGenerationHash: "v2", PCSGReplicaIndices: indicesByPCSG}
+	return grovecorev1beta1.PodGangEntry{Epoch: "100", PodCliqueSetGenerationHash: "v2", PCSGReplicaIndices: indicesByPCSG}
 }
 
 // newTestPlanner builds a subStepPlanner from an explicit per-component scenario, deriving the step plan
 // with computeStepPlan so the plan is always consistent with the stated replicas and MinAvailable.
 //
 //nolint:unparam // currentHash is a genuine generation dimension; current tests only exercise "v2".
-func newTestPlanner(clk clock.Clock, currentHash string, entries []grovecorev1alpha1.PodGangEntry, components map[string]testComponent) *subStepPlanner {
+func newTestPlanner(clk clock.Clock, currentHash string, entries []grovecorev1beta1.PodGangEntry, components map[string]testComponent) *subStepPlanner {
 	var (
 		standalonePCLQs           = map[string]int32{}
 		pcsgs                     = map[string]int32{}

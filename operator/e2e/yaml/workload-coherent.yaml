@@ -3,7 +3,7 @@
 # inference: PodCliqueScalingGroup (2 replicas, minAvailable 1) over prefill and decode.
 # Under a Coherent update the engine rolls Minimum Viable Units, one PCS replica at a time.
 ---
-apiVersion: grove.io/v1alpha1
+apiVersion: grove.io/v1beta1
 kind: PodCliqueSet
 metadata:
   name: workload-coherent

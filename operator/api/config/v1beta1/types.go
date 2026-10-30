@@ -1,0 +1,324 @@
+// Copyright 2024 The Grove Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package v1beta1
+
+import (
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+)
+
+// LogFormat defines the format of the log.
+type LogFormat string
+
+const (
+	// LogFormatJSON is the JSON log format.
+	LogFormatJSON LogFormat = "json"
+	// LogFormatText is the text log format.
+	LogFormatText LogFormat = "text"
+)
+
+// LogLevel defines the log level.
+type LogLevel string
+
+const (
+	// DebugLevel is the debug log level, i.e. the most verbose.
+	DebugLevel LogLevel = "debug"
+	// InfoLevel is the default log level.
+	InfoLevel LogLevel = "info"
+	// ErrorLevel is a log level where only errors are logged.
+	ErrorLevel LogLevel = "error"
+)
+
+var (
+	// AllLogLevels is a slice of all available log levels.
+	AllLogLevels = []LogLevel{DebugLevel, InfoLevel, ErrorLevel}
+	// AllLogFormats is a slice of all available log formats.
+	AllLogFormats = []LogFormat{LogFormatJSON, LogFormatText}
+)
+
+// SchedulerName defines the name of the scheduler backend (used in OperatorConfiguration scheduler.profiles[].name).
+type SchedulerName string
+
+const (
+	// SchedulerNameKai is the KAI scheduler backend.
+	SchedulerNameKai SchedulerName = "kai-scheduler"
+	// SchedulerNameKueue is the Kueue plain Pod integration backend.
+	SchedulerNameKueue SchedulerName = "kueue"
+	// SchedulerNameKube is the profile name for the Kubernetes default scheduler in OperatorConfiguration.
+	SchedulerNameKube SchedulerName = "default-scheduler"
+	// SchedulerNameVolcano is the Volcano scheduler backend. It supports gang scheduling via Volcano PodGroup.
+	SchedulerNameVolcano SchedulerName = "volcano"
+	// SchedulerNameLPX is the LPX scheduler backend.
+	SchedulerNameLPX SchedulerName = "lpx-scheduler"
+)
+
+var (
+	// SupportedSchedulerNames is the list of profile names allowed in scheduler.profiles[].name.
+	SupportedSchedulerNames = []SchedulerName{
+		SchedulerNameKai,
+		SchedulerNameKueue,
+		SchedulerNameKube,
+		SchedulerNameVolcano,
+		SchedulerNameLPX,
+	}
+)
+
+// SchedulerConfiguration configures scheduler profiles and which is the default.
+type SchedulerConfiguration struct {
+	// Profiles is the list of scheduler profiles. Each profile has a backend name and an optional config.
+	// The default-scheduler backend is always enabled to ensure that the kubernetes default scheduler is always enabled and supported.
+	// Use profile name "default-scheduler" to configure or set it as default.
+	// Valid profile names: "default-scheduler", "kai-scheduler", "kueue", "volcano", "lpx-scheduler".
+	// Use defaultProfileName to designate the default backend.
+	// +optional
+	Profiles []SchedulerProfile `json:"profiles,omitempty"`
+	// DefaultProfileName is the name of the default scheduler profile. If unset, defaulting sets it to "default-scheduler"
+	// which is the kubernetes default scheduler.
+	// +optional
+	DefaultProfileName string `json:"defaultProfileName,omitempty"`
+}
+
+// SchedulerProfile defines a scheduler backend profile with optional backend-specific config.
+type SchedulerProfile struct {
+	// Name is the scheduler profile name.
+	// For the Kubernetes default scheduler use the standard "default-scheduler".
+	// Ensure that the name chosen is a valid scheduler name. The name will also be directly set in `Pod.Spec.SchedulerName`.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:Enum=kai-scheduler;kueue;default-scheduler;volcano;lpx-scheduler
+	Name SchedulerName `json:"name"`
+
+	// Config holds backend-specific options. The operator unmarshals it into the config type for this backend (see backend config types).
+	// +optional
+	Config *runtime.RawExtension `json:"config,omitempty"`
+}
+
+// KueueSchedulerConfiguration defines the configuration for the kueue backend.
+type KueueSchedulerConfiguration struct {
+	// UnderlyingSchedulerName is the schedulerName used after Kueue admits the Pods.
+	// +optional
+	UnderlyingSchedulerName string `json:"underlyingSchedulerName,omitempty"`
+}
+
+// KubeSchedulerConfig holds the configuration for the default scheduler.
+// Used when unmarshalling SchedulerProfile.Config for default-scheduler.
+type KubeSchedulerConfig struct {
+	// GangScheduling indicates if Gang scheduling capability is enabled.
+	// +optional
+	GangScheduling bool `json:"gangScheduling,omitempty"`
+}
+
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+
+// OperatorConfiguration defines the configuration for the Grove operator.
+type OperatorConfiguration struct {
+	metav1.TypeMeta         `json:",inline"`
+	ClientConnection        ClientConnectionConfiguration        `json:"runtimeClientConnection"`
+	LeaderElection          LeaderElectionConfiguration          `json:"leaderElection"`
+	Server                  ServerConfiguration                  `json:"server"`
+	Debugging               *DebuggingConfiguration              `json:"debugging,omitempty"`
+	Controllers             ControllerConfiguration              `json:"controllers"`
+	LogLevel                LogLevel                             `json:"logLevel"`
+	LogFormat               LogFormat                            `json:"logFormat"`
+	Authorizer              AuthorizerConfig                     `json:"authorizer"`
+	TopologyAwareScheduling TopologyAwareSchedulingConfiguration `json:"topologyAwareScheduling"`
+	// +optional
+	Network NetworkAcceleration `json:"network,omitempty"` // Network is the configuration for network acceleration features like MNNVL.
+	// Scheduler configures which scheduler backends are active and their per-backend options.
+	Scheduler SchedulerConfiguration `json:"scheduler"`
+}
+
+// LeaderElectionConfiguration defines the configuration for the leader election.
+type LeaderElectionConfiguration struct {
+	// Enabled specifies whether leader election is enabled. Set this
+	// to true when running replicated instances of the operator for high availability.
+	Enabled bool `json:"enabled"`
+	// LeaseDuration is the duration that non-leader candidates will wait
+	// after observing a leadership renewal until attempting to acquire
+	// leadership of the occupied but un-renewed leader slot. This is effectively the
+	// maximum duration that a leader can be stopped before it is replaced
+	// by another candidate. This is only applicable if leader election is
+	// enabled.
+	LeaseDuration metav1.Duration `json:"leaseDuration"`
+	// RenewDeadline is the interval between attempts by the acting leader to
+	// renew its leadership before it stops leading. This must be less than or
+	// equal to the lease duration.
+	// This is only applicable if leader election is enabled.
+	RenewDeadline metav1.Duration `json:"renewDeadline"`
+	// RetryPeriod is the duration leader elector clients should wait
+	// between attempting acquisition and renewal of leadership.
+	// This is only applicable if leader election is enabled.
+	RetryPeriod metav1.Duration `json:"retryPeriod"`
+	// ResourceLock determines which resource lock to use for leader election.
+	// This is only applicable if leader election is enabled.
+	ResourceLock string `json:"resourceLock"`
+	// ResourceName determines the name of the resource that leader election
+	// will use for holding the leader lock.
+	// This is only applicable if leader election is enabled.
+	ResourceName string `json:"resourceName"`
+	// ResourceNamespace determines the namespace in which the leader
+	// election resource will be created.
+	// This is only applicable if leader election is enabled.
+	ResourceNamespace string `json:"resourceNamespace"`
+}
+
+// ClientConnectionConfiguration defines the configuration for constructing a client.
+type ClientConnectionConfiguration struct {
+	// QPS controls the number of queries per second allowed for this connection.
+	QPS float32 `json:"qps"`
+	// Burst allows extra queries to accumulate when a client is exceeding its rate.
+	Burst int `json:"burst"`
+	// ContentType is the content type used when sending data to the server from this client.
+	ContentType string `json:"contentType"`
+	// AcceptContentTypes defines the Accept header sent by clients when connecting to the server,
+	// overriding the default value of 'application/json'. This field will control all connections
+	// to the server used by a particular client.
+	AcceptContentTypes string `json:"acceptContentTypes"`
+}
+
+// DebuggingConfiguration defines the configuration for debugging.
+type DebuggingConfiguration struct {
+	// EnableProfiling enables profiling via host:port/debug/pprof/ endpoints.
+	// +optional
+	EnableProfiling *bool `json:"enableProfiling,omitempty"`
+	// PprofBindHost is the host/IP that the pprof HTTP server binds to.
+	// Defaults to 127.0.0.1 (loopback-only). Set to 0.0.0.0 to allow external
+	// scraping (e.g. Pyroscope). Supports IPv6 addresses (e.g. "::1").
+	// +optional
+	PprofBindHost *string `json:"pprofBindHost,omitempty"`
+	// PprofBindPort is the port that the pprof HTTP server binds to.
+	// Defaults to 2753.
+	// +optional
+	PprofBindPort *int `json:"pprofBindPort,omitempty"`
+}
+
+// ServerConfiguration defines the configuration for the HTTP(S) servers.
+type ServerConfiguration struct {
+	// Webhooks is the configuration for the HTTP(S) webhook server.
+	Webhooks WebhookServer `json:"webhooks"`
+	// HealthProbes is the configuration for serving the healthz and readyz endpoints.
+	HealthProbes *Server `json:"healthProbes,omitempty"`
+	// Metrics is the configuration for serving the metrics endpoint.
+	// +optional
+	Metrics *Server `json:"metrics,omitempty"`
+}
+
+// WebhookServer defines the configuration for the HTTP(S) webhook server.
+type WebhookServer struct {
+	Server `json:",inline"`
+	// ServerCertDir is the directory containing the server certificate and key.
+	ServerCertDir string `json:"serverCertDir"`
+	// SecretName is the name of the Kubernetes Secret containing webhook certificates.
+	// The Secret must contain tls.crt, tls.key, and ca.crt.
+	// +optional
+	// +kubebuilder:default="grove-webhook-server-cert"
+	SecretName string `json:"secretName,omitempty"`
+	// CertProvisionMode controls how webhook certificates are provisioned.
+	// +optional
+	// +kubebuilder:default="auto"
+	CertProvisionMode CertProvisionMode `json:"certProvisionMode,omitempty"`
+}
+
+// CertProvisionMode defines how webhook certificates are provisioned.
+// +kubebuilder:validation:Enum=auto;manual
+type CertProvisionMode string
+
+const (
+	// CertProvisionModeAuto enables automatic certificate generation and management via cert-controller.
+	// cert-controller automatically generates self-signed certificates and stores them in the Secret.
+	CertProvisionModeAuto CertProvisionMode = "auto"
+	// CertProvisionModeManual expects certificates to be provided externally (e.g., by cert-manager, cluster admin).
+	CertProvisionModeManual CertProvisionMode = "manual"
+)
+
+const (
+	// DefaultWebhookSecretName is the default name of the Secret containing webhook TLS certificates.
+	DefaultWebhookSecretName = "grove-webhook-server-cert"
+)
+
+// Server contains information for HTTP(S) server configuration.
+type Server struct {
+	// BindAddress is the IP address on which to listen for the specified port.
+	BindAddress string `json:"bindAddress"`
+	// Port is the port on which to serve requests.
+	Port int `json:"port"`
+}
+
+// ControllerConfiguration defines the configuration for the controllers.
+type ControllerConfiguration struct {
+	// PodCliqueSet is the configuration for the PodCliqueSet controller.
+	PodCliqueSet PodCliqueSetControllerConfiguration `json:"podCliqueSet"`
+	// PodClique is the configuration for the PodClique controller.
+	PodClique PodCliqueControllerConfiguration `json:"podClique"`
+	// PodCliqueScalingGroup is the configuration for the PodCliqueScalingGroup controller.
+	PodCliqueScalingGroup PodCliqueScalingGroupControllerConfiguration `json:"podCliqueScalingGroup"`
+	// PodGang is the configuration for the PodGang controller.
+	PodGang PodGangControllerConfiguration `json:"podGang"`
+}
+
+// PodCliqueSetControllerConfiguration defines the configuration for the PodCliqueSet controller.
+type PodCliqueSetControllerConfiguration struct {
+	// ConcurrentSyncs is the number of workers used for the controller to concurrently work on events.
+	// +optional
+	ConcurrentSyncs *int `json:"concurrentSyncs,omitempty"`
+}
+
+// PodCliqueControllerConfiguration defines the configuration for the PodClique controller.
+type PodCliqueControllerConfiguration struct {
+	// ConcurrentSyncs is the number of workers used for the controller to concurrently work on events.
+	// +optional
+	ConcurrentSyncs *int `json:"concurrentSyncs,omitempty"`
+}
+
+// PodCliqueScalingGroupControllerConfiguration defines the configuration for the PodCliqueScalingGroup controller.
+type PodCliqueScalingGroupControllerConfiguration struct {
+	// ConcurrentSyncs is the number of workers used for the controller to concurrently work on events.
+	// +optional
+	ConcurrentSyncs *int `json:"concurrentSyncs,omitempty"`
+}
+
+// PodGangControllerConfiguration defines the configuration for the PodGang controller.
+type PodGangControllerConfiguration struct {
+	// ConcurrentSyncs is the number of workers used for the controller to concurrently work on events.
+	// +optional
+	ConcurrentSyncs *int `json:"concurrentSyncs,omitempty"`
+}
+
+// AuthorizerConfig defines the configuration for the authorizer admission webhook.
+type AuthorizerConfig struct {
+	// Enabled indicates whether the authorizer is enabled.
+	Enabled bool `json:"enabled"`
+	// ExemptServiceAccountUserNames is a list of service account usernames that are exempt from authorizer checks.
+	// Each service account username name in ExemptServiceAccountUserNames should be of the following format:
+	// system:serviceaccount:<namespace>:<service-account-name>. ServiceAccounts are represented in this
+	// format when checking the username in authenticationv1.UserInfo.Name.
+	// +optional
+	ExemptServiceAccountUserNames []string `json:"exemptServiceAccountUserNames,omitempty"`
+}
+
+// TopologyAwareSchedulingConfiguration defines the configuration for topology-aware scheduling.
+type TopologyAwareSchedulingConfiguration struct {
+	// Enabled indicates whether topology-aware scheduling is enabled.
+	Enabled bool `json:"enabled"`
+}
+
+// NetworkAcceleration defines the configuration for network acceleration features.
+type NetworkAcceleration struct {
+	// AutoMNNVLEnabled indicates whether automatic MNNVL (Multi-Node NVLink) support is enabled.
+	// When enabled, the operator will automatically create and manage ComputeDomain resources
+	// for GPU workloads. If the cluster doesn't have the NVIDIA DRA driver installed,
+	// the operator will exit with a non-zero exit code.
+	// Default: false
+	AutoMNNVLEnabled bool `json:"autoMNNVLEnabled"`
+}

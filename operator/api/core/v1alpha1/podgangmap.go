@@ -21,6 +21,7 @@ import (
 // +genclient
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 // +kubebuilder:object:root=true
+// +kubebuilder:deprecatedversion:warning="grove.io/v1alpha1 is deprecated; use grove.io/v1beta1"
 // +kubebuilder:resource:shortName={pgm}
 
 // PodGangMap is the desired-state mapping between PodGangs and their constituent

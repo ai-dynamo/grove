@@ -18,7 +18,7 @@ import (
 	"testing"
 
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/stretchr/testify/assert"
@@ -33,12 +33,12 @@ import (
 )
 
 func TestMapClusterTopologyToPodCliqueSets(t *testing.T) {
-	makePCS := func(namespace, name string, mutate func(*grovecorev1alpha1.PodCliqueSet)) *grovecorev1alpha1.PodCliqueSet {
-		pcs := &grovecorev1alpha1.PodCliqueSet{
+	makePCS := func(namespace, name string, mutate func(*grovecorev1beta1.PodCliqueSet)) *grovecorev1beta1.PodCliqueSet {
+		pcs := &grovecorev1beta1.PodCliqueSet{
 			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
-			Spec: grovecorev1alpha1.PodCliqueSetSpec{
+			Spec: grovecorev1beta1.PodCliqueSetSpec{
 				Replicas: 1,
-				Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{},
+				Template: grovecorev1beta1.PodCliqueSetTemplateSpec{},
 			},
 		}
 		if mutate != nil {
@@ -47,29 +47,29 @@ func TestMapClusterTopologyToPodCliqueSets(t *testing.T) {
 		return pcs
 	}
 
-	ct := &grovecorev1alpha1.ClusterTopologyBinding{ObjectMeta: metav1.ObjectMeta{Name: "selected-topology"}}
-	pcsA := makePCS("default", "pcs-a", func(pcs *grovecorev1alpha1.PodCliqueSet) {
-		pcs.Spec.Template.TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
+	ct := &grovecorev1beta1.ClusterTopologyBinding{ObjectMeta: metav1.ObjectMeta{Name: "selected-topology"}}
+	pcsA := makePCS("default", "pcs-a", func(pcs *grovecorev1beta1.PodCliqueSet) {
+		pcs.Spec.Template.TopologyConstraint = &grovecorev1beta1.TopologyConstraint{
 			TopologyName: "selected-topology",
-			PackDomain:   grovecorev1alpha1.TopologyDomainRack,
+			Pack:         &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: grovecorev1beta1.TopologyDomainRack},
 		}
 	})
-	pcsB := makePCS("team-b", "pcs-b", func(pcs *grovecorev1alpha1.PodCliqueSet) {
-		pcs.Spec.Template.Cliques = []*grovecorev1alpha1.PodCliqueTemplateSpec{
+	pcsB := makePCS("team-b", "pcs-b", func(pcs *grovecorev1beta1.PodCliqueSet) {
+		pcs.Spec.Template.Cliques = []*grovecorev1beta1.PodCliqueTemplateSpec{
 			{
 				Name: "worker",
-				TopologyConstraint: &grovecorev1alpha1.TopologyConstraint{
+				TopologyConstraint: &grovecorev1beta1.TopologyConstraint{
 					TopologyName: "selected-topology",
-					PackDomain:   grovecorev1alpha1.TopologyDomainHost,
+					Pack:         &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: grovecorev1beta1.TopologyDomainHost},
 				},
-				Spec: grovecorev1alpha1.PodCliqueSpec{Replicas: 1},
+				Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 1},
 			},
 		}
 	})
-	pcsOther := makePCS("default", "pcs-other", func(pcs *grovecorev1alpha1.PodCliqueSet) {
-		pcs.Spec.Template.TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{
+	pcsOther := makePCS("default", "pcs-other", func(pcs *grovecorev1beta1.PodCliqueSet) {
+		pcs.Spec.Template.TopologyConstraint = &grovecorev1beta1.TopologyConstraint{
 			TopologyName: "other-topology",
-			PackDomain:   grovecorev1alpha1.TopologyDomainRack,
+			Pack:         &grovecorev1beta1.TopologyPackConstraint{RequiredDomain: grovecorev1beta1.TopologyDomainRack},
 		}
 	})
 	pcsWithoutTopology := makePCS("default", "pcs-no-topology", nil)
@@ -97,8 +97,8 @@ func TestPodCliqueSetPredicateUpdate(t *testing.T) {
 
 	tests := []struct {
 		name string
-		old  *grovecorev1alpha1.PodCliqueSet
-		new  *grovecorev1alpha1.PodCliqueSet
+		old  *grovecorev1beta1.PodCliqueSet
+		new  *grovecorev1beta1.PodCliqueSet
 		want bool
 	}{
 		{
@@ -146,8 +146,8 @@ func TestPodCliqueSetPredicateUpdate(t *testing.T) {
 	}
 }
 
-func podCliqueSetWithGenerationAndAnnotations(generation int64, annotations map[string]string) *grovecorev1alpha1.PodCliqueSet {
-	return &grovecorev1alpha1.PodCliqueSet{
+func podCliqueSetWithGenerationAndAnnotations(generation int64, annotations map[string]string) *grovecorev1beta1.PodCliqueSet {
+	return &grovecorev1beta1.PodCliqueSet{
 		ObjectMeta: metav1.ObjectMeta{
 			Generation:  generation,
 			Annotations: annotations,
@@ -164,30 +164,30 @@ func TestPodCliquePredicateStatusChangesAffectingUpdatedAccounting(t *testing.T)
 
 	tests := []struct {
 		name   string
-		mutate func(*grovecorev1alpha1.PodClique)
+		mutate func(*grovecorev1beta1.PodClique)
 	}{
 		{
 			name: "current pod template hash changes",
-			mutate: func(pclq *grovecorev1alpha1.PodClique) {
+			mutate: func(pclq *grovecorev1beta1.PodClique) {
 				pclq.Status.CurrentPodTemplateHash = ptr.To("new-template-hash")
 			},
 		},
 		{
 			name: "current PCS generation hash changes",
-			mutate: func(pclq *grovecorev1alpha1.PodClique) {
+			mutate: func(pclq *grovecorev1beta1.PodClique) {
 				pclq.Status.CurrentPodCliqueSetGenerationHash = ptr.To("new-generation-hash")
 			},
 		},
 		{
 			name: "updated replicas changes",
-			mutate: func(pclq *grovecorev1alpha1.PodClique) {
+			mutate: func(pclq *grovecorev1beta1.PodClique) {
 				pclq.Status.UpdatedReplicas = 1
 			},
 		},
 		{
 			name: "update progress changes",
-			mutate: func(pclq *grovecorev1alpha1.PodClique) {
-				pclq.Status.UpdateProgress = &grovecorev1alpha1.PodCliqueUpdateProgress{
+			mutate: func(pclq *grovecorev1beta1.PodClique) {
+				pclq.Status.UpdateProgress = &grovecorev1beta1.PodCliqueUpdateProgress{
 					PodCliqueSetGenerationHash: "generation-hash",
 					PodTemplateHash:            "template-hash",
 				}
@@ -216,23 +216,23 @@ func TestPodCliquePredicateStatusReplicaChanges(t *testing.T) {
 
 	tests := []struct {
 		name   string
-		mutate func(*grovecorev1alpha1.PodClique)
+		mutate func(*grovecorev1beta1.PodClique)
 	}{
 		{
 			name:   "replicas changes",
-			mutate: func(pclq *grovecorev1alpha1.PodClique) { pclq.Status.Replicas = 1 },
+			mutate: func(pclq *grovecorev1beta1.PodClique) { pclq.Status.Replicas = 1 },
 		},
 		{
 			name:   "scheduled replicas changes",
-			mutate: func(pclq *grovecorev1alpha1.PodClique) { pclq.Status.ScheduledReplicas = 1 },
+			mutate: func(pclq *grovecorev1beta1.PodClique) { pclq.Status.ScheduledReplicas = 1 },
 		},
 		{
 			name:   "ready replicas changes",
-			mutate: func(pclq *grovecorev1alpha1.PodClique) { pclq.Status.ReadyReplicas = 1 },
+			mutate: func(pclq *grovecorev1beta1.PodClique) { pclq.Status.ReadyReplicas = 1 },
 		},
 		{
 			name:   "schedule gated replicas changes",
-			mutate: func(pclq *grovecorev1alpha1.PodClique) { pclq.Status.ScheduleGatedReplicas = 1 },
+			mutate: func(pclq *grovecorev1beta1.PodClique) { pclq.Status.ScheduleGatedReplicas = 1 },
 		},
 	}
 
@@ -256,20 +256,20 @@ func TestPodCliquePredicateNoRelevantChange(t *testing.T) {
 
 	tests := []struct {
 		name   string
-		mutate func(*grovecorev1alpha1.PodClique)
+		mutate func(*grovecorev1beta1.PodClique)
 	}{
 		{
 			name:   "no change",
-			mutate: func(*grovecorev1alpha1.PodClique) {},
+			mutate: func(*grovecorev1beta1.PodClique) {},
 		},
 		{
 			name:   "observed generation changes",
-			mutate: func(pclq *grovecorev1alpha1.PodClique) { pclq.Status.ObservedGeneration = ptr.To(int64(2)) },
+			mutate: func(pclq *grovecorev1beta1.PodClique) { pclq.Status.ObservedGeneration = ptr.To(int64(2)) },
 		},
 		{
 			name: "last errors change",
-			mutate: func(pclq *grovecorev1alpha1.PodClique) {
-				pclq.Status.LastErrors = []grovecorev1alpha1.LastError{{Code: grovecorev1alpha1.ErrorCode("ERR"), Description: "boom"}}
+			mutate: func(pclq *grovecorev1beta1.PodClique) {
+				pclq.Status.LastErrors = []grovecorev1beta1.LastError{{Code: grovecorev1beta1.ErrorCode("ERR"), Description: "boom"}}
 			},
 		},
 	}
@@ -295,24 +295,24 @@ func TestPodCliqueScalingGroupPredicateStatusChangesAffectingUpdatedAccounting(t
 
 	tests := []struct {
 		name   string
-		mutate func(*grovecorev1alpha1.PodCliqueScalingGroup)
+		mutate func(*grovecorev1beta1.PodCliqueScalingGroup)
 	}{
 		{
 			name: "current PCS generation hash changes",
-			mutate: func(pcsg *grovecorev1alpha1.PodCliqueScalingGroup) {
+			mutate: func(pcsg *grovecorev1beta1.PodCliqueScalingGroup) {
 				pcsg.Status.CurrentPodCliqueSetGenerationHash = ptr.To("new-generation-hash")
 			},
 		},
 		{
 			name: "updated replicas changes",
-			mutate: func(pcsg *grovecorev1alpha1.PodCliqueScalingGroup) {
+			mutate: func(pcsg *grovecorev1beta1.PodCliqueScalingGroup) {
 				pcsg.Status.UpdatedReplicas = 1
 			},
 		},
 		{
 			name: "update progress changes",
-			mutate: func(pcsg *grovecorev1alpha1.PodCliqueScalingGroup) {
-				pcsg.Status.UpdateProgress = &grovecorev1alpha1.PodCliqueScalingGroupUpdateProgress{
+			mutate: func(pcsg *grovecorev1beta1.PodCliqueScalingGroup) {
+				pcsg.Status.UpdateProgress = &grovecorev1beta1.PodCliqueScalingGroupUpdateProgress{
 					PodCliqueSetGenerationHash: "generation-hash",
 				}
 			},
@@ -321,7 +321,7 @@ func TestPodCliqueScalingGroupPredicateStatusChangesAffectingUpdatedAccounting(t
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			oldPCSG := &grovecorev1alpha1.PodCliqueScalingGroup{}
+			oldPCSG := &grovecorev1beta1.PodCliqueScalingGroup{}
 			newPCSG := oldPCSG.DeepCopy()
 			tt.mutate(newPCSG)
 
@@ -337,7 +337,7 @@ func TestPodCliqueScalingGroupPredicateSpecChange(t *testing.T) {
 	pred, ok := podCliqueScalingGroupPredicate().(predicate.Funcs)
 	require.True(t, ok, "predicate must be predicate.Funcs")
 
-	oldPCSG := &grovecorev1alpha1.PodCliqueScalingGroup{ObjectMeta: metav1.ObjectMeta{Generation: 1}}
+	oldPCSG := &grovecorev1beta1.PodCliqueScalingGroup{ObjectMeta: metav1.ObjectMeta{Generation: 1}}
 	newPCSG := oldPCSG.DeepCopy()
 	newPCSG.Generation = 2
 	newPCSG.Spec.Replicas = 3
@@ -351,7 +351,7 @@ func TestPodCliqueScalingGroupPredicateNoChange(t *testing.T) {
 	pred, ok := podCliqueScalingGroupPredicate().(predicate.Funcs)
 	require.True(t, ok, "predicate must be predicate.Funcs")
 
-	oldPCSG := &grovecorev1alpha1.PodCliqueScalingGroup{ObjectMeta: metav1.ObjectMeta{Generation: 1}}
+	oldPCSG := &grovecorev1beta1.PodCliqueScalingGroup{ObjectMeta: metav1.ObjectMeta{Generation: 1}}
 	newPCSG := oldPCSG.DeepCopy()
 
 	assert.False(t, pred.UpdateFunc(event.UpdateEvent{ObjectOld: oldPCSG, ObjectNew: newPCSG}))

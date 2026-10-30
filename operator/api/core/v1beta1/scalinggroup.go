@@ -1,0 +1,147 @@
+// Copyright 2026 The Grove Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package v1beta1
+
+import metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+// +genclient
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+// +kubebuilder:object:root=true
+// +kubebuilder:storageversion
+// +kubebuilder:subresource:status
+// +kubebuilder:subresource:scale:specpath=.spec.replicas,statuspath=.status.replicas,selectorpath=.status.selector
+// +kubebuilder:resource:shortName={pcsg}
+// +kubebuilder:printcolumn:name="MinAvail",type=integer,JSONPath=`.spec.minAvailable`
+// +kubebuilder:printcolumn:name="Replicas",type=integer,JSONPath=`.spec.replicas`
+// +kubebuilder:printcolumn:name="Available",type=integer,JSONPath=`.status.availableReplicas`
+// +kubebuilder:printcolumn:name="Scheduled",type=integer,JSONPath=`.status.scheduledReplicas`
+// +kubebuilder:printcolumn:name="Updated",type=integer,JSONPath=`.status.updatedReplicas`
+// +kubebuilder:printcolumn:name="PCLQs-Updated",type=integer,JSONPath=`.status.updateProgress.updatedPodCliquesCount`
+// +kubebuilder:printcolumn:name="PCLQs-Total",type=integer,JSONPath=`.status.updateProgress.totalPodCliquesCount`
+// +kubebuilder:printcolumn:name="MinBreached",type=string,JSONPath=`.status.conditions[?(@.type=="MinAvailableBreached")].status`,priority=1
+// +kubebuilder:printcolumn:name="Update",type=string,JSONPath=`.status.conditions[?(@.type=="UpdateInProgress")].reason`,priority=1
+// +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
+
+// PodCliqueScalingGroup is the schema to define scaling groups that is used to scale a group of PodClique's.
+// An instance of this custom resource will be created for every pod clique scaling group defined as part of PodCliqueSet.
+type PodCliqueScalingGroup struct {
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
+	// Spec is the specification of the PodCliqueScalingGroup.
+	Spec PodCliqueScalingGroupSpec `json:"spec"`
+	// Status is the status of the PodCliqueScalingGroup.
+	Status PodCliqueScalingGroupStatus `json:"status,omitempty"`
+}
+
+// +kubebuilder:object:root=true
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+
+// PodCliqueScalingGroupList is a slice of PodCliqueScalingGroup's.
+type PodCliqueScalingGroupList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+	// Items is a slice of PodCliqueScalingGroup.
+	Items []PodCliqueScalingGroup `json:"items"`
+}
+
+// PodCliqueScalingGroupSpec is the specification of the PodCliqueScalingGroup.
+type PodCliqueScalingGroupSpec struct {
+	// Replicas is the desired number of replicas for the PodCliqueScalingGroup.
+	// If not specified, it defaults to 1.
+	// +kubebuilder:default=1
+	Replicas int32 `json:"replicas"`
+	// MinAvailable specifies the minimum number of ready replicas required for a PodCliqueScalingGroup to be considered operational.
+	// A PodCliqueScalingGroup replica is considered "ready" when its associated PodCliques have sufficient ready or starting pods.
+	// If MinAvailable is breached, it will be used to signal that the PodCliqueScalingGroup is no longer operating with the desired availability.
+	// MinAvailable cannot be greater than Replicas. If ScaleConfig is defined then its MinAvailable should not be less than ScaleConfig.MinReplicas.
+	//
+	// It serves two main purposes:
+	// 1. Gang Scheduling: MinAvailable defines the minimum number of replicas that are guaranteed to be gang scheduled.
+	// 2. Gang Termination: MinAvailable is used as a lower bound below which a PodGang becomes a candidate for Gang termination.
+	// If not specified, it defaults to 1.
+	// +optional
+	// +kubebuilder:default=1
+	MinAvailable *int32 `json:"minAvailable,omitempty"`
+	// CliqueNames is the list of PodClique names that are configured in the
+	// matching PodCliqueScalingGroup in PodCliqueSet.Spec.Template.PodCliqueScalingGroupConfigs.
+	CliqueNames []string `json:"cliqueNames"`
+}
+
+// PodCliqueScalingGroupStatus is the status of the PodCliqueScalingGroup.
+type PodCliqueScalingGroupStatus struct {
+	// Replicas is the observed number of replicas for the PodCliqueScalingGroup.
+	Replicas int32 `json:"replicas,omitempty"`
+	// ScheduledReplicas is the number of replicas that are scheduled for the PodCliqueScalingGroup.
+	// A replica of PodCliqueScalingGroup is considered "scheduled" when at least MinAvailable number
+	// of pods in each constituent PodClique has been scheduled.
+	// +kubebuilder:default=0
+	ScheduledReplicas int32 `json:"scheduledReplicas"`
+	// AvailableReplicas is the number of PodCliqueScalingGroup replicas that are available.
+	// A PodCliqueScalingGroup replica is considered available when all constituent PodClique's have
+	// PodClique.Status.ReadyReplicas greater than or equal to PodClique.Spec.MinAvailable
+	// +kubebuilder:default=0
+	AvailableReplicas int32 `json:"availableReplicas"`
+	// UpdatedReplicas is the number of PodCliqueScalingGroup replicas that correspond with the latest PodCliqueSetGenerationHash.
+	// +kubebuilder:default=0
+	UpdatedReplicas int32 `json:"updatedReplicas"`
+	// Selector is the selector used to identify the pods that belong to this scaling group.
+	Selector *string `json:"selector,omitempty"`
+	// ObservedGeneration is the most recent generation observed by the controller.
+	ObservedGeneration *int64 `json:"observedGeneration,omitempty"`
+	// LastErrors captures the last errors observed by the controller when reconciling the PodClique.
+	LastErrors []LastError `json:"lastErrors,omitempty"`
+	// Conditions represents the latest available observations of the PodCliqueScalingGroup by its controller.
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
+	// CurrentPodCliqueSetGenerationHash establishes a correlation to PodCliqueSet generation hash indicating
+	// that the spec of the PodCliqueSet at this generation is fully realized in the PodCliqueScalingGroup.
+	CurrentPodCliqueSetGenerationHash *string `json:"currentPodCliqueSetGenerationHash,omitempty"`
+	// UpdateProgress provides details about the ongoing update of the PodCliqueScalingGroup.
+	UpdateProgress *PodCliqueScalingGroupUpdateProgress `json:"updateProgress,omitempty"`
+}
+
+// PodCliqueScalingGroupUpdateProgress provides details about the ongoing update of the PodCliqueScalingGroup.
+type PodCliqueScalingGroupUpdateProgress struct {
+	// UpdateStartedAt is the time at which the update started.
+	UpdateStartedAt metav1.Time `json:"updateStartedAt"`
+	// UpdateEndedAt is the time at which Grove does not have any work pending to manifest the update according to the
+	// configured update strategy. For rolling update strategies where Grove handles the orchestration, while the update is
+	// still in progress it will be nil, and will be set once the update finishes where all PodCliques are replaced by
+	// Grove with the latest specification. For the OnDelete strategy, it is set to the same time as UpdateStartedAt, which
+	// implies that there is no work pending on Grove.
+	UpdateEndedAt *metav1.Time `json:"updateEndedAt,omitempty"`
+	// LastProgressedAt is the time at which the rolling update last made progress, meaning the number of
+	// updated replicas increased. The ProgressDeadline is measured from it, and it is nil while no update is in
+	// progress.
+	LastProgressedAt *metav1.Time `json:"lastProgressedAt,omitempty"`
+	// PodCliqueSetGenerationHash is the generation hash corresponding to the latest PodCliqueSet spec that this
+	// PodCliqueScalingGroup should converge to. PodCliqueScalingGroupStatus.CurrentPodCliqueSetGenerationHash is set to
+	// this hash once UpdateEndedAt is set, which marks the end of the update.
+	PodCliqueSetGenerationHash string `json:"podCliqueSetGenerationHash"`
+	// UpdatedPodCliquesCount is the number of PodCliques that have been updated to the desired
+	// PodCliqueSet generation hash. Recomputed each reconcile from child generation-hash labels.
+	// +optional
+	// +kubebuilder:default=0
+	UpdatedPodCliquesCount int32 `json:"updatedPodCliquesCount,omitempty"`
+	// TotalPodCliquesCount is the total number of PodCliques expected to exist for the PodCliqueScalingGroup
+	// at the current spec.
+	// +optional
+	// +kubebuilder:default=0
+	TotalPodCliquesCount int32 `json:"totalPodCliquesCount,omitempty"`
+}
+
+// SetLastErrors sets the last errors observed by the controller when reconciling the PodCliqueScalingGroup.
+func (pcsg *PodCliqueScalingGroup) SetLastErrors(lastErrs ...LastError) {
+	pcsg.Status.LastErrors = lastErrs
+}

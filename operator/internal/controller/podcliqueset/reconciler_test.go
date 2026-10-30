@@ -17,7 +17,7 @@ package podcliqueset
 import (
 	"testing"
 
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	ctrlcommon "github.com/ai-dynamo/grove/operator/internal/controller/common"
 	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/sync"
 
@@ -28,11 +28,11 @@ import (
 
 func TestEnsureScalingProgressExpectationSatisfied(t *testing.T) {
 	objectMeta := metav1.ObjectMeta{Namespace: "default", Name: "pcs", UID: types.UID("uid")}
-	expectedProgress := &grovecorev1alpha1.PodCliqueSetScalingProgress{ScaleOutReplicaIndices: []int32{1}}
+	expectedProgress := &grovecorev1beta1.PodCliqueSetScalingProgress{ScaleOutReplicaIndices: []int32{1}}
 	expectations := &pcssync.ScalingProgressExpectations{}
 	expectations.Record(objectMeta, expectedProgress)
 	reconciler := &Reconciler{scalingProgressExpectations: expectations}
-	pcs := &grovecorev1alpha1.PodCliqueSet{ObjectMeta: objectMeta}
+	pcs := &grovecorev1beta1.PodCliqueSet{ObjectMeta: objectMeta}
 
 	result := reconciler.ensureScalingProgressExpectationSatisfied(pcs)
 	assert.True(t, result.NeedsRequeue())

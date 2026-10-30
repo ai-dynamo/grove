@@ -17,7 +17,7 @@ package component
 import (
 	"errors"
 
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 
 	"k8s.io/apimachinery/pkg/util/sets"
 )
@@ -32,7 +32,7 @@ var (
 )
 
 // HasAnyTopologyConstraint reports whether the PCS contains a topology constraint at any supported level.
-func HasAnyTopologyConstraint(pcs *grovecorev1alpha1.PodCliqueSet) bool {
+func HasAnyTopologyConstraint(pcs *grovecorev1beta1.PodCliqueSet) bool {
 	if pcs.Spec.Template.TopologyConstraint != nil {
 		return true
 	}
@@ -66,7 +66,7 @@ func ResolveEffectiveTopologyNameForConstraint(explicitTopologyName, inheritedTo
 // ResolveEffectiveTopologyNameForPodCliqueSet resolves the single effective topologyName for the PCS after inheritance is applied.
 // Callers that need to distinguish "no topology constraints at all" from invalid topology constraints
 // must first call HasAnyTopologyConstraint.
-func ResolveEffectiveTopologyNameForPodCliqueSet(pcs *grovecorev1alpha1.PodCliqueSet) (string, error) {
+func ResolveEffectiveTopologyNameForPodCliqueSet(pcs *grovecorev1beta1.PodCliqueSet) (string, error) {
 	resolvedTopologyName := ""
 	recordTopologyName := func(topologyName string) error {
 		if resolvedTopologyName == "" {
@@ -148,7 +148,7 @@ func ResolveEffectiveTopologyNameForPodCliqueSet(pcs *grovecorev1alpha1.PodCliqu
 // It is intended for callers operating on already-validated PCS objects where all explicit topologyName
 // values are expected to match. Callers that need to distinguish "no topology constraints at all" from
 // missing explicit topologyName values must first call HasAnyTopologyConstraint.
-func FindExplicitTopologyNameForPodCliqueSet(pcs *grovecorev1alpha1.PodCliqueSet) (string, error) {
+func FindExplicitTopologyNameForPodCliqueSet(pcs *grovecorev1beta1.PodCliqueSet) (string, error) {
 	if tc := pcs.Spec.Template.TopologyConstraint; tc != nil && tc.TopologyName != "" {
 		return tc.TopologyName, nil
 	}
@@ -166,16 +166,16 @@ func FindExplicitTopologyNameForPodCliqueSet(pcs *grovecorev1alpha1.PodCliqueSet
 }
 
 // GetUniqueTopologyDomainsInPodCliqueSet returns all unique, non-empty pack domains referenced by the PCS.
-func GetUniqueTopologyDomainsInPodCliqueSet(pcs *grovecorev1alpha1.PodCliqueSet) []grovecorev1alpha1.TopologyDomain {
-	topologyDomains := sets.New[grovecorev1alpha1.TopologyDomain]()
+func GetUniqueTopologyDomainsInPodCliqueSet(pcs *grovecorev1beta1.PodCliqueSet) []grovecorev1beta1.TopologyDomain {
+	topologyDomains := sets.New[grovecorev1beta1.TopologyDomain]()
 	for _, tc := range getAllTopologyConstraintsInPodCliqueSet(pcs) {
 		topologyDomains.Insert(tc.ReferencedDomains()...)
 	}
 	return topologyDomains.UnsortedList()
 }
 
-func getAllTopologyConstraintsInPodCliqueSet(pcs *grovecorev1alpha1.PodCliqueSet) []*grovecorev1alpha1.TopologyConstraint {
-	constraints := make([]*grovecorev1alpha1.TopologyConstraint, 0, 1+len(pcs.Spec.Template.Cliques)+len(pcs.Spec.Template.PodCliqueScalingGroupConfigs))
+func getAllTopologyConstraintsInPodCliqueSet(pcs *grovecorev1beta1.PodCliqueSet) []*grovecorev1beta1.TopologyConstraint {
+	constraints := make([]*grovecorev1beta1.TopologyConstraint, 0, 1+len(pcs.Spec.Template.Cliques)+len(pcs.Spec.Template.PodCliqueScalingGroupConfigs))
 	if pcs.Spec.Template.TopologyConstraint != nil {
 		constraints = append(constraints, pcs.Spec.Template.TopologyConstraint)
 	}

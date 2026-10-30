@@ -23,7 +23,7 @@ import (
 	"time"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
@@ -405,7 +405,7 @@ func findReadyScaledPCCPod(ctx context.Context, tc *testctx.TestContext, pods *c
 	for i := range pods.Items {
 		p := &pods.Items[i]
 		role, ok := roleByPodGangName[p.Labels[apicommon.LabelPodGang]]
-		if !ok || role == string(grovecorev1alpha1.PodGangEntryRoleAnchor) {
+		if !ok || role == string(grovecorev1beta1.PodGangEntryRoleAnchor) {
 			continue
 		}
 		clique := p.Labels[apicommon.LabelPodClique]

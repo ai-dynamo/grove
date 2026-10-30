@@ -19,7 +19,7 @@ import (
 	"fmt"
 	"time"
 
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -29,10 +29,10 @@ var _ error = (*GroveError)(nil)
 const (
 	// errCodeRequeueAfter identifies a control-flow error that stops the current reconciliation
 	// and requests another reconciliation after a specified duration.
-	errCodeRequeueAfter grovecorev1alpha1.ErrorCode = "ERR_REQUEUE_AFTER"
+	errCodeRequeueAfter grovecorev1beta1.ErrorCode = "ERR_REQUEUE_AFTER"
 	// errCodeContinueReconcileAndRequeue identifies a control-flow error that allows independent
 	// components to continue before another reconciliation is requested.
-	errCodeContinueReconcileAndRequeue grovecorev1alpha1.ErrorCode = "ERR_CONTINUE_RECONCILE_AND_REQUEUE"
+	errCodeContinueReconcileAndRequeue grovecorev1beta1.ErrorCode = "ERR_CONTINUE_RECONCILE_AND_REQUEUE"
 )
 
 // GroveError is a custom error type that should be used throughout grove which encapsulates
@@ -40,7 +40,7 @@ const (
 // as operation during which an error occurred and any custom message.
 type GroveError struct {
 	// Code indicates the category of error.
-	Code grovecorev1alpha1.ErrorCode
+	Code grovecorev1beta1.ErrorCode
 	// Cause is the underline error.
 	Cause error
 	// Operation is the semantic operation during which this error is created/wrapped.
@@ -63,7 +63,7 @@ func (e *GroveError) Error() string {
 
 // New creates a new GroveError with the given error code, operation and message.
 // This function should be used to create a new error. If you wish to wrap an existing error then use WrapError instead.
-func New(code grovecorev1alpha1.ErrorCode, operation string, message string) error {
+func New(code grovecorev1beta1.ErrorCode, operation string, message string) error {
 	return &GroveError{
 		Code:       code,
 		Operation:  operation,
@@ -97,7 +97,7 @@ func NewContinueReconcileAndRequeue(operation string, message string) error {
 
 // WrapError wraps the given error with the provided error code, operation and message.
 // If the err is nil then it returns nil.
-func WrapError(err error, code grovecorev1alpha1.ErrorCode, operation string, message string) error {
+func WrapError(err error, code grovecorev1beta1.ErrorCode, operation string, message string) error {
 	if err == nil {
 		return nil
 	}
@@ -111,12 +111,12 @@ func WrapError(err error, code grovecorev1alpha1.ErrorCode, operation string, me
 }
 
 // MapToLastErrors maps the given errors (that are GroveError's) to LastError slice.
-func MapToLastErrors(errs []error) []grovecorev1alpha1.LastError {
-	lastErrs := make([]grovecorev1alpha1.LastError, 0, len(errs))
+func MapToLastErrors(errs []error) []grovecorev1beta1.LastError {
+	lastErrs := make([]grovecorev1beta1.LastError, 0, len(errs))
 	for _, err := range errs {
 		groveErr := &GroveError{}
 		if errors.As(err, &groveErr) {
-			lastErr := grovecorev1alpha1.LastError{
+			lastErr := grovecorev1beta1.LastError{
 				Code:        groveErr.Code,
 				Description: err.Error(),
 				ObservedAt:  metav1.NewTime(groveErr.ObservedAt),

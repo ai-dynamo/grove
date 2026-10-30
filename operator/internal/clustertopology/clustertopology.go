@@ -18,7 +18,7 @@ import (
 	"context"
 	"fmt"
 
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 
 	"github.com/go-logr/logr"
@@ -29,7 +29,7 @@ import (
 // Lists all existing ClusterTopologyBinding resources and ensures backend topologies exist for each.
 // Called before controllers start to avoid races with PCS reconciliation.
 func SynchronizeTopology(ctx context.Context, cl client.Client, logger logr.Logger, backends map[string]scheduler.TopologyAwareBackend) error {
-	ctList := &grovecorev1alpha1.ClusterTopologyBindingList{}
+	ctList := &grovecorev1beta1.ClusterTopologyBindingList{}
 	if err := cl.List(ctx, ctList); err != nil {
 		return fmt.Errorf("failed to list ClusterTopologyBinding resources: %w", err)
 	}
@@ -53,8 +53,8 @@ func SynchronizeTopology(ctx context.Context, cl client.Client, logger logr.Logg
 }
 
 // GetClusterTopologyLevels retrieves the TopologyLevels from the specified ClusterTopologyBinding resource.
-func GetClusterTopologyLevels(ctx context.Context, cl client.Client, name string) ([]grovecorev1alpha1.TopologyLevel, error) {
-	clusterTopology := &grovecorev1alpha1.ClusterTopologyBinding{}
+func GetClusterTopologyLevels(ctx context.Context, cl client.Client, name string) ([]grovecorev1beta1.TopologyLevel, error) {
+	clusterTopology := &grovecorev1beta1.ClusterTopologyBinding{}
 	if err := cl.Get(ctx, client.ObjectKey{Name: name}, clusterTopology); err != nil {
 		return nil, err
 	}
@@ -62,8 +62,8 @@ func GetClusterTopologyLevels(ctx context.Context, cl client.Client, name string
 }
 
 // BuildSchedulerReferenceMap builds a map from scheduler name to SchedulerTopologyReference pointer.
-func BuildSchedulerReferenceMap(refs []grovecorev1alpha1.SchedulerTopologyBinding) map[string]*grovecorev1alpha1.SchedulerTopologyBinding {
-	m := make(map[string]*grovecorev1alpha1.SchedulerTopologyBinding, len(refs))
+func BuildSchedulerReferenceMap(refs []grovecorev1beta1.SchedulerTopologyBinding) map[string]*grovecorev1beta1.SchedulerTopologyBinding {
+	m := make(map[string]*grovecorev1beta1.SchedulerTopologyBinding, len(refs))
 	for i := range refs {
 		m[refs[i].SchedulerName] = &refs[i]
 	}

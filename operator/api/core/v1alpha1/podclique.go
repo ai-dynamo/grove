@@ -23,6 +23,7 @@ import (
 // +genclient
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 // +kubebuilder:object:root=true
+// +kubebuilder:deprecatedversion:warning="grove.io/v1alpha1 is deprecated; use grove.io/v1beta1"
 // +kubebuilder:subresource:status
 // +kubebuilder:subresource:scale:specpath=.spec.replicas,statuspath=.status.replicas,selectorpath=.status.hpaPodSelector
 // +kubebuilder:resource:shortName={pclq}
@@ -92,6 +93,7 @@ type PodCliqueSpec struct {
 type AutoScalingConfig struct {
 	// MinReplicas is the lower limit for the number of replicas for the target resource.
 	// It will be used by the horizontal pod autoscaler to determine the minimum number of replicas to scale-in to.
+	// If not specified, it defaults to the MinAvailable of the PodClique or PodCliqueScalingGroup, or to 0 if MinAvailable is not set.
 	// +optional
 	MinReplicas *int32 `json:"minReplicas,omitempty"`
 	// maxReplicas is the upper limit for the number of replicas to which the autoscaler can scale up.

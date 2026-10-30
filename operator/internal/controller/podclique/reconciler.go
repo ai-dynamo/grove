@@ -19,8 +19,8 @@ import (
 	"time"
 
 	apicommonconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
-	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
 	ctrlcommon "github.com/ai-dynamo/grove/operator/internal/controller/common"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
@@ -40,17 +40,17 @@ import (
 
 // Reconciler reconciles PodClique objects.
 type Reconciler struct {
-	config                  configv1alpha1.PodCliqueControllerConfiguration
+	config                  configv1beta1.PodCliqueControllerConfiguration
 	client                  ctrlclient.Client
 	eventRecorder           record.EventRecorder
 	reconcileStatusRecorder ctrlcommon.ReconcileErrorRecorder
 	expectationsStore       *expect.ExpectationsStore
-	operatorRegistry        component.OperatorRegistry[grovecorev1alpha1.PodClique, component.EmptyState, component.NoResult]
+	operatorRegistry        component.OperatorRegistry[grovecorev1beta1.PodClique, component.EmptyState, component.NoResult]
 	schedRegistry           scheduler.Registry
 }
 
 // NewReconciler creates a new instance of the PodClique Reconciler.
-func NewReconciler(mgr ctrl.Manager, controllerCfg configv1alpha1.PodCliqueControllerConfiguration, schedRegistry scheduler.Registry) (*Reconciler, error) {
+func NewReconciler(mgr ctrl.Manager, controllerCfg configv1beta1.PodCliqueControllerConfiguration, schedRegistry scheduler.Registry) (*Reconciler, error) {
 	eventRecorder := mgr.GetEventRecorderFor(controllerName)
 	expectationsStore := expect.NewExpectationsStore()
 	operatorRegistry, err := pclqcomponent.CreateOperatorRegistry(mgr, eventRecorder, expectationsStore, schedRegistry)
@@ -78,7 +78,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	ctx = componentutils.WithPCLQPodsCache(ctx)
 	ctx = componentutils.WithPodCliqueSetCache(ctx)
 
-	pclq := &grovecorev1alpha1.PodClique{}
+	pclq := &grovecorev1beta1.PodClique{}
 	if result := ctrlutils.GetPodClique(ctx, r.client, logger, req.NamespacedName, pclq, true); ctrlcommon.ShortCircuitReconcileFlow(result) {
 		return result.Result()
 	}
@@ -126,7 +126,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 // before the delay expires, else the breach goes undetected past its termination deadline. It falls
 // back to the plain resync interval when the owner PodCliqueSet cannot be read or sets no
 // TerminationDelay.
-func (r *Reconciler) getStatusResyncInterval(ctx context.Context, pclq *grovecorev1alpha1.PodClique) time.Duration {
+func (r *Reconciler) getStatusResyncInterval(ctx context.Context, pclq *grovecorev1beta1.PodClique) time.Duration {
 	defaultResyncInterval := constants.PodCliqueStatusResyncInterval
 	pcs, err := componentutils.GetPodCliqueSet(ctx, r.client, pclq.ObjectMeta)
 	if err != nil || pcs.Spec.Template.TerminationDelay == nil {

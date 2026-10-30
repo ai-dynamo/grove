@@ -23,8 +23,8 @@ import (
 
 	"github.com/ai-dynamo/grove/operator/api/common"
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
-	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler/lpx"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
@@ -70,7 +70,7 @@ func TestBuildResourceWithLPXBackend(t *testing.T) {
 
 	uid := types.UID("test-uid")
 	podSpec := corev1.PodSpec{
-		SchedulerName: string(configv1alpha1.SchedulerNameLPX),
+		SchedulerName: string(configv1beta1.SchedulerNameLPX),
 		Containers: []corev1.Container{{
 			Name:  "worker",
 			Image: "worker",
@@ -84,7 +84,7 @@ func TestBuildResourceWithLPXBackend(t *testing.T) {
 		}},
 	}
 	pcs := testutils.NewPodCliqueSetBuilder(pcsName, namespace, uid).
-		WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeInOrder)).
+		WithCliqueStartupType(ptr.To(grovecorev1beta1.CliqueStartupTypeInOrder)).
 		WithPodCliqueTemplateSpec(
 			testutils.NewPodCliqueTemplateSpecBuilder(cliqueName).
 				WithPodSpec(podSpec).
@@ -99,23 +99,23 @@ func TestBuildResourceWithLPXBackend(t *testing.T) {
 	}
 
 	scheme := runtime.NewScheme()
-	require.NoError(t, grovecorev1alpha1.AddToScheme(scheme))
+	require.NoError(t, grovecorev1beta1.AddToScheme(scheme))
 	registry := &testutils.FakeSchedulerRegistry{
 		Backends: map[string]scheduler.Backend{
-			string(configv1alpha1.SchedulerNameLPX): lpx.New(
+			string(configv1beta1.SchedulerNameLPX): lpx.New(
 				nil,
-				configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameLPX},
-				testutils.NewFakeSchedulerBackend(string(configv1alpha1.SchedulerNameKai)),
+				configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameLPX},
+				testutils.NewFakeSchedulerBackend(string(configv1beta1.SchedulerNameKai)),
 			),
 		},
-		DefaultBackend: string(configv1alpha1.SchedulerNameLPX),
+		DefaultBackend: string(configv1beta1.SchedulerNameLPX),
 	}
 	resource := &_resource{scheme: scheme, schedRegistry: registry}
 	pod := &corev1.Pod{}
 
 	require.NoError(t, resource.buildResource(pcs, pclq, podGangName, pod, 0, nil))
 
-	assert.Equal(t, string(configv1alpha1.SchedulerNameLPX), pod.Spec.SchedulerName)
+	assert.Equal(t, string(configv1beta1.SchedulerNameLPX), pod.Spec.SchedulerName)
 	assert.Equal(t, pclq.Name+"-", pod.GenerateName)
 	assert.Equal(t, podGangName, pod.Labels[common.LabelPodGang])
 	require.Len(t, pod.Spec.SchedulingGates, 1)
@@ -228,18 +228,18 @@ func TestGetSelectorLabelsForPods_PCSGOwnedPodClique(t *testing.T) {
 func TestAddEnvironmentVariables(t *testing.T) {
 	tests := []struct {
 		name              string
-		pclq              *grovecorev1alpha1.PodClique
+		pclq              *grovecorev1beta1.PodClique
 		expectedEnvVars   []string
 		unexpectedEnvVars []string
 	}{
 		{
 			name: "standalone PodClique",
-			pclq: &grovecorev1alpha1.PodClique{
+			pclq: &grovecorev1beta1.PodClique{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-pclq",
 					Namespace: "test-ns",
 				},
-				Spec: grovecorev1alpha1.PodCliqueSpec{
+				Spec: grovecorev1beta1.PodCliqueSpec{
 					PodSpec: corev1.PodSpec{
 						Containers: []corev1.Container{
 							{
@@ -261,7 +261,7 @@ func TestAddEnvironmentVariables(t *testing.T) {
 		},
 		{
 			name: "PCSG member PodClique",
-			pclq: &grovecorev1alpha1.PodClique{
+			pclq: &grovecorev1beta1.PodClique{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-pclq",
 					Namespace: "test-ns",
@@ -269,7 +269,7 @@ func TestAddEnvironmentVariables(t *testing.T) {
 						common.LabelPodCliqueScalingGroup: "test-pcsg",
 					},
 				},
-				Spec: grovecorev1alpha1.PodCliqueSpec{
+				Spec: grovecorev1beta1.PodCliqueSpec{
 					PodSpec: corev1.PodSpec{
 						Containers: []corev1.Container{
 							{
@@ -329,7 +329,7 @@ func TestAddEnvironmentVariables(t *testing.T) {
 
 func TestGetPCSGPodIndex(t *testing.T) {
 	t.Run("PCSG member", func(t *testing.T) {
-		pclq := &grovecorev1alpha1.PodClique{ObjectMeta: metav1.ObjectMeta{
+		pclq := &grovecorev1beta1.PodClique{ObjectMeta: metav1.ObjectMeta{
 			Labels: map[string]string{
 				common.LabelPodCliqueScalingGroup: "test-pcs-0-engine",
 			},
@@ -343,14 +343,14 @@ func TestGetPCSGPodIndex(t *testing.T) {
 	})
 
 	t.Run("standalone PodClique", func(t *testing.T) {
-		index, err := getPCSGPodIndex(&grovecorev1alpha1.PodClique{}, 0)
+		index, err := getPCSGPodIndex(&grovecorev1beta1.PodClique{}, 0)
 
 		require.NoError(t, err)
 		assert.Nil(t, index)
 	})
 
 	t.Run("PCSG member without offset", func(t *testing.T) {
-		pclq := &grovecorev1alpha1.PodClique{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{
+		pclq := &grovecorev1beta1.PodClique{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{
 			common.LabelPodCliqueScalingGroup: "test-pcs-0-engine",
 		}}}
 
@@ -370,7 +370,7 @@ func TestGetLabelsIncludesPCSGPodIndex(t *testing.T) {
 func TestAddGroveEnvironmentVariables_NoDuplicates(t *testing.T) {
 	tests := []struct {
 		name            string
-		pclq            *grovecorev1alpha1.PodClique
+		pclq            *grovecorev1beta1.PodClique
 		existingEnvVars []corev1.EnvVar
 		expectedEnvVars []string
 		shouldReplace   map[string]string // env var name -> expected value
@@ -378,12 +378,12 @@ func TestAddGroveEnvironmentVariables_NoDuplicates(t *testing.T) {
 	}{
 		{
 			name: "Container with existing Grove env vars - should replace",
-			pclq: &grovecorev1alpha1.PodClique{
+			pclq: &grovecorev1beta1.PodClique{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-pclq",
 					Namespace: "test-ns",
 				},
-				Spec: grovecorev1alpha1.PodCliqueSpec{
+				Spec: grovecorev1beta1.PodCliqueSpec{
 					PodSpec: corev1.PodSpec{
 						Containers: []corev1.Container{
 							{
@@ -420,12 +420,12 @@ func TestAddGroveEnvironmentVariables_NoDuplicates(t *testing.T) {
 		},
 		{
 			name: "Container with user env vars - should preserve",
-			pclq: &grovecorev1alpha1.PodClique{
+			pclq: &grovecorev1beta1.PodClique{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-pclq",
 					Namespace: "test-ns",
 				},
-				Spec: grovecorev1alpha1.PodCliqueSpec{
+				Spec: grovecorev1beta1.PodCliqueSpec{
 					PodSpec: corev1.PodSpec{
 						Containers: []corev1.Container{
 							{
@@ -450,12 +450,12 @@ func TestAddGroveEnvironmentVariables_NoDuplicates(t *testing.T) {
 		},
 		{
 			name: "Container with mixed env vars - should replace Grove, preserve user",
-			pclq: &grovecorev1alpha1.PodClique{
+			pclq: &grovecorev1beta1.PodClique{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-pclq",
 					Namespace: "test-ns",
 				},
-				Spec: grovecorev1alpha1.PodCliqueSpec{
+				Spec: grovecorev1beta1.PodCliqueSpec{
 					PodSpec: corev1.PodSpec{
 						Containers: []corev1.Container{
 							{
@@ -484,7 +484,7 @@ func TestAddGroveEnvironmentVariables_NoDuplicates(t *testing.T) {
 		},
 		{
 			name: "PCSG PodClique with existing env vars",
-			pclq: &grovecorev1alpha1.PodClique{
+			pclq: &grovecorev1beta1.PodClique{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-pclq",
 					Namespace: "test-ns",
@@ -492,7 +492,7 @@ func TestAddGroveEnvironmentVariables_NoDuplicates(t *testing.T) {
 						common.LabelPodCliqueScalingGroup: "test-pcsg",
 					},
 				},
-				Spec: grovecorev1alpha1.PodCliqueSpec{
+				Spec: grovecorev1beta1.PodCliqueSpec{
 					PodSpec: corev1.PodSpec{
 						Containers: []corev1.Container{
 							{
@@ -568,7 +568,7 @@ func TestAddGroveEnvironmentVariables_EmptyContainers(t *testing.T) {
 			Containers: []corev1.Container{},
 		},
 	}
-	pclq := &grovecorev1alpha1.PodClique{
+	pclq := &grovecorev1beta1.PodClique{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-pclq",
 			Namespace: "test-ns",
@@ -598,7 +598,7 @@ func TestAddGroveEnvironmentVariables_MultipleContainers(t *testing.T) {
 			},
 		},
 	}
-	pclq := &grovecorev1alpha1.PodClique{
+	pclq := &grovecorev1beta1.PodClique{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-pclq",
 			Namespace: "test-ns",
@@ -642,16 +642,16 @@ func Test_generateArgsForInitContainer_WaitsOnParentReplicaInOwnPodGang(t *testi
 		oldEpoch = "100"
 		newEpoch = "200"
 	)
-	pcs := &grovecorev1alpha1.PodCliqueSet{
+	pcs := &grovecorev1beta1.PodCliqueSet{
 		ObjectMeta: metav1.ObjectMeta{Name: pcsName},
-		Spec: grovecorev1alpha1.PodCliqueSetSpec{
-			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
-				StartupType: ptr.To(grovecorev1alpha1.CliqueStartupTypeExplicit),
-				Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-					{Name: "pf", Spec: grovecorev1alpha1.PodCliqueSpec{MinAvailable: ptr.To(int32(1))}},
-					{Name: "dc", Spec: grovecorev1alpha1.PodCliqueSpec{MinAvailable: ptr.To(int32(1)), StartsAfter: []string{"pf"}}},
+		Spec: grovecorev1beta1.PodCliqueSetSpec{
+			Template: grovecorev1beta1.PodCliqueSetTemplateSpec{
+				StartupType: ptr.To(grovecorev1beta1.CliqueStartupTypeExplicit),
+				Cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
+					{Name: "pf", Spec: grovecorev1beta1.PodCliqueSpec{MinAvailable: ptr.To(int32(1))}},
+					{Name: "dc", Spec: grovecorev1beta1.PodCliqueSpec{MinAvailable: ptr.To(int32(1)), StartsAfter: []string{"pf"}}},
 				},
-				PodCliqueScalingGroupConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+				PodCliqueScalingGroupConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 					{Name: "prefill", CliqueNames: []string{"pf"}},
 					{Name: "decode", CliqueNames: []string{"dc"}},
 				},
@@ -663,19 +663,19 @@ func Test_generateArgsForInitContainer_WaitsOnParentReplicaInOwnPodGang(t *testi
 	// Mid coherent update: the old-generation anchor still holds the replicas that have not migrated, and
 	// the new-generation anchor is the first the health-ordered drain produced, pairing the unavailable
 	// prefill replica 1 with decode replica 0.
-	pgm := &grovecorev1alpha1.PodGangMap{
-		Spec: grovecorev1alpha1.PodGangMapSpec{
-			Entries: []grovecorev1alpha1.PodGangEntry{
+	pgm := &grovecorev1beta1.PodGangMap{
+		Spec: grovecorev1beta1.PodGangMapSpec{
+			Entries: []grovecorev1beta1.PodGangEntry{
 				{
 					Epoch:                      oldEpoch,
 					PodCliqueSetGenerationHash: "old-hash",
-					Role:                       grovecorev1alpha1.PodGangEntryRoleAnchor,
+					Role:                       grovecorev1beta1.PodGangEntryRoleAnchor,
 					PCSGReplicaIndices:         map[string][]int32{"prefill": {0}, "decode": {1}},
 				},
 				{
 					Epoch:                      newEpoch,
 					PodCliqueSetGenerationHash: "new-hash",
-					Role:                       grovecorev1alpha1.PodGangEntryRoleAnchor,
+					Role:                       grovecorev1beta1.PodGangEntryRoleAnchor,
 					PCSGReplicaIndices:         map[string][]int32{"prefill": {1}, "decode": {0}},
 				},
 			},
@@ -683,7 +683,7 @@ func Test_generateArgsForInitContainer_WaitsOnParentReplicaInOwnPodGang(t *testi
 	}
 	// decode replica 0 on the new generation; its pod belongs to the new anchor PodGang. Its StartsAfter is
 	// intentionally left empty: the operator derives the dependency from the PCS template, not this field.
-	pclq := &grovecorev1alpha1.PodClique{
+	pclq := &grovecorev1beta1.PodClique{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: fmt.Sprintf("%s-0-decode-0-dc", pcsName),
 			Labels: map[string]string{
@@ -709,16 +709,16 @@ func Test_generateArgsForInitContainer_IgnoresStalePreUpgradeStartsAfter(t *test
 		pcsName = "ml"
 		epoch   = "100"
 	)
-	pcs := &grovecorev1alpha1.PodCliqueSet{
+	pcs := &grovecorev1beta1.PodCliqueSet{
 		ObjectMeta: metav1.ObjectMeta{Name: pcsName},
-		Spec: grovecorev1alpha1.PodCliqueSetSpec{
-			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
-				StartupType: ptr.To(grovecorev1alpha1.CliqueStartupTypeExplicit),
-				Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-					{Name: "pf", Spec: grovecorev1alpha1.PodCliqueSpec{MinAvailable: ptr.To(int32(1))}},
-					{Name: "dc", Spec: grovecorev1alpha1.PodCliqueSpec{MinAvailable: ptr.To(int32(1)), StartsAfter: []string{"pf"}}},
+		Spec: grovecorev1beta1.PodCliqueSetSpec{
+			Template: grovecorev1beta1.PodCliqueSetTemplateSpec{
+				StartupType: ptr.To(grovecorev1beta1.CliqueStartupTypeExplicit),
+				Cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
+					{Name: "pf", Spec: grovecorev1beta1.PodCliqueSpec{MinAvailable: ptr.To(int32(1))}},
+					{Name: "dc", Spec: grovecorev1beta1.PodCliqueSpec{MinAvailable: ptr.To(int32(1)), StartsAfter: []string{"pf"}}},
 				},
-				PodCliqueScalingGroupConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+				PodCliqueScalingGroupConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 					{Name: "prefill", CliqueNames: []string{"pf"}},
 					{Name: "decode", CliqueNames: []string{"dc"}},
 				},
@@ -727,13 +727,13 @@ func Test_generateArgsForInitContainer_IgnoresStalePreUpgradeStartsAfter(t *test
 	}
 	rnr := common.ResourceNameReplica{Name: pcsName, Replica: 0}
 	anchorGangName := common.GenerateAnchorPodGangName(rnr, epoch)
-	pgm := &grovecorev1alpha1.PodGangMap{
-		Spec: grovecorev1alpha1.PodGangMapSpec{
-			Entries: []grovecorev1alpha1.PodGangEntry{
+	pgm := &grovecorev1beta1.PodGangMap{
+		Spec: grovecorev1beta1.PodGangMapSpec{
+			Entries: []grovecorev1beta1.PodGangEntry{
 				{
 					Epoch:                      epoch,
 					PodCliqueSetGenerationHash: "hash",
-					Role:                       grovecorev1alpha1.PodGangEntryRoleAnchor,
+					Role:                       grovecorev1beta1.PodGangEntryRoleAnchor,
 					PCSGReplicaIndices:         map[string][]int32{"prefill": {0}, "decode": {0}},
 				},
 			},
@@ -742,7 +742,7 @@ func Test_generateArgsForInitContainer_IgnoresStalePreUpgradeStartsAfter(t *test
 	// Existing PCSG child from an older operator: StartsAfter still holds a resolved parent FQN that is not a
 	// clique name. If the resolver trusted it, StartupDependencyTargetsInEntry would match nothing and emit
 	// no wait target, letting decode start before prefill.
-	pclq := &grovecorev1alpha1.PodClique{
+	pclq := &grovecorev1beta1.PodClique{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: fmt.Sprintf("%s-0-decode-0-dc", pcsName),
 			Labels: map[string]string{
@@ -751,7 +751,7 @@ func Test_generateArgsForInitContainer_IgnoresStalePreUpgradeStartsAfter(t *test
 				common.LabelPodCliqueScalingGroupReplicaIndex: "0",
 			},
 		},
-		Spec: grovecorev1alpha1.PodCliqueSpec{StartsAfter: []string{fmt.Sprintf("%s-0-prefill-1-pf", pcsName)}},
+		Spec: grovecorev1beta1.PodCliqueSpec{StartsAfter: []string{fmt.Sprintf("%s-0-prefill-1-pf", pcsName)}},
 	}
 	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{common.LabelPodGang: anchorGangName}}}
 
@@ -765,17 +765,17 @@ func TestCliqueTemplateName(t *testing.T) {
 	rnr := common.ResourceNameReplica{Name: pcsName, Replica: 0}
 	tests := []struct {
 		description string
-		pclq        *grovecorev1alpha1.PodClique
+		pclq        *grovecorev1beta1.PodClique
 		want        string
 	}{
 		{
 			description: "standalone PodClique FQN yields the clique template name",
-			pclq:        &grovecorev1alpha1.PodClique{ObjectMeta: metav1.ObjectMeta{Name: fmt.Sprintf("%s-0-frontend", pcsName)}},
+			pclq:        &grovecorev1beta1.PodClique{ObjectMeta: metav1.ObjectMeta{Name: fmt.Sprintf("%s-0-frontend", pcsName)}},
 			want:        "frontend",
 		},
 		{
 			description: "PodCliqueScalingGroup member FQN yields the clique template name",
-			pclq: &grovecorev1alpha1.PodClique{ObjectMeta: metav1.ObjectMeta{
+			pclq: &grovecorev1beta1.PodClique{ObjectMeta: metav1.ObjectMeta{
 				Name: fmt.Sprintf("%s-0-decode-0-dc", pcsName),
 				Labels: map[string]string{
 					common.LabelPodCliqueScalingGroup:             fmt.Sprintf("%s-0-decode", pcsName),
@@ -786,7 +786,7 @@ func TestCliqueTemplateName(t *testing.T) {
 		},
 		{
 			description: "PodCliqueScalingGroup member clique name containing hyphens is recovered intact",
-			pclq: &grovecorev1alpha1.PodClique{ObjectMeta: metav1.ObjectMeta{
+			pclq: &grovecorev1beta1.PodClique{ObjectMeta: metav1.ObjectMeta{
 				Name: fmt.Sprintf("%s-0-decode-2-worker-a", pcsName),
 				Labels: map[string]string{
 					common.LabelPodCliqueScalingGroup:             fmt.Sprintf("%s-0-decode", pcsName),
@@ -812,16 +812,16 @@ func Test_generateArgsForInitContainer_BoundsStandaloneWaitToGangCommittedCount(
 		pcsName = "ml"
 		epoch   = "100"
 	)
-	pcs := &grovecorev1alpha1.PodCliqueSet{
+	pcs := &grovecorev1beta1.PodCliqueSet{
 		ObjectMeta: metav1.ObjectMeta{Name: pcsName},
-		Spec: grovecorev1alpha1.PodCliqueSetSpec{
-			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
-				StartupType: ptr.To(grovecorev1alpha1.CliqueStartupTypeExplicit),
-				Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-					{Name: "frontend", Spec: grovecorev1alpha1.PodCliqueSpec{MinAvailable: ptr.To(int32(2))}},
-					{Name: "worker", Spec: grovecorev1alpha1.PodCliqueSpec{MinAvailable: ptr.To(int32(1)), StartsAfter: []string{"frontend"}}},
+		Spec: grovecorev1beta1.PodCliqueSetSpec{
+			Template: grovecorev1beta1.PodCliqueSetTemplateSpec{
+				StartupType: ptr.To(grovecorev1beta1.CliqueStartupTypeExplicit),
+				Cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
+					{Name: "frontend", Spec: grovecorev1beta1.PodCliqueSpec{MinAvailable: ptr.To(int32(2))}},
+					{Name: "worker", Spec: grovecorev1beta1.PodCliqueSpec{MinAvailable: ptr.To(int32(1)), StartsAfter: []string{"frontend"}}},
 				},
-				PodCliqueScalingGroupConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+				PodCliqueScalingGroupConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 					{Name: "decode", CliqueNames: []string{"worker"}},
 				},
 			},
@@ -830,20 +830,20 @@ func Test_generateArgsForInitContainer_BoundsStandaloneWaitToGangCommittedCount(
 	rnr := common.ResourceNameReplica{Name: pcsName, Replica: 0}
 	anchorGangName := common.GenerateAnchorPodGangName(rnr, epoch)
 	// A gang left with a single frontend pod after a scale-in, co-committing worker replica 1.
-	pgm := &grovecorev1alpha1.PodGangMap{
-		Spec: grovecorev1alpha1.PodGangMapSpec{
-			Entries: []grovecorev1alpha1.PodGangEntry{
+	pgm := &grovecorev1beta1.PodGangMap{
+		Spec: grovecorev1beta1.PodGangMapSpec{
+			Entries: []grovecorev1beta1.PodGangEntry{
 				{
 					Epoch:                      epoch,
 					PodCliqueSetGenerationHash: "hash",
-					Role:                       grovecorev1alpha1.PodGangEntryRoleAnchor,
+					Role:                       grovecorev1beta1.PodGangEntryRoleAnchor,
 					PodCliques:                 map[string]int32{"frontend": 1},
 					PCSGReplicaIndices:         map[string][]int32{"decode": {1}},
 				},
 			},
 		},
 	}
-	pclq := &grovecorev1alpha1.PodClique{
+	pclq := &grovecorev1beta1.PodClique{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: fmt.Sprintf("%s-0-decode-1-worker", pcsName),
 			Labels: map[string]string{
@@ -870,18 +870,18 @@ func Test_buildResource_AddsStartupInitContainerForInOrderStandalone(t *testing.
 	uid := types.UID("test-uid")
 	podSpec := corev1.PodSpec{Containers: []corev1.Container{{Name: "main", Image: "busybox"}}}
 	pcs := testutils.NewPodCliqueSetBuilder(pcsName, namespace, uid).
-		WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeInOrder)).
+		WithCliqueStartupType(ptr.To(grovecorev1beta1.CliqueStartupTypeInOrder)).
 		WithStandaloneClique("leader").
 		WithStandaloneClique("worker").
 		Build()
 	rnr := common.ResourceNameReplica{Name: pcsName, Replica: 0}
 	anchorGangName := common.GenerateAnchorPodGangName(rnr, epoch)
-	pgm := &grovecorev1alpha1.PodGangMap{
-		Spec: grovecorev1alpha1.PodGangMapSpec{
-			Entries: []grovecorev1alpha1.PodGangEntry{{
+	pgm := &grovecorev1beta1.PodGangMap{
+		Spec: grovecorev1beta1.PodGangMapSpec{
+			Entries: []grovecorev1beta1.PodGangEntry{{
 				Epoch:                      epoch,
 				PodCliqueSetGenerationHash: "hash",
-				Role:                       grovecorev1alpha1.PodGangEntryRoleAnchor,
+				Role:                       grovecorev1beta1.PodGangEntryRoleAnchor,
 				PodCliques:                 map[string]int32{"leader": 1, "worker": 1},
 			}},
 		},
@@ -908,18 +908,18 @@ func Test_buildResource_AddsStartupInitContainerForInOrderPCSGMember(t *testing.
 	uid := types.UID("test-uid")
 	podSpec := corev1.PodSpec{Containers: []corev1.Container{{Name: "main", Image: "busybox"}}}
 	pcs := testutils.NewPodCliqueSetBuilder(pcsName, namespace, uid).
-		WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeInOrder)).
+		WithCliqueStartupType(ptr.To(grovecorev1beta1.CliqueStartupTypeInOrder)).
 		WithStandaloneClique("leader").
 		WithScalingGroupConfig("decode", []string{"worker"}, 1, 1).
 		Build()
 	rnr := common.ResourceNameReplica{Name: pcsName, Replica: 0}
 	anchorGangName := common.GenerateAnchorPodGangName(rnr, epoch)
-	pgm := &grovecorev1alpha1.PodGangMap{
-		Spec: grovecorev1alpha1.PodGangMapSpec{
-			Entries: []grovecorev1alpha1.PodGangEntry{{
+	pgm := &grovecorev1beta1.PodGangMap{
+		Spec: grovecorev1beta1.PodGangMapSpec{
+			Entries: []grovecorev1beta1.PodGangEntry{{
 				Epoch:                      epoch,
 				PodCliqueSetGenerationHash: "hash",
-				Role:                       grovecorev1alpha1.PodGangEntryRoleAnchor,
+				Role:                       grovecorev1beta1.PodGangEntryRoleAnchor,
 				PodCliques:                 map[string]int32{"leader": 1},
 				PCSGReplicaIndices:         map[string][]int32{"decode": {0}},
 			}},
@@ -1051,16 +1051,16 @@ func filterOutEnvVar(envVars []string, exclude string) []string {
 func newInitContainerTestResource(t *testing.T) *_resource {
 	t.Helper()
 	scheme := runtime.NewScheme()
-	require.NoError(t, grovecorev1alpha1.AddToScheme(scheme))
+	require.NoError(t, grovecorev1beta1.AddToScheme(scheme))
 	registry := &testutils.FakeSchedulerRegistry{
 		Backends: map[string]scheduler.Backend{
-			string(configv1alpha1.SchedulerNameLPX): lpx.New(
+			string(configv1beta1.SchedulerNameLPX): lpx.New(
 				nil,
-				configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameLPX},
-				testutils.NewFakeSchedulerBackend(string(configv1alpha1.SchedulerNameKai)),
+				configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameLPX},
+				testutils.NewFakeSchedulerBackend(string(configv1beta1.SchedulerNameKai)),
 			),
 		},
-		DefaultBackend: string(configv1alpha1.SchedulerNameLPX),
+		DefaultBackend: string(configv1beta1.SchedulerNameLPX),
 	}
 	return &_resource{scheme: scheme, schedRegistry: registry}
 }

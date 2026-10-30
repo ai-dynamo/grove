@@ -21,8 +21,8 @@ import (
 	"time"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
-	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/podclique/expectations"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
@@ -51,17 +51,17 @@ func TestBuildDesiredCountByPodGang(t *testing.T) {
 	anchor1 := podGangNameForEpoch(testAnchor1Epoch)
 	tests := []struct {
 		name     string
-		entries  []grovecorev1alpha1.PodGangEntry
+		entries  []grovecorev1beta1.PodGangEntry
 		expected map[string]int32
 	}{
 		{
 			name:     "single anchor carrying the clique",
-			entries:  []grovecorev1alpha1.PodGangEntry{anchorEntryWithCliques(testAnchor0Epoch, map[string]int32{testCliqueName: 3})},
+			entries:  []grovecorev1beta1.PodGangEntry{anchorEntryWithCliques(testAnchor0Epoch, map[string]int32{testCliqueName: 3})},
 			expected: map[string]int32{anchor0: 3},
 		},
 		{
 			name: "multiple anchors carrying the clique",
-			entries: []grovecorev1alpha1.PodGangEntry{
+			entries: []grovecorev1beta1.PodGangEntry{
 				anchorEntryWithCliques(testAnchor0Epoch, map[string]int32{testCliqueName: 3}),
 				anchorEntryWithCliques(testAnchor1Epoch, map[string]int32{testCliqueName: 2}),
 			},
@@ -69,12 +69,12 @@ func TestBuildDesiredCountByPodGang(t *testing.T) {
 		},
 		{
 			name:     "entry without the clique is skipped",
-			entries:  []grovecorev1alpha1.PodGangEntry{anchorEntryWithCliques(testAnchor0Epoch, map[string]int32{"other": 3})},
+			entries:  []grovecorev1beta1.PodGangEntry{anchorEntryWithCliques(testAnchor0Epoch, map[string]int32{"other": 3})},
 			expected: map[string]int32{},
 		},
 		{
 			name:     "entry with a zero count is skipped",
-			entries:  []grovecorev1alpha1.PodGangEntry{anchorEntryWithCliques(testAnchor0Epoch, map[string]int32{testCliqueName: 0})},
+			entries:  []grovecorev1beta1.PodGangEntry{anchorEntryWithCliques(testAnchor0Epoch, map[string]int32{testCliqueName: 0})},
 			expected: map[string]int32{},
 		},
 	}
@@ -382,20 +382,20 @@ func TestRunSyncFlowDelaysUpdateWorkUntilRevisionsMatch(t *testing.T) {
 	)
 
 	anchor := podGangNameForEpoch(testAnchor0Epoch)
-	newSnapshot := func(strategy grovecorev1alpha1.UpdateStrategyType, replicas int32, existingPods []*corev1.Pod) (*syncSnapshot, _resource, client.Client) {
+	newSnapshot := func(strategy grovecorev1beta1.UpdateStrategyType, replicas int32, existingPods []*corev1.Pod) (*syncSnapshot, _resource, client.Client) {
 		podSpec := corev1.PodSpec{
-			SchedulerName: string(configv1alpha1.SchedulerNameKube),
+			SchedulerName: string(configv1beta1.SchedulerNameKube),
 			Containers:    []corev1.Container{{Name: "worker", Image: "worker"}},
 		}
 		pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "uid").
-			WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder)).
-			WithUpdateStrategy(&grovecorev1alpha1.PodCliqueSetUpdateStrategy{Type: strategy}).
+			WithCliqueStartupType(ptr.To(grovecorev1beta1.CliqueStartupTypeAnyOrder)).
+			WithUpdateStrategy(&grovecorev1beta1.PodCliqueSetUpdateStrategy{Type: strategy}).
 			WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder(testCliqueName).WithPodSpec(podSpec).Build()).
 			Build()
 		pcs.Status.CurrentGenerationHash = ptr.To(currentGeneration)
-		pcs.Status.UpdateProgress = &grovecorev1alpha1.PodCliqueSetUpdateProgress{
+		pcs.Status.UpdateProgress = &grovecorev1beta1.PodCliqueSetUpdateProgress{
 			UpdateStartedAt:   metav1.Now(),
-			CurrentlyUpdating: []grovecorev1alpha1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: testPCSReplicaIndex}},
+			CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: testPCSReplicaIndex}},
 		}
 		pclq := testutils.NewPodCliqueBuilder(testPCSName, "uid", testCliqueName, testNamespace, testPCSReplicaIndex).
 			WithReplicas(replicas).
@@ -403,7 +403,7 @@ func TestRunSyncFlowDelaysUpdateWorkUntilRevisionsMatch(t *testing.T) {
 			WithLabels(map[string]string{apicommon.LabelPodTemplateHash: testNewHash}).
 			Build()
 		pclq.Spec.PodSpec = *podSpec.DeepCopy()
-		pclq.Status.UpdateProgress = &grovecorev1alpha1.PodCliqueUpdateProgress{
+		pclq.Status.UpdateProgress = &grovecorev1beta1.PodCliqueUpdateProgress{
 			PodCliqueSetGenerationHash: currentGeneration,
 			PodTemplateHash:            testNewHash,
 		}
@@ -420,7 +420,7 @@ func TestRunSyncFlowDelaysUpdateWorkUntilRevisionsMatch(t *testing.T) {
 			expectationsStore: expect.NewExpectationsStore(),
 		}
 		currentAnchor := testutils.NewPodGangEntryBuilder(currentGeneration, testAnchor0Epoch).
-			WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).
+			WithRole(grovecorev1beta1.PodGangEntryRoleAnchor).
 			WithPodCliques(map[string]int32{testCliqueName: replicas}).
 			Build()
 		ss := &syncSnapshot{
@@ -447,7 +447,7 @@ func TestRunSyncFlowDelaysUpdateWorkUntilRevisionsMatch(t *testing.T) {
 	t.Run("RollingRecreate does not replace Pods when progress targets another PCS generation", func(t *testing.T) {
 		pod := nonTerminatingPodInPodGang("old-pod", anchor, "worker-0")
 		pod.Labels[apicommon.LabelPodTemplateHash] = testOldHash
-		ss, r, cl := newSnapshot(grovecorev1alpha1.RollingRecreateStrategy, 1, []*corev1.Pod{pod})
+		ss, r, cl := newSnapshot(grovecorev1beta1.RollingRecreateStrategy, 1, []*corev1.Pod{pod})
 		ss.pclq.Status.UpdateProgress.PodCliqueSetGenerationHash = otherGeneration
 
 		result := r.runSyncFlow(t.Context(), logr.Discard(), ss)
@@ -461,7 +461,7 @@ func TestRunSyncFlowDelaysUpdateWorkUntilRevisionsMatch(t *testing.T) {
 	t.Run("RollingRecreate waits until the PCLQ template revision is observed", func(t *testing.T) {
 		pod := nonTerminatingPodInPodGang("old-pod", anchor, "worker-0")
 		pod.Labels[apicommon.LabelPodTemplateHash] = testOldHash
-		ss, r, cl := newSnapshot(grovecorev1alpha1.RollingRecreateStrategy, 1, []*corev1.Pod{pod})
+		ss, r, cl := newSnapshot(grovecorev1beta1.RollingRecreateStrategy, 1, []*corev1.Pod{pod})
 		ss.pclq.Labels[apicommon.LabelPodTemplateHash] = testOldHash
 
 		result := r.runSyncFlow(t.Context(), logr.Discard(), ss)
@@ -476,7 +476,7 @@ func TestRunSyncFlowDelaysUpdateWorkUntilRevisionsMatch(t *testing.T) {
 		existing := nonTerminatingPodInPodGang("existing-pod", anchor, "worker-0")
 		existing.Status.Phase = corev1.PodRunning
 		existing.Labels[apicommon.LabelPodTemplateHash] = testOldHash
-		ss, r, cl := newSnapshot(grovecorev1alpha1.RollingRecreateStrategy, 2, []*corev1.Pod{existing})
+		ss, r, cl := newSnapshot(grovecorev1beta1.RollingRecreateStrategy, 2, []*corev1.Pod{existing})
 		ss.pclq.Status.UpdateProgress.PodCliqueSetGenerationHash = otherGeneration
 
 		result := r.runSyncFlow(t.Context(), logr.Discard(), ss)
@@ -492,7 +492,7 @@ func TestRunSyncFlowDelaysUpdateWorkUntilRevisionsMatch(t *testing.T) {
 	t.Run("Coherent does not complete mismatched progress", func(t *testing.T) {
 		pod := nonTerminatingPodInPodGang("current-pod", anchor, "worker-0")
 		pod.Labels[apicommon.LabelPodTemplateHash] = testNewHash
-		ss, r, _ := newSnapshot(grovecorev1alpha1.CoherentStrategy, 1, []*corev1.Pod{pod})
+		ss, r, _ := newSnapshot(grovecorev1beta1.CoherentStrategy, 1, []*corev1.Pod{pod})
 		ss.pclq.Status.Replicas = 1
 		ss.pclq.Status.UpdatedReplicas = 1
 		ss.pclq.Status.UpdateProgress.PodCliqueSetGenerationHash = otherGeneration
@@ -511,15 +511,15 @@ func TestReconcileStandalonePCLQDistributionCreateAndDelete(t *testing.T) {
 	anchor0 := podGangNameForEpoch(testAnchor0Epoch)
 	registry := testutils.NewDefaultFakeRegistry()
 	podSpec := corev1.PodSpec{
-		SchedulerName: string(configv1alpha1.SchedulerNameKube),
+		SchedulerName: string(configv1beta1.SchedulerNameKube),
 		Containers:    []corev1.Container{{Name: "worker", Image: "worker"}},
 	}
 	testPCS := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "uid").
-		WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeInOrder)).
+		WithCliqueStartupType(ptr.To(grovecorev1beta1.CliqueStartupTypeInOrder)).
 		WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder(testCliqueName).WithPodSpec(podSpec).Build()).
 		Build()
 	// The PodClique name must be a real FQN so buildResource can resolve the PCS replica index from it.
-	newPCLQ := func(replicas int32) *grovecorev1alpha1.PodClique {
+	newPCLQ := func(replicas int32) *grovecorev1beta1.PodClique {
 		pclq := testutils.NewPodCliqueBuilder(testPCSName, "uid", testCliqueName, testNamespace, testPCSReplicaIndex).WithReplicas(replicas).Build()
 		pclq.Spec.PodSpec = *podSpec.DeepCopy()
 		return pclq
@@ -759,14 +759,14 @@ func TestBuildPerPodGangCreationTasks(t *testing.T) {
 // without this clique are excluded.
 func TestCurrentGenerationPodGangNames(t *testing.T) {
 	rnr := apicommon.ResourceNameReplica{Name: "pcs", Replica: 0}
-	pcs := &grovecorev1alpha1.PodCliqueSet{
+	pcs := &grovecorev1beta1.PodCliqueSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "pcs"},
-		Status:     grovecorev1alpha1.PodCliqueSetStatus{CurrentGenerationHash: ptr.To("v2")},
+		Status:     grovecorev1beta1.PodCliqueSetStatus{CurrentGenerationHash: ptr.To("v2")},
 	}
-	pgm := &grovecorev1alpha1.PodGangMap{Spec: grovecorev1alpha1.PodGangMapSpec{Entries: []grovecorev1alpha1.PodGangEntry{
-		{Role: grovecorev1alpha1.PodGangEntryRoleAnchor, PodCliqueSetGenerationHash: "v1", Epoch: "50", PodCliques: map[string]int32{"frontend": 2}},
-		{Role: grovecorev1alpha1.PodGangEntryRoleAnchor, PodCliqueSetGenerationHash: "v2", Epoch: "200", PodCliques: map[string]int32{"frontend": 2}},
-		{Role: grovecorev1alpha1.PodGangEntryRoleAnchor, PodCliqueSetGenerationHash: "v2", Epoch: "250", PodCliques: map[string]int32{"other": 1}},
+	pgm := &grovecorev1beta1.PodGangMap{Spec: grovecorev1beta1.PodGangMapSpec{Entries: []grovecorev1beta1.PodGangEntry{
+		{Role: grovecorev1beta1.PodGangEntryRoleAnchor, PodCliqueSetGenerationHash: "v1", Epoch: "50", PodCliques: map[string]int32{"frontend": 2}},
+		{Role: grovecorev1beta1.PodGangEntryRoleAnchor, PodCliqueSetGenerationHash: "v2", Epoch: "200", PodCliques: map[string]int32{"frontend": 2}},
+		{Role: grovecorev1beta1.PodGangEntryRoleAnchor, PodCliqueSetGenerationHash: "v2", Epoch: "250", PodCliques: map[string]int32{"other": 1}},
 	}}}
 	ss := &syncSnapshot{pcs: pcs, pgm: pgm, cliqueName: "frontend", pcsReplicaIndex: 0}
 
@@ -776,23 +776,23 @@ func TestCurrentGenerationPodGangNames(t *testing.T) {
 }
 
 // anchorEntryWithCliques builds an Anchor PodGangEntry carrying the given standalone PodClique counts.
-func anchorEntryWithCliques(epoch string, cliques map[string]int32) grovecorev1alpha1.PodGangEntry {
+func anchorEntryWithCliques(epoch string, cliques map[string]int32) grovecorev1beta1.PodGangEntry {
 	return testutils.NewPodGangEntryBuilder("hash", epoch).
-		WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).
+		WithRole(grovecorev1beta1.PodGangEntryRoleAnchor).
 		WithPodCliques(cliques).
 		Build()
 }
 
 // pclqWithReplicas returns a standalone PodClique named after testCliqueName with the given replicas.
-func pclqWithReplicas(replicas int32) *grovecorev1alpha1.PodClique {
-	return &grovecorev1alpha1.PodClique{
+func pclqWithReplicas(replicas int32) *grovecorev1beta1.PodClique {
+	return &grovecorev1beta1.PodClique{
 		ObjectMeta: metav1.ObjectMeta{Name: testCliqueName, Namespace: testNamespace},
-		Spec:       grovecorev1alpha1.PodCliqueSpec{Replicas: replicas},
+		Spec:       grovecorev1beta1.PodCliqueSpec{Replicas: replicas},
 	}
 }
 
 // pclqWithHash returns a standalone PodClique carrying the given pod-template-hash label.
-func pclqWithHash(hash string) *grovecorev1alpha1.PodClique {
+func pclqWithHash(hash string) *grovecorev1beta1.PodClique {
 	return testutils.NewPodCliqueBuilder(testPCSName, "uid", testCliqueName, testNamespace, int32(testPCSReplicaIndex)).
 		WithReplicas(1).
 		WithLabels(map[string]string{apicommon.LabelPodTemplateHash: hash}).
@@ -801,12 +801,12 @@ func pclqWithHash(hash string) *grovecorev1alpha1.PodClique {
 
 // pcsCoherentUpdating returns a Coherent-strategy PodCliqueSet with an in-progress update whose
 // CurrentlyUpdating names testPCSReplicaIndex, so IsPCSReplicaUnderCoherentUpdate is true for it.
-func pcsCoherentUpdating() *grovecorev1alpha1.PodCliqueSet {
+func pcsCoherentUpdating() *grovecorev1beta1.PodCliqueSet {
 	return testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "uid").
-		WithUpdateStrategy(&grovecorev1alpha1.PodCliqueSetUpdateStrategy{Type: grovecorev1alpha1.CoherentStrategy}).
-		WithUpdateProgress(&grovecorev1alpha1.PodCliqueSetUpdateProgress{
+		WithUpdateStrategy(&grovecorev1beta1.PodCliqueSetUpdateStrategy{Type: grovecorev1beta1.CoherentStrategy}).
+		WithUpdateProgress(&grovecorev1beta1.PodCliqueSetUpdateProgress{
 			UpdateStartedAt:   metav1.Now(),
-			CurrentlyUpdating: []grovecorev1alpha1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: int32(testPCSReplicaIndex)}},
+			CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: int32(testPCSReplicaIndex)}},
 		}).Build()
 }
 

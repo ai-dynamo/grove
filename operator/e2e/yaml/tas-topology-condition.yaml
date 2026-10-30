@@ -2,7 +2,7 @@
 # Test scenario: PCS references a ClusterTopologyBinding that does not yet exist (tas20-topology).
 # The ClusterTopologyBinding is created dynamically by the test after verifying the error condition.
 ---
-apiVersion: grove.io/v1alpha1
+apiVersion: grove.io/v1beta1
 kind: PodCliqueSet
 metadata:
   name: tas-topology-condition

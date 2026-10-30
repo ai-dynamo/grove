@@ -21,7 +21,7 @@ import (
 	"fmt"
 	"reflect"
 
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -44,11 +44,11 @@ func (b *schedulerBackend) TopologyGVR() schema.GroupVersionResource {
 	}
 }
 
-func (b *schedulerBackend) TopologyResourceName(ct *grovecorev1alpha1.ClusterTopologyBinding) string {
+func (b *schedulerBackend) TopologyResourceName(ct *grovecorev1beta1.ClusterTopologyBinding) string {
 	return ct.Name
 }
 
-func (b *schedulerBackend) SyncTopology(ctx context.Context, k8sClient client.Client, ct *grovecorev1alpha1.ClusterTopologyBinding) error {
+func (b *schedulerBackend) SyncTopology(ctx context.Context, k8sClient client.Client, ct *grovecorev1beta1.ClusterTopologyBinding) error {
 	if k8sClient == nil {
 		k8sClient = b.client
 	}
@@ -86,11 +86,11 @@ func (b *schedulerBackend) SyncTopology(ctx context.Context, k8sClient client.Cl
 	return nil
 }
 
-func (b *schedulerBackend) OnTopologyDelete(_ context.Context, _ client.Client, _ *grovecorev1alpha1.ClusterTopologyBinding) error {
+func (b *schedulerBackend) OnTopologyDelete(_ context.Context, _ client.Client, _ *grovecorev1beta1.ClusterTopologyBinding) error {
 	return nil
 }
 
-func (b *schedulerBackend) CheckTopologyDrift(ctx context.Context, ct *grovecorev1alpha1.ClusterTopologyBinding, ref grovecorev1alpha1.SchedulerTopologyBinding) (bool, string, int64, error) {
+func (b *schedulerBackend) CheckTopologyDrift(ctx context.Context, ct *grovecorev1beta1.ClusterTopologyBinding, ref grovecorev1beta1.SchedulerTopologyBinding) (bool, string, int64, error) {
 	existingTopology := &kueuev1beta2.Topology{}
 	if err := b.client.Get(ctx, client.ObjectKey{Name: ref.TopologyReference}, existingTopology); err != nil {
 		if apierrors.IsNotFound(err) {
@@ -105,7 +105,7 @@ func (b *schedulerBackend) CheckTopologyDrift(ctx context.Context, ct *grovecore
 	return true, "", existingTopology.Generation, nil
 }
 
-func buildKueueTopology(name string, ct *grovecorev1alpha1.ClusterTopologyBinding, scheme *runtime.Scheme) (*kueuev1beta2.Topology, error) {
+func buildKueueTopology(name string, ct *grovecorev1beta1.ClusterTopologyBinding, scheme *runtime.Scheme) (*kueuev1beta2.Topology, error) {
 	topology := &kueuev1beta2.Topology{
 		ObjectMeta: metav1.ObjectMeta{Name: name},
 		Spec:       kueuev1beta2.TopologySpec{Levels: desiredKueueTopologyLevels(ct)},
@@ -120,7 +120,7 @@ func isKueueTopologyChanged(oldTopology, newTopology *kueuev1beta2.Topology) boo
 	return !reflect.DeepEqual(oldTopology.Spec.Levels, newTopology.Spec.Levels)
 }
 
-func desiredKueueTopologyLevels(ct *grovecorev1alpha1.ClusterTopologyBinding) []kueuev1beta2.TopologyLevel {
+func desiredKueueTopologyLevels(ct *grovecorev1beta1.ClusterTopologyBinding) []kueuev1beta2.TopologyLevel {
 	levels := make([]kueuev1beta2.TopologyLevel, 0, len(ct.Spec.Levels))
 	for _, level := range ct.Spec.Levels {
 		levels = append(levels, kueuev1beta2.TopologyLevel{NodeLabel: level.Key})

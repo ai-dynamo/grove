@@ -34,6 +34,12 @@ const (
 	PodCliqueStatusResyncInterval = 3 * time.Minute
 	// EnvVarServiceAccountName is the name of the environment variable that stores the serviceAccountName of the operator pod.
 	EnvVarServiceAccountName = "GROVE_OPERATOR_SERVICE_ACCOUNT_NAME"
+	// EnvVarServiceName is the name of the environment variable that stores the name of the Service in front of the
+	// operator's webhook server.
+	EnvVarServiceName = "GROVE_OPERATOR_SERVICE_NAME"
+	// DefaultServiceName is the name of the Service in front of the operator's webhook server when EnvVarServiceName
+	// is not set.
+	DefaultServiceName = "grove-operator"
 )
 
 // constants used for pod lifecycle events

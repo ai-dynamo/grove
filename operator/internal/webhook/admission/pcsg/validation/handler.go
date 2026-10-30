@@ -17,7 +17,7 @@ package validation
 import (
 	"context"
 
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/webhook/admission/scaleguard"
 
 	"github.com/go-logr/logr"
@@ -45,5 +45,5 @@ func NewHandler(mgr manager.Manager) *Handler {
 // Handle admits or denies a PodCliqueScalingGroup admission request, guarding replica scaling during a
 // coherent update.
 func (h *Handler) Handle(ctx context.Context, req admission.Request) admission.Response {
-	return scaleguard.Handle(ctx, req, h.client, h.logger, &grovecorev1alpha1.PodCliqueScalingGroup{})
+	return scaleguard.Handle(ctx, req, h.client, h.logger, &grovecorev1beta1.PodCliqueScalingGroup{})
 }

@@ -12,44 +12,45 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// Package crds returns the grove.io CRDs.
+//
+// Deprecated: use github.com/ai-dynamo/grove/operator/api/core/crds, whose CRDs serve every grove.io version.
+// This package returns the same CRDs.
 package crds
 
-import _ "embed"
-
-var (
-	//go:embed grove.io_podcliques.yaml
-	podCliqueCRD string
-	//go:embed grove.io_podcliquesets.yaml
-	podCliqueSetCRD string
-	//go:embed grove.io_clustertopologybindings.yaml
-	clusterTopologyCRD string
-	//go:embed grove.io_podcliquescalinggroups.yaml
-	podCliqueScalingGroupCRD string
-	//go:embed grove.io_podgangmaps.yaml
-	podGangMapCRD string
-)
+import "github.com/ai-dynamo/grove/operator/api/core/crds"
 
 // PodCliqueCRD returns the PodClique CRD
+//
+// Deprecated: use crds.PodCliqueCRD of github.com/ai-dynamo/grove/operator/api/core/crds.
 func PodCliqueCRD() string {
-	return podCliqueCRD
+	return crds.PodCliqueCRD()
 }
 
 // PodCliqueSetCRD returns the PodCliqueSet CRD
+//
+// Deprecated: use crds.PodCliqueSetCRD of github.com/ai-dynamo/grove/operator/api/core/crds.
 func PodCliqueSetCRD() string {
-	return podCliqueSetCRD
+	return crds.PodCliqueSetCRD()
 }
 
 // ClusterTopologyCRD returns the ClusterTopologyBinding CRD
+//
+// Deprecated: use crds.ClusterTopologyCRD of github.com/ai-dynamo/grove/operator/api/core/crds.
 func ClusterTopologyCRD() string {
-	return clusterTopologyCRD
+	return crds.ClusterTopologyCRD()
 }
 
 // PodCliqueScalingGroupCRD returns the PodCliqueScalingGroup CRD
+//
+// Deprecated: use crds.PodCliqueScalingGroupCRD of github.com/ai-dynamo/grove/operator/api/core/crds.
 func PodCliqueScalingGroupCRD() string {
-	return podCliqueScalingGroupCRD
+	return crds.PodCliqueScalingGroupCRD()
 }
 
 // PodGangMapCRD returns the PodGangMap CRD
+//
+// Deprecated: use crds.PodGangMapCRD of github.com/ai-dynamo/grove/operator/api/core/crds.
 func PodGangMapCRD() string {
-	return podGangMapCRD
+	return crds.PodGangMapCRD()
 }

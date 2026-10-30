@@ -1,0 +1,626 @@
+// Copyright 2026 The Grove Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package v1beta1
+
+import (
+	resourcev1 "k8s.io/api/resource/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+)
+
+// +genclient
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+// +kubebuilder:object:root=true
+// +kubebuilder:storageversion
+// +kubebuilder:subresource:status
+// +kubebuilder:subresource:scale:specpath=.spec.replicas,statuspath=.status.replicas,selectorpath=.status.hpaPodSelector
+// +kubebuilder:resource:shortName={pcs}
+// +kubebuilder:printcolumn:name="Replicas",type=integer,JSONPath=`.spec.replicas`
+// +kubebuilder:printcolumn:name="Available",type=integer,JSONPath=`.status.availableReplicas`
+// +kubebuilder:printcolumn:name="Updated",type=integer,JSONPath=`.status.updatedReplicas`
+// +kubebuilder:printcolumn:name="PCLQs-Updated",type=integer,JSONPath=`.status.updateProgress.updatedPodCliquesCount`
+// +kubebuilder:printcolumn:name="PCLQs-Total",type=integer,JSONPath=`.status.updateProgress.totalPodCliquesCount`
+// +kubebuilder:printcolumn:name="PCSGs-Updated",type=integer,JSONPath=`.status.updateProgress.updatedPodCliqueScalingGroupsCount`
+// +kubebuilder:printcolumn:name="PCSGs-Total",type=integer,JSONPath=`.status.updateProgress.totalPodCliqueScalingGroupsCount`
+// +kubebuilder:printcolumn:name="Update",type=string,JSONPath=`.status.conditions[?(@.type=="UpdateInProgress")].reason`,priority=1
+// +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
+
+// PodCliqueSet is a set of PodGangs defining specification on how to spread and manage a gang of pods and monitoring their status.
+type PodCliqueSet struct {
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
+	// Spec defines the specification of the PodCliqueSet.
+	Spec PodCliqueSetSpec `json:"spec"`
+	// Status defines the status of the PodCliqueSet.
+	Status PodCliqueSetStatus `json:"status,omitempty"`
+}
+
+// +kubebuilder:object:root=true
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+
+// PodCliqueSetList is a list of PodCliqueSet's.
+type PodCliqueSetList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+	// Items is a slice of PodCliqueSets.
+	Items []PodCliqueSet `json:"items"`
+}
+
+// PodCliqueSetSpec defines the specification of a PodCliqueSet.
+type PodCliqueSetSpec struct {
+	// Replicas is the number of desired replicas of the PodCliqueSet.
+	// +kubebuilder:default=0
+	Replicas int32 `json:"replicas,omitempty"`
+	// UpdateStrategy defines the strategy for updating replicas when
+	// templates change. This applies to both standalone PodCliques and
+	// PodCliqueScalingGroups.
+	// +optional
+	UpdateStrategy *PodCliqueSetUpdateStrategy `json:"updateStrategy,omitempty"`
+	// Template describes the template spec for PodGangs that will be created in the PodCliqueSet.
+	Template PodCliqueSetTemplateSpec `json:"template"`
+}
+
+// PodCliqueSetStatus defines the status of a PodCliqueSet.
+type PodCliqueSetStatus struct {
+	// ObservedGeneration is the most recent generation observed by the controller.
+	ObservedGeneration *int64 `json:"observedGeneration,omitempty"`
+	// Conditions represents the latest available observations of the PodCliqueSet by its controller.
+	// +optional
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
+	// LastErrors captures the last errors observed by the controller when reconciling the PodCliqueSet.
+	LastErrors []LastError `json:"lastErrors,omitempty"`
+	// Replicas is the total number of PodCliqueSet replicas created.
+	Replicas int32 `json:"replicas,omitempty"`
+	// UpdatedReplicas is the number of replicas that have been updated to the desired revision of the PodCliqueSet.
+	// +kubebuilder:default=0
+	UpdatedReplicas int32 `json:"updatedReplicas"`
+	// AvailableReplicas is the number of PodCliqueSet replicas that are available.
+	// A PodCliqueSet replica is considered available when all standalone PodCliques within that replica
+	// have MinAvailableBreached condition = False AND all PodCliqueScalingGroups (PCSG) within that replica
+	// have MinAvailableBreached condition = False.
+	// +kubebuilder:default=0
+	AvailableReplicas int32 `json:"availableReplicas"`
+	// Selector is the label selector that determines which pods are part of the PodGang.
+	// PodGang is a unit of scale and this selector is used by HPA to scale the PodGang based on metrics captured for
+	// the pods that match this selector.
+	Selector *string `json:"hpaPodSelector,omitempty"`
+	// CurrentGenerationHash is a hash value generated out of a collection of fields in a PodCliqueSet.
+	// Since only a subset of fields is taken into account when generating the hash, not every change in the PodCliqueSetSpec will
+	// be accounted for when generating this hash value. A field in PodCliqueSetSpec is included if a change to it triggers
+	// a rolling recreate of PodCliques and/or PodCliqueScalingGroups.
+	// Only if this value is not nil and the newly computed hash value is different from the persisted CurrentGenerationHash value
+	// then an update needs to be triggered.
+	CurrentGenerationHash *string `json:"currentGenerationHash,omitempty"`
+	// UpdateProgress represents the progress of an update.
+	UpdateProgress *PodCliqueSetUpdateProgress `json:"updateProgress,omitempty"`
+	// ScalingProgress records replica indices selected for scale-out or scale-in.
+	// Availability-aware scale-in can remove replicas out of index order, so active replica indices may no longer
+	// form the contiguous range [0, spec.replicas). Persisting selections ensures all components reconcile the same
+	// sparse set of replica identities while scaling is in progress. It is nil when no scaling operation is in progress.
+	// +optional
+	ScalingProgress *PodCliqueSetScalingProgress `json:"scalingProgress,omitempty"`
+}
+
+// PodCliqueSetScalingProgress records replica-index selections while their managed child resources converge to the desired scaling state.
+type PodCliqueSetScalingProgress struct {
+	// ScaleOutReplicaIndices are replica indices selected for provisioning.
+	// An index is added when allocated for scale-out and removed after all expected standalone PodCliques and
+	// PodCliqueScalingGroups for it exist. Recording the index reserves it while provisioning is incomplete.
+	// +optional
+	// +listType=set
+	ScaleOutReplicaIndices []int32 `json:"scaleOutReplicaIndices,omitempty"`
+	// ScaleInReplicaIndices are replica indices selected for removal.
+	// Availability-aware selection may add indices in any order rather than removing only the highest indices.
+	// An index is removed after no managed child resources remain for it, preventing premature reuse during deletion.
+	// +optional
+	// +listType=set
+	ScaleInReplicaIndices []int32 `json:"scaleInReplicaIndices,omitempty"`
+}
+
+// PodCliqueSetUpdateStrategy defines the update strategy for a PodCliqueSet.
+type PodCliqueSetUpdateStrategy struct {
+	// Type indicates the type of update strategy.
+	// This strategy applies uniformly to both standalone PodCliques and
+	// PodCliqueScalingGroups within the PodCliqueSet.
+	// Default is RollingRecreate.
+	// +kubebuilder:default=RollingRecreate
+	Type UpdateStrategyType `json:"type,omitempty"`
+}
+
+// PodCliqueSetUpdateProgress captures the progress of an update of the PodCliqueSet.
+type PodCliqueSetUpdateProgress struct {
+	// UpdateStartedAt is the time at which the update started for the PodCliqueSet.
+	UpdateStartedAt metav1.Time `json:"updateStartedAt,omitempty"`
+	// UpdateEndedAt is the time at which Grove does not have any work pending to manifest the update according to the
+	// configured update strategy.
+	//  - For rolling update strategies where Grove handles the orchestration, while the update is still in progress
+	//    it will be nil, and will be set once the update finishes where all child resources are updated by Grove with
+	//    the latest specification.
+	//  - For the OnDelete strategy, it is set to the same time as UpdateStartedAt, which implies that there is no work
+	// 	  pending on Grove.
+	// +optional
+	UpdateEndedAt *metav1.Time `json:"updateEndedAt,omitempty"`
+	// UpdatedPodCliquesCount is the number of PodCliques that have been updated to the desired PodCliqueSet
+	// generation hash. Recomputed each reconcile from child generation-hash labels.
+	// +optional
+	// +kubebuilder:default=0
+	UpdatedPodCliquesCount int32 `json:"updatedPodCliquesCount,omitempty"`
+	// TotalPodCliquesCount is the total number of PodCliques expected to exist for the PodCliqueSet at the
+	// current spec.
+	// +optional
+	// +kubebuilder:default=0
+	TotalPodCliquesCount int32 `json:"totalPodCliquesCount,omitempty"`
+	// UpdatedPodCliqueScalingGroupsCount is the number of PodCliqueScalingGroups that have been updated to the
+	// desired PodCliqueSet generation hash.
+	// +optional
+	// +kubebuilder:default=0
+	UpdatedPodCliqueScalingGroupsCount int32 `json:"updatedPodCliqueScalingGroupsCount,omitempty"`
+	// TotalPodCliqueScalingGroupsCount is the total number of PodCliqueScalingGroups expected to exist for the
+	// PodCliqueSet at the current spec.
+	// +optional
+	// +kubebuilder:default=0
+	TotalPodCliqueScalingGroupsCount int32 `json:"totalPodCliqueScalingGroupsCount,omitempty"`
+	// CurrentlyUpdating captures the progress of the PodCliqueSet replicas that are currently being updated.
+	// This field is only set for rolling update strategies where Grove handles the orchestration. It is not set for the
+	// OnDelete update strategy.
+	// +optional
+	CurrentlyUpdating []PodCliqueSetReplicaUpdateProgress `json:"currentlyUpdating,omitempty"`
+	// InScopeStandalonePodCliques captures the names of standalone PodCliques whose pod template
+	// changed and are therefore in scope for the current coherent update. It names what changed,
+	// not what has finished updating. The set is preserved for the lifetime of the update and is
+	// cleared when UpdateEndedAt is set. If another update lands while this coherent update is still
+	// in progress, and it changes a different set of components, those component names are merged into
+	// this set rather than replacing it, so no in-flight component's update is dropped. Only populated
+	// for the Coherent strategy.
+	// +optional
+	InScopeStandalonePodCliques []string `json:"inScopeStandalonePodCliques,omitempty"`
+	// InScopePodCliqueScalingGroups captures the config names of PodCliqueScalingGroups that had at
+	// least one constituent PodClique whose pod template changed and are therefore in scope for the
+	// current coherent update. It names what changed, not what has finished updating. The set is
+	// preserved for the lifetime of the update and is cleared when UpdateEndedAt is set. If another
+	// update lands while this coherent update is still in progress, and it changes a different set of
+	// components, those config names are merged into this set rather than replacing it, so no
+	// in-flight component's update is dropped. Only populated for the Coherent strategy.
+	// +optional
+	InScopePodCliqueScalingGroups []string `json:"inScopePodCliqueScalingGroups,omitempty"`
+}
+
+// PodCliqueSetReplicaUpdateProgress captures the progress of an update for a specific PodCliqueSet replica.
+type PodCliqueSetReplicaUpdateProgress struct {
+	// ReplicaIndex is the replica index of the PodCliqueSet that is being updated.
+	ReplicaIndex int32 `json:"replicaIndex"`
+	// UpdateStartedAt is the time at which the update started for this PodCliqueSet replica index.
+	UpdateStartedAt metav1.Time `json:"updateStartedAt,omitempty"`
+	// UpdateEndedAt is the time at which the update ended for this PodCliqueSet replica index.
+	// The update ends when all child resources have been updated with the latest specification, when all Pods are
+	// running the latest specification.
+	// +optional
+	UpdateEndedAt *metav1.Time `json:"updateEndedAt,omitempty"`
+	// InFlightEpochs are the grove.io/epochs of the PodGangs currently being rolled
+	// (in flight) for this replica's coherent update. The orchestrator waits for the
+	// PodGangs at these epochs to become ready before advancing to the next iteration.
+	// Today a single epoch is in flight at a time; the field is a list so that a future
+	// iteration supporting concurrent in-flight batches needs no API change. It is cleared
+	// once the coherent update for this replica completes.
+	// +optional
+	InFlightEpochs []string `json:"inFlightEpochs,omitempty"`
+	// Message describes the current reason the orchestrator has not advanced
+	// the coherent update this reconcile. Populated whenever any advance
+	// precondition is not met: PodGangs at the current InFlightEpochs not yet
+	// reporting LastReady, subsumed pods still coming up, or an availability
+	// budget preventing further takedown. Cleared once all preconditions hold.
+	// +optional
+	Message *string `json:"message,omitempty"`
+}
+
+// RollingUpdateConfiguration carries per-component knobs for a rolling update. It attaches to each
+// standalone PodCliqueTemplateSpec and to each PodCliqueScalingGroupConfig, keeping the
+// configuration next to the component it governs. These knobs are per-component because components
+// differ in how much disruption they tolerate and how long they take to make progress, so a single
+// PodCliqueSet-wide value cannot express them. The configuration is strategy-agnostic. It governs
+// the RollingRecreate strategy today and is reused by the Coherent strategy. It does not apply to
+// the OnDelete strategy, where the PodCliqueSet validating webhook rejects it if set. Defaulting
+// never clears it, so removing it when switching to OnDelete is left to the consumer.
+type RollingUpdateConfiguration struct {
+	// MaxUnavailable is the maximum number of pods (for a standalone PodClique) or
+	// PodCliqueScalingGroup replicas (for a PCSG) that may be unavailable at any moment during an
+	// update of this component, measured against the component's desired count.
+	//
+	// Defaulting:
+	//   - RollingRecreate: defaults to 1.
+	//   - OnDelete: not defaulted. Defaulting never clears a RollingUpdateConfiguration that is set. The validating
+	//     webhook rejects it instead, so the consumer must remove it when switching to OnDelete.
+	//
+	// Validation:
+	//   - When set, must be greater than 0.
+	//   - OnDelete: RollingUpdate must not be set. The PodCliqueSet validating webhook rejects a
+	//     RollingUpdateConfiguration on any component when the strategy is OnDelete.
+	// +optional
+	MaxUnavailable *int32 `json:"maxUnavailable,omitempty"`
+	// ProgressDeadline tracks the progress of this component's rolling update. If the component,
+	// a PodClique or a PodCliqueScalingGroup, shows no observable progress within this duration, the
+	// breach is reported through the UpdateInProgress condition, whose Status is set to Unknown with
+	// reason ProgressDeadlineExceeded. If nil, this component does not report progress-deadline
+	// breaches and its update can wait indefinitely for progress.
+	// +optional
+	ProgressDeadline *metav1.Duration `json:"progressDeadline,omitempty"`
+}
+
+// PodCliqueSetTemplateSpec defines a template spec for a PodGang.
+// A PodGang does not have a RestartPolicy field because the restart policy is predefined:
+// If the number of pods in any of the cliques falls below the threshold, the entire PodGang will be restarted.
+// The threshold is determined by either:
+// - The value of "MinReplicas", if specified in the ScaleConfig of that clique, or
+// - The "Replicas" value of that clique
+type PodCliqueSetTemplateSpec struct {
+	// Cliques is a slice of cliques that make up the PodGang. There should be at least one PodClique.
+	// +listType=map
+	// +listMapKey=name
+	Cliques []*PodCliqueTemplateSpec `json:"cliques"`
+	// StartupType defines the type of startup dependency amongst the cliques within a PodGang.
+	// If it is not defined then default of CliqueStartupTypeAnyOrder is used.
+	// +kubebuilder:default=CliqueStartupTypeAnyOrder
+	// +optional
+	StartupType *CliqueStartupType `json:"cliqueStartupType,omitempty"`
+	// PriorityClassName is the name of the PriorityClass to be used for the PodCliqueSet.
+	// If specified, indicates the priority of the PodCliqueSet. "system-node-critical" and
+	// "system-cluster-critical" are two special keywords which indicate the
+	// highest priorities with the former being the highest priority. Any other
+	// name must be defined by creating a PriorityClass object with that name.
+	// If not specified, the pod priority will be default or zero if there is no default.
+	// +optional
+	PriorityClassName string `json:"priorityClassName,omitempty"`
+	// HeadlessServiceConfig defines the config options for the headless service.
+	// If present, create headless service for each PodGang.
+	// +optional
+	HeadlessServiceConfig *HeadlessServiceConfig `json:"headlessServiceConfig,omitempty"`
+	// TopologyConstraint defines topology placement requirements for PodCliqueSet.
+	// +optional
+	TopologyConstraint *TopologyConstraint `json:"topologyConstraint,omitempty"`
+	// TerminationDelay is the delay after which the gang termination will be triggered.
+	// A gang is a candidate for termination if number of running pods fall below a threshold for any PodClique.
+	// If a PodGang remains a candidate past TerminationDelay then it will be terminated. This allows additional time
+	// to the backend scheduler to re-schedule sufficient pods in the PodGang that will result in having the total number of
+	// running pods go above the threshold.
+	// Defaults to 4 hours.
+	// +optional
+	TerminationDelay *metav1.Duration `json:"terminationDelay,omitempty"`
+	// ResourceClaimTemplates declares named ResourceClaimTemplateSpecs that can be
+	// referenced by name from resourceSharing fields at any level in the hierarchy.
+	// +optional
+	ResourceClaimTemplates []ResourceClaimTemplateConfig `json:"resourceClaimTemplates,omitempty"`
+	// ResourceSharing defines shared ResourceClaims at the PCS level.
+	// Each entry references a template (internal or external) and specifies a Scope:
+	//   - AllReplicas: one RC for the entire PCS, shared across ALL pods in ALL replicas
+	//   - PerReplica: one RC per PCS replica, shared across ALL pods in that replica
+	// The optional Filter field controls which children receive the claims.
+	// +optional
+	ResourceSharing []PCSResourceSharingSpec `json:"resourceSharing,omitempty"`
+	// PodCliqueScalingGroupConfigs is a list of scaling groups for the PodCliqueSet.
+	PodCliqueScalingGroupConfigs []PodCliqueScalingGroupConfig `json:"podCliqueScalingGroups,omitempty"`
+}
+
+// PodCliqueTemplateSpec defines a template spec for a PodClique.
+type PodCliqueTemplateSpec struct {
+	// Name must be unique within a PodCliqueSet and is used to denote a role.
+	// Once set it cannot be updated.
+	// More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names#names
+	Name string `json:"name"`
+	// Labels is a map of string keys and values that can be used to organize and categorize
+	// (scope and select) objects. May match selectors of replication controllers
+	// and services.
+	// More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/labels
+	// +optional
+	Labels map[string]string `json:"labels,omitempty"`
+	// Annotations is an unstructured key value map stored with a resource that may be
+	// set by external tools to store and retrieve arbitrary metadata. They are not
+	// queryable and should be preserved when modifying objects.
+	// More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/annotations
+	// +optional
+	Annotations map[string]string `json:"annotations,omitempty"`
+	// TopologyConstraint defines topology placement requirements for PodClique.
+	// Must be equal to or stricter than parent resource constraints.
+	// +optional
+	TopologyConstraint *TopologyConstraint `json:"topologyConstraint,omitempty"`
+	// ResourceSharing defines shared ResourceClaims for this PodClique.
+	// Each entry references a template (internal or external) and specifies a Scope:
+	//   - AllReplicas: one RC per PCLQ, shared by all replica pods
+	//   - PerReplica: one RC per PCLQ replica, shared by all pods within that replica
+	// This is distinct from adding ResourceClaimTemplate inside
+	// Spec.PodSpec.ResourceClaims[x].ResourceClaimTemplateName, which creates a unique
+	// ResourceClaim for each pod.
+	// PCLQs have no children to filter, so no Filter field is available.
+	// +optional
+	ResourceSharing []ResourceSharingSpec `json:"resourceSharing,omitempty"`
+	// RollingUpdate is the per-component update configuration for this PodClique. It applies only to
+	// a standalone PodClique. Setting it on a PodCliqueTemplateSpec whose Name appears in any
+	// PodCliqueScalingGroupConfig.CliqueNames (a PCSG-owned PodClique) is not allowed and is rejected
+	// by the PodCliqueSet validating webhook. A PCSG-owned PodClique is instead governed by the
+	// owning PodCliqueScalingGroup's RollingUpdate.
+	// +optional
+	RollingUpdate *RollingUpdateConfiguration `json:"rollingUpdate,omitempty"`
+	// Specification of the desired behavior of a PodClique.
+	// More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#spec-and-status
+	Spec PodCliqueSpec `json:"spec"`
+}
+
+// TopologyConstraint defines topology placement requirements.
+// +kubebuilder:validation:XValidation:rule="has(self.pack)",message="topologyConstraint must specify pack",fieldPath=".pack",reason=FieldValueRequired
+type TopologyConstraint struct {
+	// TopologyName is the name of the ClusterTopologyBinding resource to use for topology-aware scheduling.
+	// Setting TopologyName may be optional if the name can be inherited from a higher level scope.
+	// When TopologyName is specified at a PCS/PCSG/PCLQ resource constraint, it will also be inherited
+	// as the default ClusterTopologyBinding name on all sub-resources, unless overridden by another TopologyName
+	// at a sub-resource.
+	// For example, setting TopologyName at a PCS level makes it optional for child PCSG or PCLQ levels
+	// when the sub-resources reuse the same ClusterTopologyBinding.
+	// Immutable after creation.
+	// +optional
+	TopologyName string `json:"topologyName,omitempty"`
+
+	// Pack specifies topology packing constraints for each replica of the resource.
+	// +optional
+	Pack *TopologyPackConstraint `json:"pack,omitempty"`
+}
+
+// TopologyPackConstraint defines topology pack placement requirements.
+// +kubebuilder:validation:XValidation:rule="has(self.required) || has(self.preferred)",message="pack must specify at least one of required or preferred",reason=FieldValueRequired
+type TopologyPackConstraint struct {
+	// RequiredDomain specifies the required topology packing constraint of each replica of the resource.
+	// The workload will not be scheduled if this constraint cannot be satisfied.
+	// Must reference a domain in the topology levels defined in the selected ClusterTopologyBinding.
+	// +optional
+	RequiredDomain TopologyDomain `json:"required,omitempty"`
+
+	// PreferredDomain specifies a preferred best-effort topology domain.
+	// If the constraint cannot be satisfied, the workload is scheduled anyway.
+	// +optional
+	PreferredDomain TopologyDomain `json:"preferred,omitempty"`
+}
+
+// HasAnyPackDomain reports whether the constraint has any required or preferred pack domain.
+func (tc *TopologyConstraint) HasAnyPackDomain() bool {
+	return tc != nil && (tc.RequiredDomain() != "" || tc.PreferredDomain() != "")
+}
+
+// RequiredDomain returns the required pack domain.
+func (tc *TopologyConstraint) RequiredDomain() TopologyDomain {
+	if tc == nil || tc.Pack == nil {
+		return ""
+	}
+	return tc.Pack.RequiredDomain
+}
+
+// PreferredDomain returns the preferred pack domain.
+func (tc *TopologyConstraint) PreferredDomain() TopologyDomain {
+	if tc == nil || tc.Pack == nil {
+		return ""
+	}
+	return tc.Pack.PreferredDomain
+}
+
+// ReferencedDomains returns the unique required and preferred domains referenced by the constraint.
+func (tc *TopologyConstraint) ReferencedDomains() []TopologyDomain {
+	if tc == nil {
+		return nil
+	}
+	var domains []TopologyDomain
+	required := tc.RequiredDomain()
+	if required != "" {
+		domains = append(domains, required)
+	}
+	if preferred := tc.PreferredDomain(); preferred != "" && preferred != required {
+		domains = append(domains, preferred)
+	}
+	return domains
+}
+
+// PodCliqueScalingGroupConfig is a group of PodClique's that are scaled together.
+// Each member PodClique.Replicas will be computed as a product of PodCliqueScalingGroupConfig.Replicas and PodCliqueTemplateSpec.Spec.Replicas.
+// NOTE: If a PodCliqueScalingGroupConfig is defined, then for the member PodClique's, individual AutoScalingConfig cannot be defined.
+type PodCliqueScalingGroupConfig struct {
+	// Name is the name of the PodCliqueScalingGroupConfig. This should be unique within the PodCliqueSet.
+	// It allows consumers to give a semantic name to a group of PodCliques that needs to be scaled together.
+	Name string `json:"name"`
+	// CliqueNames is the ordered list of PodClique names that are part of the scaling group.
+	// The order determines the group-wide pod indices exposed through the
+	// grove.io/podcliquescalinggroup-pod-index Pod label and GROVE_PCSG_POD_INDEX environment variable.
+	CliqueNames []string `json:"cliqueNames"`
+	// Annotations is an unstructured key value map stored with a resource that may be
+	// set by external tools to store and retrieve arbitrary metadata. They are not
+	// queryable and should be preserved when modifying objects.
+	// More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/annotations
+	// +optional
+	Annotations map[string]string `json:"annotations,omitempty"`
+	// Replicas is the desired number of replicas for the scaling group at template level.
+	// This allows one to control the replicas of the scaling group at startup.
+	// If not specified, it defaults to 1.
+	// +optional
+	// +kubebuilder:default=1
+	Replicas *int32 `json:"replicas,omitempty"`
+	// MinAvailable serves two purposes:
+	// Gang Scheduling:
+	// It defines the minimum number of replicas that are guaranteed to be gang scheduled.
+	// Gang Termination:
+	// It defines the minimum requirement of available replicas for a PodCliqueScalingGroup.
+	// Violation of this threshold for a duration beyond TerminationDelay will result in termination of the PodCliqueSet replica that it belongs to.
+	// Default: If not specified, it defaults to 1.
+	// Constraints:
+	// MinAvailable cannot be greater than Replicas.
+	// If ScaleConfig is defined then its MinAvailable should not be less than ScaleConfig.MinReplicas.
+	// +optional
+	// +kubebuilder:default=1
+	MinAvailable *int32 `json:"minAvailable,omitempty"`
+	// ScaleConfig is the horizontal pod autoscaler configuration for the pod clique scaling group.
+	// +optional
+	ScaleConfig *AutoScalingConfig `json:"scaleConfig,omitempty"`
+	// RollingUpdate is the per-component update configuration for this PodCliqueScalingGroup.
+	// It governs the rolling update of every constituent member PodClique. The member
+	// PodCliqueTemplateSpecs must not carry their own RollingUpdate.
+	// +optional
+	RollingUpdate *RollingUpdateConfiguration `json:"rollingUpdate,omitempty"`
+	// ResourceSharing defines shared ResourceClaims at the PCSG level.
+	// Each entry references a template (internal or external) and specifies a Scope:
+	//   - AllReplicas: one RC for the entire PCSG, shared across all replicas
+	//   - PerReplica: one RC per PCSG replica, shared across all PCLQs in that replica
+	// The optional Filter field controls which PodCliques receive the claims.
+	// At PCSG level, only childCliqueNames filtering is available.
+	// +optional
+	ResourceSharing []PCSGResourceSharingSpec `json:"resourceSharing,omitempty"`
+	// TopologyConstraint defines topology placement requirements for PodCliqueScalingGroup.
+	// Must be equal to or stricter than parent PodCliqueSet constraints.
+	// +optional
+	TopologyConstraint *TopologyConstraint `json:"topologyConstraint,omitempty"`
+}
+
+// ResourceSharingScope defines the sharing scope for resource claims.
+// +kubebuilder:validation:Enum=AllReplicas;PerReplica
+type ResourceSharingScope string
+
+const (
+	// ResourceSharingScopeAllReplicas creates one ResourceClaim per instance of the owning
+	// resource (PCS, PCLQ, or PCSG), shared across all replicas and pods within that instance.
+	ResourceSharingScopeAllReplicas ResourceSharingScope = "AllReplicas"
+	// ResourceSharingScopePerReplica creates one ResourceClaim per replica, shared
+	// across all pods within that replica.
+	ResourceSharingScopePerReplica ResourceSharingScope = "PerReplica"
+)
+
+// ResourceClaimTemplateConfig defines a named ResourceClaimTemplateSpec that can be
+// referenced by ResourceSharingSpec entries in resourceSharing fields.
+type ResourceClaimTemplateConfig struct {
+	// Name is a unique identifier for this template within the PodCliqueSet.
+	Name string `json:"name"`
+	// TemplateSpec is the ResourceClaimTemplate spec used to create ResourceClaim objects.
+	TemplateSpec resourcev1.ResourceClaimTemplateSpec `json:"templateSpec"`
+}
+
+// ResourceSharingSpec contains the common fields shared by all levels of
+// resource sharing (PCS, PCSG, PCLQ). It is used directly for PCLQ-level
+// resource sharing where no filter is needed.
+type ResourceSharingSpec struct {
+	// Name of the referenced template. Resolved by first looking up
+	// PodCliqueSetTemplateSpec.ResourceClaimTemplates; if no match is found,
+	// the operator looks for a Kubernetes ResourceClaimTemplate object in the
+	// target namespace. Internal templates shadow external ones with the same name.
+	Name string `json:"name"`
+	// Namespace of the external ResourceClaimTemplate. When set, the name is
+	// resolved as an external Kubernetes ResourceClaimTemplate in the given
+	// namespace. When empty, defaults to the PCS namespace during resolution.
+	// +optional
+	Namespace string `json:"namespace,omitempty"`
+	// Scope determines the sharing granularity for the ResourceClaims created from
+	// this template.
+	Scope ResourceSharingScope `json:"scope"`
+}
+
+// PCSResourceSharingSpec defines resource sharing at the PCS level. The filter
+// can target both child PodCliques and child PodCliqueScalingGroups.
+type PCSResourceSharingSpec struct {
+	ResourceSharingSpec `json:",inline"`
+	// Filter narrows the scope by restricting which children receive the
+	// ResourceClaims. If absent, all children receive them (broadcast).
+	// +optional
+	Filter *PCSResourceSharingFilter `json:"filter,omitempty"`
+}
+
+// PCSResourceSharingFilter controls which children of a PCS receive the ResourceClaims.
+type PCSResourceSharingFilter struct {
+	// ChildCliqueNames limits distribution to the named immediate child PodCliques.
+	// +optional
+	ChildCliqueNames []string `json:"childCliqueNames,omitempty"`
+	// ChildScalingGroupNames limits distribution to the named immediate child PodCliqueScalingGroups.
+	// +optional
+	ChildScalingGroupNames []string `json:"childScalingGroupNames,omitempty"`
+}
+
+// PCSGResourceSharingSpec defines resource sharing at the PCSG level. The filter
+// can only target child PodCliques within the scaling group.
+type PCSGResourceSharingSpec struct {
+	ResourceSharingSpec `json:",inline"`
+	// Filter narrows the scope by restricting which child PodCliques receive
+	// the ResourceClaims. If absent, all PodCliques in the group receive them.
+	// +optional
+	Filter *PCSGResourceSharingFilter `json:"filter,omitempty"`
+}
+
+// PCSGResourceSharingFilter controls which child PodCliques of a PCSG receive the ResourceClaims.
+type PCSGResourceSharingFilter struct {
+	// ChildCliqueNames limits distribution to the named child PodCliques within this scaling group.
+	// +optional
+	ChildCliqueNames []string `json:"childCliqueNames,omitempty"`
+}
+
+// HeadlessServiceConfig defines the config options for the headless service.
+type HeadlessServiceConfig struct {
+	// PublishNotReadyAddresses if set to true will publish the DNS records of pods even if the pods are not ready.
+	//  if not set, it defaults to true.
+	// +kubebuilder:default=true
+	PublishNotReadyAddresses bool `json:"publishNotReadyAddresses"`
+}
+
+// UpdateStrategyType defines the type of update strategy for PodCliqueSet.
+// +kubebuilder:validation:Enum={Coherent,RollingRecreate,OnDelete}
+type UpdateStrategyType string
+
+const (
+	// CoherentStrategy indicates that replicas will be updated in Minimal Viable Units —
+	// MinAvailable replicas of each updated standalone PodClique plus MinAvailable replicas of each
+	// updated PodCliqueScalingGroup — scheduled atomically as a new PodGang. This guarantees
+	// that pods forming a minimum-viable serving unit are always version-compatible.
+	CoherentStrategy UpdateStrategyType = "Coherent"
+	// RollingRecreateStrategy indicates that replicas will be progressively
+	// deleted and recreated one at a time, when templates change. This applies to
+	// both pods (for standalone PodCliques) and replicas of PodCliqueScalingGroups.
+	// RollingRecreateStrategy qualifies as a rolling update strategy in Grove since
+	// it handles the orchestration entirely by itself.
+	// This is the default update strategy.
+	RollingRecreateStrategy UpdateStrategyType = "RollingRecreate"
+	// OnDeleteStrategy indicates that replicas will only be updated when
+	// they are manually deleted. Changes to templates do not automatically
+	// trigger replica deletions.
+	OnDeleteStrategy UpdateStrategyType = "OnDelete"
+)
+
+// CliqueStartupType defines the order in which each PodClique is started.
+// +kubebuilder:validation:Enum={CliqueStartupTypeAnyOrder,CliqueStartupTypeInOrder,CliqueStartupTypeExplicit}
+type CliqueStartupType string
+
+const (
+	// CliqueStartupTypeAnyOrder defines that the cliques can be started in any order. This allows for concurrent starts of cliques.
+	// This is the default CliqueStartupType.
+	CliqueStartupTypeAnyOrder CliqueStartupType = "CliqueStartupTypeAnyOrder"
+	// CliqueStartupTypeInOrder defines that the cliques should be started in the order they are defined in the PodGang Cliques slice.
+	CliqueStartupTypeInOrder CliqueStartupType = "CliqueStartupTypeInOrder"
+	// CliqueStartupTypeExplicit defines that the cliques should be started after the cliques defined in PodClique.StartsAfter have started.
+	CliqueStartupTypeExplicit CliqueStartupType = "CliqueStartupTypeExplicit"
+)
+
+// ErrorCode is a custom error code that uniquely identifies an error.
+type ErrorCode string
+
+// LastError captures the last error observed by the controller when reconciling an object.
+type LastError struct {
+	// Code is the error code that uniquely identifies the error.
+	Code ErrorCode `json:"code"`
+	// Description is a human-readable description of the error.
+	Description string `json:"description"`
+	// ObservedAt is the time at which the error was observed.
+	ObservedAt metav1.Time `json:"observedAt"`
+}
+
+// SetLastErrors sets the last errors observed by the controller when reconciling the PodCliqueSet.
+func (pcs *PodCliqueSet) SetLastErrors(lastErrs ...LastError) {
+	pcs.Status.LastErrors = lastErrs
+}

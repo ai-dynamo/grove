@@ -7,7 +7,7 @@ Refer to [Overview](./01_overview.md) for instructions on how to run the example
 The [previous examples](./03_pcsg_intro.md) have focused on mapping various inference workloads into Grove primitives, focusing on the model instances. However, the primitives are generic and the point of Grove is to allow the user to represent as many components as they'd like. To illustrate this point we now provide an example where we represent additional components such as a frontend and vision encoder. To add additional components you simply add additional PodCliques and PodCliqueScalingGroups into the PodCliqueSet
 
 ```yaml
-apiVersion: grove.io/v1alpha1
+apiVersion: grove.io/v1beta1
 kind: PodCliqueSet
 metadata:
   name: comp-inf-ppln

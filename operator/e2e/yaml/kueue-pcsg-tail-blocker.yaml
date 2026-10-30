@@ -2,7 +2,7 @@
 # "grove-e2e-backlog" LocalQueue (kueue-queues-backlog.yaml), taking 50Mi of its 100Mi memory
 # quota. The 50Mi left fits both of kueue-pcsg-tail.yaml's tail PodGangs (2 x 20Mi) but not its
 # anchor (60Mi), until this PodCliqueSet is deleted mid-test.
-apiVersion: grove.io/v1alpha1
+apiVersion: grove.io/v1beta1
 kind: PodCliqueSet
 metadata:
   name: kueue-pcsg-tail-blocker

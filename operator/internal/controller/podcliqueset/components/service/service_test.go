@@ -20,7 +20,7 @@ import (
 	"testing"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/sync"
 
 	"github.com/go-logr/logr"
@@ -38,7 +38,7 @@ import (
 // TestNew tests creating a new Service operator.
 func TestNew(t *testing.T) {
 	scheme := runtime.NewScheme()
-	_ = grovecorev1alpha1.AddToScheme(scheme)
+	_ = grovecorev1beta1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
 
 	cl := fake.NewClientBuilder().WithScheme(scheme).Build()
@@ -68,7 +68,7 @@ func serviceForReplica(pcsName, namespace string, replicaIndex int, ownerReferen
 // TestGetExistingResourceNames tests getting existing service names.
 func TestGetExistingResourceNames(t *testing.T) {
 	scheme := runtime.NewScheme()
-	_ = grovecorev1alpha1.AddToScheme(scheme)
+	_ = grovecorev1beta1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
 
 	// Test with no existing services
@@ -201,7 +201,7 @@ func TestGetExistingResourceNames(t *testing.T) {
 // TestSync tests synchronizing services.
 func TestSync(t *testing.T) {
 	scheme := runtime.NewScheme()
-	_ = grovecorev1alpha1.AddToScheme(scheme)
+	_ = grovecorev1beta1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
 
 	// Test creating new services
@@ -209,13 +209,13 @@ func TestSync(t *testing.T) {
 		cl := fake.NewClientBuilder().WithScheme(scheme).Build()
 		operator := New(cl, scheme)
 
-		pcs := &grovecorev1alpha1.PodCliqueSet{
+		pcs := &grovecorev1beta1.PodCliqueSet{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-pcs",
 				Namespace: "default",
 				UID:       types.UID("pcs-uid-123"),
 			},
-			Spec: grovecorev1alpha1.PodCliqueSetSpec{
+			Spec: grovecorev1beta1.PodCliqueSetSpec{
 				Replicas: 2,
 			},
 		}
@@ -249,16 +249,16 @@ func TestSync(t *testing.T) {
 		cl := fake.NewClientBuilder().WithScheme(scheme).Build()
 		operator := New(cl, scheme)
 
-		pcs := &grovecorev1alpha1.PodCliqueSet{
+		pcs := &grovecorev1beta1.PodCliqueSet{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-pcs",
 				Namespace: "default",
 				UID:       types.UID("pcs-uid-123"),
 			},
-			Spec: grovecorev1alpha1.PodCliqueSetSpec{
+			Spec: grovecorev1beta1.PodCliqueSetSpec{
 				Replicas: 1,
-				Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
-					HeadlessServiceConfig: &grovecorev1alpha1.HeadlessServiceConfig{
+				Template: grovecorev1beta1.PodCliqueSetTemplateSpec{
+					HeadlessServiceConfig: &grovecorev1beta1.HeadlessServiceConfig{
 						PublishNotReadyAddresses: true,
 					},
 				},
@@ -300,16 +300,16 @@ func TestSync(t *testing.T) {
 			Build()
 		operator := New(cl, scheme)
 
-		pcs := &grovecorev1alpha1.PodCliqueSet{
+		pcs := &grovecorev1beta1.PodCliqueSet{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-pcs",
 				Namespace: "default",
 				UID:       pcsUID,
 			},
-			Spec: grovecorev1alpha1.PodCliqueSetSpec{
+			Spec: grovecorev1beta1.PodCliqueSetSpec{
 				Replicas: 1,
-				Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
-					HeadlessServiceConfig: &grovecorev1alpha1.HeadlessServiceConfig{
+				Template: grovecorev1beta1.PodCliqueSetTemplateSpec{
+					HeadlessServiceConfig: &grovecorev1beta1.HeadlessServiceConfig{
 						PublishNotReadyAddresses: true,
 					},
 				},
@@ -330,14 +330,14 @@ func TestSync(t *testing.T) {
 
 func TestSyncUsesSparseReplicaIndices(t *testing.T) {
 	scheme := runtime.NewScheme()
-	require.NoError(t, grovecorev1alpha1.AddToScheme(scheme))
+	require.NoError(t, grovecorev1beta1.AddToScheme(scheme))
 	require.NoError(t, corev1.AddToScheme(scheme))
-	pcs := &grovecorev1alpha1.PodCliqueSet{
+	pcs := &grovecorev1beta1.PodCliqueSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-pcs", Namespace: "default", UID: "pcs-uid"},
-		Spec:       grovecorev1alpha1.PodCliqueSetSpec{Replicas: 3},
+		Spec:       grovecorev1beta1.PodCliqueSetSpec{Replicas: 3},
 	}
 	ownerReference := metav1.OwnerReference{
-		APIVersion: grovecorev1alpha1.SchemeGroupVersion.String(),
+		APIVersion: grovecorev1beta1.SchemeGroupVersion.String(),
 		Kind:       "PodCliqueSet",
 		Name:       pcs.Name,
 		UID:        pcs.UID,
@@ -370,7 +370,7 @@ func TestSyncUsesSparseReplicaIndices(t *testing.T) {
 // TestDelete tests deleting services.
 func TestDelete(t *testing.T) {
 	scheme := runtime.NewScheme()
-	_ = grovecorev1alpha1.AddToScheme(scheme)
+	_ = grovecorev1beta1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
 
 	// Test deleting existing services

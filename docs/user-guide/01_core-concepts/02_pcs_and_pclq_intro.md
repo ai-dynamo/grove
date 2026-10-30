@@ -9,7 +9,7 @@ Refer to [Overview](./01_overview.md) for instructions on how to run the example
 In this simplest scenario, each pod is a complete model instance that can service requests. This is mapped to a single standalone PodClique within the PodCliqueSet. The PodClique provides horizontal scaling capabilities at the model replica level similar to a ReplicaSet (with gang termination behavior), and the PodCliqueSet provides horizontal scaling capabilities at the system level (useful for things such as canary deployments, A/B testing, and spreading across availability zones for high availability).
 
 ```yaml
-apiVersion: grove.io/v1alpha1
+apiVersion: grove.io/v1beta1
 kind: PodCliqueSet
 metadata:
   name: single-node-aggregated
@@ -112,7 +112,7 @@ kubectl delete pcs single-node-aggregated
 Here we separate prefill and decode operations into different workers, allowing independent scaling of each component. Modelling this in Grove primitives is simple, in the previous example that demonstrated aggregated serving, we had one PodClique for the model-worker, which handled both prefill and decode. To disaggregate prefill and decode, we simply create two PodCliques, one for prefill, and one for decode. Note that the clique names can be set to whatever your want, although we recommend setting them up to match the component they represent (e.g prefill, decode).
 
 ```yaml
-apiVersion: grove.io/v1alpha1
+apiVersion: grove.io/v1beta1
 kind: PodCliqueSet
 metadata:
   name: single-node-disaggregated

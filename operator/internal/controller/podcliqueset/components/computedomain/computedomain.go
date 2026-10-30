@@ -20,7 +20,7 @@ import (
 	"strconv"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/sync"
@@ -43,9 +43,9 @@ import (
 )
 
 const (
-	errSyncComputeDomain   grovecorev1alpha1.ErrorCode = "ERR_SYNC_COMPUTEDOMAIN"
-	errDeleteComputeDomain grovecorev1alpha1.ErrorCode = "ERR_DELETE_COMPUTEDOMAIN"
-	errListComputeDomain   grovecorev1alpha1.ErrorCode = "ERR_LIST_COMPUTEDOMAIN"
+	errSyncComputeDomain   grovecorev1beta1.ErrorCode = "ERR_SYNC_COMPUTEDOMAIN"
+	errDeleteComputeDomain grovecorev1beta1.ErrorCode = "ERR_DELETE_COMPUTEDOMAIN"
+	errListComputeDomain   grovecorev1beta1.ErrorCode = "ERR_LIST_COMPUTEDOMAIN"
 
 	// labelComponentNameComputeDomain is the component name for ComputeDomain resources.
 	labelComponentNameComputeDomain = "pcs-computedomain"
@@ -91,7 +91,7 @@ func ShouldRegister(restMapper meta.RESTMapper, autoMNNVLEnabled bool, logger lo
 }
 
 // New creates a new ComputeDomain operator for managing ComputeDomain resources within PodCliqueSets.
-func New(cl client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder, disableSync bool) component.Operator[grovecorev1alpha1.PodCliqueSet, pcssync.State, pcssync.Result] {
+func New(cl client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder, disableSync bool) component.Operator[grovecorev1beta1.PodCliqueSet, pcssync.State, pcssync.Result] {
 	return &_resource{
 		client:        cl,
 		scheme:        scheme,
@@ -144,7 +144,7 @@ func getSelectorLabels(pcsName string) map[string]string {
 }
 
 // Sync synchronizes ComputeDomain resources for the PodCliqueSet.
-func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, state *pcssync.State) (pcssync.Result, error) {
+func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, state *pcssync.State) (pcssync.Result, error) {
 	if r.disableSync {
 		return pcssync.Result{}, nil
 	}
@@ -183,7 +183,7 @@ func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev
 // annotation resolution (clique → PCSG → PCS). Non-GPU cliques are skipped
 // so that a PCS-level annotation doesn't create orphaned CDs when no GPU
 // cliques exist.
-func collectDistinctGroups(pcs *grovecorev1alpha1.PodCliqueSet) map[string]struct{} {
+func collectDistinctGroups(pcs *grovecorev1beta1.PodCliqueSet) map[string]struct{} {
 	groups := make(map[string]struct{})
 
 	pcsgByClique := buildPCSGLookup(pcs)
@@ -205,8 +205,8 @@ func collectDistinctGroups(pcs *grovecorev1alpha1.PodCliqueSet) map[string]struc
 }
 
 // buildPCSGLookup builds a map from clique name to the PCSG config that contains it.
-func buildPCSGLookup(pcs *grovecorev1alpha1.PodCliqueSet) map[string]grovecorev1alpha1.PodCliqueScalingGroupConfig {
-	lookup := make(map[string]grovecorev1alpha1.PodCliqueScalingGroupConfig)
+func buildPCSGLookup(pcs *grovecorev1beta1.PodCliqueSet) map[string]grovecorev1beta1.PodCliqueScalingGroupConfig {
+	lookup := make(map[string]grovecorev1beta1.PodCliqueScalingGroupConfig)
 	for _, pcsg := range pcs.Spec.Template.PodCliqueScalingGroupConfigs {
 		for _, cliqueName := range pcsg.CliqueNames {
 			lookup[cliqueName] = pcsg
@@ -218,7 +218,7 @@ func buildPCSGLookup(pcs *grovecorev1alpha1.PodCliqueSet) map[string]grovecorev1
 // computeExpectedComputeDomains returns the desired ComputeDomains for the expected PCS replica identities.
 // It resolves and deduplicates MNNVL groups across the PCS, PCSG configs, and clique templates,
 // then produces one ComputeDomain per group for each expected PCS replica index.
-func computeExpectedComputeDomains(pcs *grovecorev1alpha1.PodCliqueSet, expectedPCSReplicaIndices []int) []cdNameInfo {
+func computeExpectedComputeDomains(pcs *grovecorev1beta1.PodCliqueSet, expectedPCSReplicaIndices []int) []cdNameInfo {
 	groups := collectDistinctGroups(pcs)
 	if len(groups) == 0 {
 		return nil
@@ -285,7 +285,7 @@ func getScaleInPCSReplicaIndicesAwaitingComputeDomainCleanup(existingCDs []metav
 }
 
 // triggerDeletionOfComputeDomainsByName deletes the specified ComputeDomains.
-func (r _resource) triggerDeletionOfComputeDomainsByName(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, cdNames []string) error {
+func (r _resource) triggerDeletionOfComputeDomainsByName(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, cdNames []string) error {
 	if len(cdNames) == 0 {
 		return nil
 	}
@@ -305,7 +305,7 @@ func (r _resource) triggerDeletionOfComputeDomainsByName(ctx context.Context, lo
 }
 
 // buildDeletionTasks generates deletion tasks for the specified ComputeDomains.
-func (r _resource) buildDeletionTasks(logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, targetCDFQNs []string) []utils.Task {
+func (r _resource) buildDeletionTasks(logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, targetCDFQNs []string) []utils.Task {
 	deleteTasks := make([]utils.Task, 0, len(targetCDFQNs))
 	for _, cdName := range targetCDFQNs {
 		cdName := cdName // Capture loop variable
@@ -377,7 +377,7 @@ func emptyComputeDomain(objKey client.ObjectKey) *unstructured.Unstructured {
 }
 
 // createComputeDomains creates the given ComputeDomains that don't already exist.
-func (r _resource) createComputeDomains(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, cds []cdNameInfo) error {
+func (r _resource) createComputeDomains(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, cds []cdNameInfo) error {
 	if len(cds) == 0 {
 		return nil
 	}
@@ -406,7 +406,7 @@ func (r _resource) createComputeDomains(ctx context.Context, logger logr.Logger,
 }
 
 // doCreate creates a single ComputeDomain resource.
-func (r _resource) doCreate(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, cdInfo cdNameInfo, cdObjKey client.ObjectKey) error {
+func (r _resource) doCreate(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, cdInfo cdNameInfo, cdObjKey client.ObjectKey) error {
 	logger.Info("Creating ComputeDomain", "cdObjectKey", cdObjKey)
 	cd := emptyComputeDomain(cdObjKey)
 	pcsObjKey := client.ObjectKeyFromObject(pcs)
@@ -431,7 +431,7 @@ func (r _resource) doCreate(ctx context.Context, logger logr.Logger, pcs *grovec
 }
 
 // buildResource configures a ComputeDomain with the desired state.
-func (r _resource) buildResource(cd *unstructured.Unstructured, pcs *grovecorev1alpha1.PodCliqueSet, cdInfo cdNameInfo) error {
+func (r _resource) buildResource(cd *unstructured.Unstructured, pcs *grovecorev1beta1.PodCliqueSet, cdInfo cdNameInfo) error {
 	rctName := mnnvl.GenerateRCTName(apicommon.ResourceNameReplica{Name: cdInfo.pcsName, Replica: cdInfo.replicaIndex}, cdInfo.groupName)
 
 	cdComponentLabels := map[string]string{
@@ -484,6 +484,6 @@ func (r _resource) Delete(ctx context.Context, logger logr.Logger, pcsObjMeta me
 		return err
 	}
 
-	pcs := &grovecorev1alpha1.PodCliqueSet{ObjectMeta: pcsObjMeta}
+	pcs := &grovecorev1beta1.PodCliqueSet{ObjectMeta: pcsObjMeta}
 	return r.triggerDeletionOfComputeDomainsByName(ctx, logger, pcs, existingCDFQNs)
 }

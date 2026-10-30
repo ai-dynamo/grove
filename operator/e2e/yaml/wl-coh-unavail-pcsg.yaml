@@ -2,7 +2,7 @@
 # the whole maxUnavailable=1 budget. The old readiness-delta budget deadlocked here. The test removes only
 # the impossible selector from the PCS template, so the old pod stays Pending until the corrective update
 # replaces it.
-apiVersion: grove.io/v1alpha1
+apiVersion: grove.io/v1beta1
 kind: PodCliqueSet
 metadata:
   name: wl-coh-unavail-pcsg

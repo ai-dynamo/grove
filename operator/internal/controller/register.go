@@ -18,7 +18,7 @@ import (
 	"context"
 	"fmt"
 
-	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
+	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/clustertopology"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podclique"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliquescalinggroup"
@@ -31,7 +31,7 @@ import (
 )
 
 // RegisterControllers registers all controllers with the manager.
-func RegisterControllers(mgr ctrl.Manager, config *configv1alpha1.OperatorConfiguration, schedRegistry scheduler.Registry) error {
+func RegisterControllers(mgr ctrl.Manager, config *configv1beta1.OperatorConfiguration, schedRegistry scheduler.Registry) error {
 	if config == nil {
 		return fmt.Errorf("operator configuration must not be nil")
 	}

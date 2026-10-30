@@ -52,25 +52,29 @@ function generate_deepcopy_defaulter() {
 }
 
 function generate_crds() {
-  local output_dir="${MODULE_ROOT}/core/v1alpha1/crds"
-  local package="github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
-  local package_path="$(go list -f '{{.Dir}}' "${package}")"
-
-  if [ -z "${package_path}" ]; then
-    echo >&2 "Could not locate directory for package: ${package}"
-    exit 1
-  fi
-
-  if [ -z "${output_dir}" ]; then
-    mkdir -p "${output_dir}"
-  fi
+  local output_dir="${MODULE_ROOT}/core/crds"
+  mkdir -p "${output_dir}"
 
   # clean all generated crd files
-  if ls "${output_dir}/*.yaml" 1> /dev/null 2>&1; then
-    rm "${output_dir}/*.yaml"
-  fi
+  rm -f "${output_dir}"/*.yaml
 
-  controller-gen crd paths="${package_path}" output:crd:dir="${output_dir}" output:stdout
+  # Every API version of the grove.io group is generated into one multi-version CRD per kind.
+  controller-gen crd paths="${MODULE_ROOT}/core/..." output:crd:dir="${output_dir}" output:stdout
+
+  add_conversion_webhook "${output_dir}"
+}
+
+# add_conversion_webhook inserts crd-conversion.yaml as spec.conversion of the CRDs whose versions are converted
+# by the operator's conversion webhook. controller-gen has no marker for it. The service address is the default
+# install (Service "grove-operator" in namespace "default", webhook port 9443). The crd-installer and the operator
+# set the configured Service name, namespace and port, and the caBundle is injected at run time. Until then
+# conversion requests fail rather than silently pruning fields, as the None strategy would. The block is inserted
+# with sed rather than yq, because yq re-indents every list of the controller-gen output.
+function add_conversion_webhook() {
+  local output_dir="$1"
+  # The other grove.io kinds have the same schema in every version and use the None strategy.
+    sed -i.bak "/^spec:$/r ${SCRIPT_DIR}/crd-conversion.yaml" "${output_dir}/grove.io_podcliquesets.yaml"
+    rm -f "${output_dir}/grove.io_podcliquesets.yaml.bak"
 }
 
 function generate_clientset() {

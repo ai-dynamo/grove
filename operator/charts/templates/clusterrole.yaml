@@ -66,18 +66,6 @@ rules:
   - patch
   - update
 - apiGroups:
-    - ""
-  resources:
-    - secrets
-  verbs:
-    - create
-    - get
-    - list
-    - patch
-    - delete
-    - watch
-    - update
-- apiGroups:
   - admissionregistration.k8s.io
   resources:
   - validatingwebhookconfigurations
@@ -97,17 +85,6 @@ rules:
   - list
   - watch
   - patch
-- apiGroups:
-    - ""
-  resources:
-    - secrets
-  verbs:
-    - create
-    - get
-    - list
-    - patch
-    - delete
-    - watch
 - apiGroups:
   - rbac.authorization.k8s.io
   resources:
@@ -183,6 +160,12 @@ rules:
   - get
   - list
   - watch
+{{- if .Values.config.network.autoMNNVLEnabled }}
+  - create
+  - delete
+  - patch
+  - update
+{{- end }}
 {{- if include "grove.scheduler.hasProfile" (list . "kai-scheduler") }}
 - apiGroups:
   - scheduling.run.ai
@@ -218,14 +201,6 @@ rules:
   - get
   - list
   - watch
-- apiGroups:
-  - apiextensions.k8s.io
-  resources:
-  - customresourcedefinitions
-  resourceNames:
-  - podgroups.scheduling.volcano.sh
-  verbs:
-  - get
 {{- end }}
 # ComputeDomain cleanup permissions are always required when the API is present, including when AutoMNNVL is disabled.
 # Kubernetes permits RBAC rules for resources whose CRD is not installed.
@@ -239,28 +214,21 @@ rules:
   - watch
   - delete
 {{- if .Values.config.network.autoMNNVLEnabled }}
-# AutoMNNVL synchronization requires ComputeDomain write permissions.
-- apiGroups:
-  - resource.nvidia.com
-  resources:
-  - computedomains
-  verbs:
   - create
-  - patch
-  - update
-# ResourceClaimTemplates write access for MNNVL
-- apiGroups:
-  - resource.k8s.io
-  resources:
-  - resourceclaimtemplates
-  verbs:
-  - create
-  - delete
   - patch
   - update
 {{- end }}
-{{- if .Values.crdInstaller.enabled }}
-# CRD installer init container requires permissions to apply Grove CRDs on startup.
+# cert-controller injects the conversion webhook caBundle in auto mode.
+# cert-controller watches CRDs through an informer, which cannot be restricted by name.
+- apiGroups:
+  - apiextensions.k8s.io
+  resources:
+  - customresourcedefinitions
+  verbs:
+  - get
+  - list
+  - watch
+# The CRD installer always patches PodCliqueSet conversion and can optionally apply all Grove CRDs.
 - apiGroups:
   - apiextensions.k8s.io
   resources:
@@ -274,7 +242,6 @@ rules:
   - podgangmaps.grove.io
   - podgangs.scheduler.grove.io
   verbs:
-  - get
   - create
   - update
   - patch
@@ -285,4 +252,3 @@ rules:
   - clustertopologies
   verbs:
   - list
-{{- end }}
