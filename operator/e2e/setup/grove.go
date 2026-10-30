@@ -41,8 +41,6 @@ import (
 // GroveConfig holds typed configuration options for updating the Grove operator.
 // This struct provides a user-friendly interface that gets translated to Helm values internally.
 type GroveConfig struct {
-	// InstallCRDs controls whether CRDs should be installed/updated.
-	InstallCRDs bool
 	// Webhooks contains webhook-specific configuration.
 	Webhooks WebhooksConfig
 }
@@ -63,14 +61,8 @@ type WebhooksConfig struct {
 // helmValues mirrors the Helm values.yaml structure, using configv1beta1 types
 // where the chart configuration matches the operator API.
 type helmValues struct {
-	CRDInstaller helmCRDInstallerValues `json:"crdInstaller"`
-	Config       helmConfigValues       `json:"config"`
-	Webhooks     helmWebhookValues      `json:"webhooks"`
-}
-
-// helmCRDInstallerValues mirrors the crdInstaller section of values.yaml.
-type helmCRDInstallerValues struct {
-	Enabled bool `json:"enabled"`
+	Config   helmConfigValues  `json:"config"`
+	Webhooks helmWebhookValues `json:"webhooks"`
 }
 
 type helmConfigValues struct {
@@ -109,7 +101,6 @@ type helmWebhookAnnotations struct {
 func (c *GroveConfig) toHelmValues() (map[string]interface{}, error) {
 	anns := helmWebhookAnnotations{Annotations: c.Webhooks.Annotations}
 	hv := helmValues{
-		CRDInstaller: helmCRDInstallerValues{Enabled: c.InstallCRDs},
 		Config: helmConfigValues{
 			Server: helmServerValues{
 				Webhooks: configv1beta1.WebhookServer{

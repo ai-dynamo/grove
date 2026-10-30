@@ -27,7 +27,9 @@ import (
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 	groveclientscheme "github.com/ai-dynamo/grove/operator/internal/client"
+	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 
+	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
@@ -686,6 +688,67 @@ func TestWaitForLocalWebhookServer(t *testing.T) {
 		err := WaitForLocalWebhookServer(ctx, &mockManager{})
 		require.ErrorContains(t, err, "webhook server did not start")
 	})
+}
+
+func TestStartWebhooksAfterCertificates(t *testing.T) {
+	testCases := []struct {
+		name          string
+		webhookErr    error
+		serverErr     error
+		expectedCalls []string
+		expectedErr   string
+	}{
+		{
+			name:          "starts webhooks after certificates are ready",
+			expectedCalls: []string{"certificates", "webhooks", "server"},
+		},
+		{
+			name:          "webhook registration failure stops startup",
+			webhookErr:    errors.New("webhook failure"),
+			expectedCalls: []string{"certificates", "webhooks"},
+			expectedErr:   "webhook failure",
+		},
+		{
+			name:          "webhook server failure is returned",
+			serverErr:     errors.New("server failure"),
+			expectedCalls: []string{"certificates", "webhooks", "server"},
+			expectedErr:   "server failure",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			originalWait := waitTillWebhookCertsReady
+			originalRegister := registerWebhooksWithMgr
+			originalServerStarted := waitTillWebhookServerStarted
+			t.Cleanup(func() {
+				waitTillWebhookCertsReady = originalWait
+				registerWebhooksWithMgr = originalRegister
+				waitTillWebhookServerStarted = originalServerStarted
+			})
+
+			var calls []string
+			waitTillWebhookCertsReady = func(_ logr.Logger, _ chan struct{}) {
+				calls = append(calls, "certificates")
+			}
+			registerWebhooksWithMgr = func(_ ctrl.Manager, _ *configv1beta1.OperatorConfiguration, _ scheduler.Registry) error {
+				calls = append(calls, "webhooks")
+				return tc.webhookErr
+			}
+			waitTillWebhookServerStarted = func(_ context.Context, _ ctrl.Manager) error {
+				calls = append(calls, "server")
+				return tc.serverErr
+			}
+
+			err := StartWebhooksAfterCertificates(context.Background(), &mockManager{}, logr.Discard(), &configv1beta1.OperatorConfiguration{}, make(chan struct{}), nil)
+			if tc.expectedErr == "" {
+				require.NoError(t, err)
+			} else {
+				require.ErrorContains(t, err, tc.expectedErr)
+			}
+			assert.Equal(t, tc.expectedCalls, calls)
+		})
+	}
 }
 
 // TestPodCacheFiltering verifies that the manager's cache only stores pods with the

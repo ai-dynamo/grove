@@ -213,7 +213,7 @@ func upgradeGrove(t *testing.T, tc *testctx.TestContext) {
 				},
 			},
 			"crdInstaller": map[string]any{
-				"enabled": true,
+				"upgradeCRDs": true,
 				"image": map[string]any{
 					"repository": "registry:5001/grove-install-crds",
 					"tag":        "latest",

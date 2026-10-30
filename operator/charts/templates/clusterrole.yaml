@@ -228,22 +228,7 @@ rules:
   - get
   - list
   - watch
-# grove-install-crds prepare-downgrade, run as the operator's ServiceAccount, sets status.storedVersions of every
-# grove.io CRD to [v1alpha1] once their objects are rewritten at grove.io/v1alpha1.
-- apiGroups:
-  - apiextensions.k8s.io
-  resources:
-  - customresourcedefinitions/status
-  resourceNames:
-  - podcliquesets.grove.io
-  - podcliques.grove.io
-  - podcliquescalinggroups.grove.io
-  - clustertopologybindings.grove.io
-  - podgangmaps.grove.io
-  verbs:
-  - update
-  - patch
-# CRD installer init container requires permissions to apply Grove CRDs on startup.
+# The CRD installer always patches PodCliqueSet conversion and can optionally apply all Grove CRDs.
 - apiGroups:
   - apiextensions.k8s.io
   resources:

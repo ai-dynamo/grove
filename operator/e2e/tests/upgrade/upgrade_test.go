@@ -116,8 +116,8 @@ func Test_VUPG1_UpgradeFromLatestGitHubRelease(t *testing.T) {
 }
 
 // Test_VDGR1_DowngradeToLatestGitHubRelease verifies the documented downgrade: after an upgrade to the
-// operator built from the current checkout, grove-install-crds prepare-downgrade moves the grove.io objects
-// back to grove.io/v1alpha1, and a Helm rollback to the released version then succeeds. The workload's pods
+// operator built from the current checkout, run-api-downgrade moves the grove.io objects back to
+// grove.io/v1alpha1, and a Helm rollback to the released version then succeeds. The workload's pods
 // survive both the upgrade and the downgrade, and the released operator keeps managing the workload.
 //
 // The released version can be controlled with GROVE_UPGRADE_FROM_VERSION.
@@ -158,7 +158,7 @@ func (s *podSurvivalUpgrade) downgradeAndVerify(t *testing.T, tc *testctx.TestCo
 	pcsBeforeDowngrade := &corev1alpha1.PodCliqueSet{}
 	require.NoError(t, tc.Client.Get(t.Context(), pcsKey, pcsBeforeDowngrade), "get PodCliqueSet at v1alpha1")
 
-	runPrepareDowngrade(t)
+	runAPIDowngrade(t)
 	requireCRDsServeOnly(t, tc, alpha)
 
 	testctx.Logger.Infof("rolling back to the released Grove operator %s", s.fromVersion)

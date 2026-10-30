@@ -34,7 +34,6 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/podgangmigrator"
 	schedulerregistry "github.com/ai-dynamo/grove/operator/internal/scheduler/registry"
 	groveversion "github.com/ai-dynamo/grove/operator/internal/version"
-	"github.com/ai-dynamo/grove/operator/internal/webhook"
 
 	"github.com/spf13/pflag"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -129,23 +128,16 @@ func main() {
 		handleErrorAndExit(err, cli.ExitErrInitializeManager)
 	}
 
-	// Register webhook handlers before the manager starts. The manager starts the webhook server before its
-	// caches, and controllers are registered only after the server can handle converted PodCliqueSets.
-	if err = webhook.Register(mgr, operatorConfig, schedRegistry); err != nil {
-		logger.Error(err, "failed to register webhooks")
-		handleErrorAndExit(err, cli.ExitErrInitializeManager)
-	}
-
 	if err = grovectrl.SetupHealthAndReadinessEndpoints(mgr, webhookCertsReadyCh); err != nil {
 		logger.Error(err, "failed to set up health and readiness for grove controller manager")
 		handleErrorAndExit(err, cli.ExitErrInitializeManager)
 	}
 
-	// The manager starts the webhook server. Once it is ready, set the migration gate before adding controllers.
+	// The manager must start cert-controller before the webhook server tries to read its serving certificate.
+	// Once the certificates and webhook server are ready, set the migration gate before adding controllers.
 	go func() {
-		cert.WaitTillWebhookCertsReady(logger, webhookCertsReadyCh)
-		if err := grovectrl.WaitForLocalWebhookServer(ctx, mgr); err != nil {
-			logger.Error(err, "failed waiting for the webhook server")
+		if err := grovectrl.StartWebhooksAfterCertificates(ctx, mgr, logger, operatorConfig, webhookCertsReadyCh, schedRegistry); err != nil {
+			logger.Error(err, "failed to start webhooks")
 			handleErrorAndExit(err, cli.ExitErrInitializeManager)
 		}
 		if err := setPodGangMigrationGate(ctx, cl); err != nil {

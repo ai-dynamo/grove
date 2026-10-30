@@ -65,30 +65,26 @@ func TestWebhookRulesMatchHubVersion(t *testing.T) {
 	assert.Equal(t, 6, groveRules)
 }
 
-// TestClusterRoleConversionCRDAccess verifies that the operator can configure the conversion webhook of the
-// converted CRD, and prepare-downgrade can update the storedVersions of every grove.io CRD, whether or not the CRD
-// installer is enabled.
+// TestClusterRoleConversionCRDAccess verifies that the installer can patch or upgrade the CRDs and cert-controller
+// can inject the conversion CA.
 func TestClusterRoleConversionCRDAccess(t *testing.T) {
-	for _, crdInstallerEnabled := range []bool{false, true} {
-		manifests := renderChart(t, map[string]interface{}{
-			"crdInstaller": map[string]interface{}{"enabled": crdInstallerEnabled},
-		})
-		clusterRoleYAML, ok := manifests["grove-charts/templates/clusterrole.yaml"]
-		require.True(t, ok)
-		clusterRole := &rbacv1.ClusterRole{}
-		require.NoError(t, yaml.UnmarshalStrict([]byte(clusterRoleYAML), clusterRole))
+	manifests := renderChart(t, map[string]interface{}{
+		"crdInstaller": map[string]interface{}{"upgradeCRDs": false},
+	})
+	clusterRoleYAML, ok := manifests["grove-charts/templates/clusterrole.yaml"]
+	require.True(t, ok)
+	clusterRole := &rbacv1.ClusterRole{}
+	require.NoError(t, yaml.UnmarshalStrict([]byte(clusterRoleYAML), clusterRole))
 
-		for _, verb := range []string{"get", "list", "watch", "update", "patch"} {
-			assert.True(t, allowsCRD(clusterRole, "customresourcedefinitions", "podcliquesets.grove.io", verb),
-				"crdInstaller.enabled=%t: %s on podcliquesets.grove.io", crdInstallerEnabled, verb)
+	for _, crd := range []string{"podcliquesets.grove.io", "podcliques.grove.io", "podcliquescalinggroups.grove.io",
+		"clustertopologybindings.grove.io", "podgangmaps.grove.io", "podgangs.scheduler.grove.io"} {
+		for _, verb := range []string{"get", "create", "update", "patch", "delete"} {
+			assert.True(t, allowsCRD(clusterRole, "customresourcedefinitions", crd, verb),
+				"%s on %s", verb, crd)
 		}
-		for _, crd := range []string{"podcliquesets.grove.io", "podcliques.grove.io", "podcliquescalinggroups.grove.io",
-			"clustertopologybindings.grove.io", "podgangmaps.grove.io"} {
-			for _, verb := range []string{"update", "patch"} {
-				assert.True(t, allowsCRD(clusterRole, "customresourcedefinitions/status", crd, verb),
-					"crdInstaller.enabled=%t: %s on %s status", crdInstallerEnabled, verb, crd)
-			}
-		}
+	}
+	for _, verb := range []string{"list", "watch"} {
+		assert.True(t, allowsCRD(clusterRole, "customresourcedefinitions", "podcliquesets.grove.io", verb), verb)
 	}
 }
 

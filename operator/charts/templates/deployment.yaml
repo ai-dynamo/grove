@@ -41,11 +41,16 @@ spec:
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- if .Values.crdInstaller.enabled }}
       initContainers:
         - name: crd-installer
           image: {{ include "image" .Values.crdInstaller.image }}
           imagePullPolicy: {{ .Values.crdInstaller.image.pullPolicy }}
+          args:
+            - --upgrade-crds={{ .Values.crdInstaller.upgradeCRDs | default false }}
+            - --conversion-webhook-port={{ required ".Values.config.server.webhooks.port is required" .Values.config.server.webhooks.port }}
+            {{- if eq (.Values.config.server.webhooks.certProvisionMode | default "auto") "manual" }}
+            - --conversion-webhook-ca-file={{ .Values.config.server.webhooks.serverCertDir | default "/etc/grove-operator/webhook-certs" }}/ca.crt
+            {{- end }}
           {{- with .Values.resources }}
           resources:
             {{- toYaml . | nindent 12 }}
@@ -61,7 +66,12 @@ spec:
             - name: kube-api-access-grove
               mountPath: /var/run/secrets/kubernetes.io/serviceaccount
               readOnly: true
-      {{- end }}
+            {{- /* In manual mode, the installer reads ca.crt to configure the conversion webhook CA bundle. */}}
+            {{- if eq (.Values.config.server.webhooks.certProvisionMode | default "auto") "manual" }}
+            - name: grove-webhook-server-cert
+              mountPath: {{ .Values.config.server.webhooks.serverCertDir | default "/etc/grove-operator/webhook-certs" }}
+              readOnly: true
+            {{- end }}
       containers:
         - name: grove-operator
           image: {{ include "image" .Values.image }}

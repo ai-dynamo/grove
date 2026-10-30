@@ -27,30 +27,19 @@ In both versions, an unset `scaleConfig.minReplicas` of a PodClique or PodClique
 
 ## Upgrading
 
-Helm does not upgrade CRDs, so the CRDs of v0.2.0-beta1 must be applied before the new operator starts. The simplest way is to let the operator's CRD installer init container apply them:
+Enable CRD upgrades so the installer applies the v0.2.0-beta1 CRDs before the new operator starts:
 
 ```bash
 helm upgrade grove oci://ghcr.io/ai-dynamo/grove/grove-charts \
   --version v0.2.0-beta1 \
   --namespace <namespace> \
-  --reuse-values \
-  --set crdInstaller.enabled=true
-```
-
-If you do not use the CRD installer, apply the CRDs from the chart yourself, then upgrade:
-
-```bash
-helm pull oci://ghcr.io/ai-dynamo/grove/grove-charts --version v0.2.0-beta1 --untar
-kubectl apply --server-side --force-conflicts -f grove-charts/crds/
-helm upgrade grove oci://ghcr.io/ai-dynamo/grove/grove-charts \
-  --version v0.2.0-beta1 \
-  --namespace <namespace> \
+  --set crdInstaller.upgradeCRDs=true \
   --reuse-values
 ```
 
-When the new operator starts, it points the PCS CRD's conversion webhook at itself and then starts its controllers. Existing objects are not rewritten: the API server stores an object as `grove.io/v1beta1` the next time it is written, and the operator writes the status of most Grove objects as it reconciles them. Objects that are not written stay stored as `grove.io/v1alpha1`, which the API server converts when they are read. A later release, before `grove.io/v1alpha1` is removed, migrates the remaining objects.
+The installer always points the PCS CRD's conversion webhook at the operator. `crdInstaller.upgradeCRDs=true` also applies the bundled CRDs. Existing objects are not rewritten: the API server stores an object as `grove.io/v1beta1` the next time it is written, and the operator writes the status of most Grove objects as it reconciles them. Objects that are not written stay stored as `grove.io/v1alpha1`, which the API server converts when they are read. A later release, before `grove.io/v1alpha1` is removed, migrates the remaining objects.
 
-> **Note:** Between applying the new CRDs and the new operator becoming ready, requests for PCS objects that need conversion fail, because the operator that serves the conversion webhook is not running yet. With `crdInstaller.enabled=true`, this window is the operator restart.
+> **Note:** Between applying the new CRDs and the new operator becoming ready, requests for PCS objects that need conversion fail because the conversion webhook is not running yet.
 
 ## Verifying the Upgrade
 
@@ -116,65 +105,35 @@ kind: OperatorConfiguration
 
 ## Downgrading
 
-After the upgrade, the API server stores every Grove object that is written as `grove.io/v1beta1`, which v0.1.x does not know, and the CRDs list `v1beta1` in `status.storedVersions`. A plain `helm rollback` fails, because the API server rejects CRDs that drop a stored version, so you must first move the objects back to `grove.io/v1alpha1` with `grove-install-crds prepare-downgrade`. The command:
+After the upgrade, the API server stores every Grove object that is written as `grove.io/v1beta1`, which v0.1.x does not know, and the CRDs list `v1beta1` in `status.storedVersions`. A plain `helm rollback` fails, because the API server rejects CRDs that drop a stored version, so you must first move the objects back to `grove.io/v1alpha1`. The downgrade script:
 
 1. Makes `v1alpha1` the storage version of the Grove CRDs, keeping both versions served.
 2. Rewrites every Grove object so that it is stored as `grove.io/v1alpha1`.
 3. Sets `status.storedVersions` of each CRD to `["v1alpha1"]`.
 4. Removes `v1beta1` and the conversion webhook from the CRDs.
 
-Run it while the v0.2.0-beta1 operator is still running, because PCS objects are converted by its conversion webhook. Downgrade to v0.1.0-alpha.16: the CRDs of earlier releases lack fields that v0.1.0-alpha.16 and later set, and the API server drops those fields.
+Run the script while the v0.2.0-beta1 operator is still running, because PCS objects are converted by its conversion webhook. Downgrade to v0.1.0-alpha.16: the CRDs of earlier releases lack fields that v0.1.0-alpha.16 and later set, and the API server drops those fields.
 
 ### Step 1: Prepare the downgrade
 
-From a checkout of the `v0.2.0-beta1` tag, with a kubeconfig that can update CRDs and Grove objects:
+From a checkout of the `v0.2.0-beta1` tag, run the script with credentials that can update Grove objects in every namespace and patch CRDs and their status:
 
 ```bash
-cd operator
-go run ./cmd/install-crds prepare-downgrade
+make --directory=operator run-api-downgrade
 ```
 
-The command uses the cluster of `--kubeconfig`, then of `KUBECONFIG`, then the in-cluster config when it runs in a Pod, and finally `~/.kube/config`. When you run it from inside a Pod against another cluster, pass `--kubeconfig <path>` before `prepare-downgrade`.
-
-Alternatively, if the release was installed with `crdInstaller.enabled=true`, run the command in the cluster as the operator's ServiceAccount, which then has the required permissions:
-
-```yaml
-apiVersion: batch/v1
-kind: Job
-metadata:
-  name: grove-prepare-downgrade
-  namespace: <namespace>
-spec:
-  backoffLimit: 0
-  template:
-    spec:
-      serviceAccountName: grove-operator
-      automountServiceAccountToken: true
-      restartPolicy: Never
-      containers:
-        - name: prepare-downgrade
-          image: ghcr.io/ai-dynamo/grove/grove-install-crds:v0.2.0-beta1
-          args: ["prepare-downgrade"]
-```
-
-```bash
-kubectl apply -f prepare-downgrade-job.yaml
-kubectl wait -n <namespace> --for=condition=complete job/grove-prepare-downgrade --timeout=10m
-kubectl logs -n <namespace> job/grove-prepare-downgrade
-```
-
-The command is idempotent. If it fails, for example because an admission webhook rejects an object, fix the object and run it again. A PCS admitted by an earlier release with a scaling group whose `scaleConfig.maxReplicas` is less than its `scaleConfig.minReplicas` is rejected this way.
+The script uses your current `kubectl` context. Set `KUBECONFIG` before running the command to use another kubeconfig. The script is safe to run again. If it stops because an object changed while it was being rewritten, run it again. If an admission webhook rejects an object, fix the object first. For example, the rewrite rejects a PCS admitted by an earlier release when a scaling group's `scaleConfig.maxReplicas` is less than its `scaleConfig.minReplicas`.
 
 ### Step 2: Roll back the release
 
-Roll back right after the command completes:
+Roll back right after the script completes:
 
 ```bash
 helm history grove -n <namespace>
 helm rollback grove <revision-of-v0.1.0-alpha.16> -n <namespace>
 ```
 
-> **Note:** If the v0.2.0-beta1 operator restarts before the rollback with `crdInstaller.enabled=true`, its init container applies the v0.2.0-beta1 CRDs again, and the objects that the operator writes are stored as `grove.io/v1beta1` again. Run `prepare-downgrade` again in that case.
+> **Note:** If the v0.2.0-beta1 operator restarts with `crdInstaller.upgradeCRDs=true` before the rollback, its init container applies the v0.2.0-beta1 CRDs again, and the objects that the operator writes are stored as `grove.io/v1beta1` again. Run the downgrade script again in that case.
 
 ### Step 3: Verify the downgrade
 
@@ -190,4 +149,4 @@ Each line shows `v1alpha1 ["v1alpha1"]`. Any `packDomain` that existed before th
 
 - **`packDomain` is converted, not stored.** As in v0.1.x, `grove.io/v1alpha1` rejects `packDomain` on a new PCS, and accepts it on an existing one. Grove stores the value as `pack.required`, so reading the PCS back at `v1alpha1` shows `pack.required`, so tools that compare the applied manifest with the live object report a difference until you replace `packDomain` with `pack.required` in your manifests.
 - **The deprecated versions are removed in a later release.** A future release stops serving `grove.io/v1alpha1` and stops accepting `operator.config.grove.io/v1alpha1`. Move your manifests and configuration to `v1beta1` before then.
-- **A downgrade needs the v0.2.0-beta1 operator.** `prepare-downgrade` cannot run after the operator is removed, because PCS objects are converted by its conversion webhook.
+- **A downgrade needs the v0.2.0-beta1 operator.** The downgrade script cannot run after the operator is removed, because PCS objects are converted by its conversion webhook.

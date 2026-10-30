@@ -112,8 +112,12 @@ func TestOperatorImagePullSecrets(t *testing.T) {
 // which the webhook certificates and the conversion webhook of the CRDs refer to.
 func TestDeploymentServiceName(t *testing.T) {
 	deployment := renderOperatorDeployment(t, map[string]interface{}{
-		"service":      map[string]interface{}{"name": "my-grove"},
-		"crdInstaller": map[string]interface{}{"enabled": true},
+		"service": map[string]interface{}{"name": "my-grove"},
+		"config": map[string]interface{}{
+			"server": map[string]interface{}{
+				"webhooks": map[string]interface{}{"port": 8443},
+			},
+		},
 	})
 	podSpec := deployment.Spec.Template.Spec
 	containers := append(append([]corev1.Container{}, podSpec.InitContainers...), podSpec.Containers...)
@@ -121,6 +125,58 @@ func TestDeploymentServiceName(t *testing.T) {
 	for _, container := range containers {
 		assert.Contains(t, container.Env, corev1.EnvVar{Name: "GROVE_OPERATOR_SERVICE_NAME", Value: "my-grove"}, container.Name)
 	}
+	require.Len(t, podSpec.InitContainers, 1)
+	assert.Contains(t, podSpec.InitContainers[0].Args, "--conversion-webhook-port=8443")
+}
+
+func TestCRDInstallerAlwaysRuns(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		values      map[string]interface{}
+		wantUpgrade string
+	}{
+		{name: "unset", wantUpgrade: "--upgrade-crds=false"},
+		{name: "disabled", values: map[string]interface{}{"crdInstaller": map[string]interface{}{"upgradeCRDs": false}}, wantUpgrade: "--upgrade-crds=false"},
+		{name: "enabled", values: map[string]interface{}{"crdInstaller": map[string]interface{}{"upgradeCRDs": true}}, wantUpgrade: "--upgrade-crds=true"},
+		{
+			name: "legacy installer toggle ignored",
+			values: map[string]interface{}{
+				"crdInstaller": map[string]interface{}{"enabled": false},
+			},
+			wantUpgrade: "--upgrade-crds=false",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			deployment := renderOperatorDeployment(t, tc.values)
+
+			require.Len(t, deployment.Spec.Template.Spec.InitContainers, 1)
+			installer := deployment.Spec.Template.Spec.InitContainers[0]
+			assert.Equal(t, "crd-installer", installer.Name)
+			assert.Contains(t, installer.Args, tc.wantUpgrade)
+		})
+	}
+}
+
+func TestCRDInstallerManualCA(t *testing.T) {
+	deployment := renderOperatorDeployment(t, map[string]interface{}{
+		"config": map[string]interface{}{
+			"server": map[string]interface{}{
+				"webhooks": map[string]interface{}{
+					"certProvisionMode": "manual",
+					"serverCertDir":     "/custom/webhook-certs",
+				},
+			},
+		},
+	})
+
+	require.Len(t, deployment.Spec.Template.Spec.InitContainers, 1)
+	installer := deployment.Spec.Template.Spec.InitContainers[0]
+	assert.Contains(t, installer.Args, "--conversion-webhook-ca-file=/custom/webhook-certs/ca.crt")
+	assert.Contains(t, installer.VolumeMounts, corev1.VolumeMount{
+		Name:      "grove-webhook-server-cert",
+		MountPath: "/custom/webhook-certs",
+		ReadOnly:  true,
+	})
 }
 
 func renderOperatorDeployment(t *testing.T, values map[string]interface{}) *appsv1.Deployment {

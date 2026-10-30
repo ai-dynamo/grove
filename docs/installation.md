@@ -103,8 +103,9 @@ You can configure the Grove operator by modifying the [values.yaml](../operator/
 This make target leverages Grove [Helm](https://helm.sh/) charts and [Skaffold](https://skaffold.dev/) to install the following resources to the cluster:
 
 - [CRDs](../operator/charts):
-  - Grove operator CRD - `podcliquesets.grove.io`, `podcliques.grove.io` and `podcliquescalinggroups.grove.io`.
-  - Grove Scheduler CRDs - `podgangs.scheduler.grove.io`.
+  - Grove operator CRDs - `podcliquesets.grove.io`, `podcliques.grove.io`, `podcliquescalinggroups.grove.io`,
+    `clustertopologybindings.grove.io`, and `podgangmaps.grove.io`.
+  - Grove scheduler CRD - `podgangs.scheduler.grove.io`.
 - All Grove operator resources defined as a part of [Grove Helm chart templates](../operator/charts/templates).
 
 ## Certificate Management
@@ -125,9 +126,9 @@ Follow the instructions in the [quickstart guide](quickstart.md) to deploy a Pod
 
 ### v0.2.0-beta1: grove.io/v1beta1
 
-v0.2.0-beta1 stores Grove objects as `grove.io/v1beta1` and deprecates `grove.io/v1alpha1`. The operator migrates
-existing objects when it starts. See [Upgrading to v0.2.0-beta1](user-guide/upgrading-to-v1beta1-v0.2.0-beta1.md) for the
-upgrade, its verification, and the downgrade procedure.
+v0.2.0-beta1 stores Grove objects as `grove.io/v1beta1` and deprecates `grove.io/v1alpha1`. Existing objects move
+to `v1beta1` the next time they are written. See [Upgrading to v0.2.0-beta1](user-guide/upgrading-to-v1beta1-v0.2.0-beta1.md)
+for the upgrade, its verification, and the downgrade procedure.
 
 ### ClusterTopology renamed to ClusterTopologyBinding
 
@@ -163,10 +164,9 @@ release containing the update that allowed administrators to create
 ## Advanced: `helm template` and GitOps
 
 `helm template` does not render the chart's `crds/` directory unless
-`--include-crds` is passed, so installs via `helm template | kubectl apply`,
-ArgoCD, Flux, or Kustomize fail with missing CRDs by default. Set
-`crdInstaller.enabled=true` to install and upgrade CRDs from an init
-container instead.
+`--include-crds` is passed. Use that flag for a fresh install. The CRD installer
+init container always configures the PodCliqueSet conversion webhook. Set
+`crdInstaller.upgradeCRDs=true` to also upgrade existing CRDs from the operator bundle.
 
 In the same workflows you should also set `webhookServerSecret.enabled=false`:
 the chart otherwise renders an empty `grove-webhook-server-cert` Secret that
@@ -174,16 +174,20 @@ overwrites the auto-generated TLS material on every re-apply or GitOps sync,
 breaking the webhook. With it disabled, the operator creates and manages the
 Secret itself.
 
+> **Note:** Reapplying the generated PodCliqueSet CRD after the operator Pod starts can restore the generated
+> conversion webhook address. Restart the operator Pod after such a sync so that the CRD installer configures
+> the address for the release namespace and `service.name`.
+
 ```bash
 helm template grove oci://ghcr.io/ai-dynamo/grove/grove-charts \
   --version <version> \
-  --set crdInstaller.enabled=true \
+  --include-crds \
+  --set crdInstaller.upgradeCRDs=true \
   --set webhookServerSecret.enabled=false \
   | kubectl apply -f -
 ```
 
-See [GREP-436](proposals/436-crd-upgrader/README.md#note-for-helm-template--gitops-users)
-for the CRD design details and the alternative `--include-crds` workflow.
+See [GREP-436](proposals/436-crd-upgrader/README.md) for the CRD design details.
 
 ## Troubleshooting
 

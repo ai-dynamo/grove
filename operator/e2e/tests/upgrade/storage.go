@@ -135,27 +135,17 @@ func requirePCSReadableAtBothVersions(t *testing.T, tc *testctx.TestContext, key
 		"PodCliqueSet %s differs between v1alpha1 and v1beta1", key)
 }
 
-// runPrepareDowngrade runs grove-install-crds prepare-downgrade from the current checkout against the test
-// cluster, the way a user prepares a downgrade.
-func runPrepareDowngrade(t *testing.T) {
+// runAPIDowngrade runs the documented downgrade target from the current checkout against the test cluster.
+func runAPIDowngrade(t *testing.T) {
 	t.Helper()
 	rootDir, err := setup.GetOperatorRootDir()
 	require.NoError(t, err, "locate current root directory")
 
-	// The test cluster is the one in the kubeconfig. Without an explicit --kubeconfig, a run inside a Pod, such as a
-	// CI runner, would prefer the in-cluster config of that Pod.
-	kubeconfig := os.Getenv("KUBECONFIG")
-	if kubeconfig == "" {
-		home, err := os.UserHomeDir()
-		require.NoError(t, err, "locate the home directory")
-		kubeconfig = filepath.Join(home, ".kube", "config")
-	}
-
-	testctx.Logger.Info("running grove-install-crds prepare-downgrade")
-	cmd := exec.CommandContext(t.Context(), "go", "run", "./cmd/install-crds", "--kubeconfig", kubeconfig, "prepare-downgrade")
-	cmd.Dir = rootDir
+	testctx.Logger.Info("running make --directory=operator run-api-downgrade")
+	cmd := exec.CommandContext(t.Context(), "make", "--directory=operator", "run-api-downgrade")
+	cmd.Dir = filepath.Dir(rootDir)
 	cmd.Env = os.Environ()
 	output, err := cmd.CombinedOutput()
-	testctx.Logger.Infof("prepare-downgrade output:\n%s", output)
-	require.NoError(t, err, "prepare-downgrade failed")
+	testctx.Logger.Infof("run-api-downgrade output:\n%s", output)
+	require.NoError(t, err, "run-api-downgrade failed")
 }
