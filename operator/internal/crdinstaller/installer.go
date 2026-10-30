@@ -35,6 +35,7 @@ const (
 	legacyClusterTopologyGroup   = "grove.io"
 	legacyClusterTopologyVersion = "v1alpha1"
 	legacyClusterTopologyKind    = "ClusterTopology"
+	requiredConversionVersion    = "v1beta1"
 )
 
 // ConversionWebhookConfig contains values injected by the CRD-installer init container. The PodCliqueSet CRD in
@@ -94,6 +95,9 @@ func ConfigureConversionWebhook(ctx context.Context, cl client.Client, log logr.
 	if err := cl.Get(ctx, client.ObjectKey{Name: obj.GetName()}, existing); err != nil {
 		return fmt.Errorf("failed to get CRD %q: %w", obj.GetName(), err)
 	}
+	if err := requireServedVersion(existing, requiredConversionVersion); err != nil {
+		return err
+	}
 
 	// In automatic mode, cert-controller owns caBundle. Preserve its current value in this merge patch.
 	if len(conversion.CABundle) == 0 {
@@ -115,6 +119,33 @@ func ConfigureConversionWebhook(ctx context.Context, cl client.Client, log logr.
 	}
 	log.Info("CRD conversion webhook configured", "name", obj.GetName())
 	return nil
+}
+
+func requireServedVersion(crd *unstructured.Unstructured, requiredVersion string) error {
+	versions, found, err := unstructured.NestedSlice(crd.Object, "spec", "versions")
+	if err != nil {
+		return fmt.Errorf("failed to read versions of CRD %q: %w", crd.GetName(), err)
+	}
+	if found {
+		for _, rawVersion := range versions {
+			version, ok := rawVersion.(map[string]any)
+			if !ok {
+				continue
+			}
+			name, _, err := unstructured.NestedString(version, "name")
+			if err != nil {
+				return fmt.Errorf("failed to read a version name of CRD %q: %w", crd.GetName(), err)
+			}
+			served, _, err := unstructured.NestedBool(version, "served")
+			if err != nil {
+				return fmt.Errorf("failed to read whether version %q of CRD %q is served: %w", name, crd.GetName(), err)
+			}
+			if name == requiredVersion && served {
+				return nil
+			}
+		}
+	}
+	return fmt.Errorf("CRD %q does not serve required version %q; enable CRD upgrades with --upgrade-crds=true", crd.GetName(), requiredVersion)
 }
 
 // deleteEmptyLegacyClusterTopologyCRD removes the unused ClusterTopology CRD

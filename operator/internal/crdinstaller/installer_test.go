@@ -170,14 +170,7 @@ func TestConfigureConversionWebhook_OnlyUpdatesConversion(t *testing.T) {
 	require.NoError(t, yaml.Unmarshal([]byte(operatorcrds.PodCliqueSetCRD()), pcsCRD))
 	pcsCRD.Labels = map[string]string{"preserve": "true"}
 	pcsCRD.Spec.Conversion.Webhook.ClientConfig.CABundle = []byte("injected-ca")
-	for _, version := range pcsCRD.Spec.Versions {
-		if version.Name == "v1alpha1" {
-			version.Storage = true
-			pcsCRD.Spec.Versions = []apiextensionsv1.CustomResourceDefinitionVersion{version}
-			break
-		}
-	}
-	require.Len(t, pcsCRD.Spec.Versions, 1)
+	originalVersions := pcsCRD.DeepCopy().Spec.Versions
 
 	cl := buildFakeClient(pcsCRD)
 	err := crdinstaller.ConfigureConversionWebhook(context.Background(), cl, logr.Discard(),
@@ -187,8 +180,7 @@ func TestConfigureConversionWebhook_OnlyUpdatesConversion(t *testing.T) {
 	configured := &apiextensionsv1.CustomResourceDefinition{}
 	require.NoError(t, cl.Get(context.Background(), client.ObjectKey{Name: pcsCRD.Name}, configured))
 	assert.Equal(t, map[string]string{"preserve": "true"}, configured.Labels)
-	require.Len(t, configured.Spec.Versions, 1)
-	assert.Equal(t, "v1alpha1", configured.Spec.Versions[0].Name)
+	assert.Equal(t, originalVersions, configured.Spec.Versions)
 	require.NotNil(t, configured.Spec.Conversion)
 	require.NotNil(t, configured.Spec.Conversion.Webhook)
 	service := configured.Spec.Conversion.Webhook.ClientConfig.Service
@@ -204,6 +196,51 @@ func TestConfigureConversionWebhook_OnlyUpdatesConversion(t *testing.T) {
 		operatorcrds.PodCliqueSetCRD(), manual))
 	require.NoError(t, cl.Get(context.Background(), client.ObjectKey{Name: pcsCRD.Name}, configured))
 	assert.Equal(t, []byte("manual-ca"), configured.Spec.Conversion.Webhook.ClientConfig.CABundle)
+}
+
+func TestConfigureConversionWebhook_RequiresServedV1beta1(t *testing.T) {
+	testCases := []struct {
+		name    string
+		prepare func(*apiextensionsv1.CustomResourceDefinition)
+	}{
+		{
+			name: "v1beta1 is missing",
+			prepare: func(crd *apiextensionsv1.CustomResourceDefinition) {
+				for _, version := range crd.Spec.Versions {
+					if version.Name == "v1alpha1" {
+						version.Storage = true
+						crd.Spec.Versions = []apiextensionsv1.CustomResourceDefinitionVersion{version}
+						return
+					}
+				}
+			},
+		},
+		{
+			name: "v1beta1 is not served",
+			prepare: func(crd *apiextensionsv1.CustomResourceDefinition) {
+				for i := range crd.Spec.Versions {
+					if crd.Spec.Versions[i].Name == "v1beta1" {
+						crd.Spec.Versions[i].Served = false
+						return
+					}
+				}
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			pcsCRD := &apiextensionsv1.CustomResourceDefinition{}
+			require.NoError(t, yaml.Unmarshal([]byte(operatorcrds.PodCliqueSetCRD()), pcsCRD))
+			tc.prepare(pcsCRD)
+
+			cl := buildFakeClient(pcsCRD)
+			err := crdinstaller.ConfigureConversionWebhook(context.Background(), cl, logr.Discard(),
+				operatorcrds.PodCliqueSetCRD(), testConversion)
+			require.ErrorContains(t, err, `does not serve required version "v1beta1"`)
+			require.ErrorContains(t, err, "--upgrade-crds=true")
+		})
+	}
 }
 
 func TestConfigureConversionWebhook_DoesNotCreateCRD(t *testing.T) {
