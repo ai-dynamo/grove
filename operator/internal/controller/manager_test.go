@@ -740,7 +740,7 @@ func TestStartWebhooksAfterCertificates(t *testing.T) {
 				return tc.serverErr
 			}
 
-			err := StartWebhooksAfterCertificates(context.Background(), &mockManager{}, logr.Discard(), &configv1beta1.OperatorConfiguration{}, make(chan struct{}), nil)
+			err := StartWebhooksAfterCertificateInjection(context.Background(), &mockManager{}, logr.Discard(), &configv1beta1.OperatorConfiguration{}, make(chan struct{}), nil)
 			if tc.expectedErr == "" {
 				require.NoError(t, err)
 			} else {

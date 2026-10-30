@@ -136,7 +136,7 @@ func main() {
 	// The manager must start cert-controller before the webhook server tries to read its serving certificate.
 	// Once the certificates and webhook server are ready, set the migration gate before adding controllers.
 	go func() {
-		if err := grovectrl.StartWebhooksAfterCertificates(ctx, mgr, logger, operatorConfig, webhookCertsReadyCh, schedRegistry); err != nil {
+		if err := grovectrl.StartWebhooksAfterCertificateInjection(ctx, mgr, logger, operatorConfig, webhookCertsReadyCh, schedRegistry); err != nil {
 			logger.Error(err, "failed to start webhooks")
 			handleErrorAndExit(err, cli.ExitErrInitializeManager)
 		}

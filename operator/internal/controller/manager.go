@@ -58,9 +58,9 @@ func CreateManager(operatorCfg *configv1beta1.OperatorConfiguration) (ctrl.Manag
 	return ctrl.NewManager(getRestConfig(operatorCfg), createManagerOptions(operatorCfg))
 }
 
-// StartWebhooksAfterCertificates waits for cert-controller to populate the serving certificate files before
+// StartWebhooksAfterCertificateInjection waits for cert-controller to populate the serving certificate files before
 // adding the webhook server to a running manager. It then waits until that server accepts TLS connections.
-func StartWebhooksAfterCertificates(ctx context.Context, mgr ctrl.Manager, logger logr.Logger, operatorCfg *configv1beta1.OperatorConfiguration, certsReady chan struct{}, schedRegistry scheduler.Registry) error {
+func StartWebhooksAfterCertificateInjection(ctx context.Context, mgr ctrl.Manager, logger logr.Logger, operatorCfg *configv1beta1.OperatorConfiguration, certsReady chan struct{}, schedRegistry scheduler.Registry) error {
 	waitTillWebhookCertsReady(logger, certsReady)
 	if err := registerWebhooksWithMgr(mgr, operatorCfg, schedRegistry); err != nil {
 		return err
