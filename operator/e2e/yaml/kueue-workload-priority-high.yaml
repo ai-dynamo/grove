@@ -1,0 +1,47 @@
+# Copyright 2026 NVIDIA CORPORATION
+# SPDX-License-Identifier: Apache-2.0
+#
+# grove-e2e-high workload for Test_Kueue13_WorkloadPriorityPreemption, submitted through the
+# "grove-e2e-priority" LocalQueue (kueue-queues-priority.yaml) and requesting its whole 100Mi
+# memory quota (2 pods x 50Mi): submitted once kueue-workload-priority-low.yaml holds the whole quota,
+# and admitted by preempting it.
+---
+apiVersion: grove.io/v1alpha1
+kind: PodCliqueSet
+metadata:
+  name: kueue-workload-priority-high
+  labels:
+    app: kueue-workload-priority-high
+    kueue.x-k8s.io/queue-name: grove-e2e-priority
+    kueue.x-k8s.io/priority-class: grove-e2e-high
+spec:
+  replicas: 1
+  template:
+    cliques:
+      - name: worker
+        spec:
+          roleName: worker
+          replicas: 2
+          minAvailable: 2
+          podSpec:
+            schedulerName: kueue
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: type
+                          operator: In
+                          values:
+                            - kwok
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: worker
+                image: registry:5001/nginx:alpine-slim
+                resources:
+                  requests:
+                    memory: 50Mi
