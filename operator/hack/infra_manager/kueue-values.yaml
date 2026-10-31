@@ -51,6 +51,7 @@ managerConfig:
       - "pod"
     # Evicts a Workload not PodsReady within 15s (Test_Kueue8, 9); well above other scenarios' ready time.
     # Kueue also sets the PodsReady condition Test_Kueue10 waits for only when this is configured.
+    # run-e2e-kueue-real-full raises the timeout to 2m (E2E_SCHEDULER__KUEUE__PODS_READY_TIMEOUT).
     waitForPodsReady:
       timeout: 15s
       blockAdmission: false
