@@ -42,7 +42,11 @@ import (
 )
 
 const (
-	maxCombinedResourceNameLength = 45
+	// reservedReplicaIndexDigits is how many decimal digits the pod hostname budget reserves for each replica index
+	// (PodCliqueSet, PodCliqueScalingGroup and pod index), i.e. room for up to 1000 replicas of each. Replica counts
+	// are not bounded at admission (scale subresources and external autoscalers change them), so a fixed reservation
+	// keeps the check independent of them.
+	reservedReplicaIndexDigits = 3
 )
 
 var allowedStartupTypes = sets.New(grovecorev1beta1.CliqueStartupTypeInOrder, grovecorev1beta1.CliqueStartupTypeAnyOrder, grovecorev1beta1.CliqueStartupTypeExplicit)
@@ -1064,33 +1068,41 @@ func (v *pcsValidator) validatePodCliqueUpdate(oldCliques []*grovecorev1beta1.Po
 	return allErrs
 }
 
-// validatePodNameConstraints validates Grove pod name component constraints.
-// This function validates the constraints for component names that will be used
-// to construct pod names.
+// validatePodNameConstraints validates that the names a user picks for a PodCliqueSet, PodCliqueScalingGroup and
+// PodClique leave room for the hostname Grove gives every pod of that PodClique.
 //
-// Pod names that belong to a PCSG follow the format:
-// <pcs-name>-<pcs-index>-<pcsg-name>-<pcsg-index>-<pclq-name>-<random>
+// The pod hostname is a DNS label (at most 63 characters) and has the format:
 //
-// Pod names that do not belong to a PCSG follow the format:
-// <pcs-name>-<pcs-index>-<pclq-name>-<random>
+//	<pcs-name>-<pcs-index>-<pcsg-name>-<pcsg-index>-<pclq-name>-<pod-index>  (PodClique in a PodCliqueScalingGroup)
+//	<pcs-name>-<pcs-index>-<pclq-name>-<pod-index>                           (standalone PodClique)
 //
-// Constraints:
-// - Random string + hyphens: 10 chars for PCSG pods, 8 chars for non-PCSG pods
-// - Max sum of all resource name characters: 45 chars
+// After the separators and reservedReplicaIndexDigits for each index, the names may use 49 characters together
+// in a PodCliqueScalingGroup and 54 for a standalone PodClique. The PodClique name (the hostname without the pod
+// index) is then also a valid label value. Pod names, which append a random suffix to the PodClique name, may be
+// longer than 63 characters; that is allowed because Grove sets the hostname explicitly.
 func validatePodNameConstraints(pcsName, pcsgName, pclqName string) error {
-	// Check resource name constraints
 	resourceNameLength := len(pcsName) + len(pclqName)
+	replicaIndices := 2
 	if pcsgName != "" {
 		resourceNameLength += len(pcsgName)
+		replicaIndices = 3
 	}
-
-	if resourceNameLength > maxCombinedResourceNameLength {
+	limit := maxPodNameComponentsLength(replicaIndices)
+	if resourceNameLength > limit {
 		if pcsgName != "" {
-			return fmt.Errorf("combined resource name length %d exceeds 45-character limit required for pod naming. Consider shortening: PodCliqueSet '%s', PodCliqueScalingGroup '%s', or PodClique '%s'",
-				resourceNameLength, pcsName, pcsgName, pclqName)
+			return fmt.Errorf("combined resource name length %d exceeds the %d-character limit that keeps pod hostnames within %d characters. Consider shortening: PodCliqueSet '%s', PodCliqueScalingGroup '%s', or PodClique '%s'",
+				resourceNameLength, limit, k8svalidation.DNS1123LabelMaxLength, pcsName, pcsgName, pclqName)
 		}
-		return fmt.Errorf("combined resource name length %d exceeds 45-character limit required for pod naming. Consider shortening: PodCliqueSet '%s' or PodClique '%s'",
-			resourceNameLength, pcsName, pclqName)
+		return fmt.Errorf("combined resource name length %d exceeds the %d-character limit that keeps pod hostnames within %d characters. Consider shortening: PodCliqueSet '%s' or PodClique '%s'",
+			resourceNameLength, limit, k8svalidation.DNS1123LabelMaxLength, pcsName, pclqName)
 	}
 	return nil
+}
+
+// maxPodNameComponentsLength returns how many characters the user-chosen names in a pod hostname may use together,
+// for a hostname with the given number of replica indices: each index takes reservedReplicaIndexDigits, and the
+// names and indices alternate with one '-' between each.
+func maxPodNameComponentsLength(replicaIndices int) int {
+	separators := 2*replicaIndices - 1
+	return k8svalidation.DNS1123LabelMaxLength - separators - replicaIndices*reservedReplicaIndexDigits
 }

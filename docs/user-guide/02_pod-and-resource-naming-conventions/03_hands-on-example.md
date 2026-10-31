@@ -255,12 +255,12 @@ The PCSG names clearly identify the two scaling groups.
 
 ## Name Length Analysis
 
-Pod names have a 63-character limit (DNS label constraint). Let's verify our longest pod name fits:
+Pod hostnames have a 63-character limit (DNS label constraint). Let's verify our longest hostname fits:
 
-- Longest pod name: `mn-disagg-0-prefill-1-pworker-klm56`
-  - Characters: 35 (well under 63) ✅
+- Longest hostname: `mn-disagg-0-prefill-1-pworker-2` (the pod name without its random suffix, plus the pod index)
+  - Characters: 31 (well under 63) ✅
 
-With 28 characters of headroom, this naming scheme can scale to millions of replicas on both PCS and PCSG dimensions without hitting the limit.
+With 32 characters of headroom, this naming scheme can scale to millions of replicas on both PCS and PCSG dimensions without hitting the limit.
 
 ## Cleanup
 
