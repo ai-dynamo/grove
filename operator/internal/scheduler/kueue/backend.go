@@ -135,7 +135,8 @@ func (b *schedulerBackend) SyncPodGang(ctx context.Context, podGang *groveschedu
 // ensureWorkload ensures a usable prebuilt Kueue Workload exists for podGang, creating it if absent once the
 // PodGangs that podGang depends on are scheduled. An existing Workload that is no longer usable (Finished, or
 // deactivated by Kueue) is deleted and rebuilt from scratch instead of repaired in place, since Kueue Workload
-// podSets are immutable once admitted.
+// podSets are immutable once admitted. A Workload of the same name that podGang does not own belongs to an earlier
+// PodGang of that name and is left to garbage collection (see workloadOwnedByPodGang).
 // Grove has no watch on Workloads, so PreparePod also calls this for every Pod it prepares. It returns an
 // error, so the caller requeues, while the old Workload is still being deleted.
 //
@@ -149,6 +150,9 @@ func (b *schedulerBackend) ensureWorkload(ctx context.Context, podGang *grovesch
 	case err == nil:
 		if existing.DeletionTimestamp != nil {
 			return fmt.Errorf("prebuilt kueue Workload %s/%s is still being deleted", podGang.Namespace, podGang.Name)
+		}
+		if !workloadOwnedByPodGang(existing, podGang) {
+			return errWorkloadNotOwned(podGang)
 		}
 		if !workloadNeedsReplacement(existing) {
 			return nil
@@ -194,11 +198,28 @@ func (b *schedulerBackend) ensureWorkload(ctx context.Context, podGang *grovesch
 		if current.DeletionTimestamp != nil || workloadNeedsReplacement(current) {
 			return fmt.Errorf("prebuilt kueue Workload %s/%s is still being replaced", podGang.Namespace, podGang.Name)
 		}
+		if !workloadOwnedByPodGang(current, podGang) {
+			return errWorkloadNotOwned(podGang)
+		}
 		log.FromContext(ctx).V(4).Info("Prebuilt Kueue Workload already recreated by a concurrent caller", "workload", client.ObjectKeyFromObject(workload))
 		return nil
 	}
 	log.FromContext(ctx).Info("Created prebuilt Kueue Workload", "workload", client.ObjectKeyFromObject(workload))
 	return nil
+}
+
+// workloadOwnedByPodGang reports whether wl was created for this incarnation of podGang. A scaled-in PodGang can be
+// recreated under the same name while its Workload is still alive: Kueue adds the admitted Pods as owners, so
+// garbage collection removes only the deleted PodGang's owner reference and keeps the Workload until those Pods are
+// gone. Matching on the UID keeps the recreated PodGang from adopting that Workload and its admission.
+func workloadOwnedByPodGang(wl *kueuev1beta2.Workload, podGang *groveschedulerv1alpha1.PodGang) bool {
+	return slices.ContainsFunc(wl.OwnerReferences, func(ref metav1.OwnerReference) bool { return ref.UID == podGang.UID })
+}
+
+// errWorkloadNotOwned is returned, so the caller requeues, while a Workload of the same name that podGang does not
+// own still exists. Grove leaves it to garbage collection, which removes it once the Pods it admitted are gone.
+func errWorkloadNotOwned(podGang *groveschedulerv1alpha1.PodGang) error {
+	return fmt.Errorf("prebuilt kueue Workload %s/%s is not owned by PodGang UID %s; waiting for the Workload of an earlier PodGang of the same name to be garbage collected", podGang.Namespace, podGang.Name, podGang.UID)
 }
 
 // workloadNeedsReplacement reports whether wl is permanently unusable and must be deleted and rebuilt.

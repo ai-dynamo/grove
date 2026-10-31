@@ -477,13 +477,23 @@ func newTestPCSAndPodGang() (*grovecorev1beta1.PodCliqueSet, *groveschedulerv1al
 	return pcs, podGang
 }
 
+// ownedByPodGang returns the owner reference buildPrebuiltWorkload sets on a Workload it creates for podGang.
+func ownedByPodGang(podGang *groveschedulerv1alpha1.PodGang) []metav1.OwnerReference {
+	return []metav1.OwnerReference{{
+		APIVersion: groveschedulerv1alpha1.SchemeGroupVersion.String(),
+		Kind:       "PodGang",
+		Name:       podGang.Name,
+		UID:        podGang.UID,
+	}}
+}
+
 func TestBackend_SyncPodGang_LeavesHealthyWorkloadUntouched(t *testing.T) {
 	pcs, podGang := newTestPCSAndPodGang()
 	cl := testutils.NewTestClientBuilder().WithObjects(pcs, newStandalonePodClique("demo-0-worker", "demo")).Build()
 	b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameKueue})
 	require.NoError(t, b.Init(nil))
 	staleWorkload := &kueuev1beta2.Workload{
-		ObjectMeta: metav1.ObjectMeta{Name: "demo-0", Namespace: "default"},
+		ObjectMeta: metav1.ObjectMeta{Name: "demo-0", Namespace: "default", OwnerReferences: ownedByPodGang(podGang)},
 		Spec:       kueuev1beta2.WorkloadSpec{QueueName: "stale-queue"},
 	}
 	require.NoError(t, cl.Create(context.Background(), staleWorkload))
@@ -501,7 +511,7 @@ func TestBackend_SyncPodGang_RecreatesFinishedWorkload(t *testing.T) {
 	b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameKueue})
 	require.NoError(t, b.Init(nil))
 	finishedWorkload := &kueuev1beta2.Workload{
-		ObjectMeta: metav1.ObjectMeta{Name: "demo-0", Namespace: "default"},
+		ObjectMeta: metav1.ObjectMeta{Name: "demo-0", Namespace: "default", OwnerReferences: ownedByPodGang(podGang)},
 		Spec:       kueuev1beta2.WorkloadSpec{QueueName: "stale-queue"},
 		Status: kueuev1beta2.WorkloadStatus{
 			Conditions: []metav1.Condition{
@@ -525,7 +535,7 @@ func TestBackend_SyncPodGang_RecreatesDeactivatedWorkload(t *testing.T) {
 	b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameKueue})
 	require.NoError(t, b.Init(nil))
 	deactivatedWorkload := &kueuev1beta2.Workload{
-		ObjectMeta: metav1.ObjectMeta{Name: "demo-0", Namespace: "default"},
+		ObjectMeta: metav1.ObjectMeta{Name: "demo-0", Namespace: "default", OwnerReferences: ownedByPodGang(podGang)},
 		Spec:       kueuev1beta2.WorkloadSpec{QueueName: "stale-queue", Active: ptr.To(false)},
 	}
 	require.NoError(t, cl.Create(context.Background(), deactivatedWorkload))
@@ -544,7 +554,7 @@ func TestBackend_PreparePod_RecreatesFinishedWorkload(t *testing.T) {
 	b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameKueue})
 	require.NoError(t, b.Init(nil))
 	finishedWorkload := &kueuev1beta2.Workload{
-		ObjectMeta: metav1.ObjectMeta{Name: "demo-0", Namespace: "default"},
+		ObjectMeta: metav1.ObjectMeta{Name: "demo-0", Namespace: "default", OwnerReferences: ownedByPodGang(podGang)},
 		Spec:       kueuev1beta2.WorkloadSpec{QueueName: "stale-queue"},
 		Status: kueuev1beta2.WorkloadStatus{
 			Conditions: []metav1.Condition{
@@ -586,12 +596,12 @@ func TestBackend_PreparePod_UsesDirectReaderForFinishedCheck(t *testing.T) {
 	require.NoError(t, cachedCl.Create(context.Background(), pclq))
 
 	healthyWorkload := &kueuev1beta2.Workload{
-		ObjectMeta: metav1.ObjectMeta{Name: "demo-0", Namespace: "default"},
+		ObjectMeta: metav1.ObjectMeta{Name: "demo-0", Namespace: "default", OwnerReferences: ownedByPodGang(podGang)},
 		Spec:       kueuev1beta2.WorkloadSpec{QueueName: "stale-queue"},
 	}
 	require.NoError(t, cachedCl.Create(context.Background(), healthyWorkload))
 	finishedWorkload := &kueuev1beta2.Workload{
-		ObjectMeta: metav1.ObjectMeta{Name: "demo-0", Namespace: "default"},
+		ObjectMeta: metav1.ObjectMeta{Name: "demo-0", Namespace: "default", OwnerReferences: ownedByPodGang(podGang)},
 		Spec:       kueuev1beta2.WorkloadSpec{QueueName: "stale-queue"},
 		Status: kueuev1beta2.WorkloadStatus{
 			Conditions: []metav1.Condition{
@@ -637,12 +647,12 @@ func TestBackend_EnsureWorkload_StaleReadKeepsReplacement(t *testing.T) {
 	b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameKueue})
 	require.NoError(t, b.Init(nil))
 	replacement := &kueuev1beta2.Workload{
-		ObjectMeta: metav1.ObjectMeta{Name: "demo-0", Namespace: "default"},
+		ObjectMeta: metav1.ObjectMeta{Name: "demo-0", Namespace: "default", OwnerReferences: ownedByPodGang(podGang)},
 		Spec:       kueuev1beta2.WorkloadSpec{QueueName: "replacement-queue"},
 	}
 	require.NoError(t, cl.Create(context.Background(), replacement))
 	finishedWorkload := &kueuev1beta2.Workload{
-		ObjectMeta: metav1.ObjectMeta{Name: "demo-0", Namespace: "default", UID: "finished-uid", ResourceVersion: "stale"},
+		ObjectMeta: metav1.ObjectMeta{Name: "demo-0", Namespace: "default", OwnerReferences: ownedByPodGang(podGang), UID: "finished-uid", ResourceVersion: "stale"},
 		Status: kueuev1beta2.WorkloadStatus{
 			Conditions: []metav1.Condition{
 				{Type: kueuev1beta2.WorkloadFinished, Status: metav1.ConditionTrue, Reason: "Test", Message: "test"},
@@ -665,7 +675,7 @@ func TestBackend_EnsureWorkload_AcceptsConcurrentReplacement(t *testing.T) {
 	b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameKueue})
 	require.NoError(t, b.Init(nil))
 	replacement := &kueuev1beta2.Workload{
-		ObjectMeta: metav1.ObjectMeta{Name: "demo-0", Namespace: "default"},
+		ObjectMeta: metav1.ObjectMeta{Name: "demo-0", Namespace: "default", OwnerReferences: ownedByPodGang(podGang)},
 		Spec:       kueuev1beta2.WorkloadSpec{QueueName: "replacement-queue"},
 	}
 	require.NoError(t, cl.Create(context.Background(), replacement))
@@ -684,7 +694,7 @@ func TestBackend_SyncPodGang_WaitsForDeletedWorkloadToGo(t *testing.T) {
 	b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameKueue})
 	require.NoError(t, b.Init(nil))
 	finishedWorkload := &kueuev1beta2.Workload{
-		ObjectMeta: metav1.ObjectMeta{Name: "demo-0", Namespace: "default", Finalizers: []string{"test/hold"}},
+		ObjectMeta: metav1.ObjectMeta{Name: "demo-0", Namespace: "default", OwnerReferences: ownedByPodGang(podGang), Finalizers: []string{"test/hold"}},
 		Spec:       kueuev1beta2.WorkloadSpec{QueueName: "stale-queue"},
 		Status: kueuev1beta2.WorkloadStatus{
 			Conditions: []metav1.Condition{
@@ -710,6 +720,97 @@ func TestBackend_SyncPodGang_WaitsForDeletedWorkloadToGo(t *testing.T) {
 	got = &kueuev1beta2.Workload{}
 	require.NoError(t, cl.Get(context.Background(), key, got))
 	assert.Equal(t, kueuev1beta2.LocalQueueName("grove-poc"), got.Spec.QueueName, "the Workload must be rebuilt once the old one is gone")
+}
+
+// predecessorWorkload is the Workload of an earlier PodGang named demo-0: garbage collection has removed that
+// PodGang's owner reference, and the Pod Kueue admitted under it still owns it.
+func predecessorWorkload(conditions ...metav1.Condition) *kueuev1beta2.Workload {
+	return &kueuev1beta2.Workload{
+		ObjectMeta: metav1.ObjectMeta{Name: "demo-0", Namespace: "default", OwnerReferences: []metav1.OwnerReference{
+			{APIVersion: "v1", Kind: "Pod", Name: "demo-0-worker-old", UID: "old-pod-uid"},
+		}},
+		Spec:   kueuev1beta2.WorkloadSpec{QueueName: "stale-queue"},
+		Status: kueuev1beta2.WorkloadStatus{Conditions: conditions},
+	}
+}
+
+// TestBackend_EnsureWorkload_LeavesPredecessorWorkloadAlone covers a PodGang recreated under the name of a scaled-in
+// one whose Workload is still alive: the new PodGang must neither adopt that Workload nor delete it.
+func TestBackend_EnsureWorkload_LeavesPredecessorWorkloadAlone(t *testing.T) {
+	finished := metav1.Condition{Type: kueuev1beta2.WorkloadFinished, Status: metav1.ConditionTrue, Reason: "Test", Message: "test"}
+	for _, tc := range []struct {
+		name     string
+		workload *kueuev1beta2.Workload
+	}{
+		{name: "admitted predecessor", workload: predecessorWorkload()},
+		{name: "finished predecessor", workload: predecessorWorkload(finished)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pcs, podGang := newTestPCSAndPodGang()
+			cl := testutils.NewTestClientBuilder().WithObjects(pcs, newStandalonePodClique("demo-0-worker", "demo")).Build()
+			b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKueue})
+			require.NoError(t, b.Init(nil))
+			require.NoError(t, cl.Create(context.Background(), tc.workload))
+
+			require.ErrorContains(t, b.SyncPodGang(context.Background(), podGang), "is not owned by PodGang UID demo-0-uid")
+
+			got := &kueuev1beta2.Workload{}
+			require.NoError(t, cl.Get(context.Background(), client.ObjectKey{Namespace: "default", Name: "demo-0"}, got))
+			assert.Equal(t, tc.workload.UID, got.UID, "the predecessor's Workload must not be deleted")
+			assert.Equal(t, kueuev1beta2.LocalQueueName("stale-queue"), got.Spec.QueueName)
+		})
+	}
+}
+
+func TestBackend_PreparePod_RefusesPredecessorWorkload(t *testing.T) {
+	pcs, podGang := newTestPCSAndPodGang()
+	cl := testutils.NewTestClientBuilder().WithObjects(pcs, podGang, newStandalonePodClique("demo-0-worker", "demo")).Build()
+	b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKueue})
+	require.NoError(t, b.Init(nil))
+	require.NoError(t, cl.Create(context.Background(), predecessorWorkload()))
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
+		Namespace: "default",
+		Labels: map[string]string{
+			apicommon.LabelPartOfKey: "demo",
+			apicommon.LabelPodClique: "demo-0-worker",
+			apicommon.LabelPodGang:   "demo-0",
+		},
+	}}
+
+	require.ErrorContains(t, b.PreparePod(pod), "is not owned by PodGang UID demo-0-uid")
+	assert.NotContains(t, pod.Labels, prebuiltWorkloadNameLabel, "the Pod must not join the predecessor's admission")
+}
+
+// A cache that has not seen the predecessor's Workload makes Create return AlreadyExists; that Workload must not be
+// taken for a concurrent caller's replacement.
+func TestBackend_EnsureWorkload_AlreadyExistsChecksOwner(t *testing.T) {
+	pcs, podGang := newTestPCSAndPodGang()
+	cl := testutils.NewTestClientBuilder().WithObjects(pcs, newStandalonePodClique("demo-0-worker", "demo")).Build()
+	b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKueue})
+	require.NoError(t, b.Init(nil))
+	require.NoError(t, cl.Create(context.Background(), predecessorWorkload()))
+
+	err := b.(*schedulerBackend).ensureWorkload(context.Background(), podGang, "demo", fixedReader{})
+	require.ErrorContains(t, err, "is not owned by PodGang UID demo-0-uid")
+}
+
+func TestBackend_SyncPodGang_CreatesOwnWorkloadOncePredecessorIsGone(t *testing.T) {
+	pcs, podGang := newTestPCSAndPodGang()
+	cl := testutils.NewTestClientBuilder().WithObjects(pcs, newStandalonePodClique("demo-0-worker", "demo")).Build()
+	b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKueue})
+	require.NoError(t, b.Init(nil))
+	predecessor := predecessorWorkload()
+	require.NoError(t, cl.Create(context.Background(), predecessor))
+	require.Error(t, b.SyncPodGang(context.Background(), podGang))
+
+	// Garbage collection removes the predecessor once the Pods it admitted are gone.
+	require.NoError(t, cl.Delete(context.Background(), predecessor))
+	require.NoError(t, b.SyncPodGang(context.Background(), podGang))
+
+	got := &kueuev1beta2.Workload{}
+	require.NoError(t, cl.Get(context.Background(), client.ObjectKey{Namespace: "default", Name: "demo-0"}, got))
+	assert.Equal(t, kueuev1beta2.LocalQueueName("grove-poc"), got.Spec.QueueName)
+	assert.True(t, workloadOwnedByPodGang(got, podGang), "the new Workload must be owned by the recreated PodGang")
 }
 
 // TestBackend_TailWorkloadWaitsForAnchor covers a scaling group with 2 replicas and minAvailable 1: replica 1
