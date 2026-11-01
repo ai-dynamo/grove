@@ -17,6 +17,7 @@ package utils
 import (
 	"github.com/go-logr/logr"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
@@ -31,6 +32,15 @@ type FakeManager struct {
 	Logger            logr.Logger
 	WebhookServer     webhook.Server
 	ConverterRegistry conversion.Registry
+	EventRecorder     record.EventRecorder
+}
+
+// GetEventRecorderFor returns the event recorder registered with the fake manager, or one that drops events if none is set
+func (f *FakeManager) GetEventRecorderFor(_ string) record.EventRecorder {
+	if f.EventRecorder == nil {
+		return &record.FakeRecorder{}
+	}
+	return f.EventRecorder
 }
 
 // GetClient returns the client registered with the fake manager
