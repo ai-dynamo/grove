@@ -109,6 +109,9 @@ const (
 	ReasonPodCliqueSetReplicaDeleteSuccessful = "PodCliqueSetReplicaDeleteSuccessful"
 	// ReasonPodCliqueSetReplicaDeleteFailed is an event reason which represents that the deletion of a PodCliqueSet replica failed.
 	ReasonPodCliqueSetReplicaDeleteFailed = "PodCliqueSetReplicaDeleteFailed"
+	// ReasonTemplateReplicasChanged is an event reason which represents that a replica count under spec.template of a
+	// PodCliqueSet was changed. Such a change only applies to children created afterward.
+	ReasonTemplateReplicasChanged = "TemplateReplicasChanged"
 	// ReasonPodCliqueSetReplicaIndicesSelectedForScaleIn indicates that PodCliqueSet replica indices were selected for scale-in.
 	ReasonPodCliqueSetReplicaIndicesSelectedForScaleIn = "PodCliqueSetReplicaIndicesSelectedForScaleIn"
 	// ReasonPodCliqueSetReplicaIndicesReservedForScaleOut indicates that PodCliqueSet replica indices were reserved for scale-out.

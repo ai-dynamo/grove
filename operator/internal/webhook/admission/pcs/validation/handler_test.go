@@ -426,6 +426,120 @@ func TestValidateUpdate(t *testing.T) {
 	}
 }
 
+// TestValidateUpdateTemplateReplicasChange tests that changing replicas under spec.template is admitted with a
+// warning and a Normal event per changed clique or scaling group.
+func TestValidateUpdateTemplateReplicasChange(t *testing.T) {
+	newPCS := func(standaloneReplicas, memberReplicas, pcsgReplicas int32) *grovecorev1beta1.PodCliqueSet {
+		return testutils.NewPodCliqueSetBuilder("test-pcs", "default", uuid.NewUUID()).
+			WithReplicas(1).
+			WithTerminationDelay(4 * time.Hour).
+			WithCliqueStartupType(ptr.To(grovecorev1beta1.CliqueStartupTypeAnyOrder)).
+			WithPodCliqueTemplateSpec(
+				testutils.NewPodCliqueTemplateSpecBuilder("standalone").
+					WithReplicas(standaloneReplicas).
+					WithRoleName("standalone-role").
+					WithMinAvailable(1).
+					Build()).
+			WithPodCliqueTemplateSpec(
+				testutils.NewPodCliqueTemplateSpecBuilder("member").
+					WithReplicas(memberReplicas).
+					WithRoleName("member-role").
+					WithMinAvailable(1).
+					Build()).
+			WithPodCliqueScalingGroupConfig(grovecorev1beta1.PodCliqueScalingGroupConfig{
+				Name:         "sg",
+				CliqueNames:  []string{"member"},
+				Replicas:     ptr.To(pcsgReplicas),
+				MinAvailable: ptr.To(int32(1)),
+			}).
+			Build()
+	}
+
+	tests := []struct {
+		// name identifies this test case
+		name string
+		// oldObj is the old version of the object
+		oldObj *grovecorev1beta1.PodCliqueSet
+		// newObj is the new version of the object
+		newObj *grovecorev1beta1.PodCliqueSet
+		// dryRun marks the admission request as a dry run
+		dryRun bool
+		// expectedWarnings are substrings expected in the warnings, in order
+		expectedWarnings []string
+		// expectEvents indicates whether the warnings are also recorded as events
+		expectEvents bool
+	}{
+		{
+			name:   "unchanged replicas produce no warning",
+			oldObj: newPCS(2, 2, 1),
+			newObj: newPCS(2, 2, 1),
+		},
+		{
+			name:   "standalone clique, member clique and scaling group replicas changes each produce a warning and an event",
+			oldObj: newPCS(2, 2, 1),
+			newObj: newPCS(3, 4, 2),
+			expectedWarnings: []string{
+				"spec.template.cliques[standalone].spec.replicas changed from 2 to 3: the new value applies only to PodCliques created from now on; existing ones must be scaled directly with kubectl scale pclq",
+				"spec.template.cliques[member].spec.replicas changed from 2 to 4: the new value applies only to PodCliques created from now on; existing ones must be scaled directly with kubectl scale pclq",
+				"spec.template.podCliqueScalingGroups[sg].replicas changed from 1 to 2: the new value applies only to PodCliqueScalingGroups created from now on; existing ones must be scaled directly with kubectl scale pcsg",
+			},
+			expectEvents: true,
+		},
+		{
+			name:   "dry run produces a warning but no event",
+			oldObj: newPCS(2, 2, 1),
+			newObj: newPCS(3, 2, 1),
+			dryRun: true,
+			expectedWarnings: []string{
+				"spec.template.cliques[standalone].spec.replicas changed from 2 to 3",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cl := testutils.NewTestClientBuilder().Build()
+			recorder := record.NewFakeRecorder(10)
+			mgr := &testutils.FakeManager{
+				Client:        cl,
+				Scheme:        cl.Scheme(),
+				Logger:        logr.Discard(),
+				EventRecorder: recorder,
+			}
+			cfg := groveconfigv1beta1.OperatorConfiguration{
+				TopologyAwareScheduling: getDefaultTASConfig(),
+				Network:                 getDefaultNetworkConfig(),
+				Scheduler:               groveconfigv1beta1.SchedulerConfiguration{Profiles: []groveconfigv1beta1.SchedulerProfile{{Name: groveconfigv1beta1.SchedulerNameKube}}, DefaultProfileName: string(groveconfigv1beta1.SchedulerNameKube)},
+			}
+			handler := NewHandler(mgr, &cfg, testutils.NewDefaultFakeRegistry())
+
+			ctx := admission.NewContextWithRequest(context.Background(), admission.Request{
+				AdmissionRequest: admissionv1.AdmissionRequest{Operation: admissionv1.Update, DryRun: ptr.To(tt.dryRun)},
+			})
+			warnings, err := handler.ValidateUpdate(ctx, tt.oldObj, tt.newObj)
+			require.NoError(t, err)
+
+			require.Len(t, warnings, len(tt.expectedWarnings))
+			for i, expected := range tt.expectedWarnings {
+				assert.Contains(t, warnings[i], expected)
+			}
+
+			var events []string
+			for len(recorder.Events) > 0 {
+				events = append(events, <-recorder.Events)
+			}
+			if !tt.expectEvents {
+				assert.Empty(t, events)
+				return
+			}
+			require.Len(t, events, len(warnings))
+			for i, w := range warnings {
+				assert.Equal(t, "Normal TemplateReplicasChanged "+w, events[i])
+			}
+		})
+	}
+}
+
 // TestValidateDelete tests validation of PodCliqueSet deletion requests.
 func TestValidateDelete(t *testing.T) {
 	cl := testutils.NewTestClientBuilder().Build()

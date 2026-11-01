@@ -20,13 +20,17 @@ import (
 
 	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 	"github.com/ai-dynamo/grove/operator/api/core/v1beta1"
+	"github.com/ai-dynamo/grove/operator/internal/constants"
 	"github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 
 	"github.com/go-logr/logr"
 	admissionv1 "k8s.io/api/admission/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/validation/field"
+	"k8s.io/client-go/tools/record"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
@@ -47,6 +51,7 @@ type Handler struct {
 	networkConfig   configv1beta1.NetworkAcceleration
 	schedulerConfig configv1beta1.SchedulerConfiguration
 	schedRegistry   scheduler.Registry
+	eventRecorder   record.EventRecorder
 }
 
 // NewHandler creates a new handler for PodCliqueSet Webhook.
@@ -60,6 +65,7 @@ func NewHandler(mgr manager.Manager, operatorCfg *configv1beta1.OperatorConfigur
 		networkConfig:   operatorCfg.Network,
 		schedulerConfig: operatorCfg.Scheduler,
 		schedRegistry:   schedRegistry,
+		eventRecorder:   mgr.GetEventRecorderFor(Name),
 	}
 }
 
@@ -116,7 +122,23 @@ func (h *Handler) ValidateUpdate(ctx context.Context, oldObj, newObj runtime.Obj
 	if len(errs) > 0 {
 		return warnings, errs.ToAggregate()
 	}
-	return warnings, v.validateUpdate(oldPCS)
+	if err := v.validateUpdate(oldPCS); err != nil {
+		return warnings, err
+	}
+
+	replicasWarnings := v.templateReplicasChangeWarnings(oldPCS)
+	if !isDryRun(ctx) {
+		for _, w := range replicasWarnings {
+			h.eventRecorder.Event(newPCS, corev1.EventTypeNormal, constants.ReasonTemplateReplicasChanged, w)
+		}
+	}
+	return append(warnings, replicasWarnings...), nil
+}
+
+// isDryRun reports whether the admission request in the context is a dry run.
+func isDryRun(ctx context.Context) bool {
+	req, err := admission.RequestFromContext(ctx)
+	return err == nil && ptr.Deref(req.DryRun, false)
 }
 
 // ValidateDelete validates a PodCliqueSet delete request.
