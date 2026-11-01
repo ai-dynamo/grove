@@ -52,7 +52,7 @@ cert_manager:
     - "quay.io/jetstack/cert-manager-ctl"
 
 kwok_controller:
-  version: "v0.7.0"
+  version: "v0.8.0"
 
 pyroscope:
   version: "1.19.0"

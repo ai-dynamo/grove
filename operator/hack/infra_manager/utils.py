@@ -42,7 +42,7 @@ def kwok_release_url(version: str) -> str:
     """Build the GitHub release base URL for a KWOK version.
 
     Args:
-        version: KWOK release version tag (e.g. ``v0.7.0``).
+        version: KWOK release version tag (e.g. ``v0.8.0``).
 
     Returns:
         Full GitHub release download URL.
