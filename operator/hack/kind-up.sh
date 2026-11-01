@@ -22,6 +22,7 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 OPERATOR_GO_MODULE_ROOT="$(dirname "$SCRIPT_DIR")"
 KIND_CONFIG_DIR="${SCRIPT_DIR}/kind"
 CLUSTER_NAME="grove-test-cluster"
+KIND_NODE_IMAGE="kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5"
 DEPLOY_REGISTRY=true
 RECREATE_CLUSTER=false
 FEATURE_GATES=()
@@ -115,13 +116,13 @@ kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 nodes:
 - role: control-plane
-  image: kindest/node:v1.35.1
+  image: ${KIND_NODE_IMAGE}
 EOF
   local worker_index
   for ((worker_index = 0; worker_index < WORKER_NODES; worker_index++)); do
     cat >>"${KIND_CONFIG_DIR}/cluster-config.yaml" <<EOF
 - role: worker
-  image: kindest/node:v1.35.1
+  image: ${KIND_NODE_IMAGE}
 EOF
   done
   if [ "${DEPLOY_REGISTRY}" = true ]; then
@@ -262,7 +263,7 @@ function kind::check_fake_nodes_prerequisites() {
 # deploy_kwok deploys KWOK using the instructions at https://kwok.sigs.k8s.io/docs/user/kwok-in-cluster/
 function kind::deploy_kwok() {
   local kwok_repo="kubernetes-sigs/kwok"
-  local kwok_version="v0.7.0"
+  local kwok_version="v0.8.0"
   
   echo "Deploying KWOK ${kwok_version}..."
   
