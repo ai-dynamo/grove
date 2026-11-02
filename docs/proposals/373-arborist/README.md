@@ -77,9 +77,9 @@ Arborist is a read-only `kubectl grove` plugin and a set of agent skills that he
 
 ## Motivation
 
-A Grove workload spans several resource kinds: a PodCliqueSet owns PodCliques and PodCliqueScalingGroups, scaling groups own PodCliques, PodCliques own Pods, and the operator creates PodGangs for the scheduler. Replicas of PodCliqueSets and scaling groups are not objects of their own, so a "replica" exists only as a naming convention across several objects. Answering ordinary operational questions with kubectl means walking this hierarchy by hand:
+A Grove workload spans several resource kinds: a PodCliqueSet owns PodCliques and PodCliqueScalingGroups, scaling groups own PodCliques, PodCliques own Pods, and the operator creates PodGangs for the scheduler. Replicas of PodCliqueSets and scaling groups are not objects of their own, so a "replica" exists only as a naming convention across several objects. Answering ordinary operational questions with kubectl means walking this hierarchy by hand. Three examples:
 
-- **Where is the workload unhealthy, and why?** Status on the higher levels summarises availability, not causes. In the POC scenario with a typo in the image registry, the PodCliques report `MinAvailableBreached=False` ("Either sufficient ready or starting pods found"), the scaling group reports no breach either, and the PodCliqueSet has no such condition, while the actual problem, `ErrImagePull`, is visible only on the Pods. Finding it means listing every level and every Pod.
+- **Where is the workload unhealthy, and why?** Status on the higher levels summarises availability, not causes. For example, if a workload's image registry has a typo, the PodCliques report `MinAvailableBreached=False` ("Either sufficient ready or starting pods found"), any scaling group reports no breach either, and the PodCliqueSet has no such condition, while the actual problem, `ErrImagePull`, is visible only on the Pods. Finding it means listing every level and every Pod.
 - **What went wrong across the workload?** Events are recorded on the object they concern, so one workload's events are spread across PodCliqueSets, scaling groups, PodCliques, PodGangs and Pods. `kubectl events --for` covers a single object and matches it by name, so it cannot tell a recreated object's events from its predecessor's; matching a whole workload by name prefix is ambiguous (`foo` vs `foo-bar`) and misses Pods that have already been replaced.
 - **Where are GPUs free, and where did my workload land?** With [topology-aware scheduling](../244-topology-aware-scheduling/README.md), a workload that needs 16 GPUs packed in one rack fits only where a single rack has 16 free GPUs. Answering this needs a cluster-wide join of a ClusterTopologyBinding's levels, node labels and GPU capacity, every Pod's GPU requests (Grove and non-Grove) and, with DRA, ResourceSlices and ResourceClaim allocations.
 
@@ -174,7 +174,7 @@ The engineer asks their agent, which uses `grove-topology` to run `kubectl grove
 
 As an operator who has hit unexpected behaviour, I want to collect a complete diagnostics bundle without leaking secrets, so that I can file a bug report or have my agent analyse it offline.
 
-The operator asks their agent to collect diagnostics for `llm-serve`, and the `grove-diagnostics` skill is selected. The agent captures the Grove resources, operator logs and status, Pods, events, the JSON of `tree`, `events` and `topology`, and the versions of the CLI, operator and CRDs into a timestamped `.tgz` with a `manifest.json` describing each file. Secrets and ConfigMaps are not collected, and environment variable values are stripped. The agent reports what was and was not collected. The operator can attach the bundle to a GitHub issue or, if they prefer not to share it, ask the agent to analyse it locally against the Grove source for the operator's exact version.
+The operator asks their agent to collect diagnostics for `llm-serve`, and the `grove-diagnostics` skill is selected. The agent captures the Grove resources, operator logs and status, Pods, events, the JSON of `tree`, `events` and `topology`, and the versions of the CLI, operator and CRDs into a timestamped `.tgz` with a `manifest.json` describing each file. Secrets and ConfigMaps are not collected, and environment variable values are stripped. The agent reports what was and was not collected. The operator can attach the bundle to a GitHub issue or, if they prefer not to share it, ask the agent to analyse it locally against the Grove source for the operator's exact version, which the agent downloads only after asking permission.
 
 ### Limitations/Risks & Mitigations
 
@@ -384,7 +384,7 @@ The same command with `--only-unhealthy -o json`:
 
 JSON shape: `namespace`; `groups[]` with `ref`, `parent`, `readyReplicas`, `replicas`, `gpusAllocated`, `gpusRequested`, `status`, `reason`, `count` (`readyReplicas` and `replicas` are `null` on replica rows); `pods[]` with `ref`, `parent`, `node`, `ready`, `gpusAllocated`, `gpusRequested`, `gang`, `reason`; `reasons[]` with `reason`, `count`, `message`; `omitted` with `healthyGroups`, `healthyPods`, `belowDepthGroups`, `belowDepthPods`. With `-A`, the top-level `namespace` is `null` and every record carries its own.
 
-From the POC scenario with an invalid environment variable name, where the `api` clique's Pods are rejected:
+For example, if the `api` clique declares an invalid environment variable name, its Pods are rejected at creation:
 
 ```text
 $ kubectl grove tree pcs/container-error-invalid-env
