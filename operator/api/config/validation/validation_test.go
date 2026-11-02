@@ -22,6 +22,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 )
 
@@ -781,6 +782,46 @@ func TestValidateOperatorConfiguration(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			errs := ValidateOperatorConfiguration(test.config)
 			assert.Len(t, errs, test.expectErrors, "expected %d validation errors but got %d: %v", test.expectErrors, len(errs), errs)
+		})
+	}
+}
+
+func TestValidateSchedulerConfiguration_KaiProfileConfig(t *testing.T) {
+	kube := configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameKube}
+	kai := func(raw string) configv1beta1.SchedulerProfile {
+		p := configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameKai}
+		if raw != "" {
+			p.Config = &runtime.RawExtension{Raw: []byte(raw)}
+		}
+		return p
+	}
+	tests := []struct {
+		name       string
+		config     string
+		wantErrors []string // field paths expected in the error list, in order
+	}{
+		{name: "no config"},
+		{name: "run:ai names", config: `{"schedulerName":"runai-scheduler","queueLabelKey":"runai/queue","nodePoolLabelKey":"runai/node-pool"}`},
+		{name: "only scheduler name", config: `{"schedulerName":"my-kai"}`},
+		{name: "unknown field is rejected", config: `{"schedulerNme":"x"}`, wantErrors: []string{"scheduler.profiles[1].config"}},
+		{name: "malformed json", config: `{nope`, wantErrors: []string{"scheduler.profiles[1].config"}},
+		{name: "scheduler name must be a DNS subdomain", config: `{"schedulerName":"Bad_Name"}`, wantErrors: []string{"scheduler.profiles[1].config.schedulerName"}},
+		{name: "scheduler name must not shadow another backend", config: `{"schedulerName":"default-scheduler"}`, wantErrors: []string{"scheduler.profiles[1].config.schedulerName"}},
+		{name: "queue label key must be a qualified name", config: `{"queueLabelKey":"has space"}`, wantErrors: []string{"scheduler.profiles[1].config.queueLabelKey"}},
+		{name: "node pool label key must be a qualified name", config: `{"nodePoolLabelKey":"a/b/c"}`, wantErrors: []string{"scheduler.profiles[1].config.nodePoolLabelKey"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &configv1beta1.SchedulerConfiguration{
+				Profiles:           []configv1beta1.SchedulerProfile{kube, kai(tt.config)},
+				DefaultProfileName: string(configv1beta1.SchedulerNameKube),
+			}
+			errs := validateSchedulerConfiguration(cfg, field.NewPath("scheduler"))
+			var got []string
+			for _, e := range errs {
+				got = append(got, e.Field)
+			}
+			assert.Equal(t, tt.wantErrors, got)
 		})
 	}
 }

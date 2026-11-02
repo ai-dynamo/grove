@@ -15,6 +15,8 @@
 package validation
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"slices"
 	"strings"
@@ -23,6 +25,7 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
+	utilvalidation "k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/utils/ptr"
 )
@@ -68,6 +71,9 @@ func validateSchedulerConfiguration(scheduler *configv1beta1.SchedulerConfigurat
 				allErrs = append(allErrs, field.Duplicate(idxPath.Child("name"), p.Name))
 			}
 			seenNames.Insert(p.Name)
+			if p.Name == configv1beta1.SchedulerNameKai {
+				allErrs = append(allErrs, validateKaiSchedulerProfileConfig(p, idxPath.Child("config"))...)
+			}
 		}
 	}
 	if !seenNames.Has(configv1beta1.SchedulerNameKube) {
@@ -155,6 +161,42 @@ func mustBeGreaterThanZeroDuration(duration metav1.Duration, fldPath *field.Path
 	allErrs := field.ErrorList{}
 	if duration.Duration <= 0 {
 		allErrs = append(allErrs, field.Invalid(fldPath, duration, "must be greater than 0"))
+	}
+	return allErrs
+}
+
+// validateKaiSchedulerProfileConfig validates the optional kai-scheduler profile config.
+// Unknown fields are rejected so that a misspelled option does not silently fall back to a default.
+func validateKaiSchedulerProfileConfig(p configv1beta1.SchedulerProfile, fldPath *field.Path) field.ErrorList {
+	allErrs := field.ErrorList{}
+	if p.Config == nil || len(p.Config.Raw) == 0 {
+		return allErrs
+	}
+	cfg := configv1beta1.KaiSchedulerConfiguration{}
+	dec := json.NewDecoder(bytes.NewReader(p.Config.Raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&cfg); err != nil {
+		return append(allErrs, field.Invalid(fldPath, string(p.Config.Raw), fmt.Sprintf("invalid kai-scheduler config: %v", err)))
+	}
+	if cfg.SchedulerName != "" {
+		for _, msg := range utilvalidation.IsDNS1123Subdomain(cfg.SchedulerName) {
+			allErrs = append(allErrs, field.Invalid(fldPath.Child("schedulerName"), cfg.SchedulerName, msg))
+		}
+		// The scheduler name keys the backend registry, so it must not shadow another backend.
+		for _, reserved := range configv1beta1.SupportedSchedulerNames {
+			if reserved != configv1beta1.SchedulerNameKai && cfg.SchedulerName == string(reserved) {
+				allErrs = append(allErrs, field.Invalid(fldPath.Child("schedulerName"), cfg.SchedulerName,
+					fmt.Sprintf("must not equal the name of another scheduler backend (%q)", reserved)))
+			}
+		}
+	}
+	for _, opt := range []struct{ name, key string }{{"queueLabelKey", cfg.QueueLabelKey}, {"nodePoolLabelKey", cfg.NodePoolLabelKey}} {
+		if opt.key == "" {
+			continue
+		}
+		for _, msg := range utilvalidation.IsQualifiedName(opt.key) {
+			allErrs = append(allErrs, field.Invalid(fldPath.Child(opt.name), opt.key, msg))
+		}
 	}
 	return allErrs
 }
