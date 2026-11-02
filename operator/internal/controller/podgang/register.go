@@ -16,6 +16,7 @@ package podgang
 
 import (
 	"context"
+	"maps"
 	"slices"
 	"strconv"
 
@@ -51,8 +52,9 @@ func (r *Reconciler) RegisterWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
-// podGangSpecChangePredicate filters PodGang events to only process spec changes
-// Status-only updates (like Initialized condition) are ignored
+// podGangSpecChangePredicate filters PodGang events to only process spec and label changes.
+// Labels are included because a backend may map labels that the PodCliqueSet mirrors onto its PodGangs onto its own
+// objects (the Kueue backend's priority class, for example). Status-only updates (like Initialized condition) are ignored.
 func podGangSpecChangePredicate() predicate.Predicate {
 	return predicate.Funcs{
 		CreateFunc: func(e event.CreateEvent) bool {
@@ -64,7 +66,8 @@ func podGangSpecChangePredicate() predicate.Predicate {
 		UpdateFunc: func(e event.UpdateEvent) bool {
 			return grovectrlutils.IsManagedPodGang(e.ObjectOld) &&
 				grovectrlutils.IsManagedPodGang(e.ObjectNew) &&
-				(e.ObjectOld.GetGeneration() != e.ObjectNew.GetGeneration())
+				(e.ObjectOld.GetGeneration() != e.ObjectNew.GetGeneration() ||
+					!maps.Equal(e.ObjectOld.GetLabels(), e.ObjectNew.GetLabels()))
 		},
 		GenericFunc: func(_ event.GenericEvent) bool { return false },
 	}
