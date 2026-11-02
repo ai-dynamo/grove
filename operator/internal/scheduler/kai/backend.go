@@ -16,6 +16,7 @@ package kai
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"maps"
 	"reflect"
@@ -44,11 +45,15 @@ import (
 
 // schedulerBackend implements the scheduler Backend interface (Backend in scheduler package) for KAI scheduler.
 type schedulerBackend struct {
-	client        client.Client
-	scheme        *runtime.Scheme
-	name          string
-	eventRecorder record.EventRecorder
-	profile       configv1beta1.SchedulerProfile
+	client client.Client
+	scheme *runtime.Scheme
+	// name is the pod-facing scheduler name. It keys the scheduler registry, so it must be the value
+	// pods carry in spec.schedulerName.
+	name             string
+	queueLabelKey    string
+	nodePoolLabelKey string
+	eventRecorder    record.EventRecorder
+	profile          configv1beta1.SchedulerProfile
 }
 
 var _ scheduler.Backend = (*schedulerBackend)(nil)
@@ -65,18 +70,43 @@ const (
 )
 
 // New creates a new KAI backend instance. profile is the scheduler profile for kai-scheduler;
-// schedulerBackend uses profile.Name and may unmarshal profile.Config for kai-specific options.
+// the optional profile.Config is unmarshalled into KaiSchedulerConfiguration. Config is validated
+// when the OperatorConfiguration is loaded, so an unparsable value here falls back to the defaults.
 func New(cl client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder, profile configv1beta1.SchedulerProfile) scheduler.Backend {
+	cfg := resolveConfiguration(profile)
 	return &schedulerBackend{
-		client:        cl,
-		scheme:        scheme,
-		name:          string(profile.Name),
-		eventRecorder: eventRecorder,
-		profile:       profile,
+		client:           cl,
+		scheme:           scheme,
+		name:             cfg.SchedulerName,
+		queueLabelKey:    cfg.QueueLabelKey,
+		nodePoolLabelKey: cfg.NodePoolLabelKey,
+		eventRecorder:    eventRecorder,
+		profile:          profile,
 	}
 }
 
-// Name returns the pod-facing scheduler name (kai-scheduler), for lookup and logging.
+// resolveConfiguration returns the effective KAI configuration for a profile: the options in
+// profile.Config with defaults filled in.
+func resolveConfiguration(profile configv1beta1.SchedulerProfile) configv1beta1.KaiSchedulerConfiguration {
+	cfg := configv1beta1.KaiSchedulerConfiguration{}
+	if profile.Config != nil && len(profile.Config.Raw) > 0 {
+		// Best effort: validation reports malformed config at startup.
+		_ = json.Unmarshal(profile.Config.Raw, &cfg)
+	}
+	if cfg.SchedulerName == "" {
+		cfg.SchedulerName = string(configv1beta1.SchedulerNameKai)
+	}
+	if cfg.QueueLabelKey == "" {
+		cfg.QueueLabelKey = labelKeyQueueName
+	}
+	if cfg.NodePoolLabelKey == "" {
+		cfg.NodePoolLabelKey = labelKeyNodePoolName
+	}
+	return cfg
+}
+
+// Name returns the pod-facing scheduler name ("kai-scheduler" unless overridden in the profile
+// config), for lookup and logging.
 func (b *schedulerBackend) Name() string {
 	return b.name
 }
@@ -170,7 +200,7 @@ func (b *schedulerBackend) PodGangMembershipAnnotations(newPodGangName string) m
 
 // ValidatePodCliqueSet runs KAI-specific validations on the PodCliqueSet.
 func (b *schedulerBackend) ValidatePodCliqueSet(_ context.Context, pcs *grovecorev1beta1.PodCliqueSet, _ ...scheduler.ValidateOption) error {
-	if _, err := resolveQueueNameForPodCliqueSet(pcs); err != nil {
+	if _, err := resolveQueueNameForPodCliqueSet(pcs, b.queueLabelKey); err != nil {
 		return err
 	}
 	_, err := resolvePreemptibilityForPodCliqueSet(pcs)
@@ -192,7 +222,7 @@ func (b *schedulerBackend) buildPodGroupForPodGang(ctx context.Context, podGang 
 	if err != nil {
 		return nil, err
 	}
-	queueName, err := resolveQueueNameForPodCliqueSet(pcs)
+	queueName, err := resolveQueueNameForPodCliqueSet(pcs, b.queueLabelKey)
 	if err != nil {
 		return nil, err
 	}
@@ -364,13 +394,13 @@ func (b *schedulerBackend) getControllingPodCliqueSet(ctx context.Context, podGa
 // resolveQueueNameForPodCliqueSet returns the KAI queue configured by a PodCliqueSet.
 // A queue set on the PodCliqueSet establishes the queue for the scheduling unit, so
 // every explicitly configured PodClique template queue must resolve to the same value.
-func resolveQueueNameForPodCliqueSet(pcs *grovecorev1beta1.PodCliqueSet) (string, error) {
-	if queueName := resolveQueueNameFromMetadata(pcs.Labels, pcs.Annotations); queueName != "" {
+func resolveQueueNameForPodCliqueSet(pcs *grovecorev1beta1.PodCliqueSet, queueLabelKey string) (string, error) {
+	if queueName := resolveQueueNameFromMetadata(pcs.Labels, pcs.Annotations, queueLabelKey); queueName != "" {
 		for _, clique := range pcs.Spec.Template.Cliques {
 			if clique == nil {
 				continue
 			}
-			if templateQueueName := resolveQueueNameFromMetadata(clique.Labels, clique.Annotations); templateQueueName != "" && templateQueueName != queueName {
+			if templateQueueName := resolveQueueNameFromMetadata(clique.Labels, clique.Annotations, queueLabelKey); templateQueueName != "" && templateQueueName != queueName {
 				return "", fmt.Errorf("KAI queue on PodCliqueSet %s/%s is %q but PodClique template %q resolves to %q", pcs.Namespace, pcs.Name, queueName, clique.Name, templateQueueName)
 			}
 		}
@@ -382,7 +412,7 @@ func resolveQueueNameForPodCliqueSet(pcs *grovecorev1beta1.PodCliqueSet) (string
 		if clique == nil {
 			continue
 		}
-		if queueName := resolveQueueNameFromMetadata(clique.Labels, clique.Annotations); queueName != "" {
+		if queueName := resolveQueueNameFromMetadata(clique.Labels, clique.Annotations, queueLabelKey); queueName != "" {
 			queueNames[queueName] = struct{}{}
 		}
 	}
@@ -416,12 +446,12 @@ func resolvePreemptibilityForPodCliqueSet(pcs *grovecorev1beta1.PodCliqueSet) (k
 }
 
 // resolveQueueNameFromMetadata returns queue from labels first, then falls back to annotations.
-func resolveQueueNameFromMetadata(labels, annotations map[string]string) string {
-	if labels != nil && labels[labelKeyQueueName] != "" {
-		return labels[labelKeyQueueName]
+func resolveQueueNameFromMetadata(labels, annotations map[string]string, queueLabelKey string) string {
+	if labels != nil && labels[queueLabelKey] != "" {
+		return labels[queueLabelKey]
 	}
 	if annotations != nil {
-		return annotations[labelKeyQueueName]
+		return annotations[queueLabelKey]
 	}
 	return ""
 }
@@ -437,11 +467,11 @@ func (b *schedulerBackend) inheritRuntimeManagedFields(oldPodGroup, newPodGroup 
 	if newPodGroupCopy.Labels == nil {
 		newPodGroupCopy.Labels = map[string]string{}
 	}
-	if nodePoolName := oldPodGroup.Labels[labelKeyNodePoolName]; nodePoolName != "" {
-		newPodGroupCopy.Labels[labelKeyNodePoolName] = nodePoolName
+	if nodePoolName := oldPodGroup.Labels[b.nodePoolLabelKey]; nodePoolName != "" {
+		newPodGroupCopy.Labels[b.nodePoolLabelKey] = nodePoolName
 	}
-	if queueName := oldPodGroup.Labels[labelKeyQueueName]; queueName != "" {
-		newPodGroupCopy.Labels[labelKeyQueueName] = queueName
+	if queueName := oldPodGroup.Labels[b.queueLabelKey]; queueName != "" {
+		newPodGroupCopy.Labels[b.queueLabelKey] = queueName
 	}
 	return newPodGroupCopy
 }

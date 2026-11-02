@@ -521,7 +521,8 @@ func TestBackend_ValidatePodCliqueSetQueues(t *testing.T) {
 		},
 	}
 
-	b := &schedulerBackend{}
+	cl := testutils.CreateDefaultFakeClient(nil)
+	b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameKai})
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := b.ValidatePodCliqueSet(context.Background(), tt.pcs)
@@ -804,7 +805,7 @@ func TestBackend_InvalidPreemptibility(t *testing.T) {
 	pcs := newPodCliqueSet("invalid-preemptibility-pcs", "team-a", podCliqueTemplateWithQueue("worker", ""))
 	pcs.Labels[labelKeyPreemptibility] = "sometimes"
 
-	b := &schedulerBackend{}
+	b := &schedulerBackend{queueLabelKey: labelKeyQueueName}
 	require.ErrorContains(t, b.ValidatePodCliqueSet(context.Background(), pcs), "invalid preemptibility value: sometimes")
 
 	podGang := testutils.NewPodGangBuilder("invalid-preemptibility-podgang", "default").
