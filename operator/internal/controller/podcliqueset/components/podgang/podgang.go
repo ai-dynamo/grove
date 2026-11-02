@@ -158,7 +158,7 @@ func (r _resource) buildResource(pcs *grovecorev1beta1.PodCliqueSet, pgi *podGan
 		)
 	}
 	pg.Spec.PodGroups = createPodGroupsForPodGang(pg.Namespace, pgi)
-	pg.Spec.PriorityClassName = pcs.Spec.Template.PriorityClassName
+	pg.Spec.PriorityClassName = podGangPriorityClassName(pcs)
 	pg.Spec.TopologyConstraint = pgi.topologyConstraint
 	pg.Spec.TopologyConstraintGroupConfigs = pgi.pcsgTopologyConstraints
 
@@ -262,4 +262,35 @@ func (r _resource) getSchedulerNameForPCS(pcs *grovecorev1beta1.PodCliqueSet) st
 		}
 	}
 	return r.schedRegistry.GetDefault().Name()
+}
+
+// podGangPriorityClassName is the priority class a PodGang is scheduled at.
+//
+// The PodCliqueSet-level priorityClassName wins. A producer that sets the class
+// only on the pod templates (Dynamo does, per component) leaves it empty, and
+// then the PodGroup a scheduler builds from the PodGang carries no priority at
+// all, so the whole gang is scheduled and preempted as if it were the lowest
+// class even though every one of its pods asks for a high one. Fall back to the
+// class the cliques agree on; if they disagree, or none names one, leave it empty
+// rather than pick a winner.
+func podGangPriorityClassName(pcs *grovecorev1beta1.PodCliqueSet) string {
+	if name := pcs.Spec.Template.PriorityClassName; name != "" {
+		return name
+	}
+	common := ""
+	for _, clique := range pcs.Spec.Template.Cliques {
+		if clique == nil {
+			continue
+		}
+		name := clique.Spec.PodSpec.PriorityClassName
+		switch {
+		case name == "":
+			continue
+		case common == "":
+			common = name
+		case common != name:
+			return ""
+		}
+	}
+	return common
 }
