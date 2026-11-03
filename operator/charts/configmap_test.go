@@ -18,7 +18,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
+	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -74,8 +74,9 @@ func TestSchedulerProfileConfig(t *testing.T) {
 			configYAML, ok := configMap.Data["config.yaml"]
 			require.True(t, ok)
 
-			var config configv1alpha1.OperatorConfiguration
+			var config configv1beta1.OperatorConfiguration
 			require.NoError(t, yaml.UnmarshalStrict([]byte(configYAML), &config))
+			assert.Equal(t, configv1beta1.SchemeGroupVersion.String(), config.APIVersion)
 			require.Len(t, config.Scheduler.Profiles, len(tt.profiles))
 			for i, profile := range config.Scheduler.Profiles {
 				expected, ok := tt.profiles[i].(map[string]interface{})

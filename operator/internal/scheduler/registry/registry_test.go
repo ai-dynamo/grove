@@ -17,7 +17,7 @@ package registry
 import (
 	"testing"
 
-	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
+	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 	schedulertest "github.com/ai-dynamo/grove/operator/test/utils/scheduler"
@@ -31,44 +31,44 @@ import (
 func TestNewRegistry(t *testing.T) {
 	tests := []struct {
 		name         string
-		schedulers   []configv1alpha1.SchedulerName
+		schedulers   []configv1beta1.SchedulerName
 		wantErr      bool
 		errContains  string
 		expectedName string
 	}{
 		{
 			name:         "kai scheduler initialization",
-			schedulers:   []configv1alpha1.SchedulerName{configv1alpha1.SchedulerNameKai},
+			schedulers:   []configv1beta1.SchedulerName{configv1beta1.SchedulerNameKai},
 			wantErr:      false,
 			expectedName: "kai-scheduler",
 		},
 		{
 			name:         "default scheduler initialization",
-			schedulers:   []configv1alpha1.SchedulerName{configv1alpha1.SchedulerNameKube},
+			schedulers:   []configv1beta1.SchedulerName{configv1beta1.SchedulerNameKube},
 			wantErr:      false,
 			expectedName: "default-scheduler",
 		},
 		{
 			name:         "lpx scheduler initialization with kai fallback",
-			schedulers:   []configv1alpha1.SchedulerName{configv1alpha1.SchedulerNameLPX, configv1alpha1.SchedulerNameKai},
+			schedulers:   []configv1beta1.SchedulerName{configv1beta1.SchedulerNameLPX, configv1beta1.SchedulerNameKai},
 			wantErr:      false,
 			expectedName: "lpx-scheduler",
 		},
 		{
 			name:         "lpx scheduler initialization without fallback",
-			schedulers:   []configv1alpha1.SchedulerName{configv1alpha1.SchedulerNameLPX},
+			schedulers:   []configv1beta1.SchedulerName{configv1beta1.SchedulerNameLPX},
 			wantErr:      false,
 			expectedName: "lpx-scheduler",
 		},
 		{
 			name:         "kueue scheduler initialization",
-			schedulers:   []configv1alpha1.SchedulerName{configv1alpha1.SchedulerNameKueue},
+			schedulers:   []configv1beta1.SchedulerName{configv1beta1.SchedulerNameKueue},
 			wantErr:      false,
 			expectedName: "kueue",
 		},
 		{
 			name:        "unsupported scheduler",
-			schedulers:  []configv1alpha1.SchedulerName{"unknown-scheduler"},
+			schedulers:  []configv1beta1.SchedulerName{"unknown-scheduler"},
 			wantErr:     true,
 			errContains: "not supported",
 		},
@@ -78,12 +78,12 @@ func TestNewRegistry(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			cl := testutils.CreateDefaultFakeClient(nil)
 			recorder := record.NewFakeRecorder(10)
-			profiles := make([]configv1alpha1.SchedulerProfile, 0, len(tt.schedulers))
+			profiles := make([]configv1beta1.SchedulerProfile, 0, len(tt.schedulers))
 			for _, schedulerName := range tt.schedulers {
-				profiles = append(profiles, configv1alpha1.SchedulerProfile{Name: schedulerName})
+				profiles = append(profiles, configv1beta1.SchedulerProfile{Name: schedulerName})
 			}
 
-			cfg := configv1alpha1.SchedulerConfiguration{
+			cfg := configv1beta1.SchedulerConfiguration{
 				Profiles:           profiles,
 				DefaultProfileName: string(tt.schedulers[0]),
 			}
@@ -108,41 +108,41 @@ func TestNewRegistry(t *testing.T) {
 	t.Run("multiple profiles with default set to kai", func(t *testing.T) {
 		cl := schedulertest.NewVolcanoClient(t, testutils.NewVolcanoPodGroupCRD(true))
 		recorder := record.NewFakeRecorder(10)
-		cfg := configv1alpha1.SchedulerConfiguration{
-			Profiles: []configv1alpha1.SchedulerProfile{
-				{Name: configv1alpha1.SchedulerNameKube},
-				{Name: configv1alpha1.SchedulerNameKai},
-				{Name: configv1alpha1.SchedulerNameVolcano},
-				{Name: configv1alpha1.SchedulerNameLPX},
-				{Name: configv1alpha1.SchedulerNameKueue},
+		cfg := configv1beta1.SchedulerConfiguration{
+			Profiles: []configv1beta1.SchedulerProfile{
+				{Name: configv1beta1.SchedulerNameKube},
+				{Name: configv1beta1.SchedulerNameKai},
+				{Name: configv1beta1.SchedulerNameVolcano},
+				{Name: configv1beta1.SchedulerNameLPX},
+				{Name: configv1beta1.SchedulerNameKueue},
 			},
-			DefaultProfileName: string(configv1alpha1.SchedulerNameKai),
+			DefaultProfileName: string(configv1beta1.SchedulerNameKai),
 		}
 		reg, err := New(cl, cl, cl.Scheme(), recorder, cfg)
 		require.NoError(t, err)
-		require.NotNil(t, reg.Get(string(configv1alpha1.SchedulerNameKai)))
-		require.NotNil(t, reg.Get(string(configv1alpha1.SchedulerNameKube)))
-		require.NotNil(t, reg.Get(string(configv1alpha1.SchedulerNameVolcano)))
-		require.NotNil(t, reg.Get(string(configv1alpha1.SchedulerNameLPX)))
-		require.NotNil(t, reg.Get(string(configv1alpha1.SchedulerNameKueue)))
-		assert.Equal(t, reg.GetDefault(), reg.Get(string(configv1alpha1.SchedulerNameKai)))
-		assert.NotContains(t, reg.AllTopologyAware(), string(configv1alpha1.SchedulerNameLPX))
+		require.NotNil(t, reg.Get(string(configv1beta1.SchedulerNameKai)))
+		require.NotNil(t, reg.Get(string(configv1beta1.SchedulerNameKube)))
+		require.NotNil(t, reg.Get(string(configv1beta1.SchedulerNameVolcano)))
+		require.NotNil(t, reg.Get(string(configv1beta1.SchedulerNameLPX)))
+		require.NotNil(t, reg.Get(string(configv1beta1.SchedulerNameKueue)))
+		assert.Equal(t, reg.GetDefault(), reg.Get(string(configv1beta1.SchedulerNameKai)))
+		assert.NotContains(t, reg.AllTopologyAware(), string(configv1beta1.SchedulerNameLPX))
 	})
 
 	t.Run("volcano scheduler initialization", func(t *testing.T) {
 		cl := schedulertest.NewVolcanoClient(t, testutils.NewVolcanoPodGroupCRD(true))
 
 		recorder := record.NewFakeRecorder(10)
-		cfg := configv1alpha1.SchedulerConfiguration{
-			Profiles: []configv1alpha1.SchedulerProfile{
-				{Name: configv1alpha1.SchedulerNameVolcano},
+		cfg := configv1beta1.SchedulerConfiguration{
+			Profiles: []configv1beta1.SchedulerProfile{
+				{Name: configv1beta1.SchedulerNameVolcano},
 			},
-			DefaultProfileName: string(configv1alpha1.SchedulerNameVolcano),
+			DefaultProfileName: string(configv1beta1.SchedulerNameVolcano),
 		}
 		reg, err := New(cl, cl, cl.Scheme(), recorder, cfg)
 		require.NoError(t, err)
 		require.NotNil(t, reg.GetDefault())
-		assert.Equal(t, string(configv1alpha1.SchedulerNameVolcano), reg.GetDefault().Name())
+		assert.Equal(t, string(configv1beta1.SchedulerNameVolcano), reg.GetDefault().Name())
 	})
 }
 

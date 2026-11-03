@@ -22,7 +22,7 @@ import (
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	apiconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	groveclientscheme "github.com/ai-dynamo/grove/operator/internal/client"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
@@ -106,7 +106,7 @@ func TestGetExistingResourceNames(t *testing.T) {
 			// Create a PodCliqueSet with the specified number of replicas and PodCliques
 			pcsBuilder := testutils.NewPodCliqueSetBuilder(testPCSName, testPCSNamespace, uuid.NewUUID()).
 				WithReplicas(tc.pcsReplicas).
-				WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder))
+				WithCliqueStartupType(ptr.To(grovecorev1beta1.CliqueStartupTypeAnyOrder))
 			for _, pclqTemplateName := range tc.podCliqueTemplateNames {
 				pcsBuilder.WithPodCliqueParameters(pclqTemplateName, 1, nil)
 			}
@@ -115,7 +115,7 @@ func TestGetExistingResourceNames(t *testing.T) {
 			existingObjects := createExistingPodCliquesFromPCS(pcs, tc.podCliqueNamesNotOwnedByPCS)
 			// Create a fake client with PodCliques. The list-error record is keyed by the list object's
 			// GVK (PodCliqueList), which is what the typed PodCliqueList List call resolves to.
-			cl := testutils.CreateFakeClientForObjectsMatchingLabels(nil, tc.listErr, pcs.Namespace, grovecorev1alpha1.SchemeGroupVersion.WithKind("PodCliqueList"), getPodCliqueSelectorLabels(pcs.ObjectMeta), existingObjects...)
+			cl := testutils.CreateFakeClientForObjectsMatchingLabels(nil, tc.listErr, pcs.Namespace, grovecorev1beta1.SchemeGroupVersion.WithKind("PodCliqueList"), getPodCliqueSelectorLabels(pcs.ObjectMeta), existingObjects...)
 			operator := New(cl, groveclientscheme.Scheme, record.NewFakeRecorder(10))
 			actualPCLQNames, err := operator.GetExistingResourceNames(context.Background(), logr.Discard(), pcs.ObjectMeta)
 			if tc.expectedErr == nil {
@@ -165,7 +165,7 @@ func TestSyncUpdatesStandaloneTemplateAfterScaleToZero(t *testing.T) {
 	ctx := context.Background()
 	pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testPCSNamespace, uuid.NewUUID()).
 		WithStandaloneCliqueReplicas("frontend", 1).
-		WithUpdateStrategy(&grovecorev1alpha1.PodCliqueSetUpdateStrategy{Type: grovecorev1alpha1.RollingRecreateStrategy}).
+		WithUpdateStrategy(&grovecorev1beta1.PodCliqueSetUpdateStrategy{Type: grovecorev1beta1.RollingRecreateStrategy}).
 		WithScalingGroupConfig("decode", []string{"worker"}, 1, 1).
 		WithPodCliqueSetGenerationHash(ptr.To("old-generation")).Build()
 	frontendTemplate := pcs.Spec.Template.Cliques[0]
@@ -181,7 +181,7 @@ func TestSyncUpdatesStandaloneTemplateAfterScaleToZero(t *testing.T) {
 	pclqOperator := New(cl, groveclientscheme.Scheme, record.NewFakeRecorder(20))
 	state := &pcssync.State{ExpectedReplicaIndices: []int{0}}
 	pgmKey := client.ObjectKey{Namespace: pcs.Namespace, Name: pcs.Name + "-0"}
-	pgm := &grovecorev1alpha1.PodGangMap{}
+	pgm := &grovecorev1beta1.PodGangMap{}
 	syncMap := func() {
 		t.Helper()
 		_, err := pgmOperator.Sync(ctx, logr.Discard(), pcs, state)
@@ -221,8 +221,8 @@ func TestSyncUpdatesStandaloneTemplateAfterScaleToZero(t *testing.T) {
 	require.NoError(t, cl.Update(ctx, pclq))
 	require.NoError(t, cl.Update(ctx, pcsg))
 	syncMap()
-	anchor := testutils.EntryByRole(pgm.Spec.Entries, grovecorev1alpha1.PodGangEntryRoleAnchor)
-	require.Equal(t, grovecorev1alpha1.PodGangEntryRoleAnchor, anchor.Role)
+	anchor := testutils.EntryByRole(pgm.Spec.Entries, grovecorev1beta1.PodGangEntryRoleAnchor)
+	require.Equal(t, grovecorev1beta1.PodGangEntryRoleAnchor, anchor.Role)
 	assert.Equal(t, int32(1), anchor.PodCliques["frontend"])
 	assert.Equal(t, []int32{0}, anchor.PCSGReplicaIndices["decode"])
 	assert.Equal(t, "new-generation", anchor.PodCliqueSetGenerationHash)
@@ -272,7 +272,7 @@ func TestDelete(t *testing.T) {
 			t.Parallel()
 			existingPodCliques := createDefaultPodCliques(pcsObjMeta, "howl", tc.numExistingPodCliques)
 			// Create a fake client with PodCliques
-			cl := testutils.CreateFakeClientForObjectsMatchingLabels(tc.deleteError, nil, testPCSNamespace, grovecorev1alpha1.SchemeGroupVersion.WithKind("PodClique"), getPodCliqueSelectorLabels(pcsObjMeta), existingPodCliques...)
+			cl := testutils.CreateFakeClientForObjectsMatchingLabels(tc.deleteError, nil, testPCSNamespace, grovecorev1beta1.SchemeGroupVersion.WithKind("PodClique"), getPodCliqueSelectorLabels(pcsObjMeta), existingPodCliques...)
 			operator := New(cl, groveclientscheme.Scheme, record.NewFakeRecorder(10))
 			err := operator.Delete(context.Background(), logr.Discard(), pcsObjMeta)
 			if tc.expectedError != nil {
@@ -286,8 +286,8 @@ func TestDelete(t *testing.T) {
 	}
 }
 
-func getExistingPodCliques(t *testing.T, cl client.Client, pcsObjMeta metav1.ObjectMeta) []grovecorev1alpha1.PodClique {
-	podCliqueList := &grovecorev1alpha1.PodCliqueList{}
+func getExistingPodCliques(t *testing.T, cl client.Client, pcsObjMeta metav1.ObjectMeta) []grovecorev1beta1.PodClique {
+	podCliqueList := &grovecorev1beta1.PodCliqueList{}
 	assert.NoError(t, cl.List(context.Background(), podCliqueList, client.InNamespace(pcsObjMeta.Namespace), client.MatchingLabels(getPodCliqueSelectorLabels(pcsObjMeta))))
 	return podCliqueList.Items
 }
@@ -303,7 +303,7 @@ func createDefaultPodCliques(pcsObjMeta metav1.ObjectMeta, pclqNamePrefix string
 	return podCliqueNames
 }
 
-func createExistingPodCliquesFromPCS(pcs *grovecorev1alpha1.PodCliqueSet, podCliqueNamesNotOwnedByPCS []string) []client.Object {
+func createExistingPodCliquesFromPCS(pcs *grovecorev1beta1.PodCliqueSet, podCliqueNamesNotOwnedByPCS []string) []client.Object {
 	existingPodCliques := make([]client.Object, 0, len(pcs.Spec.Template.Cliques)*int(pcs.Spec.Replicas)+len(podCliqueNamesNotOwnedByPCS))
 	for replicaIndex := range pcs.Spec.Replicas {
 		for _, pclqTemplate := range pcs.Spec.Template.Cliques {
@@ -537,7 +537,7 @@ func TestBuildResource_MNNVLInjection(t *testing.T) {
 			// Build PCS with the test case's containers
 			pcsBuilder := testutils.NewPodCliqueSetBuilder(testPCSName, testPCSNamespace, uuid.NewUUID()).
 				WithReplicas(1).
-				WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder)).
+				WithCliqueStartupType(ptr.To(grovecorev1beta1.CliqueStartupTypeAnyOrder)).
 				WithAnnotations(tc.pcsAnnotations)
 
 			// Create PodCliqueTemplateSpec with containers and optional annotations
@@ -552,7 +552,7 @@ func TestBuildResource_MNNVLInjection(t *testing.T) {
 
 			// Create empty PodClique with matching name suffix
 			pclqName := fmt.Sprintf("%s-%d-%s", testPCSName, pcsReplica, pclqTemplateName)
-			pclq := &grovecorev1alpha1.PodClique{
+			pclq := &grovecorev1beta1.PodClique{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      pclqName,
 					Namespace: testPCSNamespace,
@@ -601,7 +601,7 @@ func TestBuildResource_MNNVLInjection(t *testing.T) {
 func TestBuildResource_StripsTopologyAnnotation(t *testing.T) {
 	pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testPCSNamespace, uuid.NewUUID()).
 		WithReplicas(1).
-		WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder)).
+		WithCliqueStartupType(ptr.To(grovecorev1beta1.CliqueStartupTypeAnyOrder)).
 		WithPodCliqueTemplateSpec(
 			testutils.NewPodCliqueTemplateSpecBuilder("worker").
 				WithAnnotations(map[string]string{
@@ -612,7 +612,7 @@ func TestBuildResource_StripsTopologyAnnotation(t *testing.T) {
 		).
 		Build()
 
-	pclq := &grovecorev1alpha1.PodClique{
+	pclq := &grovecorev1beta1.PodClique{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      fmt.Sprintf("%s-0-worker", testPCSName),
 			Namespace: testPCSNamespace,
@@ -647,27 +647,27 @@ func TestBuildResource_PreservesRevisionForReplicaNotUnderCoherentUpdate(t *test
 		t.Run(tc.description, func(t *testing.T) {
 			pcsBuilder := testutils.NewPodCliqueSetBuilder(testPCSName, testPCSNamespace, uuid.NewUUID()).
 				WithReplicas(2).
-				WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeAnyOrder)).
-				WithUpdateStrategy(&grovecorev1alpha1.PodCliqueSetUpdateStrategy{Type: grovecorev1alpha1.CoherentStrategy})
+				WithCliqueStartupType(ptr.To(grovecorev1beta1.CliqueStartupTypeAnyOrder)).
+				WithUpdateStrategy(&grovecorev1beta1.PodCliqueSetUpdateStrategy{Type: grovecorev1beta1.CoherentStrategy})
 			template := testutils.NewPodCliqueTemplateSpecBuilder(cliqueName).Build()
 			template.Spec.PodSpec.Containers = []corev1.Container{{Name: "c", Image: "new"}}
 			pcsBuilder.WithPodCliqueTemplateSpec(template)
 			if tc.coherentUpdate {
-				pcsBuilder.WithUpdateProgress(&grovecorev1alpha1.PodCliqueSetUpdateProgress{
+				pcsBuilder.WithUpdateProgress(&grovecorev1beta1.PodCliqueSetUpdateProgress{
 					UpdateStartedAt:   metav1.Now(),
-					CurrentlyUpdating: []grovecorev1alpha1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 0}},
+					CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 0}},
 				})
 			}
 			pcs := pcsBuilder.Build()
 
 			// An existing PodClique on the running (old) revision.
-			pclq := &grovecorev1alpha1.PodClique{
+			pclq := &grovecorev1beta1.PodClique{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      fmt.Sprintf("%s-%d-%s", testPCSName, tc.pcsReplica, cliqueName),
 					Namespace: testPCSNamespace,
 					Labels:    map[string]string{apicommon.LabelPodTemplateHash: "old-hash"},
 				},
-				Spec: grovecorev1alpha1.PodCliqueSpec{
+				Spec: grovecorev1beta1.PodCliqueSpec{
 					PodSpec: corev1.PodSpec{Containers: []corev1.Container{{Name: "c", Image: "old"}}},
 				},
 			}
@@ -700,11 +700,11 @@ func TestBuildResource_DoesNotWriteStartsAfter(t *testing.T) {
 	)
 	pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testPCSNamespace, uuid.NewUUID()).
 		WithReplicas(2).
-		WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeExplicit)).
-		WithUpdateStrategy(&grovecorev1alpha1.PodCliqueSetUpdateStrategy{Type: grovecorev1alpha1.CoherentStrategy}).
-		WithUpdateProgress(&grovecorev1alpha1.PodCliqueSetUpdateProgress{
+		WithCliqueStartupType(ptr.To(grovecorev1beta1.CliqueStartupTypeExplicit)).
+		WithUpdateStrategy(&grovecorev1beta1.PodCliqueSetUpdateStrategy{Type: grovecorev1beta1.CoherentStrategy}).
+		WithUpdateProgress(&grovecorev1beta1.PodCliqueSetUpdateProgress{
 			UpdateStartedAt:   metav1.Now(),
-			CurrentlyUpdating: []grovecorev1alpha1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 0}},
+			CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 0}},
 		}).
 		WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder(leaderClique).Build()).
 		WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder(workerClique).WithStartsAfter([]string{leaderClique}).Build()).
@@ -712,13 +712,13 @@ func TestBuildResource_DoesNotWriteStartsAfter(t *testing.T) {
 
 	// A preserved worker replica from an older operator still carries the resolved parent FQN.
 	staleStartsAfter := []string{fmt.Sprintf("%s-%d-%s", testPCSName, pcsReplica, leaderClique)}
-	pclq := &grovecorev1alpha1.PodClique{
+	pclq := &grovecorev1beta1.PodClique{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      fmt.Sprintf("%s-%d-%s", testPCSName, pcsReplica, workerClique),
 			Namespace: testPCSNamespace,
 			Labels:    map[string]string{apicommon.LabelPodTemplateHash: "old-hash"},
 		},
-		Spec: grovecorev1alpha1.PodCliqueSpec{StartsAfter: staleStartsAfter},
+		Spec: grovecorev1beta1.PodCliqueSpec{StartsAfter: staleStartsAfter},
 	}
 
 	operator := &_resource{scheme: groveclientscheme.Scheme}

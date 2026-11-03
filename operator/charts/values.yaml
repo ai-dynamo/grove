@@ -235,12 +235,6 @@ webhooks:
       app.kubernetes.io/name: clustertopology-validating-webhook
       app.kubernetes.io/part-of: grove
     annotations: {}
-  podCliqueValidationWebhook:
-    labels:
-      app.kubernetes.io/component: operator-podclique-validating-webhook
-      app.kubernetes.io/name: podclique-validating-webhook
-      app.kubernetes.io/part-of: grove
-    annotations: {}
   authorizerWebhook:
     labels:
       app.kubernetes.io/component: operator-authorizer-webhook
@@ -266,12 +260,9 @@ priorityClass:
   value: 999999550
 
 crdInstaller:
-  # enabled controls whether the operator automatically installs/upgrades Grove CRDs on startup
-  # via an init container. Defaults to false — CRDs are installed by Helm on fresh install via
-  # the crds/ directory, and upgrades are managed manually by the user.
-  # Set to true to opt in to automated CRD upgrades on every helm upgrade.
-  # WARNING: when enabled, the operator ServiceAccount receives apiextensions.k8s.io permissions.
-  enabled: false
+  # upgradeCRDs upgrades CRDs from the bundle shipped with this release. The init container always configures the
+  # PodCliqueSet conversion webhook, even when CRD upgrades are disabled.
+  upgradeCRDs: false
   image:
     repository: grove-install-crds
     # Overrides the image tag whose default is the chart appVersion.

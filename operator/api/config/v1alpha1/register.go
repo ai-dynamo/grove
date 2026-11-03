@@ -26,6 +26,8 @@ var (
 	SchemeGroupVersion = schema.GroupVersion{Group: constants.OperatorConfigGroupName, Version: "v1alpha1"}
 	// SchemeBuilder is used to add go types to the GroupVersionKind scheme
 	SchemeBuilder = runtime.NewSchemeBuilder(addKnownTypes, addDefaultingFuncs)
+	// localSchemeBuilder is used by the generated conversion functions to register themselves.
+	localSchemeBuilder = &SchemeBuilder
 	// AddToScheme is a reference to the Scheme Builder's AddToScheme function.
 	AddToScheme = SchemeBuilder.AddToScheme
 )

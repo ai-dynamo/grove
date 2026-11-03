@@ -19,7 +19,7 @@ import (
 	"fmt"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/sync"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
@@ -37,9 +37,9 @@ import (
 )
 
 const (
-	errGetServiceAccount    grovecorev1alpha1.ErrorCode = "ERR_GET_SERVICEACCOUNT"
-	errSyncServiceAccount   grovecorev1alpha1.ErrorCode = "ERR_SYNC_SERVICEACCOUNT"
-	errDeleteServiceAccount grovecorev1alpha1.ErrorCode = "ERR_DELETE_SERVICEACCOUNT"
+	errGetServiceAccount    grovecorev1beta1.ErrorCode = "ERR_GET_SERVICEACCOUNT"
+	errSyncServiceAccount   grovecorev1beta1.ErrorCode = "ERR_SYNC_SERVICEACCOUNT"
+	errDeleteServiceAccount grovecorev1beta1.ErrorCode = "ERR_DELETE_SERVICEACCOUNT"
 )
 
 type _resource struct {
@@ -48,7 +48,7 @@ type _resource struct {
 }
 
 // New creates an instance of ServiceAccount components operator.
-func New(client client.Client, scheme *runtime.Scheme) component.Operator[grovecorev1alpha1.PodCliqueSet, pcssync.State, pcssync.Result] {
+func New(client client.Client, scheme *runtime.Scheme) component.Operator[grovecorev1beta1.PodCliqueSet, pcssync.State, pcssync.Result] {
 	return &_resource{
 		client: client,
 		scheme: scheme,
@@ -77,7 +77,7 @@ func (r _resource) GetExistingResourceNames(ctx context.Context, _ logr.Logger, 
 }
 
 // Sync synchronizes all resources that the ServiceAccount Operator manages.
-func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, _ *pcssync.State) (pcssync.Result, error) {
+func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, _ *pcssync.State) (pcssync.Result, error) {
 	objectKey := getObjectKey(pcs.ObjectMeta)
 	sa := emptyServiceAccount(objectKey)
 
@@ -116,7 +116,7 @@ func (r _resource) Delete(ctx context.Context, logger logr.Logger, pcsObjMeta me
 }
 
 // buildResource configures the ServiceAccount with automount enabled.
-func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, sa *corev1.ServiceAccount) error {
+func (r _resource) buildResource(pcs *grovecorev1beta1.PodCliqueSet, sa *corev1.ServiceAccount) error {
 	sa.Labels = getLabels(pcs.ObjectMeta)
 	if err := controllerutil.SetControllerReference(pcs, sa, r.scheme); err != nil {
 		return groveerr.WrapError(err,

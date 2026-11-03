@@ -32,16 +32,19 @@ import (
 	"testing"
 
 	apiconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
-	grovev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	corev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/e2e/grove/podgangmap"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/pods"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
 	"github.com/google/go-github/v86/github"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 const (
@@ -68,9 +71,14 @@ func (s *podSurvivalUpgrade) deployWorkload(t *testing.T, tc *testctx.TestContex
 	require.NoError(t, err, "listing workload pods")
 }
 
-// verifyPodsSurvive scales the workload, then asserts the pre-upgrade pods were not recreated and the
-// init containers were updated.
+// verifyPodsSurvive checks that the grove.io CRDs store v1beta1 next to v1alpha1 and that the workload is
+// readable at both versions, scales the workload, then asserts the pre-upgrade pods were not recreated and
+// the init containers were updated.
 func (s *podSurvivalUpgrade) verifyPodsSurvive(t *testing.T, tc *testctx.TestContext) {
+	waitForStoredVersions(t, tc, corev1alpha1.SchemeGroupVersion.Version, grovev1beta1.SchemeGroupVersion.Version)
+	requirePCSReadableAtBothVersions(t, tc, types.NamespacedName{Namespace: s.workload.Namespace, Name: s.workload.Name})
+	verifyPodUIDsUnchanged(t, tc, s.podsBeforeUpgrade)
+
 	tc.ScalePCSAndWait(s.workload.Name, 2, 4, 0)
 	initContainerImage := fmt.Sprintf("ghcr.io/ai-dynamo/grove/grove-initc:%s", s.fromVersion)
 	verifyInitContainerUpdate(t, tc, s.podsBeforeUpgrade, initContainerImage)
@@ -107,6 +115,74 @@ func Test_VUPG1_UpgradeFromLatestGitHubRelease(t *testing.T) {
 	})
 }
 
+// Test_VDGR1_DowngradeToLatestGitHubRelease verifies the documented downgrade: after an upgrade to the
+// operator built from the current checkout, run-api-downgrade moves the grove.io objects back to
+// grove.io/v1alpha1, and a Helm rollback to the released version then succeeds. The workload's pods
+// survive both the upgrade and the downgrade, and the released operator keeps managing the workload.
+//
+// The released version can be controlled with GROVE_UPGRADE_FROM_VERSION.
+func Test_VDGR1_DowngradeToLatestGitHubRelease(t *testing.T) {
+	fromVersion := os.Getenv("GROVE_UPGRADE_FROM_VERSION")
+	if fromVersion == "" {
+		fromVersion = latestGitHubRelease(t)
+	}
+	s := &podSurvivalUpgrade{
+		fromVersion: fromVersion,
+		workload: &testctx.WorkloadConfig{
+			Name:         "upgrade-survivor",
+			YAMLPath:     "../../yaml/upgrade.yaml",
+			Namespace:    "default",
+			ExpectedPods: 2,
+		},
+	}
+
+	runUpgradeTest(t, upgradeTest{
+		fromVersion:     s.fromVersion,
+		nodeWorkerCount: 1,
+		prepareOpts:     []testctx.TestOption{testctx.WithWorkload(s.workload)},
+		preUpgrade:      s.deployWorkload,
+		postUpgrade:     s.downgradeAndVerify,
+	})
+}
+
+// downgradeAndVerify checks the stored versions after the upgrade, prepares the downgrade, rolls the release
+// back to the installed version, and checks the CRDs, the workload and its pods on the released operator.
+// It deletes the workload itself, because the shared cleanup reads grove.io/v1beta1, which the released
+// CRDs no longer serve.
+func (s *podSurvivalUpgrade) downgradeAndVerify(t *testing.T, tc *testctx.TestContext) {
+	alpha := corev1alpha1.SchemeGroupVersion.Version
+	pcsKey := types.NamespacedName{Namespace: s.workload.Namespace, Name: s.workload.Name}
+
+	waitForStoredVersions(t, tc, alpha, grovev1beta1.SchemeGroupVersion.Version)
+	verifyPodUIDsUnchanged(t, tc, s.podsBeforeUpgrade)
+	pcsBeforeDowngrade := &corev1alpha1.PodCliqueSet{}
+	require.NoError(t, tc.Client.Get(t.Context(), pcsKey, pcsBeforeDowngrade), "get PodCliqueSet at v1alpha1")
+
+	runAPIDowngrade(t)
+	requireCRDsServeOnly(t, tc, alpha)
+
+	testctx.Logger.Infof("rolling back to the released Grove operator %s", s.fromVersion)
+	rollbackGrove(t, tc, 1)
+	requireCRDsServeOnly(t, tc, alpha)
+
+	pcsAfterDowngrade := &corev1alpha1.PodCliqueSet{}
+	require.NoError(t, tc.Client.Get(t.Context(), pcsKey, pcsAfterDowngrade), "get PodCliqueSet after the downgrade")
+	require.True(t, equality.Semantic.DeepEqual(pcsBeforeDowngrade.Spec, pcsAfterDowngrade.Spec),
+		"PodCliqueSet spec changed during the downgrade")
+	verifyPodUIDsUnchanged(t, tc, s.podsBeforeUpgrade)
+
+	testctx.Logger.Info("scaling the workload on the released operator")
+	patch := client.RawPatch(types.MergePatchType, []byte(`{"spec":{"replicas":2}}`))
+	require.NoError(t, tc.Client.Patch(t.Context(), pcsAfterDowngrade, patch), "scale PodCliqueSet at v1alpha1")
+	require.NoError(t, tc.WaitForPods(4), "released operator did not scale the workload")
+	verifyPodUIDsUnchanged(t, tc, s.podsBeforeUpgrade)
+
+	testctx.Logger.Info("deleting the workload at v1alpha1")
+	require.NoError(t, tc.Client.Delete(t.Context(), pcsAfterDowngrade), "delete PodCliqueSet at v1alpha1")
+	_, err := tc.WaitForPodCount(0)
+	require.NoError(t, err, "workload pods were not deleted")
+}
+
 // Test_VUPG2_RecoverPodGangMapAfterScaleBelowMinAvailable verifies that after migrating a
 // legacy workload from v0.1.0-alpha.11 to the epoch-based PodGang scheme, scaling a
 // PodCliqueScalingGroup below MinAvailable drains its PodGangMap to empty without wedging, and scaling
@@ -140,13 +216,15 @@ func verifyPodGangMapRecoversAfterScaleBelowMinAvailable(t *testing.T, tc *testc
 	verifier := podgangmap.NewVerifier(tc.Client, testctx.Logger)
 	pcsNsName := types.NamespacedName{Namespace: upgradePCSGWorkloadNamespace, Name: upgradePCSGWorkloadName}
 
-	testctx.Logger.Info("waiting for the legacy workload to finish migrating to the epoch-based scheme")
-	waitForMigrationComplete(t, tc, pcsNsName)
-
+	// The legacy workload has no PodGangMap, and the new operator creates one only after it set the migration
+	// gate, so the PodGangMap is waited for before the gate is waited to clear.
 	testctx.Logger.Info("verifying the migrated PodGangMap has an anchor holding worker index 0")
 	require.NoError(t, podgangmap.WaitUntilVerified(t.Context(), verifier, pcsNsName, 0, pgmRecoverTimeout, defaultPollInterval,
 		podgangmap.AnchorPCSGReplicaIndicesCheckFn("worker", []int32{0}),
 	), "migrated PodGangMap not in expected state")
+
+	testctx.Logger.Info("waiting for the legacy workload to finish migrating to the epoch-based scheme")
+	waitForMigrationComplete(t, tc, pcsNsName)
 
 	testctx.Logger.Info("scaling the worker group to 0 and verifying the PodGangMap holds no entries")
 	tc.ScalePCSGAcrossAllReplicasAndWait(upgradePCSGWorkloadName, "worker", 1, 0, 0, 0)
@@ -169,7 +247,7 @@ func waitForMigrationComplete(t *testing.T, tc *testctx.TestContext, pcsNsName t
 	t.Helper()
 	err := wait.PollUntilContextTimeout(t.Context(), defaultPollInterval, defaultPollTimeout, true,
 		func(ctx context.Context) (bool, error) {
-			pcs := &grovev1alpha1.PodCliqueSet{}
+			pcs := &grovev1beta1.PodCliqueSet{}
 			if err := tc.Client.Get(ctx, pcsNsName, pcs); err != nil {
 				return false, err
 			}

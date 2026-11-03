@@ -19,7 +19,7 @@ import (
 	"time"
 
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -68,7 +68,7 @@ func (b *PodBuilder) Build() *corev1.Pod {
 // WithOwner adds an owner reference to the Pod.
 func (b *PodBuilder) WithOwner(ownerName string) *PodBuilder {
 	ownerRef := metav1.OwnerReference{
-		APIVersion:         grovecorev1alpha1.SchemeGroupVersion.String(),
+		APIVersion:         grovecorev1beta1.SchemeGroupVersion.String(),
 		Kind:               constants.KindPodClique,
 		Name:               ownerName,
 		UID:                uuid.NewUUID(),

@@ -22,7 +22,7 @@ import (
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/podclique/expectations"
 	"github.com/ai-dynamo/grove/operator/internal/expect"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
@@ -57,7 +57,7 @@ func TestSyncPCSGPodIndexLabels(t *testing.T) {
 	scheme := runtime.NewScheme()
 	require.NoError(t, corev1.AddToScheme(scheme))
 
-	pclq := &grovecorev1alpha1.PodClique{ObjectMeta: metav1.ObjectMeta{
+	pclq := &grovecorev1beta1.PodClique{ObjectMeta: metav1.ObjectMeta{
 		Name:      "test-pcs-0-engine-0-worker",
 		Namespace: "default",
 		Labels: map[string]string{
@@ -154,19 +154,19 @@ func TestCanRemoveSchedulingGate(t *testing.T) {
 func TestResolveDependencySatisfiedByEpoch(t *testing.T) {
 	tests := []struct {
 		name            string
-		entries         []grovecorev1alpha1.PodGangEntry
+		entries         []grovecorev1beta1.PodGangEntry
 		scheduledEpochs []string
 		expected        map[string]bool
 	}{
 		{
 			name:            "single anchor with no dependency is always satisfied",
-			entries:         []grovecorev1alpha1.PodGangEntry{anchorEntry()},
+			entries:         []grovecorev1beta1.PodGangEntry{anchorEntry()},
 			scheduledEpochs: nil,
 			expected:        map[string]bool{testAnchor0Epoch: true},
 		},
 		{
 			name: "entry satisfied when its dependency epoch is scheduled",
-			entries: []grovecorev1alpha1.PodGangEntry{
+			entries: []grovecorev1beta1.PodGangEntry{
 				anchorEntry(),
 				tailEntry(testTailEpoch, testAnchor0Epoch),
 			},
@@ -175,7 +175,7 @@ func TestResolveDependencySatisfiedByEpoch(t *testing.T) {
 		},
 		{
 			name: "entry unsatisfied when its dependency epoch is not scheduled",
-			entries: []grovecorev1alpha1.PodGangEntry{
+			entries: []grovecorev1beta1.PodGangEntry{
 				anchorEntry(),
 				tailEntry(testTailEpoch, testAnchor0Epoch),
 			},
@@ -184,7 +184,7 @@ func TestResolveDependencySatisfiedByEpoch(t *testing.T) {
 		},
 		{
 			name: "dependency epoch belonging to a tail is resolved the same as an anchor",
-			entries: []grovecorev1alpha1.PodGangEntry{
+			entries: []grovecorev1beta1.PodGangEntry{
 				anchorEntry(),
 				tailEntry(testTailEpoch, testAnchor0Epoch),
 				tailEntry(testScaleOutEpoch, testTailEpoch), // depends on a tail, not an anchor
@@ -198,7 +198,7 @@ func TestResolveDependencySatisfiedByEpoch(t *testing.T) {
 		},
 		{
 			name: "multi-anchor chain and scale-out resolved by their direct dependency",
-			entries: []grovecorev1alpha1.PodGangEntry{
+			entries: []grovecorev1beta1.PodGangEntry{
 				anchorEntry(),
 				anchorDependentEntry(testAnchor1Epoch, testAnchor0Epoch),
 				tailEntry(testTailEpoch, testAnchor1Epoch),
@@ -461,9 +461,9 @@ func TestSelectExcessPodsToDelete_ExcludesPodsAlreadyBeingDeleted(t *testing.T) 
 			store := expect.NewExpectationsStore()
 			r := _resource{expectationsStore: store}
 
-			pclq := &grovecorev1alpha1.PodClique{
+			pclq := &grovecorev1beta1.PodClique{
 				ObjectMeta: metav1.ObjectMeta{Name: "pclq-1", Namespace: testNamespace},
-				Spec:       grovecorev1alpha1.PodCliqueSpec{Replicas: tt.replicas},
+				Spec:       grovecorev1beta1.PodCliqueSpec{Replicas: tt.replicas},
 			}
 			key, err := componentutils.PodGangScopedExpectationsStoreKey(pclq.ObjectMeta, podGangName)
 			require.NoError(t, err)
@@ -537,7 +537,7 @@ func TestReconcilePCSGLabellessPods(t *testing.T) {
 // ---------------- test helpers ----------------
 
 // pcs returns a minimal PodCliqueSet for the gate-removal tests.
-func pcs() *grovecorev1alpha1.PodCliqueSet {
+func pcs() *grovecorev1beta1.PodCliqueSet {
 	return testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "uid").Build()
 }
 
@@ -551,10 +551,10 @@ func gatedPod(name, podGangName string) *corev1.Pod {
 
 // gateRemovalSnapshot builds a syncSnapshot for the end-to-end gate-removal tests. pclq.Name is the
 // PodClique FQN that matches the PodGroup name recorded on the seeded PodGangs.
-func gateRemovalSnapshot(pods []*corev1.Pod, pgm *grovecorev1alpha1.PodGangMap) *syncSnapshot {
+func gateRemovalSnapshot(pods []*corev1.Pod, pgm *grovecorev1beta1.PodGangMap) *syncSnapshot {
 	return &syncSnapshot{
 		pcs:              pcs(),
-		pclq:             &grovecorev1alpha1.PodClique{ObjectMeta: metav1.ObjectMeta{Name: testCliqueName, Namespace: testNamespace}},
+		pclq:             &grovecorev1beta1.PodClique{ObjectMeta: metav1.ObjectMeta{Name: testCliqueName, Namespace: testNamespace}},
 		pcsReplicaIndex:  testPCSReplicaIndex,
 		pgm:              pgm,
 		cliqueName:       testCliqueName,
@@ -571,7 +571,7 @@ func podGangNameForEpoch(epoch string) string {
 
 // twoEpochPGM returns a PodGangMap whose anchor entry (testAnchor0Epoch) has no dependency and whose
 // tail entry (testTailEpoch) depends on the anchor.
-func twoEpochPGM() *grovecorev1alpha1.PodGangMap {
+func twoEpochPGM() *grovecorev1beta1.PodGangMap {
 	return pgmWithEntries(
 		anchorEntry(),
 		tailEntry(testTailEpoch, testAnchor0Epoch),
@@ -579,7 +579,7 @@ func twoEpochPGM() *grovecorev1alpha1.PodGangMap {
 }
 
 // pgmWithEntries builds a PodGangMap for the test PCS replica carrying the given entries.
-func pgmWithEntries(entries ...grovecorev1alpha1.PodGangEntry) *grovecorev1alpha1.PodGangMap {
+func pgmWithEntries(entries ...grovecorev1beta1.PodGangEntry) *grovecorev1beta1.PodGangMap {
 	return testutils.NewPodGangMapBuilder(testPCSName, testNamespace, "uid", testPCSReplicaIndex).
 		WithEntries(entries...).
 		Build()
@@ -588,29 +588,29 @@ func pgmWithEntries(entries ...grovecorev1alpha1.PodGangEntry) *grovecorev1alpha
 // anchorEntry builds the dependency-free anchor entry. A nil-DependsOn anchor is always the
 // AnchorIndex 0 anchor at testAnchor0Epoch; higher-index anchors depend on a prior epoch and are
 // built with anchorDependentEntry.
-func anchorEntry() grovecorev1alpha1.PodGangEntry {
+func anchorEntry() grovecorev1beta1.PodGangEntry {
 	return testutils.NewPodGangEntryBuilder("hash", testAnchor0Epoch).
-		WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).
+		WithRole(grovecorev1beta1.PodGangEntryRoleAnchor).
 		Build()
 }
 
-func anchorDependentEntry(epoch string, dependsOnEpoch string) grovecorev1alpha1.PodGangEntry {
+func anchorDependentEntry(epoch string, dependsOnEpoch string) grovecorev1beta1.PodGangEntry {
 	return testutils.NewPodGangEntryBuilder("hash", epoch).
-		WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).
+		WithRole(grovecorev1beta1.PodGangEntryRoleAnchor).
 		WithDependsOn(dependsOnEpoch).
 		Build()
 }
 
-func tailEntry(epoch, dependsOnEpoch string) grovecorev1alpha1.PodGangEntry {
+func tailEntry(epoch, dependsOnEpoch string) grovecorev1beta1.PodGangEntry {
 	return testutils.NewPodGangEntryBuilder("hash", epoch).
-		WithRole(grovecorev1alpha1.PodGangEntryRoleTail).
+		WithRole(grovecorev1beta1.PodGangEntryRoleTail).
 		WithDependsOn(dependsOnEpoch).
 		Build()
 }
 
-func scaleOutEntry(epoch, dependsOnEpoch string) grovecorev1alpha1.PodGangEntry {
+func scaleOutEntry(epoch, dependsOnEpoch string) grovecorev1beta1.PodGangEntry {
 	return testutils.NewPodGangEntryBuilder("hash", epoch).
-		WithRole(grovecorev1alpha1.PodGangEntryRoleScaleOut).
+		WithRole(grovecorev1beta1.PodGangEntryRoleScaleOut).
 		WithDependsOn(dependsOnEpoch).
 		Build()
 }
@@ -637,7 +637,7 @@ func TestRemoveSchedulerFinalizersFromDeletingPods(t *testing.T) {
 				},
 				DefaultBackend: "default-scheduler",
 			}}
-			pclq := &grovecorev1alpha1.PodClique{ObjectMeta: metav1.ObjectMeta{Name: "pclq", Namespace: testNamespace}}
+			pclq := &grovecorev1beta1.PodClique{ObjectMeta: metav1.ObjectMeta{Name: "pclq", Namespace: testNamespace}}
 			pclq.Spec.PodSpec.SchedulerName = tc.schedulerName
 			ss := &syncSnapshot{pclq: pclq, existingPCLQPods: []*corev1.Pod{running, deleting}, predecessorPods: []*corev1.Pod{predecessorDeleting}}
 

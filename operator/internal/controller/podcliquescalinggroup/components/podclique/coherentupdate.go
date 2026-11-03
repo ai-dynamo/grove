@@ -20,7 +20,7 @@ import (
 	"strconv"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
@@ -94,16 +94,16 @@ func replicaIndicesToRecreate(ss *syncSnapshot) ([]string, error) {
 
 // allMembersOnPodGang reports whether every member PodClique carries podGangName on its grove.io/podgang
 // label. Every member of one PodCliqueScalingGroup replica shares a single PodGang.
-func allMembersOnPodGang(members []grovecorev1alpha1.PodClique, podGangName string) bool {
-	return lo.EveryBy(members, func(pclq grovecorev1alpha1.PodClique) bool {
+func allMembersOnPodGang(members []grovecorev1beta1.PodClique, podGangName string) bool {
+	return lo.EveryBy(members, func(pclq grovecorev1beta1.PodClique) bool {
 		return pclq.Labels[apicommon.LabelPodGang] == podGangName
 	})
 }
 
 // anyMemberTerminating reports whether any member PodClique of a PodCliqueScalingGroup replica has a
 // deletion timestamp, so the replica is draining from a prior recreation.
-func anyMemberTerminating(members []grovecorev1alpha1.PodClique) bool {
-	return lo.SomeBy(members, func(pclq grovecorev1alpha1.PodClique) bool {
+func anyMemberTerminating(members []grovecorev1beta1.PodClique) bool {
+	return lo.SomeBy(members, func(pclq grovecorev1beta1.PodClique) bool {
 		return k8sutils.IsResourceTerminating(pclq.ObjectMeta)
 	})
 }

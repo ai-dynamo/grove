@@ -17,7 +17,7 @@ package validation
 import (
 	"fmt"
 
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
 	kubeutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
@@ -28,7 +28,7 @@ const mnnvlNotEnabledMsgFormat = "MNNVL is not enabled in the operator configura
 
 // validateMNNVLOnCreate validates all MNNVL annotations on a PodCliqueSet during creation:
 // PCS-level metadata and each PodCliqueTemplateSpec in the spec.
-func validateMNNVLOnCreate(pcs *grovecorev1alpha1.PodCliqueSet, autoMNNVLEnabled bool) field.ErrorList {
+func validateMNNVLOnCreate(pcs *grovecorev1beta1.PodCliqueSet, autoMNNVLEnabled bool) field.ErrorList {
 	allErrs := field.ErrorList{}
 	allErrs = append(allErrs, validateMetadataOnCreate(pcs, autoMNNVLEnabled)...)
 	allErrs = append(allErrs, validateSpecOnCreate(pcs, autoMNNVLEnabled)...)
@@ -37,26 +37,26 @@ func validateMNNVLOnCreate(pcs *grovecorev1alpha1.PodCliqueSet, autoMNNVLEnabled
 
 // validateMNNVLOnUpdate validates MNNVL annotation immutability on a PodCliqueSet during update:
 // PCS-level metadata and each PodCliqueTemplateSpec in the spec.
-func validateMNNVLOnUpdate(oldPCS, newPCS *grovecorev1alpha1.PodCliqueSet) field.ErrorList {
+func validateMNNVLOnUpdate(oldPCS, newPCS *grovecorev1beta1.PodCliqueSet) field.ErrorList {
 	allErrs := field.ErrorList{}
 	allErrs = append(allErrs, validateMetadataOnUpdate(oldPCS, newPCS)...)
 	allErrs = append(allErrs, validateSpecOnUpdate(oldPCS, newPCS)...)
 	return allErrs
 }
 
-func validateMetadataOnCreate(pcs *grovecorev1alpha1.PodCliqueSet, autoMNNVLEnabled bool) field.ErrorList {
+func validateMetadataOnCreate(pcs *grovecorev1beta1.PodCliqueSet, autoMNNVLEnabled bool) field.ErrorList {
 	return validateMNNVLAnnotationsOnCreate(pcs.Annotations, autoMNNVLEnabled, field.NewPath("metadata", "annotations"))
 }
 
-func validateSpecOnCreate(pcs *grovecorev1alpha1.PodCliqueSet, autoMNNVLEnabled bool) field.ErrorList {
+func validateSpecOnCreate(pcs *grovecorev1beta1.PodCliqueSet, autoMNNVLEnabled bool) field.ErrorList {
 	return validatePodCliqueSetTemplateSpecOnCreate(&pcs.Spec.Template, autoMNNVLEnabled, field.NewPath("spec", "template"))
 }
 
-func validateMetadataOnUpdate(oldPCS, newPCS *grovecorev1alpha1.PodCliqueSet) field.ErrorList {
+func validateMetadataOnUpdate(oldPCS, newPCS *grovecorev1beta1.PodCliqueSet) field.ErrorList {
 	return validateMNNVLAnnotationsImmutability(oldPCS.Annotations, newPCS.Annotations, field.NewPath("metadata", "annotations"))
 }
 
-func validateSpecOnUpdate(oldPCS, newPCS *grovecorev1alpha1.PodCliqueSet) field.ErrorList {
+func validateSpecOnUpdate(oldPCS, newPCS *grovecorev1beta1.PodCliqueSet) field.ErrorList {
 	return validatePodCliqueSetTemplateSpecOnUpdate(&oldPCS.Spec.Template, &newPCS.Spec.Template, field.NewPath("spec", "template"))
 }
 
@@ -80,7 +80,7 @@ func validateMNNVLAnnotationsOnCreate(annotations map[string]string, autoMNNVLEn
 	return allErrs
 }
 
-func validatePodCliqueSetTemplateSpecOnCreate(templateSpec *grovecorev1alpha1.PodCliqueSetTemplateSpec, autoMNNVLEnabled bool, fldPath *field.Path) field.ErrorList {
+func validatePodCliqueSetTemplateSpecOnCreate(templateSpec *grovecorev1beta1.PodCliqueSetTemplateSpec, autoMNNVLEnabled bool, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 	for i, clique := range templateSpec.Cliques {
 		if clique == nil {
@@ -98,7 +98,7 @@ func validatePodCliqueSetTemplateSpecOnCreate(templateSpec *grovecorev1alpha1.Po
 	return allErrs
 }
 
-func validatePodCliqueTemplateSpecOnCreate(clique *grovecorev1alpha1.PodCliqueTemplateSpec, autoMNNVLEnabled bool, fldPath *field.Path) field.ErrorList {
+func validatePodCliqueTemplateSpecOnCreate(clique *grovecorev1beta1.PodCliqueTemplateSpec, autoMNNVLEnabled bool, fldPath *field.Path) field.ErrorList {
 	return validateMNNVLAnnotationsOnCreate(clique.Annotations, autoMNNVLEnabled, fldPath.Child("annotations"))
 }
 
@@ -110,11 +110,11 @@ func validatePodCliqueTemplateSpecOnCreate(clique *grovecorev1alpha1.PodCliqueTe
 // package's validateMNNVLOnUpdate. A new clique name with no counterpart in oldTemplate is
 // therefore skipped here. Field paths use the index in newTemplate so errors point at the
 // object being admitted.
-func validatePodCliqueSetTemplateSpecOnUpdate(oldTemplate, newTemplate *grovecorev1alpha1.PodCliqueSetTemplateSpec, fldPath *field.Path) field.ErrorList {
+func validatePodCliqueSetTemplateSpecOnUpdate(oldTemplate, newTemplate *grovecorev1beta1.PodCliqueSetTemplateSpec, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 
 	// Validate cliques
-	oldByName := make(map[string]*grovecorev1alpha1.PodCliqueTemplateSpec, len(oldTemplate.Cliques))
+	oldByName := make(map[string]*grovecorev1beta1.PodCliqueTemplateSpec, len(oldTemplate.Cliques))
 	for _, clique := range oldTemplate.Cliques {
 		if clique == nil {
 			continue
@@ -133,7 +133,7 @@ func validatePodCliqueSetTemplateSpecOnUpdate(oldTemplate, newTemplate *grovecor
 	}
 
 	// Validate PCSG Configs
-	oldPCSGByName := make(map[string]*grovecorev1alpha1.PodCliqueScalingGroupConfig, len(oldTemplate.PodCliqueScalingGroupConfigs))
+	oldPCSGByName := make(map[string]*grovecorev1beta1.PodCliqueScalingGroupConfig, len(oldTemplate.PodCliqueScalingGroupConfigs))
 	for i := range oldTemplate.PodCliqueScalingGroupConfigs {
 		oldPCSGByName[oldTemplate.PodCliqueScalingGroupConfigs[i].Name] = &oldTemplate.PodCliqueScalingGroupConfigs[i]
 	}
@@ -152,7 +152,7 @@ func validatePodCliqueSetTemplateSpecOnUpdate(oldTemplate, newTemplate *grovecor
 	return allErrs
 }
 
-func validatePodCliqueTemplateSpecOnUpdate(oldClique, newClique *grovecorev1alpha1.PodCliqueTemplateSpec, fldPath *field.Path) field.ErrorList {
+func validatePodCliqueTemplateSpecOnUpdate(oldClique, newClique *grovecorev1beta1.PodCliqueTemplateSpec, fldPath *field.Path) field.ErrorList {
 	return validateMNNVLAnnotationsImmutability(oldClique.Annotations, newClique.Annotations, fldPath.Child("annotations"))
 }
 

@@ -20,7 +20,7 @@ import (
 	"strings"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/sync"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
@@ -37,9 +37,9 @@ import (
 )
 
 const (
-	errCodeGetRole grovecorev1alpha1.ErrorCode = "ERR_GET_ROLE"
-	errSyncRole    grovecorev1alpha1.ErrorCode = "ERR_SYNC_ROLE"
-	errDeleteRole  grovecorev1alpha1.ErrorCode = "ERR_DELETE_ROLE"
+	errCodeGetRole grovecorev1beta1.ErrorCode = "ERR_GET_ROLE"
+	errSyncRole    grovecorev1beta1.ErrorCode = "ERR_SYNC_ROLE"
+	errDeleteRole  grovecorev1beta1.ErrorCode = "ERR_DELETE_ROLE"
 )
 
 type _resource struct {
@@ -48,7 +48,7 @@ type _resource struct {
 }
 
 // New creates an instance of Role components operator.
-func New(client client.Client, scheme *runtime.Scheme) component.Operator[grovecorev1alpha1.PodCliqueSet, pcssync.State, pcssync.Result] {
+func New(client client.Client, scheme *runtime.Scheme) component.Operator[grovecorev1beta1.PodCliqueSet, pcssync.State, pcssync.Result] {
 	return &_resource{
 		client: client,
 		scheme: scheme,
@@ -77,7 +77,7 @@ func (r _resource) GetExistingResourceNames(ctx context.Context, _ logr.Logger, 
 }
 
 // Sync synchronizes all resources that the Role Operator manages.
-func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, _ *pcssync.State) (pcssync.Result, error) {
+func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, _ *pcssync.State) (pcssync.Result, error) {
 	existingRoleNames, err := r.GetExistingResourceNames(ctx, logger, pcs.ObjectMeta)
 	if err != nil {
 		return pcssync.Result{}, groveerr.WrapError(err,
@@ -131,7 +131,7 @@ func (r _resource) Delete(ctx context.Context, logger logr.Logger, pcsObjMeta me
 }
 
 // buildResource configures the Role with pod access permissions.
-func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, role *rbacv1.Role) error {
+func (r _resource) buildResource(pcs *grovecorev1beta1.PodCliqueSet, role *rbacv1.Role) error {
 	role.Labels = getLabels(pcs.ObjectMeta)
 	if err := controllerutil.SetControllerReference(pcs, role, r.scheme); err != nil {
 		return groveerr.WrapError(err,

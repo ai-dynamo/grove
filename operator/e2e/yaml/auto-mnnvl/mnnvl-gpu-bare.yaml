@@ -1,7 +1,7 @@
 # MNNVL E2E: Simple GPU PCS with no annotations
 # Used by: testNoAnnotationNoMNNVL
 ---
-apiVersion: grove.io/v1alpha1
+apiVersion: grove.io/v1beta1
 kind: PodCliqueSet
 metadata:
   name: mnnvl-gpu-bare

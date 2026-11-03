@@ -17,7 +17,7 @@ package validation
 import (
 	"testing"
 
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
@@ -25,7 +25,7 @@ import (
 )
 
 // createPCSWithGPU creates a PCS with GPU for validation tests.
-func createPCSWithGPU(annotations map[string]string) *grovecorev1alpha1.PodCliqueSet {
+func createPCSWithGPU(annotations map[string]string) *grovecorev1beta1.PodCliqueSet {
 	return testutils.NewPodCliqueSetBuilder("test-pcs", "default", "").
 		WithAnnotations(annotations).
 		WithPodCliqueTemplateSpec(
@@ -42,7 +42,7 @@ type cliqueAnnotation struct {
 }
 
 // createPCSWithCliques creates a PCS with per-clique annotations.
-func createPCSWithCliques(cliques []cliqueAnnotation) *grovecorev1alpha1.PodCliqueSet {
+func createPCSWithCliques(cliques []cliqueAnnotation) *grovecorev1beta1.PodCliqueSet {
 	builder := testutils.NewPodCliqueSetBuilder("test-pcs", "default", "")
 	for _, clique := range cliques {
 		builder.WithPodCliqueTemplateSpec(
@@ -56,14 +56,14 @@ func createPCSWithCliques(cliques []cliqueAnnotation) *grovecorev1alpha1.PodCliq
 }
 
 // createPCSWithPCSGConfigAnnotations creates a PCS with an annotated PCSG config.
-func createPCSWithPCSGConfigAnnotations(annotations map[string]string) *grovecorev1alpha1.PodCliqueSet {
+func createPCSWithPCSGConfigAnnotations(annotations map[string]string) *grovecorev1beta1.PodCliqueSet {
 	builder := testutils.NewPodCliqueSetBuilder("test-pcs", "default", "").
 		WithPodCliqueTemplateSpec(
 			testutils.NewPodCliqueTemplateSpecBuilder("worker").
 				WithContainer(testutils.NewGPUContainer("train", "nvidia/cuda:latest", 8)).
 				Build(),
 		)
-	builder.WithPodCliqueScalingGroupConfig(grovecorev1alpha1.PodCliqueScalingGroupConfig{
+	builder.WithPodCliqueScalingGroupConfig(grovecorev1beta1.PodCliqueScalingGroupConfig{
 		Name:        "scaling-group-1",
 		CliqueNames: []string{"worker"},
 		Annotations: annotations,
@@ -72,7 +72,7 @@ func createPCSWithPCSGConfigAnnotations(annotations map[string]string) *grovecor
 }
 
 // createPCSWithNonGPUCliqueAnnotations creates a PCS with an annotated non-GPU clique.
-func createPCSWithNonGPUCliqueAnnotations(annotations map[string]string) *grovecorev1alpha1.PodCliqueSet {
+func createPCSWithNonGPUCliqueAnnotations(annotations map[string]string) *grovecorev1beta1.PodCliqueSet {
 	return testutils.NewPodCliqueSetBuilder("test-pcs", "default", "").
 		WithPodCliqueTemplateSpec(
 			testutils.NewPodCliqueTemplateSpecBuilder("cpu-worker").
@@ -84,7 +84,7 @@ func createPCSWithNonGPUCliqueAnnotations(annotations map[string]string) *grovec
 }
 
 // createPCSWithGPUCliqueAnnotations creates a PCS with an annotated GPU clique.
-func createPCSWithGPUCliqueAnnotations(annotations map[string]string) *grovecorev1alpha1.PodCliqueSet {
+func createPCSWithGPUCliqueAnnotations(annotations map[string]string) *grovecorev1beta1.PodCliqueSet {
 	return testutils.NewPodCliqueSetBuilder("test-pcs", "default", "").
 		WithPodCliqueTemplateSpec(
 			testutils.NewPodCliqueTemplateSpecBuilder("gpu-worker").
@@ -98,7 +98,7 @@ func createPCSWithGPUCliqueAnnotations(annotations map[string]string) *grovecore
 func TestValidatePCSOnCreate_Metadata(t *testing.T) {
 	tests := []struct {
 		description      string
-		pcs              *grovecorev1alpha1.PodCliqueSet
+		pcs              *grovecorev1beta1.PodCliqueSet
 		autoMNNVLEnabled bool
 		expectError      bool
 		errorContains    string
@@ -142,7 +142,7 @@ func TestValidatePCSOnCreate_Metadata(t *testing.T) {
 		},
 		{
 			description:      "nil annotations map -> no error",
-			pcs:              &grovecorev1alpha1.PodCliqueSet{},
+			pcs:              &grovecorev1beta1.PodCliqueSet{},
 			autoMNNVLEnabled: false,
 			expectError:      false,
 		},
@@ -179,8 +179,8 @@ func TestValidatePCSOnCreate_Metadata(t *testing.T) {
 func TestValidatePCSOnUpdate_Metadata(t *testing.T) {
 	tests := []struct {
 		description string
-		oldPCS      *grovecorev1alpha1.PodCliqueSet
-		newPCS      *grovecorev1alpha1.PodCliqueSet
+		oldPCS      *grovecorev1beta1.PodCliqueSet
+		newPCS      *grovecorev1beta1.PodCliqueSet
 		expectError bool
 		errorMsg    string
 	}{
@@ -242,7 +242,7 @@ func TestValidatePCSOnUpdate_Metadata(t *testing.T) {
 func TestValidatePCSOnCreate_Spec(t *testing.T) {
 	tests := []struct {
 		description      string
-		pcs              *grovecorev1alpha1.PodCliqueSet
+		pcs              *grovecorev1beta1.PodCliqueSet
 		autoMNNVLEnabled bool
 		expectError      bool
 		errorContains    string
@@ -336,7 +336,7 @@ func TestValidatePCSOnCreate_Spec(t *testing.T) {
 func TestValidatePCSOnCreate_PCSGConfig(t *testing.T) {
 	tests := []struct {
 		description      string
-		pcs              *grovecorev1alpha1.PodCliqueSet
+		pcs              *grovecorev1beta1.PodCliqueSet
 		autoMNNVLEnabled bool
 		expectError      bool
 		errorContains    string
@@ -392,8 +392,8 @@ func TestValidatePCSOnCreate_PCSGConfig(t *testing.T) {
 func TestValidatePCSOnUpdate_PCSGConfig(t *testing.T) {
 	tests := []struct {
 		description string
-		oldPCS      *grovecorev1alpha1.PodCliqueSet
-		newPCS      *grovecorev1alpha1.PodCliqueSet
+		oldPCS      *grovecorev1beta1.PodCliqueSet
+		newPCS      *grovecorev1beta1.PodCliqueSet
 		expectError bool
 		errorMsg    string
 	}{
@@ -449,8 +449,8 @@ func TestValidatePCSOnUpdate_PCSGConfig(t *testing.T) {
 func TestValidatePCSOnUpdate_Spec(t *testing.T) {
 	tests := []struct {
 		description string
-		oldPCS      *grovecorev1alpha1.PodCliqueSet
-		newPCS      *grovecorev1alpha1.PodCliqueSet
+		oldPCS      *grovecorev1beta1.PodCliqueSet
+		newPCS      *grovecorev1beta1.PodCliqueSet
 		expectError bool
 		errorMsg    string
 	}{
@@ -553,7 +553,7 @@ func TestValidatePCSOnUpdate_Spec(t *testing.T) {
 func TestValidatePCSOnCreate_NonGPUCliqueWithMNNVL(t *testing.T) {
 	tests := []struct {
 		description      string
-		pcs              *grovecorev1alpha1.PodCliqueSet
+		pcs              *grovecorev1beta1.PodCliqueSet
 		autoMNNVLEnabled bool
 	}{
 		{

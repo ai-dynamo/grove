@@ -2,7 +2,7 @@
 # Scaling the sole PodClique below MinAvailable drains the anchor entry to empty, and because there is
 # no PodCliqueScalingGroup there is no ScaleOut entry, so the PodGangMap holds no entries at all.
 ---
-apiVersion: grove.io/v1alpha1
+apiVersion: grove.io/v1beta1
 kind: PodCliqueSet
 metadata:
   name: workload-pclq-only

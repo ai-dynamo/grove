@@ -20,7 +20,7 @@ import (
 	"time"
 
 	apiconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
@@ -54,7 +54,7 @@ var gateWriteBackoff = wait.Backoff{Steps: 5, Duration: 50 * time.Millisecond, F
 // those already carrying the condition, skip those that already have a PodGangMap, and set the
 // condition on the rest.
 func SetMigrationGateForLegacyPodCliqueSets(ctx context.Context, cl client.Client, logger logr.Logger) error {
-	pcsList := &grovecorev1alpha1.PodCliqueSetList{}
+	pcsList := &grovecorev1beta1.PodCliqueSetList{}
 	if err := cl.List(ctx, pcsList); err != nil {
 		return fmt.Errorf("failed to list PodCliqueSets: %w", err)
 	}
@@ -84,7 +84,7 @@ func SetMigrationGateForLegacyPodCliqueSets(ctx context.Context, cl client.Clien
 		}
 		pcsObjectKey := client.ObjectKeyFromObject(pcs)
 		if err := retry.OnError(gateWriteBackoff, k8sutils.IsRetriableAPIError, func() error {
-			latest := &grovecorev1alpha1.PodCliqueSet{}
+			latest := &grovecorev1beta1.PodCliqueSet{}
 			if err := cl.Get(ctx, pcsObjectKey, latest); err != nil {
 				return err
 			}
@@ -107,6 +107,6 @@ func SetMigrationGateForLegacyPodCliqueSets(ctx context.Context, cl client.Clien
 // scheme, i.e. its PodGangMigrationInProgress condition is True. While migration is in progress the
 // PodCliqueScalingGroup and PodClique reconcilers must not act on spec changes, so scaling does not
 // interleave with the migration.
-func IsMigrationInProgress(pcs *grovecorev1alpha1.PodCliqueSet) bool {
+func IsMigrationInProgress(pcs *grovecorev1beta1.PodCliqueSet) bool {
 	return meta.IsStatusConditionTrue(pcs.Status.Conditions, apiconstants.ConditionTypePodGangMigrationInProgress)
 }

@@ -19,7 +19,7 @@ import (
 	"maps"
 	"slices"
 
-	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
+	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler/kai"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler/kube"
@@ -44,7 +44,7 @@ type registry struct {
 // New creates a scheduler.Registry by initializing backend instances for each
 // profile in cfg.Profiles.
 // NOTE: This function should be called once during the lifecycle of the Grove operator.
-func New(cl, directClient client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder, cfg configv1alpha1.SchedulerConfiguration) (scheduler.Registry, error) {
+func New(cl, directClient client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder, cfg configv1beta1.SchedulerConfiguration) (scheduler.Registry, error) {
 	reg := &registry{backends: make(map[string]scheduler.Backend)}
 	for _, p := range cfg.Profiles {
 		backend, err := newSchedulerBackend(cfg, cl, directClient, scheme, eventRecorder, p)
@@ -96,21 +96,21 @@ func (r *registry) AllTopologyAware() map[string]scheduler.TopologyAwareBackend 
 
 // newSchedulerBackend creates and initializes a Backend for the given profile.
 // NOTE: For any newly supported backend, add a case for it in the switch statement.
-func newSchedulerBackend(cfg configv1alpha1.SchedulerConfiguration, cl, directClient client.Client, scheme *runtime.Scheme, rec record.EventRecorder, p configv1alpha1.SchedulerProfile) (scheduler.Backend, error) {
+func newSchedulerBackend(cfg configv1beta1.SchedulerConfiguration, cl, directClient client.Client, scheme *runtime.Scheme, rec record.EventRecorder, p configv1beta1.SchedulerProfile) (scheduler.Backend, error) {
 	var b scheduler.Backend
 	switch p.Name {
-	case configv1alpha1.SchedulerNameKube:
+	case configv1beta1.SchedulerNameKube:
 		b = kube.New(cl, scheme, rec, p)
-	case configv1alpha1.SchedulerNameKai:
+	case configv1beta1.SchedulerNameKai:
 		b = kai.New(cl, scheme, rec, p)
-	case configv1alpha1.SchedulerNameKueue:
+	case configv1beta1.SchedulerNameKueue:
 		b = kueue.New(cl, scheme, rec, p)
-	case configv1alpha1.SchedulerNameVolcano:
+	case configv1beta1.SchedulerNameVolcano:
 		b = volcano.New(cl, scheme, rec, p)
-	case configv1alpha1.SchedulerNameLPX:
+	case configv1beta1.SchedulerNameLPX:
 		var kaiBackend scheduler.Backend
 
-		kaiProfileIndex := slices.IndexFunc(cfg.Profiles, func(p configv1alpha1.SchedulerProfile) bool { return p.Name == configv1alpha1.SchedulerNameKai })
+		kaiProfileIndex := slices.IndexFunc(cfg.Profiles, func(p configv1beta1.SchedulerProfile) bool { return p.Name == configv1beta1.SchedulerNameKai })
 		if kaiProfileIndex != -1 {
 			kaiBackend = kai.New(cl, scheme, rec, cfg.Profiles[kaiProfileIndex])
 		}

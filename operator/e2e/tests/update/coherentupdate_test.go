@@ -24,7 +24,7 @@ import (
 	"testing"
 	"time"
 
-	grovev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/kwok"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
 	"github.com/ai-dynamo/grove/operator/e2e/tests"
@@ -829,11 +829,11 @@ func Test_CU16_CoherentUpdateSelfHealsCurrentVersionPodLoss(t *testing.T) {
 // assertCoherentAnchorCompositions fails unless the new-hash anchor entries match want as a multiset, and
 // every new-hash anchor carries newHash. It compares each anchor's standalone pod counts and its indices
 // for pcsgName, ignoring other entries so steady-state scaffolding does not affect the match.
-func assertCoherentAnchorCompositions(t *testing.T, entries []grovev1alpha1.PodGangEntry, newHash, pcsgName string, want []coherentAnchor) {
+func assertCoherentAnchorCompositions(t *testing.T, entries []grovev1beta1.PodGangEntry, newHash, pcsgName string, want []coherentAnchor) {
 	t.Helper()
 	gotKeys := make([]string, 0, len(want))
 	for _, entry := range entries {
-		if entry.Role != grovev1alpha1.PodGangEntryRoleAnchor || entry.PodCliqueSetGenerationHash != newHash {
+		if entry.Role != grovev1beta1.PodGangEntryRoleAnchor || entry.PodCliqueSetGenerationHash != newHash {
 			continue
 		}
 		gotKeys = append(gotKeys, anchorCompositionKey(entry.PodCliques, entry.PCSGReplicaIndices[pcsgName]))
@@ -847,10 +847,10 @@ func assertCoherentAnchorCompositions(t *testing.T, entries []grovev1alpha1.PodG
 
 // newHashTailPCSGIndices returns the indices for pcsgName carried by the single new-hash tail entry, or nil
 // when no new-hash tail entry exists. It fails when more than one new-hash tail entry is present.
-func newHashTailPCSGIndices(entries []grovev1alpha1.PodGangEntry, newHash, pcsgName string) []int32 {
+func newHashTailPCSGIndices(entries []grovev1beta1.PodGangEntry, newHash, pcsgName string) []int32 {
 	var indices []int32
 	for _, entry := range entries {
-		if entry.Role == grovev1alpha1.PodGangEntryRoleTail && entry.PodCliqueSetGenerationHash == newHash {
+		if entry.Role == grovev1beta1.PodGangEntryRoleTail && entry.PodCliqueSetGenerationHash == newHash {
 			indices = entry.PCSGReplicaIndices[pcsgName]
 		}
 	}
@@ -1122,7 +1122,7 @@ func recoverFromCrashloopAndTriggerUpdate(t *testing.T, tc *testctx.TestContext)
 // replica count and zero available replicas.
 func assertPCSGUnavailable(pcsgConfigName string, expectedReplicas int32) func(c *assert.CollectT, tc *testctx.TestContext) {
 	return func(c *assert.CollectT, tc *testctx.TestContext) {
-		var pcsg grovev1alpha1.PodCliqueScalingGroup
+		var pcsg grovev1beta1.PodCliqueScalingGroup
 		require.NoError(c, tc.Client.Get(tc.Ctx, types.NamespacedName{
 			Namespace: tc.Namespace, Name: pcsgFQN(tc, pcsgConfigName),
 		}, &pcsg))

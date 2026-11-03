@@ -1,7 +1,7 @@
 # Workload: Host-Level Packing - PCS with single clique at host level
 # Test scenario: PCS with single clique constrained to host level
 ---
-apiVersion: grove.io/v1alpha1
+apiVersion: grove.io/v1beta1
 kind: PodCliqueSet
 metadata:
   name: tas-host-level

@@ -18,7 +18,7 @@ import (
 	"fmt"
 	"sync"
 
-	grovev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -32,9 +32,9 @@ type ScalingProgressExpectations struct {
 
 // Record stores the scaling progress that must be observed through the informer cache.
 // Nil progress records the expectation that the status field is cleared.
-func (e *ScalingProgressExpectations) Record(pcsObjectMeta metav1.ObjectMeta, progress *grovev1alpha1.PodCliqueSetScalingProgress) {
+func (e *ScalingProgressExpectations) Record(pcsObjectMeta metav1.ObjectMeta, progress *grovev1beta1.PodCliqueSetScalingProgress) {
 	expectationKey := scalingProgressExpectationKey(pcsObjectMeta)
-	expectedProgress := &grovev1alpha1.PodCliqueSetScalingProgress{}
+	expectedProgress := &grovev1beta1.PodCliqueSetScalingProgress{}
 	if progress != nil {
 		expectedProgress = progress.DeepCopy()
 	}
@@ -43,13 +43,13 @@ func (e *ScalingProgressExpectations) Record(pcsObjectMeta metav1.ObjectMeta, pr
 
 // ClearIfSatisfied reports whether no expectation exists or the cached scaling progress matches it.
 // A matching expectation is removed.
-func (e *ScalingProgressExpectations) ClearIfSatisfied(pcsObjectMeta metav1.ObjectMeta, progress *grovev1alpha1.PodCliqueSetScalingProgress) bool {
+func (e *ScalingProgressExpectations) ClearIfSatisfied(pcsObjectMeta metav1.ObjectMeta, progress *grovev1beta1.PodCliqueSetScalingProgress) bool {
 	expectationKey := scalingProgressExpectationKey(pcsObjectMeta)
 	storedExpectation, exists := e.expectations.Load(expectationKey)
 	if !exists {
 		return true
 	}
-	expectedProgress := storedExpectation.(*grovev1alpha1.PodCliqueSetScalingProgress)
+	expectedProgress := storedExpectation.(*grovev1beta1.PodCliqueSetScalingProgress)
 	if !ScalingProgressEqual(expectedProgress, progress) {
 		return false
 	}
@@ -68,7 +68,7 @@ func scalingProgressExpectationKey(pcsObjectMeta metav1.ObjectMeta) string {
 
 // ScalingProgressEqual reports whether two scaling-progress values contain the same replica-index sets.
 // Nil and empty progress are equal.
-func ScalingProgressEqual(left, right *grovev1alpha1.PodCliqueSetScalingProgress) bool {
+func ScalingProgressEqual(left, right *grovev1beta1.PodCliqueSetScalingProgress) bool {
 	leftScaleOutReplicaIndices := sets.New[int32]()
 	leftScaleInReplicaIndices := sets.New[int32]()
 	if left != nil {

@@ -23,14 +23,14 @@ webhooks:
         path: /webhooks/validate-podcliqueset
         port: {{ required ".Values.config.server.webhooks.port" .Values.config.server.webhooks.port }}
     failurePolicy: Fail
-    matchPolicy: Exact
+    matchPolicy: Equivalent
     name: pcs.validating.webhooks.grove.io
     namespaceSelector: { }
     rules:
       - apiGroups:
           - "grove.io"
         apiVersions:
-          - "v1alpha1"
+          - "v1beta1"
         operations:
           - CREATE
           - UPDATE

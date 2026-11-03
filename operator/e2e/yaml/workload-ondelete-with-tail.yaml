@@ -1,6 +1,6 @@
 # Workload for OnDelete Update Strategy E2E Tests, with a PodCliqueScalingGroup replicas > minAvailable so the PodGangMap materializes a tail entry.
 ---
-apiVersion: grove.io/v1alpha1
+apiVersion: grove.io/v1beta1
 kind: PodCliqueSet
 metadata:
   name: workload-ondelete-with-tail

@@ -20,7 +20,7 @@ import (
 	"maps"
 	"slices"
 
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/sync"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
@@ -34,14 +34,14 @@ import (
 )
 
 const (
-	errCodeComputingPCSReplicaDeletionWork grovecorev1alpha1.ErrorCode = "ERR_COMPUTE_PCS_REPLICA_DELETION_WORK"
-	errCodeDeletePCSReplica                grovecorev1alpha1.ErrorCode = "ERR_DELETE_PCS_REPLICA"
-	errCodeListPCLQs                       grovecorev1alpha1.ErrorCode = "ERR_LIST_PCLQs"
-	errCodeListPCSGs                       grovecorev1alpha1.ErrorCode = "ERR_LIST_PCSGs"
-	errCodeListServices                    grovecorev1alpha1.ErrorCode = "ERR_LIST_SERVICES"
-	errCodeUpdatePCSStatus                 grovecorev1alpha1.ErrorCode = "ERR_UPDATE_PCS_STATUS"
-	errCodeGetPodGangMap                   grovecorev1alpha1.ErrorCode = "ERR_GET_PODGANGMAP"
-	errCodeInvalidEpoch                    grovecorev1alpha1.ErrorCode = "ERR_INVALID_EPOCH"
+	errCodeComputingPCSReplicaDeletionWork grovecorev1beta1.ErrorCode = "ERR_COMPUTE_PCS_REPLICA_DELETION_WORK"
+	errCodeDeletePCSReplica                grovecorev1beta1.ErrorCode = "ERR_DELETE_PCS_REPLICA"
+	errCodeListPCLQs                       grovecorev1beta1.ErrorCode = "ERR_LIST_PCLQs"
+	errCodeListPCSGs                       grovecorev1beta1.ErrorCode = "ERR_LIST_PCSGs"
+	errCodeListServices                    grovecorev1beta1.ErrorCode = "ERR_LIST_SERVICES"
+	errCodeUpdatePCSStatus                 grovecorev1beta1.ErrorCode = "ERR_UPDATE_PCS_STATUS"
+	errCodeGetPodGangMap                   grovecorev1beta1.ErrorCode = "ERR_GET_PODGANGMAP"
+	errCodeInvalidEpoch                    grovecorev1beta1.ErrorCode = "ERR_INVALID_EPOCH"
 )
 
 type _resource struct {
@@ -51,7 +51,7 @@ type _resource struct {
 }
 
 // New creates a new instance of the PodCliqueSetReplica operator.
-func New(client client.Client, eventRecorder record.EventRecorder, scalingProgressExpectations *pcssync.ScalingProgressExpectations) component.Operator[grovecorev1alpha1.PodCliqueSet, pcssync.State, pcssync.Result] {
+func New(client client.Client, eventRecorder record.EventRecorder, scalingProgressExpectations *pcssync.ScalingProgressExpectations) component.Operator[grovecorev1beta1.PodCliqueSet, pcssync.State, pcssync.Result] {
 	return &_resource{
 		client:                      client,
 		eventRecorder:               eventRecorder,
@@ -65,7 +65,7 @@ func (r *_resource) GetExistingResourceNames(_ context.Context, _ logr.Logger, _
 }
 
 // Sync orchestrates replica deletion and rolling updates for the PodCliqueSet.
-func (r *_resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, state *pcssync.State) (pcssync.Result, error) {
+func (r *_resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, state *pcssync.State) (pcssync.Result, error) {
 	scalingProgressChanged, err := r.syncScalingProgress(ctx, logger, pcs, state)
 	if err != nil {
 		return pcssync.Result{}, err

@@ -19,7 +19,7 @@ import (
 	"testing"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podclique/expectations"
 	"github.com/ai-dynamo/grove/operator/internal/expect"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
@@ -163,12 +163,12 @@ func TestMapPodCliqueSetToPCLQs(t *testing.T) {
 	pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "default", "test-uid").
 		WithReplicas(3).
 		WithStandaloneClique("worker").
-		WithPodCliqueScalingGroupConfig(grovecorev1alpha1.PodCliqueScalingGroupConfig{
+		WithPodCliqueScalingGroupConfig(grovecorev1beta1.PodCliqueScalingGroupConfig{
 			Name:        "group",
 			CliqueNames: []string{"member"},
 		}).
-		WithUpdateProgress(&grovecorev1alpha1.PodCliqueSetUpdateProgress{
-			CurrentlyUpdating: []grovecorev1alpha1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 4}},
+		WithUpdateProgress(&grovecorev1beta1.PodCliqueSetUpdateProgress{
+			CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 4}},
 		}).
 		Build()
 
@@ -185,42 +185,42 @@ func TestPodCliqueSetPredicateSelectedReplicaChanges(t *testing.T) {
 
 	tests := []struct {
 		name        string
-		oldProgress *grovecorev1alpha1.PodCliqueSetUpdateProgress
-		newProgress *grovecorev1alpha1.PodCliqueSetUpdateProgress
+		oldProgress *grovecorev1beta1.PodCliqueSetUpdateProgress
+		newProgress *grovecorev1beta1.PodCliqueSetUpdateProgress
 		want        bool
 	}{
 		{
 			name: "currently updating starts",
-			newProgress: &grovecorev1alpha1.PodCliqueSetUpdateProgress{
-				CurrentlyUpdating: []grovecorev1alpha1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 0}},
+			newProgress: &grovecorev1beta1.PodCliqueSetUpdateProgress{
+				CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 0}},
 			},
 			want: true,
 		},
 		{
 			name: "currently updating clears",
-			oldProgress: &grovecorev1alpha1.PodCliqueSetUpdateProgress{
-				CurrentlyUpdating: []grovecorev1alpha1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 0}},
+			oldProgress: &grovecorev1beta1.PodCliqueSetUpdateProgress{
+				CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 0}},
 			},
-			newProgress: &grovecorev1alpha1.PodCliqueSetUpdateProgress{},
+			newProgress: &grovecorev1beta1.PodCliqueSetUpdateProgress{},
 			want:        false,
 		},
 		{
 			name: "currently updating moves",
-			oldProgress: &grovecorev1alpha1.PodCliqueSetUpdateProgress{
-				CurrentlyUpdating: []grovecorev1alpha1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 0}},
+			oldProgress: &grovecorev1beta1.PodCliqueSetUpdateProgress{
+				CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 0}},
 			},
-			newProgress: &grovecorev1alpha1.PodCliqueSetUpdateProgress{
-				CurrentlyUpdating: []grovecorev1alpha1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 1}},
+			newProgress: &grovecorev1beta1.PodCliqueSetUpdateProgress{
+				CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 1}},
 			},
 			want: true,
 		},
 		{
 			name: "currently updating unchanged",
-			oldProgress: &grovecorev1alpha1.PodCliqueSetUpdateProgress{
-				CurrentlyUpdating: []grovecorev1alpha1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 0}},
+			oldProgress: &grovecorev1beta1.PodCliqueSetUpdateProgress{
+				CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 0}},
 			},
-			newProgress: &grovecorev1alpha1.PodCliqueSetUpdateProgress{
-				CurrentlyUpdating: []grovecorev1alpha1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 0}},
+			newProgress: &grovecorev1beta1.PodCliqueSetUpdateProgress{
+				CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 0}},
 			},
 			want: false,
 		},
@@ -229,8 +229,8 @@ func TestPodCliqueSetPredicateSelectedReplicaChanges(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := pred.UpdateFunc(event.UpdateEvent{
-				ObjectOld: &grovecorev1alpha1.PodCliqueSet{Status: grovecorev1alpha1.PodCliqueSetStatus{CurrentGenerationHash: ptr.To("generation"), UpdateProgress: tt.oldProgress}},
-				ObjectNew: &grovecorev1alpha1.PodCliqueSet{Status: grovecorev1alpha1.PodCliqueSetStatus{CurrentGenerationHash: ptr.To("generation"), UpdateProgress: tt.newProgress}},
+				ObjectOld: &grovecorev1beta1.PodCliqueSet{Status: grovecorev1beta1.PodCliqueSetStatus{CurrentGenerationHash: ptr.To("generation"), UpdateProgress: tt.oldProgress}},
+				ObjectNew: &grovecorev1beta1.PodCliqueSet{Status: grovecorev1beta1.PodCliqueSetStatus{CurrentGenerationHash: ptr.To("generation"), UpdateProgress: tt.newProgress}},
 			})
 			assert.Equal(t, tt.want, got)
 		})
@@ -246,49 +246,49 @@ func TestPodCliqueScalingGroupPredicateGenerationStatusChanges(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		oldPCSG *grovecorev1alpha1.PodCliqueScalingGroup
-		newPCSG *grovecorev1alpha1.PodCliqueScalingGroup
+		oldPCSG *grovecorev1beta1.PodCliqueScalingGroup
+		newPCSG *grovecorev1beta1.PodCliqueScalingGroup
 		want    bool
 	}{
 		{
 			name: "current generation changes",
-			oldPCSG: &grovecorev1alpha1.PodCliqueScalingGroup{Status: grovecorev1alpha1.PodCliqueScalingGroupStatus{
+			oldPCSG: &grovecorev1beta1.PodCliqueScalingGroup{Status: grovecorev1beta1.PodCliqueScalingGroupStatus{
 				CurrentPodCliqueSetGenerationHash: ptr.To("old-generation"),
 			}},
-			newPCSG: &grovecorev1alpha1.PodCliqueScalingGroup{Status: grovecorev1alpha1.PodCliqueScalingGroupStatus{
+			newPCSG: &grovecorev1beta1.PodCliqueScalingGroup{Status: grovecorev1beta1.PodCliqueScalingGroupStatus{
 				CurrentPodCliqueSetGenerationHash: ptr.To("new-generation"),
 			}},
 			want: true,
 		},
 		{
 			name: "equal current generation values with different pointers do not enqueue",
-			oldPCSG: &grovecorev1alpha1.PodCliqueScalingGroup{Status: grovecorev1alpha1.PodCliqueScalingGroupStatus{
+			oldPCSG: &grovecorev1beta1.PodCliqueScalingGroup{Status: grovecorev1beta1.PodCliqueScalingGroupStatus{
 				CurrentPodCliqueSetGenerationHash: ptr.To("generation"),
 			}},
-			newPCSG: &grovecorev1alpha1.PodCliqueScalingGroup{Status: grovecorev1alpha1.PodCliqueScalingGroupStatus{
+			newPCSG: &grovecorev1beta1.PodCliqueScalingGroup{Status: grovecorev1beta1.PodCliqueScalingGroupStatus{
 				CurrentPodCliqueSetGenerationHash: ptr.To("generation"),
 			}},
 			want: false,
 		},
 		{
 			name: "update target generation changes",
-			oldPCSG: &grovecorev1alpha1.PodCliqueScalingGroup{Status: grovecorev1alpha1.PodCliqueScalingGroupStatus{
-				UpdateProgress: &grovecorev1alpha1.PodCliqueScalingGroupUpdateProgress{PodCliqueSetGenerationHash: "old-generation"},
+			oldPCSG: &grovecorev1beta1.PodCliqueScalingGroup{Status: grovecorev1beta1.PodCliqueScalingGroupStatus{
+				UpdateProgress: &grovecorev1beta1.PodCliqueScalingGroupUpdateProgress{PodCliqueSetGenerationHash: "old-generation"},
 			}},
-			newPCSG: &grovecorev1alpha1.PodCliqueScalingGroup{Status: grovecorev1alpha1.PodCliqueScalingGroupStatus{
-				UpdateProgress: &grovecorev1alpha1.PodCliqueScalingGroupUpdateProgress{PodCliqueSetGenerationHash: "new-generation"},
+			newPCSG: &grovecorev1beta1.PodCliqueScalingGroup{Status: grovecorev1beta1.PodCliqueScalingGroupStatus{
+				UpdateProgress: &grovecorev1beta1.PodCliqueScalingGroupUpdateProgress{PodCliqueSetGenerationHash: "new-generation"},
 			}},
 			want: true,
 		},
 		{
 			name: "generation status unchanged",
-			oldPCSG: &grovecorev1alpha1.PodCliqueScalingGroup{Status: grovecorev1alpha1.PodCliqueScalingGroupStatus{
+			oldPCSG: &grovecorev1beta1.PodCliqueScalingGroup{Status: grovecorev1beta1.PodCliqueScalingGroupStatus{
 				CurrentPodCliqueSetGenerationHash: ptr.To("generation"),
-				UpdateProgress:                    &grovecorev1alpha1.PodCliqueScalingGroupUpdateProgress{PodCliqueSetGenerationHash: "generation"},
+				UpdateProgress:                    &grovecorev1beta1.PodCliqueScalingGroupUpdateProgress{PodCliqueSetGenerationHash: "generation"},
 			}},
-			newPCSG: &grovecorev1alpha1.PodCliqueScalingGroup{Status: grovecorev1alpha1.PodCliqueScalingGroupStatus{
+			newPCSG: &grovecorev1beta1.PodCliqueScalingGroup{Status: grovecorev1beta1.PodCliqueScalingGroupStatus{
 				CurrentPodCliqueSetGenerationHash: ptr.To("generation"),
-				UpdateProgress:                    &grovecorev1alpha1.PodCliqueScalingGroupUpdateProgress{PodCliqueSetGenerationHash: "generation"},
+				UpdateProgress:                    &grovecorev1beta1.PodCliqueScalingGroupUpdateProgress{PodCliqueSetGenerationHash: "generation"},
 			}},
 			want: false,
 		},
@@ -384,12 +384,12 @@ func TestPodGangMapPredicate(t *testing.T) {
 	pred, ok := podGangMapPredicate().(predicate.Funcs)
 	require.True(t, ok, "predicate must be predicate.Funcs")
 
-	pgmWith := func(entries ...grovecorev1alpha1.PodGangEntry) *grovecorev1alpha1.PodGangMap {
+	pgmWith := func(entries ...grovecorev1beta1.PodGangEntry) *grovecorev1beta1.PodGangMap {
 		return testutils.NewPodGangMapBuilder(pcsName, ns, "pcs-uid", 0).WithEntries(entries...).Build()
 	}
-	anchor := func(epoch string, podCliques map[string]int32) grovecorev1alpha1.PodGangEntry {
+	anchor := func(epoch string, podCliques map[string]int32) grovecorev1beta1.PodGangEntry {
 		return testutils.NewPodGangEntryBuilder(hash, epoch).
-			WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).
+			WithRole(grovecorev1beta1.PodGangEntryRoleAnchor).
 			WithPodCliques(podCliques).
 			Build()
 	}
@@ -397,8 +397,8 @@ func TestPodGangMapPredicate(t *testing.T) {
 	tests := []struct {
 		name     string
 		isCreate bool
-		old      *grovecorev1alpha1.PodGangMap
-		new      *grovecorev1alpha1.PodGangMap
+		old      *grovecorev1beta1.PodGangMap
+		new      *grovecorev1beta1.PodGangMap
 		want     bool
 	}{
 		{
@@ -437,11 +437,11 @@ func TestPodGangMapPredicate(t *testing.T) {
 		{
 			name: "only PodCliqueScalingGroup indices change does not fire",
 			old: pgmWith(testutils.NewPodGangEntryBuilder(hash, "100").
-				WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).
+				WithRole(grovecorev1beta1.PodGangEntryRoleAnchor).
 				WithPodCliques(map[string]int32{"frontend": 6}).
 				WithPCSGReplicaIndices(map[string][]int32{"sga": {0, 1, 2}}).Build()),
 			new: pgmWith(testutils.NewPodGangEntryBuilder(hash, "100").
-				WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).
+				WithRole(grovecorev1beta1.PodGangEntryRoleAnchor).
 				WithPodCliques(map[string]int32{"frontend": 6}).
 				WithPCSGReplicaIndices(map[string][]int32{"sga": {0, 1}}).Build()),
 			want: false,
@@ -469,10 +469,10 @@ func TestMapPodGangMapToPCLQs(t *testing.T) {
 
 	pgm := testutils.NewPodGangMapBuilder(pcsName, ns, "pcs-uid", 0).WithEntries(
 		testutils.NewPodGangEntryBuilder(hash, "100").
-			WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).
+			WithRole(grovecorev1beta1.PodGangEntryRoleAnchor).
 			WithPodCliques(map[string]int32{"frontend": 3, "backend": 2}).Build(),
 		testutils.NewPodGangEntryBuilder(hash, "200").
-			WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).
+			WithRole(grovecorev1beta1.PodGangEntryRoleAnchor).
 			WithPodCliques(map[string]int32{"frontend": 3}).Build(),
 	).Build()
 

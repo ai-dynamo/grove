@@ -17,7 +17,7 @@ package sync
 import (
 	"testing"
 
-	grovev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -29,20 +29,20 @@ func TestScalingProgressExpectationsRecord(t *testing.T) {
 	objectMeta := metav1.ObjectMeta{Namespace: "default", Name: "pcs", UID: types.UID("uid")}
 	tests := []struct {
 		name             string
-		progress         *grovev1alpha1.PodCliqueSetScalingProgress
-		expectedProgress *grovev1alpha1.PodCliqueSetScalingProgress
+		progress         *grovev1beta1.PodCliqueSetScalingProgress
+		expectedProgress *grovev1beta1.PodCliqueSetScalingProgress
 	}{
 		{
 			name:             "nil progress",
-			expectedProgress: &grovev1alpha1.PodCliqueSetScalingProgress{},
+			expectedProgress: &grovev1beta1.PodCliqueSetScalingProgress{},
 		},
 		{
 			name: "non-empty progress",
-			progress: &grovev1alpha1.PodCliqueSetScalingProgress{
+			progress: &grovev1beta1.PodCliqueSetScalingProgress{
 				ScaleOutReplicaIndices: []int32{3, 1},
 				ScaleInReplicaIndices:  []int32{4, 2},
 			},
-			expectedProgress: &grovev1alpha1.PodCliqueSetScalingProgress{
+			expectedProgress: &grovev1beta1.PodCliqueSetScalingProgress{
 				ScaleOutReplicaIndices: []int32{3, 1},
 				ScaleInReplicaIndices:  []int32{4, 2},
 			},
@@ -69,8 +69,8 @@ func TestScalingProgressExpectationsClearIfSatisfied(t *testing.T) {
 	objectMeta := metav1.ObjectMeta{Namespace: "default", Name: "pcs", UID: types.UID("uid")}
 	tests := []struct {
 		name             string
-		expectedProgress *grovev1alpha1.PodCliqueSetScalingProgress
-		observedProgress *grovev1alpha1.PodCliqueSetScalingProgress
+		expectedProgress *grovev1beta1.PodCliqueSetScalingProgress
+		observedProgress *grovev1beta1.PodCliqueSetScalingProgress
 		hasExpectation   bool
 		expectSatisfied  bool
 		expectCleared    bool
@@ -82,23 +82,23 @@ func TestScalingProgressExpectationsClearIfSatisfied(t *testing.T) {
 		{
 			name:             "matching progress",
 			hasExpectation:   true,
-			expectedProgress: &grovev1alpha1.PodCliqueSetScalingProgress{ScaleOutReplicaIndices: []int32{3, 1}},
-			observedProgress: &grovev1alpha1.PodCliqueSetScalingProgress{ScaleOutReplicaIndices: []int32{1, 3}},
+			expectedProgress: &grovev1beta1.PodCliqueSetScalingProgress{ScaleOutReplicaIndices: []int32{3, 1}},
+			observedProgress: &grovev1beta1.PodCliqueSetScalingProgress{ScaleOutReplicaIndices: []int32{1, 3}},
 			expectSatisfied:  true,
 			expectCleared:    true,
 		},
 		{
 			name:             "nil progress matches empty progress",
 			hasExpectation:   true,
-			expectedProgress: &grovev1alpha1.PodCliqueSetScalingProgress{},
+			expectedProgress: &grovev1beta1.PodCliqueSetScalingProgress{},
 			expectSatisfied:  true,
 			expectCleared:    true,
 		},
 		{
 			name:             "different progress",
 			hasExpectation:   true,
-			expectedProgress: &grovev1alpha1.PodCliqueSetScalingProgress{ScaleInReplicaIndices: []int32{1}},
-			observedProgress: &grovev1alpha1.PodCliqueSetScalingProgress{ScaleInReplicaIndices: []int32{2}},
+			expectedProgress: &grovev1beta1.PodCliqueSetScalingProgress{ScaleInReplicaIndices: []int32{1}},
+			observedProgress: &grovev1beta1.PodCliqueSetScalingProgress{ScaleInReplicaIndices: []int32{2}},
 		},
 	}
 
@@ -124,7 +124,7 @@ func TestScalingProgressExpectationsClearIfSatisfied(t *testing.T) {
 	t.Run("clears only the satisfied PodCliqueSet expectation", func(t *testing.T) {
 		expectations := &ScalingProgressExpectations{}
 		otherObjectMeta := metav1.ObjectMeta{Namespace: "default", Name: "other-pcs", UID: types.UID("other-uid")}
-		expectedProgress := &grovev1alpha1.PodCliqueSetScalingProgress{ScaleOutReplicaIndices: []int32{1}}
+		expectedProgress := &grovev1beta1.PodCliqueSetScalingProgress{ScaleOutReplicaIndices: []int32{1}}
 		expectations.expectations.Store(scalingProgressExpectationKey(objectMeta), expectedProgress)
 		expectations.expectations.Store(scalingProgressExpectationKey(otherObjectMeta), expectedProgress.DeepCopy())
 
@@ -143,7 +143,7 @@ func TestScalingProgressExpectationsForget(t *testing.T) {
 	objectMeta := metav1.ObjectMeta{Namespace: "default", Name: "pcs", UID: types.UID("uid")}
 	expectations.expectations.Store(
 		scalingProgressExpectationKey(objectMeta),
-		&grovev1alpha1.PodCliqueSetScalingProgress{ScaleOutReplicaIndices: []int32{1}},
+		&grovev1beta1.PodCliqueSetScalingProgress{ScaleOutReplicaIndices: []int32{1}},
 	)
 
 	expectations.Forget(objectMeta)
@@ -155,19 +155,19 @@ func TestScalingProgressExpectationsForget(t *testing.T) {
 func TestScalingProgressEqual(t *testing.T) {
 	tests := []struct {
 		name     string
-		left     *grovev1alpha1.PodCliqueSetScalingProgress
-		right    *grovev1alpha1.PodCliqueSetScalingProgress
+		left     *grovev1beta1.PodCliqueSetScalingProgress
+		right    *grovev1beta1.PodCliqueSetScalingProgress
 		expected bool
 	}{
 		{name: "nil values", expected: true},
-		{name: "nil and empty", right: &grovev1alpha1.PodCliqueSetScalingProgress{}, expected: true},
+		{name: "nil and empty", right: &grovev1beta1.PodCliqueSetScalingProgress{}, expected: true},
 		{
 			name: "same index sets",
-			left: &grovev1alpha1.PodCliqueSetScalingProgress{
+			left: &grovev1beta1.PodCliqueSetScalingProgress{
 				ScaleOutReplicaIndices: []int32{3, 1},
 				ScaleInReplicaIndices:  []int32{4, 2},
 			},
-			right: &grovev1alpha1.PodCliqueSetScalingProgress{
+			right: &grovev1beta1.PodCliqueSetScalingProgress{
 				ScaleOutReplicaIndices: []int32{1, 3},
 				ScaleInReplicaIndices:  []int32{2, 4},
 			},
@@ -175,8 +175,8 @@ func TestScalingProgressEqual(t *testing.T) {
 		},
 		{
 			name:  "different index sets",
-			left:  &grovev1alpha1.PodCliqueSetScalingProgress{ScaleInReplicaIndices: []int32{1}},
-			right: &grovev1alpha1.PodCliqueSetScalingProgress{ScaleInReplicaIndices: []int32{2}},
+			left:  &grovev1beta1.PodCliqueSetScalingProgress{ScaleInReplicaIndices: []int32{1}},
+			right: &grovev1beta1.PodCliqueSetScalingProgress{ScaleInReplicaIndices: []int32{2}},
 		},
 	}
 

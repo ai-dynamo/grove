@@ -20,7 +20,7 @@ import (
 	"strconv"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/sync"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
@@ -36,17 +36,17 @@ import (
 )
 
 const (
-	errCodeListPodGangMaps         grovecorev1alpha1.ErrorCode = "ERR_LIST_PODGANGMAPS"
-	errCodeDeletePodGangMaps       grovecorev1alpha1.ErrorCode = "ERR_DELETE_PODGANGMAPS"
-	errCodeCreateOrPatchPodGangMap grovecorev1alpha1.ErrorCode = "ERR_CREATE_OR_PATCH_PODGANGMAP"
-	errCodeSetControllerReference  grovecorev1alpha1.ErrorCode = "ERR_SET_CONTROLLER_REFERENCE"
-	errCodeListPCLQs               grovecorev1alpha1.ErrorCode = "ERR_LIST_PCLQS"
-	errCodeListPCSGs               grovecorev1alpha1.ErrorCode = "ERR_LIST_PCSGS"
-	errCodeListPodGangs            grovecorev1alpha1.ErrorCode = "ERR_LIST_PODGANGS"
-	errCodeGroupPodGangsByReplica  grovecorev1alpha1.ErrorCode = "ERR_GROUP_PODGANGS_BY_REPLICA"
-	errCodeInvalidEpoch            grovecorev1alpha1.ErrorCode = "ERR_INVALID_EPOCH"
-	errCodeExtractPCSGName         grovecorev1alpha1.ErrorCode = "ERR_EXTRACT_PCSG_NAME"
-	errCodeListPods                grovecorev1alpha1.ErrorCode = "ERR_LIST_PODS"
+	errCodeListPodGangMaps         grovecorev1beta1.ErrorCode = "ERR_LIST_PODGANGMAPS"
+	errCodeDeletePodGangMaps       grovecorev1beta1.ErrorCode = "ERR_DELETE_PODGANGMAPS"
+	errCodeCreateOrPatchPodGangMap grovecorev1beta1.ErrorCode = "ERR_CREATE_OR_PATCH_PODGANGMAP"
+	errCodeSetControllerReference  grovecorev1beta1.ErrorCode = "ERR_SET_CONTROLLER_REFERENCE"
+	errCodeListPCLQs               grovecorev1beta1.ErrorCode = "ERR_LIST_PCLQS"
+	errCodeListPCSGs               grovecorev1beta1.ErrorCode = "ERR_LIST_PCSGS"
+	errCodeListPodGangs            grovecorev1beta1.ErrorCode = "ERR_LIST_PODGANGS"
+	errCodeGroupPodGangsByReplica  grovecorev1beta1.ErrorCode = "ERR_GROUP_PODGANGS_BY_REPLICA"
+	errCodeInvalidEpoch            grovecorev1beta1.ErrorCode = "ERR_INVALID_EPOCH"
+	errCodeExtractPCSGName         grovecorev1beta1.ErrorCode = "ERR_EXTRACT_PCSG_NAME"
+	errCodeListPods                grovecorev1beta1.ErrorCode = "ERR_LIST_PODS"
 )
 
 type _resource struct {
@@ -56,7 +56,7 @@ type _resource struct {
 }
 
 // New creates a new instance of the PodGangMap component operator.
-func New(cl client.Client, scheme *runtime.Scheme, clk clock.Clock) component.Operator[grovecorev1alpha1.PodCliqueSet, pcssync.State, pcssync.Result] {
+func New(cl client.Client, scheme *runtime.Scheme, clk clock.Clock) component.Operator[grovecorev1beta1.PodCliqueSet, pcssync.State, pcssync.Result] {
 	return &_resource{
 		client: cl,
 		scheme: scheme,
@@ -66,7 +66,7 @@ func New(cl client.Client, scheme *runtime.Scheme, clk clock.Clock) component.Op
 
 // GetExistingResourceNames returns the names of existing PodGangMap resources owned by the PodCliqueSet.
 func (r _resource) GetExistingResourceNames(ctx context.Context, _ logr.Logger, pcsObjMeta metav1.ObjectMeta) ([]string, error) {
-	podGangMapList := &grovecorev1alpha1.PodGangMapList{}
+	podGangMapList := &grovecorev1beta1.PodGangMapList{}
 	if err := r.client.List(ctx,
 		podGangMapList,
 		client.InNamespace(pcsObjMeta.Namespace),
@@ -84,7 +84,7 @@ func (r _resource) GetExistingResourceNames(ctx context.Context, _ logr.Logger, 
 // Sync reconciles the PodGangMap for every PCS replica. It takes a snapshot once, authors the
 // PodGangMap resources in the bootstrap and steady-state flows and cleans up PodGangMaps orphaned
 // by a PCS replica scale-in.
-func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, state *pcssync.State) (pcssync.Result, error) {
+func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, state *pcssync.State) (pcssync.Result, error) {
 	logger.V(4).Info("Syncing PodGangMap resources")
 	syncSnap, err := r.takeSnapshot(ctx, logger, pcs, state)
 	if err != nil {
@@ -115,7 +115,7 @@ func existingScaleInPCSReplicaIndices(syncSnap *syncSnapshot) []int {
 func (r _resource) Delete(ctx context.Context, logger logr.Logger, pcsObjMeta metav1.ObjectMeta) error {
 	logger.Info("Triggering deletion of PodGangMaps")
 	if err := r.client.DeleteAllOf(ctx,
-		&grovecorev1alpha1.PodGangMap{},
+		&grovecorev1beta1.PodGangMap{},
 		client.InNamespace(pcsObjMeta.Namespace),
 		client.MatchingLabels(getSelectorLabels(pcsObjMeta.Name)),
 	); err != nil {
@@ -151,7 +151,7 @@ func getLabels(pcsName string, replicaIndex int) map[string]string {
 }
 
 // buildResource configures the PodGangMap with the desired entries.
-func (r _resource) buildResource(pgm *grovecorev1alpha1.PodGangMap, pcs *grovecorev1alpha1.PodCliqueSet, replicaIndex int, entries []grovecorev1alpha1.PodGangEntry) error {
+func (r _resource) buildResource(pgm *grovecorev1beta1.PodGangMap, pcs *grovecorev1beta1.PodCliqueSet, replicaIndex int, entries []grovecorev1beta1.PodGangEntry) error {
 	if err := controllerutil.SetControllerReference(pcs, pgm, r.scheme); err != nil {
 		return groveerr.WrapError(err,
 			errCodeSetControllerReference,
@@ -169,8 +169,8 @@ func (r _resource) buildResource(pgm *grovecorev1alpha1.PodGangMap, pcs *groveco
 }
 
 // emptyPodGangMap creates an empty PodGangMap with only metadata set.
-func emptyPodGangMap(objKey client.ObjectKey) *grovecorev1alpha1.PodGangMap {
-	return &grovecorev1alpha1.PodGangMap{
+func emptyPodGangMap(objKey client.ObjectKey) *grovecorev1beta1.PodGangMap {
+	return &grovecorev1beta1.PodGangMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      objKey.Name,
 			Namespace: objKey.Namespace,
