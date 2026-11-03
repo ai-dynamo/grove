@@ -84,9 +84,19 @@ config.yaml: |
 grove-operator-cm-{{ include "operator.config.data" . | sha256sum | trunc 8 }}
 {{- end -}}
 
-{{- define "common.chart.labels" -}}
-chart: "{{- printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimAll "-_." }}"
-release: "{{ .Release.Name }}"
+{{/*
+Merge chart defaults (chart, release) with user-supplied labels.
+User keys overwrite defaults so a values release label replaces the
+Helm release name instead of duplicating the YAML key.
+Args: list <root> <userLabelsDictOrNil>
+*/}}
+{{- define "common.labels" -}}
+{{- $root := index . 0 -}}
+{{- $labels := dict
+  "chart" (printf "%s-%s" $root.Chart.Name $root.Chart.Version | replace "+" "_" | trunc 63 | trimAll "-_.")
+  "release" $root.Release.Name
+-}}
+{{- toYaml (mergeOverwrite $labels (index . 1 | default dict)) }}
 {{- end -}}
 
 {{/* Returns "true" if the named scheduler profile is configured, empty string otherwise. */}}
@@ -99,10 +109,7 @@ release: "{{ .Release.Name }}"
 {{- end -}}
 
 {{- define "operator.config.labels" -}}
-{{- include "common.chart.labels" . }}
-{{- range $key, $val := .Values.configMap.labels }}
-{{ $key }}: {{ $val }}
-{{- end }}
+{{- include "common.labels" (list . .Values.configMap.labels) }}
 {{- end -}}
 
 {{- define "operator.deployment.matchLabels" -}}
@@ -112,15 +119,11 @@ release: "{{ .Release.Name }}"
 {{- end -}}
 
 {{- define "operator.deployment.labels" -}}
-{{- include "common.chart.labels" . }}
-{{- include "operator.deployment.matchLabels" . }}
+{{- include "common.labels" (list . .Values.deployment.labels) }}
 {{- end -}}
 
 {{- define "operator.serviceaccount.labels" -}}
-{{- include "common.chart.labels" . }}
-{{- range $key, $val := .Values.serviceAccount.labels }}
-{{ $key }}: {{ $val }}
-{{- end }}
+{{- include "common.labels" (list . .Values.serviceAccount.labels) }}
 {{- end -}}
 
 {{- define "operator.service.matchLabels" -}}
@@ -130,29 +133,19 @@ release: "{{ .Release.Name }}"
 {{- end -}}
 
 {{- define "operator.service.labels" -}}
-{{- include "common.chart.labels" . }}
-{{- include "operator.service.matchLabels" . }}
+{{- include "common.labels" (list . .Values.service.labels) }}
 {{- end -}}
 
 {{- define "operator.servicemonitor.labels" -}}
-{{- include "common.chart.labels" . }}
-{{- range $key, $val := .Values.metrics.serviceMonitor.labels }}
-{{ $key }}: {{ $val }}
-{{- end }}
+{{- include "common.labels" (list . .Values.metrics.serviceMonitor.labels) }}
 {{- end -}}
 
 {{- define "operator.clusterrole.labels" -}}
-{{- include "common.chart.labels" . }}
-{{- range $key, $val := .Values.clusterRole.labels }}
-{{ $key }}: {{ $val }}
-{{- end }}
+{{- include "common.labels" (list . .Values.clusterRole.labels) }}
 {{- end -}}
 
 {{- define "operator.clusterrolebinding.labels" -}}
-{{- include "common.chart.labels" . }}
-{{- range $key, $val := .Values.clusterRoleBinding.labels }}
-{{ $key }}: {{ $val }}
-{{- end }}
+{{- include "common.labels" (list . .Values.clusterRoleBinding.labels) }}
 {{- end -}}
 
 {{- define "image" -}}
@@ -164,71 +157,41 @@ release: "{{ .Release.Name }}"
 {{- end -}}
 
 {{- define "operator.pcs.validating.webhook.labels" -}}
-{{- include "common.chart.labels" . }}
-{{- range $key, $val := .Values.webhooks.podCliqueSetValidationWebhook.labels }}
-{{ $key }}: {{ $val }}
-{{- end }}
+{{- include "common.labels" (list . .Values.webhooks.podCliqueSetValidationWebhook.labels) }}
 {{- end -}}
 
 {{- define "operator.pclq.validating.webhook.labels" -}}
-{{- include "common.chart.labels" . }}
-{{- range $key, $val := .Values.webhooks.podCliqueValidationWebhook.labels }}
-{{ $key }}: {{ $val }}
-{{- end }}
+{{- include "common.labels" (list . .Values.webhooks.podCliqueValidationWebhook.labels) }}
 {{- end -}}
 
 {{- define "operator.pcsg.validating.webhook.labels" -}}
-{{- include "common.chart.labels" . }}
-{{- range $key, $val := .Values.webhooks.podCliqueScalingGroupValidationWebhook.labels }}
-{{ $key }}: {{ $val }}
-{{- end }}
+{{- include "common.labels" (list . .Values.webhooks.podCliqueScalingGroupValidationWebhook.labels) }}
 {{- end -}}
 
 {{- define "operator.pcs.defaulting.webhook.labels" -}}
-{{- include "common.chart.labels" . }}
-{{- range $key, $val := .Values.webhooks.podCliqueSetDefaultingWebhook.labels }}
-{{ $key }}: {{ $val }}
-{{- end }}
+{{- include "common.labels" (list . .Values.webhooks.podCliqueSetDefaultingWebhook.labels) }}
 {{- end -}}
 
 {{- define "operator.clustertopology.validating.webhook.labels" -}}
-{{- include "common.chart.labels" . }}
-{{- range $key, $val := .Values.webhooks.clusterTopologyValidationWebhook.labels }}
-{{ $key }}: {{ $val }}
-{{- end }}
+{{- include "common.labels" (list . .Values.webhooks.clusterTopologyValidationWebhook.labels) }}
 {{- end -}}
 
 {{- define "operator.podclique.validating.webhook.labels" -}}
-{{- include "common.chart.labels" . }}
-{{- range $key, $val := .Values.webhooks.podCliqueValidationWebhook.labels }}
-{{ $key }}: {{ $val }}
-{{- end }}
+{{- include "common.labels" (list . .Values.webhooks.podCliqueValidationWebhook.labels) }}
 {{- end -}}
 
 {{- define "operator.authorizer.webhook.labels" -}}
-{{- include "common.chart.labels" . }}
-{{- range $key, $val := .Values.webhooks.authorizerWebhook.labels }}
-{{ $key }}: {{ $val }}
-{{- end }}
+{{- include "common.labels" (list . .Values.webhooks.authorizerWebhook.labels) }}
 {{- end -}}
 
 {{- define "operator.server.secret.labels" -}}
-{{- include "common.chart.labels" . }}
-{{- range $key, $val := .Values.webhookServerSecret.labels }}
-{{ $key }}: {{ $val }}
-{{- end }}
+{{- include "common.labels" (list . .Values.webhookServerSecret.labels) }}
 {{- end -}}
 
 {{- define "operator.lease.role.labels" -}}
-{{- include "common.chart.labels" . }}
-{{- range $key, $val := .Values.leaseRole.labels }}
-{{ $key }}: {{ $val }}
-{{- end }}
+{{- include "common.labels" (list . .Values.leaseRole.labels) }}
 {{- end -}}
 
 {{- define "operator.lease.rolebinding.labels" -}}
-{{- include "common.chart.labels" . }}
-{{- range $key, $val := .Values.leaseRoleBinding.labels }}
-{{ $key }}: {{ $val }}
-{{- end }}
+{{- include "common.labels" (list . .Values.leaseRoleBinding.labels) }}
 {{- end -}}
