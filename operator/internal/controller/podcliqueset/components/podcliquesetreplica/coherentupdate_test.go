@@ -107,6 +107,24 @@ func TestGetPCSReplicaInfos(t *testing.T) {
 	assert.Equal(t, []int{2}, pcsReplicaIndicesToTerminate)
 }
 
+func TestGetPCSReplicaInfosForCoherentUpdate(t *testing.T) {
+	pcs := coherentTestPCS([]string{"frontend"}, nil)
+	entriesByReplicaIndex := map[int][]grovecorev1beta1.PodGangEntry{
+		0: {{Epoch: "100", PodCliqueSetGenerationHash: "old"}},
+		1: {{Epoch: "200", PodCliqueSetGenerationHash: coherentTestCurrentGen}},
+	}
+	pgm0 := testutils.NewPodGangMapBuilder(pcs.Name, pcs.Namespace, pcs.UID, 0).WithEntries(entriesByReplicaIndex[0]...).Build()
+	pgm1 := testutils.NewPodGangMapBuilder(pcs.Name, pcs.Namespace, pcs.UID, 1).WithEntries(entriesByReplicaIndex[1]...).Build()
+	r := &_resource{client: testutils.SetupFakeClient(pcs, pgm0, pgm1)}
+
+	got, err := r.getPCSReplicaInfos(context.Background(), pcs, []int{0, 1}, []int{0})
+
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, 1, got[0].replicaIndex)
+	assert.Equal(t, entriesByReplicaIndex[1], got[0].pgmEntries)
+}
+
 func TestInFlightEpochsForReplica(t *testing.T) {
 	pcs := coherentTestPCS([]string{"frontend"}, nil)
 	currentHashEntry := grovecorev1beta1.PodGangEntry{Epoch: "200", PodCliqueSetGenerationHash: coherentTestCurrentGen, PodCliques: map[string]int32{"frontend": 1}}
@@ -146,11 +164,11 @@ func TestInFlightEpochsForReplica(t *testing.T) {
 
 func TestUpdateCoherentReplicaProgress(t *testing.T) {
 	pcs := coherentTestPCS([]string{"frontend"}, nil)
-	pcs.Status.UpdateProgress.CurrentlyUpdating = []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 0}}
-	pgm := testutils.NewPodGangMapBuilder(coherentTestPCSName, coherentTestNamespace, coherentTestPCSUID, 0).
+	pcs.Status.UpdateProgress.CurrentlyUpdating = []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 0}, {ReplicaIndex: 1}}
+	pgm := testutils.NewPodGangMapBuilder(coherentTestPCSName, coherentTestNamespace, coherentTestPCSUID, 1).
 		WithEntries(grovecorev1beta1.PodGangEntry{Epoch: "200", PodCliqueSetGenerationHash: coherentTestCurrentGen, PodCliques: map[string]int32{"frontend": 1}}).Build()
 	replicaInfo := pcsReplicaInfo{
-		replicaIndex: 0,
+		replicaIndex: 1,
 		pclqs:        []grovecorev1beta1.PodClique{standalonePCLQAtHash(pcs, "frontend", "stale-hash")}, // not converged
 	}
 	r := _resource{client: testutils.SetupFakeClient(pcs, pgm)}
@@ -158,10 +176,42 @@ func TestUpdateCoherentReplicaProgress(t *testing.T) {
 	err := r.updateCoherentReplicaProgress(context.Background(), logr.Discard(), pcs, replicaInfo)
 
 	require.NoError(t, err)
-	current := pcs.Status.UpdateProgress.CurrentlyUpdating[0]
+	assert.Empty(t, pcs.Status.UpdateProgress.CurrentlyUpdating[0].InFlightEpochs)
+	assert.Nil(t, pcs.Status.UpdateProgress.CurrentlyUpdating[0].Message)
+	current := pcs.Status.UpdateProgress.CurrentlyUpdating[1]
 	assert.Equal(t, []string{"200"}, current.InFlightEpochs)
 	require.NotNil(t, current.Message)
 	assert.Equal(t, "0/1 standalone PodCliques updated to the current revision", *current.Message)
+}
+
+func TestUpdateCoherentReplicaProgressRejectsUnselectedReplica(t *testing.T) {
+	tests := []struct {
+		name     string
+		progress *grovecorev1beta1.PodCliqueSetUpdateProgress
+	}{
+		{name: "nil update progress"},
+		{
+			name: "different replica selected",
+			progress: &grovecorev1beta1.PodCliqueSetUpdateProgress{
+				CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 0}},
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			pcs := coherentTestPCS([]string{"frontend"}, nil)
+			pcs.Status.UpdateProgress = tc.progress
+			r := _resource{client: testutils.SetupFakeClient(pcs)}
+
+			err := r.updateCoherentReplicaProgress(context.Background(), logr.Discard(), pcs, pcsReplicaInfo{replicaIndex: 1})
+
+			require.Error(t, err)
+			if tc.progress != nil {
+				assert.Empty(t, tc.progress.CurrentlyUpdating[0].InFlightEpochs)
+				assert.Nil(t, tc.progress.CurrentlyUpdating[0].Message)
+			}
+		})
+	}
 }
 
 func TestIsUpdateComplete(t *testing.T) {
