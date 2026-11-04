@@ -29,6 +29,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"slices"
 	"testing"
 
 	apiconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
@@ -58,9 +59,10 @@ const (
 // podSurvivalUpgrade holds the state shared between the pre-upgrade and post-upgrade steps of the pod
 // survival test. The pod list is captured before the upgrade and asserted against afterwards.
 type podSurvivalUpgrade struct {
-	fromVersion       string
-	workload          *testctx.WorkloadConfig
-	podsBeforeUpgrade *corev1.PodList
+	fromVersion            string
+	workload               *testctx.WorkloadConfig
+	podsBeforeUpgrade      *corev1.PodList
+	expectedStoredVersions map[string][]string
 }
 
 // deployWorkload deploys the workload on the fromVersion operator and captures its pods.
@@ -69,13 +71,26 @@ func (s *podSurvivalUpgrade) deployWorkload(t *testing.T, tc *testctx.TestContex
 	require.NoError(t, err, "applying workload")
 	s.podsBeforeUpgrade, err = tc.ListPods()
 	require.NoError(t, err, "listing workload pods")
+
+	// Preserve each CRD's storage history. A beta release can already store v1beta1
+	// without any v1alpha1 objects, so an upgrade does not always add a version.
+	s.expectedStoredVersions = make(map[string][]string, len(groveCRDNames))
+	for _, name := range groveCRDNames {
+		crd, err := getCRD(t.Context(), tc.Client, name)
+		require.NoError(t, err, "get CRD %s before the upgrade", name)
+		versions := crd.Status.StoredVersions
+		if !slices.Contains(versions, grovev1beta1.SchemeGroupVersion.Version) {
+			versions = append(versions, grovev1beta1.SchemeGroupVersion.Version)
+		}
+		s.expectedStoredVersions[name] = versions
+	}
 }
 
-// verifyPodsSurvive checks that the grove.io CRDs store v1beta1 next to v1alpha1 and that the workload is
-// readable at both versions, scales the workload, then asserts the pre-upgrade pods were not recreated and
-// the init containers were updated.
+// verifyPodsSurvive checks that the grove.io CRDs retain their storage history and store v1beta1.
+// It checks that the workload is readable at both versions, scales the workload, then checks that
+// the original pods were not recreated and the init containers were updated.
 func (s *podSurvivalUpgrade) verifyPodsSurvive(t *testing.T, tc *testctx.TestContext) {
-	waitForStoredVersions(t, tc, corev1alpha1.SchemeGroupVersion.Version, grovev1beta1.SchemeGroupVersion.Version)
+	waitForStoredVersions(t, tc, s.expectedStoredVersions)
 	requirePCSReadableAtBothVersions(t, tc, types.NamespacedName{Namespace: s.workload.Namespace, Name: s.workload.Name})
 	verifyPodUIDsUnchanged(t, tc, s.podsBeforeUpgrade)
 
@@ -115,16 +130,16 @@ func Test_VUPG1_UpgradeFromLatestGitHubRelease(t *testing.T) {
 	})
 }
 
-// Test_VDGR1_DowngradeToLatestGitHubRelease verifies the documented downgrade: after an upgrade to the
+// Test_VDGR1_DowngradeToV1Alpha1Release verifies the documented downgrade: after an upgrade to the
 // operator built from the current checkout, run-api-downgrade moves the grove.io objects back to
 // grove.io/v1alpha1, and a Helm rollback to the released version then succeeds. The workload's pods
 // survive both the upgrade and the downgrade, and the released operator keeps managing the workload.
 //
-// The released version can be controlled with GROVE_UPGRADE_FROM_VERSION.
-func Test_VDGR1_DowngradeToLatestGitHubRelease(t *testing.T) {
+// GROVE_UPGRADE_FROM_VERSION can select another release that stores only v1alpha1.
+func Test_VDGR1_DowngradeToV1Alpha1Release(t *testing.T) {
 	fromVersion := os.Getenv("GROVE_UPGRADE_FROM_VERSION")
 	if fromVersion == "" {
-		fromVersion = latestGitHubRelease(t)
+		fromVersion = "v0.1.0-alpha.17"
 	}
 	s := &podSurvivalUpgrade{
 		fromVersion: fromVersion,
@@ -140,8 +155,11 @@ func Test_VDGR1_DowngradeToLatestGitHubRelease(t *testing.T) {
 		fromVersion:     s.fromVersion,
 		nodeWorkerCount: 1,
 		prepareOpts:     []testctx.TestOption{testctx.WithWorkload(s.workload)},
-		preUpgrade:      s.deployWorkload,
-		postUpgrade:     s.downgradeAndVerify,
+		preUpgrade: func(t *testing.T, tc *testctx.TestContext) {
+			requireCRDsServeOnly(t, tc, corev1alpha1.SchemeGroupVersion.Version)
+			s.deployWorkload(t, tc)
+		},
+		postUpgrade: s.downgradeAndVerify,
 	})
 }
 
@@ -153,11 +171,12 @@ func (s *podSurvivalUpgrade) downgradeAndVerify(t *testing.T, tc *testctx.TestCo
 	alpha := corev1alpha1.SchemeGroupVersion.Version
 	pcsKey := types.NamespacedName{Namespace: s.workload.Namespace, Name: s.workload.Name}
 
-	waitForStoredVersions(t, tc, alpha, grovev1beta1.SchemeGroupVersion.Version)
+	waitForStoredVersions(t, tc, s.expectedStoredVersions)
 	verifyPodUIDsUnchanged(t, tc, s.podsBeforeUpgrade)
 	pcsBeforeDowngrade := &corev1alpha1.PodCliqueSet{}
 	require.NoError(t, tc.Client.Get(t.Context(), pcsKey, pcsBeforeDowngrade), "get PodCliqueSet at v1alpha1")
 
+	waitForGroveResourcesQuiesced(t, tc)
 	runAPIDowngrade(t)
 	requireCRDsServeOnly(t, tc, alpha)
 
