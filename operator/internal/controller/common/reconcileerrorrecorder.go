@@ -17,7 +17,7 @@ package common
 import (
 	"context"
 
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -29,7 +29,7 @@ import (
 type ReconciledObject interface {
 	client.Object
 	// SetLastErrors sets the <resource>.Status.LastErrors on the target resource.
-	SetLastErrors(lastErrors ...grovecorev1alpha1.LastError)
+	SetLastErrors(lastErrors ...grovecorev1beta1.LastError)
 }
 
 // ReconcileErrorRecorder is an interface that records errors during a reconciliation into <resource>.Status.LastErrors.
@@ -51,7 +51,7 @@ func NewReconcileErrorRecorder(client client.Client) ReconcileErrorRecorder {
 
 // RecordErrors updates the target object's LastErrors status field with any errors from the reconcile step result
 func (r *recorder) RecordErrors(ctx context.Context, obj ReconciledObject, result *ReconcileStepResult) error {
-	var lastErrors []grovecorev1alpha1.LastError
+	var lastErrors []grovecorev1beta1.LastError
 	if result != nil && result.HasErrors() {
 		lastErrors = groveerr.MapToLastErrors(result.GetErrors())
 	}

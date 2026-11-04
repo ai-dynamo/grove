@@ -22,6 +22,7 @@ import (
 	fmt "fmt"
 
 	v1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	v1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	schema "k8s.io/apimachinery/pkg/runtime/schema"
 	cache "k8s.io/client-go/tools/cache"
 )
@@ -63,6 +64,18 @@ func (f *sharedInformerFactory) ForResource(resource schema.GroupVersionResource
 		return &genericInformer{resource: resource.GroupResource(), informer: f.Grove().V1alpha1().PodCliqueSets().Informer()}, nil
 	case v1alpha1.SchemeGroupVersion.WithResource("podgangmaps"):
 		return &genericInformer{resource: resource.GroupResource(), informer: f.Grove().V1alpha1().PodGangMaps().Informer()}, nil
+
+		// Group=grove.io, Version=v1beta1
+	case v1beta1.SchemeGroupVersion.WithResource("clustertopologybindings"):
+		return &genericInformer{resource: resource.GroupResource(), informer: f.Grove().V1beta1().ClusterTopologyBindings().Informer()}, nil
+	case v1beta1.SchemeGroupVersion.WithResource("podcliques"):
+		return &genericInformer{resource: resource.GroupResource(), informer: f.Grove().V1beta1().PodCliques().Informer()}, nil
+	case v1beta1.SchemeGroupVersion.WithResource("podcliquescalinggroups"):
+		return &genericInformer{resource: resource.GroupResource(), informer: f.Grove().V1beta1().PodCliqueScalingGroups().Informer()}, nil
+	case v1beta1.SchemeGroupVersion.WithResource("podcliquesets"):
+		return &genericInformer{resource: resource.GroupResource(), informer: f.Grove().V1beta1().PodCliqueSets().Informer()}, nil
+	case v1beta1.SchemeGroupVersion.WithResource("podgangmaps"):
+		return &genericInformer{resource: resource.GroupResource(), informer: f.Grove().V1beta1().PodGangMaps().Informer()}, nil
 
 	}
 

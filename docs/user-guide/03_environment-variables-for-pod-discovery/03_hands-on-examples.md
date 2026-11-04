@@ -7,7 +7,7 @@ This guide walks through deploying example PodCliqueSets, observing the environm
 Let's deploy a simple PodCliqueSet with a standalone PodClique and inspect the environment variables.
 
 ```yaml
-apiVersion: grove.io/v1alpha1
+apiVersion: grove.io/v1beta1
 kind: PodCliqueSet
 metadata:
   name: env-demo-standalone
@@ -124,7 +124,7 @@ kubectl delete pcs env-demo-standalone
 This example demonstrates a more complex scenario with a PodCliqueScalingGroup containing leader and worker pods. We'll show how workers can use environment variables to discover and connect to their leader.
 
 ```yaml
-apiVersion: grove.io/v1alpha1
+apiVersion: grove.io/v1beta1
 kind: PodCliqueSet
 metadata:
   name: env-demo-pcsg

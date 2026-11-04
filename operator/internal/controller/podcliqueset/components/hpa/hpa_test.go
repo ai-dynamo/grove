@@ -20,7 +20,7 @@ import (
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/stretchr/testify/assert"
@@ -41,7 +41,7 @@ var (
 func TestComputeExpectedHPAs(t *testing.T) {
 	tests := []struct {
 		name     string
-		pcs      *grovecorev1alpha1.PodCliqueSet
+		pcs      *grovecorev1beta1.PodCliqueSet
 		expected []hpaInfo
 	}{
 		{
@@ -60,7 +60,7 @@ func TestComputeExpectedHPAs(t *testing.T) {
 				{
 					targetScaleResourceKind: constants.KindPodClique,
 					targetScaleResourceName: "test-pcs-0-test-clique",
-					scaleConfig: grovecorev1alpha1.AutoScalingConfig{
+					scaleConfig: grovecorev1beta1.AutoScalingConfig{
 						MinReplicas: ptr.To(int32(2)),
 						MaxReplicas: 5,
 					},
@@ -71,12 +71,12 @@ func TestComputeExpectedHPAs(t *testing.T) {
 			name: "PodCliqueScalingGroup HPA",
 			pcs: testutils.NewPodCliqueSetBuilder("test-pcs", "default", pcsUID).
 				WithReplicas(1).
-				WithPodCliqueScalingGroupConfig(grovecorev1alpha1.PodCliqueScalingGroupConfig{
+				WithPodCliqueScalingGroupConfig(grovecorev1beta1.PodCliqueScalingGroupConfig{
 					Name:         "test-sg",
 					Replicas:     ptr.To(int32(4)),
 					MinAvailable: ptr.To(int32(3)),
 					CliqueNames:  []string{"test-clique"},
-					ScaleConfig: &grovecorev1alpha1.AutoScalingConfig{
+					ScaleConfig: &grovecorev1beta1.AutoScalingConfig{
 						MinReplicas: ptr.To(int32(2)),
 						MaxReplicas: 6,
 					},
@@ -86,7 +86,7 @@ func TestComputeExpectedHPAs(t *testing.T) {
 				{
 					targetScaleResourceKind: constants.KindPodCliqueScalingGroup,
 					targetScaleResourceName: "test-pcs-0-test-sg",
-					scaleConfig: grovecorev1alpha1.AutoScalingConfig{
+					scaleConfig: grovecorev1beta1.AutoScalingConfig{
 						MinReplicas: ptr.To(int32(2)),
 						MaxReplicas: 6,
 					},
@@ -104,12 +104,12 @@ func TestComputeExpectedHPAs(t *testing.T) {
 						WithScaleConfig(ptr.To(int32(2)), 4).
 						Build(),
 				).
-				WithPodCliqueScalingGroupConfig(grovecorev1alpha1.PodCliqueScalingGroupConfig{
+				WithPodCliqueScalingGroupConfig(grovecorev1beta1.PodCliqueScalingGroupConfig{
 					Name:         "scaling-group",
 					Replicas:     ptr.To(int32(3)),
 					MinAvailable: ptr.To(int32(2)),
 					CliqueNames:  []string{"sg-clique"},
-					ScaleConfig: &grovecorev1alpha1.AutoScalingConfig{
+					ScaleConfig: &grovecorev1beta1.AutoScalingConfig{
 						MinReplicas: ptr.To(int32(1)),
 						MaxReplicas: 5,
 					},
@@ -119,7 +119,7 @@ func TestComputeExpectedHPAs(t *testing.T) {
 				{
 					targetScaleResourceKind: constants.KindPodClique,
 					targetScaleResourceName: "test-pcs-0-individual-clique",
-					scaleConfig: grovecorev1alpha1.AutoScalingConfig{
+					scaleConfig: grovecorev1beta1.AutoScalingConfig{
 						MinReplicas: ptr.To(int32(2)),
 						MaxReplicas: 4,
 					},
@@ -127,7 +127,7 @@ func TestComputeExpectedHPAs(t *testing.T) {
 				{
 					targetScaleResourceKind: constants.KindPodCliqueScalingGroup,
 					targetScaleResourceName: "test-pcs-0-scaling-group",
-					scaleConfig: grovecorev1alpha1.AutoScalingConfig{
+					scaleConfig: grovecorev1beta1.AutoScalingConfig{
 						MinReplicas: ptr.To(int32(1)),
 						MaxReplicas: 5,
 					},
@@ -198,7 +198,7 @@ func TestPCSReplicaIndexForHPAUsesLabel(t *testing.T) {
 
 func TestPCSReplicaIndexFromScaleTarget(t *testing.T) {
 	scheme := runtime.NewScheme()
-	require.NoError(t, grovecorev1alpha1.AddToScheme(scheme))
+	require.NoError(t, grovecorev1beta1.AddToScheme(scheme))
 	pclq := testutils.NewPodCliqueBuilder("test-pcs", pcsUID, "worker", "default", 5).Build()
 	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pclq).Build()
 	hpa := &autoscalingv2.HorizontalPodAutoscaler{
@@ -227,7 +227,7 @@ func TestBuildResource(t *testing.T) {
 			hpaInfo: hpaInfo{
 				targetScaleResourceKind: constants.KindPodClique,
 				targetScaleResourceName: "test-resource",
-				scaleConfig: grovecorev1alpha1.AutoScalingConfig{
+				scaleConfig: grovecorev1beta1.AutoScalingConfig{
 					MinReplicas: ptr.To(int32(2)),
 					MaxReplicas: 5,
 				},

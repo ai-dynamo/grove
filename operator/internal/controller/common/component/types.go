@@ -18,7 +18,7 @@ import (
 	"context"
 	"fmt"
 
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 
 	"github.com/go-logr/logr"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -36,7 +36,7 @@ const (
 
 // GroveCustomResourceType defines a type bound for generic types.
 type GroveCustomResourceType interface {
-	grovecorev1alpha1.PodCliqueSet | grovecorev1alpha1.PodClique | grovecorev1alpha1.PodCliqueScalingGroup
+	grovecorev1beta1.PodCliqueSet | grovecorev1beta1.PodClique | grovecorev1beta1.PodCliqueScalingGroup
 }
 
 // EmptyState is used by reconcilers that do not share reconcile-scoped input with component operators.

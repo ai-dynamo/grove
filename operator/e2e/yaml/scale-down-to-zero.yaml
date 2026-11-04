@@ -1,7 +1,7 @@
 # Scale Down Test: to-zero variant
 # Starts at 500 PCS replicas (1000 pods); the test scales to 0.
 ---
-apiVersion: grove.io/v1alpha1
+apiVersion: grove.io/v1beta1
 kind: PodCliqueSet
 metadata:
   name: scale-down-to-zero

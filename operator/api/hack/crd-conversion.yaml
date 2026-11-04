@@ -1,0 +1,11 @@
+  conversion:
+    strategy: Webhook
+    webhook:
+      clientConfig:
+        service:
+          name: grove-operator
+          namespace: default
+          path: /convert
+          port: 9443
+      conversionReviewVersions:
+      - v1

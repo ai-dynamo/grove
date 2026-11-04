@@ -5,7 +5,7 @@
 # - GROVE_PCSG_NAME, GROVE_PCSG_INDEX, GROVE_PCSG_POD_INDEX, GROVE_PCSG_TEMPLATE_NUM_PODS
 # - How workers construct the leader's FQDN using environment variables
 ---
-apiVersion: grove.io/v1alpha1
+apiVersion: grove.io/v1beta1
 kind: PodCliqueSet
 metadata:
   name: env-demo-pcsg

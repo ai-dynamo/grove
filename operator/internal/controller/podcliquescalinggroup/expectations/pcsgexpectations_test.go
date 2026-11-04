@@ -18,7 +18,7 @@ import (
 	"testing"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/expect"
 
 	"github.com/go-logr/logr"
@@ -39,7 +39,7 @@ func TestPCSGScopedExpectationsStoreKey(t *testing.T) {
 // scaling group label, and that a member without the label is reported as not owned by a PCSG.
 func TestPCSGScopedExpectationsStoreKeyForMemberPodClique(t *testing.T) {
 	t.Run("derives the key from the scaling group label", func(t *testing.T) {
-		pclq := &grovecorev1alpha1.PodClique{ObjectMeta: metav1.ObjectMeta{
+		pclq := &grovecorev1beta1.PodClique{ObjectMeta: metav1.ObjectMeta{
 			Namespace: "ns",
 			Name:      "pcsg-0-0-worker",
 			Labels:    map[string]string{apicommon.LabelPodCliqueScalingGroup: "pcsg-0"},
@@ -49,7 +49,7 @@ func TestPCSGScopedExpectationsStoreKeyForMemberPodClique(t *testing.T) {
 		assert.Equal(t, "ns/pcsg-0", key)
 	})
 	t.Run("returns false when the scaling group label is absent", func(t *testing.T) {
-		pclq := &grovecorev1alpha1.PodClique{ObjectMeta: metav1.ObjectMeta{Namespace: "ns", Name: "standalone"}}
+		pclq := &grovecorev1beta1.PodClique{ObjectMeta: metav1.ObjectMeta{Namespace: "ns", Name: "standalone"}}
 		_, ok := PCSGScopedExpectationsStoreKeyForMemberPodClique(pclq)
 		assert.False(t, ok)
 	})
@@ -60,7 +60,7 @@ func TestPCSGScopedExpectationsStoreKeyForMemberPodClique(t *testing.T) {
 func TestRecordPCSGReplicaDeleteExpectations(t *testing.T) {
 	t.Run("records a delete expectation for each member", func(t *testing.T) {
 		store := expect.NewExpectationsStore()
-		members := []grovecorev1alpha1.PodClique{memberWithUID("a"), memberWithUID("b")}
+		members := []grovecorev1beta1.PodClique{memberWithUID("a"), memberWithUID("b")}
 		require.NoError(t, RecordPCSGReplicaDeleteExpectations(logr.Discard(), store, "ns/pcsg-0", members))
 		assert.True(t, store.HasDeleteExpectation("ns/pcsg-0", types.UID("a")))
 		assert.True(t, store.HasDeleteExpectation("ns/pcsg-0", types.UID("b")))
@@ -80,11 +80,11 @@ func TestHasPCSGReplicaDisruptionBeenTriggered(t *testing.T) {
 	store := expect.NewExpectationsStore()
 	require.NoError(t, store.ExpectDeletions(logr.Discard(), "ns/pcsg-0", types.UID("a")))
 	t.Run("true when a member has a pending delete expectation", func(t *testing.T) {
-		members := []grovecorev1alpha1.PodClique{memberWithUID("a"), memberWithUID("b")}
+		members := []grovecorev1beta1.PodClique{memberWithUID("a"), memberWithUID("b")}
 		assert.True(t, HasPCSGReplicaDisruptionBeenTriggered(store, "ns/pcsg-0", members))
 	})
 	t.Run("false when no member has a delete expectation", func(t *testing.T) {
-		members := []grovecorev1alpha1.PodClique{memberWithUID("c"), memberWithUID("d")}
+		members := []grovecorev1beta1.PodClique{memberWithUID("c"), memberWithUID("d")}
 		assert.False(t, HasPCSGReplicaDisruptionBeenTriggered(store, "ns/pcsg-0", members))
 	})
 }
@@ -95,14 +95,14 @@ func TestSyncPCSGReplicaDeleteExpectations(t *testing.T) {
 	t.Run("keeps present members and clears members no longer in the cache", func(t *testing.T) {
 		store := expect.NewExpectationsStore()
 		require.NoError(t, store.ExpectDeletions(logr.Discard(), "ns/pcsg-0", types.UID("present"), types.UID("gone")))
-		SyncPCSGReplicaDeleteExpectations(store, "ns/pcsg-0", []grovecorev1alpha1.PodClique{memberWithUID("present")})
+		SyncPCSGReplicaDeleteExpectations(store, "ns/pcsg-0", []grovecorev1beta1.PodClique{memberWithUID("present")})
 		assert.True(t, store.HasDeleteExpectation("ns/pcsg-0", types.UID("present")), "expectation for a still-present member is retained")
 		assert.False(t, store.HasDeleteExpectation("ns/pcsg-0", types.UID("gone")), "expectation for a member no longer in the cache is cleared")
 	})
 	t.Run("retains the expectation for a terminating member", func(t *testing.T) {
 		store := expect.NewExpectationsStore()
 		require.NoError(t, store.ExpectDeletions(logr.Discard(), "ns/pcsg-0", types.UID("terminating")))
-		SyncPCSGReplicaDeleteExpectations(store, "ns/pcsg-0", []grovecorev1alpha1.PodClique{terminatingMemberWithUID("terminating")})
+		SyncPCSGReplicaDeleteExpectations(store, "ns/pcsg-0", []grovecorev1beta1.PodClique{terminatingMemberWithUID("terminating")})
 		assert.True(t, store.HasDeleteExpectation("ns/pcsg-0", types.UID("terminating")))
 	})
 }
@@ -131,13 +131,13 @@ func TestClearPCSGExpectations(t *testing.T) {
 	assert.NoError(t, ClearPCSGExpectations(logr.Discard(), store, pcsgObjMeta))
 }
 
-func memberWithUID(uid string) grovecorev1alpha1.PodClique {
-	return grovecorev1alpha1.PodClique{ObjectMeta: metav1.ObjectMeta{Namespace: "ns", Name: uid, UID: types.UID(uid)}}
+func memberWithUID(uid string) grovecorev1beta1.PodClique {
+	return grovecorev1beta1.PodClique{ObjectMeta: metav1.ObjectMeta{Namespace: "ns", Name: uid, UID: types.UID(uid)}}
 }
 
-func terminatingMemberWithUID(uid string) grovecorev1alpha1.PodClique {
+func terminatingMemberWithUID(uid string) grovecorev1beta1.PodClique {
 	now := metav1.Now()
-	return grovecorev1alpha1.PodClique{ObjectMeta: metav1.ObjectMeta{
+	return grovecorev1beta1.PodClique{ObjectMeta: metav1.ObjectMeta{
 		Namespace:         "ns",
 		Name:              uid,
 		UID:               types.UID(uid),

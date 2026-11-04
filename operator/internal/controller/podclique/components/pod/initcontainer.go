@@ -21,7 +21,7 @@ import (
 	"strings"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
@@ -139,7 +139,7 @@ func getInitContainerImage() (string, error) {
 // PodClique's declared startup parents from the PodCliqueSet template and resolves them against the committed
 // PodGangMap entry of the pod's own PodGang. Only parents committed in that PodGang are returned, each with
 // the number of pods to wait on, so the pod waits only for the parents present in its own PodGang.
-func generateArgsForInitContainer(pcs *grovecorev1alpha1.PodCliqueSet, pclq *grovecorev1alpha1.PodClique, pod *corev1.Pod, pgm *grovecorev1alpha1.PodGangMap) ([]string, error) {
+func generateArgsForInitContainer(pcs *grovecorev1beta1.PodCliqueSet, pclq *grovecorev1beta1.PodClique, pod *corev1.Pod, pgm *grovecorev1beta1.PodGangMap) ([]string, error) {
 	pcsName := componentutils.GetPodCliqueSetName(pclq.ObjectMeta)
 	pcsReplicaIndex, err := componentutils.GetPodCliqueSetReplicaIndexFromPodCliqueFQN(pcsName, pclq.Name)
 	if err != nil {
@@ -172,7 +172,7 @@ func generateArgsForInitContainer(pcs *grovecorev1alpha1.PodCliqueSet, pclq *gro
 // <pcsgFQN>-<pcsgReplicaIndex>-<cliqueName>, so the clique template name is recovered from the scaling group FQN and
 // replica-index labels. A standalone PodClique is named <pcs>-<pcsReplicaIndex>-<cliqueName> and can be extracted
 // given the PCS name and PCS replica index.
-func cliqueTemplateName(pclq *grovecorev1alpha1.PodClique, pcsRnr apicommon.ResourceNameReplica) string {
+func cliqueTemplateName(pclq *grovecorev1beta1.PodClique, pcsRnr apicommon.ResourceNameReplica) string {
 	if pcsgFQN, ok := pclq.Labels[apicommon.LabelPodCliqueScalingGroup]; ok {
 		prefix := fmt.Sprintf("%s-%s-", pcsgFQN, pclq.Labels[apicommon.LabelPodCliqueScalingGroupReplicaIndex])
 		return strings.TrimPrefix(pclq.Name, prefix)
@@ -182,7 +182,7 @@ func cliqueTemplateName(pclq *grovecorev1alpha1.PodClique, pcsRnr apicommon.Reso
 
 // entryForPodGangName returns the committed PodGangMap entry that materializes podGangName for the replica,
 // or nil when no entry does.
-func entryForPodGangName(pgm *grovecorev1alpha1.PodGangMap, rnr apicommon.ResourceNameReplica, podGangName string) *grovecorev1alpha1.PodGangEntry {
+func entryForPodGangName(pgm *grovecorev1beta1.PodGangMap, rnr apicommon.ResourceNameReplica, podGangName string) *grovecorev1beta1.PodGangEntry {
 	if pgm == nil {
 		return nil
 	}

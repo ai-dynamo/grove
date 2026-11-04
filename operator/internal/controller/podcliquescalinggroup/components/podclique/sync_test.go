@@ -19,13 +19,13 @@ import (
 	"time"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 
 	"github.com/stretchr/testify/assert"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-func pclqAtIndex(name, replicaIndex string, terminating bool) grovecorev1alpha1.PodClique {
+func pclqAtIndex(name, replicaIndex string, terminating bool) grovecorev1beta1.PodClique {
 	objMeta := metav1.ObjectMeta{
 		Name:   name,
 		Labels: map[string]string{apicommon.LabelPodCliqueScalingGroupReplicaIndex: replicaIndex},
@@ -34,19 +34,19 @@ func pclqAtIndex(name, replicaIndex string, terminating bool) grovecorev1alpha1.
 		deletionTime := metav1.NewTime(time.Now())
 		objMeta.DeletionTimestamp = &deletionTime
 	}
-	return grovecorev1alpha1.PodClique{ObjectMeta: objMeta}
+	return grovecorev1beta1.PodClique{ObjectMeta: objMeta}
 }
 
 func TestComputeExcessPCSGReplicaIndices(t *testing.T) {
 	testCases := []struct {
 		name             string
-		existingPCLQs    []grovecorev1alpha1.PodClique
+		existingPCLQs    []grovecorev1beta1.PodClique
 		expectedReplicas int
 		wantIndices      []string
 	}{
 		{
 			name: "sparse live indices with a terminating lower replica still delete the high replicas",
-			existingPCLQs: []grovecorev1alpha1.PodClique{
+			existingPCLQs: []grovecorev1beta1.PodClique{
 				pclqAtIndex("pcs-0-sg-0-w", "0", false),
 				pclqAtIndex("pcs-0-sg-1-w", "1", true),
 				pclqAtIndex("pcs-0-sg-2-w", "2", false),
@@ -57,7 +57,7 @@ func TestComputeExcessPCSGReplicaIndices(t *testing.T) {
 		},
 		{
 			name: "contiguous scale-down deletes only the index at or above the bound",
-			existingPCLQs: []grovecorev1alpha1.PodClique{
+			existingPCLQs: []grovecorev1beta1.PodClique{
 				pclqAtIndex("pcs-0-sg-0-w", "0", false),
 				pclqAtIndex("pcs-0-sg-1-w", "1", false),
 				pclqAtIndex("pcs-0-sg-2-w", "2", false),
@@ -67,7 +67,7 @@ func TestComputeExcessPCSGReplicaIndices(t *testing.T) {
 		},
 		{
 			name: "no excess returns nothing",
-			existingPCLQs: []grovecorev1alpha1.PodClique{
+			existingPCLQs: []grovecorev1beta1.PodClique{
 				pclqAtIndex("pcs-0-sg-0-w", "0", false),
 				pclqAtIndex("pcs-0-sg-1-w", "1", false),
 			},
@@ -76,7 +76,7 @@ func TestComputeExcessPCSGReplicaIndices(t *testing.T) {
 		},
 		{
 			name: "a terminating excess replica is not re-deleted",
-			existingPCLQs: []grovecorev1alpha1.PodClique{
+			existingPCLQs: []grovecorev1beta1.PodClique{
 				pclqAtIndex("pcs-0-sg-0-w", "0", false),
 				pclqAtIndex("pcs-0-sg-1-w", "1", false),
 				pclqAtIndex("pcs-0-sg-2-w", "2", true),
@@ -86,7 +86,7 @@ func TestComputeExcessPCSGReplicaIndices(t *testing.T) {
 		},
 		{
 			name: "multiple PodCliques at the same excess index yield that index once",
-			existingPCLQs: []grovecorev1alpha1.PodClique{
+			existingPCLQs: []grovecorev1beta1.PodClique{
 				pclqAtIndex("pcs-0-sg-0-leader", "0", false),
 				pclqAtIndex("pcs-0-sg-0-worker", "0", false),
 				pclqAtIndex("pcs-0-sg-2-leader", "2", false),

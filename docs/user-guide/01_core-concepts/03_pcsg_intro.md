@@ -13,7 +13,7 @@ A PodCliqueScalingGroup encodes this by grouping the relevant PodCliques and sca
 The example below shows how to model this leader-worker pattern in Grove:
 
 ```yaml
-apiVersion: grove.io/v1alpha1
+apiVersion: grove.io/v1beta1
 kind: PodCliqueSet
 metadata:
   name: multinode-aggregated
@@ -184,7 +184,7 @@ kubectl delete pcs multinode-aggregated
 You can put together all the things we've covered to represent the most complex scenario: multi-node disaggregated serving where both the prefill and decode components are multi-node. We represent this in Grove by creating PodCliqueScalingGroups for both prefill and decode. Additionally each PodCliqueScalingGroup consists of two PodCliques, one for the leader and one for the worker. 
 
 ```yaml
-apiVersion: grove.io/v1alpha1
+apiVersion: grove.io/v1beta1
 kind: PodCliqueSet
 metadata:
   name: multinode-disaggregated

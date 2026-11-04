@@ -20,8 +20,8 @@ import (
 	"fmt"
 	"slices"
 
-	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
@@ -47,7 +47,7 @@ var (
 )
 
 // New creates an LPX scheduler backend.
-func New(cl client.Client, profile configv1alpha1.SchedulerProfile, secondaryBackend scheduler.Backend) scheduler.Backend {
+func New(cl client.Client, profile configv1beta1.SchedulerProfile, secondaryBackend scheduler.Backend) scheduler.Backend {
 	return &schedulerBackend{
 		client:           cl,
 		name:             string(profile.Name),
@@ -106,7 +106,7 @@ func (b *schedulerBackend) PreparePod(pod *corev1.Pod) error {
 }
 
 // ValidatePodCliqueSet runs LPX-specific validations on the PodCliqueSet as well as any fallback backend validations, if necessary.
-func (b *schedulerBackend) ValidatePodCliqueSet(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, opts ...scheduler.ValidateOption) error {
+func (b *schedulerBackend) ValidatePodCliqueSet(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet, opts ...scheduler.ValidateOption) error {
 	if pcs.Spec.Template.TopologyConstraint != nil {
 		return errTopologyConstraintsUnsupported
 	}
@@ -124,7 +124,7 @@ func (b *schedulerBackend) ValidatePodCliqueSet(ctx context.Context, pcs *grovec
 	}
 
 	if b.secondaryBackend != nil {
-		if slices.ContainsFunc(pcs.Spec.Template.Cliques, func(clique *grovecorev1alpha1.PodCliqueTemplateSpec) bool { return !usesLPX(clique.Spec.PodSpec) }) {
+		if slices.ContainsFunc(pcs.Spec.Template.Cliques, func(clique *grovecorev1beta1.PodCliqueTemplateSpec) bool { return !usesLPX(clique.Spec.PodSpec) }) {
 			return b.secondaryBackend.ValidatePodCliqueSet(ctx, pcs, opts...)
 		}
 	}
@@ -139,7 +139,7 @@ func (b *schedulerBackend) fallbackPodGang(ctx context.Context, podGang *grovesc
 	fallback.Spec.PodGroups = make([]groveschedulerv1alpha1.PodGroup, 0, len(podGang.Spec.PodGroups))
 
 	for _, group := range podGang.Spec.PodGroups {
-		var pclq grovecorev1alpha1.PodClique
+		var pclq grovecorev1beta1.PodClique
 
 		if err := b.client.Get(ctx, client.ObjectKey{Namespace: podGang.Namespace, Name: group.Name}, &pclq); err != nil {
 			return nil, fmt.Errorf("get PodClique %s for PodGang %s/%s: %w", group.Name, podGang.Namespace, podGang.Name, err)

@@ -19,7 +19,7 @@ import (
 	"testing"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
@@ -42,11 +42,11 @@ func TestInScopeUpdateCounts(t *testing.T) {
 	pcs := coherentTestPCS([]string{"frontend", "router"}, []string{"decode"})
 	replicaInfo := pcsReplicaInfo{
 		replicaIndex: 0,
-		pclqs: []grovecorev1alpha1.PodClique{
+		pclqs: []grovecorev1beta1.PodClique{
 			standalonePCLQAtHash(pcs, "frontend", coherentHashOf(pcs, "frontend")), // converged
 			standalonePCLQAtHash(pcs, "router", "stale-hash"),                      // not converged
 		},
-		pcsgs: []grovecorev1alpha1.PodCliqueScalingGroup{
+		pcsgs: []grovecorev1beta1.PodCliqueScalingGroup{
 			pcsgAtGenerationHash(pcs, "decode", nil), // not converged
 		},
 	}
@@ -63,8 +63,8 @@ func TestCoherentProgressMessage(t *testing.T) {
 	t.Run("returns nil when every in-scope component has converged", func(t *testing.T) {
 		pcs := coherentTestPCS([]string{"frontend"}, []string{"decode"})
 		replicaInfo := pcsReplicaInfo{
-			pclqs: []grovecorev1alpha1.PodClique{standalonePCLQAtHash(pcs, "frontend", coherentHashOf(pcs, "frontend"))},
-			pcsgs: []grovecorev1alpha1.PodCliqueScalingGroup{pcsgAtGenerationHash(pcs, "decode", new(coherentTestCurrentGen))},
+			pclqs: []grovecorev1beta1.PodClique{standalonePCLQAtHash(pcs, "frontend", coherentHashOf(pcs, "frontend"))},
+			pcsgs: []grovecorev1beta1.PodCliqueScalingGroup{pcsgAtGenerationHash(pcs, "decode", new(coherentTestCurrentGen))},
 		}
 		assert.Nil(t, coherentProgressMessage(pcs, replicaInfo))
 	})
@@ -72,11 +72,11 @@ func TestCoherentProgressMessage(t *testing.T) {
 	t.Run("summarizes standalone PodCliques and PodCliqueScalingGroups when both are in scope", func(t *testing.T) {
 		pcs := coherentTestPCS([]string{"frontend", "router"}, []string{"decode"})
 		replicaInfo := pcsReplicaInfo{
-			pclqs: []grovecorev1alpha1.PodClique{
+			pclqs: []grovecorev1beta1.PodClique{
 				standalonePCLQAtHash(pcs, "frontend", coherentHashOf(pcs, "frontend")),
 				standalonePCLQAtHash(pcs, "router", "stale-hash"),
 			},
-			pcsgs: []grovecorev1alpha1.PodCliqueScalingGroup{pcsgAtGenerationHash(pcs, "decode", nil)},
+			pcsgs: []grovecorev1beta1.PodCliqueScalingGroup{pcsgAtGenerationHash(pcs, "decode", nil)},
 		}
 		require.NotNil(t, coherentProgressMessage(pcs, replicaInfo))
 		assert.Equal(t, "1/2 standalone PodCliques and 0/1 PodCliqueScalingGroups updated to the current revision", *coherentProgressMessage(pcs, replicaInfo))
@@ -85,7 +85,7 @@ func TestCoherentProgressMessage(t *testing.T) {
 	t.Run("omits the standalone part when only PodCliqueScalingGroups are in scope", func(t *testing.T) {
 		pcs := coherentTestPCS(nil, []string{"decode"})
 		replicaInfo := pcsReplicaInfo{
-			pcsgs: []grovecorev1alpha1.PodCliqueScalingGroup{pcsgAtGenerationHash(pcs, "decode", nil)},
+			pcsgs: []grovecorev1beta1.PodCliqueScalingGroup{pcsgAtGenerationHash(pcs, "decode", nil)},
 		}
 		require.NotNil(t, coherentProgressMessage(pcs, replicaInfo))
 		assert.Equal(t, "0/1 PodCliqueScalingGroups updated to the current revision", *coherentProgressMessage(pcs, replicaInfo))
@@ -109,8 +109,8 @@ func TestGetPCSReplicaInfos(t *testing.T) {
 
 func TestInFlightEpochsForReplica(t *testing.T) {
 	pcs := coherentTestPCS([]string{"frontend"}, nil)
-	currentHashEntry := grovecorev1alpha1.PodGangEntry{Epoch: "200", PodCliqueSetGenerationHash: coherentTestCurrentGen, PodCliques: map[string]int32{"frontend": 1}}
-	oldHashEntry := grovecorev1alpha1.PodGangEntry{Epoch: "50", PodCliqueSetGenerationHash: "v1", PodCliques: map[string]int32{"frontend": 1}}
+	currentHashEntry := grovecorev1beta1.PodGangEntry{Epoch: "200", PodCliqueSetGenerationHash: coherentTestCurrentGen, PodCliques: map[string]int32{"frontend": 1}}
+	oldHashEntry := grovecorev1beta1.PodGangEntry{Epoch: "50", PodCliqueSetGenerationHash: "v1", PodCliques: map[string]int32{"frontend": 1}}
 
 	t.Run("returns the latest current-hash epoch on the PodGangMap", func(t *testing.T) {
 		pgm := testutils.NewPodGangMapBuilder(coherentTestPCSName, coherentTestNamespace, coherentTestPCSUID, 0).
@@ -146,12 +146,12 @@ func TestInFlightEpochsForReplica(t *testing.T) {
 
 func TestUpdateCoherentReplicaProgress(t *testing.T) {
 	pcs := coherentTestPCS([]string{"frontend"}, nil)
-	pcs.Status.UpdateProgress.CurrentlyUpdating = []grovecorev1alpha1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 0}}
+	pcs.Status.UpdateProgress.CurrentlyUpdating = []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 0}}
 	pgm := testutils.NewPodGangMapBuilder(coherentTestPCSName, coherentTestNamespace, coherentTestPCSUID, 0).
-		WithEntries(grovecorev1alpha1.PodGangEntry{Epoch: "200", PodCliqueSetGenerationHash: coherentTestCurrentGen, PodCliques: map[string]int32{"frontend": 1}}).Build()
+		WithEntries(grovecorev1beta1.PodGangEntry{Epoch: "200", PodCliqueSetGenerationHash: coherentTestCurrentGen, PodCliques: map[string]int32{"frontend": 1}}).Build()
 	replicaInfo := pcsReplicaInfo{
 		replicaIndex: 0,
-		pclqs:        []grovecorev1alpha1.PodClique{standalonePCLQAtHash(pcs, "frontend", "stale-hash")}, // not converged
+		pclqs:        []grovecorev1beta1.PodClique{standalonePCLQAtHash(pcs, "frontend", "stale-hash")}, // not converged
 	}
 	r := _resource{client: testutils.SetupFakeClient(pcs, pgm)}
 
@@ -165,19 +165,19 @@ func TestUpdateCoherentReplicaProgress(t *testing.T) {
 }
 
 func TestIsUpdateComplete(t *testing.T) {
-	singleGenEntries := []grovecorev1alpha1.PodGangEntry{
+	singleGenEntries := []grovecorev1beta1.PodGangEntry{
 		{Epoch: "100", PodCliqueSetGenerationHash: coherentTestCurrentGen},
 		{Epoch: "200", PodCliqueSetGenerationHash: coherentTestCurrentGen},
 	}
-	multiGenEntries := []grovecorev1alpha1.PodGangEntry{
+	multiGenEntries := []grovecorev1beta1.PodGangEntry{
 		{Epoch: "50", PodCliqueSetGenerationHash: "v1"}, // a stray older generation left by a cascade
 		{Epoch: "200", PodCliqueSetGenerationHash: coherentTestCurrentGen},
 	}
-	convergedReplicaInfo := func(pcs *grovecorev1alpha1.PodCliqueSet, entries []grovecorev1alpha1.PodGangEntry) pcsReplicaInfo {
+	convergedReplicaInfo := func(pcs *grovecorev1beta1.PodCliqueSet, entries []grovecorev1beta1.PodGangEntry) pcsReplicaInfo {
 		return pcsReplicaInfo{
 			replicaIndex: 0,
-			pclqs:        []grovecorev1alpha1.PodClique{standalonePCLQAtHash(pcs, "frontend", coherentHashOf(pcs, "frontend"))},
-			pcsgs:        []grovecorev1alpha1.PodCliqueScalingGroup{pcsgAtGenerationHash(pcs, "decode", new(coherentTestCurrentGen))},
+			pclqs:        []grovecorev1beta1.PodClique{standalonePCLQAtHash(pcs, "frontend", coherentHashOf(pcs, "frontend"))},
+			pcsgs:        []grovecorev1beta1.PodCliqueScalingGroup{pcsgAtGenerationHash(pcs, "decode", new(coherentTestCurrentGen))},
 			pgmEntries:   entries,
 		}
 	}
@@ -196,7 +196,7 @@ func TestIsUpdateComplete(t *testing.T) {
 
 	t.Run("RollingRecreate update does not apply the single-generation gate", func(t *testing.T) {
 		pcs := coherentTestPCS([]string{"frontend"}, []string{"decode"})
-		pcs.Spec.UpdateStrategy = &grovecorev1alpha1.PodCliqueSetUpdateStrategy{Type: grovecorev1alpha1.RollingRecreateStrategy}
+		pcs.Spec.UpdateStrategy = &grovecorev1beta1.PodCliqueSetUpdateStrategy{Type: grovecorev1beta1.RollingRecreateStrategy}
 		ri := convergedReplicaInfo(pcs, multiGenEntries)
 		assert.True(t, ri.isUpdateComplete(pcs))
 	})
@@ -210,21 +210,21 @@ func TestIsUpdateComplete(t *testing.T) {
 	t.Run("an unconverged standalone PodClique keeps the update incomplete even when the PodGangMap is single-generation", func(t *testing.T) {
 		pcs := coherentTestPCS([]string{"frontend"}, []string{"decode"})
 		ri := convergedReplicaInfo(pcs, singleGenEntries)
-		ri.pclqs = []grovecorev1alpha1.PodClique{standalonePCLQAtHash(pcs, "frontend", "stale-hash")}
+		ri.pclqs = []grovecorev1beta1.PodClique{standalonePCLQAtHash(pcs, "frontend", "stale-hash")}
 		assert.False(t, ri.isUpdateComplete(pcs))
 	})
 
 	t.Run("an unconverged PodCliqueScalingGroup keeps the update incomplete even when the PodGangMap is single-generation", func(t *testing.T) {
 		pcs := coherentTestPCS([]string{"frontend"}, []string{"decode"})
 		ri := convergedReplicaInfo(pcs, singleGenEntries)
-		ri.pcsgs = []grovecorev1alpha1.PodCliqueScalingGroup{pcsgAtGenerationHash(pcs, "decode", nil)} // stale generation
+		ri.pcsgs = []grovecorev1beta1.PodCliqueScalingGroup{pcsgAtGenerationHash(pcs, "decode", nil)} // stale generation
 		assert.False(t, ri.isUpdateComplete(pcs))
 	})
 }
 
 // coherentTestPCS builds a PodCliqueSet with the given standalone and PodCliqueScalingGroup component
 // names in scope for an in-flight coherent update at coherentTestCurrentGen.
-func coherentTestPCS(standaloneCliques, pcsgConfigs []string) *grovecorev1alpha1.PodCliqueSet {
+func coherentTestPCS(standaloneCliques, pcsgConfigs []string) *grovecorev1beta1.PodCliqueSet {
 	builder := testutils.NewPodCliqueSetBuilder(coherentTestPCSName, coherentTestNamespace, coherentTestPCSUID)
 	for _, cliqueName := range standaloneCliques {
 		builder = builder.WithStandaloneCliqueReplicas(cliqueName, 1)
@@ -233,8 +233,8 @@ func coherentTestPCS(standaloneCliques, pcsgConfigs []string) *grovecorev1alpha1
 		builder = builder.WithScalingGroupConfig(pcsgConfig, []string{pcsgConfig + "-worker"}, 1, 1)
 	}
 	pcs := builder.WithPodCliqueSetGenerationHash(new(coherentTestCurrentGen)).
-		WithUpdateStrategy(&grovecorev1alpha1.PodCliqueSetUpdateStrategy{Type: grovecorev1alpha1.CoherentStrategy}).Build()
-	pcs.Status.UpdateProgress = &grovecorev1alpha1.PodCliqueSetUpdateProgress{
+		WithUpdateStrategy(&grovecorev1beta1.PodCliqueSetUpdateStrategy{Type: grovecorev1beta1.CoherentStrategy}).Build()
+	pcs.Status.UpdateProgress = &grovecorev1beta1.PodCliqueSetUpdateProgress{
 		InScopeStandalonePodCliques:   standaloneCliques,
 		InScopePodCliqueScalingGroups: pcsgConfigs,
 	}
@@ -244,14 +244,14 @@ func coherentTestPCS(standaloneCliques, pcsgConfigs []string) *grovecorev1alpha1
 // coherentHashOf returns the expected pod template hash of a clique from the PodCliqueSet spec.
 //
 //nolint:unparam // cliqueName is a genuine PCLQ dimension. Current tests only exercise "frontend".
-func coherentHashOf(pcs *grovecorev1alpha1.PodCliqueSet, cliqueName string) string {
+func coherentHashOf(pcs *grovecorev1beta1.PodCliqueSet, cliqueName string) string {
 	return componentutils.ComputePCLQPodTemplateHash(componentutils.FindPodCliqueTemplateSpecByName(pcs, cliqueName), pcs.Spec.Template.PriorityClassName)
 }
 
 // standalonePCLQAtHash builds a standalone PodClique for replica 0 whose deployed hash and status hashes
 // are podTemplateHash. When podTemplateHash equals the clique's expected hash the PodClique reads as
 // converged, otherwise it reads as still updating.
-func standalonePCLQAtHash(pcs *grovecorev1alpha1.PodCliqueSet, cliqueName, podTemplateHash string) grovecorev1alpha1.PodClique {
+func standalonePCLQAtHash(pcs *grovecorev1beta1.PodCliqueSet, cliqueName, podTemplateHash string) grovecorev1beta1.PodClique {
 	pclq := testutils.NewPodCliqueBuilder(pcs.Name, coherentTestPCSUID, cliqueName, coherentTestNamespace, 0).
 		WithMinAvailable(1).
 		WithLabels(map[string]string{apicommon.LabelPodTemplateHash: podTemplateHash}).Build()
@@ -266,12 +266,12 @@ func standalonePCLQAtHash(pcs *grovecorev1alpha1.PodCliqueSet, cliqueName, podTe
 // currentGenerationHash. Setting it to coherentTestCurrentGen makes it read as converged.
 //
 //nolint:unparam // pcsgConfigName is a genuine PCSG dimension. Current tests only exercise "decode".
-func pcsgAtGenerationHash(pcs *grovecorev1alpha1.PodCliqueSet, pcsgConfigName string, currentGenerationHash *string) grovecorev1alpha1.PodCliqueScalingGroup {
-	return grovecorev1alpha1.PodCliqueScalingGroup{
+func pcsgAtGenerationHash(pcs *grovecorev1beta1.PodCliqueSet, pcsgConfigName string, currentGenerationHash *string) grovecorev1beta1.PodCliqueScalingGroup {
+	return grovecorev1beta1.PodCliqueScalingGroup{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      apicommon.GeneratePodCliqueScalingGroupName(apicommon.ResourceNameReplica{Name: pcs.Name, Replica: 0}, pcsgConfigName),
 			Namespace: coherentTestNamespace,
 		},
-		Status: grovecorev1alpha1.PodCliqueScalingGroupStatus{CurrentPodCliqueSetGenerationHash: currentGenerationHash},
+		Status: grovecorev1beta1.PodCliqueScalingGroupStatus{CurrentPodCliqueSetGenerationHash: currentGenerationHash},
 	}
 }

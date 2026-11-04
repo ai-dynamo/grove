@@ -4,7 +4,7 @@
 # Sized small on purpose: the soak test is about reconcile churn under load,
 # not absolute capacity.
 ---
-apiVersion: grove.io/v1alpha1
+apiVersion: grove.io/v1beta1
 kind: PodCliqueSet
 metadata:
   name: soak-churn

@@ -36,7 +36,7 @@ spec:
 #   PCS  → childCliqueNames        (int-tpl  targets worker-a only)
 #   PCS  → childScalingGroupNames  (int-tpl7 targets sga only)
 #   PCSG → childCliqueNames        (int-tpl8 targets worker-b only)
-apiVersion: grove.io/v1alpha1
+apiVersion: grove.io/v1beta1
 kind: PodCliqueSet
 metadata:
   name: rs-test

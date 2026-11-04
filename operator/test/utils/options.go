@@ -18,7 +18,7 @@ import (
 	"time"
 
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -28,11 +28,11 @@ import (
 // ============================================================================
 
 // PCSGOption is a function that modifies a PodCliqueScalingGroup for testing.
-type PCSGOption func(*grovecorev1alpha1.PodCliqueScalingGroup)
+type PCSGOption func(*grovecorev1beta1.PodCliqueScalingGroup)
 
 // WithPCSGMinAvailableBreached sets the PCSG to have MinAvailableBreached=True.
 func WithPCSGMinAvailableBreached() PCSGOption {
-	return func(pcsg *grovecorev1alpha1.PodCliqueScalingGroup) {
+	return func(pcsg *grovecorev1beta1.PodCliqueScalingGroup) {
 		pcsg.Status.Conditions = []metav1.Condition{
 			{
 				Type:   constants.ConditionTypeMinAvailableBreached,
@@ -55,7 +55,7 @@ func WithPCSGMinAvailableBreached() PCSGOption {
 
 // WithPCSGUnknownCondition sets the PCSG to have MinAvailableBreached=Unknown.
 func WithPCSGUnknownCondition() PCSGOption {
-	return func(pcsg *grovecorev1alpha1.PodCliqueScalingGroup) {
+	return func(pcsg *grovecorev1beta1.PodCliqueScalingGroup) {
 		pcsg.Status.Conditions = []metav1.Condition{
 			{
 				Type:   constants.ConditionTypeMinAvailableBreached,
@@ -70,7 +70,7 @@ func WithPCSGUnknownCondition() PCSGOption {
 
 // WithPCSGObservedGeneration sets the PCSG ObservedGeneration to enable status mutations.
 func WithPCSGObservedGeneration(generation int64) PCSGOption {
-	return func(pcsg *grovecorev1alpha1.PodCliqueScalingGroup) {
+	return func(pcsg *grovecorev1beta1.PodCliqueScalingGroup) {
 		pcsg.Status.ObservedGeneration = &generation
 	}
 }
@@ -80,11 +80,11 @@ func WithPCSGObservedGeneration(generation int64) PCSGOption {
 // ============================================================================
 
 // PCLQOption is a function that modifies a PodClique for testing.
-type PCLQOption func(*grovecorev1alpha1.PodClique)
+type PCLQOption func(*grovecorev1beta1.PodClique)
 
 // WithPCLQAvailable sets the PodClique to a healthy state with MinAvailableBreached=False and PodCliqueScheduled=True.
 func WithPCLQAvailable() PCLQOption {
-	return func(pclq *grovecorev1alpha1.PodClique) {
+	return func(pclq *grovecorev1beta1.PodClique) {
 		pclq.Status.Conditions = []metav1.Condition{
 			{
 				Type:   constants.ConditionTypeMinAvailableBreached,
@@ -103,7 +103,7 @@ func WithPCLQAvailable() PCLQOption {
 
 // WithPCLQTerminating marks the PodClique for termination with a DeletionTimestamp.
 func WithPCLQTerminating() PCLQOption {
-	return func(pclq *grovecorev1alpha1.PodClique) {
+	return func(pclq *grovecorev1beta1.PodClique) {
 		now := metav1.NewTime(time.Now())
 		pclq.DeletionTimestamp = &now
 		pclq.Finalizers = []string{"test-finalizer"}
@@ -112,7 +112,7 @@ func WithPCLQTerminating() PCLQOption {
 
 // WithPCLQMinAvailableBreached sets the PodClique to have MinAvailableBreached=True but scheduled.
 func WithPCLQMinAvailableBreached() PCLQOption {
-	return func(pclq *grovecorev1alpha1.PodClique) {
+	return func(pclq *grovecorev1beta1.PodClique) {
 		pclq.Status.Conditions = []metav1.Condition{
 			{
 				Type:   constants.ConditionTypeMinAvailableBreached,
@@ -132,7 +132,7 @@ func WithPCLQMinAvailableBreached() PCLQOption {
 // scheduled also has scheduledReplicas < minAvailable, so under the always-breach rule the
 // MinAvailableBreached condition is True as well — this helper sets both.
 func WithPCLQNotScheduled() PCLQOption {
-	return func(pclq *grovecorev1alpha1.PodClique) {
+	return func(pclq *grovecorev1beta1.PodClique) {
 		pclq.Status.Conditions = []metav1.Condition{
 			{
 				Type:   constants.ConditionTypePodCliqueScheduled,
@@ -160,35 +160,35 @@ func WithPCLQScheduledButBreached() PCLQOption {
 
 // WithPCLQNoConditions removes all conditions from the PodClique status.
 func WithPCLQNoConditions() PCLQOption {
-	return func(pclq *grovecorev1alpha1.PodClique) {
+	return func(pclq *grovecorev1beta1.PodClique) {
 		pclq.Status.Conditions = []metav1.Condition{}
 	}
 }
 
 // WithPCSGAvailableReplicas sets specific AvailableReplicas count for PCSG without touching conditions.
 func WithPCSGAvailableReplicas(available int32) PCSGOption {
-	return func(pcsg *grovecorev1alpha1.PodCliqueScalingGroup) {
+	return func(pcsg *grovecorev1beta1.PodCliqueScalingGroup) {
 		pcsg.Status.AvailableReplicas = available
 	}
 }
 
 // WithPCLQReplicaReadyStatus sets specific ReadyReplicas count for PodClique without touching conditions.
 func WithPCLQReplicaReadyStatus(ready int32) PCLQOption {
-	return func(pclq *grovecorev1alpha1.PodClique) {
+	return func(pclq *grovecorev1beta1.PodClique) {
 		pclq.Status.ReadyReplicas = ready
 	}
 }
 
 // WithPCLQCurrentPCSGenerationHash sets the CurrentPodCliqueSetGenerationHash in the PodClique status.
 func WithPCLQCurrentPCSGenerationHash(pcsGenerationHash string) PCLQOption {
-	return func(pclq *grovecorev1alpha1.PodClique) {
+	return func(pclq *grovecorev1beta1.PodClique) {
 		pclq.Status.CurrentPodCliqueSetGenerationHash = &pcsGenerationHash
 	}
 }
 
 // WithPCSGCurrentPCSGenerationHash sets the CurrentPodCliqueSetGenerationHash in the PCSG status.
 func WithPCSGCurrentPCSGenerationHash(pcsGenerationHash string) PCSGOption {
-	return func(pcsg *grovecorev1alpha1.PodCliqueScalingGroup) {
+	return func(pcsg *grovecorev1beta1.PodCliqueScalingGroup) {
 		pcsg.Status.CurrentPodCliqueSetGenerationHash = &pcsGenerationHash
 	}
 }
@@ -198,4 +198,4 @@ func WithPCSGCurrentPCSGenerationHash(pcsGenerationHash string) PCSGOption {
 // ============================================================================
 
 // PCSOption is a function that modifies a PodCliqueSet for testing.
-type PCSOption func(*grovecorev1alpha1.PodCliqueSet)
+type PCSOption func(*grovecorev1beta1.PodCliqueSet)

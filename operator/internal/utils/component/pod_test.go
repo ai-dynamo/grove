@@ -19,7 +19,7 @@ import (
 	"testing"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -34,11 +34,11 @@ import (
 func TestGetPCLQPods(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
-	_ = grovecorev1alpha1.AddToScheme(scheme)
+	_ = grovecorev1beta1.AddToScheme(scheme)
 
 	// Test with owned pods
 	t.Run("returns owned pods only", func(t *testing.T) {
-		pclq := &grovecorev1alpha1.PodClique{
+		pclq := &grovecorev1beta1.PodClique{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-pclq",
 				Namespace: "default",
@@ -96,7 +96,7 @@ func TestGetPCLQPods(t *testing.T) {
 
 	// Test with no pods
 	t.Run("no pods", func(t *testing.T) {
-		pclq := &grovecorev1alpha1.PodClique{
+		pclq := &grovecorev1beta1.PodClique{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-pclq",
 				Namespace: "default",
@@ -117,7 +117,7 @@ func TestGetPCLQPods(t *testing.T) {
 
 	// Test with multiple owned pods
 	t.Run("multiple owned pods", func(t *testing.T) {
-		pclq := &grovecorev1alpha1.PodClique{
+		pclq := &grovecorev1beta1.PodClique{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-pclq",
 				Namespace: "default",
@@ -168,7 +168,7 @@ func TestGetPCLQPods(t *testing.T) {
 	// by the PodClique is returned even without the grove.io/podclique label, and a Pod that
 	// carries that label but is controlled by a different owner is not.
 	t.Run("selects by controller ownership not podclique label", func(t *testing.T) {
-		pclq := &grovecorev1alpha1.PodClique{
+		pclq := &grovecorev1beta1.PodClique{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-pclq",
 				Namespace: "default",

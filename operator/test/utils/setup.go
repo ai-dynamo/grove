@@ -15,7 +15,7 @@
 package utils
 
 import (
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -32,14 +32,14 @@ import (
 // SetupFakeClient creates a fake Kubernetes client with Grove CRDs and status subresources.
 func SetupFakeClient(objects ...client.Object) client.WithWatch {
 	scheme := runtime.NewScheme()
-	utilruntime.Must(grovecorev1alpha1.AddToScheme(scheme))
+	utilruntime.Must(grovecorev1beta1.AddToScheme(scheme))
 	utilruntime.Must(v1.AddToScheme(scheme))
 
 	return fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithStatusSubresource(&grovecorev1alpha1.PodCliqueSet{}).
-		WithStatusSubresource(&grovecorev1alpha1.PodCliqueScalingGroup{}).
-		WithStatusSubresource(&grovecorev1alpha1.PodClique{}).
+		WithStatusSubresource(&grovecorev1beta1.PodCliqueSet{}).
+		WithStatusSubresource(&grovecorev1beta1.PodCliqueScalingGroup{}).
+		WithStatusSubresource(&grovecorev1beta1.PodClique{}).
 		WithStatusSubresource(&v1.Pod{}).
 		WithIndex(&v1.Pod{}, ".metadata.controller.uid", func(obj client.Object) []string {
 			controllerRef := metav1.GetControllerOfNoCopy(obj)

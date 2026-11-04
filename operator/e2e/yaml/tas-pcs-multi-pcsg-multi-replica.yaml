@@ -1,7 +1,7 @@
 # Workload: Disaggregated Inference - Multi-replica PCS with 3-level topology hierarchy
 # Test scenario: PCS (block) with 2 replicas, 2 PCSGs (rack), and PCLQ-level constraint (host)
 ---
-apiVersion: grove.io/v1alpha1
+apiVersion: grove.io/v1beta1
 kind: PodCliqueSet
 metadata:
   name: tas-pcs-multi-pcsg

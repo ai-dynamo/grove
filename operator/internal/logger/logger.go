@@ -17,7 +17,7 @@ package logger
 import (
 	"fmt"
 
-	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
+	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 
 	"github.com/go-logr/logr"
 	"go.uber.org/zap/zapcore"
@@ -26,14 +26,14 @@ import (
 )
 
 // MustNewLogger creates a new logr.Logger backed by Zap and panics on invalid input.
-func MustNewLogger(devMode bool, level configv1alpha1.LogLevel, format configv1alpha1.LogFormat) logr.Logger {
+func MustNewLogger(devMode bool, level configv1beta1.LogLevel, format configv1beta1.LogFormat) logr.Logger {
 	opts, err := buildDefaultLoggerOpts(devMode, level, format)
 	utilruntime.Must(err)
 	return logzap.New(opts...)
 }
 
 // buildDefaultLoggerOpts constructs Zap logger options from the provided configuration.
-func buildDefaultLoggerOpts(devMode bool, level configv1alpha1.LogLevel, format configv1alpha1.LogFormat) ([]logzap.Opts, error) {
+func buildDefaultLoggerOpts(devMode bool, level configv1beta1.LogLevel, format configv1beta1.LogFormat) ([]logzap.Opts, error) {
 	var opts []logzap.Opts
 	opts = append(opts, logzap.UseDevMode(devMode))
 	formatOpts, err := createLogFormatOpts(format)
@@ -50,14 +50,14 @@ func buildDefaultLoggerOpts(devMode bool, level configv1alpha1.LogLevel, format 
 }
 
 // createLogLevelOpts converts a LogLevel to Zap logger options.
-func createLogLevelOpts(level configv1alpha1.LogLevel) (logzap.Opts, error) {
+func createLogLevelOpts(level configv1beta1.LogLevel) (logzap.Opts, error) {
 	var zapLevel zapcore.LevelEnabler
 	switch level {
-	case configv1alpha1.DebugLevel:
+	case configv1beta1.DebugLevel:
 		zapLevel = zapcore.DebugLevel
-	case configv1alpha1.ErrorLevel:
+	case configv1beta1.ErrorLevel:
 		zapLevel = zapcore.ErrorLevel
-	case "", configv1alpha1.InfoLevel:
+	case "", configv1beta1.InfoLevel:
 		zapLevel = zapcore.InfoLevel
 	default:
 		return nil, fmt.Errorf("invalid log level %q", level)
@@ -66,7 +66,7 @@ func createLogLevelOpts(level configv1alpha1.LogLevel) (logzap.Opts, error) {
 }
 
 // createLogFormatOpts converts a LogFormat to Zap logger options.
-func createLogFormatOpts(format configv1alpha1.LogFormat) (logzap.Opts, error) {
+func createLogFormatOpts(format configv1beta1.LogFormat) (logzap.Opts, error) {
 	setCommonEncoderConfigOpts := func(encoderConfig *zapcore.EncoderConfig) {
 		encoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
 		encoderConfig.EncodeDuration = zapcore.StringDurationEncoder
@@ -74,9 +74,9 @@ func createLogFormatOpts(format configv1alpha1.LogFormat) (logzap.Opts, error) {
 
 	// configure zap log format
 	switch format {
-	case configv1alpha1.LogFormatText:
+	case configv1beta1.LogFormatText:
 		return logzap.ConsoleEncoder(setCommonEncoderConfigOpts), nil
-	case "", configv1alpha1.LogFormatJSON:
+	case "", configv1beta1.LogFormatJSON:
 		return logzap.JSONEncoder(setCommonEncoderConfigOpts), nil
 	default:
 		return nil, fmt.Errorf("invalid log format %q", format)

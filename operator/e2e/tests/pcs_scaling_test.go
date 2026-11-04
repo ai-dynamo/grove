@@ -24,7 +24,7 @@ import (
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	apiconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/kwok"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
 	"github.com/stretchr/testify/require"
@@ -71,7 +71,7 @@ func Test_PCSS1_AvailabilityAwareScalingReplicaSelection(t *testing.T) {
 	_, err := tc.DeployAndVerifyWorkload()
 	require.NoError(t, err)
 	require.NoError(t, tc.WaitForReadyPods(5))
-	pcs := &grovecorev1alpha1.PodCliqueSet{}
+	pcs := &grovecorev1beta1.PodCliqueSet{}
 	require.NoError(t, tc.Client.Get(ctx, client.ObjectKey{Namespace: tc.Namespace, Name: sparseScalingWorkloadName}, pcs))
 	require.Nil(t, pcs.Status.ScalingProgress, "initial provisioning must not be recorded as scaling progress")
 
@@ -132,7 +132,7 @@ func Test_PCSS1_AvailabilityAwareScalingReplicaSelection(t *testing.T) {
 
 func waitForPCSScalingProgressToComplete(tc *testctx.TestContext, pcsName string) error {
 	return wait.PollUntilContextTimeout(tc.Ctx, tc.Interval, tc.Timeout, true, func(ctx context.Context) (bool, error) {
-		pcs := &grovecorev1alpha1.PodCliqueSet{}
+		pcs := &grovecorev1beta1.PodCliqueSet{}
 		if err := tc.Client.Get(ctx, client.ObjectKey{Namespace: tc.Namespace, Name: pcsName}, pcs); err != nil {
 			return false, err
 		}
@@ -142,7 +142,7 @@ func waitForPCSScalingProgressToComplete(tc *testctx.TestContext, pcsName string
 
 func waitForPCSReplicaIndices(tc *testctx.TestContext, pcsName string, expected sets.Set[int]) error {
 	return wait.PollUntilContextTimeout(tc.Ctx, tc.Interval, tc.Timeout, true, func(ctx context.Context) (bool, error) {
-		pclqs := &grovecorev1alpha1.PodCliqueList{}
+		pclqs := &grovecorev1beta1.PodCliqueList{}
 		if err := tc.Client.List(ctx, pclqs,
 			client.InNamespace(tc.Namespace),
 			client.MatchingLabels{apicommon.LabelPartOfKey: pcsName},
@@ -170,7 +170,7 @@ func waitForPCSReplicaIndices(tc *testctx.TestContext, pcsName string, expected 
 
 func waitForPCLQReplicaCounts(tc *testctx.TestContext, pclqName string, scheduledReplicas, readyReplicas int32) error {
 	return wait.PollUntilContextTimeout(tc.Ctx, tc.Interval, tc.Timeout, true, func(ctx context.Context) (bool, error) {
-		pclq := &grovecorev1alpha1.PodClique{}
+		pclq := &grovecorev1beta1.PodClique{}
 		if err := tc.Client.Get(ctx, client.ObjectKey{Namespace: tc.Namespace, Name: pclqName}, pclq); err != nil {
 			return false, err
 		}
@@ -180,7 +180,7 @@ func waitForPCLQReplicaCounts(tc *testctx.TestContext, pclqName string, schedule
 
 func waitForPCLQMinAvailableBreach(tc *testctx.TestContext, pclqName string) error {
 	return wait.PollUntilContextTimeout(tc.Ctx, tc.Interval, tc.Timeout, true, func(ctx context.Context) (bool, error) {
-		pclq := &grovecorev1alpha1.PodClique{}
+		pclq := &grovecorev1beta1.PodClique{}
 		if err := tc.Client.Get(ctx, client.ObjectKey{Namespace: tc.Namespace, Name: pclqName}, pclq); err != nil {
 			return false, err
 		}

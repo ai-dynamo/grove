@@ -18,7 +18,7 @@ import (
 	"os"
 	"testing"
 
-	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
+	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
@@ -85,15 +85,15 @@ func TestRegisterWebhooks_WithoutAuthorizer(t *testing.T) {
 	mgr.WebhookServer = server
 
 	// Authorizer disabled
-	authorizerConfig := configv1alpha1.AuthorizerConfig{
+	authorizerConfig := configv1beta1.AuthorizerConfig{
 		Enabled: false,
 	}
 
-	operatorCfg := configv1alpha1.OperatorConfiguration{
+	operatorCfg := configv1beta1.OperatorConfiguration{
 		Authorizer:              authorizerConfig,
-		TopologyAwareScheduling: configv1alpha1.TopologyAwareSchedulingConfiguration{},
-		Network:                 configv1alpha1.NetworkAcceleration{},
-		Scheduler:               configv1alpha1.SchedulerConfiguration{Profiles: []configv1alpha1.SchedulerProfile{{Name: configv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(configv1alpha1.SchedulerNameKube)},
+		TopologyAwareScheduling: configv1beta1.TopologyAwareSchedulingConfiguration{},
+		Network:                 configv1beta1.NetworkAcceleration{},
+		Scheduler:               configv1beta1.SchedulerConfiguration{Profiles: []configv1beta1.SchedulerProfile{{Name: configv1beta1.SchedulerNameKube}}, DefaultProfileName: string(configv1beta1.SchedulerNameKube)},
 	}
 	err := Register(mgr, &operatorCfg, &testutils.FakeSchedulerRegistry{})
 	require.NoError(t, err)
@@ -120,15 +120,15 @@ func TestRegisterWebhooks_WithAuthorizerMissingEnvVar(t *testing.T) {
 	require.NoError(t, err)
 
 	// Authorizer enabled
-	authorizerConfig := configv1alpha1.AuthorizerConfig{
+	authorizerConfig := configv1beta1.AuthorizerConfig{
 		Enabled: true,
 	}
 
-	operatorCfg := configv1alpha1.OperatorConfiguration{
+	operatorCfg := configv1beta1.OperatorConfiguration{
 		Authorizer:              authorizerConfig,
-		TopologyAwareScheduling: configv1alpha1.TopologyAwareSchedulingConfiguration{},
-		Network:                 configv1alpha1.NetworkAcceleration{},
-		Scheduler:               configv1alpha1.SchedulerConfiguration{Profiles: []configv1alpha1.SchedulerProfile{{Name: configv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(configv1alpha1.SchedulerNameKube)},
+		TopologyAwareScheduling: configv1beta1.TopologyAwareSchedulingConfiguration{},
+		Network:                 configv1beta1.NetworkAcceleration{},
+		Scheduler:               configv1beta1.SchedulerConfiguration{Profiles: []configv1beta1.SchedulerProfile{{Name: configv1beta1.SchedulerNameKube}}, DefaultProfileName: string(configv1beta1.SchedulerNameKube)},
 	}
 	err = Register(mgr, &operatorCfg, &testutils.FakeSchedulerRegistry{})
 	require.Error(t, err)
@@ -155,15 +155,15 @@ func TestRegisterWebhooks_WithAuthorizerMissingNamespaceFile(t *testing.T) {
 	t.Setenv(constants.EnvVarServiceAccountName, "test-sa")
 
 	// Authorizer enabled - will fail on reading non-existent namespace file
-	authorizerConfig := configv1alpha1.AuthorizerConfig{
+	authorizerConfig := configv1beta1.AuthorizerConfig{
 		Enabled: true,
 	}
 
-	operatorCfg := configv1alpha1.OperatorConfiguration{
+	operatorCfg := configv1beta1.OperatorConfiguration{
 		Authorizer:              authorizerConfig,
-		TopologyAwareScheduling: configv1alpha1.TopologyAwareSchedulingConfiguration{},
-		Network:                 configv1alpha1.NetworkAcceleration{},
-		Scheduler:               configv1alpha1.SchedulerConfiguration{Profiles: []configv1alpha1.SchedulerProfile{{Name: configv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(configv1alpha1.SchedulerNameKube)},
+		TopologyAwareScheduling: configv1beta1.TopologyAwareSchedulingConfiguration{},
+		Network:                 configv1beta1.NetworkAcceleration{},
+		Scheduler:               configv1beta1.SchedulerConfiguration{Profiles: []configv1beta1.SchedulerProfile{{Name: configv1beta1.SchedulerNameKube}}, DefaultProfileName: string(configv1beta1.SchedulerNameKube)},
 	}
 	err := Register(mgr, &operatorCfg, &testutils.FakeSchedulerRegistry{})
 	require.Error(t, err)
@@ -206,15 +206,15 @@ func TestRegisterWebhooks_WithAuthorizerSuccess(t *testing.T) {
 
 	// This test would require refactoring the code to make the namespace file path configurable
 	// For now, we'll just test that the error occurs as expected
-	authorizerConfig := configv1alpha1.AuthorizerConfig{
+	authorizerConfig := configv1beta1.AuthorizerConfig{
 		Enabled: true,
 	}
 
-	operatorCfg := configv1alpha1.OperatorConfiguration{
+	operatorCfg := configv1beta1.OperatorConfiguration{
 		Authorizer:              authorizerConfig,
-		TopologyAwareScheduling: configv1alpha1.TopologyAwareSchedulingConfiguration{},
-		Network:                 configv1alpha1.NetworkAcceleration{},
-		Scheduler:               configv1alpha1.SchedulerConfiguration{Profiles: []configv1alpha1.SchedulerProfile{{Name: configv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(configv1alpha1.SchedulerNameKube)},
+		TopologyAwareScheduling: configv1beta1.TopologyAwareSchedulingConfiguration{},
+		Network:                 configv1beta1.NetworkAcceleration{},
+		Scheduler:               configv1beta1.SchedulerConfiguration{Profiles: []configv1beta1.SchedulerProfile{{Name: configv1beta1.SchedulerNameKube}}, DefaultProfileName: string(configv1beta1.SchedulerNameKube)},
 	}
 	err = Register(mgr, &operatorCfg, &testutils.FakeSchedulerRegistry{})
 	// Will error because it tries to read the hardcoded namespace file path

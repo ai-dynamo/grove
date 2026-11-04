@@ -17,7 +17,7 @@ package validation
 import (
 	"testing"
 
-	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
+	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/go-logr/logr"
@@ -40,10 +40,10 @@ func TestRegisterWithManager(t *testing.T) {
 	})
 	mgr.WebhookServer = server
 
-	cfg := configv1alpha1.OperatorConfiguration{
-		TopologyAwareScheduling: configv1alpha1.TopologyAwareSchedulingConfiguration{},
-		Network:                 configv1alpha1.NetworkAcceleration{},
-		Scheduler:               configv1alpha1.SchedulerConfiguration{Profiles: []configv1alpha1.SchedulerProfile{{Name: configv1alpha1.SchedulerNameKube}}, DefaultProfileName: string(configv1alpha1.SchedulerNameKube)},
+	cfg := configv1beta1.OperatorConfiguration{
+		TopologyAwareScheduling: configv1beta1.TopologyAwareSchedulingConfiguration{},
+		Network:                 configv1beta1.NetworkAcceleration{},
+		Scheduler:               configv1beta1.SchedulerConfiguration{Profiles: []configv1beta1.SchedulerProfile{{Name: configv1beta1.SchedulerNameKube}}, DefaultProfileName: string(configv1beta1.SchedulerNameKube)},
 	}
 	handler := NewHandler(mgr, &cfg, &testutils.FakeSchedulerRegistry{})
 	err := handler.RegisterWithManager(mgr)

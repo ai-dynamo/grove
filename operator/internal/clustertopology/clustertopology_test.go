@@ -19,8 +19,8 @@ import (
 	"testing"
 
 	apicommonconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
-	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler/kai"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
@@ -41,9 +41,9 @@ const topologyName = "test-topology"
 
 func TestSynchronizeTopologyListsAndSyncs(t *testing.T) {
 	ctx := context.Background()
-	topologyLevels := []grovecorev1alpha1.TopologyLevel{
-		{Domain: grovecorev1alpha1.TopologyDomainZone, Key: "topology.kubernetes.io/zone"},
-		{Domain: grovecorev1alpha1.TopologyDomainHost, Key: "kubernetes.io/hostname"},
+	topologyLevels := []grovecorev1beta1.TopologyLevel{
+		{Domain: grovecorev1beta1.TopologyDomainZone, Key: "topology.kubernetes.io/zone"},
+		{Domain: grovecorev1beta1.TopologyDomainHost, Key: "kubernetes.io/hostname"},
 	}
 	ct := createTestClusterTopology(topologyName, topologyLevels)
 
@@ -65,11 +65,11 @@ func TestSynchronizeTopologyListsAndSyncs(t *testing.T) {
 
 func TestSynchronizeTopologyMultipleCTs(t *testing.T) {
 	ctx := context.Background()
-	ct1 := createTestClusterTopology("topology-a", []grovecorev1alpha1.TopologyLevel{
-		{Domain: grovecorev1alpha1.TopologyDomainZone, Key: "topology.kubernetes.io/zone"},
+	ct1 := createTestClusterTopology("topology-a", []grovecorev1beta1.TopologyLevel{
+		{Domain: grovecorev1beta1.TopologyDomainZone, Key: "topology.kubernetes.io/zone"},
 	})
-	ct2 := createTestClusterTopology("topology-b", []grovecorev1alpha1.TopologyLevel{
-		{Domain: grovecorev1alpha1.TopologyDomainHost, Key: "kubernetes.io/hostname"},
+	ct2 := createTestClusterTopology("topology-b", []grovecorev1beta1.TopologyLevel{
+		{Domain: grovecorev1beta1.TopologyDomainHost, Key: "kubernetes.io/hostname"},
 	})
 
 	cl := schedulertest.NewKAIClient(t, ct1, ct2)
@@ -101,8 +101,8 @@ func TestSynchronizeTopologyNoCTs(t *testing.T) {
 
 func TestSynchronizeTopologyNoTASBackends(t *testing.T) {
 	ctx := context.Background()
-	ct := createTestClusterTopology(topologyName, []grovecorev1alpha1.TopologyLevel{
-		{Domain: grovecorev1alpha1.TopologyDomainHost, Key: "kubernetes.io/hostname"},
+	ct := createTestClusterTopology(topologyName, []grovecorev1beta1.TopologyLevel{
+		{Domain: grovecorev1beta1.TopologyDomainHost, Key: "kubernetes.io/hostname"},
 	})
 	cl := schedulertest.NewKAIClient(t, ct)
 	logger := logr.Discard()
@@ -114,12 +114,12 @@ func TestSynchronizeTopologyNoTASBackends(t *testing.T) {
 
 func TestSynchronizeTopologySkipsExternallyManaged(t *testing.T) {
 	ctx := context.Background()
-	topologyLevels := []grovecorev1alpha1.TopologyLevel{
-		{Domain: grovecorev1alpha1.TopologyDomainZone, Key: "topology.kubernetes.io/zone"},
-		{Domain: grovecorev1alpha1.TopologyDomainHost, Key: "kubernetes.io/hostname"},
+	topologyLevels := []grovecorev1beta1.TopologyLevel{
+		{Domain: grovecorev1beta1.TopologyDomainZone, Key: "topology.kubernetes.io/zone"},
+		{Domain: grovecorev1beta1.TopologyDomainHost, Key: "kubernetes.io/hostname"},
 	}
 	ct := createTestClusterTopology(topologyName, topologyLevels)
-	ct.Spec.SchedulerTopologyBindings = []grovecorev1alpha1.SchedulerTopologyBinding{
+	ct.Spec.SchedulerTopologyBindings = []grovecorev1beta1.SchedulerTopologyBinding{
 		{SchedulerName: "kai-scheduler", TopologyReference: "external-kai-topology"},
 	}
 
@@ -140,7 +140,7 @@ func TestSynchronizeTopologySkipsExternallyManaged(t *testing.T) {
 func TestSynchronizeTopologyListError(t *testing.T) {
 	ctx := context.Background()
 	listErr := apierrors.NewInternalError(assert.AnError)
-	ctListGVK := grovecorev1alpha1.SchemeGroupVersion.WithKind("ClusterTopologyBindingList")
+	ctListGVK := grovecorev1beta1.SchemeGroupVersion.WithKind("ClusterTopologyBindingList")
 	cl := testutils.NewTestClientBuilder().
 		WithScheme(schedulertest.NewKAIScheme(t)).
 		RecordErrorForObjectsMatchingLabels(testutils.ClientMethodList, client.ObjectKey{}, ctListGVK, nil, listErr).
@@ -154,48 +154,48 @@ func TestSynchronizeTopologyListError(t *testing.T) {
 func TestGetClusterTopologyLevels(t *testing.T) {
 	tests := []struct {
 		name              string
-		clusterTopology   *grovecorev1alpha1.ClusterTopologyBinding
+		clusterTopology   *grovecorev1beta1.ClusterTopologyBinding
 		topologyName      string
 		getError          *apierrors.StatusError
-		expectedLevels    []grovecorev1alpha1.TopologyLevel
+		expectedLevels    []grovecorev1beta1.TopologyLevel
 		expectError       bool
 		expectedErrorType error
 	}{
 		{
 			name: "successfully retrieve topology levels",
-			clusterTopology: &grovecorev1alpha1.ClusterTopologyBinding{
+			clusterTopology: &grovecorev1beta1.ClusterTopologyBinding{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "test-topology",
 				},
-				Spec: grovecorev1alpha1.ClusterTopologyBindingSpec{
-					Levels: []grovecorev1alpha1.TopologyLevel{
+				Spec: grovecorev1beta1.ClusterTopologyBindingSpec{
+					Levels: []grovecorev1beta1.TopologyLevel{
 						{
-							Domain: grovecorev1alpha1.TopologyDomainRegion,
+							Domain: grovecorev1beta1.TopologyDomainRegion,
 							Key:    "topology.kubernetes.io/region",
 						},
 						{
-							Domain: grovecorev1alpha1.TopologyDomainZone,
+							Domain: grovecorev1beta1.TopologyDomainZone,
 							Key:    "topology.kubernetes.io/zone",
 						},
 						{
-							Domain: grovecorev1alpha1.TopologyDomainHost,
+							Domain: grovecorev1beta1.TopologyDomainHost,
 							Key:    "kubernetes.io/hostname",
 						},
 					},
 				},
 			},
 			topologyName: "test-topology",
-			expectedLevels: []grovecorev1alpha1.TopologyLevel{
+			expectedLevels: []grovecorev1beta1.TopologyLevel{
 				{
-					Domain: grovecorev1alpha1.TopologyDomainRegion,
+					Domain: grovecorev1beta1.TopologyDomainRegion,
 					Key:    "topology.kubernetes.io/region",
 				},
 				{
-					Domain: grovecorev1alpha1.TopologyDomainZone,
+					Domain: grovecorev1beta1.TopologyDomainZone,
 					Key:    "topology.kubernetes.io/zone",
 				},
 				{
-					Domain: grovecorev1alpha1.TopologyDomainHost,
+					Domain: grovecorev1beta1.TopologyDomainHost,
 					Key:    "kubernetes.io/hostname",
 				},
 			},
@@ -203,14 +203,14 @@ func TestGetClusterTopologyLevels(t *testing.T) {
 		},
 		{
 			name: "topology not found",
-			clusterTopology: &grovecorev1alpha1.ClusterTopologyBinding{
+			clusterTopology: &grovecorev1beta1.ClusterTopologyBinding{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "existing-topology",
 				},
-				Spec: grovecorev1alpha1.ClusterTopologyBindingSpec{
-					Levels: []grovecorev1alpha1.TopologyLevel{
+				Spec: grovecorev1beta1.ClusterTopologyBindingSpec{
+					Levels: []grovecorev1beta1.TopologyLevel{
 						{
-							Domain: grovecorev1alpha1.TopologyDomainRegion,
+							Domain: grovecorev1beta1.TopologyDomainRegion,
 							Key:    "topology.kubernetes.io/region",
 						},
 					},
@@ -226,14 +226,14 @@ func TestGetClusterTopologyLevels(t *testing.T) {
 		},
 		{
 			name: "client Get returns error",
-			clusterTopology: &grovecorev1alpha1.ClusterTopologyBinding{
+			clusterTopology: &grovecorev1beta1.ClusterTopologyBinding{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "test-topology",
 				},
-				Spec: grovecorev1alpha1.ClusterTopologyBindingSpec{
-					Levels: []grovecorev1alpha1.TopologyLevel{
+				Spec: grovecorev1beta1.ClusterTopologyBindingSpec{
+					Levels: []grovecorev1beta1.TopologyLevel{
 						{
-							Domain: grovecorev1alpha1.TopologyDomainZone,
+							Domain: grovecorev1beta1.TopologyDomainZone,
 							Key:    "topology.kubernetes.io/zone",
 						},
 					},
@@ -283,7 +283,7 @@ func TestGetClusterTopologyLevels(t *testing.T) {
 }
 
 func TestBuildSchedulerReferenceMap(t *testing.T) {
-	refs := []grovecorev1alpha1.SchedulerTopologyBinding{
+	refs := []grovecorev1beta1.SchedulerTopologyBinding{
 		{SchedulerName: "kai-scheduler", TopologyReference: "kai-topo"},
 		{SchedulerName: "other-scheduler", TopologyReference: "other-topo"},
 	}
@@ -296,20 +296,20 @@ func TestBuildSchedulerReferenceMap(t *testing.T) {
 
 func newKAIBackendMap(t *testing.T, cl client.Client) map[string]scheduler.TopologyAwareBackend {
 	t.Helper()
-	profile := configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKai}
+	profile := configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameKai}
 	b := kai.New(cl, cl.Scheme(), nil, profile)
 	require.NoError(t, b.Init(cl))
 	return map[string]scheduler.TopologyAwareBackend{b.Name(): b.(scheduler.TopologyAwareBackend)}
 }
 
 // createTestClusterTopology creates a ClusterTopologyBinding with the given name and topology levels.
-func createTestClusterTopology(name string, levels []grovecorev1alpha1.TopologyLevel) *grovecorev1alpha1.ClusterTopologyBinding {
-	return &grovecorev1alpha1.ClusterTopologyBinding{
+func createTestClusterTopology(name string, levels []grovecorev1beta1.TopologyLevel) *grovecorev1beta1.ClusterTopologyBinding {
+	return &grovecorev1beta1.ClusterTopologyBinding{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: name,
 			UID:  uuid.NewUUID(),
 		},
-		Spec: grovecorev1alpha1.ClusterTopologyBindingSpec{
+		Spec: grovecorev1beta1.ClusterTopologyBindingSpec{
 			Levels: levels,
 		},
 	}

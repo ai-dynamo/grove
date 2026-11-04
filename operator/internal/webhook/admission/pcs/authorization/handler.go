@@ -23,7 +23,7 @@ import (
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	apiconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
-	groveconfigv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
+	groveconfigv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
 	"github.com/go-logr/logr"
@@ -38,7 +38,7 @@ import (
 
 // Handler is the PodCliqueSet authorization admission webhook handler.
 type Handler struct {
-	config                           groveconfigv1alpha1.AuthorizerConfig
+	config                           groveconfigv1beta1.AuthorizerConfig
 	client                           client.Client
 	decoder                          *requestDecoder
 	logger                           logr.Logger
@@ -46,7 +46,7 @@ type Handler struct {
 }
 
 // NewHandler creates a new handler for the auhtorizer webhook.
-func NewHandler(mgr manager.Manager, config groveconfigv1alpha1.AuthorizerConfig, reconcilerServiceAccountUserName string) *Handler {
+func NewHandler(mgr manager.Manager, config groveconfigv1beta1.AuthorizerConfig, reconcilerServiceAccountUserName string) *Handler {
 	return &Handler{
 		config:                           config,
 		client:                           mgr.GetClient(),
