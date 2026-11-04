@@ -83,6 +83,30 @@ func TestSelectReplicasToUpdate(t *testing.T) {
 	})
 }
 
+func TestIsSchedulingConfigRolloutInProgress(t *testing.T) {
+	tests := []struct {
+		name        string
+		progress    *grovecorev1beta1.PodCliqueSetUpdateProgress
+		appliedHash *string
+		want        bool
+	}{
+		{name: "no update progress", appliedHash: new("applied")},
+		{name: "no applied scheduling baseline", progress: &grovecorev1beta1.PodCliqueSetUpdateProgress{TargetSchedulingConfigurationHash: "target"}},
+		{name: "ordinary update", progress: &grovecorev1beta1.PodCliqueSetUpdateProgress{TargetSchedulingConfigurationHash: "same"}, appliedHash: new("same")},
+		{name: "completed scheduling config rollout", progress: &grovecorev1beta1.PodCliqueSetUpdateProgress{TargetSchedulingConfigurationHash: "target", UpdateEndedAt: new(metav1.Now())}, appliedHash: new("applied")},
+		{name: "scheduling config rollout", progress: &grovecorev1beta1.PodCliqueSetUpdateProgress{TargetSchedulingConfigurationHash: "target"}, appliedHash: new("applied"), want: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			pcs := &grovecorev1beta1.PodCliqueSet{Status: grovecorev1beta1.PodCliqueSetStatus{
+				UpdateProgress:                     tc.progress,
+				AppliedSchedulingConfigurationHash: tc.appliedHash,
+			}}
+			assert.Equal(t, tc.want, isSchedulingConfigRolloutInProgress(pcs))
+		})
+	}
+}
+
 func TestSelectReplicasToUpdateOrdering(t *testing.T) {
 	pcs := rollingUpdateTestPCS()
 	replicaInfos := []pcsReplicaInfo{
@@ -95,6 +119,79 @@ func TestSelectReplicasToUpdateOrdering(t *testing.T) {
 	selected := selectReplicasToUpdate(pcs, replicaInfos, nil, []int{2, 3}, len(replicaInfos))
 
 	assert.Equal(t, []int{1, 2, 3, 0}, replicaIndices(selected))
+}
+
+func TestSelectReplicasToUpdateUsesSchedulingConfigRolloutOrdering(t *testing.T) {
+	pcs := schedulingConfigRolloutTestPCS()
+	replicaInfos := []pcsReplicaInfo{
+		rollingUpdateReplicaInfoAtGeneration(pcs, 5, "superseded", true),
+		rollingUpdateReplicaInfoAtGeneration(pcs, 4, "pending", true),
+		rollingUpdateReplicaInfoAtGeneration(pcs, 3, "pending", false),
+		rollingUpdateReplicaInfoAtGeneration(pcs, 2, "superseded", false),
+		rollingUpdateReplicaInfoAtGeneration(pcs, 1, "pending", true),
+		rollingUpdateReplicaInfoAtGeneration(pcs, 0, "pending", false),
+		{replicaIndex: 6},
+	}
+
+	selected := selectReplicasToUpdate(pcs, replicaInfos, nil, nil, len(replicaInfos))
+
+	assert.Equal(t, []int{0, 3, 6, 1, 4, 2, 5}, replicaIndices(selected))
+}
+
+func TestSelectReplicasToUpdateRetainsActiveReplicaBeforeSchedulingConfigRolloutCandidates(t *testing.T) {
+	pcs := schedulingConfigRolloutTestPCS()
+	active := rollingUpdateReplicaInfoAtGeneration(pcs, 7, "pending", true)
+	pendingUnavailable := rollingUpdateReplicaInfoAtGeneration(pcs, 0, "pending", false)
+
+	selected := selectReplicasToUpdate(pcs, []pcsReplicaInfo{pendingUnavailable, active}, []pcsReplicaInfo{active}, nil, 1)
+
+	assert.Equal(t, []int{7, 0}, replicaIndices(selected))
+}
+
+func TestPCSReplicaInfoHasConvergedToPCSGeneration(t *testing.T) {
+	pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "default", types.UID("test-uid")).
+		WithStandaloneClique("frontend").
+		WithScalingGroup("workers", []string{"worker"}).
+		Build()
+	generationHash := "generation"
+	converged := pcsReplicaInfo{
+		replicaIndex: 0,
+		pclqs: []grovecorev1beta1.PodClique{{
+			Status: grovecorev1beta1.PodCliqueStatus{CurrentPodCliqueSetGenerationHash: new(generationHash)},
+		}},
+		pcsgs: []grovecorev1beta1.PodCliqueScalingGroup{{
+			Status: grovecorev1beta1.PodCliqueScalingGroupStatus{CurrentPodCliqueSetGenerationHash: new(generationHash)},
+		}},
+	}
+
+	tests := []struct {
+		name string
+		info pcsReplicaInfo
+		want bool
+	}{
+		{name: "all expected children converged", info: converged, want: true},
+		{name: "missing standalone PodClique", info: pcsReplicaInfo{replicaIndex: 0, pcsgs: converged.pcsgs}},
+		{name: "missing PodCliqueScalingGroup", info: pcsReplicaInfo{replicaIndex: 0, pclqs: converged.pclqs}},
+		{name: "standalone PodClique has no generation", info: pcsReplicaInfo{replicaIndex: 0, pclqs: []grovecorev1beta1.PodClique{{}}, pcsgs: converged.pcsgs}},
+		{name: "standalone PodClique has another generation", info: pcsReplicaInfo{replicaIndex: 0, pclqs: []grovecorev1beta1.PodClique{{Status: grovecorev1beta1.PodCliqueStatus{CurrentPodCliqueSetGenerationHash: new("other")}}}, pcsgs: converged.pcsgs}},
+		{name: "PodCliqueScalingGroup has no generation", info: pcsReplicaInfo{replicaIndex: 0, pclqs: converged.pclqs, pcsgs: []grovecorev1beta1.PodCliqueScalingGroup{{}}}},
+		{name: "PodCliqueScalingGroup has another generation", info: pcsReplicaInfo{replicaIndex: 0, pclqs: converged.pclqs, pcsgs: []grovecorev1beta1.PodCliqueScalingGroup{{Status: grovecorev1beta1.PodCliqueScalingGroupStatus{CurrentPodCliqueSetGenerationHash: new("other")}}}}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, tc.info.hasConvergedToPCSGeneration(pcs, generationHash))
+		})
+	}
+}
+
+func TestPCSReplicaInfoIsAvailable(t *testing.T) {
+	pcs := rollingUpdateTestPCS()
+	available := rollingUpdateReplicaInfoAtGeneration(pcs, 0, "generation", true)
+	unavailable := rollingUpdateReplicaInfoAtGeneration(pcs, 0, "generation", false)
+
+	assert.True(t, available.isAvailable(pcs))
+	assert.False(t, unavailable.isAvailable(pcs))
+	assert.False(t, (&pcsReplicaInfo{replicaIndex: 0}).isAvailable(pcs))
 }
 
 func TestOrchestrateRollingUpdate(t *testing.T) {
@@ -251,6 +348,14 @@ func TestUpdatePCSWithSelectedReplicasCompletesUpdate(t *testing.T) {
 	assert.NotNil(t, persisted.Status.UpdateProgress.UpdateEndedAt)
 }
 
+func schedulingConfigRolloutTestPCS() *grovecorev1beta1.PodCliqueSet {
+	pcs := rollingUpdateTestPCS()
+	pcs.Status.AppliedSchedulingConfigurationHash = new("applied")
+	pcs.Status.UpdateProgress.TargetSchedulingConfigurationHash = "target"
+	pcs.Status.UpdateProgress.SupersededGenerationHash = new("superseded")
+	return pcs
+}
+
 func rollingUpdateTestPCS() *grovecorev1beta1.PodCliqueSet {
 	pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "default", types.UID("test-uid")).
 		WithStandaloneClique("worker").
@@ -259,6 +364,17 @@ func rollingUpdateTestPCS() *grovecorev1beta1.PodCliqueSet {
 	pcs.Spec.Template.Cliques[0].Spec.MinAvailable = new(int32(1))
 	pcs.Status.UpdateProgress = &grovecorev1beta1.PodCliqueSetUpdateProgress{UpdateStartedAt: metav1.Now()}
 	return pcs
+}
+
+func rollingUpdateReplicaInfoAtGeneration(pcs *grovecorev1beta1.PodCliqueSet, replicaIndex int, generationHash string, available bool) pcsReplicaInfo {
+	info := rollingUpdateReplicaInfo(pcs, replicaIndex, false, 1)
+	info.pclqs[0].Status.CurrentPodCliqueSetGenerationHash = new(generationHash)
+	if available {
+		info.pclqs[0].Status.ReadyReplicas = 1
+	} else {
+		info.pclqs[0].Status.ReadyReplicas = 0
+	}
+	return info
 }
 
 func rollingUpdateReplicaInfo(pcs *grovecorev1beta1.PodCliqueSet, replicaIndex int, complete bool, scheduledReplicas int32) pcsReplicaInfo {

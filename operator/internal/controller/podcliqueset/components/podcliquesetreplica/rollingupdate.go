@@ -175,12 +175,57 @@ func selectReplicasToUpdate(pcs *grovecorev1beta1.PodCliqueSet, replicaInfos, re
 		}
 		replicaInfosPendingUpdate = append(replicaInfosPendingUpdate, replicaInfo)
 	}
-	slices.SortFunc(replicaInfosPendingUpdate, orderPCSReplicaInfo(pcs, minAvailableBreachedPCSReplicaIndices))
+	if isSchedulingConfigRolloutInProgress(pcs) {
+		slices.SortFunc(replicaInfosPendingUpdate, orderPCSReplicaInfoBySchedulingConfigRolloutPriority(pcs))
+	} else {
+		slices.SortFunc(replicaInfosPendingUpdate, orderPCSReplicaInfo(pcs, minAvailableBreachedPCSReplicaIndices))
+	}
 	numReplicasToSelect := min(remainingSlots, len(replicaInfosPendingUpdate))
 	return append(selectedReplicaInfos, replicaInfosPendingUpdate[:numReplicasToSelect]...)
 }
 
-// orderPCSReplicaInfo returns a comparison function for prioritizing replica updates.
+// isSchedulingConfigRolloutInProgress reports whether the active update must recreate PCS replicas to
+// apply a scheduling configuration change.
+func isSchedulingConfigRolloutInProgress(pcs *grovecorev1beta1.PodCliqueSet) bool {
+	return componentutils.IsRollingUpdateInProgress(pcs) &&
+		pcs.Status.AppliedSchedulingConfigurationHash != nil &&
+		pcs.Status.UpdateProgress.TargetSchedulingConfigurationHash != *pcs.Status.AppliedSchedulingConfigurationHash
+}
+
+// orderPCSReplicaInfoBySchedulingConfigRolloutPriority orders PCS replicas for a scheduling configuration
+// rollout using these priority groups:
+//  1. replicas that had not converged to the superseded PCS generation and are currently unavailable
+//  2. replicas that had not converged to the superseded PCS generation and are currently available
+//  3. replicas that had converged to the superseded PCS generation.
+//
+// Replica indices are ordered ascending within each group. Replicas already selected for update are retained
+// separately and are not passed through this ordering.
+func orderPCSReplicaInfoBySchedulingConfigRolloutPriority(pcs *grovecorev1beta1.PodCliqueSet) func(a, b pcsReplicaInfo) int {
+	supersededGenerationHash := pcs.Status.UpdateProgress.SupersededGenerationHash
+	return func(a, b pcsReplicaInfo) int {
+		aConverged := supersededGenerationHash != nil && a.hasConvergedToPCSGeneration(pcs, *supersededGenerationHash)
+		bConverged := supersededGenerationHash != nil && b.hasConvergedToPCSGeneration(pcs, *supersededGenerationHash)
+		if aConverged != bConverged {
+			if aConverged {
+				return 1
+			}
+			return -1
+		}
+		if !aConverged {
+			aAvailable := a.isAvailable(pcs)
+			bAvailable := b.isAvailable(pcs)
+			if aAvailable != bAvailable {
+				if aAvailable {
+					return 1
+				}
+				return -1
+			}
+		}
+		return cmp.Compare(a.replicaIndex, b.replicaIndex)
+	}
+}
+
+// orderPCSReplicaInfo returns a comparison function for prioritizing ordinary replica updates.
 func orderPCSReplicaInfo(pcs *grovecorev1beta1.PodCliqueSet, minAvailableBreachedPCSReplicaIndices []int) func(a, b pcsReplicaInfo) int {
 	return func(a, b pcsReplicaInfo) int {
 		scheduledPodsInA, scheduledPodsInB := a.getNumScheduledPods(pcs), b.getNumScheduledPods(pcs)
@@ -287,6 +332,40 @@ func (pri *pcsReplicaInfo) isUpdateComplete(pcs *grovecorev1beta1.PodCliqueSet) 
 		return false
 	}
 	return true
+}
+
+// hasConvergedToPCSGeneration reports whether every expected standalone PodClique and
+// PodCliqueScalingGroup exists and reports the given PCS generation as current.
+func (pri *pcsReplicaInfo) hasConvergedToPCSGeneration(pcs *grovecorev1beta1.PodCliqueSet, generationHash string) bool {
+	if len(pri.pclqs) != len(componentutils.GetPodCliqueFQNsForPCSReplicaNotInPCSG(pcs, pri.replicaIndex)) {
+		return false
+	}
+	for i := range pri.pclqs {
+		currentGenerationHash := pri.pclqs[i].Status.CurrentPodCliqueSetGenerationHash
+		if currentGenerationHash == nil || *currentGenerationHash != generationHash {
+			return false
+		}
+	}
+	if len(pri.pcsgs) != len(pcs.Spec.Template.PodCliqueScalingGroupConfigs) {
+		return false
+	}
+	for i := range pri.pcsgs {
+		currentGenerationHash := pri.pcsgs[i].Status.CurrentPodCliqueSetGenerationHash
+		if currentGenerationHash == nil || *currentGenerationHash != generationHash {
+			return false
+		}
+	}
+	return true
+}
+
+// isAvailable reports whether every expected child exists and satisfies its availability requirement.
+func (pri *pcsReplicaInfo) isAvailable(pcs *grovecorev1beta1.PodCliqueSet) bool {
+	return componentutils.IsPCSReplicaAvailable(
+		len(componentutils.GetPodCliqueFQNsForPCSReplicaNotInPCSG(pcs, pri.replicaIndex)),
+		len(pcs.Spec.Template.PodCliqueScalingGroupConfigs),
+		pri.pclqs,
+		pri.pcsgs,
+	)
 }
 
 // getNumScheduledPods calculates total scheduled pods across PCLQs and PCSGs for a replica.
