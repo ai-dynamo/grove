@@ -405,6 +405,9 @@ func (r _resource) deleteTerminalPods(ctx context.Context, logger logr.Logger, s
 		if k8sutils.IsResourceTerminating(pod.ObjectMeta) || !isPodTerminal(pod) {
 			continue
 		}
+		// Logged before the delete so the cause stays visible once the Pod is gone.
+		logger.Info("Deleting Pod in a terminal phase", "pod", client.ObjectKeyFromObject(pod),
+			"phase", pod.Status.Phase, "reason", pod.Status.Reason, "message", pod.Status.Message)
 		deleteTasks = append(deleteTasks, r.createPodDeletionTask(logger, ss.pclq, pod))
 	}
 	if len(deleteTasks) == 0 {
@@ -420,7 +423,6 @@ func (r _resource) deleteTerminalPods(ctx context.Context, logger logr.Logger, s
 			fmt.Sprintf("failed to delete terminal Pods for PodClique %v", pclqObjectKey),
 		)
 	}
-	logger.Info("deleted terminal pods", "numPodsDeleted", len(deleteTasks))
 	return nil
 }
 
