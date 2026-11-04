@@ -19,11 +19,8 @@ import (
 
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
-	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
-
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/utils/ptr"
 )
 
@@ -38,14 +35,13 @@ func defaultPodCliqueSet(pcs *grovecorev1beta1.PodCliqueSet) {
 	if utils.IsEmptyStringType(pcs.Namespace) {
 		pcs.Namespace = metav1.NamespaceDefault
 	}
-	_, pcsgOwnedCliqueNames := componentutils.GetExpectedPCLQNamesGroupByOwner(pcs)
-	defaultPodCliqueSetSpec(&pcs.Spec, pcsgOwnedCliqueNames)
+	defaultPodCliqueSetSpec(&pcs.Spec)
 }
 
 // defaultPodCliqueSetSpec adds defaults to the specification of a PodCliqueSet.
-func defaultPodCliqueSetSpec(spec *grovecorev1beta1.PodCliqueSetSpec, pcsgOwnedCliqueNames sets.Set[string]) {
+func defaultPodCliqueSetSpec(spec *grovecorev1beta1.PodCliqueSetSpec) {
 	defaultUpdateStrategy(spec)
-	defaultPodCliqueSetTemplateSpec(&spec.Template, spec.UpdateStrategy.Type, pcsgOwnedCliqueNames)
+	defaultPodCliqueSetTemplateSpec(&spec.Template)
 }
 
 // defaultUpdateStrategy populates Spec.UpdateStrategy when it is unset and fills in its Type. The
@@ -62,9 +58,9 @@ func defaultUpdateStrategy(pcsSpec *grovecorev1beta1.PodCliqueSetSpec) {
 }
 
 // defaultPodCliqueSetTemplateSpec applies defaults to the template specification including cliques, scaling groups, and service configuration.
-func defaultPodCliqueSetTemplateSpec(spec *grovecorev1beta1.PodCliqueSetTemplateSpec, updateStrategy grovecorev1beta1.UpdateStrategyType, pcsgOwnedCliqueNames sets.Set[string]) {
-	spec.Cliques = defaultPodCliqueTemplateSpecs(spec.Cliques, updateStrategy, pcsgOwnedCliqueNames)
-	spec.PodCliqueScalingGroupConfigs = defaultPodCliqueScalingGroupConfigs(spec.PodCliqueScalingGroupConfigs, updateStrategy)
+func defaultPodCliqueSetTemplateSpec(spec *grovecorev1beta1.PodCliqueSetTemplateSpec) {
+	spec.Cliques = defaultPodCliqueTemplateSpecs(spec.Cliques)
+	spec.PodCliqueScalingGroupConfigs = defaultPodCliqueScalingGroupConfigs(spec.PodCliqueScalingGroupConfigs)
 	if spec.TerminationDelay == nil {
 		spec.TerminationDelay = &metav1.Duration{Duration: defaultTerminationDelay}
 	}
@@ -83,7 +79,7 @@ func defaultHeadlessServiceConfig(headlessServiceConfig *grovecorev1beta1.Headle
 }
 
 // defaultPodCliqueTemplateSpecs applies defaults to each PodClique template including replicas, minAvailable, and autoscaling configuration.
-func defaultPodCliqueTemplateSpecs(cliqueSpecs []*grovecorev1beta1.PodCliqueTemplateSpec, updateStrategy grovecorev1beta1.UpdateStrategyType, pcsgOwnedCliqueNames sets.Set[string]) []*grovecorev1beta1.PodCliqueTemplateSpec {
+func defaultPodCliqueTemplateSpecs(cliqueSpecs []*grovecorev1beta1.PodCliqueTemplateSpec) []*grovecorev1beta1.PodCliqueTemplateSpec {
 	defaultedCliqueSpecs := make([]*grovecorev1beta1.PodCliqueTemplateSpec, 0, len(cliqueSpecs))
 	for _, cliqueSpec := range cliqueSpecs {
 		defaultedCliqueSpec := cliqueSpec.DeepCopy()
@@ -96,18 +92,12 @@ func defaultPodCliqueTemplateSpecs(cliqueSpecs []*grovecorev1beta1.PodCliqueTemp
 				defaultedCliqueSpec.Spec.ScaleConfig.MinReplicas = ptr.To(ptr.Deref(defaultedCliqueSpec.Spec.MinAvailable, 0))
 			}
 		}
-		// A standalone PodClique carries its own RollingUpdate. A PCSG-owned PodClique is governed by
-		// its PodCliqueScalingGroup, and the validating webhook rejects a RollingUpdate set on it, so
-		// it is skipped here.
-		if !pcsgOwnedCliqueNames.Has(defaultedCliqueSpec.Name) {
-			defaultedCliqueSpec.RollingUpdate = defaultRollingUpdateConfiguration(defaultedCliqueSpec.RollingUpdate, updateStrategy, ptr.Deref(defaultedCliqueSpec.Spec.MinAvailable, defaultedCliqueSpec.Spec.Replicas))
-		}
 		defaultedCliqueSpecs = append(defaultedCliqueSpecs, defaultedCliqueSpec)
 	}
 	return defaultedCliqueSpecs
 }
 
-func defaultPodCliqueScalingGroupConfigs(scalingGroupConfigs []grovecorev1beta1.PodCliqueScalingGroupConfig, updateStrategy grovecorev1beta1.UpdateStrategyType) []grovecorev1beta1.PodCliqueScalingGroupConfig {
+func defaultPodCliqueScalingGroupConfigs(scalingGroupConfigs []grovecorev1beta1.PodCliqueScalingGroupConfig) []grovecorev1beta1.PodCliqueScalingGroupConfig {
 	defaultedScalingGroupConfigs := make([]grovecorev1beta1.PodCliqueScalingGroupConfig, 0, len(scalingGroupConfigs))
 	for _, scalingGroupConfig := range scalingGroupConfigs {
 		defaultedScalingGroupConfig := scalingGroupConfig.DeepCopy()
@@ -117,36 +107,9 @@ func defaultPodCliqueScalingGroupConfigs(scalingGroupConfigs []grovecorev1beta1.
 				defaultedScalingGroupConfig.ScaleConfig.MinReplicas = ptr.To(ptr.Deref(defaultedScalingGroupConfig.MinAvailable, 0))
 			}
 		}
-		defaultedScalingGroupConfig.RollingUpdate = defaultRollingUpdateConfiguration(defaultedScalingGroupConfig.RollingUpdate, updateStrategy, ptr.Deref(defaultedScalingGroupConfig.MinAvailable, 1))
 		defaultedScalingGroupConfigs = append(defaultedScalingGroupConfigs, *defaultedScalingGroupConfig)
 	}
 	return defaultedScalingGroupConfigs
-}
-
-// defaultRollingUpdateConfiguration fills a missing MaxUnavailable for the rolling update strategies
-// (Coherent, RollingRecreate). It never clears a consumer-populated RollingUpdate. For OnDelete the
-// validating webhook rejects a set RollingUpdate, so removing it is left to the consumer. Coherent
-// defaults MaxUnavailable to minAvailable, since the MVU sub-step takes down MinAvailable of the
-// component at once and that is the smallest internally consistent budget; RollingRecreate defaults
-// it to 1. ProgressDeadline is never defaulted, a nil value opts out of the deadline.
-func defaultRollingUpdateConfiguration(existing *grovecorev1beta1.RollingUpdateConfiguration, updateStrategy grovecorev1beta1.UpdateStrategyType, minAvailable int32) *grovecorev1beta1.RollingUpdateConfiguration {
-	if existing != nil && existing.MaxUnavailable != nil {
-		return existing
-	}
-	var maxUnavailable int32
-	switch updateStrategy {
-	case grovecorev1beta1.CoherentStrategy:
-		maxUnavailable = minAvailable
-	case grovecorev1beta1.RollingRecreateStrategy:
-		maxUnavailable = componentutils.DefaultRollingRecreateMaxUnavailable
-	default: // OnDelete or unknown, no defaulting
-		return existing
-	}
-	if existing == nil {
-		existing = &grovecorev1beta1.RollingUpdateConfiguration{}
-	}
-	existing.MaxUnavailable = ptr.To(maxUnavailable)
-	return existing
 }
 
 // defaultPodSpec adds defaults to PodSpec.
