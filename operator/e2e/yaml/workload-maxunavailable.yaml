@@ -1,7 +1,7 @@
 # Workload for MaxUnavailable>1 rolling update tests (RU22, RU23).
 # Standalone pc-a and PCSG sg-x each allow up to 2 units unavailable during a rolling update.
 ---
-apiVersion: grove.io/v1alpha1
+apiVersion: grove.io/v1beta1
 kind: PodCliqueSet
 metadata:
   name: workload-maxunavailable

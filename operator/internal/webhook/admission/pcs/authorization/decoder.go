@@ -19,7 +19,7 @@ import (
 	"fmt"
 
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	"github.com/go-logr/logr"
@@ -46,11 +46,11 @@ var (
 	serviceAccountGVK = corev1.SchemeGroupVersion.WithKind("ServiceAccount")
 	hpaV2GVK          = autoscalingv2.SchemeGroupVersion.WithKind("HorizontalPodAutoscaler")
 	hpaV1GVK          = autoscalingv1.SchemeGroupVersion.WithKind("HorizontalPodAutoscaler")
-	pcsGVK            = grovecorev1alpha1.SchemeGroupVersion.WithKind(constants.KindPodCliqueSet)
-	pcsgGVK           = grovecorev1alpha1.SchemeGroupVersion.WithKind(constants.KindPodCliqueScalingGroup)
-	pclqGVK           = grovecorev1alpha1.SchemeGroupVersion.WithKind(constants.KindPodClique)
+	pcsGVK            = grovecorev1beta1.SchemeGroupVersion.WithKind(constants.KindPodCliqueSet)
+	pcsgGVK           = grovecorev1beta1.SchemeGroupVersion.WithKind(constants.KindPodCliqueScalingGroup)
+	pclqGVK           = grovecorev1beta1.SchemeGroupVersion.WithKind(constants.KindPodClique)
 	podGangGVK        = groveschedulerv1alpha1.SchemeGroupVersion.WithKind(groveschedulerv1alpha1.KindPodGang)
-	podGangMapGVK     = grovecorev1alpha1.SchemeGroupVersion.WithKind(constants.KindPodGangMap)
+	podGangMapGVK     = grovecorev1beta1.SchemeGroupVersion.WithKind(constants.KindPodGangMap)
 
 	errDecodeRequestObject  = errors.New("failed to decode request")
 	errUnsupportedOperation = errors.New("unsupported operation")
@@ -75,6 +75,7 @@ func (d *requestDecoder) decode(logger logr.Logger, req admission.Request) (*met
 		Version: req.Kind.Version,
 		Kind:    req.Kind.Kind,
 	}
+	// The grove.io rule matches v1beta1 with matchPolicy Equivalent, so grove.io requests arrive with the v1beta1 kind.
 	switch reqGVK {
 	case pcsgGVK, pclqGVK, podGVK, serviceAccountGVK, serviceGVK, secretGVK, roleGVK, roleBindingGVK,
 		hpaV2GVK, hpaV1GVK, podGangMapGVK, podGangGVK:

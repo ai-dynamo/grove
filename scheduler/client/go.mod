@@ -1,6 +1,6 @@
 module github.com/ai-dynamo/grove/scheduler/client
 
-go 1.26.8
+go 1.26.10
 
 require (
 	github.com/ai-dynamo/grove/scheduler/api v0.0.0

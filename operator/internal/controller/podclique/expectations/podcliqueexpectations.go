@@ -18,7 +18,7 @@ import (
 	"fmt"
 	"strings"
 
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/expect"
 
 	"github.com/go-logr/logr"
@@ -36,7 +36,7 @@ const PodCliqueExpectationsIndexName = "byPodClique"
 // to the PodGang lets a PodClique whose pods span multiple PodGangs track each PodGang's create and
 // delete expectations separately. The key has the form "<namespace>/<pclq-name>/<podGangName>".
 func PodGangScopedExpectationsStoreKey(pclqObjMeta metav1.ObjectMeta, podGangName string) (string, error) {
-	pclqKey, err := cache.MetaNamespaceKeyFunc(&grovecorev1alpha1.PodClique{ObjectMeta: pclqObjMeta})
+	pclqKey, err := cache.MetaNamespaceKeyFunc(&grovecorev1beta1.PodClique{ObjectMeta: pclqObjMeta})
 	if err != nil {
 		return "", err
 	}
@@ -54,7 +54,7 @@ func PodCliqueExpectationsIndexers() cache.Indexers {
 
 // ClearPodCliqueExpectations removes every PodGang-scoped expectation recorded for the PodClique.
 func ClearPodCliqueExpectations(logger logr.Logger, store *expect.ExpectationsStore, pclqObjMeta metav1.ObjectMeta) error {
-	groupKey, err := cache.MetaNamespaceKeyFunc(&grovecorev1alpha1.PodClique{ObjectMeta: pclqObjMeta})
+	groupKey, err := cache.MetaNamespaceKeyFunc(&grovecorev1beta1.PodClique{ObjectMeta: pclqObjMeta})
 	if err != nil {
 		return err
 	}

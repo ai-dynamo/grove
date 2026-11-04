@@ -17,7 +17,7 @@ package kube
 import (
 	"testing"
 
-	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
+	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/stretchr/testify/assert"
@@ -28,12 +28,12 @@ import (
 func TestBackend_PreparePod(t *testing.T) {
 	cl := testutils.CreateDefaultFakeClient(nil)
 	recorder := record.NewFakeRecorder(10)
-	profile := configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKube}
+	profile := configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameKube}
 	b := New(cl, cl.Scheme(), recorder, profile)
 
 	pod := testutils.NewPodBuilder("test-pod", "default").Build()
 
 	require.NoError(t, b.PreparePod(pod))
 
-	assert.Equal(t, string(configv1alpha1.SchedulerNameKube), pod.Spec.SchedulerName)
+	assert.Equal(t, string(configv1beta1.SchedulerNameKube), pod.Spec.SchedulerName)
 }

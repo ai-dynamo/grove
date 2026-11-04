@@ -15,14 +15,16 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	apicommonconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
-	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
+	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 	"github.com/ai-dynamo/grove/operator/cmd/cli"
 	"github.com/ai-dynamo/grove/operator/internal/clustertopology"
 	grovectrl "github.com/ai-dynamo/grove/operator/internal/controller"
@@ -34,6 +36,7 @@ import (
 	groveversion "github.com/ai-dynamo/grove/operator/internal/version"
 
 	"github.com/spf13/pflag"
+	"k8s.io/apimachinery/pkg/util/wait"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -43,7 +46,7 @@ var (
 )
 
 func main() {
-	ctrl.SetLogger(grovelogger.MustNewLogger(false, configv1alpha1.InfoLevel, configv1alpha1.LogFormatJSON))
+	ctrl.SetLogger(grovelogger.MustNewLogger(false, configv1beta1.InfoLevel, configv1beta1.LogFormatJSON))
 	groveInfo := groveversion.New()
 
 	launchOpts, err := cli.ParseLaunchOptions(os.Args[1:])
@@ -54,10 +57,13 @@ func main() {
 		_, _ = fmt.Fprintf(io.Writer(os.Stdout), "%s %v\n", apicommonconstants.OperatorName, groveInfo)
 		os.Exit(cli.ExitSuccess)
 	}
-	operatorConfig, err := launchOpts.LoadAndValidateOperatorConfig()
+	operatorConfig, configWarnings, err := launchOpts.LoadAndValidateOperatorConfig()
 	if err != nil {
 		logger.Error(err, "failed to load operator config")
 		handleErrorAndExit(err, cli.ExitErrLoadOperatorConfig)
+	}
+	for _, warning := range configWarnings {
+		logger.Info(warning)
 	}
 
 	logger.Info("Starting grove operator", "grove-info", groveInfo.Verbose())
@@ -107,13 +113,6 @@ func main() {
 		handleErrorAndExit(err, cli.ExitErrSynchronizeTopology)
 	}
 
-	// Close the PodGang migration gate on legacy PodCliqueSets before the controllers start, so that
-	// scaling reconcilers do not race the in-reconcile migration to the epoch-based PodGang scheme.
-	if err = podgangmigrator.SetMigrationGateForLegacyPodCliqueSets(ctx, cl, logger); err != nil {
-		logger.Error(err, "failed to set the PodGang migration gate on legacy PodCliqueSets")
-		handleErrorAndExit(err, cli.ExitErrSetPodGangMigrationGate)
-	}
-
 	webhookCertsReadyCh := make(chan struct{})
 	if err = cert.ManageWebhookCerts(
 		ctx,
@@ -134,11 +133,19 @@ func main() {
 		handleErrorAndExit(err, cli.ExitErrInitializeManager)
 	}
 
-	// Certificates need to be generated before the webhooks are started, which can only happen once the manager is started.
-	// Block while generating the certificates, and then start the webhooks.
+	// The manager must start cert-controller before the webhook server tries to read its serving certificate.
+	// Once the certificates and webhook server are ready, set the migration gate before adding controllers.
 	go func() {
-		if err = grovectrl.RegisterControllersAndWebhooks(mgr, logger, operatorConfig, webhookCertsReadyCh, schedRegistry); err != nil {
-			logger.Error(err, "failed to initialize grove controller manager")
+		if err := grovectrl.StartWebhooksAfterCertificateInjection(ctx, mgr, logger, operatorConfig, webhookCertsReadyCh, schedRegistry); err != nil {
+			logger.Error(err, "failed to start webhooks")
+			handleErrorAndExit(err, cli.ExitErrInitializeManager)
+		}
+		if err := setPodGangMigrationGate(ctx, cl); err != nil {
+			logger.Error(err, "failed to set the PodGang migration gate on legacy PodCliqueSets")
+			handleErrorAndExit(err, cli.ExitErrSetPodGangMigrationGate)
+		}
+		if err := grovectrl.RegisterControllers(mgr, operatorConfig, schedRegistry); err != nil {
+			logger.Error(err, "failed to register controllers")
 			handleErrorAndExit(err, cli.ExitErrInitializeManager)
 		}
 	}()
@@ -148,6 +155,24 @@ func main() {
 		logger.Error(err, "Error starting controller manager")
 		handleErrorAndExit(err, cli.ExitErrStart)
 	}
+}
+
+// setPodGangMigrationGate closes the PodGang migration gate on legacy PodCliqueSets before the controllers
+// start, so that scaling reconcilers do not race the in-reconcile migration to the epoch-based PodGang scheme.
+// PodCliqueSets are read through the conversion webhook, which becomes reachable only once this replica is
+// ready and the CRDs carry its CA, so the gate is retried.
+func setPodGangMigrationGate(ctx context.Context, cl client.Client) error {
+	var lastErr error
+	if err := wait.PollUntilContextTimeout(ctx, 2*time.Second, 5*time.Minute, true, func(ctx context.Context) (bool, error) {
+		lastErr = podgangmigrator.SetMigrationGateForLegacyPodCliqueSets(ctx, cl, logger)
+		if lastErr != nil {
+			logger.Info("Retrying the PodGang migration gate", "error", lastErr.Error())
+		}
+		return lastErr == nil, nil
+	}); err != nil {
+		return fmt.Errorf("failed to set the PodGang migration gate on legacy PodCliqueSets: %w", errors.Join(err, lastErr))
+	}
+	return nil
 }
 
 func printFlags() {

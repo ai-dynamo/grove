@@ -21,6 +21,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/pem"
 	"fmt"
 	"net"
@@ -31,7 +32,7 @@ import (
 	"testing"
 	"time"
 
-	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
+	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 	"github.com/ai-dynamo/grove/operator/e2e/grove/workload"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/k8sclient"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/pods"
@@ -39,10 +40,12 @@ import (
 	"github.com/ai-dynamo/grove/operator/e2e/setup"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
 	"github.com/ai-dynamo/grove/operator/e2e/waiter"
+	conversionwebhook "github.com/ai-dynamo/grove/operator/internal/webhook/conversion"
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/rest"
@@ -56,10 +59,10 @@ import (
 func certManagerGroveConfig() *setup.GroveConfig {
 	return &setup.GroveConfig{
 		Webhooks: setup.WebhooksConfig{
-			CertProvisionMode: configv1alpha1.CertProvisionModeManual,
-			SecretName:        configv1alpha1.DefaultWebhookSecretName,
+			CertProvisionMode: configv1beta1.CertProvisionModeManual,
+			SecretName:        configv1beta1.DefaultWebhookSecretName,
 			Annotations: map[string]string{
-				"cert-manager.io/inject-ca-from": "grove-system/" + configv1alpha1.DefaultWebhookSecretName,
+				"cert-manager.io/inject-ca-from": "grove-system/" + configv1beta1.DefaultWebhookSecretName,
 			},
 		},
 	}
@@ -72,8 +75,8 @@ func certManagerGroveConfig() *setup.GroveConfig {
 func autoProvisionGroveConfig() *setup.GroveConfig {
 	return &setup.GroveConfig{
 		Webhooks: setup.WebhooksConfig{
-			CertProvisionMode: configv1alpha1.CertProvisionModeAuto,
-			SecretName:        configv1alpha1.DefaultWebhookSecretName,
+			CertProvisionMode: configv1beta1.CertProvisionModeAuto,
+			SecretName:        configv1beta1.DefaultWebhookSecretName,
 		},
 	}
 }
@@ -189,7 +192,10 @@ func Test_CM1_CertManagementRoundTrip(t *testing.T) {
 	// Wait for cert-manager to actually take over the secret.
 	// This is critical because the secret may already exist from auto-provision mode,
 	// and we need to wait for cert-manager to update it (not just check existence).
-	waitForSecretManagedByCertManager(t, ctx, tc.Client, configv1alpha1.DefaultWebhookSecretName)
+	waitForSecretManagedByCertManager(t, ctx, tc.Client, configv1beta1.DefaultWebhookSecretName)
+	if err := configureCertManagerConversionCAInjection(ctx, tc.Client, true); err != nil {
+		t.Fatalf("Failed to configure cert-manager CA injection for conversion webhooks: %v", err)
+	}
 
 	Logger.Info("3. Upgrade Grove to use cert-manager (certProvisionMode=manual)")
 	updateGroveToCertManager(t, ctx, tc.Client.RestConfig)
@@ -210,12 +216,15 @@ func Test_CM1_CertManagementRoundTrip(t *testing.T) {
 	}
 
 	Logger.Info("6. Remove cert-manager resources")
+	if err := configureCertManagerConversionCAInjection(ctx, tc.Client, false); err != nil {
+		t.Fatalf("Failed to remove cert-manager CA injection from conversion webhooks: %v", err)
+	}
 	deleteCertManagerResources(ctx, tc.Client)
-	waitForSecret(t, ctx, tc.Client, configv1alpha1.DefaultWebhookSecretName, false)
+	waitForSecret(t, ctx, tc.Client, configv1beta1.DefaultWebhookSecretName, false)
 
 	Logger.Info("7. Upgrade Grove back to auto-provision mode")
 	updateGroveToAutoProvision(t, ctx, tc.Client.RestConfig)
-	waitForSecret(t, ctx, tc.Client, configv1alpha1.DefaultWebhookSecretName, true)
+	waitForSecret(t, ctx, tc.Client, configv1beta1.DefaultWebhookSecretName, true)
 
 	Logger.Info("8. Verify auto-provision mode is active")
 	verifyAutoProvisionMode(t, ctx, tc.Client)
@@ -298,6 +307,36 @@ func waitForSecretManagedByCertManager(t *testing.T, ctx context.Context, k8sCli
 	}
 }
 
+func configureCertManagerConversionCAInjection(ctx context.Context, k8sClient *k8sclient.Client, enabled bool) error {
+	for _, crdName := range conversionwebhook.ConvertedCRDNames() {
+		crd := &unstructured.Unstructured{}
+		crd.SetGroupVersionKind(schema.GroupVersionKind{
+			Group:   "apiextensions.k8s.io",
+			Version: "v1",
+			Kind:    "CustomResourceDefinition",
+		})
+		if err := k8sClient.Get(ctx, types.NamespacedName{Name: crdName}, crd); err != nil {
+			return fmt.Errorf("failed to get CRD %s: %w", crdName, err)
+		}
+
+		base := crd.DeepCopy()
+		annotations := crd.GetAnnotations()
+		if annotations == nil {
+			annotations = make(map[string]string)
+		}
+		if enabled {
+			annotations[certManagerInjectAnnotation] = groveNamespace + "/" + configv1beta1.DefaultWebhookSecretName
+		} else {
+			delete(annotations, certManagerInjectAnnotation)
+		}
+		crd.SetAnnotations(annotations)
+		if err := k8sClient.Patch(ctx, crd, client.MergeFrom(base)); err != nil {
+			return fmt.Errorf("failed to update CA injection annotation on CRD %s: %w", crdName, err)
+		}
+	}
+	return nil
+}
+
 func deleteCertManagerResources(ctx context.Context, k8sClient *k8sclient.Client) {
 	certGVK := certManagerCertificate
 	issuerGVK := certManagerClusterIssuer
@@ -305,14 +344,14 @@ func deleteCertManagerResources(ctx context.Context, k8sClient *k8sclient.Client
 	// Delete Certificate first (cert-manager resource)
 	certObj := &unstructured.Unstructured{}
 	certObj.SetGroupVersionKind(certGVK)
-	certObj.SetName(configv1alpha1.DefaultWebhookSecretName)
+	certObj.SetName(configv1beta1.DefaultWebhookSecretName)
 	certObj.SetNamespace(groveNamespace)
 	if err := k8sClient.Delete(ctx, certObj); err != nil {
 		Logger.Warnf("Failed to delete Certificate (may not exist): %v", err)
 	}
 
 	// Delete the Secret managed by cert-manager
-	if err := k8sClient.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: configv1alpha1.DefaultWebhookSecretName, Namespace: groveNamespace}}); err != nil {
+	if err := k8sClient.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: configv1beta1.DefaultWebhookSecretName, Namespace: groveNamespace}}); err != nil {
 		Logger.Warnf("Failed to delete Secret (may not exist): %v", err)
 	}
 
@@ -517,8 +556,8 @@ func getWebhookConfigAnnotations(ctx context.Context, k8sClient *k8sclient.Clien
 // If expectManaged is true, it verifies cert-manager annotations exist; if false, it verifies they are absent.
 func verifyWebhookSecretCertManagerStatus(ctx context.Context, k8sClient *k8sclient.Client, expectManaged bool) error {
 	var secret corev1.Secret
-	if err := k8sClient.Get(ctx, types.NamespacedName{Namespace: groveNamespace, Name: configv1alpha1.DefaultWebhookSecretName}, &secret); err != nil {
-		return fmt.Errorf("failed to get secret %s/%s: %w", groveNamespace, configv1alpha1.DefaultWebhookSecretName, err)
+	if err := k8sClient.Get(ctx, types.NamespacedName{Namespace: groveNamespace, Name: configv1beta1.DefaultWebhookSecretName}, &secret); err != nil {
+		return fmt.Errorf("failed to get secret %s/%s: %w", groveNamespace, configv1beta1.DefaultWebhookSecretName, err)
 	}
 
 	// Check for cert-manager certificate name annotation
@@ -526,13 +565,13 @@ func verifyWebhookSecretCertManagerStatus(ctx context.Context, k8sClient *k8scli
 	isManagedByCertManager := certName != ""
 
 	if expectManaged && !isManagedByCertManager {
-		return fmt.Errorf("secret %s is not managed by cert-manager (missing %s annotation)", configv1alpha1.DefaultWebhookSecretName, certManagerCertNameAnnotation)
+		return fmt.Errorf("secret %s is not managed by cert-manager (missing %s annotation)", configv1beta1.DefaultWebhookSecretName, certManagerCertNameAnnotation)
 	}
 	if !expectManaged && isManagedByCertManager {
-		return fmt.Errorf("secret %s is unexpectedly managed by cert-manager (has %s=%s)", configv1alpha1.DefaultWebhookSecretName, certManagerCertNameAnnotation, certName)
+		return fmt.Errorf("secret %s is unexpectedly managed by cert-manager (has %s=%s)", configv1beta1.DefaultWebhookSecretName, certManagerCertNameAnnotation, certName)
 	}
 
-	Logger.Debugf("Secret %s: managed by cert-manager=%v (expected=%v)", configv1alpha1.DefaultWebhookSecretName, isManagedByCertManager, expectManaged)
+	Logger.Debugf("Secret %s: managed by cert-manager=%v (expected=%v)", configv1beta1.DefaultWebhookSecretName, isManagedByCertManager, expectManaged)
 	return nil
 }
 
@@ -608,8 +647,11 @@ func waitForWebhookCABundlesToTrustServingCertificate(t *testing.T, ctx context.
 		testctx.DefaultPollTimeout,
 		true,
 		func(ctx context.Context) (bool, error) {
-			lastErr = verifyWebhookCABundlesTrustCertificate(ctx, k8sClient, servedCertificate)
-			return lastErr == nil, nil
+			verificationErr := verifyWebhookCABundlesTrustCertificate(ctx, k8sClient, servedCertificate)
+			if verificationErr != nil && (lastErr == nil || ctx.Err() == nil) {
+				lastErr = verificationErr
+			}
+			return verificationErr == nil, nil
 		},
 	); err != nil {
 		t.Fatalf("Webhook CA bundles did not trust the served certificate (serial %s): %v: %v",
@@ -618,7 +660,8 @@ func waitForWebhookCABundlesToTrustServingCertificate(t *testing.T, ctx context.
 }
 
 // verifyWebhookCABundlesTrustCertificate verifies that every expected Grove admission webhook CA
-// bundle trusts certificate for the Grove webhook service DNS name.
+// bundle, and the conversion webhook CA bundle of every converted Grove CRD, trusts certificate for
+// the Grove webhook service DNS name.
 func verifyWebhookCABundlesTrustCertificate(ctx context.Context, k8sClient *k8sclient.Client, certificate *x509.Certificate) error {
 	for _, config := range webhookConfigs {
 		caBundles, err := getWebhookCABundles(ctx, k8sClient, config)
@@ -626,24 +669,59 @@ func verifyWebhookCABundlesTrustCertificate(ctx context.Context, k8sClient *k8sc
 			return err
 		}
 		for webhookName, caBundle := range caBundles {
-			if len(caBundle) == 0 {
-				return fmt.Errorf("webhook configuration %s entry %s has an empty caBundle", config.name, webhookName)
-			}
-
-			roots := x509.NewCertPool()
-			if !roots.AppendCertsFromPEM(caBundle) {
-				return fmt.Errorf("webhook configuration %s entry %s has an invalid PEM caBundle", config.name, webhookName)
-			}
-			if _, err := certificate.Verify(x509.VerifyOptions{
-				DNSName: "grove-operator.grove-system.svc",
-				Roots:   roots,
-			}); err != nil {
-				return fmt.Errorf("webhook configuration %s entry %s does not trust served certificate serial %s: %w",
-					config.name, webhookName, certificate.SerialNumber, err)
+			owner := fmt.Sprintf("webhook configuration %s entry %s", config.name, webhookName)
+			if err := verifyCABundleTrustsCertificate(owner, caBundle, certificate); err != nil {
+				return err
 			}
 		}
 	}
+	for _, crdName := range conversionwebhook.ConvertedCRDNames() {
+		caBundle, err := getCRDConversionCABundle(ctx, k8sClient, crdName)
+		if err != nil {
+			return err
+		}
+		if err := verifyCABundleTrustsCertificate("conversion webhook of CRD "+crdName, caBundle, certificate); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+// verifyCABundleTrustsCertificate verifies that the PEM caBundle of owner trusts certificate for the Grove
+// webhook service DNS name.
+func verifyCABundleTrustsCertificate(owner string, caBundle []byte, certificate *x509.Certificate) error {
+	if len(caBundle) == 0 {
+		return fmt.Errorf("%s has an empty caBundle", owner)
+	}
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(caBundle) {
+		return fmt.Errorf("%s has an invalid PEM caBundle", owner)
+	}
+	if _, err := certificate.Verify(x509.VerifyOptions{
+		DNSName: "grove-operator.grove-system.svc",
+		Roots:   roots,
+	}); err != nil {
+		return fmt.Errorf("%s does not trust served certificate serial %s: %w", owner, certificate.SerialNumber, err)
+	}
+	return nil
+}
+
+// getCRDConversionCABundle returns the decoded caBundle of the conversion webhook of the named CRD.
+func getCRDConversionCABundle(ctx context.Context, k8sClient *k8sclient.Client, crdName string) ([]byte, error) {
+	crd := &unstructured.Unstructured{}
+	crd.SetGroupVersionKind(schema.GroupVersionKind{Group: "apiextensions.k8s.io", Version: "v1", Kind: "CustomResourceDefinition"})
+	if err := k8sClient.Get(ctx, types.NamespacedName{Name: crdName}, crd); err != nil {
+		return nil, fmt.Errorf("failed to get CRD %s: %w", crdName, err)
+	}
+	encoded, _, err := unstructured.NestedString(crd.Object, "spec", "conversion", "webhook", "clientConfig", "caBundle")
+	if err != nil {
+		return nil, fmt.Errorf("failed to read the conversion caBundle of CRD %s: %w", crdName, err)
+	}
+	caBundle, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode the conversion caBundle of CRD %s: %w", crdName, err)
+	}
+	return caBundle, nil
 }
 
 // getWebhookCABundles returns each webhook entry name and CA bundle from the expected validating or
@@ -676,7 +754,7 @@ func getWebhookCABundles(ctx context.Context, k8sClient *k8sclient.Client, confi
 // getCertificateFromSecret retrieves and parses the TLS certificate from the webhook Secret.
 func getCertificateFromSecret(ctx context.Context, k8sClient *k8sclient.Client) (*x509.Certificate, error) {
 	var secret corev1.Secret
-	if err := k8sClient.Get(ctx, types.NamespacedName{Namespace: groveNamespace, Name: configv1alpha1.DefaultWebhookSecretName}, &secret); err != nil {
+	if err := k8sClient.Get(ctx, types.NamespacedName{Namespace: groveNamespace, Name: configv1beta1.DefaultWebhookSecretName}, &secret); err != nil {
 		return nil, fmt.Errorf("failed to get secret: %w", err)
 	}
 

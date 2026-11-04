@@ -25,10 +25,9 @@ import (
 	"time"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
-	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
+	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 	groveclientscheme "github.com/ai-dynamo/grove/operator/internal/client"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
-	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
@@ -54,25 +53,25 @@ import (
 func TestCreateManagerOptions(t *testing.T) {
 	// Test with minimal configuration
 	t.Run("minimal configuration", func(t *testing.T) {
-		cfg := &configv1alpha1.OperatorConfiguration{
-			Server: configv1alpha1.ServerConfiguration{
-				Metrics: &configv1alpha1.Server{
+		cfg := &configv1beta1.OperatorConfiguration{
+			Server: configv1beta1.ServerConfiguration{
+				Metrics: &configv1beta1.Server{
 					BindAddress: "0.0.0.0",
 					Port:        8080,
 				},
-				HealthProbes: &configv1alpha1.Server{
+				HealthProbes: &configv1beta1.Server{
 					BindAddress: "0.0.0.0",
 					Port:        8081,
 				},
-				Webhooks: configv1alpha1.WebhookServer{
-					Server: configv1alpha1.Server{
+				Webhooks: configv1beta1.WebhookServer{
+					Server: configv1beta1.Server{
 						BindAddress: "0.0.0.0",
 						Port:        9443,
 					},
 					ServerCertDir: "/tmp/certs",
 				},
 			},
-			LeaderElection: configv1alpha1.LeaderElectionConfiguration{
+			LeaderElection: configv1beta1.LeaderElectionConfiguration{
 				Enabled:           false,
 				ResourceName:      "operator-lock",
 				ResourceLock:      "leases",
@@ -101,25 +100,25 @@ func TestCreateManagerOptions(t *testing.T) {
 
 	// Test with leader election enabled
 	t.Run("leader election enabled", func(t *testing.T) {
-		cfg := &configv1alpha1.OperatorConfiguration{
-			Server: configv1alpha1.ServerConfiguration{
-				Metrics: &configv1alpha1.Server{
+		cfg := &configv1beta1.OperatorConfiguration{
+			Server: configv1beta1.ServerConfiguration{
+				Metrics: &configv1beta1.Server{
 					BindAddress: "127.0.0.1",
 					Port:        9090,
 				},
-				HealthProbes: &configv1alpha1.Server{
+				HealthProbes: &configv1beta1.Server{
 					BindAddress: "127.0.0.1",
 					Port:        9091,
 				},
-				Webhooks: configv1alpha1.WebhookServer{
-					Server: configv1alpha1.Server{
+				Webhooks: configv1beta1.WebhookServer{
+					Server: configv1beta1.Server{
 						BindAddress: "0.0.0.0",
 						Port:        9443,
 					},
 					ServerCertDir: "/tmp/certs",
 				},
 			},
-			LeaderElection: configv1alpha1.LeaderElectionConfiguration{
+			LeaderElection: configv1beta1.LeaderElectionConfiguration{
 				Enabled:           true,
 				ResourceName:      "grove-operator-leader",
 				ResourceLock:      "leases",
@@ -144,30 +143,30 @@ func TestCreateManagerOptions(t *testing.T) {
 
 	// Test with profiling enabled (default port)
 	t.Run("profiling enabled", func(t *testing.T) {
-		cfg := &configv1alpha1.OperatorConfiguration{
-			Server: configv1alpha1.ServerConfiguration{
-				Metrics: &configv1alpha1.Server{
+		cfg := &configv1beta1.OperatorConfiguration{
+			Server: configv1beta1.ServerConfiguration{
+				Metrics: &configv1beta1.Server{
 					BindAddress: "0.0.0.0",
 					Port:        8080,
 				},
-				HealthProbes: &configv1alpha1.Server{
+				HealthProbes: &configv1beta1.Server{
 					BindAddress: "0.0.0.0",
 					Port:        8081,
 				},
-				Webhooks: configv1alpha1.WebhookServer{
-					Server: configv1alpha1.Server{
+				Webhooks: configv1beta1.WebhookServer{
+					Server: configv1beta1.Server{
 						BindAddress: "0.0.0.0",
 						Port:        9443,
 					},
 					ServerCertDir: "/tmp/certs",
 				},
 			},
-			LeaderElection: configv1alpha1.LeaderElectionConfiguration{
+			LeaderElection: configv1beta1.LeaderElectionConfiguration{
 				Enabled:      false,
 				ResourceName: "operator-lock",
 				ResourceLock: "leases",
 			},
-			Debugging: &configv1alpha1.DebuggingConfiguration{
+			Debugging: &configv1beta1.DebuggingConfiguration{
 				EnableProfiling: ptr.To(true),
 				PprofBindHost:   ptr.To("127.0.0.1"),
 				PprofBindPort:   ptr.To(2753),
@@ -180,30 +179,30 @@ func TestCreateManagerOptions(t *testing.T) {
 	})
 
 	t.Run("profiling enabled with custom bind address", func(t *testing.T) {
-		cfg := &configv1alpha1.OperatorConfiguration{
-			Server: configv1alpha1.ServerConfiguration{
-				Metrics: &configv1alpha1.Server{
+		cfg := &configv1beta1.OperatorConfiguration{
+			Server: configv1beta1.ServerConfiguration{
+				Metrics: &configv1beta1.Server{
 					BindAddress: "0.0.0.0",
 					Port:        8080,
 				},
-				HealthProbes: &configv1alpha1.Server{
+				HealthProbes: &configv1beta1.Server{
 					BindAddress: "0.0.0.0",
 					Port:        8081,
 				},
-				Webhooks: configv1alpha1.WebhookServer{
-					Server: configv1alpha1.Server{
+				Webhooks: configv1beta1.WebhookServer{
+					Server: configv1beta1.Server{
 						BindAddress: "0.0.0.0",
 						Port:        9443,
 					},
 					ServerCertDir: "/tmp/certs",
 				},
 			},
-			LeaderElection: configv1alpha1.LeaderElectionConfiguration{
+			LeaderElection: configv1beta1.LeaderElectionConfiguration{
 				Enabled:      false,
 				ResourceName: "operator-lock",
 				ResourceLock: "leases",
 			},
-			Debugging: &configv1alpha1.DebuggingConfiguration{
+			Debugging: &configv1beta1.DebuggingConfiguration{
 				EnableProfiling: ptr.To(true),
 				PprofBindHost:   ptr.To("127.0.0.1"),
 				PprofBindPort:   ptr.To(9999),
@@ -216,30 +215,30 @@ func TestCreateManagerOptions(t *testing.T) {
 	})
 
 	t.Run("profiling enabled with IPv6 bind host", func(t *testing.T) {
-		cfg := &configv1alpha1.OperatorConfiguration{
-			Server: configv1alpha1.ServerConfiguration{
-				Metrics: &configv1alpha1.Server{
+		cfg := &configv1beta1.OperatorConfiguration{
+			Server: configv1beta1.ServerConfiguration{
+				Metrics: &configv1beta1.Server{
 					BindAddress: "0.0.0.0",
 					Port:        8080,
 				},
-				HealthProbes: &configv1alpha1.Server{
+				HealthProbes: &configv1beta1.Server{
 					BindAddress: "0.0.0.0",
 					Port:        8081,
 				},
-				Webhooks: configv1alpha1.WebhookServer{
-					Server: configv1alpha1.Server{
+				Webhooks: configv1beta1.WebhookServer{
+					Server: configv1beta1.Server{
 						BindAddress: "0.0.0.0",
 						Port:        9443,
 					},
 					ServerCertDir: "/tmp/certs",
 				},
 			},
-			LeaderElection: configv1alpha1.LeaderElectionConfiguration{
+			LeaderElection: configv1beta1.LeaderElectionConfiguration{
 				Enabled:      false,
 				ResourceName: "operator-lock",
 				ResourceLock: "leases",
 			},
-			Debugging: &configv1alpha1.DebuggingConfiguration{
+			Debugging: &configv1beta1.DebuggingConfiguration{
 				EnableProfiling: ptr.To(true),
 				PprofBindHost:   ptr.To("::1"),
 				PprofBindPort:   ptr.To(2753),
@@ -252,30 +251,30 @@ func TestCreateManagerOptions(t *testing.T) {
 	})
 
 	t.Run("profiling enabled with defaults", func(t *testing.T) {
-		cfg := &configv1alpha1.OperatorConfiguration{
-			Server: configv1alpha1.ServerConfiguration{
-				Metrics: &configv1alpha1.Server{
+		cfg := &configv1beta1.OperatorConfiguration{
+			Server: configv1beta1.ServerConfiguration{
+				Metrics: &configv1beta1.Server{
 					BindAddress: "0.0.0.0",
 					Port:        8080,
 				},
-				HealthProbes: &configv1alpha1.Server{
+				HealthProbes: &configv1beta1.Server{
 					BindAddress: "0.0.0.0",
 					Port:        8081,
 				},
-				Webhooks: configv1alpha1.WebhookServer{
-					Server: configv1alpha1.Server{
+				Webhooks: configv1beta1.WebhookServer{
+					Server: configv1beta1.Server{
 						BindAddress: "0.0.0.0",
 						Port:        9443,
 					},
 					ServerCertDir: "/tmp/certs",
 				},
 			},
-			LeaderElection: configv1alpha1.LeaderElectionConfiguration{
+			LeaderElection: configv1beta1.LeaderElectionConfiguration{
 				Enabled:      false,
 				ResourceName: "operator-lock",
 				ResourceLock: "leases",
 			},
-			Debugging: &configv1alpha1.DebuggingConfiguration{
+			Debugging: &configv1beta1.DebuggingConfiguration{
 				EnableProfiling: ptr.To(true),
 				PprofBindHost:   ptr.To("127.0.0.1"),
 				PprofBindPort:   ptr.To(2753),
@@ -289,30 +288,30 @@ func TestCreateManagerOptions(t *testing.T) {
 
 	// Test with profiling explicitly disabled
 	t.Run("profiling disabled", func(t *testing.T) {
-		cfg := &configv1alpha1.OperatorConfiguration{
-			Server: configv1alpha1.ServerConfiguration{
-				Metrics: &configv1alpha1.Server{
+		cfg := &configv1beta1.OperatorConfiguration{
+			Server: configv1beta1.ServerConfiguration{
+				Metrics: &configv1beta1.Server{
 					BindAddress: "0.0.0.0",
 					Port:        8080,
 				},
-				HealthProbes: &configv1alpha1.Server{
+				HealthProbes: &configv1beta1.Server{
 					BindAddress: "0.0.0.0",
 					Port:        8081,
 				},
-				Webhooks: configv1alpha1.WebhookServer{
-					Server: configv1alpha1.Server{
+				Webhooks: configv1beta1.WebhookServer{
+					Server: configv1beta1.Server{
 						BindAddress: "0.0.0.0",
 						Port:        9443,
 					},
 					ServerCertDir: "/tmp/certs",
 				},
 			},
-			LeaderElection: configv1alpha1.LeaderElectionConfiguration{
+			LeaderElection: configv1beta1.LeaderElectionConfiguration{
 				Enabled:      false,
 				ResourceName: "operator-lock",
 				ResourceLock: "leases",
 			},
-			Debugging: &configv1alpha1.DebuggingConfiguration{
+			Debugging: &configv1beta1.DebuggingConfiguration{
 				EnableProfiling: ptr.To(false),
 			},
 		}
@@ -324,25 +323,25 @@ func TestCreateManagerOptions(t *testing.T) {
 
 	// Test that cache is configured with managed-by label selectors for all core types
 	t.Run("core types filtered by managed-by label", func(t *testing.T) {
-		cfg := &configv1alpha1.OperatorConfiguration{
-			Server: configv1alpha1.ServerConfiguration{
-				Metrics: &configv1alpha1.Server{
+		cfg := &configv1beta1.OperatorConfiguration{
+			Server: configv1beta1.ServerConfiguration{
+				Metrics: &configv1beta1.Server{
 					BindAddress: "0.0.0.0",
 					Port:        8080,
 				},
-				HealthProbes: &configv1alpha1.Server{
+				HealthProbes: &configv1beta1.Server{
 					BindAddress: "0.0.0.0",
 					Port:        8081,
 				},
-				Webhooks: configv1alpha1.WebhookServer{
-					Server: configv1alpha1.Server{
+				Webhooks: configv1beta1.WebhookServer{
+					Server: configv1beta1.Server{
 						BindAddress: "0.0.0.0",
 						Port:        9443,
 					},
 					ServerCertDir: "/tmp/certs",
 				},
 			},
-			LeaderElection: configv1alpha1.LeaderElectionConfiguration{
+			LeaderElection: configv1beta1.LeaderElectionConfiguration{
 				Enabled:      false,
 				ResourceName: "operator-lock",
 				ResourceLock: "leases",
@@ -390,25 +389,25 @@ func TestCreateManagerOptions(t *testing.T) {
 
 	// Test with no debugging configuration
 	t.Run("no debugging configuration", func(t *testing.T) {
-		cfg := &configv1alpha1.OperatorConfiguration{
-			Server: configv1alpha1.ServerConfiguration{
-				Metrics: &configv1alpha1.Server{
+		cfg := &configv1beta1.OperatorConfiguration{
+			Server: configv1beta1.ServerConfiguration{
+				Metrics: &configv1beta1.Server{
 					BindAddress: "0.0.0.0",
 					Port:        8080,
 				},
-				HealthProbes: &configv1alpha1.Server{
+				HealthProbes: &configv1beta1.Server{
 					BindAddress: "0.0.0.0",
 					Port:        8081,
 				},
-				Webhooks: configv1alpha1.WebhookServer{
-					Server: configv1alpha1.Server{
+				Webhooks: configv1beta1.WebhookServer{
+					Server: configv1beta1.Server{
 						BindAddress: "0.0.0.0",
 						Port:        9443,
 					},
 					ServerCertDir: "/tmp/certs",
 				},
 			},
-			LeaderElection: configv1alpha1.LeaderElectionConfiguration{
+			LeaderElection: configv1beta1.LeaderElectionConfiguration{
 				Enabled:      false,
 				ResourceName: "operator-lock",
 				ResourceLock: "leases",
@@ -437,8 +436,8 @@ func TestGetRestConfig(t *testing.T) {
 			}
 		}
 
-		cfg := &configv1alpha1.OperatorConfiguration{
-			ClientConnection: configv1alpha1.ClientConnectionConfiguration{
+		cfg := &configv1beta1.OperatorConfiguration{
+			ClientConnection: configv1beta1.ClientConnectionConfiguration{
 				QPS:                100.0,
 				Burst:              200,
 				ContentType:        "application/json",
@@ -566,30 +565,30 @@ func TestCreateManager(t *testing.T) {
 			return rest.CopyConfig(envCfg)
 		}
 
-		cfg := &configv1alpha1.OperatorConfiguration{
-			Server: configv1alpha1.ServerConfiguration{
-				Metrics: &configv1alpha1.Server{
+		cfg := &configv1beta1.OperatorConfiguration{
+			Server: configv1beta1.ServerConfiguration{
+				Metrics: &configv1beta1.Server{
 					BindAddress: "0.0.0.0",
 					Port:        8080,
 				},
-				HealthProbes: &configv1alpha1.Server{
+				HealthProbes: &configv1beta1.Server{
 					BindAddress: "0.0.0.0",
 					Port:        8081,
 				},
-				Webhooks: configv1alpha1.WebhookServer{
-					Server: configv1alpha1.Server{
+				Webhooks: configv1beta1.WebhookServer{
+					Server: configv1beta1.Server{
 						BindAddress: "0.0.0.0",
 						Port:        9443,
 					},
 					ServerCertDir: "/tmp/certs",
 				},
 			},
-			LeaderElection: configv1alpha1.LeaderElectionConfiguration{
+			LeaderElection: configv1beta1.LeaderElectionConfiguration{
 				Enabled:      false,
 				ResourceName: "operator-lock",
 				ResourceLock: "leases",
 			},
-			ClientConnection: configv1alpha1.ClientConnectionConfiguration{
+			ClientConnection: configv1beta1.ClientConnectionConfiguration{
 				QPS:   100.0,
 				Burst: 200,
 			},
@@ -676,103 +675,79 @@ func TestSetupHealthAndReadinessEndpoints(t *testing.T) {
 	})
 }
 
-// registerControllersAndWebhooksCase documents how each field drives expectations in TestRegisterControllersAndWebhooks.
-// name identifies the scenario and is read during failure output for quick diagnosis.
-// waitFn supplies the behavior of certificate readiness waiting to avoid blocking on a real channel.
-// controllerErr controls the simulated outcome of controller registration.
-// webhookErr controls the simulated outcome of webhook registration.
-// expectWebhooksCalled indicates whether webhook registration should be invoked in the scenario.
-// expectError indicates whether the function under test should return an error.
-// expectedErrFrag, when set, should be contained in the returned error to ensure the correct failure path is exercised.
-type registerControllersAndWebhooksCase struct {
-	name                 string
-	waitFn               func(logr.Logger, chan struct{})
-	controllerErr        error
-	webhookErr           error
-	expectWebhooksCalled bool
-	expectError          bool
-	expectedErrFrag      string
+func TestWaitForLocalWebhookServer(t *testing.T) {
+	t.Run("server started", func(t *testing.T) {
+		mgr := &mockManager{webhookServer: &mockWebhookServer{started: true}}
+		require.NoError(t, WaitForLocalWebhookServer(context.Background(), mgr))
+	})
+
+	t.Run("context canceled", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		err := WaitForLocalWebhookServer(ctx, &mockManager{})
+		require.ErrorContains(t, err, "webhook server did not start")
+	})
 }
 
-// TestRegisterControllersAndWebhooks verifies that certificate readiness is honored and that controller and webhook
-// registration errors are surfaced appropriately.
-func TestRegisterControllersAndWebhooks(t *testing.T) {
-	testCases := []registerControllersAndWebhooksCase{
-		// name: ensures the happy path waits for readiness and registers controllers and webhooks
+func TestStartWebhooksAfterCertificates(t *testing.T) {
+	testCases := []struct {
+		name          string
+		webhookErr    error
+		serverErr     error
+		expectedCalls []string
+		expectedErr   string
+	}{
 		{
-			name: "registers controllers and webhooks after readiness",
-			waitFn: func(_ logr.Logger, ready chan struct{}) {
-				close(ready)
-			},
-			expectWebhooksCalled: true,
+			name:          "starts webhooks after certificates are ready",
+			expectedCalls: []string{"certificates", "webhooks", "server"},
 		},
-		// name: ensures controller registration failures are propagated and webhook registration is skipped
 		{
-			name: "controller registration failure short-circuits",
-			waitFn: func(_ logr.Logger, ready chan struct{}) {
-				close(ready)
-			},
-			controllerErr:        errors.New("controller failure"),
-			expectError:          true,
-			expectedErrFrag:      "controller failure",
-			expectWebhooksCalled: false,
+			name:          "webhook registration failure stops startup",
+			webhookErr:    errors.New("webhook failure"),
+			expectedCalls: []string{"certificates", "webhooks"},
+			expectedErr:   "webhook failure",
 		},
-		// name: ensures webhook registration failures bubble up after controllers succeed
 		{
-			name: "webhook registration failure bubbles up",
-			waitFn: func(_ logr.Logger, ready chan struct{}) {
-				close(ready)
-			},
-			webhookErr:           errors.New("webhook failure"),
-			expectError:          true,
-			expectedErrFrag:      "webhook failure",
-			expectWebhooksCalled: true,
+			name:          "webhook server failure is returned",
+			serverErr:     errors.New("server failure"),
+			expectedCalls: []string{"certificates", "webhooks", "server"},
+			expectedErr:   "server failure",
 		},
 	}
 
 	for _, tc := range testCases {
-		originalWait := waitTillWebhookCertsReady
-		originalRegisterControllers := registerControllersWithMgr
-		originalRegisterWebhooks := registerWebhooksWithMgr
+		t.Run(tc.name, func(t *testing.T) {
+			originalWait := waitTillWebhookCertsReady
+			originalRegister := registerWebhooksWithMgr
+			originalServerStarted := waitTillWebhookServerStarted
+			t.Cleanup(func() {
+				waitTillWebhookCertsReady = originalWait
+				registerWebhooksWithMgr = originalRegister
+				waitTillWebhookServerStarted = originalServerStarted
+			})
 
-		readyCh := make(chan struct{})
-		waitCalled := false
-		controllersCalled := false
-		webhooksCalled := false
-
-		waitTillWebhookCertsReady = func(logger logr.Logger, ch chan struct{}) {
-			waitCalled = true
-			if tc.waitFn != nil {
-				tc.waitFn(logger, ch)
+			var calls []string
+			waitTillWebhookCertsReady = func(_ logr.Logger, _ chan struct{}) {
+				calls = append(calls, "certificates")
 			}
-		}
-
-		registerControllersWithMgr = func(_ ctrl.Manager, _ *configv1alpha1.OperatorConfiguration, _ scheduler.Registry) error {
-			controllersCalled = true
-			return tc.controllerErr
-		}
-		registerWebhooksWithMgr = func(_ ctrl.Manager, _ *configv1alpha1.OperatorConfiguration, _ scheduler.Registry) error {
-			webhooksCalled = true
-			return tc.webhookErr
-		}
-
-		err := RegisterControllersAndWebhooks(&mockManager{}, logr.Discard(), &configv1alpha1.OperatorConfiguration{}, readyCh, &testutils.FakeSchedulerRegistry{})
-		if tc.expectError {
-			require.Error(t, err, tc.name)
-			if tc.expectedErrFrag != "" {
-				assert.ErrorContains(t, err, tc.expectedErrFrag, tc.name)
+			registerWebhooksWithMgr = func(_ ctrl.Manager, _ *configv1beta1.OperatorConfiguration, _ scheduler.Registry) error {
+				calls = append(calls, "webhooks")
+				return tc.webhookErr
 			}
-		} else {
-			require.NoError(t, err, tc.name)
-		}
+			waitTillWebhookServerStarted = func(_ context.Context, _ ctrl.Manager) error {
+				calls = append(calls, "server")
+				return tc.serverErr
+			}
 
-		assert.True(t, waitCalled, tc.name)
-		assert.True(t, controllersCalled, tc.name)
-		assert.Equal(t, tc.expectWebhooksCalled, webhooksCalled, tc.name)
-
-		waitTillWebhookCertsReady = originalWait
-		registerControllersWithMgr = originalRegisterControllers
-		registerWebhooksWithMgr = originalRegisterWebhooks
+			err := StartWebhooksAfterCertificateInjection(context.Background(), &mockManager{}, logr.Discard(), &configv1beta1.OperatorConfiguration{}, make(chan struct{}), nil)
+			if tc.expectedErr == "" {
+				require.NoError(t, err)
+			} else {
+				require.ErrorContains(t, err, tc.expectedErr)
+			}
+			assert.Equal(t, tc.expectedCalls, calls)
+		})
 	}
 }
 

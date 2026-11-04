@@ -24,7 +24,7 @@ import (
 	"time"
 
 	nameutils "github.com/ai-dynamo/grove/operator/api/common"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/e2e/log"
 	"github.com/ai-dynamo/grove/operator/e2e/waiter"
 	kaischedulingv2alpha2 "github.com/kai-scheduler/KAI-scheduler/pkg/apis/scheduling/v2alpha2"
@@ -169,7 +169,7 @@ func (pv *PodGroupVerifier) WaitForKAIPodGroups(ctx context.Context, namespace, 
 func FindAnchorPodGroup(podGroups []kaischedulingv2alpha2.PodGroup, pcsReplicaIndex int) (*kaischedulingv2alpha2.PodGroup, error) {
 	for i := range podGroups {
 		labels := podGroups[i].Labels
-		if labels[nameutils.LabelPodGangRole] == string(grovecorev1alpha1.PodGangEntryRoleAnchor) &&
+		if labels[nameutils.LabelPodGangRole] == string(grovecorev1beta1.PodGangEntryRoleAnchor) &&
 			labels[nameutils.LabelPodCliqueSetReplicaIndex] == strconv.Itoa(pcsReplicaIndex) {
 			return &podGroups[i], nil
 		}
@@ -187,7 +187,7 @@ func FindScaledPodGroup(podGroups []kaischedulingv2alpha2.PodGroup, pcsReplicaIn
 	for i := range podGroups {
 		labels := podGroups[i].Labels
 		role := labels[nameutils.LabelPodGangRole]
-		if role != string(grovecorev1alpha1.PodGangEntryRoleTail) && role != string(grovecorev1alpha1.PodGangEntryRoleScaleOut) {
+		if role != string(grovecorev1beta1.PodGangEntryRoleTail) && role != string(grovecorev1beta1.PodGangEntryRoleScaleOut) {
 			continue
 		}
 		if labels[nameutils.LabelPodCliqueSetReplicaIndex] != strconv.Itoa(pcsReplicaIndex) {

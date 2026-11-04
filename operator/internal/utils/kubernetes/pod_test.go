@@ -690,10 +690,15 @@ func TestCategorizePodsByConditionType(t *testing.T) {
 		}).
 		Build()
 
-	// Terminating pod
+	// A terminating pod can still report Ready and Scheduled during its grace period, but it no longer
+	// contributes to active PodClique status counts.
 	terminatingPod := testutils.NewPodWithBuilderWithDefaultSpec("terminating-pod", testPodNamespace).
 		WithCondition(corev1.PodCondition{
 			Type:   corev1.PodScheduled,
+			Status: corev1.ConditionTrue,
+		}).
+		WithCondition(corev1.PodCondition{
+			Type:   corev1.PodReady,
 			Status: corev1.ConditionTrue,
 		}).
 		MarkForTermination().
@@ -748,7 +753,18 @@ func TestCategorizePodsByConditionType(t *testing.T) {
 		},
 	}
 
-	pods := []*corev1.Pod{readyPod, gatedPod, terminatingPod, erroneousPod, startedNotReadyPod}
+	failedPod := testutils.NewPodWithBuilderWithDefaultSpec("failed-pod", testPodNamespace).
+		WithCondition(corev1.PodCondition{Type: corev1.PodScheduled, Status: corev1.ConditionTrue}).
+		WithCondition(corev1.PodCondition{Type: corev1.PodReady, Status: corev1.ConditionTrue}).
+		WithPhase(corev1.PodFailed).
+		Build()
+	succeededPod := testutils.NewPodWithBuilderWithDefaultSpec("succeeded-pod", testPodNamespace).
+		WithCondition(corev1.PodCondition{Type: corev1.PodScheduled, Status: corev1.ConditionTrue}).
+		WithCondition(corev1.PodCondition{Type: corev1.PodReady, Status: corev1.ConditionTrue}).
+		WithPhase(corev1.PodSucceeded).
+		Build()
+
+	pods := []*corev1.Pod{readyPod, gatedPod, terminatingPod, erroneousPod, startedNotReadyPod, failedPod, succeededPod}
 	categories := CategorizePodsByConditionType(logr.Discard(), pods)
 
 	// Check ready pods
@@ -756,7 +772,7 @@ func TestCategorizePodsByConditionType(t *testing.T) {
 	assert.Equal(t, "ready-pod", categories[corev1.PodReady][0].Name)
 
 	// Check scheduled pods
-	assert.Len(t, categories[corev1.PodScheduled], 4)
+	assert.Len(t, categories[corev1.PodScheduled], 3)
 
 	// Check schedule gated pods
 	assert.Len(t, categories[ScheduleGatedPod], 1)
@@ -765,6 +781,12 @@ func TestCategorizePodsByConditionType(t *testing.T) {
 	// Check terminating pods
 	assert.Len(t, categories[TerminatingPod], 1)
 	assert.Equal(t, "terminating-pod", categories[TerminatingPod][0].Name)
+	assert.NotContains(t, categories[corev1.PodReady], terminatingPod)
+	assert.NotContains(t, categories[corev1.PodScheduled], terminatingPod)
+	assert.NotContains(t, categories[corev1.PodReady], failedPod)
+	assert.NotContains(t, categories[corev1.PodScheduled], failedPod)
+	assert.NotContains(t, categories[corev1.PodReady], succeededPod)
+	assert.NotContains(t, categories[corev1.PodScheduled], succeededPod)
 
 	// Check pods with erroneous containers
 	assert.Len(t, categories[PodHasAtleastOneContainerWithNonZeroExitCode], 1)

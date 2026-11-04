@@ -20,7 +20,7 @@ import (
 	"sort"
 	"testing"
 
-	grovev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/e2e/tests"
 
 	"github.com/stretchr/testify/assert"
@@ -80,13 +80,13 @@ func Test_PCUS1_ScaleInAfterCoherentUpdateKeepsPodGangMapConsistent(t *testing.T
 		{standalone: map[string]int32{"frontend": 1}, pcsgIndices: []int32{0}},
 		{standalone: map[string]int32{"frontend": 1}, pcsgIndices: []int32{2}},
 	})
-	assert.Equal(t, []int32{1, 3}, pcsgIndicesForRole(entries, grovev1alpha1.PodGangEntryRoleTail, "inference"), "tails must carry inference indices 1 and 3")
+	assert.Equal(t, []int32{1, 3}, pcsgIndicesForRole(entries, grovev1beta1.PodGangEntryRoleTail, "inference"), "tails must carry inference indices 1 and 3")
 
 	tests.Logger.Info("6. Scale the inference PCSG out from 4 to 5 so a ScaleOut entry carries index 4 (12 pods)")
 	tc.ScalePCSGAcrossAllReplicasAndWait(coherentWorkloadName, "inference", 1, 5, 12, 0)
 	entries = getPodGangMapEntries(t, tc, 0)
-	assert.Equal(t, []int32{4}, pcsgIndicesForRole(entries, grovev1alpha1.PodGangEntryRoleScaleOut, "inference"), "the ScaleOut entry must carry inference index 4")
-	assert.NotEmpty(t, pcsgIndicesForRole(entries, grovev1alpha1.PodGangEntryRoleTail, "inference"), "a tail entry must still be present alongside the ScaleOut entry")
+	assert.Equal(t, []int32{4}, pcsgIndicesForRole(entries, grovev1beta1.PodGangEntryRoleScaleOut, "inference"), "the ScaleOut entry must carry inference index 4")
+	assert.NotEmpty(t, pcsgIndicesForRole(entries, grovev1beta1.PodGangEntryRoleTail, "inference"), "a tail entry must still be present alongside the ScaleOut entry")
 
 	tests.Logger.Info("7. Scale the inference PCSG in from 5 to 2, deleting replicas 2, 3 and 4 (6 pods)")
 	tc.ScalePCSGAcrossAllReplicasAndWait(coherentWorkloadName, "inference", 1, 2, 6, 0)
@@ -122,14 +122,14 @@ func Test_PCUS1_ScaleInAfterCoherentUpdateKeepsPodGangMapConsistent(t *testing.T
 		{standalone: map[string]int32{"frontend": 2}, pcsgIndices: nil},
 	})
 	assert.Equal(t, []int32{1}, newHashTailPCSGIndices(entries, newHash, "inference"), "the tail must keep inference index 1")
-	scaleOutEntry := requireSingleEntryByRole(t, entries, grovev1alpha1.PodGangEntryRoleScaleOut)
+	scaleOutEntry := requireSingleEntryByRole(t, entries, grovev1beta1.PodGangEntryRoleScaleOut)
 	assert.Empty(t, scaleOutEntry.PCSGReplicaIndices, "the scale-out entry must carry no inference indices after scaling back in")
 	assert.Equal(t, []int32{0, 1}, allPCSGIndices(entries, "inference"), "the second update must preserve the reconciled inference replicas")
 }
 
 // pcsgIndicesForRole returns the sorted union of pcsgName replica indices carried by every entry of the
 // given role.
-func pcsgIndicesForRole(entries []grovev1alpha1.PodGangEntry, role grovev1alpha1.PodGangEntryRole, pcsgName string) []int32 {
+func pcsgIndicesForRole(entries []grovev1beta1.PodGangEntry, role grovev1beta1.PodGangEntryRole, pcsgName string) []int32 {
 	var indices []int32
 	for _, entry := range entries {
 		if entry.Role == role {
@@ -142,7 +142,7 @@ func pcsgIndicesForRole(entries []grovev1alpha1.PodGangEntry, role grovev1alpha1
 
 // allPCSGIndices returns the sorted union of pcsgName replica indices carried by every entry, regardless
 // of role.
-func allPCSGIndices(entries []grovev1alpha1.PodGangEntry, pcsgName string) []int32 {
+func allPCSGIndices(entries []grovev1beta1.PodGangEntry, pcsgName string) []int32 {
 	var indices []int32
 	for _, entry := range entries {
 		indices = append(indices, entry.PCSGReplicaIndices[pcsgName]...)

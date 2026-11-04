@@ -21,10 +21,9 @@ import (
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	pcsgexpectations "github.com/ai-dynamo/grove/operator/internal/controller/podcliquescalinggroup/expectations"
 	ctrlutils "github.com/ai-dynamo/grove/operator/internal/controller/utils"
-	"github.com/ai-dynamo/grove/operator/internal/utils"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 
 	"github.com/samber/lo"
@@ -52,25 +51,44 @@ func (r *Reconciler) RegisterWithManager(mgr manager.Manager) error {
 		WithOptions(controller.Options{
 			MaxConcurrentReconciles: *r.config.ConcurrentSyncs,
 		}).
-		For(&grovecorev1alpha1.PodCliqueScalingGroup{}, builder.WithPredicates(
+		For(&grovecorev1beta1.PodCliqueScalingGroup{}, builder.WithPredicates(
 			predicate.And(
-				predicate.GenerationChangedPredicate{},
+				podCliqueScalingGroupReconcilePredicate(),
 				podCliqueScalingGroupUpdatePredicate(),
 			)),
 		).
-		Watches(&grovecorev1alpha1.PodCliqueSet{},
+		Watches(&grovecorev1beta1.PodCliqueSet{},
 			handler.EnqueueRequestsFromMapFunc(mapPCSToPCSG()),
 			builder.WithPredicates(podCliqueSetPredicate()),
 		).
-		Watches(&grovecorev1alpha1.PodClique{},
+		Watches(&grovecorev1beta1.PodClique{},
 			handler.EnqueueRequestsFromMapFunc(mapPCLQToPCSG()),
 			builder.WithPredicates(r.podCliquePredicate()),
 		).
-		Watches(&grovecorev1alpha1.PodGangMap{},
+		Watches(&grovecorev1beta1.PodGangMap{},
 			handler.EnqueueRequestsFromMapFunc(mapPodGangMapToPCSGs()),
 			builder.WithPredicates(podGangMapPredicate()),
 		).
 		Complete(r)
+}
+
+// podCliqueScalingGroupReconcilePredicate admits creates, spec changes, and changes to the parent
+// PodCliqueSet generation annotation used to trigger OnDelete template propagation.
+func podCliqueScalingGroupReconcilePredicate() predicate.Predicate {
+	return predicate.Funcs{
+		CreateFunc: func(_ event.CreateEvent) bool { return true },
+		DeleteFunc: func(_ event.DeleteEvent) bool { return false },
+		UpdateFunc: func(updateEvent event.UpdateEvent) bool {
+			oldPCSG, oldOK := updateEvent.ObjectOld.(*grovecorev1beta1.PodCliqueScalingGroup)
+			newPCSG, newOK := updateEvent.ObjectNew.(*grovecorev1beta1.PodCliqueScalingGroup)
+			if !oldOK || !newOK {
+				return false
+			}
+			return oldPCSG.Generation != newPCSG.Generation ||
+				oldPCSG.Annotations[constants.AnnotationOnDeletePodCliqueSetGenerationHash] != newPCSG.Annotations[constants.AnnotationOnDeletePodCliqueSetGenerationHash]
+		},
+		GenericFunc: func(_ event.GenericEvent) bool { return false },
+	}
 }
 
 // podCliqueScalingGroupUpdatePredicate filters PodCliqueScalingGroup events to only process Grove-managed resources owned by PodCliqueSet
@@ -89,35 +107,28 @@ func podCliqueScalingGroupUpdatePredicate() predicate.Predicate {
 	}
 }
 
-// mapPCSToPCSG maps PodCliqueSet rolling update events to PodCliqueScalingGroup reconcile requests for the currently updating replica
+// mapPCSToPCSG maps the PCS replica selected for an automatic update to its PodCliqueScalingGroups.
+// OnDelete propagation is triggered by AnnotationOnDeletePodCliqueSetGenerationHash on each actual PCSG.
 func mapPCSToPCSG() handler.MapFunc {
 	return func(_ context.Context, obj client.Object) []reconcile.Request {
-		pcs, ok := obj.(*grovecorev1alpha1.PodCliqueSet)
+		pcs, ok := obj.(*grovecorev1beta1.PodCliqueSet)
+		if !ok || !componentutils.IsRollingUpdateStrategy(pcs) {
+			return nil
+		}
+		pcsReplicaIndex, ok := currentPCSReplicaInUpdate(pcs.Status.UpdateProgress)
 		if !ok {
 			return nil
 		}
-		if pcs.Status.UpdateProgress == nil {
-			return nil
-		}
-		var pcsReplicaIndices []int32
-		if componentutils.IsRollingUpdateStrategy(pcs) &&
-			len(pcs.Status.UpdateProgress.CurrentlyUpdating) > 0 {
-			// Rolling recreate needs to have a CurrentlyUpdating which is used to generate an event for the corresponding PCSG
-			pcsReplicaIndices = lo.RangeFrom(pcs.Status.UpdateProgress.CurrentlyUpdating[0].ReplicaIndex, 1)
-		} else {
-			// OnDelete will not have a specific CurrentlyUpdating, so PCSG resources of all PCS replicas are reconciled
-			pcsReplicaIndices = lo.RangeFrom(int32(0), int(pcs.Spec.Replicas))
-		}
-		return pcsgReconcileRequestsForPCSReplicas(pcs, pcsReplicaIndices)
+		return pcsgReconcileRequestsForPCSReplicas(pcs, []int32{pcsReplicaIndex})
 	}
 }
 
-func pcsgReconcileRequestsForPCSReplicas(pcs *grovecorev1alpha1.PodCliqueSet, pcsReplicaIndices []int32) []reconcile.Request {
+func pcsgReconcileRequestsForPCSReplicas(pcs *grovecorev1beta1.PodCliqueSet, pcsReplicaIndices []int32) []reconcile.Request {
 	pcsgConfigs := pcs.Spec.Template.PodCliqueScalingGroupConfigs
 	if len(pcsgConfigs) == 0 {
 		return nil
 	}
-	requests := make([]reconcile.Request, 0, int(pcs.Spec.Replicas)*len(pcsgConfigs))
+	requests := make([]reconcile.Request, 0, len(pcsReplicaIndices)*len(pcsgConfigs))
 	for _, pcsReplicaIndex := range pcsReplicaIndices {
 		for _, pcsgConfig := range pcsgConfigs {
 			pcsgName := apicommon.GeneratePodCliqueScalingGroupName(apicommon.ResourceNameReplica{Name: pcs.Name, Replica: int(pcsReplicaIndex)}, pcsgConfig.Name)
@@ -132,45 +143,45 @@ func pcsgReconcileRequestsForPCSReplicas(pcs *grovecorev1alpha1.PodCliqueSet, pc
 	return requests
 }
 
-// podCliqueSetPredicate filters PodCliqueSet events to only process rolling update status changes
+// podCliqueSetPredicate filters PodCliqueSet events to updates that select a new PCS replica for an automatic update.
 func podCliqueSetPredicate() predicate.Predicate {
 	return predicate.Funcs{
 		CreateFunc: func(_ event.CreateEvent) bool { return false },
 		DeleteFunc: func(_ event.DeleteEvent) bool { return false },
 		UpdateFunc: func(updateEvent event.UpdateEvent) bool {
-			return shouldEnqueueOnPCSUpdate(updateEvent)
+			oldPCS, okOld := updateEvent.ObjectOld.(*grovecorev1beta1.PodCliqueSet)
+			newPCS, okNew := updateEvent.ObjectNew.(*grovecorev1beta1.PodCliqueSet)
+			if !okOld || !okNew || !componentutils.IsRollingUpdateStrategy(newPCS) {
+				return false
+			}
+			return hasNewPCSReplicaBeenSelectedForUpdate(oldPCS.Status.UpdateProgress, newPCS.Status.UpdateProgress)
 		},
 		GenericFunc: func(_ event.GenericEvent) bool { return false },
 	}
 }
 
-// shouldEnqueueOnPCSUpdate determines if a PodCliqueSet update event should trigger PodCliqueScalingGroup reconciliation based on rolling update progress changes
-func shouldEnqueueOnPCSUpdate(event event.UpdateEvent) bool {
-	oldPCS, okOld := event.ObjectOld.(*grovecorev1alpha1.PodCliqueSet)
-	newPCS, okNew := event.ObjectNew.(*grovecorev1alpha1.PodCliqueSet)
-	if !okOld || !okNew {
+// hasNewPCSReplicaBeenSelectedForUpdate reports whether the PCS selected a new replica for update.
+func hasNewPCSReplicaBeenSelectedForUpdate(oldProgress, newProgress *grovecorev1beta1.PodCliqueSetUpdateProgress) bool {
+	oldReplicaIndex, oldOK := currentPCSReplicaInUpdate(oldProgress)
+	newReplicaIndex, newOK := currentPCSReplicaInUpdate(newProgress)
+	if !newOK {
 		return false
 	}
+	return !oldOK || oldReplicaIndex != newReplicaIndex
+}
 
-	if oldPCS.Status.UpdateProgress != nil && newPCS.Status.UpdateProgress != nil {
-		if utils.OnlyOneIsEmpty(oldPCS.Status.UpdateProgress.CurrentlyUpdating, newPCS.Status.UpdateProgress.CurrentlyUpdating) ||
-			len(oldPCS.Status.UpdateProgress.CurrentlyUpdating) > 0 &&
-				len(newPCS.Status.UpdateProgress.CurrentlyUpdating) > 0 &&
-				oldPCS.Status.UpdateProgress.CurrentlyUpdating[0].ReplicaIndex != newPCS.Status.UpdateProgress.CurrentlyUpdating[0].ReplicaIndex {
-			return true
-		}
+// currentPCSReplicaInUpdate returns the PCS replica index currently being updated, if any.
+func currentPCSReplicaInUpdate(progress *grovecorev1beta1.PodCliqueSetUpdateProgress) (int32, bool) {
+	if progress == nil || len(progress.CurrentlyUpdating) == 0 {
+		return 0, false
 	}
-	// Enqueue while using OnDelete since there is no CurrentlyUpdating
-	if newPCS.Status.UpdateProgress != nil && !componentutils.IsRollingUpdateStrategy(newPCS) {
-		return true
-	}
-	return false
+	return progress.CurrentlyUpdating[0].ReplicaIndex, true
 }
 
 // mapPCLQToPCSG maps PodClique events to their owning PodCliqueScalingGroup reconcile requests
 func mapPCLQToPCSG() handler.MapFunc {
 	return func(_ context.Context, obj client.Object) []reconcile.Request {
-		pclq, ok := obj.(*grovecorev1alpha1.PodClique)
+		pclq, ok := obj.(*grovecorev1beta1.PodClique)
 		if !ok {
 			return nil
 		}
@@ -203,7 +214,7 @@ func (r *Reconciler) podCliquePredicate() predicate.Predicate {
 // observeMemberPodCliqueDeletion lowers the PodCliqueScalingGroup's delete expectation for a deleted
 // member PodClique so a disrupted replica stops counting as unavailable once its PodCliques are gone.
 func (r *Reconciler) observeMemberPodCliqueDeletion(obj client.Object) {
-	pclq, ok := obj.(*grovecorev1alpha1.PodClique)
+	pclq, ok := obj.(*grovecorev1beta1.PodClique)
 	if !ok {
 		return
 	}
@@ -220,7 +231,7 @@ func (r *Reconciler) observeMemberPodCliqueDeletion(obj client.Object) {
 // only signal. The requests cover every PodCliqueScalingGroup config named across the entries.
 func mapPodGangMapToPCSGs() handler.MapFunc {
 	return func(_ context.Context, obj client.Object) []reconcile.Request {
-		pgm, ok := obj.(*grovecorev1alpha1.PodGangMap)
+		pgm, ok := obj.(*grovecorev1beta1.PodGangMap)
 		if !ok {
 			return nil
 		}
@@ -253,8 +264,8 @@ func podGangMapPredicate() predicate.Predicate {
 		DeleteFunc:  func(_ event.DeleteEvent) bool { return false },
 		GenericFunc: func(_ event.GenericEvent) bool { return false },
 		UpdateFunc: func(e event.UpdateEvent) bool {
-			oldPGM, okOld := e.ObjectOld.(*grovecorev1alpha1.PodGangMap)
-			newPGM, okNew := e.ObjectNew.(*grovecorev1alpha1.PodGangMap)
+			oldPGM, okOld := e.ObjectOld.(*grovecorev1beta1.PodGangMap)
+			newPGM, okNew := e.ObjectNew.(*grovecorev1beta1.PodGangMap)
 			if !okOld || !okNew {
 				return false
 			}
@@ -267,7 +278,7 @@ func podGangMapPredicate() predicate.Predicate {
 // two PodGangMaps. It compares the maps returned by pcsgPlacement. Because those maps key the indices
 // by both the entry epoch and the PodCliqueScalingGroup config name, moving a replica index from one
 // entry to another with the same total still counts as a change.
-func pcsgPlacementChanged(oldPGM, newPGM *grovecorev1alpha1.PodGangMap) bool {
+func pcsgPlacementChanged(oldPGM, newPGM *grovecorev1beta1.PodGangMap) bool {
 	return !maps.EqualFunc(pcsgPlacement(oldPGM), pcsgPlacement(newPGM), slices.Equal[[]int32])
 }
 
@@ -275,7 +286,7 @@ func pcsgPlacementChanged(oldPGM, newPGM *grovecorev1alpha1.PodGangMap) bool {
 // index slice is the entry epoch and the config name joined together, so the same config under two
 // different epochs yields two distinct keys. The indices are written in a stable sorted order by the
 // PodGangMap writer, so the slices are compared directly.
-func pcsgPlacement(pgm *grovecorev1alpha1.PodGangMap) map[string][]int32 {
+func pcsgPlacement(pgm *grovecorev1beta1.PodGangMap) map[string][]int32 {
 	placement := make(map[string][]int32)
 	for _, entry := range pgm.Spec.Entries {
 		for pcsgConfigName, indices := range entry.PCSGReplicaIndices {

@@ -23,7 +23,7 @@ import (
 	"time"
 
 	"github.com/ai-dynamo/grove/operator/api/common"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/e2e/grove/workload"
 	"github.com/ai-dynamo/grove/operator/e2e/measurement"
 	"github.com/ai-dynamo/grove/operator/e2e/measurement/condition"
@@ -33,6 +33,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -112,7 +113,7 @@ func runScaleFinalChecks(ctx context.Context, tc *testctx.TestContext, cfg scale
 		return fmt.Errorf("list pods: %w", err)
 	}
 
-	pclqList := &grovecorev1alpha1.PodCliqueList{}
+	pclqList := &grovecorev1beta1.PodCliqueList{}
 	if err := tc.Client.List(ctx, pclqList,
 		client.InNamespace(tc.Namespace),
 		client.MatchingLabels{common.LabelPartOfKey: cfg.workloadName},
@@ -120,7 +121,7 @@ func runScaleFinalChecks(ctx context.Context, tc *testctx.TestContext, cfg scale
 		return fmt.Errorf("list PodCliques: %w", err)
 	}
 
-	pcsgList := &grovecorev1alpha1.PodCliqueScalingGroupList{}
+	pcsgList := &grovecorev1beta1.PodCliqueScalingGroupList{}
 	if err := tc.Client.List(ctx, pcsgList,
 		client.InNamespace(tc.Namespace),
 		client.MatchingLabels{common.LabelPartOfKey: cfg.workloadName},
@@ -136,7 +137,7 @@ func runScaleFinalChecks(ctx context.Context, tc *testctx.TestContext, cfg scale
 		return fmt.Errorf("list PodGangs: %w", err)
 	}
 
-	pcs := &grovecorev1alpha1.PodCliqueSet{}
+	pcs := &grovecorev1beta1.PodCliqueSet{}
 	if err := tc.Client.Get(ctx, client.ObjectKey{Namespace: tc.Namespace, Name: cfg.workloadName}, pcs); err != nil {
 		return fmt.Errorf("get PCS: %w", err)
 	}
@@ -173,7 +174,7 @@ func waitForStatusConvergence(ctx context.Context, tc *testctx.TestContext, cfg 
 	var lastErr error
 	pollErr := wait.PollUntilContextTimeout(ctx, statusConvergenceInterval, statusConvergenceTimeout, true,
 		func(ctx context.Context) (bool, error) {
-			pcs := &grovecorev1alpha1.PodCliqueSet{}
+			pcs := &grovecorev1beta1.PodCliqueSet{}
 			if err := tc.Client.Get(ctx, client.ObjectKey{Namespace: tc.Namespace, Name: cfg.workloadName}, pcs); err != nil {
 				return false, fmt.Errorf("get PCS: %w", err)
 			}
@@ -181,7 +182,7 @@ func waitForStatusConvergence(ctx context.Context, tc *testctx.TestContext, cfg 
 				lastErr = err
 				return false, nil
 			}
-			pclqList := &grovecorev1alpha1.PodCliqueList{}
+			pclqList := &grovecorev1beta1.PodCliqueList{}
 			if err := tc.Client.List(ctx, pclqList,
 				client.InNamespace(tc.Namespace),
 				client.MatchingLabels{common.LabelPartOfKey: cfg.workloadName},
@@ -229,7 +230,7 @@ func snapshotOperatorRestarts(ctx context.Context, tc *testctx.TestContext) (map
 // exact live pod and PodClique counts match the target, zero PCSGs (all scale
 // fixtures use standalone cliques only), and no object carries a replica index
 // from beyond the target — the canonical leak signal.
-func checkExpectedObjectGraph(pods *corev1.PodList, pclqList *grovecorev1alpha1.PodCliqueList, pcsgList *grovecorev1alpha1.PodCliqueScalingGroupList, targetReplicas, targetPods int) error {
+func checkExpectedObjectGraph(pods *corev1.PodList, pclqList *grovecorev1beta1.PodCliqueList, pcsgList *grovecorev1beta1.PodCliqueScalingGroupList, targetReplicas, targetPods int) error {
 	if got, want := len(pods.Items), targetPods; got != want {
 		return fmt.Errorf("live pod count = %d, want %d (potential leak)", got, want)
 	}
@@ -239,43 +240,52 @@ func checkExpectedObjectGraph(pods *corev1.PodList, pclqList *grovecorev1alpha1.
 	if len(pcsgList.Items) != 0 {
 		return fmt.Errorf("PCSG count = %d, want 0 for this fixture", len(pcsgList.Items))
 	}
-	for i := range pclqList.Items {
-		pclq := &pclqList.Items[i]
-		if err := assertReplicaIndexBelow(pclq.Labels, targetReplicas, "PodClique", pclq.Name); err != nil {
-			return err
-		}
+	pclqPCSReplicaIndices, err := pcsReplicaIndicesFromLabels(pclqList.Items, func(pclq *grovecorev1beta1.PodClique) (map[string]string, string) {
+		return pclq.Labels, pclq.Name
+	})
+	if err != nil {
+		return err
 	}
-	for i := range pods.Items {
-		pod := &pods.Items[i]
-		if err := assertReplicaIndexBelow(pod.Labels, targetReplicas, "Pod", pod.Name); err != nil {
-			return err
-		}
+	expectedPCSReplicaIndices := sets.New[int]()
+	for pcsReplicaIndex := range targetReplicas {
+		expectedPCSReplicaIndices.Insert(pcsReplicaIndex)
+	}
+	if !pclqPCSReplicaIndices.Equal(expectedPCSReplicaIndices) {
+		return fmt.Errorf("PodClique PCS replica indices = %v, want %v", sets.List(pclqPCSReplicaIndices), sets.List(expectedPCSReplicaIndices))
+	}
+	podPCSReplicaIndices, err := pcsReplicaIndicesFromLabels(pods.Items, func(pod *corev1.Pod) (map[string]string, string) {
+		return pod.Labels, pod.Name
+	})
+	if err != nil {
+		return err
+	}
+	if !podPCSReplicaIndices.Equal(pclqPCSReplicaIndices) {
+		return fmt.Errorf("Pod PCS replica indices = %v, want PodClique indices %v", sets.List(podPCSReplicaIndices), sets.List(pclqPCSReplicaIndices))
 	}
 	return nil
 }
 
-// assertReplicaIndexBelow fails if an object carries a PCS-replica-index label
-// >= target, indicating it was created at a higher replica count and not cleaned
-// up. Objects without the label are skipped.
-func assertReplicaIndexBelow(labels map[string]string, target int, kind, name string) error {
-	raw, ok := labels[common.LabelPodCliqueSetReplicaIndex]
-	if !ok {
-		return nil
+func pcsReplicaIndicesFromLabels[T any](objects []T, objectMetadata func(*T) (map[string]string, string)) (sets.Set[int], error) {
+	pcsReplicaIndices := sets.New[int]()
+	for i := range objects {
+		labels, name := objectMetadata(&objects[i])
+		raw, ok := labels[common.LabelPodCliqueSetReplicaIndex]
+		if !ok {
+			return nil, fmt.Errorf("object %s is missing %s label", name, common.LabelPodCliqueSetReplicaIndex)
+		}
+		pcsReplicaIndex, err := strconv.Atoi(raw)
+		if err != nil {
+			return nil, fmt.Errorf("object %s has non-integer %s label %q: %w", name, common.LabelPodCliqueSetReplicaIndex, raw, err)
+		}
+		pcsReplicaIndices.Insert(pcsReplicaIndex)
 	}
-	idx, err := strconv.Atoi(raw)
-	if err != nil {
-		return fmt.Errorf("%s %s has non-integer %s label %q: %w", kind, name, common.LabelPodCliqueSetReplicaIndex, raw, err)
-	}
-	if idx >= target {
-		return fmt.Errorf("%s %s has stale replica index %d (>= target %d)", kind, name, idx, target)
-	}
-	return nil
+	return pcsReplicaIndices, nil
 }
 
 // checkNoStuckDeletions (check #2) asserts that no managed object still has a
 // DeletionTimestamp. A surviving DeletionTimestamp after the system should have
 // settled indicates a finalizer pile-up.
-func checkNoStuckDeletions(pods *corev1.PodList, pclqList *grovecorev1alpha1.PodCliqueList, pcsgList *grovecorev1alpha1.PodCliqueScalingGroupList, podGangs *groveschedulerv1alpha1.PodGangList) error {
+func checkNoStuckDeletions(pods *corev1.PodList, pclqList *grovecorev1beta1.PodCliqueList, pcsgList *grovecorev1beta1.PodCliqueScalingGroupList, podGangs *groveschedulerv1alpha1.PodGangList) error {
 	for i := range pods.Items {
 		if ts := pods.Items[i].DeletionTimestamp; ts != nil {
 			return fmt.Errorf("Pod %s still terminating at final check (DeletionTimestamp=%s)", pods.Items[i].Name, ts)
@@ -312,7 +322,7 @@ func checkPodGangCleanup(podGangs *groveschedulerv1alpha1.PodGangList, targetRep
 // checkPCSStatusConvergence (check #4) verifies full PCS spec/status convergence:
 // replica counters match the target, ObservedGeneration is current, and no
 // LastErrors have accumulated.
-func checkPCSStatusConvergence(pcs *grovecorev1alpha1.PodCliqueSet, targetReplicas int) error {
+func checkPCSStatusConvergence(pcs *grovecorev1beta1.PodCliqueSet, targetReplicas int) error {
 	target := int32(targetReplicas)
 	if pcs.Spec.Replicas != target {
 		return fmt.Errorf("PCS Spec.Replicas = %d, want %d", pcs.Spec.Replicas, target)
@@ -325,6 +335,9 @@ func checkPCSStatusConvergence(pcs *grovecorev1alpha1.PodCliqueSet, targetReplic
 	}
 	if pcs.Status.UpdatedReplicas != target {
 		return fmt.Errorf("PCS Status.UpdatedReplicas = %d, want %d", pcs.Status.UpdatedReplicas, target)
+	}
+	if pcs.Status.ScalingProgress != nil {
+		return fmt.Errorf("PCS ScalingProgress = %+v, want nil", pcs.Status.ScalingProgress)
 	}
 	if og := pcs.Status.ObservedGeneration; og == nil || *og != pcs.Generation {
 		return fmt.Errorf("PCS ObservedGeneration = %v, want %d", og, pcs.Generation)
@@ -349,7 +362,7 @@ func checkPCSStatusConvergence(pcs *grovecorev1alpha1.PodCliqueSet, targetReplic
 // converged: ObservedGeneration matches, replica counters match Spec, and no
 // LastErrors are recorded. Per-child errors can hide here even when the PCS-level
 // LastErrors slice is empty.
-func checkPodCliqueStatusConvergence(pclqList *grovecorev1alpha1.PodCliqueList) error {
+func checkPodCliqueStatusConvergence(pclqList *grovecorev1beta1.PodCliqueList) error {
 	for i := range pclqList.Items {
 		pclq := &pclqList.Items[i]
 		if og := pclq.Status.ObservedGeneration; og == nil || *og != pclq.Generation {

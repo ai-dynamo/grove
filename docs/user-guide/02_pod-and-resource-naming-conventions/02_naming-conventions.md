@@ -179,7 +179,7 @@ metadata:
   name: example-pcsg-hpa
 spec:
   scaleTargetRef:
-    apiVersion: grove.io/v1alpha1
+    apiVersion: grove.io/v1beta1
     kind: PodCliqueScalingGroup
     name: <pcsg-name>
   minReplicas: 1

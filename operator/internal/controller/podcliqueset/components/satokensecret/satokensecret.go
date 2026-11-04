@@ -19,8 +19,10 @@ import (
 	"fmt"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
+	"github.com/ai-dynamo/grove/operator/internal/constants"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
+	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/sync"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
@@ -35,12 +37,12 @@ import (
 )
 
 const (
-	errCodeGetSecret              grovecorev1alpha1.ErrorCode = "ERR_GET_SECRET"
-	errCodeSecretConflict         grovecorev1alpha1.ErrorCode = "ERR_SECRET_CONFLICT"
-	errCodeSetControllerReference grovecorev1alpha1.ErrorCode = "ERR_SET_CONTROLLER_REFERENCE"
-	errCodeCreateSecret           grovecorev1alpha1.ErrorCode = "ERR_CREATE_SECRET"
-	errCodeDeleteSecret           grovecorev1alpha1.ErrorCode = "ERR_DELETE_SECRET"
-	errCodeListPods               grovecorev1alpha1.ErrorCode = "ERR_LIST_PODS"
+	errCodeGetSecret              grovecorev1beta1.ErrorCode = "ERR_GET_SECRET"
+	errCodeSecretConflict         grovecorev1beta1.ErrorCode = "ERR_SECRET_CONFLICT"
+	errCodeSetControllerReference grovecorev1beta1.ErrorCode = "ERR_SET_CONTROLLER_REFERENCE"
+	errCodeCreateSecret           grovecorev1beta1.ErrorCode = "ERR_CREATE_SECRET"
+	errCodeDeleteSecret           grovecorev1beta1.ErrorCode = "ERR_DELETE_SECRET"
+	errCodeListPods               grovecorev1beta1.ErrorCode = "ERR_LIST_PODS"
 )
 
 type _resource struct {
@@ -49,7 +51,7 @@ type _resource struct {
 }
 
 // New creates an instance of Secret components operator.
-func New(client client.Client, scheme *runtime.Scheme) component.Operator[grovecorev1alpha1.PodCliqueSet] {
+func New(client client.Client, scheme *runtime.Scheme) component.Operator[grovecorev1beta1.PodCliqueSet, pcssync.State, pcssync.Result] {
 	return &_resource{
 		client: client,
 		scheme: scheme,
@@ -79,12 +81,12 @@ func (r _resource) GetExistingResourceNames(ctx context.Context, _ logr.Logger, 
 }
 
 // Sync creates the service account token secret if it doesn't exist.
-func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) error {
+func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, _ *pcssync.State) (pcssync.Result, error) {
 	pcsObjKey := client.ObjectKeyFromObject(pcs)
 	objKey := getObjectKey(pcs.ObjectMeta)
 	existingSecret, err := r.getSecret(ctx, objKey)
 	if err != nil {
-		return groveerr.WrapError(err,
+		return pcssync.Result{}, groveerr.WrapError(err,
 			errCodeGetSecret,
 			component.OperationSync,
 			fmt.Sprintf("Error getting satokensecret: %v for PodCliqueSet: %v", objKey, pcsObjKey),
@@ -92,35 +94,35 @@ func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev
 	}
 	if existingSecret != nil {
 		if !metav1.IsControlledBy(existingSecret, pcs) {
-			return groveerr.New(
+			return pcssync.Result{}, groveerr.New(
 				errCodeSecretConflict,
 				component.OperationSync,
 				fmt.Sprintf("Secret %v already exists but is not controlled by PodCliqueSet %v", objKey, pcsObjKey),
 			)
 		}
 		if !hasServiceAccountToken(existingSecret) {
-			return newWaitingForTokenError(objKey)
+			return pcssync.Result{}, newWaitingForTokenError(objKey)
 		}
 		if err = r.cleanupLegacySecret(ctx, logger, pcs); err != nil {
-			return err
+			return pcssync.Result{}, err
 		}
 		logger.V(1).Info("Secret already exists, skipping creation", "existingSecret", client.ObjectKeyFromObject(existingSecret))
-		return nil
+		return pcssync.Result{}, nil
 	}
 
 	secret := emptySecret(objKey)
 	if err = r.buildResource(pcs, secret); err != nil {
-		return err
+		return pcssync.Result{}, err
 	}
 	if err = r.client.Create(ctx, secret); err != nil {
-		return groveerr.WrapError(err,
+		return pcssync.Result{}, groveerr.WrapError(err,
 			errCodeCreateSecret,
 			component.OperationSync,
 			fmt.Sprintf("Error creating satokensecret: %v for PodCliqueSet: %v", objKey, pcsObjKey),
 		)
 	}
 	logger.Info("Created Secret", "objectKey", objKey)
-	return newWaitingForTokenError(objKey)
+	return pcssync.Result{}, newWaitingForTokenError(objKey)
 }
 
 // Delete removes the service account token secret.
@@ -144,7 +146,7 @@ func (r _resource) Delete(ctx context.Context, logger logr.Logger, pcsObjMeta me
 }
 
 // buildResource configures the Secret as a ServiceAccountToken type.
-func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, secret *corev1.Secret) error {
+func (r _resource) buildResource(pcs *grovecorev1beta1.PodCliqueSet, secret *corev1.Secret) error {
 	secret.Labels = getLabels(pcs.Name, secret.Name)
 	if err := controllerutil.SetControllerReference(pcs, secret, r.scheme); err != nil {
 		return groveerr.WrapError(err,
@@ -177,10 +179,10 @@ func hasServiceAccountToken(secret *corev1.Secret) bool {
 }
 
 func newWaitingForTokenError(objKey client.ObjectKey) error {
-	return groveerr.New(
-		groveerr.ErrCodeRequeueAfter,
+	return groveerr.NewRequeueAfter(
 		component.OperationSync,
 		fmt.Sprintf("Secret %v is waiting for service account token", objKey),
+		constants.ComponentSyncRetryInterval,
 	)
 }
 
@@ -195,7 +197,7 @@ func (r _resource) getSecret(ctx context.Context, objKey client.ObjectKey) (*cor
 	return secret, nil
 }
 
-func (r _resource) cleanupLegacySecret(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) error {
+func (r _resource) cleanupLegacySecret(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet) error {
 	pcsObjKey := client.ObjectKeyFromObject(pcs)
 	legacyObjKey := getLegacyObjectKey(pcs.ObjectMeta)
 	legacySecret, err := r.getSecret(ctx, legacyObjKey)
@@ -236,7 +238,7 @@ func (r _resource) cleanupLegacySecret(ctx context.Context, logger logr.Logger, 
 	return nil
 }
 
-func (r _resource) getPodsReferencingSecret(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, secretName string) ([]string, error) {
+func (r _resource) getPodsReferencingSecret(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet, secretName string) ([]string, error) {
 	podList := &corev1.PodList{}
 	if err := r.client.List(ctx,
 		podList,

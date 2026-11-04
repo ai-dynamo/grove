@@ -24,7 +24,7 @@ import (
 	"time"
 
 	commonapi "github.com/ai-dynamo/grove/operator/api/common"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/e2e/log"
 
 	"k8s.io/apimachinery/pkg/types"
@@ -40,7 +40,7 @@ type Verifier struct {
 
 // Check verifies a single PodGangMap. It returns nil if the PodGangMap passes the check or an error
 // why the check failed.
-type Check func(*grovecorev1alpha1.PodGangMap) error
+type Check func(*grovecorev1beta1.PodGangMap) error
 
 // NewVerifier creates a Verifier for PodGangMap resources bound to the given client.
 func NewVerifier(cl client.Client, logger *log.Logger) *Verifier {
@@ -52,9 +52,9 @@ func NewVerifier(cl client.Client, logger *log.Logger) *Verifier {
 
 // Get returns the PodGangMap for the given PodCliqueSet replica index. One PodGangMap exists per
 // PodCliqueSet replica, named <pcs-name>-<pcs-replica-index>.
-func (v *Verifier) Get(ctx context.Context, pcsNsName types.NamespacedName, pcsReplicaIndex int) (*grovecorev1alpha1.PodGangMap, error) {
+func (v *Verifier) Get(ctx context.Context, pcsNsName types.NamespacedName, pcsReplicaIndex int) (*grovecorev1beta1.PodGangMap, error) {
 	name := commonapi.GeneratePodGangMapName(commonapi.ResourceNameReplica{Name: pcsNsName.Name, Replica: pcsReplicaIndex})
-	pgm := &grovecorev1alpha1.PodGangMap{}
+	pgm := &grovecorev1beta1.PodGangMap{}
 	if err := v.cl.Get(ctx, types.NamespacedName{Namespace: pcsNsName.Namespace, Name: name}, pgm); err != nil {
 		return nil, err
 	}
@@ -81,8 +81,8 @@ func (v *Verifier) Verify(ctx context.Context, pcsNsName types.NamespacedName, p
 // NOTE: it selects the single anchor entry. After a coherent update a PodGangMap has more than one
 // anchor entry, and selecting the right one is left to the coherent update tests.
 func AnchorPCSGReplicaIndicesCheckFn(pcsgName string, want []int32) Check {
-	return func(pgm *grovecorev1alpha1.PodGangMap) error {
-		entry, err := singleEntryByRole(pgm, grovecorev1alpha1.PodGangEntryRoleAnchor)
+	return func(pgm *grovecorev1beta1.PodGangMap) error {
+		entry, err := singleEntryByRole(pgm, grovecorev1beta1.PodGangEntryRoleAnchor)
 		if err != nil {
 			return err
 		}
@@ -93,8 +93,8 @@ func AnchorPCSGReplicaIndicesCheckFn(pcsgName string, want []int32) Check {
 // ScaleOutPCSGReplicaIndicesCheckFn returns a Check that verifies the ScaleOut entry carries the wanted
 // replica indices for the given PodCliqueScalingGroup.
 func ScaleOutPCSGReplicaIndicesCheckFn(pcsgName string, want []int32) Check {
-	return func(pgm *grovecorev1alpha1.PodGangMap) error {
-		entry, err := singleEntryByRole(pgm, grovecorev1alpha1.PodGangEntryRoleScaleOut)
+	return func(pgm *grovecorev1beta1.PodGangMap) error {
+		entry, err := singleEntryByRole(pgm, grovecorev1beta1.PodGangEntryRoleScaleOut)
 		if err != nil {
 			return err
 		}
@@ -105,8 +105,8 @@ func ScaleOutPCSGReplicaIndicesCheckFn(pcsgName string, want []int32) Check {
 // AnchorStandalonePodCliqueCountCheckFn returns a Check that verifies the anchor entry carries the
 // wanted pod count for the given standalone PodClique.
 func AnchorStandalonePodCliqueCountCheckFn(cliqueName string, want int32) Check {
-	return func(pgm *grovecorev1alpha1.PodGangMap) error {
-		entry, err := singleEntryByRole(pgm, grovecorev1alpha1.PodGangEntryRoleAnchor)
+	return func(pgm *grovecorev1beta1.PodGangMap) error {
+		entry, err := singleEntryByRole(pgm, grovecorev1beta1.PodGangEntryRoleAnchor)
 		if err != nil {
 			return err
 		}
@@ -121,8 +121,8 @@ func AnchorStandalonePodCliqueCountCheckFn(cliqueName string, want int32) Check 
 // used to confirm a rebuilt PodGangMap reuses the epoch of the existing scale-out PodGang rather than
 // minting a new one, so the scale-out PodGang keeps its name.
 func ScaleOutEpochCheckFn(want string) Check {
-	return func(pgm *grovecorev1alpha1.PodGangMap) error {
-		entry, err := singleEntryByRole(pgm, grovecorev1alpha1.PodGangEntryRoleScaleOut)
+	return func(pgm *grovecorev1beta1.PodGangMap) error {
+		entry, err := singleEntryByRole(pgm, grovecorev1beta1.PodGangEntryRoleScaleOut)
 		if err != nil {
 			return err
 		}
@@ -137,8 +137,8 @@ func ScaleOutEpochCheckFn(want string) Check {
 // to confirm a rebuilt PodGangMap reuses the epoch of the existing anchor PodGang rather than minting a
 // new one, so the anchor PodGang keeps its name.
 func AnchorEpochCheckFn(want string) Check {
-	return func(pgm *grovecorev1alpha1.PodGangMap) error {
-		entry, err := singleEntryByRole(pgm, grovecorev1alpha1.PodGangEntryRoleAnchor)
+	return func(pgm *grovecorev1beta1.PodGangMap) error {
+		entry, err := singleEntryByRole(pgm, grovecorev1beta1.PodGangEntryRoleAnchor)
 		if err != nil {
 			return err
 		}
@@ -153,7 +153,7 @@ func AnchorEpochCheckFn(want string) Check {
 // state after every entry drains to empty, for example when a PodCliqueScalingGroup is scaled below
 // MinAvailable on an all-PodCliqueScalingGroup PodCliqueSet.
 func NoEntriesCheckFn() Check {
-	return func(pgm *grovecorev1alpha1.PodGangMap) error {
+	return func(pgm *grovecorev1beta1.PodGangMap) error {
 		if len(pgm.Spec.Entries) != 0 {
 			return fmt.Errorf("expected no entries, found %d", len(pgm.Spec.Entries))
 		}
@@ -178,22 +178,22 @@ func WaitUntilVerified(ctx context.Context, v *Verifier, pcsNsName types.Namespa
 }
 
 // singleEntryByRole returns the entry with the given role, or an error unless there is exactly one.
-func singleEntryByRole(pgm *grovecorev1alpha1.PodGangMap, role grovecorev1alpha1.PodGangEntryRole) (grovecorev1alpha1.PodGangEntry, error) {
-	var found []grovecorev1alpha1.PodGangEntry
+func singleEntryByRole(pgm *grovecorev1beta1.PodGangMap, role grovecorev1beta1.PodGangEntryRole) (grovecorev1beta1.PodGangEntry, error) {
+	var found []grovecorev1beta1.PodGangEntry
 	for i := range pgm.Spec.Entries {
 		if pgm.Spec.Entries[i].Role == role {
 			found = append(found, pgm.Spec.Entries[i])
 		}
 	}
 	if len(found) != 1 {
-		return grovecorev1alpha1.PodGangEntry{}, fmt.Errorf("expected exactly one %s entry, found %d", role, len(found))
+		return grovecorev1beta1.PodGangEntry{}, fmt.Errorf("expected exactly one %s entry, found %d", role, len(found))
 	}
 	return found[0], nil
 }
 
 // assertPCSGReplicaIndices reports whether the entry carries exactly the wanted replica indices for the
 // given PodCliqueScalingGroup.
-func assertPCSGReplicaIndices(entry grovecorev1alpha1.PodGangEntry, pcsgName string, want []int32) error {
+func assertPCSGReplicaIndices(entry grovecorev1beta1.PodGangEntry, pcsgName string, want []int32) error {
 	got := entry.PCSGReplicaIndices[pcsgName]
 	if !slices.Equal(got, want) {
 		return fmt.Errorf("%s PodCliqueScalingGroup %q replica indices = %v, want %v", entry.Role, pcsgName, got, want)

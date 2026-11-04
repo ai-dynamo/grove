@@ -38,10 +38,10 @@ Grove validates the following Kubernetes minor release lines in CI:
 
 | Kubernetes | K3s image | CI coverage |
 | :--- | :--- | :--- |
-| `1.34` | `rancher/k3s:v1.34.11-k3s1` | Compatibility matrix |
-| `1.35` | `rancher/k3s:v1.35.5-k3s1` | Compatibility matrix and regular E2E jobs |
+| `1.34` | `rancher/k3s:v1.34.11-k3s1` | Compatibility smoke suite |
+| `1.35` | `rancher/k3s:v1.35.5-k3s1` | Regular E2E jobs |
 
-The compatibility matrix runs the standard-cluster suites on both versions, including coherent updates and post-update scaling. Scale, AutoMNNVL, startup-ordering, and upgrade tests remain on their dedicated CI targets and are not included in the matrix.
+The compatibility smoke suite exercises representative installation, scheduling, deletion, update, topology, and resource-sharing paths on the minimum supported version. Full behavioral coverage runs through the regular E2E jobs on Kubernetes 1.35. Scale, AutoMNNVL, startup-ordering, and upgrade tests remain on their dedicated CI targets.
 
 ## Motivation
 

@@ -42,20 +42,24 @@ const (
 	PodStartedButNotReady corev1.PodConditionType = "PodStartedButNotReady"
 )
 
-// CategorizePodsByConditionType groups pods by their pod condition. Three condition types a.k.a. categories are of interest:
-// 1. Ready pods, 2. ScheduleGated pods and 3. Pods that are NotReady and have at least one container with non-zero exit code.
+// CategorizePodsByConditionType groups active pods by their pod condition. Terminating pods are placed
+// only in the TerminatingPod category, and terminal-phase pods are excluded from active status categories.
 func CategorizePodsByConditionType(logger logr.Logger, pods []*corev1.Pod) map[corev1.PodConditionType][]*corev1.Pod {
 	podCategories := make(map[corev1.PodConditionType][]*corev1.Pod)
 	for _, pod := range pods {
+		if IsResourceTerminating(pod.ObjectMeta) {
+			podCategories[TerminatingPod] = append(podCategories[TerminatingPod], pod)
+			continue
+		}
+		if pod.Status.Phase == corev1.PodFailed || pod.Status.Phase == corev1.PodSucceeded {
+			continue
+		}
+
 		// Check if the pod has been scheduled or is schedule gated.
 		if IsPodScheduled(pod) {
 			podCategories[corev1.PodScheduled] = append(podCategories[corev1.PodScheduled], pod)
 		} else if IsPodScheduleGated(pod) {
 			podCategories[ScheduleGatedPod] = append(podCategories[ScheduleGatedPod], pod)
-		}
-		// Check if the pod has a deletion timestamp set, which indicates that the pod is terminating.
-		if IsResourceTerminating(pod.ObjectMeta) {
-			podCategories[TerminatingPod] = append(podCategories[TerminatingPod], pod)
 		}
 		// check if the pod is ready, has at least one container with a non-zero exit code or has started but not ready containers.
 		if IsPodReady(pod) {

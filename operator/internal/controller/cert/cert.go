@@ -17,17 +17,16 @@ package cert
 import (
 	"context"
 	"fmt"
-	"os"
-	"strings"
 
-	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
-	"github.com/ai-dynamo/grove/operator/internal/constants"
+	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
+	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 	clustertopologyvalidationwebhook "github.com/ai-dynamo/grove/operator/internal/webhook/admission/clustertopology/validation"
 	pclqvalidationwebhook "github.com/ai-dynamo/grove/operator/internal/webhook/admission/pclq/validation"
 	authorizationwebhook "github.com/ai-dynamo/grove/operator/internal/webhook/admission/pcs/authorization"
 	defaultingwebhook "github.com/ai-dynamo/grove/operator/internal/webhook/admission/pcs/defaulting"
 	validatingwebhook "github.com/ai-dynamo/grove/operator/internal/webhook/admission/pcs/validation"
 	pcsgvalidationwebhook "github.com/ai-dynamo/grove/operator/internal/webhook/admission/pcsg/validation"
+	conversionwebhook "github.com/ai-dynamo/grove/operator/internal/webhook/conversion"
 
 	"github.com/go-logr/logr"
 	cert "github.com/open-policy-agent/cert-controller/pkg/rotator"
@@ -40,7 +39,6 @@ import (
 )
 
 const (
-	serviceName                      = "grove-operator"
 	certificateAuthorityName         = "Grove-CA"
 	certificateAuthorityOrganization = "Grove"
 )
@@ -49,18 +47,18 @@ const (
 // When mode=auto: uses cert-controller for automatic certificate generation and management.
 // When mode=manual: waits for externally provided certificates (e.g., from cert-manager, cluster admin).
 // Returns an error for unrecognized modes to ensure new modes are explicitly handled.
-func ManageWebhookCerts(ctx context.Context, mgr ctrl.Manager, cl client.Client, certDir string, secretName string, authorizerEnabled bool, certProvisionMode configv1alpha1.CertProvisionMode, certsReadyCh chan struct{}) error {
+func ManageWebhookCerts(ctx context.Context, mgr ctrl.Manager, cl client.Client, certDir string, secretName string, authorizerEnabled bool, certProvisionMode configv1beta1.CertProvisionMode, certsReadyCh chan struct{}) error {
 	logger := ctrl.Log.WithName("cert-management")
 
 	switch certProvisionMode {
-	case configv1alpha1.CertProvisionModeManual:
+	case configv1beta1.CertProvisionModeManual:
 		logger.Info("Using externally provided certificates (manual mode)",
 			"certDir", certDir, "secretName", secretName)
 		// Certificates are managed externally, signal ready immediately
 		close(certsReadyCh)
 		return nil
 
-	case configv1alpha1.CertProvisionModeAuto:
+	case configv1beta1.CertProvisionModeAuto:
 		return setupAutoCertProvisioning(ctx, mgr, cl, certDir, secretName, authorizerEnabled, certsReadyCh, logger)
 
 	default:
@@ -70,10 +68,11 @@ func ManageWebhookCerts(ctx context.Context, mgr ctrl.Manager, cl client.Client,
 
 // setupAutoCertProvisioning configures cert-controller for automatic certificate management.
 func setupAutoCertProvisioning(ctx context.Context, mgr ctrl.Manager, cl client.Client, certDir string, secretName string, authorizerEnabled bool, certsReadyCh chan struct{}, logger logr.Logger) error {
-	namespace, err := getOperatorNamespace()
+	namespace, err := k8sutils.OperatorNamespace()
 	if err != nil {
 		return err
 	}
+	serviceName := k8sutils.OperatorServiceName()
 
 	// Ensure the TLS secret exists before handing off to cert-controller.
 	// The upstream cert-controller can only Update existing secrets, not Create them.
@@ -146,6 +145,12 @@ func getWebhooks(authorizerEnabled bool) []cert.WebhookInfo {
 			Name: authorizationwebhook.Name,
 		})
 	}
+	for _, crdName := range conversionwebhook.ConvertedCRDNames() {
+		webhooks = append(webhooks, cert.WebhookInfo{
+			Type: cert.CRDConversion,
+			Name: crdName,
+		})
+	}
 	return webhooks
 }
 
@@ -192,23 +197,4 @@ func createPlaceholderSecretIfNotExists(ctx context.Context, cl client.Client, n
 	ctrl.Log.WithName("cert-management").Info("Created webhook TLS secret",
 		"namespace", namespace, "name", secretName)
 	return nil
-}
-
-// getOperatorNamespace reads the operator's namespace from namespace file
-func getOperatorNamespace() (string, error) {
-	return getOperatorNamespaceFromFile(constants.OperatorNamespaceFile)
-}
-
-// getOperatorNamespaceFromFile reads the operator's namespace from the specified file path.
-// This is extracted for testability.
-func getOperatorNamespaceFromFile(path string) (string, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return "", err
-	}
-	namespace := strings.TrimSpace(string(data))
-	if len(namespace) == 0 {
-		return "", fmt.Errorf("operator namespace is empty")
-	}
-	return namespace, nil
 }

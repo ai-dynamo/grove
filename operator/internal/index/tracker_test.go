@@ -23,13 +23,12 @@ import (
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/sets"
 )
 
 // ==================== GetAvailableIndices Tests ====================
 
 func TestGetNextAvailableIndices_EmptyPods(t *testing.T) {
-	indices, err := GetAvailableIndices(logr.Logger{}, []*corev1.Pod{}, 3)
+	indices, err := GetAvailablePodIndices(logr.Logger{}, []*corev1.Pod{}, 3)
 
 	assert.NoError(t, err)
 	assert.Equal(t, []int{0, 1, 2}, indices)
@@ -43,7 +42,7 @@ func TestGetNextAvailableIndices_WithExistingPods(t *testing.T) {
 		createTestPod("pod-c", "test-clique-4"),
 	}
 
-	indices, err := GetAvailableIndices(logr.Logger{}, pods, 3)
+	indices, err := GetAvailablePodIndices(logr.Logger{}, pods, 3)
 
 	assert.NoError(t, err)
 	// Should fill holes: 1, 3, 5
@@ -57,7 +56,7 @@ func TestGetNextAvailableIndices_Sequential(t *testing.T) {
 		createTestPod("pod-c", "test-clique-2"),
 	}
 
-	indices, err := GetAvailableIndices(logr.Logger{}, pods, 2)
+	indices, err := GetAvailablePodIndices(logr.Logger{}, pods, 2)
 
 	assert.NoError(t, err)
 	// Should continue sequence: 3, 4
@@ -72,7 +71,7 @@ func TestGetNextAvailableIndices_InvalidHostnames(t *testing.T) {
 		createTestPod("pod-valid2", "test-clique-2"),
 	}
 
-	indices, err := GetAvailableIndices(logr.Logger{}, pods, 3)
+	indices, err := GetAvailablePodIndices(logr.Logger{}, pods, 3)
 
 	// Should return error for invalid hostname
 	assert.Error(t, err)
@@ -152,43 +151,6 @@ func TestExtractUsedIndices_OnlyActivePods(t *testing.T) {
 	assert.True(t, usedIndices.Has(0))  // Only active pod index
 	assert.False(t, usedIndices.Has(1)) // Terminating pod index should not be included
 	assert.False(t, usedIndices.Has(2)) // Failed pod index should not be included
-}
-
-// ==================== findAvailableIndices Tests ====================
-func TestFindAvailableIndices_EmptyUsed(t *testing.T) {
-	usedIndices := sets.New[int]()
-
-	indices := findAvailableIndices(&usedIndices, 3)
-
-	assert.Equal(t, []int{0, 1, 2}, indices)
-}
-
-func TestFindAvailableIndices_WithHoles(t *testing.T) {
-	usedIndices := sets.New[int]()
-	usedIndices.Insert(0, 2, 4)
-
-	indices := findAvailableIndices(&usedIndices, 3)
-
-	assert.Equal(t, []int{1, 3, 5}, indices)
-}
-
-func TestFindAvailableIndices_Sequential(t *testing.T) {
-	usedIndices := sets.New[int]()
-	usedIndices.Insert(0, 1, 2)
-
-	indices := findAvailableIndices(&usedIndices, 2)
-
-	assert.Equal(t, []int{3, 4}, indices)
-}
-
-func TestFindAvailableIndices_ZeroCount(t *testing.T) {
-	usedIndices := sets.New[int]()
-	usedIndices.Insert(0, 1, 2)
-
-	indices := findAvailableIndices(&usedIndices, 0)
-
-	assert.Empty(t, indices, "should return empty slice for zero count")
-	assert.NotNil(t, indices, "should return empty slice, not nil")
 }
 
 // ==================== extractIndexFromHostname Tests ====================

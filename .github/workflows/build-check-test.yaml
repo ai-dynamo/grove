@@ -57,7 +57,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v4
         with:
-          go-version: "1.26.8"
+          go-version: "1.26.10"
           cache: true
           cache-dependency-path: |
             operator/go.sum
@@ -75,7 +75,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v4
         with:
-          go-version: "1.26.8"
+          go-version: "1.26.10"
           cache: true
           cache-dependency-path: operator/go.sum
       - name: build-operator
@@ -89,7 +89,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v4
         with:
-          go-version: "1.26.8"
+          go-version: "1.26.10"
           cache: true
           cache-dependency-path: operator/go.sum
       - name: check
@@ -119,6 +119,8 @@ jobs:
             test_pattern: "^Test_GS"
           - test_name: gang_termination
             test_pattern: "^Test_GT"
+          - test_name: pcs_scaling
+            test_pattern: "^Test_PCSS"
           - test_name: rolling_updates
             test_pattern: "^Test_RU"
           - test_name: ondelete_updates
@@ -139,6 +141,8 @@ jobs:
             make_target: "run-e2e-mnnvl-full"
           - test_name: crd_installer
             test_pattern: "^Test_CRD_Installer"
+          - test_name: api_conversion
+            test_pattern: "^Test_CONV"
           - test_name: resource_sharing
             test_pattern: "^Test_RS"
           - test_name: podgangmap_reconstruct
@@ -146,6 +150,9 @@ jobs:
           - test_name: version_upgrade
             test_pattern: "^Test_VUPG"
             make_target: "run-upgrade-e2e"
+          - test_name: version_downgrade
+            test_pattern: "^Test_VDGR"
+            make_target: "run-downgrade-e2e"
           - test_name: kueue
             test_pattern: "^Test_Kueue[0-9]"
             make_target: "run-e2e-kueue-full"
@@ -173,7 +180,7 @@ jobs:
 
       - name: Run e2e tests - ${{ matrix.test_name }}
         env:
-          GITHUB_TOKEN: ${{ matrix.test_name == 'version_upgrade' && secrets.GITHUB_TOKEN || '' }}
+          GITHUB_TOKEN: ${{ (matrix.test_name == 'version_upgrade' || matrix.test_name == 'version_downgrade') && secrets.GITHUB_TOKEN || '' }}
         run: |
           make ${{ matrix.make_target || 'run-e2e-full' }} TEST_PATTERN='${{ matrix.test_pattern }}' E2E_CREATE_FLAGS='--dind-memory-mode'
         working-directory: operator
@@ -213,6 +220,7 @@ jobs:
         include:
           - test_name: gang_scheduling
           - test_name: gang_termination
+          - test_name: pcs_scaling
           - test_name: rolling_updates
           - test_name: coherent_updates
           - test_name: ondelete_updates
@@ -222,9 +230,11 @@ jobs:
           - test_name: cascade_delete
           - test_name: auto_mnnvl
           - test_name: crd_installer
+          - test_name: api_conversion
           - test_name: resource_sharing
           - test_name: podgangmap_reconstruct
           - test_name: version_upgrade
+          - test_name: version_downgrade
           - test_name: kueue
           - test_name: kueue_update
     name: E2E - ${{ matrix.test_name }}
@@ -233,7 +243,7 @@ jobs:
         run: echo "E2E skipped — no changes to operator/ or .github/"
 
   kubernetes-compatibility:
-    needs: [test, build, check, changes]
+    needs: [test, build, check, changes, e2e]
     # Run only from copy-pr-bot's trusted branch.
     if: |
       startsWith(github.ref, 'refs/heads/pull-request/') &&
@@ -244,14 +254,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Regular E2E jobs provide full coverage on Kubernetes 1.35. The compatibility
+          # job only needs a representative smoke suite on the minimum supported version.
           - kubernetes_version: "1.34"
             k3s_image: "rancher/k3s:v1.34.11-k3s1"
-          - kubernetes_version: "1.35"
-            k3s_image: "rancher/k3s:v1.35.5-k3s1"
     name: Kubernetes compatibility - ${{ matrix.kubernetes_version }}
     env:
       KUBERNETES_COMPATIBILITY_TEST_PATTERN: >-
-        ^Test_(GS|GT|RU|OD|CU|PCUS|TAS|CM|CD|CRD_Installer|RS|PGMR)
+        ^Test_(CRD_Installer_AllCRDsExist|GS1_|CD1_|RU7_|CU2_|TAS1_|RS1_)
       # Test packages modify the same cluster.
       E2E_GO_TEST_FLAGS: "-p 1"
     steps:

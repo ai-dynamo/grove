@@ -17,7 +17,7 @@ package logger
 import (
 	"testing"
 
-	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
+	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 
 	"go.uber.org/zap/zapcore"
 )
@@ -29,7 +29,7 @@ func TestCreateLogLevelOpts(t *testing.T) {
 		// name is the test case identifier
 		name string
 		// level is the input log level to convert
-		level configv1alpha1.LogLevel
+		level configv1beta1.LogLevel
 		// wantErr indicates whether an error is expected
 		wantErr bool
 		// expectedLevel is the expected Zap level (only checked when wantErr is false)
@@ -38,14 +38,14 @@ func TestCreateLogLevelOpts(t *testing.T) {
 		{
 			// Debug level should map to zapcore.DebugLevel
 			name:          "debug level",
-			level:         configv1alpha1.DebugLevel,
+			level:         configv1beta1.DebugLevel,
 			wantErr:       false,
 			expectedLevel: zapcore.DebugLevel,
 		},
 		{
 			// Info level should map to zapcore.InfoLevel
 			name:          "info level",
-			level:         configv1alpha1.InfoLevel,
+			level:         configv1beta1.InfoLevel,
 			wantErr:       false,
 			expectedLevel: zapcore.InfoLevel,
 		},
@@ -59,7 +59,7 @@ func TestCreateLogLevelOpts(t *testing.T) {
 		{
 			// Error level should map to zapcore.ErrorLevel
 			name:          "error level",
-			level:         configv1alpha1.ErrorLevel,
+			level:         configv1beta1.ErrorLevel,
 			wantErr:       false,
 			expectedLevel: zapcore.ErrorLevel,
 		},
@@ -92,14 +92,14 @@ func TestCreateLogFormatOpts(t *testing.T) {
 		// name is the test case identifier
 		name string
 		// format is the input log format to convert
-		format configv1alpha1.LogFormat
+		format configv1beta1.LogFormat
 		// wantErr indicates whether an error is expected
 		wantErr bool
 	}{
 		{
 			// JSON format should return JSON encoder options
 			name:    "json format",
-			format:  configv1alpha1.LogFormatJSON,
+			format:  configv1beta1.LogFormatJSON,
 			wantErr: false,
 		},
 		{
@@ -111,7 +111,7 @@ func TestCreateLogFormatOpts(t *testing.T) {
 		{
 			// Text format should return console encoder options
 			name:    "text format",
-			format:  configv1alpha1.LogFormatText,
+			format:  configv1beta1.LogFormatText,
 			wantErr: false,
 		},
 		{
@@ -145,9 +145,9 @@ func TestBuildDefaultLoggerOpts(t *testing.T) {
 		// devMode specifies whether development mode is enabled
 		devMode bool
 		// level is the log level configuration
-		level configv1alpha1.LogLevel
+		level configv1beta1.LogLevel
 		// format is the log format configuration
-		format configv1alpha1.LogFormat
+		format configv1beta1.LogFormat
 		// wantErr indicates whether an error is expected
 		wantErr bool
 	}{
@@ -155,24 +155,24 @@ func TestBuildDefaultLoggerOpts(t *testing.T) {
 			// Production configuration with info level and JSON format
 			name:    "production mode with info level and json format",
 			devMode: false,
-			level:   configv1alpha1.InfoLevel,
-			format:  configv1alpha1.LogFormatJSON,
+			level:   configv1beta1.InfoLevel,
+			format:  configv1beta1.LogFormatJSON,
 			wantErr: false,
 		},
 		{
 			// Development configuration with debug level and text format
 			name:    "dev mode with debug level and text format",
 			devMode: true,
-			level:   configv1alpha1.DebugLevel,
-			format:  configv1alpha1.LogFormatText,
+			level:   configv1beta1.DebugLevel,
+			format:  configv1beta1.LogFormatText,
 			wantErr: false,
 		},
 		{
 			// Configuration with error level
 			name:    "error level configuration",
 			devMode: false,
-			level:   configv1alpha1.ErrorLevel,
-			format:  configv1alpha1.LogFormatJSON,
+			level:   configv1beta1.ErrorLevel,
+			format:  configv1beta1.LogFormatJSON,
 			wantErr: false,
 		},
 		{
@@ -188,14 +188,14 @@ func TestBuildDefaultLoggerOpts(t *testing.T) {
 			name:    "invalid log level",
 			devMode: false,
 			level:   "invalid",
-			format:  configv1alpha1.LogFormatJSON,
+			format:  configv1beta1.LogFormatJSON,
 			wantErr: true,
 		},
 		{
 			// Invalid log format should cause an error
 			name:    "invalid log format",
 			devMode: false,
-			level:   configv1alpha1.InfoLevel,
+			level:   configv1beta1.InfoLevel,
 			format:  "invalid",
 			wantErr: true,
 		},
@@ -230,9 +230,9 @@ func TestMustNewLogger(t *testing.T) {
 		// devMode specifies whether development mode is enabled
 		devMode bool
 		// level is the log level configuration
-		level configv1alpha1.LogLevel
+		level configv1beta1.LogLevel
 		// format is the log format configuration
-		format configv1alpha1.LogFormat
+		format configv1beta1.LogFormat
 		// wantPanic indicates whether a panic is expected
 		wantPanic bool
 	}{
@@ -240,24 +240,24 @@ func TestMustNewLogger(t *testing.T) {
 			// Valid production configuration should create logger successfully
 			name:      "valid production configuration",
 			devMode:   false,
-			level:     configv1alpha1.InfoLevel,
-			format:    configv1alpha1.LogFormatJSON,
+			level:     configv1beta1.InfoLevel,
+			format:    configv1beta1.LogFormatJSON,
 			wantPanic: false,
 		},
 		{
 			// Valid development configuration should create logger successfully
 			name:      "valid development configuration",
 			devMode:   true,
-			level:     configv1alpha1.DebugLevel,
-			format:    configv1alpha1.LogFormatText,
+			level:     configv1beta1.DebugLevel,
+			format:    configv1beta1.LogFormatText,
 			wantPanic: false,
 		},
 		{
 			// Valid configuration with error level
 			name:      "valid configuration with error level",
 			devMode:   false,
-			level:     configv1alpha1.ErrorLevel,
-			format:    configv1alpha1.LogFormatJSON,
+			level:     configv1beta1.ErrorLevel,
+			format:    configv1beta1.LogFormatJSON,
 			wantPanic: false,
 		},
 		{
@@ -273,14 +273,14 @@ func TestMustNewLogger(t *testing.T) {
 			name:      "invalid log level causes panic",
 			devMode:   false,
 			level:     "invalid",
-			format:    configv1alpha1.LogFormatJSON,
+			format:    configv1beta1.LogFormatJSON,
 			wantPanic: true,
 		},
 		{
 			// Invalid log format should cause panic
 			name:      "invalid log format causes panic",
 			devMode:   false,
-			level:     configv1alpha1.InfoLevel,
+			level:     configv1beta1.InfoLevel,
 			format:    "invalid",
 			wantPanic: true,
 		},

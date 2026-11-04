@@ -21,11 +21,12 @@ import (
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	apiconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
 	ctrlcommon "github.com/ai-dynamo/grove/operator/internal/controller/common"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	ctrlutils "github.com/ai-dynamo/grove/operator/internal/controller/utils"
+	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 
 	"github.com/go-logr/logr"
@@ -36,8 +37,8 @@ import (
 )
 
 // reconcileSpec performs the main reconciliation logic for PodCliqueScalingGroup spec changes
-func (r *Reconciler) reconcileSpec(ctx context.Context, logger logr.Logger, pcsg *grovecorev1alpha1.PodCliqueScalingGroup) ctrlcommon.ReconcileStepResult {
-	reconcileStepFns := []ctrlcommon.ReconcileStepFn[grovecorev1alpha1.PodCliqueScalingGroup]{
+func (r *Reconciler) reconcileSpec(ctx context.Context, logger logr.Logger, pcsg *grovecorev1beta1.PodCliqueScalingGroup) ctrlcommon.ReconcileStepResult {
+	reconcileStepFns := []ctrlcommon.ReconcileStepFn[grovecorev1beta1.PodCliqueScalingGroup]{
 		r.ensureFinalizer,
 		r.processUpdate,
 		r.syncPodCliqueScalingGroupResources,
@@ -54,7 +55,7 @@ func (r *Reconciler) reconcileSpec(ctx context.Context, logger logr.Logger, pcsg
 }
 
 // ensureFinalizer adds the PodCliqueScalingGroup finalizer if it's not already present
-func (r *Reconciler) ensureFinalizer(ctx context.Context, logger logr.Logger, pcsg *grovecorev1alpha1.PodCliqueScalingGroup) ctrlcommon.ReconcileStepResult {
+func (r *Reconciler) ensureFinalizer(ctx context.Context, logger logr.Logger, pcsg *grovecorev1beta1.PodCliqueScalingGroup) ctrlcommon.ReconcileStepResult {
 	if !controllerutil.ContainsFinalizer(pcsg, apiconstants.FinalizerPodCliqueScalingGroup) {
 		logger.Info("Adding finalizer", "finalizerName", apiconstants.FinalizerPodCliqueScalingGroup)
 		if err := ctrlutils.AddAndPatchFinalizer(ctx, r.client, pcsg, apiconstants.FinalizerPodCliqueScalingGroup); err != nil {
@@ -66,7 +67,7 @@ func (r *Reconciler) ensureFinalizer(ctx context.Context, logger logr.Logger, pc
 }
 
 // processUpdate handles rolling update initialization for PodCliqueScalingGroups when the parent PodCliqueSet is updating
-func (r *Reconciler) processUpdate(ctx context.Context, logger logr.Logger, pcsg *grovecorev1alpha1.PodCliqueScalingGroup) ctrlcommon.ReconcileStepResult {
+func (r *Reconciler) processUpdate(ctx context.Context, logger logr.Logger, pcsg *grovecorev1beta1.PodCliqueScalingGroup) ctrlcommon.ReconcileStepResult {
 	pcsgObjectKey := client.ObjectKeyFromObject(pcsg)
 	pcs, err := componentutils.GetPodCliqueSet(ctx, r.client, pcsg.ObjectMeta)
 	if err != nil {
@@ -110,7 +111,7 @@ func (r *Reconciler) processUpdate(ctx context.Context, logger logr.Logger, pcsg
 }
 
 // shouldResetOrTriggerUpdate determines if a rolling update should be initiated based on generation hash changes
-func shouldResetOrTriggerUpdate(pcs *grovecorev1alpha1.PodCliqueSet, pcsg *grovecorev1alpha1.PodCliqueScalingGroup) bool {
+func shouldResetOrTriggerUpdate(pcs *grovecorev1beta1.PodCliqueSet, pcsg *grovecorev1beta1.PodCliqueScalingGroup) bool {
 	if pcs.Status.CurrentGenerationHash == nil {
 		return false
 	}
@@ -124,10 +125,10 @@ func shouldResetOrTriggerUpdate(pcs *grovecorev1alpha1.PodCliqueSet, pcsg *grove
 	return true
 }
 
-func (r *Reconciler) initOrResetUpdate(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, pcsg *grovecorev1alpha1.PodCliqueScalingGroup) error {
+func (r *Reconciler) initOrResetUpdate(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet, pcsg *grovecorev1beta1.PodCliqueScalingGroup) error {
 	// reset and start the update
 	patch := client.MergeFrom(pcsg.DeepCopy())
-	pcsg.Status.UpdateProgress = &grovecorev1alpha1.PodCliqueScalingGroupUpdateProgress{
+	pcsg.Status.UpdateProgress = &grovecorev1beta1.PodCliqueScalingGroupUpdateProgress{
 		UpdateStartedAt:            metav1.Now(),
 		PodCliqueSetGenerationHash: *pcs.Status.CurrentGenerationHash,
 	}
@@ -144,7 +145,8 @@ func (r *Reconciler) initOrResetUpdate(ctx context.Context, pcs *grovecorev1alph
 }
 
 // syncPodCliqueScalingGroupResources synchronizes all managed resources using registered operators with retry logic
-func (r *Reconciler) syncPodCliqueScalingGroupResources(ctx context.Context, logger logr.Logger, pcsg *grovecorev1alpha1.PodCliqueScalingGroup) ctrlcommon.ReconcileStepResult {
+func (r *Reconciler) syncPodCliqueScalingGroupResources(ctx context.Context, logger logr.Logger, pcsg *grovecorev1beta1.PodCliqueScalingGroup) ctrlcommon.ReconcileStepResult {
+	state := &component.EmptyState{}
 	continueReconcileAndRequeueKinds := make([]component.Kind, 0)
 	for _, kind := range getOrderedKindsForSync() {
 		operator, err := r.operatorRegistry.GetOperator(kind)
@@ -152,15 +154,15 @@ func (r *Reconciler) syncPodCliqueScalingGroupResources(ctx context.Context, log
 			return ctrlcommon.ReconcileWithErrors(fmt.Sprintf("error getting operator for kind: %s", kind), err)
 		}
 		logger.V(1).Info("Syncing PodCliqueScalingGroup resource", "kind", kind)
-		if err = operator.Sync(ctx, logger, pcsg); err != nil {
-			if ctrlutils.ShouldContinueReconcileAndRequeue(err) {
+		if _, err = operator.Sync(ctx, logger, pcsg, state); err != nil {
+			if groveerr.IsContinueReconcileAndRequeue(err) {
 				logger.V(1).Info("components has registered a request to requeue post completion of all components syncs", "kind", kind, "message", err.Error())
 				continueReconcileAndRequeueKinds = append(continueReconcileAndRequeueKinds, kind)
 				continue
 			}
-			if shouldRequeue := ctrlutils.ShouldRequeueAfter(err); shouldRequeue {
-				logger.V(1).Info("retrying sync due to components", "kind", kind, "syncRetryInterval", constants.ComponentSyncRetryInterval, "message", err.Error())
-				return ctrlcommon.ReconcileAfter(constants.ComponentSyncRetryInterval, err.Error())
+			if requeueAfter, shouldRequeue := groveerr.GetRequeueAfter(err); shouldRequeue {
+				logger.V(1).Info("Retrying sync due to component", "kind", kind, "requeueAfter", requeueAfter, "message", err.Error())
+				return ctrlcommon.ReconcileAfter(requeueAfter, err.Error())
 			}
 			logger.Error(err, "failed to sync PodCliqueScalingGroup resources", "kind", kind)
 			return ctrlcommon.ReconcileWithErrors("error syncing managed resources", fmt.Errorf("failed to sync %s: %w", kind, err))
@@ -173,7 +175,7 @@ func (r *Reconciler) syncPodCliqueScalingGroupResources(ctx context.Context, log
 }
 
 // recordIncompleteReconcile records errors from failed reconciliation steps in the PodCliqueScalingGroup status
-func (r *Reconciler) recordIncompleteReconcile(ctx context.Context, logger logr.Logger, pcsg *grovecorev1alpha1.PodCliqueScalingGroup, errStepResult *ctrlcommon.ReconcileStepResult) ctrlcommon.ReconcileStepResult {
+func (r *Reconciler) recordIncompleteReconcile(ctx context.Context, logger logr.Logger, pcsg *grovecorev1beta1.PodCliqueScalingGroup, errStepResult *ctrlcommon.ReconcileStepResult) ctrlcommon.ReconcileStepResult {
 	if err := r.reconcileStatusRecorder.RecordErrors(ctx, pcsg, errStepResult); err != nil {
 		logger.Error(err, "failed to record incomplete reconcile operation")
 		// combine all errors
@@ -184,7 +186,7 @@ func (r *Reconciler) recordIncompleteReconcile(ctx context.Context, logger logr.
 }
 
 // updateObservedGeneration updates the PodCliqueScalingGroup status to reflect the current generation being processed
-func (r *Reconciler) updateObservedGeneration(ctx context.Context, logger logr.Logger, pcsg *grovecorev1alpha1.PodCliqueScalingGroup) ctrlcommon.ReconcileStepResult {
+func (r *Reconciler) updateObservedGeneration(ctx context.Context, logger logr.Logger, pcsg *grovecorev1beta1.PodCliqueScalingGroup) ctrlcommon.ReconcileStepResult {
 	if pcsg.Status.ObservedGeneration != nil && *pcsg.Status.ObservedGeneration == pcsg.Generation {
 		return ctrlcommon.ContinueReconcile()
 	}

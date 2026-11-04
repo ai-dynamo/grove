@@ -23,7 +23,8 @@ import (
 	"strconv"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
+	"github.com/ai-dynamo/grove/operator/internal/constants"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podclique/expectations"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
@@ -43,7 +44,7 @@ import (
 )
 
 // prepareSyncFlow gathers information in preparation for the sync flow to run.
-func (r _resource) prepareSyncFlow(ctx context.Context, logger logr.Logger, pclq *grovecorev1alpha1.PodClique) (*syncSnapshot, error) {
+func (r _resource) prepareSyncFlow(ctx context.Context, logger logr.Logger, pclq *grovecorev1beta1.PodClique) (*syncSnapshot, error) {
 	var (
 		ss            = &syncSnapshot{pclq: pclq}
 		err           error
@@ -79,7 +80,7 @@ func (r _resource) prepareSyncFlow(ctx context.Context, logger logr.Logger, pclq
 			fmt.Sprintf("failed to extract clique name from PodClique: %v", pclqObjectKey),
 		)
 	}
-	ss.isStandalonePCLQ = componentutils.IsStandalonePCLQ(ss.pcs, ss.cliqueName)
+	ss.isStandalonePCLQ = componentutils.IsStandalonePCLQTemplate(ss.pcs, ss.cliqueName)
 
 	ss.pcsReplicaIndex, err = k8sutils.GetPodCliqueSetReplicaIndex(pclq.ObjectMeta)
 	if err != nil {
@@ -145,7 +146,7 @@ func (r _resource) prepareSyncFlow(ctx context.Context, logger logr.Logger, pclq
 
 // listPredecessorPods lists the pods that an earlier PodClique of the same name left behind for garbage collection.
 // The PodClique lists its own pods by owner UID, so it does not see these.
-func (r _resource) listPredecessorPods(ctx context.Context, pclq *grovecorev1alpha1.PodClique) ([]*corev1.Pod, error) {
+func (r _resource) listPredecessorPods(ctx context.Context, pclq *grovecorev1beta1.PodClique) ([]*corev1.Pod, error) {
 	podList := &corev1.PodList{}
 	if err := r.client.List(ctx, podList, client.InNamespace(pclq.Namespace), client.MatchingLabels{apicommon.LabelPodClique: pclq.Name}); err != nil {
 		return nil, err
@@ -229,8 +230,8 @@ func (r _resource) runSyncFlow(ctx context.Context, logger logr.Logger, ss *sync
 			return result
 		}
 		if repaired {
-			result.recordError(groveerr.New(groveerr.ErrCodeRequeueAfter, component.OperationSync,
-				fmt.Sprintf("repaired pods missing the %s label for PodCliqueScalingGroup PodClique %v, re-queueing", apicommon.LabelPodGang, client.ObjectKeyFromObject(ss.pclq))))
+			result.recordError(groveerr.NewRequeueAfter(component.OperationSync,
+				fmt.Sprintf("repaired pods missing the %s label for PodCliqueScalingGroup PodClique %v, re-queueing", apicommon.LabelPodGang, client.ObjectKeyFromObject(ss.pclq)), constants.ComponentSyncRetryInterval))
 			return result
 		}
 
@@ -255,8 +256,7 @@ func (r _resource) runSyncFlow(ctx context.Context, logger logr.Logger, ss *sync
 
 	if componentutils.IsPCLQRollingUpdateInProgress(ss.pclq) {
 		if !pclqUpdateProgressMatchesCurrentRevision(ss) {
-			result.recordError(groveerr.New(
-				groveerr.ErrCodeContinueReconcileAndRequeue,
+			result.recordError(groveerr.NewContinueReconcileAndRequeue(
 				component.OperationSync,
 				fmt.Sprintf("PodClique %v update progress does not match the current PCS and PCLQ revisions, requeuing", client.ObjectKeyFromObject(ss.pclq)),
 			))
@@ -648,7 +648,7 @@ func removePodGangSchedulingGate(pod *corev1.Pod) bool {
 // createPods creates the specified number of new pods for the PodClique with proper indexing and concurrency control
 func (r _resource) createPods(ctx context.Context, logger logr.Logger, ss *syncSnapshot, numPods int) (int, error) {
 	// Pre-calculate all needed indices to avoid race conditions
-	availableIndices, err := index.GetAvailableIndices(logger, ss.existingPCLQPods, numPods)
+	availableIndices, err := index.GetAvailablePodIndices(logger, ss.existingPCLQPods, numPods)
 	if err != nil {
 		return 0, groveerr.WrapError(err,
 			errCodeGetAvailablePodHostNameIndices,
@@ -683,10 +683,10 @@ func (r _resource) createPods(ctx context.Context, logger logr.Logger, ss *syncS
 
 // syncSnapshot holds the relevant state required during the sync flow run.
 type syncSnapshot struct {
-	pcs                     *grovecorev1alpha1.PodCliqueSet
-	pclq                    *grovecorev1alpha1.PodClique
+	pcs                     *grovecorev1beta1.PodCliqueSet
+	pclq                    *grovecorev1beta1.PodClique
 	pcsReplicaIndex         int
-	pgm                     *grovecorev1alpha1.PodGangMap
+	pgm                     *grovecorev1beta1.PodGangMap
 	isStandalonePCLQ        bool
 	cliqueName              string
 	pcsgReplicaPodGangName  string

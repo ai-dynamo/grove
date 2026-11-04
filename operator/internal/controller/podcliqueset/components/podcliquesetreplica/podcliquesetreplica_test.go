@@ -16,14 +16,17 @@ package podcliquesetreplica
 
 import (
 	"context"
+	"slices"
 	"testing"
 
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
+	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/sync"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 
 	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
@@ -34,18 +37,21 @@ import (
 func TestNew(t *testing.T) {
 	// Tests creating a new operator instance
 	scheme := runtime.NewScheme()
-	require.NoError(t, grovecorev1alpha1.AddToScheme(scheme))
+	require.NoError(t, grovecorev1beta1.AddToScheme(scheme))
+	require.NoError(t, corev1.AddToScheme(scheme))
 
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 	eventRecorder := &record.FakeRecorder{}
 
-	operator := New(client, eventRecorder)
+	expectations := &pcssync.ScalingProgressExpectations{}
+	operator := New(client, eventRecorder, expectations)
 
 	assert.NotNil(t, operator)
 	resource, ok := operator.(*_resource)
 	assert.True(t, ok)
 	assert.Equal(t, client, resource.client)
 	assert.Equal(t, eventRecorder, resource.eventRecorder)
+	assert.Same(t, expectations, resource.scalingProgressExpectations)
 }
 
 // TestGetExistingResourceNames tests the GetExistingResourceNames function
@@ -64,19 +70,49 @@ func TestGetExistingResourceNames(t *testing.T) {
 	assert.Empty(t, names)
 }
 
-// TestDelete tests the Delete function
-func TestDelete(t *testing.T) {
-	// Tests that Delete is a no-op
-	scheme := runtime.NewScheme()
-	client := fake.NewClientBuilder().WithScheme(scheme).Build()
-
-	r := &_resource{
-		client: client,
+func TestSyncPersistsScaleOutFromZeroAndPopulatesState(t *testing.T) {
+	observedGeneration := int64(1)
+	pcs := &grovecorev1beta1.PodCliqueSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: "default",
+			Name:      "test-pcs",
+			UID:       "test-uid",
+		},
+		Spec: grovecorev1beta1.PodCliqueSetSpec{
+			Replicas: 2,
+			Template: grovecorev1beta1.PodCliqueSetTemplateSpec{
+				TerminationDelay: &metav1.Duration{},
+			},
+		},
+		Status: grovecorev1beta1.PodCliqueSetStatus{
+			ObservedGeneration: &observedGeneration,
+		},
 	}
+	scheme := runtime.NewScheme()
+	require.NoError(t, grovecorev1beta1.AddToScheme(scheme))
+	require.NoError(t, corev1.AddToScheme(scheme))
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(pcs).
+		WithStatusSubresource(pcs).
+		Build()
+	r := &_resource{
+		client:                      fakeClient,
+		eventRecorder:               &record.FakeRecorder{},
+		scalingProgressExpectations: &pcssync.ScalingProgressExpectations{},
+	}
+	state := &pcssync.State{}
 
-	err := r.Delete(context.Background(), logr.Discard(), metav1.ObjectMeta{})
+	_, err := r.Sync(context.Background(), logr.Discard(), pcs, state)
 
-	assert.NoError(t, err)
+	assert.True(t, groveerr.IsContinueReconcileAndRequeue(err))
+	assert.Equal(t, pcssync.State{
+		ExpectedReplicaIndices: []int{0, 1},
+		ScaleOutReplicaIndices: []int{0, 1},
+	}, *state)
+	assert.Equal(t, &grovecorev1beta1.PodCliqueSetScalingProgress{
+		ScaleOutReplicaIndices: []int32{0, 1},
+	}, pcs.Status.ScalingProgress)
 }
 
 // TestSync tests the Sync function
@@ -84,7 +120,7 @@ func TestSync(t *testing.T) {
 	tests := []struct {
 		name string
 		// pcs is the PodCliqueSet to sync
-		pcs *grovecorev1alpha1.PodCliqueSet
+		pcs *grovecorev1beta1.PodCliqueSet
 		// existingObjs are the existing objects in the cluster
 		existingObjs []runtime.Object
 		// expectError indicates if an error is expected
@@ -93,14 +129,14 @@ func TestSync(t *testing.T) {
 		{
 			// Tests sync with no replicas
 			name: "no_replicas",
-			pcs: &grovecorev1alpha1.PodCliqueSet{
+			pcs: &grovecorev1beta1.PodCliqueSet{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-pcs",
 					Namespace: "default",
 				},
-				Spec: grovecorev1alpha1.PodCliqueSetSpec{
+				Spec: grovecorev1beta1.PodCliqueSetSpec{
 					Replicas: 0,
-					Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
+					Template: grovecorev1beta1.PodCliqueSetTemplateSpec{
 						TerminationDelay: &metav1.Duration{},
 					},
 				},
@@ -111,14 +147,14 @@ func TestSync(t *testing.T) {
 		{
 			// Tests sync with replicas
 			name: "with_replicas",
-			pcs: &grovecorev1alpha1.PodCliqueSet{
+			pcs: &grovecorev1beta1.PodCliqueSet{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-pcs",
 					Namespace: "default",
 				},
-				Spec: grovecorev1alpha1.PodCliqueSetSpec{
+				Spec: grovecorev1beta1.PodCliqueSetSpec{
 					Replicas: 2,
-					Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
+					Template: grovecorev1beta1.PodCliqueSetTemplateSpec{
 						TerminationDelay: &metav1.Duration{},
 					},
 				},
@@ -134,28 +170,30 @@ func TestSync(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			scheme := runtime.NewScheme()
-			require.NoError(t, grovecorev1alpha1.AddToScheme(scheme))
+			require.NoError(t, grovecorev1beta1.AddToScheme(scheme))
+			require.NoError(t, corev1.AddToScheme(scheme))
 
+			existingObjs := append(slices.Clone(tc.existingObjs), tc.pcs)
 			fakeClient := fake.NewClientBuilder().
 				WithScheme(scheme).
-				WithRuntimeObjects(tc.existingObjs...).
+				WithRuntimeObjects(existingObjs...).
 				WithStatusSubresource(tc.pcs).
 				Build()
 
 			r := &_resource{
-				client:        fakeClient,
-				eventRecorder: &record.FakeRecorder{},
+				client:                      fakeClient,
+				eventRecorder:               &record.FakeRecorder{},
+				scalingProgressExpectations: &pcssync.ScalingProgressExpectations{},
 			}
 
-			err := r.Sync(ctx, logger, tc.pcs)
+			_, err := r.Sync(ctx, logger, tc.pcs, &pcssync.State{})
 
 			if tc.expectError {
 				assert.Error(t, err)
 			} else {
 				// May return a requeue error which is expected
 				if err != nil {
-					groveErr, ok := err.(*groveerr.GroveError)
-					if ok && groveErr.Code == groveerr.ErrCodeContinueReconcileAndRequeue {
+					if groveerr.IsContinueReconcileAndRequeue(err) {
 						// This is expected
 					} else {
 						t.Errorf("Unexpected error: %v", err)

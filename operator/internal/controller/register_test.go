@@ -17,7 +17,7 @@ package controller
 import (
 	"testing"
 
-	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
+	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 	groveclientscheme "github.com/ai-dynamo/grove/operator/internal/client"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
@@ -49,19 +49,19 @@ func TestRegisterControllers(t *testing.T) {
 		mgr, err := ctrl.NewManager(cfg, ctrl.Options{Scheme: groveclientscheme.Scheme})
 		require.NoError(t, err)
 
-		operatorConfig := configv1alpha1.OperatorConfiguration{
-			Scheduler: configv1alpha1.SchedulerConfiguration{Profiles: []configv1alpha1.SchedulerProfile{{Name: configv1alpha1.SchedulerNameKai}}, DefaultProfileName: string(configv1alpha1.SchedulerNameKai)},
-			Controllers: configv1alpha1.ControllerConfiguration{
-				PodCliqueSet: configv1alpha1.PodCliqueSetControllerConfiguration{
+		operatorConfig := configv1beta1.OperatorConfiguration{
+			Scheduler: configv1beta1.SchedulerConfiguration{Profiles: []configv1beta1.SchedulerProfile{{Name: configv1beta1.SchedulerNameKai}}, DefaultProfileName: string(configv1beta1.SchedulerNameKai)},
+			Controllers: configv1beta1.ControllerConfiguration{
+				PodCliqueSet: configv1beta1.PodCliqueSetControllerConfiguration{
 					ConcurrentSyncs: ptr.To(1),
 				},
-				PodClique: configv1alpha1.PodCliqueControllerConfiguration{
+				PodClique: configv1beta1.PodCliqueControllerConfiguration{
 					ConcurrentSyncs: ptr.To(1),
 				},
-				PodCliqueScalingGroup: configv1alpha1.PodCliqueScalingGroupControllerConfiguration{
+				PodCliqueScalingGroup: configv1beta1.PodCliqueScalingGroupControllerConfiguration{
 					ConcurrentSyncs: ptr.To(1),
 				},
-				PodGang: configv1alpha1.PodGangControllerConfiguration{
+				PodGang: configv1beta1.PodGangControllerConfiguration{
 					ConcurrentSyncs: ptr.To(1),
 				},
 			},

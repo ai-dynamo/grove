@@ -20,8 +20,8 @@ import (
 	"context"
 	"testing"
 
-	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
@@ -70,8 +70,8 @@ func TestCheckTopologyDrift(t *testing.T) {
 	cl := testutils.NewTestClientBuilder().WithObjects(ct, topology).Build()
 	b := newKueueBackend(cl)
 
-	inSync, message, _, err := b.CheckTopologyDrift(ctx, ct, grovecorev1alpha1.SchedulerTopologyBinding{
-		SchedulerName:     string(configv1alpha1.SchedulerNameKueue),
+	inSync, message, _, err := b.CheckTopologyDrift(ctx, ct, grovecorev1beta1.SchedulerTopologyBinding{
+		SchedulerName:     string(configv1beta1.SchedulerNameKueue),
 		TopologyReference: ct.Name,
 	})
 
@@ -82,21 +82,21 @@ func TestCheckTopologyDrift(t *testing.T) {
 
 func newKueueBackend(cl client.Client) scheduler.TopologyAwareBackend {
 	recorder := record.NewFakeRecorder(10)
-	profile := configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKueue}
+	profile := configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameKueue}
 	b := New(cl, cl.Scheme(), recorder, profile)
 	return b.(scheduler.TopologyAwareBackend)
 }
 
-func testClusterTopology() *grovecorev1alpha1.ClusterTopologyBinding {
-	return &grovecorev1alpha1.ClusterTopologyBinding{
+func testClusterTopology() *grovecorev1beta1.ClusterTopologyBinding {
+	return &grovecorev1beta1.ClusterTopologyBinding{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "grove-kind-topology",
 			UID:  uuid.NewUUID(),
 		},
-		Spec: grovecorev1alpha1.ClusterTopologyBindingSpec{
-			Levels: []grovecorev1alpha1.TopologyLevel{
-				{Domain: grovecorev1alpha1.TopologyDomainRack, Key: "topology.ai-dynamo.io/rack"},
-				{Domain: grovecorev1alpha1.TopologyDomainHost, Key: "kubernetes.io/hostname"},
+		Spec: grovecorev1beta1.ClusterTopologyBindingSpec{
+			Levels: []grovecorev1beta1.TopologyLevel{
+				{Domain: grovecorev1beta1.TopologyDomainRack, Key: "topology.ai-dynamo.io/rack"},
+				{Domain: grovecorev1beta1.TopologyDomainHost, Key: "kubernetes.io/hostname"},
 			},
 		},
 	}

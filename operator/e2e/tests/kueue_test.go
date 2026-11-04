@@ -25,7 +25,7 @@ import (
 	"time"
 
 	nameutils "github.com/ai-dynamo/grove/operator/api/common"
-	corev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	corev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/e2e/grove/kueueworkload"
 	"github.com/ai-dynamo/grove/operator/e2e/grove/podgang"
 	"github.com/ai-dynamo/grove/operator/e2e/grove/topology"
@@ -174,7 +174,7 @@ func nonAnchorPodGangs(podGangs []groveschedulerv1alpha1.PodGang) []groveschedul
 	var result []groveschedulerv1alpha1.PodGang
 	for _, pg := range podGangs {
 		role := pg.Labels[nameutils.LabelPodGangRole]
-		if role == string(corev1alpha1.PodGangEntryRoleTail) || role == string(corev1alpha1.PodGangEntryRoleScaleOut) {
+		if role == string(corev1beta1.PodGangEntryRoleTail) || role == string(corev1beta1.PodGangEntryRoleScaleOut) {
 			result = append(result, pg)
 		}
 	}
@@ -185,7 +185,7 @@ func nonAnchorPodGangs(podGangs []groveschedulerv1alpha1.PodGang) []groveschedul
 // so the PodCliqueSet admission webhook resolves the kueue scheduler backend for it
 // (validatePodCliqueSetWithBackend in internal/webhook/admission/pcs/validation/handler.go reads
 // Spec.Template.Cliques[0].Spec.PodSpec.SchedulerName).
-func kueueSchedulerClique(name string, replicas, minAvailable int32) *corev1alpha1.PodCliqueTemplateSpec {
+func kueueSchedulerClique(name string, replicas, minAvailable int32) *corev1beta1.PodCliqueTemplateSpec {
 	return testutils.NewPodCliqueTemplateSpecBuilder(name).
 		WithRoleName(name + "-role").
 		WithReplicas(replicas).
@@ -644,7 +644,7 @@ func Test_Kueue6_ValidatePodCliqueSetAndScaleRejection(t *testing.T) {
 	defer cleanup()
 	requireKueueCRD(t, tc)
 
-	newPCS := func(name string) *corev1alpha1.PodCliqueSet {
+	newPCS := func(name string) *corev1beta1.PodCliqueSet {
 		pcs := testutils.NewPodCliqueSetBuilder(name, "default", uuid.NewUUID()).
 			WithReplicas(1).
 			Build()
@@ -654,8 +654,8 @@ func Test_Kueue6_ValidatePodCliqueSetAndScaleRejection(t *testing.T) {
 
 	t.Run("PCSG-member PodClique minAvailable < replicas is rejected", func(t *testing.T) {
 		pcs := newPCS("kueue-t6-member-min")
-		pcs.Spec.Template.Cliques = []*corev1alpha1.PodCliqueTemplateSpec{kueueSchedulerClique("worker", 2, 1)}
-		pcs.Spec.Template.PodCliqueScalingGroupConfigs = []corev1alpha1.PodCliqueScalingGroupConfig{
+		pcs.Spec.Template.Cliques = []*corev1beta1.PodCliqueTemplateSpec{kueueSchedulerClique("worker", 2, 1)}
+		pcs.Spec.Template.PodCliqueScalingGroupConfigs = []corev1beta1.PodCliqueScalingGroupConfig{
 			{
 				Name:         "sg",
 				CliqueNames:  []string{"worker"},
@@ -675,7 +675,7 @@ func Test_Kueue6_ValidatePodCliqueSetAndScaleRejection(t *testing.T) {
 
 	t.Run("more than one partial-gang standalone PodClique is rejected", func(t *testing.T) {
 		pcs := newPCS("kueue-t6-two-partial")
-		pcs.Spec.Template.Cliques = []*corev1alpha1.PodCliqueTemplateSpec{
+		pcs.Spec.Template.Cliques = []*corev1beta1.PodCliqueTemplateSpec{
 			kueueSchedulerClique("worker-a", 4, 2),
 			kueueSchedulerClique("worker-b", 4, 2),
 		}
@@ -698,7 +698,7 @@ func Test_Kueue6_ValidatePodCliqueSetAndScaleRejection(t *testing.T) {
 			WithScaleConfig(ptr.To(int32(1)), 4).
 			Build()
 		pcs := newPCS("kueue-t6-autoscale")
-		pcs.Spec.Template.Cliques = []*corev1alpha1.PodCliqueTemplateSpec{clique}
+		pcs.Spec.Template.Cliques = []*corev1beta1.PodCliqueTemplateSpec{clique}
 		err := tc.Client.Create(ctx, pcs)
 		if err == nil {
 			t.Fatalf("Expected autoScalingConfig on a PodClique to be rejected, but create succeeded")
@@ -712,18 +712,18 @@ func Test_Kueue6_ValidatePodCliqueSetAndScaleRejection(t *testing.T) {
 	t.Run("PCSG resolving both a required and a preferred topology domain is rejected", func(t *testing.T) {
 		ensureGroveTopology(ctx, t, topology.NewTopologyVerifier(tc.Client, Logger))
 		pcs := newPCS("kueue-t6-pcsg-topology")
-		pcs.Spec.Template.Cliques = []*corev1alpha1.PodCliqueTemplateSpec{kueueSchedulerClique("worker", 2, 2)}
-		pcs.Spec.Template.PodCliqueScalingGroupConfigs = []corev1alpha1.PodCliqueScalingGroupConfig{
+		pcs.Spec.Template.Cliques = []*corev1beta1.PodCliqueTemplateSpec{kueueSchedulerClique("worker", 2, 2)}
+		pcs.Spec.Template.PodCliqueScalingGroupConfigs = []corev1beta1.PodCliqueScalingGroupConfig{
 			{
 				Name:         "sg",
 				CliqueNames:  []string{"worker"},
 				Replicas:     ptr.To(int32(1)),
 				MinAvailable: ptr.To(int32(1)),
-				TopologyConstraint: &corev1alpha1.TopologyConstraint{
+				TopologyConstraint: &corev1beta1.TopologyConstraint{
 					TopologyName: "grove-topology",
-					Pack: &corev1alpha1.TopologyPackConstraint{
-						RequiredDomain:  corev1alpha1.TopologyDomainBlock,
-						PreferredDomain: corev1alpha1.TopologyDomainRack,
+					Pack: &corev1beta1.TopologyPackConstraint{
+						RequiredDomain:  corev1beta1.TopologyDomainBlock,
+						PreferredDomain: corev1beta1.TopologyDomainRack,
 					},
 				},
 			},
@@ -755,7 +755,7 @@ func Test_Kueue6_ValidatePodCliqueSetAndScaleRejection(t *testing.T) {
 
 	t.Run("valid partial-gang standalone PodClique is accepted", func(t *testing.T) {
 		pcs := newPCS("kueue-t6-valid")
-		pcs.Spec.Template.Cliques = []*corev1alpha1.PodCliqueTemplateSpec{kueueSchedulerClique("worker", 4, 2)}
+		pcs.Spec.Template.Cliques = []*corev1beta1.PodCliqueTemplateSpec{kueueSchedulerClique("worker", 4, 2)}
 		// Dry run: the webhook still runs, but no Workload or pods are created.
 		if err := tc.Client.Create(ctx, pcs, client.DryRunAll); err != nil {
 			t.Fatalf("Expected valid partial-gang PodCliqueSet create to succeed, got: %v", err)
@@ -783,7 +783,7 @@ func Test_Kueue6_ValidatePodCliqueSetAndScaleRejection(t *testing.T) {
 	t.Run("PodCliqueSet without the queue label is rejected", func(t *testing.T) {
 		pcs := newPCS("kueue-t6-no-queue")
 		pcs.Labels = nil
-		pcs.Spec.Template.Cliques = []*corev1alpha1.PodCliqueTemplateSpec{kueueSchedulerClique("worker", 1, 1)}
+		pcs.Spec.Template.Cliques = []*corev1beta1.PodCliqueTemplateSpec{kueueSchedulerClique("worker", 1, 1)}
 		err := tc.Client.Create(ctx, pcs)
 		if err == nil {
 			t.Fatalf("Expected a PodCliqueSet without label %q to be rejected, but create succeeded", queueNameLabel)
@@ -796,7 +796,7 @@ func Test_Kueue6_ValidatePodCliqueSetAndScaleRejection(t *testing.T) {
 
 	t.Run("changing the queue label is rejected", func(t *testing.T) {
 		pcs := newPCS("kueue-t6-queue-change")
-		pcs.Spec.Template.Cliques = []*corev1alpha1.PodCliqueTemplateSpec{kueueSchedulerClique("worker", 1, 1)}
+		pcs.Spec.Template.Cliques = []*corev1beta1.PodCliqueTemplateSpec{kueueSchedulerClique("worker", 1, 1)}
 		if err := tc.Client.Create(ctx, pcs); err != nil {
 			t.Fatalf("Failed to create PodCliqueSet %s: %v", pcs.Name, err)
 		}
@@ -938,7 +938,7 @@ func Test_Kueue7_QueuedWorkloadAdmitsWhenQuotaFrees(t *testing.T) {
 	}
 
 	Logger.Info("7. Delete the filler PodCliqueSet to free its quota (the trigger for this scenario)")
-	fillerPCS := &corev1alpha1.PodCliqueSet{ObjectMeta: metav1.ObjectMeta{Namespace: tc.Namespace, Name: fillerName}}
+	fillerPCS := &corev1beta1.PodCliqueSet{ObjectMeta: metav1.ObjectMeta{Namespace: tc.Namespace, Name: fillerName}}
 	if err := client.IgnoreNotFound(tc.Client.Delete(ctx, fillerPCS)); err != nil {
 		t.Fatalf("Failed to delete filler PodCliqueSet: %v", err)
 	}
@@ -1287,7 +1287,7 @@ func Test_Kueue11_ScalingGroupTailWaitsForAnchor(t *testing.T) {
 	}
 	var anchor groveschedulerv1alpha1.PodGang
 	for _, pg := range podGangs {
-		if pg.Labels[nameutils.LabelPodGangRole] == string(corev1alpha1.PodGangEntryRoleAnchor) {
+		if pg.Labels[nameutils.LabelPodGangRole] == string(corev1beta1.PodGangEntryRoleAnchor) {
 			anchor = pg
 		}
 	}
@@ -1315,7 +1315,7 @@ func Test_Kueue11_ScalingGroupTailWaitsForAnchor(t *testing.T) {
 	}
 
 	Logger.Info("4. Delete the blocker to free its quota")
-	blocker := &corev1alpha1.PodCliqueSet{ObjectMeta: metav1.ObjectMeta{Namespace: tc.Namespace, Name: blockerName}}
+	blocker := &corev1beta1.PodCliqueSet{ObjectMeta: metav1.ObjectMeta{Namespace: tc.Namespace, Name: blockerName}}
 	if err := client.IgnoreNotFound(tc.Client.Delete(ctx, blocker)); err != nil {
 		t.Fatalf("Failed to delete the blocker: %v", err)
 	}

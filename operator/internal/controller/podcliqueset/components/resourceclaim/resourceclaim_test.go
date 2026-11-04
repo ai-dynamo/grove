@@ -20,10 +20,12 @@ import (
 	"testing"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
+	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/sync"
 	"github.com/ai-dynamo/grove/operator/internal/resourceclaim"
 
 	"github.com/go-logr/logr"
+	"github.com/samber/lo"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	resourcev1 "k8s.io/api/resource/v1"
@@ -35,7 +37,7 @@ import (
 
 func newTestScheme() *runtime.Scheme {
 	scheme := runtime.NewScheme()
-	_ = grovecorev1alpha1.AddToScheme(scheme)
+	_ = grovecorev1beta1.AddToScheme(scheme)
 	_ = resourcev1.AddToScheme(scheme)
 	return scheme
 }
@@ -45,7 +47,7 @@ const (
 	namespace = "default"
 )
 
-var gpuTemplate = grovecorev1alpha1.ResourceClaimTemplateConfig{
+var gpuTemplate = grovecorev1beta1.ResourceClaimTemplateConfig{
 	Name: "gpu-mps",
 	TemplateSpec: resourcev1.ResourceClaimTemplateSpec{
 		Spec: resourcev1.ResourceClaimSpec{
@@ -56,7 +58,7 @@ var gpuTemplate = grovecorev1alpha1.ResourceClaimTemplateConfig{
 	},
 }
 
-var gpuSharedTemplate = grovecorev1alpha1.ResourceClaimTemplateConfig{
+var gpuSharedTemplate = grovecorev1beta1.ResourceClaimTemplateConfig{
 	Name: "gpu-shared",
 	TemplateSpec: resourcev1.ResourceClaimTemplateSpec{
 		Spec: resourcev1.ResourceClaimSpec{
@@ -67,13 +69,13 @@ var gpuSharedTemplate = grovecorev1alpha1.ResourceClaimTemplateConfig{
 	},
 }
 
-func newPCS(replicas int32, refs []grovecorev1alpha1.PCSResourceSharingSpec, templates []grovecorev1alpha1.ResourceClaimTemplateConfig) *grovecorev1alpha1.PodCliqueSet {
-	return &grovecorev1alpha1.PodCliqueSet{
+func newPCS(replicas int32, refs []grovecorev1beta1.PCSResourceSharingSpec, templates []grovecorev1beta1.ResourceClaimTemplateConfig) *grovecorev1beta1.PodCliqueSet {
+	return &grovecorev1beta1.PodCliqueSet{
 		ObjectMeta: metav1.ObjectMeta{Name: pcsName, Namespace: namespace, UID: "pcs-uid"},
-		Spec: grovecorev1alpha1.PodCliqueSetSpec{
+		Spec: grovecorev1beta1.PodCliqueSetSpec{
 			Replicas: replicas,
-			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
-				Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+			Template: grovecorev1beta1.PodCliqueSetTemplateSpec{
+				Cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
 					{Name: "worker"},
 				},
 				ResourceClaimTemplates: templates,
@@ -89,7 +91,7 @@ func newRC(name string, labels map[string]string) *resourcev1.ResourceClaim {
 			Name: name, Namespace: namespace, Labels: labels,
 			OwnerReferences: []metav1.OwnerReference{
 				{
-					APIVersion: grovecorev1alpha1.SchemeGroupVersion.String(),
+					APIVersion: grovecorev1beta1.SchemeGroupVersion.String(),
 					Kind:       "PodCliqueSet",
 					Name:       pcsName,
 					UID:        "pcs-uid",
@@ -138,18 +140,18 @@ func TestGetExistingResourceNames(t *testing.T) {
 func TestSync(t *testing.T) {
 	scheme := newTestScheme()
 
-	refs := []grovecorev1alpha1.PCSResourceSharingSpec{
-		{ResourceSharingSpec: grovecorev1alpha1.ResourceSharingSpec{Name: "gpu-shared", Scope: grovecorev1alpha1.ResourceSharingScopeAllReplicas}},
-		{ResourceSharingSpec: grovecorev1alpha1.ResourceSharingSpec{Name: "gpu-mps", Scope: grovecorev1alpha1.ResourceSharingScopePerReplica}},
+	refs := []grovecorev1beta1.PCSResourceSharingSpec{
+		{ResourceSharingSpec: grovecorev1beta1.ResourceSharingSpec{Name: "gpu-shared", Scope: grovecorev1beta1.ResourceSharingScopeAllReplicas}},
+		{ResourceSharingSpec: grovecorev1beta1.ResourceSharingSpec{Name: "gpu-mps", Scope: grovecorev1beta1.ResourceSharingScopePerReplica}},
 	}
-	templates := []grovecorev1alpha1.ResourceClaimTemplateConfig{gpuTemplate, gpuSharedTemplate}
+	templates := []grovecorev1beta1.ResourceClaimTemplateConfig{gpuTemplate, gpuSharedTemplate}
 
 	t.Run("creates AllReplicas and PerReplica RCs", func(t *testing.T) {
 		pcs := newPCS(2, refs, templates)
 		cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pcs).Build()
 		r := _resource{client: cl, scheme: scheme}
 
-		err := r.Sync(context.Background(), logr.Discard(), pcs)
+		_, err := r.Sync(context.Background(), logr.Discard(), pcs, &pcssync.State{ExpectedReplicaIndices: lo.Range(int(pcs.Spec.Replicas))})
 		require.NoError(t, err)
 
 		rc := &resourcev1.ResourceClaim{}
@@ -174,7 +176,8 @@ func TestSync(t *testing.T) {
 		cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pcs).Build()
 		r := _resource{client: cl, scheme: scheme}
 
-		require.NoError(t, r.Sync(context.Background(), logr.Discard(), pcs))
+		_, err := r.Sync(context.Background(), logr.Discard(), pcs, &pcssync.State{ExpectedReplicaIndices: lo.Range(int(pcs.Spec.Replicas))})
+		require.NoError(t, err)
 
 		rc := &resourcev1.ResourceClaim{}
 		require.NoError(t, cl.Get(context.Background(), types.NamespacedName{
@@ -195,7 +198,8 @@ func TestSync(t *testing.T) {
 		cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pcs, staleRC).Build()
 		r := _resource{client: cl, scheme: scheme}
 
-		require.NoError(t, r.Sync(context.Background(), logr.Discard(), pcs))
+		_, err := r.Sync(context.Background(), logr.Discard(), pcs, &pcssync.State{ExpectedReplicaIndices: lo.Range(int(pcs.Spec.Replicas))})
+		require.NoError(t, err)
 
 		rc := &resourcev1.ResourceClaim{}
 		assert.Error(t, cl.Get(context.Background(), types.NamespacedName{
@@ -208,7 +212,7 @@ func TestSync(t *testing.T) {
 		cl := fake.NewClientBuilder().WithScheme(scheme).Build()
 		r := _resource{client: cl, scheme: scheme}
 
-		err := r.Sync(context.Background(), logr.Discard(), pcs)
+		_, err := r.Sync(context.Background(), logr.Discard(), pcs, &pcssync.State{ExpectedReplicaIndices: lo.Range(int(pcs.Spec.Replicas))})
 		require.NoError(t, err)
 
 		rcList := &resourcev1.ResourceClaimList{}
@@ -217,14 +221,15 @@ func TestSync(t *testing.T) {
 	})
 
 	t.Run("AllReplicas RC is shared across replicas", func(t *testing.T) {
-		allReplicasOnly := []grovecorev1alpha1.PCSResourceSharingSpec{
-			{ResourceSharingSpec: grovecorev1alpha1.ResourceSharingSpec{Name: "gpu-mps", Scope: grovecorev1alpha1.ResourceSharingScopeAllReplicas}},
+		allReplicasOnly := []grovecorev1beta1.PCSResourceSharingSpec{
+			{ResourceSharingSpec: grovecorev1beta1.ResourceSharingSpec{Name: "gpu-mps", Scope: grovecorev1beta1.ResourceSharingScopeAllReplicas}},
 		}
 		pcs := newPCS(3, allReplicasOnly, templates)
 		cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pcs).Build()
 		r := _resource{client: cl, scheme: scheme}
 
-		require.NoError(t, r.Sync(context.Background(), logr.Discard(), pcs))
+		_, err := r.Sync(context.Background(), logr.Discard(), pcs, &pcssync.State{ExpectedReplicaIndices: lo.Range(int(pcs.Spec.Replicas))})
+		require.NoError(t, err)
 
 		rcList := &resourcev1.ResourceClaimList{}
 		require.NoError(t, cl.List(context.Background(), rcList))
@@ -239,14 +244,15 @@ func TestSync(t *testing.T) {
 	})
 
 	t.Run("PerReplica creates one RC per replica", func(t *testing.T) {
-		perReplicaOnly := []grovecorev1alpha1.PCSResourceSharingSpec{
-			{ResourceSharingSpec: grovecorev1alpha1.ResourceSharingSpec{Name: "gpu-mps", Scope: grovecorev1alpha1.ResourceSharingScopePerReplica}},
+		perReplicaOnly := []grovecorev1beta1.PCSResourceSharingSpec{
+			{ResourceSharingSpec: grovecorev1beta1.ResourceSharingSpec{Name: "gpu-mps", Scope: grovecorev1beta1.ResourceSharingScopePerReplica}},
 		}
 		pcs := newPCS(3, perReplicaOnly, templates)
 		cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pcs).Build()
 		r := _resource{client: cl, scheme: scheme}
 
-		require.NoError(t, r.Sync(context.Background(), logr.Discard(), pcs))
+		_, err := r.Sync(context.Background(), logr.Discard(), pcs, &pcssync.State{ExpectedReplicaIndices: lo.Range(int(pcs.Spec.Replicas))})
+		require.NoError(t, err)
 
 		rc := &resourcev1.ResourceClaim{}
 		for i := range 3 {
@@ -255,6 +261,38 @@ func TestSync(t *testing.T) {
 			}, rc))
 		}
 	})
+}
+
+func TestSyncUsesSparseReplicaIndices(t *testing.T) {
+	scheme := newTestScheme()
+	refs := []grovecorev1beta1.PCSResourceSharingSpec{
+		{ResourceSharingSpec: grovecorev1beta1.ResourceSharingSpec{Name: "gpu-mps", Scope: grovecorev1beta1.ResourceSharingScopePerReplica}},
+	}
+	pcs := newPCS(3, refs, []grovecorev1beta1.ResourceClaimTemplateConfig{gpuTemplate})
+	staleLabels := pcsRCLabels()
+	staleLabels[apicommon.LabelPodCliqueSetReplicaIndex] = "1"
+	staleRC := newRC(pcsName+"-1-gpu-mps", staleLabels)
+	highIndexLabels := pcsRCLabels()
+	highIndexLabels[apicommon.LabelPodCliqueSetReplicaIndex] = "4"
+	highIndexRC := newRC(pcsName+"-4-gpu-mps", highIndexLabels)
+	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pcs, staleRC, highIndexRC).Build()
+	r := _resource{client: cl, scheme: scheme}
+	state := &pcssync.State{ExpectedReplicaIndices: []int{0, 2, 4}, ScaleInReplicaIndices: []int{1}}
+
+	result, err := r.Sync(context.Background(), logr.Discard(), pcs, state)
+
+	require.NoError(t, err)
+	assert.Equal(t, []int{1}, result.ScaleInReplicaIndicesAwaitingResourceCleanup)
+	for _, replicaIndex := range []int{0, 2, 4} {
+		rc := &resourcev1.ResourceClaim{}
+		require.NoError(t, cl.Get(context.Background(), types.NamespacedName{
+			Name: pcsName + "-" + strconv.Itoa(replicaIndex) + "-gpu-mps", Namespace: namespace,
+		}, rc))
+	}
+	staleClaim := &resourcev1.ResourceClaim{}
+	assert.Error(t, cl.Get(context.Background(), types.NamespacedName{Name: staleRC.Name, Namespace: namespace}, staleClaim))
+	assert.Equal(t, []int{0, 2, 4}, state.ExpectedReplicaIndices)
+	assert.Equal(t, []int{1}, state.ScaleInReplicaIndices)
 }
 
 // --- Delete ---

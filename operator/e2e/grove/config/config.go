@@ -20,7 +20,8 @@ import (
 	"context"
 	"fmt"
 
-	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
+	operatorconfig "github.com/ai-dynamo/grove/operator/api/config"
+	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 	"github.com/ai-dynamo/grove/operator/e2e/setup"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -38,7 +39,7 @@ const (
 
 // GroveMetadata holds operator deployment metadata collected before a test run.
 type GroveMetadata struct {
-	Config *configv1alpha1.OperatorConfiguration
+	Config *configv1beta1.OperatorConfiguration
 	Image  string
 }
 
@@ -83,7 +84,7 @@ func (oc *OperatorConfig) ReadGroveMetadata(ctx context.Context) (*GroveMetadata
 		return nil, fmt.Errorf("key %q not found in configmap %q", operatorConfigDataKey, cmName)
 	}
 
-	cfg, err := configv1alpha1.DecodeOperatorConfig([]byte(data))
+	cfg, _, err := operatorconfig.DecodeOperatorConfig([]byte(data))
 	if err != nil {
 		return nil, err
 	}

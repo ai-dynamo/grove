@@ -1,6 +1,6 @@
 # Workload 5: Strict Startup with Dependency
 ---
-apiVersion: grove.io/v1alpha1
+apiVersion: grove.io/v1beta1
 kind: PodCliqueSet
 metadata:
   name: workload5

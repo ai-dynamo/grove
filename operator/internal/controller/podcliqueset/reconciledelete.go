@@ -19,7 +19,7 @@ import (
 	"fmt"
 
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
-	"github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	"github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	ctrlcommon "github.com/ai-dynamo/grove/operator/internal/controller/common"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	ctrlutils "github.com/ai-dynamo/grove/operator/internal/controller/utils"
@@ -41,8 +41,8 @@ import (
 // strip on its own. We invoke the ComputeDomain operator's Delete (which removes
 // the finalizer and issues Delete) before dropping the PCS finalizer, so the
 // CDs aren't left dangling once GC starts cascading.
-func (r *Reconciler) triggerDeletionFlow(ctx context.Context, logger logr.Logger, pcs *v1alpha1.PodCliqueSet) ctrlcommon.ReconcileStepResult {
-	deleteStepFns := []ctrlcommon.ReconcileStepFn[v1alpha1.PodCliqueSet]{
+func (r *Reconciler) triggerDeletionFlow(ctx context.Context, logger logr.Logger, pcs *v1beta1.PodCliqueSet) ctrlcommon.ReconcileStepResult {
+	deleteStepFns := []ctrlcommon.ReconcileStepFn[v1beta1.PodCliqueSet]{
 		r.releaseComputeDomainFinalizers,
 		r.removeFinalizer,
 	}
@@ -52,8 +52,9 @@ func (r *Reconciler) triggerDeletionFlow(ctx context.Context, logger logr.Logger
 		}
 	}
 	logger.Info("PodCliqueSet finalizer removed; Kubernetes garbage collector will cascade-delete owned resources")
-	// Remove the in-memory generation-hash expectation so the map does not retain an entry for a deleted PodCliqueSet.
+	// Remove in-memory expectations so they do not retain entries for the deleted PodCliqueSet.
 	r.pcsGenerationHashExpectations.Delete(pcsGenerationHashKey(pcs))
+	r.scalingProgressExpectations.Forget(pcs.ObjectMeta)
 	return ctrlcommon.DoNotRequeue()
 }
 
@@ -62,7 +63,7 @@ func (r *Reconciler) triggerDeletionFlow(ctx context.Context, logger logr.Logger
 // resource that carry a Grove-managed finalizer; without this step the K8s
 // garbage collector would orphan them in a `deleting` state forever once the
 // PCS goes away.
-func (r *Reconciler) releaseComputeDomainFinalizers(ctx context.Context, logger logr.Logger, pcs *v1alpha1.PodCliqueSet) ctrlcommon.ReconcileStepResult {
+func (r *Reconciler) releaseComputeDomainFinalizers(ctx context.Context, logger logr.Logger, pcs *v1beta1.PodCliqueSet) ctrlcommon.ReconcileStepResult {
 	op, err := r.operatorRegistry.GetOperator(component.KindComputeDomain)
 	if err != nil {
 		// ComputeDomain operator not registered (test scaffolding, etc.). Nothing to release.
@@ -75,7 +76,7 @@ func (r *Reconciler) releaseComputeDomainFinalizers(ctx context.Context, logger 
 }
 
 // removeFinalizer removes the PodCliqueSet finalizer if present.
-func (r *Reconciler) removeFinalizer(ctx context.Context, logger logr.Logger, pcs *v1alpha1.PodCliqueSet) ctrlcommon.ReconcileStepResult {
+func (r *Reconciler) removeFinalizer(ctx context.Context, logger logr.Logger, pcs *v1beta1.PodCliqueSet) ctrlcommon.ReconcileStepResult {
 	if !controllerutil.ContainsFinalizer(pcs, constants.FinalizerPodCliqueSet) {
 		logger.Info("Finalizer not found", "PodCliqueSet", pcs)
 		return ctrlcommon.ContinueReconcile()
@@ -88,7 +89,7 @@ func (r *Reconciler) removeFinalizer(ctx context.Context, logger logr.Logger, pc
 }
 
 // recordIncompleteDeletion records errors that occurred during deletion and returns the combined result.
-func (r *Reconciler) recordIncompleteDeletion(ctx context.Context, logger logr.Logger, pcs *v1alpha1.PodCliqueSet, errResult *ctrlcommon.ReconcileStepResult) ctrlcommon.ReconcileStepResult {
+func (r *Reconciler) recordIncompleteDeletion(ctx context.Context, logger logr.Logger, pcs *v1beta1.PodCliqueSet, errResult *ctrlcommon.ReconcileStepResult) ctrlcommon.ReconcileStepResult {
 	if err := r.reconcileStatusRecorder.RecordErrors(ctx, pcs, errResult); err != nil {
 		logger.Error(err, "failed to record deletion completion operation", "PodCliqueSet", pcs)
 		// combine all errors

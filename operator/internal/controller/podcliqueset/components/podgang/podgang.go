@@ -23,9 +23,10 @@ import (
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	apicommonconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
-	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
+	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/sync"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
@@ -42,28 +43,28 @@ import (
 )
 
 const (
-	errCodeListPodGangs            grovecorev1alpha1.ErrorCode = "ERR_LIST_PODGANGS"
-	errCodeDeletePodGangs          grovecorev1alpha1.ErrorCode = "ERR_DELETE_PODGANGS"
-	errCodeDeleteExcessPodGang     grovecorev1alpha1.ErrorCode = "ERR_DELETE_EXCESS_PODGANG"
-	errCodeListPods                grovecorev1alpha1.ErrorCode = "ERR_LIST_PODS_FOR_PODCLIQUESET"
-	errCodeListPodCliques          grovecorev1alpha1.ErrorCode = "ERR_LIST_PODCLIQUES_FOR_PODCLIQUESET"
-	errCodeComputeExistingPodGangs grovecorev1alpha1.ErrorCode = "ERR_COMPUTE_EXISTING_PODGANG"
-	errCodeSetControllerReference  grovecorev1alpha1.ErrorCode = "ERR_SET_CONTROLLER_REFERENCE"
-	errCodeCreateOrPatchPodGang    grovecorev1alpha1.ErrorCode = "ERR_CREATE_OR_PATCH_PODGANG"
-	errCodeResolveTopologyLevels   grovecorev1alpha1.ErrorCode = "ERR_RESOLVE_TOPOLOGY_LEVELS"
-	errCodeUpdatePodGangStatus     grovecorev1alpha1.ErrorCode = "ERR_UPDATE_PODGANG_STATUS"
+	errCodeListPodGangs            grovecorev1beta1.ErrorCode = "ERR_LIST_PODGANGS"
+	errCodeDeletePodGangs          grovecorev1beta1.ErrorCode = "ERR_DELETE_PODGANGS"
+	errCodeDeleteExcessPodGang     grovecorev1beta1.ErrorCode = "ERR_DELETE_EXCESS_PODGANG"
+	errCodeListPods                grovecorev1beta1.ErrorCode = "ERR_LIST_PODS_FOR_PODCLIQUESET"
+	errCodeListPodCliques          grovecorev1beta1.ErrorCode = "ERR_LIST_PODCLIQUES_FOR_PODCLIQUESET"
+	errCodeComputeExistingPodGangs grovecorev1beta1.ErrorCode = "ERR_COMPUTE_EXISTING_PODGANG"
+	errCodeSetControllerReference  grovecorev1beta1.ErrorCode = "ERR_SET_CONTROLLER_REFERENCE"
+	errCodeCreateOrPatchPodGang    grovecorev1beta1.ErrorCode = "ERR_CREATE_OR_PATCH_PODGANG"
+	errCodeResolveTopologyLevels   grovecorev1beta1.ErrorCode = "ERR_RESOLVE_TOPOLOGY_LEVELS"
+	errCodeUpdatePodGangStatus     grovecorev1beta1.ErrorCode = "ERR_UPDATE_PODGANG_STATUS"
 )
 
 type _resource struct {
 	client        client.Client
 	scheme        *runtime.Scheme
 	eventRecorder record.EventRecorder
-	tasConfig     configv1alpha1.TopologyAwareSchedulingConfiguration
+	tasConfig     configv1beta1.TopologyAwareSchedulingConfiguration
 	schedRegistry scheduler.Registry
 }
 
 // New creates a new instance of PodGang components operator.
-func New(client client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder, tasConfig configv1alpha1.TopologyAwareSchedulingConfiguration, schedRegistry scheduler.Registry) component.Operator[grovecorev1alpha1.PodCliqueSet] {
+func New(client client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder, tasConfig configv1beta1.TopologyAwareSchedulingConfiguration, schedRegistry scheduler.Registry) component.Operator[grovecorev1beta1.PodCliqueSet, pcssync.State, pcssync.Result] {
 	return &_resource{
 		client:        client,
 		scheme:        scheme,
@@ -93,17 +94,21 @@ func (r _resource) GetExistingResourceNames(ctx context.Context, logger logr.Log
 
 // Sync creates, updates, or deletes PodGang resources to match the desired state.
 // NEW FLOW: PodGangs are created with empty podReferences before Pods are created.
-func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet) error {
+func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, state *pcssync.State) (pcssync.Result, error) {
 	logger.V(1).Info("Syncing PodGang resources")
-	sc, err := r.prepareSyncFlow(ctx, logger, pcs)
+	ss, err := r.prepareSyncFlow(ctx, logger, pcs, state)
 	if err != nil {
-		return err
+		return pcssync.Result{}, err
 	}
-	result := r.runSyncFlow(ctx, sc)
-	if result.hasErrors() {
-		return result.getAggregatedError()
+
+	pcsReplicaIndicesAwaitingResourceCleanup := ss.getScaleInPCSReplicaIndicesAwaitingPodGangCleanup()
+	syncResult := r.runSyncFlow(ctx, ss)
+	if syncResult.hasErrors() {
+		return pcssync.Result{}, syncResult.getAggregatedError()
 	}
-	return nil
+	return pcssync.Result{
+		ScaleInReplicaIndicesAwaitingResourceCleanup: pcsReplicaIndicesAwaitingResourceCleanup,
+	}, nil
 }
 
 // Delete removes all PodGang resources managed by the PodCliqueSet.
@@ -124,7 +129,7 @@ func (r _resource) Delete(ctx context.Context, logger logr.Logger, pcsObjectMeta
 }
 
 // buildResource configures a PodGang with pod groups and priority.
-func (r _resource) buildResource(pcs *grovecorev1alpha1.PodCliqueSet, pgi *podGangInfo, pg *groveschedulerv1alpha1.PodGang) error {
+func (r _resource) buildResource(pcs *grovecorev1beta1.PodCliqueSet, pgi *podGangInfo, pg *groveschedulerv1alpha1.PodGang) error {
 	// Mirror PCS labels and annotations onto the PodGang so the PCS owns the
 	// non-grove.io namespace exclusively — additions and removals on the PCS
 	// propagate. grove.io/-prefixed entries are operator-managed and have a
@@ -202,7 +207,7 @@ func emptyPodGang(objKey client.ObjectKey) *groveschedulerv1alpha1.PodGang {
 	}
 }
 
-func (r _resource) buildLabels(pcs *grovecorev1alpha1.PodCliqueSet, pgi *podGangInfo, schedulerName string) map[string]string {
+func (r _resource) buildLabels(pcs *grovecorev1beta1.PodCliqueSet, pgi *podGangInfo, schedulerName string) map[string]string {
 	pgLabels := map[string]string{
 		apicommon.LabelComponentKey:             apicommon.LabelComponentNamePodGang,
 		apicommon.LabelPodCliqueSetReplicaIndex: strconv.Itoa(pgi.pcsReplicaIndex),
@@ -250,7 +255,7 @@ func podGangHasTranslatedTopologyConstraints(pgi *podGangInfo) bool {
 // First check the PodClique templates to find any schedulerName configured. Validating webhook ensures
 // that there cannot be more than one scheduler name configured for a PCS.
 // the template's schedulerName if set (same across all cliques per validation), else the default backend.
-func (r _resource) getSchedulerNameForPCS(pcs *grovecorev1alpha1.PodCliqueSet) string {
+func (r _resource) getSchedulerNameForPCS(pcs *grovecorev1beta1.PodCliqueSet) string {
 	for _, c := range pcs.Spec.Template.Cliques {
 		if c != nil && c.Spec.PodSpec.SchedulerName != "" {
 			return c.Spec.PodSpec.SchedulerName

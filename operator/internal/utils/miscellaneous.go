@@ -14,7 +14,11 @@
 
 package utils
 
-import "strings"
+import (
+	"strings"
+
+	"k8s.io/apimachinery/pkg/util/sets"
+)
 
 // IsEmptyStringType returns true if value (which is a string or has an underline type string) is empty or contains only whitespace characters.
 func IsEmptyStringType[T ~string](val T) bool {
@@ -29,4 +33,16 @@ func OnlyOneIsNil[T any](objA, objB *T) bool {
 // OnlyOneIsEmpty returns true if only one of the Objects is empty else it will return false.
 func OnlyOneIsEmpty[T any](objA, objB []T) bool {
 	return (len(objA) == 0) != (len(objB) == 0)
+}
+
+// GetAvailableIndices returns count lowest non-negative indices that are not present in occupiedIndices.
+func GetAvailableIndices(occupiedIndices sets.Set[int], count int) []int {
+	availableIndices := make([]int, 0, count)
+	for candidateIndex := 0; len(availableIndices) < count; candidateIndex++ {
+		if occupiedIndices.Has(candidateIndex) {
+			continue
+		}
+		availableIndices = append(availableIndices, candidateIndex)
+	}
+	return availableIndices
 }

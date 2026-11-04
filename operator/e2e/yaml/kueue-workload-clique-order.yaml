@@ -1,6 +1,6 @@
 # Test_Kueue10 fixture: two standalone cliques listed out of name order (prefill before decode), so the
 # PodGang lists its PodGroups out of name order too.
-apiVersion: grove.io/v1alpha1
+apiVersion: grove.io/v1beta1
 kind: PodCliqueSet
 metadata:
   name: kueue-clique-order

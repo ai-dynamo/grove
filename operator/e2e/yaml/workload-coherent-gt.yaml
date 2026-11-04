@@ -4,7 +4,7 @@
 # frontend: standalone PodClique (2 replicas, minAvailable 1).
 # inference: PodCliqueScalingGroup (2 replicas, minAvailable 1) over prefill and decode.
 ---
-apiVersion: grove.io/v1alpha1
+apiVersion: grove.io/v1beta1
 kind: PodCliqueSet
 metadata:
   name: workload-coherent-gt
