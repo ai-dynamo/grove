@@ -17,7 +17,7 @@ package podcliqueset
 import (
 	"testing"
 
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/stretchr/testify/assert"
@@ -43,7 +43,7 @@ func TestComputeGenerationHash(t *testing.T) {
 	assert.NotEqual(t, generationHash, computeGenerationHash(contentChange))
 
 	pcsgChange := pcs.DeepCopy()
-	pcsgChange.Spec.Template.PodCliqueScalingGroupConfigs = []grovecorev1alpha1.PodCliqueScalingGroupConfig{{
+	pcsgChange.Spec.Template.PodCliqueScalingGroupConfigs = []grovecorev1beta1.PodCliqueScalingGroupConfig{{
 		Name:         "workers",
 		MinAvailable: ptr.To[int32](2),
 	}}
@@ -54,8 +54,8 @@ func TestBuildPCSSchedulingConfig(t *testing.T) {
 	pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, uuid.NewUUID()).
 		WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("worker-b").WithReplicas(3).Build()).
 		WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("worker-a").WithReplicas(4).WithMinAvailable(2).Build()).
-		WithPodCliqueScalingGroupConfig(grovecorev1alpha1.PodCliqueScalingGroupConfig{Name: "group-b", MinAvailable: ptr.To[int32](2)}).
-		WithPodCliqueScalingGroupConfig(grovecorev1alpha1.PodCliqueScalingGroupConfig{Name: "group-a"}).
+		WithPodCliqueScalingGroupConfig(grovecorev1beta1.PodCliqueScalingGroupConfig{Name: "group-b", MinAvailable: ptr.To[int32](2)}).
+		WithPodCliqueScalingGroupConfig(grovecorev1beta1.PodCliqueScalingGroupConfig{Name: "group-a"}).
 		Build()
 
 	want := pcsSchedulingConfig{

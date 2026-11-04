@@ -17,7 +17,7 @@ package podcliqueset
 import (
 	"sort"
 
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
 	"github.com/samber/lo"
@@ -50,14 +50,14 @@ type pcsGenerationConfig struct {
 }
 
 // computeGenerationHash calculates the combined content and scheduling hash of a PodCliqueSet.
-func computeGenerationHash(pcs *grovecorev1alpha1.PodCliqueSet) string {
+func computeGenerationHash(pcs *grovecorev1beta1.PodCliqueSet) string {
 	_, _, generationHash := computePCSHashes(pcs)
 	return generationHash
 }
 
 // computePCSHashes computes the legacy generation, scheduling configuration,
 // and combined generation hashes from the current PodCliqueSet specification.
-func computePCSHashes(pcs *grovecorev1alpha1.PodCliqueSet) (
+func computePCSHashes(pcs *grovecorev1beta1.PodCliqueSet) (
 	legacyGenerationHash string,
 	schedulingConfigurationHash string,
 	generationHash string,
@@ -73,7 +73,7 @@ func computePCSHashes(pcs *grovecorev1alpha1.PodCliqueSet) (
 }
 
 // buildPCSSchedulingConfig creates a stable, name-ordered representation of the scheduling configuration.
-func buildPCSSchedulingConfig(pcs *grovecorev1alpha1.PodCliqueSet) pcsSchedulingConfig {
+func buildPCSSchedulingConfig(pcs *grovecorev1beta1.PodCliqueSet) pcsSchedulingConfig {
 	podCliques := make([]resourceSchedulingInfo, 0, len(pcs.Spec.Template.Cliques))
 	for _, clique := range pcs.Spec.Template.Cliques {
 		podCliques = append(podCliques, resourceSchedulingInfo{
@@ -107,8 +107,8 @@ func (r resourceSchedulingInfo) less(other resourceSchedulingInfo) bool {
 }
 
 // computeLegacyGenerationHash calculates the generation hash used before scheduling configuration hashing was introduced.
-func computeLegacyGenerationHash(pcs *grovecorev1alpha1.PodCliqueSet) string {
-	podTemplateSpecs := lo.Map(pcs.Spec.Template.Cliques, func(pclqTemplateSpec *grovecorev1alpha1.PodCliqueTemplateSpec, _ int) *corev1.PodTemplateSpec {
+func computeLegacyGenerationHash(pcs *grovecorev1beta1.PodCliqueSet) string {
+	podTemplateSpecs := lo.Map(pcs.Spec.Template.Cliques, func(pclqTemplateSpec *grovecorev1beta1.PodCliqueTemplateSpec, _ int) *corev1.PodTemplateSpec {
 		podTemplateSpec := &corev1.PodTemplateSpec{
 			ObjectMeta: metav1.ObjectMeta{
 				Labels:      pclqTemplateSpec.Labels,

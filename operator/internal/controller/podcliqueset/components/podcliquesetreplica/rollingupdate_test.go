@@ -83,30 +83,6 @@ func TestSelectReplicasToUpdate(t *testing.T) {
 	})
 }
 
-func TestIsSchedulingConfigRolloutInProgress(t *testing.T) {
-	tests := []struct {
-		name        string
-		progress    *grovecorev1beta1.PodCliqueSetUpdateProgress
-		appliedHash *string
-		want        bool
-	}{
-		{name: "no update progress", appliedHash: new("applied")},
-		{name: "no applied scheduling baseline", progress: &grovecorev1beta1.PodCliqueSetUpdateProgress{TargetSchedulingConfigurationHash: "target"}},
-		{name: "ordinary update", progress: &grovecorev1beta1.PodCliqueSetUpdateProgress{TargetSchedulingConfigurationHash: "same"}, appliedHash: new("same")},
-		{name: "completed scheduling config rollout", progress: &grovecorev1beta1.PodCliqueSetUpdateProgress{TargetSchedulingConfigurationHash: "target", UpdateEndedAt: new(metav1.Now())}, appliedHash: new("applied")},
-		{name: "scheduling config rollout", progress: &grovecorev1beta1.PodCliqueSetUpdateProgress{TargetSchedulingConfigurationHash: "target"}, appliedHash: new("applied"), want: true},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			pcs := &grovecorev1beta1.PodCliqueSet{Status: grovecorev1beta1.PodCliqueSetStatus{
-				UpdateProgress:                     tc.progress,
-				AppliedSchedulingConfigurationHash: tc.appliedHash,
-			}}
-			assert.Equal(t, tc.want, isSchedulingConfigRolloutInProgress(pcs))
-		})
-	}
-}
-
 func TestSelectReplicasToUpdateOrdering(t *testing.T) {
 	pcs := rollingUpdateTestPCS()
 	replicaInfos := []pcsReplicaInfo{
@@ -351,6 +327,7 @@ func TestUpdatePCSWithSelectedReplicasCompletesUpdate(t *testing.T) {
 func schedulingConfigRolloutTestPCS() *grovecorev1beta1.PodCliqueSet {
 	pcs := rollingUpdateTestPCS()
 	pcs.Status.AppliedSchedulingConfigurationHash = new("applied")
+	pcs.Status.UpdateProgress.RequiresReplicaRecreation = true
 	pcs.Status.UpdateProgress.TargetSchedulingConfigurationHash = "target"
 	pcs.Status.UpdateProgress.SupersededGenerationHash = new("superseded")
 	return pcs

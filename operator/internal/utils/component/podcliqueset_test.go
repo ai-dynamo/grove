@@ -252,6 +252,7 @@ func TestIsCoherentUpdateInProgress(t *testing.T) {
 		{"not Coherent", &grovecorev1beta1.PodCliqueSetUpdateStrategy{Type: grovecorev1beta1.RollingRecreateStrategy}, &grovecorev1beta1.PodCliqueSetUpdateProgress{}, false},
 		{"Coherent with no UpdateProgress", coherent, nil, false},
 		{"Coherent with an in-flight update", coherent, &grovecorev1beta1.PodCliqueSetUpdateProgress{}, true},
+		{"Coherent with PCS replica recreation in progress", coherent, &grovecorev1beta1.PodCliqueSetUpdateProgress{RequiresReplicaRecreation: true}, false},
 		{"Coherent with an ended update", coherent, &grovecorev1beta1.PodCliqueSetUpdateProgress{UpdateEndedAt: &endedAt}, false},
 	}
 	for _, tc := range testCases {
@@ -260,6 +261,26 @@ func TestIsCoherentUpdateInProgress(t *testing.T) {
 			pcs.Spec.UpdateStrategy = tc.strategy
 			pcs.Status.UpdateProgress = tc.progress
 			assert.Equal(t, tc.want, IsCoherentUpdateInProgress(pcs))
+		})
+	}
+}
+
+func TestIsPCSReplicaRecreationInProgress(t *testing.T) {
+	endedAt := metav1.Now()
+	tests := []struct {
+		name     string
+		progress *grovecorev1beta1.PodCliqueSetUpdateProgress
+		want     bool
+	}{
+		{name: "no update progress"},
+		{name: "ordinary update", progress: &grovecorev1beta1.PodCliqueSetUpdateProgress{}},
+		{name: "recreation in progress", progress: &grovecorev1beta1.PodCliqueSetUpdateProgress{RequiresReplicaRecreation: true}, want: true},
+		{name: "completed recreation", progress: &grovecorev1beta1.PodCliqueSetUpdateProgress{RequiresReplicaRecreation: true, UpdateEndedAt: &endedAt}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			pcs := &grovecorev1beta1.PodCliqueSet{Status: grovecorev1beta1.PodCliqueSetStatus{UpdateProgress: tc.progress}}
+			assert.Equal(t, tc.want, IsPCSReplicaRecreationInProgress(pcs))
 		})
 	}
 }
@@ -296,6 +317,7 @@ func TestIsRollingRecreateUpdateInProgress(t *testing.T) {
 		want        bool
 	}{
 		{"RollingRecreate with an in-flight update", &grovecorev1beta1.PodCliqueSetUpdateStrategy{Type: grovecorev1beta1.RollingRecreateStrategy}, &grovecorev1beta1.PodCliqueSetUpdateProgress{}, true},
+		{"RollingRecreate with PCS replica recreation in progress", &grovecorev1beta1.PodCliqueSetUpdateStrategy{Type: grovecorev1beta1.RollingRecreateStrategy}, &grovecorev1beta1.PodCliqueSetUpdateProgress{RequiresReplicaRecreation: true}, false},
 		{"a nil UpdateStrategy defaults to RollingRecreate and is RollingRecreate", nil, &grovecorev1beta1.PodCliqueSetUpdateProgress{}, true},
 		{"Coherent with an in-flight update is not RollingRecreate", &grovecorev1beta1.PodCliqueSetUpdateStrategy{Type: grovecorev1beta1.CoherentStrategy}, &grovecorev1beta1.PodCliqueSetUpdateProgress{}, false},
 		{"OnDelete with an in-flight update is not RollingRecreate", &grovecorev1beta1.PodCliqueSetUpdateStrategy{Type: grovecorev1beta1.OnDeleteStrategy}, &grovecorev1beta1.PodCliqueSetUpdateProgress{}, false},
