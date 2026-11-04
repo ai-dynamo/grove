@@ -160,7 +160,10 @@ func hasPodStatusChanged(updateEvent event.UpdateEvent) bool {
 	if !oldOk || !newOk {
 		return false
 	}
-	return hasConditionStatusChanged(oldPod.Status.Conditions, newPod.Status.Conditions, corev1.PodReady) ||
+	// A phase change is checked on its own: the kubelet can move a Pod to Failed while its containers
+	// are still waiting, for example when it is evicted mid image pull, and none of the checks below fire.
+	return oldPod.Status.Phase != newPod.Status.Phase ||
+		hasConditionStatusChanged(oldPod.Status.Conditions, newPod.Status.Conditions, corev1.PodReady) ||
 		hasConditionStatusChanged(oldPod.Status.Conditions, newPod.Status.Conditions, corev1.PodScheduled) ||
 		hasLastTerminationStateChanged(oldPod.Status.InitContainerStatuses, newPod.Status.InitContainerStatuses) ||
 		hasLastTerminationStateChanged(oldPod.Status.ContainerStatuses, newPod.Status.ContainerStatuses) ||
