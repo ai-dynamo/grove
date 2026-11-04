@@ -115,11 +115,7 @@ func mapPCSToPCSG() handler.MapFunc {
 		if !ok || !componentutils.IsRollingUpdateStrategy(pcs) {
 			return nil
 		}
-		pcsReplicaIndex, ok := currentPCSReplicaInUpdate(pcs.Status.UpdateProgress)
-		if !ok {
-			return nil
-		}
-		return pcsgReconcileRequestsForPCSReplicas(pcs, []int32{pcsReplicaIndex})
+		return pcsgReconcileRequestsForPCSReplicas(pcs, componentutils.PCSReplicaIndicesSelectedForUpdate(pcs))
 	}
 }
 
@@ -154,28 +150,10 @@ func podCliqueSetPredicate() predicate.Predicate {
 			if !okOld || !okNew || !componentutils.IsRollingUpdateStrategy(newPCS) {
 				return false
 			}
-			return hasNewPCSReplicaBeenSelectedForUpdate(oldPCS.Status.UpdateProgress, newPCS.Status.UpdateProgress)
+			return componentutils.HasNewPCSReplicaIndicesSelectedForUpdate(oldPCS, newPCS)
 		},
 		GenericFunc: func(_ event.GenericEvent) bool { return false },
 	}
-}
-
-// hasNewPCSReplicaBeenSelectedForUpdate reports whether the PCS selected a new replica for update.
-func hasNewPCSReplicaBeenSelectedForUpdate(oldProgress, newProgress *grovecorev1beta1.PodCliqueSetUpdateProgress) bool {
-	oldReplicaIndex, oldOK := currentPCSReplicaInUpdate(oldProgress)
-	newReplicaIndex, newOK := currentPCSReplicaInUpdate(newProgress)
-	if !newOK {
-		return false
-	}
-	return !oldOK || oldReplicaIndex != newReplicaIndex
-}
-
-// currentPCSReplicaInUpdate returns the PCS replica index currently being updated, if any.
-func currentPCSReplicaInUpdate(progress *grovecorev1beta1.PodCliqueSetUpdateProgress) (int32, bool) {
-	if progress == nil || len(progress.CurrentlyUpdating) == 0 {
-		return 0, false
-	}
-	return progress.CurrentlyUpdating[0].ReplicaIndex, true
 }
 
 // mapPCLQToPCSG maps PodClique events to their owning PodCliqueScalingGroup reconcile requests

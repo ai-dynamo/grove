@@ -17,9 +17,7 @@ package podcliquescalinggroup
 import (
 	"context"
 	"fmt"
-	"strconv"
 
-	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	apiconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
@@ -28,6 +26,7 @@ import (
 	ctrlutils "github.com/ai-dynamo/grove/operator/internal/controller/utils"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
+	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
 	"github.com/go-logr/logr"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -87,14 +86,13 @@ func (r *Reconciler) processUpdate(ctx context.Context, logger logr.Logger, pcsg
 		// No update has yet been triggered for the PodCliqueSet. Nothing to do here.
 		return ctrlcommon.ContinueReconcile()
 	}
-	pcsReplicaInUpdating := pcs.Status.UpdateProgress.CurrentlyUpdating[0].ReplicaIndex
-	pcsReplicaIndexStr, ok := pcsg.Labels[apicommon.LabelPodCliqueSetReplicaIndex]
-	if !ok {
-		logger.V(1).Info("PodCliqueSet is currently under rolling update. Cannot process pending updates for this PodCliqueScalingGroup as no PodCliqueSet index label is found")
+	pcsReplicaIndex, err := k8sutils.GetPodCliqueSetReplicaIndex(pcsg.ObjectMeta)
+	if err != nil {
+		logger.Error(err, "Cannot process pending updates for PodCliqueScalingGroup because its PodCliqueSet replica index is invalid", "podCliqueScalingGroup", pcsgObjectKey)
 		return ctrlcommon.ContinueReconcile()
 	}
-	if pcsReplicaIndexStr != strconv.Itoa(int(pcsReplicaInUpdating)) {
-		logger.V(1).Info("PodCliqueSet is currently under rolling update. Skipping processing pending updates for this PodCliqueScalingGroup as it does not belong to the PodCliqueSet Index in update", "currentlyUpdatingPCSIndex", pcsReplicaInUpdating, "pcsIndexForPCSG", pcsReplicaIndexStr)
+	if !componentutils.IsPCSReplicaSelectedForUpdate(pcs, pcsReplicaIndex) {
+		logger.V(1).Info("PodCliqueSet is currently under rolling update. Skipping pending updates for a PodCliqueScalingGroup outside the selected replica set", "pcsIndexForPCSG", pcsReplicaIndex)
 		return ctrlcommon.ContinueReconcile()
 	}
 

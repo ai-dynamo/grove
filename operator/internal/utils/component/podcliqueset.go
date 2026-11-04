@@ -149,18 +149,46 @@ func IsCoherentStrategy(pcs *grovecorev1beta1.PodCliqueSet) bool {
 	return ResolveUpdateStrategyType(pcs) == grovecorev1beta1.CoherentStrategy
 }
 
-// IsPCSReplicaUnderCoherentUpdate reports whether the given PodCliqueSet replica is the one the
-// orchestrator has selected for a coherent update and has not yet closed out.
-func IsPCSReplicaUnderCoherentUpdate(pcs *grovecorev1beta1.PodCliqueSet, pcsReplicaIndex int) bool {
-	if !IsCoherentUpdateInProgress(pcs) {
-		return false
+// PCSReplicaIndicesSelectedForUpdate returns the unique PCS replica indices selected for the active
+// update, sorted in ascending order.
+func PCSReplicaIndicesSelectedForUpdate(pcs *grovecorev1beta1.PodCliqueSet) []int32 {
+	if pcs == nil || pcs.Status.UpdateProgress == nil || pcs.Status.UpdateProgress.UpdateEndedAt != nil {
+		return nil
 	}
+
+	replicaIndices := sets.New[int32]()
 	for _, replicaProgress := range pcs.Status.UpdateProgress.CurrentlyUpdating {
-		if int(replicaProgress.ReplicaIndex) == pcsReplicaIndex && replicaProgress.UpdateEndedAt == nil {
+		if replicaProgress.UpdateEndedAt == nil {
+			replicaIndices.Insert(replicaProgress.ReplicaIndex)
+		}
+	}
+	if replicaIndices.Len() == 0 {
+		return nil
+	}
+	return sets.List(replicaIndices)
+}
+
+// IsPCSReplicaSelectedForUpdate reports whether the given PCS replica is selected for the active update.
+func IsPCSReplicaSelectedForUpdate(pcs *grovecorev1beta1.PodCliqueSet, pcsReplicaIndex int) bool {
+	return slices.Contains(PCSReplicaIndicesSelectedForUpdate(pcs), int32(pcsReplicaIndex))
+}
+
+// HasNewPCSReplicaIndicesSelectedForUpdate reports whether newPCS selects one or more PCS replica
+// indices for update that oldPCS did not select.
+func HasNewPCSReplicaIndicesSelectedForUpdate(oldPCS, newPCS *grovecorev1beta1.PodCliqueSet) bool {
+	oldReplicaIndices := sets.New(PCSReplicaIndicesSelectedForUpdate(oldPCS)...)
+	for _, replicaIndex := range PCSReplicaIndicesSelectedForUpdate(newPCS) {
+		if !oldReplicaIndices.Has(replicaIndex) {
 			return true
 		}
 	}
 	return false
+}
+
+// IsPCSReplicaUnderCoherentUpdate reports whether the given PodCliqueSet replica is selected for an
+// active coherent update.
+func IsPCSReplicaUnderCoherentUpdate(pcs *grovecorev1beta1.PodCliqueSet, pcsReplicaIndex int) bool {
+	return IsCoherentUpdateInProgress(pcs) && IsPCSReplicaSelectedForUpdate(pcs, pcsReplicaIndex)
 }
 
 // GetExpectedPCLQNamesGroupByOwner returns the expected unqualified PodClique names which are either owned by PodCliqueSet or PodCliqueScalingGroup.

@@ -62,6 +62,14 @@ func TestShouldCheckPendingUpdatesForPCLQ(t *testing.T) {
 			expected:            true,
 		},
 		{
+			name: "standalone_matching_second_active_pcs_replica",
+			pcsUpdateProgress: &grovecorev1beta1.PodCliqueSetUpdateProgress{
+				CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 0}, {ReplicaIndex: 1}},
+			},
+			pclqPCSReplicaIndex: 1,
+			expected:            true,
+		},
+		{
 			name:                "standalone_active_pcs_update_without_selected_replica",
 			pcsUpdateProgress:   &grovecorev1beta1.PodCliqueSetUpdateProgress{},
 			pclqPCSReplicaIndex: 0,
