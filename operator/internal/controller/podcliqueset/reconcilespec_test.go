@@ -377,9 +377,10 @@ func TestGetKindSyncGroups(t *testing.T) {
 // TestInitOrResetUpdate tests the initOrResetUpdate function for both OnDelete and RollingRecreate strategies
 func TestInitOrResetUpdate(t *testing.T) {
 	tests := []struct {
-		name                   string
-		setupPCS               func() *grovecorev1beta1.PodCliqueSet
-		expectUpdateEndedAtSet bool
+		name                           string
+		setupPCS                       func() *grovecorev1beta1.PodCliqueSet
+		expectUpdateEndedAtSet         bool
+		expectedCurrentlyUpdatingIndex *int32
 	}{
 		{
 			name: "rolling_recreate_strategy_does_not_set_update_ended_at",
@@ -456,7 +457,8 @@ func TestInitOrResetUpdate(t *testing.T) {
 				pcs.Status.UpdatedReplicas = 2
 				return pcs
 			},
-			expectUpdateEndedAtSet: false,
+			expectUpdateEndedAtSet:         false,
+			expectedCurrentlyUpdatingIndex: ptr.To[int32](1),
 		},
 		{
 			name: "existing_on_delete_update_is_reset_when_hash_changes",
@@ -512,6 +514,8 @@ func TestInitOrResetUpdate(t *testing.T) {
 			require.NotNil(t, updatedPCS.Status.UpdateProgress, "UpdateProgress should be set")
 			assert.NotEmpty(t, updatedPCS.Status.UpdateProgress.UpdateStartedAt, "UpdateStartedAt should be set")
 			assert.Equal(t, targetSchedulingConfigurationHash, updatedPCS.Status.UpdateProgress.TargetSchedulingConfigurationHash)
+			require.NotNil(t, updatedPCS.Status.UpdateProgress.SupersededGenerationHash)
+			assert.Equal(t, "old-hash", *updatedPCS.Status.UpdateProgress.SupersededGenerationHash)
 
 			// Verify UpdateEndedAt based on strategy
 			if tt.expectUpdateEndedAtSet {
@@ -522,13 +526,47 @@ func TestInitOrResetUpdate(t *testing.T) {
 
 			assert.Equal(t, int32(0), updatedPCS.Status.UpdateProgress.UpdatedPodCliqueScalingGroupsCount, "UpdatedPodCliqueScalingGroupsCount should be reset to 0")
 			assert.Equal(t, int32(0), updatedPCS.Status.UpdateProgress.UpdatedPodCliquesCount, "UpdatedPodCliquesCount should be reset to 0")
-			// Currently updating is not set by the initOrResetUpdate function
-			assert.Nil(t, updatedPCS.Status.UpdateProgress.CurrentlyUpdating, "CurrentlyUpdating should be nil")
+			if tt.expectedCurrentlyUpdatingIndex == nil {
+				assert.Nil(t, updatedPCS.Status.UpdateProgress.CurrentlyUpdating)
+			} else {
+				require.Len(t, updatedPCS.Status.UpdateProgress.CurrentlyUpdating, 1)
+				assert.Equal(t, *tt.expectedCurrentlyUpdatingIndex, updatedPCS.Status.UpdateProgress.CurrentlyUpdating[0].ReplicaIndex)
+				assert.Equal(t, updatedPCS.Status.UpdateProgress.UpdateStartedAt, updatedPCS.Status.UpdateProgress.CurrentlyUpdating[0].UpdateStartedAt)
+				assert.Nil(t, updatedPCS.Status.UpdateProgress.CurrentlyUpdating[0].UpdateEndedAt)
+			}
 			assert.Equal(t, int32(0), updatedPCS.Status.UpdatedReplicas, "UpdatedReplicas should be reset to 0")
 			require.NotNil(t, updatedPCS.Status.CurrentGenerationHash)
 			assert.Equal(t, newGenerationHash, *updatedPCS.Status.CurrentGenerationHash)
 		})
 	}
+}
+
+func TestCarryCurrentlyUpdatingReplicaProgress(t *testing.T) {
+	updateStartedAt := metav1.Now()
+	completedAt := metav1.Now()
+	pcs := &grovecorev1beta1.PodCliqueSet{
+		Status: grovecorev1beta1.PodCliqueSetStatus{
+			UpdateProgress: &grovecorev1beta1.PodCliqueSetUpdateProgress{
+				CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{
+					{ReplicaIndex: 3},
+					{ReplicaIndex: 1},
+					{ReplicaIndex: 3},
+					{ReplicaIndex: 2, UpdateEndedAt: &completedAt},
+				},
+			},
+			ScalingProgress: &grovecorev1beta1.PodCliqueSetScalingProgress{
+				ScaleInReplicaIndices: []int32{1},
+			},
+		},
+	}
+
+	got := carryCurrentlyUpdatingReplicaProgress(pcs, updateStartedAt)
+
+	require.Len(t, got, 1)
+	assert.Equal(t, int32(3), got[0].ReplicaIndex)
+	assert.Equal(t, updateStartedAt, got[0].UpdateStartedAt)
+	assert.Nil(t, got[0].UpdateEndedAt)
+	assert.Nil(t, carryCurrentlyUpdatingReplicaProgress(&grovecorev1beta1.PodCliqueSet{}, updateStartedAt))
 }
 
 // TestPCSGenerationHashKey verifies the generation-hash expectation key includes the PCS UID so two
@@ -576,14 +614,14 @@ func TestProcessGenerationHashChangeBaselinesActiveLegacyUpdate(t *testing.T) {
 	legacyGenerationHash := computeLegacyGenerationHash(pcs)
 	pcs.Status.CurrentGenerationHash = ptr.To(legacyGenerationHash)
 	updateStartedAt := metav1.Now()
-	pcs.Status.UpdateProgress = &grovecorev1alpha1.PodCliqueSetUpdateProgress{UpdateStartedAt: updateStartedAt}
+	pcs.Status.UpdateProgress = &grovecorev1beta1.PodCliqueSetUpdateProgress{UpdateStartedAt: updateStartedAt}
 
 	fakeClient := testutils.SetupFakeClient(pcs)
 	reconciler := &Reconciler{client: fakeClient, pcsGenerationHashExpectations: sync.Map{}}
 	result := reconciler.processGenerationHashChange(context.Background(), logr.Discard(), pcs)
 
 	require.False(t, result.HasErrors())
-	updated := &grovecorev1alpha1.PodCliqueSet{}
+	updated := &grovecorev1beta1.PodCliqueSet{}
 	require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKeyFromObject(pcs), updated))
 	schedulingHash := computeSchedulingConfigurationHash(buildPCSSchedulingConfig(pcs))
 	require.NotNil(t, updated.Status.AppliedSchedulingConfigurationHash)
@@ -604,7 +642,7 @@ func TestProcessGenerationHashChangeKeepsActiveMigratedLegacyUpdate(t *testing.T
 	pcs.Status.CurrentGenerationHash = ptr.To(legacyGenerationHash)
 	pcs.Status.AppliedSchedulingConfigurationHash = ptr.To(schedulingHash)
 	updateStartedAt := metav1.Now()
-	pcs.Status.UpdateProgress = &grovecorev1alpha1.PodCliqueSetUpdateProgress{
+	pcs.Status.UpdateProgress = &grovecorev1beta1.PodCliqueSetUpdateProgress{
 		TargetSchedulingConfigurationHash: schedulingHash,
 		UpdateStartedAt:                   updateStartedAt,
 	}
@@ -614,7 +652,7 @@ func TestProcessGenerationHashChangeKeepsActiveMigratedLegacyUpdate(t *testing.T
 	result := reconciler.processGenerationHashChange(context.Background(), logr.Discard(), pcs)
 
 	require.False(t, result.HasErrors())
-	updated := &grovecorev1alpha1.PodCliqueSet{}
+	updated := &grovecorev1beta1.PodCliqueSet{}
 	require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKeyFromObject(pcs), updated))
 	assert.Equal(t, legacyGenerationHash, *updated.Status.CurrentGenerationHash)
 	require.NotNil(t, updated.Status.UpdateProgress)
@@ -632,7 +670,7 @@ func TestProcessGenerationHashChangeMigratesCompletedLegacyUpdate(t *testing.T) 
 	pcs.Status.AppliedSchedulingConfigurationHash = ptr.To(schedulingHash)
 	updateStartedAt := metav1.Now()
 	updateEndedAt := metav1.NewTime(updateStartedAt.Add(time.Minute))
-	pcs.Status.UpdateProgress = &grovecorev1alpha1.PodCliqueSetUpdateProgress{
+	pcs.Status.UpdateProgress = &grovecorev1beta1.PodCliqueSetUpdateProgress{
 		TargetSchedulingConfigurationHash: schedulingHash,
 		UpdateStartedAt:                   updateStartedAt,
 		UpdateEndedAt:                     &updateEndedAt,
@@ -643,7 +681,7 @@ func TestProcessGenerationHashChangeMigratesCompletedLegacyUpdate(t *testing.T) 
 	result := reconciler.processGenerationHashChange(context.Background(), logr.Discard(), pcs)
 
 	require.False(t, result.HasErrors())
-	updated := &grovecorev1alpha1.PodCliqueSet{}
+	updated := &grovecorev1beta1.PodCliqueSet{}
 	require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKeyFromObject(pcs), updated))
 	assert.Equal(t, computeGenerationHash(pcs), *updated.Status.CurrentGenerationHash)
 	require.NotNil(t, updated.Status.UpdateProgress)
@@ -687,7 +725,7 @@ func TestProcessGenerationHashChangeMigratesIdleLegacyHashWithoutUpdate(t *testi
 	result := reconciler.processGenerationHashChange(context.Background(), logr.Discard(), pcs)
 
 	require.False(t, result.HasErrors())
-	updated := &grovecorev1alpha1.PodCliqueSet{}
+	updated := &grovecorev1beta1.PodCliqueSet{}
 	require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKeyFromObject(pcs), updated))
 	require.NotNil(t, updated.Status.CurrentGenerationHash)
 	assert.Equal(t, computeGenerationHash(pcs), *updated.Status.CurrentGenerationHash)
@@ -706,13 +744,13 @@ func TestProcessGenerationHashChangePreservesLegacyContentUpdate(t *testing.T) {
 	baselineResult := reconciler.processGenerationHashChange(context.Background(), logr.Discard(), pcs)
 	require.False(t, baselineResult.HasErrors())
 
-	baselined := &grovecorev1alpha1.PodCliqueSet{}
+	baselined := &grovecorev1beta1.PodCliqueSet{}
 	require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKeyFromObject(pcs), baselined))
 	reconciler.pcsGenerationHashExpectations.Delete(pcsGenerationHashKey(baselined))
 	updateResult := reconciler.processGenerationHashChange(context.Background(), logr.Discard(), baselined)
 	require.False(t, updateResult.HasErrors())
 
-	updated := &grovecorev1alpha1.PodCliqueSet{}
+	updated := &grovecorev1beta1.PodCliqueSet{}
 	require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKeyFromObject(pcs), updated))
 	schedulingHash := computeSchedulingConfigurationHash(buildPCSSchedulingConfig(pcs))
 	require.NotNil(t, updated.Status.UpdateProgress)
@@ -735,7 +773,7 @@ func TestProcessGenerationHashChangeSnapshotsSchedulingTarget(t *testing.T) {
 	result := reconciler.processGenerationHashChange(context.Background(), logr.Discard(), pcs)
 
 	require.False(t, result.HasErrors())
-	updated := &grovecorev1alpha1.PodCliqueSet{}
+	updated := &grovecorev1beta1.PodCliqueSet{}
 	require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKeyFromObject(pcs), updated))
 	assert.Equal(t, appliedSchedulingHash, *updated.Status.AppliedSchedulingConfigurationHash)
 	require.NotNil(t, updated.Status.UpdateProgress)

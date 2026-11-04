@@ -165,13 +165,17 @@ func (r *Reconciler) setGenerationHashAndUpdateStatus(ctx context.Context, pcs *
 
 // initOrResetUpdate initializes or resets update progress for the PodCliqueSet.
 func (r *Reconciler) initOrResetUpdate(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet, pcsGenHashKey, newGenerationHash, targetSchedulingConfigurationHash string) error {
+	updateStartedAt := metav1.Now()
 	updateProgress := &grovecorev1beta1.PodCliqueSetUpdateProgress{
 		TargetSchedulingConfigurationHash: targetSchedulingConfigurationHash,
-		UpdateStartedAt:                   metav1.Now(),
+		SupersededGenerationHash:          new(*pcs.Status.CurrentGenerationHash),
+		UpdateStartedAt:                   updateStartedAt,
 	}
 	// OnDelete strategy sets UpdateEndedAt too, since we do not know when all the pods will manually be deleted, and gang termination is disabled when an update is in progress
 	if pcs.Spec.UpdateStrategy != nil && pcs.Spec.UpdateStrategy.Type == grovecorev1beta1.OnDeleteStrategy {
-		updateProgress.UpdateEndedAt = new(metav1.Now())
+		updateProgress.UpdateEndedAt = new(updateStartedAt)
+	} else {
+		updateProgress.CurrentlyUpdating = carryCurrentlyUpdatingReplicaProgress(pcs, updateStartedAt)
 	}
 	// The Coherent strategy rolls only the components whose pod template changed. Capture that scope now,
 	// while Status.CurrentGenerationHash still holds the previous hash, and preserve it for the update.
@@ -190,6 +194,37 @@ func (r *Reconciler) initOrResetUpdate(ctx context.Context, pcs *grovecorev1beta
 		return fmt.Errorf("could not set UpdateProgress for PodCliqueSet: %v: %w", client.ObjectKeyFromObject(pcs), err)
 	}
 	return nil
+}
+
+// carryCurrentlyUpdatingReplicaProgress returns active replica selections from the superseded update,
+// excluding identities already reserved for scale-in. Replica indices are treated as a set and returned
+// in ascending order with progress reset for the new update target.
+func carryCurrentlyUpdatingReplicaProgress(pcs *grovecorev1beta1.PodCliqueSet, updateStartedAt metav1.Time) []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress {
+	if pcs.Status.UpdateProgress == nil {
+		return nil
+	}
+
+	activeReplicaIndices := sets.New[int32]()
+	for _, progress := range pcs.Status.UpdateProgress.CurrentlyUpdating {
+		if progress.UpdateEndedAt == nil {
+			activeReplicaIndices.Insert(progress.ReplicaIndex)
+		}
+	}
+	if pcs.Status.ScalingProgress != nil {
+		activeReplicaIndices.Delete(pcs.Status.ScalingProgress.ScaleInReplicaIndices...)
+	}
+	if activeReplicaIndices.Len() == 0 {
+		return nil
+	}
+
+	currentlyUpdating := make([]grovecorev1beta1.PodCliqueSetReplicaUpdateProgress, 0, activeReplicaIndices.Len())
+	for _, replicaIndex := range sets.List(activeReplicaIndices) {
+		currentlyUpdating = append(currentlyUpdating, grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{
+			ReplicaIndex:    replicaIndex,
+			UpdateStartedAt: updateStartedAt,
+		})
+	}
+	return currentlyUpdating
 }
 
 // syncPodCliqueSetResources synchronizes all managed child resources. Components are
