@@ -11395,6 +11395,15 @@ spec:
                     items:
                       type: string
                     type: array
+                  supersededGenerationHash:
+                    description: |-
+                      SupersededGenerationHash identifies the PodCliqueSet generation that was
+                      current immediately before this update was initialized or reset. Comparing
+                      each expected PodClique and PodCliqueScalingGroup status'
+                      CurrentPodCliqueSetGenerationHash with this hash distinguishes PCS replicas
+                      that fully realized the superseded generation from replicas that were still
+                      pending when the new generation was recorded.
+                    type: string
                   targetSchedulingConfigurationHash:
                     description: |-
                       TargetSchedulingConfigurationHash identifies the scheduling configuration

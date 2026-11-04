@@ -160,6 +160,12 @@ type PodCliqueSetUpdateProgress struct {
 	// On successful completion, it is copied to
 	// PodCliqueSetStatus.AppliedSchedulingConfigurationHash.
 	TargetSchedulingConfigurationHash string `json:"targetSchedulingConfigurationHash"`
+	// SupersededGenerationHash identifies the PodCliqueSet generation that was current immediately before this update was
+	// initialized or reset. Comparing each expected PodClique and PodCliqueScalingGroup status'
+	// CurrentPodCliqueSetGenerationHash with this hash distinguishes PCS replicas that fully realized the superseded
+	// generation from replicas that were still pending when the new generation was recorded.
+	// +optional
+	SupersededGenerationHash *string `json:"supersededGenerationHash,omitempty"`
 	// UpdateStartedAt is the time at which the update started for the PodCliqueSet.
 	UpdateStartedAt metav1.Time `json:"updateStartedAt,omitempty"`
 	// UpdateEndedAt is the time at which Grove does not have any work pending to manifest the update according to the
