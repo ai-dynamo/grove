@@ -15,6 +15,7 @@
 package podcliquesetreplica
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"slices"
@@ -25,137 +26,112 @@ import (
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 
 	"github.com/go-logr/logr"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/utils/ptr"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// orchestrateRollingUpdate drives a rolling update (RollingRecreate or Coherent) for the PodCliqueSet
-// replicas, one replica at a time.
-func (r *_resource) orchestrateRollingUpdate(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, expectedPCSReplicaIndices, pcsReplicaIndicesToTerminate, minAvailableBreachedPCSReplicaIndices []int) error {
-	replicaInfos, err := r.getPCSReplicaInfos(ctx, pcs, expectedPCSReplicaIndices, pcsReplicaIndicesToTerminate)
-	if err != nil {
-		return err
-	}
-
-	if currentlyUpdating := findCurrentlyUpdatingReplicaInfo(pcs, replicaInfos); currentlyUpdating != nil {
-		if !currentlyUpdating.isUpdateComplete(pcs) {
-			// A Coherent update records its in-flight epochs and the components it is still waiting on. The
-			// PodGangMap component owns the advance, so this only writes observability status.
-			if componentutils.IsCoherentStrategy(pcs) {
-				if err = r.updateCoherentReplicaProgress(ctx, logger, pcs, *currentlyUpdating); err != nil {
-					return err
-				}
-			}
-			return groveerr.NewContinueReconcileAndRequeue(
-				component.OperationSync,
-				fmt.Sprintf("rolling update of PodCliqueSet replica index %d is not completed", currentlyUpdating.replicaIndex),
-			)
-		}
-		if err = r.markCurrentReplicaUpdateEnded(ctx, logger, pcs); err != nil {
-			return err
-		}
-	}
-
-	nextReplicaToUpdate := selectNextReplicaToUpdate(pcs, replicaInfos, minAvailableBreachedPCSReplicaIndices)
-	if err = r.updatePCSWithNextSelectedReplica(ctx, logger, pcs, nextReplicaToUpdate); err != nil {
-		return err
-	}
-
-	if nextReplicaToUpdate != nil {
-		return groveerr.NewContinueReconcileAndRequeue(
-			component.OperationSync,
-			fmt.Sprintf("commencing rolling update of PodCliqueSet replica index %d", *nextReplicaToUpdate),
-		)
-	}
-	return nil
-}
-
-// getPCSReplicaInfos fetches the PCLQs and PCSGs for each PCS replica.
-func (r *_resource) getPCSReplicaInfos(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet, expectedPCSReplicaIndices, pcsReplicaIndicesToTerminate []int) ([]pcsReplicaInfo, error) {
-	pcsObjectKey := client.ObjectKeyFromObject(pcs)
-	pclqsByPCSReplicaIndex, err := componentutils.GetStandalonePCLQsByPCSReplicaIndex(ctx, r.client, pcs.ObjectMeta)
-	if err != nil {
-		return nil, groveerr.WrapError(err,
-			errCodeListPCLQs,
-			component.OperationSync,
-			fmt.Sprintf("could not list PCLQs for PCS: %v", pcsObjectKey),
-		)
-	}
-	pcsgsByPCSReplicaIndex, err := componentutils.GetPCSGsByPCSReplicaIndex(ctx, r.client, pcs.ObjectMeta)
-	if err != nil {
-		return nil, groveerr.WrapError(err,
-			errCodeListPCSGs,
-			component.OperationSync,
-			fmt.Sprintf("could not list PCSGs for PCS: %v", pcsObjectKey),
-		)
-	}
-	// A coherent update gates completion on the replica's PodGangMap having reconverged to a single
-	// generation, so its entries are gathered here. One list serves every replica.
-	var pgmsByPCSReplicaIndex map[int]*grovecorev1beta1.PodGangMap
-	if componentutils.IsCoherentStrategy(pcs) {
-		pgms, listErr := componentutils.ListPodGangMapsForPCS(ctx, r.client, pcs.ObjectMeta)
-		if listErr != nil {
-			return nil, groveerr.WrapError(listErr,
-				errCodeGetPodGangMap,
-				component.OperationSync,
-				fmt.Sprintf("could not list PodGangMaps for PCS: %v", pcsObjectKey),
-			)
-		}
-		pgmsByPCSReplicaIndex, err = componentutils.PodGangMapByPCSReplicaIndex(pgms)
-		if err != nil {
-			return nil, groveerr.WrapError(err,
-				errCodeGetPodGangMap,
-				component.OperationSync,
-				fmt.Sprintf("could not index PodGangMaps by PCS replica for PCS: %v", pcsObjectKey),
-			)
-		}
-	}
-	replicaInfos := make([]pcsReplicaInfo, 0, len(expectedPCSReplicaIndices))
-	for _, pcsReplicaIndex := range expectedPCSReplicaIndices {
-		if slices.Contains(pcsReplicaIndicesToTerminate, pcsReplicaIndex) {
+// orchestrateRollingUpdate drives a RollingRecreate or Coherent update for the PodCliqueSet replicas.
+func (r *_resource) orchestrateRollingUpdate(
+	ctx context.Context,
+	logger logr.Logger,
+	pcs *grovecorev1beta1.PodCliqueSet,
+	replicaInfos []pcsReplicaInfo,
+	minAvailableBreachedPCSReplicaIndices []int,
+) error {
+	activelyUpdatedReplicaInfos := currentlyUpdatingReplicaInfos(pcs, replicaInfos)
+	var (
+		replicaInfosWithCompletedUpdate []pcsReplicaInfo
+		replicaInfosStillUpdating       []pcsReplicaInfo
+	)
+	for _, updatingReplicaInfo := range activelyUpdatedReplicaInfos {
+		if updatingReplicaInfo.isUpdateComplete(pcs) {
+			replicaInfosWithCompletedUpdate = append(replicaInfosWithCompletedUpdate, updatingReplicaInfo)
 			continue
 		}
-		var pgmEntries []grovecorev1beta1.PodGangEntry
-		if pgm := pgmsByPCSReplicaIndex[pcsReplicaIndex]; pgm != nil {
-			pgmEntries = pgm.Spec.Entries
+		replicaInfosStillUpdating = append(replicaInfosStillUpdating, updatingReplicaInfo)
+		// A Coherent update records its in-flight epochs and the components it is still waiting on. The
+		// PodGangMap component owns the advance, so this only writes observability status.
+		if componentutils.IsCoherentStrategy(pcs) {
+			if err := r.updateCoherentReplicaProgress(ctx, logger, pcs, updatingReplicaInfo); err != nil {
+				return err
+			}
 		}
-		replicaInfos = append(replicaInfos, pcsReplicaInfo{
-			replicaIndex: pcsReplicaIndex,
-			pclqs:        pclqsByPCSReplicaIndex[pcsReplicaIndex],
-			pcsgs:        pcsgsByPCSReplicaIndex[pcsReplicaIndex],
-			pgmEntries:   pgmEntries,
-		})
 	}
-	return replicaInfos, nil
-}
 
-// findCurrentlyUpdatingReplicaInfo returns the gathered info for the replica the status marks as
-// currently updating, or nil when none is marked.
-func findCurrentlyUpdatingReplicaInfo(pcs *grovecorev1beta1.PodCliqueSet, replicaInfos []pcsReplicaInfo) *pcsReplicaInfo {
-	if len(pcs.Status.UpdateProgress.CurrentlyUpdating) == 0 {
+	if err := r.markUpdateEndForReplicas(ctx, logger, pcs, replicaInfosWithCompletedUpdate); err != nil {
+		return err
+	}
+
+	remainingSelectionBudget := pcsReplicaUpdateSelectionBudget(pcs, replicaInfosStillUpdating)
+	selectedReplicaInfos := selectReplicasToUpdate(
+		pcs,
+		replicaInfos,
+		replicaInfosStillUpdating,
+		minAvailableBreachedPCSReplicaIndices,
+		remainingSelectionBudget,
+	)
+	if err := r.updatePCSWithSelectedReplicas(ctx, logger, pcs, selectedReplicaInfos); err != nil {
+		return err
+	}
+	if len(selectedReplicaInfos) == 0 {
 		return nil
 	}
-	currentReplicaIndex := pcs.Status.UpdateProgress.CurrentlyUpdating[0].ReplicaIndex
-	for i := range replicaInfos {
-		if int32(replicaInfos[i].replicaIndex) == currentReplicaIndex {
-			return &replicaInfos[i]
-		}
-	}
-	return nil
+	return groveerr.NewContinueReconcileAndRequeue(
+		component.OperationSync,
+		fmt.Sprintf("rolling update of PodCliqueSet replica indices %v is in progress", replicaIndices(selectedReplicaInfos)),
+	)
 }
 
-// markCurrentReplicaUpdateEnded stamps UpdateEndedAt on the currently-updating replica once it has fully
-// converged. Aggregate update progress counts are derived in reconcileStatus each reconcile, so they are
-// not maintained here.
-func (r *_resource) markCurrentReplicaUpdateEnded(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet) error {
+// currentlyUpdatingReplicaInfos returns selected PCS replicas that remain expected after scaling and
+// termination decisions. The result is sorted by ascending PCS replica index.
+func currentlyUpdatingReplicaInfos(pcs *grovecorev1beta1.PodCliqueSet, replicaInfos []pcsReplicaInfo) []pcsReplicaInfo {
+	replicasSelectedForUpdate := sets.New(componentutils.PCSReplicaIndicesSelectedForUpdate(pcs)...)
+	if replicasSelectedForUpdate.Len() == 0 {
+		return nil
+	}
+	activelyUpdatedReplicaInfos := make([]pcsReplicaInfo, 0, replicasSelectedForUpdate.Len())
+	for _, replicaInfo := range replicaInfos {
+		if replicasSelectedForUpdate.Has(int32(replicaInfo.replicaIndex)) {
+			activelyUpdatedReplicaInfos = append(activelyUpdatedReplicaInfos, replicaInfo)
+		}
+	}
+	slices.SortFunc(activelyUpdatedReplicaInfos, func(a, b pcsReplicaInfo) int {
+		return cmp.Compare(a.replicaIndex, b.replicaIndex)
+	})
+	return activelyUpdatedReplicaInfos
+}
+
+// markUpdateEndForReplicas stamps UpdateEndedAt on selected PCS replicas that have fully converged.
+// Aggregate update progress counts are derived during status reconciliation and are not maintained here.
+func (r *_resource) markUpdateEndForReplicas(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, replicaInfosWithCompletedUpdate []pcsReplicaInfo) error {
+	if len(replicaInfosWithCompletedUpdate) == 0 {
+		return nil
+	}
+	completedReplicaIndices := sets.New(replicaIndices(replicaInfosWithCompletedUpdate)...)
 	original := pcs.DeepCopy()
-	pcs.Status.UpdateProgress.CurrentlyUpdating[0].UpdateEndedAt = ptr.To(metav1.Now())
+	updateEndedAt := metav1.Now()
+	for i := range pcs.Status.UpdateProgress.CurrentlyUpdating {
+		progress := &pcs.Status.UpdateProgress.CurrentlyUpdating[i]
+		if completedReplicaIndices.Has(int(progress.ReplicaIndex)) {
+			progress.UpdateEndedAt = &updateEndedAt
+		}
+	}
 	if err := r.patchUpdateProgressStatus(ctx, logger, pcs, original); err != nil {
-		logger.Error(err, "failed to patch update progress", "replicaIndex", pcs.Status.UpdateProgress.CurrentlyUpdating[0].ReplicaIndex)
+		logger.Error(err, "failed to mark PCS replica updates ended", "replicaIndices", sets.List(completedReplicaIndices))
 		return err
 	}
 	return nil
+}
+
+// replicaIndices returns the PCS replica indices represented by replicaInfos in the same order.
+func replicaIndices(replicaInfos []pcsReplicaInfo) []int {
+	indices := make([]int, len(replicaInfos))
+	for i, replicaInfo := range replicaInfos {
+		indices[i] = replicaInfo.replicaIndex
+	}
+	return indices
 }
 
 // patchUpdateProgressStatus persists update progress to the PCS status using a merge patch.
@@ -172,20 +148,36 @@ func (r *_resource) patchUpdateProgressStatus(ctx context.Context, logger logr.L
 	return nil
 }
 
-// selectNextReplicaToUpdate returns the index of the highest-priority replica not yet converged to the
-// current generation hash, or nil when every replica is updated.
-func selectNextReplicaToUpdate(pcs *grovecorev1beta1.PodCliqueSet, replicaInfos []pcsReplicaInfo, minAvailableBreachedPCSReplicaIndices []int) *int {
-	pendingReplicaInfos := make([]pcsReplicaInfo, 0, len(replicaInfos))
-	for i := range replicaInfos {
-		if !replicaInfos[i].isUpdateComplete(pcs) {
-			pendingReplicaInfos = append(pendingReplicaInfos, replicaInfos[i])
+// pcsReplicaUpdateSelectionBudget returns how many additional PCS replicas may be selected for update.
+// Issue #889 updates one PCS replica at a time. Issue #888 will derive this budget from PCS-level
+// MaxUnavailable using count-anchored semantics: unavailable old-generation replicas remain replaceable,
+// while unavailable current-generation replacements consume the budget.
+func pcsReplicaUpdateSelectionBudget(
+	_ *grovecorev1beta1.PodCliqueSet,
+	replicaInfosStillUpdating []pcsReplicaInfo,
+) int {
+	return max(0, 1-len(replicaInfosStillUpdating))
+}
+
+// selectReplicasToUpdate retains replicas still under update and fills the remaining slots from pending
+// replicas in update-priority order.
+func selectReplicasToUpdate(pcs *grovecorev1beta1.PodCliqueSet, replicaInfos, replicasStillUpdating []pcsReplicaInfo, minAvailableBreachedPCSReplicaIndices []int, remainingSlots int) []pcsReplicaInfo {
+	selectedReplicaInfos := make([]pcsReplicaInfo, 0, len(replicasStillUpdating)+remainingSlots)
+	selectedReplicaInfos = append(selectedReplicaInfos, replicasStillUpdating...)
+	if remainingSlots == 0 {
+		return selectedReplicaInfos
+	}
+	selectedReplicaIndices := sets.New(replicaIndices(replicasStillUpdating)...)
+	var replicaInfosPendingUpdate []pcsReplicaInfo
+	for _, replicaInfo := range replicaInfos {
+		if selectedReplicaIndices.Has(replicaInfo.replicaIndex) || replicaInfo.isUpdateComplete(pcs) {
+			continue
 		}
+		replicaInfosPendingUpdate = append(replicaInfosPendingUpdate, replicaInfo)
 	}
-	slices.SortFunc(pendingReplicaInfos, orderPCSReplicaInfo(pcs, minAvailableBreachedPCSReplicaIndices))
-	if len(pendingReplicaInfos) > 0 {
-		return &pendingReplicaInfos[0].replicaIndex
-	}
-	return nil
+	slices.SortFunc(replicaInfosPendingUpdate, orderPCSReplicaInfo(pcs, minAvailableBreachedPCSReplicaIndices))
+	numReplicasToSelect := min(remainingSlots, len(replicaInfosPendingUpdate))
+	return append(selectedReplicaInfos, replicaInfosPendingUpdate[:numReplicasToSelect]...)
 }
 
 // orderPCSReplicaInfo returns a comparison function for prioritizing replica updates.
@@ -210,31 +202,49 @@ func orderPCSReplicaInfo(pcs *grovecorev1beta1.PodCliqueSet, minAvailableBreache
 		}
 
 		// 3. If all replicas are healthy, then pick the replicas in ascending ordinal value.
-		if a.replicaIndex < b.replicaIndex {
-			return -1
-		} else {
-			return 1
-		}
+		return cmp.Compare(a.replicaIndex, b.replicaIndex)
 	}
 }
 
-// updatePCSWithNextSelectedReplica initiates an update for the next replica or marks completion.
-func (r *_resource) updatePCSWithNextSelectedReplica(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, nextPCSReplicaToUpdate *int) error {
+// updatePCSWithSelectedReplicas retains existing progress for replicas still updating, initializes
+// progress for newly selected replicas, or marks the whole update complete when no work remains.
+func (r *_resource) updatePCSWithSelectedReplicas(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, selectedReplicaInfos []pcsReplicaInfo) error {
+	selectedReplicaInfos = slices.Clone(selectedReplicaInfos)
+	slices.SortFunc(selectedReplicaInfos, func(a, b pcsReplicaInfo) int {
+		return cmp.Compare(a.replicaIndex, b.replicaIndex)
+	})
 	original := pcs.DeepCopy()
-
-	if nextPCSReplicaToUpdate == nil {
+	if len(selectedReplicaInfos) == 0 {
 		logger.Info("Rolling update has completed")
-		pcs.Status.UpdateProgress.UpdateEndedAt = ptr.To(metav1.Now())
+		pcs.Status.UpdateProgress.UpdateEndedAt = new(metav1.Now())
 		pcs.Status.UpdateProgress.CurrentlyUpdating = nil
-	} else {
-		logger.Info("Initiating rolling update for next replica index", "nextReplicaIndex", *nextPCSReplicaToUpdate)
-		pcs.Status.UpdateProgress.CurrentlyUpdating = []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{
-			{
-				ReplicaIndex:    int32(*nextPCSReplicaToUpdate),
-				UpdateStartedAt: metav1.Now(),
-			},
+		return r.patchUpdateProgressStatus(ctx, logger, pcs, original)
+	}
+
+	progressByReplicaIndex := make(map[int32]grovecorev1beta1.PodCliqueSetReplicaUpdateProgress, len(pcs.Status.UpdateProgress.CurrentlyUpdating))
+	for _, progress := range pcs.Status.UpdateProgress.CurrentlyUpdating {
+		if progress.UpdateEndedAt == nil {
+			progressByReplicaIndex[progress.ReplicaIndex] = progress
 		}
 	}
+	updateStartedAt := metav1.Now()
+	selectedProgress := make([]grovecorev1beta1.PodCliqueSetReplicaUpdateProgress, 0, len(selectedReplicaInfos))
+	for _, selectedReplicaInfo := range selectedReplicaInfos {
+		replicaIndex := int32(selectedReplicaInfo.replicaIndex)
+		if progress, ok := progressByReplicaIndex[replicaIndex]; ok {
+			selectedProgress = append(selectedProgress, progress)
+			continue
+		}
+		selectedProgress = append(selectedProgress, grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{
+			ReplicaIndex:    replicaIndex,
+			UpdateStartedAt: updateStartedAt,
+		})
+	}
+	if apiequality.Semantic.DeepEqual(pcs.Status.UpdateProgress.CurrentlyUpdating, selectedProgress) {
+		return nil
+	}
+	logger.Info("Updated PCS replicas selected for rolling update", "replicaIndices", replicaIndices(selectedReplicaInfos))
+	pcs.Status.UpdateProgress.CurrentlyUpdating = selectedProgress
 	return r.patchUpdateProgressStatus(ctx, logger, pcs, original)
 }
 

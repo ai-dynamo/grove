@@ -93,8 +93,12 @@ func (r *_resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecore
 
 	// Orchestrate the rolling update (RollingRecreate or Coherent) while one is in progress.
 	if componentutils.IsRollingUpdateInProgress(pcs) {
+		replicaInfos, err := r.getPCSReplicaInfos(ctx, pcs, state.ExpectedReplicaIndices, delWork.pcsIndicesToTerminate)
+		if err != nil {
+			return pcssync.Result{}, err
+		}
 		minAvailableBreachedPCSReplicaIndices := slices.Collect(maps.Keys(delWork.minAvailableBreachedConstituents))
-		if err := r.orchestrateRollingUpdate(ctx, logger, pcs, state.ExpectedReplicaIndices, delWork.pcsIndicesToTerminate, minAvailableBreachedPCSReplicaIndices); err != nil {
+		if err := r.orchestrateRollingUpdate(ctx, logger, pcs, replicaInfos, minAvailableBreachedPCSReplicaIndices); err != nil {
 			return pcssync.Result{}, err
 		}
 	}
@@ -117,4 +121,63 @@ func (r *_resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecore
 // Delete is a no-op.
 func (r *_resource) Delete(_ context.Context, _ logr.Logger, _ metav1.ObjectMeta) error {
 	return nil
+}
+
+// getPCSReplicaInfos fetches the PCLQs and PCSGs for each PCS replica.
+func (r *_resource) getPCSReplicaInfos(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet, expectedPCSReplicaIndices, pcsReplicaIndicesToTerminate []int) ([]pcsReplicaInfo, error) {
+	pcsObjectKey := client.ObjectKeyFromObject(pcs)
+	pclqsByPCSReplicaIndex, err := componentutils.GetStandalonePCLQsByPCSReplicaIndex(ctx, r.client, pcs.ObjectMeta)
+	if err != nil {
+		return nil, groveerr.WrapError(err,
+			errCodeListPCLQs,
+			component.OperationSync,
+			fmt.Sprintf("could not list PCLQs for PCS: %v", pcsObjectKey),
+		)
+	}
+	pcsgsByPCSReplicaIndex, err := componentutils.GetPCSGsByPCSReplicaIndex(ctx, r.client, pcs.ObjectMeta)
+	if err != nil {
+		return nil, groveerr.WrapError(err,
+			errCodeListPCSGs,
+			component.OperationSync,
+			fmt.Sprintf("could not list PCSGs for PCS: %v", pcsObjectKey),
+		)
+	}
+	// A coherent update gates completion on the replica's PodGangMap having reconverged to a single
+	// generation, so its entries are gathered here. One list serves every replica.
+	var pgmsByPCSReplicaIndex map[int]*grovecorev1beta1.PodGangMap
+	if componentutils.IsCoherentStrategy(pcs) {
+		pgms, listErr := componentutils.ListPodGangMapsForPCS(ctx, r.client, pcs.ObjectMeta)
+		if listErr != nil {
+			return nil, groveerr.WrapError(listErr,
+				errCodeGetPodGangMap,
+				component.OperationSync,
+				fmt.Sprintf("could not list PodGangMaps for PCS: %v", pcsObjectKey),
+			)
+		}
+		pgmsByPCSReplicaIndex, err = componentutils.PodGangMapByPCSReplicaIndex(pgms)
+		if err != nil {
+			return nil, groveerr.WrapError(err,
+				errCodeGetPodGangMap,
+				component.OperationSync,
+				fmt.Sprintf("could not index PodGangMaps by PCS replica for PCS: %v", pcsObjectKey),
+			)
+		}
+	}
+	replicaInfos := make([]pcsReplicaInfo, 0, len(expectedPCSReplicaIndices))
+	for _, pcsReplicaIndex := range expectedPCSReplicaIndices {
+		if slices.Contains(pcsReplicaIndicesToTerminate, pcsReplicaIndex) {
+			continue
+		}
+		var pgmEntries []grovecorev1beta1.PodGangEntry
+		if pgm := pgmsByPCSReplicaIndex[pcsReplicaIndex]; pgm != nil {
+			pgmEntries = pgm.Spec.Entries
+		}
+		replicaInfos = append(replicaInfos, pcsReplicaInfo{
+			replicaIndex: pcsReplicaIndex,
+			pclqs:        pclqsByPCSReplicaIndex[pcsReplicaIndex],
+			pcsgs:        pcsgsByPCSReplicaIndex[pcsReplicaIndex],
+			pgmEntries:   pgmEntries,
+		})
+	}
+	return replicaInfos, nil
 }

@@ -41,7 +41,10 @@ func (r *_resource) updateCoherentReplicaProgress(ctx context.Context, logger lo
 		return err
 	}
 	original := pcs.DeepCopy()
-	current := &pcs.Status.UpdateProgress.CurrentlyUpdating[0]
+	current := updateProgressForReplica(pcs.Status.UpdateProgress, replicaInfo.replicaIndex)
+	if current == nil {
+		return fmt.Errorf("PodCliqueSet replica index %d is not selected for update", replicaInfo.replicaIndex)
+	}
 	current.InFlightEpochs = inFlightEpochs
 	current.Message = coherentProgressMessage(pcs, replicaInfo)
 	return r.patchUpdateProgressStatus(ctx, logger, pcs, original)
@@ -68,6 +71,19 @@ func (r *_resource) inFlightEpochsForReplica(ctx context.Context, pcs *grovecore
 		return nil, nil
 	}
 	return []string{*latestEpoch}, nil
+}
+
+// updateProgressForReplica returns the update progress for the selected PCS replica index.
+func updateProgressForReplica(progress *grovecorev1beta1.PodCliqueSetUpdateProgress, replicaIndex int) *grovecorev1beta1.PodCliqueSetReplicaUpdateProgress {
+	if progress == nil {
+		return nil
+	}
+	for i := range progress.CurrentlyUpdating {
+		if int(progress.CurrentlyUpdating[i].ReplicaIndex) == replicaIndex {
+			return &progress.CurrentlyUpdating[i]
+		}
+	}
+	return nil
 }
 
 // coherentProgressMessage summarizes how many in-scope components of the replica have converged to the
