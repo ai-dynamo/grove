@@ -206,24 +206,25 @@ func hasStartedAndReadyChangedForAnyContainer(oldContainerStatuses []corev1.Cont
 	return false
 }
 
-// mapPodCliqueSetToPCLQs maps the PCS replica newly selected for update to its standalone PodCliques.
+// mapPodCliqueSetToPCLQs maps PCS replicas selected for update to their standalone PodCliques.
 func mapPodCliqueSetToPCLQs() handler.MapFunc {
 	return func(_ context.Context, obj client.Object) []reconcile.Request {
 		pcs, ok := obj.(*grovecorev1beta1.PodCliqueSet)
 		if !ok {
 			return nil
 		}
-		pcsReplicaIndex, ok := currentPCSReplicaInUpdate(pcs.Status.UpdateProgress)
-		if !ok {
-			return nil
+		selectedReplicaIndices := componentutils.PCSReplicaIndicesSelectedForUpdate(pcs)
+		requests := make([]reconcile.Request, 0)
+		for _, pcsReplicaIndex := range selectedReplicaIndices {
+			pclqFQNs := componentutils.GetPodCliqueFQNsForPCSReplicaNotInPCSG(pcs, int(pcsReplicaIndex))
+			for _, pclqFQN := range pclqFQNs {
+				requests = append(requests, reconcile.Request{NamespacedName: types.NamespacedName{
+					Namespace: pcs.Namespace,
+					Name:      pclqFQN,
+				}})
+			}
 		}
-		pclqFQNs := componentutils.GetPodCliqueFQNsForPCSReplicaNotInPCSG(pcs, int(pcsReplicaIndex))
-		return lo.Map(pclqFQNs, func(pclqFQN string, _ int) reconcile.Request {
-			return reconcile.Request{NamespacedName: types.NamespacedName{
-				Namespace: pcs.Namespace,
-				Name:      pclqFQN,
-			}}
-		})
+		return requests
 	}
 }
 
@@ -238,28 +239,10 @@ func podCliqueSetPredicate() predicate.Predicate {
 			if !okOld || !okNew {
 				return false
 			}
-			return hasNewPCSReplicaBeenSelectedForUpdate(oldPCS.Status.UpdateProgress, newPCS.Status.UpdateProgress)
+			return componentutils.HasNewPCSReplicaIndicesSelectedForUpdate(oldPCS, newPCS)
 		},
 		GenericFunc: func(_ event.GenericEvent) bool { return false },
 	}
-}
-
-// hasNewPCSReplicaBeenSelectedForUpdate reports whether the PCS selected a new replica for update.
-func hasNewPCSReplicaBeenSelectedForUpdate(oldProgress, newProgress *grovecorev1beta1.PodCliqueSetUpdateProgress) bool {
-	oldReplicaIndex, oldOK := currentPCSReplicaInUpdate(oldProgress)
-	newReplicaIndex, newOK := currentPCSReplicaInUpdate(newProgress)
-	if !newOK {
-		return false
-	}
-	return !oldOK || oldReplicaIndex != newReplicaIndex
-}
-
-// currentPCSReplicaInUpdate returns the replica index of the PodCliqueSet replica currently being updated, if any.
-func currentPCSReplicaInUpdate(progress *grovecorev1beta1.PodCliqueSetUpdateProgress) (int32, bool) {
-	if progress == nil || len(progress.CurrentlyUpdating) == 0 {
-		return 0, false
-	}
-	return progress.CurrentlyUpdating[0].ReplicaIndex, true
 }
 
 // mapPodCliqueScalingGroupToPCLQs maps a PodCliqueScalingGroup to one or more reconcile.Request(s) to its constituent PodCliques.

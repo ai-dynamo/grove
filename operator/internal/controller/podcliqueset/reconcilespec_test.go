@@ -550,7 +550,6 @@ func TestCarryCurrentlyUpdatingReplicaProgress(t *testing.T) {
 				CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{
 					{ReplicaIndex: 3},
 					{ReplicaIndex: 1},
-					{ReplicaIndex: 3},
 					{ReplicaIndex: 2, UpdateEndedAt: &completedAt},
 				},
 			},
