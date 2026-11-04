@@ -166,20 +166,23 @@ func (r *Reconciler) setGenerationHashAndUpdateStatus(ctx context.Context, pcs *
 // initOrResetUpdate initializes or resets update progress for the PodCliqueSet.
 func (r *Reconciler) initOrResetUpdate(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet, pcsGenHashKey, newGenerationHash, targetSchedulingConfigurationHash string) error {
 	updateStartedAt := metav1.Now()
+	requiresReplicaRecreation := requiresPCSReplicaRecreation(pcs, targetSchedulingConfigurationHash)
 	updateProgress := &grovecorev1beta1.PodCliqueSetUpdateProgress{
+		RequiresReplicaRecreation:         requiresReplicaRecreation,
 		TargetSchedulingConfigurationHash: targetSchedulingConfigurationHash,
 		SupersededGenerationHash:          new(*pcs.Status.CurrentGenerationHash),
 		UpdateStartedAt:                   updateStartedAt,
 	}
-	// OnDelete strategy sets UpdateEndedAt too, since we do not know when all the pods will manually be deleted, and gang termination is disabled when an update is in progress
-	if pcs.Spec.UpdateStrategy != nil && pcs.Spec.UpdateStrategy.Type == grovecorev1beta1.OnDeleteStrategy {
-		updateProgress.UpdateEndedAt = new(updateStartedAt)
-	} else {
+	if isUpdateOrchestratedByGrove(pcs, requiresReplicaRecreation) {
 		updateProgress.CurrentlyUpdating = carryCurrentlyUpdatingReplicaProgress(pcs, updateStartedAt)
+	} else {
+		// Grove does not orchestrate ordinary OnDelete updates because it cannot know when every Pod has
+		// been manually deleted. Replica recreation is always orchestrated by Grove.
+		updateProgress.UpdateEndedAt = new(updateStartedAt)
 	}
 	// The Coherent strategy rolls only the components whose pod template changed. Capture that scope now,
 	// while Status.CurrentGenerationHash still holds the previous hash, and preserve it for the update.
-	if componentutils.IsCoherentStrategy(pcs) {
+	if !requiresReplicaRecreation && componentutils.IsCoherentStrategy(pcs) {
 		scope, err := r.computeCoherentUpdateScope(ctx, pcs)
 		if err != nil {
 			return fmt.Errorf("could not compute coherent update scope for PodCliqueSet: %v: %w", client.ObjectKeyFromObject(pcs), err)
@@ -194,6 +197,22 @@ func (r *Reconciler) initOrResetUpdate(ctx context.Context, pcs *grovecorev1beta
 		return fmt.Errorf("could not set UpdateProgress for PodCliqueSet: %v: %w", client.ObjectKeyFromObject(pcs), err)
 	}
 	return nil
+}
+
+// requiresPCSReplicaRecreation reports whether the new update must recreate PCS replicas. Once started,
+// recreation remains required across superseding updates, including a scheduling rollback to the applied hash.
+func requiresPCSReplicaRecreation(pcs *grovecorev1beta1.PodCliqueSet, targetSchedulingConfigurationHash string) bool {
+	if pcs.Status.AppliedSchedulingConfigurationHash == nil {
+		return false
+	}
+	return targetSchedulingConfigurationHash != *pcs.Status.AppliedSchedulingConfigurationHash ||
+		componentutils.IsPCSReplicaRecreationInProgress(pcs)
+}
+
+// isUpdateOrchestratedByGrove reports whether Grove drives the update to completion. Replica recreation is
+// always orchestrated; ordinary OnDelete updates are completed by manual Pod deletion.
+func isUpdateOrchestratedByGrove(pcs *grovecorev1beta1.PodCliqueSet, requiresReplicaRecreation bool) bool {
+	return requiresReplicaRecreation || componentutils.ResolveUpdateStrategyType(pcs) != grovecorev1beta1.OnDeleteStrategy
 }
 
 // carryCurrentlyUpdatingReplicaProgress returns active replica selections from the superseded update,

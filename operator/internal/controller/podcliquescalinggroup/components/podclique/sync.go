@@ -192,7 +192,7 @@ func (r _resource) reconcileInProgressUpdate(ctx context.Context, logger logr.Lo
 		return err
 	}
 
-	if componentutils.IsCoherentStrategy(ss.pcs) {
+	if componentutils.IsCoherentUpdateInProgress(ss.pcs) {
 		if err := r.reconcileReplicasToCommittedPodGangs(ctx, logger, ss); err != nil {
 			return err
 		}

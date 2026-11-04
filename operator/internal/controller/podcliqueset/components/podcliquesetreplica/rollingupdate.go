@@ -53,7 +53,7 @@ func (r *_resource) orchestrateRollingUpdate(
 		replicaInfosStillUpdating = append(replicaInfosStillUpdating, updatingReplicaInfo)
 		// A Coherent update records its in-flight epochs and the components it is still waiting on. The
 		// PodGangMap component owns the advance, so this only writes observability status.
-		if componentutils.IsCoherentStrategy(pcs) {
+		if componentutils.IsCoherentUpdateInProgress(pcs) {
 			if err := r.updateCoherentReplicaProgress(ctx, logger, pcs, updatingReplicaInfo); err != nil {
 				return err
 			}
@@ -175,21 +175,13 @@ func selectReplicasToUpdate(pcs *grovecorev1beta1.PodCliqueSet, replicaInfos, re
 		}
 		replicaInfosPendingUpdate = append(replicaInfosPendingUpdate, replicaInfo)
 	}
-	if isSchedulingConfigRolloutInProgress(pcs) {
+	if componentutils.IsPCSReplicaRecreationInProgress(pcs) {
 		slices.SortFunc(replicaInfosPendingUpdate, orderPCSReplicaInfoBySchedulingConfigRolloutPriority(pcs))
 	} else {
 		slices.SortFunc(replicaInfosPendingUpdate, orderPCSReplicaInfo(pcs, minAvailableBreachedPCSReplicaIndices))
 	}
 	numReplicasToSelect := min(remainingSlots, len(replicaInfosPendingUpdate))
 	return append(selectedReplicaInfos, replicaInfosPendingUpdate[:numReplicasToSelect]...)
-}
-
-// isSchedulingConfigRolloutInProgress reports whether the active update must recreate PCS replicas to
-// apply a scheduling configuration change.
-func isSchedulingConfigRolloutInProgress(pcs *grovecorev1beta1.PodCliqueSet) bool {
-	return componentutils.IsRollingUpdateInProgress(pcs) &&
-		pcs.Status.AppliedSchedulingConfigurationHash != nil &&
-		pcs.Status.UpdateProgress.TargetSchedulingConfigurationHash != *pcs.Status.AppliedSchedulingConfigurationHash
 }
 
 // orderPCSReplicaInfoBySchedulingConfigRolloutPriority orders PCS replicas for a scheduling configuration
@@ -328,7 +320,7 @@ func (pri *pcsReplicaInfo) isUpdateComplete(pcs *grovecorev1beta1.PodCliqueSet) 
 	if completePCSGs != len(pcs.Spec.Template.PodCliqueScalingGroupConfigs) {
 		return false
 	}
-	if componentutils.IsCoherentStrategy(pcs) && !componentutils.IsPodGangMapAtSingleGeneration(pri.pgmEntries, currentGenerationHash) {
+	if componentutils.IsCoherentUpdateInProgress(pcs) && !componentutils.IsPodGangMapAtSingleGeneration(pri.pgmEntries, currentGenerationHash) {
 		return false
 	}
 	return true

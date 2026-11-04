@@ -127,16 +127,23 @@ func updateInProgress(pcs *grovecorev1beta1.PodCliqueSet) bool {
 	return pcs.Status.UpdateProgress != nil && pcs.Status.UpdateProgress.UpdateEndedAt == nil
 }
 
-// IsCoherentUpdateInProgress returns true when the PodCliqueSet uses the Coherent update strategy
-// and an update has started but has not yet ended.
-func IsCoherentUpdateInProgress(pcs *grovecorev1beta1.PodCliqueSet) bool {
-	return IsCoherentStrategy(pcs) && updateInProgress(pcs)
+// IsPCSReplicaRecreationInProgress returns true when an active update must recreate each selected PCS
+// replica's workload and scheduling resources. Replica recreation takes precedence over the configured
+// update strategy.
+func IsPCSReplicaRecreationInProgress(pcs *grovecorev1beta1.PodCliqueSet) bool {
+	return updateInProgress(pcs) && pcs.Status.UpdateProgress.RequiresReplicaRecreation
 }
 
-// IsRollingRecreateUpdateInProgress returns true when a rolling update is in progress under the
-// RollingRecreate strategy, the default strategy that is neither Coherent nor OnDelete.
+// IsCoherentUpdateInProgress returns true when an active update is executing Coherent semantics. A PCS
+// replica recreation rollout does not execute the configured Coherent strategy.
+func IsCoherentUpdateInProgress(pcs *grovecorev1beta1.PodCliqueSet) bool {
+	return IsCoherentStrategy(pcs) && updateInProgress(pcs) && !IsPCSReplicaRecreationInProgress(pcs)
+}
+
+// IsRollingRecreateUpdateInProgress returns true when an active update is executing RollingRecreate
+// semantics. A PCS replica recreation rollout does not execute the configured RollingRecreate strategy.
 func IsRollingRecreateUpdateInProgress(pcs *grovecorev1beta1.PodCliqueSet) bool {
-	return IsRollingUpdateInProgress(pcs) && !IsCoherentStrategy(pcs)
+	return IsRollingUpdateInProgress(pcs) && !IsCoherentStrategy(pcs) && !IsPCSReplicaRecreationInProgress(pcs)
 }
 
 // IsCoherentStrategy returns true when the PodCliqueSet uses the Coherent update strategy (the

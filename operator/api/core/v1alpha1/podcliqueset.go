@@ -153,6 +153,13 @@ type PodCliqueSetUpdateStrategy struct {
 
 // PodCliqueSetUpdateProgress captures the progress of an update of the PodCliqueSet.
 type PodCliqueSetUpdateProgress struct {
+	// RequiresReplicaRecreation indicates that this update must rebuild each selected PodCliqueSet replica's
+	// scheduling structure. Grove retains the standalone PodClique and PodCliqueScalingGroup resources while
+	// recreating standalone PodClique Pods, PodCliqueScalingGroup-owned PodCliques, the PodGangMap, and PodGangs.
+	// Grove sets this field when scheduling configuration changes and preserves it across superseding updates
+	// until recreation completes.
+	// +optional
+	RequiresReplicaRecreation bool `json:"requiresReplicaRecreation,omitempty"`
 	// TargetSchedulingConfigurationHash identifies the scheduling configuration
 	// that this update must realize across all relevant PodCliqueSet replicas. The
 	// scheduling configuration currently comprises the effective MinAvailable

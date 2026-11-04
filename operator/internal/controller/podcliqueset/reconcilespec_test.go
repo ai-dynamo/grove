@@ -377,10 +377,11 @@ func TestGetKindSyncGroups(t *testing.T) {
 // TestInitOrResetUpdate tests the initOrResetUpdate function for both OnDelete and RollingRecreate strategies
 func TestInitOrResetUpdate(t *testing.T) {
 	tests := []struct {
-		name                           string
-		setupPCS                       func() *grovecorev1beta1.PodCliqueSet
-		expectUpdateEndedAtSet         bool
-		expectedCurrentlyUpdatingIndex *int32
+		name                            string
+		setupPCS                        func() *grovecorev1beta1.PodCliqueSet
+		expectUpdateEndedAtSet          bool
+		expectRequiresReplicaRecreation bool
+		expectedCurrentlyUpdatingIndex  *int32
 	}{
 		{
 			name: "rolling_recreate_strategy_does_not_set_update_ended_at",
@@ -426,6 +427,48 @@ func TestInitOrResetUpdate(t *testing.T) {
 				return pcs
 			},
 			expectUpdateEndedAtSet: true,
+		},
+		{
+			name: "rolling_recreate_scheduling_change_requires_replica_recreation",
+			setupPCS: func() *grovecorev1beta1.PodCliqueSet {
+				pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, uuid.NewUUID()).
+					WithReplicas(2).
+					WithPodCliqueParameters("worker", 1, nil).
+					WithUpdateStrategy(&grovecorev1beta1.PodCliqueSetUpdateStrategy{Type: grovecorev1beta1.RollingRecreateStrategy}).
+					WithPodCliqueSetGenerationHash(new("old-hash")).
+					Build()
+				pcs.Status.AppliedSchedulingConfigurationHash = new("applied-scheduling-hash")
+				return pcs
+			},
+			expectRequiresReplicaRecreation: true,
+		},
+		{
+			name: "coherent_scheduling_change_requires_replica_recreation_without_coherent_scope",
+			setupPCS: func() *grovecorev1beta1.PodCliqueSet {
+				pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, uuid.NewUUID()).
+					WithReplicas(2).
+					WithPodCliqueParameters("worker", 1, nil).
+					WithUpdateStrategy(&grovecorev1beta1.PodCliqueSetUpdateStrategy{Type: grovecorev1beta1.CoherentStrategy}).
+					WithPodCliqueSetGenerationHash(new("old-hash")).
+					Build()
+				pcs.Status.AppliedSchedulingConfigurationHash = new("applied-scheduling-hash")
+				return pcs
+			},
+			expectRequiresReplicaRecreation: true,
+		},
+		{
+			name: "on_delete_scheduling_change_requires_replica_recreation",
+			setupPCS: func() *grovecorev1beta1.PodCliqueSet {
+				pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, uuid.NewUUID()).
+					WithReplicas(2).
+					WithPodCliqueParameters("worker", 1, nil).
+					WithUpdateStrategy(&grovecorev1beta1.PodCliqueSetUpdateStrategy{Type: grovecorev1beta1.OnDeleteStrategy}).
+					WithPodCliqueSetGenerationHash(new("old-hash")).
+					Build()
+				pcs.Status.AppliedSchedulingConfigurationHash = new("applied-scheduling-hash")
+				return pcs
+			},
+			expectRequiresReplicaRecreation: true,
 		},
 		{
 			name: "existing_rollingrecreate_in_progress_is_reset_when_hash_changes",
@@ -514,6 +557,7 @@ func TestInitOrResetUpdate(t *testing.T) {
 			require.NotNil(t, updatedPCS.Status.UpdateProgress, "UpdateProgress should be set")
 			assert.NotEmpty(t, updatedPCS.Status.UpdateProgress.UpdateStartedAt, "UpdateStartedAt should be set")
 			assert.Equal(t, targetSchedulingConfigurationHash, updatedPCS.Status.UpdateProgress.TargetSchedulingConfigurationHash)
+			assert.Equal(t, tt.expectRequiresReplicaRecreation, updatedPCS.Status.UpdateProgress.RequiresReplicaRecreation)
 			require.NotNil(t, updatedPCS.Status.UpdateProgress.SupersededGenerationHash)
 			assert.Equal(t, "old-hash", *updatedPCS.Status.UpdateProgress.SupersededGenerationHash)
 
@@ -539,6 +583,69 @@ func TestInitOrResetUpdate(t *testing.T) {
 			assert.Equal(t, newGenerationHash, *updatedPCS.Status.CurrentGenerationHash)
 		})
 	}
+}
+
+func TestInitOrResetUpdatePreservesReplicaRecreationAcrossSupersession(t *testing.T) {
+	pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, uuid.NewUUID()).
+		WithReplicas(2).
+		WithPodCliqueParameters("worker", 1, nil).
+		WithUpdateStrategy(&grovecorev1beta1.PodCliqueSetUpdateStrategy{Type: grovecorev1beta1.CoherentStrategy}).
+		WithPodCliqueSetGenerationHash(new("old-hash")).
+		WithUpdateProgress(&grovecorev1beta1.PodCliqueSetUpdateProgress{
+			RequiresReplicaRecreation: true,
+			CurrentlyUpdating:         []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 1}},
+		}).
+		Build()
+	pcs.Status.AppliedSchedulingConfigurationHash = new("applied-scheduling-hash")
+	fakeClient := testutils.SetupFakeClient(pcs)
+	r := &Reconciler{client: fakeClient, pcsGenerationHashExpectations: sync.Map{}}
+
+	err := r.initOrResetUpdate(context.Background(), pcs, pcsGenerationHashKey(pcs), "new-hash", "applied-scheduling-hash")
+
+	require.NoError(t, err)
+	updated := &grovecorev1beta1.PodCliqueSet{}
+	require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKeyFromObject(pcs), updated))
+	require.NotNil(t, updated.Status.UpdateProgress)
+	assert.True(t, updated.Status.UpdateProgress.RequiresReplicaRecreation)
+	assert.Empty(t, updated.Status.UpdateProgress.InScopeStandalonePodCliques)
+	require.Len(t, updated.Status.UpdateProgress.CurrentlyUpdating, 1)
+	assert.Equal(t, int32(1), updated.Status.UpdateProgress.CurrentlyUpdating[0].ReplicaIndex)
+}
+
+func TestRequiresPCSReplicaRecreation(t *testing.T) {
+	tests := []struct {
+		name       string
+		pcs        *grovecorev1beta1.PodCliqueSet
+		targetHash string
+		want       bool
+	}{
+		{name: "no scheduling baseline", pcs: &grovecorev1beta1.PodCliqueSet{}, targetHash: "target"},
+		{name: "scheduling configuration unchanged", pcs: &grovecorev1beta1.PodCliqueSet{Status: grovecorev1beta1.PodCliqueSetStatus{AppliedSchedulingConfigurationHash: new("same")}}, targetHash: "same"},
+		{name: "scheduling configuration changed", pcs: &grovecorev1beta1.PodCliqueSet{Status: grovecorev1beta1.PodCliqueSetStatus{AppliedSchedulingConfigurationHash: new("applied")}}, targetHash: "target", want: true},
+		{
+			name: "scheduling rollback preserves active recreation",
+			pcs: &grovecorev1beta1.PodCliqueSet{Status: grovecorev1beta1.PodCliqueSetStatus{
+				AppliedSchedulingConfigurationHash: new("applied"),
+				UpdateProgress:                     &grovecorev1beta1.PodCliqueSetUpdateProgress{RequiresReplicaRecreation: true},
+			}},
+			targetHash: "applied",
+			want:       true,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, requiresPCSReplicaRecreation(tc.pcs, tc.targetHash))
+		})
+	}
+}
+
+func TestIsUpdateOrchestratedByGrove(t *testing.T) {
+	onDeletePCS := &grovecorev1beta1.PodCliqueSet{Spec: grovecorev1beta1.PodCliqueSetSpec{UpdateStrategy: &grovecorev1beta1.PodCliqueSetUpdateStrategy{Type: grovecorev1beta1.OnDeleteStrategy}}}
+	rollingPCS := &grovecorev1beta1.PodCliqueSet{Spec: grovecorev1beta1.PodCliqueSetSpec{UpdateStrategy: &grovecorev1beta1.PodCliqueSetUpdateStrategy{Type: grovecorev1beta1.RollingRecreateStrategy}}}
+
+	assert.False(t, isUpdateOrchestratedByGrove(onDeletePCS, false))
+	assert.True(t, isUpdateOrchestratedByGrove(onDeletePCS, true))
+	assert.True(t, isUpdateOrchestratedByGrove(rollingPCS, false))
 }
 
 func TestCarryCurrentlyUpdatingReplicaProgress(t *testing.T) {

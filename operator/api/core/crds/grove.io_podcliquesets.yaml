@@ -11395,14 +11395,20 @@ spec:
                     items:
                       type: string
                     type: array
+                  requiresReplicaRecreation:
+                    description: |-
+                      RequiresReplicaRecreation indicates that this update must rebuild each selected PodCliqueSet replica's
+                      scheduling structure. Grove retains the standalone PodClique and PodCliqueScalingGroup resources while
+                      recreating standalone PodClique Pods, PodCliqueScalingGroup-owned PodCliques, the PodGangMap, and PodGangs.
+                      Grove sets this field when scheduling configuration changes and preserves it across superseding updates
+                      until recreation completes.
+                    type: boolean
                   supersededGenerationHash:
                     description: |-
-                      SupersededGenerationHash identifies the PodCliqueSet generation that was
-                      current immediately before this update was initialized or reset. Comparing
-                      each expected PodClique and PodCliqueScalingGroup status'
-                      CurrentPodCliqueSetGenerationHash with this hash distinguishes PCS replicas
-                      that fully realized the superseded generation from replicas that were still
-                      pending when the new generation was recorded.
+                      SupersededGenerationHash identifies the PodCliqueSet generation that was current immediately before this update was
+                      initialized or reset. Comparing each expected PodClique and PodCliqueScalingGroup status'
+                      CurrentPodCliqueSetGenerationHash with this hash distinguishes PCS replicas that fully realized the superseded
+                      generation from replicas that were still pending when the new generation was recorded.
                     type: string
                   targetSchedulingConfigurationHash:
                     description: |-
@@ -22506,6 +22512,15 @@ spec:
           status:
             description: Status defines the status of the PodCliqueSet.
             properties:
+              appliedSchedulingConfigurationHash:
+                description: |-
+                  AppliedSchedulingConfigurationHash identifies the scheduling configuration
+                  fully realized by all expected PodCliqueSet replicas. The scheduling
+                  configuration currently comprises the effective MinAvailable values of all
+                  PodClique templates and PodCliqueScalingGroup configs.
+                  A nil value identifies an object created before scheduling-configuration
+                  hashing was introduced.
+                type: string
               availableReplicas:
                 default: 0
                 description: |-
@@ -22727,6 +22742,30 @@ spec:
                     items:
                       type: string
                     type: array
+                  requiresReplicaRecreation:
+                    description: |-
+                      RequiresReplicaRecreation indicates that this update must rebuild each selected PodCliqueSet replica's
+                      scheduling structure. Grove retains the standalone PodClique and PodCliqueScalingGroup resources while
+                      recreating standalone PodClique Pods, PodCliqueScalingGroup-owned PodCliques, the PodGangMap, and PodGangs.
+                      Grove sets this field when scheduling configuration changes and preserves it across superseding updates
+                      until recreation completes.
+                    type: boolean
+                  supersededGenerationHash:
+                    description: |-
+                      SupersededGenerationHash identifies the PodCliqueSet generation that was current immediately before this update was
+                      initialized or reset. Comparing each expected PodClique and PodCliqueScalingGroup status'
+                      CurrentPodCliqueSetGenerationHash with this hash distinguishes PCS replicas that fully realized the superseded
+                      generation from replicas that were still pending when the new generation was recorded.
+                    type: string
+                  targetSchedulingConfigurationHash:
+                    description: |-
+                      TargetSchedulingConfigurationHash identifies the scheduling configuration
+                      that this update must realize across all relevant PodCliqueSet replicas. The
+                      scheduling configuration currently comprises the effective MinAvailable
+                      values of all PodClique templates and PodCliqueScalingGroup configs.
+                      On successful completion, it is copied to
+                      PodCliqueSetStatus.AppliedSchedulingConfigurationHash.
+                    type: string
                   totalPodCliqueScalingGroupsCount:
                     default: 0
                     description: |-
@@ -22772,6 +22811,8 @@ spec:
                       generation hash. Recomputed each reconcile from child generation-hash labels.
                     format: int32
                     type: integer
+                required:
+                - targetSchedulingConfigurationHash
                 type: object
               updatedReplicas:
                 default: 0

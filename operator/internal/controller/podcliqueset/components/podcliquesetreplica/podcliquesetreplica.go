@@ -92,7 +92,7 @@ func (r *_resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecore
 	}
 
 	// Orchestrate the rolling update (RollingRecreate or Coherent) while one is in progress.
-	if componentutils.IsRollingUpdateInProgress(pcs) {
+	if componentutils.IsRollingUpdateInProgress(pcs) || componentutils.IsPCSReplicaRecreationInProgress(pcs) {
 		replicaInfos, err := r.getPCSReplicaInfos(ctx, pcs, state.ExpectedReplicaIndices, delWork.pcsIndicesToTerminate)
 		if err != nil {
 			return pcssync.Result{}, err
@@ -145,7 +145,7 @@ func (r *_resource) getPCSReplicaInfos(ctx context.Context, pcs *grovecorev1beta
 	// A coherent update gates completion on the replica's PodGangMap having reconverged to a single
 	// generation, so its entries are gathered here. One list serves every replica.
 	var pgmsByPCSReplicaIndex map[int]*grovecorev1beta1.PodGangMap
-	if componentutils.IsCoherentStrategy(pcs) {
+	if componentutils.IsCoherentUpdateInProgress(pcs) {
 		pgms, listErr := componentutils.ListPodGangMapsForPCS(ctx, r.client, pcs.ObjectMeta)
 		if listErr != nil {
 			return nil, groveerr.WrapError(listErr,
