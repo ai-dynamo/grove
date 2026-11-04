@@ -17,7 +17,10 @@
 package setup
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -29,11 +32,17 @@ import (
 	"time"
 
 	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/k8sclient"
 	"github.com/ai-dynamo/grove/operator/e2e/log"
+	groveclientscheme "github.com/ai-dynamo/grove/operator/internal/client"
+	"github.com/ai-dynamo/grove/operator/internal/webhook/admission/pcs/defaulting"
+	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
+	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	admissionv1 "k8s.io/api/admission/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -45,6 +54,7 @@ import (
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
+	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 )
 
 func TestGroveConfigToHelmValuesEnablesHealthProbes(t *testing.T) {
@@ -100,23 +110,107 @@ func TestWaitForWebhookReadyRequiresConsecutiveSuccesses(t *testing.T) {
 		testInterval = time.Millisecond
 	)
 	var calls atomic.Int32
+	webhook := newTestDefaultingWebhook()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/v1/namespaces/grove-system/services/https:grove-operator:webhooks/proxy/webhooks/default-podcliqueset" {
 			http.NotFound(w, r)
 			return
 		}
+		assert.Equal(t, http.MethodPost, r.Method)
+		assert.Equal(t, "application/json", r.Header.Get("Content-Type"))
 		switch calls.Add(1) {
-		case 1, 2, 4:
+		case 1, 2:
 			http.Error(w, "webhook unavailable", http.StatusServiceUnavailable)
-		default:
-			w.WriteHeader(http.StatusOK)
+			return
+		case 4:
+			// The real handler returns HTTP 200 with an admission error for an empty body.
+			r.Body = http.NoBody
 		}
+		webhook.ServeHTTP(w, r)
 	}))
 	defer server.Close()
 
 	err := waitForWebhookReady(t.Context(), &rest.Config{Host: server.URL}, testTimeout, testInterval, nil)
 	require.NoError(t, err)
 	assert.Equal(t, int32(7), calls.Load())
+}
+
+func TestWaitForWebhookReadyRejectsInvalidResponses(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		wantLog string
+	}{
+		{name: "invalid JSON", wantLog: "Failed to decode webhook readiness probe response"},
+		{name: "missing response", wantLog: "Webhook readiness probe returned no admission response"},
+		{name: "mismatched UID", wantLog: `Webhook readiness probe returned UID "other-request"`},
+		{name: "denied", wantLog: "Webhook readiness probe was denied"},
+		{name: "unavailable", wantLog: "Webhook readiness probe returned HTTP status 503"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var review admissionv1.AdmissionReview
+				if !assert.NoError(t, json.NewDecoder(r.Body).Decode(&review)) ||
+					!assert.NotNil(t, review.Request) {
+					return
+				}
+				review.Response = &admissionv1.AdmissionResponse{UID: review.Request.UID, Allowed: true}
+				review.Request = nil
+				switch tc.name {
+				case "invalid JSON":
+					_, _ = io.WriteString(w, "not JSON")
+					return
+				case "missing response":
+					review.Response = nil
+				case "mismatched UID":
+					review.Response.UID = "other-request"
+				case "denied":
+					review.Response.Allowed = false
+				case "unavailable":
+					http.Error(w, "webhook unavailable", http.StatusServiceUnavailable)
+					return
+				}
+				assert.NoError(t, json.NewEncoder(w).Encode(review))
+			}))
+			defer server.Close()
+
+			var logs bytes.Buffer
+			logger := log.NewTestLoggerWithOutput(log.DebugLevel, &logs)
+			err := waitForWebhookReady(t.Context(), &rest.Config{Host: server.URL}, 50*time.Millisecond, time.Millisecond, logger)
+			require.ErrorContains(t, err, "condition not met within timeout")
+			assert.Contains(t, logs.String(), tc.wantLog)
+		})
+	}
+}
+
+func TestWaitForWebhookReadyRetriesTransportErrors(t *testing.T) {
+	var calls atomic.Int32
+	var logs bytes.Buffer
+	logger := log.NewTestLoggerWithOutput(log.DebugLevel, &logs)
+	webhook := newTestDefaultingWebhook()
+	config := &rest.Config{
+		Host: "https://webhook.test",
+		Transport: restfake.CreateHTTPClient(func(req *http.Request) (*http.Response, error) {
+			switch calls.Add(1) {
+			case 1, 4:
+				return nil, errors.New("test connection failure")
+			}
+			recorder := httptest.NewRecorder()
+			webhook.ServeHTTP(recorder, req)
+			return recorder.Result(), nil
+		}).Transport,
+	}
+
+	err := waitForWebhookReady(t.Context(), config, time.Second, time.Millisecond, logger)
+	require.NoError(t, err)
+	assert.Equal(t, int32(7), calls.Load())
+	assert.Contains(t, logs.String(), "Webhook readiness probe request failed")
+	assert.Contains(t, logs.String(), "test connection failure")
+}
+
+func newTestDefaultingWebhook() http.Handler {
+	mgr := &testutils.FakeManager{Scheme: groveclientscheme.Scheme, Logger: logr.Discard()}
+	return admission.WithCustomDefaulter(mgr.GetScheme(), &grovecorev1beta1.PodCliqueSet{}, defaulting.NewHandler(mgr)).
+		WithRecoverPanic(true)
 }
 
 func TestUpdateGroveConfigurationWaitsForNewDeployment(t *testing.T) {
@@ -144,11 +238,14 @@ func TestUpdateGroveConfigurationWaitsForNewDeployment(t *testing.T) {
 	t.Setenv("HELM_DRIVER", "secret")
 
 	var probes atomic.Int32
+	webhook := newTestDefaultingWebhook()
 	config.Wrap(func(transport http.RoundTripper) http.RoundTripper {
 		return restfake.CreateHTTPClient(func(req *http.Request) (*http.Response, error) {
 			if strings.HasSuffix(req.URL.Path, "/proxy/webhooks/default-podcliqueset") {
 				probes.Add(1)
-				return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(""))}, nil
+				recorder := httptest.NewRecorder()
+				webhook.ServeHTTP(recorder, req)
+				return recorder.Result(), nil
 			}
 			return transport.RoundTrip(req)
 		}).Transport

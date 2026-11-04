@@ -23,9 +23,10 @@
 package setup
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -34,6 +35,7 @@ import (
 	"time"
 
 	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/k8sclient"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/pods"
@@ -41,7 +43,12 @@ import (
 	"github.com/ai-dynamo/grove/operator/e2e/waiter"
 
 	"gopkg.in/yaml.v3"
+	admissionv1 "k8s.io/api/admission/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	k8sruntime "k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/client-go/rest"
+	"k8s.io/utils/ptr"
 )
 
 const webhookReadySuccessCount = 3
@@ -215,22 +222,75 @@ func waitForWebhookReady(ctx context.Context, restConfig *rest.Config, timeout, 
 		return fmt.Errorf("create Kubernetes HTTP client: %w", err)
 	}
 
+	// Probe defaulting directly without creating a Kubernetes resource.
+	review := admissionv1.AdmissionReview{
+		TypeMeta: metav1.TypeMeta{APIVersion: admissionv1.SchemeGroupVersion.String(), Kind: "AdmissionReview"},
+		Request: &admissionv1.AdmissionRequest{
+			UID:       uuid.NewUUID(),
+			Kind:      metav1.GroupVersionKind{Group: grovecorev1beta1.SchemeGroupVersion.Group, Version: grovecorev1beta1.SchemeGroupVersion.Version, Kind: "PodCliqueSet"},
+			Resource:  metav1.GroupVersionResource{Group: grovecorev1beta1.SchemeGroupVersion.Group, Version: grovecorev1beta1.SchemeGroupVersion.Version, Resource: "podcliquesets"},
+			Operation: admissionv1.Create,
+			Name:      "webhook-readiness-probe",
+			Namespace: OperatorNamespace,
+			DryRun:    ptr.To(true),
+			Object: k8sruntime.RawExtension{Object: &grovecorev1beta1.PodCliqueSet{
+				TypeMeta:   metav1.TypeMeta{APIVersion: grovecorev1beta1.SchemeGroupVersion.String(), Kind: "PodCliqueSet"},
+				ObjectMeta: metav1.ObjectMeta{Name: "webhook-readiness-probe", Namespace: OperatorNamespace},
+			}},
+		},
+	}
+	body, err := json.Marshal(review)
+	if err != nil {
+		return fmt.Errorf("encode webhook probe request: %w", err)
+	}
+
 	proxyURL := strings.TrimRight(restConfig.Host, "/") +
 		"/api/v1/namespaces/" + OperatorNamespace +
 		"/services/https:" + OperatorDeploymentName + ":webhooks/proxy/webhooks/default-podcliqueset"
 	consecutiveSuccesses := 0
 	fetch := waiter.FetchFunc[bool](func(ctx context.Context) (bool, error) {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, proxyURL, nil)
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, proxyURL, bytes.NewReader(body))
 		if err != nil {
 			return false, fmt.Errorf("create webhook probe request: %w", err)
 		}
+		req.Header.Set("Content-Type", "application/json")
 		response, err := httpClient.Do(req)
 		if err != nil {
+			if logger != nil {
+				logger.Debugf("Webhook readiness probe request failed: %v", err)
+			}
 			return false, nil
 		}
 		defer response.Body.Close()
-		_, _ = io.Copy(io.Discard, response.Body)
-		return response.StatusCode == http.StatusOK, nil
+		if response.StatusCode != http.StatusOK {
+			if logger != nil {
+				logger.Debugf("Webhook readiness probe returned HTTP status %d", response.StatusCode)
+			}
+			return false, nil
+		}
+		var result admissionv1.AdmissionReview
+		if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
+			if logger != nil {
+				logger.Debugf("Failed to decode webhook readiness probe response: %v", err)
+			}
+			return false, nil
+		}
+		if result.Response == nil {
+			if logger != nil {
+				logger.Debug("Webhook readiness probe returned no admission response")
+			}
+			return false, nil
+		}
+		if result.Response.UID != review.Request.UID {
+			if logger != nil {
+				logger.Debugf("Webhook readiness probe returned UID %q, expected %q", result.Response.UID, review.Request.UID)
+			}
+			return false, nil
+		}
+		if !result.Response.Allowed && logger != nil {
+			logger.Debugf("Webhook readiness probe was denied: %+v", result.Response.Result)
+		}
+		return result.Response.Allowed, nil
 	})
 
 	return waiter.New[bool]().
