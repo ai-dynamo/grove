@@ -1,4 +1,4 @@
-# GREP-373: Arborist — `kubectl grove` CLI and Agent Skills
+# GREP-373: `kubectl-grove` CLI and Agent Skills
 
 <!-- toc -->
 - [Summary](#summary)
@@ -41,7 +41,7 @@
 
 ## Summary
 
-Arborist is a read-only `kubectl grove` CLI plus agent skills for debugging Grove workloads and finding GPU capacity. The CLI adds only views kubectl lacks: a workload's hierarchy with Pod health rolled up, its events, and GPU capacity per topology domain. The skills teach coding agents to combine these with kubectl. Arborist installs through Krew and needs no change to Grove.
+`kubectl-grove` is a read-only kubectl plugin (`kubectl grove`) plus agent skills for debugging Grove workloads and finding GPU capacity. The CLI adds only views kubectl lacks: a workload's hierarchy with Pod health rolled up, its events, and GPU capacity per topology domain. The skills teach coding agents to combine these with kubectl. It installs through Krew and needs no change to Grove.
 
 ## Motivation
 
@@ -51,7 +51,7 @@ A Grove workload spans five resource kinds, and its replicas exist only as name 
 - **What went wrong across the workload?** `kubectl events --for` covers one object and matches by name, so it mixes a recreated object's events with the earlier object's; name prefixes are ambiguous (`foo` vs `foo-bar`).
 - **Where are GPUs free, and where did my workload land?** With [topology-aware scheduling](../244-topology-aware-scheduling/README.md), 16 GPUs packed in one rack need a rack with 16 free, which means joining topology levels, nodes and every Pod's GPU requests.
 
-Coding agents can run kubectl, but the data is large and they lack Grove knowledge. Arborist's commands do the joins; its skills carry the knowledge.
+Coding agents can run kubectl, but the data is large and they lack Grove knowledge. `kubectl grove` commands do the joins; the skills carry the knowledge.
 
 ### Goals
 
@@ -64,7 +64,7 @@ Coding agents can run kubectl, but the data is large and they lack Grove knowled
 ### Non-Goals
 
 - **Re-implementing kubectl:** YAML, logs, exec, watches and waits stay in kubectl.
-- **Changing cluster state:** Arborist never writes; skills only suggest commands.
+- **Changing cluster state:** `kubectl-grove` never writes; skills only suggest commands.
 - **An interactive UI or k9s plugin** ([Alternatives](#alternatives)).
 - **Live views:** `--watch` and a Grove-aware `wait` are [Future Work](#future-work).
 - **Changes to Grove's APIs, operator or Helm chart.**
@@ -73,10 +73,10 @@ Coding agents can run kubectl, but the data is large and they lack Grove knowled
 
 ## Proposal
 
-Arborist adds five read-only commands under `kubectl grove` and three agent skills. Terms:
+`kubectl-grove` adds five read-only commands under `kubectl grove` and three agent skills. Terms:
 
 - **PCS, PCSG, PCLQ, PG, CTB:** PodCliqueSet, PodCliqueScalingGroup, PodClique, PodGang, ClusterTopologyBinding (short names `pcs`, `pcsg`, `pclq`, `pg`, `ctb`).
-- **Ref:** `kind/name` (`pcs/llm-serve`), usable with kubectl; a **replica ref** (`pcs/<name>/<i>`, `pcsg/<name>/<i>`) is Arborist-only.
+- **Ref:** `kind/name` (`pcs/llm-serve`), usable with kubectl; a **replica ref** (`pcs/<name>/<i>`, `pcsg/<name>/<i>`) works only with `kubectl grove`.
 - **Subtree:** a ref and everything beneath it.
 - **Grove Pod:** a Pod controlled by a PodClique.
 - **Binding, level, domain:** a ClusterTopologyBinding lists levels (zone, rack, …), each a node label; a domain is one level value (`rack-a2`).
@@ -134,7 +134,7 @@ As a cluster operator, I want a secret-free diagnostics bundle, so that I can fi
 - **`topology` reads the whole cluster.** *Mitigation:* users without cluster-wide read get an error, not partial numbers ([RBAC](#rbac)); it is the costliest command, and scale [tests](#test-plan) decide on pagination.
 - **Events expire; nothing is live.** *Mitigation:* `events` notes retention; skills add Pod status, conditions and logs, and rerun `tree` when `kubectl wait` times out.
 - **Agents pay per token and vary between runs.** *Mitigation:* bounded [output](#output); skills narrow scope and filter with `jq`; repeated [test runs](#test-plan) measure accuracy.
-- **Cluster text is untrusted.** *Mitigation:* Arborist never acts on it; skills treat it as data, never as commands; docs recommend read-only credentials for agents.
+- **Cluster text is untrusted.** *Mitigation:* `kubectl-grove` never acts on it; skills treat it as data, never as commands; docs recommend read-only credentials for agents.
 - **Bundles may hold sensitive data.** *Mitigation:* no Secrets or ConfigMaps; a fixed `jq` filter strips environment values (canary-tested); bundles stay local and list their contents.
 - **GPU accounting is partial** ([GPU Accounting](#gpu-accounting)); taints are ignored. *Mitigation:* warnings for uncounted devices; `grove-topology` checks taints when Pods pend despite free GPUs.
 - **Version skew.** *Mitigation:* see [`version`](#version). Each skill records the CLI version it was installed with: on a skills/CLI mismatch it asks for `skills install`; on a CLI/operator mismatch it names the matching CLI release, continues and notes it.
@@ -346,7 +346,7 @@ Prints the client and operator versions and the operator's source link. The oper
 CI uses one `PACKAGE_VERSION` for image, binary and chart, so the tag identifies the release; `-dev` and custom tags are `unknown`.
 
 - **Skew:** the same major.minor is compatible. Otherwise a stderr warning names the release to download, and the exit code stays 0. Only `version` checks.
-- **Source link:** releases, including pre-releases such as `v0.1.0-alpha.17`, link to `https://github.com/ai-dynamo/grove/archive/refs/tags/<tag>.tar.gz`; `v0.0.0-g<sha>` links to `https://github.com/ai-dynamo/grove/archive/<sha>.tar.gz`; anything else is `unknown`, never `main`. Arborist makes no requests outside the cluster.
+- **Source link:** releases, including pre-releases such as `v0.1.0-alpha.17`, link to `https://github.com/ai-dynamo/grove/archive/refs/tags/<tag>.tar.gz`; `v0.0.0-g<sha>` links to `https://github.com/ai-dynamo/grove/archive/<sha>.tar.gz`; anything else is `unknown`, never `main`. `kubectl-grove` makes no requests outside the cluster.
 
 ```text
 $ kubectl grove version
@@ -368,14 +368,14 @@ Writes the skills embedded in the binary to `DIR`. Without `DIR`, a terminal use
 
 `tree` and `topology` count whole GPUs only; other devices are skipped with a warning. Kubernetes has two ways to request GPUs, and a cluster can use both:
 
-- **Device plugin** (`nvidia.com/gpu`), the original and still most common: each Node advertises a GPU count that Pods request like CPU. Arborist counts a Pod's effective request as the scheduler computes it (init containers, sidecars, Pod overhead).
-- **DRA** (`gpu.nvidia.com`), newer and GA since Kubernetes 1.34: drivers publish individual GPUs in ResourceSlices, and Pods claim them through ResourceClaims. Arborist counts capacity from ResourceSlices, requests from claims or their templates, and allocations from claims. A claim shared by several Pods ([GREP-390](../390-hierarchical-resource-sharing/README.md)) counts once. DRA is read from `resource.k8s.io/v1` only; if that API is missing or unreadable, only device-plugin GPUs are counted.
+- **Device plugin** (`nvidia.com/gpu`), the original and still most common: each Node advertises a GPU count that Pods request like CPU. `kubectl-grove` counts a Pod's effective request as the scheduler computes it (init containers, sidecars, Pod overhead).
+- **DRA** (`gpu.nvidia.com`), newer and GA since Kubernetes 1.34: drivers publish individual GPUs in ResourceSlices, and Pods claim them through ResourceClaims. `kubectl-grove` counts capacity from ResourceSlices, requests from claims or their templates, and allocations from claims. A claim shared by several Pods ([GREP-390](../390-hierarchical-resource-sharing/README.md)) counts once. DRA is read from `resource.k8s.io/v1` only; if that API is missing or unreadable, only device-plugin GPUs are counted.
 
 Nodes using both are summed.
 
 ### Agent Skills
 
-The skills are `grove-*` folders under `tools/arborist/skills/`, embedded in the binary. Each carries a copy of the shared reference (`tools/arborist/skills/_shared/`) and checks its version first ([Risks](#limitationsrisks--mitigations)); detailed content comes with the implementation.
+The skills are `grove-*` folders under `tools/kubectl-grove/skills/`, embedded in the binary. Each carries a copy of the shared reference (`tools/kubectl-grove/skills/_shared/`) and checks its version first ([Risks](#limitationsrisks--mitigations)); detailed content comes with the implementation.
 
 The shared reference covers:
 
@@ -403,13 +403,13 @@ It also explains rollout progress (`grove.io/pod-template-hash`, or the generati
 **`grove-diagnostics`:** collect or analyze a bundle.
 
 1. Scope: namespaces and, optionally, a PCS.
-2. Capture resources, operator logs, Pods, events, Arborist JSON, versions and `manifest.json`; no Secrets or ConfigMaps; a `jq` filter strips environment values.
+2. Capture resources, operator logs, Pods, events, `kubectl grove` JSON, versions and `manifest.json`; no Secrets or ConfigMaps; a `jq` filter strips environment values.
 3. Package a timestamped `.tgz`; report its contents.
 4. Optionally analyze it with the matching source.
 
 ### RBAC
 
-Arborist uses the caller's own credentials and installs no ServiceAccount or Role. The table lists the minimum permissions each command needs, so a cluster admin can grant exactly these to a restricted user or an agent's read-only credentials. All are `get` and `list`. A missing permission fails the command with an error naming it, except for reads marked optional, which only warn ([Commands](#commands)). `skills install` reads nothing.
+`kubectl-grove` uses the caller's own credentials and installs no ServiceAccount or Role. The table lists the minimum permissions each command needs, so a cluster admin can grant exactly these to a restricted user or an agent's read-only credentials. All are `get` and `list`. A missing permission fails the command with an error naming it, except for reads marked optional, which only warn ([Commands](#commands)). `skills install` reads nothing.
 
 | Command | Reads | Scope |
 |---|---|---|
@@ -426,14 +426,14 @@ Arborist uses the caller's own credentials and installs no ServiceAccount or Rol
 
 ### Monitoring
 
-Arborist is a client and exposes no metrics or endpoints. Errors and warnings go to stderr, and API server audit logs show its User-Agent, `kubectl-grove/<version>`.
+`kubectl-grove` is a client and exposes no metrics or endpoints. Errors and warnings go to stderr, and API server audit logs show its User-Agent, `kubectl-grove/<version>`.
 
 ### Dependencies
 
 - **Go:** cli-runtime, client-go, Grove's clients, cobra, a JSON Schema generator.
 - **Cluster:** Grove; `events.k8s.io/v1`; for DRA, `resource.k8s.io/v1` (Kubernetes 1.34+) and the NVIDIA DRA driver; `nvidia.com/gpu.product` node labels. ClusterTopologyBindings are optional.
 - **Distribution:** Krew plugin `grove` (latest only); Linux and macOS binaries on every Grove release, versioned with the operator.
-- **Location:** a Go module in `tools/arborist/` ([Open Questions](#open-questions)).
+- **Location:** a Go module in `tools/kubectl-grove/` ([Open Questions](#open-questions)).
 
 ### Test Plan
 
@@ -446,7 +446,7 @@ Arborist is a client and exposes no metrics or endpoints. Errors and warnings go
 
 ### Graduation Criteria
 
-Arborist is a separate, opt-in CLI and set of skills, released with Grove, so there is no feature gate and the stages do not apply.
+`kubectl-grove` is a separate, opt-in CLI and set of skills, released with Grove, so there is no feature gate and the stages do not apply.
 
 #### Alpha
 
@@ -465,6 +465,7 @@ N/A.
 - **2026-01:** Issue [#373](https://github.com/ai-dynamo/grove/issues/373); first proposal [#374](https://github.com/ai-dynamo/grove/pull/374).
 - **2026-03–04:** TUI prototype; GREP [#508](https://github.com/ai-dynamo/grove/pull/508).
 - **2026-10:** Revised to a CLI plus agent skills.
+- **2026-11:** Renamed from Arborist to `kubectl-grove`, the name of its binary.
 
 ## Alternatives
 
@@ -483,7 +484,7 @@ N/A.
 | cli-runtime printers | `JSONPrinter` requires `apiVersion`/`kind`, then just calls `MarshalIndent`; `PrintFlags` adds many formats to the contract. |
 | Own kubeconfig handling; kubectl's factory; kong | Reimplements kubectl's flags; heavy dependency; flags mapped by hand. |
 | HPA, ResourceClaim and Node events | They relate to the workload but sit outside the PCS–PCSG–PCLQ–Pod hierarchy: each adds reads and permissions, and a Node's events cover every workload on it. Grove-created claims are an [open question](#open-questions). |
-| Reusing [Topograph](https://github.com/NVIDIA/topograph) | It writes topology labels; Arborist reads them. Its reusable code is internal and needs newer Go and Kubernetes. |
+| Reusing [Topograph](https://github.com/NVIDIA/topograph) | It writes topology labels; `kubectl-grove` reads them. Its reusable code is internal and needs newer Go and Kubernetes. |
 | Exact version match | Krew has only the latest, so most users would see warnings. |
 | Operator-published build info | Needs operator changes. |
 | Source download in the CLI | No requests outside the cluster. |
@@ -495,7 +496,7 @@ N/A.
 - **Scheduler objects.** Should `events` follow PodGangs to [backend](../375-scheduler-backend-framework/README.md) PodGroups and Kueue Workloads?
 - **Grove-created ResourceClaims.** Include events of claims from [resource sharing](../390-hierarchical-resource-sharing/README.md)?
 - **Topology narrowing.** Proposed: `--in LEVEL=VALUE,...`. Alternatives: all-positional, or a nested tree with `--depth`.
-- **Module location.** Proposed: `tools/arborist/`. Use the empty `cli-plugin/` module instead, or remove it?
+- **Module location.** Proposed: `tools/kubectl-grove/`. Use the empty `cli-plugin/` module instead, or remove it?
 
 ## Future Work
 
