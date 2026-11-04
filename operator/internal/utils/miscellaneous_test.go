@@ -134,6 +134,27 @@ func TestIsEmptyStringTypeWithCustomTypes(t *testing.T) {
 	}
 }
 
+func TestEqualOptional(t *testing.T) {
+	testCases := []struct {
+		description string
+		objA        *string
+		objB        *string
+		expected    bool
+	}{
+		{description: "both nil", expected: true},
+		{description: "only first nil", objB: ptr.To("value")},
+		{description: "only second nil", objA: ptr.To("value")},
+		{description: "equal values", objA: ptr.To("value"), objB: ptr.To("value"), expected: true},
+		{description: "different values", objA: ptr.To("first"), objB: ptr.To("second")},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.description, func(t *testing.T) {
+			assert.Equal(t, tc.expected, EqualOptional(tc.objA, tc.objB))
+		})
+	}
+}
+
 func TestOnlyOneIsNil(t *testing.T) {
 	testCases := []struct {
 		description string

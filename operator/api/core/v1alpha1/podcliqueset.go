@@ -153,26 +153,19 @@ type PodCliqueSetUpdateStrategy struct {
 
 // PodCliqueSetUpdateProgress captures the progress of an update of the PodCliqueSet.
 type PodCliqueSetUpdateProgress struct {
-	// RequiresReplicaRecreation indicates that this update must rebuild each selected PodCliqueSet replica's
-	// scheduling structure. Grove retains the standalone PodClique and PodCliqueScalingGroup resources while
-	// recreating standalone PodClique Pods, PodCliqueScalingGroup-owned PodCliques, the PodGangMap, and PodGangs.
-	// Grove sets this field when scheduling configuration changes and preserves it across superseding updates
-	// until recreation completes.
+	// RequiresReplicaRecreation indicates that this update must replace PodCliqueSet replicas instead of only executing
+	// spec.updateStrategy. Grove sets this field when scheduling configuration changes and preserves it across superseding
+	// updates until replica recreation completes.
 	// +optional
 	RequiresReplicaRecreation bool `json:"requiresReplicaRecreation,omitempty"`
-	// TargetSchedulingConfigurationHash identifies the scheduling configuration
-	// that this update must realize across all relevant PodCliqueSet replicas. The
-	// scheduling configuration currently comprises the effective MinAvailable
-	// values of all PodClique templates and PodCliqueScalingGroup configs.
-	// On successful completion, it is copied to
-	// PodCliqueSetStatus.AppliedSchedulingConfigurationHash.
+	// TargetSchedulingConfigurationHash identifies the scheduling configuration that this update must converge to.
+	// On successful completion, it is copied to PodCliqueSetStatus.AppliedSchedulingConfigurationHash.
 	TargetSchedulingConfigurationHash string `json:"targetSchedulingConfigurationHash"`
-	// SupersededGenerationHash identifies the PodCliqueSet generation that was current immediately before this update was
-	// initialized or reset. Comparing each expected PodClique and PodCliqueScalingGroup status'
-	// CurrentPodCliqueSetGenerationHash with this hash distinguishes PCS replicas that fully realized the superseded
-	// generation from replicas that were still pending when the new generation was recorded.
+	// PreviousPodCliqueSetGenerationHash identifies the PodCliqueSet generation that was the update target immediately
+	// before the current update was initialized. It distinguishes replicas that had converged to the previous target from
+	// replicas that had not.
 	// +optional
-	SupersededGenerationHash *string `json:"supersededGenerationHash,omitempty"`
+	PreviousPodCliqueSetGenerationHash *string `json:"previousPodCliqueSetGenerationHash,omitempty"`
 	// UpdateStartedAt is the time at which the update started for the PodCliqueSet.
 	UpdateStartedAt metav1.Time `json:"updateStartedAt,omitempty"`
 	// UpdateEndedAt is the time at which Grove does not have any work pending to manifest the update according to the
@@ -208,6 +201,8 @@ type PodCliqueSetUpdateProgress struct {
 	// This field is only set for rolling update strategies where Grove handles the orchestration. It is not set for the
 	// OnDelete update strategy.
 	// +optional
+	// +listType=map
+	// +listMapKey=replicaIndex
 	CurrentlyUpdating []PodCliqueSetReplicaUpdateProgress `json:"currentlyUpdating,omitempty"`
 	// InScopeStandalonePodCliques captures the names of standalone PodCliques whose pod template
 	// changed and are therefore in scope for the current coherent update. It names what changed,
@@ -231,8 +226,12 @@ type PodCliqueSetUpdateProgress struct {
 
 // PodCliqueSetReplicaUpdateProgress captures the progress of an update for a specific PodCliqueSet replica.
 type PodCliqueSetReplicaUpdateProgress struct {
-	// ReplicaIndex is the replica index of the PodCliqueSet that is being updated.
+	// ReplicaIndex is the replica being updated. During replica recreation, it is the source replica being replaced.
 	ReplicaIndex int32 `json:"replicaIndex"`
+	// ReplacementReplicaIndex is the target replica created from the latest PodCliqueSet template.
+	// It is populated only during replica recreation.
+	// +optional
+	ReplacementReplicaIndex *int32 `json:"replacementReplicaIndex,omitempty"`
 	// UpdateStartedAt is the time at which the update started for this PodCliqueSet replica index.
 	UpdateStartedAt metav1.Time `json:"updateStartedAt,omitempty"`
 	// UpdateEndedAt is the time at which the update ended for this PodCliqueSet replica index.

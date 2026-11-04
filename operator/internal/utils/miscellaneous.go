@@ -30,6 +30,14 @@ func OnlyOneIsNil[T any](objA, objB *T) bool {
 	return (objA == nil) != (objB == nil)
 }
 
+// EqualOptional compares two optional comparable values.
+func EqualOptional[T comparable](objA, objB *T) bool {
+	if OnlyOneIsNil(objA, objB) {
+		return false
+	}
+	return objA == nil || *objA == *objB
+}
+
 // OnlyOneIsEmpty returns true if only one of the Objects is empty else it will return false.
 func OnlyOneIsEmpty[T any](objA, objB []T) bool {
 	return (len(objA) == 0) != (len(objB) == 0)
