@@ -193,7 +193,7 @@ func selectReplicasToUpdate(pcs *grovecorev1beta1.PodCliqueSet, replicaInfos, re
 // Replica indices are ordered ascending within each group. Replicas already selected for update are retained
 // separately and are not passed through this ordering.
 func orderPCSReplicaInfoBySchedulingConfigRolloutPriority(pcs *grovecorev1beta1.PodCliqueSet) func(a, b pcsReplicaInfo) int {
-	supersededGenerationHash := pcs.Status.UpdateProgress.SupersededGenerationHash
+	supersededGenerationHash := pcs.Status.UpdateProgress.PreviousPodCliqueSetGenerationHash
 	return func(a, b pcsReplicaInfo) int {
 		aConverged := supersededGenerationHash != nil && a.hasConvergedToPCSGeneration(pcs, *supersededGenerationHash)
 		bConverged := supersededGenerationHash != nil && b.hasConvergedToPCSGeneration(pcs, *supersededGenerationHash)

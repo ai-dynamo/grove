@@ -329,7 +329,7 @@ func schedulingConfigRolloutTestPCS() *grovecorev1beta1.PodCliqueSet {
 	pcs.Status.AppliedSchedulingConfigurationHash = new("applied")
 	pcs.Status.UpdateProgress.RequiresReplicaRecreation = true
 	pcs.Status.UpdateProgress.TargetSchedulingConfigurationHash = "target"
-	pcs.Status.UpdateProgress.SupersededGenerationHash = new("superseded")
+	pcs.Status.UpdateProgress.PreviousPodCliqueSetGenerationHash = new("superseded")
 	return pcs
 }
 

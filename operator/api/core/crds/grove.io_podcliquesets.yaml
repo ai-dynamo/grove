@@ -11350,9 +11350,16 @@ spec:
                             reporting LastReady, subsumed pods still coming up, or an availability
                             budget preventing further takedown. Cleared once all preconditions hold.
                           type: string
+                        replacementReplicaIndex:
+                          description: |-
+                            ReplacementReplicaIndex is the target replica created from the latest PodCliqueSet template.
+                            It is populated only during replica recreation.
+                          format: int32
+                          type: integer
                         replicaIndex:
-                          description: ReplicaIndex is the replica index of the PodCliqueSet
-                            that is being updated.
+                          description: ReplicaIndex is the replica being updated.
+                            During replica recreation, it is the source replica being
+                            replaced.
                           format: int32
                           type: integer
                         updateEndedAt:
@@ -11371,6 +11378,9 @@ spec:
                       - replicaIndex
                       type: object
                     type: array
+                    x-kubernetes-list-map-keys:
+                    - replicaIndex
+                    x-kubernetes-list-type: map
                   inScopePodCliqueScalingGroups:
                     description: |-
                       InScopePodCliqueScalingGroups captures the config names of PodCliqueScalingGroups that had at
@@ -11395,29 +11405,22 @@ spec:
                     items:
                       type: string
                     type: array
+                  previousPodCliqueSetGenerationHash:
+                    description: |-
+                      PreviousPodCliqueSetGenerationHash identifies the PodCliqueSet generation that was the update target immediately
+                      before the current update was initialized. It distinguishes replicas that had converged to the previous target from
+                      replicas that had not.
+                    type: string
                   requiresReplicaRecreation:
                     description: |-
-                      RequiresReplicaRecreation indicates that this update must rebuild each selected PodCliqueSet replica's
-                      scheduling structure. Grove retains the standalone PodClique and PodCliqueScalingGroup resources while
-                      recreating standalone PodClique Pods, PodCliqueScalingGroup-owned PodCliques, the PodGangMap, and PodGangs.
-                      Grove sets this field when scheduling configuration changes and preserves it across superseding updates
-                      until recreation completes.
+                      RequiresReplicaRecreation indicates that this update must replace PodCliqueSet replicas instead of only executing
+                      spec.updateStrategy. Grove sets this field when scheduling configuration changes and preserves it across superseding
+                      updates until replica recreation completes.
                     type: boolean
-                  supersededGenerationHash:
-                    description: |-
-                      SupersededGenerationHash identifies the PodCliqueSet generation that was current immediately before this update was
-                      initialized or reset. Comparing each expected PodClique and PodCliqueScalingGroup status'
-                      CurrentPodCliqueSetGenerationHash with this hash distinguishes PCS replicas that fully realized the superseded
-                      generation from replicas that were still pending when the new generation was recorded.
-                    type: string
                   targetSchedulingConfigurationHash:
                     description: |-
-                      TargetSchedulingConfigurationHash identifies the scheduling configuration
-                      that this update must realize across all relevant PodCliqueSet replicas. The
-                      scheduling configuration currently comprises the effective MinAvailable
-                      values of all PodClique templates and PodCliqueScalingGroup configs.
-                      On successful completion, it is copied to
-                      PodCliqueSetStatus.AppliedSchedulingConfigurationHash.
+                      TargetSchedulingConfigurationHash identifies the scheduling configuration that this update must converge to.
+                      On successful completion, it is copied to PodCliqueSetStatus.AppliedSchedulingConfigurationHash.
                     type: string
                   totalPodCliqueScalingGroupsCount:
                     default: 0
@@ -22697,9 +22700,16 @@ spec:
                             reporting LastReady, subsumed pods still coming up, or an availability
                             budget preventing further takedown. Cleared once all preconditions hold.
                           type: string
+                        replacementReplicaIndex:
+                          description: |-
+                            ReplacementReplicaIndex is the target replica created from the latest PodCliqueSet template.
+                            It is populated only during replica recreation.
+                          format: int32
+                          type: integer
                         replicaIndex:
-                          description: ReplicaIndex is the replica index of the PodCliqueSet
-                            that is being updated.
+                          description: ReplicaIndex is the replica being updated.
+                            During replica recreation, it is the source replica being
+                            replaced.
                           format: int32
                           type: integer
                         updateEndedAt:
@@ -22718,6 +22728,9 @@ spec:
                       - replicaIndex
                       type: object
                     type: array
+                    x-kubernetes-list-map-keys:
+                    - replicaIndex
+                    x-kubernetes-list-type: map
                   inScopePodCliqueScalingGroups:
                     description: |-
                       InScopePodCliqueScalingGroups captures the config names of PodCliqueScalingGroups that had at
@@ -22742,29 +22755,22 @@ spec:
                     items:
                       type: string
                     type: array
+                  previousPodCliqueSetGenerationHash:
+                    description: |-
+                      PreviousPodCliqueSetGenerationHash identifies the PodCliqueSet generation that was the update target immediately
+                      before the current update was initialized. It distinguishes replicas that had converged to the previous target from
+                      replicas that had not.
+                    type: string
                   requiresReplicaRecreation:
                     description: |-
-                      RequiresReplicaRecreation indicates that this update must rebuild each selected PodCliqueSet replica's
-                      scheduling structure. Grove retains the standalone PodClique and PodCliqueScalingGroup resources while
-                      recreating standalone PodClique Pods, PodCliqueScalingGroup-owned PodCliques, the PodGangMap, and PodGangs.
-                      Grove sets this field when scheduling configuration changes and preserves it across superseding updates
-                      until recreation completes.
+                      RequiresReplicaRecreation indicates that this update must replace PodCliqueSet replicas instead of only executing
+                      spec.updateStrategy. Grove sets this field when scheduling configuration changes and preserves it across superseding
+                      updates until replica recreation completes.
                     type: boolean
-                  supersededGenerationHash:
-                    description: |-
-                      SupersededGenerationHash identifies the PodCliqueSet generation that was current immediately before this update was
-                      initialized or reset. Comparing each expected PodClique and PodCliqueScalingGroup status'
-                      CurrentPodCliqueSetGenerationHash with this hash distinguishes PCS replicas that fully realized the superseded
-                      generation from replicas that were still pending when the new generation was recorded.
-                    type: string
                   targetSchedulingConfigurationHash:
                     description: |-
-                      TargetSchedulingConfigurationHash identifies the scheduling configuration
-                      that this update must realize across all relevant PodCliqueSet replicas. The
-                      scheduling configuration currently comprises the effective MinAvailable
-                      values of all PodClique templates and PodCliqueScalingGroup configs.
-                      On successful completion, it is copied to
-                      PodCliqueSetStatus.AppliedSchedulingConfigurationHash.
+                      TargetSchedulingConfigurationHash identifies the scheduling configuration that this update must converge to.
+                      On successful completion, it is copied to PodCliqueSetStatus.AppliedSchedulingConfigurationHash.
                     type: string
                   totalPodCliqueScalingGroupsCount:
                     default: 0

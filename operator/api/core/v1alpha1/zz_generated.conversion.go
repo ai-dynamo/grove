@@ -1081,6 +1081,7 @@ func Convert_v1beta1_PodCliqueSetList_To_v1alpha1_PodCliqueSetList(in *v1beta1.P
 
 func autoConvert_v1alpha1_PodCliqueSetReplicaUpdateProgress_To_v1beta1_PodCliqueSetReplicaUpdateProgress(in *PodCliqueSetReplicaUpdateProgress, out *v1beta1.PodCliqueSetReplicaUpdateProgress, s conversion.Scope) error {
 	out.ReplicaIndex = in.ReplicaIndex
+	out.ReplacementReplicaIndex = (*int32)(unsafe.Pointer(in.ReplacementReplicaIndex))
 	out.UpdateStartedAt = in.UpdateStartedAt
 	out.UpdateEndedAt = (*v1.Time)(unsafe.Pointer(in.UpdateEndedAt))
 	out.InFlightEpochs = *(*[]string)(unsafe.Pointer(&in.InFlightEpochs))
@@ -1095,6 +1096,7 @@ func Convert_v1alpha1_PodCliqueSetReplicaUpdateProgress_To_v1beta1_PodCliqueSetR
 
 func autoConvert_v1beta1_PodCliqueSetReplicaUpdateProgress_To_v1alpha1_PodCliqueSetReplicaUpdateProgress(in *v1beta1.PodCliqueSetReplicaUpdateProgress, out *PodCliqueSetReplicaUpdateProgress, s conversion.Scope) error {
 	out.ReplicaIndex = in.ReplicaIndex
+	out.ReplacementReplicaIndex = (*int32)(unsafe.Pointer(in.ReplacementReplicaIndex))
 	out.UpdateStartedAt = in.UpdateStartedAt
 	out.UpdateEndedAt = (*v1.Time)(unsafe.Pointer(in.UpdateEndedAt))
 	out.InFlightEpochs = *(*[]string)(unsafe.Pointer(&in.InFlightEpochs))
@@ -1288,7 +1290,7 @@ func Convert_v1beta1_PodCliqueSetTemplateSpec_To_v1alpha1_PodCliqueSetTemplateSp
 func autoConvert_v1alpha1_PodCliqueSetUpdateProgress_To_v1beta1_PodCliqueSetUpdateProgress(in *PodCliqueSetUpdateProgress, out *v1beta1.PodCliqueSetUpdateProgress, s conversion.Scope) error {
 	out.RequiresReplicaRecreation = in.RequiresReplicaRecreation
 	out.TargetSchedulingConfigurationHash = in.TargetSchedulingConfigurationHash
-	out.SupersededGenerationHash = (*string)(unsafe.Pointer(in.SupersededGenerationHash))
+	out.PreviousPodCliqueSetGenerationHash = (*string)(unsafe.Pointer(in.PreviousPodCliqueSetGenerationHash))
 	out.UpdateStartedAt = in.UpdateStartedAt
 	out.UpdateEndedAt = (*v1.Time)(unsafe.Pointer(in.UpdateEndedAt))
 	out.UpdatedPodCliquesCount = in.UpdatedPodCliquesCount
@@ -1309,7 +1311,7 @@ func Convert_v1alpha1_PodCliqueSetUpdateProgress_To_v1beta1_PodCliqueSetUpdatePr
 func autoConvert_v1beta1_PodCliqueSetUpdateProgress_To_v1alpha1_PodCliqueSetUpdateProgress(in *v1beta1.PodCliqueSetUpdateProgress, out *PodCliqueSetUpdateProgress, s conversion.Scope) error {
 	out.RequiresReplicaRecreation = in.RequiresReplicaRecreation
 	out.TargetSchedulingConfigurationHash = in.TargetSchedulingConfigurationHash
-	out.SupersededGenerationHash = (*string)(unsafe.Pointer(in.SupersededGenerationHash))
+	out.PreviousPodCliqueSetGenerationHash = (*string)(unsafe.Pointer(in.PreviousPodCliqueSetGenerationHash))
 	out.UpdateStartedAt = in.UpdateStartedAt
 	out.UpdateEndedAt = (*v1.Time)(unsafe.Pointer(in.UpdateEndedAt))
 	out.UpdatedPodCliquesCount = in.UpdatedPodCliquesCount
