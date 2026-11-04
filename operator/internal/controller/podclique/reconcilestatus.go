@@ -179,10 +179,10 @@ func mutateUpdatedReplica(pclq *grovecorev1beta1.PodClique, existingPods, schedu
 	}
 }
 
-// countPodsAtTemplateHash returns how many of the given Pods carry the pod template hash.
+// countPodsAtTemplateHash counts Pods with the template hash and no deletion timestamp.
 func countPodsAtTemplateHash(pods []*corev1.Pod, podTemplateHash string) int32 {
 	return int32(lo.CountBy(pods, func(pod *corev1.Pod) bool {
-		return pod.Labels[apicommon.LabelPodTemplateHash] == podTemplateHash
+		return !k8sutils.IsResourceTerminating(pod.ObjectMeta) && pod.Labels[apicommon.LabelPodTemplateHash] == podTemplateHash
 	}))
 }
 
