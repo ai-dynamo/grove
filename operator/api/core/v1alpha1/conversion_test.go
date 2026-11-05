@@ -21,14 +21,25 @@ import (
 	"github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/api/equality"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/randfill"
 )
 
 const roundTripIterations = 200
+
+// roundTripCmpOptions lets cmp.Diff render API objects that contain types with unexported fields
+// (metav1.Time wraps time.Time, resource.Quantity caches a string) without panicking. The comparers
+// mirror the ones registered with apiequality.Semantic, so the printed diff matches the verdict.
+var roundTripCmpOptions = cmp.Options{
+	cmp.Comparer(func(a, b metav1.Time) bool { return a.UTC().Equal(b.UTC()) }),
+	cmp.Comparer(func(a, b resource.Quantity) bool { return a.Cmp(b) == 0 }),
+	cmpopts.EquateEmpty(),
+}
 
 func TestConvertTopologyConstraintToBeta(t *testing.T) {
 	testCases := []struct {
@@ -118,7 +129,7 @@ func TestRoundTripFromBeta(t *testing.T) {
 				out := &v1beta1.PodCliqueSet{}
 				require.NoError(t, Convert_v1alpha1_PodCliqueSet_To_v1beta1_PodCliqueSet(alpha, out, nil))
 				if !equality.Semantic.DeepEqual(in, out) {
-					t.Fatalf("round trip mismatch (-want +got): \n%s", cmp.Diff(in, out))
+					t.Fatalf("round trip mismatch (-want +got): \n%s", cmp.Diff(in, out, roundTripCmpOptions...))
 				}
 			})
 			t.Run("PodClique", func(t *testing.T) {
@@ -129,7 +140,7 @@ func TestRoundTripFromBeta(t *testing.T) {
 				require.NoError(t, Convert_v1beta1_PodClique_To_v1alpha1_PodClique(in, mid, nil))
 				require.NoError(t, Convert_v1alpha1_PodClique_To_v1beta1_PodClique(mid, out, nil))
 				if !equality.Semantic.DeepEqual(in, out) {
-					t.Fatalf("round trip mismatch (-want +got): \n%s", cmp.Diff(in, out))
+					t.Fatalf("round trip mismatch (-want +got): \n%s", cmp.Diff(in, out, roundTripCmpOptions...))
 				}
 			})
 			t.Run("PodCliqueScalingGroup", func(t *testing.T) {
@@ -140,7 +151,7 @@ func TestRoundTripFromBeta(t *testing.T) {
 				require.NoError(t, Convert_v1beta1_PodCliqueScalingGroup_To_v1alpha1_PodCliqueScalingGroup(in, mid, nil))
 				require.NoError(t, Convert_v1alpha1_PodCliqueScalingGroup_To_v1beta1_PodCliqueScalingGroup(mid, out, nil))
 				if !equality.Semantic.DeepEqual(in, out) {
-					t.Fatalf("round trip mismatch (-want +got): \n%s", cmp.Diff(in, out))
+					t.Fatalf("round trip mismatch (-want +got): \n%s", cmp.Diff(in, out, roundTripCmpOptions...))
 				}
 			})
 			t.Run("ClusterTopologyBinding", func(t *testing.T) {
@@ -151,7 +162,7 @@ func TestRoundTripFromBeta(t *testing.T) {
 				require.NoError(t, Convert_v1beta1_ClusterTopologyBinding_To_v1alpha1_ClusterTopologyBinding(in, mid, nil))
 				require.NoError(t, Convert_v1alpha1_ClusterTopologyBinding_To_v1beta1_ClusterTopologyBinding(mid, out, nil))
 				if !equality.Semantic.DeepEqual(in, out) {
-					t.Fatalf("round trip mismatch (-want +got): \n%s", cmp.Diff(in, out))
+					t.Fatalf("round trip mismatch (-want +got): \n%s", cmp.Diff(in, out, roundTripCmpOptions...))
 				}
 			})
 			t.Run("PodGangMap", func(t *testing.T) {
@@ -162,7 +173,7 @@ func TestRoundTripFromBeta(t *testing.T) {
 				require.NoError(t, Convert_v1beta1_PodGangMap_To_v1alpha1_PodGangMap(in, mid, nil))
 				require.NoError(t, Convert_v1alpha1_PodGangMap_To_v1beta1_PodGangMap(mid, out, nil))
 				if !equality.Semantic.DeepEqual(in, out) {
-					t.Fatalf("round trip mismatch (-want +got): \n%s", cmp.Diff(in, out))
+					t.Fatalf("round trip mismatch (-want +got): \n%s", cmp.Diff(in, out, roundTripCmpOptions...))
 				}
 			})
 		})
