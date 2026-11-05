@@ -19,6 +19,29 @@ Set the `KUBECONFIG` in your shell session, and run the following:
 helm upgrade -i grove oci://ghcr.io/ai-dynamo/grove/grove-charts --version <version>
 ```
 
+### Pin the startup init-container image
+
+Grove injects `grove-initc` into workload pods with startup dependencies. Configure its image separately
+from the operator image:
+
+```yaml
+initContainer:
+  image:
+    repository: registry.example/grove-initc
+    tag: ""
+    digest: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+```
+
+Replace the example digest with a real manifest digest. The digest takes precedence over `tag`.
+When both are empty, Grove appends the operator's build version to the repository, preserving the
+default image selection. Use an init-container build compatible with the operator version.
+
+For installations that set `GROVE_INIT_CONTAINER_IMAGE` directly, Grove preserves an explicit tag,
+digest, or tag-and-digest reference unchanged. A repository-only value, including a registry port,
+still receives the build-version tag. An explicit entry in `deployment.env` takes precedence over
+`initContainer.image` and is emitted only once. These settings apply when Grove creates new workload
+pods; existing pods retain their injected image. No PodCliqueSet API fields change.
+
 ## Build and install Grove from source (*for developers*)
 
 You can build and deploy Grove to your local kind cluster or remote cluster using the provided `make` targets in the repository.

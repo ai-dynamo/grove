@@ -163,6 +163,18 @@ release: "{{ .Release.Name }}"
 {{- end -}}
 {{- end -}}
 
+{{- define "grove.initContainerImage" -}}
+{{- $image := .Values.initContainer.image -}}
+{{- $repository := required "initContainer.image.repository is required" $image.repository -}}
+{{- if $image.digest -}}
+{{- printf "%s@%s" $repository $image.digest -}}
+{{- else if $image.tag -}}
+{{- printf "%s:%s" $repository $image.tag -}}
+{{- else -}}
+{{- $repository -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "operator.pcs.validating.webhook.labels" -}}
 {{- include "common.chart.labels" . }}
 {{- range $key, $val := .Values.webhooks.podCliqueSetValidationWebhook.labels }}

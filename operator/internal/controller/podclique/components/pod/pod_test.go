@@ -27,6 +27,7 @@ import (
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler/lpx"
+	groveversion "github.com/ai-dynamo/grove/operator/internal/version"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/stretchr/testify/assert"
@@ -1063,4 +1064,24 @@ func newInitContainerTestResource(t *testing.T) *_resource {
 		DefaultBackend: string(configv1beta1.SchedulerNameLPX),
 	}
 	return &_resource{scheme: scheme, schedRegistry: registry}
+}
+
+func TestInitContainerImageReference(t *testing.T) {
+	digest := "sha256:" + strings.Repeat("a", 64)
+	for _, tc := range []struct{ name, image, want string }{
+		{"repository", "grove-initc", "grove-initc:" + groveversion.New().GitVersion},
+		{"registry port", "registry.example:5000/grove-initc", "registry.example:5000/grove-initc:" + groveversion.New().GitVersion},
+		{"tag", "registry.example:5000/grove-initc:custom", "registry.example:5000/grove-initc:custom"},
+		{"digest", "registry.example/grove-initc@" + digest, "registry.example/grove-initc@" + digest},
+		{"tag and digest", "registry.example/grove-initc:custom@" + digest, "registry.example/grove-initc:custom@" + digest},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(envVarInitContainerImage, tc.image)
+			pod := &corev1.Pod{}
+			require.NoError(t, addInitContainer(pod, []string{"--podcliques=leader:1"}))
+			require.Len(t, pod.Spec.InitContainers, 1)
+			assert.Equal(t, tc.want, pod.Spec.InitContainers[0].Image)
+			assert.Equal(t, []string{"--podcliques=leader:1"}, pod.Spec.InitContainers[0].Args)
+		})
+	}
 }

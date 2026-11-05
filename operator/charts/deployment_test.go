@@ -209,3 +209,32 @@ func renderChart(t *testing.T, values map[string]interface{}) map[string]string 
 	require.NoError(t, err)
 	return manifests
 }
+
+func TestInitContainerImageValues(t *testing.T) {
+	const digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	for _, tc := range []struct {
+		name   string
+		values map[string]interface{}
+		want   string
+	}{
+		{name: "repository default", want: "grove-initc"},
+		{name: "registry port", values: map[string]interface{}{"initContainer": map[string]interface{}{"image": map[string]interface{}{"repository": "registry.example:5000/grove-initc"}}}, want: "registry.example:5000/grove-initc"},
+		{name: "tag", values: map[string]interface{}{"initContainer": map[string]interface{}{"image": map[string]interface{}{"repository": "registry.example/grove-initc", "tag": "custom"}}}, want: "registry.example/grove-initc:custom"},
+		{name: "digest wins over tag", values: map[string]interface{}{"initContainer": map[string]interface{}{"image": map[string]interface{}{"repository": "registry.example/grove-initc", "tag": "unused", "digest": digest}}}, want: "registry.example/grove-initc@" + digest},
+		{name: "legacy environment override", values: map[string]interface{}{
+			"initContainer": map[string]interface{}{"image": map[string]interface{}{"repository": "unused", "digest": digest}},
+			"deployment":    map[string]interface{}{"env": []interface{}{map[string]interface{}{"name": "GROVE_INIT_CONTAINER_IMAGE", "value": "registry.example/legacy:custom@" + digest}}},
+		}, want: "registry.example/legacy:custom@" + digest},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			deployment := renderOperatorDeployment(t, tc.values)
+			var images []string
+			for _, env := range deployment.Spec.Template.Spec.Containers[0].Env {
+				if env.Name == "GROVE_INIT_CONTAINER_IMAGE" {
+					images = append(images, env.Value)
+				}
+			}
+			assert.Equal(t, []string{tc.want}, images)
+		})
+	}
+}

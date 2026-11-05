@@ -124,7 +124,19 @@ spec:
                   fieldPath: spec.serviceAccountName
             - name: GROVE_OPERATOR_SERVICE_NAME
               value: {{ required ".Values.service.name is required" .Values.service.name | quote }}
-{{- toYaml .Values.deployment.env | nindent 12 }}
+            {{- $hasInitContainerImage := false }}
+            {{- range .Values.deployment.env }}
+              {{- if eq .name "GROVE_INIT_CONTAINER_IMAGE" }}
+                {{- $hasInitContainerImage = true }}
+              {{- end }}
+            {{- end }}
+            {{- if not $hasInitContainerImage }}
+            - name: GROVE_INIT_CONTAINER_IMAGE
+              value: {{ include "grove.initContainerImage" . | quote }}
+            {{- end }}
+{{- with .Values.deployment.env }}
+{{- toYaml . | nindent 12 }}
+{{- end }}
       volumes:
         - name: kube-api-access-grove
           projected:
