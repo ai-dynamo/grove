@@ -35,6 +35,15 @@ func ValidateOperatorConfiguration(config *configv1beta1.OperatorConfiguration) 
 	allErrs = append(allErrs, validateLeaderElectionConfiguration(config.LeaderElection, field.NewPath("leaderElection"))...)
 	allErrs = append(allErrs, validateClientConnectionConfiguration(config.ClientConnection, field.NewPath("clientConnection"))...)
 	allErrs = append(allErrs, validateControllerConfiguration(config.Controllers, field.NewPath("controllers"))...)
+	allErrs = append(allErrs, validateScaleInConfiguration(config.ScaleIn, field.NewPath("scaleIn"))...)
+	return allErrs
+}
+
+func validateScaleInConfiguration(cfg configv1beta1.ScaleInConfiguration, fldPath *field.Path) field.ErrorList {
+	allErrs := field.ErrorList{}
+	if len(strings.TrimSpace(string(cfg.CostSource))) > 0 && !slices.Contains(configv1beta1.AllScaleInCostSourceNames, cfg.CostSource) {
+		allErrs = append(allErrs, field.NotSupported(fldPath.Child("costSource"), cfg.CostSource, configv1beta1.AllScaleInCostSourceNames))
+	}
 	return allErrs
 }
 

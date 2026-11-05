@@ -22,8 +22,11 @@ import (
 	"time"
 
 	"github.com/ai-dynamo/grove/operator/api/common"
+	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
+	"github.com/ai-dynamo/grove/operator/internal/scalein"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -111,4 +114,100 @@ func TestDeletionSorterPrefersTerminatingPods(t *testing.T) {
 			assert.Equal(t, tt.expectedFirst, podNames(sorter.Pods)[:len(tt.expectedFirst)])
 		})
 	}
+}
+
+// TestDeletionSorterScaleInCost pins criterion 4: a lower scale-in cost is deleted first, after the serving
+// criteria and before the template-hash and age tie-breaks. Equal costs fall through to those tie-breaks, and
+// a nil cost map leaves the order exactly what it is without a cost.
+func TestDeletionSorterScaleInCost(t *testing.T) {
+	createdAt := metav1.NewTime(time.Now())
+	older := metav1.NewTime(createdAt.Add(-time.Hour))
+
+	notReady := func(name string) *corev1.Pod {
+		pod := newSortablePod(name, createdAt, false)
+		pod.Status.Conditions = nil
+		return pod
+	}
+	outdated := func(name string) *corev1.Pod {
+		pod := newSortablePod(name, createdAt, false)
+		pod.Labels[common.LabelPodTemplateHash] = "old-hash"
+		return pod
+	}
+
+	tests := []struct {
+		name         string
+		pods         []*corev1.Pod
+		scaleInCosts map[string]int32
+		expected     []string
+	}{
+		{
+			name: "the lowest cost leaves first among serving pods",
+			pods: []*corev1.Pod{
+				newSortablePod("cost-5", createdAt, false),
+				newSortablePod("cost-0", createdAt, false),
+				newSortablePod("cost-negative", createdAt, false),
+			},
+			scaleInCosts: map[string]int32{"cost-5": 5, "cost-negative": -1000000},
+			expected:     []string{"cost-negative", "cost-0", "cost-5"},
+		},
+		{
+			name: "a cost never removes a serving pod ahead of one that is not serving",
+			pods: []*corev1.Pod{
+				newSortablePod("marked-ready", createdAt, false),
+				notReady("unmarked-not-ready"),
+			},
+			scaleInCosts: map[string]int32{"marked-ready": -1000000},
+			expected:     []string{"unmarked-not-ready", "marked-ready"},
+		},
+		{
+			name: "a cost outranks the template hash and age",
+			pods: []*corev1.Pod{
+				outdated("outdated-unmarked"),
+				newSortablePod("newest-unmarked", createdAt, false),
+				newSortablePod("oldest-marked", older, false),
+			},
+			scaleInCosts: map[string]int32{"oldest-marked": -1},
+			expected:     []string{"oldest-marked", "outdated-unmarked", "newest-unmarked"},
+		},
+		{
+			name: "equal costs fall through to the template hash and age",
+			pods: []*corev1.Pod{
+				newSortablePod("older", older, false),
+				newSortablePod("newer", createdAt, false),
+				outdated("outdated"),
+			},
+			scaleInCosts: map[string]int32{"older": -3, "newer": -3, "outdated": -3},
+			expected:     []string{"outdated", "newer", "older"},
+		},
+		{
+			name: "no costs is today's order",
+			pods: []*corev1.Pod{
+				newSortablePod("older", older, false),
+				newSortablePod("newer", createdAt, false),
+			},
+			expected: []string{"newer", "older"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sorter := DeletionSorter{Pods: tt.pods, ExpectedPodTemplateHash: sortTestTemplateHash, ScaleInCosts: tt.scaleInCosts}
+			sort.Sort(sorter)
+			assert.Equal(t, tt.expected, podNames(sorter.Pods))
+		})
+	}
+}
+
+func TestScaleInCostsByPodName(t *testing.T) {
+	source, err := scalein.NewCostSource(configv1beta1.ScaleInCostSourcePodDeletionCost)
+	require.NoError(t, err)
+	marked := newSortablePod("marked", metav1.Now(), false)
+	marked.Annotations = map[string]string{corev1.PodDeletionCost: "-9"}
+	unmarked := newSortablePod("unmarked", metav1.Now(), false)
+	zero := newSortablePod("zero", metav1.Now(), false)
+	zero.Annotations = map[string]string{corev1.PodDeletionCost: "0"}
+	pods := []*corev1.Pod{marked, unmarked, zero}
+
+	assert.Equal(t, map[string]int32{"marked": -9}, scaleInCostsByPodName(source, pods))
+	assert.Empty(t, scaleInCostsByPodName(nil, pods), "a nil source reads no cost")
 }

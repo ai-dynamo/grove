@@ -24,6 +24,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/sync"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
+	"github.com/ai-dynamo/grove/operator/internal/scalein"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 
@@ -39,6 +40,7 @@ const (
 	errCodeListPCLQs                       grovecorev1beta1.ErrorCode = "ERR_LIST_PCLQs"
 	errCodeListPCSGs                       grovecorev1beta1.ErrorCode = "ERR_LIST_PCSGs"
 	errCodeListServices                    grovecorev1beta1.ErrorCode = "ERR_LIST_SERVICES"
+	errCodeListPods                        grovecorev1beta1.ErrorCode = "ERR_LIST_PODS"
 	errCodeUpdatePCSStatus                 grovecorev1beta1.ErrorCode = "ERR_UPDATE_PCS_STATUS"
 	errCodeGetPodGangMap                   grovecorev1beta1.ErrorCode = "ERR_GET_PODGANGMAP"
 	errCodeInvalidEpoch                    grovecorev1beta1.ErrorCode = "ERR_INVALID_EPOCH"
@@ -48,14 +50,17 @@ type _resource struct {
 	client                      client.Client
 	eventRecorder               record.EventRecorder
 	scalingProgressExpectations *pcssync.ScalingProgressExpectations
+	// costSource yields the scale-in cost of a pod; a replica's cost is the minimum over its pods.
+	costSource scalein.CostSource
 }
 
 // New creates a new instance of the PodCliqueSetReplica operator.
-func New(client client.Client, eventRecorder record.EventRecorder, scalingProgressExpectations *pcssync.ScalingProgressExpectations) component.Operator[grovecorev1beta1.PodCliqueSet, pcssync.State, pcssync.Result] {
+func New(client client.Client, eventRecorder record.EventRecorder, scalingProgressExpectations *pcssync.ScalingProgressExpectations, costSource scalein.CostSource) component.Operator[grovecorev1beta1.PodCliqueSet, pcssync.State, pcssync.Result] {
 	return &_resource{
 		client:                      client,
 		eventRecorder:               eventRecorder,
 		scalingProgressExpectations: scalingProgressExpectations,
+		costSource:                  costSource,
 	}
 }
 

@@ -29,6 +29,7 @@ import (
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/expect"
 	"github.com/ai-dynamo/grove/operator/internal/resourceclaim"
+	"github.com/ai-dynamo/grove/operator/internal/scalein"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
@@ -83,6 +84,8 @@ type _resource struct {
 	eventRecorder     record.EventRecorder
 	expectationsStore *expect.ExpectationsStore
 	schedRegistry     scheduler.Registry
+	// costSource yields the scale-in cost of a pod, which orders excess pods for deletion.
+	costSource scalein.CostSource
 }
 
 // New creates a new Pod operator for managing Pod resources within PodCliques
@@ -90,7 +93,8 @@ func New(client client.Client,
 	scheme *runtime.Scheme,
 	eventRecorder record.EventRecorder,
 	expectationsStore *expect.ExpectationsStore,
-	schedRegistry scheduler.Registry) (component.Operator[grovecorev1beta1.PodClique, component.EmptyState, component.NoResult], error) {
+	schedRegistry scheduler.Registry,
+	costSource scalein.CostSource) (component.Operator[grovecorev1beta1.PodClique, component.EmptyState, component.NoResult], error) {
 	// The pod component groups its create and delete expectations by owning PodClique so it can clear
 	// them per PodClique in one call regardless of how many PodGangs a PodClique's pods span.
 	if err := expectationsStore.AddIndexers(expectations.PodCliqueExpectationsIndexers()); err != nil {
@@ -106,6 +110,7 @@ func New(client client.Client,
 		eventRecorder:     eventRecorder,
 		expectationsStore: expectationsStore,
 		schedRegistry:     schedRegistry,
+		costSource:        costSource,
 	}, nil
 }
 

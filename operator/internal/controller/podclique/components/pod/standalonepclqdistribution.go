@@ -359,9 +359,17 @@ func (r _resource) buildPerPodGangCreationTasks(logger logr.Logger, ss *syncSnap
 }
 
 // buildPerPodGangDeletionTasks builds deletion tasks for each PodGang whose effective count exceeds
-// the desired count. Within each PodGang the DeletionSorter picks which pods to remove.
+// the desired count. Within each PodGang the DeletionSorter picks which pods to remove, so a scale-in
+// cost orders the pods of the PodGang being trimmed and a marked pod in another PodGang stays.
+// During a coherent update of this replica the old-generation PodGangs are drained by the update
+// engine, not scaled in: their take-down keeps Grove's own order and reads no cost.
 func (r _resource) buildPerPodGangDeletionTasks(logger logr.Logger, ss *syncSnapshot, countDeltaByPodGang map[string]int32, orderedPodGangNames []string, podsByPodGang map[string]podGangPods) []utils.Task {
 	var tasks []utils.Task
+	underCoherentUpdate := componentutils.IsPCSReplicaUnderCoherentUpdate(ss.pcs, ss.pcsReplicaIndex)
+	var currentGenerationPodGangs sets.Set[string]
+	if underCoherentUpdate {
+		currentGenerationPodGangs = currentGenerationPodGangNames(ss)
+	}
 	for _, podGangName := range orderedPodGangNames {
 		if countDeltaByPodGang[podGangName] >= 0 {
 			continue
@@ -371,7 +379,15 @@ func (r _resource) buildPerPodGangDeletionTasks(logger logr.Logger, ss *syncSnap
 		if len(pods) == 0 {
 			continue
 		}
-		sorter := DeletionSorter{Pods: slices.Clone(pods), ExpectedPodTemplateHash: ss.expectedPodTemplateHash}
+		costSource := r.costSource
+		if underCoherentUpdate && !currentGenerationPodGangs.Has(podGangName) {
+			costSource = nil
+		}
+		sorter := DeletionSorter{
+			Pods:                    slices.Clone(pods),
+			ExpectedPodTemplateHash: ss.expectedPodTemplateHash,
+			ScaleInCosts:            scaleInCostsByPodName(costSource, pods),
+		}
 		sort.Sort(sorter)
 		numToDelete = min(numToDelete, len(sorter.Pods))
 		for _, pod := range sorter.Pods[:numToDelete] {
