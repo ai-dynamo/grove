@@ -33,6 +33,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
 	"github.com/ai-dynamo/grove/operator/internal/podgangmigrator"
 	schedulerregistry "github.com/ai-dynamo/grove/operator/internal/scheduler/registry"
+	"github.com/ai-dynamo/grove/operator/internal/startup"
 	groveversion "github.com/ai-dynamo/grove/operator/internal/version"
 
 	"github.com/spf13/pflag"
@@ -108,7 +109,22 @@ func main() {
 
 	// Synchronize backend topologies for all existing ClusterTopologyBinding resources.
 	// This must be done before starting the controllers that may depend on the ClusterTopologyBinding resource.
-	if err = clustertopology.SynchronizeTopology(ctx, cl, logger, schedRegistry.AllTopologyAware()); err != nil {
+	// Uses a bounded exponential backoff so that transient API-server errors do not crash the operator.
+	topologyRetrier := startup.New(
+		wait.Backoff{
+			Duration: time.Second,
+			Factor:   2.0,
+			Jitter:   0.1,
+			Steps:    6,
+		},
+		startup.IsTransientAPIError,
+		func(attempt int, _ error) {
+			logger.Info("Retrying topology synchronization after transient error", "attempt", attempt+1)
+		},
+	)
+	if err = topologyRetrier.Do(func() error {
+		return clustertopology.SynchronizeTopology(ctx, cl, logger, schedRegistry.AllTopologyAware())
+	}); err != nil {
 		logger.Error(err, "failed to synchronize cluster topology")
 		handleErrorAndExit(err, cli.ExitErrSynchronizeTopology)
 	}
