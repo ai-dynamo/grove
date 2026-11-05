@@ -19,7 +19,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"k8s.io/apimachinery/pkg/util/sets"
-	"k8s.io/utils/ptr"
 )
 
 type CustomString string
@@ -29,7 +28,7 @@ type AnotherStringType string
 func TestIsEmptyStringType(t *testing.T) {
 	testCases := []struct {
 		description string
-		input       interface{}
+		input       any
 		expected    bool
 	}{
 		{
@@ -87,7 +86,7 @@ func TestIsEmptyStringType(t *testing.T) {
 func TestIsEmptyStringTypeWithCustomTypes(t *testing.T) {
 	testCases := []struct {
 		description string
-		input       interface{}
+		input       any
 		expected    bool
 	}{
 		{
@@ -137,8 +136,8 @@ func TestIsEmptyStringTypeWithCustomTypes(t *testing.T) {
 func TestOnlyOneIsNil(t *testing.T) {
 	testCases := []struct {
 		description string
-		objA        interface{}
-		objB        interface{}
+		objA        any
+		objB        any
 		expected    bool
 	}{
 		{
@@ -150,25 +149,25 @@ func TestOnlyOneIsNil(t *testing.T) {
 		{
 			description: "first nil, second non-nil should return true",
 			objA:        (*string)(nil),
-			objB:        ptr.To("test"),
+			objB:        new("test"),
 			expected:    true,
 		},
 		{
 			description: "first non-nil, second nil should return true",
-			objA:        ptr.To("test"),
+			objA:        new("test"),
 			objB:        (*string)(nil),
 			expected:    true,
 		},
 		{
 			description: "both non-nil should return false",
-			objA:        ptr.To("test1"),
-			objB:        ptr.To("test2"),
+			objA:        new("test1"),
+			objB:        new("test2"),
 			expected:    false,
 		},
 		{
 			description: "both non-nil with same value should return false",
-			objA:        ptr.To("same"),
-			objB:        ptr.To("same"),
+			objA:        new("same"),
+			objB:        new("same"),
 			expected:    false,
 		},
 	}
@@ -197,21 +196,21 @@ func TestOnlyOneIsNilWithDifferentTypes(t *testing.T) {
 		{
 			description: "int pointers - first nil should return true",
 			testFunc: func() bool {
-				return OnlyOneIsNil((*int)(nil), ptr.To(42))
+				return OnlyOneIsNil((*int)(nil), new(42))
 			},
 			expected: true,
 		},
 		{
 			description: "int pointers - second nil should return true",
 			testFunc: func() bool {
-				return OnlyOneIsNil(ptr.To(42), (*int)(nil))
+				return OnlyOneIsNil(new(42), (*int)(nil))
 			},
 			expected: true,
 		},
 		{
 			description: "int pointers - both non-nil should return false",
 			testFunc: func() bool {
-				return OnlyOneIsNil(ptr.To(42), ptr.To(84))
+				return OnlyOneIsNil(new(42), new(84))
 			},
 			expected: false,
 		},

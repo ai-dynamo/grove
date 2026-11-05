@@ -26,7 +26,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/uuid"
-	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -169,13 +168,13 @@ func TestPodCliquePredicateStatusChangesAffectingUpdatedAccounting(t *testing.T)
 		{
 			name: "current pod template hash changes",
 			mutate: func(pclq *grovecorev1beta1.PodClique) {
-				pclq.Status.CurrentPodTemplateHash = ptr.To("new-template-hash")
+				pclq.Status.CurrentPodTemplateHash = new("new-template-hash")
 			},
 		},
 		{
 			name: "current PCS generation hash changes",
 			mutate: func(pclq *grovecorev1beta1.PodClique) {
-				pclq.Status.CurrentPodCliqueSetGenerationHash = ptr.To("new-generation-hash")
+				pclq.Status.CurrentPodCliqueSetGenerationHash = new("new-generation-hash")
 			},
 		},
 		{
@@ -264,7 +263,7 @@ func TestPodCliquePredicateNoRelevantChange(t *testing.T) {
 		},
 		{
 			name:   "observed generation changes",
-			mutate: func(pclq *grovecorev1beta1.PodClique) { pclq.Status.ObservedGeneration = ptr.To(int64(2)) },
+			mutate: func(pclq *grovecorev1beta1.PodClique) { pclq.Status.ObservedGeneration = new(int64(2)) },
 		},
 		{
 			name: "last errors change",
@@ -277,7 +276,7 @@ func TestPodCliquePredicateNoRelevantChange(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			oldPCLQ := testutils.NewPodCliqueBuilder("pcs", uuid.NewUUID(), "worker", "default", 0).Build()
-			oldPCLQ.Status.ObservedGeneration = ptr.To(int64(1))
+			oldPCLQ.Status.ObservedGeneration = new(int64(1))
 			newPCLQ := oldPCLQ.DeepCopy()
 			tt.mutate(newPCLQ)
 
@@ -300,7 +299,7 @@ func TestPodCliqueScalingGroupPredicateStatusChangesAffectingUpdatedAccounting(t
 		{
 			name: "current PCS generation hash changes",
 			mutate: func(pcsg *grovecorev1beta1.PodCliqueScalingGroup) {
-				pcsg.Status.CurrentPodCliqueSetGenerationHash = ptr.To("new-generation-hash")
+				pcsg.Status.CurrentPodCliqueSetGenerationHash = new("new-generation-hash")
 			},
 		},
 		{

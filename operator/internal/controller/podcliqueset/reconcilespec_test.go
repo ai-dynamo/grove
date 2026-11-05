@@ -40,7 +40,6 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/client-go/tools/record"
-	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -270,7 +269,7 @@ func TestUpdateObservedGeneration(t *testing.T) {
 					WithReplicas(1).
 					Build()
 				pcs.Generation = 5
-				pcs.Status.ObservedGeneration = ptr.To(int64(5))
+				pcs.Status.ObservedGeneration = new(int64(5))
 				return pcs
 			},
 			expectPatchSkipped: true,
@@ -296,7 +295,7 @@ func TestUpdateObservedGeneration(t *testing.T) {
 					WithReplicas(1).
 					Build()
 				pcs.Generation = 7
-				pcs.Status.ObservedGeneration = ptr.To(int64(4))
+				pcs.Status.ObservedGeneration = new(int64(4))
 				return pcs
 			},
 			expectPatchSkipped: false,
@@ -390,7 +389,7 @@ func TestInitUpdateProgress(t *testing.T) {
 					WithUpdateStrategy(&grovecorev1beta1.PodCliqueSetUpdateStrategy{
 						Type: grovecorev1beta1.RollingRecreateStrategy,
 					}).
-					WithPodCliqueSetGenerationHash(ptr.To("old-hash")).
+					WithPodCliqueSetGenerationHash(new("old-hash")).
 					Build()
 				pcs.Status.UpdatedReplicas = 3 // should be reset to 0
 				return pcs
@@ -403,7 +402,7 @@ func TestInitUpdateProgress(t *testing.T) {
 				pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, uuid.NewUUID()).
 					WithReplicas(2).
 					WithPodCliqueParameters("worker", 1, nil).
-					WithPodCliqueSetGenerationHash(ptr.To("old-hash")).
+					WithPodCliqueSetGenerationHash(new("old-hash")).
 					Build()
 				pcs.Status.UpdatedReplicas = 2 // should be reset to 0
 				return pcs
@@ -419,7 +418,7 @@ func TestInitUpdateProgress(t *testing.T) {
 					WithUpdateStrategy(&grovecorev1beta1.PodCliqueSetUpdateStrategy{
 						Type: grovecorev1beta1.OnDeleteStrategy,
 					}).
-					WithPodCliqueSetGenerationHash(ptr.To("old-hash")).
+					WithPodCliqueSetGenerationHash(new("old-hash")).
 					Build()
 				pcs.Status.UpdatedReplicas = 5 // should be reset to 0
 				return pcs
@@ -438,7 +437,7 @@ func TestInitUpdateProgress(t *testing.T) {
 					WithUpdateStrategy(&grovecorev1beta1.PodCliqueSetUpdateStrategy{
 						Type: grovecorev1beta1.RollingRecreateStrategy,
 					}).
-					WithPodCliqueSetGenerationHash(ptr.To("old-hash")).
+					WithPodCliqueSetGenerationHash(new("old-hash")).
 					WithUpdateProgress(&grovecorev1beta1.PodCliqueSetUpdateProgress{
 						UpdateStartedAt:                    updateStartedAt,
 						UpdatedPodCliqueScalingGroupsCount: 2,
@@ -469,10 +468,10 @@ func TestInitUpdateProgress(t *testing.T) {
 					WithUpdateStrategy(&grovecorev1beta1.PodCliqueSetUpdateStrategy{
 						Type: grovecorev1beta1.OnDeleteStrategy,
 					}).
-					WithPodCliqueSetGenerationHash(ptr.To("old-hash")).
+					WithPodCliqueSetGenerationHash(new("old-hash")).
 					WithUpdateProgress(&grovecorev1beta1.PodCliqueSetUpdateProgress{
 						UpdateStartedAt:                    updateStartedAt,
-						UpdateEndedAt:                      ptr.To(updateStartedAt),
+						UpdateEndedAt:                      new(updateStartedAt),
 						UpdatedPodCliqueScalingGroupsCount: 1,
 						TotalPodCliqueScalingGroupsCount:   1,
 						UpdatedPodCliquesCount:             2,

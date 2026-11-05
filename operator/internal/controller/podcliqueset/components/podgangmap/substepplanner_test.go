@@ -25,7 +25,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"k8s.io/utils/clock"
 	testingclock "k8s.io/utils/clock/testing"
-	"k8s.io/utils/ptr"
 )
 
 func TestComputeNumAnchorBearingSteps(t *testing.T) {
@@ -782,7 +781,7 @@ func TestSubStepDrainCountAndDrainsNothing(t *testing.T) {
 
 func pcsWithCurrentHash(currentGenerationHash string) *grovecorev1beta1.PodCliqueSet {
 	pcs := &grovecorev1beta1.PodCliqueSet{}
-	pcs.Status.CurrentGenerationHash = ptr.To(currentGenerationHash)
+	pcs.Status.CurrentGenerationHash = new(currentGenerationHash)
 	return pcs
 }
 

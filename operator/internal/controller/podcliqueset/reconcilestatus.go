@@ -37,7 +37,6 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
-	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -108,7 +107,7 @@ func mutateSelector(pcs *grovecorev1beta1.PodCliqueSet) error {
 	if err != nil {
 		return fmt.Errorf("%w: failed to create label selector for PodCliqueSet %v", err, client.ObjectKeyFromObject(pcs))
 	}
-	pcs.Status.Selector = ptr.To(selector.String())
+	pcs.Status.Selector = new(selector.String())
 	return nil
 }
 

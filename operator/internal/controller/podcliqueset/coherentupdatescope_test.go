@@ -165,7 +165,7 @@ func TestComputeCoherentUpdateScope(t *testing.T) {
 		// v0 entry). A new edit now changes router. The scope must carry frontend forward and add router.
 		pcs := pcsBuilder().
 			WithUpdateStrategy(&grovecorev1beta1.PodCliqueSetUpdateStrategy{Type: grovecorev1beta1.CoherentStrategy}).
-			WithPodCliqueSetGenerationHash(ptr.To("v1")).
+			WithPodCliqueSetGenerationHash(new("v1")).
 			WithUpdateProgress(&grovecorev1beta1.PodCliqueSetUpdateProgress{InScopeStandalonePodCliques: []string{"frontend"}}).
 			Build()
 		pgm := testutils.NewPodGangMapBuilder(testPCSName, testNamespace, "uid", 0).

@@ -31,7 +31,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
-	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -94,7 +93,7 @@ func TestBackend_SyncPodGang_CreateAndUpdate(t *testing.T) {
 	podGang.Spec.PriorityClassName = "high-priority"
 	podGang.Spec.TopologyConstraint = &groveschedulerv1alpha1.TopologyConstraint{
 		PackConstraint: &groveschedulerv1alpha1.TopologyPackConstraint{
-			Required: ptr.To("zone"),
+			Required: new("zone"),
 		},
 	}
 	podGang.Spec.TopologyConstraintGroupConfigs = []groveschedulerv1alpha1.TopologyConstraintGroupConfig{
@@ -103,7 +102,7 @@ func TestBackend_SyncPodGang_CreateAndUpdate(t *testing.T) {
 			PodGroupNames: []string{"decoder"},
 			TopologyConstraint: &groveschedulerv1alpha1.TopologyConstraint{
 				PackConstraint: &groveschedulerv1alpha1.TopologyPackConstraint{
-					Preferred: ptr.To("rack"),
+					Preferred: new("rack"),
 				},
 			},
 		},
@@ -114,7 +113,7 @@ func TestBackend_SyncPodGang_CreateAndUpdate(t *testing.T) {
 			MinReplicas: 2,
 			TopologyConstraint: &groveschedulerv1alpha1.TopologyConstraint{
 				PackConstraint: &groveschedulerv1alpha1.TopologyPackConstraint{
-					Required: ptr.To("host"),
+					Required: new("host"),
 				},
 			},
 		},
@@ -250,7 +249,7 @@ func TestBackend_SyncPodGang_MissingClusterTopologyBindingFailsLoudly(t *testing
 	podGang.Annotations = map[string]string{"grove.io/topology-name": "deleted-binding"}
 	podGang.Spec.TopologyConstraint = &groveschedulerv1alpha1.TopologyConstraint{
 		PackConstraint: &groveschedulerv1alpha1.TopologyPackConstraint{
-			Required: ptr.To("zone"),
+			Required: new("zone"),
 		},
 	}
 	podGang.Spec.PodGroups = []groveschedulerv1alpha1.PodGroup{
@@ -291,7 +290,7 @@ func TestBackend_SyncPodGang_ResolvesExternallyManagedTopologyName(t *testing.T)
 	podGang.Annotations = map[string]string{"grove.io/topology-name": ct.Name}
 	podGang.Spec.TopologyConstraint = &groveschedulerv1alpha1.TopologyConstraint{
 		PackConstraint: &groveschedulerv1alpha1.TopologyPackConstraint{
-			Required: ptr.To("zone"),
+			Required: new("zone"),
 		},
 	}
 	podGang.Spec.PodGroups = []groveschedulerv1alpha1.PodGroup{
@@ -325,7 +324,7 @@ func TestBackend_SyncPodGang_SkipsEmptyTopologyConstraintGroups(t *testing.T) {
 			Name: "empty-group",
 			TopologyConstraint: &groveschedulerv1alpha1.TopologyConstraint{
 				PackConstraint: &groveschedulerv1alpha1.TopologyPackConstraint{
-					Required: ptr.To("host"),
+					Required: new("host"),
 				},
 			},
 		},
@@ -678,6 +677,6 @@ func setPodCliqueSetControllerOwner(podGang *groveschedulerv1alpha1.PodGang, pcs
 		Kind:       "PodCliqueSet",
 		Name:       pcs.Name,
 		UID:        pcs.UID,
-		Controller: ptr.To(true),
+		Controller: new(true),
 	}}
 }

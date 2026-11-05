@@ -30,7 +30,6 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/samber/lo"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -161,8 +160,8 @@ func computeDisruptionBudget(existing, desired, effectiveMaxUnavailable, newNotR
 func (r _resource) markUpdateEnd(ctx context.Context, logger logr.Logger, pcsg *grovecorev1beta1.PodCliqueScalingGroup) error {
 	patch := client.MergeFrom(pcsg.DeepCopy())
 
-	pcsg.Status.UpdateProgress.UpdateEndedAt = ptr.To(metav1.Now())
-	pcsg.Status.CurrentPodCliqueSetGenerationHash = ptr.To(pcsg.Status.UpdateProgress.PodCliqueSetGenerationHash)
+	pcsg.Status.UpdateProgress.UpdateEndedAt = new(metav1.Now())
+	pcsg.Status.CurrentPodCliqueSetGenerationHash = new(pcsg.Status.UpdateProgress.PodCliqueSetGenerationHash)
 
 	if err := r.client.Status().Patch(ctx, pcsg, patch); err != nil {
 		return groveerr.WrapError(

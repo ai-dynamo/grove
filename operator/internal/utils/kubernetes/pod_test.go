@@ -23,7 +23,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/utils/ptr"
 )
 
 const (
@@ -260,7 +259,7 @@ func TestHasAnyStartedButNotReadyContainer(t *testing.T) {
 			containerStatuses: []corev1.ContainerStatus{
 				{
 					Name:    "container-1",
-					Started: ptr.To(true),
+					Started: new(true),
 					Ready:   false,
 				},
 			},
@@ -272,7 +271,7 @@ func TestHasAnyStartedButNotReadyContainer(t *testing.T) {
 			containerStatuses: []corev1.ContainerStatus{
 				{
 					Name:    "container-1",
-					Started: ptr.To(true),
+					Started: new(true),
 					Ready:   true,
 				},
 			},
@@ -284,7 +283,7 @@ func TestHasAnyStartedButNotReadyContainer(t *testing.T) {
 			containerStatuses: []corev1.ContainerStatus{
 				{
 					Name:    "container-1",
-					Started: ptr.To(false),
+					Started: new(false),
 					Ready:   false,
 				},
 			},
@@ -308,12 +307,12 @@ func TestHasAnyStartedButNotReadyContainer(t *testing.T) {
 			containerStatuses: []corev1.ContainerStatus{
 				{
 					Name:    "container-1",
-					Started: ptr.To(true),
+					Started: new(true),
 					Ready:   true,
 				},
 				{
 					Name:    "container-2",
-					Started: ptr.To(true),
+					Started: new(true),
 					Ready:   false,
 				},
 			},
@@ -353,7 +352,7 @@ func TestHasAnyContainerNotStarted(t *testing.T) {
 			containerStatuses: []corev1.ContainerStatus{
 				{
 					Name:    "container-1",
-					Started: ptr.To(false),
+					Started: new(false),
 					Ready:   false,
 				},
 			},
@@ -377,7 +376,7 @@ func TestHasAnyContainerNotStarted(t *testing.T) {
 			containerStatuses: []corev1.ContainerStatus{
 				{
 					Name:    "container-1",
-					Started: ptr.To(true),
+					Started: new(true),
 					Ready:   false,
 				},
 			},
@@ -389,7 +388,7 @@ func TestHasAnyContainerNotStarted(t *testing.T) {
 			containerStatuses: []corev1.ContainerStatus{
 				{
 					Name:    "container-1",
-					Started: ptr.To(true),
+					Started: new(true),
 					Ready:   true,
 				},
 			},
@@ -407,12 +406,12 @@ func TestHasAnyContainerNotStarted(t *testing.T) {
 			containerStatuses: []corev1.ContainerStatus{
 				{
 					Name:    "container-1",
-					Started: ptr.To(true),
+					Started: new(true),
 					Ready:   true,
 				},
 				{
 					Name:    "container-2",
-					Started: ptr.To(false),
+					Started: new(false),
 					Ready:   false,
 				},
 			},
@@ -424,12 +423,12 @@ func TestHasAnyContainerNotStarted(t *testing.T) {
 			containerStatuses: []corev1.ContainerStatus{
 				{
 					Name:    "container-1",
-					Started: ptr.To(true),
+					Started: new(true),
 					Ready:   true,
 				},
 				{
 					Name:    "container-2",
-					Started: ptr.To(true),
+					Started: new(true),
 					Ready:   false,
 				},
 			},
@@ -746,7 +745,7 @@ func TestCategorizePodsByConditionType(t *testing.T) {
 			ContainerStatuses: []corev1.ContainerStatus{
 				{
 					Name:    "container-1",
-					Started: ptr.To(true),
+					Started: new(true),
 					Ready:   false,
 				},
 			},

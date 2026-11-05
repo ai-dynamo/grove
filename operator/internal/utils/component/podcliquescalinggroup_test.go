@@ -24,7 +24,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/utils/ptr"
 )
 
 func TestFindScalingGroupConfigForClique(t *testing.T) {
@@ -143,7 +142,7 @@ func TestIsPCSGUpdateInProgress(t *testing.T) {
 				Status: grovecorev1beta1.PodCliqueScalingGroupStatus{
 					UpdateProgress: &grovecorev1beta1.PodCliqueScalingGroupUpdateProgress{
 						UpdateStartedAt: metav1.Now(),
-						UpdateEndedAt:   ptr.To(metav1.Now()), // set means completed
+						UpdateEndedAt:   new(metav1.Now()), // set means completed
 					},
 				},
 			},
@@ -181,7 +180,7 @@ func TestIsPCSGUpdateComplete(t *testing.T) {
 			name: "returns_true_when_hash_matches_and_no_update_progress_exists",
 			pcsg: &grovecorev1beta1.PodCliqueScalingGroup{
 				Status: grovecorev1beta1.PodCliqueScalingGroupStatus{
-					CurrentPodCliqueSetGenerationHash: ptr.To("hash1"),
+					CurrentPodCliqueSetGenerationHash: new("hash1"),
 				},
 			},
 			pcsGenerationHash: "hash1",
@@ -191,7 +190,7 @@ func TestIsPCSGUpdateComplete(t *testing.T) {
 			name: "returns_false_when_hash_matches_but_update_is_in_progress",
 			pcsg: &grovecorev1beta1.PodCliqueScalingGroup{
 				Status: grovecorev1beta1.PodCliqueScalingGroupStatus{
-					CurrentPodCliqueSetGenerationHash: ptr.To("hash1"),
+					CurrentPodCliqueSetGenerationHash: new("hash1"),
 					UpdateProgress: &grovecorev1beta1.PodCliqueScalingGroupUpdateProgress{
 						UpdateStartedAt:            metav1.Now(),
 						PodCliqueSetGenerationHash: "superseded-hash",
@@ -205,10 +204,10 @@ func TestIsPCSGUpdateComplete(t *testing.T) {
 			name: "returns_true_when_hash_matches_and_update_has_ended",
 			pcsg: &grovecorev1beta1.PodCliqueScalingGroup{
 				Status: grovecorev1beta1.PodCliqueScalingGroupStatus{
-					CurrentPodCliqueSetGenerationHash: ptr.To("hash1"),
+					CurrentPodCliqueSetGenerationHash: new("hash1"),
 					UpdateProgress: &grovecorev1beta1.PodCliqueScalingGroupUpdateProgress{
 						UpdateStartedAt:            metav1.Now(),
-						UpdateEndedAt:              ptr.To(metav1.Now()),
+						UpdateEndedAt:              new(metav1.Now()),
 						PodCliqueSetGenerationHash: "hash1",
 					},
 				},
@@ -220,7 +219,7 @@ func TestIsPCSGUpdateComplete(t *testing.T) {
 			name: "returns_false_when_hash_differs",
 			pcsg: &grovecorev1beta1.PodCliqueScalingGroup{
 				Status: grovecorev1beta1.PodCliqueScalingGroupStatus{
-					CurrentPodCliqueSetGenerationHash: ptr.To("old-hash"),
+					CurrentPodCliqueSetGenerationHash: new("old-hash"),
 				},
 			},
 			pcsGenerationHash: "new-hash",
@@ -400,14 +399,14 @@ func TestOrderPCSGReplicaIndicesForDisruption(t *testing.T) {
 // scheduled and ready status counts that ComputePCSGReplicaState reads.
 func pclqWithMinAvailableAndStatus(minAvailable, scheduled, ready int32) grovecorev1beta1.PodClique {
 	return grovecorev1beta1.PodClique{
-		Spec:   grovecorev1beta1.PodCliqueSpec{MinAvailable: ptr.To(minAvailable)},
+		Spec:   grovecorev1beta1.PodCliqueSpec{MinAvailable: new(minAvailable)},
 		Status: grovecorev1beta1.PodCliqueStatus{ScheduledReplicas: scheduled, ReadyReplicas: ready},
 	}
 }
 
 // terminatingPCLQ marks a PodClique as terminating by setting a deletion timestamp and a finalizer.
 func terminatingPCLQ(pclq grovecorev1beta1.PodClique) grovecorev1beta1.PodClique {
-	pclq.DeletionTimestamp = ptr.To(metav1.Now())
+	pclq.DeletionTimestamp = new(metav1.Now())
 	pclq.Finalizers = []string{"grove.io/test"}
 	return pclq
 }

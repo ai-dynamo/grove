@@ -362,7 +362,7 @@ func TestGetPCSGPodIndex(t *testing.T) {
 }
 
 func TestGetLabelsIncludesPCSGPodIndex(t *testing.T) {
-	labels := getLabels(metav1.ObjectMeta{}, "test-pcs", "test-podgang", 0, 1, ptr.To(2))
+	labels := getLabels(metav1.ObjectMeta{}, "test-pcs", "test-podgang", 0, 1, new(2))
 
 	assert.Equal(t, "2", labels[common.LabelPodCliqueScalingGroupPodIndex])
 }
@@ -648,8 +648,8 @@ func Test_generateArgsForInitContainer_WaitsOnParentReplicaInOwnPodGang(t *testi
 			Template: grovecorev1beta1.PodCliqueSetTemplateSpec{
 				StartupType: ptr.To(grovecorev1beta1.CliqueStartupTypeExplicit),
 				Cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
-					{Name: "pf", Spec: grovecorev1beta1.PodCliqueSpec{MinAvailable: ptr.To(int32(1))}},
-					{Name: "dc", Spec: grovecorev1beta1.PodCliqueSpec{MinAvailable: ptr.To(int32(1)), StartsAfter: []string{"pf"}}},
+					{Name: "pf", Spec: grovecorev1beta1.PodCliqueSpec{MinAvailable: new(int32(1))}},
+					{Name: "dc", Spec: grovecorev1beta1.PodCliqueSpec{MinAvailable: new(int32(1)), StartsAfter: []string{"pf"}}},
 				},
 				PodCliqueScalingGroupConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 					{Name: "prefill", CliqueNames: []string{"pf"}},
@@ -715,8 +715,8 @@ func Test_generateArgsForInitContainer_IgnoresStalePreUpgradeStartsAfter(t *test
 			Template: grovecorev1beta1.PodCliqueSetTemplateSpec{
 				StartupType: ptr.To(grovecorev1beta1.CliqueStartupTypeExplicit),
 				Cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
-					{Name: "pf", Spec: grovecorev1beta1.PodCliqueSpec{MinAvailable: ptr.To(int32(1))}},
-					{Name: "dc", Spec: grovecorev1beta1.PodCliqueSpec{MinAvailable: ptr.To(int32(1)), StartsAfter: []string{"pf"}}},
+					{Name: "pf", Spec: grovecorev1beta1.PodCliqueSpec{MinAvailable: new(int32(1))}},
+					{Name: "dc", Spec: grovecorev1beta1.PodCliqueSpec{MinAvailable: new(int32(1)), StartsAfter: []string{"pf"}}},
 				},
 				PodCliqueScalingGroupConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 					{Name: "prefill", CliqueNames: []string{"pf"}},
@@ -818,8 +818,8 @@ func Test_generateArgsForInitContainer_BoundsStandaloneWaitToGangCommittedCount(
 			Template: grovecorev1beta1.PodCliqueSetTemplateSpec{
 				StartupType: ptr.To(grovecorev1beta1.CliqueStartupTypeExplicit),
 				Cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
-					{Name: "frontend", Spec: grovecorev1beta1.PodCliqueSpec{MinAvailable: ptr.To(int32(2))}},
-					{Name: "worker", Spec: grovecorev1beta1.PodCliqueSpec{MinAvailable: ptr.To(int32(1)), StartsAfter: []string{"frontend"}}},
+					{Name: "frontend", Spec: grovecorev1beta1.PodCliqueSpec{MinAvailable: new(int32(2))}},
+					{Name: "worker", Spec: grovecorev1beta1.PodCliqueSpec{MinAvailable: new(int32(1)), StartsAfter: []string{"frontend"}}},
 				},
 				PodCliqueScalingGroupConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 					{Name: "decode", CliqueNames: []string{"worker"}},

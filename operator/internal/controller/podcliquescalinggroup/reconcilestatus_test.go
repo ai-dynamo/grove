@@ -138,7 +138,7 @@ func TestComputeMinAvailableBreachedCondition(t *testing.T) {
 		{
 			name:         "1 of 5 replicas breached, MinAvailable=2 — not in breach",
 			replicas:     5,
-			minAvailable: ptr.To(int32(2)),
+			minAvailable: new(int32(2)),
 			pclqsMap: map[int][]grovecorev1beta1.PodClique{
 				0: breachedPCSGReplica(),
 				1: healthyPCSGReplica(),
@@ -157,7 +157,7 @@ func TestComputeMinAvailableBreachedCondition(t *testing.T) {
 			// the PCSG-level scoped restart should fire.
 			name:         "1 of 2 replicas breached, MinAvailable=1 — not in breach (PCSG-scoped restart only)",
 			replicas:     2,
-			minAvailable: ptr.To(int32(1)),
+			minAvailable: new(int32(1)),
 			pclqsMap: map[int][]grovecorev1beta1.PodClique{
 				0: breachedPCSGReplica(),
 				1: healthyPCSGReplica(),
@@ -170,7 +170,7 @@ func TestComputeMinAvailableBreachedCondition(t *testing.T) {
 			// in breach. PCS-level handler should restart the whole PCS replica.
 			name:         "both replicas breached, MinAvailable=1 — in breach (escalates to PCS-level)",
 			replicas:     2,
-			minAvailable: ptr.To(int32(1)),
+			minAvailable: new(int32(1)),
 			pclqsMap: map[int][]grovecorev1beta1.PodClique{
 				0: breachedPCSGReplica(),
 				1: breachedPCSGReplica(),
@@ -181,7 +181,7 @@ func TestComputeMinAvailableBreachedCondition(t *testing.T) {
 		{
 			name:         "2 of 3 replicas breached, MinAvailable=2 — in breach",
 			replicas:     3,
-			minAvailable: ptr.To(int32(2)),
+			minAvailable: new(int32(2)),
 			pclqsMap: map[int][]grovecorev1beta1.PodClique{
 				0: breachedPCSGReplica(),
 				1: breachedPCSGReplica(),
@@ -195,7 +195,7 @@ func TestComputeMinAvailableBreachedCondition(t *testing.T) {
 			// TerminationDelay (default 4h) absorbs the startup window before any action fires.
 			name:         "no replicas exist yet — in breach (startup)",
 			replicas:     3,
-			minAvailable: ptr.To(int32(2)),
+			minAvailable: new(int32(2)),
 			pclqsMap:     map[int][]grovecorev1beta1.PodClique{},
 			wantStatus:   metav1.ConditionTrue,
 			wantReason:   "InsufficientAvailablePodCliqueScalingGroupReplicas",
@@ -207,7 +207,7 @@ func TestComputeMinAvailableBreachedCondition(t *testing.T) {
 			// mistaken for a healthy one (which would also poison the was-healthy gate).
 			name:         "one replica incomplete, one breached, MinAvailable=1 — in breach",
 			replicas:     2,
-			minAvailable: ptr.To(int32(1)),
+			minAvailable: new(int32(1)),
 			pclqsMap: map[int][]grovecorev1beta1.PodClique{
 				0: incompletePCSGReplica(),
 				1: breachedPCSGReplica(),
@@ -220,7 +220,7 @@ func TestComputeMinAvailableBreachedCondition(t *testing.T) {
 			// MinAvailable=1 → not in breach (the one complete replica satisfies MinAvailable).
 			name:         "one replica incomplete, one healthy, MinAvailable=1 — not in breach",
 			replicas:     2,
-			minAvailable: ptr.To(int32(1)),
+			minAvailable: new(int32(1)),
 			pclqsMap: map[int][]grovecorev1beta1.PodClique{
 				0: incompletePCSGReplica(),
 				1: healthyPCSGReplica(),
@@ -318,7 +318,7 @@ func TestComputeMinAvailableBreachedConditionUpdateInProgress(t *testing.T) {
 		{
 			name:         "update in progress overrides every-replica-breached",
 			replicas:     2,
-			minAvailable: ptr.To(int32(1)),
+			minAvailable: new(int32(1)),
 			updateProgress: &grovecorev1beta1.PodCliqueScalingGroupUpdateProgress{
 				UpdateStartedAt:            pastTransition,
 				UpdateEndedAt:              nil, // active update
@@ -779,7 +779,7 @@ func TestHavePCSGPodCliquesConverged(t *testing.T) {
 			name:  "status template hash stale",
 			pclqs: []grovecorev1beta1.PodClique{*base.DeepCopy()},
 			mutate: func(pclq *grovecorev1beta1.PodClique) {
-				pclq.Status.CurrentPodTemplateHash = ptr.To("old-template")
+				pclq.Status.CurrentPodTemplateHash = new("old-template")
 			},
 			want: false,
 		},
@@ -787,7 +787,7 @@ func TestHavePCSGPodCliquesConverged(t *testing.T) {
 			name:  "generation hash stale",
 			pclqs: []grovecorev1beta1.PodClique{*base.DeepCopy()},
 			mutate: func(pclq *grovecorev1beta1.PodClique) {
-				pclq.Status.CurrentPodCliqueSetGenerationHash = ptr.To("old-generation")
+				pclq.Status.CurrentPodCliqueSetGenerationHash = new("old-generation")
 			},
 			want: false,
 		},
@@ -881,7 +881,7 @@ func TestReconcileStatusBoundedDuringScaleDown(t *testing.T) {
 			WithReplicas(2).
 			WithOptions(testutils.WithPCLQScheduledAndAvailable()).Build()
 		if replicaIdx >= int(pcsg.Spec.Replicas) {
-			pclq.Status.CurrentPodCliqueSetGenerationHash = ptr.To(pcsHash)
+			pclq.Status.CurrentPodCliqueSetGenerationHash = new(pcsHash)
 			return pclq
 		}
 		return markPCSGPCLQConverged(t, pcs, pcsg, pclq, pcsHash)
@@ -958,7 +958,7 @@ func TestMutateMinAvailableBreachedConditionClearsGangTerminationInProgress(t *t
 	pcsg := &grovecorev1beta1.PodCliqueScalingGroup{
 		Spec: grovecorev1beta1.PodCliqueScalingGroupSpec{
 			Replicas:     2,
-			MinAvailable: ptr.To(int32(1)),
+			MinAvailable: new(int32(1)),
 			// Each fixture replica carries one PodClique, so a single clique name makes the
 			// recovered replicas count as complete and not-in-breach.
 			CliqueNames: []string{"pc"},
@@ -1064,7 +1064,7 @@ func TestMutateSelector(t *testing.T) {
 
 func TestMutateUpdateInProgressCondition(t *testing.T) {
 	minutesAgo := func(m int) *metav1.Time {
-		return ptr.To(metav1.NewTime(time.Now().Add(-time.Duration(m) * time.Minute)))
+		return new(metav1.NewTime(time.Now().Add(-time.Duration(m) * time.Minute)))
 	}
 	tests := []struct {
 		description          string
@@ -1086,7 +1086,7 @@ func TestMutateUpdateInProgressCondition(t *testing.T) {
 		},
 		{
 			description:        "completed update clears LastProgressedAt",
-			updateProgress:     &grovecorev1beta1.PodCliqueScalingGroupUpdateProgress{UpdateEndedAt: ptr.To(metav1.Now()), LastProgressedAt: minutesAgo(5)},
+			updateProgress:     &grovecorev1beta1.PodCliqueScalingGroupUpdateProgress{UpdateEndedAt: new(metav1.Now()), LastProgressedAt: minutesAgo(5)},
 			wantStatus:         metav1.ConditionFalse,
 			wantReason:         constants.ConditionReasonNoActiveUpdate,
 			wantLastProgressed: false,
@@ -1221,8 +1221,8 @@ func markPCSGPCLQConverged(t testing.TB, pcs *grovecorev1beta1.PodCliqueSet, pcs
 		pclq.Labels = map[string]string{}
 	}
 	pclq.Labels[apicommon.LabelPodTemplateHash] = expectedTemplateHash
-	pclq.Status.CurrentPodTemplateHash = ptr.To(expectedTemplateHash)
-	pclq.Status.CurrentPodCliqueSetGenerationHash = ptr.To(generationHash)
+	pclq.Status.CurrentPodTemplateHash = new(expectedTemplateHash)
+	pclq.Status.CurrentPodCliqueSetGenerationHash = new(generationHash)
 	pclq.Status.ReadyReplicas = *pclq.Spec.MinAvailable
 	pclq.Status.UpdatedReplicas = *pclq.Spec.MinAvailable
 	return pclq

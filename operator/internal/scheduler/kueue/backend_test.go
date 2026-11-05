@@ -526,7 +526,7 @@ func TestBackend_SyncPodGang_RecreatesDeactivatedWorkload(t *testing.T) {
 	require.NoError(t, b.Init(nil))
 	deactivatedWorkload := &kueuev1beta2.Workload{
 		ObjectMeta: metav1.ObjectMeta{Name: "demo-0", Namespace: "default"},
-		Spec:       kueuev1beta2.WorkloadSpec{QueueName: "stale-queue", Active: ptr.To(false)},
+		Spec:       kueuev1beta2.WorkloadSpec{QueueName: "stale-queue", Active: new(false)},
 	}
 	require.NoError(t, cl.Create(context.Background(), deactivatedWorkload))
 
@@ -1496,7 +1496,7 @@ func TestBackend_ValidatePodCliqueSet_PodSetLimit(t *testing.T) {
 		return names
 	}
 	scalingGroup := func(name string, replicas int32, cliqueNames ...string) grovecorev1beta1.PodCliqueScalingGroupConfig {
-		return grovecorev1beta1.PodCliqueScalingGroupConfig{Name: name, CliqueNames: cliqueNames, Replicas: ptr.To(replicas), MinAvailable: ptr.To(replicas)}
+		return grovecorev1beta1.PodCliqueScalingGroupConfig{Name: name, CliqueNames: cliqueNames, Replicas: new(replicas), MinAvailable: new(replicas)}
 	}
 
 	testCases := []struct {

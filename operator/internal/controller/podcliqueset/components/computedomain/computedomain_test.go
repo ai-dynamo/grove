@@ -572,7 +572,7 @@ func TestSyncScaleIn(t *testing.T) {
 	assert.Equal(t, []int{2, 3}, result.ScaleInReplicaIndicesAwaitingResourceCleanup)
 
 	// Verify CDs 0 and 1 still exist
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		cdName := testPCSName + "-" + strconv.Itoa(i) + "-default"
 		cd := emptyComputeDomain(client.ObjectKey{Name: cdName, Namespace: testPCSNamespace})
 		err := cl.Get(context.Background(), client.ObjectKeyFromObject(cd), cd)
@@ -609,7 +609,7 @@ func TestSyncScaleOut(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify all 4 CDs exist
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		cdName := testPCSName + "-" + strconv.Itoa(i) + "-default"
 		cd := emptyComputeDomain(client.ObjectKey{Name: cdName, Namespace: testPCSNamespace})
 		err := cl.Get(context.Background(), client.ObjectKeyFromObject(cd), cd)
@@ -632,7 +632,7 @@ func TestSyncIdempotent(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify exactly 3 CDs exist
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		cdName := testPCSName + "-" + strconv.Itoa(i) + "-default"
 		cd := emptyComputeDomain(client.ObjectKey{Name: cdName, Namespace: testPCSNamespace})
 		err := cl.Get(context.Background(), client.ObjectKeyFromObject(cd), cd)
@@ -693,7 +693,7 @@ func TestSyncMultipleGroups(t *testing.T) {
 	require.NoError(t, err)
 
 	for _, group := range []string{"default", "workers"} {
-		for i := 0; i < 2; i++ {
+		for i := range 2 {
 			cdName := testPCSName + "-" + strconv.Itoa(i) + "-" + group
 			cd := emptyComputeDomain(client.ObjectKey{Name: cdName, Namespace: testPCSNamespace})
 			err := cl.Get(context.Background(), client.ObjectKeyFromObject(cd), cd)
@@ -799,7 +799,7 @@ func TestDeleteRemovesAllComputeDomains(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify all CDs were deleted
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		cdName := testPCSName + "-" + strconv.Itoa(i) + "-default"
 		cd := emptyComputeDomain(client.ObjectKey{Name: cdName, Namespace: testPCSNamespace})
 		err := cl.Get(context.Background(), client.ObjectKeyFromObject(cd), cd)
@@ -912,7 +912,7 @@ func createClientThatFailsOnList() client.Client {
 // createTestCDs creates a slice of test ComputeDomains with proper labels and finalizers.
 func createTestCDs(groupName string, count int) []*unstructured.Unstructured {
 	cds := make([]*unstructured.Unstructured, count)
-	for i := 0; i < count; i++ {
+	for i := range count {
 		cdName := testPCSName + "-" + strconv.Itoa(i) + "-" + groupName
 		cd := createTestCD(cdName, testPCSNamespace, testPCSName, i)
 		cds[i] = cd
@@ -946,7 +946,7 @@ func createTestCD(name, namespace, pcsName string, replicaIndex int) *unstructur
 			Kind:       "PodCliqueSet",
 			Name:       pcsName,
 			UID:        "pcs-uid-123",
-			Controller: boolPtr(true),
+			Controller: new(true),
 		},
 	})
 
@@ -955,9 +955,4 @@ func createTestCD(name, namespace, pcsName string, replicaIndex int) *unstructur
 	_ = unstructured.SetNestedField(cd.Object, int64(0), "spec", "numNodes")
 
 	return cd
-}
-
-// boolPtr returns a pointer to a bool value.
-func boolPtr(b bool) *bool {
-	return &b
 }

@@ -15,6 +15,7 @@
 package utils
 
 import (
+	"maps"
 	"strconv"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
@@ -22,7 +23,6 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/utils/ptr"
 )
 
 // PodCliqueScalingGroupBuilder provides a fluent interface for building test PodCliqueScalingGroup objects.
@@ -45,7 +45,7 @@ func NewPodCliqueScalingGroupBuilder(name, namespace, pcsName string, pcsReplica
 			},
 			Spec: grovecorev1beta1.PodCliqueScalingGroupSpec{
 				Replicas:     1,
-				MinAvailable: ptr.To(int32(1)),
+				MinAvailable: new(int32(1)),
 			},
 			Status: grovecorev1beta1.PodCliqueScalingGroupStatus{},
 		},
@@ -60,7 +60,7 @@ func (b *PodCliqueScalingGroupBuilder) WithReplicas(replicas int32) *PodCliqueSc
 
 // WithMinAvailable sets the MinAvailable field for the PodCliqueScalingGroup.
 func (b *PodCliqueScalingGroupBuilder) WithMinAvailable(minAvailable int32) *PodCliqueScalingGroupBuilder {
-	b.pcsg.Spec.MinAvailable = ptr.To(minAvailable)
+	b.pcsg.Spec.MinAvailable = new(minAvailable)
 	return b
 }
 
@@ -75,9 +75,7 @@ func (b *PodCliqueScalingGroupBuilder) WithLabels(labels map[string]string) *Pod
 	if b.pcsg.Labels == nil {
 		b.pcsg.Labels = make(map[string]string)
 	}
-	for k, v := range labels {
-		b.pcsg.Labels[k] = v
-	}
+	maps.Copy(b.pcsg.Labels, labels)
 	return b
 }
 
@@ -87,7 +85,7 @@ func (b *PodCliqueScalingGroupBuilder) WithOwnerReference(kind, name string, uid
 		Kind:       kind,
 		Name:       name,
 		UID:        types.UID("test-uid"),
-		Controller: ptr.To(true),
+		Controller: new(true),
 	}
 	if uid != "" {
 		ownerRef.UID = uid

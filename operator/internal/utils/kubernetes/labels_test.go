@@ -16,6 +16,7 @@ package kubernetes
 
 import (
 	"errors"
+	"maps"
 	"testing"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
@@ -55,9 +56,7 @@ func newLabelsWithReplicaIndexAndExtras(index string, extraLabels map[string]str
 	labels := map[string]string{
 		apicommon.LabelPodCliqueSetReplicaIndex: index,
 	}
-	for k, v := range extraLabels {
-		labels[k] = v
-	}
+	maps.Copy(labels, extraLabels)
 	return labels
 }
 

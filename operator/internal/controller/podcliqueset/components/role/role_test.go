@@ -29,7 +29,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
@@ -83,7 +82,7 @@ func TestGetExistingResourceNames(t *testing.T) {
 						Kind:       "PodCliqueSet",
 						Name:       "test-pcs",
 						UID:        pcsUID,
-						Controller: ptr.To(true),
+						Controller: new(true),
 					},
 				},
 			},
@@ -120,7 +119,7 @@ func TestGetExistingResourceNames(t *testing.T) {
 						Kind:       "PodCliqueSet",
 						Name:       "other-pcs",
 						UID:        types.UID("other-uid"),
-						Controller: ptr.To(true),
+						Controller: new(true),
 					},
 				},
 			},
@@ -197,7 +196,7 @@ func TestSync(t *testing.T) {
 						Kind:       "PodCliqueSet",
 						Name:       "test-pcs",
 						UID:        pcsUID,
-						Controller: ptr.To(true),
+						Controller: new(true),
 					},
 				},
 			},

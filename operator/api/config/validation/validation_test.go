@@ -37,14 +37,14 @@ func TestValidatePodCliqueControllerConfiguration(t *testing.T) {
 		{
 			name: "valid: concurrentSyncs set to 1",
 			config: configv1beta1.PodCliqueControllerConfiguration{
-				ConcurrentSyncs: intPtr(1),
+				ConcurrentSyncs: new(1),
 			},
 			expectErrors: 0,
 		},
 		{
 			name: "valid: concurrentSyncs set to a large value",
 			config: configv1beta1.PodCliqueControllerConfiguration{
-				ConcurrentSyncs: intPtr(10),
+				ConcurrentSyncs: new(10),
 			},
 			expectErrors: 0,
 		},
@@ -60,7 +60,7 @@ func TestValidatePodCliqueControllerConfiguration(t *testing.T) {
 		{
 			name: "invalid: concurrentSyncs set to 0",
 			config: configv1beta1.PodCliqueControllerConfiguration{
-				ConcurrentSyncs: intPtr(0),
+				ConcurrentSyncs: new(0),
 			},
 			expectErrors:   1,
 			expectedFields: []string{"controllers.podClique.concurrentSyncs"},
@@ -69,7 +69,7 @@ func TestValidatePodCliqueControllerConfiguration(t *testing.T) {
 		{
 			name: "invalid: concurrentSyncs set to negative value",
 			config: configv1beta1.PodCliqueControllerConfiguration{
-				ConcurrentSyncs: intPtr(-1),
+				ConcurrentSyncs: new(-1),
 			},
 			expectErrors:   1,
 			expectedFields: []string{"controllers.podClique.concurrentSyncs"},
@@ -95,8 +95,6 @@ func TestValidatePodCliqueControllerConfiguration(t *testing.T) {
 	}
 }
 
-func intPtr(v int) *int { return &v }
-
 func TestValidatePodGangControllerConfiguration(t *testing.T) {
 	fldPath := field.NewPath("controllers").Child("podGang")
 	tests := []struct {
@@ -109,14 +107,14 @@ func TestValidatePodGangControllerConfiguration(t *testing.T) {
 		{
 			name: "valid: concurrentSyncs set to 1",
 			config: configv1beta1.PodGangControllerConfiguration{
-				ConcurrentSyncs: intPtr(1),
+				ConcurrentSyncs: new(1),
 			},
 			expectErrors: 0,
 		},
 		{
 			name: "valid: concurrentSyncs set to a large value",
 			config: configv1beta1.PodGangControllerConfiguration{
-				ConcurrentSyncs: intPtr(10),
+				ConcurrentSyncs: new(10),
 			},
 			expectErrors: 0,
 		},
@@ -132,7 +130,7 @@ func TestValidatePodGangControllerConfiguration(t *testing.T) {
 		{
 			name: "invalid: concurrentSyncs set to 0",
 			config: configv1beta1.PodGangControllerConfiguration{
-				ConcurrentSyncs: intPtr(0),
+				ConcurrentSyncs: new(0),
 			},
 			expectErrors:   1,
 			expectedFields: []string{"controllers.podGang.concurrentSyncs"},
@@ -141,7 +139,7 @@ func TestValidatePodGangControllerConfiguration(t *testing.T) {
 		{
 			name: "invalid: concurrentSyncs set to negative value",
 			config: configv1beta1.PodGangControllerConfiguration{
-				ConcurrentSyncs: intPtr(-1),
+				ConcurrentSyncs: new(-1),
 			},
 			expectErrors:   1,
 			expectedFields: []string{"controllers.podGang.concurrentSyncs"},
@@ -592,10 +590,10 @@ func TestValidateClientConnectionConfiguration(t *testing.T) {
 func TestValidateControllerConfiguration(t *testing.T) {
 	fldPath := field.NewPath("controllers")
 	validCfg := configv1beta1.ControllerConfiguration{
-		PodCliqueSet:          configv1beta1.PodCliqueSetControllerConfiguration{ConcurrentSyncs: intPtr(10)},
-		PodClique:             configv1beta1.PodCliqueControllerConfiguration{ConcurrentSyncs: intPtr(10)},
-		PodCliqueScalingGroup: configv1beta1.PodCliqueScalingGroupControllerConfiguration{ConcurrentSyncs: intPtr(5)},
-		PodGang:               configv1beta1.PodGangControllerConfiguration{ConcurrentSyncs: intPtr(5)},
+		PodCliqueSet:          configv1beta1.PodCliqueSetControllerConfiguration{ConcurrentSyncs: new(10)},
+		PodClique:             configv1beta1.PodCliqueControllerConfiguration{ConcurrentSyncs: new(10)},
+		PodCliqueScalingGroup: configv1beta1.PodCliqueScalingGroupControllerConfiguration{ConcurrentSyncs: new(5)},
+		PodGang:               configv1beta1.PodGangControllerConfiguration{ConcurrentSyncs: new(5)},
 	}
 	tests := []struct {
 		name           string
@@ -635,7 +633,7 @@ func TestValidateControllerConfiguration(t *testing.T) {
 			name: "invalid: only podCliqueSet has invalid concurrentSyncs",
 			config: func() configv1beta1.ControllerConfiguration {
 				c := validCfg
-				c.PodCliqueSet.ConcurrentSyncs = intPtr(0)
+				c.PodCliqueSet.ConcurrentSyncs = new(0)
 				return c
 			}(),
 			expectErrors:   1,
@@ -646,7 +644,7 @@ func TestValidateControllerConfiguration(t *testing.T) {
 			name: "invalid: only podGang has invalid concurrentSyncs",
 			config: func() configv1beta1.ControllerConfiguration {
 				c := validCfg
-				c.PodGang.ConcurrentSyncs = intPtr(-1)
+				c.PodGang.ConcurrentSyncs = new(-1)
 				return c
 			}(),
 			expectErrors:   1,
@@ -695,10 +693,10 @@ func TestValidateOperatorConfiguration(t *testing.T) {
 				Burst: 120,
 			},
 			Controllers: configv1beta1.ControllerConfiguration{
-				PodCliqueSet:          configv1beta1.PodCliqueSetControllerConfiguration{ConcurrentSyncs: intPtr(10)},
-				PodClique:             configv1beta1.PodCliqueControllerConfiguration{ConcurrentSyncs: intPtr(10)},
-				PodCliqueScalingGroup: configv1beta1.PodCliqueScalingGroupControllerConfiguration{ConcurrentSyncs: intPtr(5)},
-				PodGang:               configv1beta1.PodGangControllerConfiguration{ConcurrentSyncs: intPtr(5)},
+				PodCliqueSet:          configv1beta1.PodCliqueSetControllerConfiguration{ConcurrentSyncs: new(10)},
+				PodClique:             configv1beta1.PodCliqueControllerConfiguration{ConcurrentSyncs: new(10)},
+				PodCliqueScalingGroup: configv1beta1.PodCliqueScalingGroupControllerConfiguration{ConcurrentSyncs: new(5)},
+				PodGang:               configv1beta1.PodGangControllerConfiguration{ConcurrentSyncs: new(5)},
 			},
 			TopologyAwareScheduling: configv1beta1.TopologyAwareSchedulingConfiguration{Enabled: false},
 		}
@@ -757,7 +755,7 @@ func TestValidateOperatorConfiguration(t *testing.T) {
 				c := validConfig()
 				c.LogLevel = "verbose"
 				c.ClientConnection.Burst = -1
-				c.Controllers.PodCliqueSet.ConcurrentSyncs = intPtr(0)
+				c.Controllers.PodCliqueSet.ConcurrentSyncs = new(0)
 				return c
 			}(),
 			expectErrors: 3,

@@ -147,7 +147,7 @@ func TestValidateCreate(t *testing.T) {
 				Spec: grovecorev1beta1.PodCliqueSetSpec{
 					Replicas: 1,
 					Template: grovecorev1beta1.PodCliqueSetTemplateSpec{
-						TerminationDelay: ptr.To(metav1.Duration{Duration: 4 * time.Hour}),
+						TerminationDelay: new(metav1.Duration{Duration: 4 * time.Hour}),
 						StartupType:      ptr.To(grovecorev1beta1.CliqueStartupTypeAnyOrder),
 						Cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
 							{
@@ -155,7 +155,7 @@ func TestValidateCreate(t *testing.T) {
 								Spec: grovecorev1beta1.PodCliqueSpec{
 									RoleName:     "test-role",
 									Replicas:     1,
-									MinAvailable: ptr.To(int32(1)),
+									MinAvailable: new(int32(1)),
 									PodSpec: corev1.PodSpec{
 										SchedulerName: "unknown-scheduler",
 										Containers: []corev1.Container{{

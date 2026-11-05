@@ -34,7 +34,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/uuid"
-	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -371,8 +370,8 @@ func TestComputePCSUpdatedReplicasWithScaledToZeroComponent(t *testing.T) {
 			pclq.Labels = map[string]string{}
 		}
 		pclq.Labels[apicommon.LabelPodTemplateHash] = templateHash
-		pclq.Status.CurrentPodTemplateHash = ptr.To(templateHash)
-		pclq.Status.CurrentPodCliqueSetGenerationHash = ptr.To(genHash)
+		pclq.Status.CurrentPodTemplateHash = new(templateHash)
+		pclq.Status.CurrentPodCliqueSetGenerationHash = new(genHash)
 		return pclq
 	}
 
@@ -483,7 +482,7 @@ func TestMutateTopologyLevelUnavailableConditions(t *testing.T) {
 							Name: "worker",
 							Spec: grovecorev1beta1.PodCliqueSpec{
 								Replicas:     1,
-								MinAvailable: ptr.To(int32(1)),
+								MinAvailable: new(int32(1)),
 							},
 						},
 					},
@@ -1039,7 +1038,7 @@ func TestCountUpdatedPCLQs(t *testing.T) {
 	staleLabel := *matching.DeepCopy()
 	staleLabel.Labels[apicommon.LabelPodTemplateHash] = "old-template"
 	staleCurrentTemplate := *matching.DeepCopy()
-	staleCurrentTemplate.Status.CurrentPodTemplateHash = ptr.To("old-template")
+	staleCurrentTemplate.Status.CurrentPodTemplateHash = new("old-template")
 	notReady := *matching.DeepCopy()
 	notReady.Status.ReadyReplicas = 0
 	notUpdated := *matching.DeepCopy()
@@ -1123,7 +1122,7 @@ func TestMutateSelector(t *testing.T) {
 		{name: "publishes selector for fresh PodCliqueSet"},
 		// PCS always rewrites Status.Selector, so a stale value from a previous reconcile must
 		// not survive into the new status.
-		{name: "overwrites a stale selector", existingSelector: ptr.To("app.kubernetes.io/part-of=stale-pcs")},
+		{name: "overwrites a stale selector", existingSelector: new("app.kubernetes.io/part-of=stale-pcs")},
 	}
 
 	for _, tt := range tests {
@@ -1208,8 +1207,8 @@ func markStandalonePCLQConverged(t testing.TB, pcs *grovecorev1beta1.PodCliqueSe
 		pclq.Labels = map[string]string{}
 	}
 	pclq.Labels[apicommon.LabelPodTemplateHash] = expectedTemplateHash
-	pclq.Status.CurrentPodTemplateHash = ptr.To(expectedTemplateHash)
-	pclq.Status.CurrentPodCliqueSetGenerationHash = ptr.To(generationHash)
+	pclq.Status.CurrentPodTemplateHash = new(expectedTemplateHash)
+	pclq.Status.CurrentPodCliqueSetGenerationHash = new(generationHash)
 	pclq.Status.ReadyReplicas = *pclq.Spec.MinAvailable
 	pclq.Status.UpdatedReplicas = *pclq.Spec.MinAvailable
 	return pclq

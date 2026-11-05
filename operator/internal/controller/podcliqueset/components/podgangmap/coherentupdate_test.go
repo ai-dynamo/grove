@@ -372,7 +372,7 @@ func TestMaxUnavailableBudgetSatisfied(t *testing.T) {
 func TestCurrentBatchScheduled(t *testing.T) {
 	pcs := &grovecorev1beta1.PodCliqueSet{
 		ObjectMeta: metav1.ObjectMeta{Name: coherentTestPCSName, Namespace: coherentTestNamespace},
-		Status:     grovecorev1beta1.PodCliqueSetStatus{CurrentGenerationHash: ptr.To(coherentTestCurrentGen)},
+		Status:     grovecorev1beta1.PodCliqueSetStatus{CurrentGenerationHash: new(coherentTestCurrentGen)},
 	}
 	rnr := apicommon.ResourceNameReplica{Name: coherentTestPCSName, Replica: 0}
 	anchorEntry := grovecorev1beta1.PodGangEntry{Epoch: "200", PodCliqueSetGenerationHash: coherentTestCurrentGen, Role: grovecorev1beta1.PodGangEntryRoleAnchor, PodCliques: map[string]int32{"frontend": 2}}
@@ -714,7 +714,7 @@ func TestGatherStandalonePodCounts(t *testing.T) {
 	rnr := apicommon.ResourceNameReplica{Name: coherentTestPCSName, Replica: 0}
 	pcs := &grovecorev1beta1.PodCliqueSet{
 		ObjectMeta: metav1.ObjectMeta{Name: coherentTestPCSName, Namespace: coherentTestNamespace},
-		Status:     grovecorev1beta1.PodCliqueSetStatus{CurrentGenerationHash: ptr.To("new")},
+		Status:     grovecorev1beta1.PodCliqueSetStatus{CurrentGenerationHash: new("new")},
 	}
 	pclq := grovecorev1beta1.PodClique{ObjectMeta: metav1.ObjectMeta{Name: "frontend-pclq", Namespace: coherentTestNamespace, UID: "frontend-uid"}}
 	entries := []grovecorev1beta1.PodGangEntry{
@@ -728,10 +728,10 @@ func TestGatherStandalonePodCounts(t *testing.T) {
 			Name:            name,
 			Namespace:       coherentTestNamespace,
 			Labels:          map[string]string{apicommon.LabelPodGang: gang},
-			OwnerReferences: []metav1.OwnerReference{{APIVersion: "grove.io/v1alpha1", Kind: "PodClique", Name: pclq.Name, UID: pclq.UID, Controller: ptr.To(true)}},
+			OwnerReferences: []metav1.OwnerReference{{APIVersion: "grove.io/v1alpha1", Kind: "PodClique", Name: pclq.Name, UID: pclq.UID, Controller: new(true)}},
 		}}
 		if terminating {
-			p.DeletionTimestamp = ptr.To(metav1.Now())
+			p.DeletionTimestamp = new(metav1.Now())
 			p.Finalizers = []string{"grove.io/test"}
 		}
 		if ready {
@@ -767,7 +767,7 @@ func TestGatherStandalonePodCounts(t *testing.T) {
 func TestGatherPCSGReplicaInfos(t *testing.T) {
 	pcs := &grovecorev1beta1.PodCliqueSet{
 		ObjectMeta: metav1.ObjectMeta{Name: coherentTestPCSName, Namespace: coherentTestNamespace},
-		Status:     grovecorev1beta1.PodCliqueSetStatus{CurrentGenerationHash: ptr.To("new")},
+		Status:     grovecorev1beta1.PodCliqueSetStatus{CurrentGenerationHash: new("new")},
 	}
 	pcsg := grovecorev1beta1.PodCliqueScalingGroup{ObjectMeta: metav1.ObjectMeta{Name: coherentTestPCSGObjName, Namespace: coherentTestNamespace}, Spec: grovecorev1beta1.PodCliqueScalingGroupSpec{Replicas: 4, CliqueNames: []string{"m"}}}
 	// A current-hash entry commits replica index 0 of sga, so it is at the current hash.
@@ -800,7 +800,7 @@ func TestGatherPCSGReplicaInfos(t *testing.T) {
 func TestGatherPCSGReplicaInfosSkipsStrayReplicaIndices(t *testing.T) {
 	pcs := &grovecorev1beta1.PodCliqueSet{
 		ObjectMeta: metav1.ObjectMeta{Name: coherentTestPCSName, Namespace: coherentTestNamespace},
-		Status:     grovecorev1beta1.PodCliqueSetStatus{CurrentGenerationHash: ptr.To("new")},
+		Status:     grovecorev1beta1.PodCliqueSetStatus{CurrentGenerationHash: new("new")},
 	}
 	pcsg := grovecorev1beta1.PodCliqueScalingGroup{ObjectMeta: metav1.ObjectMeta{Name: coherentTestPCSGObjName, Namespace: coherentTestNamespace}, Spec: grovecorev1beta1.PodCliqueScalingGroupSpec{Replicas: 2}}
 	objs := []client.Object{
@@ -825,7 +825,7 @@ func TestGatherPCSGReplicaInfosSkipsStrayReplicaIndices(t *testing.T) {
 func TestGatherPCSGReplicaInfosInventoriesAbsentReplicasAsPending(t *testing.T) {
 	pcs := &grovecorev1beta1.PodCliqueSet{
 		ObjectMeta: metav1.ObjectMeta{Name: coherentTestPCSName, Namespace: coherentTestNamespace},
-		Status:     grovecorev1beta1.PodCliqueSetStatus{CurrentGenerationHash: ptr.To("new")},
+		Status:     grovecorev1beta1.PodCliqueSetStatus{CurrentGenerationHash: new("new")},
 	}
 	pcsg := grovecorev1beta1.PodCliqueScalingGroup{
 		ObjectMeta: metav1.ObjectMeta{
@@ -865,13 +865,13 @@ func pcsgMemberPCLQ(name string, replicaIndex, scheduled, ready int32, terminati
 				apicommon.LabelPodCliqueScalingGroup:             coherentTestPCSGObjName,
 				apicommon.LabelPodCliqueScalingGroupReplicaIndex: strconv.Itoa(int(replicaIndex)),
 			},
-			OwnerReferences: []metav1.OwnerReference{{APIVersion: "grove.io/v1alpha1", Kind: constants.KindPodCliqueScalingGroup, Name: coherentTestPCSGObjName, Controller: ptr.To(true)}},
+			OwnerReferences: []metav1.OwnerReference{{APIVersion: "grove.io/v1alpha1", Kind: constants.KindPodCliqueScalingGroup, Name: coherentTestPCSGObjName, Controller: new(true)}},
 		},
-		Spec:   grovecorev1beta1.PodCliqueSpec{MinAvailable: ptr.To(int32(1))},
+		Spec:   grovecorev1beta1.PodCliqueSpec{MinAvailable: new(int32(1))},
 		Status: grovecorev1beta1.PodCliqueStatus{ScheduledReplicas: scheduled, ReadyReplicas: ready},
 	}
 	if terminating {
-		pclq.DeletionTimestamp = ptr.To(metav1.Now())
+		pclq.DeletionTimestamp = new(metav1.Now())
 		pclq.Finalizers = []string{"grove.io/test"}
 	}
 	return pclq
@@ -945,13 +945,13 @@ func newCoherentTestSnapshot(pcsNameReplica apicommon.ResourceNameReplica, liveR
 						RollingUpdate: &grovecorev1beta1.RollingUpdateConfiguration{MaxUnavailable: maxUnavailable},
 						Spec: grovecorev1beta1.PodCliqueSpec{
 							Replicas:     liveReplicas,
-							MinAvailable: ptr.To(minAvailable),
+							MinAvailable: new(minAvailable),
 						},
 					},
 				},
 			},
 		},
-		Status: grovecorev1beta1.PodCliqueSetStatus{CurrentGenerationHash: ptr.To(coherentTestCurrentGen)},
+		Status: grovecorev1beta1.PodCliqueSetStatus{CurrentGenerationHash: new(coherentTestCurrentGen)},
 	}
 	frontendPCLQ := grovecorev1beta1.PodClique{
 		ObjectMeta: metav1.ObjectMeta{Name: apicommon.GeneratePodCliqueName(pcsNameReplica, "frontend")},
@@ -1008,14 +1008,14 @@ func newCoherentPCSGTest(replicas, minAvailable int32, maxUnavailable *int32, co
 			Replicas: 1,
 			Template: grovecorev1beta1.PodCliqueSetTemplateSpec{
 				Cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
-					{Name: "m", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To(int32(1))}},
+					{Name: "m", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 1, MinAvailable: new(int32(1))}},
 				},
 				PodCliqueScalingGroupConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
-					{Name: "sga", CliqueNames: []string{"m"}, Replicas: ptr.To(replicas), MinAvailable: ptr.To(minAvailable), RollingUpdate: &grovecorev1beta1.RollingUpdateConfiguration{MaxUnavailable: maxUnavailable}},
+					{Name: "sga", CliqueNames: []string{"m"}, Replicas: new(replicas), MinAvailable: new(minAvailable), RollingUpdate: &grovecorev1beta1.RollingUpdateConfiguration{MaxUnavailable: maxUnavailable}},
 				},
 			},
 		},
-		Status: grovecorev1beta1.PodCliqueSetStatus{CurrentGenerationHash: ptr.To(coherentTestCurrentGen)},
+		Status: grovecorev1beta1.PodCliqueSetStatus{CurrentGenerationHash: new(coherentTestCurrentGen)},
 	}
 	pcsg := grovecorev1beta1.PodCliqueScalingGroup{
 		ObjectMeta: metav1.ObjectMeta{Name: coherentTestPCSGObjName, Namespace: coherentTestNamespace},

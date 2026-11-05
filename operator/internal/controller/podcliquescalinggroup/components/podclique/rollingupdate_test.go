@@ -34,7 +34,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
-	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -90,7 +89,7 @@ func TestMarkUpdateEndReturnsRequeueAfterPatch(t *testing.T) {
 // from the current PCS generation. Removing the common stale-target guard must make this test fail.
 func TestReconcileInProgressUpdateDoesNotCompleteStaleTarget(t *testing.T) {
 	sc := buildRollingUpdateSnapshot(1, 1, 1, []testReplica{updatedReadyReplica(0)})
-	sc.pcsg.Status.CurrentPodCliqueSetGenerationHash = ptr.To(testRollingUpdateGenHash)
+	sc.pcsg.Status.CurrentPodCliqueSetGenerationHash = new(testRollingUpdateGenHash)
 	sc.pcsg.Status.UpdateProgress.PodCliqueSetGenerationHash = "superseded-generation"
 	cl := testutils.NewTestClientBuilder().
 		WithObjects(sc.pcsg).
@@ -167,7 +166,7 @@ func TestIsReplicaUpdatedRequiresNonEmptyExpectedHash(t *testing.T) {
 	m := &sc.existingPCLQs[0]
 	sc.expectedPCLQPodTemplateHashMap[m.Name] = ""
 	m.Labels[apicommon.LabelPodTemplateHash] = ""
-	m.Status.CurrentPodTemplateHash = ptr.To("")
+	m.Status.CurrentPodTemplateHash = new("")
 
 	assert.False(t, isReplicaUpdated(sc, 0, sc.existingPCLQs),
 		"a replica whose expected pod-template hash is empty must not be considered updated")
@@ -299,7 +298,7 @@ func buildRollingUpdateSnapshot(replicas, minAvailable, maxUnavailable int32, re
 	pcs := testutils.NewPodCliqueSetBuilder(testRollingUpdatePCSName, testRollingUpdateNamespace, "uid").
 		WithUpdateStrategy(&grovecorev1beta1.PodCliqueSetUpdateStrategy{Type: grovecorev1beta1.RollingRecreateStrategy}).
 		Build()
-	pcs.Status.CurrentGenerationHash = ptr.To(testRollingUpdateGenHash)
+	pcs.Status.CurrentGenerationHash = new(testRollingUpdateGenHash)
 	pcsg := testutils.NewPodCliqueScalingGroupBuilder(testRollingUpdatePCSGName, testRollingUpdateNamespace, testRollingUpdatePCSName, 0).
 		WithReplicas(replicas).
 		WithMinAvailable(minAvailable).
@@ -320,7 +319,7 @@ func buildRollingUpdateSnapshot(replicas, minAvailable, maxUnavailable int32, re
 		pcs:                            pcs,
 		pcsg:                           pcsg,
 		expectationsStoreKey:           pcsg.Namespace + "/" + pcsg.Name,
-		pcsgConfig:                     &grovecorev1beta1.PodCliqueScalingGroupConfig{RollingUpdate: &grovecorev1beta1.RollingUpdateConfiguration{MaxUnavailable: ptr.To(maxUnavailable)}},
+		pcsgConfig:                     &grovecorev1beta1.PodCliqueScalingGroupConfig{RollingUpdate: &grovecorev1beta1.RollingUpdateConfiguration{MaxUnavailable: new(maxUnavailable)}},
 		existingPCLQs:                  members,
 		expectedPCLQPodTemplateHashMap: expectedHashByName,
 		expectedPCLQFQNsPerPCSGReplica: expectedFQNsByReplica,
@@ -335,8 +334,8 @@ func newRollingUpdateMemberPCLQ(name string, rep testReplica) grovecorev1beta1.P
 			p.Status.ScheduledReplicas = rep.scheduled
 			p.Status.ReadyReplicas = rep.ready
 			p.Status.UpdatedReplicas = rep.updated
-			p.Status.CurrentPodTemplateHash = ptr.To(rep.hash)
-			p.Status.CurrentPodCliqueSetGenerationHash = ptr.To(testRollingUpdateGenHash)
+			p.Status.CurrentPodTemplateHash = new(rep.hash)
+			p.Status.CurrentPodCliqueSetGenerationHash = new(testRollingUpdateGenHash)
 			if rep.terminating {
 				now := metav1.Now()
 				p.DeletionTimestamp = &now

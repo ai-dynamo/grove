@@ -37,7 +37,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
-	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
@@ -198,7 +197,7 @@ func (b *schedulerBackend) buildPodGroupForPodGang(ctx context.Context, podGang 
 		}
 		subGroups = append(subGroups, kaischedulingv2alpha2.SubGroup{
 			Name:               groupConfig.Name,
-			MinSubGroup:        ptr.To(int32(len(groupConfig.PodGroupNames))),
+			MinSubGroup:        new(int32(len(groupConfig.PodGroupNames))),
 			TopologyConstraint: groupTopologyConstraint,
 		})
 		for _, podGroupName := range groupConfig.PodGroupNames {
@@ -214,13 +213,13 @@ func (b *schedulerBackend) buildPodGroupForPodGang(ctx context.Context, podGang 
 		}
 		subGroup := kaischedulingv2alpha2.SubGroup{
 			Name:               podGroup.Name,
-			MinMember:          ptr.To(podGroup.MinReplicas),
+			MinMember:          new(podGroup.MinReplicas),
 			TopologyConstraint: subGroupTopologyConstraint,
 		}
 		// Group configs cover a strict subset of PodGroups. Unmatched PodGroups
 		// intentionally remain root-level KAI SubGroups.
 		if parentName, found := parentBySubGroupName[podGroup.Name]; found {
-			subGroup.Parent = ptr.To(parentName)
+			subGroup.Parent = new(parentName)
 		}
 		subGroups = append(subGroups, subGroup)
 		minMember += podGroup.MinReplicas
@@ -234,7 +233,7 @@ func (b *schedulerBackend) buildPodGroupForPodGang(ctx context.Context, podGang 
 			Annotations: maps.Clone(podGang.Annotations),
 		},
 		Spec: kaischedulingv2alpha2.PodGroupSpec{
-			MinMember:         ptr.To(minMember),
+			MinMember:         new(minMember),
 			Queue:             queueName,
 			PriorityClassName: podGang.Spec.PriorityClassName,
 			SubGroups:         subGroups,

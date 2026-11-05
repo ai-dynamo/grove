@@ -20,7 +20,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/validation/field"
-	"k8s.io/utils/ptr"
 )
 
 // TestValidateEnumType tests validation of enum values against allowed sets.
@@ -48,26 +47,26 @@ func TestValidateEnumType(t *testing.T) {
 		},
 		{
 			name:          "valid value passes validation",
-			value:         ptr.To("option1"),
+			value:         new("option1"),
 			allowedValues: sets.New("option1", "option2"),
 			expectError:   false,
 		},
 		{
 			name:          "invalid value returns Invalid error",
-			value:         ptr.To("option3"),
+			value:         new("option3"),
 			allowedValues: sets.New("option1", "option2"),
 			expectError:   true,
 			errorType:     field.ErrorTypeInvalid,
 		},
 		{
 			name:          "empty string value in allowed set passes",
-			value:         ptr.To(""),
+			value:         new(""),
 			allowedValues: sets.New("", "option1"),
 			expectError:   false,
 		},
 		{
 			name:          "empty string value not in allowed set fails",
-			value:         ptr.To(""),
+			value:         new(""),
 			allowedValues: sets.New("option1", "option2"),
 			expectError:   true,
 			errorType:     field.ErrorTypeInvalid,
@@ -112,13 +111,13 @@ func TestValidateEnumTypeInt(t *testing.T) {
 		},
 		{
 			name:          "valid integer value passes validation",
-			value:         ptr.To(2),
+			value:         new(2),
 			allowedValues: sets.New(1, 2, 3),
 			expectError:   false,
 		},
 		{
 			name:          "invalid integer value returns Invalid error",
-			value:         ptr.To(5),
+			value:         new(5),
 			allowedValues: sets.New(1, 2, 3),
 			expectError:   true,
 			errorType:     field.ErrorTypeInvalid,
@@ -157,12 +156,12 @@ func TestValidateNonNilField(t *testing.T) {
 		},
 		{
 			name:        "non-nil pointer passes validation",
-			value:       ptr.To("value"),
+			value:       new("value"),
 			expectError: false,
 		},
 		{
 			name:        "non-nil pointer with empty string passes validation",
-			value:       ptr.To(""),
+			value:       new(""),
 			expectError: false,
 		},
 	}

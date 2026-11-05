@@ -32,7 +32,6 @@ import (
 	"github.com/samber/lo"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -257,9 +256,9 @@ func (r _resource) markRollingUpdateEnd(ctx context.Context, logger logr.Logger,
 	patch := client.MergeFrom(pclq.DeepCopy())
 	progress := pclq.Status.UpdateProgress
 
-	progress.UpdateEndedAt = ptr.To(metav1.Now())
-	pclq.Status.CurrentPodTemplateHash = ptr.To(progress.PodTemplateHash)
-	pclq.Status.CurrentPodCliqueSetGenerationHash = ptr.To(progress.PodCliqueSetGenerationHash)
+	progress.UpdateEndedAt = new(metav1.Now())
+	pclq.Status.CurrentPodTemplateHash = new(progress.PodTemplateHash)
+	pclq.Status.CurrentPodCliqueSetGenerationHash = new(progress.PodCliqueSetGenerationHash)
 
 	if err := client.IgnoreNotFound(r.client.Status().Patch(ctx, pclq, patch)); err != nil {
 		return groveerr.WrapError(err,

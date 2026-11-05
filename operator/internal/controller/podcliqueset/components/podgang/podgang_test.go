@@ -287,7 +287,7 @@ func TestBuildResource(t *testing.T) {
 				apicommonconstants.AnnotationTopologyName: "stale-topology",
 			},
 			initialPodGangConstraint: &groveschedulerv1alpha1.TopologyConstraint{
-				PackConstraint: &groveschedulerv1alpha1.TopologyPackConstraint{Required: ptr.To("topology.kubernetes.io/rack")},
+				PackConstraint: &groveschedulerv1alpha1.TopologyPackConstraint{Required: new("topology.kubernetes.io/rack")},
 			},
 			expectedLabels: expectedDefaultLabels,
 			expectedAnnotations: map[string]string{

@@ -115,20 +115,20 @@ func TestComputeUpdateWork(t *testing.T) {
 		expected bucket
 	}{
 		{"old pending", newTestPod("old-pending", testOldHash, withPhase(corev1.PodPending)), bucketOldPending},
-		{"old unhealthy (started, not ready)", newTestPod("old-unhealthy-started", testOldHash, withPhase(corev1.PodRunning), withContainerStatus(ptr.To(true), false)), bucketOldUnhealthy},
+		{"old unhealthy (started, not ready)", newTestPod("old-unhealthy-started", testOldHash, withPhase(corev1.PodRunning), withContainerStatus(new(true), false)), bucketOldUnhealthy},
 		{"old unhealthy (erroneous exit)", newTestPod("old-unhealthy-exit", testOldHash, withPhase(corev1.PodRunning), withErroneousExit()), bucketOldUnhealthy},
-		{"old ready", newTestPod("old-ready", testOldHash, withPhase(corev1.PodRunning), withReadyCondition(), withContainerStatus(ptr.To(true), true)), bucketOldReady},
+		{"old ready", newTestPod("old-ready", testOldHash, withPhase(corev1.PodRunning), withReadyCondition(), withContainerStatus(new(true), true)), bucketOldReady},
 		// A Pod that restarted a container at some earlier point keeps a non-zero
 		// LastTerminationState for the rest of its life. While it is Ready it is serving, so it must
 		// go through the ordered budgeted-replacement path rather than the immediate-deletion path.
 		{"old ready despite an earlier erroneous exit", newTestPod("old-ready-restarted", testOldHash, withPhase(corev1.PodRunning), withReadyCondition(), withErroneousExit()), bucketOldReady},
-		{"old ready despite an earlier erroneous exit on a started container", newTestPod("old-ready-restarted-started", testOldHash, withPhase(corev1.PodRunning), withReadyCondition(), withContainerStatus(ptr.To(true), true), withErroneousExit()), bucketOldReady},
-		{"old starting (Started=false)", newTestPod("old-starting-false", testOldHash, withPhase(corev1.PodRunning), withContainerStatus(ptr.To(false), false)), bucketOldStarting},
+		{"old ready despite an earlier erroneous exit on a started container", newTestPod("old-ready-restarted-started", testOldHash, withPhase(corev1.PodRunning), withReadyCondition(), withContainerStatus(new(true), true), withErroneousExit()), bucketOldReady},
+		{"old starting (Started=false)", newTestPod("old-starting-false", testOldHash, withPhase(corev1.PodRunning), withContainerStatus(new(false), false)), bucketOldStarting},
 		{"old starting (Started=nil)", newTestPod("old-starting-nil", testOldHash, withPhase(corev1.PodRunning), withContainerStatus(nil, false)), bucketOldStarting},
 		{"old uncategorized (no containers)", newTestPod("old-uncategorized", testOldHash, withPhase(corev1.PodRunning)), bucketOldUncategorized},
 		{"old terminating is skipped", newTestPod("old-terminating", testOldHash, withDeletionTimestamp()), bucketSkipped},
-		{"new ready", newTestPod("new-ready", testNewHash, withPhase(corev1.PodRunning), withReadyCondition(), withContainerStatus(ptr.To(true), true)), bucketNewReady},
-		{"new not-ready is not tracked", newTestPod("new-not-ready", testNewHash, withPhase(corev1.PodRunning), withContainerStatus(ptr.To(false), false)), bucketSkipped},
+		{"new ready", newTestPod("new-ready", testNewHash, withPhase(corev1.PodRunning), withReadyCondition(), withContainerStatus(new(true), true)), bucketNewReady},
+		{"new not-ready is not tracked", newTestPod("new-not-ready", testNewHash, withPhase(corev1.PodRunning), withContainerStatus(new(false), false)), bucketSkipped},
 	}
 
 	r := _resource{expectationsStore: expect.NewExpectationsStore()}

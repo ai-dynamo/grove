@@ -30,7 +30,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -229,8 +228,8 @@ func TestPodCliqueSetPredicateSelectedReplicaChanges(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := pred.UpdateFunc(event.UpdateEvent{
-				ObjectOld: &grovecorev1beta1.PodCliqueSet{Status: grovecorev1beta1.PodCliqueSetStatus{CurrentGenerationHash: ptr.To("generation"), UpdateProgress: tt.oldProgress}},
-				ObjectNew: &grovecorev1beta1.PodCliqueSet{Status: grovecorev1beta1.PodCliqueSetStatus{CurrentGenerationHash: ptr.To("generation"), UpdateProgress: tt.newProgress}},
+				ObjectOld: &grovecorev1beta1.PodCliqueSet{Status: grovecorev1beta1.PodCliqueSetStatus{CurrentGenerationHash: new("generation"), UpdateProgress: tt.oldProgress}},
+				ObjectNew: &grovecorev1beta1.PodCliqueSet{Status: grovecorev1beta1.PodCliqueSetStatus{CurrentGenerationHash: new("generation"), UpdateProgress: tt.newProgress}},
 			})
 			assert.Equal(t, tt.want, got)
 		})
@@ -253,20 +252,20 @@ func TestPodCliqueScalingGroupPredicateGenerationStatusChanges(t *testing.T) {
 		{
 			name: "current generation changes",
 			oldPCSG: &grovecorev1beta1.PodCliqueScalingGroup{Status: grovecorev1beta1.PodCliqueScalingGroupStatus{
-				CurrentPodCliqueSetGenerationHash: ptr.To("old-generation"),
+				CurrentPodCliqueSetGenerationHash: new("old-generation"),
 			}},
 			newPCSG: &grovecorev1beta1.PodCliqueScalingGroup{Status: grovecorev1beta1.PodCliqueScalingGroupStatus{
-				CurrentPodCliqueSetGenerationHash: ptr.To("new-generation"),
+				CurrentPodCliqueSetGenerationHash: new("new-generation"),
 			}},
 			want: true,
 		},
 		{
 			name: "equal current generation values with different pointers do not enqueue",
 			oldPCSG: &grovecorev1beta1.PodCliqueScalingGroup{Status: grovecorev1beta1.PodCliqueScalingGroupStatus{
-				CurrentPodCliqueSetGenerationHash: ptr.To("generation"),
+				CurrentPodCliqueSetGenerationHash: new("generation"),
 			}},
 			newPCSG: &grovecorev1beta1.PodCliqueScalingGroup{Status: grovecorev1beta1.PodCliqueScalingGroupStatus{
-				CurrentPodCliqueSetGenerationHash: ptr.To("generation"),
+				CurrentPodCliqueSetGenerationHash: new("generation"),
 			}},
 			want: false,
 		},
@@ -283,11 +282,11 @@ func TestPodCliqueScalingGroupPredicateGenerationStatusChanges(t *testing.T) {
 		{
 			name: "generation status unchanged",
 			oldPCSG: &grovecorev1beta1.PodCliqueScalingGroup{Status: grovecorev1beta1.PodCliqueScalingGroupStatus{
-				CurrentPodCliqueSetGenerationHash: ptr.To("generation"),
+				CurrentPodCliqueSetGenerationHash: new("generation"),
 				UpdateProgress:                    &grovecorev1beta1.PodCliqueScalingGroupUpdateProgress{PodCliqueSetGenerationHash: "generation"},
 			}},
 			newPCSG: &grovecorev1beta1.PodCliqueScalingGroup{Status: grovecorev1beta1.PodCliqueScalingGroupStatus{
-				CurrentPodCliqueSetGenerationHash: ptr.To("generation"),
+				CurrentPodCliqueSetGenerationHash: new("generation"),
 				UpdateProgress:                    &grovecorev1beta1.PodCliqueScalingGroupUpdateProgress{PodCliqueSetGenerationHash: "generation"},
 			}},
 			want: false,
@@ -304,7 +303,7 @@ func TestPodCliqueScalingGroupPredicateGenerationStatusChanges(t *testing.T) {
 
 // Test_isMarkedForDeletion tests if a deletion timestamp is set on the pod
 func Test_isMarkedForDeletion(t *testing.T) {
-	now := ptr.To(metav1.Now())
+	now := new(metav1.Now())
 	tests := []struct {
 		name        string
 		updateEvent event.UpdateEvent

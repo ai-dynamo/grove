@@ -761,7 +761,7 @@ func TestCurrentGenerationPodGangNames(t *testing.T) {
 	rnr := apicommon.ResourceNameReplica{Name: "pcs", Replica: 0}
 	pcs := &grovecorev1beta1.PodCliqueSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "pcs"},
-		Status:     grovecorev1beta1.PodCliqueSetStatus{CurrentGenerationHash: ptr.To("v2")},
+		Status:     grovecorev1beta1.PodCliqueSetStatus{CurrentGenerationHash: new("v2")},
 	}
 	pgm := &grovecorev1beta1.PodGangMap{Spec: grovecorev1beta1.PodGangMapSpec{Entries: []grovecorev1beta1.PodGangEntry{
 		{Role: grovecorev1beta1.PodGangEntryRoleAnchor, PodCliqueSetGenerationHash: "v1", Epoch: "50", PodCliques: map[string]int32{"frontend": 2}},
