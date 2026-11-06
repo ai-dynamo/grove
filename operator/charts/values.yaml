@@ -17,6 +17,15 @@ image:
 # Set this when the images are hosted in a private registry.
 imagePullSecrets: []
 
+# Image injected into workload pods with startup dependencies.
+initContainer:
+  image:
+    repository: grove-initc
+    # Empty uses the operator's build version.
+    tag: ""
+    # Digest takes precedence over tag. Include the algorithm, for example sha256:...
+    digest: ""
+
 resources:
   limits:
     memory: 1Gi
@@ -140,9 +149,8 @@ deployment:
     app.kubernetes.io/component: operator-deployment
     app.kubernetes.io/name: grove-operator
     app.kubernetes.io/part-of: grove
-  env:
-    - name: GROVE_INIT_CONTAINER_IMAGE
-      value: grove-initc
+  # An explicit GROVE_INIT_CONTAINER_IMAGE entry overrides initContainer.image.
+  env: []
 
 # This is for setting up a service more information can be found here: https://kubernetes.io/docs/concepts/services-networking/service/
 service:

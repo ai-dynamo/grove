@@ -35,7 +35,7 @@ import (
 
 const (
 	// envVarInitContainerImage stores the environment variable which is read to find the image for the init-container.
-	// The environment variable should only store the registry and repository of the init-container. It should not contain any tag.
+	// Repository-only values use the operator's build version; tagged or digest-pinned references are used as-is.
 	envVarInitContainerImage string = "GROVE_INIT_CONTAINER_IMAGE"
 	// initContainerName is the name of the init container.
 	initContainerName = "grove-initc"
@@ -104,7 +104,7 @@ func addInitContainer(pod *corev1.Pod, args []string) error {
 
 	pod.Spec.InitContainers = append(pod.Spec.InitContainers, corev1.Container{
 		Name:  initContainerName,
-		Image: fmt.Sprintf("%s:%s", image, groveversion.New().GitVersion),
+		Image: image,
 		Args:  args,
 		VolumeMounts: []corev1.VolumeMount{
 			{
@@ -132,7 +132,12 @@ func getInitContainerImage() (string, error) {
 			fmt.Sprintf("environment variable %s specifying the init-container image is missing", envVarInitContainerImage),
 		)
 	}
-	return initContainerImage, nil
+	// A colon in the final path component is a tag or digest, not a registry port.
+	imageName := initContainerImage[strings.LastIndex(initContainerImage, "/")+1:]
+	if strings.ContainsAny(imageName, ":@") {
+		return initContainerImage, nil
+	}
+	return fmt.Sprintf("%s:%s", initContainerImage, groveversion.New().GitVersion), nil
 }
 
 // generateArgsForInitContainer builds the init container wait arguments for the pod. It derives this

@@ -69,8 +69,18 @@ done
 echo "> Rewriting Grove objects at v1alpha1"
 for resource in "${RESOURCES[@]}"; do
   if [[ -n "$(run_kubectl get "$resource" --all-namespaces -o name)" ]]; then
-    run_kubectl get "$resource" --all-namespaces -o json |
-      run_kubectl replace -f - >/dev/null
+    # Operator status writes can race migration; re-read before retrying conflicts.
+    for attempt in 1 2 3 4 5; do
+      if replace_output="$(run_kubectl get "$resource" --all-namespaces -o json |
+        run_kubectl replace -f - 2>&1)"; then
+        break
+      fi
+      if [[ "$replace_output" != *"Error from server (Conflict)"* || "$attempt" == 5 ]]; then
+        printf '%s\n' "$replace_output" >&2
+        exit 1
+      fi
+      sleep 1
+    done
   fi
 done
 
