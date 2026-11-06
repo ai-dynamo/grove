@@ -22,7 +22,7 @@ spec:
           - name: app
             image: busybox:latest
             command: ["/bin/sh"]
-            args: 
+            args:
             - "-c"
             - |
               echo "=== Grove Environment Variables ==="
@@ -49,6 +49,3 @@ spec:
               requests:
                 cpu: "10m"
                 memory: "32Mi"
-
-
-

@@ -18,7 +18,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
@@ -233,11 +232,9 @@ func (c *ParentPodCliqueDependencies) registerEventHandler(factory informers.Sha
 
 // refreshReadyPodsOfPodClique updates the ready pod count for the PodClique that owns the given pod.
 func (c *ParentPodCliqueDependencies) refreshReadyPodsOfPodClique(pod *corev1.Pod, deletionEvent bool) {
-	// Find which parent PodClique this pod belongs to by name prefix matching
-	podCliqueName, ok := lo.Find(lo.Keys(c.pclqFQNToMinAvailable), func(podCliqueFQN string) bool {
-		return strings.HasPrefix(pod.Name, podCliqueFQN)
-	})
-	if !ok {
+	// Find the tracked parent PodClique named by the pod's membership label.
+	podCliqueName := pod.Labels[apicommon.LabelPodClique]
+	if _, ok := c.pclqFQNToMinAvailable[podCliqueName]; !ok {
 		return // Pod doesn't belong to any tracked parent PodClique
 	}
 

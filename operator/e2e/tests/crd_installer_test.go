@@ -24,6 +24,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/e2e/k8s"
 	k8spods "github.com/ai-dynamo/grove/operator/e2e/k8s/pods"
 	"github.com/ai-dynamo/grove/operator/e2e/setup"
+	"github.com/ai-dynamo/grove/operator/e2e/waiter"
 
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -137,8 +138,13 @@ func Test_CRD_Installer_Idempotent(t *testing.T) {
 	}
 	Logger.Infof("deleted operator pod %s, waiting for replacement to be ready", podName)
 
-	// Wait for a new, ready operator pod to appear.
-	if err := k8spods.NewPodManager(k8sClient, Logger).WaitForReadyInNamespace(ctx, setup.OperatorNamespace, 1, 3*time.Minute, 5*time.Second); err != nil {
+	// The deleted Pod can stay Ready while it terminates. Wait for its replacement.
+	pm := k8spods.NewPodManager(k8sClient, Logger)
+	w := waiter.New[*v1.PodList]().WithTimeout(3 * time.Minute).WithInterval(5 * time.Second)
+	_, err := w.WaitFor(ctx, pm.FetchFunc(ctx, setup.OperatorNamespace, setup.OperatorPodLabelSelector), func(pods *v1.PodList) bool {
+		return k8spods.ExcludesPod(podName)(pods) && k8spods.AllReady(1)(pods)
+	})
+	if err != nil {
 		t.Fatalf("operator pod did not become ready after restart: %v", err)
 	}
 

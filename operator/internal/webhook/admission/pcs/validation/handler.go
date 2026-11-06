@@ -20,6 +20,7 @@ import (
 
 	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 	"github.com/ai-dynamo/grove/operator/api/core/v1beta1"
+	"github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/podcliquesetreplica"
 	"github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 
@@ -71,7 +72,7 @@ func (h *Handler) ValidateCreate(ctx context.Context, obj runtime.Object) (admis
 		return nil, errors.WrapError(err, ErrValidateCreatePodCliqueSet, string(admissionv1.Create), "failed to cast object to PodCliqueSet")
 	}
 
-	v := newPCSValidator(pcs, admissionv1.Create, h.tasConfig, h.schedulerConfig, h.client, h.schedRegistry)
+	v := newPCSValidator(pcs, nil, -1, admissionv1.Create, h.tasConfig, h.schedulerConfig, h.client, h.schedRegistry)
 	var allErrs field.ErrorList
 	topologyWarnings, topologyErrs := v.validateTopologyConstraintsOnCreate(ctx)
 	allErrs = append(allErrs, topologyErrs...)
@@ -101,8 +102,15 @@ func (h *Handler) ValidateUpdate(ctx context.Context, oldObj, newObj runtime.Obj
 	if err != nil {
 		return nil, errors.WrapError(err, ErrValidateUpdatePodCliqueSet, string(admissionv1.Update), "failed to cast old object to PodCliqueSet")
 	}
+	if newPCS.DeletionTimestamp != nil {
+		return nil, nil
+	}
 
-	v := newPCSValidator(newPCS, admissionv1.Update, h.tasConfig, h.schedulerConfig, h.client, h.schedRegistry)
+	snapshot, err := podcliquesetreplica.TakeReplicaResourceSnapshot(ctx, h.client, newPCS)
+	if err != nil {
+		return nil, errors.WrapError(err, ErrValidateUpdatePodCliqueSet, string(admissionv1.Update), fmt.Sprintf("failed to determine maximum PCS replica index for %s/%s", newPCS.Namespace, newPCS.Name))
+	}
+	v := newPCSValidator(newPCS, snapshot.ScalingGroupsByPCSReplicaIndex(), snapshot.MaximumPCSReplicaIndex(), admissionv1.Update, h.tasConfig, h.schedulerConfig, h.client, h.schedRegistry)
 	warnings, errs := v.validate()
 
 	// Validate MNNVL annotation immutability on PCS metadata and spec (clique templates)
