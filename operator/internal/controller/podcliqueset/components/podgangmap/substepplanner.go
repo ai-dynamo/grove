@@ -69,6 +69,10 @@ type subStep struct {
 	// drainPCSGReplicaIndices are the old-hash PodCliqueScalingGroup replica indices this sub-step takes
 	// down, keyed by PCSG name.
 	drainPCSGReplicaIndices map[string][]int32
+	// lastUnitHeld is true when this sub-step drains nothing because the old revision is down to its last
+	// minimal viable unit and not every component of that unit can drain in this sub-step. See
+	// keepOldRevisionServiceable.
+	lastUnitHeld bool
 }
 
 // String renders the sub-step in a compact single line form for tracing.
@@ -454,7 +458,77 @@ func (p *subStepPlanner) buildTailSubStep(planPos planPosition, headroomByCompon
 			remainingByComponent[componentName] = gap
 		}
 	}
-	return p.buildNonAnchorSubStep(newEpoch(p.clk), planPos.mostRecentAnchorEpoch, remainingByComponent, headroomByComponent)
+	lastUnit := false
+	if p.plan.numAnchorBearingSteps == 1 {
+		remainingByComponent, lastUnit = p.keepOldRevisionServiceable(remainingByComponent)
+	}
+	ss, err := p.buildNonAnchorSubStep(newEpoch(p.clk), planPos.mostRecentAnchorEpoch, remainingByComponent, headroomByComponent)
+	if err != nil || ss == nil || !lastUnit {
+		return ss, err
+	}
+	// The old revision's last minimal viable unit drains in one sub-step or not at all: draining part of it
+	// would leave the rest of the old revision without a complete set of components.
+	drained := ss.drainCountByComponent()
+	for componentName, remaining := range remainingByComponent {
+		if drained[componentName] < remaining {
+			return &subStep{
+				epoch:                       ss.epoch,
+				dependsOn:                   ss.dependsOn,
+				subsumeAnchorEpoch:          ss.subsumeAnchorEpoch,
+				subsumeStandalonePCLQCounts: map[string]int32{},
+				drainStandalonePCLQCounts:   map[string]int32{},
+				tailPCSGReplicaIndices:      map[string][]int32{},
+				drainPCSGReplicaIndices:     map[string][]int32{},
+				lastUnitHeld:                true,
+			}, nil
+		}
+	}
+	return ss, nil
+}
+
+// keepOldRevisionServiceable orders the tail of a single anchor-bearing step so that the old revision keeps a
+// complete minimal viable unit (MinAvailable of every in-scope component) until its own last unit drains.
+//
+// A plan with one anchor-bearing step, such as any plan whose in-scope components are all standalone
+// PodCliques, has no leftover step: its tail is everything the anchor did not take, so remainingByComponent
+// is exactly each component's count of old-revision replicas. Each component's tail otherwise drains on its
+// own MaxUnavailable budget, so a component with few replicas can lose its last old-revision replica while
+// another still has many. The surviving old-revision capacity is then no longer a set of compatible,
+// interdependent components: in disaggregated inference, old-revision decode pods are left with no
+// old-revision prefill pod to pair with, and a data plane that keeps revisions apart cannot use them.
+//
+// While any component has more than MinAvailable old-revision replicas left, every component's tail is capped
+// so that MinAvailable of it stays at the old revision. Once no component has more than MinAvailable left
+// (lastUnit), the caps lift and the caller drains that unit in one sub-step or holds. MaxUnavailable is at
+// least MinAvailable for every component under the Coherent strategy, so the last unit can always drain
+// together once the budgets allow it.
+func (p *subStepPlanner) keepOldRevisionServiceable(remainingByComponent map[string]int32) (map[string]int32, bool) {
+	lastUnit := true
+	for componentName, remaining := range remainingByComponent {
+		if remaining > p.minAvailableOf(componentName) {
+			lastUnit = false
+			break
+		}
+	}
+	if lastUnit {
+		return remainingByComponent, true
+	}
+	capped := make(map[string]int32, len(remainingByComponent))
+	for componentName, remaining := range remainingByComponent {
+		if drainable := remaining - p.minAvailableOf(componentName); drainable > 0 {
+			capped[componentName] = drainable
+		}
+	}
+	return capped, false
+}
+
+// minAvailableOf returns the MinAvailable of an in-scope component: pods for a standalone PodClique, replicas
+// for a PodCliqueScalingGroup.
+func (p *subStepPlanner) minAvailableOf(componentName string) int32 {
+	if minAvailable, ok := p.mvu.standalonePCLQs[componentName]; ok {
+		return minAvailable
+	}
+	return p.mvu.pcsgs[componentName]
 }
 
 // buildAnchorBearingSubStep opens the next anchor-bearing step by committing a new anchor entry that

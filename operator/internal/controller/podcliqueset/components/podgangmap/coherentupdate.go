@@ -230,6 +230,9 @@ func (r _resource) canEmitNextSubStep(ctx context.Context, planner *subStepPlann
 	if !planner.maxUnavailableBudgetSatisfied(ss.drainCountByComponent()) {
 		return false, "maxUnavailableBudgetSatisfied=false", nil
 	}
+	if ss.lastUnitHeld {
+		return false, "oldRevisionLastUnitHeld=true", nil
+	}
 	if ss.drainsNothing() {
 		return false, "noHeadroomToDrain=true", nil
 	}
