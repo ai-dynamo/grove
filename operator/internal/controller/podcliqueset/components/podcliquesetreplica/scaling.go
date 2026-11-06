@@ -163,9 +163,9 @@ func computeReplicaIndices(pcs *grovecorev1beta1.PodCliqueSet, replicaInfos pcsR
 	scaleOutIndices := sets.New(scalingIndices.scaleOut...)
 	scaleInIndices := sets.New(scalingIndices.scaleIn...)
 
-	// Remove scale-out indices that have now been materialized.
-	materializedReplicaIndices := findMaterializedScaleOutReplicaIndices(pcs, scalingIndices.scaleOut, replicaInfos)
-	scaleOutIndices.Delete(materializedReplicaIndices...)
+	// Remove scale-out indices after all expected PCLQs and PCSGs exist.
+	scaleOutReplicaIndicesWithExpectedPCLQsAndPCSGs := findScaleOutReplicaIndicesWithExpectedPCLQsAndPCSGs(pcs, scalingIndices.scaleOut, replicaInfos)
+	scaleOutIndices.Delete(scaleOutReplicaIndicesWithExpectedPCLQsAndPCSGs...)
 
 	projectedReplicaIndices := replicaInfos.projectedReplicaIndices(pcsReplicaScalingIndices{
 		scaleOut: scaleOutIndices.UnsortedList(),
@@ -197,15 +197,13 @@ func computeReplicaIndices(pcs *grovecorev1beta1.PodCliqueSet, replicaInfos pcsR
 	}
 }
 
-// findMaterializedScaleOutReplicaIndices returns recorded scale-out indices for which every expected standalone
-// PodClique and PodCliqueScalingGroup resource exists.
-// NOTE: Only existence of these resources is checked and not their readiness as that is sufficient.
-func findMaterializedScaleOutReplicaIndices(
+// findScaleOutReplicaIndicesWithExpectedPCLQsAndPCSGs returns scale-out PCS replica indices for which every
+// expected PodClique and PodCliqueScalingGroup exists. It does not consider readiness or update convergence.
+func findScaleOutReplicaIndicesWithExpectedPCLQsAndPCSGs(
 	pcs *grovecorev1beta1.PodCliqueSet,
 	scaleOutReplicaIndices []int,
-	replicaInfos pcsReplicaInfoByIndex,
-) []int {
-	var materializedReplicaIndices []int
+	replicaInfos pcsReplicaInfoByIndex) []int {
+	var scaleOutReplicaIndicesWithExpectedPCLQsAndPCSGs []int
 	for _, pcsReplicaIndex := range scaleOutReplicaIndices {
 		replicaInfo := replicaInfos[pcsReplicaIndex]
 		expectedPCLQNames := sets.New(componentutils.GetPodCliqueFQNsForPCSReplicaNotInPCSG(pcs, pcsReplicaIndex)...)
@@ -215,12 +213,12 @@ func findMaterializedScaleOutReplicaIndices(
 
 		expectedPCSGNames := sets.New(componentutils.GetPCSGFQNsForPCSReplica(pcs, pcsReplicaIndex)...)
 		if replicaInfo.pcsgNames().IsSuperset(expectedPCSGNames) {
-			materializedReplicaIndices = append(materializedReplicaIndices, pcsReplicaIndex)
+			scaleOutReplicaIndicesWithExpectedPCLQsAndPCSGs = append(scaleOutReplicaIndicesWithExpectedPCLQsAndPCSGs, pcsReplicaIndex)
 		}
 	}
 
-	slices.Sort(materializedReplicaIndices)
-	return materializedReplicaIndices
+	slices.Sort(scaleOutReplicaIndicesWithExpectedPCLQsAndPCSGs)
+	return scaleOutReplicaIndicesWithExpectedPCLQsAndPCSGs
 }
 
 // selectReplicaIndicesForScaleIn selects the requested number of desired PCS replica indices for removal.

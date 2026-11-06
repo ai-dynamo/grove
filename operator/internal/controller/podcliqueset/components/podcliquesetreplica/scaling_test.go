@@ -247,7 +247,7 @@ func TestComputeReplicaIndices(t *testing.T) {
 			},
 		},
 		{
-			name:                   "materialized scale-out index no longer needs a reservation",
+			name:                   "scale-out index with expected PCLQs and PCSGs no longer needs a reservation",
 			pcs:                    newPCS(2),
 			replicaInfos:           newReplicaInfos(newPCS(2), map[int]bool{0: true, 1: false}),
 			scaleOutReplicaIndices: []int{1},
@@ -416,7 +416,7 @@ func TestSortReplicaIndicesDescending(t *testing.T) {
 	assert.Equal(t, []int{4, 3, 2, 1}, replicaIndices)
 }
 
-func TestFindMaterializedScaleOutReplicaIndices(t *testing.T) {
+func TestFindScaleOutReplicaIndicesWithExpectedPCLQsAndPCSGs(t *testing.T) {
 	pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "default", types.UID("test-pcs-uid")).
 		WithStandaloneClique("router").
 		WithStandaloneClique("metrics").
@@ -505,7 +505,7 @@ func TestFindMaterializedScaleOutReplicaIndices(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			got := findMaterializedScaleOutReplicaIndices(
+			got := findScaleOutReplicaIndicesWithExpectedPCLQsAndPCSGs(
 				pcs,
 				test.scaleOutReplicaIndices,
 				replicaInfosFromResources(test.pclqsByReplica, test.pcsgsByReplica),
