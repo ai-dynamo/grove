@@ -74,8 +74,8 @@ func Test_RU7_RollingUpdatePCSPodClique(t *testing.T) {
 	tests.Logger.Info("5. Verify that a single PCS replica is updated first before moving to another")
 	verifySinglePCSReplicaUpdatedFirst(tc, events)
 
-	tests.Logger.Info("6. Verify MaxUnavailable defaulted to 1 and UpdateInProgress cleared")
-	assertDefaultedMaxUnavailable(tc, "pc-a", 1)
+	tests.Logger.Info("6. Verify omitted MaxUnavailable remains unstored and UpdateInProgress is cleared")
+	assertMaxUnavailableOmitted(tc, "pc-a")
 	assertUpdateInProgressCleared(tc)
 
 	tests.Logger.Info("Rolling Update on PCS-owned Podclique test (RU-7) completed successfully!")
