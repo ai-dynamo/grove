@@ -1875,24 +1875,21 @@ func assertGangTerminationSuspended(tc *testctx.TestContext, cliqueName string) 
 	}
 }
 
-// assertDefaultedMaxUnavailable fails the test unless the named clique's RollingUpdate.MaxUnavailable
-// was defaulted to want by the admission webhook.
-func assertDefaultedMaxUnavailable(tc *testctx.TestContext, cliqueName string, want int32) {
+// assertMaxUnavailableOmitted fails the test unless the named clique keeps an omitted MaxUnavailable unset.
+func assertMaxUnavailableOmitted(tc *testctx.TestContext, cliqueName string) {
 	tc.T.Helper()
 	pcs, err := getPCS(tc, tc.Workload.Name)
 	if err != nil {
 		tc.T.Fatalf("failed to get PodCliqueSet: %v", err)
 	}
 	for _, clique := range pcs.Spec.Template.Cliques {
-		if clique.Name == cliqueName {
-			if clique.RollingUpdate == nil || clique.RollingUpdate.MaxUnavailable == nil {
-				tc.T.Fatalf("clique %s has no defaulted RollingUpdate.MaxUnavailable", cliqueName)
-			}
-			if *clique.RollingUpdate.MaxUnavailable != want {
-				tc.T.Fatalf("defaulted MaxUnavailable for clique %s = %d, want %d", cliqueName, *clique.RollingUpdate.MaxUnavailable, want)
-			}
-			return
+		if clique.Name != cliqueName {
+			continue
 		}
+		if clique.RollingUpdate != nil && clique.RollingUpdate.MaxUnavailable != nil {
+			tc.T.Fatalf("MaxUnavailable for clique %s = %d, want omitted", cliqueName, *clique.RollingUpdate.MaxUnavailable)
+		}
+		return
 	}
 	tc.T.Fatalf("clique %s not found in PodCliqueSet %s", cliqueName, tc.Workload.Name)
 }
