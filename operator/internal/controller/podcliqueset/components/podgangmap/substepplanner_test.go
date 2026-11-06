@@ -21,6 +21,7 @@ import (
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 
+	"github.com/samber/lo"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"k8s.io/utils/clock"
@@ -635,6 +636,107 @@ func TestNextForStandaloneOnlyMVU(t *testing.T) {
 			assert.Equal(t, tc.want, ss)
 		})
 	}
+}
+
+func TestNextForStandaloneOnlyMVUKeepsOldRevisionServiceable(t *testing.T) {
+	// A disaggregated inference graph with standalone PodCliques, as Dynamo generates it.
+	//
+	// component  liveReplicas  minAvailable  maxUnavailable
+	// prefill    2             1             1
+	// decode     5             1             1
+	//
+	// After the anchor takes one of each, the old revision has 1 prefill and 4 decodes. Draining each tail on
+	// its own budget would take the last old prefill first and leave 3 or 4 old decodes with no old prefill to
+	// pair with. The old revision instead keeps its last prefill until its decodes are down to one, and that
+	// last prefill and decode then drain together.
+	newPlanner := func() *subStepPlanner {
+		return newTestPlanner(testingclock.NewFakeClock(time.Unix(0, 1)), "v2",
+			[]grovecorev1beta1.PodGangEntry{{Epoch: "100", PodCliqueSetGenerationHash: "v2"}},
+			map[string]testComponent{
+				"prefill": {liveReplicas: 2, minAvailable: 1, maxUnavailable: 1, standalone: true},
+				"decode":  {liveReplicas: 5, minAvailable: 1, maxUnavailable: 1, standalone: true},
+			})
+	}
+	require.Equal(t, int32(1), newPlanner().plan.numAnchorBearingSteps)
+	tail := func(prefill, decode int32) *subStep {
+		return &subStep{
+			epoch:                       "1",
+			dependsOn:                   []string{"100"},
+			subsumeAnchorEpoch:          "100",
+			subsumeStandalonePCLQCounts: lo.OmitByValues(map[string]int32{"prefill": prefill, "decode": decode}, []int32{0}),
+			drainStandalonePCLQCounts:   lo.OmitByValues(map[string]int32{"prefill": prefill, "decode": decode}, []int32{0}),
+			tailPCSGReplicaIndices:      map[string][]int32{},
+			drainPCSGReplicaIndices:     map[string][]int32{},
+		}
+	}
+	committed := func(prefill, decode int32) planPosition {
+		counts := map[string]int32{"prefill": prefill, "decode": decode}
+		return planPosition{currentHashCountByComponent: counts, currentAnchorStepCountByComponent: counts, mostRecentAnchorEpoch: "100"}
+	}
+
+	testCases := []struct {
+		description string
+		position    planPosition
+		headroom    map[string]int32
+		want        *subStep
+	}{
+		{
+			description: "with the anchor committed, only a decode drains: the old revision keeps its last prefill",
+			position:    committed(1, 1),
+			want:        tail(0, 1),
+		},
+		{
+			description: "with two old decodes left, the next decode drains and the old prefill still stays",
+			position:    committed(1, 3),
+			want:        tail(0, 1),
+		},
+		{
+			description: "with the old revision down to one prefill and one decode, both drain together",
+			position:    committed(1, 4),
+			want:        tail(1, 1),
+		},
+		{
+			description: "the last unit holds when one of its components has no headroom yet",
+			position:    committed(1, 4),
+			headroom:    map[string]int32{"prefill": 1, "decode": 0},
+			want: &subStep{
+				epoch:                       "1",
+				dependsOn:                   []string{"100"},
+				subsumeAnchorEpoch:          "100",
+				subsumeStandalonePCLQCounts: map[string]int32{},
+				drainStandalonePCLQCounts:   map[string]int32{},
+				tailPCSGReplicaIndices:      map[string][]int32{},
+				drainPCSGReplicaIndices:     map[string][]int32{},
+				lastUnitHeld:                true,
+			},
+		},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.description, func(t *testing.T) {
+			ss, err := newPlanner().next(tc.position, tc.headroom)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, ss)
+		})
+	}
+
+	t.Run("a whole roll never leaves old decodes without an old prefill", func(t *testing.T) {
+		desired := map[string]int32{"prefill": 2, "decode": 5}
+		counts := map[string]int32{"prefill": 1, "decode": 1} // the anchor
+		for step := 0; counts["prefill"] < desired["prefill"] || counts["decode"] < desired["decode"]; step++ {
+			require.Less(t, step, 10, "the roll did not converge")
+			ss, err := newPlanner().next(committed(counts["prefill"], counts["decode"]), nil)
+			require.NoError(t, err)
+			require.NotNil(t, ss)
+			require.False(t, ss.drainsNothing())
+			for componentName, drained := range ss.drainCountByComponent() {
+				counts[componentName] += drained
+			}
+			oldPrefill, oldDecode := desired["prefill"]-counts["prefill"], desired["decode"]-counts["decode"]
+			assert.False(t, oldPrefill == 0 && oldDecode > 0, "old revision has %d decodes and no prefill", oldDecode)
+			assert.False(t, oldDecode == 0 && oldPrefill > 0, "old revision has %d prefills and no decode", oldPrefill)
+		}
+		assert.Equal(t, desired, counts)
+	})
 }
 
 func TestNextForPCSGOnlyMVU(t *testing.T) {
