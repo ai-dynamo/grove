@@ -40,17 +40,17 @@ func TestCurrentlyUpdatingReplicaInfos(t *testing.T) {
 		},
 	}}
 
-	assert.Equal(t, []int{0, 2}, replicaIndices(currentlyUpdatingReplicaInfos(pcs, []pcsReplicaInfo{{replicaIndex: 0}, {replicaIndex: 1}, {replicaIndex: 2}})))
-	assert.Equal(t, []int{0}, replicaIndices(currentlyUpdatingReplicaInfos(pcs, []pcsReplicaInfo{{replicaIndex: 0}, {replicaIndex: 1}})))
-	assert.Nil(t, currentlyUpdatingReplicaInfos(&grovecorev1beta1.PodCliqueSet{}, []pcsReplicaInfo{{replicaIndex: 0}}))
+	assert.Equal(t, []int{0, 2}, extractReplicaIndices(currentlyUpdatingReplicaInfos(pcs, []pcsReplicaInfo{{index: 0}, {index: 1}, {index: 2}})))
+	assert.Equal(t, []int{0}, extractReplicaIndices(currentlyUpdatingReplicaInfos(pcs, []pcsReplicaInfo{{index: 0}, {index: 1}})))
+	assert.Nil(t, currentlyUpdatingReplicaInfos(&grovecorev1beta1.PodCliqueSet{}, []pcsReplicaInfo{{index: 0}}))
 }
 
 func TestPCSReplicaUpdateSelectionBudget(t *testing.T) {
 	pcs := &grovecorev1beta1.PodCliqueSet{}
 
 	assert.Equal(t, 1, pcsReplicaUpdateSelectionBudget(pcs, nil))
-	assert.Equal(t, 0, pcsReplicaUpdateSelectionBudget(pcs, []pcsReplicaInfo{{replicaIndex: 0}}))
-	assert.Equal(t, 0, pcsReplicaUpdateSelectionBudget(pcs, []pcsReplicaInfo{{replicaIndex: 0}, {replicaIndex: 1}}))
+	assert.Equal(t, 0, pcsReplicaUpdateSelectionBudget(pcs, []pcsReplicaInfo{{index: 0}}))
+	assert.Equal(t, 0, pcsReplicaUpdateSelectionBudget(pcs, []pcsReplicaInfo{{index: 0}, {index: 1}}))
 }
 
 func TestSelectReplicasToUpdate(t *testing.T) {
@@ -58,28 +58,28 @@ func TestSelectReplicasToUpdate(t *testing.T) {
 		WithStandaloneClique("worker").
 		WithPodCliqueSetGenerationHash(new("generation")).
 		Build()
-	replicaInfos := []pcsReplicaInfo{{replicaIndex: 0}, {replicaIndex: 1}, {replicaIndex: 2}}
+	replicaInfos := []pcsReplicaInfo{{index: 0}, {index: 1}, {index: 2}}
 
 	t.Run("retains updating replicas and fills the shortage", func(t *testing.T) {
-		selected := selectReplicasToUpdate(pcs, replicaInfos, []pcsReplicaInfo{{replicaIndex: 1}}, nil, 1)
-		assert.Equal(t, []int{1, 0}, replicaIndices(selected))
+		selected := selectReplicasToUpdate(pcs, replicaInfos, []pcsReplicaInfo{{index: 1}}, nil, 1)
+		assert.Equal(t, []int{1, 0}, extractReplicaIndices(selected))
 	})
 
 	t.Run("retains every updating replica when no slot remains", func(t *testing.T) {
-		selected := selectReplicasToUpdate(pcs, replicaInfos, []pcsReplicaInfo{{replicaIndex: 0}, {replicaIndex: 1}}, nil, 0)
-		assert.Equal(t, []int{0, 1}, replicaIndices(selected))
+		selected := selectReplicasToUpdate(pcs, replicaInfos, []pcsReplicaInfo{{index: 0}, {index: 1}}, nil, 0)
+		assert.Equal(t, []int{0, 1}, extractReplicaIndices(selected))
 	})
 
 	t.Run("fills multiple synthetic concurrency slots", func(t *testing.T) {
 		selected := selectReplicasToUpdate(pcs, replicaInfos, nil, nil, 2)
-		assert.Equal(t, []int{0, 1}, replicaIndices(selected))
+		assert.Equal(t, []int{0, 1}, extractReplicaIndices(selected))
 	})
 
 	t.Run("excludes completed replicas", func(t *testing.T) {
 		complete := rollingUpdateReplicaInfo(pcs, 0, true, 1)
 		pending := rollingUpdateReplicaInfo(pcs, 1, false, 1)
 		selected := selectReplicasToUpdate(pcs, []pcsReplicaInfo{complete, pending}, nil, nil, 1)
-		assert.Equal(t, []int{1}, replicaIndices(selected))
+		assert.Equal(t, []int{1}, extractReplicaIndices(selected))
 	})
 }
 
@@ -94,7 +94,7 @@ func TestSelectReplicasToUpdateOrdering(t *testing.T) {
 
 	selected := selectReplicasToUpdate(pcs, replicaInfos, nil, []int{2, 3}, len(replicaInfos))
 
-	assert.Equal(t, []int{1, 2, 3, 0}, replicaIndices(selected))
+	assert.Equal(t, []int{1, 2, 3, 0}, extractReplicaIndices(selected))
 }
 
 func TestSelectReplicasToUpdateUsesSchedulingConfigRolloutOrdering(t *testing.T) {
@@ -106,12 +106,12 @@ func TestSelectReplicasToUpdateUsesSchedulingConfigRolloutOrdering(t *testing.T)
 		rollingUpdateReplicaInfoAtGeneration(pcs, 2, "superseded", false),
 		rollingUpdateReplicaInfoAtGeneration(pcs, 1, "pending", true),
 		rollingUpdateReplicaInfoAtGeneration(pcs, 0, "pending", false),
-		{replicaIndex: 6},
+		{index: 6},
 	}
 
 	selected := selectReplicasToUpdate(pcs, replicaInfos, nil, nil, len(replicaInfos))
 
-	assert.Equal(t, []int{0, 3, 6, 1, 4, 2, 5}, replicaIndices(selected))
+	assert.Equal(t, []int{0, 3, 6, 1, 4, 2, 5}, extractReplicaIndices(selected))
 }
 
 func TestSelectReplicasToUpdateRetainsActiveReplicaBeforeSchedulingConfigRolloutCandidates(t *testing.T) {
@@ -121,7 +121,7 @@ func TestSelectReplicasToUpdateRetainsActiveReplicaBeforeSchedulingConfigRollout
 
 	selected := selectReplicasToUpdate(pcs, []pcsReplicaInfo{pendingUnavailable, active}, []pcsReplicaInfo{active}, nil, 1)
 
-	assert.Equal(t, []int{7, 0}, replicaIndices(selected))
+	assert.Equal(t, []int{7, 0}, extractReplicaIndices(selected))
 }
 
 func TestPCSReplicaInfoHasConvergedToPCSGeneration(t *testing.T) {
@@ -131,8 +131,8 @@ func TestPCSReplicaInfoHasConvergedToPCSGeneration(t *testing.T) {
 		Build()
 	generationHash := "generation"
 	converged := pcsReplicaInfo{
-		replicaIndex: 0,
-		pclqs: []grovecorev1beta1.PodClique{{
+		index: 0,
+		standalonePCLQs: []grovecorev1beta1.PodClique{{
 			Status: grovecorev1beta1.PodCliqueStatus{CurrentPodCliqueSetGenerationHash: new(generationHash)},
 		}},
 		pcsgs: []grovecorev1beta1.PodCliqueScalingGroup{{
@@ -146,12 +146,12 @@ func TestPCSReplicaInfoHasConvergedToPCSGeneration(t *testing.T) {
 		want bool
 	}{
 		{name: "all expected children converged", info: converged, want: true},
-		{name: "missing standalone PodClique", info: pcsReplicaInfo{replicaIndex: 0, pcsgs: converged.pcsgs}},
-		{name: "missing PodCliqueScalingGroup", info: pcsReplicaInfo{replicaIndex: 0, pclqs: converged.pclqs}},
-		{name: "standalone PodClique has no generation", info: pcsReplicaInfo{replicaIndex: 0, pclqs: []grovecorev1beta1.PodClique{{}}, pcsgs: converged.pcsgs}},
-		{name: "standalone PodClique has another generation", info: pcsReplicaInfo{replicaIndex: 0, pclqs: []grovecorev1beta1.PodClique{{Status: grovecorev1beta1.PodCliqueStatus{CurrentPodCliqueSetGenerationHash: new("other")}}}, pcsgs: converged.pcsgs}},
-		{name: "PodCliqueScalingGroup has no generation", info: pcsReplicaInfo{replicaIndex: 0, pclqs: converged.pclqs, pcsgs: []grovecorev1beta1.PodCliqueScalingGroup{{}}}},
-		{name: "PodCliqueScalingGroup has another generation", info: pcsReplicaInfo{replicaIndex: 0, pclqs: converged.pclqs, pcsgs: []grovecorev1beta1.PodCliqueScalingGroup{{Status: grovecorev1beta1.PodCliqueScalingGroupStatus{CurrentPodCliqueSetGenerationHash: new("other")}}}}},
+		{name: "missing standalone PodClique", info: pcsReplicaInfo{index: 0, pcsgs: converged.pcsgs}},
+		{name: "missing PodCliqueScalingGroup", info: pcsReplicaInfo{index: 0, standalonePCLQs: converged.standalonePCLQs}},
+		{name: "standalone PodClique has no generation", info: pcsReplicaInfo{index: 0, standalonePCLQs: []grovecorev1beta1.PodClique{{}}, pcsgs: converged.pcsgs}},
+		{name: "standalone PodClique has another generation", info: pcsReplicaInfo{index: 0, standalonePCLQs: []grovecorev1beta1.PodClique{{Status: grovecorev1beta1.PodCliqueStatus{CurrentPodCliqueSetGenerationHash: new("other")}}}, pcsgs: converged.pcsgs}},
+		{name: "PodCliqueScalingGroup has no generation", info: pcsReplicaInfo{index: 0, standalonePCLQs: converged.standalonePCLQs, pcsgs: []grovecorev1beta1.PodCliqueScalingGroup{{}}}},
+		{name: "PodCliqueScalingGroup has another generation", info: pcsReplicaInfo{index: 0, standalonePCLQs: converged.standalonePCLQs, pcsgs: []grovecorev1beta1.PodCliqueScalingGroup{{Status: grovecorev1beta1.PodCliqueScalingGroupStatus{CurrentPodCliqueSetGenerationHash: new("other")}}}}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -167,7 +167,7 @@ func TestPCSReplicaInfoIsAvailable(t *testing.T) {
 
 	assert.True(t, available.isAvailable(pcs))
 	assert.False(t, unavailable.isAvailable(pcs))
-	assert.False(t, (&pcsReplicaInfo{replicaIndex: 0}).isAvailable(pcs))
+	assert.False(t, (&pcsReplicaInfo{index: 0}).isAvailable(pcs))
 }
 
 func TestOrchestrateRollingUpdate(t *testing.T) {
@@ -267,7 +267,7 @@ func TestMarkUpdateEndForReplicas(t *testing.T) {
 	fakeClient := testutils.NewTestClientBuilder().WithObjects(pcs).WithStatusSubresource(pcs).Build()
 	r := &_resource{client: fakeClient}
 
-	err := r.markUpdateEndForReplicas(context.Background(), logr.Discard(), pcs, []pcsReplicaInfo{{replicaIndex: 1}})
+	err := r.markUpdateEndForReplicas(context.Background(), logr.Discard(), pcs, []pcsReplicaInfo{{index: 1}})
 
 	require.NoError(t, err)
 	persisted := &grovecorev1beta1.PodCliqueSet{}
@@ -287,7 +287,7 @@ func TestUpdatePCSWithSelectedReplicas(t *testing.T) {
 	fakeClient := testutils.NewTestClientBuilder().WithObjects(pcs).WithStatusSubresource(pcs).Build()
 	r := &_resource{client: fakeClient}
 
-	err := r.updatePCSWithSelectedReplicas(context.Background(), logr.Discard(), pcs, []pcsReplicaInfo{{replicaIndex: 1}, {replicaIndex: 0}})
+	err := r.updatePCSWithSelectedReplicas(context.Background(), logr.Discard(), pcs, []pcsReplicaInfo{{index: 1}, {index: 0}})
 
 	require.NoError(t, err)
 	persisted := &grovecorev1beta1.PodCliqueSet{}
@@ -304,7 +304,7 @@ func TestUpdatePCSWithSelectedReplicasIsIdempotent(t *testing.T) {
 	pcs.Status.UpdateProgress.CurrentlyUpdating = []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 0, UpdateStartedAt: metav1.Now()}}
 	r := &_resource{client: nil}
 
-	err := r.updatePCSWithSelectedReplicas(context.Background(), logr.Discard(), pcs, []pcsReplicaInfo{{replicaIndex: 0}})
+	err := r.updatePCSWithSelectedReplicas(context.Background(), logr.Discard(), pcs, []pcsReplicaInfo{{index: 0}})
 
 	require.NoError(t, err)
 }
@@ -345,11 +345,11 @@ func rollingUpdateTestPCS() *grovecorev1beta1.PodCliqueSet {
 
 func rollingUpdateReplicaInfoAtGeneration(pcs *grovecorev1beta1.PodCliqueSet, replicaIndex int, generationHash string, available bool) pcsReplicaInfo {
 	info := rollingUpdateReplicaInfo(pcs, replicaIndex, false, 1)
-	info.pclqs[0].Status.CurrentPodCliqueSetGenerationHash = new(generationHash)
+	info.standalonePCLQs[0].Status.CurrentPodCliqueSetGenerationHash = new(generationHash)
 	if available {
-		info.pclqs[0].Status.ReadyReplicas = 1
+		info.standalonePCLQs[0].Status.ReadyReplicas = 1
 	} else {
-		info.pclqs[0].Status.ReadyReplicas = 0
+		info.standalonePCLQs[0].Status.ReadyReplicas = 0
 	}
 	return info
 }
@@ -371,7 +371,7 @@ func rollingUpdateReplicaInfo(pcs *grovecorev1beta1.PodCliqueSet, replicaIndex i
 	pclq.Status.UpdatedReplicas = 1
 	pclq.Status.ReadyReplicas = 1
 	pclq.Status.ScheduledReplicas = scheduledReplicas
-	return pcsReplicaInfo{replicaIndex: replicaIndex, pclqs: []grovecorev1beta1.PodClique{*pclq}}
+	return pcsReplicaInfo{index: replicaIndex, standalonePCLQs: []grovecorev1beta1.PodClique{*pclq}}
 }
 
 func rollingUpdateTestResource(t *testing.T, pcs *grovecorev1beta1.PodCliqueSet) (*_resource, func() *grovecorev1beta1.PodCliqueSetUpdateProgress) {
