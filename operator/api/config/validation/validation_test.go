@@ -763,6 +763,33 @@ func TestValidateOperatorConfiguration(t *testing.T) {
 			expectErrors: 3,
 		},
 		{
+			name: "valid: scale-in cost source pod-deletion-cost",
+			config: func() *configv1beta1.OperatorConfiguration {
+				c := validConfig()
+				c.ScaleIn.CostSource = configv1beta1.ScaleInCostSourcePodDeletionCost
+				return c
+			}(),
+			expectErrors: 0,
+		},
+		{
+			name: "valid: scale-in cost source none",
+			config: func() *configv1beta1.OperatorConfiguration {
+				c := validConfig()
+				c.ScaleIn.CostSource = configv1beta1.ScaleInCostSourceNone
+				return c
+			}(),
+			expectErrors: 0,
+		},
+		{
+			name: "invalid: unsupported scale-in cost source",
+			config: func() *configv1beta1.OperatorConfiguration {
+				c := validConfig()
+				c.ScaleIn.CostSource = "grove-annotation"
+				return c
+			}(),
+			expectErrors: 1,
+		},
+		{
 			name: "invalid: scheduler missing kube profile and controller nil syncs",
 			config: func() *configv1beta1.OperatorConfiguration {
 				c := validConfig()

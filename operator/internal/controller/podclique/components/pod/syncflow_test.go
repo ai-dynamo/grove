@@ -22,9 +22,11 @@ import (
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
+	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/podclique/expectations"
 	"github.com/ai-dynamo/grove/operator/internal/expect"
+	"github.com/ai-dynamo/grove/operator/internal/scalein"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
@@ -498,6 +500,59 @@ func TestSelectExcessPodsToDelete_ExcludesPodsAlreadyBeingDeleted(t *testing.T) 
 				assert.Nil(t, pod.DeletionTimestamp, "pod %s is already terminating and must not be selected", pod.Name)
 				assert.False(t, store.HasDeleteExpectation(key, pod.GetUID()), "pod %s already has a delete expectation", pod.Name)
 			}
+		})
+	}
+}
+
+// TestSelectExcessPodsToDelete_HonoursScaleInCost verifies the excess-pod selection of a PodClique in a scaling
+// group reads the configured cost source: the marked pod is selected ahead of the newest pod, and with no cost
+// source the newest pod is selected as before.
+func TestSelectExcessPodsToDelete_HonoursScaleInCost(t *testing.T) {
+	const templateHash = "hash-1"
+	newPod := func(name string, createdAt metav1.Time) *corev1.Pod {
+		return &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:              name,
+				UID:               types.UID("uid-" + name),
+				CreationTimestamp: createdAt,
+				Labels:            map[string]string{apicommon.LabelPodTemplateHash: templateHash},
+			},
+			Spec: corev1.PodSpec{NodeName: "node-a"},
+			Status: corev1.PodStatus{
+				Phase:      corev1.PodRunning,
+				Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}},
+			},
+		}
+	}
+	now := metav1.NewTime(time.Now())
+	oldest := newPod("oldest", metav1.NewTime(now.Add(-2*time.Hour)))
+	oldest.Annotations = map[string]string{corev1.PodDeletionCost: "-1000000"}
+	middle := newPod("middle", metav1.NewTime(now.Add(-time.Hour)))
+	newest := newPod("newest", now)
+	pclq := &grovecorev1beta1.PodClique{
+		ObjectMeta: metav1.ObjectMeta{Name: "pclq-1", Namespace: testNamespace},
+		Spec:       grovecorev1beta1.PodCliqueSpec{Replicas: 2},
+	}
+	podDeletionCost, err := scalein.NewCostSource(configv1beta1.ScaleInCostSourcePodDeletionCost)
+	require.NoError(t, err)
+
+	tests := []struct {
+		name       string
+		costSource scalein.CostSource
+		want       string
+	}{
+		{name: "pod-deletion-cost source selects the marked pod", costSource: podDeletionCost, want: "oldest"},
+		{name: "no cost source selects the newest pod", costSource: nil, want: "newest"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := _resource{expectationsStore: expect.NewExpectationsStore(), costSource: tt.costSource}
+			sc := &syncSnapshot{pclq: pclq, existingPCLQPods: []*corev1.Pod{middle, newest, oldest}}
+
+			selected := r.selectExcessPodsToDelete(sc, logr.Discard())
+
+			require.Len(t, selected, 1)
+			assert.Equal(t, tt.want, selected[0].Name)
 		})
 	}
 }

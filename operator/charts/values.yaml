@@ -118,6 +118,16 @@ config:
   logFormat: json
   topologyAwareScheduling:
     enabled: false
+  # scaleIn configures how a scale-in chooses what to remove.
+  scaleIn:
+    # costSource names where a pod's scale-in cost is read from. Within the availability order a scale-in
+    # already applies, the lowest-cost candidates are removed first.
+    # Values:
+    #   "none" (default): no cost is read, selection is unchanged.
+    #   "pod-deletion-cost": the controller.kubernetes.io/pod-deletion-cost annotation on each pod, the key a
+    #     ReplicaSet reads. Turn it on deliberately: tools that stamp the key for a ReplicaSet's benefit may
+    #     already stamp Grove pods.
+    costSource: none
   authorizer:
     enabled: false
     exemptServiceAccountUserNames:

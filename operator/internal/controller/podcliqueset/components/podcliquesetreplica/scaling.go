@@ -19,14 +19,18 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strings"
 
+	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/sync"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
+	"github.com/ai-dynamo/grove/operator/internal/scalein"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
+	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
 	"github.com/go-logr/logr"
 	"github.com/samber/lo"
@@ -43,14 +47,19 @@ func (r *_resource) syncScalingProgress(ctx context.Context, logger logr.Logger,
 	}
 
 	scaleOutReplicaIndices, scaleInReplicaIndices := replicaIndicesFromScalingProgress(pcs.Status.ScalingProgress)
-	computedState := computeReplicaIndices(pcs, snapshot, scaleOutReplicaIndices, scaleInReplicaIndices)
+	computedState, scaleInCosts, err := computeReplicaIndices(pcs, snapshot, scaleOutReplicaIndices, scaleInReplicaIndices, func() (map[int]int32, error) {
+		return r.replicaScaleInCosts(ctx, pcs)
+	})
+	if err != nil {
+		return false, err
+	}
 	computedProgress := scalingProgressFromState(computedState)
 	scalingProgressChanged := !pcssync.ScalingProgressEqual(pcs.Status.ScalingProgress, computedProgress)
 	if scalingProgressChanged {
 		if err := r.patchScalingProgress(ctx, pcs, computedProgress); err != nil {
 			return false, err
 		}
-		r.recordNewScalingSelectionEvents(logger, pcs, scaleOutReplicaIndices, scaleInReplicaIndices, computedState)
+		r.recordNewScalingSelectionEvents(logger, pcs, scaleOutReplicaIndices, scaleInReplicaIndices, computedState, scaleInCosts)
 	}
 
 	*state = computedState
@@ -58,7 +67,10 @@ func (r *_resource) syncScalingProgress(ctx context.Context, logger logr.Logger,
 }
 
 // recordNewScalingSelectionEvents records newly selected scale-in indices and newly reserved scale-out indices.
-func (r *_resource) recordNewScalingSelectionEvents(logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, previousScaleOutReplicaIndices, previousScaleInReplicaIndices []int, computedState pcssync.State) {
+// scaleInCosts holds the scale-in cost of every replica the selection considered. The scale-in log line always
+// carries the selected replicas' costs, and the event carries them when any of them is non-zero, so a scale-in
+// without a cost reads as it did before.
+func (r *_resource) recordNewScalingSelectionEvents(logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, previousScaleOutReplicaIndices, previousScaleInReplicaIndices []int, computedState pcssync.State, scaleInCosts map[int]int32) {
 	newScaleOutReplicaIndices := sets.New(computedState.ScaleOutReplicaIndices...).Difference(sets.New(previousScaleOutReplicaIndices...))
 	if newScaleOutReplicaIndices.Len() > 0 {
 		pcsReplicaIndices := sets.List(newScaleOutReplicaIndices)
@@ -75,16 +87,74 @@ func (r *_resource) recordNewScalingSelectionEvents(logger logr.Logger, pcs *gro
 	newScaleInReplicaIndices := sets.New(computedState.ScaleInReplicaIndices...).Difference(sets.New(previousScaleInReplicaIndices...))
 	if newScaleInReplicaIndices.Len() > 0 {
 		pcsReplicaIndices := sets.List(newScaleInReplicaIndices)
-		logger.Info("Selected PCS replica indices for scale-in", "pcsReplicaIndices", pcsReplicaIndices)
-		r.eventRecorder.Eventf(
-			pcs,
-			corev1.EventTypeNormal,
-			constants.ReasonPodCliqueSetReplicaIndicesSelectedForScaleIn,
-			"Selected PCS replica indices %v for scale-in",
-			pcsReplicaIndices,
-		)
+		selectedCosts, anyNonZero := formatScaleInCosts(pcsReplicaIndices, scaleInCosts)
+		logger.Info("Selected PCS replica indices for scale-in", "pcsReplicaIndices", pcsReplicaIndices, "scaleInCost", selectedCosts)
+		message := fmt.Sprintf("Selected PCS replica indices %v for scale-in", pcsReplicaIndices)
+		if anyNonZero {
+			message += " (scale-in cost: " + selectedCosts + ")"
+		}
+		r.eventRecorder.Event(pcs, corev1.EventTypeNormal, constants.ReasonPodCliqueSetReplicaIndicesSelectedForScaleIn, message)
 	}
 }
+
+// formatScaleInCosts renders the selected replicas' scale-in costs as "index=cost" pairs in index order and
+// reports whether any of them is non-zero.
+func formatScaleInCosts(selectedReplicaIndices []int, scaleInCosts map[int]int32) (string, bool) {
+	pairs := make([]string, 0, len(selectedReplicaIndices))
+	anyNonZero := false
+	for _, replicaIndex := range selectedReplicaIndices {
+		cost := scaleInCosts[replicaIndex]
+		anyNonZero = anyNonZero || cost != 0
+		pairs = append(pairs, fmt.Sprintf("%d=%d", replicaIndex, cost))
+	}
+	return strings.Join(pairs, ","), anyNonZero
+}
+
+// replicaScaleInCosts lists the PodCliqueSet's pods from the informer cache and returns the scale-in cost of every
+// replica index that has a non-terminating pod: the minimum over the replica's pods of what the cost source reports.
+// It runs only when a scale-in is being computed, so a reconcile with no scale-in reads no pods. The PodGang
+// component lists the same pods from the same cache on every sync, so this adds no watch and no apiserver call.
+// A source that reads no cost lists nothing: every replica costs 0 and the scale-in does the work it did before
+// the cost existed, with no list and no list error to fail on.
+func (r *_resource) replicaScaleInCosts(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet) (map[int]int32, error) {
+	if scalein.ReadsNoCost(r.costSource) {
+		return nil, nil
+	}
+	podList := &corev1.PodList{}
+	if err := r.client.List(ctx,
+		podList,
+		client.InNamespace(pcs.Namespace),
+		client.MatchingLabels(apicommon.GetDefaultLabelsForPodCliqueSetManagedResources(pcs.Name)),
+	); err != nil {
+		return nil, groveerr.WrapError(err,
+			errCodeListPods,
+			component.OperationSync,
+			fmt.Sprintf("failed to list Pods by replica for PodCliqueSet: %v", client.ObjectKeyFromObject(pcs)),
+		)
+	}
+	podsByReplicaIndex := make(map[int][]*corev1.Pod)
+	for i := range podList.Items {
+		pod := &podList.Items[i]
+		if k8sutils.IsResourceTerminating(pod.ObjectMeta) {
+			continue
+		}
+		replicaIndex, err := k8sutils.GetPodCliqueSetReplicaIndex(pod.ObjectMeta)
+		if err != nil {
+			// A pod without a readable replica index belongs to no replica a scale-in can select.
+			continue
+		}
+		podsByReplicaIndex[replicaIndex] = append(podsByReplicaIndex[replicaIndex], pod)
+	}
+	costs := make(map[int]int32, len(podsByReplicaIndex))
+	for replicaIndex, pods := range podsByReplicaIndex {
+		costs[replicaIndex] = scalein.MinCost(r.costSource, pods)
+	}
+	return costs, nil
+}
+
+// replicaScaleInCostLookup returns the scale-in cost per PCS replica index. It is called only when a scale-in is
+// being computed, so a reconcile without one costs nothing. A replica absent from the map costs 0.
+type replicaScaleInCostLookup func() (map[int]int32, error)
 
 // takeReplicaResourceSnapshot lists standalone PodCliques and PodCliqueScalingGroups owned by the PCS and groups them by PCS replica index.
 func (r *_resource) takeReplicaResourceSnapshot(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet) (*replicaResourceSnapshot, error) {
@@ -196,11 +266,13 @@ func replicaIndicesFromScalingProgress(progress *grovecorev1beta1.PodCliqueSetSc
 
 // computeReplicaIndices determines which replica indices must exist and which are being added or removed.
 // It uses the observed resources, the recorded scaling progress, and the desired replica count. All returned slices are sorted.
-func computeReplicaIndices(pcs *grovecorev1beta1.PodCliqueSet, snapshot *replicaResourceSnapshot, scaleOutReplicaIndices []int, scaleInReplicaIndices []int) pcssync.State {
+// The scale-in costs are read through lookupScaleInCosts only when replicas have to be removed, and the costs read are
+// returned beside the state so the selection event can carry them.
+func computeReplicaIndices(pcs *grovecorev1beta1.PodCliqueSet, snapshot *replicaResourceSnapshot, scaleOutReplicaIndices []int, scaleInReplicaIndices []int, lookupScaleInCosts replicaScaleInCostLookup) (pcssync.State, map[int]int32, error) {
 	// An unobserved PCS is still being provisioned for the first time. Its initial
 	// identities are not scale-out work and therefore do not require reservations.
 	if pcs.Status.ObservedGeneration == nil {
-		return pcssync.State{ExpectedReplicaIndices: lo.Range(int(pcs.Spec.Replicas))}
+		return pcssync.State{ExpectedReplicaIndices: lo.Range(int(pcs.Spec.Replicas))}, nil, nil
 	}
 
 	scaleOutIndices := sets.New(scaleOutReplicaIndices...)
@@ -213,9 +285,14 @@ func computeReplicaIndices(pcs *grovecorev1beta1.PodCliqueSet, snapshot *replica
 	projectedReplicaIndices := snapshot.projectedReplicaIndices(scaleOutIndices.UnsortedList(), scaleInIndices.UnsortedList())
 	desiredReplicaCount := int(pcs.Spec.Replicas)
 
+	var scaleInCosts map[int]int32
 	if projectedReplicaIndices.Len() > desiredReplicaCount {
 		numReplicasToRemove := projectedReplicaIndices.Len() - desiredReplicaCount
-		selectedScaleInIndices := selectReplicaIndicesForScaleIn(pcs, snapshot, projectedReplicaIndices, scaleOutIndices, numReplicasToRemove)
+		var err error
+		if scaleInCosts, err = lookupScaleInCosts(); err != nil {
+			return pcssync.State{}, nil, err
+		}
+		selectedScaleInIndices := selectReplicaIndicesForScaleIn(pcs, snapshot, projectedReplicaIndices, scaleOutIndices, scaleInCosts, numReplicasToRemove)
 		scaleOutIndices.Delete(selectedScaleInIndices...)
 		scaleInIndices.Insert(selectedScaleInIndices...)
 		projectedReplicaIndices.Delete(selectedScaleInIndices...)
@@ -231,7 +308,7 @@ func computeReplicaIndices(pcs *grovecorev1beta1.PodCliqueSet, snapshot *replica
 		ExpectedReplicaIndices: sortedReplicaIndices(projectedReplicaIndices),
 		ScaleOutReplicaIndices: sortedReplicaIndices(scaleOutIndices),
 		ScaleInReplicaIndices:  sortedReplicaIndices(scaleInIndices),
-	}
+	}, scaleInCosts, nil
 }
 
 // findMaterializedScaleOutReplicaIndices returns recorded scale-out indices for which every expected standalone
@@ -262,12 +339,15 @@ func findMaterializedScaleOutReplicaIndices(
 // selectReplicaIndicesForScaleIn selects the requested number of desired PCS replica indices for removal.
 // It prefers established replicas with insufficient scheduled capacity, established replicas with sufficient
 // scheduled but insufficient available capacity, replicas with scale-out in progress, and then established
-// available replicas. Higher indices are selected first within each group.
+// available replicas. Within each group the lowest scale-in cost is selected first, and among equal costs the
+// higher index. scaleInCosts holds a cost per replica index; a replica absent from it costs 0. A cost never
+// moves a replica across groups, so an available replica is never selected ahead of an unavailable one.
 func selectReplicaIndicesForScaleIn(
 	pcs *grovecorev1beta1.PodCliqueSet,
 	snapshot *replicaResourceSnapshot,
 	projectedReplicaIndices sets.Set[int],
 	scaleOutReplicaIndices sets.Set[int],
+	scaleInCosts map[int]int32,
 	count int) []int {
 	if count <= 0 {
 		return nil
@@ -302,16 +382,18 @@ func selectReplicaIndicesForScaleIn(
 		insufficientAvailableReplicaIndices,
 		scaleOutReplicaIndices.UnsortedList(),
 		availableReplicaIndices,
+		scaleInCosts,
 	)
 	return orderedReplicaIndices[:min(count, len(orderedReplicaIndices))]
 }
 
-// sortAndCoalesceReplicaIndices sorts each group from highest to lowest and returns them in scale-in priority order.
-func sortAndCoalesceReplicaIndices(insufficientScheduledReplicaIndices, insufficientAvailableReplicaIndices, scaleOutReplicaIndices, availableReplicaIndices []int) []int {
-	sortReplicaIndicesDescending(insufficientScheduledReplicaIndices)
-	sortReplicaIndicesDescending(insufficientAvailableReplicaIndices)
-	sortReplicaIndicesDescending(scaleOutReplicaIndices)
-	sortReplicaIndicesDescending(availableReplicaIndices)
+// sortAndCoalesceReplicaIndices sorts each group by ascending scale-in cost, then from highest to lowest index, and
+// returns them in scale-in priority order. The groups are never merged: a cost orders replicas within a group only.
+func sortAndCoalesceReplicaIndices(insufficientScheduledReplicaIndices, insufficientAvailableReplicaIndices, scaleOutReplicaIndices, availableReplicaIndices []int, scaleInCosts map[int]int32) []int {
+	sortReplicaIndicesByCostThenDescending(insufficientScheduledReplicaIndices, scaleInCosts)
+	sortReplicaIndicesByCostThenDescending(insufficientAvailableReplicaIndices, scaleInCosts)
+	sortReplicaIndicesByCostThenDescending(scaleOutReplicaIndices, scaleInCosts)
+	sortReplicaIndicesByCostThenDescending(availableReplicaIndices, scaleInCosts)
 
 	capacity := len(insufficientScheduledReplicaIndices) + len(insufficientAvailableReplicaIndices) + len(scaleOutReplicaIndices) + len(availableReplicaIndices)
 	orderedReplicaIndices := make([]int, 0, capacity)
@@ -323,10 +405,11 @@ func sortAndCoalesceReplicaIndices(insufficientScheduledReplicaIndices, insuffic
 	return orderedReplicaIndices
 }
 
-// sortReplicaIndicesDescending sorts replica indices from highest to lowest.
-func sortReplicaIndicesDescending(replicaIndices []int) {
+// sortReplicaIndicesByCostThenDescending sorts replica indices by ascending scale-in cost, then from highest to
+// lowest index. A replica absent from scaleInCosts costs 0, so with no costs at all the order is descending index.
+func sortReplicaIndicesByCostThenDescending(replicaIndices []int, scaleInCosts map[int]int32) {
 	slices.SortFunc(replicaIndices, func(a, b int) int {
-		return cmp.Compare(b, a)
+		return cmp.Or(cmp.Compare(scaleInCosts[a], scaleInCosts[b]), cmp.Compare(b, a))
 	})
 }
 
