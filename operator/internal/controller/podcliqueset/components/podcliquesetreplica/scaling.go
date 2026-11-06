@@ -37,20 +37,20 @@ import (
 
 // syncScalingProgress computes and persists replica-index selections and populates the state shared with later components.
 func (r *_resource) syncScalingProgress(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, state *pcssync.State) (bool, error) {
-	snapshot, err := r.takeReplicaResourceSnapshot(ctx, pcs)
+	replicaInfos, err := r.takeReplicaResourceSnapshot(ctx, pcs)
 	if err != nil {
 		return false, err
 	}
 
-	scaleOutReplicaIndices, scaleInReplicaIndices := replicaIndicesFromScalingProgress(pcs.Status.ScalingProgress)
-	computedState := computeReplicaIndices(pcs, snapshot, scaleOutReplicaIndices, scaleInReplicaIndices)
+	scalingIndices := replicaScalingIndicesFromProgress(pcs.Status.ScalingProgress)
+	computedState := computeReplicaIndices(pcs, replicaInfos, scalingIndices)
 	computedProgress := scalingProgressFromState(computedState)
 	scalingProgressChanged := !pcssync.ScalingProgressEqual(pcs.Status.ScalingProgress, computedProgress)
 	if scalingProgressChanged {
 		if err := r.patchScalingProgress(ctx, pcs, computedProgress); err != nil {
 			return false, err
 		}
-		r.recordNewScalingSelectionEvents(logger, pcs, scaleOutReplicaIndices, scaleInReplicaIndices, computedState)
+		r.recordNewScalingSelectionEvents(logger, pcs, scalingIndices.scaleOut, scalingIndices.scaleIn, computedState)
 	}
 
 	*state = computedState
@@ -87,7 +87,7 @@ func (r *_resource) recordNewScalingSelectionEvents(logger logr.Logger, pcs *gro
 }
 
 // takeReplicaResourceSnapshot lists standalone PodCliques and PodCliqueScalingGroups owned by the PCS and groups them by PCS replica index.
-func (r *_resource) takeReplicaResourceSnapshot(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet) (*replicaResourceSnapshot, error) {
+func (r *_resource) takeReplicaResourceSnapshot(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet) (pcsReplicaInfoByIndex, error) {
 	standalonePCLQsByPCSReplicaIndex, err := componentutils.GetStandalonePCLQsByPCSReplicaIndex(ctx, r.client, pcs.ObjectMeta)
 	if err != nil {
 		return nil, groveerr.WrapError(err,
@@ -116,112 +116,75 @@ func (r *_resource) takeReplicaResourceSnapshot(ctx context.Context, pcs *grovec
 			fmt.Sprintf("failed to list headless Services by replica for PodCliqueSet: %v", client.ObjectKeyFromObject(pcs)),
 		)
 	}
-	return &replicaResourceSnapshot{
-		standalonePCLQsByReplicaIndex:     standalonePCLQsByPCSReplicaIndex,
-		pcsgsByReplicaIndex:               pcsgsByPCSReplicaIndex,
-		headlessServicesByPCSReplicaIndex: headlessServicesByPCSReplicaIndex,
-	}, nil
-}
-
-// replicaResourceSnapshot contains the standalone PodCliques and PodCliqueScalingGroups observed for each PCS replica
-// index during one reconciliation.
-type replicaResourceSnapshot struct {
-	standalonePCLQsByReplicaIndex     map[int][]grovecorev1beta1.PodClique
-	pcsgsByReplicaIndex               map[int][]grovecorev1beta1.PodCliqueScalingGroup
-	headlessServicesByPCSReplicaIndex map[int][]corev1.Service
-}
-
-// standalonePCLQNames returns the names of standalone PodCliques observed for the given PCS replica index.
-func (r *replicaResourceSnapshot) standalonePCLQNames(pcsReplicaIndex int) sets.Set[string] {
-	pclqNames := sets.New[string]()
-	for _, pclq := range r.standalonePCLQsByReplicaIndex[pcsReplicaIndex] {
-		pclqNames.Insert(pclq.Name)
+	exitingReplicaIndices := sets.New[int]()
+	for replicaIndex := range standalonePCLQsByPCSReplicaIndex {
+		exitingReplicaIndices.Insert(replicaIndex)
 	}
-	return pclqNames
-}
-
-// pcsgNames returns the names of PodCliqueScalingGroups observed for the given PCS replica index.
-func (r *replicaResourceSnapshot) pcsgNames(pcsReplicaIndex int) sets.Set[string] {
-	pcsgNames := sets.New[string]()
-	for _, pcsg := range r.pcsgsByReplicaIndex[pcsReplicaIndex] {
-		pcsgNames.Insert(pcsg.Name)
+	for replicaIndex := range pcsgsByPCSReplicaIndex {
+		exitingReplicaIndices.Insert(replicaIndex)
 	}
-	return pcsgNames
-}
-
-// projectedReplicaIndices returns the observed replica indices plus indices being added, excluding indices being removed.
-func (r *replicaResourceSnapshot) projectedReplicaIndices(scaleOutReplicaIndices []int, scaleInReplicaIndices []int) sets.Set[int] {
-	replicaIndices := r.existingReplicaIndices()
-	replicaIndices.Insert(scaleOutReplicaIndices...)
-	replicaIndices.Delete(scaleInReplicaIndices...)
-	return replicaIndices
-}
-
-// existingReplicaIndices returns PCS replica indices represented in the snapshot.
-// Headless Services preserve the identity of standalone-only replicas while gang termination temporarily removes their PodCliques.
-func (r *replicaResourceSnapshot) existingReplicaIndices() sets.Set[int] {
-	indices := sets.New[int]()
-	for replicaIndex := range r.standalonePCLQsByReplicaIndex {
-		indices.Insert(replicaIndex)
+	for replicaIndex := range headlessServicesByPCSReplicaIndex {
+		exitingReplicaIndices.Insert(replicaIndex)
 	}
-	for replicaIndex := range r.pcsgsByReplicaIndex {
-		indices.Insert(replicaIndex)
+
+	replicaInfos := make(pcsReplicaInfoByIndex, exitingReplicaIndices.Len())
+	for replicaIndex := range exitingReplicaIndices {
+		replicaInfos[replicaIndex] = pcsReplicaInfo{
+			index:           replicaIndex,
+			standalonePCLQs: standalonePCLQsByPCSReplicaIndex[replicaIndex],
+			pcsgs:           pcsgsByPCSReplicaIndex[replicaIndex],
+			headlessSvcs:    headlessServicesByPCSReplicaIndex[replicaIndex],
+		}
 	}
-	for pcsReplicaIndex := range r.headlessServicesByPCSReplicaIndex {
-		indices.Insert(pcsReplicaIndex)
-	}
-	return indices
+	return replicaInfos, nil
 }
 
-// reservedReplicaIndices returns PCS replica indices that are unavailable for allocation.
-// It includes indices represented by resources and indices reserved by scale-out or scale-in progress.
-func (r *replicaResourceSnapshot) reservedReplicaIndices(scaleOutReplicaIndices []int, scaleInReplicaIndices []int) sets.Set[int] {
-	replicaIndices := r.existingReplicaIndices()
-	replicaIndices.Insert(scaleOutReplicaIndices...)
-	replicaIndices.Insert(scaleInReplicaIndices...)
-	return replicaIndices
-}
-
-// replicaIndicesFromScalingProgress converts API scaling-progress indices to reconcile-local indices.
-func replicaIndicesFromScalingProgress(progress *grovecorev1beta1.PodCliqueSetScalingProgress) ([]int, []int) {
+// replicaScalingIndicesFromProgress converts API scaling progress to reconcile-local indices.
+func replicaScalingIndicesFromProgress(progress *grovecorev1beta1.PodCliqueSetScalingProgress) pcsReplicaScalingIndices {
 	if progress == nil {
-		return nil, nil
+		return pcsReplicaScalingIndices{}
 	}
-
-	scaleOutReplicaIndices := lo.Map(progress.ScaleOutReplicaIndices, func(replicaIndex int32, _ int) int { return int(replicaIndex) })
-	scaleInReplicaIndices := lo.Map(progress.ScaleInReplicaIndices, func(replicaIndex int32, _ int) int { return int(replicaIndex) })
-
-	return scaleOutReplicaIndices, scaleInReplicaIndices
+	return pcsReplicaScalingIndices{
+		scaleOut: lo.Map(progress.ScaleOutReplicaIndices, func(replicaIndex int32, _ int) int { return int(replicaIndex) }),
+		scaleIn:  lo.Map(progress.ScaleInReplicaIndices, func(replicaIndex int32, _ int) int { return int(replicaIndex) }),
+	}
 }
 
 // computeReplicaIndices determines which replica indices must exist and which are being added or removed.
-// It uses the observed resources, the recorded scaling progress, and the desired replica count. All returned slices are sorted.
-func computeReplicaIndices(pcs *grovecorev1beta1.PodCliqueSet, snapshot *replicaResourceSnapshot, scaleOutReplicaIndices []int, scaleInReplicaIndices []int) pcssync.State {
+// It uses the observed resources, the recorded scaling progress, and the desired replica count.
+// All returned slices are sorted in ascending order.
+func computeReplicaIndices(pcs *grovecorev1beta1.PodCliqueSet, replicaInfos pcsReplicaInfoByIndex, scalingIndices pcsReplicaScalingIndices) pcssync.State {
 	// An unobserved PCS is still being provisioned for the first time. Its initial
 	// identities are not scale-out work and therefore do not require reservations.
 	if pcs.Status.ObservedGeneration == nil {
 		return pcssync.State{ExpectedReplicaIndices: lo.Range(int(pcs.Spec.Replicas))}
 	}
 
-	scaleOutIndices := sets.New(scaleOutReplicaIndices...)
-	scaleInIndices := sets.New(scaleInReplicaIndices...)
+	scaleOutIndices := sets.New(scalingIndices.scaleOut...)
+	scaleInIndices := sets.New(scalingIndices.scaleIn...)
 
 	// Remove scale-out indices that have now been materialized.
-	materializedReplicaIndices := findMaterializedScaleOutReplicaIndices(pcs, scaleOutReplicaIndices, snapshot)
+	materializedReplicaIndices := findMaterializedScaleOutReplicaIndices(pcs, scalingIndices.scaleOut, replicaInfos)
 	scaleOutIndices.Delete(materializedReplicaIndices...)
 
-	projectedReplicaIndices := snapshot.projectedReplicaIndices(scaleOutIndices.UnsortedList(), scaleInIndices.UnsortedList())
+	projectedReplicaIndices := replicaInfos.projectedReplicaIndices(pcsReplicaScalingIndices{
+		scaleOut: scaleOutIndices.UnsortedList(),
+		scaleIn:  scaleInIndices.UnsortedList(),
+	})
 	desiredReplicaCount := int(pcs.Spec.Replicas)
 
 	if projectedReplicaIndices.Len() > desiredReplicaCount {
 		numReplicasToRemove := projectedReplicaIndices.Len() - desiredReplicaCount
-		selectedScaleInIndices := selectReplicaIndicesForScaleIn(pcs, snapshot, projectedReplicaIndices, scaleOutIndices, numReplicasToRemove)
+		selectedScaleInIndices := selectReplicaIndicesForScaleIn(pcs, replicaInfos, projectedReplicaIndices, scaleOutIndices, numReplicasToRemove)
 		scaleOutIndices.Delete(selectedScaleInIndices...)
 		scaleInIndices.Insert(selectedScaleInIndices...)
 		projectedReplicaIndices.Delete(selectedScaleInIndices...)
 	} else if projectedReplicaIndices.Len() < desiredReplicaCount {
 		numReplicasToAdd := desiredReplicaCount - projectedReplicaIndices.Len()
-		reservedIndices := snapshot.reservedReplicaIndices(scaleOutIndices.UnsortedList(), scaleInIndices.UnsortedList())
+		reservedIndices := replicaInfos.reservedReplicaIndices(pcsReplicaScalingIndices{
+			scaleOut: scaleOutIndices.UnsortedList(),
+			scaleIn:  scaleInIndices.UnsortedList(),
+		})
 		selectedScaleOutIndices := utils.GetAvailableIndices(reservedIndices, numReplicasToAdd)
 		scaleOutIndices.Insert(selectedScaleOutIndices...)
 		projectedReplicaIndices.Insert(selectedScaleOutIndices...)
@@ -240,17 +203,18 @@ func computeReplicaIndices(pcs *grovecorev1beta1.PodCliqueSet, snapshot *replica
 func findMaterializedScaleOutReplicaIndices(
 	pcs *grovecorev1beta1.PodCliqueSet,
 	scaleOutReplicaIndices []int,
-	snapshot *replicaResourceSnapshot,
+	replicaInfos pcsReplicaInfoByIndex,
 ) []int {
 	var materializedReplicaIndices []int
 	for _, pcsReplicaIndex := range scaleOutReplicaIndices {
+		replicaInfo := replicaInfos[pcsReplicaIndex]
 		expectedPCLQNames := sets.New(componentutils.GetPodCliqueFQNsForPCSReplicaNotInPCSG(pcs, pcsReplicaIndex)...)
-		if !snapshot.standalonePCLQNames(pcsReplicaIndex).IsSuperset(expectedPCLQNames) {
+		if !replicaInfo.standalonePCLQNames().IsSuperset(expectedPCLQNames) {
 			continue
 		}
 
 		expectedPCSGNames := sets.New(componentutils.GetPCSGFQNsForPCSReplica(pcs, pcsReplicaIndex)...)
-		if snapshot.pcsgNames(pcsReplicaIndex).IsSuperset(expectedPCSGNames) {
+		if replicaInfo.pcsgNames().IsSuperset(expectedPCSGNames) {
 			materializedReplicaIndices = append(materializedReplicaIndices, pcsReplicaIndex)
 		}
 	}
@@ -265,7 +229,7 @@ func findMaterializedScaleOutReplicaIndices(
 // available replicas. Higher indices are selected first within each group.
 func selectReplicaIndicesForScaleIn(
 	pcs *grovecorev1beta1.PodCliqueSet,
-	snapshot *replicaResourceSnapshot,
+	replicaInfos pcsReplicaInfoByIndex,
 	projectedReplicaIndices sets.Set[int],
 	scaleOutReplicaIndices sets.Set[int],
 	count int) []int {
@@ -284,8 +248,9 @@ func selectReplicaIndicesForScaleIn(
 		if scaleOutReplicaIndices.Has(replicaIndex) {
 			continue
 		}
-		standalonePCLQs := snapshot.standalonePCLQsByReplicaIndex[replicaIndex]
-		pcsgs := snapshot.pcsgsByReplicaIndex[replicaIndex]
+		replicaInfo := replicaInfos[replicaIndex]
+		standalonePCLQs := replicaInfo.standalonePCLQs
+		pcsgs := replicaInfo.pcsgs
 		if componentutils.IsPCSReplicaAvailable(numExpectedStandalonePCLQs, numExpectedPCSGs, standalonePCLQs, pcsgs) {
 			availableReplicaIndices = append(availableReplicaIndices, replicaIndex)
 			continue

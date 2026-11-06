@@ -173,10 +173,10 @@ func (r *_resource) getPCSReplicaInfos(ctx context.Context, pcs *grovecorev1beta
 			pgmEntries = pgm.Spec.Entries
 		}
 		replicaInfos = append(replicaInfos, pcsReplicaInfo{
-			replicaIndex: pcsReplicaIndex,
-			pclqs:        pclqsByPCSReplicaIndex[pcsReplicaIndex],
-			pcsgs:        pcsgsByPCSReplicaIndex[pcsReplicaIndex],
-			pgmEntries:   pgmEntries,
+			index:           pcsReplicaIndex,
+			standalonePCLQs: pclqsByPCSReplicaIndex[pcsReplicaIndex],
+			pcsgs:           pcsgsByPCSReplicaIndex[pcsReplicaIndex],
+			pgmEntries:      pgmEntries,
 		})
 	}
 	return replicaInfos, nil

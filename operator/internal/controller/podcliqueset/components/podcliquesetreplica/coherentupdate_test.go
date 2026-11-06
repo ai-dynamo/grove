@@ -41,8 +41,8 @@ const (
 func TestInScopeUpdateCounts(t *testing.T) {
 	pcs := coherentTestPCS([]string{"frontend", "router"}, []string{"decode"})
 	replicaInfo := pcsReplicaInfo{
-		replicaIndex: 0,
-		pclqs: []grovecorev1beta1.PodClique{
+		index: 0,
+		standalonePCLQs: []grovecorev1beta1.PodClique{
 			standalonePCLQAtHash(pcs, "frontend", coherentHashOf(pcs, "frontend")), // converged
 			standalonePCLQAtHash(pcs, "router", "stale-hash"),                      // not converged
 		},
@@ -63,8 +63,8 @@ func TestCoherentProgressMessage(t *testing.T) {
 	t.Run("returns nil when every in-scope component has converged", func(t *testing.T) {
 		pcs := coherentTestPCS([]string{"frontend"}, []string{"decode"})
 		replicaInfo := pcsReplicaInfo{
-			pclqs: []grovecorev1beta1.PodClique{standalonePCLQAtHash(pcs, "frontend", coherentHashOf(pcs, "frontend"))},
-			pcsgs: []grovecorev1beta1.PodCliqueScalingGroup{pcsgAtGenerationHash(pcs, "decode", new(coherentTestCurrentGen))},
+			standalonePCLQs: []grovecorev1beta1.PodClique{standalonePCLQAtHash(pcs, "frontend", coherentHashOf(pcs, "frontend"))},
+			pcsgs:           []grovecorev1beta1.PodCliqueScalingGroup{pcsgAtGenerationHash(pcs, "decode", new(coherentTestCurrentGen))},
 		}
 		assert.Nil(t, coherentProgressMessage(pcs, replicaInfo))
 	})
@@ -72,7 +72,7 @@ func TestCoherentProgressMessage(t *testing.T) {
 	t.Run("summarizes standalone PodCliques and PodCliqueScalingGroups when both are in scope", func(t *testing.T) {
 		pcs := coherentTestPCS([]string{"frontend", "router"}, []string{"decode"})
 		replicaInfo := pcsReplicaInfo{
-			pclqs: []grovecorev1beta1.PodClique{
+			standalonePCLQs: []grovecorev1beta1.PodClique{
 				standalonePCLQAtHash(pcs, "frontend", coherentHashOf(pcs, "frontend")),
 				standalonePCLQAtHash(pcs, "router", "stale-hash"),
 			},
@@ -101,7 +101,7 @@ func TestGetPCSReplicaInfos(t *testing.T) {
 	got, err := r.getPCSReplicaInfos(context.Background(), pcs, expectedPCSReplicaIndices, pcsReplicaIndicesToTerminate)
 
 	require.NoError(t, err)
-	gotPCSReplicaIndices := lo.Map(got, func(info pcsReplicaInfo, _ int) int { return info.replicaIndex })
+	gotPCSReplicaIndices := lo.Map(got, func(info pcsReplicaInfo, _ int) int { return info.index })
 	assert.Equal(t, []int{0, 4}, gotPCSReplicaIndices)
 	assert.Equal(t, []int{0, 2, 4}, expectedPCSReplicaIndices)
 	assert.Equal(t, []int{2}, pcsReplicaIndicesToTerminate)
@@ -121,7 +121,7 @@ func TestGetPCSReplicaInfosForCoherentUpdate(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Len(t, got, 1)
-	assert.Equal(t, 1, got[0].replicaIndex)
+	assert.Equal(t, 1, got[0].index)
 	assert.Equal(t, entriesByReplicaIndex[1], got[0].pgmEntries)
 }
 
@@ -168,8 +168,8 @@ func TestUpdateCoherentReplicaProgress(t *testing.T) {
 	pgm := testutils.NewPodGangMapBuilder(coherentTestPCSName, coherentTestNamespace, coherentTestPCSUID, 1).
 		WithEntries(grovecorev1beta1.PodGangEntry{Epoch: "200", PodCliqueSetGenerationHash: coherentTestCurrentGen, PodCliques: map[string]int32{"frontend": 1}}).Build()
 	replicaInfo := pcsReplicaInfo{
-		replicaIndex: 1,
-		pclqs:        []grovecorev1beta1.PodClique{standalonePCLQAtHash(pcs, "frontend", "stale-hash")}, // not converged
+		index:           1,
+		standalonePCLQs: []grovecorev1beta1.PodClique{standalonePCLQAtHash(pcs, "frontend", "stale-hash")}, // not converged
 	}
 	r := _resource{client: testutils.SetupFakeClient(pcs, pgm)}
 
@@ -203,7 +203,7 @@ func TestUpdateCoherentReplicaProgressRejectsUnselectedReplica(t *testing.T) {
 			pcs.Status.UpdateProgress = tc.progress
 			r := _resource{client: testutils.SetupFakeClient(pcs)}
 
-			err := r.updateCoherentReplicaProgress(context.Background(), logr.Discard(), pcs, pcsReplicaInfo{replicaIndex: 1})
+			err := r.updateCoherentReplicaProgress(context.Background(), logr.Discard(), pcs, pcsReplicaInfo{index: 1})
 
 			require.Error(t, err)
 			if tc.progress != nil {
@@ -225,10 +225,10 @@ func TestIsUpdateComplete(t *testing.T) {
 	}
 	convergedReplicaInfo := func(pcs *grovecorev1beta1.PodCliqueSet, entries []grovecorev1beta1.PodGangEntry) pcsReplicaInfo {
 		return pcsReplicaInfo{
-			replicaIndex: 0,
-			pclqs:        []grovecorev1beta1.PodClique{standalonePCLQAtHash(pcs, "frontend", coherentHashOf(pcs, "frontend"))},
-			pcsgs:        []grovecorev1beta1.PodCliqueScalingGroup{pcsgAtGenerationHash(pcs, "decode", new(coherentTestCurrentGen))},
-			pgmEntries:   entries,
+			index:           0,
+			standalonePCLQs: []grovecorev1beta1.PodClique{standalonePCLQAtHash(pcs, "frontend", coherentHashOf(pcs, "frontend"))},
+			pcsgs:           []grovecorev1beta1.PodCliqueScalingGroup{pcsgAtGenerationHash(pcs, "decode", new(coherentTestCurrentGen))},
+			pgmEntries:      entries,
 		}
 	}
 
@@ -260,7 +260,7 @@ func TestIsUpdateComplete(t *testing.T) {
 	t.Run("an unconverged standalone PodClique keeps the update incomplete even when the PodGangMap is single-generation", func(t *testing.T) {
 		pcs := coherentTestPCS([]string{"frontend"}, []string{"decode"})
 		ri := convergedReplicaInfo(pcs, singleGenEntries)
-		ri.pclqs = []grovecorev1beta1.PodClique{standalonePCLQAtHash(pcs, "frontend", "stale-hash")}
+		ri.standalonePCLQs = []grovecorev1beta1.PodClique{standalonePCLQAtHash(pcs, "frontend", "stale-hash")}
 		assert.False(t, ri.isUpdateComplete(pcs))
 	})
 

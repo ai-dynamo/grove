@@ -28,7 +28,6 @@ import (
 	"github.com/go-logr/logr"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/util/sets"
-	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -36,14 +35,14 @@ import (
 // coherent update. InFlightEpochs mirrors the latest current-hash epoch on the replica's PodGangMap, and
 // Message summarizes the in-scope components that have not yet reached the current revision.
 func (r *_resource) updateCoherentReplicaProgress(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, replicaInfo pcsReplicaInfo) error {
-	inFlightEpochs, err := r.inFlightEpochsForReplica(ctx, pcs, replicaInfo.replicaIndex)
+	inFlightEpochs, err := r.inFlightEpochsForReplica(ctx, pcs, replicaInfo.index)
 	if err != nil {
 		return err
 	}
 	original := pcs.DeepCopy()
-	current := updateProgressForReplica(pcs.Status.UpdateProgress, replicaInfo.replicaIndex)
+	current := updateProgressForReplica(pcs.Status.UpdateProgress, replicaInfo.index)
 	if current == nil {
-		return fmt.Errorf("PodCliqueSet replica index %d is not selected for update", replicaInfo.replicaIndex)
+		return fmt.Errorf("PodCliqueSet replica index %d is not selected for update", replicaInfo.index)
 	}
 	current.InFlightEpochs = inFlightEpochs
 	current.Message = coherentProgressMessage(pcs, replicaInfo)
@@ -101,7 +100,7 @@ func coherentProgressMessage(pcs *grovecorev1beta1.PodCliqueSet, replicaInfo pcs
 	if inScopePCSG > 0 {
 		parts = append(parts, fmt.Sprintf("%d/%d PodCliqueScalingGroups", updatedPCSG, inScopePCSG))
 	}
-	return ptr.To(fmt.Sprintf("%s updated to the current revision", strings.Join(parts, " and ")))
+	return new(fmt.Sprintf("%s updated to the current revision", strings.Join(parts, " and ")))
 }
 
 // inScopeUpdateCounts returns, for the update's in-scope components, how many are in scope and how many
@@ -112,8 +111,8 @@ func inScopeUpdateCounts(pcs *grovecorev1beta1.PodCliqueSet, replicaInfo pcsRepl
 	inScopePCSGNames := sets.New(pcs.Status.UpdateProgress.InScopePodCliqueScalingGroups...)
 	inScopeStandalone = inScopeStandaloneNames.Len()
 	inScopePCSG = inScopePCSGNames.Len()
-	for i := range replicaInfo.pclqs {
-		pclq := &replicaInfo.pclqs[i]
+	for i := range replicaInfo.standalonePCLQs {
+		pclq := &replicaInfo.standalonePCLQs[i]
 		cliqueName, err := componentutils.GetPodCliqueNameFromPodCliqueFQN(pclq.ObjectMeta)
 		if err != nil {
 			continue
@@ -122,7 +121,7 @@ func inScopeUpdateCounts(pcs *grovecorev1beta1.PodCliqueSet, replicaInfo pcsRepl
 			updatedStandalone++
 		}
 	}
-	pcsNameReplica := apicommon.ResourceNameReplica{Name: pcs.Name, Replica: replicaInfo.replicaIndex}
+	pcsNameReplica := apicommon.ResourceNameReplica{Name: pcs.Name, Replica: replicaInfo.index}
 	for i := range replicaInfo.pcsgs {
 		pcsg := &replicaInfo.pcsgs[i]
 		pcsgName, err := apicommon.ExtractScalingGroupNameFromPCSGFQN(pcsg.Name, pcsNameReplica)
