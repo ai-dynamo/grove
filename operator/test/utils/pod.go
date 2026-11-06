@@ -72,8 +72,8 @@ func (b *PodBuilder) WithOwner(ownerName string) *PodBuilder {
 		Kind:               constants.KindPodClique,
 		Name:               ownerName,
 		UID:                uuid.NewUUID(),
-		BlockOwnerDeletion: ptr.To(true),
-		Controller:         ptr.To(true),
+		BlockOwnerDeletion: new(true),
+		Controller:         new(true),
 	}
 	b.pod.OwnerReferences = append(b.pod.OwnerReferences, ownerRef)
 	return b

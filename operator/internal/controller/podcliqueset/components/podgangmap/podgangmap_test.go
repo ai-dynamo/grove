@@ -37,7 +37,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	clocktesting "k8s.io/utils/clock/testing"
-	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -45,7 +44,7 @@ func TestSyncBootstrapsPodGangMapForFreshReplica(t *testing.T) {
 	pcs := testutils.NewPodCliqueSetBuilder("pcs", "default", "uid").
 		WithReplicas(1).
 		WithScalingGroupConfig("sg", []string{"c"}, 4, 2).
-		WithPodCliqueSetGenerationHash(ptr.To("hash1")).
+		WithPodCliqueSetGenerationHash(new("hash1")).
 		Build()
 
 	cl := testutils.CreateDefaultFakeClient([]client.Object{pcs})
@@ -79,7 +78,7 @@ func TestSyncReusesEpochFromExistingPodGangsWhenPodGangMapIsMissing(t *testing.T
 	pcs := testutils.NewPodCliqueSetBuilder("pcs", "default", "uid").
 		WithReplicas(1).
 		WithStandaloneCliqueReplicas("clq-a", 1).
-		WithPodCliqueSetGenerationHash(ptr.To("hash1")).
+		WithPodCliqueSetGenerationHash(new("hash1")).
 		Build()
 
 	// The PodGangMap for replica 0 is gone, but its anchor PodGang still carries the epoch its pods use.
@@ -103,7 +102,7 @@ func TestSyncReconstructsScaledOutPCSGWhenPodGangMapIsMissing(t *testing.T) {
 	pcs := testutils.NewPodCliqueSetBuilder("pcs", "default", "uid").
 		WithReplicas(1).
 		WithScalingGroupConfig("sg", []string{"c"}, 1, 1).
-		WithPodCliqueSetGenerationHash(ptr.To("hash1")).
+		WithPodCliqueSetGenerationHash(new("hash1")).
 		Build()
 	pcsg := testutils.NewPodCliqueScalingGroupBuilder("pcs-0-sg", "default", "pcs", 0).
 		WithReplicas(2).
@@ -136,7 +135,7 @@ func TestSyncReconstructsScaledOutPCSGWithoutExistingScaleOutPodGang(t *testing.
 	pcs := testutils.NewPodCliqueSetBuilder("pcs", "default", "uid").
 		WithReplicas(1).
 		WithScalingGroupConfig("sg", []string{"c"}, 1, 1).
-		WithPodCliqueSetGenerationHash(ptr.To("hash1")).
+		WithPodCliqueSetGenerationHash(new("hash1")).
 		Build()
 	pcsg := testutils.NewPodCliqueScalingGroupBuilder("pcs-0-sg", "default", "pcs", 0).
 		WithReplicas(2).
@@ -163,7 +162,7 @@ func TestSyncReconstructsScaledStandalonePCLQWhenPodGangMapIsMissing(t *testing.
 	pcs := testutils.NewPodCliqueSetBuilder("pcs", "default", "uid").
 		WithReplicas(1).
 		WithStandaloneCliqueReplicas("clq-a", 1).
-		WithPodCliqueSetGenerationHash(ptr.To("hash1")).
+		WithPodCliqueSetGenerationHash(new("hash1")).
 		Build()
 	pclq := testutils.NewPodCliqueBuilder("pcs", types.UID("uid"), "clq-a", "default", 0).
 		WithReplicas(4).
@@ -185,7 +184,7 @@ func TestSyncIgnoresLegacyPodGangsWithoutEpochLabelWhenPodGangMapIsMissing(t *te
 	pcs := testutils.NewPodCliqueSetBuilder("pcs", "default", "uid").
 		WithReplicas(1).
 		WithStandaloneCliqueReplicas("clq-a", 1).
-		WithPodCliqueSetGenerationHash(ptr.To("hash1")).
+		WithPodCliqueSetGenerationHash(new("hash1")).
 		Build()
 
 	// A legacy PodGang from before the epoch scheme carries no grove.io/epoch or replica-index label.
@@ -210,7 +209,7 @@ func TestSyncRebuildsAnchorWhenPodGangMapHasNoEntries(t *testing.T) {
 	pcs := testutils.NewPodCliqueSetBuilder("pcs", "default", "uid").
 		WithReplicas(1).
 		WithStandaloneCliqueReplicas("clq-a", 1).
-		WithPodCliqueSetGenerationHash(ptr.To("hash1")).
+		WithPodCliqueSetGenerationHash(new("hash1")).
 		Build()
 
 	// A PodGangMap can end up with no entries when every entry drained to empty. The sync rebuilds it
@@ -233,7 +232,7 @@ func TestSyncDeletesOrphanedPodGangMaps(t *testing.T) {
 	pcs := testutils.NewPodCliqueSetBuilder("pcs", "default", "uid").
 		WithReplicas(1).
 		WithStandaloneCliqueReplicas("clq-a", 1).
-		WithPodCliqueSetGenerationHash(ptr.To("hash1")).
+		WithPodCliqueSetGenerationHash(new("hash1")).
 		Build()
 
 	// A PodGangMap for replica 1 exists but the PCS is now scaled to a single replica.
@@ -256,7 +255,7 @@ func TestSyncUsesSparsePCSReplicaIndices(t *testing.T) {
 	pcs := testutils.NewPodCliqueSetBuilder("pcs", "default", "uid").
 		WithReplicas(3).
 		WithStandaloneCliqueReplicas("clq-a", 1).
-		WithPodCliqueSetGenerationHash(ptr.To("hash1")).
+		WithPodCliqueSetGenerationHash(new("hash1")).
 		Build()
 	scaleInPGM := testutils.NewPodGangMapBuilder("pcs", "default", types.UID("uid"), 1).
 		WithEntries(testutils.NewPodGangEntryBuilder("hash1", "100").WithRole(grovecorev1beta1.PodGangEntryRoleAnchor).Build()).
@@ -286,7 +285,7 @@ func TestSyncAdvancesGenerationHashForAllReplicas(t *testing.T) {
 		WithReplicas(2).
 		WithStandaloneCliqueReplicas("clq-a", 1).
 		WithUpdateStrategy(&grovecorev1beta1.PodCliqueSetUpdateStrategy{Type: grovecorev1beta1.RollingRecreateStrategy}).
-		WithPodCliqueSetGenerationHash(ptr.To("new-hash")).
+		WithPodCliqueSetGenerationHash(new("new-hash")).
 		WithUpdateProgress(&grovecorev1beta1.PodCliqueSetUpdateProgress{
 			CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 0}},
 		}).

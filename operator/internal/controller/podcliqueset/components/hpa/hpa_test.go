@@ -29,7 +29,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/uuid"
-	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
@@ -52,7 +51,7 @@ func TestComputeExpectedHPAs(t *testing.T) {
 					testutils.NewPodCliqueTemplateSpecBuilder("test-clique").
 						WithReplicas(3).
 						WithMinAvailable(1).
-						WithScaleConfig(ptr.To(int32(2)), 5).
+						WithScaleConfig(new(int32(2)), 5).
 						Build(),
 				).
 				Build(),
@@ -61,7 +60,7 @@ func TestComputeExpectedHPAs(t *testing.T) {
 					targetScaleResourceKind: constants.KindPodClique,
 					targetScaleResourceName: "test-pcs-0-test-clique",
 					scaleConfig: grovecorev1beta1.AutoScalingConfig{
-						MinReplicas: ptr.To(int32(2)),
+						MinReplicas: new(int32(2)),
 						MaxReplicas: 5,
 					},
 				},
@@ -73,11 +72,11 @@ func TestComputeExpectedHPAs(t *testing.T) {
 				WithReplicas(1).
 				WithPodCliqueScalingGroupConfig(grovecorev1beta1.PodCliqueScalingGroupConfig{
 					Name:         "test-sg",
-					Replicas:     ptr.To(int32(4)),
-					MinAvailable: ptr.To(int32(3)),
+					Replicas:     new(int32(4)),
+					MinAvailable: new(int32(3)),
 					CliqueNames:  []string{"test-clique"},
 					ScaleConfig: &grovecorev1beta1.AutoScalingConfig{
-						MinReplicas: ptr.To(int32(2)),
+						MinReplicas: new(int32(2)),
 						MaxReplicas: 6,
 					},
 				}).
@@ -87,7 +86,7 @@ func TestComputeExpectedHPAs(t *testing.T) {
 					targetScaleResourceKind: constants.KindPodCliqueScalingGroup,
 					targetScaleResourceName: "test-pcs-0-test-sg",
 					scaleConfig: grovecorev1beta1.AutoScalingConfig{
-						MinReplicas: ptr.To(int32(2)),
+						MinReplicas: new(int32(2)),
 						MaxReplicas: 6,
 					},
 				},
@@ -101,16 +100,16 @@ func TestComputeExpectedHPAs(t *testing.T) {
 					testutils.NewPodCliqueTemplateSpecBuilder("individual-clique").
 						WithReplicas(2).
 						WithMinAvailable(1).
-						WithScaleConfig(ptr.To(int32(2)), 4).
+						WithScaleConfig(new(int32(2)), 4).
 						Build(),
 				).
 				WithPodCliqueScalingGroupConfig(grovecorev1beta1.PodCliqueScalingGroupConfig{
 					Name:         "scaling-group",
-					Replicas:     ptr.To(int32(3)),
-					MinAvailable: ptr.To(int32(2)),
+					Replicas:     new(int32(3)),
+					MinAvailable: new(int32(2)),
 					CliqueNames:  []string{"sg-clique"},
 					ScaleConfig: &grovecorev1beta1.AutoScalingConfig{
-						MinReplicas: ptr.To(int32(1)),
+						MinReplicas: new(int32(1)),
 						MaxReplicas: 5,
 					},
 				}).
@@ -120,7 +119,7 @@ func TestComputeExpectedHPAs(t *testing.T) {
 					targetScaleResourceKind: constants.KindPodClique,
 					targetScaleResourceName: "test-pcs-0-individual-clique",
 					scaleConfig: grovecorev1beta1.AutoScalingConfig{
-						MinReplicas: ptr.To(int32(2)),
+						MinReplicas: new(int32(2)),
 						MaxReplicas: 4,
 					},
 				},
@@ -128,7 +127,7 @@ func TestComputeExpectedHPAs(t *testing.T) {
 					targetScaleResourceKind: constants.KindPodCliqueScalingGroup,
 					targetScaleResourceName: "test-pcs-0-scaling-group",
 					scaleConfig: grovecorev1beta1.AutoScalingConfig{
-						MinReplicas: ptr.To(int32(1)),
+						MinReplicas: new(int32(1)),
 						MaxReplicas: 5,
 					},
 				},
@@ -158,7 +157,7 @@ func TestComputeExpectedHPAsUsesSparseReplicaIndices(t *testing.T) {
 		WithReplicas(3).
 		WithPodCliqueTemplateSpec(
 			testutils.NewPodCliqueTemplateSpecBuilder("worker").
-				WithScaleConfig(ptr.To(int32(1)), 3).
+				WithScaleConfig(new(int32(1)), 3).
 				Build(),
 		).
 		Build()
@@ -228,7 +227,7 @@ func TestBuildResource(t *testing.T) {
 				targetScaleResourceKind: constants.KindPodClique,
 				targetScaleResourceName: "test-resource",
 				scaleConfig: grovecorev1beta1.AutoScalingConfig{
-					MinReplicas: ptr.To(int32(2)),
+					MinReplicas: new(int32(2)),
 					MaxReplicas: 5,
 				},
 			},

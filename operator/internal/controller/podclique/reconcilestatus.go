@@ -33,7 +33,6 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -122,13 +121,13 @@ func mutateCurrentHashes(logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet,
 			return err
 		}
 		if isPodCliqueTemplateHashCurrent(pclq, expectedPodTemplateHash) {
-			pclq.Status.CurrentPodTemplateHash = ptr.To(expectedPodTemplateHash)
+			pclq.Status.CurrentPodTemplateHash = new(expectedPodTemplateHash)
 			pclq.Status.CurrentPodCliqueSetGenerationHash = pcs.Status.CurrentGenerationHash
 		}
 	} else if componentutils.IsLastPCLQUpdateCompleted(pclq) {
 		logger.Info("PodClique update has completed, setting CurrentPodCliqueSetGenerationHash")
-		pclq.Status.CurrentPodTemplateHash = ptr.To(pclq.Status.UpdateProgress.PodTemplateHash)
-		pclq.Status.CurrentPodCliqueSetGenerationHash = ptr.To(pclq.Status.UpdateProgress.PodCliqueSetGenerationHash)
+		pclq.Status.CurrentPodTemplateHash = new(pclq.Status.UpdateProgress.PodTemplateHash)
+		pclq.Status.CurrentPodCliqueSetGenerationHash = new(pclq.Status.UpdateProgress.PodCliqueSetGenerationHash)
 	}
 	return nil
 }
@@ -203,7 +202,7 @@ func mutateSelector(pcsName string, pclq *grovecorev1beta1.PodClique) error {
 	if err != nil {
 		return fmt.Errorf("%w: failed to create label selector for PodClique %v", err, client.ObjectKeyFromObject(pclq))
 	}
-	pclq.Status.Selector = ptr.To(selector.String())
+	pclq.Status.Selector = new(selector.String())
 	return nil
 }
 
@@ -314,7 +313,7 @@ func mutateLastScheduled(pclq *grovecorev1beta1.PodClique, originalStatus *grove
 	freshlyScheduled := scheduledNow && !scheduledBefore
 	needsBackfill := scheduledNow && pclq.Status.LastScheduled == nil
 	if freshlyScheduled || needsBackfill {
-		pclq.Status.LastScheduled = ptr.To(metav1.Now())
+		pclq.Status.LastScheduled = new(metav1.Now())
 	}
 }
 

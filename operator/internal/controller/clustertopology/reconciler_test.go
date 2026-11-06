@@ -34,7 +34,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/client-go/tools/record"
-	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -617,7 +616,7 @@ func TestMapBackendTopologyToCT_AutoManaged(t *testing.T) {
 				Kind:       "ClusterTopologyBinding",
 				Name:       "my-topology",
 				UID:        ct.UID,
-				Controller: ptr.To(true),
+				Controller: new(true),
 			}},
 		},
 	}

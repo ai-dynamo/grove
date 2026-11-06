@@ -212,14 +212,14 @@ func TestBaseAnchorEpoch(t *testing.T) {
 	})
 
 	t.Run("filters to the given generation hash and ignores the lower-epoch tail", func(t *testing.T) {
-		epoch, found, err := BaseAnchorEpoch(entries, ptr.To("v2"))
+		epoch, found, err := BaseAnchorEpoch(entries, new("v2"))
 		require.NoError(t, err)
 		assert.True(t, found)
 		assert.Equal(t, "200", epoch)
 	})
 
 	t.Run("reports not found when no anchor matches the generation hash", func(t *testing.T) {
-		epoch, found, err := BaseAnchorEpoch(entries, ptr.To("v3"))
+		epoch, found, err := BaseAnchorEpoch(entries, new("v3"))
 		require.NoError(t, err)
 		assert.False(t, found)
 		assert.Equal(t, "", epoch)
@@ -431,9 +431,9 @@ func TestStartupDependencyTargetsInEntry(t *testing.T) {
 		Spec: grovecorev1beta1.PodCliqueSetSpec{
 			Template: grovecorev1beta1.PodCliqueSetTemplateSpec{
 				Cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
-					{Name: "frontend", Spec: grovecorev1beta1.PodCliqueSpec{MinAvailable: ptr.To(int32(2))}},
-					{Name: "pf", Spec: grovecorev1beta1.PodCliqueSpec{MinAvailable: ptr.To(int32(1))}},
-					{Name: "dc", Spec: grovecorev1beta1.PodCliqueSpec{MinAvailable: ptr.To(int32(1))}},
+					{Name: "frontend", Spec: grovecorev1beta1.PodCliqueSpec{MinAvailable: new(int32(2))}},
+					{Name: "pf", Spec: grovecorev1beta1.PodCliqueSpec{MinAvailable: new(int32(1))}},
+					{Name: "dc", Spec: grovecorev1beta1.PodCliqueSpec{MinAvailable: new(int32(1))}},
 				},
 				PodCliqueScalingGroupConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 					{Name: "prefill", CliqueNames: []string{"pf"}},

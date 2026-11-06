@@ -26,7 +26,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
@@ -62,7 +61,7 @@ func TestGetPCLQPods(t *testing.T) {
 						Kind:       "PodClique",
 						Name:       "test-pclq",
 						UID:        "pclq-uid-123",
-						Controller: ptr.To(true),
+						Controller: new(true),
 					},
 				},
 			},
@@ -126,7 +125,7 @@ func TestGetPCLQPods(t *testing.T) {
 		}
 
 		pods := []*corev1.Pod{}
-		for i := 0; i < 3; i++ {
+		for i := range 3 {
 			pod := &corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "pod-" + string(rune('a'+i)),
@@ -142,7 +141,7 @@ func TestGetPCLQPods(t *testing.T) {
 							Kind:       "PodClique",
 							Name:       "test-pclq",
 							UID:        "pclq-uid-123",
-							Controller: ptr.To(true),
+							Controller: new(true),
 						},
 					},
 				},
@@ -190,7 +189,7 @@ func TestGetPCLQPods(t *testing.T) {
 						Kind:       "PodClique",
 						Name:       "test-pclq",
 						UID:        "pclq-uid-123",
-						Controller: ptr.To(true),
+						Controller: new(true),
 					},
 				},
 			},
@@ -211,7 +210,7 @@ func TestGetPCLQPods(t *testing.T) {
 						Kind:       "PodClique",
 						Name:       "test-pclq",
 						UID:        "some-other-uid",
-						Controller: ptr.To(true),
+						Controller: new(true),
 					},
 				},
 			},

@@ -24,7 +24,6 @@ import (
 	"github.com/samber/lo"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/utils/ptr"
 )
 
 // PodGangEntryBuilder provides a fluent interface for building test PodGangEntry values.
@@ -126,8 +125,8 @@ func NewPodGangMapBuilder(pcsName, namespace string, pcsUID types.UID, replicaIn
 						Kind:               "PodCliqueSet",
 						Name:               pcsName,
 						UID:                pcsUID,
-						Controller:         ptr.To(true),
-						BlockOwnerDeletion: ptr.To(true),
+						Controller:         new(true),
+						BlockOwnerDeletion: new(true),
 					},
 				},
 			},

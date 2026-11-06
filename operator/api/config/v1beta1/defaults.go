@@ -18,7 +18,6 @@ import (
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/utils/ptr"
 )
 
 const (
@@ -136,37 +135,37 @@ func SetDefaults_ServerConfiguration(serverConfig *ServerConfiguration) {
 // SetDefaults_PodCliqueSetControllerConfiguration sets defaults for the PodCliqueSetControllerConfiguration.
 func SetDefaults_PodCliqueSetControllerConfiguration(obj *PodCliqueSetControllerConfiguration) {
 	if obj.ConcurrentSyncs == nil {
-		obj.ConcurrentSyncs = ptr.To(10)
+		obj.ConcurrentSyncs = new(10)
 	}
 }
 
 // SetDefaults_PodCliqueControllerConfiguration sets defaults for the PodCliqueControllerConfiguration.
 func SetDefaults_PodCliqueControllerConfiguration(obj *PodCliqueControllerConfiguration) {
 	if obj.ConcurrentSyncs == nil {
-		obj.ConcurrentSyncs = ptr.To(10)
+		obj.ConcurrentSyncs = new(10)
 	}
 }
 
 // SetDefaults_PodCliqueScalingGroupControllerConfiguration sets defaults for the PodCliqueScalignGroupControllerConfiguration.
 func SetDefaults_PodCliqueScalingGroupControllerConfiguration(obj *PodCliqueScalingGroupControllerConfiguration) {
 	if obj.ConcurrentSyncs == nil {
-		obj.ConcurrentSyncs = ptr.To(5)
+		obj.ConcurrentSyncs = new(5)
 	}
 }
 
 // SetDefaults_PodGangControllerConfiguration sets the default for PodGangControllerConfiguration.
 func SetDefaults_PodGangControllerConfiguration(obj *PodGangControllerConfiguration) {
 	if obj.ConcurrentSyncs == nil {
-		obj.ConcurrentSyncs = ptr.To(5)
+		obj.ConcurrentSyncs = new(5)
 	}
 }
 
 // SetDefaults_DebuggingConfiguration sets defaults for the debugging configuration.
 func SetDefaults_DebuggingConfiguration(obj *DebuggingConfiguration) {
 	if obj.PprofBindHost == nil {
-		obj.PprofBindHost = ptr.To(defaultPprofBindHost)
+		obj.PprofBindHost = new(defaultPprofBindHost)
 	}
 	if obj.PprofBindPort == nil {
-		obj.PprofBindPort = ptr.To(defaultPprofBindPort)
+		obj.PprofBindPort = new(defaultPprofBindPort)
 	}
 }

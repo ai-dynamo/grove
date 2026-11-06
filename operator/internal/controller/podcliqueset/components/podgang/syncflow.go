@@ -41,7 +41,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
-	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
@@ -429,7 +428,7 @@ func topologyLevelKeyForPackDomain(ss *syncState, nsName types.NamespacedName, t
 		ss.logger.Info(packConstraintType+" topology domain not found in cluster topology levels, skipping setting "+packConstraintType+" pack constraint", "namespacedName", nsName, "topologyDomain", topologyDomain, "topologyConstraint", *topologyConstraint)
 		return nil
 	}
-	return ptr.To(topologyLevel.Key)
+	return new(topologyLevel.Key)
 }
 
 // getExistingPodsByPCLQForPCS fetches all non-terminating pods grouped by PodClique.

@@ -23,7 +23,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"k8s.io/utils/ptr"
 )
 
 func TestOperatorServiceName(t *testing.T) {
@@ -50,22 +49,22 @@ func TestNamespaceFromFile(t *testing.T) {
 		},
 		{
 			description: "namespace is returned",
-			content:     ptr.To("grove-system"),
+			content:     new("grove-system"),
 			expected:    "grove-system",
 		},
 		{
 			description: "surrounding whitespace is trimmed",
-			content:     ptr.To("  grove-system\n"),
+			content:     new("  grove-system\n"),
 			expected:    "grove-system",
 		},
 		{
 			description: "empty file is an error",
-			content:     ptr.To(""),
+			content:     new(""),
 			errContains: "is empty",
 		},
 		{
 			description: "whitespace-only file is an error",
-			content:     ptr.To(" \n"),
+			content:     new(" \n"),
 			errContains: "is empty",
 		},
 	}

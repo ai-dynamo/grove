@@ -7,6 +7,7 @@ linters:
     - importas
     - loggercheck
     - misspell
+    - modernize
     - nilerr
     - revive
     - unconvert
@@ -19,6 +20,13 @@ linters:
       no-printf-like: true
     misspell:
       mode: restricted # only check comments
+    modernize:
+      # omitzero would rewrite `omitempty` to `omitzero` on JSON tags, which
+      # changes wire semantics (omitzero omits on the zero value, omitempty on
+      # the empty value) and is not a safe mechanical modernization for CRD
+      # API types. Keep the other modernize analyzers.
+      disable:
+        - omitzero
     revive:
       rules:
         - name: duplicated-imports

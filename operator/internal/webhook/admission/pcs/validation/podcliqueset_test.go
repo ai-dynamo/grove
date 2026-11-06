@@ -346,8 +346,8 @@ func TestPodCliqueScalingGroupConfigValidation(t *testing.T) {
 				{
 					Name:         "workers",
 					CliqueNames:  []string{"prefill"},
-					Replicas:     ptr.To(int32(4)),
-					MinAvailable: ptr.To(int32(2)),
+					Replicas:     new(int32(4)),
+					MinAvailable: new(int32(2)),
 				},
 			},
 			cliqueTemplates: []string{"prefill"},
@@ -359,8 +359,8 @@ func TestPodCliqueScalingGroupConfigValidation(t *testing.T) {
 				{
 					Name:         "workers",
 					CliqueNames:  []string{"prefill"},
-					Replicas:     ptr.To(int32(-1)),
-					MinAvailable: ptr.To(int32(1)),
+					Replicas:     new(int32(-1)),
+					MinAvailable: new(int32(1)),
 				},
 			},
 			cliqueTemplates: []string{"prefill"},
@@ -376,8 +376,8 @@ func TestPodCliqueScalingGroupConfigValidation(t *testing.T) {
 				{
 					Name:         "workers",
 					CliqueNames:  []string{"prefill"},
-					Replicas:     ptr.To(int32(4)),
-					MinAvailable: ptr.To(int32(0)),
+					Replicas:     new(int32(4)),
+					MinAvailable: new(int32(0)),
 				},
 			},
 			cliqueTemplates: []string{"prefill"},
@@ -392,8 +392,8 @@ func TestPodCliqueScalingGroupConfigValidation(t *testing.T) {
 				{
 					Name:         "workers",
 					CliqueNames:  []string{"prefill"},
-					Replicas:     ptr.To(int32(2)),
-					MinAvailable: ptr.To(int32(4)),
+					Replicas:     new(int32(2)),
+					MinAvailable: new(int32(4)),
 				},
 			},
 			cliqueTemplates: []string{"prefill"},
@@ -408,10 +408,10 @@ func TestPodCliqueScalingGroupConfigValidation(t *testing.T) {
 				{
 					Name:         "workers",
 					CliqueNames:  []string{"prefill"},
-					Replicas:     ptr.To(int32(4)),
-					MinAvailable: ptr.To(int32(3)),
+					Replicas:     new(int32(4)),
+					MinAvailable: new(int32(3)),
 					ScaleConfig: &grovecorev1beta1.AutoScalingConfig{
-						MinReplicas: ptr.To(int32(2)),
+						MinReplicas: new(int32(2)),
 						MaxReplicas: 10,
 					},
 				},
@@ -428,10 +428,10 @@ func TestPodCliqueScalingGroupConfigValidation(t *testing.T) {
 				{
 					Name:         "workers",
 					CliqueNames:  []string{"prefill"},
-					Replicas:     ptr.To(int32(4)),
-					MinAvailable: ptr.To(int32(1)),
+					Replicas:     new(int32(4)),
+					MinAvailable: new(int32(1)),
 					ScaleConfig: &grovecorev1beta1.AutoScalingConfig{
-						MinReplicas: ptr.To(int32(4)),
+						MinReplicas: new(int32(4)),
 						MaxReplicas: 4,
 					},
 				},
@@ -445,10 +445,10 @@ func TestPodCliqueScalingGroupConfigValidation(t *testing.T) {
 				{
 					Name:         "workers",
 					CliqueNames:  []string{"prefill"},
-					Replicas:     ptr.To(int32(4)),
-					MinAvailable: ptr.To(int32(1)),
+					Replicas:     new(int32(4)),
+					MinAvailable: new(int32(1)),
 					ScaleConfig: &grovecorev1beta1.AutoScalingConfig{
-						MinReplicas: ptr.To(int32(4)),
+						MinReplicas: new(int32(4)),
 						MaxReplicas: 2,
 					},
 				},
@@ -465,10 +465,10 @@ func TestPodCliqueScalingGroupConfigValidation(t *testing.T) {
 				{
 					Name:         "workers",
 					CliqueNames:  []string{"prefill"},
-					Replicas:     ptr.To(int32(1)),
-					MinAvailable: ptr.To(int32(1)),
+					Replicas:     new(int32(1)),
+					MinAvailable: new(int32(1)),
 					ScaleConfig: &grovecorev1beta1.AutoScalingConfig{
-						MinReplicas: ptr.To(int32(1)),
+						MinReplicas: new(int32(1)),
 						MaxReplicas: 0,
 					},
 				},
@@ -485,7 +485,7 @@ func TestPodCliqueScalingGroupConfigValidation(t *testing.T) {
 				{
 					Name:        "workers",
 					CliqueNames: []string{"prefill"},
-					Replicas:    ptr.To(int32(4)),
+					Replicas:    new(int32(4)),
 				},
 			},
 			cliqueTemplates: []string{"prefill"},
@@ -693,12 +693,12 @@ func TestImmutableFieldsValidation(t *testing.T) {
 			name: "Invalid: MinAvailable is immutable",
 			setupOldPCS: func() *grovecorev1beta1.PodCliqueSet {
 				pcs := createTestPodCliqueSet("test")
-				pcs.Spec.Template.Cliques[0].Spec.MinAvailable = ptr.To(int32(1))
+				pcs.Spec.Template.Cliques[0].Spec.MinAvailable = new(int32(1))
 				return pcs
 			},
 			setupNewPCS: func() *grovecorev1beta1.PodCliqueSet {
 				pcs := createTestPodCliqueSet("test")
-				pcs.Spec.Template.Cliques[0].Spec.MinAvailable = ptr.To(int32(2))
+				pcs.Spec.Template.Cliques[0].Spec.MinAvailable = new(int32(2))
 				return pcs
 			},
 			expectError:    true,
@@ -730,14 +730,14 @@ func TestImmutableFieldsValidation(t *testing.T) {
 			setupOldPCS: func() *grovecorev1beta1.PodCliqueSet {
 				pcs := createTestPodCliqueSet("test")
 				pcs.Spec.Template.Cliques[0].Spec.RoleName = "old-role"
-				pcs.Spec.Template.Cliques[0].Spec.MinAvailable = ptr.To(int32(1))
+				pcs.Spec.Template.Cliques[0].Spec.MinAvailable = new(int32(1))
 				pcs.Spec.Template.Cliques[0].Spec.StartsAfter = []string{"dep1"}
 				return pcs
 			},
 			setupNewPCS: func() *grovecorev1beta1.PodCliqueSet {
 				pcs := createTestPodCliqueSet("test")
 				pcs.Spec.Template.Cliques[0].Spec.RoleName = "new-role"
-				pcs.Spec.Template.Cliques[0].Spec.MinAvailable = ptr.To(int32(2))
+				pcs.Spec.Template.Cliques[0].Spec.MinAvailable = new(int32(2))
 				pcs.Spec.Template.Cliques[0].Spec.StartsAfter = []string{"dep1", "dep2"}
 				return pcs
 			},
@@ -867,13 +867,13 @@ func TestPodCliqueScalingGroupConfigsUpdateValidation(t *testing.T) {
 			oldConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{
 					CliqueNames:  []string{"clique1", "clique2"},
-					MinAvailable: ptr.To(int32(1)),
+					MinAvailable: new(int32(1)),
 				},
 			},
 			newConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{
 					CliqueNames:  []string{"clique1", "clique2"},
-					MinAvailable: ptr.To(int32(1)),
+					MinAvailable: new(int32(1)),
 				},
 			},
 			expectedErrors: false,
@@ -883,13 +883,13 @@ func TestPodCliqueScalingGroupConfigsUpdateValidation(t *testing.T) {
 			oldConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{
 					CliqueNames:  []string{"clique1", "clique2"},
-					MinAvailable: ptr.To(int32(1)),
+					MinAvailable: new(int32(1)),
 				},
 			},
 			newConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{
 					CliqueNames:  []string{"clique1", "clique3"},
-					MinAvailable: ptr.To(int32(1)),
+					MinAvailable: new(int32(1)),
 				},
 			},
 			expectedErrors: true,
@@ -900,13 +900,13 @@ func TestPodCliqueScalingGroupConfigsUpdateValidation(t *testing.T) {
 			oldConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{
 					CliqueNames:  []string{"clique1", "clique2"},
-					MinAvailable: ptr.To(int32(1)),
+					MinAvailable: new(int32(1)),
 				},
 			},
 			newConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{
 					CliqueNames:  []string{"clique1", "clique2"},
-					MinAvailable: ptr.To(int32(2)),
+					MinAvailable: new(int32(2)),
 				},
 			},
 			expectedErrors: true,
@@ -917,17 +917,17 @@ func TestPodCliqueScalingGroupConfigsUpdateValidation(t *testing.T) {
 			oldConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{
 					CliqueNames:  []string{"clique1"},
-					MinAvailable: ptr.To(int32(1)),
+					MinAvailable: new(int32(1)),
 				},
 			},
 			newConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{
 					CliqueNames:  []string{"clique1"},
-					MinAvailable: ptr.To(int32(1)),
+					MinAvailable: new(int32(1)),
 				},
 				{
 					CliqueNames:  []string{"clique2"},
-					MinAvailable: ptr.To(int32(1)),
+					MinAvailable: new(int32(1)),
 				},
 			},
 			expectedErrors: true,
@@ -938,17 +938,17 @@ func TestPodCliqueScalingGroupConfigsUpdateValidation(t *testing.T) {
 			oldConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{
 					CliqueNames:  []string{"clique1"},
-					MinAvailable: ptr.To(int32(1)),
+					MinAvailable: new(int32(1)),
 				},
 				{
 					CliqueNames:  []string{"clique2"},
-					MinAvailable: ptr.To(int32(1)),
+					MinAvailable: new(int32(1)),
 				},
 			},
 			newConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{
 					CliqueNames:  []string{"clique1"},
-					MinAvailable: ptr.To(int32(1)),
+					MinAvailable: new(int32(1)),
 				},
 			},
 			expectedErrors: true,
@@ -993,7 +993,7 @@ func TestPodCliqueScalingGroupConfigsUpdateValidation(t *testing.T) {
 			newConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 				{
 					CliqueNames:  []string{"clique1"},
-					MinAvailable: ptr.To(int32(1)),
+					MinAvailable: new(int32(1)),
 				},
 			},
 			expectedErrors: true,
@@ -1005,7 +1005,7 @@ func TestPodCliqueScalingGroupConfigsUpdateValidation(t *testing.T) {
 				{
 					Name:         "sg1",
 					CliqueNames:  []string{"clique1"},
-					MinAvailable: ptr.To(int32(1)),
+					MinAvailable: new(int32(1)),
 					ResourceSharing: []grovecorev1beta1.PCSGResourceSharingSpec{
 						{ResourceSharingSpec: grovecorev1beta1.ResourceSharingSpec{Name: "share-a", Scope: grovecorev1beta1.ResourceSharingScopeAllReplicas}},
 					},
@@ -1015,7 +1015,7 @@ func TestPodCliqueScalingGroupConfigsUpdateValidation(t *testing.T) {
 				{
 					Name:         "sg1",
 					CliqueNames:  []string{"clique1"},
-					MinAvailable: ptr.To(int32(1)),
+					MinAvailable: new(int32(1)),
 					ResourceSharing: []grovecorev1beta1.PCSGResourceSharingSpec{
 						{ResourceSharingSpec: grovecorev1beta1.ResourceSharingSpec{Name: "share-a", Scope: grovecorev1beta1.ResourceSharingScopeAllReplicas}},
 					},
@@ -1029,7 +1029,7 @@ func TestPodCliqueScalingGroupConfigsUpdateValidation(t *testing.T) {
 				{
 					Name:         "sg1",
 					CliqueNames:  []string{"clique1"},
-					MinAvailable: ptr.To(int32(1)),
+					MinAvailable: new(int32(1)),
 					ResourceSharing: []grovecorev1beta1.PCSGResourceSharingSpec{
 						{ResourceSharingSpec: grovecorev1beta1.ResourceSharingSpec{Name: "share-a", Scope: grovecorev1beta1.ResourceSharingScopeAllReplicas}},
 					},
@@ -1039,7 +1039,7 @@ func TestPodCliqueScalingGroupConfigsUpdateValidation(t *testing.T) {
 				{
 					Name:         "sg1",
 					CliqueNames:  []string{"clique1"},
-					MinAvailable: ptr.To(int32(1)),
+					MinAvailable: new(int32(1)),
 					ResourceSharing: []grovecorev1beta1.PCSGResourceSharingSpec{
 						{ResourceSharingSpec: grovecorev1beta1.ResourceSharingSpec{Name: "share-a", Scope: grovecorev1beta1.ResourceSharingScopePerReplica}},
 					},
@@ -1220,7 +1220,7 @@ func TestValidateScaleConfig(t *testing.T) {
 		{
 			name: "valid scale config",
 			scaleConfig: &grovecorev1beta1.AutoScalingConfig{
-				MinReplicas: ptr.To(int32(2)),
+				MinReplicas: new(int32(2)),
 				MaxReplicas: 5,
 			},
 			minAvailable: 1,
@@ -1229,7 +1229,7 @@ func TestValidateScaleConfig(t *testing.T) {
 		{
 			name: "minReplicas less than minAvailable returns error",
 			scaleConfig: &grovecorev1beta1.AutoScalingConfig{
-				MinReplicas: ptr.To(int32(1)),
+				MinReplicas: new(int32(1)),
 				MaxReplicas: 5,
 			},
 			minAvailable:  2,
@@ -1239,7 +1239,7 @@ func TestValidateScaleConfig(t *testing.T) {
 		{
 			name: "maxReplicas less than minReplicas returns error",
 			scaleConfig: &grovecorev1beta1.AutoScalingConfig{
-				MinReplicas: ptr.To(int32(5)),
+				MinReplicas: new(int32(5)),
 				MaxReplicas: 3,
 			},
 			minAvailable:  1,
@@ -1249,7 +1249,7 @@ func TestValidateScaleConfig(t *testing.T) {
 		{
 			name: "minReplicas equal to maxReplicas passes validation",
 			scaleConfig: &grovecorev1beta1.AutoScalingConfig{
-				MinReplicas: ptr.To(int32(5)),
+				MinReplicas: new(int32(5)),
 				MaxReplicas: 5,
 			},
 			minAvailable: 1,

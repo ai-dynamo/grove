@@ -17,6 +17,7 @@ package resourceclaim
 import (
 	"context"
 	"fmt"
+	"maps"
 	"testing"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
@@ -28,7 +29,6 @@ import (
 	resourcev1 "k8s.io/api/resource/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
@@ -500,9 +500,7 @@ func TestCleanupStalePerReplicaRCs(t *testing.T) {
 
 	rcWithIndex := func(name, ns string, replicaIndex int) *resourcev1.ResourceClaim {
 		l := make(map[string]string, len(baseLabels)+1)
-		for k, v := range baseLabels {
-			l[k] = v
-		}
+		maps.Copy(l, baseLabels)
 		l[apicommon.LabelPodCliqueSetReplicaIndex] = fmt.Sprintf("%d", replicaIndex)
 		return &resourcev1.ResourceClaim{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns, Labels: l}}
 	}
@@ -558,4 +556,4 @@ func TestCleanupStalePerReplicaRCs(t *testing.T) {
 }
 
 // Ensure ptr.To works for tests that need int pointer
-var _ = ptr.To(0)
+var _ = new(0)

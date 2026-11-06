@@ -26,7 +26,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/uuid"
-	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -52,7 +51,7 @@ func newTestOwnerReference(name string, uid types.UID, isController bool) metav1
 		Kind:       constants.KindPodCliqueSet,
 		Name:       name,
 		UID:        uid,
-		Controller: ptr.To(isController),
+		Controller: new(isController),
 	}
 }
 
@@ -366,7 +365,7 @@ func TestIsResourceTerminating(t *testing.T) {
 					"test.finalizer/cleanup",
 				},
 				DeletionTimestamp:          &now,
-				DeletionGracePeriodSeconds: ptr.To(int64(30)),
+				DeletionGracePeriodSeconds: new(int64(30)),
 			},
 			expectedResult: true,
 		},

@@ -36,7 +36,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
-	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
@@ -154,7 +153,7 @@ func (r *Reconciler) initUpdateProgress(ctx context.Context, pcs *grovecorev1bet
 	}
 	// OnDelete strategy sets UpdateEndedAt too, since we do not know when all the pods will manually be deleted, and gang termination is disabled when an update is in progress
 	if pcs.Spec.UpdateStrategy != nil && pcs.Spec.UpdateStrategy.Type == grovecorev1beta1.OnDeleteStrategy {
-		updateProgress.UpdateEndedAt = ptr.To(metav1.Now())
+		updateProgress.UpdateEndedAt = new(metav1.Now())
 	}
 	// The Coherent strategy rolls only the components whose pod template changed. Capture that scope now,
 	// while Status.CurrentGenerationHash still holds the previous hash, and preserve it for the update.

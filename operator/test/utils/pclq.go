@@ -24,7 +24,6 @@ import (
 	"github.com/samber/lo"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/utils/ptr"
 )
 
 // PodCliqueBuilder is a builder for creating PodClique objects.
@@ -61,7 +60,7 @@ func NewPCSGPodCliqueBuilder(name, namespace, pcsName, pcsgName string, pcsRepli
 		},
 		Spec: grovecorev1beta1.PodCliqueSpec{
 			Replicas:     1,
-			MinAvailable: ptr.To(int32(1)),
+			MinAvailable: new(int32(1)),
 		},
 		Status: grovecorev1beta1.PodCliqueStatus{},
 	}
@@ -89,7 +88,7 @@ func (b *PodCliqueBuilder) WithReplicas(replicas int32) *PodCliqueBuilder {
 
 // WithMinAvailable sets the MinAvailable for the PodClique.
 func (b *PodCliqueBuilder) WithMinAvailable(minAvailable int32) *PodCliqueBuilder {
-	b.pclq.Spec.MinAvailable = ptr.To(minAvailable)
+	b.pclq.Spec.MinAvailable = new(minAvailable)
 	return b
 }
 
@@ -116,7 +115,7 @@ func (b *PodCliqueBuilder) WithOwnerReference(kind, name string, uid types.UID) 
 		Kind:       kind,
 		Name:       name,
 		UID:        types.UID("test-uid"),
-		Controller: ptr.To(true),
+		Controller: new(true),
 	}
 	if uid != "" {
 		ownerRef.UID = uid
@@ -157,14 +156,14 @@ func createDefaultPodCliqueWithoutPodSpec(pcsName string, pcsUID types.UID, pclq
 					Kind:               constants.KindPodCliqueSet,
 					Name:               pcsName,
 					UID:                pcsUID,
-					Controller:         ptr.To(true),
-					BlockOwnerDeletion: ptr.To(true),
+					Controller:         new(true),
+					BlockOwnerDeletion: new(true),
 				},
 			},
 		},
 		Spec: grovecorev1beta1.PodCliqueSpec{
 			Replicas:     1,
-			MinAvailable: ptr.To(int32(1)),
+			MinAvailable: new(int32(1)),
 		},
 	}
 }

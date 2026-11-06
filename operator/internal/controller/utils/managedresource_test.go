@@ -23,7 +23,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/uuid"
-	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -34,7 +33,7 @@ func newOwnerReference(kind, name string, isController bool) metav1.OwnerReferen
 		Kind:       kind,
 		Name:       name,
 		UID:        uuid.NewUUID(),
-		Controller: ptr.To(isController),
+		Controller: new(isController),
 	}
 }
 

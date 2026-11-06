@@ -31,7 +31,6 @@ import (
 
 	"github.com/go-logr/logr"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
@@ -134,7 +133,7 @@ func (r *Reconciler) initOrResetUpdate(ctx context.Context, pcs *grovecorev1beta
 	}
 	// OnDelete strategy sets UpdateEndedAt too, since we do not know when all the pods will manually be deleted, and gang termination is disabled when an update is in progress
 	if !componentutils.IsRollingUpdateStrategy(pcs) {
-		pcsg.Status.UpdateProgress.UpdateEndedAt = ptr.To(metav1.Now())
+		pcsg.Status.UpdateProgress.UpdateEndedAt = new(metav1.Now())
 	}
 	// reset the updated replicas count to 0 so that the update can start afresh.
 	pcsg.Status.UpdatedReplicas = 0

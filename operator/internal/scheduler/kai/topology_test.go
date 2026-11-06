@@ -34,7 +34,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/client-go/tools/record"
-	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -439,8 +438,8 @@ func createTestKAITopology(levels []kaitopologyv1alpha1.TopologyLevel, owner *gr
 				Kind:               apicommonconstants.KindClusterTopology,
 				Name:               owner.Name,
 				UID:                owner.UID,
-				Controller:         ptr.To(true),
-				BlockOwnerDeletion: ptr.To(true),
+				Controller:         new(true),
+				BlockOwnerDeletion: new(true),
 			},
 		}
 	}

@@ -34,7 +34,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	k8svalidation "k8s.io/apimachinery/pkg/util/validation"
-	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
@@ -88,7 +87,7 @@ func TestGetExistingResourceNames(t *testing.T) {
 						Kind:       "PodCliqueSet",
 						Name:       "test-pcs",
 						UID:        pcsUID,
-						Controller: ptr.To(true),
+						Controller: new(true),
 					},
 				},
 			},
@@ -125,7 +124,7 @@ func TestGetExistingResourceNames(t *testing.T) {
 						Kind:       "PodCliqueSet",
 						Name:       "test-pcs",
 						UID:        pcsUID,
-						Controller: ptr.To(true),
+						Controller: new(true),
 					},
 				},
 			},
@@ -162,7 +161,7 @@ func TestGetExistingResourceNames(t *testing.T) {
 						Kind:       "PodCliqueSet",
 						Name:       "other-pcs",
 						UID:        types.UID("other-uid"),
-						Controller: ptr.To(true),
+						Controller: new(true),
 					},
 				},
 			},
@@ -272,7 +271,7 @@ func TestSync(t *testing.T) {
 						Kind:       "PodCliqueSet",
 						Name:       "test-pcs",
 						UID:        pcsUID,
-						Controller: ptr.To(true),
+						Controller: new(true),
 					},
 				},
 			},
@@ -320,7 +319,7 @@ func TestSync(t *testing.T) {
 						Kind:       "PodCliqueSet",
 						Name:       "other-pcs",
 						UID:        types.UID("other-uid"),
-						Controller: ptr.To(true),
+						Controller: new(true),
 					},
 				},
 			},
@@ -410,7 +409,7 @@ func TestSync(t *testing.T) {
 						Kind:       "PodCliqueSet",
 						Name:       "test-pcs",
 						UID:        pcsUID,
-						Controller: ptr.To(true),
+						Controller: new(true),
 					},
 				},
 			},
@@ -535,7 +534,7 @@ func newOwnedSecret(name string, pcs *grovecorev1beta1.PodCliqueSet) *corev1.Sec
 					Kind:       "PodCliqueSet",
 					Name:       pcs.Name,
 					UID:        pcs.UID,
-					Controller: ptr.To(true),
+					Controller: new(true),
 				},
 			},
 		},

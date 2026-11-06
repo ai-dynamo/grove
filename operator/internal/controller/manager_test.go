@@ -38,7 +38,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/rest"
-	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
@@ -167,9 +166,9 @@ func TestCreateManagerOptions(t *testing.T) {
 				ResourceLock: "leases",
 			},
 			Debugging: &configv1beta1.DebuggingConfiguration{
-				EnableProfiling: ptr.To(true),
-				PprofBindHost:   ptr.To("127.0.0.1"),
-				PprofBindPort:   ptr.To(2753),
+				EnableProfiling: new(true),
+				PprofBindHost:   new("127.0.0.1"),
+				PprofBindPort:   new(2753),
 			},
 		}
 
@@ -203,9 +202,9 @@ func TestCreateManagerOptions(t *testing.T) {
 				ResourceLock: "leases",
 			},
 			Debugging: &configv1beta1.DebuggingConfiguration{
-				EnableProfiling: ptr.To(true),
-				PprofBindHost:   ptr.To("127.0.0.1"),
-				PprofBindPort:   ptr.To(9999),
+				EnableProfiling: new(true),
+				PprofBindHost:   new("127.0.0.1"),
+				PprofBindPort:   new(9999),
 			},
 		}
 
@@ -239,9 +238,9 @@ func TestCreateManagerOptions(t *testing.T) {
 				ResourceLock: "leases",
 			},
 			Debugging: &configv1beta1.DebuggingConfiguration{
-				EnableProfiling: ptr.To(true),
-				PprofBindHost:   ptr.To("::1"),
-				PprofBindPort:   ptr.To(2753),
+				EnableProfiling: new(true),
+				PprofBindHost:   new("::1"),
+				PprofBindPort:   new(2753),
 			},
 		}
 
@@ -275,9 +274,9 @@ func TestCreateManagerOptions(t *testing.T) {
 				ResourceLock: "leases",
 			},
 			Debugging: &configv1beta1.DebuggingConfiguration{
-				EnableProfiling: ptr.To(true),
-				PprofBindHost:   ptr.To("127.0.0.1"),
-				PprofBindPort:   ptr.To(2753),
+				EnableProfiling: new(true),
+				PprofBindHost:   new("127.0.0.1"),
+				PprofBindPort:   new(2753),
 			},
 		}
 
@@ -312,7 +311,7 @@ func TestCreateManagerOptions(t *testing.T) {
 				ResourceLock: "leases",
 			},
 			Debugging: &configv1beta1.DebuggingConfiguration{
-				EnableProfiling: ptr.To(false),
+				EnableProfiling: new(false),
 			},
 		}
 

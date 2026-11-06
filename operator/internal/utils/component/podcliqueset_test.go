@@ -27,7 +27,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/sets"
-	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
@@ -583,22 +582,22 @@ func TestIsPCSReplicaAvailable(t *testing.T) {
 	availablePCLQ := grovecorev1beta1.PodClique{
 		Spec: grovecorev1beta1.PodCliqueSpec{
 			Replicas:     1,
-			MinAvailable: ptr.To(int32(1)),
+			MinAvailable: new(int32(1)),
 		},
 		Status: grovecorev1beta1.PodCliqueStatus{ReadyReplicas: 1},
 	}
 	availablePCSG := grovecorev1beta1.PodCliqueScalingGroup{
 		Spec: grovecorev1beta1.PodCliqueScalingGroupSpec{
 			Replicas:     1,
-			MinAvailable: ptr.To(int32(1)),
+			MinAvailable: new(int32(1)),
 		},
 		Status: grovecorev1beta1.PodCliqueScalingGroupStatus{AvailableReplicas: 1},
 	}
 	terminatingPCLQ := availablePCLQ
-	terminatingPCLQ.DeletionTimestamp = ptr.To(metav1.Now())
+	terminatingPCLQ.DeletionTimestamp = new(metav1.Now())
 	terminatingPCLQ.Finalizers = []string{"test"}
 	terminatingPCSG := availablePCSG
-	terminatingPCSG.DeletionTimestamp = ptr.To(metav1.Now())
+	terminatingPCSG.DeletionTimestamp = new(metav1.Now())
 	terminatingPCSG.Finalizers = []string{"test"}
 	unavailablePCLQ := availablePCLQ
 	unavailablePCLQ.Status.ReadyReplicas = 0
@@ -655,18 +654,18 @@ func TestIsPCSReplicaAvailable(t *testing.T) {
 
 func TestHasSufficientScheduledReplicasForPCSReplica(t *testing.T) {
 	scheduledPCLQ := grovecorev1beta1.PodClique{
-		Spec:   grovecorev1beta1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To(int32(1))},
+		Spec:   grovecorev1beta1.PodCliqueSpec{Replicas: 1, MinAvailable: new(int32(1))},
 		Status: grovecorev1beta1.PodCliqueStatus{ScheduledReplicas: 1},
 	}
 	scheduledPCSG := grovecorev1beta1.PodCliqueScalingGroup{
-		Spec:   grovecorev1beta1.PodCliqueScalingGroupSpec{Replicas: 1, MinAvailable: ptr.To(int32(1))},
+		Spec:   grovecorev1beta1.PodCliqueScalingGroupSpec{Replicas: 1, MinAvailable: new(int32(1))},
 		Status: grovecorev1beta1.PodCliqueScalingGroupStatus{ScheduledReplicas: 1},
 	}
 	terminatingPCLQ := scheduledPCLQ
-	terminatingPCLQ.DeletionTimestamp = ptr.To(metav1.Now())
+	terminatingPCLQ.DeletionTimestamp = new(metav1.Now())
 	terminatingPCLQ.Finalizers = []string{"test"}
 	terminatingPCSG := scheduledPCSG
-	terminatingPCSG.DeletionTimestamp = ptr.To(metav1.Now())
+	terminatingPCSG.DeletionTimestamp = new(metav1.Now())
 	terminatingPCSG.Finalizers = []string{"test"}
 	insufficientPCLQ := scheduledPCLQ
 	insufficientPCLQ.Status.ScheduledReplicas = 0

@@ -48,7 +48,7 @@ func TestDefaultPodCliqueSet(t *testing.T) {
 							TerminationGracePeriodSeconds: ptr.To[int64](30),
 						},
 						ScaleConfig: &grovecorev1beta1.AutoScalingConfig{
-							MinReplicas: ptr.To(int32(2)),
+							MinReplicas: new(int32(2)),
 							MaxReplicas: 3,
 						},
 						MinAvailable: ptr.To[int32](1),
@@ -149,7 +149,7 @@ func TestDefaultPodCliqueTemplateSpecs(t *testing.T) {
 					Spec: grovecorev1beta1.PodCliqueSpec{
 						Replicas:     5,
 						RoleName:     "role1",
-						MinAvailable: ptr.To(int32(3)),
+						MinAvailable: new(int32(3)),
 						PodSpec:      corev1.PodSpec{},
 					},
 				},
@@ -168,7 +168,7 @@ func TestDefaultPodCliqueTemplateSpecs(t *testing.T) {
 					Spec: grovecorev1beta1.PodCliqueSpec{
 						Replicas:     5,
 						RoleName:     "role1",
-						MinAvailable: ptr.To(int32(2)),
+						MinAvailable: new(int32(2)),
 						PodSpec:      corev1.PodSpec{},
 						ScaleConfig: &grovecorev1beta1.AutoScalingConfig{
 							MinReplicas: nil,
@@ -217,7 +217,7 @@ func TestDefaultPodCliqueTemplateSpecs(t *testing.T) {
 						RoleName: "role1",
 						PodSpec:  corev1.PodSpec{},
 						ScaleConfig: &grovecorev1beta1.AutoScalingConfig{
-							MinReplicas: ptr.To(int32(2)),
+							MinReplicas: new(int32(2)),
 							MaxReplicas: 10,
 						},
 					},
@@ -293,8 +293,8 @@ func TestDefaultPodCliqueScalingGroupConfigs(t *testing.T) {
 				{
 					Name:         "sg1",
 					CliqueNames:  []string{"clique1", "clique2"},
-					Replicas:     ptr.To(int32(3)),
-					MinAvailable: ptr.To(int32(2)),
+					Replicas:     new(int32(3)),
+					MinAvailable: new(int32(2)),
 					ScaleConfig: &grovecorev1beta1.AutoScalingConfig{
 						MinReplicas: nil,
 						MaxReplicas: 10,
@@ -314,7 +314,7 @@ func TestDefaultPodCliqueScalingGroupConfigs(t *testing.T) {
 				{
 					Name:        "sg1",
 					CliqueNames: []string{"clique1", "clique2"},
-					Replicas:    ptr.To(int32(3)),
+					Replicas:    new(int32(3)),
 					ScaleConfig: &grovecorev1beta1.AutoScalingConfig{
 						MinReplicas: nil,
 						MaxReplicas: 10,
@@ -334,9 +334,9 @@ func TestDefaultPodCliqueScalingGroupConfigs(t *testing.T) {
 				{
 					Name:        "sg1",
 					CliqueNames: []string{"clique1", "clique2"},
-					Replicas:    ptr.To(int32(3)),
+					Replicas:    new(int32(3)),
 					ScaleConfig: &grovecorev1beta1.AutoScalingConfig{
-						MinReplicas: ptr.To(int32(1)),
+						MinReplicas: new(int32(1)),
 						MaxReplicas: 10,
 					},
 				},
@@ -354,7 +354,7 @@ func TestDefaultPodCliqueScalingGroupConfigs(t *testing.T) {
 				{
 					Name:        "sg1",
 					CliqueNames: []string{"clique1", "clique2"},
-					Replicas:    ptr.To(int32(3)),
+					Replicas:    new(int32(3)),
 					ScaleConfig: nil,
 				},
 			},
@@ -383,8 +383,8 @@ func TestDefaultPodCliqueScalingGroupConfigs(t *testing.T) {
 				{
 					Name:         "sg1",
 					CliqueNames:  []string{"clique1"},
-					Replicas:     ptr.To(int32(2)),
-					MinAvailable: ptr.To(int32(1)),
+					Replicas:     new(int32(2)),
+					MinAvailable: new(int32(1)),
 					ScaleConfig: &grovecorev1beta1.AutoScalingConfig{
 						MinReplicas: nil,
 						MaxReplicas: 5,
@@ -393,8 +393,8 @@ func TestDefaultPodCliqueScalingGroupConfigs(t *testing.T) {
 				{
 					Name:         "sg2",
 					CliqueNames:  []string{"clique2"},
-					Replicas:     ptr.To(int32(4)),
-					MinAvailable: ptr.To(int32(3)),
+					Replicas:     new(int32(4)),
+					MinAvailable: new(int32(3)),
 					ScaleConfig: &grovecorev1beta1.AutoScalingConfig{
 						MinReplicas: nil,
 						MaxReplicas: 8,

@@ -30,7 +30,7 @@ import (
 func TestOperatorHealthProbes(t *testing.T) {
 	tests := []struct {
 		name       string
-		values     map[string]interface{}
+		values     map[string]any
 		wantProbes bool
 	}{
 		{
@@ -40,10 +40,10 @@ func TestOperatorHealthProbes(t *testing.T) {
 		},
 		{
 			name: "explicitly disabled",
-			values: map[string]interface{}{
-				"config": map[string]interface{}{
-					"server": map[string]interface{}{
-						"healthProbes": map[string]interface{}{
+			values: map[string]any{
+				"config": map[string]any{
+					"server": map[string]any{
+						"healthProbes": map[string]any{
 							"enable": false,
 						},
 					},
@@ -81,7 +81,7 @@ func TestOperatorHealthProbes(t *testing.T) {
 func TestOperatorImagePullSecrets(t *testing.T) {
 	tests := []struct {
 		name   string
-		values map[string]interface{}
+		values map[string]any
 		want   []corev1.LocalObjectReference
 	}{
 		{
@@ -91,9 +91,9 @@ func TestOperatorImagePullSecrets(t *testing.T) {
 		},
 		{
 			name: "set from values",
-			values: map[string]interface{}{
-				"imagePullSecrets": []interface{}{
-					map[string]interface{}{"name": "registry-creds"},
+			values: map[string]any{
+				"imagePullSecrets": []any{
+					map[string]any{"name": "registry-creds"},
 				},
 			},
 			want: []corev1.LocalObjectReference{{Name: "registry-creds"}},
@@ -111,11 +111,11 @@ func TestOperatorImagePullSecrets(t *testing.T) {
 // TestDeploymentServiceName verifies that the operator and the CRD installer get the name of the operator Service,
 // which the webhook certificates and the conversion webhook of the CRDs refer to.
 func TestDeploymentServiceName(t *testing.T) {
-	deployment := renderOperatorDeployment(t, map[string]interface{}{
-		"service": map[string]interface{}{"name": "my-grove"},
-		"config": map[string]interface{}{
-			"server": map[string]interface{}{
-				"webhooks": map[string]interface{}{"port": 8443},
+	deployment := renderOperatorDeployment(t, map[string]any{
+		"service": map[string]any{"name": "my-grove"},
+		"config": map[string]any{
+			"server": map[string]any{
+				"webhooks": map[string]any{"port": 8443},
 			},
 		},
 	})
@@ -132,16 +132,16 @@ func TestDeploymentServiceName(t *testing.T) {
 func TestCRDInstallerAlwaysRuns(t *testing.T) {
 	for _, tc := range []struct {
 		name        string
-		values      map[string]interface{}
+		values      map[string]any
 		wantUpgrade string
 	}{
 		{name: "unset", wantUpgrade: "--upgrade-crds=false"},
-		{name: "disabled", values: map[string]interface{}{"crdInstaller": map[string]interface{}{"upgradeCRDs": false}}, wantUpgrade: "--upgrade-crds=false"},
-		{name: "enabled", values: map[string]interface{}{"crdInstaller": map[string]interface{}{"upgradeCRDs": true}}, wantUpgrade: "--upgrade-crds=true"},
+		{name: "disabled", values: map[string]any{"crdInstaller": map[string]any{"upgradeCRDs": false}}, wantUpgrade: "--upgrade-crds=false"},
+		{name: "enabled", values: map[string]any{"crdInstaller": map[string]any{"upgradeCRDs": true}}, wantUpgrade: "--upgrade-crds=true"},
 		{
 			name: "legacy installer toggle ignored",
-			values: map[string]interface{}{
-				"crdInstaller": map[string]interface{}{"enabled": false},
+			values: map[string]any{
+				"crdInstaller": map[string]any{"enabled": false},
 			},
 			wantUpgrade: "--upgrade-crds=false",
 		},
@@ -158,10 +158,10 @@ func TestCRDInstallerAlwaysRuns(t *testing.T) {
 }
 
 func TestCRDInstallerManualCA(t *testing.T) {
-	deployment := renderOperatorDeployment(t, map[string]interface{}{
-		"config": map[string]interface{}{
-			"server": map[string]interface{}{
-				"webhooks": map[string]interface{}{
+	deployment := renderOperatorDeployment(t, map[string]any{
+		"config": map[string]any{
+			"server": map[string]any{
+				"webhooks": map[string]any{
 					"certProvisionMode": "manual",
 					"serverCertDir":     "/custom/webhook-certs",
 				},
@@ -179,7 +179,7 @@ func TestCRDInstallerManualCA(t *testing.T) {
 	})
 }
 
-func renderOperatorDeployment(t *testing.T, values map[string]interface{}) *appsv1.Deployment {
+func renderOperatorDeployment(t *testing.T, values map[string]any) *appsv1.Deployment {
 	t.Helper()
 
 	manifests := renderChart(t, values)
@@ -191,7 +191,7 @@ func renderOperatorDeployment(t *testing.T, values map[string]interface{}) *apps
 	return deployment
 }
 
-func renderChart(t *testing.T, values map[string]interface{}) map[string]string {
+func renderChart(t *testing.T, values map[string]any) map[string]string {
 	t.Helper()
 
 	chart, err := loader.Load(".")

@@ -28,7 +28,6 @@ import (
 	"github.com/go-logr/logr"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/util/sets"
-	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -85,7 +84,7 @@ func coherentProgressMessage(pcs *grovecorev1beta1.PodCliqueSet, replicaInfo pcs
 	if inScopePCSG > 0 {
 		parts = append(parts, fmt.Sprintf("%d/%d PodCliqueScalingGroups", updatedPCSG, inScopePCSG))
 	}
-	return ptr.To(fmt.Sprintf("%s updated to the current revision", strings.Join(parts, " and ")))
+	return new(fmt.Sprintf("%s updated to the current revision", strings.Join(parts, " and ")))
 }
 
 // inScopeUpdateCounts returns, for the update's in-scope components, how many are in scope and how many

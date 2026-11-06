@@ -54,7 +54,7 @@ func TestUpdateObservedGeneration(t *testing.T) {
 					WithReplicas(1).
 					Build()
 				pcsg.Generation = 5
-				pcsg.Status.ObservedGeneration = ptr.To(int64(5))
+				pcsg.Status.ObservedGeneration = new(int64(5))
 				return pcsg
 			},
 			expectPatchSkipped: true,
@@ -80,7 +80,7 @@ func TestUpdateObservedGeneration(t *testing.T) {
 					WithReplicas(1).
 					Build()
 				pcsg.Generation = 7
-				pcsg.Status.ObservedGeneration = ptr.To(int64(4))
+				pcsg.Status.ObservedGeneration = new(int64(4))
 				return pcsg
 			},
 			expectPatchSkipped: false,
@@ -161,7 +161,7 @@ func TestShouldResetOrTriggerUpdatePCSG(t *testing.T) {
 			name: "should_trigger_update_when_no_update_progress",
 			pcs: &grovecorev1beta1.PodCliqueSet{
 				Status: grovecorev1beta1.PodCliqueSetStatus{
-					CurrentGenerationHash: ptr.To("new-hash"),
+					CurrentGenerationHash: new("new-hash"),
 				},
 			},
 			pcsg: &grovecorev1beta1.PodCliqueScalingGroup{
@@ -175,7 +175,7 @@ func TestShouldResetOrTriggerUpdatePCSG(t *testing.T) {
 			name: "should_not_trigger_update_when_hash_matches",
 			pcs: &grovecorev1beta1.PodCliqueSet{
 				Status: grovecorev1beta1.PodCliqueSetStatus{
-					CurrentGenerationHash: ptr.To("current-hash"),
+					CurrentGenerationHash: new("current-hash"),
 				},
 			},
 			pcsg: &grovecorev1beta1.PodCliqueScalingGroup{
@@ -191,7 +191,7 @@ func TestShouldResetOrTriggerUpdatePCSG(t *testing.T) {
 			name: "should_trigger_update_when_hash_differs",
 			pcs: &grovecorev1beta1.PodCliqueSet{
 				Status: grovecorev1beta1.PodCliqueSetStatus{
-					CurrentGenerationHash: ptr.To("new-hash"),
+					CurrentGenerationHash: new("new-hash"),
 				},
 			},
 			pcsg: &grovecorev1beta1.PodCliqueScalingGroup{
@@ -282,7 +282,7 @@ func TestInitOrResetUpdate(t *testing.T) {
 					WithUpdateStrategy(&grovecorev1beta1.PodCliqueSetUpdateStrategy{
 						Type: grovecorev1beta1.RollingRecreateStrategy,
 					}).
-					WithPodCliqueSetGenerationHash(ptr.To("current-hash")).
+					WithPodCliqueSetGenerationHash(new("current-hash")).
 					Build()
 			},
 			setupPCSG: func(pcsUID types.UID) *grovecorev1beta1.PodCliqueScalingGroup {
@@ -301,7 +301,7 @@ func TestInitOrResetUpdate(t *testing.T) {
 				return testutils.NewPodCliqueSetBuilder(testPCSNamePCSG, testNamespacePCSG, pcsUID).
 					WithReplicas(2).
 					WithScalingGroup(testPCSGName, []string{"worker", "router"}).
-					WithPodCliqueSetGenerationHash(ptr.To("current-hash")).
+					WithPodCliqueSetGenerationHash(new("current-hash")).
 					Build()
 			},
 			setupPCSG: func(pcsUID types.UID) *grovecorev1beta1.PodCliqueScalingGroup {
@@ -323,7 +323,7 @@ func TestInitOrResetUpdate(t *testing.T) {
 					WithUpdateStrategy(&grovecorev1beta1.PodCliqueSetUpdateStrategy{
 						Type: grovecorev1beta1.OnDeleteStrategy,
 					}).
-					WithPodCliqueSetGenerationHash(ptr.To("current-hash")).
+					WithPodCliqueSetGenerationHash(new("current-hash")).
 					Build()
 			},
 			setupPCSG: func(pcsUID types.UID) *grovecorev1beta1.PodCliqueScalingGroup {
@@ -345,7 +345,7 @@ func TestInitOrResetUpdate(t *testing.T) {
 					WithUpdateStrategy(&grovecorev1beta1.PodCliqueSetUpdateStrategy{
 						Type: grovecorev1beta1.RollingRecreateStrategy,
 					}).
-					WithPodCliqueSetGenerationHash(ptr.To("new-hash")).
+					WithPodCliqueSetGenerationHash(new("new-hash")).
 					Build()
 			},
 			setupPCSG: func(pcsUID types.UID) *grovecorev1beta1.PodCliqueScalingGroup {
@@ -374,7 +374,7 @@ func TestInitOrResetUpdate(t *testing.T) {
 					WithUpdateStrategy(&grovecorev1beta1.PodCliqueSetUpdateStrategy{
 						Type: grovecorev1beta1.OnDeleteStrategy,
 					}).
-					WithPodCliqueSetGenerationHash(ptr.To("new-hash")).
+					WithPodCliqueSetGenerationHash(new("new-hash")).
 					Build()
 			},
 			setupPCSG: func(pcsUID types.UID) *grovecorev1beta1.PodCliqueScalingGroup {
@@ -388,7 +388,7 @@ func TestInitOrResetUpdate(t *testing.T) {
 				// Simulate an existing update that was completed
 				pcsg.Status.UpdateProgress = &grovecorev1beta1.PodCliqueScalingGroupUpdateProgress{
 					UpdateStartedAt:            updateStartedAt,
-					UpdateEndedAt:              ptr.To(updateEndedAt),
+					UpdateEndedAt:              new(updateEndedAt),
 					PodCliqueSetGenerationHash: "old-hash",
 				}
 				pcsg.Status.UpdatedReplicas = 1

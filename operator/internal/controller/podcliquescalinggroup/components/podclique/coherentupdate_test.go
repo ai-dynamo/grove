@@ -26,7 +26,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/utils/ptr"
 )
 
 func TestReplicaIndicesToRecreate(t *testing.T) {
@@ -138,7 +137,7 @@ func TestReplicaIndicesToRecreate(t *testing.T) {
 func TestReconcileInProgressUpdateRejectsStaleCoherentTarget(t *testing.T) {
 	pcs := &grovecorev1beta1.PodCliqueSet{
 		Status: grovecorev1beta1.PodCliqueSetStatus{
-			CurrentGenerationHash: ptr.To("generation-a"),
+			CurrentGenerationHash: new("generation-a"),
 		},
 		Spec: grovecorev1beta1.PodCliqueSetSpec{
 			UpdateStrategy: &grovecorev1beta1.PodCliqueSetUpdateStrategy{

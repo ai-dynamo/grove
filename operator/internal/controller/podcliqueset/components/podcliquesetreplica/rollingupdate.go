@@ -26,7 +26,6 @@ import (
 
 	"github.com/go-logr/logr"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -150,7 +149,7 @@ func findCurrentlyUpdatingReplicaInfo(pcs *grovecorev1beta1.PodCliqueSet, replic
 // not maintained here.
 func (r *_resource) markCurrentReplicaUpdateEnded(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet) error {
 	original := pcs.DeepCopy()
-	pcs.Status.UpdateProgress.CurrentlyUpdating[0].UpdateEndedAt = ptr.To(metav1.Now())
+	pcs.Status.UpdateProgress.CurrentlyUpdating[0].UpdateEndedAt = new(metav1.Now())
 	if err := r.patchUpdateProgressStatus(ctx, logger, pcs, original); err != nil {
 		logger.Error(err, "failed to patch update progress", "replicaIndex", pcs.Status.UpdateProgress.CurrentlyUpdating[0].ReplicaIndex)
 		return err
@@ -224,7 +223,7 @@ func (r *_resource) updatePCSWithNextSelectedReplica(ctx context.Context, logger
 
 	if nextPCSReplicaToUpdate == nil {
 		logger.Info("Rolling update has completed")
-		pcs.Status.UpdateProgress.UpdateEndedAt = ptr.To(metav1.Now())
+		pcs.Status.UpdateProgress.UpdateEndedAt = new(metav1.Now())
 		pcs.Status.UpdateProgress.CurrentlyUpdating = nil
 	} else {
 		logger.Info("Initiating rolling update for next replica index", "nextReplicaIndex", *nextPCSReplicaToUpdate)

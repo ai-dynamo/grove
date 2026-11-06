@@ -115,7 +115,7 @@ func createManagerOptions(operatorCfg *configv1beta1.OperatorConfiguration) ctrl
 		RenewDeadline:                 &operatorCfg.LeaderElection.RenewDeadline.Duration,
 		RetryPeriod:                   &operatorCfg.LeaderElection.RetryPeriod.Duration,
 		Controller: ctrlconfig.Controller{
-			RecoverPanic: ptr.To(true),
+			RecoverPanic: new(true),
 		},
 		WebhookServer: ctrlwebhook.NewServer(ctrlwebhook.Options{
 			Host:    operatorCfg.Server.Webhooks.BindAddress,

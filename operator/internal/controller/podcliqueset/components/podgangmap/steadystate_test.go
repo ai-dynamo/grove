@@ -15,6 +15,7 @@
 package podgangmap
 
 import (
+	"slices"
 	"strconv"
 	"testing"
 	"time"
@@ -28,7 +29,6 @@ import (
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	clocktesting "k8s.io/utils/clock/testing"
-	"k8s.io/utils/ptr"
 )
 
 const (
@@ -51,7 +51,7 @@ func TestBuildBootstrapEntries(t *testing.T) {
 			name: "standalone clique only, no scaling group",
 			pcs: testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "uid").
 				WithStandaloneCliqueReplicas("clq-a", 3).
-				WithPodCliqueSetGenerationHash(ptr.To(testGenHash)).
+				WithPodCliqueSetGenerationHash(new(testGenHash)).
 				Build(),
 			expectedRoles: []grovecorev1beta1.PodGangEntryRole{grovecorev1beta1.PodGangEntryRoleAnchor},
 			assertEntries: func(t *testing.T, entries []grovecorev1beta1.PodGangEntry) {
@@ -65,7 +65,7 @@ func TestBuildBootstrapEntries(t *testing.T) {
 			name: "scaling group only, no standalone clique, replicas equal minAvailable",
 			pcs: testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "uid").
 				WithScalingGroupConfig(testPCSGName, []string{"c"}, 2, 2).
-				WithPodCliqueSetGenerationHash(ptr.To(testGenHash)).
+				WithPodCliqueSetGenerationHash(new(testGenHash)).
 				Build(),
 			expectedRoles: []grovecorev1beta1.PodGangEntryRole{grovecorev1beta1.PodGangEntryRoleAnchor},
 			assertEntries: func(t *testing.T, entries []grovecorev1beta1.PodGangEntry) {
@@ -78,7 +78,7 @@ func TestBuildBootstrapEntries(t *testing.T) {
 			name: "scaling group only, replicas above minAvailable yields tail",
 			pcs: testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "uid").
 				WithScalingGroupConfig(testPCSGName, []string{"c"}, 4, 2).
-				WithPodCliqueSetGenerationHash(ptr.To(testGenHash)).
+				WithPodCliqueSetGenerationHash(new(testGenHash)).
 				Build(),
 			expectedRoles: []grovecorev1beta1.PodGangEntryRole{
 				grovecorev1beta1.PodGangEntryRoleAnchor,
@@ -98,7 +98,7 @@ func TestBuildBootstrapEntries(t *testing.T) {
 			pcs: testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "uid").
 				WithStandaloneCliqueReplicas("clq-a", 3).
 				WithScalingGroupConfig(testPCSGName, []string{"c"}, 4, 2).
-				WithPodCliqueSetGenerationHash(ptr.To(testGenHash)).
+				WithPodCliqueSetGenerationHash(new(testGenHash)).
 				Build(),
 			expectedRoles: []grovecorev1beta1.PodGangEntryRole{
 				grovecorev1beta1.PodGangEntryRoleAnchor,
@@ -116,7 +116,7 @@ func TestBuildBootstrapEntries(t *testing.T) {
 			name: "reuses anchor epoch from an existing anchor PodGang",
 			pcs: testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "uid").
 				WithStandaloneCliqueReplicas("clq-a", 3).
-				WithPodCliqueSetGenerationHash(ptr.To(testGenHash)).
+				WithPodCliqueSetGenerationHash(new(testGenHash)).
 				Build(),
 			existingPodGangs: []groveschedulerv1alpha1.PodGang{
 				*podGangWithEpochRole("pg-anchor", "500", grovecorev1beta1.PodGangEntryRoleAnchor),
@@ -131,7 +131,7 @@ func TestBuildBootstrapEntries(t *testing.T) {
 			name: "reuses anchor and tail epochs from existing PodGangs",
 			pcs: testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "uid").
 				WithScalingGroupConfig(testPCSGName, []string{"c"}, 4, 2).
-				WithPodCliqueSetGenerationHash(ptr.To(testGenHash)).
+				WithPodCliqueSetGenerationHash(new(testGenHash)).
 				Build(),
 			existingPodGangs: []groveschedulerv1alpha1.PodGang{
 				*podGangWithEpochRole("pg-anchor", "500", grovecorev1beta1.PodGangEntryRoleAnchor),
@@ -152,7 +152,7 @@ func TestBuildBootstrapEntries(t *testing.T) {
 			name: "reuses anchor epoch and assigns tail epoch when no tail PodGang exists",
 			pcs: testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "uid").
 				WithScalingGroupConfig(testPCSGName, []string{"c"}, 4, 2).
-				WithPodCliqueSetGenerationHash(ptr.To(testGenHash)).
+				WithPodCliqueSetGenerationHash(new(testGenHash)).
 				Build(),
 			existingPodGangs: []groveschedulerv1alpha1.PodGang{
 				*podGangWithEpochRole("pg-anchor", "500", grovecorev1beta1.PodGangEntryRoleAnchor),
@@ -174,7 +174,7 @@ func TestBuildBootstrapEntries(t *testing.T) {
 			name: "assigns all epochs when no anchor PodGang exists even if a tail PodGang carries one",
 			pcs: testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "uid").
 				WithScalingGroupConfig(testPCSGName, []string{"c"}, 4, 2).
-				WithPodCliqueSetGenerationHash(ptr.To(testGenHash)).
+				WithPodCliqueSetGenerationHash(new(testGenHash)).
 				Build(),
 			existingPodGangs: []groveschedulerv1alpha1.PodGang{
 				*podGangWithEpochRole("pg-tail", "600", grovecorev1beta1.PodGangEntryRoleTail),
@@ -196,7 +196,7 @@ func TestBuildBootstrapEntries(t *testing.T) {
 			name: "assigns epochs when existing PodGangs carry no epoch label (legacy)",
 			pcs: testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "uid").
 				WithStandaloneCliqueReplicas("clq-a", 3).
-				WithPodCliqueSetGenerationHash(ptr.To(testGenHash)).
+				WithPodCliqueSetGenerationHash(new(testGenHash)).
 				Build(),
 			existingPodGangs: []groveschedulerv1alpha1.PodGang{
 				*testutils.NewPodGangBuilder("pg-legacy", testNamespace).Build(),
@@ -290,7 +290,7 @@ func TestSyncEntries(t *testing.T) {
 			pcs: testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "uid").
 				WithStandaloneCliqueReplicas("clq-a", 3).
 				WithScalingGroupConfig(testPCSGName, []string{"c"}, 2, 2).
-				WithPodCliqueSetGenerationHash(ptr.To(testGenHash)).Build(),
+				WithPodCliqueSetGenerationHash(new(testGenHash)).Build(),
 			existingEntries: []grovecorev1beta1.PodGangEntry{
 				anchorEntry(map[string]int32{"clq-a": 3}, map[string][]int32{testPCSGName: {0, 1}}),
 				scaleOutEntry(nil),
@@ -307,7 +307,7 @@ func TestSyncEntries(t *testing.T) {
 			name: "scale out appends new index to scaleout entry",
 			pcs: testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "uid").
 				WithScalingGroupConfig(testPCSGName, []string{"c"}, 2, 2).
-				WithPodCliqueSetGenerationHash(ptr.To(testGenHash)).Build(),
+				WithPodCliqueSetGenerationHash(new(testGenHash)).Build(),
 			existingEntries: []grovecorev1beta1.PodGangEntry{
 				anchorEntry(nil, map[string][]int32{testPCSGName: {0, 1}}),
 				scaleOutEntry(nil),
@@ -322,7 +322,7 @@ func TestSyncEntries(t *testing.T) {
 			name: "scale in drains only the scaleout entry",
 			pcs: testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "uid").
 				WithScalingGroupConfig(testPCSGName, []string{"c"}, 4, 2).
-				WithPodCliqueSetGenerationHash(ptr.To(testGenHash)).Build(),
+				WithPodCliqueSetGenerationHash(new(testGenHash)).Build(),
 			existingEntries: []grovecorev1beta1.PodGangEntry{
 				anchorEntry(nil, map[string][]int32{testPCSGName: {0, 1}}),
 				tailEntry(map[string][]int32{testPCSGName: {2, 3}}),
@@ -341,7 +341,7 @@ func TestSyncEntries(t *testing.T) {
 			name: "scale in drains tail when scaleout has no indices",
 			pcs: testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "uid").
 				WithScalingGroupConfig(testPCSGName, []string{"c"}, 4, 2).
-				WithPodCliqueSetGenerationHash(ptr.To(testGenHash)).Build(),
+				WithPodCliqueSetGenerationHash(new(testGenHash)).Build(),
 			existingEntries: []grovecorev1beta1.PodGangEntry{
 				anchorEntry(nil, map[string][]int32{testPCSGName: {0, 1}}),
 				tailEntry(map[string][]int32{testPCSGName: {2, 3}}),
@@ -360,7 +360,7 @@ func TestSyncEntries(t *testing.T) {
 			name: "standalone pod count refreshed from live replicas",
 			pcs: testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "uid").
 				WithStandaloneCliqueReplicas("clq-a", 3).
-				WithPodCliqueSetGenerationHash(ptr.To(testGenHash)).Build(),
+				WithPodCliqueSetGenerationHash(new(testGenHash)).Build(),
 			existingEntries: []grovecorev1beta1.PodGangEntry{
 				anchorEntry(map[string]int32{"clq-a": 3}, nil),
 			},
@@ -393,10 +393,10 @@ func TestReconcileStandaloneCliqueCountAcrossAnchors(t *testing.T) {
 	// the i-th count is anchor index len-1-i.
 	anchorsHighestFirst := func(countsByIndex ...int32) []*grovecorev1beta1.PodGangEntry {
 		anchors := make([]*grovecorev1beta1.PodGangEntry, 0, len(countsByIndex))
-		for i := len(countsByIndex) - 1; i >= 0; i-- {
+		for i, c := range slices.Backward(countsByIndex) {
 			entry := testutils.NewPodGangEntryBuilder(testGenHash, strconv.Itoa(100+i)).
 				WithRole(grovecorev1beta1.PodGangEntryRoleAnchor).
-				WithPodCliques(map[string]int32{clique: countsByIndex[i]}).
+				WithPodCliques(map[string]int32{clique: c}).
 				Build()
 			anchors = append(anchors, &entry)
 		}
@@ -438,7 +438,7 @@ func TestEnsureScaleOutEntry(t *testing.T) {
 	clk := clocktesting.NewFakeClock(time.Now())
 	pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "uid").
 		WithScalingGroupConfig(testPCSGName, []string{"c"}, 2, 2).
-		WithPodCliqueSetGenerationHash(ptr.To(testGenHash)).
+		WithPodCliqueSetGenerationHash(new(testGenHash)).
 		Build()
 
 	t.Run("adds a ScaleOut depending on the current-generation anchor", func(t *testing.T) {
@@ -671,6 +671,6 @@ func pcsg(replicas int32) grovecorev1beta1.PodCliqueScalingGroup {
 		ObjectMeta: metav1.ObjectMeta{
 			Name: apicommon.GeneratePodCliqueScalingGroupName(apicommon.ResourceNameReplica{Name: testPCSName, Replica: 0}, testPCSGName),
 		},
-		Spec: grovecorev1beta1.PodCliqueScalingGroupSpec{Replicas: replicas, MinAvailable: ptr.To(int32(2))},
+		Spec: grovecorev1beta1.PodCliqueScalingGroupSpec{Replicas: replicas, MinAvailable: new(int32(2))},
 	}
 }

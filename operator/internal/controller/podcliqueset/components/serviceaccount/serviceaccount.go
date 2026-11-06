@@ -31,7 +31,6 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
@@ -125,7 +124,7 @@ func (r _resource) buildResource(pcs *grovecorev1beta1.PodCliqueSet, sa *corev1.
 			fmt.Sprintf("Error setting controller reference for ServiceAccount: %v", client.ObjectKeyFromObject(sa)),
 		)
 	}
-	sa.AutomountServiceAccountToken = ptr.To(true)
+	sa.AutomountServiceAccountToken = new(true)
 	return nil
 }
 

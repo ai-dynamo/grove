@@ -22,7 +22,6 @@ import (
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/stretchr/testify/require"
-	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 )
@@ -53,16 +52,16 @@ func TestRegisterControllers(t *testing.T) {
 			Scheduler: configv1beta1.SchedulerConfiguration{Profiles: []configv1beta1.SchedulerProfile{{Name: configv1beta1.SchedulerNameKai}}, DefaultProfileName: string(configv1beta1.SchedulerNameKai)},
 			Controllers: configv1beta1.ControllerConfiguration{
 				PodCliqueSet: configv1beta1.PodCliqueSetControllerConfiguration{
-					ConcurrentSyncs: ptr.To(1),
+					ConcurrentSyncs: new(1),
 				},
 				PodClique: configv1beta1.PodCliqueControllerConfiguration{
-					ConcurrentSyncs: ptr.To(1),
+					ConcurrentSyncs: new(1),
 				},
 				PodCliqueScalingGroup: configv1beta1.PodCliqueScalingGroupControllerConfiguration{
-					ConcurrentSyncs: ptr.To(1),
+					ConcurrentSyncs: new(1),
 				},
 				PodGang: configv1beta1.PodGangControllerConfiguration{
-					ConcurrentSyncs: ptr.To(1),
+					ConcurrentSyncs: new(1),
 				},
 			},
 		}
