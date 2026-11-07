@@ -467,23 +467,39 @@ func (p *subStepPlanner) buildTailSubStep(planPos planPosition, headroomByCompon
 		return ss, err
 	}
 	// The old revision's last minimal viable unit drains in one sub-step or not at all: draining part of it
-	// would leave the rest of the old revision without a complete set of components.
+	// would leave the rest of the old revision without a complete set of components. Its missing old-version
+	// Pods are reclaimed meanwhile.
 	drained := ss.drainCountByComponent()
 	for componentName, remaining := range remainingByComponent {
 		if drained[componentName] < remaining {
-			return &subStep{
-				epoch:                       ss.epoch,
-				dependsOn:                   ss.dependsOn,
-				subsumeAnchorEpoch:          ss.subsumeAnchorEpoch,
-				subsumeStandalonePCLQCounts: map[string]int32{},
-				drainStandalonePCLQCounts:   map[string]int32{},
-				tailPCSGReplicaIndices:      map[string][]int32{},
-				drainPCSGReplicaIndices:     map[string][]int32{},
-				lastUnitHeld:                true,
-			}, nil
+			return p.reclaimsOnly(ss), nil
 		}
 	}
 	return ss, nil
+}
+
+// reclaimsOnly narrows a sub-step to the missing old-version Pods it reclaims, for an old revision's last unit
+// that cannot drain together yet. A missing old-version Pod is a slot with no running Pod behind it: keeping it
+// keeps none of the old revision serviceable, and the pod controller does not refill an old-version gang, so
+// holding it would only block its replacement. The sub-step is held when there is nothing to reclaim.
+func (p *subStepPlanner) reclaimsOnly(ss *subStep) *subStep {
+	reclaims := &subStep{
+		epoch:                       ss.epoch,
+		dependsOn:                   ss.dependsOn,
+		subsumeAnchorEpoch:          ss.subsumeAnchorEpoch,
+		subsumeStandalonePCLQCounts: map[string]int32{},
+		drainStandalonePCLQCounts:   map[string]int32{},
+		tailPCSGReplicaIndices:      map[string][]int32{},
+		drainPCSGReplicaIndices:     map[string][]int32{},
+	}
+	for componentName, drain := range ss.drainStandalonePCLQCounts {
+		if reclaim := min(drain, p.numMissingOldVersionPodsByPCLQ[componentName]); reclaim > 0 {
+			reclaims.subsumeStandalonePCLQCounts[componentName] = reclaim
+			reclaims.drainStandalonePCLQCounts[componentName] = reclaim
+		}
+	}
+	reclaims.lastUnitHeld = len(reclaims.drainStandalonePCLQCounts) == 0
+	return reclaims
 }
 
 // keepOldRevisionServiceable orders the tail of a single anchor-bearing step so that the old revision keeps a
@@ -497,17 +513,25 @@ func (p *subStepPlanner) buildTailSubStep(planPos planPosition, headroomByCompon
 // interdependent components: in disaggregated inference, old-revision decode pods are left with no
 // old-revision prefill pod to pair with, and a data plane that keeps revisions apart cannot use them.
 //
-// While any component has more than MinAvailable old-revision replicas left, every component's tail is capped
-// so that MinAvailable of it stays at the old revision. Once no component has more than MinAvailable left
-// (lastUnit), the caps lift and the caller drains that unit in one sub-step or holds. MaxUnavailable is at
-// least MinAvailable for every component under the Coherent strategy, so the last unit can always drain
-// together once the budgets allow it.
+// Only running old-revision replicas count. A missing old-version Pod (a slot with no running Pod behind it,
+// which the pod controller does not refill on an old-version gang) keeps none of the old revision serviceable,
+// so it is always drainable and the drain's first phase reclaims it before taking any running Pod down.
+//
+// While any component has more than MinAvailable running old-revision replicas, every component's tail is
+// capped so that up to MinAvailable of its running replicas stay at the old revision. Once no component has
+// more than MinAvailable running (lastUnit), the caps lift and the caller drains that unit in one sub-step or,
+// until it can, reclaims only its missing Pods. MaxUnavailable is at least MinAvailable for every component
+// under the Coherent strategy, so the last unit can always drain together once the budgets allow it.
 func (p *subStepPlanner) keepOldRevisionServiceable(remainingByComponent map[string]int32) (map[string]int32, bool) {
+	missingByComponent := make(map[string]int32, len(remainingByComponent))
 	lastUnit := true
 	for componentName, remaining := range remainingByComponent {
-		if remaining > p.minAvailableOf(componentName) {
+		// A PodCliqueScalingGroup has no missing old-version count: a dead member Pod is recreated at the old
+		// revision on its own gang.
+		missing := min(remaining, p.numMissingOldVersionPodsByPCLQ[componentName])
+		missingByComponent[componentName] = missing
+		if remaining-missing > p.minAvailableOf(componentName) {
 			lastUnit = false
-			break
 		}
 	}
 	if lastUnit {
@@ -515,7 +539,8 @@ func (p *subStepPlanner) keepOldRevisionServiceable(remainingByComponent map[str
 	}
 	capped := make(map[string]int32, len(remainingByComponent))
 	for componentName, remaining := range remainingByComponent {
-		if drainable := remaining - p.minAvailableOf(componentName); drainable > 0 {
+		missing := missingByComponent[componentName]
+		if drainable := missing + max(0, remaining-missing-p.minAvailableOf(componentName)); drainable > 0 {
 			capped[componentName] = drainable
 		}
 	}

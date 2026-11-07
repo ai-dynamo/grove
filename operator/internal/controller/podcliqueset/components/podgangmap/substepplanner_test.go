@@ -739,6 +739,62 @@ func TestNextForStandaloneOnlyMVUKeepsOldRevisionServiceable(t *testing.T) {
 	})
 }
 
+func TestNextForStandaloneOnlyMVUReclaimsMissingOldVersionPods(t *testing.T) {
+	// A missing old-version Pod is a slot with no running Pod behind it. It keeps none of the old revision
+	// serviceable, so keeping the old revision serviceable never holds its reclaim.
+	t.Run("the last unit reclaims its missing Pod while a new Pod is still not Ready", func(t *testing.T) {
+		// component  liveReplicas  minAvailable  maxUnavailable
+		// decode     4             2             2
+		//
+		// Two new Pods (one Ready, one not Ready) and two old slots (one Ready, one missing). The budget allows
+		// the free reclaim of the missing slot and no running-Pod takedown, so the last unit cannot drain
+		// together. The reclaim still goes ahead: the pod controller does not refill an old-version gang.
+		planner := newTestPlanner(testingclock.NewFakeClock(time.Unix(0, 1)), "v2",
+			[]grovecorev1beta1.PodGangEntry{{Epoch: "100", PodCliqueSetGenerationHash: "v2"}},
+			map[string]testComponent{"decode": {liveReplicas: 4, minAvailable: 2, maxUnavailable: 2, standalone: true}})
+		planner.pclqPodCounts = standalonePCLQPodCounts{
+			nonTerminatingByPCLQ: map[string]int32{"decode": 3},
+			newNotReadyByPCLQ:    map[string]int32{"decode": 1},
+		}
+		planner.numMissingOldVersionPodsByPCLQ = map[string]int32{"decode": 1}
+		position := planPosition{
+			currentHashCountByComponent:       map[string]int32{"decode": 2},
+			currentAnchorStepCountByComponent: map[string]int32{"decode": 2},
+			mostRecentAnchorEpoch:             "100",
+		}
+
+		ss, err := planner.next(position, planner.headroomByComponent())
+		require.NoError(t, err)
+		require.NotNil(t, ss)
+		assert.False(t, ss.lastUnitHeld)
+		assert.Equal(t, map[string]int32{"decode": 1}, ss.drainCountByComponent())
+		assert.True(t, planner.maxUnavailableBudgetSatisfied(ss.drainCountByComponent()))
+	})
+
+	t.Run("a component whose old Pods are all missing is reclaimed while the cap keeps the others", func(t *testing.T) {
+		// component  liveReplicas  minAvailable  maxUnavailable
+		// prefill    2             1             1
+		// decode     5             1             1
+		//
+		// After the anchor, the old revision's only prefill slot is missing. Keeping it preserves nothing, so it
+		// is reclaimed alongside the decode the cap allows.
+		planner := newTestPlanner(testingclock.NewFakeClock(time.Unix(0, 1)), "v2",
+			[]grovecorev1beta1.PodGangEntry{{Epoch: "100", PodCliqueSetGenerationHash: "v2"}},
+			map[string]testComponent{
+				"prefill": {liveReplicas: 2, minAvailable: 1, maxUnavailable: 1, standalone: true},
+				"decode":  {liveReplicas: 5, minAvailable: 1, maxUnavailable: 1, standalone: true},
+			})
+		planner.numMissingOldVersionPodsByPCLQ = map[string]int32{"prefill": 1}
+		counts := map[string]int32{"prefill": 1, "decode": 1}
+		position := planPosition{currentHashCountByComponent: counts, currentAnchorStepCountByComponent: counts, mostRecentAnchorEpoch: "100"}
+
+		ss, err := planner.next(position, nil)
+		require.NoError(t, err)
+		require.NotNil(t, ss)
+		assert.Equal(t, map[string]int32{"prefill": 1, "decode": 1}, ss.drainCountByComponent())
+	})
+}
+
 func TestNextForPCSGOnlyMVU(t *testing.T) {
 	// A PCSG-only MVU with two PodCliqueScalingGroups.
 	//
