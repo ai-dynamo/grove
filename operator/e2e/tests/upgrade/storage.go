@@ -18,11 +18,13 @@ package upgrade
 
 import (
 	"context"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
 	"testing"
+	"time"
 
 	corev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	corev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
@@ -86,10 +88,10 @@ func deleteGroveCRDs(t *testing.T, tc *testctx.TestContext) {
 	}), "waiting for the grove.io CRDs to be deleted")
 }
 
-// waitForStoredVersions waits until every grove.io CRD lists exactly versions in status.storedVersions.
-func waitForStoredVersions(t *testing.T, tc *testctx.TestContext, versions ...string) {
+// waitForStoredVersions waits until each grove.io CRD lists its expected status.storedVersions.
+func waitForStoredVersions(t *testing.T, tc *testctx.TestContext, expected map[string][]string) {
 	t.Helper()
-	testctx.Logger.Infof("waiting for the grove.io CRDs to list the stored versions %v", versions)
+	testctx.Logger.Infof("waiting for the grove.io CRDs to list the stored versions %v", expected)
 	var last map[string][]string
 	err := wait.PollUntilContextTimeout(t.Context(), defaultPollInterval, defaultPollTimeout, true, func(ctx context.Context) (bool, error) {
 		last = map[string][]string{}
@@ -100,11 +102,11 @@ func waitForStoredVersions(t *testing.T, tc *testctx.TestContext, versions ...st
 				return false, err
 			}
 			last[name] = crd.Status.StoredVersions
-			done = done && slices.Equal(crd.Status.StoredVersions, versions)
+			done = done && slices.Equal(crd.Status.StoredVersions, expected[name])
 		}
 		return done, nil
 	})
-	require.NoError(t, err, "storedVersions of the grove.io CRDs are %v, want %v", last, versions)
+	require.NoError(t, err, "storedVersions of the grove.io CRDs are %v, want %v", last, expected)
 }
 
 // requireCRDsServeOnly checks that every grove.io CRD serves and stores version, and no other version.
@@ -133,6 +135,32 @@ func requirePCSReadableAtBothVersions(t *testing.T, tc *testctx.TestContext, key
 	require.NoError(t, corev1alpha1.Convert_v1alpha1_PodCliqueSet_To_v1beta1_PodCliqueSet(alpha, converted, nil))
 	require.True(t, equality.Semantic.DeepEqual(converted.Spec, beta.Spec),
 		"PodCliqueSet %s differs between v1alpha1 and v1beta1", key)
+}
+
+// waitForGroveResourcesQuiesced waits for the objects rewritten by the downgrade script to stop changing.
+func waitForGroveResourcesQuiesced(t *testing.T, tc *testctx.TestContext) {
+	t.Helper()
+	testctx.Logger.Info("waiting for Grove resources to remain unchanged for 10 seconds")
+	var previous map[types.UID]string
+	var quietSince time.Time
+	require.NoError(t, wait.PollUntilContextTimeout(t.Context(), defaultPollInterval, defaultPollTimeout, true, func(ctx context.Context) (bool, error) {
+		current := make(map[types.UID]string)
+		for _, kind := range []string{"PodCliqueSet", "PodClique", "PodCliqueScalingGroup", "ClusterTopologyBinding", "PodGangMap"} {
+			resources := &unstructured.UnstructuredList{}
+			resources.SetGroupVersionKind(corev1beta1.SchemeGroupVersion.WithKind(kind + "List"))
+			if err := tc.Client.List(ctx, resources); err != nil {
+				return false, err
+			}
+			for _, resource := range resources.Items {
+				current[resource.GetUID()] = resource.GetResourceVersion()
+			}
+		}
+		if previous == nil || !maps.Equal(previous, current) {
+			previous = current
+			quietSince = time.Now()
+		}
+		return time.Since(quietSince) >= 10*time.Second, nil
+	}), "waiting for Grove resources to remain unchanged for 10 seconds")
 }
 
 // runAPIDowngrade runs the documented downgrade target from the current checkout against the test cluster.

@@ -16,9 +16,11 @@ package validation
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
+	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	groveconfigv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
@@ -580,4 +582,48 @@ func getDefaultNetworkConfig() groveconfigv1beta1.NetworkAcceleration {
 	return groveconfigv1beta1.NetworkAcceleration{
 		AutoMNNVLEnabled: false,
 	}
+}
+
+func TestValidateUpdateRejectsHPAForRetainedPCSReplica(t *testing.T) {
+	cliqueName := strings.Repeat("c", 55)
+	pcs := testutils.NewPodCliqueSetBuilder("p", "default", uuid.NewUUID()).
+		WithReplicas(1).
+		WithTerminationDelay(4 * time.Hour).
+		WithCliqueStartupType(ptr.To(grovecorev1beta1.CliqueStartupTypeAnyOrder)).
+		WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder(cliqueName).
+			WithReplicas(1).WithRoleName("worker").WithMinAvailable(1).Build()).Build()
+	pcs.Status.ObservedGeneration = ptr.To[int64](1)
+	pcs.Spec.Template.Cliques[0].Spec.ScaleConfig = &grovecorev1beta1.AutoScalingConfig{MinReplicas: ptr.To[int32](1), MaxReplicas: 100}
+	labels := apicommon.GetDefaultLabelsForPodCliqueSetManagedResources(pcs.Name)
+	labels[apicommon.LabelComponentKey] = apicommon.LabelComponentNamePodCliqueSetPodClique
+	labels[apicommon.LabelPodCliqueSetReplicaIndex] = "10"
+	pclq := &grovecorev1beta1.PodClique{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      apicommon.GeneratePodCliqueName(apicommon.ResourceNameReplica{Name: pcs.Name, Replica: 10}, cliqueName),
+			Namespace: pcs.Namespace, Labels: labels,
+			OwnerReferences: []metav1.OwnerReference{*metav1.NewControllerRef(pcs, grovecorev1beta1.SchemeGroupVersion.WithKind("PodCliqueSet"))},
+		},
+		Spec: *pcs.Spec.Template.Cliques[0].Spec.DeepCopy(),
+	}
+	cl := testutils.NewTestClientBuilder().WithObjects(pcs, pclq).Build()
+	mgr := &testutils.FakeManager{Client: cl, Scheme: cl.Scheme(), Logger: logr.Discard()}
+	cfg := &groveconfigv1beta1.OperatorConfiguration{
+		TopologyAwareScheduling: getDefaultTASConfig(), Network: getDefaultNetworkConfig(),
+		Scheduler: groveconfigv1beta1.SchedulerConfiguration{Profiles: []groveconfigv1beta1.SchedulerProfile{{Name: groveconfigv1beta1.SchedulerNameKube}}, DefaultProfileName: string(groveconfigv1beta1.SchedulerNameKube)},
+	}
+	h := NewHandler(mgr, cfg, testutils.NewDefaultFakeRegistry())
+	updated := pcs.DeepCopy()
+	updated.Spec.Template.Cliques[0].Spec.ScaleConfig.MaxReplicas = 1000
+	_, err := h.ValidateUpdate(t.Context(), pcs, updated)
+	require.ErrorContains(t, err, "generated pod hostname")
+
+	// The previous HPA maximum still fits the retained two-digit PCS index.
+	_, err = h.ValidateUpdate(t.Context(), pcs, pcs.DeepCopy())
+	require.NoError(t, err)
+
+	// A previous PCS incarnation must not impose its old replica indexes.
+	pclq.OwnerReferences[0].UID = "previous-pcs"
+	require.NoError(t, cl.Update(t.Context(), pclq))
+	_, err = h.ValidateUpdate(t.Context(), pcs, updated)
+	require.NoError(t, err)
 }

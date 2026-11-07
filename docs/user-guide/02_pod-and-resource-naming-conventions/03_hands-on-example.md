@@ -161,20 +161,20 @@ kubectl get pods -l app.kubernetes.io/part-of=mn-disagg -o wide
 
 You should see output like:
 ```
-NAME                                   READY   STATUS    RESTARTS   AGE
-mn-disagg-0-decode-0-dleader-abc12     1/1     Running   0          45s
-mn-disagg-0-decode-0-dworker-def34     1/1     Running   0          45s
-mn-disagg-0-decode-0-dworker-ghi56     1/1     Running   0          45s
-mn-disagg-0-frontend-jkl78             1/1     Running   0          45s
-mn-disagg-0-frontend-mno90             1/1     Running   0          45s
-mn-disagg-0-prefill-0-pleader-pqr12    1/1     Running   0          45s
-mn-disagg-0-prefill-0-pworker-stu34    1/1     Running   0          45s
-mn-disagg-0-prefill-0-pworker-vwx56    1/1     Running   0          45s
-mn-disagg-0-prefill-0-pworker-yza78    1/1     Running   0          45s
-mn-disagg-0-prefill-1-pleader-bcd90    1/1     Running   0          45s
-mn-disagg-0-prefill-1-pworker-efg12    1/1     Running   0          45s
-mn-disagg-0-prefill-1-pworker-hij34    1/1     Running   0          45s
-mn-disagg-0-prefill-1-pworker-klm56    1/1     Running   0          45s
+NAME                                     READY   STATUS    RESTARTS   AGE
+mn-disagg-0-decode-0-dleader-0-abc7d     1/1     Running   0          45s
+mn-disagg-0-decode-0-dworker-0-def8e     1/1     Running   0          45s
+mn-disagg-0-decode-0-dworker-1-ghi9f     1/1     Running   0          45s
+mn-disagg-0-frontend-0-jkl0g             1/1     Running   0          45s
+mn-disagg-0-frontend-1-mno1h             1/1     Running   0          45s
+mn-disagg-0-prefill-0-pleader-0-pqr2i    1/1     Running   0          45s
+mn-disagg-0-prefill-0-pworker-0-stu3j    1/1     Running   0          45s
+mn-disagg-0-prefill-0-pworker-1-vwx4k    1/1     Running   0          45s
+mn-disagg-0-prefill-0-pworker-2-yza5l    1/1     Running   0          45s
+mn-disagg-0-prefill-1-pleader-0-bcd6m    1/1     Running   0          45s
+mn-disagg-0-prefill-1-pworker-0-efg7n    1/1     Running   0          45s
+mn-disagg-0-prefill-1-pworker-1-hij8p    1/1     Running   0          45s
+mn-disagg-0-prefill-1-pworker-2-klm9x    1/1     Running   0          45s
 ```
 
 ## Parsing the Naming Hierarchy
@@ -185,7 +185,7 @@ Looking at this output, you can immediately understand the system structure:
 ```
 mn-disagg-0-frontend-*
 ```
-- Simpler naming: `<pcs>-<pcs-idx>-<pclq>-<suffix>`
+- Simpler naming: `<pcs>-<pcs-idx>-<pclq>-<pod-idx>-<suffix>`
 - 2 frontend pods serving requests
 
 **2. PodCliqueScalingGroup (prefill) - 2 replicas:**
@@ -193,7 +193,7 @@ mn-disagg-0-frontend-*
 mn-disagg-0-prefill-0-*
 mn-disagg-0-prefill-1-*
 ```
-- Deeper hierarchy: `<pcs>-<pcs-idx>-<pcsg>-<pcsg-idx>-<pclq>-<suffix>`
+- Deeper hierarchy: `<pcs>-<pcs-idx>-<pcsg>-<pcsg-idx>-<pclq>-<pod-idx>-<suffix>`
 - Each replica has 1 `pleader` + 3 `pworker` pods
 - Two independent prefill clusters
 
@@ -255,12 +255,13 @@ The PCSG names clearly identify the two scaling groups.
 
 ## Name Length Analysis
 
-Pod names have a 63-character limit (DNS label constraint). Let's verify our longest pod name fits:
+Grove pod hostnames have a 63-character DNS label limit. Pod object names include an extra 5-character suffix and can be longer than 63 characters, but hostname length is the limit that matters for service discovery. Let's verify our longest generated hostname fits:
 
-- Longest pod name: `mn-disagg-0-prefill-1-pworker-klm56`
-  - Characters: 35 (well under 63) ✅
+- Longest pod name: `mn-disagg-0-prefill-1-pworker-2-klm9x`
+- Longest hostname: `mn-disagg-0-prefill-1-pworker-2`
+  - Characters: 31 (well under 63) ✅
 
-With 28 characters of headroom, this naming scheme can scale to millions of replicas on both PCS and PCSG dimensions without hitting the limit.
+With 32 characters of hostname headroom, this naming scheme can scale to millions of replicas across the PCS, PCSG, and PodClique pod dimensions without hitting the limit.
 
 ## Cleanup
 
@@ -275,4 +276,3 @@ kubectl delete pcs mn-disagg
 Now that you've seen the naming conventions in action, check out:
 - The [Key Takeaways](./02_naming-conventions.md#key-takeaways) section for a summary of naming best practices
 - The [Environment Variables guide](../03_environment-variables-for-pod-discovery/01_overview.md) to learn how to use these names programmatically for pod discovery
-
