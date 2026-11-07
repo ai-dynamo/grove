@@ -739,9 +739,88 @@ func TestNextForStandaloneOnlyMVUKeepsOldRevisionServiceable(t *testing.T) {
 	})
 }
 
-func TestNextForStandaloneOnlyMVUReclaimsMissingOldVersionPods(t *testing.T) {
-	// A missing old-version Pod is a slot with no running Pod behind it. It keeps none of the old revision
-	// serviceable, so keeping the old revision serviceable never holds its reclaim.
+func TestNextForStandaloneOnlyMVUReplacesUnhealthyOldVersionPods(t *testing.T) {
+	// An unhealthy old-version Pod, a missing slot with no running Pod behind it or a running Pod that is not
+	// Ready, keeps none of the old revision serviceable. Keeping the old revision serviceable protects only its
+	// Ready Pods, so it never holds the replacement of an unhealthy one that the budget allows.
+	t.Run("the last unit replaces its not-Ready Pod while a new Pod is still not Ready", func(t *testing.T) {
+		// component  liveReplicas  minAvailable  maxUnavailable
+		// decode     4             2             2
+		//
+		// Each revision has one Ready and one not-Ready Pod. The budget allows one running-Pod takedown, which
+		// the drain spends on the not-Ready old Pod before a Ready one. The last unit cannot drain together, and
+		// the pod controller does not replace an old-version Pod on its own during the update, so the
+		// replacement still goes ahead.
+		planner := newTestPlanner(testingclock.NewFakeClock(time.Unix(0, 1)), "v2",
+			[]grovecorev1beta1.PodGangEntry{{Epoch: "100", PodCliqueSetGenerationHash: "v2"}},
+			map[string]testComponent{"decode": {liveReplicas: 4, minAvailable: 2, maxUnavailable: 2, standalone: true}})
+		planner.pclqPodCounts = standalonePCLQPodCounts{
+			nonTerminatingByPCLQ: map[string]int32{"decode": 4},
+			newNotReadyByPCLQ:    map[string]int32{"decode": 1},
+		}
+		planner.numNotReadyOldVersionPodsByPCLQ = map[string]int32{"decode": 1}
+		position := planPosition{
+			currentHashCountByComponent:       map[string]int32{"decode": 2},
+			currentAnchorStepCountByComponent: map[string]int32{"decode": 2},
+			mostRecentAnchorEpoch:             "100",
+		}
+
+		ss, err := planner.next(position, planner.headroomByComponent())
+		require.NoError(t, err)
+		require.NotNil(t, ss)
+		assert.False(t, ss.lastUnitHeld)
+		assert.Equal(t, map[string]int32{"decode": 1}, ss.drainCountByComponent())
+		assert.True(t, planner.maxUnavailableBudgetSatisfied(ss.drainCountByComponent()))
+	})
+
+	t.Run("the last unit replaces its unavailable PodCliqueScalingGroup replica while another component holds", func(t *testing.T) {
+		// component  liveReplicas  minAvailable  maxUnavailable
+		// prefill    3             2             2               PodCliqueScalingGroup, old replica 2 Unavailable
+		// decode     4             2             2               standalone, no headroom yet
+		//
+		// One anchor-bearing step (3/2). The decode's two Ready old Pods can't go yet, so the last unit can't
+		// drain together, but the prefill's unavailable old replica is still replaced.
+		planner := newTestPlanner(testingclock.NewFakeClock(time.Unix(0, 1)), "v2",
+			[]grovecorev1beta1.PodGangEntry{currentHashEntryWithCommittedPCSGIndices(map[string]int32{"prefill": 2})},
+			map[string]testComponent{
+				"prefill": {liveReplicas: 3, minAvailable: 2, maxUnavailable: 2},
+				"decode":  {liveReplicas: 4, minAvailable: 2, maxUnavailable: 2, standalone: true},
+			})
+		require.Equal(t, int32(1), planner.plan.numAnchorBearingSteps)
+		planner.pcsgReplicaInfos["prefill"][2].state = componentutils.PCSGReplicaStateUnavailable
+		counts := map[string]int32{"prefill": 2, "decode": 2}
+		position := planPosition{currentHashCountByComponent: counts, currentAnchorStepCountByComponent: counts, mostRecentAnchorEpoch: "100"}
+
+		ss, err := planner.next(position, map[string]int32{"prefill": 1, "decode": 0})
+		require.NoError(t, err)
+		require.NotNil(t, ss)
+		assert.False(t, ss.lastUnitHeld)
+		assert.Equal(t, map[string][]int32{"prefill": {2}}, ss.drainPCSGReplicaIndices)
+		assert.Empty(t, ss.drainStandalonePCLQCounts)
+	})
+
+	t.Run("the last unit holds its Ready Pods when it has no unhealthy Pod to replace", func(t *testing.T) {
+		// As above, but both old Pods are Ready: the one takedown the budget allows would split the last unit.
+		planner := newTestPlanner(testingclock.NewFakeClock(time.Unix(0, 1)), "v2",
+			[]grovecorev1beta1.PodGangEntry{{Epoch: "100", PodCliqueSetGenerationHash: "v2"}},
+			map[string]testComponent{"decode": {liveReplicas: 4, minAvailable: 2, maxUnavailable: 2, standalone: true}})
+		planner.pclqPodCounts = standalonePCLQPodCounts{
+			nonTerminatingByPCLQ: map[string]int32{"decode": 4},
+			newNotReadyByPCLQ:    map[string]int32{"decode": 1},
+		}
+		position := planPosition{
+			currentHashCountByComponent:       map[string]int32{"decode": 2},
+			currentAnchorStepCountByComponent: map[string]int32{"decode": 2},
+			mostRecentAnchorEpoch:             "100",
+		}
+
+		ss, err := planner.next(position, planner.headroomByComponent())
+		require.NoError(t, err)
+		require.NotNil(t, ss)
+		assert.True(t, ss.lastUnitHeld)
+		assert.True(t, ss.drainsNothing())
+	})
+
 	t.Run("the last unit reclaims its missing Pod while a new Pod is still not Ready", func(t *testing.T) {
 		// component  liveReplicas  minAvailable  maxUnavailable
 		// decode     4             2             2

@@ -165,6 +165,10 @@ type subStepPlanner struct {
 	// PodClique, derived at construction from the committed entries and pclqPodCounts.
 	// The gate reads it to keep the reclaim free.
 	numMissingOldVersionPodsByPCLQ map[string]int32
+	// numNotReadyOldVersionPodsByPCLQ is the count of running, not-Ready old-version Pods per in-scope
+	// standalone PodClique, derived at construction like numMissingOldVersionPodsByPCLQ: the Pods the drain
+	// takes down, after the missing ones, before any Ready one.
+	numNotReadyOldVersionPodsByPCLQ map[string]int32
 	// plan is the step-level decomposition the sub-step methods work against.
 	plan stepPlan
 }
@@ -175,18 +179,19 @@ func newSubStepPlanner(syncSnap *syncSnapshot, pcsReplicaIndex int, entries []gr
 	mvu := syncSnap.mvuTemplate
 	minAvailableByComponent := lo.Assign(mvu.standalonePCLQs, mvu.pcsgs)
 	return &subStepPlanner{
-		clk:                            clk,
-		pcs:                            syncSnap.pcs,
-		pcsReplicaIndex:                pcsReplicaIndex,
-		mvu:                            mvu,
-		entries:                        entries,
-		desiredReplicas:                desiredReplicas,
-		maxUnavailableByComponent:      componentutils.CoherentMaxUnavailableByComponent(syncSnap.pcs, lo.Keys(minAvailableByComponent)),
-		standalonePCLQByComponent:      standalonePCLQByComponent,
-		pcsgReplicaInfos:               pcsgReplicaInfos,
-		pclqPodCounts:                  pclqPodCounts,
-		numMissingOldVersionPodsByPCLQ: numMissingOldVersionPodsByStandalonePCLQ(entries, *syncSnap.pcs.Status.CurrentGenerationHash, pclqPodCounts),
-		plan:                           computeStepPlan(desiredReplicas, mvu),
+		clk:                             clk,
+		pcs:                             syncSnap.pcs,
+		pcsReplicaIndex:                 pcsReplicaIndex,
+		mvu:                             mvu,
+		entries:                         entries,
+		desiredReplicas:                 desiredReplicas,
+		maxUnavailableByComponent:       componentutils.CoherentMaxUnavailableByComponent(syncSnap.pcs, lo.Keys(minAvailableByComponent)),
+		standalonePCLQByComponent:       standalonePCLQByComponent,
+		pcsgReplicaInfos:                pcsgReplicaInfos,
+		pclqPodCounts:                   pclqPodCounts,
+		numMissingOldVersionPodsByPCLQ:  numMissingOldVersionPodsByStandalonePCLQ(entries, *syncSnap.pcs.Status.CurrentGenerationHash, pclqPodCounts),
+		numNotReadyOldVersionPodsByPCLQ: numNotReadyOldVersionPodsByStandalonePCLQ(entries, *syncSnap.pcs.Status.CurrentGenerationHash, pclqPodCounts),
+		plan:                            computeStepPlan(desiredReplicas, mvu),
 	}
 }
 
@@ -467,23 +472,26 @@ func (p *subStepPlanner) buildTailSubStep(planPos planPosition, headroomByCompon
 		return ss, err
 	}
 	// The old revision's last minimal viable unit drains in one sub-step or not at all: draining part of it
-	// would leave the rest of the old revision without a complete set of components. Its missing old-version
-	// Pods are reclaimed meanwhile.
+	// would leave the rest of the old revision without a complete set of components. Its unhealthy replicas
+	// are replaced meanwhile.
 	drained := ss.drainCountByComponent()
 	for componentName, remaining := range remainingByComponent {
 		if drained[componentName] < remaining {
-			return p.reclaimsOnly(ss), nil
+			return p.replaceUnhealthyOnly(ss), nil
 		}
 	}
 	return ss, nil
 }
 
-// reclaimsOnly narrows a sub-step to the missing old-version Pods it reclaims, for an old revision's last unit
-// that cannot drain together yet. A missing old-version Pod is a slot with no running Pod behind it: keeping it
-// keeps none of the old revision serviceable, and the pod controller does not refill an old-version gang, so
-// holding it would only block its replacement. The sub-step is held when there is nothing to reclaim.
-func (p *subStepPlanner) reclaimsOnly(ss *subStep) *subStep {
-	reclaims := &subStep{
+// replaceUnhealthyOnly narrows a sub-step to the unhealthy old-revision replicas it replaces, for an old
+// revision's last unit that cannot drain together yet. An unhealthy replica (see unhealthyOldVersionCountOf)
+// keeps none of the old revision serviceable, and the pod controller neither refills nor replaces an
+// old-version replica on its own during the update, so holding it would only block its replacement until the
+// whole unit can drain. The drain takes unhealthy replicas before Ready ones (standalone Pods by phase,
+// PodCliqueScalingGroup replicas worst-off first), so no Ready replica of the unit is taken down. The
+// sub-step is held when there is nothing unhealthy to replace.
+func (p *subStepPlanner) replaceUnhealthyOnly(ss *subStep) *subStep {
+	replacements := &subStep{
 		epoch:                       ss.epoch,
 		dependsOn:                   ss.dependsOn,
 		subsumeAnchorEpoch:          ss.subsumeAnchorEpoch,
@@ -492,14 +500,39 @@ func (p *subStepPlanner) reclaimsOnly(ss *subStep) *subStep {
 		tailPCSGReplicaIndices:      map[string][]int32{},
 		drainPCSGReplicaIndices:     map[string][]int32{},
 	}
-	for componentName, drain := range ss.drainStandalonePCLQCounts {
-		if reclaim := min(drain, p.numMissingOldVersionPodsByPCLQ[componentName]); reclaim > 0 {
-			reclaims.subsumeStandalonePCLQCounts[componentName] = reclaim
-			reclaims.drainStandalonePCLQCounts[componentName] = reclaim
+	for componentName, drain := range ss.drainCountByComponent() {
+		replace := min(drain, p.unhealthyOldVersionCountOf(componentName))
+		if replace <= 0 {
+			continue
+		}
+		if _, isPCSG := p.mvu.pcsgs[componentName]; isPCSG {
+			indices := p.nextOldPCSGIndicesToRoll(componentName, replace)
+			replacements.tailPCSGReplicaIndices[componentName] = indices
+			replacements.drainPCSGReplicaIndices[componentName] = indices
+		} else {
+			replacements.subsumeStandalonePCLQCounts[componentName] = replace
+			replacements.drainStandalonePCLQCounts[componentName] = replace
 		}
 	}
-	reclaims.lastUnitHeld = len(reclaims.drainStandalonePCLQCounts) == 0
-	return reclaims
+	replacements.lastUnitHeld = replacements.drainsNothing()
+	return replacements
+}
+
+// unhealthyOldVersionCountOf returns how many of a component's old-revision replicas serve nothing. For a
+// standalone PodClique, these are its missing old-version Pods (slots with no running Pod behind them) and its
+// running, not-Ready old-version Pods: the Pods the drain's first two phases take down before any Ready one.
+// For a PodCliqueScalingGroup, these are its old replicas that are not Ready.
+func (p *subStepPlanner) unhealthyOldVersionCountOf(componentName string) int32 {
+	if _, isPCSG := p.mvu.pcsgs[componentName]; isPCSG {
+		var unhealthy int32
+		for _, info := range p.pcsgReplicaInfos[componentName] {
+			if !info.atCurrentHash && info.state != componentutils.PCSGReplicaStateReady {
+				unhealthy++
+			}
+		}
+		return unhealthy
+	}
+	return p.numMissingOldVersionPodsByPCLQ[componentName] + p.numNotReadyOldVersionPodsByPCLQ[componentName]
 }
 
 // keepOldRevisionServiceable orders the tail of a single anchor-bearing step so that the old revision keeps a
@@ -513,24 +546,23 @@ func (p *subStepPlanner) reclaimsOnly(ss *subStep) *subStep {
 // interdependent components: in disaggregated inference, old-revision decode pods are left with no
 // old-revision prefill pod to pair with, and a data plane that keeps revisions apart cannot use them.
 //
-// Only running old-revision replicas count. A missing old-version Pod (a slot with no running Pod behind it,
-// which the pod controller does not refill on an old-version gang) keeps none of the old revision serviceable,
-// so it is always drainable and the drain's first phase reclaims it before taking any running Pod down.
+// Only Ready old-revision replicas count. An unhealthy one (a missing old-version Pod, a not-Ready Pod, or a
+// PodCliqueScalingGroup replica that is not Ready; see unhealthyOldVersionCountOf) keeps none of the old revision
+// serviceable, and the pod controller neither refills nor replaces it during the update. So it is always
+// drainable, and the drain takes it before any Ready replica.
 //
-// While any component has more than MinAvailable running old-revision replicas, every component's tail is
-// capped so that up to MinAvailable of its running replicas stay at the old revision. Once no component has
-// more than MinAvailable running (lastUnit), the caps lift and the caller drains that unit in one sub-step or,
-// until it can, reclaims only its missing Pods. MaxUnavailable is at least MinAvailable for every component
-// under the Coherent strategy, so the last unit can always drain together once the budgets allow it.
+// While any component has more than MinAvailable Ready old-revision replicas, every component's tail is capped
+// so that up to MinAvailable of its Ready replicas stay at the old revision. Once no component has more than
+// MinAvailable Ready (lastUnit), the caps lift and the caller drains that unit in one sub-step or, until it
+// can, replaces only its unhealthy replicas. MaxUnavailable is at least MinAvailable for every component under
+// the Coherent strategy, so the last unit can always drain together once the budgets allow it.
 func (p *subStepPlanner) keepOldRevisionServiceable(remainingByComponent map[string]int32) (map[string]int32, bool) {
-	missingByComponent := make(map[string]int32, len(remainingByComponent))
+	unhealthyByComponent := make(map[string]int32, len(remainingByComponent))
 	lastUnit := true
 	for componentName, remaining := range remainingByComponent {
-		// A PodCliqueScalingGroup has no missing old-version count: a dead member Pod is recreated at the old
-		// revision on its own gang.
-		missing := min(remaining, p.numMissingOldVersionPodsByPCLQ[componentName])
-		missingByComponent[componentName] = missing
-		if remaining-missing > p.minAvailableOf(componentName) {
+		unhealthy := min(remaining, p.unhealthyOldVersionCountOf(componentName))
+		unhealthyByComponent[componentName] = unhealthy
+		if remaining-unhealthy > p.minAvailableOf(componentName) {
 			lastUnit = false
 		}
 	}
@@ -539,8 +571,8 @@ func (p *subStepPlanner) keepOldRevisionServiceable(remainingByComponent map[str
 	}
 	capped := make(map[string]int32, len(remainingByComponent))
 	for componentName, remaining := range remainingByComponent {
-		missing := missingByComponent[componentName]
-		if drainable := missing + max(0, remaining-missing-p.minAvailableOf(componentName)); drainable > 0 {
+		unhealthy := unhealthyByComponent[componentName]
+		if drainable := unhealthy + max(0, remaining-unhealthy-p.minAvailableOf(componentName)); drainable > 0 {
 			capped[componentName] = drainable
 		}
 	}

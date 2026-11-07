@@ -585,3 +585,27 @@ func numMissingOldVersionPodsByStandalonePCLQ(entries []grovecorev1beta1.PodGang
 	}
 	return missingOldVersionPodsByClique
 }
+
+// numNotReadyOldVersionPodsByStandalonePCLQ returns the count of running, not-Ready old-version Pods per in-scope
+// standalone PodClique: on each old-version anchor, the not-Ready Pods the drain's second phase takes down
+// before any Ready one, clamped to the Pods the anchor commits. Like numMissingOldVersionPodsByStandalonePCLQ, it
+// skips current-version anchors and out-of-scope PodCliques.
+func numNotReadyOldVersionPodsByStandalonePCLQ(entries []grovecorev1beta1.PodGangEntry, currentHash string, counts standalonePCLQPodCounts) map[string]int32 {
+	notReadyOldVersionPodsByClique := make(map[string]int32)
+	for i := range entries {
+		entry := entries[i]
+		if !isOldHashAnchor(entry, currentHash) {
+			continue
+		}
+		for cliqueName, committedPodCount := range entry.PodCliques {
+			if _, inScope := counts.nonTerminatingByPCLQ[cliqueName]; !inScope {
+				continue
+			}
+			livePods := counts.livePodCountsByAnchor[cliqueAndEpochKey{clique: cliqueName, epoch: entry.Epoch}]
+			if notReady := min(notReadyPods(committedPodCount, livePods), committedPodCount); notReady > 0 {
+				notReadyOldVersionPodsByClique[cliqueName] += notReady
+			}
+		}
+	}
+	return notReadyOldVersionPodsByClique
+}
