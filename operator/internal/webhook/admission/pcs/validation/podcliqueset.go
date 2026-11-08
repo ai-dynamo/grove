@@ -661,12 +661,20 @@ func (v *pcsValidator) validatePodSpec(spec corev1.PodSpec, fldPath *field.Path)
 		}
 	}
 
+	containerNames := make([]string, 0, len(spec.Containers)+len(spec.InitContainers))
 	for i, container := range spec.Containers {
+		containerNames = append(containerNames, container.Name)
 		allErrs = append(allErrs, validateContainer(container, specFldPath.Child("containers").Index(i))...)
 	}
+	allErrs = append(allErrs, sliceMustHaveUniqueElements(containerNames, fldPath.Child("containers"))...)
+
+	// Remove duplicates so we can now check for duplicate initContainer names
+	containerNames = lo.Uniq(containerNames)
 	for i, container := range spec.InitContainers {
+		containerNames = append(containerNames, container.Name)
 		allErrs = append(allErrs, validateContainer(container, specFldPath.Child("initContainers").Index(i))...)
 	}
+	allErrs = append(allErrs, sliceMustHaveUniqueElements(containerNames, fldPath.Child("initContainers"))...)
 
 	return warnings, allErrs
 }
