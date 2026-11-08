@@ -1403,6 +1403,113 @@ func TestEnvVarValidation(t *testing.T) {
 	}
 }
 
+// Test that only unique container names are allowed for a PodCliqueSet
+// Failures must be detected at the PodCliqueSet validation stage
+func TestContainerNameValidation(t *testing.T) {
+	testCases := []struct {
+		description    string
+		containers     []corev1.Container
+		initContainers []corev1.Container
+		errorMatchers  []testutils.ErrorMatcher
+		duplicateNames []string
+	}{
+		{
+			description: "Duplicate ctr names within containers",
+			containers: []corev1.Container{
+				{Name: "main", Image: "test:latest"},
+				{Name: "main", Image: "test:latest"},
+			},
+			errorMatchers: []testutils.ErrorMatcher{
+				{ErrorType: field.ErrorTypeDuplicate, Field: "spec.template.cliques[0].spec.podSpec.containers"},
+			},
+			duplicateNames: []string{"main"},
+		},
+		{
+			description: "Duplicate ctr names within initContainers",
+			containers: []corev1.Container{
+				{Name: "main", Image: "test:latest"},
+			},
+			initContainers: []corev1.Container{
+				{Name: "setup", Image: "test:latest"},
+				{Name: "setup", Image: "test:latest"},
+			},
+			errorMatchers: []testutils.ErrorMatcher{
+				{ErrorType: field.ErrorTypeDuplicate, Field: "spec.template.cliques[0].spec.podSpec.initContainers"},
+			},
+			duplicateNames: []string{"setup"},
+		},
+		{
+			description: "Duplicate ctr names within containers and initContainers",
+			containers: []corev1.Container{
+				{Name: "main", Image: "test:latest"},
+			},
+			initContainers: []corev1.Container{
+				{Name: "main", Image: "test:latest"},
+			},
+			errorMatchers: []testutils.ErrorMatcher{
+				{ErrorType: field.ErrorTypeDuplicate, Field: "spec.template.cliques[0].spec.podSpec.initContainers"},
+			},
+			duplicateNames: []string{"main"},
+		},
+		{
+			description: "Unique ctr names",
+			containers: []corev1.Container{
+				{Name: "main", Image: "test:latest"},
+				{Name: "sidecar", Image: "test:latest"},
+			},
+			initContainers: []corev1.Container{
+				{Name: "setup", Image: "test:latest"},
+				{Name: "prepare", Image: "test:latest"},
+			},
+		},
+		{
+			description: "Unique ctr names (without initContainers)",
+			containers: []corev1.Container{
+				{Name: "main", Image: "test:latest"},
+				{Name: "sidecar", Image: "test:latest"},
+			},
+		},
+	}
+
+	for _, operation := range []admissionv1.Operation{admissionv1.Create, admissionv1.Update} {
+		t.Run(string(operation), func(t *testing.T) {
+			for _, tc := range testCases {
+				t.Run(tc.description, func(t *testing.T) {
+					clique := testutils.NewPodCliqueTemplateSpecBuilder("worker").
+						WithReplicas(1).
+						WithRoleName("dummy-worker-role").
+						WithMinAvailable(1)
+
+					for _, c := range tc.containers {
+						clique = clique.WithContainer(c)
+					}
+					for _, c := range tc.initContainers {
+						clique = clique.WithInitContainer(c)
+					}
+
+					pcs := testutils.NewPodCliqueSetBuilder("inference", "default", uuid.NewUUID()).
+						WithReplicas(1).
+						WithTerminationDelay(4 * time.Hour).
+						WithCliqueStartupType(ptr.To(grovecorev1beta1.CliqueStartupTypeAnyOrder)).
+						WithPodCliqueTemplateSpec(clique.Build()).
+						Build()
+
+					validator := newPCSValidator(pcs, operation, defaultTASConfig(), groveconfigv1beta1.SchedulerConfiguration{Profiles: []groveconfigv1beta1.SchedulerProfile{{Name: groveconfigv1beta1.SchedulerNameKube}}, DefaultProfileName: string(groveconfigv1beta1.SchedulerNameKube)}, nil, testutils.NewDefaultFakeRegistry())
+					_, errs := validator.validate()
+
+					if tc.errorMatchers != nil {
+						testutils.AssertErrorMatches(t, errs, tc.errorMatchers)
+						require.Len(t, errs, len(tc.errorMatchers))
+						assert.Equal(t, tc.duplicateNames, errs[0].BadValue)
+					} else {
+						assert.NoError(t, errs.ToAggregate(), "Expected no validation error for test case: %s", tc.description)
+					}
+				})
+			}
+		})
+	}
+}
+
 // ---------------------------- Resource Sharing Validation Tests ----------------------------
 
 func TestValidateResourceClaimTemplates(t *testing.T) {
