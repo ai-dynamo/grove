@@ -482,9 +482,20 @@ func (r _resource) checkAndRemovePodSchedulingGates(ctx context.Context, logger 
 		return nil, err
 	}
 
+	// Pre-compute, once per referenced PodGang, the set of pod names recorded for this PodClique.
+	// Checking each gated pod against the PodGang's PodReferences directly would rescan the same
+	// slice for every pod, making the loop below quadratic in the PodClique's size.
+	podNamesByGangName := make(map[string]map[string]struct{}, len(podGangByName))
+	for podGangName, podGang := range podGangByName {
+		if podGang == nil {
+			continue
+		}
+		podNamesByGangName[podGangName] = podNamesInClique(podGang, ss.pclq.Name)
+	}
+
 	tasks := make([]utils.Task, 0, len(gatedPods))
 	for i, pod := range gatedPods {
-		if !canRemoveSchedulingGate(logger, pod, ss.pclq.Name, podGangByName, dependencySatisfiedByEpoch) {
+		if !canRemoveSchedulingGate(logger, pod, podGangByName, podNamesByGangName, dependencySatisfiedByEpoch) {
 			skippedScheduleGatedPods = append(skippedScheduleGatedPods, pod.Name)
 			continue
 		}
@@ -586,7 +597,7 @@ func (r _resource) resolveDependencySatisfiedByEpoch(ctx context.Context, ss *sy
 // satisfied. It reads only prefetched maps and makes no API calls. A PodGang epoch absent from
 // dependencySatisfiedByEpoch (a transient PodGangMap and PodGang divergence) resolves to false, so
 // the pod is skipped and the reconcile requeues.
-func canRemoveSchedulingGate(logger logr.Logger, pod *corev1.Pod, pclqName string, podGangByName map[string]*groveschedulerv1alpha1.PodGang, dependencySatisfiedByEpoch map[string]bool) bool {
+func canRemoveSchedulingGate(logger logr.Logger, pod *corev1.Pod, podGangByName map[string]*groveschedulerv1alpha1.PodGang, podNamesByGangName map[string]map[string]struct{}, dependencySatisfiedByEpoch map[string]bool) bool {
 	podObjectKey := client.ObjectKeyFromObject(pod)
 	podGangName, ok := pod.Labels[apicommon.LabelPodGang]
 	if !ok {
@@ -599,7 +610,7 @@ func canRemoveSchedulingGate(logger logr.Logger, pod *corev1.Pod, pclqName strin
 		logger.Info("PodGang not found yet, skipping gate removal", "podObjectKey", podObjectKey, "podGangName", podGangName)
 		return false
 	}
-	if !isPodInPodReferences(podGang, pclqName, pod.Name) {
+	if _, recorded := podNamesByGangName[podGangName][pod.Name]; !recorded {
 		logger.Info("Pod not yet recorded in PodGang PodReferences, skipping gate removal", "podObjectKey", podObjectKey, "podGangName", podGangName)
 		return false
 	}
@@ -610,19 +621,22 @@ func canRemoveSchedulingGate(logger logr.Logger, pod *corev1.Pod, pclqName strin
 	return true
 }
 
-// isPodInPodReferences reports whether podName appears in the PodGroup for pclqFQN in podGang.
-func isPodInPodReferences(podGang *groveschedulerv1alpha1.PodGang, pclqFQN, podName string) bool {
+// podNamesInClique returns the set of pod names recorded in the PodGroup for pclqFQN in podGang.
+// A nil set is returned when no PodGroup matches, which safely reports every pod as unrecorded.
+func podNamesInClique(podGang *groveschedulerv1alpha1.PodGang, pclqFQN string) map[string]struct{} {
+	var podNames map[string]struct{}
 	for _, podGroup := range podGang.Spec.PodGroups {
 		if podGroup.Name != pclqFQN {
 			continue
 		}
+		if podNames == nil {
+			podNames = make(map[string]struct{}, len(podGroup.PodReferences))
+		}
 		for _, ref := range podGroup.PodReferences {
-			if ref.Name == podName {
-				return true
-			}
+			podNames[ref.Name] = struct{}{}
 		}
 	}
-	return false
+	return podNames
 }
 
 // hasPodGangSchedulingGate checks if a pod has the PodGang scheduling gate
