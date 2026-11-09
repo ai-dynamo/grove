@@ -681,3 +681,80 @@ func setPodCliqueSetControllerOwner(podGang *groveschedulerv1alpha1.PodGang, pcs
 		Controller: ptr.To(true),
 	}}
 }
+
+func TestBackend_SyncPodGang_SetsPreemptibilityFromPodCliqueSet(t *testing.T) {
+	tests := []struct {
+		name        string
+		labels      map[string]string
+		annotations map[string]string
+		want        kaischedulingv2alpha2.Preemptibility
+	}{
+		{
+			name: "unset leaves KAI's priority-based default",
+			want: "",
+		},
+		{
+			name:   "label",
+			labels: map[string]string{labelKeyPreemptibility: "non-preemptible"},
+			want:   kaischedulingv2alpha2.NonPreemptible,
+		},
+		{
+			name:        "annotation when the label is absent",
+			annotations: map[string]string{labelKeyPreemptibility: "preemptible"},
+			want:        kaischedulingv2alpha2.Preemptible,
+		},
+		{
+			name:        "label overrides annotation",
+			labels:      map[string]string{labelKeyPreemptibility: "non-preemptible"},
+			annotations: map[string]string{labelKeyPreemptibility: "preemptible"},
+			want:        kaischedulingv2alpha2.NonPreemptible,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pcs := newPodCliqueSet("preemptibility-pcs", "team-a", podCliqueTemplateWithQueue("worker", ""))
+			for k, v := range tt.labels {
+				pcs.Labels[k] = v
+			}
+			pcs.Annotations = tt.annotations
+			podGang := testutils.NewPodGangBuilder("preemptibility-podgang", "default").
+				WithPodGroup("worker", 1).
+				WithSchedulerName(string(configv1beta1.SchedulerNameKai)).
+				Build()
+			setPodCliqueSetControllerOwner(podGang, pcs)
+
+			cl := testutils.NewTestClientBuilder().WithObjects(pcs, podGang).Build()
+			b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameKai})
+			require.NoError(t, b.Init(cl))
+
+			ctx := context.Background()
+			require.NoError(t, b.SyncPodGang(ctx, podGang))
+
+			podGroup := &kaischedulingv2alpha2.PodGroup{}
+			require.NoError(t, cl.Get(ctx, client.ObjectKeyFromObject(podGang), podGroup))
+			assert.Equal(t, tt.want, podGroup.Spec.Preemptibility)
+		})
+	}
+}
+
+func TestBackend_InvalidPreemptibility(t *testing.T) {
+	pcs := newPodCliqueSet("invalid-preemptibility-pcs", "team-a", podCliqueTemplateWithQueue("worker", ""))
+	pcs.Labels[labelKeyPreemptibility] = "sometimes"
+
+	b := &schedulerBackend{}
+	require.ErrorContains(t, b.ValidatePodCliqueSet(context.Background(), pcs), "invalid preemptibility value: sometimes")
+
+	podGang := testutils.NewPodGangBuilder("invalid-preemptibility-podgang", "default").
+		WithPodGroup("worker", 1).
+		WithSchedulerName(string(configv1beta1.SchedulerNameKai)).
+		Build()
+	setPodCliqueSetControllerOwner(podGang, pcs)
+	cl := testutils.NewTestClientBuilder().WithObjects(pcs, podGang).Build()
+	b = New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameKai}).(*schedulerBackend)
+	require.NoError(t, b.Init(cl))
+
+	ctx := context.Background()
+	require.ErrorContains(t, b.SyncPodGang(ctx, podGang), "invalid preemptibility value: sometimes")
+	err := cl.Get(ctx, client.ObjectKeyFromObject(podGang), &kaischedulingv2alpha2.PodGroup{})
+	assert.True(t, apierrors.IsNotFound(err))
+}
