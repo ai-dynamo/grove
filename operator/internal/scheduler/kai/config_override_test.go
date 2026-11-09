@@ -42,12 +42,12 @@ const runaiConfig = `{"schedulerName":"runai-scheduler","queueLabelKey":"runai/q
 
 func TestResolveConfiguration_Defaults(t *testing.T) {
 	for name, profile := range map[string]configv1beta1.SchedulerProfile{
-		"no config":     {Name: configv1beta1.SchedulerNameKai},
-		"empty config":  runaiProfile(`{}`),
-		"broken config": runaiProfile(`{not json`),
+		"no config":    {Name: configv1beta1.SchedulerNameKai},
+		"empty config": runaiProfile(`{}`),
 	} {
 		t.Run(name, func(t *testing.T) {
-			cfg := resolveConfiguration(profile)
+			cfg, err := resolveConfiguration(profile)
+			require.NoError(t, err)
 			assert.Equal(t, "kai-scheduler", cfg.SchedulerName)
 			assert.Equal(t, "kai.scheduler/queue", cfg.QueueLabelKey)
 			assert.Equal(t, "kai.scheduler/node-pool", cfg.NodePoolLabelKey)
@@ -56,10 +56,42 @@ func TestResolveConfiguration_Defaults(t *testing.T) {
 }
 
 func TestResolveConfiguration_PartialOverrideKeepsOtherDefaults(t *testing.T) {
-	cfg := resolveConfiguration(runaiProfile(`{"schedulerName":"my-kai"}`))
+	cfg, err := resolveConfiguration(runaiProfile(`{"schedulerName":"my-kai"}`))
+	require.NoError(t, err)
 	assert.Equal(t, "my-kai", cfg.SchedulerName)
 	assert.Equal(t, "kai.scheduler/queue", cfg.QueueLabelKey)
 	assert.Equal(t, "kai.scheduler/node-pool", cfg.NodePoolLabelKey)
+}
+
+func TestResolveConfiguration_Validation(t *testing.T) {
+	tests := []struct {
+		name    string
+		config  string
+		wantErr string // substring of the expected error; empty means valid
+	}{
+		{name: "run:ai names", config: runaiConfig},
+		{name: "unknown field is rejected", config: `{"schedulerNme":"x"}`, wantErr: `unknown field "schedulerNme"`},
+		{name: "malformed json", config: `{nope`, wantErr: "invalid kai-scheduler config"},
+		{name: "scheduler name must be a DNS subdomain", config: `{"schedulerName":"Bad_Name"}`, wantErr: "config.schedulerName"},
+		{name: "queue label key must be a qualified name", config: `{"queueLabelKey":"has space"}`, wantErr: "config.queueLabelKey"},
+		{name: "node pool label key must be a qualified name", config: `{"nodePoolLabelKey":"a/b/c"}`, wantErr: "config.nodePoolLabelKey"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := resolveConfiguration(runaiProfile(tt.config))
+			if tt.wantErr == "" {
+				require.NoError(t, err)
+			} else {
+				require.ErrorContains(t, err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestBackend_Init_RejectsInvalidConfig(t *testing.T) {
+	cl := testutils.CreateDefaultFakeClient(nil)
+	b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), runaiProfile(`{"queueLabelKey":"has space"}`))
+	require.ErrorContains(t, b.Init(cl), "config.queueLabelKey")
 }
 
 func TestBackend_NameAndPreparePod_UseConfiguredSchedulerName(t *testing.T) {

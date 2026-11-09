@@ -15,6 +15,7 @@
 package kai
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -37,6 +38,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	utilvalidation "k8s.io/apimachinery/pkg/util/validation"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -54,6 +57,8 @@ type schedulerBackend struct {
 	nodePoolLabelKey string
 	eventRecorder    record.EventRecorder
 	profile          configv1beta1.SchedulerProfile
+	// configErr is the error from decoding and validating profile.Config, returned by Init.
+	configErr error
 }
 
 var _ scheduler.Backend = (*schedulerBackend)(nil)
@@ -68,10 +73,10 @@ const (
 )
 
 // New creates a new KAI backend instance. profile is the scheduler profile for kai-scheduler;
-// the optional profile.Config is unmarshalled into KaiSchedulerConfiguration. Config is validated
-// when the OperatorConfiguration is loaded, so an unparsable value here falls back to the defaults.
+// the optional profile.Config is decoded into KaiSchedulerConfiguration. An invalid config is
+// reported by Init, which the registry calls at operator startup.
 func New(cl client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder, profile configv1beta1.SchedulerProfile) scheduler.Backend {
-	cfg := resolveConfiguration(profile)
+	cfg, err := resolveConfiguration(profile)
 	return &schedulerBackend{
 		client:           cl,
 		scheme:           scheme,
@@ -80,16 +85,25 @@ func New(cl client.Client, scheme *runtime.Scheme, eventRecorder record.EventRec
 		nodePoolLabelKey: cfg.NodePoolLabelKey,
 		eventRecorder:    eventRecorder,
 		profile:          profile,
+		configErr:        err,
 	}
 }
 
 // resolveConfiguration returns the effective KAI configuration for a profile: the options in
-// profile.Config with defaults filled in.
-func resolveConfiguration(profile configv1beta1.SchedulerProfile) configv1beta1.KaiSchedulerConfiguration {
+// profile.Config with defaults filled in. Unknown fields are rejected so that a misspelled option
+// does not silently fall back to a default. On error, the defaults are returned with the error.
+func resolveConfiguration(profile configv1beta1.SchedulerProfile) (configv1beta1.KaiSchedulerConfiguration, error) {
 	cfg := configv1beta1.KaiSchedulerConfiguration{}
+	var err error
 	if profile.Config != nil && len(profile.Config.Raw) > 0 {
-		// Best effort: validation reports malformed config at startup.
-		_ = json.Unmarshal(profile.Config.Raw, &cfg)
+		dec := json.NewDecoder(bytes.NewReader(profile.Config.Raw))
+		dec.DisallowUnknownFields()
+		if decodeErr := dec.Decode(&cfg); decodeErr != nil {
+			cfg = configv1beta1.KaiSchedulerConfiguration{}
+			err = fmt.Errorf("invalid kai-scheduler config: %w", decodeErr)
+		} else {
+			err = validateConfiguration(cfg, field.NewPath("config")).ToAggregate()
+		}
 	}
 	if cfg.SchedulerName == "" {
 		cfg.SchedulerName = string(configv1beta1.SchedulerNameKai)
@@ -100,7 +114,26 @@ func resolveConfiguration(profile configv1beta1.SchedulerProfile) configv1beta1.
 	if cfg.NodePoolLabelKey == "" {
 		cfg.NodePoolLabelKey = labelKeyNodePoolName
 	}
-	return cfg
+	return cfg, err
+}
+
+// validateConfiguration validates the options set in a KaiSchedulerConfiguration.
+func validateConfiguration(cfg configv1beta1.KaiSchedulerConfiguration, fldPath *field.Path) field.ErrorList {
+	allErrs := field.ErrorList{}
+	if cfg.SchedulerName != "" {
+		for _, msg := range utilvalidation.IsDNS1123Subdomain(cfg.SchedulerName) {
+			allErrs = append(allErrs, field.Invalid(fldPath.Child("schedulerName"), cfg.SchedulerName, msg))
+		}
+	}
+	for _, opt := range []struct{ name, key string }{{"queueLabelKey", cfg.QueueLabelKey}, {"nodePoolLabelKey", cfg.NodePoolLabelKey}} {
+		if opt.key == "" {
+			continue
+		}
+		for _, msg := range utilvalidation.IsQualifiedName(opt.key) {
+			allErrs = append(allErrs, field.Invalid(fldPath.Child(opt.name), opt.key, msg))
+		}
+	}
+	return allErrs
 }
 
 // Name returns the pod-facing scheduler name ("kai-scheduler" unless overridden in the profile
@@ -109,9 +142,12 @@ func (b *schedulerBackend) Name() string {
 	return b.name
 }
 
-// Init registers the KAI API types into b.scheme and must be called before
-// that scheme is used to serialize or deserialize KAI objects.
+// Init rejects an invalid profile config, then registers the KAI API types into b.scheme. It must
+// be called before that scheme is used to serialize or deserialize KAI objects.
 func (b *schedulerBackend) Init(_ client.Client) error {
+	if b.configErr != nil {
+		return b.configErr
+	}
 	if err := kaitopologyv1alpha1.AddToScheme(b.scheme); err != nil {
 		return err
 	}
