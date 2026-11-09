@@ -30,12 +30,12 @@ import (
 	"fmt"
 	"testing"
 
+	apicommon "github.com/ai-dynamo/grove/operator/api/common"
+	testutils "github.com/ai-dynamo/grove/operator/test/utils"
+
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-
-	apicommon "github.com/ai-dynamo/grove/operator/api/common"
-	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 )
 
 func BenchmarkGateRemovalDependencyWait(b *testing.B) {
