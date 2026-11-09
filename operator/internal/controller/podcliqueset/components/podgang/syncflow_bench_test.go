@@ -18,14 +18,13 @@ import (
 	"fmt"
 	"testing"
 
-	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
+	groveclientscheme "github.com/ai-dynamo/grove/operator/internal/client"
+	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
+	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/record"
-
-	groveclientscheme "github.com/ai-dynamo/grove/operator/internal/client"
-	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 )
 
 // BenchmarkReconcilePodGangStatus measures the real production method that evaluates
