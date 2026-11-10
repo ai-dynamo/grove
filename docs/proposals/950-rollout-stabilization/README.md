@@ -40,6 +40,8 @@ Frontend acknowledgements, inference probes, generic pause/resume, cross-version
 
 ## Proposal
 
+The stabilization window follows the same idea as Kubernetes Deployment [`minReadySeconds`](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/#min-ready-seconds). A Deployment counts a Pod as available only after it has stayed Ready for the configured duration. Grove applies the window to replacement units, which can span multiple Pods, before allowing further disruptive rollout steps.
+
 For RollingRecreate, a replacement only replenishes the disruption budget after it has remained Ready for the configured duration.
 
 For Coherent, hold advancement to the next sub-step until the replacement units committed by the current sub-step have remained Ready for the configured duration. When P/D are updated together, this includes both participating components. Existing scheduling and availability-budget checks still apply. The window applies before further disruptive advancement, rather than postponing creation of the initial replacement batch.
