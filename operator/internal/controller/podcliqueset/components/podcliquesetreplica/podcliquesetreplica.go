@@ -29,6 +29,7 @@ import (
 
 	"github.com/go-logr/logr"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -66,7 +67,11 @@ func (r *_resource) GetExistingResourceNames(_ context.Context, _ logr.Logger, _
 
 // Sync orchestrates replica deletion and rolling updates for the PodCliqueSet.
 func (r *_resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, state *pcssync.State) (pcssync.Result, error) {
-	scalingProgressChanged, err := r.syncScalingProgress(ctx, logger, pcs, state)
+	pcsReplicaInfosByIndex, err := r.gatherPCSReplicaInfosByIndex(ctx, pcs)
+	if err != nil {
+		return pcssync.Result{}, err
+	}
+	scalingProgressChanged, err := r.syncScalingProgress(ctx, logger, pcs, pcsReplicaInfosByIndex, state)
 	if err != nil {
 		return pcssync.Result{}, err
 	}
@@ -93,12 +98,9 @@ func (r *_resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecore
 
 	// Orchestrate the rolling update (RollingRecreate or Coherent) while one is in progress.
 	if componentutils.IsRollingUpdateInProgress(pcs) || componentutils.IsPCSReplicaRecreationInProgress(pcs) {
-		replicaInfos, err := r.getPCSReplicaInfos(ctx, pcs, state.ExpectedReplicaIndices, delWork.pcsIndicesToTerminate)
-		if err != nil {
-			return pcssync.Result{}, err
-		}
+		pcsReplicaInfos := pcsReplicaInfosExcludingTerminationIndices(pcsReplicaInfosByIndex, state.ExpectedReplicaIndices, delWork.pcsIndicesToTerminate)
 		minAvailableBreachedPCSReplicaIndices := slices.Collect(maps.Keys(delWork.minAvailableBreachedConstituents))
-		if err := r.orchestrateRollingUpdate(ctx, logger, pcs, replicaInfos, minAvailableBreachedPCSReplicaIndices); err != nil {
+		if err := r.orchestrateRollingUpdate(ctx, logger, pcs, pcsReplicaInfos, minAvailableBreachedPCSReplicaIndices); err != nil {
 			return pcssync.Result{}, err
 		}
 	}
@@ -123,61 +125,22 @@ func (r *_resource) Delete(_ context.Context, _ logr.Logger, _ metav1.ObjectMeta
 	return nil
 }
 
-// getPCSReplicaInfos fetches the PCLQs and PCSGs for each PCS replica.
-func (r *_resource) getPCSReplicaInfos(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet, expectedPCSReplicaIndices, pcsReplicaIndicesToTerminate []int) ([]pcsReplicaInfo, error) {
-	pcsObjectKey := client.ObjectKeyFromObject(pcs)
-	pclqsByPCSReplicaIndex, err := componentutils.GetStandalonePCLQsByPCSReplicaIndex(ctx, r.client, pcs.ObjectMeta)
-	if err != nil {
-		return nil, groveerr.WrapError(err,
-			errCodeListPCLQs,
-			component.OperationSync,
-			fmt.Sprintf("could not list PCLQs for PCS: %v", pcsObjectKey),
-		)
-	}
-	pcsgsByPCSReplicaIndex, err := componentutils.GetPCSGsByPCSReplicaIndex(ctx, r.client, pcs.ObjectMeta)
-	if err != nil {
-		return nil, groveerr.WrapError(err,
-			errCodeListPCSGs,
-			component.OperationSync,
-			fmt.Sprintf("could not list PCSGs for PCS: %v", pcsObjectKey),
-		)
-	}
-	// A coherent update gates completion on the replica's PodGangMap having reconverged to a single
-	// generation, so its entries are gathered here. One list serves every replica.
-	var pgmsByPCSReplicaIndex map[int]*grovecorev1beta1.PodGangMap
-	if componentutils.IsCoherentUpdateInProgress(pcs) {
-		pgms, listErr := componentutils.ListPodGangMapsForPCS(ctx, r.client, pcs.ObjectMeta)
-		if listErr != nil {
-			return nil, groveerr.WrapError(listErr,
-				errCodeGetPodGangMap,
-				component.OperationSync,
-				fmt.Sprintf("could not list PodGangMaps for PCS: %v", pcsObjectKey),
-			)
-		}
-		pgmsByPCSReplicaIndex, err = componentutils.PodGangMapByPCSReplicaIndex(pgms)
-		if err != nil {
-			return nil, groveerr.WrapError(err,
-				errCodeGetPodGangMap,
-				component.OperationSync,
-				fmt.Sprintf("could not index PodGangMaps by PCS replica for PCS: %v", pcsObjectKey),
-			)
-		}
-	}
-	replicaInfos := make([]pcsReplicaInfo, 0, len(expectedPCSReplicaIndices))
+// pcsReplicaInfosExcludingTerminationIndices returns information for expected PCS replicas that are not selected
+// for termination. The result retains the order of expectedPCSReplicaIndices.
+func pcsReplicaInfosExcludingTerminationIndices(
+	pcsReplicaInfosByIndex pcsReplicaInfoByIndex,
+	expectedPCSReplicaIndices []int,
+	pcsReplicaIndicesToTerminate []int) []pcsReplicaInfo {
+
+	pcsReplicaIndicesSelectedForTermination := sets.New(pcsReplicaIndicesToTerminate...)
+	pcsReplicaInfos := make([]pcsReplicaInfo, 0, len(expectedPCSReplicaIndices))
 	for _, pcsReplicaIndex := range expectedPCSReplicaIndices {
-		if slices.Contains(pcsReplicaIndicesToTerminate, pcsReplicaIndex) {
+		if pcsReplicaIndicesSelectedForTermination.Has(pcsReplicaIndex) {
 			continue
 		}
-		var pgmEntries []grovecorev1beta1.PodGangEntry
-		if pgm := pgmsByPCSReplicaIndex[pcsReplicaIndex]; pgm != nil {
-			pgmEntries = pgm.Spec.Entries
-		}
-		replicaInfos = append(replicaInfos, pcsReplicaInfo{
-			index:           pcsReplicaIndex,
-			standalonePCLQs: pclqsByPCSReplicaIndex[pcsReplicaIndex],
-			pcsgs:           pcsgsByPCSReplicaIndex[pcsReplicaIndex],
-			pgmEntries:      pgmEntries,
-		})
+		pcsReplicaInfoForUpdate := pcsReplicaInfosByIndex[pcsReplicaIndex]
+		pcsReplicaInfoForUpdate.index = pcsReplicaIndex
+		pcsReplicaInfos = append(pcsReplicaInfos, pcsReplicaInfoForUpdate)
 	}
-	return replicaInfos, nil
+	return pcsReplicaInfos
 }

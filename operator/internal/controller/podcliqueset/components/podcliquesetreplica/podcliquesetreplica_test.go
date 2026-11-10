@@ -16,6 +16,7 @@ package podcliquesetreplica
 
 import (
 	"context"
+	"reflect"
 	"slices"
 	"testing"
 
@@ -30,6 +31,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
@@ -113,6 +115,39 @@ func TestSyncPersistsScaleOutFromZeroAndPopulatesState(t *testing.T) {
 	assert.Equal(t, &grovecorev1beta1.PodCliqueSetScalingProgress{
 		ScaleOutReplicaIndices: []int32{0, 1},
 	}, pcs.Status.ScalingProgress)
+}
+
+func TestSyncGathersEachReplicaResourceTypeOnceForCoherentUpdate(t *testing.T) {
+	pcs := coherentTestPCS([]string{"frontend"}, nil)
+	pcs.Spec.Replicas = 0
+	pcs.Spec.Template.TerminationDelay = &metav1.Duration{}
+	scheme := runtime.NewScheme()
+	require.NoError(t, grovecorev1beta1.AddToScheme(scheme))
+	require.NoError(t, corev1.AddToScheme(scheme))
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(pcs).
+		WithStatusSubresource(pcs).
+		Build()
+	countingClient := &listCountingClient{
+		Client:     fakeClient,
+		listCounts: make(map[string]int),
+	}
+	r := &_resource{
+		client:                      countingClient,
+		eventRecorder:               &record.FakeRecorder{},
+		scalingProgressExpectations: &pcssync.ScalingProgressExpectations{},
+	}
+
+	_, err := r.Sync(context.Background(), logr.Discard(), pcs, &pcssync.State{})
+
+	assert.NoError(t, err)
+	assert.Equal(t, map[string]int{
+		"PodCliqueList":             1,
+		"PodCliqueScalingGroupList": 1,
+		"ServiceList":               1,
+		"PodGangMapList":            1,
+	}, countingClient.listCounts)
 }
 
 // TestSync tests the Sync function
@@ -202,4 +237,14 @@ func TestSync(t *testing.T) {
 			}
 		})
 	}
+}
+
+type listCountingClient struct {
+	client.Client
+	listCounts map[string]int
+}
+
+func (c *listCountingClient) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
+	c.listCounts[reflect.TypeOf(list).Elem().Name()]++
+	return c.Client.List(ctx, list, opts...)
 }
