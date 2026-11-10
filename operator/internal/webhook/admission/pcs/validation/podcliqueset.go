@@ -756,6 +756,45 @@ func (v *pcsValidator) validatePodCliqueScalingGroupConfigsUpdate(oldConfigs []g
 	return allErrs
 }
 
+// templateReplicasChangeWarnings returns one warning per clique or scaling group, matched by name, whose replicas
+// under spec.template changed. Controllers preserve the replicas of existing PodCliques and PodCliqueScalingGroups,
+// so such a change only affects children created afterward.
+// TODO(omerap12): consolidate all warning and error functions under validate()
+func (v *pcsValidator) templateReplicasChangeWarnings(oldPCS *grovecorev1beta1.PodCliqueSet) []string {
+	var warnings []string
+	fldPath := field.NewPath("spec", "template")
+
+	oldCliqueReplicas := make(map[string]int32, len(oldPCS.Spec.Template.Cliques))
+	for _, clique := range oldPCS.Spec.Template.Cliques {
+		if clique != nil {
+			oldCliqueReplicas[clique.Name] = clique.Spec.Replicas
+		}
+	}
+	for _, clique := range v.pcs.Spec.Template.Cliques {
+		if clique == nil {
+			continue
+		}
+		if oldReplicas, ok := oldCliqueReplicas[clique.Name]; ok && oldReplicas != clique.Spec.Replicas {
+			warnings = append(warnings, fmt.Sprintf("%s changed from %d to %d: the new value applies only to PodCliques created from now on; existing ones must be scaled directly with kubectl scale pclq",
+				fldPath.Child("cliques").Key(clique.Name).Child("spec", "replicas"), oldReplicas, clique.Spec.Replicas))
+		}
+	}
+
+	// Replicas defaults to 1 for a PodCliqueScalingGroupConfig.
+	oldPCSGReplicas := lo.SliceToMap(oldPCS.Spec.Template.PodCliqueScalingGroupConfigs, func(config grovecorev1beta1.PodCliqueScalingGroupConfig) (string, int32) {
+		return config.Name, ptr.Deref(config.Replicas, 1)
+	})
+	for _, config := range v.pcs.Spec.Template.PodCliqueScalingGroupConfigs {
+		newReplicas := ptr.Deref(config.Replicas, 1)
+		if oldReplicas, ok := oldPCSGReplicas[config.Name]; ok && oldReplicas != newReplicas {
+			warnings = append(warnings, fmt.Sprintf("%s changed from %d to %d: the new value applies only to PodCliqueScalingGroups created from now on; existing ones must be scaled directly with kubectl scale pcsg",
+				fldPath.Child("podCliqueScalingGroups").Key(config.Name).Child("replicas"), oldReplicas, newReplicas))
+		}
+	}
+
+	return warnings
+}
+
 func (v *pcsValidator) validateTopologyConstraintsUpdate(oldPCS *grovecorev1beta1.PodCliqueSet) field.ErrorList {
 	immutabilityValidator := newTopologyConstraintsValidator(v.pcs, v.tasEnabled, nil)
 

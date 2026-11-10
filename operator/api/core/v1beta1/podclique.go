@@ -65,6 +65,8 @@ type PodCliqueSpec struct {
 	// Spec is the spec of the pods in the clique.
 	PodSpec corev1.PodSpec `json:"podSpec"`
 	// Replicas is the number of replicas of the pods in the clique. It cannot be less than 1.
+	// In a PodCliqueSet clique template, a change applies only to PodCliques created from now on;
+	// existing ones must be scaled directly with kubectl scale pclq.
 	Replicas int32 `json:"replicas"`
 	// MinAvailable serves two purposes:
 	// 1. It defines the minimum number of pods that are guaranteed to be gang scheduled.
