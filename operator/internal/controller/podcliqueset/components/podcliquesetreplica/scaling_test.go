@@ -515,7 +515,7 @@ func TestFindScaleOutReplicaIndicesWithExpectedPCLQsAndPCSGs(t *testing.T) {
 	}
 }
 
-func TestTakeReplicaResourceSnapshot(t *testing.T) {
+func TestGatherPCSReplicaInfosByIndex(t *testing.T) {
 	const (
 		pcsName      = "test-pcs"
 		otherPCSName = "other-pcs"
@@ -552,7 +552,7 @@ func TestTakeReplicaResourceSnapshot(t *testing.T) {
 		headlessService2,
 	)}
 
-	replicaInfos, err := r.takeReplicaResourceSnapshot(context.Background(), pcs)
+	replicaInfos, err := r.gatherPCSReplicaInfosByIndex(context.Background(), pcs)
 	require.NoError(t, err)
 
 	require.Equal(t, []int{0, 2}, sortedMapKeys(replicaInfos))
@@ -563,16 +563,47 @@ func TestTakeReplicaResourceSnapshot(t *testing.T) {
 	assert.Equal(t, headlessService2.Name, replicaInfos[2].headlessSvcs[0].Name)
 }
 
-func TestTakeReplicaResourceSnapshotReturnsEmptyMaps(t *testing.T) {
+func TestGatherPCSReplicaInfosByIndexIncludesPodGangMapEntriesForCoherentUpdate(t *testing.T) {
+	pcs := coherentTestPCS([]string{"frontend"}, nil)
+	podGangMapEntries := []grovecorev1beta1.PodGangEntry{{
+		Epoch:                      "200",
+		PodCliqueSetGenerationHash: coherentTestCurrentGen,
+	}}
+	podGangMap := testutils.NewPodGangMapBuilder(pcs.Name, pcs.Namespace, pcs.UID, 1).
+		WithEntries(podGangMapEntries...).
+		Build()
+	r := _resource{client: newScalingTestClient(t, podGangMap)}
+
+	pcsReplicaInfosByIndex, err := r.gatherPCSReplicaInfosByIndex(context.Background(), pcs)
+
+	require.NoError(t, err)
+	require.Contains(t, pcsReplicaInfosByIndex, 1)
+	assert.Equal(t, podGangMapEntries, pcsReplicaInfosByIndex[1].pgmEntries)
+}
+
+func TestGatherPCSReplicaInfosByIndexIgnoresPodGangMapsOutsideCoherentUpdate(t *testing.T) {
+	pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "default", types.UID("test-pcs-uid")).Build()
+	podGangMap := testutils.NewPodGangMapBuilder(pcs.Name, pcs.Namespace, pcs.UID, 1).
+		WithEntries(grovecorev1beta1.PodGangEntry{Epoch: "200"}).
+		Build()
+	r := _resource{client: newScalingTestClient(t, podGangMap)}
+
+	pcsReplicaInfosByIndex, err := r.gatherPCSReplicaInfosByIndex(context.Background(), pcs)
+
+	require.NoError(t, err)
+	assert.Empty(t, pcsReplicaInfosByIndex)
+}
+
+func TestGatherPCSReplicaInfosByIndexReturnsEmptyMaps(t *testing.T) {
 	pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "default", types.UID("test-pcs-uid")).Build()
 	r := _resource{client: newScalingTestClient(t)}
 
-	replicaInfos, err := r.takeReplicaResourceSnapshot(context.Background(), pcs)
+	replicaInfos, err := r.gatherPCSReplicaInfosByIndex(context.Background(), pcs)
 	require.NoError(t, err)
 	assert.Empty(t, replicaInfos)
 }
 
-func TestTakeReplicaResourceSnapshotRejectsInvalidPCLQReplicaIndex(t *testing.T) {
+func TestGatherPCSReplicaInfosByIndexRejectsInvalidPCLQReplicaIndex(t *testing.T) {
 	pcsUID := types.UID("test-pcs-uid")
 	pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "default", pcsUID).Build()
 	pclq := testutils.NewPodCliqueBuilder(pcs.Name, pcsUID, "standalone", pcs.Namespace, 0).
@@ -580,11 +611,11 @@ func TestTakeReplicaResourceSnapshotRejectsInvalidPCLQReplicaIndex(t *testing.T)
 		Build()
 	r := _resource{client: newScalingTestClient(t, pclq)}
 
-	_, err := r.takeReplicaResourceSnapshot(context.Background(), pcs)
+	_, err := r.gatherPCSReplicaInfosByIndex(context.Background(), pcs)
 	assertGroveErrorCode(t, err, errCodeListPCLQs)
 }
 
-func TestTakeReplicaResourceSnapshotRejectsInvalidPCSGReplicaIndex(t *testing.T) {
+func TestGatherPCSReplicaInfosByIndexRejectsInvalidPCSGReplicaIndex(t *testing.T) {
 	pcsUID := types.UID("test-pcs-uid")
 	pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "default", pcsUID).Build()
 	pcsg := testutils.NewPodCliqueScalingGroupBuilder("test-pcs-group", pcs.Namespace, pcs.Name, 0).
@@ -593,11 +624,36 @@ func TestTakeReplicaResourceSnapshotRejectsInvalidPCSGReplicaIndex(t *testing.T)
 		Build()
 	r := _resource{client: newScalingTestClient(t, pcsg)}
 
-	_, err := r.takeReplicaResourceSnapshot(context.Background(), pcs)
+	_, err := r.gatherPCSReplicaInfosByIndex(context.Background(), pcs)
 	assertGroveErrorCode(t, err, errCodeListPCSGs)
 }
 
-func TestTakeReplicaResourceSnapshotWrapsListErrors(t *testing.T) {
+func TestGatherPCSReplicaInfosByIndexRejectsInvalidPodGangMapReplicaIndex(t *testing.T) {
+	pcs := coherentTestPCS([]string{"frontend"}, nil)
+	podGangMap := testutils.NewPodGangMapBuilder(pcs.Name, pcs.Namespace, pcs.UID, 0).Build()
+	podGangMap.Labels[apicommon.LabelPodCliqueSetReplicaIndex] = "invalid"
+	r := _resource{client: newScalingTestClient(t, podGangMap)}
+
+	_, err := r.gatherPCSReplicaInfosByIndex(context.Background(), pcs)
+
+	assertGroveErrorCode(t, err, errCodeGetPodGangMap)
+}
+
+func TestGatherPCSReplicaInfosByIndexWrapsPodGangMapListError(t *testing.T) {
+	pcs := coherentTestPCS([]string{"frontend"}, nil)
+	r := _resource{
+		client: &failingListClient{
+			Client:       newScalingTestClient(t),
+			failedObject: &grovecorev1beta1.PodGangMapList{},
+		},
+	}
+
+	_, err := r.gatherPCSReplicaInfosByIndex(context.Background(), pcs)
+
+	assertGroveErrorCode(t, err, errCodeGetPodGangMap)
+}
+
+func TestGatherPCSReplicaInfosByIndexWrapsListErrors(t *testing.T) {
 	pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "default", types.UID("test-pcs-uid")).Build()
 	tests := []struct {
 		name      string
@@ -630,7 +686,7 @@ func TestTakeReplicaResourceSnapshotWrapsListErrors(t *testing.T) {
 				},
 			}
 
-			_, err := r.takeReplicaResourceSnapshot(context.Background(), pcs)
+			_, err := r.gatherPCSReplicaInfosByIndex(context.Background(), pcs)
 			assertGroveErrorCode(t, err, test.wantCode)
 		})
 	}

@@ -36,14 +36,15 @@ import (
 )
 
 // syncScalingProgress computes and persists replica-index selections and populates the state shared with later components.
-func (r *_resource) syncScalingProgress(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, state *pcssync.State) (bool, error) {
-	replicaInfos, err := r.takeReplicaResourceSnapshot(ctx, pcs)
-	if err != nil {
-		return false, err
-	}
+func (r *_resource) syncScalingProgress(
+	ctx context.Context,
+	logger logr.Logger,
+	pcs *grovecorev1beta1.PodCliqueSet,
+	pcsReplicaInfosByIndex pcsReplicaInfoByIndex,
+	state *pcssync.State) (bool, error) {
 
 	scalingIndices := replicaScalingIndicesFromProgress(pcs.Status.ScalingProgress)
-	computedState := computeReplicaIndices(pcs, replicaInfos, scalingIndices)
+	computedState := computeReplicaIndices(pcs, pcsReplicaInfosByIndex, scalingIndices)
 	computedProgress := scalingProgressFromState(computedState)
 	scalingProgressChanged := !pcssync.ScalingProgressEqual(pcs.Status.ScalingProgress, computedProgress)
 	if scalingProgressChanged {
@@ -86,8 +87,9 @@ func (r *_resource) recordNewScalingSelectionEvents(logger logr.Logger, pcs *gro
 	}
 }
 
-// takeReplicaResourceSnapshot lists standalone PodCliques and PodCliqueScalingGroups owned by the PCS and groups them by PCS replica index.
-func (r *_resource) takeReplicaResourceSnapshot(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet) (pcsReplicaInfoByIndex, error) {
+// gatherPCSReplicaInfosByIndex gathers observed replica-scoped resources and groups their information by PCS replica index.
+// PodGangMaps are gathered only during a Coherent update.
+func (r *_resource) gatherPCSReplicaInfosByIndex(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet) (pcsReplicaInfoByIndex, error) {
 	standalonePCLQsByPCSReplicaIndex, err := componentutils.GetStandalonePCLQsByPCSReplicaIndex(ctx, r.client, pcs.ObjectMeta)
 	if err != nil {
 		return nil, groveerr.WrapError(err,
@@ -116,27 +118,55 @@ func (r *_resource) takeReplicaResourceSnapshot(ctx context.Context, pcs *grovec
 			fmt.Sprintf("failed to list headless Services by replica for PodCliqueSet: %v", client.ObjectKeyFromObject(pcs)),
 		)
 	}
-	exitingReplicaIndices := sets.New[int]()
-	for replicaIndex := range standalonePCLQsByPCSReplicaIndex {
-		exitingReplicaIndices.Insert(replicaIndex)
-	}
-	for replicaIndex := range pcsgsByPCSReplicaIndex {
-		exitingReplicaIndices.Insert(replicaIndex)
-	}
-	for replicaIndex := range headlessServicesByPCSReplicaIndex {
-		exitingReplicaIndices.Insert(replicaIndex)
-	}
-
-	replicaInfos := make(pcsReplicaInfoByIndex, exitingReplicaIndices.Len())
-	for replicaIndex := range exitingReplicaIndices {
-		replicaInfos[replicaIndex] = pcsReplicaInfo{
-			index:           replicaIndex,
-			standalonePCLQs: standalonePCLQsByPCSReplicaIndex[replicaIndex],
-			pcsgs:           pcsgsByPCSReplicaIndex[replicaIndex],
-			headlessSvcs:    headlessServicesByPCSReplicaIndex[replicaIndex],
+	var podGangMapsByPCSReplicaIndex map[int]*grovecorev1beta1.PodGangMap
+	if componentutils.IsCoherentUpdateInProgress(pcs) {
+		podGangMaps, listErr := componentutils.ListPodGangMapsForPCS(ctx, r.client, pcs.ObjectMeta)
+		if listErr != nil {
+			return nil, groveerr.WrapError(listErr,
+				errCodeGetPodGangMap,
+				component.OperationSync,
+				fmt.Sprintf("could not list PodGangMaps for PCS: %v", client.ObjectKeyFromObject(pcs)),
+			)
+		}
+		podGangMapsByPCSReplicaIndex, err = componentutils.PodGangMapByPCSReplicaIndex(podGangMaps)
+		if err != nil {
+			return nil, groveerr.WrapError(err,
+				errCodeGetPodGangMap,
+				component.OperationSync,
+				fmt.Sprintf("could not index PodGangMaps by PCS replica for PCS: %v", client.ObjectKeyFromObject(pcs)),
+			)
 		}
 	}
-	return replicaInfos, nil
+
+	existingPCSReplicaIndices := sets.New[int]()
+	for pcsReplicaIndex := range standalonePCLQsByPCSReplicaIndex {
+		existingPCSReplicaIndices.Insert(pcsReplicaIndex)
+	}
+	for pcsReplicaIndex := range pcsgsByPCSReplicaIndex {
+		existingPCSReplicaIndices.Insert(pcsReplicaIndex)
+	}
+	for pcsReplicaIndex := range headlessServicesByPCSReplicaIndex {
+		existingPCSReplicaIndices.Insert(pcsReplicaIndex)
+	}
+	for pcsReplicaIndex := range podGangMapsByPCSReplicaIndex {
+		existingPCSReplicaIndices.Insert(pcsReplicaIndex)
+	}
+
+	pcsReplicaInfosByIndex := make(pcsReplicaInfoByIndex, existingPCSReplicaIndices.Len())
+	for pcsReplicaIndex := range existingPCSReplicaIndices {
+		var podGangMapEntries []grovecorev1beta1.PodGangEntry
+		if podGangMap := podGangMapsByPCSReplicaIndex[pcsReplicaIndex]; podGangMap != nil {
+			podGangMapEntries = podGangMap.Spec.Entries
+		}
+		pcsReplicaInfosByIndex[pcsReplicaIndex] = pcsReplicaInfo{
+			index:           pcsReplicaIndex,
+			standalonePCLQs: standalonePCLQsByPCSReplicaIndex[pcsReplicaIndex],
+			pcsgs:           pcsgsByPCSReplicaIndex[pcsReplicaIndex],
+			headlessSvcs:    headlessServicesByPCSReplicaIndex[pcsReplicaIndex],
+			pgmEntries:      podGangMapEntries,
+		}
+	}
+	return pcsReplicaInfosByIndex, nil
 }
 
 // replicaScalingIndicesFromProgress converts API scaling progress to reconcile-local indices.
@@ -167,31 +197,31 @@ func computeReplicaIndices(pcs *grovecorev1beta1.PodCliqueSet, replicaInfos pcsR
 	scaleOutReplicaIndicesWithExpectedPCLQsAndPCSGs := findScaleOutReplicaIndicesWithExpectedPCLQsAndPCSGs(pcs, scalingIndices.scaleOut, replicaInfos)
 	scaleOutIndices.Delete(scaleOutReplicaIndicesWithExpectedPCLQsAndPCSGs...)
 
-	projectedReplicaIndices := replicaInfos.projectedReplicaIndices(pcsReplicaScalingIndices{
+	projectedPCSReplicaIndices := replicaInfos.projectedReplicaIndices(pcsReplicaScalingIndices{
 		scaleOut: scaleOutIndices.UnsortedList(),
 		scaleIn:  scaleInIndices.UnsortedList(),
 	})
 	desiredReplicaCount := int(pcs.Spec.Replicas)
 
-	if projectedReplicaIndices.Len() > desiredReplicaCount {
-		numReplicasToRemove := projectedReplicaIndices.Len() - desiredReplicaCount
-		selectedScaleInIndices := selectReplicaIndicesForScaleIn(pcs, replicaInfos, projectedReplicaIndices, scaleOutIndices, numReplicasToRemove)
+	if projectedPCSReplicaIndices.Len() > desiredReplicaCount {
+		numReplicasToRemove := projectedPCSReplicaIndices.Len() - desiredReplicaCount
+		selectedScaleInIndices := selectReplicaIndicesForScaleIn(pcs, replicaInfos, projectedPCSReplicaIndices, scaleOutIndices, numReplicasToRemove)
 		scaleOutIndices.Delete(selectedScaleInIndices...)
 		scaleInIndices.Insert(selectedScaleInIndices...)
-		projectedReplicaIndices.Delete(selectedScaleInIndices...)
-	} else if projectedReplicaIndices.Len() < desiredReplicaCount {
-		numReplicasToAdd := desiredReplicaCount - projectedReplicaIndices.Len()
+		projectedPCSReplicaIndices.Delete(selectedScaleInIndices...)
+	} else if projectedPCSReplicaIndices.Len() < desiredReplicaCount {
+		numReplicasToAdd := desiredReplicaCount - projectedPCSReplicaIndices.Len()
 		reservedIndices := replicaInfos.reservedReplicaIndices(pcsReplicaScalingIndices{
 			scaleOut: scaleOutIndices.UnsortedList(),
 			scaleIn:  scaleInIndices.UnsortedList(),
 		})
 		selectedScaleOutIndices := utils.GetAvailableIndices(reservedIndices, numReplicasToAdd)
 		scaleOutIndices.Insert(selectedScaleOutIndices...)
-		projectedReplicaIndices.Insert(selectedScaleOutIndices...)
+		projectedPCSReplicaIndices.Insert(selectedScaleOutIndices...)
 	}
 
 	return pcssync.State{
-		ExpectedReplicaIndices: sortedReplicaIndices(projectedReplicaIndices),
+		ExpectedReplicaIndices: sortedReplicaIndices(projectedPCSReplicaIndices),
 		ScaleOutReplicaIndices: sortedReplicaIndices(scaleOutIndices),
 		ScaleInReplicaIndices:  sortedReplicaIndices(scaleInIndices),
 	}

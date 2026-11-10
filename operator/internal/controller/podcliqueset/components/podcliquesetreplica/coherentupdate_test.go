@@ -28,7 +28,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
 )
 
 const (
@@ -92,37 +91,24 @@ func TestCoherentProgressMessage(t *testing.T) {
 	})
 }
 
-func TestGetPCSReplicaInfos(t *testing.T) {
-	pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "default", types.UID("test-pcs-uid")).Build()
-	r := &_resource{client: newScalingTestClient(t)}
+func TestPCSReplicaInfosExcludingTerminationIndices(t *testing.T) {
 	expectedPCSReplicaIndices := []int{0, 2, 4}
 	pcsReplicaIndicesToTerminate := []int{2}
+	pcsReplicaInfosByIndex := pcsReplicaInfoByIndex{
+		0: {index: 0, pgmEntries: []grovecorev1beta1.PodGangEntry{{Epoch: "100"}}},
+		2: {index: 2},
+	}
 
-	got, err := r.getPCSReplicaInfos(context.Background(), pcs, expectedPCSReplicaIndices, pcsReplicaIndicesToTerminate)
+	got := pcsReplicaInfosExcludingTerminationIndices(
+		pcsReplicaInfosByIndex,
+		expectedPCSReplicaIndices,
+		pcsReplicaIndicesToTerminate)
 
-	require.NoError(t, err)
 	gotPCSReplicaIndices := lo.Map(got, func(info pcsReplicaInfo, _ int) int { return info.index })
 	assert.Equal(t, []int{0, 4}, gotPCSReplicaIndices)
+	assert.Equal(t, pcsReplicaInfosByIndex[0].pgmEntries, got[0].pgmEntries)
 	assert.Equal(t, []int{0, 2, 4}, expectedPCSReplicaIndices)
 	assert.Equal(t, []int{2}, pcsReplicaIndicesToTerminate)
-}
-
-func TestGetPCSReplicaInfosForCoherentUpdate(t *testing.T) {
-	pcs := coherentTestPCS([]string{"frontend"}, nil)
-	entriesByReplicaIndex := map[int][]grovecorev1beta1.PodGangEntry{
-		0: {{Epoch: "100", PodCliqueSetGenerationHash: "old"}},
-		1: {{Epoch: "200", PodCliqueSetGenerationHash: coherentTestCurrentGen}},
-	}
-	pgm0 := testutils.NewPodGangMapBuilder(pcs.Name, pcs.Namespace, pcs.UID, 0).WithEntries(entriesByReplicaIndex[0]...).Build()
-	pgm1 := testutils.NewPodGangMapBuilder(pcs.Name, pcs.Namespace, pcs.UID, 1).WithEntries(entriesByReplicaIndex[1]...).Build()
-	r := &_resource{client: testutils.SetupFakeClient(pcs, pgm0, pgm1)}
-
-	got, err := r.getPCSReplicaInfos(context.Background(), pcs, []int{0, 1}, []int{0})
-
-	require.NoError(t, err)
-	require.Len(t, got, 1)
-	assert.Equal(t, 1, got[0].index)
-	assert.Equal(t, entriesByReplicaIndex[1], got[0].pgmEntries)
 }
 
 func TestInFlightEpochsForReplica(t *testing.T) {
