@@ -129,6 +129,12 @@ run-upgrade-e2e:
 	@echo "> Running operator upgrade e2e test"
 	@make --directory=operator run-upgrade-e2e
 
+# Runs the standalone KAI backend migration upgrade test.
+.PHONY: run-kai-backend-upgrade-e2e
+run-kai-backend-upgrade-e2e:
+	@echo "> Running KAI backend upgrade e2e test"
+	@make --directory=operator run-kai-backend-upgrade-e2e
+
 # Runs all tests
 .PHONY: test
 test: test-unit
