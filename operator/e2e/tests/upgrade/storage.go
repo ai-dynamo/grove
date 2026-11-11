@@ -107,6 +107,34 @@ func waitForStoredVersions(t *testing.T, tc *testctx.TestContext, versions ...st
 	require.NoError(t, err, "storedVersions of the grove.io CRDs are %v, want %v", last, versions)
 }
 
+// commonStoredVersions returns the status.storedVersions every grove.io CRD lists, failing the test when
+// the CRDs disagree.
+func commonStoredVersions(t *testing.T, tc *testctx.TestContext) []string {
+	t.Helper()
+	var common []string
+	for i, name := range groveCRDNames {
+		crd, err := getCRD(t.Context(), tc.Client, name)
+		require.NoError(t, err, "get CRD %s", name)
+		if i == 0 {
+			common = crd.Status.StoredVersions
+			continue
+		}
+		require.Equal(t, common, crd.Status.StoredVersions, "CRD %s storedVersions differ from %s", name, groveCRDNames[0])
+	}
+	return common
+}
+
+// withCurrentStorageVersion returns the storedVersions expected after upgrading to this checkout. The API
+// server only appends, so a release that already stores v1beta1 keeps the list it had, while one that
+// stores v1alpha1 gains v1beta1 behind it.
+func withCurrentStorageVersion(versions []string) []string {
+	current := corev1beta1.SchemeGroupVersion.Version
+	if slices.Contains(versions, current) {
+		return versions
+	}
+	return append(slices.Clone(versions), current)
+}
+
 // requireCRDsServeOnly checks that every grove.io CRD serves and stores version, and no other version.
 func requireCRDsServeOnly(t *testing.T, tc *testctx.TestContext, version string) {
 	t.Helper()
