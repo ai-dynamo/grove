@@ -76,6 +76,9 @@ func (b *schedulerBackend) SyncPodGang(ctx context.Context, podGang *groveschedu
 	if podGang == nil {
 		return fmt.Errorf("podGang is nil")
 	}
+	if !podGang.DeletionTimestamp.IsZero() {
+		return nil
+	}
 
 	if b.secondaryBackend == nil {
 		return nil
