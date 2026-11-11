@@ -15,6 +15,7 @@
 package kai
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -25,15 +26,19 @@ import (
 	"strings"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
+	apicommonconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
+	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	kaischedulingv2alpha2 "github.com/kai-scheduler/KAI-scheduler/pkg/apis/scheduling/v2alpha2"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
 
@@ -41,6 +46,47 @@ const (
 	aggregatePrefix               = "grove-"
 	nonAnchorPodGangsSubGroupName = "0-non-anchor-podgangs"
 )
+
+func (b *schedulerBackend) reconcileAggregateReplica(
+	ctx context.Context,
+	pcs *grovecorev1beta1.PodCliqueSet,
+	replica int,
+	materialized []componentutils.MaterializedPodGang,
+	sourceScheduler string,
+) error {
+	for _, item := range materialized {
+		if !item.PodGang.DeletionTimestamp.IsZero() {
+			continue
+		}
+		if err := b.ensurePodGangMetadata(ctx, item.PodGang); err != nil {
+			return fmt.Errorf("ensure KAI metadata on PodGang %s/%s: %w", item.PodGang.Namespace, item.PodGang.Name, err)
+		}
+	}
+
+	if sourceScheduler == string(configv1beta1.SchedulerNameLPX) {
+		projected, err := b.projectLPXPodGangs(ctx, materialized)
+		if err != nil {
+			return err
+		}
+		if len(projected) == 0 {
+			return b.deleteScaledInAggregatePodGroup(ctx, pcs, replica, sourceScheduler)
+		}
+		materialized = projected
+	}
+	topologyReference, err := b.resolveKAITopologyReference(ctx, materialized)
+	if err != nil {
+		return err
+	}
+	plan, err := b.buildAggregatePlan(pcs, replica, materialized, topologyReference)
+	if err != nil {
+		return err
+	}
+	// Persist the aggregate before any Pod is patched to reference it.
+	if err = b.syncAggregatePodGroup(ctx, pcs, plan.podGroup); err != nil {
+		return err
+	}
+	return b.migratePods(ctx, pcs, replica, plan, sourceScheduler)
+}
 
 type aggregateInputs struct {
 	reference  *groveschedulerv1alpha1.PodGang
@@ -332,6 +378,174 @@ func (b *subGroupBuilder) appendPodGroupLeaves(podGangName, branchName string, h
 	return nil
 }
 
+func (b *schedulerBackend) resolveKAITopologyReference(ctx context.Context, materialized []componentutils.MaterializedPodGang) (string, error) {
+	clusterTopologyName := ""
+	for _, item := range materialized {
+		podGang := item.PodGang
+		if !podGangHasTopologyConstraints(podGang) {
+			continue
+		}
+		name := getTopologyName(podGang)
+		if name == "" {
+			return "", fmt.Errorf("PodGang %s/%s has topology constraints without %q annotation", podGang.Namespace, podGang.Name, apicommonconstants.AnnotationTopologyName)
+		}
+		if clusterTopologyName != "" && clusterTopologyName != name {
+			return "", fmt.Errorf("PodGangs for one PodCliqueSet replica reference multiple ClusterTopologyBindings: %q and %q", clusterTopologyName, name)
+		}
+		clusterTopologyName = name
+	}
+	if clusterTopologyName == "" {
+		return "", nil
+	}
+
+	return b.resolveTopologyName(ctx, clusterTopologyName)
+}
+
+func podGangHasTopologyConstraints(podGang *groveschedulerv1alpha1.PodGang) bool {
+	if podGang.Spec.TopologyConstraint != nil {
+		return true
+	}
+	for _, group := range podGang.Spec.TopologyConstraintGroupConfigs {
+		if len(group.PodGroupNames) > 0 && group.TopologyConstraint != nil {
+			return true
+		}
+	}
+	for _, podGroup := range podGang.Spec.PodGroups {
+		if podGroup.TopologyConstraint != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func (b *schedulerBackend) syncAggregatePodGroup(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet, desired *kaischedulingv2alpha2.PodGroup) error {
+	existing := &kaischedulingv2alpha2.PodGroup{}
+	if err := b.client.Get(ctx, client.ObjectKeyFromObject(desired), existing); err != nil {
+		if apierrors.IsNotFound(err) {
+			return b.client.Create(ctx, desired)
+		}
+		return err
+	}
+	if !metav1.IsControlledBy(existing, pcs) {
+		return fmt.Errorf("KAI PodGroup %s/%s already exists and is not controlled by PodCliqueSet %s", existing.Namespace, existing.Name, pcs.Name)
+	}
+	desired = b.inheritRuntimeManagedFields(existing, desired)
+	if podGroupsEqual(existing, desired) {
+		return nil
+	}
+	updatePodGroup(existing, desired)
+	return b.client.Update(ctx, existing)
+}
+
+func (b *schedulerBackend) migratePods(
+	ctx context.Context,
+	pcs *grovecorev1beta1.PodCliqueSet,
+	replica int,
+	plan *aggregatePlan,
+	sourceScheduler string,
+) error {
+	pods, err := b.listActivePodsForReplica(ctx, pcs, replica, sourceScheduler)
+	if err != nil {
+		return err
+	}
+	for i := range pods {
+		leaf, err := plan.leafForPod(&pods[i])
+		if err != nil {
+			return err
+		}
+		if err := b.patchPodMembership(ctx, &pods[i], plan.podGroup.Name, leaf); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (p *aggregatePlan) leafForPod(pod *corev1.Pod) (string, error) {
+	podGangName := pod.Labels[apicommon.LabelPodGang]
+	leaves, found := p.podLeaves[podGangName]
+	if !found {
+		return "", fmt.Errorf("pod %s/%s references PodGang %q outside aggregate %q", pod.Namespace, pod.Name, podGangName, p.podGroup.Name)
+	}
+	podGroupName := pod.Labels[apicommon.LabelPodClique]
+	leaf, found := leaves[podGroupName]
+	if !found {
+		return "", fmt.Errorf("pod %s/%s maps to missing KAI subgroup %q", pod.Namespace, pod.Name, podGroupLeafName(podGangName, podGroupName))
+	}
+	return leaf, nil
+}
+
+func (b *schedulerBackend) patchPodMembership(ctx context.Context, pod *corev1.Pod, podGroupName, leaf string) error {
+	if pod.Annotations[annotationPodGroup] == podGroupName && pod.Labels[labelSubGroup] == leaf && pod.Annotations[annotationKeySkipPGR] == annotationValSkipPGR {
+		return nil
+	}
+	before := pod.DeepCopy()
+	if pod.Annotations == nil {
+		pod.Annotations = map[string]string{}
+	}
+	if pod.Labels == nil {
+		pod.Labels = map[string]string{}
+	}
+	pod.Annotations[annotationKeySkipPGR] = annotationValSkipPGR
+	pod.Annotations[annotationPodGroup] = podGroupName
+	pod.Labels[labelSubGroup] = leaf
+	if err := b.client.Patch(ctx, pod, client.MergeFrom(before)); err != nil {
+		return fmt.Errorf("migrate Pod %s/%s to KAI PodGroup %q: %w", pod.Namespace, pod.Name, podGroupName, err)
+	}
+	return nil
+}
+
+func (b *schedulerBackend) listActivePodsForReplica(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet, replica int, sourceScheduler string) ([]corev1.Pod, error) {
+	list := &corev1.PodList{}
+	if err := b.client.List(ctx, list,
+		client.InNamespace(pcs.Namespace),
+		client.MatchingLabels(apicommon.GetDefaultLabelsForPodCliqueSetManagedResources(pcs.Name)),
+	); err != nil {
+		return nil, fmt.Errorf("list Pods for PodCliqueSet %s/%s: %w", pcs.Namespace, pcs.Name, err)
+	}
+	result := make([]corev1.Pod, 0, len(list.Items))
+	for i := range list.Items {
+		pod := &list.Items[i]
+		if !pod.DeletionTimestamp.IsZero() {
+			continue
+		}
+		podReplica, err := podCliqueSetReplicaFromObjectMeta(pod.ObjectMeta)
+		if err != nil {
+			return nil, fmt.Errorf("pod %s/%s: %w", pod.Namespace, pod.Name, err)
+		}
+		if podReplica == replica {
+			result = append(result, *pod.DeepCopy())
+		}
+	}
+	if sourceScheduler == string(configv1beta1.SchedulerNameLPX) {
+		return b.selectLPXFallbackPods(ctx, result)
+	}
+	return result, nil
+}
+
+func (b *schedulerBackend) deleteScaledInAggregatePodGroup(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet, replica int, sourceScheduler string) error {
+	pods, err := b.listActivePodsForReplica(ctx, pcs, replica, sourceScheduler)
+	if err != nil {
+		return err
+	}
+	if len(pods) > 0 {
+		return fmt.Errorf("waiting for %d Pods in PodCliqueSet %s/%s replica %d to terminate", len(pods), pcs.Namespace, pcs.Name, replica)
+	}
+
+	podGroup := &kaischedulingv2alpha2.PodGroup{}
+	key := aggregatePodGroupKey(pcs, replica)
+	if err = b.client.Get(ctx, key, podGroup); err != nil {
+		return client.IgnoreNotFound(err)
+	}
+	if !metav1.IsControlledBy(podGroup, pcs) {
+		return fmt.Errorf("refusing to delete KAI PodGroup %s not controlled by PodCliqueSet %s", key, pcs.Name)
+	}
+	return client.IgnoreNotFound(b.client.Delete(ctx, podGroup))
+}
+
+func aggregatePodGroupKey(pcs *grovecorev1beta1.PodCliqueSet, replica int) client.ObjectKey {
+	return client.ObjectKey{Namespace: pcs.Namespace, Name: aggregatePodGroupName(pcs.Name, replica)}
+}
+
 func aggregatePodGroupName(pcsName string, replica int) string {
 	return stableKAIName(fmt.Sprintf("%s%s-%d", aggregatePrefix, pcsName, replica))
 }
@@ -358,6 +572,17 @@ func podGroupLeafName(podGangName, podGroupName string) string {
 
 func structuralKAIName(parts ...string) string {
 	return stableKAIName(strings.Join(parts, "\x00"))
+}
+
+func podCliqueSetReplicaFromObjectMeta(objMeta metav1.ObjectMeta) (int, error) {
+	replica, err := k8sutils.GetPodCliqueSetReplicaIndex(objMeta)
+	if err != nil {
+		return 0, err
+	}
+	if replica < 0 {
+		return 0, fmt.Errorf("invalid %s value %q", apicommon.LabelPodCliqueSetReplicaIndex, objMeta.Labels[apicommon.LabelPodCliqueSetReplicaIndex])
+	}
+	return replica, nil
 }
 
 func stableKAIName(value string) string {
@@ -392,18 +617,4 @@ func stableKAIName(value string) string {
 		name = strings.TrimRight(name[:52], "-")
 	}
 	return name + "-" + suffix
-}
-
-func (p *aggregatePlan) leafForPod(pod *corev1.Pod) (string, error) {
-	podGangName := pod.Labels[apicommon.LabelPodGang]
-	leaves, found := p.podLeaves[podGangName]
-	if !found {
-		return "", fmt.Errorf("pod %s/%s references PodGang %q outside aggregate %q", pod.Namespace, pod.Name, podGangName, p.podGroup.Name)
-	}
-	podGroupName := pod.Labels[apicommon.LabelPodClique]
-	leaf, found := leaves[podGroupName]
-	if !found {
-		return "", fmt.Errorf("pod %s/%s maps to missing KAI subgroup %q", pod.Namespace, pod.Name, podGroupLeafName(podGangName, podGroupName))
-	}
-	return leaf, nil
 }
