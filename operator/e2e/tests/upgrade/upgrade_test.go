@@ -53,29 +53,36 @@ const (
 	upgradePCSGWorkloadName = "upgrade-pcsg-only"
 	// upgradePCSGWorkloadNamespace is the namespace of that workload.
 	upgradePCSGWorkloadNamespace = "default"
+	// lastV1Alpha1Release is the last Grove release whose grove.io CRDs serve and store only v1alpha1.
+	// The downgrade test pins it because from v0.2.0-beta1 on a release already stores v1beta1, leaving
+	// the documented downgrade with nothing to move back.
+	lastV1Alpha1Release = "v0.1.0-alpha.17"
 )
 
 // podSurvivalUpgrade holds the state shared between the pre-upgrade and post-upgrade steps of the pod
 // survival test. The pod list is captured before the upgrade and asserted against afterwards.
 type podSurvivalUpgrade struct {
-	fromVersion       string
-	workload          *testctx.WorkloadConfig
-	podsBeforeUpgrade *corev1.PodList
+	fromVersion          string
+	workload             *testctx.WorkloadConfig
+	podsBeforeUpgrade    *corev1.PodList
+	storedVersionsBefore []string
 }
 
-// deployWorkload deploys the workload on the fromVersion operator and captures its pods.
+// deployWorkload deploys the workload on the fromVersion operator and captures its pods and the versions
+// that release stores.
 func (s *podSurvivalUpgrade) deployWorkload(t *testing.T, tc *testctx.TestContext) {
 	_, err := tc.DeployAndVerifyWorkload()
 	require.NoError(t, err, "applying workload")
 	s.podsBeforeUpgrade, err = tc.ListPods()
 	require.NoError(t, err, "listing workload pods")
+	s.storedVersionsBefore = commonStoredVersions(t, tc)
 }
 
-// verifyPodsSurvive checks that the grove.io CRDs store v1beta1 next to v1alpha1 and that the workload is
-// readable at both versions, scales the workload, then asserts the pre-upgrade pods were not recreated and
-// the init containers were updated.
+// verifyPodsSurvive checks that the grove.io CRDs store this checkout's version alongside whatever the
+// installed release stored and that the workload is readable at both versions, scales the workload, then
+// asserts the pre-upgrade pods were not recreated and the init containers were updated.
 func (s *podSurvivalUpgrade) verifyPodsSurvive(t *testing.T, tc *testctx.TestContext) {
-	waitForStoredVersions(t, tc, corev1alpha1.SchemeGroupVersion.Version, grovev1beta1.SchemeGroupVersion.Version)
+	waitForStoredVersions(t, tc, withCurrentStorageVersion(s.storedVersionsBefore)...)
 	requirePCSReadableAtBothVersions(t, tc, types.NamespacedName{Namespace: s.workload.Namespace, Name: s.workload.Name})
 	verifyPodUIDsUnchanged(t, tc, s.podsBeforeUpgrade)
 
@@ -115,16 +122,16 @@ func Test_VUPG1_UpgradeFromLatestGitHubRelease(t *testing.T) {
 	})
 }
 
-// Test_VDGR1_DowngradeToLatestGitHubRelease verifies the documented downgrade: after an upgrade to the
+// Test_VDGR1_DowngradeToLastV1Alpha1Release verifies the documented downgrade: after an upgrade to the
 // operator built from the current checkout, run-api-downgrade moves the grove.io objects back to
 // grove.io/v1alpha1, and a Helm rollback to the released version then succeeds. The workload's pods
 // survive both the upgrade and the downgrade, and the released operator keeps managing the workload.
 //
 // The released version can be controlled with GROVE_UPGRADE_FROM_VERSION.
-func Test_VDGR1_DowngradeToLatestGitHubRelease(t *testing.T) {
+func Test_VDGR1_DowngradeToLastV1Alpha1Release(t *testing.T) {
 	fromVersion := os.Getenv("GROVE_UPGRADE_FROM_VERSION")
 	if fromVersion == "" {
-		fromVersion = latestGitHubRelease(t)
+		fromVersion = lastV1Alpha1Release
 	}
 	s := &podSurvivalUpgrade{
 		fromVersion: fromVersion,
@@ -153,7 +160,7 @@ func (s *podSurvivalUpgrade) downgradeAndVerify(t *testing.T, tc *testctx.TestCo
 	alpha := corev1alpha1.SchemeGroupVersion.Version
 	pcsKey := types.NamespacedName{Namespace: s.workload.Namespace, Name: s.workload.Name}
 
-	waitForStoredVersions(t, tc, alpha, grovev1beta1.SchemeGroupVersion.Version)
+	waitForStoredVersions(t, tc, withCurrentStorageVersion(s.storedVersionsBefore)...)
 	verifyPodUIDsUnchanged(t, tc, s.podsBeforeUpgrade)
 	pcsBeforeDowngrade := &corev1alpha1.PodCliqueSet{}
 	require.NoError(t, tc.Client.Get(t.Context(), pcsKey, pcsBeforeDowngrade), "get PodCliqueSet at v1alpha1")
