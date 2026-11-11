@@ -50,6 +50,7 @@ func (r *Reconciler) reconcileSpec(ctx context.Context, logger logr.Logger, pcs 
 	reconcileStepFns := []ctrlcommon.ReconcileStepFn[grovecorev1beta1.PodCliqueSet]{
 		r.ensureFinalizer,
 		r.processGenerationHashChange,
+		r.ensureCurrentControllerRevision,
 		syncResources,
 		r.updateObservedGeneration,
 	}

@@ -64,6 +64,7 @@ func (r *Reconciler) RegisterWithManager(mgr ctrl.Manager) error {
 					predicate.Or(
 						predicate.GenerationChangedPredicate{},
 						predicate.AnnotationChangedPredicate{},
+						podCliqueTemplateHashChangedPredicate(),
 					),
 				),
 			),
@@ -90,6 +91,17 @@ func (r *Reconciler) RegisterWithManager(mgr ctrl.Manager) error {
 			builder.WithPredicates(podGangMapPredicate()),
 		).
 		Complete(r)
+}
+
+// podCliqueTemplateHashChangedPredicate admits owner updates that change only the selected pod template.
+func podCliqueTemplateHashChangedPredicate() predicate.Predicate {
+	return predicate.Funcs{
+		UpdateFunc: func(updateEvent event.UpdateEvent) bool {
+			oldHash := updateEvent.ObjectOld.GetLabels()[apicommon.LabelPodTemplateHash]
+			newHash := updateEvent.ObjectNew.GetLabels()[apicommon.LabelPodTemplateHash]
+			return oldHash != newHash
+		},
+	}
 }
 
 // managedPodCliquePredicate filters PodClique events to only process managed PodCliques owned by expected resources
@@ -224,7 +236,7 @@ func mapPodCliqueSetToPCLQs() handler.MapFunc {
 	}
 }
 
-// podCliqueSetPredicate filters PodCliqueSet events to updates that select a new PCS replica for update.
+// podCliqueSetPredicate filters PodCliqueSet events to updates that select a new PCS replica.
 func podCliqueSetPredicate() predicate.Predicate {
 	return predicate.Funcs{
 		CreateFunc: func(_ event.CreateEvent) bool { return false },

@@ -135,6 +135,26 @@ func TestGetOrderedKindsForSyncPCSG(t *testing.T) {
 	}
 }
 
+func TestProcessUpdateStartsForSelectedPCSReplica(t *testing.T) {
+	pcsUID := uuid.NewUUID()
+	pcs := testutils.NewPodCliqueSetBuilder(testPCSNamePCSG, testNamespacePCSG, pcsUID).
+		WithReplicas(1).
+		WithScalingGroup(testPCSGName, []string{"worker"}).
+		WithPodCliqueSetGenerationHash(ptr.To("new-generation-hash")).
+		Build()
+	pcs.Status.UpdateProgress = &grovecorev1beta1.PodCliqueSetUpdateProgress{
+		CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 0}},
+	}
+	pcsg := testutils.NewPodCliqueScalingGroupBuilder(testPCSGName, testNamespacePCSG, testPCSNamePCSG, 0).Build()
+
+	reconciler := &Reconciler{client: testutils.SetupFakeClient(pcs, pcsg)}
+	result := reconciler.processUpdate(context.Background(), logr.Discard(), pcsg)
+	_, err := result.Result()
+	require.NoError(t, err)
+	require.NotNil(t, pcsg.Status.UpdateProgress)
+	assert.Equal(t, "new-generation-hash", pcsg.Status.UpdateProgress.PodCliqueSetGenerationHash)
+}
+
 // TestShouldResetOrTriggerUpdatePCSG tests the shouldResetOrTriggerUpdate function for PodCliqueScalingGroup
 func TestShouldResetOrTriggerUpdatePCSG(t *testing.T) {
 	tests := []struct {

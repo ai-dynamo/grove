@@ -26,6 +26,7 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	appsv1 "k8s.io/api/apps/v1"
 	resourcev1 "k8s.io/api/resource/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -52,6 +53,7 @@ func newTestScheme() *runtime.Scheme {
 	scheme := runtime.NewScheme()
 	_ = grovecorev1beta1.AddToScheme(scheme)
 	_ = resourcev1.AddToScheme(scheme)
+	_ = appsv1.AddToScheme(scheme)
 	return scheme
 }
 

@@ -177,8 +177,19 @@ func TestMapPodCliqueSetToPCLQs(t *testing.T) {
 	assert.Equal(t, []reconcile.Request{{NamespacedName: types.NamespacedName{Namespace: "default", Name: "test-pcs-4-worker"}}}, requests)
 }
 
-// TestPodCliqueSetPredicateSelectedReplicaChanges verifies that the PodCliqueSet watch predicate
-// enqueues PodClique reconciles only when a new PCS replica is selected for update.
+func TestPodCliqueTemplateHashChangedPredicate(t *testing.T) {
+	pred := podCliqueTemplateHashChangedPredicate()
+	oldPCLQ := &grovecorev1beta1.PodClique{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{apicommon.LabelPodTemplateHash: "old"}}}
+	newPCLQ := oldPCLQ.DeepCopy()
+	newPCLQ.Labels[apicommon.LabelPodTemplateHash] = "new"
+
+	assert.True(t, pred.Update(event.UpdateEvent{ObjectOld: oldPCLQ, ObjectNew: newPCLQ}))
+	assert.False(t, pred.Update(event.UpdateEvent{ObjectOld: newPCLQ, ObjectNew: newPCLQ.DeepCopy()}))
+}
+
+// TestPodCliqueSetPredicateCurrentlyUpdatingReplicaChanges verifies that the PodCliqueSet
+// watch predicate enqueues PodClique reconciles when the replica currently being rolled out
+// changes.
 func TestPodCliqueSetPredicateSelectedReplicaChanges(t *testing.T) {
 	pred, ok := podCliqueSetPredicate().(predicate.Funcs)
 	require.True(t, ok, "predicate must be predicate.Funcs")
