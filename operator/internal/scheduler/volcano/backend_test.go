@@ -28,6 +28,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -394,4 +395,26 @@ func TestBackend_ValidatePodCliqueSetQueues(t *testing.T) {
 			require.NoError(t, err)
 		})
 	}
+}
+
+func TestBackend_SyncPodGangIgnoresTerminatingPodGang(t *testing.T) {
+	now := metav1.Now()
+	podGang := &groveschedulerv1alpha1.PodGang{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "pg-terminating",
+			Namespace:         "default",
+			UID:               "uid-terminating",
+			DeletionTimestamp: &now,
+			Finalizers:        []string{"example.com/hold"},
+		},
+		Spec: groveschedulerv1alpha1.PodGangSpec{
+			PodGroups: []groveschedulerv1alpha1.PodGroup{{Name: "worker", MinReplicas: 1}},
+		},
+	}
+	cl := schedulertest.NewVolcanoClient(t, podGang)
+	b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameVolcano})
+
+	require.NoError(t, b.SyncPodGang(context.Background(), podGang))
+	err := cl.Get(context.Background(), client.ObjectKeyFromObject(podGang), &volcanov1beta1.PodGroup{})
+	assert.True(t, apierrors.IsNotFound(err))
 }
