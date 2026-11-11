@@ -113,13 +113,13 @@
   │  grove/workload/       grove/topology/     grove/podgroup/      │
   │  ┌──────────────────┐ ┌──────────────────┐ ┌────────────────┐  │
   │  │ WorkloadManager  │ │ TopologyVerifier │ │PodGroupVerifier│  │
-  │  │ ScalePCS         │ │ VerifyCluster    │ │GetKAIPodGroups │  │
-  │  │ ScalePCSG        │ │  TopologyLevels  │ │WaitForKAI      │  │
-  │  │ DeletePCS        │ │ VerifyPodsInSame │ │  PodGroups     │  │
-  │  │ GetPCS           │ │  TopologyDomain  │ │VerifyTopology  │  │
-  │  │ WaitForPCSG      │ │ VerifyPCSG       │ │  Constraint    │  │
-  │  │ WaitForPodClique │ │  Replicas        │ │VerifySubGroups │  │
-  │  │ PodCliqueSetGVR  │ │ PCSGTypeConfig   │ │ExpectedSubGroup│  │
+  │  │ ScalePCS         │ │ VerifyCluster    │ │GetAggregate    │  │
+  │  │ ScalePCSG        │ │  TopologyLevels  │ │  PodGroup      │  │
+  │  │ DeletePCS        │ │ VerifyPodsInSame │ │VerifyAggregate │  │
+  │  │ GetPCS           │ │  TopologyDomain  │ │  Topology      │  │
+  │  │ WaitForPCSG      │ │ VerifyPCSG       │ │ExpectedSubGroup│  │
+  │  │ WaitForPodClique │ │  Replicas        │ │ScaledPCSGConfig│  │
+  │  │ PodCliqueSetGVR  │ │ PCSGTypeConfig   │ │                │  │
   │  └──────────────────┘ └──────────────────┘ └────────────────┘  │
   │                                                                  │
   │  grove/config/                                                   │
@@ -163,7 +163,7 @@ TestMain
   │     ├── podGroupVerifier := podgroup.NewPodGroupVerifier(tc.Clients, Logger)
   │     ├── tc.DeployAndVerifyWorkload()
   │     ├── topologyVerifier.VerifyPodsInSame...(...)
-  │     ├── podGroupVerifier.VerifySubGroups(...)
+  │     ├── podGroupVerifier.VerifyAggregatePodGroupTopology(...)
   │     │
   │     └── cleanup()
   │           ├── if failed: diag.CollectAll(ctx, t.Name())
