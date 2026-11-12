@@ -173,6 +173,7 @@ In the KAI representation, BPG and SPG are not separate KAI PodGroups. They are 
 | Sum of all mapped subgroup minimum replicas | PodGroup `minMember` |
 | PodGang priority class | PodGroup priority class |
 | PodCliqueSet `kai.scheduler/queue` metadata, or a shared PodClique-template queue | PodGroup queue on initial creation |
+| PodCliqueSet `kai.scheduler/preemptibility` label | PodGroup `preemptibility`; unset or invalid leaves KAI's priority-based default |
 | Base PodGang | Top-level KAI subgroup, usually named from the BPG name |
 | Scaled PodGang collection for a PCSG | Top-level KAI subgroup that groups scaled PodGang replicas |
 | Individual Scaled PodGang replica | Child KAI subgroup under the SPG collection subgroup |

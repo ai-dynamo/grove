@@ -54,12 +54,14 @@ type schedulerBackend struct {
 var _ scheduler.Backend = (*schedulerBackend)(nil)
 
 const (
-	labelKeyQueueName    = "kai.scheduler/queue"
-	labelKeyNodePoolName = "kai.scheduler/node-pool"
-	annotationKeySkipPGR = "kai.scheduler/skip-podgrouper"
-	annotationValSkipPGR = "true"
-	annotationPodGroup   = "pod-group-name"
-	labelSubGroup        = "kai.scheduler/subgroup-name"
+	labelKeyQueueName = "kai.scheduler/queue"
+	// labelKeyPreemptibility is the key KAI's podgrouper reads from a workload's top owner.
+	labelKeyPreemptibility = "kai.scheduler/preemptibility"
+	labelKeyNodePoolName   = "kai.scheduler/node-pool"
+	annotationKeySkipPGR   = "kai.scheduler/skip-podgrouper"
+	annotationValSkipPGR   = "true"
+	annotationPodGroup     = "pod-group-name"
+	labelSubGroup          = "kai.scheduler/subgroup-name"
 )
 
 // New creates a new KAI backend instance. profile is the scheduler profile for kai-scheduler;
@@ -165,7 +167,10 @@ func (b *schedulerBackend) PodGangMembershipAnnotations(newPodGangName string) m
 
 // ValidatePodCliqueSet runs KAI-specific validations on the PodCliqueSet.
 func (b *schedulerBackend) ValidatePodCliqueSet(_ context.Context, pcs *grovecorev1beta1.PodCliqueSet, _ ...scheduler.ValidateOption) error {
-	_, err := resolveQueueNameForPodCliqueSet(pcs)
+	if _, err := resolveQueueNameForPodCliqueSet(pcs); err != nil {
+		return err
+	}
+	_, err := resolvePreemptibilityForPodCliqueSet(pcs)
 	return err
 }
 
@@ -180,9 +185,21 @@ func (b *schedulerBackend) buildPodGroupForPodGang(ctx context.Context, podGang 
 	if err != nil {
 		return nil, err
 	}
-	queueName, err := b.resolveQueueName(ctx, podGang)
+	pcs, err := b.getControllingPodCliqueSet(ctx, podGang)
 	if err != nil {
 		return nil, err
+	}
+	queueName, err := resolveQueueNameForPodCliqueSet(pcs)
+	if err != nil {
+		return nil, err
+	}
+	// Admission rejects an invalid value, but an object admitted before this
+	// check existed may carry one. Ignore it as KAI's podgrouper does rather
+	// than leave the gang without a PodGroup.
+	preemptibility, err := resolvePreemptibilityForPodCliqueSet(pcs)
+	if err != nil {
+		b.recordWarning(podGang, "InvalidKAIPreemptibility", err)
+		preemptibility = ""
 	}
 
 	parentBySubGroupName := map[string]string{}
@@ -237,6 +254,7 @@ func (b *schedulerBackend) buildPodGroupForPodGang(ctx context.Context, podGang 
 			MinMember:         ptr.To(minMember),
 			Queue:             queueName,
 			PriorityClassName: podGang.Spec.PriorityClassName,
+			Preemptibility:    preemptibility,
 			SubGroups:         subGroups,
 		},
 	}
@@ -326,22 +344,21 @@ func toKAITopologyConstraint(topologyConstraint *groveschedulerv1alpha1.Topology
 	return result, nil
 }
 
-// resolveQueueName returns the KAI queue configured by the PodGang's owning PodCliqueSet.
-func (b *schedulerBackend) resolveQueueName(ctx context.Context, podGang *groveschedulerv1alpha1.PodGang) (string, error) {
+// getControllingPodCliqueSet returns the PodCliqueSet that controls the PodGang.
+func (b *schedulerBackend) getControllingPodCliqueSet(ctx context.Context, podGang *groveschedulerv1alpha1.PodGang) (*grovecorev1beta1.PodCliqueSet, error) {
 	owner := metav1.GetControllerOf(podGang)
 	if owner == nil {
-		return "", fmt.Errorf("podgang %s/%s has no controlling PodCliqueSet", podGang.Namespace, podGang.Name)
+		return nil, fmt.Errorf("podgang %s/%s has no controlling PodCliqueSet", podGang.Namespace, podGang.Name)
 	}
 	if owner.APIVersion != grovecorev1beta1.SchemeGroupVersion.String() || owner.Kind != "PodCliqueSet" {
-		return "", fmt.Errorf("podgang %s/%s is controlled by %s %q, expected PodCliqueSet", podGang.Namespace, podGang.Name, owner.APIVersion, owner.Kind)
+		return nil, fmt.Errorf("podgang %s/%s is controlled by %s %q, expected PodCliqueSet", podGang.Namespace, podGang.Name, owner.APIVersion, owner.Kind)
 	}
 
 	pcs := &grovecorev1beta1.PodCliqueSet{}
 	if err := b.client.Get(ctx, client.ObjectKey{Namespace: podGang.Namespace, Name: owner.Name}, pcs); err != nil {
-		return "", fmt.Errorf("get controlling PodCliqueSet %s/%s: %w", podGang.Namespace, owner.Name, err)
+		return nil, fmt.Errorf("get controlling PodCliqueSet %s/%s: %w", podGang.Namespace, owner.Name, err)
 	}
-
-	return resolveQueueNameForPodCliqueSet(pcs)
+	return pcs, nil
 }
 
 // resolveQueueNameForPodCliqueSet returns the KAI queue configured by a PodCliqueSet.
@@ -385,6 +402,17 @@ func resolveQueueNameForPodCliqueSet(pcs *grovecorev1beta1.PodCliqueSet) (string
 	}
 	sort.Strings(queueNamesList)
 	return "", fmt.Errorf("conflicting KAI queues on PodCliqueSet %s/%s PodClique templates: %v", pcs.Namespace, pcs.Name, queueNamesList)
+}
+
+// resolvePreemptibilityForPodCliqueSet returns the KAI preemptibility set by the PodCliqueSet's
+// label, or "" when none is set, which leaves KAI to derive it from the priority class. Like KAI's
+// podgrouper, it reads labels only.
+func resolvePreemptibilityForPodCliqueSet(pcs *grovecorev1beta1.PodCliqueSet) (kaischedulingv2alpha2.Preemptibility, error) {
+	preemptibility, err := kaischedulingv2alpha2.ParsePreemptibility(pcs.Labels[labelKeyPreemptibility])
+	if err != nil {
+		return "", fmt.Errorf("KAI preemptibility on PodCliqueSet %s/%s: %w", pcs.Namespace, pcs.Name, err)
+	}
+	return preemptibility, nil
 }
 
 // resolveQueueNameFromMetadata returns queue from labels first, then falls back to annotations.

@@ -306,3 +306,4 @@ Currently the following schedulers support gang scheduling of `PodGang`s created
   - Disable KAI stale-gang eviction with
     `--set-string scheduler.args.default-staleness-grace-period=-1`. KAI's default eviction can terminate a
     partially scheduled gang before Grove's controller-owned termination delay.
+  - See the [KAI Scheduler user guide](user-guide/kai-scheduler.md) for the KAI metadata Grove reads from a PodCliqueSet.
