@@ -1309,7 +1309,7 @@ func TestEnvVarValidation(t *testing.T) {
 				},
 			},
 			errorMatchers: []testutils.ErrorMatcher{
-				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.cliques[0].spec.podSpec.spec.containers[0].env[0].name"},
+				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.cliques[0].spec.podSpec.containers[0].env[0].name"},
 			},
 		},
 		{
@@ -1325,7 +1325,7 @@ func TestEnvVarValidation(t *testing.T) {
 				},
 			},
 			errorMatchers: []testutils.ErrorMatcher{
-				{ErrorType: field.ErrorTypeDuplicate, Field: "spec.template.cliques[0].spec.podSpec.spec.containers[0].env"},
+				{ErrorType: field.ErrorTypeDuplicate, Field: "spec.template.cliques[0].spec.podSpec.containers[0].env"},
 			},
 		},
 		{
@@ -1341,7 +1341,7 @@ func TestEnvVarValidation(t *testing.T) {
 				},
 			},
 			errorMatchers: []testutils.ErrorMatcher{
-				{ErrorType: field.ErrorTypeDuplicate, Field: "spec.template.cliques[0].spec.podSpec.spec.initContainers[0].env"},
+				{ErrorType: field.ErrorTypeDuplicate, Field: "spec.template.cliques[0].spec.podSpec.initContainers[0].env"},
 			},
 		},
 		{

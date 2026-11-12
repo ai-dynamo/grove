@@ -664,7 +664,7 @@ func (v *pcsValidator) validatePodSpec(spec corev1.PodSpec, fldPath *field.Path)
 	containerNames := make([]string, 0, len(spec.Containers)+len(spec.InitContainers))
 	for i, container := range spec.Containers {
 		containerNames = append(containerNames, container.Name)
-		allErrs = append(allErrs, validateContainer(container, specFldPath.Child("containers").Index(i))...)
+		allErrs = append(allErrs, validateContainer(container, fldPath.Child("containers").Index(i))...)
 	}
 	allErrs = append(allErrs, sliceMustHaveUniqueElements(containerNames, fldPath.Child("containers"))...)
 
@@ -672,7 +672,7 @@ func (v *pcsValidator) validatePodSpec(spec corev1.PodSpec, fldPath *field.Path)
 	containerNames = lo.Uniq(containerNames)
 	for i, container := range spec.InitContainers {
 		containerNames = append(containerNames, container.Name)
-		allErrs = append(allErrs, validateContainer(container, specFldPath.Child("initContainers").Index(i))...)
+		allErrs = append(allErrs, validateContainer(container, fldPath.Child("initContainers").Index(i))...)
 	}
 	allErrs = append(allErrs, sliceMustHaveUniqueElements(containerNames, fldPath.Child("initContainers"))...)
 
