@@ -27,6 +27,7 @@ import (
 	kaischedulingv2alpha2 "github.com/kai-scheduler/KAI-scheduler/pkg/apis/scheduling/v2alpha2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -680,4 +681,42 @@ func setPodCliqueSetControllerOwner(podGang *groveschedulerv1alpha1.PodGang, pcs
 		UID:        pcs.UID,
 		Controller: ptr.To(true),
 	}}
+}
+
+func legacyAggregatePod(pcs *grovecorev1beta1.PodCliqueSet, podGang *groveschedulerv1alpha1.PodGang, podCliqueName string) *corev1.Pod {
+	labels := apicommon.GetDefaultLabelsForPodCliqueSetManagedResources(pcs.Name)
+	labels[apicommon.LabelPodCliqueSetReplicaIndex] = podGang.Labels[apicommon.LabelPodCliqueSetReplicaIndex]
+	labels[apicommon.LabelPodGang] = podGang.Name
+	labels[apicommon.LabelPodClique] = podCliqueName
+	return &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
+		Name:        podGang.Name + "-pod",
+		Namespace:   pcs.Namespace,
+		Labels:      labels,
+		Annotations: map[string]string{annotationPodGroup: podGang.Name, "unrelated": "keep"},
+	}}
+}
+
+func requireSubGroup(t *testing.T, podGroup *kaischedulingv2alpha2.PodGroup, name string) *kaischedulingv2alpha2.SubGroup {
+	t.Helper()
+	subGroup := findSubGroup(podGroup, name)
+	require.NotNil(t, subGroup, "subgroup %q not found", name)
+	return subGroup
+}
+
+func findSubGroup(podGroup *kaischedulingv2alpha2.PodGroup, name string) *kaischedulingv2alpha2.SubGroup {
+	for i := range podGroup.Spec.SubGroups {
+		if podGroup.Spec.SubGroups[i].Name == name {
+			return &podGroup.Spec.SubGroups[i]
+		}
+	}
+	return nil
+}
+
+type kaiBackendInitializer interface {
+	Init(client.Client) error
+}
+
+func initTestBackend(t *testing.T, backend kaiBackendInitializer, cl client.Client) {
+	t.Helper()
+	require.NoError(t, backend.Init(cl))
 }
