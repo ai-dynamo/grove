@@ -33,6 +33,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
 	"github.com/ai-dynamo/grove/operator/internal/podgangmigrator"
 	schedulerregistry "github.com/ai-dynamo/grove/operator/internal/scheduler/registry"
+	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 	groveversion "github.com/ai-dynamo/grove/operator/internal/version"
 
 	"github.com/spf13/pflag"
@@ -43,6 +44,12 @@ import (
 
 var (
 	logger = ctrl.Log.WithName("grove-setup")
+
+	// topologySyncBackoff bounds the retries of the startup topology synchronization: up to five
+	// attempts with waits of about 1s, 2s, 4s and 8s between them. The health endpoint is not served
+	// until the manager starts, so the total has to stay below the time after which the kubelet
+	// restarts the container on a failing liveness probe.
+	topologySyncBackoff = wait.Backoff{Duration: time.Second, Factor: 2.0, Jitter: 0.1, Steps: 5}
 )
 
 func main() {
@@ -108,7 +115,16 @@ func main() {
 
 	// Synchronize backend topologies for all existing ClusterTopologyBinding resources.
 	// This must be done before starting the controllers that may depend on the ClusterTopologyBinding resource.
-	if err = clustertopology.SynchronizeTopology(ctx, cl, logger, schedRegistry.AllTopologyAware()); err != nil {
+	// Transient API server and connection errors are retried in-process so that a brief control-plane
+	// disruption does not restart the operator.
+	if err = k8sutils.RetryOnError(ctx, topologySyncBackoff, k8sutils.IsRetriableError,
+		func(attempt int, err error) {
+			logger.Info("Retrying cluster topology synchronization after a transient error", "failedAttempt", attempt, "error", err.Error())
+		},
+		func(ctx context.Context) error {
+			return clustertopology.SynchronizeTopology(ctx, cl, logger, schedRegistry.AllTopologyAware())
+		},
+	); err != nil {
 		logger.Error(err, "failed to synchronize cluster topology")
 		handleErrorAndExit(err, cli.ExitErrSynchronizeTopology)
 	}
