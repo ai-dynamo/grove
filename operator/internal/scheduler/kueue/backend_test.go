@@ -1591,3 +1591,20 @@ func TestBackend_IsPodFinalized(t *testing.T) {
 		})
 	}
 }
+
+func TestBackend_SyncPodGang_IgnoresTerminatingPodGang(t *testing.T) {
+	now := metav1.Now()
+	podGang := &groveschedulerv1alpha1.PodGang{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "demo-0",
+			Namespace:         "default",
+			DeletionTimestamp: &now,
+			Finalizers:        []string{"example.com/hold"},
+		},
+	}
+	cl := testutils.NewTestClientBuilder().WithObjects(podGang).Build()
+	b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameKueue})
+	require.NoError(t, b.Init(nil))
+
+	require.NoError(t, b.SyncPodGang(context.Background(), podGang))
+}
