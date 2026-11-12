@@ -61,8 +61,8 @@ func TestWebhookRulesMatchHubVersion(t *testing.T) {
 		}
 	}
 	// PodCliqueSet defaulting and validation, PodClique, PodCliqueScalingGroup, ClusterTopologyBinding and the
-	// authorizer.
-	assert.Equal(t, 6, groveRules)
+	// authorizer, plus two rules for replica validation.
+	assert.Equal(t, 8, groveRules)
 }
 
 // TestClusterRoleConversionCRDAccess verifies that the installer can patch or upgrade the CRDs and cert-controller
