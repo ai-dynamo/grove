@@ -69,6 +69,10 @@ type subStep struct {
 	// drainPCSGReplicaIndices are the old-hash PodCliqueScalingGroup replica indices this sub-step takes
 	// down, keyed by PCSG name.
 	drainPCSGReplicaIndices map[string][]int32
+	// lastUnitHeld is true when this sub-step drains nothing because the old revision is down to its last
+	// minimal viable unit and not every component of that unit can drain in this sub-step. See
+	// keepOldRevisionServiceable.
+	lastUnitHeld bool
 }
 
 // String renders the sub-step in a compact single line form for tracing.
@@ -161,6 +165,10 @@ type subStepPlanner struct {
 	// PodClique, derived at construction from the committed entries and pclqPodCounts.
 	// The gate reads it to keep the reclaim free.
 	numMissingOldVersionPodsByPCLQ map[string]int32
+	// numNotReadyOldVersionPodsByPCLQ is the count of running, not-Ready old-version Pods per in-scope
+	// standalone PodClique, derived at construction like numMissingOldVersionPodsByPCLQ: the Pods the drain
+	// takes down, after the missing ones, before any Ready one.
+	numNotReadyOldVersionPodsByPCLQ map[string]int32
 	// plan is the step-level decomposition the sub-step methods work against.
 	plan stepPlan
 }
@@ -171,18 +179,19 @@ func newSubStepPlanner(syncSnap *syncSnapshot, pcsReplicaIndex int, entries []gr
 	mvu := syncSnap.mvuTemplate
 	minAvailableByComponent := lo.Assign(mvu.standalonePCLQs, mvu.pcsgs)
 	return &subStepPlanner{
-		clk:                            clk,
-		pcs:                            syncSnap.pcs,
-		pcsReplicaIndex:                pcsReplicaIndex,
-		mvu:                            mvu,
-		entries:                        entries,
-		desiredReplicas:                desiredReplicas,
-		maxUnavailableByComponent:      componentutils.CoherentMaxUnavailableByComponent(syncSnap.pcs, lo.Keys(minAvailableByComponent)),
-		standalonePCLQByComponent:      standalonePCLQByComponent,
-		pcsgReplicaInfos:               pcsgReplicaInfos,
-		pclqPodCounts:                  pclqPodCounts,
-		numMissingOldVersionPodsByPCLQ: numMissingOldVersionPodsByStandalonePCLQ(entries, *syncSnap.pcs.Status.CurrentGenerationHash, pclqPodCounts),
-		plan:                           computeStepPlan(desiredReplicas, mvu),
+		clk:                             clk,
+		pcs:                             syncSnap.pcs,
+		pcsReplicaIndex:                 pcsReplicaIndex,
+		mvu:                             mvu,
+		entries:                         entries,
+		desiredReplicas:                 desiredReplicas,
+		maxUnavailableByComponent:       componentutils.CoherentMaxUnavailableByComponent(syncSnap.pcs, lo.Keys(minAvailableByComponent)),
+		standalonePCLQByComponent:       standalonePCLQByComponent,
+		pcsgReplicaInfos:                pcsgReplicaInfos,
+		pclqPodCounts:                   pclqPodCounts,
+		numMissingOldVersionPodsByPCLQ:  numMissingOldVersionPodsByStandalonePCLQ(entries, *syncSnap.pcs.Status.CurrentGenerationHash, pclqPodCounts),
+		numNotReadyOldVersionPodsByPCLQ: numNotReadyOldVersionPodsByStandalonePCLQ(entries, *syncSnap.pcs.Status.CurrentGenerationHash, pclqPodCounts),
+		plan:                            computeStepPlan(desiredReplicas, mvu),
 	}
 }
 
@@ -454,7 +463,129 @@ func (p *subStepPlanner) buildTailSubStep(planPos planPosition, headroomByCompon
 			remainingByComponent[componentName] = gap
 		}
 	}
-	return p.buildNonAnchorSubStep(newEpoch(p.clk), planPos.mostRecentAnchorEpoch, remainingByComponent, headroomByComponent)
+	lastUnit := false
+	if p.plan.numAnchorBearingSteps == 1 {
+		remainingByComponent, lastUnit = p.keepOldRevisionServiceable(remainingByComponent)
+	}
+	ss, err := p.buildNonAnchorSubStep(newEpoch(p.clk), planPos.mostRecentAnchorEpoch, remainingByComponent, headroomByComponent)
+	if err != nil || ss == nil || !lastUnit {
+		return ss, err
+	}
+	// The old revision's last minimal viable unit drains in one sub-step or not at all: draining part of it
+	// would leave the rest of the old revision without a complete set of components. Its unhealthy replicas
+	// are replaced meanwhile.
+	drained := ss.drainCountByComponent()
+	for componentName, remaining := range remainingByComponent {
+		if drained[componentName] < remaining {
+			return p.replaceUnhealthyOnly(ss), nil
+		}
+	}
+	return ss, nil
+}
+
+// replaceUnhealthyOnly narrows a sub-step to the unhealthy old-revision replicas it replaces, for an old
+// revision's last unit that cannot drain together yet. An unhealthy replica (see unhealthyOldVersionCountOf)
+// keeps none of the old revision serviceable, and the pod controller neither refills nor replaces an
+// old-version replica on its own during the update, so holding it would only block its replacement until the
+// whole unit can drain. The drain takes unhealthy replicas before Ready ones (standalone Pods by phase,
+// PodCliqueScalingGroup replicas worst-off first), so no Ready replica of the unit is taken down. The
+// sub-step is held when there is nothing unhealthy to replace.
+func (p *subStepPlanner) replaceUnhealthyOnly(ss *subStep) *subStep {
+	replacements := &subStep{
+		epoch:                       ss.epoch,
+		dependsOn:                   ss.dependsOn,
+		subsumeAnchorEpoch:          ss.subsumeAnchorEpoch,
+		subsumeStandalonePCLQCounts: map[string]int32{},
+		drainStandalonePCLQCounts:   map[string]int32{},
+		tailPCSGReplicaIndices:      map[string][]int32{},
+		drainPCSGReplicaIndices:     map[string][]int32{},
+	}
+	for componentName, drain := range ss.drainCountByComponent() {
+		replace := min(drain, p.unhealthyOldVersionCountOf(componentName))
+		if replace <= 0 {
+			continue
+		}
+		if _, isPCSG := p.mvu.pcsgs[componentName]; isPCSG {
+			indices := p.nextOldPCSGIndicesToRoll(componentName, replace)
+			replacements.tailPCSGReplicaIndices[componentName] = indices
+			replacements.drainPCSGReplicaIndices[componentName] = indices
+		} else {
+			replacements.subsumeStandalonePCLQCounts[componentName] = replace
+			replacements.drainStandalonePCLQCounts[componentName] = replace
+		}
+	}
+	replacements.lastUnitHeld = replacements.drainsNothing()
+	return replacements
+}
+
+// unhealthyOldVersionCountOf returns how many of a component's old-revision replicas serve nothing. For a
+// standalone PodClique, these are its missing old-version Pods (slots with no running Pod behind them) and its
+// running, not-Ready old-version Pods: the Pods the drain's first two phases take down before any Ready one.
+// For a PodCliqueScalingGroup, these are its old replicas that are not Ready.
+func (p *subStepPlanner) unhealthyOldVersionCountOf(componentName string) int32 {
+	if _, isPCSG := p.mvu.pcsgs[componentName]; isPCSG {
+		var unhealthy int32
+		for _, info := range p.pcsgReplicaInfos[componentName] {
+			if !info.atCurrentHash && info.state != componentutils.PCSGReplicaStateReady {
+				unhealthy++
+			}
+		}
+		return unhealthy
+	}
+	return p.numMissingOldVersionPodsByPCLQ[componentName] + p.numNotReadyOldVersionPodsByPCLQ[componentName]
+}
+
+// keepOldRevisionServiceable orders the tail of a single anchor-bearing step so that the old revision keeps a
+// complete minimal viable unit (MinAvailable of every in-scope component) until its own last unit drains.
+//
+// A plan with one anchor-bearing step, such as any plan whose in-scope components are all standalone
+// PodCliques, has no leftover step: its tail is everything the anchor did not take, so remainingByComponent
+// is exactly each component's count of old-revision replicas. Each component's tail otherwise drains on its
+// own MaxUnavailable budget, so a component with few replicas can lose its last old-revision replica while
+// another still has many. The surviving old-revision capacity is then no longer a set of compatible,
+// interdependent components: in disaggregated inference, old-revision decode pods are left with no
+// old-revision prefill pod to pair with, and a data plane that keeps revisions apart cannot use them.
+//
+// Only Ready old-revision replicas count. An unhealthy one (a missing old-version Pod, a not-Ready Pod, or a
+// PodCliqueScalingGroup replica that is not Ready; see unhealthyOldVersionCountOf) keeps none of the old revision
+// serviceable, and the pod controller neither refills nor replaces it during the update. So it is always
+// drainable, and the drain takes it before any Ready replica.
+//
+// While any component has more than MinAvailable Ready old-revision replicas, every component's tail is capped
+// so that up to MinAvailable of its Ready replicas stay at the old revision. Once no component has more than
+// MinAvailable Ready (lastUnit), the caps lift and the caller drains that unit in one sub-step or, until it
+// can, replaces only its unhealthy replicas. MaxUnavailable is at least MinAvailable for every component under
+// the Coherent strategy, so the last unit can always drain together once the budgets allow it.
+func (p *subStepPlanner) keepOldRevisionServiceable(remainingByComponent map[string]int32) (map[string]int32, bool) {
+	unhealthyByComponent := make(map[string]int32, len(remainingByComponent))
+	lastUnit := true
+	for componentName, remaining := range remainingByComponent {
+		unhealthy := min(remaining, p.unhealthyOldVersionCountOf(componentName))
+		unhealthyByComponent[componentName] = unhealthy
+		if remaining-unhealthy > p.minAvailableOf(componentName) {
+			lastUnit = false
+		}
+	}
+	if lastUnit {
+		return remainingByComponent, true
+	}
+	capped := make(map[string]int32, len(remainingByComponent))
+	for componentName, remaining := range remainingByComponent {
+		unhealthy := unhealthyByComponent[componentName]
+		if drainable := unhealthy + max(0, remaining-unhealthy-p.minAvailableOf(componentName)); drainable > 0 {
+			capped[componentName] = drainable
+		}
+	}
+	return capped, false
+}
+
+// minAvailableOf returns the MinAvailable of an in-scope component: pods for a standalone PodClique, replicas
+// for a PodCliqueScalingGroup.
+func (p *subStepPlanner) minAvailableOf(componentName string) int32 {
+	if minAvailable, ok := p.mvu.standalonePCLQs[componentName]; ok {
+		return minAvailable
+	}
+	return p.mvu.pcsgs[componentName]
 }
 
 // buildAnchorBearingSubStep opens the next anchor-bearing step by committing a new anchor entry that
