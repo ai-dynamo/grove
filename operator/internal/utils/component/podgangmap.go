@@ -22,10 +22,12 @@ import (
 	"strconv"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
+	"github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	"github.com/samber/lo"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/utils/ptr"
@@ -48,14 +50,16 @@ func GetPodGangMap(ctx context.Context, cl client.Client, pcsObjectKey client.Ob
 	return pgm, nil
 }
 
-// GetOwningPodCliqueSetForPodGang loads and validates a PodGang's controller owner.
+// GetOwningPodCliqueSetForPodGang loads and validates a PodGang's controller owner. It returns a
+// NotFound error when the owner is gone, including when a PodCliqueSet of the same name but a
+// different UID has replaced it.
 func GetOwningPodCliqueSetForPodGang(ctx context.Context, cl client.Client, podGang *groveschedulerv1alpha1.PodGang) (*grovecorev1beta1.PodCliqueSet, error) {
 	owner := metav1.GetControllerOf(podGang)
 	if owner == nil {
 		return nil, fmt.Errorf("PodGang %s/%s has no controlling PodCliqueSet", podGang.Namespace, podGang.Name)
 	}
 	ownerGV, err := schema.ParseGroupVersion(owner.APIVersion)
-	if err != nil || ownerGV.Group != grovecorev1beta1.SchemeGroupVersion.Group || owner.Kind != "PodCliqueSet" {
+	if err != nil || ownerGV.Group != grovecorev1beta1.SchemeGroupVersion.Group || owner.Kind != constants.KindPodCliqueSet {
 		return nil, fmt.Errorf("PodGang %s/%s is controlled by %s %q, expected PodCliqueSet", podGang.Namespace, podGang.Name, owner.APIVersion, owner.Kind)
 	}
 
@@ -64,7 +68,8 @@ func GetOwningPodCliqueSetForPodGang(ctx context.Context, cl client.Client, podG
 		return nil, fmt.Errorf("get controlling PodCliqueSet %s/%s: %w", podGang.Namespace, owner.Name, err)
 	}
 	if pcs.UID != owner.UID {
-		return nil, fmt.Errorf("PodGang %s/%s owner UID %q does not match PodCliqueSet UID %q", podGang.Namespace, podGang.Name, owner.UID, pcs.UID)
+		notFound := apierrors.NewNotFound(grovecorev1beta1.Resource("podcliquesets"), owner.Name)
+		return nil, fmt.Errorf("PodGang %s/%s owner UID %q does not match PodCliqueSet UID %q: %w", podGang.Namespace, podGang.Name, owner.UID, pcs.UID, notFound)
 	}
 	return pcs, nil
 }
@@ -217,8 +222,9 @@ func DependsOnForEpoch(pgm *grovecorev1beta1.PodGangMap, epoch string) ([]string
 // pre-created ScaleOut entry, whose epoch every scale-out replica shares. It returns an error when
 // neither an owning entry nor a ScaleOut entry exists, which is a contract violation for a
 // PodCliqueScalingGroup-owned PodClique and must be requeued rather than resolved to an empty name.
-// It does not filter by generation hash: Coherent updates retain older entries while their content
-// drains, so a replica must resolve against the entry that owns it, regardless of generation.
+// It does not filter by generation hash: a replica's PodGangMap holds a single generation's entries,
+// and during a rolling update only the under-update replica's entries advance, so a lagging replica
+// is resolved against its own entries.
 func podGangEntryForPCSGReplica(pgm *grovecorev1beta1.PodGangMap, pcsgName string, pcsgReplicaIndex int32) (*grovecorev1beta1.PodGangEntry, error) {
 	var scaleOut *grovecorev1beta1.PodGangEntry
 	for i := range pgm.Spec.Entries {

@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
+	"github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
@@ -789,4 +790,25 @@ func TestGetOwningPodCliqueSetForPodGang_AcceptsAnyServedGroveVersion(t *testing
 			assert.Equal(t, pcs.UID, owner.UID)
 		})
 	}
+}
+
+func TestGetOwningPodCliqueSetForPodGang_ReplacedOwnerIsNotFound(t *testing.T) {
+	pcs := testutils.NewPodCliqueSetBuilder("pcs", "default", types.UID("new-pcs-uid")).Build()
+	podGang := &groveschedulerv1alpha1.PodGang{ObjectMeta: metav1.ObjectMeta{
+		Name:      "pcs-0",
+		Namespace: pcs.Namespace,
+		OwnerReferences: []metav1.OwnerReference{{
+			APIVersion: grovecorev1beta1.SchemeGroupVersion.String(),
+			Kind:       constants.KindPodCliqueSet,
+			Name:       pcs.Name,
+			UID:        types.UID("old-pcs-uid"),
+			Controller: ptr.To(true),
+		}},
+	}}
+	cl := testutils.CreateDefaultFakeClient([]client.Object{pcs, podGang})
+
+	_, err := GetOwningPodCliqueSetForPodGang(context.Background(), cl, podGang)
+	require.Error(t, err)
+	assert.True(t, apierrors.IsNotFound(err))
+	assert.ErrorContains(t, err, "does not match PodCliqueSet UID")
 }

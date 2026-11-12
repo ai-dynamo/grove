@@ -49,16 +49,17 @@ func PodCliqueUsesFallback(ctx context.Context, cl client.Client, key client.Obj
 	return !UsesLPX(pclq.Spec.PodSpec), nil
 }
 
-// ProjectPodGang returns a metadata-preserving copy containing only LPX-selected fallback groups.
+// ProjectPodGang returns a metadata-preserving copy that keeps only the groups that fall back,
+// meaning the ones that do not request an LPX resource.
 func ProjectPodGang(ctx context.Context, cl client.Client, podGang *groveschedulerv1alpha1.PodGang) (*groveschedulerv1alpha1.PodGang, error) {
 	fallback := podGang.DeepCopy()
 	fallback.Spec.PodGroups = make([]groveschedulerv1alpha1.PodGroup, 0, len(podGang.Spec.PodGroups))
 	for _, group := range podGang.Spec.PodGroups {
-		selected, err := PodCliqueUsesFallback(ctx, cl, client.ObjectKey{Namespace: podGang.Namespace, Name: group.Name})
+		usesFallback, err := PodCliqueUsesFallback(ctx, cl, client.ObjectKey{Namespace: podGang.Namespace, Name: group.Name})
 		if err != nil {
 			return nil, fmt.Errorf("project PodGang %s/%s: %w", podGang.Namespace, podGang.Name, err)
 		}
-		if selected {
+		if usesFallback {
 			fallback.Spec.PodGroups = append(fallback.Spec.PodGroups, group)
 		}
 	}
