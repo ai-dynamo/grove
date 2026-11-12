@@ -80,6 +80,11 @@ func (b *schedulerBackend) SyncPodGang(ctx context.Context, podGang *groveschedu
 	if b.secondaryBackend == nil {
 		return nil
 	}
+	// KAI resolves remaining membership from PodGangMap. A terminating trigger needs
+	// no projection, and its PodCliques may already be gone during PCS deletion.
+	if !podGang.DeletionTimestamp.IsZero() && b.secondaryBackend.Name() == string(configv1beta1.SchedulerNameKai) {
+		return b.secondaryBackend.SyncPodGang(ctx, podGang)
+	}
 
 	newPodGang, err := b.fallbackPodGang(ctx, podGang)
 	if err != nil {
