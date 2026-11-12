@@ -194,6 +194,7 @@ func TestSyncExpectations(t *testing.T) {
 		existingTerminatingUIDs       []types.UID
 		createExpectationUIDsPostSync []types.UID
 		deleteExpectationUIDsPostSync []types.UID
+		skipInitialization            bool
 	}{
 		{
 			description:                   "should sync both create and delete expectations",
@@ -215,18 +216,39 @@ func TestSyncExpectations(t *testing.T) {
 			deleteExpectationUIDsPostSync: []types.UID{"4", "5"},
 		},
 		{
-			description:                   "should be a no-op when expectations do not exist",
+			description:                   "terminating pod satisfies its creation expectation",
+			controlleeKey:                 controlleeKey,
+			createExpectationUIDs:         []types.UID{"1", "2"},
+			deleteExpectationsUIDs:        []types.UID{},
+			existingNonTerminatingUIDs:    []types.UID{"1"},
+			existingTerminatingUIDs:       []types.UID{"2"},
+			createExpectationUIDsPostSync: []types.UID{},
+			deleteExpectationUIDsPostSync: []types.UID{"2"},
+		},
+		{
+			description:                   "should seed terminating pods when expectations do not exist",
 			controlleeKey:                 "does-not-exist",
+			existingTerminatingUIDs:       []types.UID{"1", "2"},
+			createExpectationUIDsPostSync: []types.UID{},
+			deleteExpectationUIDsPostSync: []types.UID{"1", "2"},
+			skipInitialization:            true,
+		},
+		{
+			description:                   "should remain a no-op without expectations or terminating pods",
+			controlleeKey:                 "still-does-not-exist",
 			existingNonTerminatingUIDs:    []types.UID{"1", "2"},
 			createExpectationUIDsPostSync: []types.UID{},
 			deleteExpectationUIDsPostSync: []types.UID{},
+			skipInitialization:            true,
 		},
 	}
 
 	expStore := NewExpectationsStore()
 	for _, tc := range testCases {
 		t.Run(tc.description, func(t *testing.T) {
-			assert.NoError(t, initializeControlleeExpectations(expStore, tc.controlleeKey, tc.createExpectationUIDs, tc.deleteExpectationsUIDs))
+			if !tc.skipInitialization {
+				assert.NoError(t, initializeControlleeExpectations(expStore, tc.controlleeKey, tc.createExpectationUIDs, tc.deleteExpectationsUIDs))
+			}
 			expStore.SyncExpectations(tc.controlleeKey, tc.existingNonTerminatingUIDs, tc.existingTerminatingUIDs)
 			assert.ElementsMatch(t, tc.createExpectationUIDsPostSync, expStore.GetCreateExpectations(tc.controlleeKey))
 			assert.ElementsMatch(t, tc.deleteExpectationUIDsPostSync, expStore.GetDeleteExpectations(tc.controlleeKey))
