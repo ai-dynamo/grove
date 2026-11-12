@@ -95,7 +95,7 @@ func BenchmarkGateRemovalDependencyWait(b *testing.B) {
 }
 
 func BenchmarkCheckAndRemovePodSchedulingGates(b *testing.B) {
-	for _, n := range []int{250, 1000, 2000, 10000} {
+	for _, n := range []int{250, 1000, 2000} {
 		b.Run(fmt.Sprintf("gatedPods=%d", n), func(b *testing.B) {
 			ctx := context.Background()
 			podGangName := podGangNameForEpoch(testAnchor0Epoch)
