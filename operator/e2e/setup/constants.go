@@ -36,6 +36,15 @@ const (
 	// This is used to find operator pods for log collection during test failures.
 	OperatorDeploymentName = "grove-operator"
 
+	// OperatorLeaderElectionLeaseName is the Lease the operator's leader election holds when it is enabled.
+	// NOTE: If you change this, also update config.leaderElection.resourceName in operator/charts/values.yaml
+	OperatorLeaderElectionLeaseName = "grove-operator-leader-election"
+
+	// OperatorConfiguredAtAnnotation is stamped on the operator pod template by UpdateGroveConfiguration.
+	// The operator reads its configuration once at startup, so the stamp is what rolls the operator pods
+	// on a configuration change, and it names the pods that run the new configuration.
+	OperatorConfiguredAtAnnotation = "e2e.grove.io/configured-at"
+
 	// DefaultWebhookPort is the default port for the webhook server.
 	// NOTE: If you change this, also update config.server.webhooks.port in operator/charts/values.yaml
 	DefaultWebhookPort = 9443

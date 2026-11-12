@@ -66,6 +66,7 @@ controllers:
 kind: OperatorConfiguration
 `),
 			assertFn: func(t *testing.T, cfg *configv1beta1.OperatorConfiguration) {
+				assert.Equal(t, configv1beta1.ScaleInCostSourceNone, cfg.ScaleIn.CostSource)
 				assert.InDelta(t, float32(100), cfg.ClientConnection.QPS, 0.01)
 				assert.Equal(t, 120, cfg.ClientConnection.Burst)
 				require.NotNil(t, cfg.Controllers.PodCliqueSet.ConcurrentSyncs)
@@ -75,6 +76,17 @@ kind: OperatorConfiguration
 				require.NotNil(t, cfg.Controllers.PodClique.ConcurrentSyncs)
 				assert.Equal(t, 10, *cfg.Controllers.PodClique.ConcurrentSyncs)
 				assert.Equal(t, []configv1beta1.SchedulerProfile{{Name: configv1beta1.SchedulerNameKube}}, cfg.Scheduler.Profiles)
+			},
+		},
+		{
+			name: "scale-in cost source is read and defaults to none",
+			input: []byte(`apiVersion: operator.config.grove.io/v1beta1
+kind: OperatorConfiguration
+scaleIn:
+  costSource: pod-deletion-cost
+`),
+			assertFn: func(t *testing.T, cfg *configv1beta1.OperatorConfiguration) {
+				assert.Equal(t, configv1beta1.ScaleInCostSourcePodDeletionCost, cfg.ScaleIn.CostSource)
 			},
 		},
 		{
@@ -126,6 +138,7 @@ topologyAwareScheduling:
 				assert.Equal(t, string(configv1beta1.SchedulerNameKai), cfg.Scheduler.DefaultProfileName)
 				assert.Equal(t, []configv1beta1.SchedulerProfile{{Name: configv1beta1.SchedulerNameKai}, {Name: configv1beta1.SchedulerNameKube}}, cfg.Scheduler.Profiles)
 				assert.True(t, cfg.TopologyAwareScheduling.Enabled)
+				assert.Equal(t, configv1beta1.ScaleInCostSourceNone, cfg.ScaleIn.CostSource, "a v1alpha1 configuration reads no scale-in cost")
 				require.NotNil(t, cfg.Controllers.PodClique.ConcurrentSyncs)
 				assert.Equal(t, 10, *cfg.Controllers.PodClique.ConcurrentSyncs)
 			},

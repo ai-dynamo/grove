@@ -67,6 +67,9 @@ func SetDefaults_OperatorConfiguration(operatorConfig *OperatorConfiguration) {
 	if operatorConfig.LogFormat == "" {
 		operatorConfig.LogFormat = "json"
 	}
+	if operatorConfig.ScaleIn.CostSource == "" {
+		operatorConfig.ScaleIn.CostSource = ScaleInCostSourceNone
+	}
 }
 
 // SetDefaults_SchedulerConfiguration sets defaults for scheduler configuration.
