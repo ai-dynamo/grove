@@ -193,9 +193,13 @@ func (b *schedulerBackend) buildPodGroupForPodGang(ctx context.Context, podGang 
 	if err != nil {
 		return nil, err
 	}
+	// Admission rejects an invalid value, but an object admitted before this
+	// check existed may carry one. Ignore it as KAI's podgrouper does rather
+	// than leave the gang without a PodGroup.
 	preemptibility, err := resolvePreemptibilityForPodCliqueSet(pcs)
 	if err != nil {
-		return nil, err
+		b.recordWarning(podGang, "InvalidKAIPreemptibility", err)
+		preemptibility = ""
 	}
 
 	parentBySubGroupName := map[string]string{}
@@ -400,11 +404,11 @@ func resolveQueueNameForPodCliqueSet(pcs *grovecorev1beta1.PodCliqueSet) (string
 	return "", fmt.Errorf("conflicting KAI queues on PodCliqueSet %s/%s PodClique templates: %v", pcs.Namespace, pcs.Name, queueNamesList)
 }
 
-// resolvePreemptibilityForPodCliqueSet returns the KAI preemptibility configured on a PodCliqueSet,
-// or "" when none is set, which leaves KAI to derive it from the priority class.
+// resolvePreemptibilityForPodCliqueSet returns the KAI preemptibility set by the PodCliqueSet's
+// label, or "" when none is set, which leaves KAI to derive it from the priority class. Like KAI's
+// podgrouper, it reads labels only.
 func resolvePreemptibilityForPodCliqueSet(pcs *grovecorev1beta1.PodCliqueSet) (kaischedulingv2alpha2.Preemptibility, error) {
-	value := resolveMetadataValue(pcs.Labels, pcs.Annotations, labelKeyPreemptibility)
-	preemptibility, err := kaischedulingv2alpha2.ParsePreemptibility(value)
+	preemptibility, err := kaischedulingv2alpha2.ParsePreemptibility(pcs.Labels[labelKeyPreemptibility])
 	if err != nil {
 		return "", fmt.Errorf("KAI preemptibility on PodCliqueSet %s/%s: %w", pcs.Namespace, pcs.Name, err)
 	}
@@ -413,15 +417,13 @@ func resolvePreemptibilityForPodCliqueSet(pcs *grovecorev1beta1.PodCliqueSet) (k
 
 // resolveQueueNameFromMetadata returns queue from labels first, then falls back to annotations.
 func resolveQueueNameFromMetadata(labels, annotations map[string]string) string {
-	return resolveMetadataValue(labels, annotations, labelKeyQueueName)
-}
-
-// resolveMetadataValue returns key from labels first, then falls back to annotations.
-func resolveMetadataValue(labels, annotations map[string]string, key string) string {
-	if labels[key] != "" {
-		return labels[key]
+	if labels != nil && labels[labelKeyQueueName] != "" {
+		return labels[labelKeyQueueName]
 	}
-	return annotations[key]
+	if annotations != nil {
+		return annotations[labelKeyQueueName]
+	}
+	return ""
 }
 
 // inheritRuntimeManagedFields preserves fields that are managed by KAI runtime components.

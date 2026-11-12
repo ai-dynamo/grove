@@ -699,15 +699,9 @@ func TestBackend_SyncPodGang_SetsPreemptibilityFromPodCliqueSet(t *testing.T) {
 			want:   kaischedulingv2alpha2.NonPreemptible,
 		},
 		{
-			name:        "annotation when the label is absent",
+			name:        "annotation is ignored, as KAI's podgrouper ignores it",
 			annotations: map[string]string{labelKeyPreemptibility: "preemptible"},
-			want:        kaischedulingv2alpha2.Preemptible,
-		},
-		{
-			name:        "label overrides annotation",
-			labels:      map[string]string{labelKeyPreemptibility: "non-preemptible"},
-			annotations: map[string]string{labelKeyPreemptibility: "preemptible"},
-			want:        kaischedulingv2alpha2.NonPreemptible,
+			want:        "",
 		},
 	}
 	for _, tt := range tests {
@@ -737,6 +731,8 @@ func TestBackend_SyncPodGang_SetsPreemptibilityFromPodCliqueSet(t *testing.T) {
 	}
 }
 
+// An invalid value is rejected at admission. A PodCliqueSet admitted before that check keeps its
+// PodGroup, without preemptibility, and gets a warning.
 func TestBackend_InvalidPreemptibility(t *testing.T) {
 	pcs := newPodCliqueSet("invalid-preemptibility-pcs", "team-a", podCliqueTemplateWithQueue("worker", ""))
 	pcs.Labels[labelKeyPreemptibility] = "sometimes"
@@ -750,11 +746,15 @@ func TestBackend_InvalidPreemptibility(t *testing.T) {
 		Build()
 	setPodCliqueSetControllerOwner(podGang, pcs)
 	cl := testutils.NewTestClientBuilder().WithObjects(pcs, podGang).Build()
-	b = New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameKai}).(*schedulerBackend)
+	recorder := record.NewFakeRecorder(10)
+	b = New(cl, cl.Scheme(), recorder, configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameKai}).(*schedulerBackend)
 	require.NoError(t, b.Init(cl))
 
 	ctx := context.Background()
-	require.ErrorContains(t, b.SyncPodGang(ctx, podGang), "invalid preemptibility value: sometimes")
-	err := cl.Get(ctx, client.ObjectKeyFromObject(podGang), &kaischedulingv2alpha2.PodGroup{})
-	assert.True(t, apierrors.IsNotFound(err))
+	require.NoError(t, b.SyncPodGang(ctx, podGang))
+	podGroup := &kaischedulingv2alpha2.PodGroup{}
+	require.NoError(t, cl.Get(ctx, client.ObjectKeyFromObject(podGang), podGroup))
+	assert.Empty(t, podGroup.Spec.Preemptibility)
+	require.Len(t, recorder.Events, 1)
+	assert.Contains(t, <-recorder.Events, "Warning InvalidKAIPreemptibility")
 }
