@@ -18,7 +18,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
 	"strconv"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
@@ -576,9 +575,10 @@ func (r _resource) reconcilePodGangStatus(ctx context.Context, ss *syncState, pg
 func (r _resource) arePodGangMinReplicasScheduled(ss *syncState, pgi *podGangInfo) bool {
 	for _, pclq := range pgi.pclqs {
 		pods := ss.existingPCLQPods[pclq.fqn]
+		associated := sets.New(pclq.associatedPodNames...)
 		var scheduledCount int32
 		for i := range pods {
-			if slices.Contains(pclq.associatedPodNames, pods[i].Name) && k8sutils.IsPodScheduled(&pods[i]) {
+			if associated.Has(pods[i].Name) && k8sutils.IsPodScheduled(&pods[i]) {
 				scheduledCount++
 			}
 		}
@@ -596,9 +596,10 @@ func (r _resource) arePodGangMinReplicasScheduled(ss *syncState, pgi *podGangInf
 func (r _resource) arePodGangMinReplicasReady(ss *syncState, pgi *podGangInfo) bool {
 	for _, pclq := range pgi.pclqs {
 		pods := ss.existingPCLQPods[pclq.fqn]
+		associated := sets.New(pclq.associatedPodNames...)
 		var readyCount int32
 		for i := range pods {
-			if slices.Contains(pclq.associatedPodNames, pods[i].Name) && k8sutils.IsPodReady(&pods[i]) {
+			if associated.Has(pods[i].Name) && k8sutils.IsPodReady(&pods[i]) {
 				readyCount++
 			}
 		}
