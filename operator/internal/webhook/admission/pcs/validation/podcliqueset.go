@@ -635,9 +635,9 @@ func validateScaleConfig(scaleConfig *grovecorev1beta1.AutoScalingConfig, minAva
 		if *scaleConfig.MinReplicas < minAvailable {
 			allErrs = append(allErrs, field.Invalid(fldPath.Child("minReplicas"), *scaleConfig.MinReplicas, "must be greater than or equal to podCliqueSpec.minAvailable"))
 		}
-	}
-	if scaleConfig.MaxReplicas < *scaleConfig.MinReplicas {
-		allErrs = append(allErrs, field.Invalid(fldPath.Child("maxReplicas"), scaleConfig.MaxReplicas, "must be greater than or equal to podCliqueSpec.minReplicas"))
+		if scaleConfig.MaxReplicas < *scaleConfig.MinReplicas {
+			allErrs = append(allErrs, field.Invalid(fldPath.Child("maxReplicas"), scaleConfig.MaxReplicas, "must be greater than or equal to podCliqueSpec.minReplicas"))
+		}
 	}
 	return allErrs
 }

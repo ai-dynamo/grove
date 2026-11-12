@@ -1255,6 +1255,18 @@ func TestValidateScaleConfig(t *testing.T) {
 			minAvailable: 1,
 			expectError:  false,
 		},
+		{
+			// The CRD marks scaleConfig.minReplicas optional with no schema default, so the
+			// validating webhook can observe it unset whenever defaulting did not run. Validation
+			// must report the missing field instead of panicking on the nil dereference.
+			name: "nil minReplicas reports field required without panicking",
+			scaleConfig: &grovecorev1beta1.AutoScalingConfig{
+				MaxReplicas: 5,
+			},
+			minAvailable:  1,
+			expectError:   true,
+			errorContains: "field is required",
+		},
 	}
 
 	for _, tt := range tests {
