@@ -299,11 +299,14 @@ func (r _resource) applyCountDeltaByPodGang(ctx context.Context, logger logr.Log
 	orderedPodGangNames := lo.Keys(countDeltaByPodGang)
 	sort.Strings(orderedPodGangNames)
 
-	createTasks, err := r.buildPerPodGangCreationTasks(logger, ss, countDeltaByPodGang, orderedPodGangNames)
+	podsToDelete := selectPerPodGangPodsToDelete(ss, countDeltaByPodGang, orderedPodGangNames, podsByPodGang)
+	createTasks, err := r.buildPerPodGangCreationTasks(logger, ss, countDeltaByPodGang, orderedPodGangNames, podsToDelete)
 	if err != nil {
 		return err
 	}
-	deleteTasks := r.buildPerPodGangDeletionTasks(logger, ss, countDeltaByPodGang, orderedPodGangNames, podsByPodGang)
+	deleteTasks := lo.Map(podsToDelete, func(pod *corev1.Pod, _ int) utils.Task {
+		return r.createPodDeletionTask(logger, ss.pclq, pod)
+	})
 
 	// delete the excess pods first so replacements are created only after the old pods are taken down.
 	if len(deleteTasks) > 0 {
@@ -328,7 +331,7 @@ func (r _resource) applyCountDeltaByPodGang(ctx context.Context, logger logr.Log
 // buildPerPodGangCreationTasks builds creation tasks for each PodGang whose desired count exceeds the
 // effective count, assigning each new pod a host-name index. Each task records its create expectation
 // under the PodGang-scoped expectations key.
-func (r _resource) buildPerPodGangCreationTasks(logger logr.Logger, ss *syncSnapshot, countDeltaByPodGang map[string]int32, orderedPodGangNames []string) ([]utils.Task, error) {
+func (r _resource) buildPerPodGangCreationTasks(logger logr.Logger, ss *syncSnapshot, countDeltaByPodGang map[string]int32, orderedPodGangNames []string, podsDeletedFirst []*corev1.Pod) ([]utils.Task, error) {
 	var totalToCreate int32
 	for _, delta := range countDeltaByPodGang {
 		if delta > 0 {
@@ -338,7 +341,11 @@ func (r _resource) buildPerPodGangCreationTasks(logger logr.Logger, ss *syncSnap
 	if totalToCreate == 0 {
 		return nil, nil
 	}
-	availableIndices, err := index.GetAvailablePodIndices(logger, ss.existingPCLQPods, int(totalToCreate))
+	// Deletes run before creates in this pass, so the indices of the pods being deleted are free for
+	// the replacements; allocate as if those deletes had already happened.
+	deletedFirst := sets.New(lo.Map(podsDeletedFirst, func(pod *corev1.Pod, _ int) string { return pod.Name })...)
+	remainingPods := lo.Reject(ss.existingPCLQPods, func(pod *corev1.Pod, _ int) bool { return deletedFirst.Has(pod.Name) })
+	availableIndices, err := index.GetAvailablePodIndices(logger, remainingPods, int(totalToCreate))
 	if err != nil {
 		return nil, groveerr.WrapError(err, errCodeGetAvailablePodHostNameIndices, component.OperationSync,
 			fmt.Sprintf("error getting available indices for Pods in PodClique %v", client.ObjectKeyFromObject(ss.pclq)))
@@ -358,10 +365,10 @@ func (r _resource) buildPerPodGangCreationTasks(logger logr.Logger, ss *syncSnap
 	return tasks, nil
 }
 
-// buildPerPodGangDeletionTasks builds deletion tasks for each PodGang whose effective count exceeds
+// selectPerPodGangPodsToDelete picks the excess pods for each PodGang whose effective count exceeds
 // the desired count. Within each PodGang the DeletionSorter picks which pods to remove.
-func (r _resource) buildPerPodGangDeletionTasks(logger logr.Logger, ss *syncSnapshot, countDeltaByPodGang map[string]int32, orderedPodGangNames []string, podsByPodGang map[string]podGangPods) []utils.Task {
-	var tasks []utils.Task
+func selectPerPodGangPodsToDelete(ss *syncSnapshot, countDeltaByPodGang map[string]int32, orderedPodGangNames []string, podsByPodGang map[string]podGangPods) []*corev1.Pod {
+	var podsToDelete []*corev1.Pod
 	for _, podGangName := range orderedPodGangNames {
 		if countDeltaByPodGang[podGangName] >= 0 {
 			continue
@@ -374,9 +381,7 @@ func (r _resource) buildPerPodGangDeletionTasks(logger logr.Logger, ss *syncSnap
 		sorter := DeletionSorter{Pods: slices.Clone(pods), ExpectedPodTemplateHash: ss.expectedPodTemplateHash}
 		sort.Sort(sorter)
 		numToDelete = min(numToDelete, len(sorter.Pods))
-		for _, pod := range sorter.Pods[:numToDelete] {
-			tasks = append(tasks, r.createPodDeletionTask(logger, ss.pclq, pod))
-		}
+		podsToDelete = append(podsToDelete, sorter.Pods[:numToDelete]...)
 	}
-	return tasks
+	return podsToDelete
 }
