@@ -93,7 +93,7 @@ type PodCliqueScalingGroupStatus struct {
 	// PodClique.Status.ReadyReplicas greater than or equal to PodClique.Spec.MinAvailable
 	// +kubebuilder:default=0
 	AvailableReplicas int32 `json:"availableReplicas"`
-	// UpdatedReplicas is the number of PodCliqueScalingGroup replicas that correspond with the latest PodCliqueSetGenerationHash.
+	// UpdatedReplicas is the number of replicas that correspond with the latest PodCliqueSet ControllerRevision
 	// +kubebuilder:default=0
 	UpdatedReplicas int32 `json:"updatedReplicas"`
 	// Selector is the selector used to identify the pods that belong to this scaling group.
@@ -107,6 +107,9 @@ type PodCliqueScalingGroupStatus struct {
 	// CurrentPodCliqueSetGenerationHash establishes a correlation to PodCliqueSet generation hash indicating
 	// that the spec of the PodCliqueSet at this generation is fully realized in the PodCliqueScalingGroup.
 	CurrentPodCliqueSetGenerationHash *string `json:"currentPodCliqueSetGenerationHash,omitempty"`
+	// CurrentPodCliqueSetRevision is the name of the PodCliqueSet ControllerRevision that every member PodClique has reached.
+	// +optional
+	CurrentPodCliqueSetRevision string `json:"currentPodCliqueSetRevision,omitempty"`
 	// UpdateProgress provides details about the ongoing update of the PodCliqueScalingGroup.
 	UpdateProgress *PodCliqueScalingGroupUpdateProgress `json:"updateProgress,omitempty"`
 }
@@ -129,8 +132,10 @@ type PodCliqueScalingGroupUpdateProgress struct {
 	// PodCliqueScalingGroup should converge to. PodCliqueScalingGroupStatus.CurrentPodCliqueSetGenerationHash is set to
 	// this hash once UpdateEndedAt is set, which marks the end of the update.
 	PodCliqueSetGenerationHash string `json:"podCliqueSetGenerationHash"`
-	// UpdatedPodCliquesCount is the number of PodCliques that have been updated to the desired
-	// PodCliqueSet generation hash. Recomputed each reconcile from child generation-hash labels.
+	// PodCliqueSetRevision is the name of the PodCliqueSet ControllerRevision that this update targets.
+	// +optional
+	PodCliqueSetRevision string `json:"podCliqueSetRevision,omitempty"`
+	// UpdatedPodCliquesCount is the number of PodCliques that have reached the corresponding PodCliqueSet revision.
 	// +optional
 	// +kubebuilder:default=0
 	UpdatedPodCliquesCount int32 `json:"updatedPodCliquesCount,omitempty"`

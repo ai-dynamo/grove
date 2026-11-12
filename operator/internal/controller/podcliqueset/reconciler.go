@@ -40,14 +40,14 @@ import (
 
 // Reconciler reconciles PodCliqueSet resources.
 type Reconciler struct {
-	config                        configv1beta1.PodCliqueSetControllerConfiguration
-	tasConfig                     configv1beta1.TopologyAwareSchedulingConfiguration
-	client                        ctrlclient.Client
-	eventRecorder                 record.EventRecorder
-	reconcileStatusRecorder       ctrlcommon.ReconcileErrorRecorder
-	operatorRegistry              component.OperatorRegistry[grovecorev1beta1.PodCliqueSet, pcssync.State, pcssync.Result]
-	pcsGenerationHashExpectations sync.Map
-	scalingProgressExpectations   *pcssync.ScalingProgressExpectations
+	config                      configv1beta1.PodCliqueSetControllerConfiguration
+	tasConfig                   configv1beta1.TopologyAwareSchedulingConfiguration
+	client                      ctrlclient.Client
+	eventRecorder               record.EventRecorder
+	reconcileStatusRecorder     ctrlcommon.ReconcileErrorRecorder
+	operatorRegistry            component.OperatorRegistry[grovecorev1beta1.PodCliqueSet, pcssync.State, pcssync.Result]
+	updateRevisionExpectations  sync.Map
+	scalingProgressExpectations *pcssync.ScalingProgressExpectations
 }
 
 // NewReconciler creates a new reconciler for PodCliqueSet.
@@ -56,14 +56,14 @@ func NewReconciler(mgr ctrl.Manager, controllerCfg configv1beta1.PodCliqueSetCon
 	client := mgr.GetClient()
 	scalingProgressExpectations := &pcssync.ScalingProgressExpectations{}
 	return &Reconciler{
-		config:                        controllerCfg,
-		tasConfig:                     topologyAwareSchedulingConfig,
-		client:                        client,
-		eventRecorder:                 eventRecorder,
-		reconcileStatusRecorder:       ctrlcommon.NewReconcileErrorRecorder(client),
-		operatorRegistry:              pcscomponent.CreateOperatorRegistry(mgr, eventRecorder, topologyAwareSchedulingConfig, networkConfig, schedRegistry, scalingProgressExpectations),
-		pcsGenerationHashExpectations: sync.Map{},
-		scalingProgressExpectations:   scalingProgressExpectations,
+		config:                      controllerCfg,
+		tasConfig:                   topologyAwareSchedulingConfig,
+		client:                      client,
+		eventRecorder:               eventRecorder,
+		reconcileStatusRecorder:     ctrlcommon.NewReconcileErrorRecorder(client),
+		operatorRegistry:            pcscomponent.CreateOperatorRegistry(mgr, eventRecorder, topologyAwareSchedulingConfig, networkConfig, schedRegistry, scalingProgressExpectations),
+		updateRevisionExpectations:  sync.Map{},
+		scalingProgressExpectations: scalingProgressExpectations,
 	}
 }
 

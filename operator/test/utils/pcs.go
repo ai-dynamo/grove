@@ -140,6 +140,12 @@ func (b *PodCliqueSetBuilder) WithPodCliqueSetGenerationHash(pcsGenerationHash *
 	return b
 }
 
+// WithUpdateRevision sets the UpdateRevision in the PodCliqueSet status.
+func (b *PodCliqueSetBuilder) WithUpdateRevision(revision string) *PodCliqueSetBuilder {
+	b.pcs.Status.UpdateRevision = revision
+	return b
+}
+
 // WithUpdateStrategy sets the UpdateStrategy for the PodCliqueSet.
 func (b *PodCliqueSetBuilder) WithUpdateStrategy(strategy *grovecorev1beta1.PodCliqueSetUpdateStrategy) *PodCliqueSetBuilder {
 	b.pcs.Spec.UpdateStrategy = strategy

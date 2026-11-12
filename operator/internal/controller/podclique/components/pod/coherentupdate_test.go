@@ -49,6 +49,7 @@ func TestMarkCoherentUpdateEndIfConverged(t *testing.T) {
 					p.Status.UpdatedReplicas = tc.updatedReplicas
 					p.Status.UpdateProgress = &grovecorev1beta1.PodCliqueUpdateProgress{
 						PodCliqueSetGenerationHash: generation,
+						PodCliqueSetRevision:       generation,
 						PodTemplateHash:            testNewHash,
 					}
 				}).Build()
@@ -70,10 +71,12 @@ func TestMarkCoherentUpdateEndIfConverged(t *testing.T) {
 				assert.Equal(t, testNewHash, *persistedPCLQ.Status.CurrentPodTemplateHash)
 				require.NotNil(t, persistedPCLQ.Status.CurrentPodCliqueSetGenerationHash)
 				assert.Equal(t, generation, *persistedPCLQ.Status.CurrentPodCliqueSetGenerationHash)
+				assert.Equal(t, generation, persistedPCLQ.Status.CurrentPodCliqueSetRevision)
 			} else {
 				assert.Nil(t, persistedPCLQ.Status.UpdateProgress.UpdateEndedAt)
 				assert.Nil(t, persistedPCLQ.Status.CurrentPodTemplateHash)
 				assert.Nil(t, persistedPCLQ.Status.CurrentPodCliqueSetGenerationHash)
+				assert.Empty(t, persistedPCLQ.Status.CurrentPodCliqueSetRevision)
 			}
 		})
 	}

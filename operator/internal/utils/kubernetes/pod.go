@@ -136,10 +136,17 @@ func HasAnyContainerNotStarted(pod *corev1.Pod) bool {
 	return false
 }
 
+// hashSalt is mixed into every hash ComputeHash returns. It is empty in release builds.
+// E2E tests set it through LD_FLAGS to build an operator whose hashing differs, as a k8s.io/api bump can cause.
+var hashSalt string
+
 // ComputeHash computes a hash given one or more corev1.PodTemplateSpec.
 func ComputeHash(podTemplateSpecs ...*corev1.PodTemplateSpec) string {
 	podTemplateSpecHasher := fnv.New64a()
 	podTemplateSpecHasher.Reset()
+	if hashSalt != "" {
+		_, _ = fmt.Fprint(podTemplateSpecHasher, hashSalt)
+	}
 	for _, podTemplateSpec := range podTemplateSpecs {
 		_, _ = fmt.Fprintf(podTemplateSpecHasher, "%v", dump.ForHash(podTemplateSpec))
 	}

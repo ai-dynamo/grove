@@ -173,7 +173,7 @@ func (r *_resource) patchUpdateProgressStatus(ctx context.Context, logger logr.L
 }
 
 // selectNextReplicaToUpdate returns the index of the highest-priority replica not yet converged to the
-// current generation hash, or nil when every replica is updated.
+// update revision, or nil when every replica is updated.
 func selectNextReplicaToUpdate(pcs *grovecorev1beta1.PodCliqueSet, replicaInfos []pcsReplicaInfo, minAvailableBreachedPCSReplicaIndices []int) *int {
 	pendingReplicaInfos := make([]pcsReplicaInfo, 0, len(replicaInfos))
 	for i := range replicaInfos {
@@ -249,10 +249,10 @@ type pcsReplicaInfo struct {
 }
 
 // isUpdateComplete reports whether every expected PodClique and PodCliqueScalingGroup of the replica has
-// converged to the current generation hash. A missing PodClique keeps the replica incomplete because the
-// count of converged PodCliques falls short of the expected count. Under a coherent update it also requires
-// the replica's PodGangMap to have reconverged to a single generation, so a mid-flight intermediate anchor
-// left by back-to-back updates is drained before the update is declared complete.
+// reached the update revision. A missing PodClique keeps the replica incomplete because the count of converged
+// PodCliques falls short of the expected count. Under a coherent update it also requires the replica's
+// PodGangMap to have reconverged to a single generation, so a mid-flight intermediate anchor left by
+// back-to-back updates is drained before the update is declared complete.
 func (pri *pcsReplicaInfo) isUpdateComplete(pcs *grovecorev1beta1.PodCliqueSet) bool {
 	completeStandalonePCLQs := 0
 	for i := range pri.pclqs {
@@ -263,17 +263,18 @@ func (pri *pcsReplicaInfo) isUpdateComplete(pcs *grovecorev1beta1.PodCliqueSet) 
 	if completeStandalonePCLQs != len(componentutils.GetPodCliqueFQNsForPCSReplicaNotInPCSG(pcs, pri.replicaIndex)) {
 		return false
 	}
-	currentGenerationHash := *pcs.Status.CurrentGenerationHash
 	completePCSGs := 0
 	for i := range pri.pcsgs {
-		if componentutils.IsPCSGUpdateComplete(&pri.pcsgs[i], currentGenerationHash) {
+		if componentutils.IsPCSGUpdateComplete(&pri.pcsgs[i], pcs.Status.UpdateRevision) {
 			completePCSGs++
 		}
 	}
 	if completePCSGs != len(pcs.Spec.Template.PodCliqueScalingGroupConfigs) {
 		return false
 	}
-	if componentutils.IsCoherentStrategy(pcs) && !componentutils.IsPodGangMapAtSingleGeneration(pri.pgmEntries, currentGenerationHash) {
+	// The PodGangMap still tags its entries with the generation hash, which only changes when an update that
+	// replaces Pods starts.
+	if componentutils.IsCoherentStrategy(pcs) && !componentutils.IsPodGangMapAtSingleGeneration(pri.pgmEntries, *pcs.Status.CurrentGenerationHash) {
 		return false
 	}
 	return true

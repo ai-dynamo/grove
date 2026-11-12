@@ -151,6 +151,9 @@ type PodCliqueStatus struct {
 	// CurrentPodTemplateHash establishes a correlation to PodClique template hash indicating
 	// that the spec of the PodClique at this template hash is fully realized in the PodClique.
 	CurrentPodTemplateHash *string `json:"currentPodTemplateHash,omitempty"`
+	// CurrentPodCliqueSetRevision is the name of the PodCliqueSet ControllerRevision whose pod template all Pods run.
+	// +optional
+	CurrentPodCliqueSetRevision string `json:"currentPodCliqueSetRevision,omitempty"`
 	// UpdateProgress provides details about the ongoing update of the PodClique.
 	UpdateProgress *PodCliqueUpdateProgress `json:"updateProgress,omitempty"`
 }
@@ -174,6 +177,9 @@ type PodCliqueUpdateProgress struct {
 	// PodClique should converge to. PodCliqueStatus.CurrentPodCliqueSetGenerationHash is set to this hash once
 	// UpdateEndedAt is set, which marks the end of the update.
 	PodCliqueSetGenerationHash string `json:"podCliqueSetGenerationHash"`
+	// PodCliqueSetRevision is the name of the PodCliqueSet ControllerRevision that this update targets.
+	// +optional
+	PodCliqueSetRevision string `json:"podCliqueSetRevision,omitempty"`
 	// PodTemplateHash is the template hash of the PodClique that the Pods of this PodClique should converge to.
 	// This hash is used to segregate Pods which are up to date with the specification, and ones which are outdated for
 	// preferential deletions in rolling update strategies, and in all strategies for scale-ins.

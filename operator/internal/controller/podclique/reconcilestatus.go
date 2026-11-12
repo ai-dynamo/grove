@@ -65,11 +65,8 @@ func (r *Reconciler) reconcileStatus(ctx context.Context, logger logr.Logger, pc
 	// mutate PodClique Status Replicas, ReadyReplicas, ScheduleGatedReplicas and UpdatedReplicas.
 	mutateReplicas(pclq, podCategories, len(existingPods))
 	mutateUpdatedReplica(pclq, existingPods, podCategories[corev1.PodScheduled])
-	// mutate PodClique.Status.CurrentPodTemplateHash and PodClique.Status.CurrentPodCliqueSetGenerationHash
-	if err = mutateCurrentHashes(logger, pcs, pclq); err != nil {
-		logger.Error(err, "failed to compute PodClique current hashes")
-		return ctrlcommon.ReconcileWithErrors("failed to compute PodClique current hashes", err)
-	}
+	// mutate PodClique.Status.CurrentPodCliqueSetRevision, CurrentPodTemplateHash and CurrentPodCliqueSetGenerationHash
+	mutateCurrentRevision(pcs, pclq)
 
 	// mutate the conditions only if the PodClique has been successfully reconciled at least once.
 	// This prevents prematurely setting incorrect conditions.
@@ -110,32 +107,38 @@ func (r *Reconciler) reconcileStatus(ctx context.Context, logger logr.Logger, pc
 	return ctrlcommon.ContinueReconcile()
 }
 
-// mutateCurrentHashes updates the PodClique's current template and generation hashes when updates are complete
-func mutateCurrentHashes(logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, pclq *grovecorev1beta1.PodClique) error {
+// mutateCurrentRevision records the revision and pod template hash that every Pod of the PodClique runs. It acts
+// only when no update is in progress and every Pod is updated.
+//   - When the last update targets an older pod template hash than the label, the Pods run that update's target,
+//     so its revision is recorded.
+//   - Otherwise the Pods run the label's hash, so the revision on the PodClique's revision label is recorded. A new
+//     revision with the same hash is recorded this way, without an update.
+//
+// The generation hash is recorded for compatibility and is not used to decide anything.
+func mutateCurrentRevision(pcs *grovecorev1beta1.PodCliqueSet, pclq *grovecorev1beta1.PodClique) {
 	if componentutils.IsPCLQRollingUpdateInProgress(pclq) || pclq.Status.UpdatedReplicas != pclq.Status.Replicas {
-		logger.V(1).Info("PodClique is currently updating, cannot set PodCliqueSet CurrentGenerationHash yet")
-		return nil
+		return
 	}
-	if pclq.Status.UpdateProgress == nil {
-		expectedPodTemplateHash, err := componentutils.GetExpectedPCLQPodTemplateHash(pcs, pclq.ObjectMeta)
-		if err != nil {
-			return err
-		}
-		if isPodCliqueTemplateHashCurrent(pclq, expectedPodTemplateHash) {
-			pclq.Status.CurrentPodTemplateHash = ptr.To(expectedPodTemplateHash)
-			pclq.Status.CurrentPodCliqueSetGenerationHash = pcs.Status.CurrentGenerationHash
-		}
-	} else if componentutils.IsLastPCLQUpdateCompleted(pclq) {
-		logger.Info("PodClique update has completed, setting CurrentPodCliqueSetGenerationHash")
-		pclq.Status.CurrentPodTemplateHash = ptr.To(pclq.Status.UpdateProgress.PodTemplateHash)
-		pclq.Status.CurrentPodCliqueSetGenerationHash = ptr.To(pclq.Status.UpdateProgress.PodCliqueSetGenerationHash)
+	labelPodTemplateHash := pclq.Labels[apicommon.LabelPodTemplateHash]
+	if progress := pclq.Status.UpdateProgress; progress != nil && progress.PodTemplateHash != labelPodTemplateHash {
+		pclq.Status.CurrentPodTemplateHash = ptr.To(progress.PodTemplateHash)
+		pclq.Status.CurrentPodCliqueSetRevision = progress.PodCliqueSetRevision
+		pclq.Status.CurrentPodCliqueSetGenerationHash = ptr.To(progress.PodCliqueSetGenerationHash)
+		return
 	}
-	return nil
-}
-
-func isPodCliqueTemplateHashCurrent(pclq *grovecorev1beta1.PodClique, expectedPodTemplateHash string) bool {
-	labelPodTemplateHash, ok := pclq.Labels[apicommon.LabelPodTemplateHash]
-	return ok && labelPodTemplateHash == expectedPodTemplateHash
+	if labelPodTemplateHash == "" {
+		return
+	}
+	pclq.Status.CurrentPodTemplateHash = ptr.To(labelPodTemplateHash)
+	// A PodClique written by an older operator has no revision label until its owner adopts it.
+	revision := pclq.Labels[apicommon.LabelPodCliqueSetRevision]
+	if revision == "" {
+		return
+	}
+	pclq.Status.CurrentPodCliqueSetRevision = revision
+	if revision == pcs.Status.UpdateRevision {
+		pclq.Status.CurrentPodCliqueSetGenerationHash = pcs.Status.CurrentGenerationHash
+	}
 }
 
 // mutateReplicas updates the PodClique status with current replica counts based on pod categorization

@@ -222,7 +222,8 @@ func hasAnyStatusReplicasChanged(oldPCLQStatus, newPCLQStatus grovecorev1beta1.P
 
 func hasPodCliqueHashStatusChanged(oldPCLQStatus, newPCLQStatus grovecorev1beta1.PodCliqueStatus) bool {
 	return !stringPointersEqual(oldPCLQStatus.CurrentPodTemplateHash, newPCLQStatus.CurrentPodTemplateHash) ||
-		!stringPointersEqual(oldPCLQStatus.CurrentPodCliqueSetGenerationHash, newPCLQStatus.CurrentPodCliqueSetGenerationHash)
+		!stringPointersEqual(oldPCLQStatus.CurrentPodCliqueSetGenerationHash, newPCLQStatus.CurrentPodCliqueSetGenerationHash) ||
+		oldPCLQStatus.CurrentPodCliqueSetRevision != newPCLQStatus.CurrentPodCliqueSetRevision
 }
 
 // hasMinAvailableBreachedConditionChanged checks if the MinAvailableBreached condition has changed.
@@ -243,6 +244,7 @@ func hasPodCliqueScalingGroupStatusChanged(oldPCSGStatus, newPCSGStatus *groveco
 	return oldPCSGStatus.AvailableReplicas != newPCSGStatus.AvailableReplicas ||
 		oldPCSGStatus.UpdatedReplicas != newPCSGStatus.UpdatedReplicas ||
 		!stringPointersEqual(oldPCSGStatus.CurrentPodCliqueSetGenerationHash, newPCSGStatus.CurrentPodCliqueSetGenerationHash) ||
+		oldPCSGStatus.CurrentPodCliqueSetRevision != newPCSGStatus.CurrentPodCliqueSetRevision ||
 		hasUpdateStatusChanged(oldPCSGStatus.UpdateProgress, newPCSGStatus.UpdateProgress) ||
 		hasMinAvailableBreachedConditionChanged(oldPCSGStatus.Conditions, newPCSGStatus.Conditions)
 }

@@ -1808,6 +1808,7 @@ func assertUpdateInProgressCleared(tc *testctx.TestContext) {
 
 // assertGenerationHashConverged fails the test unless every PodClique and PodCliqueScalingGroup of the
 // workload reports CurrentPodCliqueSetGenerationHash equal to the PodCliqueSet's CurrentGenerationHash.
+// It also waits for the revisions to converge, see assertRevisionsConverged.
 func assertGenerationHashConverged(tc *testctx.TestContext) {
 	tc.T.Helper()
 	pcs, err := getPCS(tc, tc.Workload.Name)
@@ -1842,6 +1843,59 @@ func assertGenerationHashConverged(tc *testctx.TestContext) {
 			tc.T.Fatalf("PodCliqueScalingGroup %s did not converge to generation hash %s, got %v", pcsg.Name, want, pcsg.Status.CurrentPodCliqueSetGenerationHash)
 		}
 	}
+	assertRevisionsConverged(tc)
+}
+
+// assertRevisionsConverged waits until the PodCliqueSet's CurrentRevision equals its UpdateRevision, and every
+// PodClique and PodCliqueScalingGroup of the workload carries that revision in its label and status.
+// The PodCliqueSet status moves after its children, so this polls.
+func assertRevisionsConverged(tc *testctx.TestContext) {
+	tc.T.Helper()
+	var reason error
+	err := wait.PollUntilContextTimeout(tc.Ctx, 2*time.Second, time.Minute, true, func(ctx context.Context) (bool, error) {
+		reason = revisionsNotConverged(ctx, tc)
+		return reason == nil, nil
+	})
+	if err != nil {
+		tc.T.Fatalf("revisions did not converge: %v", reason)
+	}
+}
+
+// revisionsNotConverged returns why the workload's revisions have not converged, or nil.
+func revisionsNotConverged(ctx context.Context, tc *testctx.TestContext) error {
+	var pcs grovev1beta1.PodCliqueSet
+	if err := tc.Client.Get(ctx, types.NamespacedName{Name: tc.Workload.Name, Namespace: tc.Namespace}, &pcs); err != nil {
+		return err
+	}
+	rev := pcs.Status.UpdateRevision
+	if rev == "" || pcs.Status.CurrentRevision != rev {
+		return fmt.Errorf("PodCliqueSet %s current revision %q, update revision %q", pcs.Name, pcs.Status.CurrentRevision, rev)
+	}
+	inNamespace := client.InNamespace(tc.Namespace)
+	matchingPCS := client.MatchingLabels{common.LabelPartOfKey: pcs.Name}
+
+	var pclqList grovev1beta1.PodCliqueList
+	if err := tc.Client.List(ctx, &pclqList, inNamespace, matchingPCS); err != nil {
+		return err
+	}
+	for _, pclq := range pclqList.Items {
+		if pclq.Labels[common.LabelPodCliqueSetRevision] != rev || pclq.Status.CurrentPodCliqueSetRevision != rev {
+			return fmt.Errorf("PodClique %s label revision %q, current revision %q, want %q",
+				pclq.Name, pclq.Labels[common.LabelPodCliqueSetRevision], pclq.Status.CurrentPodCliqueSetRevision, rev)
+		}
+	}
+
+	var pcsgList grovev1beta1.PodCliqueScalingGroupList
+	if err := tc.Client.List(ctx, &pcsgList, inNamespace, matchingPCS); err != nil {
+		return err
+	}
+	for _, pcsg := range pcsgList.Items {
+		if pcsg.Labels[common.LabelPodCliqueSetRevision] != rev || pcsg.Status.CurrentPodCliqueSetRevision != rev {
+			return fmt.Errorf("PodCliqueScalingGroup %s label revision %q, current revision %q, want %q",
+				pcsg.Name, pcsg.Labels[common.LabelPodCliqueSetRevision], pcsg.Status.CurrentPodCliqueSetRevision, rev)
+		}
+	}
+	return nil
 }
 
 // assertPodCliqueUpdateNotComplete fails the test unless the named standalone PodClique has a rolling

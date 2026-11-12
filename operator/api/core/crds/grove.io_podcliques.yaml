@@ -9094,6 +9094,11 @@ spec:
                   CurrentPodCliqueSetGenerationHash establishes a correlation to PodCliqueSet generation hash indicating
                   that the spec of the PodCliqueSet at this generation is fully realized in the PodClique.
                 type: string
+              currentPodCliqueSetRevision:
+                description: |-
+                  CurrentPodCliqueSetRevision is the name of the PodCliqueSet ControllerRevision whose pod template all Pods run.
+                  It is taken from the grove.io/podcliqueset-revision label once the Pods converge.
+                type: string
               currentPodTemplateHash:
                 description: |-
                   CurrentPodTemplateHash establishes a correlation to PodClique template hash indicating
@@ -9183,6 +9188,10 @@ spec:
                       PodCliqueSetGenerationHash is the generation hash corresponding to the latest PodCliqueSet spec that this
                       PodClique should converge to. PodCliqueStatus.CurrentPodCliqueSetGenerationHash is set to this hash once
                       UpdateEndedAt is set, which marks the end of the update.
+                    type: string
+                  podCliqueSetRevision:
+                    description: PodCliqueSetRevision is the name of the PodCliqueSet
+                      ControllerRevision that this update targets.
                     type: string
                   podTemplateHash:
                     description: |-
@@ -18318,6 +18327,11 @@ spec:
                   CurrentPodCliqueSetGenerationHash establishes a correlation to PodCliqueSet generation hash indicating
                   that the spec of the PodCliqueSet at this generation is fully realized in the PodClique.
                 type: string
+              currentPodCliqueSetRevision:
+                description: |-
+                  CurrentPodCliqueSetRevision is the name of the PodCliqueSet ControllerRevision whose pod template all Pods run.
+                  It is taken from the grove.io/podcliqueset-revision label once the Pods converge.
+                type: string
               currentPodTemplateHash:
                 description: |-
                   CurrentPodTemplateHash establishes a correlation to PodClique template hash indicating
@@ -18407,6 +18421,10 @@ spec:
                       PodCliqueSetGenerationHash is the generation hash corresponding to the latest PodCliqueSet spec that this
                       PodClique should converge to. PodCliqueStatus.CurrentPodCliqueSetGenerationHash is set to this hash once
                       UpdateEndedAt is set, which marks the end of the update.
+                    type: string
+                  podCliqueSetRevision:
+                    description: PodCliqueSetRevision is the name of the PodCliqueSet
+                      ControllerRevision that this update targets.
                     type: string
                   podTemplateHash:
                     description: |-

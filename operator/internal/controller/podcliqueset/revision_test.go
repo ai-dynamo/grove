@@ -21,11 +21,14 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
+	apiconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/sync"
+	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 	controllerrevision "github.com/ai-dynamo/grove/operator/internal/utils/controllerrevision"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
@@ -37,11 +40,12 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/uuid"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
-func TestEnsureCurrentControllerRevisionDefersCleanupUntilUpdateEnds(t *testing.T) {
+func TestEnsureUpdateRevisionDefersCleanupUntilUpdateEnds(t *testing.T) {
 	for _, strategy := range []grovecorev1beta1.UpdateStrategyType{
 		grovecorev1beta1.RollingRecreateStrategy, grovecorev1beta1.CoherentStrategy, grovecorev1beta1.OnDeleteStrategy,
 	} {
@@ -55,7 +59,7 @@ func TestEnsureCurrentControllerRevisionDefersCleanupUntilUpdateEnds(t *testing.
 			fakeClient := testutils.SetupFakeClient(pcs, old, previous)
 			r := &Reconciler{client: fakeClient}
 
-			require.False(t, r.ensureCurrentControllerRevision(t.Context(), logr.Discard(), pcs).HasErrors())
+			require.False(t, r.ensureUpdateRevision(t.Context(), logr.Discard(), pcs).HasErrors())
 			require.NoError(t, fakeClient.Get(t.Context(), client.ObjectKeyFromObject(old), &appsv1.ControllerRevision{}))
 			owned, err := r.listOwnedRevisions(t.Context(), pcs)
 			require.NoError(t, err)
@@ -63,7 +67,7 @@ func TestEnsureCurrentControllerRevisionDefersCleanupUntilUpdateEnds(t *testing.
 
 			endedAt := metav1.Now()
 			pcs.Status.UpdateProgress.UpdateEndedAt = &endedAt
-			require.False(t, r.ensureCurrentControllerRevision(t.Context(), logr.Discard(), pcs).HasErrors())
+			require.False(t, r.ensureUpdateRevision(t.Context(), logr.Discard(), pcs).HasErrors())
 			assert.True(t, apierrors.IsNotFound(fakeClient.Get(t.Context(), client.ObjectKeyFromObject(old), &appsv1.ControllerRevision{})))
 			owned, err = r.listOwnedRevisions(t.Context(), pcs)
 			require.NoError(t, err)
@@ -75,11 +79,12 @@ func TestEnsureCurrentControllerRevisionDefersCleanupUntilUpdateEnds(t *testing.
 func TestReconcileSpecRetainsRevisionsWhenUpdateStarts(t *testing.T) {
 	pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, uuid.NewUUID()).
 		WithPodCliqueParameters("worker", 1, nil).Build()
-	previousHash := computeGenerationHash(pcs)
+	previousHash := computeGenerationHash(&pcs.Spec.Template)
 	pcs.Status.CurrentGenerationHash = &previousHash
+	previous := newTestRevision(t, pcs, &pcs.Spec.Template, 14)
+	pcs.Status.UpdateRevision = previous.Name
 	pcs.Spec.Template.PriorityClassName = "new-priority"
 	old := buildControllerRevision(pcs, []byte(`{}`), 1, 0)
-	previous := buildControllerRevision(pcs, []byte(`{"previous":true}`), 14, 0)
 	fakeClient := testutils.SetupFakeClient(pcs, old, previous)
 	r := &Reconciler{
 		client:           fakeClient,
@@ -95,7 +100,7 @@ func TestReconcileSpecRetainsRevisionsWhenUpdateStarts(t *testing.T) {
 	assert.Len(t, owned, 3)
 }
 
-func TestEnsureCurrentControllerRevisionPrunesHistory(t *testing.T) {
+func TestEnsureUpdateRevisionPrunesHistory(t *testing.T) {
 	for _, currentNumber := range []int64{10, 11, 12, 15} {
 		t.Run(fmt.Sprint(currentNumber), func(t *testing.T) {
 			pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, uuid.NewUUID()).
@@ -115,9 +120,9 @@ func TestEnsureCurrentControllerRevisionPrunesHistory(t *testing.T) {
 			fakeClient := testutils.SetupFakeClient(objects...)
 			r := &Reconciler{client: fakeClient}
 
-			require.False(t, r.ensureCurrentControllerRevision(t.Context(), logr.Discard(), pcs).HasErrors())
+			require.False(t, r.ensureUpdateRevision(t.Context(), logr.Discard(), pcs).HasErrors())
 			// Cleanup-triggered reconciles must leave retained history unchanged.
-			require.False(t, r.ensureCurrentControllerRevision(t.Context(), logr.Discard(), pcs).HasErrors())
+			require.False(t, r.ensureUpdateRevision(t.Context(), logr.Discard(), pcs).HasErrors())
 			owned, err := r.listOwnedRevisions(t.Context(), pcs)
 			require.NoError(t, err)
 			var actual, expected []int64
@@ -134,7 +139,7 @@ func TestEnsureCurrentControllerRevisionPrunesHistory(t *testing.T) {
 	}
 }
 
-func TestEnsureCurrentControllerRevisionPrunesAfterReuse(t *testing.T) {
+func TestEnsureUpdateRevisionPrunesAfterReuse(t *testing.T) {
 	pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, uuid.NewUUID()).
 		WithPodCliqueParameters("worker", 1, nil).Build()
 	data, err := controllerrevision.EncodeTemplate(&pcs.Spec.Template)
@@ -152,11 +157,13 @@ func TestEnsureCurrentControllerRevisionPrunesAfterReuse(t *testing.T) {
 	listCalls := 0
 	r := &Reconciler{client: interceptor.NewClient(fakeClient, interceptor.Funcs{
 		List: func(ctx context.Context, cl client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
-			listCalls++
+			if _, ok := list.(*appsv1.ControllerRevisionList); ok {
+				listCalls++
+			}
 			return cl.List(ctx, list, opts...)
 		},
 	})}
-	require.False(t, r.ensureCurrentControllerRevision(t.Context(), logr.Discard(), pcs).HasErrors())
+	require.False(t, r.ensureUpdateRevision(t.Context(), logr.Discard(), pcs).HasErrors())
 	assert.Equal(t, 1, listCalls, "creation and cleanup must share one revision list")
 	r.client = fakeClient
 	owned, err := r.listOwnedRevisions(t.Context(), pcs)
@@ -211,16 +218,16 @@ func TestCleanupControllerRevisionsDeletionErrors(t *testing.T) {
 	}
 }
 
-// TestEnsureCurrentControllerRevisionCreatesMissingRevision verifies that a PCS with no owned
+// TestEnsureUpdateRevisionCreatesMissingRevision verifies that a PCS with no owned
 // ControllerRevision gets exactly one created, labelled and owned, carrying its current template.
-func TestEnsureCurrentControllerRevisionCreatesMissingRevision(t *testing.T) {
+func TestEnsureUpdateRevisionCreatesMissingRevision(t *testing.T) {
 	pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, uuid.NewUUID()).
 		WithPodCliqueParameters("worker", 1, nil).
 		Build()
 	fakeClient := testutils.SetupFakeClient(pcs)
 	r := &Reconciler{client: fakeClient}
 
-	result := r.ensureCurrentControllerRevision(t.Context(), logr.Discard(), pcs)
+	result := r.ensureUpdateRevision(t.Context(), logr.Discard(), pcs)
 	require.False(t, result.HasErrors())
 
 	revisions := &appsv1.ControllerRevisionList{}
@@ -238,46 +245,46 @@ func TestEnsureCurrentControllerRevisionCreatesMissingRevision(t *testing.T) {
 	assert.Equal(t, pcs.Spec.Template, *template)
 }
 
-// TestEnsureCurrentControllerRevisionIsIdempotent verifies that reconciling twice with an unchanged
+// TestEnsureUpdateRevisionIsIdempotent verifies that reconciling twice with an unchanged
 // template does not create a second ControllerRevision.
-func TestEnsureCurrentControllerRevisionIsIdempotent(t *testing.T) {
+func TestEnsureUpdateRevisionIsIdempotent(t *testing.T) {
 	pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, uuid.NewUUID()).
 		WithPodCliqueParameters("worker", 1, nil).
 		Build()
 	fakeClient := testutils.SetupFakeClient(pcs)
 	r := &Reconciler{client: fakeClient}
 
-	require.False(t, r.ensureCurrentControllerRevision(t.Context(), logr.Discard(), pcs).HasErrors())
-	require.False(t, r.ensureCurrentControllerRevision(t.Context(), logr.Discard(), pcs).HasErrors())
+	require.False(t, r.ensureUpdateRevision(t.Context(), logr.Discard(), pcs).HasErrors())
+	require.False(t, r.ensureUpdateRevision(t.Context(), logr.Discard(), pcs).HasErrors())
 
 	revisions := &appsv1.ControllerRevisionList{}
 	require.NoError(t, fakeClient.List(t.Context(), revisions, client.InNamespace(pcs.Namespace)))
 	assert.Len(t, revisions.Items, 1)
 }
 
-// TestEnsureCurrentControllerRevisionCreatesRevisionPerTemplate verifies that a template change
+// TestEnsureUpdateRevisionCreatesRevisionPerTemplate verifies that a template change
 // results in a second ControllerRevision at the next revision number.
-func TestEnsureCurrentControllerRevisionCreatesRevisionPerTemplate(t *testing.T) {
+func TestEnsureUpdateRevisionCreatesRevisionPerTemplate(t *testing.T) {
 	pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, uuid.NewUUID()).
 		WithPodCliqueParameters("worker", 1, nil).
 		Build()
 	fakeClient := testutils.SetupFakeClient(pcs)
 	r := &Reconciler{client: fakeClient}
 
-	require.False(t, r.ensureCurrentControllerRevision(t.Context(), logr.Discard(), pcs).HasErrors())
+	require.False(t, r.ensureUpdateRevision(t.Context(), logr.Discard(), pcs).HasErrors())
 
 	pcs.Spec.Template.PriorityClassName = "high-priority"
 	require.NoError(t, fakeClient.Update(t.Context(), pcs))
-	require.False(t, r.ensureCurrentControllerRevision(t.Context(), logr.Discard(), pcs).HasErrors())
+	require.False(t, r.ensureUpdateRevision(t.Context(), logr.Discard(), pcs).HasErrors())
 
 	revisions := &appsv1.ControllerRevisionList{}
 	require.NoError(t, fakeClient.List(t.Context(), revisions, client.InNamespace(pcs.Namespace)))
 	require.Len(t, revisions.Items, 2)
 }
 
-// TestEnsureCurrentControllerRevisionReusesUnreferencedRevision verifies that an already-present
+// TestEnsureUpdateRevisionReusesUnreferencedRevision verifies that an already-present
 // equivalent revision is reused rather than duplicated.
-func TestEnsureCurrentControllerRevisionReusesUnreferencedRevision(t *testing.T) {
+func TestEnsureUpdateRevisionReusesUnreferencedRevision(t *testing.T) {
 	pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, uuid.NewUUID()).
 		WithPodCliqueParameters("worker", 1, nil).
 		Build()
@@ -287,7 +294,7 @@ func TestEnsureCurrentControllerRevisionReusesUnreferencedRevision(t *testing.T)
 	fakeClient := testutils.SetupFakeClient(pcs, existing)
 	r := &Reconciler{client: fakeClient}
 
-	require.False(t, r.ensureCurrentControllerRevision(t.Context(), logr.Discard(), pcs).HasErrors())
+	require.False(t, r.ensureUpdateRevision(t.Context(), logr.Discard(), pcs).HasErrors())
 
 	revisions := &appsv1.ControllerRevisionList{}
 	require.NoError(t, fakeClient.List(t.Context(), revisions, client.InNamespace(pcs.Namespace)))
@@ -295,10 +302,10 @@ func TestEnsureCurrentControllerRevisionReusesUnreferencedRevision(t *testing.T)
 	assert.Equal(t, existing.Name, revisions.Items[0].Name)
 }
 
-// TestEnsureCurrentControllerRevisionRecoversFromNameCollision verifies that when a foreign
+// TestEnsureUpdateRevisionRecoversFromNameCollision verifies that when a foreign
 // ControllerRevision already holds the hashed name, the collision count is recomputed locally so a
 // distinct name is chosen for the owned revision.
-func TestEnsureCurrentControllerRevisionRecoversFromNameCollision(t *testing.T) {
+func TestEnsureUpdateRevisionRecoversFromNameCollision(t *testing.T) {
 	pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, uuid.NewUUID()).
 		WithPodCliqueParameters("worker", 1, nil).
 		Build()
@@ -313,7 +320,7 @@ func TestEnsureCurrentControllerRevisionRecoversFromNameCollision(t *testing.T) 
 	fakeClient := testutils.SetupFakeClient(pcs, colliding)
 	r := &Reconciler{client: fakeClient}
 
-	require.False(t, r.ensureCurrentControllerRevision(t.Context(), logr.Discard(), pcs).HasErrors())
+	require.False(t, r.ensureUpdateRevision(t.Context(), logr.Discard(), pcs).HasErrors())
 
 	owned, err := r.listOwnedRevisions(t.Context(), pcs)
 	require.NoError(t, err)
@@ -329,4 +336,249 @@ func TestControllerRevisionNameIsLabelSafe(t *testing.T) {
 	name := controllerRevisionName(strings.Repeat("a", 63), strings.Repeat("b", 20))
 	assert.LessOrEqual(t, len(name), maxControllerRevisionNameLength)
 	assert.True(t, strings.HasSuffix(name, "-"+strings.Repeat("b", 20)))
+}
+
+// newTestRevision returns the ControllerRevision of the PodCliqueSet that stores template.
+func newTestRevision(t *testing.T, pcs *grovecorev1beta1.PodCliqueSet, template *grovecorev1beta1.PodCliqueSetTemplateSpec, number int64) *appsv1.ControllerRevision {
+	t.Helper()
+	data, err := controllerrevision.EncodeTemplate(template)
+	require.NoError(t, err)
+	return buildControllerRevision(pcs, data, number, 0)
+}
+
+// newStandalonePCLQ returns a standalone PodClique of PodCliqueSet replica 0 with the given labels.
+func newStandalonePCLQ(pcs *grovecorev1beta1.PodCliqueSet, cliqueName string, labels map[string]string) *grovecorev1beta1.PodClique {
+	return testutils.NewPodCliqueBuilder(pcs.Name, pcs.UID, cliqueName, pcs.Namespace, 0).WithLabels(labels).Build()
+}
+
+func getPCS(t *testing.T, cl client.Client, pcs *grovecorev1beta1.PodCliqueSet) *grovecorev1beta1.PodCliqueSet {
+	t.Helper()
+	stored := &grovecorev1beta1.PodCliqueSet{}
+	require.NoError(t, cl.Get(t.Context(), client.ObjectKeyFromObject(pcs), stored))
+	return stored
+}
+
+// TestEnsureUpdateRevisionInitializesNewPodCliqueSet verifies that the first reconcile records the revision and the
+// generation hash without starting an update.
+func TestEnsureUpdateRevisionInitializesNewPodCliqueSet(t *testing.T) {
+	pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, uuid.NewUUID()).
+		WithPodCliqueParameters("worker", 1, nil).Build()
+	fakeClient := testutils.SetupFakeClient(pcs)
+	r := &Reconciler{client: fakeClient}
+
+	require.False(t, r.ensureUpdateRevision(t.Context(), logr.Discard(), pcs).HasErrors())
+
+	stored := getPCS(t, fakeClient, pcs)
+	owned, err := r.listOwnedRevisions(t.Context(), pcs)
+	require.NoError(t, err)
+	require.Len(t, owned, 1)
+	assert.Equal(t, owned[0].Name, stored.Status.UpdateRevision)
+	assert.Empty(t, stored.Status.CurrentRevision, "the current revision moves only once children reach it")
+	require.NotNil(t, stored.Status.CurrentGenerationHash)
+	assert.Equal(t, computeGenerationHash(&pcs.Spec.Template), *stored.Status.CurrentGenerationHash)
+	assert.Nil(t, stored.Status.UpdateProgress)
+}
+
+// TestEnsureUpdateRevisionWithoutPodTemplateChange verifies that an edit outside the pod templates records a new
+// revision but starts no update and keeps the generation hash.
+func TestEnsureUpdateRevisionWithoutPodTemplateChange(t *testing.T) {
+	pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, uuid.NewUUID()).
+		WithPodCliqueParameters("worker", 1, nil).
+		WithPodCliqueSetGenerationHash(ptr.To("generation-1")).Build()
+	previous := newTestRevision(t, pcs, &pcs.Spec.Template, 1)
+	pcs.Status.UpdateRevision = previous.Name
+	pcs.Spec.Template.Cliques[0].Spec.Replicas = 4
+	fakeClient := testutils.SetupFakeClient(pcs, previous)
+	r := &Reconciler{client: fakeClient}
+
+	require.False(t, r.ensureUpdateRevision(t.Context(), logr.Discard(), pcs).HasErrors())
+
+	stored := getPCS(t, fakeClient, pcs)
+	assert.NotEqual(t, previous.Name, stored.Status.UpdateRevision)
+	assert.Nil(t, stored.Status.UpdateProgress)
+	assert.Equal(t, ptr.To("generation-1"), stored.Status.CurrentGenerationHash)
+}
+
+// TestEnsureUpdateRevisionKeepsInFlightUpdate verifies that an edit outside the pod templates during an update keeps
+// the update going instead of restarting it.
+func TestEnsureUpdateRevisionKeepsInFlightUpdate(t *testing.T) {
+	startedAt := metav1.NewTime(metav1.Now().Add(-time.Hour)).Rfc3339Copy()
+	progress := &grovecorev1beta1.PodCliqueSetUpdateProgress{
+		UpdateStartedAt:   startedAt,
+		CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 1, UpdateStartedAt: startedAt}},
+	}
+	pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, uuid.NewUUID()).
+		WithReplicas(2).
+		WithPodCliqueParameters("worker", 1, nil).
+		WithPodCliqueSetGenerationHash(ptr.To("generation-2")).
+		WithUpdateProgress(progress).Build()
+	previous := newTestRevision(t, pcs, &pcs.Spec.Template, 2)
+	pcs.Status.UpdateRevision = previous.Name
+	pcs.Spec.Template.Cliques[0].Spec.Replicas = 4
+	// The replica not yet updated is still on the template before the in-flight update.
+	outdated := newStandalonePCLQ(pcs, "worker", map[string]string{
+		apicommon.LabelPodTemplateHash: "old-hash", apicommon.LabelPodCliqueSetRevision: "revision-before-update",
+	})
+	fakeClient := testutils.SetupFakeClient(pcs, previous, outdated)
+	r := &Reconciler{client: fakeClient}
+
+	require.False(t, r.ensureUpdateRevision(t.Context(), logr.Discard(), pcs).HasErrors())
+
+	stored := getPCS(t, fakeClient, pcs)
+	assert.NotEqual(t, previous.Name, stored.Status.UpdateRevision)
+	require.NotNil(t, stored.Status.UpdateProgress)
+	assert.True(t, startedAt.Equal(&stored.Status.UpdateProgress.UpdateStartedAt), "the in-flight update must not restart")
+	assert.Equal(t, progress.CurrentlyUpdating, stored.Status.UpdateProgress.CurrentlyUpdating)
+	assert.Equal(t, ptr.To("generation-2"), stored.Status.CurrentGenerationHash)
+}
+
+// TestEnsureUpdateRevisionIgnoresHashDrift reproduces https://github.com/ai-dynamo/grove/issues/709. After an operator
+// upgrade the same template hashes differently, but the template still matches the recorded revision, so nothing
+// changes.
+func TestEnsureUpdateRevisionIgnoresHashDrift(t *testing.T) {
+	pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, uuid.NewUUID()).
+		WithPodCliqueParameters("worker", 1, nil).
+		WithPodCliqueSetGenerationHash(ptr.To("generation-from-older-build")).Build()
+	revision := newTestRevision(t, pcs, &pcs.Spec.Template, 1)
+	pcs.Status.UpdateRevision = revision.Name
+	pclq := newStandalonePCLQ(pcs, "worker", map[string]string{
+		apicommon.LabelPodTemplateHash: "hash-from-older-build", apicommon.LabelPodCliqueSetRevision: revision.Name,
+	})
+	fakeClient := testutils.SetupFakeClient(pcs, revision, pclq)
+	r := &Reconciler{client: fakeClient}
+
+	require.False(t, r.ensureUpdateRevision(t.Context(), logr.Discard(), pcs).HasErrors())
+
+	stored := getPCS(t, fakeClient, pcs)
+	assert.Equal(t, revision.Name, stored.Status.UpdateRevision)
+	assert.Nil(t, stored.Status.UpdateProgress)
+	assert.Equal(t, ptr.To("generation-from-older-build"), stored.Status.CurrentGenerationHash)
+}
+
+// TestEnsureUpdateRevisionAdoptsLegacyPodCliqueSet covers the first reconcile after an upgrade from an operator
+// without revisions. The PodCliques carry no revision label, so their hashes decide.
+func TestEnsureUpdateRevisionAdoptsLegacyPodCliqueSet(t *testing.T) {
+	newPCS := func() *grovecorev1beta1.PodCliqueSet {
+		return testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "pcs-uid").
+			WithReplicas(1).
+			WithUpdateStrategy(&grovecorev1beta1.PodCliqueSetUpdateStrategy{Type: grovecorev1beta1.CoherentStrategy}).
+			WithPodCliqueParameters("worker", 1, nil).
+			WithPodCliqueSetGenerationHash(ptr.To("legacy-generation")).Build()
+	}
+
+	t.Run("converged children start no update", func(t *testing.T) {
+		pcs := newPCS()
+		hash := componentutils.ComputePCLQPodTemplateHash(pcs.Spec.Template.Cliques[0], pcs.Spec.Template.PriorityClassName)
+		fakeClient := testutils.SetupFakeClient(pcs, newStandalonePCLQ(pcs, "worker", map[string]string{apicommon.LabelPodTemplateHash: hash}))
+		r := &Reconciler{client: fakeClient}
+
+		require.False(t, r.ensureUpdateRevision(t.Context(), logr.Discard(), pcs).HasErrors())
+
+		stored := getPCS(t, fakeClient, pcs)
+		assert.NotEmpty(t, stored.Status.UpdateRevision)
+		assert.Nil(t, stored.Status.UpdateProgress)
+		assert.Equal(t, ptr.To("legacy-generation"), stored.Status.CurrentGenerationHash)
+	})
+
+	t.Run("a child on an older template starts an update", func(t *testing.T) {
+		pcs := newPCS()
+		fakeClient := testutils.SetupFakeClient(pcs, newStandalonePCLQ(pcs, "worker", map[string]string{apicommon.LabelPodTemplateHash: "older-template"}))
+		r := &Reconciler{client: fakeClient}
+
+		require.False(t, r.ensureUpdateRevision(t.Context(), logr.Discard(), pcs).HasErrors())
+
+		stored := getPCS(t, fakeClient, pcs)
+		require.NotNil(t, stored.Status.UpdateProgress)
+		assert.Equal(t, []string{"worker"}, stored.Status.UpdateProgress.InScopeStandalonePodCliques)
+		assert.Equal(t, ptr.To(computeGenerationHash(&pcs.Spec.Template)), stored.Status.CurrentGenerationHash)
+	})
+}
+
+// TestEnsureUpdateRevisionRevert verifies that reverting a template brings back the earlier revision and starts an
+// update that moves the children back.
+func TestEnsureUpdateRevisionRevert(t *testing.T) {
+	pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, uuid.NewUUID()).
+		WithPodCliqueParameters("worker", 1, nil).Build()
+	original := newTestRevision(t, pcs, &pcs.Spec.Template, 1)
+	edited := pcs.Spec.Template.DeepCopy()
+	edited.Cliques[0].Spec.PodSpec.Containers[0].Image = "edited"
+	editedRevision := newTestRevision(t, pcs, edited, 2)
+	pcs.Status.UpdateRevision = editedRevision.Name
+	pcs.Status.CurrentGenerationHash = ptr.To(computeGenerationHash(edited))
+	pclq := newStandalonePCLQ(pcs, "worker", map[string]string{
+		apicommon.LabelPodTemplateHash: "edited-hash", apicommon.LabelPodCliqueSetRevision: editedRevision.Name,
+	})
+	fakeClient := testutils.SetupFakeClient(pcs, original, editedRevision, pclq)
+	r := &Reconciler{client: fakeClient}
+
+	require.False(t, r.ensureUpdateRevision(t.Context(), logr.Discard(), pcs).HasErrors())
+
+	stored := getPCS(t, fakeClient, pcs)
+	assert.Equal(t, original.Name, stored.Status.UpdateRevision, "the earlier revision is reused")
+	require.NotNil(t, stored.Status.UpdateProgress)
+	assert.Equal(t, ptr.To(computeGenerationHash(&pcs.Spec.Template)), stored.Status.CurrentGenerationHash)
+	reused := &appsv1.ControllerRevision{}
+	require.NoError(t, fakeClient.Get(t.Context(), client.ObjectKeyFromObject(original), reused))
+	assert.Equal(t, int64(3), reused.Revision, "the reused revision is fast-forwarded")
+}
+
+// TestEnsureUpdateRevisionRequeuesWhileCacheIsStale verifies that no decision is taken on a status older than the
+// last one written.
+func TestEnsureUpdateRevisionRequeuesWhileCacheIsStale(t *testing.T) {
+	pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, uuid.NewUUID()).
+		WithPodCliqueParameters("worker", 1, nil).
+		WithUpdateRevision("revision-1").Build()
+	r := &Reconciler{client: testutils.SetupFakeClient(pcs)}
+	r.updateRevisionExpectations.Store(updateRevisionExpectationKey(pcs), "revision-2")
+
+	result := r.ensureUpdateRevision(t.Context(), logr.Discard(), pcs)
+
+	assert.False(t, result.HasErrors())
+	assert.True(t, result.NeedsRequeue())
+	owned, err := r.listOwnedRevisions(t.Context(), pcs)
+	require.NoError(t, err)
+	assert.Empty(t, owned)
+}
+
+// TestCleanupKeepsReferencedRevisions verifies that history cleanup never deletes the current revision or a revision
+// a PodClique or PodCliqueScalingGroup references.
+func TestCleanupKeepsReferencedRevisions(t *testing.T) {
+	pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, uuid.NewUUID()).
+		WithPodCliqueParameters("worker", 1, nil).Build()
+	revisions := make([]*appsv1.ControllerRevision, 0, 16)
+	objects := []client.Object{pcs}
+	for number := int64(1); number <= 15; number++ {
+		revision := buildControllerRevision(pcs, []byte(fmt.Sprintf(`{"n":%d}`, number)), number, 0)
+		revisions = append(revisions, revision)
+		objects = append(objects, revision)
+	}
+	pcs.Status.CurrentRevision = revisions[0].Name
+	pclq := newStandalonePCLQ(pcs, "worker", map[string]string{apicommon.LabelPodCliqueSetRevision: revisions[1].Name})
+	pclq.Status.CurrentPodCliqueSetRevision = revisions[2].Name
+	pcsg := testutils.NewPodCliqueScalingGroupBuilder("test-pcs-0-sg", testNamespace, testPCSName, 0).
+		WithOwnerReference(apiconstants.KindPodCliqueSet, testPCSName, pcs.UID).
+		WithOptions(func(pcsg *grovecorev1beta1.PodCliqueScalingGroup) {
+			pcsg.Status.UpdateProgress = &grovecorev1beta1.PodCliqueScalingGroupUpdateProgress{PodCliqueSetRevision: revisions[3].Name}
+		}).Build()
+	objects = append(objects, pclq, pcsg)
+	fakeClient := testutils.SetupFakeClient(objects...)
+	r := &Reconciler{client: fakeClient}
+
+	owned, err := r.listOwnedRevisions(t.Context(), pcs)
+	require.NoError(t, err)
+	require.NoError(t, r.cleanupControllerRevisions(t.Context(), pcs, owned, revisions[14]))
+
+	exists := func(revision *appsv1.ControllerRevision) bool {
+		return fakeClient.Get(t.Context(), client.ObjectKeyFromObject(revision), &appsv1.ControllerRevision{}) == nil
+	}
+	for i, revision := range revisions {
+		switch {
+		case i <= 3:
+			assert.True(t, exists(revision), "referenced revision %d must be kept", revision.Revision)
+		case revision.Revision < 5:
+			assert.False(t, exists(revision), "unreferenced revision %d must be deleted", revision.Revision)
+		default:
+			assert.True(t, exists(revision), "recent revision %d must be kept", revision.Revision)
+		}
+	}
 }

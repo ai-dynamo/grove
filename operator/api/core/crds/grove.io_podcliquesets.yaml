@@ -11152,12 +11152,14 @@ spec:
                 type: array
               currentGenerationHash:
                 description: |-
-                  CurrentGenerationHash is a hash value generated out of a collection of fields in a PodCliqueSet.
-                  Since only a subset of fields is taken into account when generating the hash, not every change in the PodCliqueSetSpec will
-                  be accounted for when generating this hash value. A field in PodCliqueSetSpec is included if a change to it triggers
-                  a rolling recreate of PodCliques and/or PodCliqueScalingGroups.
-                  Only if this value is not nil and the newly computed hash value is different from the persisted CurrentGenerationHash value
-                  then an update needs to be triggered.
+                  CurrentGenerationHash is a hash of the pod templates of UpdateRevision.
+                  It is set when the PodCliqueSet is created and recomputed only when a pod template changes.
+                  Use UpdateRevision and CurrentRevision to track updates.
+                type: string
+              currentRevision:
+                description: |-
+                  CurrentRevision is the name of the last ControllerRevision that every PodClique and PodCliqueScalingGroup reached.
+                  It moves to UpdateRevision once all of them reach it.
                 type: string
               hpaPodSelector:
                 description: |-
@@ -11419,19 +11421,21 @@ spec:
                     type: string
                   updatedPodCliqueScalingGroupsCount:
                     default: 0
-                    description: |-
-                      UpdatedPodCliqueScalingGroupsCount is the number of PodCliqueScalingGroups that have been updated to the
-                      desired PodCliqueSet generation hash.
+                    description: UpdatedPodCliqueScalingGroupsCount is the number
+                      of PodCliqueScalingGroups that have reached UpdateRevision.
                     format: int32
                     type: integer
                   updatedPodCliquesCount:
                     default: 0
-                    description: |-
-                      UpdatedPodCliquesCount is the number of PodCliques that have been updated to the desired PodCliqueSet
-                      generation hash. Recomputed each reconcile from child generation-hash labels.
+                    description: UpdatedPodCliquesCount is the number of standalone
+                      PodCliques that have reached UpdateRevision.
                     format: int32
                     type: integer
                 type: object
+              updateRevision:
+                description: UpdateRevision is the name of the ControllerRevision
+                  whose template matches spec.template.
+                type: string
               updatedReplicas:
                 default: 0
                 description: UpdatedReplicas is the number of replicas that have been
@@ -22546,12 +22550,14 @@ spec:
                 type: array
               currentGenerationHash:
                 description: |-
-                  CurrentGenerationHash is a hash value generated out of a collection of fields in a PodCliqueSet.
-                  Since only a subset of fields is taken into account when generating the hash, not every change in the PodCliqueSetSpec will
-                  be accounted for when generating this hash value. A field in PodCliqueSetSpec is included if a change to it triggers
-                  a rolling recreate of PodCliques and/or PodCliqueScalingGroups.
-                  Only if this value is not nil and the newly computed hash value is different from the persisted CurrentGenerationHash value
-                  then an update needs to be triggered.
+                  CurrentGenerationHash is a hash of the pod templates of UpdateRevision.
+                  It is set when the PodCliqueSet is created and recomputed only when a pod template changes.
+                  Use UpdateRevision and CurrentRevision to track updates.
+                type: string
+              currentRevision:
+                description: |-
+                  CurrentRevision is the name of the last ControllerRevision that every PodClique and PodCliqueScalingGroup reached.
+                  It moves to UpdateRevision once all of them reach it.
                 type: string
               hpaPodSelector:
                 description: |-
@@ -22731,19 +22737,21 @@ spec:
                     type: string
                   updatedPodCliqueScalingGroupsCount:
                     default: 0
-                    description: |-
-                      UpdatedPodCliqueScalingGroupsCount is the number of PodCliqueScalingGroups that have been updated to the
-                      desired PodCliqueSet generation hash.
+                    description: UpdatedPodCliqueScalingGroupsCount is the number
+                      of PodCliqueScalingGroups that have reached UpdateRevision.
                     format: int32
                     type: integer
                   updatedPodCliquesCount:
                     default: 0
-                    description: |-
-                      UpdatedPodCliquesCount is the number of PodCliques that have been updated to the desired PodCliqueSet
-                      generation hash. Recomputed each reconcile from child generation-hash labels.
+                    description: UpdatedPodCliquesCount is the number of standalone
+                      PodCliques that have reached UpdateRevision.
                     format: int32
                     type: integer
                 type: object
+              updateRevision:
+                description: UpdateRevision is the name of the ControllerRevision
+                  whose template matches spec.template.
+                type: string
               updatedReplicas:
                 default: 0
                 description: UpdatedReplicas is the number of replicas that have been

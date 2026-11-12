@@ -667,6 +667,21 @@ func TestComputeHash(t *testing.T) {
 	assert.Equal(t, hash4, hash5)
 }
 
+// TestComputeHashWithSalt tests that a hash salt changes every hash and keeps it deterministic.
+func TestComputeHashWithSalt(t *testing.T) {
+	podSpec := &corev1.PodTemplateSpec{
+		Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "container-1", Image: "image:v1"}}},
+	}
+	unsalted := ComputeHash(podSpec)
+
+	hashSalt = "e2e"
+	t.Cleanup(func() { hashSalt = "" })
+
+	salted := ComputeHash(podSpec)
+	assert.NotEqual(t, unsalted, salted)
+	assert.Equal(t, salted, ComputeHash(podSpec))
+}
+
 // TestCategorizePodsByConditionType tests categorizing pods by their conditions.
 func TestCategorizePodsByConditionType(t *testing.T) {
 	// Ready pod

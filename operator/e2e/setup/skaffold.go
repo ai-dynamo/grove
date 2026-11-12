@@ -50,6 +50,9 @@ type SkaffoldInstallConfig struct {
 	Namespace string
 	// Env are environment variables required by skaffold.yaml (e.g., VERSION, LD_FLAGS).
 	Env map[string]string
+	// DisableCache rebuilds every artifact. The cache key ignores Env, so a build that differs only in
+	// LD_FLAGS would otherwise reuse a cached image.
+	DisableCache bool
 	// Logger is the logger for operations (optional, will use default if nil).
 	Logger *log.Logger
 }
@@ -158,6 +161,9 @@ func skaffoldSetup(ctx context.Context, config *SkaffoldInstallConfig) (string, 
 // Returns a map of image names to their full tags with digests
 func runSkaffoldBuild(ctx context.Context, absSkaffoldPath, skaffoldDir string, config *SkaffoldInstallConfig) (map[string]string, error) {
 	args := []string{"build", "--quiet", "--output={{json .}}"}
+	if config.DisableCache {
+		args = append(args, "--cache-artifacts=false")
+	}
 
 	// Add default repo for build (push repository)
 	args = append(args, "--default-repo", config.PushRepo)

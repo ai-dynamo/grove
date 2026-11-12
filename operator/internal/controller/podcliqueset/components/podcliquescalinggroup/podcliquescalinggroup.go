@@ -315,12 +315,16 @@ func getAnnotations(pcsgConfig grovecorev1beta1.PodCliqueScalingGroupConfig) map
 	return annotations
 }
 
-// getLabels constructs labels for a PodCliqueScalingGroup resource.
+// getLabels constructs labels for a PodCliqueScalingGroup resource. The revision label tells the
+// PodCliqueScalingGroup which revision its member PodCliques move to.
 func getLabels(pcs *grovecorev1beta1.PodCliqueSet, pcsReplica int, pclqScalingGroupObjKey client.ObjectKey) map[string]string {
 	componentLabels := map[string]string{
 		apicommon.LabelAppNameKey:               pclqScalingGroupObjKey.Name,
 		apicommon.LabelComponentKey:             apicommon.LabelComponentNamePodCliqueScalingGroup,
 		apicommon.LabelPodCliqueSetReplicaIndex: strconv.Itoa(pcsReplica),
+	}
+	if pcs.Status.UpdateRevision != "" {
+		componentLabels[apicommon.LabelPodCliqueSetRevision] = pcs.Status.UpdateRevision
 	}
 	return lo.Assign(
 		apicommon.GetDefaultLabelsForPodCliqueSetManagedResources(pcs.Name),

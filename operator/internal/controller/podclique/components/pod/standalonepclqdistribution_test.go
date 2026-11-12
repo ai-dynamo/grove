@@ -393,6 +393,7 @@ func TestRunSyncFlowDelaysUpdateWorkUntilRevisionsMatch(t *testing.T) {
 			WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder(testCliqueName).WithPodSpec(podSpec).Build()).
 			Build()
 		pcs.Status.CurrentGenerationHash = ptr.To(currentGeneration)
+		pcs.Status.UpdateRevision = currentGeneration
 		pcs.Status.UpdateProgress = &grovecorev1beta1.PodCliqueSetUpdateProgress{
 			UpdateStartedAt:   metav1.Now(),
 			CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: testPCSReplicaIndex}},
@@ -400,11 +401,12 @@ func TestRunSyncFlowDelaysUpdateWorkUntilRevisionsMatch(t *testing.T) {
 		pclq := testutils.NewPodCliqueBuilder(testPCSName, "uid", testCliqueName, testNamespace, testPCSReplicaIndex).
 			WithReplicas(replicas).
 			WithMinAvailable(1).
-			WithLabels(map[string]string{apicommon.LabelPodTemplateHash: testNewHash}).
+			WithLabels(map[string]string{apicommon.LabelPodTemplateHash: testNewHash, apicommon.LabelPodCliqueSetRevision: currentGeneration}).
 			Build()
 		pclq.Spec.PodSpec = *podSpec.DeepCopy()
 		pclq.Status.UpdateProgress = &grovecorev1beta1.PodCliqueUpdateProgress{
 			PodCliqueSetGenerationHash: currentGeneration,
+			PodCliqueSetRevision:       currentGeneration,
 			PodTemplateHash:            testNewHash,
 		}
 		objects := []client.Object{pclq}
@@ -444,11 +446,11 @@ func TestRunSyncFlowDelaysUpdateWorkUntilRevisionsMatch(t *testing.T) {
 		assert.Equal(t, component.OperationSync, requeueErr.Operation)
 	}
 
-	t.Run("RollingRecreate does not replace Pods when progress targets another PCS generation", func(t *testing.T) {
+	t.Run("RollingRecreate does not replace Pods when progress targets another PCS revision", func(t *testing.T) {
 		pod := nonTerminatingPodInPodGang("old-pod", anchor, "worker-0")
 		pod.Labels[apicommon.LabelPodTemplateHash] = testOldHash
 		ss, r, cl := newSnapshot(grovecorev1beta1.RollingRecreateStrategy, 1, []*corev1.Pod{pod})
-		ss.pclq.Status.UpdateProgress.PodCliqueSetGenerationHash = otherGeneration
+		ss.pclq.Status.UpdateProgress.PodCliqueSetRevision = otherGeneration
 
 		result := r.runSyncFlow(t.Context(), logr.Discard(), ss)
 
@@ -477,7 +479,7 @@ func TestRunSyncFlowDelaysUpdateWorkUntilRevisionsMatch(t *testing.T) {
 		existing.Status.Phase = corev1.PodRunning
 		existing.Labels[apicommon.LabelPodTemplateHash] = testOldHash
 		ss, r, cl := newSnapshot(grovecorev1beta1.RollingRecreateStrategy, 2, []*corev1.Pod{existing})
-		ss.pclq.Status.UpdateProgress.PodCliqueSetGenerationHash = otherGeneration
+		ss.pclq.Status.UpdateProgress.PodCliqueSetRevision = otherGeneration
 
 		result := r.runSyncFlow(t.Context(), logr.Discard(), ss)
 
@@ -495,7 +497,7 @@ func TestRunSyncFlowDelaysUpdateWorkUntilRevisionsMatch(t *testing.T) {
 		ss, r, _ := newSnapshot(grovecorev1beta1.CoherentStrategy, 1, []*corev1.Pod{pod})
 		ss.pclq.Status.Replicas = 1
 		ss.pclq.Status.UpdatedReplicas = 1
-		ss.pclq.Status.UpdateProgress.PodCliqueSetGenerationHash = otherGeneration
+		ss.pclq.Status.UpdateProgress.PodCliqueSetRevision = otherGeneration
 
 		result := r.runSyncFlow(t.Context(), logr.Discard(), ss)
 
@@ -804,6 +806,7 @@ func pclqWithHash(hash string) *grovecorev1beta1.PodClique {
 func pcsCoherentUpdating() *grovecorev1beta1.PodCliqueSet {
 	return testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "uid").
 		WithUpdateStrategy(&grovecorev1beta1.PodCliqueSetUpdateStrategy{Type: grovecorev1beta1.CoherentStrategy}).
+		WithUpdateRevision("new-revision").
 		WithUpdateProgress(&grovecorev1beta1.PodCliqueSetUpdateProgress{
 			UpdateStartedAt:   metav1.Now(),
 			CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: int32(testPCSReplicaIndex)}},

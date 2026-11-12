@@ -29,6 +29,7 @@ import (
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/ptr"
 )
 
 const (
@@ -233,6 +234,7 @@ func coherentTestPCS(standaloneCliques, pcsgConfigs []string) *grovecorev1beta1.
 		builder = builder.WithScalingGroupConfig(pcsgConfig, []string{pcsgConfig + "-worker"}, 1, 1)
 	}
 	pcs := builder.WithPodCliqueSetGenerationHash(new(coherentTestCurrentGen)).
+		WithUpdateRevision(coherentTestCurrentGen).
 		WithUpdateStrategy(&grovecorev1beta1.PodCliqueSetUpdateStrategy{Type: grovecorev1beta1.CoherentStrategy}).Build()
 	pcs.Status.UpdateProgress = &grovecorev1beta1.PodCliqueSetUpdateProgress{
 		InScopeStandalonePodCliques:   standaloneCliques,
@@ -248,22 +250,30 @@ func coherentHashOf(pcs *grovecorev1beta1.PodCliqueSet, cliqueName string) strin
 	return componentutils.ComputePCLQPodTemplateHash(componentutils.FindPodCliqueTemplateSpecByName(pcs, cliqueName), pcs.Spec.Template.PriorityClassName)
 }
 
-// standalonePCLQAtHash builds a standalone PodClique for replica 0 whose deployed hash and status hashes
-// are podTemplateHash. When podTemplateHash equals the clique's expected hash the PodClique reads as
-// converged, otherwise it reads as still updating.
+// standalonePCLQAtHash builds a standalone PodClique for replica 0 written from the update revision whose
+// deployed hash is podTemplateHash. When podTemplateHash equals the clique's expected hash its Pods have
+// reached the update revision and it reads as converged, otherwise it reads as still updating.
 func standalonePCLQAtHash(pcs *grovecorev1beta1.PodCliqueSet, cliqueName, podTemplateHash string) grovecorev1beta1.PodClique {
+	reachedRevision := "stale-revision"
+	if podTemplateHash == coherentHashOf(pcs, cliqueName) {
+		reachedRevision = coherentTestCurrentGen
+	}
 	pclq := testutils.NewPodCliqueBuilder(pcs.Name, coherentTestPCSUID, cliqueName, coherentTestNamespace, 0).
 		WithMinAvailable(1).
-		WithLabels(map[string]string{apicommon.LabelPodTemplateHash: podTemplateHash}).Build()
+		WithLabels(map[string]string{
+			apicommon.LabelPodTemplateHash:      podTemplateHash,
+			apicommon.LabelPodCliqueSetRevision: coherentTestCurrentGen,
+		}).Build()
 	pclq.Status.CurrentPodTemplateHash = new(podTemplateHash)
-	pclq.Status.CurrentPodCliqueSetGenerationHash = new(coherentTestCurrentGen)
+	pclq.Status.CurrentPodCliqueSetRevision = reachedRevision
 	pclq.Status.ReadyReplicas = 1
 	pclq.Status.UpdatedReplicas = 1
 	return *pclq
 }
 
-// pcsgAtGenerationHash builds a PodCliqueScalingGroup for replica 0 whose status generation hash is
-// currentGenerationHash. Setting it to coherentTestCurrentGen makes it read as converged.
+// pcsgAtGenerationHash builds a PodCliqueScalingGroup for replica 0 that has reached the revision named by
+// currentGenerationHash, or none when it is nil. Setting it to coherentTestCurrentGen makes it read as
+// converged.
 //
 //nolint:unparam // pcsgConfigName is a genuine PCSG dimension. Current tests only exercise "decode".
 func pcsgAtGenerationHash(pcs *grovecorev1beta1.PodCliqueSet, pcsgConfigName string, currentGenerationHash *string) grovecorev1beta1.PodCliqueScalingGroup {
@@ -272,6 +282,9 @@ func pcsgAtGenerationHash(pcs *grovecorev1beta1.PodCliqueSet, pcsgConfigName str
 			Name:      apicommon.GeneratePodCliqueScalingGroupName(apicommon.ResourceNameReplica{Name: pcs.Name, Replica: 0}, pcsgConfigName),
 			Namespace: coherentTestNamespace,
 		},
-		Status: grovecorev1beta1.PodCliqueScalingGroupStatus{CurrentPodCliqueSetGenerationHash: currentGenerationHash},
+		Status: grovecorev1beta1.PodCliqueScalingGroupStatus{
+			CurrentPodCliqueSetGenerationHash: currentGenerationHash,
+			CurrentPodCliqueSetRevision:       ptr.Deref(currentGenerationHash, ""),
+		},
 	}
 }

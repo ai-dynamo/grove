@@ -20,83 +20,102 @@ import (
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
+	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
+	"github.com/samber/lo"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
 )
 
-// updateScope names the components a coherent update targets, split into standalone PodCliques and
+// updateScope names the components whose Pods an update replaces, split into standalone PodCliques and
 // PodCliqueScalingGroups. It backs the in-scope set recorded on Status.UpdateProgress.
 type updateScope struct {
 	standalonePCLQs        sets.Set[string]
 	podCliqueScalingGroups sets.Set[string]
 }
 
-// computeCoherentUpdateScope determines which components a coherent update must roll for the given
-// PodCliqueSet. A component is in scope when its pod template changed in this edit. When a coherent update
-// is already in flight, the previous scope's still-pending components are merged in so a half-rolled
-// component is finished rather than frozen. It reads the current generation hash from status, so it must
-// run before that hash is overwritten with the new one.
-func (r *Reconciler) computeCoherentUpdateScope(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet) (updateScope, error) {
-	deployedHashByClique, err := r.deployedPodTemplateHashByClique(ctx, pcs)
-	if err != nil {
-		return updateScope{}, err
-	}
-	newInScope := newlyChangedInScope(pcs, deployedHashByClique)
-	if !componentutils.IsCoherentUpdateInProgress(pcs) {
-		return newInScope, nil
-	}
-	pgms, err := componentutils.ListPodGangMapsForPCS(ctx, r.client, pcs.ObjectMeta)
-	if err != nil {
-		return updateScope{}, err
-	}
-	previousInScope := previousPendingInScope(pcs, pgms, *pcs.Status.CurrentGenerationHash)
-	return mergeInScopes(newInScope, previousInScope), nil
+// newUpdateScope returns an empty updateScope.
+func newUpdateScope() updateScope {
+	return updateScope{standalonePCLQs: sets.New[string](), podCliqueScalingGroups: sets.New[string]()}
 }
 
-// deployedPodTemplateHashByClique returns the currently deployed pod template hash of each PodClique keyed
-// by clique name. It reads the desired-hash label set by the owner sync, which is what the cluster last
-// converged toward, and covers standalone and PodCliqueScalingGroup-owned PodCliques alike.
-func (r *Reconciler) deployedPodTemplateHashByClique(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet) (map[string]string, error) {
+// isEmpty reports whether the scope names no component.
+func (s updateScope) isEmpty() bool {
+	return s.standalonePCLQs.Len() == 0 && s.podCliqueScalingGroups.Len() == 0
+}
+
+// computeChangedScope returns the components with a PodClique whose pod-template-hash changes once it is written
+// from updateRevision, so its Pods must be replaced. A standalone PodClique adds its clique name, and a
+// PodCliqueScalingGroup-owned PodClique adds its PodCliqueScalingGroup config name. It uses the rule the PodClique
+// writers use, so the update starts exactly when a writer changes a hash. Terminating PodCliques are skipped, since
+// they are recreated from the current template.
+func (r *Reconciler) computeChangedScope(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet, updateRevision string) (updateScope, error) {
+	scope := newUpdateScope()
+	pclqs, err := r.listPCSPodCliques(ctx, pcs)
+	if err != nil {
+		return scope, err
+	}
+	for i := range pclqs {
+		pclq := &pclqs[i]
+		if k8sutils.IsResourceTerminating(pclq.ObjectMeta) {
+			continue
+		}
+		cliqueName, err := componentutils.GetPodCliqueNameFromPodCliqueFQN(pclq.ObjectMeta)
+		if err != nil {
+			return scope, err
+		}
+		if componentutils.FindPodCliqueTemplateSpecByName(pcs, cliqueName) == nil {
+			continue
+		}
+		podTemplateHash, err := componentutils.ResolvePodTemplateHash(ctx, r.client, pcs, updateRevision, cliqueName, pclq.Labels)
+		if err != nil {
+			return scope, err
+		}
+		if podTemplateHash == pclq.Labels[apicommon.LabelPodTemplateHash] {
+			continue
+		}
+		if pcsgConfig := componentutils.FindScalingGroupConfigForClique(pcs.Spec.Template.PodCliqueScalingGroupConfigs, cliqueName); pcsgConfig != nil {
+			scope.podCliqueScalingGroups.Insert(pcsgConfig.Name)
+		} else {
+			scope.standalonePCLQs.Insert(cliqueName)
+		}
+	}
+	return scope, nil
+}
+
+// listPCSPodCliques returns the standalone PodCliques of the PodCliqueSet and the PodCliques of its
+// PodCliqueScalingGroups. PodCliques left by an older PodCliqueSet of the same name are excluded.
+func (r *Reconciler) listPCSPodCliques(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet) ([]grovecorev1beta1.PodClique, error) {
 	pclqs, err := componentutils.ListPCLQsMatchingLabels(ctx, r.client, pcs.Namespace, apicommon.GetDefaultLabelsForPodCliqueSetManagedResources(pcs.Name))
 	if err != nil {
 		return nil, err
 	}
-	hashByClique := make(map[string]string)
-	for _, pclq := range pclqs {
-		cliqueName, err := componentutils.GetPodCliqueNameFromPodCliqueFQN(pclq.ObjectMeta)
-		if err != nil {
-			return nil, err
-		}
-		hashByClique[cliqueName] = pclq.Labels[apicommon.LabelPodTemplateHash]
+	pcsgs, err := componentutils.GetPCSGsForPCS(ctx, r.client, pcs.ObjectMeta)
+	if err != nil {
+		return nil, err
 	}
-	return hashByClique, nil
+	ownerUIDs := sets.New(pcs.UID)
+	for i := range pcsgs {
+		ownerUIDs.Insert(pcsgs[i].UID)
+	}
+	return lo.Filter(pclqs, func(pclq grovecorev1beta1.PodClique, _ int) bool {
+		controllerRef := metav1.GetControllerOfNoCopy(&pclq)
+		return controllerRef != nil && ownerUIDs.Has(controllerRef.UID)
+	}), nil
 }
 
-// newlyChangedInScope returns the components whose newly computed pod template hash differs from the
-// deployed hash, so this edit must roll them. A changed clique that is not part of any
-// PodCliqueScalingGroup is a standalone entry, and a PodCliqueScalingGroup is in scope when any of its
-// constituent cliques changed. Standalone changes go straight to the scope, so only changed
-// PodCliqueScalingGroup cliques are collected to resolve group membership in a second pass.
-func newlyChangedInScope(pcs *grovecorev1beta1.PodCliqueSet, deployedHashByClique map[string]string) updateScope {
-	scope := updateScope{standalonePCLQs: sets.New[string](), podCliqueScalingGroups: sets.New[string]()}
-	changedPCSGPCLQs := sets.New[string]()
-	for _, cliqueTemplate := range pcs.Spec.Template.Cliques {
-		newHash := componentutils.ComputePCLQPodTemplateHash(cliqueTemplate, pcs.Spec.Template.PriorityClassName)
-		if deployedHashByClique[cliqueTemplate.Name] == newHash {
-			continue
-		}
-		if componentutils.IsStandalonePCLQTemplate(pcs, cliqueTemplate.Name) {
-			scope.standalonePCLQs.Insert(cliqueTemplate.Name)
-		} else {
-			changedPCSGPCLQs.Insert(cliqueTemplate.Name)
-		}
+// withPreviousPendingScope merges the components that an in-flight coherent update has not finished rolling into
+// scope, so a half-rolled component is finished rather than frozen. It reads the current generation hash from
+// status, so it must run before that hash is overwritten with the new one.
+func (r *Reconciler) withPreviousPendingScope(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet, scope updateScope) (updateScope, error) {
+	if !componentutils.IsCoherentUpdateInProgress(pcs) || pcs.Status.CurrentGenerationHash == nil {
+		return scope, nil
 	}
-	for _, pcsgConfig := range pcs.Spec.Template.PodCliqueScalingGroupConfigs {
-		if changedPCSGPCLQs.HasAny(pcsgConfig.CliqueNames...) {
-			scope.podCliqueScalingGroups.Insert(pcsgConfig.Name)
-		}
+	pgms, err := componentutils.ListPodGangMapsForPCS(ctx, r.client, pcs.ObjectMeta)
+	if err != nil {
+		return scope, err
 	}
-	return scope
+	return mergeInScopes(scope, previousPendingInScope(pcs, pgms, *pcs.Status.CurrentGenerationHash)), nil
 }
 
 // previousPendingInScope returns the components from the in-flight update's scope that have not finished
@@ -106,7 +125,7 @@ func newlyChangedInScope(pcs *grovecorev1beta1.PodCliqueSet, deployedHashByCliqu
 func previousPendingInScope(pcs *grovecorev1beta1.PodCliqueSet, pgms []grovecorev1beta1.PodGangMap, currentGenerationHash string) updateScope {
 	previousStandalone := sets.New(pcs.Status.UpdateProgress.InScopeStandalonePodCliques...)
 	previousPCSG := sets.New(pcs.Status.UpdateProgress.InScopePodCliqueScalingGroups...)
-	pending := updateScope{standalonePCLQs: sets.New[string](), podCliqueScalingGroups: sets.New[string]()}
+	pending := newUpdateScope()
 	for _, pgm := range pgms {
 		for _, entry := range pgm.Spec.Entries {
 			if entry.PodCliqueSetGenerationHash == currentGenerationHash {

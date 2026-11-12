@@ -27,7 +27,9 @@ import (
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	apiconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
+	"github.com/ai-dynamo/grove/operator/internal/constants"
 	ctrlcommon "github.com/ai-dynamo/grove/operator/internal/controller/common"
+	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 	controllerrevision "github.com/ai-dynamo/grove/operator/internal/utils/controllerrevision"
 
 	"github.com/go-logr/logr"
@@ -37,6 +39,8 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	utilrand "k8s.io/apimachinery/pkg/util/rand"
+	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -46,39 +50,146 @@ const (
 	previousControllerRevisionsToKeep int64 = 10
 )
 
-// ensureCurrentControllerRevision creates the ControllerRevision for the current PodCliqueSetSpec
-// template when it is missing, fast-forwards an equivalent older revision's number, and prunes history.
-func (r *Reconciler) ensureCurrentControllerRevision(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet) ctrlcommon.ReconcileStepResult {
+// ensureUpdateRevision makes the ControllerRevisions decide and track updates, the way a StatefulSet does. It
+// resolves the revision whose template matches spec.template, the update revision. When that revision changes, it
+// decides whether the change replaces Pods and starts the update if it does. It writes the update revision, the
+// update progress and the generation hash in one status update. It then prunes the revision history.
+func (r *Reconciler) ensureUpdateRevision(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet) ctrlcommon.ReconcileStepResult {
+	pcsObjectKey := client.ObjectKeyFromObject(pcs)
+	expectationKey := updateRevisionExpectationKey(pcs)
+	// If the update revision is not reflected in the informer cache yet, requeue. Deciding again on a stale status
+	// would restart an update that already started.
+	if !r.isUpdateRevisionExpectationSatisfied(expectationKey, pcs.Status.UpdateRevision) {
+		return ctrlcommon.ReconcileAfter(constants.ComponentSyncRetryInterval, fmt.Sprintf("UpdateRevision is not up-to-date for PodCliqueSet: %v", pcsObjectKey))
+	}
+	r.updateRevisionExpectations.Delete(expectationKey)
+
 	revisions, err := r.listOwnedRevisions(ctx, pcs)
 	if err != nil {
 		return ctrlcommon.ReconcileWithErrors("failed to list ControllerRevisions", err)
 	}
-	current, err := r.createOrUpdateLatestControllerRevision(ctx, pcs, revisions)
+	updateRevision, err := r.createOrUpdateLatestControllerRevision(ctx, pcs, revisions)
 	if err != nil {
 		return ctrlcommon.ReconcileWithErrors("failed to ensure ControllerRevision", err)
 	}
-	if err := r.cleanupControllerRevisions(ctx, pcs, revisions, current); err != nil {
+	if pcs.Status.UpdateRevision != updateRevision.Name || pcs.Status.CurrentGenerationHash == nil {
+		if err = r.processUpdateRevisionChange(ctx, logger, pcs, expectationKey, updateRevision.Name); err != nil {
+			return ctrlcommon.ReconcileWithErrors(fmt.Sprintf("could not process the update revision of PodCliqueSet: %v", pcsObjectKey), err)
+		}
+	}
+	if err = r.cleanupControllerRevisions(ctx, pcs, revisions, updateRevision); err != nil {
 		return ctrlcommon.ReconcileWithErrors("failed to clean up ControllerRevisions", err)
 	}
-	logger.V(1).Info("Reconciled PodCliqueSet ControllerRevision")
 	return ctrlcommon.ContinueReconcile()
 }
 
-// cleanupControllerRevisions keeps the current revision and its previous ten revision numbers.
-// History is retained while an update is in progress.
-func (r *Reconciler) cleanupControllerRevisions(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet, revisions []appsv1.ControllerRevision, current *appsv1.ControllerRevision) error {
+// updateRevisionExpectationKey returns the key for the in-memory update-revision expectation of a PCS.
+// The key scheme is <pcs-namespace>/<pcs-name>/<pcs-UID>. Suffixing a UID ensures that a stale
+// remnant expectation entry for the same <pcs-namespace>/<pcs-name> does not block reconciliation of
+// a new PCS (with a different UID).
+// See https://github.com/ai-dynamo/grove/issues/782 for context.
+func updateRevisionExpectationKey(pcs *grovecorev1beta1.PodCliqueSet) string {
+	return fmt.Sprintf("%s/%s", client.ObjectKeyFromObject(pcs), pcs.UID)
+}
+
+// isUpdateRevisionExpectationSatisfied checks if the cached update revision matches the last one written.
+func (r *Reconciler) isUpdateRevisionExpectationSatisfied(expectationKey, updateRevision string) bool {
+	expectedUpdateRevision, ok := r.updateRevisionExpectations.Load(expectationKey)
+	return !ok || expectedUpdateRevision.(string) == updateRevision
+}
+
+// processUpdateRevisionChange records a new update revision. It starts an update when the change replaces Pods.
+// Only then is the generation hash recomputed, so it never changes on an operator upgrade.
+func (r *Reconciler) processUpdateRevisionChange(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, expectationKey, updateRevision string) error {
+	previousUpdateRevision := pcs.Status.UpdateRevision
+	startUpdate, scope, err := r.decideUpdate(ctx, pcs, previousUpdateRevision, updateRevision)
+	if err != nil {
+		return err
+	}
+	pcs.Status.UpdateRevision = updateRevision
+	if startUpdate || pcs.Status.CurrentGenerationHash == nil {
+		pcs.Status.CurrentGenerationHash = ptr.To(computeGenerationHash(&pcs.Spec.Template))
+	}
+	if startUpdate {
+		pcs.Status.UpdateProgress = newUpdateProgress(pcs, scope)
+		pcs.Status.UpdatedReplicas = 0
+	}
+	if err = r.client.Status().Update(ctx, pcs); err != nil {
+		return fmt.Errorf("could not update UpdateRevision for PodCliqueSet: %v: %w", client.ObjectKeyFromObject(pcs), err)
+	}
+	r.updateRevisionExpectations.Store(expectationKey, updateRevision)
+	logger.Info("Recorded the update revision of the PodCliqueSet", "previousUpdateRevision", previousUpdateRevision, "updateRevision", updateRevision, "updateStarted", startUpdate)
+	return nil
+}
+
+// decideUpdate reports whether moving to updateRevision replaces Pods, and which components the update covers.
+//   - When the previous update revision is known, the update starts only if the two revisions differ in a pod
+//     template. An edit to anything else, such as replicas, starts no update, and an update in progress keeps
+//     going.
+//   - When the previous update revision is unknown, the PodCliques decide. This covers a PodCliqueSet created by
+//     an older operator, whose children carry no revision.
+//
+// The scope names the components with a PodClique whose pod-template-hash changes, plus, during a coherent
+// update, the components that update has not finished rolling.
+func (r *Reconciler) decideUpdate(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet, previousUpdateRevision, updateRevision string) (bool, updateScope, error) {
+	if previousUpdateRevision == updateRevision {
+		return false, newUpdateScope(), nil
+	}
+	startUpdate := false
+	if previousUpdateRevision != "" {
+		previousTemplate, err := controllerrevision.GetTemplate(ctx, r.client, pcs, previousUpdateRevision)
+		switch {
+		case err == nil:
+			if controllerrevision.PodTemplatesEqual(previousTemplate, &pcs.Spec.Template) {
+				return false, newUpdateScope(), nil
+			}
+			startUpdate = true
+		case !apierrors.IsNotFound(err):
+			return false, newUpdateScope(), err
+		}
+	}
+	scope, err := r.computeChangedScope(ctx, pcs, updateRevision)
+	if err != nil {
+		return false, newUpdateScope(), err
+	}
+	startUpdate = startUpdate || !scope.isEmpty()
+	if !startUpdate || !componentutils.IsCoherentStrategy(pcs) {
+		return startUpdate, scope, nil
+	}
+	scope, err = r.withPreviousPendingScope(ctx, pcs, scope)
+	return startUpdate, scope, err
+}
+
+// cleanupControllerRevisions keeps the update revision and the ten revision numbers before it. It never deletes the
+// current revision or a revision that a PodClique or PodCliqueScalingGroup still references. History is retained
+// while an update is in progress.
+func (r *Reconciler) cleanupControllerRevisions(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet, revisions []appsv1.ControllerRevision, updateRevision *appsv1.ControllerRevision) error {
 	if pcs.Status.UpdateProgress != nil && pcs.Status.UpdateProgress.UpdateEndedAt == nil {
 		return nil
 	}
-	oldestToKeep := current.Revision - previousControllerRevisionsToKeep
+	oldestToKeep := updateRevision.Revision - previousControllerRevisionsToKeep
 	if oldestToKeep <= 0 {
 		return nil
 	}
-	var deleteErrors []error
+	candidates := make([]*appsv1.ControllerRevision, 0, len(revisions))
 	for i := range revisions {
 		revision := &revisions[i]
 		// Skip if an already existing revision was fast-fowarded.
-		if revision.Name == current.Name || revision.Revision >= oldestToKeep {
+		if revision.Name == updateRevision.Name || revision.Name == pcs.Status.CurrentRevision || revision.Revision >= oldestToKeep {
+			continue
+		}
+		candidates = append(candidates, revision)
+	}
+	if len(candidates) == 0 {
+		return nil
+	}
+	referenced, err := r.listReferencedRevisionNames(ctx, pcs)
+	if err != nil {
+		return err
+	}
+	var deleteErrors []error
+	for _, revision := range candidates {
+		if referenced.Has(revision.Name) {
 			continue
 		}
 		// Refuse to delete revisions updated since they were listed, or if the cache is not up to date.
@@ -88,6 +199,42 @@ func (r *Reconciler) cleanupControllerRevisions(ctx context.Context, pcs *grovec
 		}
 	}
 	return errors.Join(deleteErrors...)
+}
+
+// listReferencedRevisionNames returns the revisions that the PodCliques and PodCliqueScalingGroups of the
+// PodCliqueSet were written from, have reached, or are updating to.
+func (r *Reconciler) listReferencedRevisionNames(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet) (sets.Set[string], error) {
+	referenced := sets.New[string]()
+	insert := func(names ...string) {
+		for _, name := range names {
+			if name != "" {
+				referenced.Insert(name)
+			}
+		}
+	}
+	pclqs, err := componentutils.ListPCLQsMatchingLabels(ctx, r.client, pcs.Namespace, apicommon.GetDefaultLabelsForPodCliqueSetManagedResources(pcs.Name))
+	if err != nil {
+		return nil, err
+	}
+	for i := range pclqs {
+		pclq := &pclqs[i]
+		insert(pclq.Labels[apicommon.LabelPodCliqueSetRevision], pclq.Status.CurrentPodCliqueSetRevision)
+		if pclq.Status.UpdateProgress != nil {
+			insert(pclq.Status.UpdateProgress.PodCliqueSetRevision)
+		}
+	}
+	pcsgs, err := componentutils.GetPCSGsForPCS(ctx, r.client, pcs.ObjectMeta)
+	if err != nil {
+		return nil, err
+	}
+	for i := range pcsgs {
+		pcsg := &pcsgs[i]
+		insert(pcsg.Labels[apicommon.LabelPodCliqueSetRevision], pcsg.Status.CurrentPodCliqueSetRevision)
+		if pcsg.Status.UpdateProgress != nil {
+			insert(pcsg.Status.UpdateProgress.PodCliqueSetRevision)
+		}
+	}
+	return referenced, nil
 }
 
 // createOrUpdateLatestControllerRevision ensures that the corresponding ControllerRevision for the current PodCliqueSet is present in the cluster
@@ -192,7 +339,7 @@ func controllerRevisionName(pcsName, hash string) string {
 	suffix := "-" + hash
 	maxPrefixLength := maxControllerRevisionNameLength - len(suffix)
 	if len(pcsName) > maxPrefixLength {
-		pcsName = strings.TrimRight(pcsName[:maxPrefixLength], "-")
+		pcsName = strings.TrimRight(pcsName[:maxPrefixLength], "-.")
 	}
 	if pcsName == "" {
 		return hash

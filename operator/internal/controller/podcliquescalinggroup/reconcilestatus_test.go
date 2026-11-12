@@ -25,7 +25,6 @@ import (
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	internalconstants "github.com/ai-dynamo/grove/operator/internal/constants"
-	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/go-logr/logr"
@@ -43,14 +42,14 @@ import (
 
 func TestComputeReplicaStatus(t *testing.T) {
 	tests := []struct {
-		name              string
-		expectedSize      int
-		cliques           []grovecorev1beta1.PodClique
-		minAvailable      int32
-		pcsGenerationHash *string
-		wantScheduled     bool
-		wantAvailable     bool
-		wantUpdated       bool
+		name           string
+		expectedSize   int
+		cliques        []grovecorev1beta1.PodClique
+		minAvailable   int32
+		targetRevision string
+		wantScheduled  bool
+		wantAvailable  bool
+		wantUpdated    bool
 	}{
 		{
 			name:          "healthy vs failed states",
@@ -100,7 +99,7 @@ func TestComputeReplicaStatus(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			scheduled, available, updated := computeReplicaStatus(logr.Discard(), tt.pcsGenerationHash, nil, 0, tt.expectedSize, tt.cliques)
+			scheduled, available, updated := computeReplicaStatus(logr.Discard(), tt.targetRevision, 0, tt.expectedSize, tt.cliques)
 
 			assert.Equal(t, tt.wantScheduled, scheduled, "scheduled mismatch")
 			assert.Equal(t, tt.wantAvailable, available, "available mismatch")
@@ -410,7 +409,7 @@ func TestReconcileStatus(t *testing.T) {
 		{
 			name: "happy path",
 			setup: func() (*grovecorev1beta1.PodCliqueScalingGroup, *grovecorev1beta1.PodCliqueSet, []client.Object) {
-				pcsg := testutils.NewPodCliqueScalingGroupBuilder("test-pcsg", "test-ns", "test-pcs", 0).
+				pcsg := testutils.NewPodCliqueScalingGroupBuilder("test-pcsg", "test-ns", "test-pcs", 0).WithLabels(map[string]string{apicommon.LabelPodCliqueSetRevision: pcsGenerationHash}).
 					WithReplicas(2).
 					WithCliqueNames([]string{"frontend", "backend"}).
 					WithOptions(testutils.WithPCSGObservedGeneration(1)).Build()
@@ -446,7 +445,7 @@ func TestReconcileStatus(t *testing.T) {
 		{
 			name: "mixed replica states",
 			setup: func() (*grovecorev1beta1.PodCliqueScalingGroup, *grovecorev1beta1.PodCliqueSet, []client.Object) {
-				pcsg := testutils.NewPodCliqueScalingGroupBuilder("test-pcsg", "test-ns", "test-pcs", 0).
+				pcsg := testutils.NewPodCliqueScalingGroupBuilder("test-pcsg", "test-ns", "test-pcs", 0).WithLabels(map[string]string{apicommon.LabelPodCliqueSetRevision: pcsGenerationHash}).
 					WithReplicas(3).
 					WithCliqueNames([]string{"worker"}).
 					WithMinAvailable(2).
@@ -479,7 +478,7 @@ func TestReconcileStatus(t *testing.T) {
 		{
 			name: "with terminating cliques",
 			setup: func() (*grovecorev1beta1.PodCliqueScalingGroup, *grovecorev1beta1.PodCliqueSet, []client.Object) {
-				pcsg := testutils.NewPodCliqueScalingGroupBuilder("test-pcsg", "test-ns", "test-pcs", 0).
+				pcsg := testutils.NewPodCliqueScalingGroupBuilder("test-pcsg", "test-ns", "test-pcs", 0).WithLabels(map[string]string{apicommon.LabelPodCliqueSetRevision: pcsGenerationHash}).
 					WithReplicas(2).
 					WithCliqueNames([]string{"frontend", "backend"}).
 					WithOptions(testutils.WithPCSGObservedGeneration(1)).Build()
@@ -602,12 +601,14 @@ func TestPCSGMutateReplicasWritesUpdateProgressCounts(t *testing.T) {
 
 	build := func(replicas int32, withProgress bool) *grovecorev1beta1.PodCliqueScalingGroup {
 		pcsg := testutils.NewPodCliqueScalingGroupBuilder("test-pcsg", "test-ns", "test-pcs", 0).
+			WithLabels(map[string]string{apicommon.LabelPodCliqueSetRevision: pcsHash}).
 			WithReplicas(replicas).
 			WithCliqueNames([]string{"frontend", "backend"}).Build()
 		if withProgress {
 			pcsg.Status.UpdateProgress = &grovecorev1beta1.PodCliqueScalingGroupUpdateProgress{
 				UpdateStartedAt:            metav1.Now(),
 				PodCliqueSetGenerationHash: pcsHash,
+				PodCliqueSetRevision:       pcsHash,
 			}
 		}
 		return pcsg
@@ -682,7 +683,7 @@ func TestPCSGMutateReplicasWritesUpdateProgressCounts(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mutateReplicas(logr.Discard(), pcs, tt.pcsg, tt.pclqsPerReplica(t, tt.pcsg))
+			mutateReplicas(logr.Discard(), tt.pcsg, tt.pclqsPerReplica(t, tt.pcsg))
 
 			if !tt.wantWritten {
 				require.Nil(t, tt.pcsg.Status.UpdateProgress, "UpdateProgress must remain nil")
@@ -696,20 +697,18 @@ func TestPCSGMutateReplicasWritesUpdateProgressCounts(t *testing.T) {
 }
 
 func TestCountPCSGReplicaUpdatedPCLQs(t *testing.T) {
-	hash := "h"
-	otherHash := "old"
+	revision := "h"
+	otherRevision := "old"
 	pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "test-ns", uuid.NewUUID()).
-		WithPodCliqueSetGenerationHash(&hash).
 		WithScalingGroup("compute", []string{"frontend"}).
 		Build()
 	pcsg := testutils.NewPodCliqueScalingGroupBuilder("test-pcsg", "test-ns", "test-pcs", 0).
 		WithReplicas(1).
 		WithCliqueNames([]string{"frontend"}).Build()
-	expectedHashes := componentutils.GetPCLQTemplateHashes(pcs, pcsg)
-	mk := func(currHash *string, terminating bool) grovecorev1beta1.PodClique {
+	mk := func(reached *string, terminating bool) grovecorev1beta1.PodClique {
 		p := testutils.NewPCSGPodCliqueBuilder("test-pcsg-0-frontend", "test-ns", "test-pcs", "test-pcsg", 0, 0).Build()
-		if currHash != nil {
-			p = markPCSGPCLQConverged(t, pcs, pcsg, p, *currHash)
+		if reached != nil {
+			p = markPCSGPCLQConverged(t, pcs, pcsg, p, *reached)
 		}
 		if terminating {
 			now := metav1.NewTime(time.Now())
@@ -720,28 +719,27 @@ func TestCountPCSGReplicaUpdatedPCLQs(t *testing.T) {
 	}
 
 	tests := []struct {
-		name string
-		hash *string
-		in   []grovecorev1beta1.PodClique
-		want int32
+		name   string
+		target string
+		in     []grovecorev1beta1.PodClique
+		want   int32
 	}{
-		{"nil parent hash → 0", nil, []grovecorev1beta1.PodClique{mk(&hash, false)}, 0},
-		{"empty input → 0", &hash, nil, 0},
-		{"all matching", &hash, []grovecorev1beta1.PodClique{mk(&hash, false), mk(&hash, false)}, 2},
-		{"mixed", &hash, []grovecorev1beta1.PodClique{mk(&hash, false), mk(&otherHash, false), mk(nil, false)}, 1},
-		{"terminating matching excluded", &hash, []grovecorev1beta1.PodClique{mk(&hash, false), mk(&hash, true)}, 1},
+		{"no target revision → 0", "", []grovecorev1beta1.PodClique{mk(&revision, false)}, 0},
+		{"empty input → 0", revision, nil, 0},
+		{"all matching", revision, []grovecorev1beta1.PodClique{mk(&revision, false), mk(&revision, false)}, 2},
+		{"mixed", revision, []grovecorev1beta1.PodClique{mk(&revision, false), mk(&otherRevision, false), mk(nil, false)}, 1},
+		{"terminating matching excluded", revision, []grovecorev1beta1.PodClique{mk(&revision, false), mk(&revision, true)}, 1},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, countPCSGReplicaUpdatedPCLQs(tt.hash, expectedHashes, tt.in))
+			assert.Equal(t, tt.want, countPCSGReplicaUpdatedPCLQs(tt.target, tt.in))
 		})
 	}
 }
 
-func TestHavePCSGPodCliquesConverged(t *testing.T) {
-	hash := "generation-hash"
+func TestHaveAllPCSGPodCliquesReachedRevision(t *testing.T) {
+	revision := "revision-1"
 	pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "test-ns", uuid.NewUUID()).
-		WithPodCliqueSetGenerationHash(&hash).
 		WithScalingGroup("compute", []string{"frontend"}).
 		Build()
 	pcsg := testutils.NewPodCliqueScalingGroupBuilder("test-pcsg", "test-ns", "test-pcs", 0).
@@ -749,7 +747,7 @@ func TestHavePCSGPodCliquesConverged(t *testing.T) {
 		WithCliqueNames([]string{"frontend"}).Build()
 	base := markPCSGPCLQConverged(t, pcs, pcsg,
 		testutils.NewPCSGPodCliqueBuilder("test-pcsg-0-frontend", "test-ns", "test-pcs", "test-pcsg", 0, 0).Build(),
-		hash)
+		revision)
 
 	tests := []struct {
 		name   string
@@ -758,7 +756,7 @@ func TestHavePCSGPodCliquesConverged(t *testing.T) {
 		want   bool
 	}{
 		{
-			name:  "all expected hashes converged",
+			name:  "every expected child reached the revision",
 			pclqs: []grovecorev1beta1.PodClique{*base.DeepCopy()},
 			want:  true,
 		},
@@ -768,26 +766,18 @@ func TestHavePCSGPodCliquesConverged(t *testing.T) {
 			want:  false,
 		},
 		{
-			name:  "label hash stale",
+			name:  "written from another revision",
 			pclqs: []grovecorev1beta1.PodClique{*base.DeepCopy()},
 			mutate: func(pclq *grovecorev1beta1.PodClique) {
-				pclq.Labels[apicommon.LabelPodTemplateHash] = "old-template"
+				pclq.Labels[apicommon.LabelPodCliqueSetRevision] = "revision-0"
 			},
 			want: false,
 		},
 		{
-			name:  "status template hash stale",
+			name:  "Pods have not reached the revision",
 			pclqs: []grovecorev1beta1.PodClique{*base.DeepCopy()},
 			mutate: func(pclq *grovecorev1beta1.PodClique) {
-				pclq.Status.CurrentPodTemplateHash = ptr.To("old-template")
-			},
-			want: false,
-		},
-		{
-			name:  "generation hash stale",
-			pclqs: []grovecorev1beta1.PodClique{*base.DeepCopy()},
-			mutate: func(pclq *grovecorev1beta1.PodClique) {
-				pclq.Status.CurrentPodCliqueSetGenerationHash = ptr.To("old-generation")
+				pclq.Status.CurrentPodCliqueSetRevision = "revision-0"
 			},
 			want: false,
 		},
@@ -809,9 +799,51 @@ func TestHavePCSGPodCliquesConverged(t *testing.T) {
 			if tt.mutate != nil && len(pclqs) > 0 {
 				tt.mutate(&pclqs[0])
 			}
-			assert.Equal(t, tt.want, havePCSGPodCliquesConverged(pcs, pcsg, pclqs))
+			assert.Equal(t, tt.want, haveAllPCSGPodCliquesReachedRevision(pcsg, pclqs, revision))
 		})
 	}
+}
+
+// TestMutateCurrentPodCliqueSetRevision verifies that the PodCliqueScalingGroup records its target revision once
+// every member PodClique reached it and no update is in progress.
+func TestMutateCurrentPodCliqueSetRevision(t *testing.T) {
+	const revision = "revision-2"
+	pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "test-ns", uuid.NewUUID()).
+		WithScalingGroup("compute", []string{"frontend"}).
+		WithPodCliqueSetGenerationHash(ptr.To("generation-2")).
+		WithUpdateRevision(revision).
+		Build()
+	newPCSG := func() *grovecorev1beta1.PodCliqueScalingGroup {
+		return testutils.NewPodCliqueScalingGroupBuilder("test-pcsg", "test-ns", "test-pcs", 0).
+			WithLabels(map[string]string{apicommon.LabelPodCliqueSetRevision: revision}).
+			WithReplicas(1).
+			WithCliqueNames([]string{"frontend"}).Build()
+	}
+	member := func(pcsg *grovecorev1beta1.PodCliqueScalingGroup, reached string) []grovecorev1beta1.PodClique {
+		return []grovecorev1beta1.PodClique{*markPCSGPCLQConverged(t, pcs, pcsg,
+			testutils.NewPCSGPodCliqueBuilder("test-pcsg-0-frontend", "test-ns", "test-pcs", "test-pcsg", 0, 0).Build(), reached)}
+	}
+
+	t.Run("all members reached the target", func(t *testing.T) {
+		pcsg := newPCSG()
+		mutateCurrentPodCliqueSetRevision(logr.Discard(), pcs, pcsg, member(pcsg, revision))
+		assert.Equal(t, revision, pcsg.Status.CurrentPodCliqueSetRevision)
+		assert.Equal(t, ptr.To("generation-2"), pcsg.Status.CurrentPodCliqueSetGenerationHash)
+	})
+
+	t.Run("a member on another revision keeps the old value", func(t *testing.T) {
+		pcsg := newPCSG()
+		pcsg.Status.CurrentPodCliqueSetRevision = "revision-1"
+		mutateCurrentPodCliqueSetRevision(logr.Discard(), pcs, pcsg, member(pcsg, "revision-1"))
+		assert.Equal(t, "revision-1", pcsg.Status.CurrentPodCliqueSetRevision)
+	})
+
+	t.Run("an update in progress keeps the old value", func(t *testing.T) {
+		pcsg := newPCSG()
+		pcsg.Status.UpdateProgress = &grovecorev1beta1.PodCliqueScalingGroupUpdateProgress{PodCliqueSetRevision: revision}
+		mutateCurrentPodCliqueSetRevision(logr.Discard(), pcs, pcsg, member(pcsg, revision))
+		assert.Empty(t, pcsg.Status.CurrentPodCliqueSetRevision)
+	})
 }
 
 // TestPruneStrayPCSGPCLQs covers the two stray-child cases that would otherwise inflate
@@ -863,12 +895,14 @@ func TestReconcileStatusBoundedDuringScaleDown(t *testing.T) {
 
 	// PCSG was scaled 3 → 2; replica index 2 children have not yet been GC'd by the cascade.
 	pcsg := testutils.NewPodCliqueScalingGroupBuilder("test-pcsg", "test-ns", "test-pcs", 0).
+		WithLabels(map[string]string{apicommon.LabelPodCliqueSetRevision: pcsHash}).
 		WithReplicas(2).
 		WithCliqueNames([]string{"frontend", "backend"}).
 		WithOptions(testutils.WithPCSGObservedGeneration(1)).Build()
 	pcsg.Status.UpdateProgress = &grovecorev1beta1.PodCliqueScalingGroupUpdateProgress{
 		UpdateStartedAt:            metav1.Now(),
 		PodCliqueSetGenerationHash: pcsHash,
+		PodCliqueSetRevision:       pcsHash,
 	}
 	pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "test-ns", uuid.NewUUID()).
 		WithPodCliqueSetGenerationHash(&pcsHash).
@@ -882,6 +916,7 @@ func TestReconcileStatusBoundedDuringScaleDown(t *testing.T) {
 			WithOptions(testutils.WithPCLQScheduledAndAvailable()).Build()
 		if replicaIdx >= int(pcsg.Spec.Replicas) {
 			pclq.Status.CurrentPodCliqueSetGenerationHash = ptr.To(pcsHash)
+			pclq.Status.CurrentPodCliqueSetRevision = pcsHash
 			return pclq
 		}
 		return markPCSGPCLQConverged(t, pcs, pcsg, pclq, pcsHash)
@@ -1212,17 +1247,17 @@ func pcsgChildName(pcsgName string, replicaIndex int, cliqueName string) string 
 	return fmt.Sprintf("%s-%d-%s", pcsgName, replicaIndex, cliqueName)
 }
 
-func markPCSGPCLQConverged(t testing.TB, pcs *grovecorev1beta1.PodCliqueSet, pcsg *grovecorev1beta1.PodCliqueScalingGroup, pclq *grovecorev1beta1.PodClique, generationHash string) *grovecorev1beta1.PodClique {
+// markPCSGPCLQConverged makes a member PodClique written from and converged to the revision, with MinAvailable Pods
+// updated and ready.
+func markPCSGPCLQConverged(t testing.TB, _ *grovecorev1beta1.PodCliqueSet, _ *grovecorev1beta1.PodCliqueScalingGroup, pclq *grovecorev1beta1.PodClique, revision string) *grovecorev1beta1.PodClique {
 	t.Helper()
-	expectedHashes := componentutils.GetPCLQTemplateHashes(pcs, pcsg)
-	expectedTemplateHash, ok := expectedHashes[pclq.Name]
-	require.True(t, ok, "expected template hash for %s", pclq.Name)
 	if pclq.Labels == nil {
 		pclq.Labels = map[string]string{}
 	}
-	pclq.Labels[apicommon.LabelPodTemplateHash] = expectedTemplateHash
-	pclq.Status.CurrentPodTemplateHash = ptr.To(expectedTemplateHash)
-	pclq.Status.CurrentPodCliqueSetGenerationHash = ptr.To(generationHash)
+	pclq.Labels[apicommon.LabelPodTemplateHash] = "template-hash"
+	pclq.Labels[apicommon.LabelPodCliqueSetRevision] = revision
+	pclq.Status.CurrentPodTemplateHash = ptr.To("template-hash")
+	pclq.Status.CurrentPodCliqueSetRevision = revision
 	pclq.Status.ReadyReplicas = *pclq.Spec.MinAvailable
 	pclq.Status.UpdatedReplicas = *pclq.Spec.MinAvailable
 	return pclq

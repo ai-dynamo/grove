@@ -86,25 +86,69 @@ func deleteGroveCRDs(t *testing.T, tc *testctx.TestContext) {
 	}), "waiting for the grove.io CRDs to be deleted")
 }
 
-// waitForStoredVersions waits until every grove.io CRD lists exactly versions in status.storedVersions.
-func waitForStoredVersions(t *testing.T, tc *testctx.TestContext, versions ...string) {
+// readStoredVersions returns status.storedVersions of every grove.io CRD, keyed by CRD name.
+func readStoredVersions(ctx context.Context, cl client.Client) (map[string][]string, error) {
+	stored := map[string][]string{}
+	for _, name := range groveCRDNames {
+		crd, err := getCRD(ctx, cl, name)
+		if err != nil {
+			return nil, err
+		}
+		stored[name] = crd.Status.StoredVersions
+	}
+	return stored, nil
+}
+
+// requireStoredVersions returns status.storedVersions of every grove.io CRD, keyed by CRD name.
+func requireStoredVersions(t *testing.T, tc *testctx.TestContext) map[string][]string {
 	t.Helper()
-	testctx.Logger.Infof("waiting for the grove.io CRDs to list the stored versions %v", versions)
+	stored, err := readStoredVersions(t.Context(), tc.Client)
+	require.NoError(t, err, "read storedVersions of the grove.io CRDs")
+	return stored
+}
+
+// storedVersionsFor returns the same stored versions for every grove.io CRD.
+func storedVersionsFor(versions ...string) map[string][]string {
+	stored := map[string][]string{}
+	for _, name := range groveCRDNames {
+		stored[name] = versions
+	}
+	return stored
+}
+
+// withStoredVersion returns stored with version appended to each CRD that does not list it yet.
+// The API server appends a new storage version the same way.
+func withStoredVersion(stored map[string][]string, version string) map[string][]string {
+	result := map[string][]string{}
+	for name, versions := range stored {
+		result[name] = versions
+		if !slices.Contains(versions, version) {
+			result[name] = append(slices.Clone(versions), version)
+		}
+	}
+	return result
+}
+
+// waitForStoredVersions waits until every grove.io CRD lists exactly the versions in want in status.storedVersions.
+func waitForStoredVersions(t *testing.T, tc *testctx.TestContext, want map[string][]string) {
+	t.Helper()
+	testctx.Logger.Infof("waiting for the grove.io CRDs to list the stored versions %v", want)
 	var last map[string][]string
 	err := wait.PollUntilContextTimeout(t.Context(), defaultPollInterval, defaultPollTimeout, true, func(ctx context.Context) (bool, error) {
-		last = map[string][]string{}
-		done := true
-		for _, name := range groveCRDNames {
-			crd, err := getCRD(ctx, tc.Client, name)
-			if err != nil {
-				return false, err
-			}
-			last[name] = crd.Status.StoredVersions
-			done = done && slices.Equal(crd.Status.StoredVersions, versions)
+		stored, err := readStoredVersions(ctx, tc.Client)
+		if err != nil {
+			testctx.Logger.Infof("reading storedVersions of the grove.io CRDs: %v", err)
+			return false, nil
 		}
-		return done, nil
+		last = stored
+		for _, name := range groveCRDNames {
+			if !slices.Equal(stored[name], want[name]) {
+				return false, nil
+			}
+		}
+		return true, nil
 	})
-	require.NoError(t, err, "storedVersions of the grove.io CRDs are %v, want %v", last, versions)
+	require.NoError(t, err, "storedVersions of the grove.io CRDs are %v, want %v", last, want)
 }
 
 // requireCRDsServeOnly checks that every grove.io CRD serves and stores version, and no other version.

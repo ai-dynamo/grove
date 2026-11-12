@@ -50,7 +50,9 @@ type syncSnapshot struct {
 	existingPCLQNameSet            sets.Set[string]
 	expectationsStoreKey           string
 	expectedPCLQFQNsPerPCSGReplica map[int][]string
-	expectedPCLQPodTemplateHashMap map[string]string
+	// targetRevision is the PodCliqueSet ControllerRevision the member PodCliques move to. The PodCliqueSet writes
+	// it as a label on the PodCliqueScalingGroup.
+	targetRevision string
 }
 
 // prepareSyncContext creates and initializes the synchronization context with all necessary data for PCSG reconciliation
@@ -109,9 +111,7 @@ func (r _resource) prepareSyncContext(ctx context.Context, pcsg *grovecorev1beta
 		return nil, err
 	}
 	syncSnap.existingPCLQNameSet = componentutils.PodCliqueNameSet(syncSnap.existingPCLQs)
-
-	// pre-compute expected PodTemplateHash for each PCLQ
-	syncSnap.expectedPCLQPodTemplateHashMap = getExpectedPCLQPodTemplateHashMap(syncSnap.pcs, pcsg)
+	syncSnap.targetRevision = pcsg.Labels[apicommon.LabelPodCliqueSetRevision]
 
 	return syncSnap, nil
 }
@@ -173,12 +173,53 @@ func (r _resource) runSyncFlow(ctx context.Context, logger logr.Logger, ss *sync
 // reconcileExpectedPodCliques materializes the PodCliqueScalingGroup's member PodCliques. OnDelete updates
 // existing PodCliques in place with createOrUpdatePCLQs. RollingRecreate and Coherent only create missing
 // PodCliques with createExpectedPCLQs, since their rolls replace whole replicas rather than mutate a
-// PodClique in place.
+// PodClique in place. They move a member whose pod template is unchanged to the target revision first.
 func (r _resource) reconcileExpectedPodCliques(ctx context.Context, logger logr.Logger, ss *syncSnapshot) error {
 	if !componentutils.IsRollingUpdateStrategy(ss.pcs) {
 		return r.createOrUpdatePCLQs(ctx, logger, ss)
 	}
+	if err := r.restampUnchangedPCLQs(ctx, logger, ss); err != nil {
+		return err
+	}
 	return r.createExpectedPCLQs(ctx, logger, ss)
+}
+
+// restampUnchangedPCLQs moves a member PodClique to the target revision when its pod template hash stays the same,
+// i.e. its clique has the same pod template in the PodCliqueSet template. Only its revision label changes, so its Pods
+// are kept. The other members keep their revision, so the update replaces them. Hashes are computed from the cached
+// PodCliqueSet template, which a member is also built from, so a hash always matches the member's pod template even
+// when the PodCliqueSet has not yet written a newer target.
+func (r _resource) restampUnchangedPCLQs(ctx context.Context, logger logr.Logger, ss *syncSnapshot) error {
+	if ss.targetRevision == "" {
+		return nil
+	}
+	for i := range ss.existingPCLQs {
+		pclq := &ss.existingPCLQs[i]
+		if k8sutils.IsResourceTerminating(pclq.ObjectMeta) || pclq.Labels[apicommon.LabelPodCliqueSetRevision] == ss.targetRevision {
+			continue
+		}
+		cliqueName, err := componentutils.GetPodCliqueNameFromPodCliqueFQN(pclq.ObjectMeta)
+		if err != nil {
+			return groveerr.WrapError(err, errCodeRestampPodClique, component.OperationSync,
+				fmt.Sprintf("failed to get the clique name of PodClique %v", client.ObjectKeyFromObject(pclq)))
+		}
+		podTemplateHash, err := componentutils.ResolvePodTemplateHash(ctx, r.client, ss.pcs, ss.targetRevision, cliqueName, pclq.Labels)
+		if err != nil {
+			return groveerr.WrapError(err, errCodeRestampPodClique, component.OperationSync,
+				fmt.Sprintf("failed to resolve the pod template hash of PodClique %v", client.ObjectKeyFromObject(pclq)))
+		}
+		if podTemplateHash != pclq.Labels[apicommon.LabelPodTemplateHash] {
+			continue
+		}
+		patch := client.MergeFrom(pclq.DeepCopy())
+		pclq.Labels[apicommon.LabelPodCliqueSetRevision] = ss.targetRevision
+		if err = r.client.Patch(ctx, pclq, patch); err != nil {
+			return groveerr.WrapError(err, errCodeRestampPodClique, component.OperationSync,
+				fmt.Sprintf("failed to set label %s on PodClique %v", apicommon.LabelPodCliqueSetRevision, client.ObjectKeyFromObject(pclq)))
+		}
+		logger.Info("Moved PodClique to the target revision without replacing its Pods", "pclq", client.ObjectKeyFromObject(pclq), "targetRevision", ss.targetRevision)
+	}
+	return nil
 }
 
 // reconcileInProgressUpdate drives an in-progress update of the PodCliqueScalingGroup per the update
@@ -205,21 +246,19 @@ func (r _resource) reconcileInProgressUpdate(ctx context.Context, logger logr.Lo
 }
 
 // requeueIfPCSGUpdateTargetIsStale delays RollingRecreate and Coherent processing when the PCSG update
-// target differs from the current PCS generation. A new PCS revision replaces the PCS update progress
-// immediately, while PCSG processUpdate can reset the child target only after the PCS selects this PCSG's
-// replica in UpdateProgress.CurrentlyUpdating. Requeueing gives processUpdate another opportunity to perform
-// that reset and prevents the superseded PCSG update from replacing replicas or being marked complete against
-// the new PCS template in the meantime.
+// target differs from the target revision on the PCSG. A new PCS revision moves the target immediately, while
+// PCSG processUpdate can reset the update only after the PCS selects this PCSG's replica in
+// UpdateProgress.CurrentlyUpdating. Requeueing gives processUpdate another opportunity to perform that reset and
+// prevents the superseded PCSG update from replacing replicas or being marked complete in the meantime.
 func requeueIfPCSGUpdateTargetIsStale(ss *syncSnapshot) error {
-	updateTarget := ss.pcsg.Status.UpdateProgress.PodCliqueSetGenerationHash
-	currentTarget := *ss.pcs.Status.CurrentGenerationHash
-	if updateTarget == currentTarget {
+	updateTarget := ss.pcsg.Status.UpdateProgress.PodCliqueSetRevision
+	if updateTarget == ss.targetRevision {
 		return nil
 	}
 
 	return groveerr.NewContinueReconcileAndRequeue(
 		component.OperationSync,
-		fmt.Sprintf("PodCliqueScalingGroup update target %q is stale; current PodCliqueSet generation is %q", updateTarget, currentTarget),
+		fmt.Sprintf("PodCliqueScalingGroup update target %q is stale; the target revision is %q", updateTarget, ss.targetRevision),
 	)
 }
 
@@ -489,27 +528,6 @@ func (r _resource) getExistingPCLQs(ctx context.Context, pcsg *grovecorev1beta1.
 		)
 	}
 	return existingPCLQs, nil
-}
-
-// getExpectedPCLQPodTemplateHashMap computes the expected pod template hash for each PodClique in the PCSG
-func getExpectedPCLQPodTemplateHashMap(pcs *grovecorev1beta1.PodCliqueSet, pcsg *grovecorev1beta1.PodCliqueScalingGroup) map[string]string {
-	pclqFQNToHash := make(map[string]string)
-	pcsgPCLQNames := pcsg.Spec.CliqueNames
-	for _, pcsgCliqueName := range pcsgPCLQNames {
-		pclqTemplateSpec := componentutils.FindPodCliqueTemplateSpecByName(pcs, pcsgCliqueName)
-		if pclqTemplateSpec == nil {
-			continue
-		}
-		podTemplateHash := componentutils.ComputePCLQPodTemplateHash(pclqTemplateSpec, pcs.Spec.Template.PriorityClassName)
-		for pcsgReplicaIndex := range int(pcsg.Spec.Replicas) {
-			cliqueFQN := apicommon.GeneratePodCliqueName(apicommon.ResourceNameReplica{
-				Name:    pcsg.Name,
-				Replica: pcsgReplicaIndex,
-			}, pcsgCliqueName)
-			pclqFQNToHash[cliqueFQN] = podTemplateHash
-		}
-	}
-	return pclqFQNToHash
 }
 
 // refreshExistingPCLQs removes all the excess PCLQs that belong to any PCSG replica > expectedPCSGReplicas.

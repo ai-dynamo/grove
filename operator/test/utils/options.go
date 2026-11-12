@@ -17,6 +17,7 @@ package utils
 import (
 	"time"
 
+	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 
@@ -183,6 +184,28 @@ func WithPCLQReplicaReadyStatus(ready int32) PCLQOption {
 func WithPCLQCurrentPCSGenerationHash(pcsGenerationHash string) PCLQOption {
 	return func(pclq *grovecorev1beta1.PodClique) {
 		pclq.Status.CurrentPodCliqueSetGenerationHash = &pcsGenerationHash
+	}
+}
+
+// WithPCLQCurrentPCSRevision makes the PodClique written from and converged to the PodCliqueSet revision.
+func WithPCLQCurrentPCSRevision(revision string) PCLQOption {
+	return func(pclq *grovecorev1beta1.PodClique) {
+		if pclq.Labels == nil {
+			pclq.Labels = map[string]string{}
+		}
+		pclq.Labels[apicommon.LabelPodCliqueSetRevision] = revision
+		pclq.Status.CurrentPodCliqueSetRevision = revision
+	}
+}
+
+// WithPCSGCurrentPCSRevision makes the PodCliqueScalingGroup target and have reached the PodCliqueSet revision.
+func WithPCSGCurrentPCSRevision(revision string) PCSGOption {
+	return func(pcsg *grovecorev1beta1.PodCliqueScalingGroup) {
+		if pcsg.Labels == nil {
+			pcsg.Labels = map[string]string{}
+		}
+		pcsg.Labels[apicommon.LabelPodCliqueSetRevision] = revision
+		pcsg.Status.CurrentPodCliqueSetRevision = revision
 	}
 }
 

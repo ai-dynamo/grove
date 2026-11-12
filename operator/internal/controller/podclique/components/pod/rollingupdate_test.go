@@ -44,62 +44,57 @@ const (
 )
 
 func TestPCLQUpdateProgressMatchesCurrentRevision(t *testing.T) {
-	const generation = "generation-1"
+	const revision = "revision-1"
 
 	tests := []struct {
 		name         string
-		pcsHash      *string
 		progress     *grovecorev1beta1.PodCliqueUpdateProgress
+		pclqRevision string
 		pclqHash     string
 		wantMatching bool
 	}{
 		{
-			name:    "matches when generation and template revisions agree",
-			pcsHash: ptr.To(generation),
-			progress: &grovecorev1beta1.PodCliqueUpdateProgress{
-				PodCliqueSetGenerationHash: generation,
-				PodTemplateHash:            testNewHash,
-			},
+			name:         "matches when revision and template hash agree",
+			progress:     &grovecorev1beta1.PodCliqueUpdateProgress{PodCliqueSetRevision: revision, PodTemplateHash: testNewHash},
+			pclqRevision: revision,
 			pclqHash:     testNewHash,
 			wantMatching: true,
 		},
 		{
-			name:    "does not match when progress targets another PCS generation",
-			pcsHash: ptr.To(generation),
-			progress: &grovecorev1beta1.PodCliqueUpdateProgress{
-				PodCliqueSetGenerationHash: "generation-2",
-				PodTemplateHash:            testNewHash,
-			},
-			pclqHash: testNewHash,
+			name:         "does not match when progress targets another revision",
+			progress:     &grovecorev1beta1.PodCliqueUpdateProgress{PodCliqueSetRevision: "revision-2", PodTemplateHash: testNewHash},
+			pclqRevision: revision,
+			pclqHash:     testNewHash,
 		},
 		{
-			name:    "does not match before the PCLQ template update is observed",
-			pcsHash: ptr.To(generation),
-			progress: &grovecorev1beta1.PodCliqueUpdateProgress{
-				PodCliqueSetGenerationHash: generation,
-				PodTemplateHash:            testNewHash,
-			},
-			pclqHash: testOldHash,
+			name:         "does not match before the PCLQ template update is observed",
+			progress:     &grovecorev1beta1.PodCliqueUpdateProgress{PodCliqueSetRevision: revision, PodTemplateHash: testNewHash},
+			pclqRevision: revision,
+			pclqHash:     testOldHash,
 		},
 		{
-			name:     "does not match without progress",
-			pcsHash:  ptr.To(generation),
-			pclqHash: testNewHash,
+			name:         "does not match without progress",
+			pclqRevision: revision,
+			pclqHash:     testNewHash,
 		},
 		{
-			name:     "does not match without a PCS generation",
-			progress: &grovecorev1beta1.PodCliqueUpdateProgress{PodTemplateHash: testNewHash},
-			pclqHash: testNewHash,
+			name:         "does not match progress from an older operator",
+			progress:     &grovecorev1beta1.PodCliqueUpdateProgress{PodCliqueSetGenerationHash: "generation-1", PodTemplateHash: testNewHash},
+			pclqRevision: revision,
+			pclqHash:     testNewHash,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ss := &syncSnapshot{
-				pcs: &grovecorev1beta1.PodCliqueSet{Status: grovecorev1beta1.PodCliqueSetStatus{CurrentGenerationHash: tt.pcsHash}},
+				pcs: &grovecorev1beta1.PodCliqueSet{},
 				pclq: &grovecorev1beta1.PodClique{
-					ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{apicommon.LabelPodTemplateHash: tt.pclqHash}},
-					Status:     grovecorev1beta1.PodCliqueStatus{UpdateProgress: tt.progress},
+					ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{
+						apicommon.LabelPodTemplateHash:      tt.pclqHash,
+						apicommon.LabelPodCliqueSetRevision: tt.pclqRevision,
+					}},
+					Status: grovecorev1beta1.PodCliqueStatus{UpdateProgress: tt.progress},
 				},
 			}
 
@@ -216,6 +211,7 @@ func TestProcessPendingUpdates(t *testing.T) {
 			WithOptions(func(p *grovecorev1beta1.PodClique) {
 				p.Status.UpdateProgress = &grovecorev1beta1.PodCliqueUpdateProgress{
 					PodCliqueSetGenerationHash: "generation-1",
+					PodCliqueSetRevision:       "revision-1",
 					PodTemplateHash:            testNewHash,
 				}
 			}).
@@ -264,6 +260,7 @@ func TestProcessPendingUpdates(t *testing.T) {
 		assert.Equal(t, testNewHash, *persistedPCLQ.Status.CurrentPodTemplateHash)
 		require.NotNil(t, persistedPCLQ.Status.CurrentPodCliqueSetGenerationHash)
 		assert.Equal(t, "generation-1", *persistedPCLQ.Status.CurrentPodCliqueSetGenerationHash)
+		assert.Equal(t, "revision-1", persistedPCLQ.Status.CurrentPodCliqueSetRevision)
 	})
 
 	t.Run("completes when replacements are ready even if an old pod is stuck terminating", func(t *testing.T) {

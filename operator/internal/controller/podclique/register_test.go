@@ -185,6 +185,11 @@ func TestPodCliqueTemplateHashChangedPredicate(t *testing.T) {
 
 	assert.True(t, pred.Update(event.UpdateEvent{ObjectOld: oldPCLQ, ObjectNew: newPCLQ}))
 	assert.False(t, pred.Update(event.UpdateEvent{ObjectOld: newPCLQ, ObjectNew: newPCLQ.DeepCopy()}))
+
+	// A new revision with the same pod template replaces no Pod, but the PodClique must still record it.
+	restamped := newPCLQ.DeepCopy()
+	restamped.Labels[apicommon.LabelPodCliqueSetRevision] = "revision-2"
+	assert.True(t, pred.Update(event.UpdateEvent{ObjectOld: newPCLQ, ObjectNew: restamped}))
 }
 
 // TestPodCliqueSetPredicateCurrentlyUpdatingReplicaChanges verifies that the PodCliqueSet

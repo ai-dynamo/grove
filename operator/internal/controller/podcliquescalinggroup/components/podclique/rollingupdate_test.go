@@ -45,6 +45,9 @@ const (
 	testRollingUpdateNewHash   = "new-hash-abc"
 	testRollingUpdateOldHash   = "old-hash-xyz"
 	testRollingUpdateGenHash   = "pcs-gen-1"
+	// testRollingUpdateNewRevision is the target revision of the update; a member with the new hash carries it.
+	testRollingUpdateNewRevision = "test-pcs-new-revision"
+	testRollingUpdateOldRevision = "test-pcs-old-revision"
 )
 
 // testReplica describes a PCSG replica to synthesize for a rolling-update test.
@@ -62,6 +65,7 @@ func TestMarkUpdateEndReturnsRequeueAfterPatch(t *testing.T) {
 	pcsg.Status.UpdateProgress = &grovecorev1beta1.PodCliqueScalingGroupUpdateProgress{
 		UpdateStartedAt:            metav1.Now(),
 		PodCliqueSetGenerationHash: testRollingUpdateGenHash,
+		PodCliqueSetRevision:       testRollingUpdateNewRevision,
 	}
 	cl := testutils.NewTestClientBuilder().
 		WithObjects(pcsg).
@@ -83,15 +87,17 @@ func TestMarkUpdateEndReturnsRequeueAfterPatch(t *testing.T) {
 	assert.NotNil(t, updated.Status.UpdateProgress.UpdateEndedAt)
 	require.NotNil(t, updated.Status.CurrentPodCliqueSetGenerationHash)
 	assert.Equal(t, testRollingUpdateGenHash, *updated.Status.CurrentPodCliqueSetGenerationHash)
+	assert.Equal(t, testRollingUpdateNewRevision, updated.Status.CurrentPodCliqueSetRevision)
 }
 
 // TestReconcileInProgressUpdateDoesNotCompleteStaleTarget verifies the safety precondition for
 // markUpdateEnd: a PCSG update cannot end, or publish its target as current, when its target differs
-// from the current PCS generation. Removing the common stale-target guard must make this test fail.
+// from the target revision on the PCSG. Removing the common stale-target guard must make this test fail.
 func TestReconcileInProgressUpdateDoesNotCompleteStaleTarget(t *testing.T) {
 	sc := buildRollingUpdateSnapshot(1, 1, 1, []testReplica{updatedReadyReplica(0)})
 	sc.pcsg.Status.CurrentPodCliqueSetGenerationHash = ptr.To(testRollingUpdateGenHash)
-	sc.pcsg.Status.UpdateProgress.PodCliqueSetGenerationHash = "superseded-generation"
+	sc.pcsg.Status.CurrentPodCliqueSetRevision = testRollingUpdateOldRevision
+	sc.pcsg.Status.UpdateProgress.PodCliqueSetRevision = "superseded-revision"
 	cl := testutils.NewTestClientBuilder().
 		WithObjects(sc.pcsg).
 		WithStatusSubresource(&grovecorev1beta1.PodCliqueScalingGroup{}).
@@ -105,8 +111,7 @@ func TestReconcileInProgressUpdateDoesNotCompleteStaleTarget(t *testing.T) {
 	require.True(t, errors.As(err, &groveError))
 	assert.True(t, groveerr.IsContinueReconcileAndRequeue(err))
 	assert.Nil(t, sc.pcsg.Status.UpdateProgress.UpdateEndedAt)
-	require.NotNil(t, sc.pcsg.Status.CurrentPodCliqueSetGenerationHash)
-	assert.Equal(t, testRollingUpdateGenHash, *sc.pcsg.Status.CurrentPodCliqueSetGenerationHash)
+	assert.Equal(t, testRollingUpdateOldRevision, sc.pcsg.Status.CurrentPodCliqueSetRevision)
 }
 
 func TestComputePendingUpdateWork(t *testing.T) {
@@ -159,18 +164,21 @@ func TestComputePendingUpdateWorkSkipsReplicaWithDeleteExpectation(t *testing.T)
 	assert.Equal(t, 2, uw.existingReplicas, "replica 0 with a pending delete expectation must not be counted as an existing replica")
 }
 
-func TestIsReplicaUpdatedRequiresNonEmptyExpectedHash(t *testing.T) {
-	// A member whose expected pod-template hash is unknown (empty) must never read as updated, even when
-	// its status hash is also empty, guarding against a "" == "" false positive. updatedReadyReplica is
-	// otherwise fully updated, so only the empty expected hash can flip the result.
+func TestIsReplicaUpdatedRequiresTargetRevision(t *testing.T) {
+	// A replica must never read as updated without a target revision, even when its members report an empty
+	// reached revision too, guarding against a "" == "" false positive. updatedReadyReplica is otherwise fully
+	// updated, so only the empty target can flip the result.
 	sc := buildRollingUpdateSnapshot(1, 1, 1, []testReplica{updatedReadyReplica(0)})
+	sc.targetRevision = ""
 	m := &sc.existingPCLQs[0]
-	sc.expectedPCLQPodTemplateHashMap[m.Name] = ""
-	m.Labels[apicommon.LabelPodTemplateHash] = ""
-	m.Status.CurrentPodTemplateHash = ptr.To("")
+	m.Labels[apicommon.LabelPodCliqueSetRevision] = ""
+	m.Status.CurrentPodCliqueSetRevision = ""
 
-	assert.False(t, isReplicaUpdated(sc, 0, sc.existingPCLQs),
-		"a replica whose expected pod-template hash is empty must not be considered updated")
+	atTarget, err := isReplicaAtTargetRevision(sc, sc.existingPCLQs)
+	require.NoError(t, err)
+	assert.False(t, atTarget, "a replica without a target revision must not be considered at the target")
+	assert.False(t, isReplicaUpdatedAndReady(sc, 0, sc.existingPCLQs),
+		"a replica without a target revision must not be considered updated")
 }
 
 func TestProcessPendingUpdates(t *testing.T) {
@@ -300,20 +308,21 @@ func buildRollingUpdateSnapshot(replicas, minAvailable, maxUnavailable int32, re
 		WithUpdateStrategy(&grovecorev1beta1.PodCliqueSetUpdateStrategy{Type: grovecorev1beta1.RollingRecreateStrategy}).
 		Build()
 	pcs.Status.CurrentGenerationHash = ptr.To(testRollingUpdateGenHash)
+	pcs.Status.UpdateRevision = testRollingUpdateNewRevision
 	pcsg := testutils.NewPodCliqueScalingGroupBuilder(testRollingUpdatePCSGName, testRollingUpdateNamespace, testRollingUpdatePCSName, 0).
 		WithReplicas(replicas).
 		WithMinAvailable(minAvailable).
+		WithLabels(map[string]string{apicommon.LabelPodCliqueSetRevision: testRollingUpdateNewRevision}).
 		Build()
 	pcsg.Status.UpdateProgress = &grovecorev1beta1.PodCliqueScalingGroupUpdateProgress{
 		PodCliqueSetGenerationHash: testRollingUpdateGenHash,
+		PodCliqueSetRevision:       testRollingUpdateNewRevision,
 	}
 	members := make([]grovecorev1beta1.PodClique, 0, len(reps))
-	expectedHashByName := map[string]string{}
 	expectedFQNsByReplica := map[int][]string{}
 	for _, rep := range reps {
 		name := fmt.Sprintf("%s-%d-c", testRollingUpdatePCSGName, rep.index)
 		members = append(members, newRollingUpdateMemberPCLQ(name, rep))
-		expectedHashByName[name] = testRollingUpdateNewHash
 		expectedFQNsByReplica[rep.index] = append(expectedFQNsByReplica[rep.index], name)
 	}
 	return &syncSnapshot{
@@ -322,21 +331,27 @@ func buildRollingUpdateSnapshot(replicas, minAvailable, maxUnavailable int32, re
 		expectationsStoreKey:           pcsg.Namespace + "/" + pcsg.Name,
 		pcsgConfig:                     &grovecorev1beta1.PodCliqueScalingGroupConfig{RollingUpdate: &grovecorev1beta1.RollingUpdateConfiguration{MaxUnavailable: ptr.To(maxUnavailable)}},
 		existingPCLQs:                  members,
-		expectedPCLQPodTemplateHashMap: expectedHashByName,
 		expectedPCLQFQNsPerPCSGReplica: expectedFQNsByReplica,
+		targetRevision:                 testRollingUpdateNewRevision,
 	}
 }
 
+// newRollingUpdateMemberPCLQ builds a member PodClique. A member with the new hash was written from the target
+// revision and an old one from the previous revision. Its Pods have reached that revision.
 func newRollingUpdateMemberPCLQ(name string, rep testReplica) grovecorev1beta1.PodClique {
+	revision := testRollingUpdateOldRevision
+	if rep.hash == testRollingUpdateNewHash {
+		revision = testRollingUpdateNewRevision
+	}
 	return *testutils.NewPCSGPodCliqueBuilder(name, testRollingUpdateNamespace, testRollingUpdatePCSName, testRollingUpdatePCSGName, 0, rep.index).
-		WithLabels(map[string]string{apicommon.LabelPodTemplateHash: rep.hash}).
+		WithLabels(map[string]string{apicommon.LabelPodTemplateHash: rep.hash, apicommon.LabelPodCliqueSetRevision: revision}).
 		WithOptions(func(p *grovecorev1beta1.PodClique) {
 			p.UID = types.UID(name)
 			p.Status.ScheduledReplicas = rep.scheduled
 			p.Status.ReadyReplicas = rep.ready
 			p.Status.UpdatedReplicas = rep.updated
 			p.Status.CurrentPodTemplateHash = ptr.To(rep.hash)
-			p.Status.CurrentPodCliqueSetGenerationHash = ptr.To(testRollingUpdateGenHash)
+			p.Status.CurrentPodCliqueSetRevision = revision
 			if rep.terminating {
 				now := metav1.Now()
 				p.DeletionTimestamp = &now

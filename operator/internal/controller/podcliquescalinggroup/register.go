@@ -72,8 +72,9 @@ func (r *Reconciler) RegisterWithManager(mgr manager.Manager) error {
 		Complete(r)
 }
 
-// podCliqueScalingGroupReconcilePredicate admits creates, spec changes, and changes to the parent
-// PodCliqueSet generation annotation used to trigger OnDelete template propagation.
+// podCliqueScalingGroupReconcilePredicate admits creates, spec changes, changes to the revision label written by
+// the PodCliqueSet, and changes to the parent PodCliqueSet generation annotation used to trigger OnDelete template
+// propagation.
 func podCliqueScalingGroupReconcilePredicate() predicate.Predicate {
 	return predicate.Funcs{
 		CreateFunc: func(_ event.CreateEvent) bool { return true },
@@ -85,6 +86,7 @@ func podCliqueScalingGroupReconcilePredicate() predicate.Predicate {
 				return false
 			}
 			return oldPCSG.Generation != newPCSG.Generation ||
+				oldPCSG.Labels[apicommon.LabelPodCliqueSetRevision] != newPCSG.Labels[apicommon.LabelPodCliqueSetRevision] ||
 				oldPCSG.Annotations[constants.AnnotationOnDeletePodCliqueSetGenerationHash] != newPCSG.Annotations[constants.AnnotationOnDeletePodCliqueSetGenerationHash]
 		},
 		GenericFunc: func(_ event.GenericEvent) bool { return false },

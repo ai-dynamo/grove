@@ -24,7 +24,6 @@ import (
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	internalconstants "github.com/ai-dynamo/grove/operator/internal/constants"
-	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/go-logr/logr"
@@ -364,6 +363,7 @@ func TestReconcileStatusConvergesWhenReadyPodMatchesDesiredHash(t *testing.T) {
 	require.NoError(t, cl.Get(context.Background(), types.NamespacedName{Name: pclq.Name, Namespace: pclq.Namespace}, updatedPCLQ))
 	assert.Equal(t, int32(1), updatedPCLQ.Status.UpdatedReplicas)
 	assert.Equal(t, templateHash, *updatedPCLQ.Status.CurrentPodTemplateHash)
+	assert.Equal(t, pcs.Status.UpdateRevision, updatedPCLQ.Status.CurrentPodCliqueSetRevision)
 	assert.Equal(t, *pcs.Status.CurrentGenerationHash, *updatedPCLQ.Status.CurrentPodCliqueSetGenerationHash)
 }
 
@@ -414,24 +414,83 @@ func TestReconcileStatusRequeuesWithoutPatchWhenStatusUnchanged(t *testing.T) {
 	assert.Equal(t, rvBefore, after.ResourceVersion, "no status patch should be issued when the status is unchanged")
 }
 
-// TestMutateCurrentHashesDoesNotAdvanceWhenTemplateHashIsStale verifies that
-// mutateCurrentHashes refuses to advance CurrentPodTemplateHash or
-// CurrentPodCliqueSetGenerationHash when the PodClique metadata label has not
-// actually converged on the current PodCliqueSet template, even though the
-// replica counts (Replicas == UpdatedReplicas) would superficially suggest it has.
-func TestMutateCurrentHashesDoesNotAdvanceWhenTemplateHashIsStale(t *testing.T) {
-	pcs, pclq, _ := newPodCliqueHashConvergenceFixture(t)
-	pclq.Labels[apicommon.LabelPodTemplateHash] = "stale-template-hash"
-	pclq.Status.CurrentPodTemplateHash = ptr.To("")
-	pclq.Status.CurrentPodCliqueSetGenerationHash = ptr.To("old-generation-hash")
-	pclq.Status.Replicas = 2
-	pclq.Status.UpdatedReplicas = 2
+// TestMutateCurrentRevision verifies when the PodClique records the revision and pod template hash that all of its
+// Pods run.
+func TestMutateCurrentRevision(t *testing.T) {
+	const (
+		updateRevision = "revision-2"
+		labelHash      = "hash-2"
+	)
+	pcs := &grovecorev1beta1.PodCliqueSet{Status: grovecorev1beta1.PodCliqueSetStatus{
+		UpdateRevision:        updateRevision,
+		CurrentGenerationHash: ptr.To("generation-2"),
+	}}
+	newPCLQ := func(labels map[string]string, status grovecorev1beta1.PodCliqueStatus) *grovecorev1beta1.PodClique {
+		return &grovecorev1beta1.PodClique{ObjectMeta: metav1.ObjectMeta{Labels: labels}, Status: status}
+	}
+	labels := map[string]string{apicommon.LabelPodCliqueSetRevision: updateRevision, apicommon.LabelPodTemplateHash: labelHash}
+	converged := grovecorev1beta1.PodCliqueStatus{
+		Replicas: 2, UpdatedReplicas: 2,
+		CurrentPodTemplateHash:            ptr.To(labelHash),
+		CurrentPodCliqueSetRevision:       "revision-1",
+		CurrentPodCliqueSetGenerationHash: ptr.To("generation-1"),
+	}
 
-	err := mutateCurrentHashes(logr.Discard(), pcs, pclq)
+	t.Run("a new revision with the same hash is recorded without an update", func(t *testing.T) {
+		pclq := newPCLQ(labels, converged)
+		mutateCurrentRevision(pcs, pclq)
+		assert.Equal(t, updateRevision, pclq.Status.CurrentPodCliqueSetRevision)
+		assert.Equal(t, labelHash, *pclq.Status.CurrentPodTemplateHash)
+		assert.Equal(t, "generation-2", *pclq.Status.CurrentPodCliqueSetGenerationHash)
+	})
 
-	require.NoError(t, err)
-	assert.Equal(t, "", *pclq.Status.CurrentPodTemplateHash)
-	assert.Equal(t, "old-generation-hash", *pclq.Status.CurrentPodCliqueSetGenerationHash)
+	t.Run("nothing advances while Pods are not all updated", func(t *testing.T) {
+		status := converged
+		status.UpdatedReplicas = 1
+		pclq := newPCLQ(labels, status)
+		mutateCurrentRevision(pcs, pclq)
+		assert.Equal(t, "revision-1", pclq.Status.CurrentPodCliqueSetRevision)
+		assert.Equal(t, "generation-1", *pclq.Status.CurrentPodCliqueSetGenerationHash)
+	})
+
+	t.Run("nothing advances while an update is in progress", func(t *testing.T) {
+		status := converged
+		status.UpdateProgress = &grovecorev1beta1.PodCliqueUpdateProgress{PodCliqueSetRevision: updateRevision, PodTemplateHash: labelHash}
+		pclq := newPCLQ(labels, status)
+		mutateCurrentRevision(pcs, pclq)
+		assert.Equal(t, "revision-1", pclq.Status.CurrentPodCliqueSetRevision)
+	})
+
+	t.Run("a completed update to an older hash records that update's target", func(t *testing.T) {
+		status := converged
+		status.CurrentPodTemplateHash = ptr.To("hash-0")
+		status.UpdateProgress = &grovecorev1beta1.PodCliqueUpdateProgress{
+			PodCliqueSetRevision: "revision-1", PodTemplateHash: "hash-1", PodCliqueSetGenerationHash: "generation-1",
+			UpdateEndedAt: ptr.To(metav1.Now()),
+		}
+		pclq := newPCLQ(labels, status)
+		mutateCurrentRevision(pcs, pclq)
+		assert.Equal(t, "revision-1", pclq.Status.CurrentPodCliqueSetRevision)
+		assert.Equal(t, "hash-1", *pclq.Status.CurrentPodTemplateHash)
+		assert.Equal(t, "generation-1", *pclq.Status.CurrentPodCliqueSetGenerationHash)
+	})
+
+	t.Run("a PodClique without a revision label records only its hash", func(t *testing.T) {
+		pclq := newPCLQ(map[string]string{apicommon.LabelPodTemplateHash: labelHash}, grovecorev1beta1.PodCliqueStatus{
+			Replicas: 1, UpdatedReplicas: 1, CurrentPodCliqueSetGenerationHash: ptr.To("generation-1"),
+		})
+		mutateCurrentRevision(pcs, pclq)
+		assert.Empty(t, pclq.Status.CurrentPodCliqueSetRevision)
+		assert.Equal(t, labelHash, *pclq.Status.CurrentPodTemplateHash)
+		assert.Equal(t, "generation-1", *pclq.Status.CurrentPodCliqueSetGenerationHash)
+	})
+
+	t.Run("a revision other than the update revision keeps the generation hash", func(t *testing.T) {
+		pclq := newPCLQ(map[string]string{apicommon.LabelPodCliqueSetRevision: "revision-1", apicommon.LabelPodTemplateHash: labelHash}, converged)
+		mutateCurrentRevision(pcs, pclq)
+		assert.Equal(t, "revision-1", pclq.Status.CurrentPodCliqueSetRevision)
+		assert.Equal(t, "generation-1", *pclq.Status.CurrentPodCliqueSetGenerationHash)
+	})
 }
 
 // TestEmitAllScheduledReplicasLostIfNeeded covers the only explicit signal users have when a
@@ -819,8 +878,10 @@ func newPodCliqueHashConvergenceFixture(t *testing.T) (*grovecorev1beta1.PodCliq
 		},
 		Status: grovecorev1beta1.PodCliqueSetStatus{
 			CurrentGenerationHash: ptr.To(generationHash),
+			UpdateRevision:        "pcs-current-revision",
 		},
 	}
+	templateHash := "current-template-hash"
 	pclq := &grovecorev1beta1.PodClique{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "pcs-0-worker",
@@ -828,12 +889,11 @@ func newPodCliqueHashConvergenceFixture(t *testing.T) (*grovecorev1beta1.PodCliq
 			Labels: map[string]string{
 				apicommon.LabelPartOfKey:                "pcs",
 				apicommon.LabelPodCliqueSetReplicaIndex: "0",
+				apicommon.LabelPodTemplateHash:          templateHash,
+				apicommon.LabelPodCliqueSetRevision:     pcs.Status.UpdateRevision,
 			},
 		},
 	}
-	templateHash, err := componentutils.GetExpectedPCLQPodTemplateHash(pcs, pclq.ObjectMeta)
-	require.NoError(t, err)
-	pclq.Labels[apicommon.LabelPodTemplateHash] = templateHash
 	return pcs, pclq, templateHash
 }
 

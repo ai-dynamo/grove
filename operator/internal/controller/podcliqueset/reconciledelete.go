@@ -53,7 +53,7 @@ func (r *Reconciler) triggerDeletionFlow(ctx context.Context, logger logr.Logger
 	}
 	logger.Info("PodCliqueSet finalizer removed; Kubernetes garbage collector will cascade-delete owned resources")
 	// Remove in-memory expectations so they do not retain entries for the deleted PodCliqueSet.
-	r.pcsGenerationHashExpectations.Delete(pcsGenerationHashKey(pcs))
+	r.updateRevisionExpectations.Delete(updateRevisionExpectationKey(pcs))
 	r.scalingProgressExpectations.Forget(pcs.ObjectMeta)
 	return ctrlcommon.DoNotRequeue()
 }

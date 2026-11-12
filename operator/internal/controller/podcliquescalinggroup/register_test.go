@@ -17,6 +17,7 @@ package podcliquescalinggroup
 import (
 	"testing"
 
+	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
@@ -59,6 +60,12 @@ func TestPodCliqueScalingGroupReconcilePredicate(t *testing.T) {
 			want: false,
 		},
 		{name: "status-only update", old: newPCSG(1, nil), new: newPCSG(1, nil), want: false},
+		{
+			name: "revision label changed",
+			old:  withRevisionLabel(newPCSG(1, nil), "revision-1"),
+			new:  withRevisionLabel(newPCSG(1, nil), "revision-2"),
+			want: true,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -226,4 +233,10 @@ func TestMapPodGangMapToPCSGs(t *testing.T) {
 		{NamespacedName: types.NamespacedName{Namespace: ns, Name: "pcs-0-sgb"}},
 	}
 	assert.ElementsMatch(t, expected, actual)
+}
+
+// withRevisionLabel sets the revision label that the PodCliqueSet writes on the PodCliqueScalingGroup.
+func withRevisionLabel(pcsg *grovecorev1beta1.PodCliqueScalingGroup, revision string) *grovecorev1beta1.PodCliqueScalingGroup {
+	pcsg.Labels = map[string]string{apicommon.LabelPodCliqueSetRevision: revision}
+	return pcsg
 }

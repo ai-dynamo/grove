@@ -63,12 +63,13 @@ func (r _resource) prepareSyncFlow(ctx context.Context, logger logr.Logger, pclq
 	ss.pcs = pcs
 	pcsObjectKey := client.ObjectKeyFromObject(pcs)
 
-	ss.expectedPodTemplateHash, err = componentutils.GetExpectedPCLQPodTemplateHash(ss.pcs, pclq.ObjectMeta)
-	if err != nil {
-		return nil, groveerr.WrapError(err,
-			errCodeGetPodCliqueTemplate,
+	// The owner writes the pod template hash on the PodClique and changes it only when the clique's pod template
+	// changes, so it is the hash new and updated Pods must carry.
+	ss.expectedPodTemplateHash = pclq.Labels[apicommon.LabelPodTemplateHash]
+	if ss.expectedPodTemplateHash == "" {
+		return nil, groveerr.New(errCodeGetPodCliqueTemplate,
 			component.OperationSync,
-			fmt.Sprintf("failed to compute pod clique template hash for PodClique: %v in PodCliqueSet", pclqObjectKey),
+			fmt.Sprintf("PodClique %v is missing required label %s", pclqObjectKey, apicommon.LabelPodTemplateHash),
 		)
 	}
 
@@ -308,17 +309,15 @@ func (r _resource) removeSchedulerFinalizersFromDeletingPods(ctx context.Context
 	return nil
 }
 
-// pclqUpdateProgressMatchesCurrentRevision reports whether the PCLQ update progress identifies the
-// same PCS generation and Pod template revision currently observed on the PCS and PCLQ resources.
-// The PCS controller updates these resources independently, so update-specific Pod replacement and
-// completion must wait until all revision markers agree.
+// pclqUpdateProgressMatchesCurrentRevision reports whether the PCLQ update progress targets the revision and
+// Pod template hash currently on the PCLQ labels. The owner writes the labels independently of this controller,
+// so update-specific Pod replacement and completion must wait until processUpdate resets a stale update.
 func pclqUpdateProgressMatchesCurrentRevision(ss *syncSnapshot) bool {
-	if ss.pcs.Status.CurrentGenerationHash == nil || ss.pclq.Status.UpdateProgress == nil {
+	progress := ss.pclq.Status.UpdateProgress
+	if progress == nil {
 		return false
 	}
-
-	progress := ss.pclq.Status.UpdateProgress
-	return progress.PodCliqueSetGenerationHash == *ss.pcs.Status.CurrentGenerationHash &&
+	return progress.PodCliqueSetRevision == ss.pclq.Labels[apicommon.LabelPodCliqueSetRevision] &&
 		progress.PodTemplateHash == ss.pclq.Labels[apicommon.LabelPodTemplateHash]
 }
 
@@ -444,19 +443,10 @@ func (r _resource) selectExcessPodsToDelete(ss *syncSnapshot, logger logr.Logger
 	logger.Info("found excess pods for PodClique", "numExcessPods", numExcessPods)
 	sorter := DeletionSorter{
 		Pods:                    livePods,
-		ExpectedPodTemplateHash: ss.getExpectedPodTemplateHash(),
+		ExpectedPodTemplateHash: ss.expectedPodTemplateHash,
 	}
 	sort.Sort(sorter)
 	return sorter.Pods[:numExcessPods]
-}
-
-func (ss *syncSnapshot) getExpectedPodTemplateHash() string {
-	if ss.pclq.Status.UpdateProgress != nil &&
-		ss.pcs.Status.CurrentGenerationHash != nil &&
-		ss.pclq.Status.UpdateProgress.PodCliqueSetGenerationHash == *ss.pcs.Status.CurrentGenerationHash {
-		return ss.pclq.Status.UpdateProgress.PodTemplateHash
-	}
-	return ss.pclq.Labels[apicommon.LabelPodTemplateHash]
 }
 
 // checkAndRemovePodSchedulingGates removes the Grove PodGang scheduling gate from gated pods whose

@@ -250,15 +250,16 @@ func (r _resource) deleteOldNonReadyPods(ctx context.Context, logger logr.Logger
 }
 
 // markRollingUpdateEnd atomically records successful completion and publishes the update target as the
-// PCLQ's fully realized generation and Pod template. Publishing these hashes is safe only because
-// runSyncFlow permits RollingRecreate and Coherent completion after the progress generation matches the
-// PCS current generation and the progress template hash matches the observed PCLQ template-hash label.
+// PCLQ's fully realized revision and Pod template. Publishing the target is safe only because runSyncFlow
+// permits RollingRecreate and Coherent completion after the progress target matches the revision and
+// template-hash labels on the PCLQ.
 func (r _resource) markRollingUpdateEnd(ctx context.Context, logger logr.Logger, pclq *grovecorev1beta1.PodClique) error {
 	patch := client.MergeFrom(pclq.DeepCopy())
 	progress := pclq.Status.UpdateProgress
 
 	progress.UpdateEndedAt = ptr.To(metav1.Now())
 	pclq.Status.CurrentPodTemplateHash = ptr.To(progress.PodTemplateHash)
+	pclq.Status.CurrentPodCliqueSetRevision = progress.PodCliqueSetRevision
 	pclq.Status.CurrentPodCliqueSetGenerationHash = ptr.To(progress.PodCliqueSetGenerationHash)
 
 	if err := client.IgnoreNotFound(r.client.Status().Patch(ctx, pclq, patch)); err != nil {

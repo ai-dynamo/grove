@@ -74,8 +74,12 @@ func (r *Reconciler) processUpdate(ctx context.Context, logger logr.Logger, pcsg
 		return ctrlcommon.ReconcileWithErrors(fmt.Sprintf("could not get owner PodCliqueSet for PodCliqueScalingGroup: %v", pcsgObjectKey), err)
 	}
 
+	// Wait until the PodCliqueSet writes the revision the members move to.
+	if pcsg.Labels[apicommon.LabelPodCliqueSetRevision] == "" {
+		return ctrlcommon.ContinueReconcile()
+	}
 	if !componentutils.IsRollingUpdateStrategy(pcs) {
-		if shouldResetOrTriggerUpdate(pcs, pcsg) {
+		if shouldResetOrTriggerUpdate(pcsg) {
 			if err = r.initOrResetUpdate(ctx, pcs, pcsg); err != nil {
 				return ctrlcommon.ReconcileWithErrors("could not initialize update for OnDelete", err)
 			}
@@ -98,11 +102,11 @@ func (r *Reconciler) processUpdate(ctx context.Context, logger logr.Logger, pcsg
 		return ctrlcommon.ContinueReconcile()
 	}
 
-	// Trigger processing of pending updates for this PCSG. Check if all pending updates for this PCSG and for the PCS CurrentGenerationHash
-	// has already been completed or are already in-progress. If that is true, then there is nothing more to do.
-	// If the rolling update is in-progress for a different PCS CurrentGenerationHash, or it has not even been started, then
-	// reset the rolling update progress so that it can be restarted.
-	if shouldResetOrTriggerUpdate(pcs, pcsg) {
+	// Trigger processing of pending updates for this PCSG. Check if all pending updates for this PCSG and for its
+	// target revision have already been completed or are already in-progress. If that is true, then there is nothing
+	// more to do. If the rolling update is in-progress for a different revision, or it has not even been started,
+	// then reset the rolling update progress so that it can be restarted.
+	if shouldResetOrTriggerUpdate(pcsg) {
 		if err = r.initOrResetUpdate(ctx, pcs, pcsg); err != nil {
 			return ctrlcommon.ReconcileWithErrors("could not initialize RollingRecreate update", err)
 		}
@@ -110,19 +114,16 @@ func (r *Reconciler) processUpdate(ctx context.Context, logger logr.Logger, pcsg
 	return ctrlcommon.ContinueReconcile()
 }
 
-// shouldResetOrTriggerUpdate determines if a rolling update should be initiated based on generation hash changes
-func shouldResetOrTriggerUpdate(pcs *grovecorev1beta1.PodCliqueSet, pcsg *grovecorev1beta1.PodCliqueScalingGroup) bool {
-	if pcs.Status.CurrentGenerationHash == nil {
+// shouldResetOrTriggerUpdate determines if an update should be initiated. The target is the revision on the
+// PodCliqueScalingGroup's revision label, which the PodCliqueSet writes.
+func shouldResetOrTriggerUpdate(pcsg *grovecorev1beta1.PodCliqueScalingGroup) bool {
+	targetRevision := pcsg.Labels[apicommon.LabelPodCliqueSetRevision]
+	if targetRevision == "" {
 		return false
 	}
-
-	// If processing of rolling update of PCSG for PCS CurrentGenerationHash is either completed or in-progress,
-	// there is no need to reset or trigger another rolling update of this PCSG for the same PCS CurrentGenerationHash.
-	if pcsg.Status.UpdateProgress != nil &&
-		pcsg.Status.UpdateProgress.PodCliqueSetGenerationHash == *pcs.Status.CurrentGenerationHash {
-		return false
-	}
-	return true
+	// If processing of the update of the PCSG to its target revision is either completed or in-progress, there is
+	// no need to reset or trigger another update for the same target.
+	return pcsg.Status.UpdateProgress == nil || pcsg.Status.UpdateProgress.PodCliqueSetRevision != targetRevision
 }
 
 func (r *Reconciler) initOrResetUpdate(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet, pcsg *grovecorev1beta1.PodCliqueScalingGroup) error {
@@ -130,7 +131,8 @@ func (r *Reconciler) initOrResetUpdate(ctx context.Context, pcs *grovecorev1beta
 	patch := client.MergeFrom(pcsg.DeepCopy())
 	pcsg.Status.UpdateProgress = &grovecorev1beta1.PodCliqueScalingGroupUpdateProgress{
 		UpdateStartedAt:            metav1.Now(),
-		PodCliqueSetGenerationHash: *pcs.Status.CurrentGenerationHash,
+		PodCliqueSetGenerationHash: ptr.Deref(pcs.Status.CurrentGenerationHash, ""),
+		PodCliqueSetRevision:       pcsg.Labels[apicommon.LabelPodCliqueSetRevision],
 	}
 	// OnDelete strategy sets UpdateEndedAt too, since we do not know when all the pods will manually be deleted, and gang termination is disabled when an update is in progress
 	if !componentutils.IsRollingUpdateStrategy(pcs) {

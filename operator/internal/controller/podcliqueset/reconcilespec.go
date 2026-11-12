@@ -49,8 +49,7 @@ func (r *Reconciler) reconcileSpec(ctx context.Context, logger logr.Logger, pcs 
 	}
 	reconcileStepFns := []ctrlcommon.ReconcileStepFn[grovecorev1beta1.PodCliqueSet]{
 		r.ensureFinalizer,
-		r.processGenerationHashChange,
-		r.ensureCurrentControllerRevision,
+		r.ensureUpdateRevision,
 		syncResources,
 		r.updateObservedGeneration,
 	}
@@ -75,56 +74,10 @@ func (r *Reconciler) ensureFinalizer(ctx context.Context, logger logr.Logger, pc
 	return ctrlcommon.ContinueReconcile()
 }
 
-// processGenerationHashChange computes the generation hash given a PodCliqueSet resource and if the generation has
-// changed from the previously persisted pcs.status.generationHash then it resets the pcs.status.updateProgress
-func (r *Reconciler) processGenerationHashChange(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet) ctrlcommon.ReconcileStepResult {
-	pcsObjectKey := client.ObjectKeyFromObject(pcs)
-	pcsGenHashKey := pcsGenerationHashKey(pcs)
-
-	// if the generationHash is not reflected correctly yet, requeue. Allow the informer cache to catch-up.
-	if !r.isGenerationHashExpectationSatisfied(pcsGenHashKey, pcs.Status.CurrentGenerationHash) {
-		return ctrlcommon.ReconcileAfter(constants.ComponentSyncRetryInterval, fmt.Sprintf("CurrentGenerationHash is not up-to-date for PodCliqueSet: %v", pcsObjectKey))
-	}
-	r.pcsGenerationHashExpectations.Delete(pcsGenHashKey)
-
-	newGenerationHash := computeGenerationHash(pcs)
-	if pcs.Status.CurrentGenerationHash == nil {
-		// update the generation hash and continue reconciliation. No rolling update is required.
-		if err := r.setGenerationHashAndUpdateStatus(ctx, pcs, pcsGenHashKey, newGenerationHash); err != nil {
-			logger.Error(err, "failed to set generation hash on PCS", "newGenerationHash", newGenerationHash)
-			return ctrlcommon.ReconcileWithErrors("error updating generation hash", err)
-		}
-		return ctrlcommon.ContinueReconcile()
-	}
-
-	if newGenerationHash != *pcs.Status.CurrentGenerationHash {
-		// trigger rolling update by setting or overriding pcs.Status.UpdateProgress.
-		if err := r.initUpdateProgress(ctx, pcs, pcsGenHashKey, newGenerationHash); err != nil {
-			return ctrlcommon.ReconcileWithErrors(fmt.Sprintf("could not triggering rolling update for PCS: %v", pcsObjectKey), err)
-		}
-	}
-
-	return ctrlcommon.ContinueReconcile()
-}
-
-// pcsGenerationHashKey returns the key for the in-memory generation-hash expectation of a PCS.
-// The key scheme is <pcs-namespace>/<pcs-name>/<pcs-UID>. Suffixing a UID ensures that a stale
-// remnant expectation entry for the same <pcs-namespace>/<pcs-name> does not block reconciliation of
-// a new PCS (with a different UID).
-// See https://github.com/ai-dynamo/grove/issues/782 for context.
-func pcsGenerationHashKey(pcs *grovecorev1beta1.PodCliqueSet) string {
-	return fmt.Sprintf("%s/%s", client.ObjectKeyFromObject(pcs), pcs.UID)
-}
-
-// isGenerationHashExpectationSatisfied checks if the current generation hash matches expectations.
-func (r *Reconciler) isGenerationHashExpectationSatisfied(pcsGenHashKey string, pcsGenerationHash *string) bool {
-	expectedGenerationHash, ok := r.pcsGenerationHashExpectations.Load(pcsGenHashKey)
-	return !ok || (pcsGenerationHash != nil && expectedGenerationHash.(string) == *pcsGenerationHash)
-}
-
-// computeGenerationHash calculates a hash of the PodCliqueSet pod template specifications.
-func computeGenerationHash(pcs *grovecorev1beta1.PodCliqueSet) string {
-	podTemplateSpecs := lo.Map(pcs.Spec.Template.Cliques, func(pclqTemplateSpec *grovecorev1beta1.PodCliqueTemplateSpec, _ int) *corev1.PodTemplateSpec {
+// computeGenerationHash calculates a hash of the pod templates of the PodCliqueSet template. It is only written to
+// status.currentGenerationHash and never compared with a stored hash.
+func computeGenerationHash(template *grovecorev1beta1.PodCliqueSetTemplateSpec) string {
+	podTemplateSpecs := lo.Map(template.Cliques, func(pclqTemplateSpec *grovecorev1beta1.PodCliqueTemplateSpec, _ int) *corev1.PodTemplateSpec {
 		podTemplateSpec := &corev1.PodTemplateSpec{
 			ObjectMeta: metav1.ObjectMeta{
 				Labels:      pclqTemplateSpec.Labels,
@@ -132,24 +85,14 @@ func computeGenerationHash(pcs *grovecorev1beta1.PodCliqueSet) string {
 			},
 			Spec: pclqTemplateSpec.Spec.PodSpec,
 		}
-		podTemplateSpec.Spec.PriorityClassName = pcs.Spec.Template.PriorityClassName
+		podTemplateSpec.Spec.PriorityClassName = template.PriorityClassName
 		return podTemplateSpec
 	})
 	return k8sutils.ComputeHash(podTemplateSpecs...)
 }
 
-// setGenerationHashAndUpdateStatus updates the PodCliqueSet status with the new generation hash, stores the expectation, and updates the status subresource.
-func (r *Reconciler) setGenerationHashAndUpdateStatus(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet, pcsGenHashKey, newGenerationHash string) error {
-	pcs.Status.CurrentGenerationHash = &newGenerationHash
-	if err := r.client.Status().Update(ctx, pcs); err != nil {
-		return fmt.Errorf("could not update CurrentGenerationHash for PodCliqueSet: %v: %w", client.ObjectKeyFromObject(pcs), err)
-	}
-	r.pcsGenerationHashExpectations.Store(pcsGenHashKey, newGenerationHash)
-	return nil
-}
-
-// initUpdateProgress initializes a new rolling update by resetting progress tracking.
-func (r *Reconciler) initUpdateProgress(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet, pcsGenHashKey, newGenerationHash string) error {
+// newUpdateProgress returns the progress of an update that replaces the Pods of the components in scope.
+func newUpdateProgress(pcs *grovecorev1beta1.PodCliqueSet, scope updateScope) *grovecorev1beta1.PodCliqueSetUpdateProgress {
 	updateProgress := &grovecorev1beta1.PodCliqueSetUpdateProgress{
 		UpdateStartedAt: metav1.Now(),
 	}
@@ -157,23 +100,13 @@ func (r *Reconciler) initUpdateProgress(ctx context.Context, pcs *grovecorev1bet
 	if pcs.Spec.UpdateStrategy != nil && pcs.Spec.UpdateStrategy.Type == grovecorev1beta1.OnDeleteStrategy {
 		updateProgress.UpdateEndedAt = ptr.To(metav1.Now())
 	}
-	// The Coherent strategy rolls only the components whose pod template changed. Capture that scope now,
-	// while Status.CurrentGenerationHash still holds the previous hash, and preserve it for the update.
+	// The Coherent strategy rolls only the components whose pod template changed. The scope is preserved for
+	// the update.
 	if componentutils.IsCoherentStrategy(pcs) {
-		scope, err := r.computeCoherentUpdateScope(ctx, pcs)
-		if err != nil {
-			return fmt.Errorf("could not compute coherent update scope for PodCliqueSet: %v: %w", client.ObjectKeyFromObject(pcs), err)
-		}
 		updateProgress.InScopeStandalonePodCliques = sets.List(scope.standalonePCLQs)
 		updateProgress.InScopePodCliqueScalingGroups = sets.List(scope.podCliqueScalingGroups)
 	}
-	pcs.Status.UpdateProgress = updateProgress
-	pcs.Status.UpdatedReplicas = 0
-	pcs.Status.CurrentGenerationHash = &newGenerationHash
-	if err := r.setGenerationHashAndUpdateStatus(ctx, pcs, pcsGenHashKey, newGenerationHash); err != nil {
-		return fmt.Errorf("could not set UpdateProgress for PodCliqueSet: %v: %w", client.ObjectKeyFromObject(pcs), err)
-	}
-	return nil
+	return updateProgress
 }
 
 // syncPodCliqueSetResources synchronizes all managed child resources. Components are

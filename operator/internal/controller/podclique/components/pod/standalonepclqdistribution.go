@@ -47,10 +47,10 @@ func (r _resource) reconcileStandalonePCLQDistribution(ctx context.Context, logg
 	// PodGangMap opens that anchor as soon as the sub-step commits, which can precede this controller
 	// observing the PCS controller's PodClique template update. Creating now would build the anchor's pod
 	// from the stale (old) PodClique and land an old-revision pod that never self-heals, since distribution
-	// is count-driven. Wait until this PodClique's own template hash catches up to the expected hash. This
+	// is count-driven. Wait until this PodClique has been written from the PodCliqueSet update revision. This
 	// is scoped to the replica under update, so a replica frozen on its old revision is unaffected.
 	if componentutils.IsPCSReplicaUnderCoherentUpdate(ss.pcs, ss.pcsReplicaIndex) &&
-		ss.pclq.Labels[apicommon.LabelPodTemplateHash] != ss.expectedPodTemplateHash {
+		ss.pclq.Labels[apicommon.LabelPodCliqueSetRevision] != ss.pcs.Status.UpdateRevision {
 		return groveerr.NewRequeueAfter(component.OperationSync,
 			fmt.Sprintf("PodClique %v template not yet propagated for its coherent update, re-queueing", client.ObjectKeyFromObject(ss.pclq)), constants.ComponentSyncRetryInterval)
 	}

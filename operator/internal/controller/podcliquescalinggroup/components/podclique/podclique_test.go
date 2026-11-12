@@ -631,7 +631,7 @@ func TestBuildResource_MNNVLInjection(t *testing.T) {
 			pclq := emptyMemberPodClique("test-pcs-0-sg-0-worker")
 			ss := &syncSnapshot{pcs: pcs, pcsg: pcsg, pcsReplicaIndex: 0, pgm: newAnchorPodGangMap()}
 
-			require.NoError(t, operator.buildResource(logr.Discard(), ss, 0, pclq, false))
+			require.NoError(t, operator.buildResource(t.Context(), logr.Discard(), ss, 0, pclq, false))
 
 			assertPodLevelMNNVLClaim(t, pclq, tc.expectPodLevelClaim, tc.expectedRCTName)
 			assertContainerMNNVLClaims(t, pclq.Spec.PodSpec.Containers, tc.expectedContainersWithClaims, tc.expectedContainersWithoutClaims)
@@ -650,7 +650,7 @@ func TestBuildResource_StripsTopologyAnnotation(t *testing.T) {
 	ss := &syncSnapshot{pcs: pcs, pcsg: pcsg, pcsReplicaIndex: 0, pgm: newAnchorPodGangMap()}
 
 	operator := &_resource{scheme: groveclientscheme.Scheme}
-	require.NoError(t, operator.buildResource(logr.Discard(), ss, 0, pclq, false))
+	require.NoError(t, operator.buildResource(t.Context(), logr.Discard(), ss, 0, pclq, false))
 	require.NotNil(t, pclq.Annotations)
 	assert.Equal(t, "yes", pclq.Annotations["example.com/keep"])
 	_, hasTopologyAnnotation := pclq.Annotations[apiconstants.AnnotationTopologyName]
@@ -784,6 +784,8 @@ func cpuContainer(name string, cpus int) corev1.Container {
 
 // newBuildResourcePCS builds a single-clique PodCliqueSet used by buildResource tests, with the given
 // clique annotations and containers.
+//
+//nolint:unparam // cliqueName names the clique the scaling group owns. Current tests only use "worker".
 func newBuildResourcePCS(cliqueName string, cliqueAnnotations map[string]string, containers, initContainers []corev1.Container) *grovecorev1beta1.PodCliqueSet {
 	cliqueBuilder := testutils.NewPodCliqueTemplateSpecBuilder(cliqueName).
 		WithReplicas(1).

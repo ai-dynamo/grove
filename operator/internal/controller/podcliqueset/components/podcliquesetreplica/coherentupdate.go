@@ -89,8 +89,8 @@ func coherentProgressMessage(pcs *grovecorev1beta1.PodCliqueSet, replicaInfo pcs
 }
 
 // inScopeUpdateCounts returns, for the update's in-scope components, how many are in scope and how many
-// have converged to the current generation hash for the given replica, split by standalone PodCliques
-// and PodCliqueScalingGroups.
+// have reached the update revision for the given replica, split by standalone PodCliques and
+// PodCliqueScalingGroups.
 func inScopeUpdateCounts(pcs *grovecorev1beta1.PodCliqueSet, replicaInfo pcsReplicaInfo) (inScopeStandalone, updatedStandalone, inScopePCSG, updatedPCSG int) {
 	inScopeStandaloneNames := sets.New(pcs.Status.UpdateProgress.InScopeStandalonePodCliques...)
 	inScopePCSGNames := sets.New(pcs.Status.UpdateProgress.InScopePodCliqueScalingGroups...)
@@ -113,7 +113,7 @@ func inScopeUpdateCounts(pcs *grovecorev1beta1.PodCliqueSet, replicaInfo pcsRepl
 		if err != nil {
 			continue
 		}
-		if inScopePCSGNames.Has(pcsgName) && componentutils.IsPCSGUpdateComplete(pcsg, *pcs.Status.CurrentGenerationHash) {
+		if inScopePCSGNames.Has(pcsgName) && componentutils.IsPCSGUpdateComplete(pcsg, pcs.Status.UpdateRevision) {
 			updatedPCSG++
 		}
 	}

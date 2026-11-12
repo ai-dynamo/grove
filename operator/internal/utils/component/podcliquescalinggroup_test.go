@@ -162,76 +162,108 @@ func TestIsPCSGUpdateInProgress(t *testing.T) {
 // TestIsPCSGUpdateComplete tests the IsPCSGUpdateComplete function
 func TestIsPCSGUpdateComplete(t *testing.T) {
 	tests := []struct {
-		name              string
-		pcsg              *grovecorev1beta1.PodCliqueScalingGroup
-		pcsGenerationHash string
-		expected          bool
+		name           string
+		pcsg           *grovecorev1beta1.PodCliqueScalingGroup
+		updateRevision string
+		expected       bool
 	}{
 		{
-			name: "returns_false_when_current_pcs_generation_hash_is_nil",
-			pcsg: &grovecorev1beta1.PodCliqueScalingGroup{
-				Status: grovecorev1beta1.PodCliqueScalingGroupStatus{
-					CurrentPodCliqueSetGenerationHash: nil,
-				},
-			},
-			pcsGenerationHash: "hash1",
-			expected:          false,
+			name:           "returns_false_when_no_revision_is_reached",
+			pcsg:           &grovecorev1beta1.PodCliqueScalingGroup{},
+			updateRevision: "revision-1",
+			expected:       false,
 		},
 		{
-			name: "returns_true_when_hash_matches_and_no_update_progress_exists",
+			name: "returns_false_when_the_pcs_has_no_update_revision",
 			pcsg: &grovecorev1beta1.PodCliqueScalingGroup{
-				Status: grovecorev1beta1.PodCliqueScalingGroupStatus{
-					CurrentPodCliqueSetGenerationHash: ptr.To("hash1"),
-				},
+				Status: grovecorev1beta1.PodCliqueScalingGroupStatus{CurrentPodCliqueSetRevision: ""},
 			},
-			pcsGenerationHash: "hash1",
-			expected:          true,
+			updateRevision: "",
+			expected:       false,
 		},
 		{
-			name: "returns_false_when_hash_matches_but_update_is_in_progress",
+			name: "returns_true_when_revision_matches_and_no_update_progress_exists",
+			pcsg: &grovecorev1beta1.PodCliqueScalingGroup{
+				Status: grovecorev1beta1.PodCliqueScalingGroupStatus{CurrentPodCliqueSetRevision: "revision-1"},
+			},
+			updateRevision: "revision-1",
+			expected:       true,
+		},
+		{
+			name: "returns_false_when_revision_matches_but_update_is_in_progress",
 			pcsg: &grovecorev1beta1.PodCliqueScalingGroup{
 				Status: grovecorev1beta1.PodCliqueScalingGroupStatus{
-					CurrentPodCliqueSetGenerationHash: ptr.To("hash1"),
+					CurrentPodCliqueSetRevision: "revision-1",
 					UpdateProgress: &grovecorev1beta1.PodCliqueScalingGroupUpdateProgress{
-						UpdateStartedAt:            metav1.Now(),
-						PodCliqueSetGenerationHash: "superseded-hash",
+						UpdateStartedAt:      metav1.Now(),
+						PodCliqueSetRevision: "superseded-revision",
 					},
 				},
 			},
-			pcsGenerationHash: "hash1",
-			expected:          false,
+			updateRevision: "revision-1",
+			expected:       false,
 		},
 		{
-			name: "returns_true_when_hash_matches_and_update_has_ended",
+			name: "returns_true_when_revision_matches_and_update_has_ended",
 			pcsg: &grovecorev1beta1.PodCliqueScalingGroup{
 				Status: grovecorev1beta1.PodCliqueScalingGroupStatus{
-					CurrentPodCliqueSetGenerationHash: ptr.To("hash1"),
+					CurrentPodCliqueSetRevision: "revision-1",
 					UpdateProgress: &grovecorev1beta1.PodCliqueScalingGroupUpdateProgress{
-						UpdateStartedAt:            metav1.Now(),
-						UpdateEndedAt:              ptr.To(metav1.Now()),
-						PodCliqueSetGenerationHash: "hash1",
+						UpdateStartedAt:      metav1.Now(),
+						UpdateEndedAt:        ptr.To(metav1.Now()),
+						PodCliqueSetRevision: "revision-1",
 					},
 				},
 			},
-			pcsGenerationHash: "hash1",
-			expected:          true,
+			updateRevision: "revision-1",
+			expected:       true,
 		},
 		{
-			name: "returns_false_when_hash_differs",
+			name: "returns_false_when_revision_differs",
 			pcsg: &grovecorev1beta1.PodCliqueScalingGroup{
-				Status: grovecorev1beta1.PodCliqueScalingGroupStatus{
-					CurrentPodCliqueSetGenerationHash: ptr.To("old-hash"),
-				},
+				Status: grovecorev1beta1.PodCliqueScalingGroupStatus{CurrentPodCliqueSetRevision: "old-revision"},
 			},
-			pcsGenerationHash: "new-hash",
-			expected:          false,
+			updateRevision: "new-revision",
+			expected:       false,
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			result := IsPCSGUpdateComplete(tc.pcsg, tc.pcsGenerationHash)
+			result := IsPCSGUpdateComplete(tc.pcsg, tc.updateRevision)
 			assert.Equal(t, tc.expected, result)
+		})
+	}
+}
+
+func TestIsPCSGMemberPCLQUpdated(t *testing.T) {
+	newMember := func(labelRevision, reachedRevision string, ready, updated int32) *grovecorev1beta1.PodClique {
+		return &grovecorev1beta1.PodClique{
+			ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{apicommon.LabelPodCliqueSetRevision: labelRevision}},
+			Spec:       grovecorev1beta1.PodCliqueSpec{MinAvailable: ptr.To[int32](1)},
+			Status: grovecorev1beta1.PodCliqueStatus{
+				CurrentPodCliqueSetRevision: reachedRevision,
+				ReadyReplicas:               ready,
+				UpdatedReplicas:             updated,
+			},
+		}
+	}
+	tests := []struct {
+		name     string
+		pclq     *grovecorev1beta1.PodClique
+		target   string
+		expected bool
+	}{
+		{name: "reached target with MinAvailable updated and ready", pclq: newMember("r1", "r1", 1, 1), target: "r1", expected: true},
+		{name: "written from another revision", pclq: newMember("r0", "r1", 1, 1), target: "r1", expected: false},
+		{name: "Pods not converged to the target", pclq: newMember("r1", "r0", 1, 1), target: "r1", expected: false},
+		{name: "not enough ready Pods", pclq: newMember("r1", "r1", 0, 1), target: "r1", expected: false},
+		{name: "not enough updated Pods", pclq: newMember("r1", "r1", 1, 0), target: "r1", expected: false},
+		{name: "no target", pclq: newMember("", "", 1, 1), target: "", expected: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.expected, IsPCSGMemberPCLQUpdated(tc.pclq, tc.target))
 		})
 	}
 }

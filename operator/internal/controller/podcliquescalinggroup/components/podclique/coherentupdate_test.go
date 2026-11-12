@@ -134,7 +134,7 @@ func TestReplicaIndicesToRecreate(t *testing.T) {
 // ended while a replica is still draining or pending recreation, and that the reconcile is requeued so
 // the roll keeps progressing rather than stalling until a later watch event.
 // TestReconcileInProgressUpdateRejectsStaleCoherentTarget verifies that Coherent updates obey the
-// same target-generation guard as RollingRecreate and cannot complete a superseded PCSG update.
+// same target-revision guard as RollingRecreate and cannot complete a superseded PCSG update.
 func TestReconcileInProgressUpdateRejectsStaleCoherentTarget(t *testing.T) {
 	pcs := &grovecorev1beta1.PodCliqueSet{
 		Status: grovecorev1beta1.PodCliqueSetStatus{
@@ -148,9 +148,9 @@ func TestReconcileInProgressUpdateRejectsStaleCoherentTarget(t *testing.T) {
 	}
 	pcsg := testutils.NewPodCliqueScalingGroupBuilder("test-pcsg", "test-ns", "test-pcs", 0).Build()
 	pcsg.Status.UpdateProgress = &grovecorev1beta1.PodCliqueScalingGroupUpdateProgress{
-		PodCliqueSetGenerationHash: "generation-b",
+		PodCliqueSetRevision: "revision-b",
 	}
-	ss := &syncSnapshot{pcs: pcs, pcsg: pcsg}
+	ss := &syncSnapshot{pcs: pcs, pcsg: pcsg, targetRevision: "revision-a"}
 
 	err := _resource{}.reconcileInProgressUpdate(t.Context(), logr.Discard(), ss)
 

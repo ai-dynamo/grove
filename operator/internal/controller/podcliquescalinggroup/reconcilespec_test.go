@@ -18,6 +18,7 @@ import (
 	"context"
 	"testing"
 
+	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
@@ -145,7 +146,8 @@ func TestProcessUpdateStartsForSelectedPCSReplica(t *testing.T) {
 	pcs.Status.UpdateProgress = &grovecorev1beta1.PodCliqueSetUpdateProgress{
 		CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 0}},
 	}
-	pcsg := testutils.NewPodCliqueScalingGroupBuilder(testPCSGName, testNamespacePCSG, testPCSNamePCSG, 0).Build()
+	pcsg := testutils.NewPodCliqueScalingGroupBuilder(testPCSGName, testNamespacePCSG, testPCSNamePCSG, 0).
+		WithLabels(map[string]string{apicommon.LabelPodCliqueSetRevision: "revision-2"}).Build()
 
 	reconciler := &Reconciler{client: testutils.SetupFakeClient(pcs, pcsg)}
 	result := reconciler.processUpdate(context.Background(), logr.Discard(), pcsg)
@@ -153,90 +155,79 @@ func TestProcessUpdateStartsForSelectedPCSReplica(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, pcsg.Status.UpdateProgress)
 	assert.Equal(t, "new-generation-hash", pcsg.Status.UpdateProgress.PodCliqueSetGenerationHash)
+	assert.Equal(t, "revision-2", pcsg.Status.UpdateProgress.PodCliqueSetRevision)
 }
 
-// TestShouldResetOrTriggerUpdatePCSG tests the shouldResetOrTriggerUpdate function for PodCliqueScalingGroup
+// TestProcessUpdateWaitsForRevisionLabel verifies that a PodCliqueScalingGroup the PodCliqueSet has not yet written
+// a revision to starts no update.
+func TestProcessUpdateWaitsForRevisionLabel(t *testing.T) {
+	pcs := testutils.NewPodCliqueSetBuilder(testPCSNamePCSG, testNamespacePCSG, uuid.NewUUID()).
+		WithReplicas(1).
+		WithScalingGroup(testPCSGName, []string{"worker"}).
+		WithUpdateStrategy(&grovecorev1beta1.PodCliqueSetUpdateStrategy{Type: grovecorev1beta1.OnDeleteStrategy}).
+		Build()
+	pcsg := testutils.NewPodCliqueScalingGroupBuilder(testPCSGName, testNamespacePCSG, testPCSNamePCSG, 0).Build()
+
+	reconciler := &Reconciler{client: testutils.SetupFakeClient(pcs, pcsg)}
+	result := reconciler.processUpdate(context.Background(), logr.Discard(), pcsg)
+
+	require.False(t, result.HasErrors())
+	assert.Nil(t, pcsg.Status.UpdateProgress)
+}
+
+// TestShouldResetOrTriggerUpdatePCSG tests the shouldResetOrTriggerUpdate function for PodCliqueScalingGroup. The
+// revision label the PodCliqueSet writes on the PodCliqueScalingGroup is the update target.
 func TestShouldResetOrTriggerUpdatePCSG(t *testing.T) {
+	withTarget := func(progress *grovecorev1beta1.PodCliqueScalingGroupUpdateProgress) *grovecorev1beta1.PodCliqueScalingGroup {
+		return &grovecorev1beta1.PodCliqueScalingGroup{
+			ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{apicommon.LabelPodCliqueSetRevision: "current-revision"}},
+			Status:     grovecorev1beta1.PodCliqueScalingGroupStatus{UpdateProgress: progress},
+		}
+	}
 	tests := []struct {
 		name     string
-		pcs      *grovecorev1beta1.PodCliqueSet
 		pcsg     *grovecorev1beta1.PodCliqueScalingGroup
 		expected bool
 	}{
 		{
-			name: "should_not_trigger_update_until_pcs_current_generation_hash_exists",
-			pcs: &grovecorev1beta1.PodCliqueSet{
-				Status: grovecorev1beta1.PodCliqueSetStatus{
-					CurrentGenerationHash: nil,
-				},
-			},
-			pcsg: &grovecorev1beta1.PodCliqueScalingGroup{
-				Status: grovecorev1beta1.PodCliqueScalingGroupStatus{
-					UpdateProgress: nil,
-				},
-			},
+			name:     "should_not_trigger_update_until_the_revision_label_exists",
+			pcsg:     &grovecorev1beta1.PodCliqueScalingGroup{},
 			expected: false,
 		},
 		{
-			name: "should_trigger_update_when_no_update_progress",
-			pcs: &grovecorev1beta1.PodCliqueSet{
-				Status: grovecorev1beta1.PodCliqueSetStatus{
-					CurrentGenerationHash: ptr.To("new-hash"),
-				},
-			},
-			pcsg: &grovecorev1beta1.PodCliqueScalingGroup{
-				Status: grovecorev1beta1.PodCliqueScalingGroupStatus{
-					UpdateProgress: nil,
-				},
-			},
+			name:     "should_trigger_update_when_no_update_progress",
+			pcsg:     withTarget(nil),
 			expected: true,
 		},
 		{
-			name: "should_not_trigger_update_when_hash_matches",
-			pcs: &grovecorev1beta1.PodCliqueSet{
-				Status: grovecorev1beta1.PodCliqueSetStatus{
-					CurrentGenerationHash: ptr.To("current-hash"),
-				},
-			},
-			pcsg: &grovecorev1beta1.PodCliqueScalingGroup{
-				Status: grovecorev1beta1.PodCliqueScalingGroupStatus{
-					UpdateProgress: &grovecorev1beta1.PodCliqueScalingGroupUpdateProgress{
-						PodCliqueSetGenerationHash: "current-hash",
-					},
-				},
-			},
+			name:     "should_not_trigger_update_when_revision_matches",
+			pcsg:     withTarget(&grovecorev1beta1.PodCliqueScalingGroupUpdateProgress{PodCliqueSetRevision: "current-revision"}),
 			expected: false,
 		},
 		{
-			name: "should_trigger_update_when_hash_differs",
-			pcs: &grovecorev1beta1.PodCliqueSet{
-				Status: grovecorev1beta1.PodCliqueSetStatus{
-					CurrentGenerationHash: ptr.To("new-hash"),
-				},
-			},
-			pcsg: &grovecorev1beta1.PodCliqueScalingGroup{
-				Status: grovecorev1beta1.PodCliqueScalingGroupStatus{
-					UpdateProgress: &grovecorev1beta1.PodCliqueScalingGroupUpdateProgress{
-						PodCliqueSetGenerationHash: "old-hash",
-					},
-				},
-			},
+			name:     "should_trigger_update_when_revision_differs",
+			pcsg:     withTarget(&grovecorev1beta1.PodCliqueScalingGroupUpdateProgress{PodCliqueSetRevision: "old-revision"}),
+			expected: true,
+		},
+		{
+			name:     "should_trigger_update_for_progress_from_an_older_operator",
+			pcsg:     withTarget(&grovecorev1beta1.PodCliqueScalingGroupUpdateProgress{PodCliqueSetGenerationHash: "current-hash"}),
 			expected: true,
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			result := shouldResetOrTriggerUpdate(tc.pcs, tc.pcsg)
+			result := shouldResetOrTriggerUpdate(tc.pcsg)
 			assert.Equal(t, tc.expected, result)
 		})
 	}
 }
 
 // TestProcessUpdateResetsStaleProgressForSelectedPCSReplica verifies the rollback path where a PCSG's
-// last fully realized generation already matches the PCS target, but its active update still targets a
-// superseded generation. Once the PCS selects this replica again, processUpdate must reset the PCSG target
-// to the current PCS generation so the child update can finish or revert partially updated PodCliques.
+// last fully realized revision already matches its target, but its active update still targets a
+// superseded revision. Once the PCS selects this replica again, processUpdate must reset the PCSG target
+// to the current revision so the child update can finish or revert partially updated PodCliques.
 func TestProcessUpdateResetsStaleProgressForSelectedPCSReplica(t *testing.T) {
 	const (
 		currentGeneration    = "generation-a"
@@ -263,11 +254,12 @@ func TestProcessUpdateResetsStaleProgressForSelectedPCSReplica(t *testing.T) {
 	pcsg := testutils.NewPodCliqueScalingGroupBuilder(testPCSGName, testNamespacePCSG, testPCSNamePCSG, 0).
 		WithReplicas(1).
 		WithOwnerReference("PodCliqueSet", testPCSNamePCSG, pcsUID).
+		WithLabels(map[string]string{apicommon.LabelPodCliqueSetRevision: currentGeneration}).
 		Build()
-	pcsg.Status.CurrentPodCliqueSetGenerationHash = ptr.To(currentGeneration)
+	pcsg.Status.CurrentPodCliqueSetRevision = currentGeneration
 	pcsg.Status.UpdateProgress = &grovecorev1beta1.PodCliqueScalingGroupUpdateProgress{
-		UpdateStartedAt:            metav1.Now(),
-		PodCliqueSetGenerationHash: supersededGeneration,
+		UpdateStartedAt:      metav1.Now(),
+		PodCliqueSetRevision: supersededGeneration,
 	}
 	pcsg.Status.UpdatedReplicas = 1
 
@@ -281,6 +273,7 @@ func TestProcessUpdateResetsStaleProgressForSelectedPCSReplica(t *testing.T) {
 	require.NoError(t, fakeClient.Get(t.Context(), client.ObjectKeyFromObject(pcsg), updatedPCSG))
 	require.NotNil(t, updatedPCSG.Status.UpdateProgress)
 	assert.Equal(t, currentGeneration, updatedPCSG.Status.UpdateProgress.PodCliqueSetGenerationHash)
+	assert.Equal(t, currentGeneration, updatedPCSG.Status.UpdateProgress.PodCliqueSetRevision)
 	assert.Nil(t, updatedPCSG.Status.UpdateProgress.UpdateEndedAt)
 	assert.Zero(t, updatedPCSG.Status.UpdatedReplicas)
 }
@@ -423,6 +416,7 @@ func TestInitOrResetUpdate(t *testing.T) {
 			pcsUID := uuid.NewUUID()
 			pcs := tt.setupPCS(pcsUID)
 			pcsg := tt.setupPCSG(pcsUID)
+			pcsg.Labels[apicommon.LabelPodCliqueSetRevision] = "target-revision"
 
 			fakeClient := testutils.SetupFakeClient(pcs, pcsg)
 			reconciler := &Reconciler{client: fakeClient}
@@ -447,6 +441,7 @@ func TestInitOrResetUpdate(t *testing.T) {
 			}
 
 			assert.Equal(t, *pcs.Status.CurrentGenerationHash, updatedPCSG.Status.UpdateProgress.PodCliqueSetGenerationHash, "PodCliqueSetGenerationHash should match PCS CurrentGenerationHash")
+			assert.Equal(t, "target-revision", updatedPCSG.Status.UpdateProgress.PodCliqueSetRevision, "PodCliqueSetRevision should match the revision label")
 			assert.Equal(t, int32(0), updatedPCSG.Status.UpdatedReplicas, "UpdatedReplicas should be reset to 0")
 		})
 	}

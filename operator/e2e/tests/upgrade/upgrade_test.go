@@ -48,6 +48,8 @@ import (
 )
 
 const (
+	// latestV1alpha1Release is the last release whose grove.io CRDs store v1alpha1. Later releases store v1beta1.
+	latestV1alpha1Release = "v0.1.0-alpha.17"
 	// upgradePCSGWorkloadName is the name of the all-PodCliqueScalingGroup workload used by the
 	// migration recovery test.
 	upgradePCSGWorkloadName = "upgrade-pcsg-only"
@@ -58,31 +60,71 @@ const (
 // podSurvivalUpgrade holds the state shared between the pre-upgrade and post-upgrade steps of the pod
 // survival test. The pod list is captured before the upgrade and asserted against afterwards.
 type podSurvivalUpgrade struct {
-	fromVersion       string
-	workload          *testctx.WorkloadConfig
-	podsBeforeUpgrade *corev1.PodList
+	fromVersion         string
+	workload            *testctx.WorkloadConfig
+	podsBeforeUpgrade   *corev1.PodList
+	hashesBeforeUpgrade workloadHashes
+	// storedVersionsBeforeUpgrade are the storedVersions of the grove.io CRDs of the fromVersion release.
+	storedVersionsBeforeUpgrade map[string][]string
 }
 
-// deployWorkload deploys the workload on the fromVersion operator and captures its pods.
+// deployWorkload deploys the workload on the fromVersion operator and captures its pods and hash labels.
 func (s *podSurvivalUpgrade) deployWorkload(t *testing.T, tc *testctx.TestContext) {
 	_, err := tc.DeployAndVerifyWorkload()
 	require.NoError(t, err, "applying workload")
 	s.podsBeforeUpgrade, err = tc.ListPods()
 	require.NoError(t, err, "listing workload pods")
+	s.hashesBeforeUpgrade = captureWorkloadHashes(t, tc)
+	s.storedVersionsBeforeUpgrade = requireStoredVersions(t, tc)
 }
 
-// verifyPodsSurvive checks that the grove.io CRDs store v1beta1 next to v1alpha1 and that the workload is
-// readable at both versions, scales the workload, then asserts the pre-upgrade pods were not recreated and
-// the init containers were updated.
+// verifyAdopted waits for the upgraded operator to set the revisions on the workload, then asserts that
+// no pod was replaced and no hash label changed.
+func (s *podSurvivalUpgrade) verifyAdopted(t *testing.T, tc *testctx.TestContext) *grovev1beta1.PodCliqueSet {
+	pcs := waitForRevisionsConverged(t, tc)
+	s.hashesBeforeUpgrade.requireUnchanged(t, tc)
+	return pcs
+}
+
+// verifyPodsSurvive checks that the grove.io CRDs add v1beta1 to the stored versions of the fromVersion
+// release and that the workload is readable at both versions, checks that the workload is adopted without replacing pods, scales the
+// workload, then asserts the pre-upgrade pods were not recreated and the init containers were updated.
 func (s *podSurvivalUpgrade) verifyPodsSurvive(t *testing.T, tc *testctx.TestContext) {
-	waitForStoredVersions(t, tc, corev1alpha1.SchemeGroupVersion.Version, grovev1beta1.SchemeGroupVersion.Version)
+	waitForStoredVersions(t, tc, withStoredVersion(s.storedVersionsBeforeUpgrade, grovev1beta1.SchemeGroupVersion.Version))
 	requirePCSReadableAtBothVersions(t, tc, types.NamespacedName{Namespace: s.workload.Namespace, Name: s.workload.Name})
-	verifyPodUIDsUnchanged(t, tc, s.podsBeforeUpgrade)
+	s.verifyAdopted(t, tc)
 
 	tc.ScalePCSAndWait(s.workload.Name, 2, 4, 0)
 	initContainerImage := fmt.Sprintf("ghcr.io/ai-dynamo/grove/grove-initc:%s", s.fromVersion)
 	verifyInitContainerUpdate(t, tc, s.podsBeforeUpgrade, initContainerImage)
 	verifyPodUIDsUnchanged(t, tc, s.podsBeforeUpgrade)
+	s.hashesBeforeUpgrade.requireUnchanged(t, tc)
+	waitForRevisionsConverged(t, tc)
+}
+
+// verifyPodsSurviveChangedHashing checks the workload is adopted by the operator built from the current
+// checkout. It then upgrades again, to a build whose hashing differs, and scales the workload.
+// No pre-upgrade pod may be replaced and no hash label may change. The new replica's PodCliques must get
+// hashes that differ from the existing replica's, which shows the second build hashes differently.
+func (s *podSurvivalUpgrade) verifyPodsSurviveChangedHashing(t *testing.T, tc *testctx.TestContext) {
+	revision := s.verifyAdopted(t, tc).Status.UpdateRevision
+
+	testctx.Logger.Info("upgrading to a Grove operator whose hashing differs")
+	upgradeGrove(t, tc, groveBuild{version: "hash-salted", hashSalt: "e2e-vupg3"})
+
+	tc.ScalePCSAndWait(s.workload.Name, 2, 4, 0)
+	require.NoError(t, tc.WaitForReadyPods(4), "scaled workload pods not ready")
+	pcs := waitForRevisionsConverged(t, tc)
+	require.Equal(t, revision, pcs.Status.UpdateRevision, "update revision changed although the template did not")
+	s.hashesBeforeUpgrade.requireUnchanged(t, tc)
+
+	hashes := captureWorkloadHashes(t, tc)
+	for _, clique := range []string{"bootstrap", "worker"} {
+		existing := hashes.podCliques[fmt.Sprintf("%s-0-%s", s.workload.Name, clique)]
+		added := hashes.podCliques[fmt.Sprintf("%s-1-%s", s.workload.Name, clique)]
+		require.NotEmpty(t, added, "PodClique %s of the new replica has no hash label", clique)
+		require.NotEqual(t, existing, added, "PodClique %s of the new replica has the existing replica's hash: the build does not hash differently", clique)
+	}
 }
 
 // Test_VUPG1_UpgradeFromLatestGitHubRelease verifies that a workload's pods created with the latest released
@@ -115,16 +157,49 @@ func Test_VUPG1_UpgradeFromLatestGitHubRelease(t *testing.T) {
 	})
 }
 
+// Test_VUPG3_UpgradeWithChangedHashing verifies #709: an operator upgrade whose hashing differs, as a
+// k8s.io/api bump can cause, does not replace pods. The workload is created on the latest release and
+// adopted by the operator built from the current checkout. Adoption compares hashes, so it runs on a
+// build that hashes like the release. A second upgrade then moves to a build with a hash salt. That
+// build decides updates from ControllerRevisions only.
+//
+// The initial version of Grove to install can be controlled with GROVE_UPGRADE_FROM_VERSION.
+func Test_VUPG3_UpgradeWithChangedHashing(t *testing.T) {
+	fromVersion := os.Getenv("GROVE_UPGRADE_FROM_VERSION")
+	if fromVersion == "" {
+		fromVersion = latestGitHubRelease(t)
+	}
+
+	s := &podSurvivalUpgrade{
+		fromVersion: fromVersion,
+		workload: &testctx.WorkloadConfig{
+			Name:         "upgrade-survivor",
+			YAMLPath:     "../../yaml/upgrade.yaml",
+			Namespace:    "default",
+			ExpectedPods: 2,
+		},
+	}
+
+	runUpgradeTest(t, upgradeTest{
+		fromVersion:     s.fromVersion,
+		nodeWorkerCount: 1,
+		prepareOpts:     []testctx.TestOption{testctx.WithWorkload(s.workload)},
+		preUpgrade:      s.deployWorkload,
+		postUpgrade:     s.verifyPodsSurviveChangedHashing,
+	})
+}
+
 // Test_VDGR1_DowngradeToLatestGitHubRelease verifies the documented downgrade: after an upgrade to the
 // operator built from the current checkout, run-api-downgrade moves the grove.io objects back to
 // grove.io/v1alpha1, and a Helm rollback to the released version then succeeds. The workload's pods
 // survive both the upgrade and the downgrade, and the released operator keeps managing the workload.
 //
-// The released version can be controlled with GROVE_UPGRADE_FROM_VERSION.
+// The documented downgrade targets a release that stores only grove.io/v1alpha1, so the released version
+// defaults to latestV1alpha1Release. It can be controlled with GROVE_UPGRADE_FROM_VERSION.
 func Test_VDGR1_DowngradeToLatestGitHubRelease(t *testing.T) {
 	fromVersion := os.Getenv("GROVE_UPGRADE_FROM_VERSION")
 	if fromVersion == "" {
-		fromVersion = latestGitHubRelease(t)
+		fromVersion = latestV1alpha1Release
 	}
 	s := &podSurvivalUpgrade{
 		fromVersion: fromVersion,
@@ -153,8 +228,8 @@ func (s *podSurvivalUpgrade) downgradeAndVerify(t *testing.T, tc *testctx.TestCo
 	alpha := corev1alpha1.SchemeGroupVersion.Version
 	pcsKey := types.NamespacedName{Namespace: s.workload.Namespace, Name: s.workload.Name}
 
-	waitForStoredVersions(t, tc, alpha, grovev1beta1.SchemeGroupVersion.Version)
-	verifyPodUIDsUnchanged(t, tc, s.podsBeforeUpgrade)
+	waitForStoredVersions(t, tc, storedVersionsFor(alpha, grovev1beta1.SchemeGroupVersion.Version))
+	s.verifyAdopted(t, tc)
 	pcsBeforeDowngrade := &corev1alpha1.PodCliqueSet{}
 	require.NoError(t, tc.Client.Get(t.Context(), pcsKey, pcsBeforeDowngrade), "get PodCliqueSet at v1alpha1")
 

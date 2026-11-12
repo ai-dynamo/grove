@@ -93,13 +93,14 @@ func (r *Reconciler) RegisterWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
-// podCliqueTemplateHashChangedPredicate admits owner updates that change only the selected pod template.
+// podCliqueTemplateHashChangedPredicate admits owner updates that change only the pod template hash or the
+// revision label. A revision change without a hash change replaces no Pod but must still be recorded in status.
 func podCliqueTemplateHashChangedPredicate() predicate.Predicate {
 	return predicate.Funcs{
 		UpdateFunc: func(updateEvent event.UpdateEvent) bool {
-			oldHash := updateEvent.ObjectOld.GetLabels()[apicommon.LabelPodTemplateHash]
-			newHash := updateEvent.ObjectNew.GetLabels()[apicommon.LabelPodTemplateHash]
-			return oldHash != newHash
+			oldLabels, newLabels := updateEvent.ObjectOld.GetLabels(), updateEvent.ObjectNew.GetLabels()
+			return oldLabels[apicommon.LabelPodTemplateHash] != newLabels[apicommon.LabelPodTemplateHash] ||
+				oldLabels[apicommon.LabelPodCliqueSetRevision] != newLabels[apicommon.LabelPodCliqueSetRevision]
 		},
 	}
 }
@@ -272,7 +273,7 @@ func currentPCSReplicaInUpdate(progress *grovecorev1beta1.PodCliqueSetUpdateProg
 }
 
 // mapPodCliqueScalingGroupToPCLQs maps a PodCliqueScalingGroup to one or more reconcile.Request(s) to its constituent PodCliques.
-// These events are needed to keep the PodClique.Status.CurrentPodCliqueSetGenerationHash in sync with the PodCliqueSet.
+// These events keep the status of member PodCliques in sync with the update of their PodCliqueScalingGroup.
 func mapPodCliqueScalingGroupToPCLQs() handler.MapFunc {
 	return func(_ context.Context, obj client.Object) []reconcile.Request {
 		pcsg, ok := obj.(*grovecorev1beta1.PodCliqueScalingGroup)
@@ -300,6 +301,7 @@ func podCliqueScalingGroupPredicate() predicate.Predicate {
 				return false
 			}
 			return !stringPointersEqual(oldPCSG.Status.CurrentPodCliqueSetGenerationHash, newPCSG.Status.CurrentPodCliqueSetGenerationHash) ||
+				oldPCSG.Status.CurrentPodCliqueSetRevision != newPCSG.Status.CurrentPodCliqueSetRevision ||
 				pcsgUpdateTargetGenerationChanged(oldPCSG.Status.UpdateProgress, newPCSG.Status.UpdateProgress)
 		},
 		GenericFunc: func(_ event.GenericEvent) bool { return false },
@@ -316,12 +318,13 @@ func pcsgUpdateTargetGenerationChanged(oldProgress, newProgress *grovecorev1beta
 	return oldOK && oldTarget != newTarget
 }
 
-// pcsgUpdateTargetGeneration returns the target PodCliqueSet generation hash for an in-progress PodCliqueScalingGroup update, if any.
+// pcsgUpdateTargetGeneration returns the target PodCliqueSet revision and generation hash for an in-progress
+// PodCliqueScalingGroup update, if any.
 func pcsgUpdateTargetGeneration(progress *grovecorev1beta1.PodCliqueScalingGroupUpdateProgress) (string, bool) {
 	if progress == nil {
 		return "", false
 	}
-	return progress.PodCliqueSetGenerationHash, true
+	return progress.PodCliqueSetRevision + "/" + progress.PodCliqueSetGenerationHash, true
 }
 
 func stringPointersEqual(oldValue, newValue *string) bool {

@@ -372,11 +372,15 @@ func getLabels(pclqObjectMeta metav1.ObjectMeta, pcsName, podGangName string, pc
 	if pcsgPodIndex != nil {
 		labels[apicommon.LabelPodCliqueScalingGroupPodIndex] = strconv.Itoa(*pcsgPodIndex)
 	}
-	return lo.Assign(
+	podLabels := lo.Assign(
 		apicommon.GetDefaultLabelsForPodCliqueSetManagedResources(pcsName),
 		pclqObjectMeta.Labels,
 		labels,
 	)
+	// The revision label records which revision the PodClique corresponds to. It moves without replacing Pods, so
+	// a Pod would carry a stale value.
+	delete(podLabels, apicommon.LabelPodCliqueSetRevision)
+	return podLabels
 }
 
 // addEnvironmentVariables adds Grove-specific environment variables to all containers and init-containers.

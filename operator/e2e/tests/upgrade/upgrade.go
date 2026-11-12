@@ -86,7 +86,7 @@ func runUpgradeTest(t *testing.T, cfg upgradeTest) {
 	if cfg.preUpgrade != nil {
 		cfg.preUpgrade(t, tc)
 	}
-	upgradeGrove(t, tc)
+	upgradeGrove(t, tc, groveBuild{})
 	cfg.postUpgrade(t, tc)
 }
 
@@ -159,11 +159,36 @@ func uninstallGrove(t *testing.T, tc *testctx.TestContext) {
 	}), "uninstall Grove chart")
 }
 
-// upgradeGrove handles the upgrade of Grove to the current codebase.
-func upgradeGrove(t *testing.T, tc *testctx.TestContext) {
+// groveBuild describes an operator build from the current checkout.
+type groveBuild struct {
+	// version is the image tag and the operator's gitVersion. It defaults to latest.
+	// A different version makes Helm roll the operator to the new images.
+	version string
+	// hashSalt, when set, is mixed into every hash the operator computes.
+	// It simulates a build whose hashing differs, as a k8s.io/api bump can cause.
+	hashSalt string
+}
+
+// ldFlags returns the LD_FLAGS for the build.
+func (b groveBuild) ldFlags() string {
+	ldFlags := "-X github.com/ai-dynamo/grove/operator/internal/version.gitCommit=e2e-upgrade-commit " +
+		"-X github.com/ai-dynamo/grove/operator/internal/version.gitTreeState=clean " +
+		"-X github.com/ai-dynamo/grove/operator/internal/version.buildDate=now " +
+		"-X github.com/ai-dynamo/grove/operator/internal/version.gitVersion=" + b.version
+	if b.hashSalt != "" {
+		ldFlags += " -X github.com/ai-dynamo/grove/operator/internal/utils/kubernetes.hashSalt=" + b.hashSalt
+	}
+	return ldFlags
+}
+
+// upgradeGrove builds the operator from the current checkout and upgrades the Grove release to it.
+func upgradeGrove(t *testing.T, tc *testctx.TestContext, build groveBuild) {
 	t.Helper()
 
-	testctx.Logger.Info("building current Grove operator")
+	if build.version == "" {
+		build.version = "latest"
+	}
+	testctx.Logger.Infof("building current Grove operator %s", build.version)
 
 	rootDir, err := setup.GetOperatorRootDir()
 	require.NoError(t, err, "locate current root directory")
@@ -174,12 +199,11 @@ func upgradeGrove(t *testing.T, tc *testctx.TestContext) {
 		PushRepo:         "localhost:5001",
 		PullRepo:         "registry:5001",
 		Env: map[string]string{
-			"VERSION": "latest",
-			"LD_FLAGS": "-X github.com/ai-dynamo/grove/operator/internal/version.gitCommit=e2e-upgrade-commit " +
-				"-X github.com/ai-dynamo/grove/operator/internal/version.gitTreeState=clean " +
-				"-X github.com/ai-dynamo/grove/operator/internal/version.buildDate=now " +
-				"-X github.com/ai-dynamo/grove/operator/internal/version.gitVersion=latest",
+			"VERSION":  build.version,
+			"LD_FLAGS": build.ldFlags(),
 		},
+		// The skaffold cache ignores LD_FLAGS, so a cached image would drop the salt.
+		DisableCache: build.hashSalt != "",
 		Logger: testctx.Logger,
 	})
 	require.NoError(t, err, "building new operator images")
@@ -202,7 +226,7 @@ func upgradeGrove(t *testing.T, tc *testctx.TestContext) {
 			"config": map[string]any{"server": map[string]any{"healthProbes": map[string]any{"enable": true}}},
 			"image": map[string]any{
 				"repository": "registry:5001/grove-operator",
-				"tag":        "latest",
+				"tag":        build.version,
 			},
 			"deployment": map[string]any{
 				"env": []any{
@@ -216,7 +240,7 @@ func upgradeGrove(t *testing.T, tc *testctx.TestContext) {
 				"upgradeCRDs": true,
 				"image": map[string]any{
 					"repository": "registry:5001/grove-install-crds",
-					"tag":        "latest",
+					"tag":        build.version,
 				},
 			},
 		},

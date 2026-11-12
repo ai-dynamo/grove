@@ -947,6 +947,7 @@ func autoConvert_v1alpha1_PodCliqueScalingGroupStatus_To_v1beta1_PodCliqueScalin
 	out.LastErrors = *(*[]v1beta1.LastError)(unsafe.Pointer(&in.LastErrors))
 	out.Conditions = *(*[]v1.Condition)(unsafe.Pointer(&in.Conditions))
 	out.CurrentPodCliqueSetGenerationHash = (*string)(unsafe.Pointer(in.CurrentPodCliqueSetGenerationHash))
+	out.CurrentPodCliqueSetRevision = in.CurrentPodCliqueSetRevision
 	out.UpdateProgress = (*v1beta1.PodCliqueScalingGroupUpdateProgress)(unsafe.Pointer(in.UpdateProgress))
 	return nil
 }
@@ -966,6 +967,7 @@ func autoConvert_v1beta1_PodCliqueScalingGroupStatus_To_v1alpha1_PodCliqueScalin
 	out.LastErrors = *(*[]LastError)(unsafe.Pointer(&in.LastErrors))
 	out.Conditions = *(*[]v1.Condition)(unsafe.Pointer(&in.Conditions))
 	out.CurrentPodCliqueSetGenerationHash = (*string)(unsafe.Pointer(in.CurrentPodCliqueSetGenerationHash))
+	out.CurrentPodCliqueSetRevision = in.CurrentPodCliqueSetRevision
 	out.UpdateProgress = (*PodCliqueScalingGroupUpdateProgress)(unsafe.Pointer(in.UpdateProgress))
 	return nil
 }
@@ -980,6 +982,7 @@ func autoConvert_v1alpha1_PodCliqueScalingGroupUpdateProgress_To_v1beta1_PodCliq
 	out.UpdateEndedAt = (*v1.Time)(unsafe.Pointer(in.UpdateEndedAt))
 	out.LastProgressedAt = (*v1.Time)(unsafe.Pointer(in.LastProgressedAt))
 	out.PodCliqueSetGenerationHash = in.PodCliqueSetGenerationHash
+	out.PodCliqueSetRevision = in.PodCliqueSetRevision
 	out.UpdatedPodCliquesCount = in.UpdatedPodCliquesCount
 	out.TotalPodCliquesCount = in.TotalPodCliquesCount
 	return nil
@@ -995,6 +998,7 @@ func autoConvert_v1beta1_PodCliqueScalingGroupUpdateProgress_To_v1alpha1_PodCliq
 	out.UpdateEndedAt = (*v1.Time)(unsafe.Pointer(in.UpdateEndedAt))
 	out.LastProgressedAt = (*v1.Time)(unsafe.Pointer(in.LastProgressedAt))
 	out.PodCliqueSetGenerationHash = in.PodCliqueSetGenerationHash
+	out.PodCliqueSetRevision = in.PodCliqueSetRevision
 	out.UpdatedPodCliquesCount = in.UpdatedPodCliquesCount
 	out.TotalPodCliquesCount = in.TotalPodCliquesCount
 	return nil
@@ -1167,6 +1171,8 @@ func autoConvert_v1alpha1_PodCliqueSetStatus_To_v1beta1_PodCliqueSetStatus(in *P
 	out.Selector = (*string)(unsafe.Pointer(in.Selector))
 	// WARNING: in.PodGangStatutes requires manual conversion: does not exist in peer-type
 	out.CurrentGenerationHash = (*string)(unsafe.Pointer(in.CurrentGenerationHash))
+	out.CurrentRevision = in.CurrentRevision
+	out.UpdateRevision = in.UpdateRevision
 	out.UpdateProgress = (*v1beta1.PodCliqueSetUpdateProgress)(unsafe.Pointer(in.UpdateProgress))
 	out.ScalingProgress = (*v1beta1.PodCliqueSetScalingProgress)(unsafe.Pointer(in.ScalingProgress))
 	return nil
@@ -1181,6 +1187,8 @@ func autoConvert_v1beta1_PodCliqueSetStatus_To_v1alpha1_PodCliqueSetStatus(in *v
 	out.AvailableReplicas = in.AvailableReplicas
 	out.Selector = (*string)(unsafe.Pointer(in.Selector))
 	out.CurrentGenerationHash = (*string)(unsafe.Pointer(in.CurrentGenerationHash))
+	out.CurrentRevision = in.CurrentRevision
+	out.UpdateRevision = in.UpdateRevision
 	out.UpdateProgress = (*PodCliqueSetUpdateProgress)(unsafe.Pointer(in.UpdateProgress))
 	out.ScalingProgress = (*PodCliqueSetScalingProgress)(unsafe.Pointer(in.ScalingProgress))
 	return nil
@@ -1382,6 +1390,7 @@ func autoConvert_v1alpha1_PodCliqueStatus_To_v1beta1_PodCliqueStatus(in *PodCliq
 	out.Conditions = *(*[]v1.Condition)(unsafe.Pointer(&in.Conditions))
 	out.CurrentPodCliqueSetGenerationHash = (*string)(unsafe.Pointer(in.CurrentPodCliqueSetGenerationHash))
 	out.CurrentPodTemplateHash = (*string)(unsafe.Pointer(in.CurrentPodTemplateHash))
+	out.CurrentPodCliqueSetRevision = in.CurrentPodCliqueSetRevision
 	out.UpdateProgress = (*v1beta1.PodCliqueUpdateProgress)(unsafe.Pointer(in.UpdateProgress))
 	return nil
 }
@@ -1404,6 +1413,7 @@ func autoConvert_v1beta1_PodCliqueStatus_To_v1alpha1_PodCliqueStatus(in *v1beta1
 	out.Conditions = *(*[]v1.Condition)(unsafe.Pointer(&in.Conditions))
 	out.CurrentPodCliqueSetGenerationHash = (*string)(unsafe.Pointer(in.CurrentPodCliqueSetGenerationHash))
 	out.CurrentPodTemplateHash = (*string)(unsafe.Pointer(in.CurrentPodTemplateHash))
+	out.CurrentPodCliqueSetRevision = in.CurrentPodCliqueSetRevision
 	out.UpdateProgress = (*PodCliqueUpdateProgress)(unsafe.Pointer(in.UpdateProgress))
 	return nil
 }
@@ -1470,6 +1480,7 @@ func autoConvert_v1alpha1_PodCliqueUpdateProgress_To_v1beta1_PodCliqueUpdateProg
 	out.UpdateEndedAt = (*v1.Time)(unsafe.Pointer(in.UpdateEndedAt))
 	out.LastProgressedAt = (*v1.Time)(unsafe.Pointer(in.LastProgressedAt))
 	out.PodCliqueSetGenerationHash = in.PodCliqueSetGenerationHash
+	out.PodCliqueSetRevision = in.PodCliqueSetRevision
 	out.PodTemplateHash = in.PodTemplateHash
 	out.UpdatedScheduledReplicas = in.UpdatedScheduledReplicas
 	return nil
@@ -1485,6 +1496,7 @@ func autoConvert_v1beta1_PodCliqueUpdateProgress_To_v1alpha1_PodCliqueUpdateProg
 	out.UpdateEndedAt = (*v1.Time)(unsafe.Pointer(in.UpdateEndedAt))
 	out.LastProgressedAt = (*v1.Time)(unsafe.Pointer(in.LastProgressedAt))
 	out.PodCliqueSetGenerationHash = in.PodCliqueSetGenerationHash
+	out.PodCliqueSetRevision = in.PodCliqueSetRevision
 	out.PodTemplateHash = in.PodTemplateHash
 	out.UpdatedScheduledReplicas = in.UpdatedScheduledReplicas
 	return nil

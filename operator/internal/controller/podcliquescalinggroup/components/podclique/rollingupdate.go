@@ -153,15 +153,16 @@ func computeDisruptionBudget(existing, desired, effectiveMaxUnavailable, newNotR
 	return existing - (desired - effectiveMaxUnavailable) - newNotReady
 }
 
-// markUpdateEnd atomically records that the update ended and that the PCSG fully realized its target generation.
-// Setting CurrentPodCliqueSetGenerationHash from UpdateProgress is safe only because reconcileInProgressUpdate
-// first requeues when the PCSG update target differs from the current PCS generation. That guard ensures the
-// completion checks were evaluated against the same generation recorded here; it must remain in place for every
+// markUpdateEnd atomically records that the update ended and that the PCSG fully realized its target revision.
+// Setting CurrentPodCliqueSetRevision from UpdateProgress is safe only because reconcileInProgressUpdate first
+// requeues when the PCSG update target differs from the target revision on the PCSG. That guard ensures the
+// completion checks were evaluated against the same revision recorded here; it must remain in place for every
 // strategy that calls markUpdateEnd.
 func (r _resource) markUpdateEnd(ctx context.Context, logger logr.Logger, pcsg *grovecorev1beta1.PodCliqueScalingGroup) error {
 	patch := client.MergeFrom(pcsg.DeepCopy())
 
 	pcsg.Status.UpdateProgress.UpdateEndedAt = ptr.To(metav1.Now())
+	pcsg.Status.CurrentPodCliqueSetRevision = pcsg.Status.UpdateProgress.PodCliqueSetRevision
 	pcsg.Status.CurrentPodCliqueSetGenerationHash = ptr.To(pcsg.Status.UpdateProgress.PodCliqueSetGenerationHash)
 
 	if err := r.client.Status().Patch(ctx, pcsg, patch); err != nil {
@@ -199,7 +200,7 @@ func (r _resource) computePendingUpdateWork(ss *syncSnapshot) (*updateWork, erro
 		}
 		uw.existingReplicas++
 
-		labeled, err := isReplicaLabeledWithExpectedHash(ss, memberPCLQs)
+		labeled, err := isReplicaAtTargetRevision(ss, memberPCLQs)
 		if err != nil {
 			return nil, err
 		}
@@ -224,50 +225,45 @@ func (r _resource) computePendingUpdateWork(ss *syncSnapshot) (*updateWork, erro
 	return uw, nil
 }
 
-// isReplicaLabeledWithExpectedHash reports whether every member PodClique carries the expected pod
-// template hash label, i.e. the replica already holds the new configuration. This is the old-vs-new
-// discriminator and is intentionally label-only: a freshly recreated replica carries the label
-// immediately while its status hashes lag, so a status-based check would misclassify it as old and
-// re-disrupt it. It returns ErrMissingPodTemplateHashLabel when a member is missing the label, since a
-// managed PodClique must always carry it and its absence is a malformed state, not an old replica.
-func isReplicaLabeledWithExpectedHash(sc *syncSnapshot, members []grovecorev1beta1.PodClique) (bool, error) {
+// isReplicaAtTargetRevision reports whether every member PodClique carries the target revision label, i.e. the
+// replica already holds the new configuration. This is the old-vs-new discriminator. Members whose pod template is
+// unchanged are moved to the target revision before this runs, so a member left on another revision has a changed
+// pod template. It is intentionally label-only: a freshly recreated replica carries the label immediately while its
+// status lags, so a status-based check would misclassify it as old and re-disrupt it. It returns
+// ErrMissingPodTemplateHashLabel when a member is missing the pod template hash label, since a managed PodClique must
+// always carry it and its absence is a malformed state, not an old replica.
+func isReplicaAtTargetRevision(sc *syncSnapshot, members []grovecorev1beta1.PodClique) (bool, error) {
 	for _, pclq := range members {
-		podTemplateHash, ok := pclq.Labels[apicommon.LabelPodTemplateHash]
-		if !ok {
+		if _, ok := pclq.Labels[apicommon.LabelPodTemplateHash]; !ok {
 			return false, groveerr.ErrMissingPodTemplateHashLabel
 		}
-		if podTemplateHash != sc.expectedPCLQPodTemplateHashMap[pclq.Name] {
+		if sc.targetRevision == "" || pclq.Labels[apicommon.LabelPodCliqueSetRevision] != sc.targetRevision {
 			return false, nil
 		}
 	}
 	return true, nil
 }
 
-// isReplicaUpdated reports whether an already labeled replica has confirmed its rollout: every expected
-// member exists and its status reports the expected pod template and PodCliqueSet generation with at
-// least MinAvailable updated Pods. Call only for replicas isReplicaLabeledWithExpectedHash accepts.
+// isReplicaUpdated reports whether a replica at the target revision has confirmed its rollout: every expected
+// member exists, has reached the target revision and has at least MinAvailable updated Pods. Call only for replicas
+// isReplicaAtTargetRevision accepts.
 func isReplicaUpdated(sc *syncSnapshot, replicaIndex int, members []grovecorev1beta1.PodClique) bool {
 	if len(sc.expectedPCLQFQNsPerPCSGReplica[replicaIndex]) != len(members) {
 		return false
 	}
 	return lo.EveryBy(members, func(pclq grovecorev1beta1.PodClique) bool {
-		expectedPodTemplateHash := sc.expectedPCLQPodTemplateHashMap[pclq.Name]
-		return expectedPodTemplateHash != "" &&
-			pclq.Status.CurrentPodTemplateHash != nil && *pclq.Status.CurrentPodTemplateHash == expectedPodTemplateHash &&
-			sc.pcs.Status.CurrentGenerationHash != nil &&
-			pclq.Status.CurrentPodCliqueSetGenerationHash != nil && *pclq.Status.CurrentPodCliqueSetGenerationHash == *sc.pcs.Status.CurrentGenerationHash &&
+		return pclq.Status.CurrentPodCliqueSetRevision == sc.targetRevision &&
 			pclq.Status.UpdatedReplicas >= *pclq.Spec.MinAvailable
 	})
 }
 
 // isReplicaUpdatedAndReady reports whether a PodCliqueScalingGroup replica has fully rolled to the
-// expected configuration and is Ready: every member carries the expected pod template hash, its
-// rollout is confirmed (status hashes and MinAvailable updated Pods), and the replica is Ready. It
-// backs the coherent-update convergence check, which must not end an update while any replica is on a
-// superseded revision or not yet Ready.
+// target revision and is Ready: every member carries the target revision label, its rollout is confirmed
+// (reached revision and MinAvailable updated Pods), and the replica is Ready. It backs the coherent-update
+// convergence check, which must not end an update while any replica is on a superseded revision or not yet Ready.
 func isReplicaUpdatedAndReady(sc *syncSnapshot, replicaIndex int, members []grovecorev1beta1.PodClique) bool {
-	labeled, err := isReplicaLabeledWithExpectedHash(sc, members)
-	if err != nil || !labeled {
+	atTarget, err := isReplicaAtTargetRevision(sc, members)
+	if err != nil || !atTarget {
 		return false
 	}
 	return isReplicaUpdated(sc, replicaIndex, members) && componentutils.ComputePCSGReplicaState(members, len(sc.pcsg.Spec.CliqueNames)) == componentutils.PCSGReplicaStateReady

@@ -108,56 +108,31 @@ func GetPCSGsByPCSReplicaIndex(ctx context.Context, cl client.Client, pcsObjMeta
 	return GroupPCSGsByPCSReplicaIndex(pcsgs)
 }
 
-// GetPCLQTemplateHashes generates the Pod template hash for all PCLQs in a PCSG. Returns a map of [PCLQ Name : PodTemplateHas]
-func GetPCLQTemplateHashes(pcs *grovecorev1beta1.PodCliqueSet, pcsg *grovecorev1beta1.PodCliqueScalingGroup) map[string]string {
-	pclqTemplateSpecs := make([]*grovecorev1beta1.PodCliqueTemplateSpec, 0, len(pcsg.Spec.CliqueNames))
-	for _, cliqueName := range pcsg.Spec.CliqueNames {
-		pclqTemplateSpec := FindPodCliqueTemplateSpecByName(pcs, cliqueName)
-		if pclqTemplateSpec == nil {
-			continue
-		}
-		pclqTemplateSpecs = append(pclqTemplateSpecs, pclqTemplateSpec)
-	}
-	cliqueTemplateSpecHashes := make(map[string]string, len(pclqTemplateSpecs))
-	for pcsgReplicaIndex := range int(pcsg.Spec.Replicas) {
-		for _, pclqTemplateSpec := range pclqTemplateSpecs {
-			pclqFQN := apicommon.GeneratePodCliqueName(apicommon.ResourceNameReplica{Name: pcsg.Name, Replica: pcsgReplicaIndex}, pclqTemplateSpec.Name)
-			cliqueTemplateSpecHashes[pclqFQN] = ComputePCLQPodTemplateHash(pclqTemplateSpec, pcs.Spec.Template.PriorityClassName)
-		}
-	}
-	return cliqueTemplateSpecHashes
-}
-
-// GetPCLQsInPCSGPendingUpdate collects the PodClique FQNs that are pending updates.
-// It identifies PCLQ pending update by comparing the current PodTemplateHash label on an existing PCLQ with that of
-// a computed PodTemplateHash from the latest PodCliqueSet resource.
-func GetPCLQsInPCSGPendingUpdate(pcs *grovecorev1beta1.PodCliqueSet, pcsg *grovecorev1beta1.PodCliqueScalingGroup, existingPCLQs []grovecorev1beta1.PodClique) []string {
-	pclqFQNsPendingUpdate := make([]string, 0, len(existingPCLQs))
-	expectedPCLQPodTemplateHashes := GetPCLQTemplateHashes(pcs, pcsg)
-	for _, existingPCLQ := range existingPCLQs {
-		existingPodTemplateHash := existingPCLQ.Labels[apicommon.LabelPodTemplateHash]
-		expectedPodTemplateHash := expectedPCLQPodTemplateHashes[existingPCLQ.Name]
-		if existingPodTemplateHash != expectedPodTemplateHash {
-			pclqFQNsPendingUpdate = append(pclqFQNsPendingUpdate, existingPCLQ.Name)
-		}
-	}
-	return pclqFQNsPendingUpdate
-}
-
 // IsPCSGUpdateInProgress checks if PCSG is under rolling update.
 func IsPCSGUpdateInProgress(pcsg *grovecorev1beta1.PodCliqueScalingGroup) bool {
 	return pcsg.Status.UpdateProgress != nil && pcsg.Status.UpdateProgress.UpdateEndedAt == nil
 }
 
-// IsPCSGUpdateComplete reports whether the PodCliqueScalingGroup has fully converged to the requested
-// PCS generation and has no active update. Requiring both prevents a PCS revision rollback from treating
-// a PCSG as complete merely because CurrentPodCliqueSetGenerationHash still matches the restored generation
-// while the PCSG is partway through an update to the superseded generation. Keeping that replica incomplete
-// allows the PCS to select it again, after which PCSG processUpdate can reset its update target.
-func IsPCSGUpdateComplete(pcsg *grovecorev1beta1.PodCliqueScalingGroup, pcsGenerationHash string) bool {
-	generationConverged := pcsg.Status.CurrentPodCliqueSetGenerationHash != nil &&
-		*pcsg.Status.CurrentPodCliqueSetGenerationHash == pcsGenerationHash
-	return generationConverged && !IsPCSGUpdateInProgress(pcsg)
+// IsPCSGUpdateComplete reports whether every member PodClique of the PodCliqueScalingGroup has reached
+// updateRevision and no update of it is in progress. Requiring both keeps a PodCliqueScalingGroup that is partway
+// through an update to a superseded revision incomplete, so the PodCliqueSet selects its replica again and the
+// PodCliqueScalingGroup can reset its update target.
+func IsPCSGUpdateComplete(pcsg *grovecorev1beta1.PodCliqueScalingGroup, updateRevision string) bool {
+	return updateRevision != "" &&
+		pcsg.Status.CurrentPodCliqueSetRevision == updateRevision &&
+		!IsPCSGUpdateInProgress(pcsg)
+}
+
+// IsPCSGMemberPCLQUpdated reports whether a member PodClique of a PodCliqueScalingGroup has reached targetRevision
+// and has at least MinAvailable updated and ready Pods.
+func IsPCSGMemberPCLQUpdated(pclq *grovecorev1beta1.PodClique, targetRevision string) bool {
+	if targetRevision == "" || pclq.Spec.MinAvailable == nil {
+		return false
+	}
+	return pclq.Labels[apicommon.LabelPodCliqueSetRevision] == targetRevision &&
+		pclq.Status.CurrentPodCliqueSetRevision == targetRevision &&
+		pclq.Status.ReadyReplicas >= *pclq.Spec.MinAvailable &&
+		pclq.Status.UpdatedReplicas >= *pclq.Spec.MinAvailable
 }
 
 // GetPodCliqueFQNsForPCSG generates the PodClique FQNs for all PodCliques that are owned by a PodCliqueScalingGroup.

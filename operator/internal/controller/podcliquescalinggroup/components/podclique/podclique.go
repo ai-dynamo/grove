@@ -67,6 +67,7 @@ const (
 	errCodeSyncPCSGPodIndexOffsets                       grovecorev1beta1.ErrorCode = "ERR_SYNC_PCSG_POD_INDEX_OFFSETS"
 	errCodeCreatePCSGExpectationsStoreKey                grovecorev1beta1.ErrorCode = "ERR_CREATE_PODCLIQUESCALINGGROUP_EXPECTATIONS_STORE_KEY"
 	errCodeReconcileReplicaPlacement                     grovecorev1beta1.ErrorCode = "ERR_RECONCILE_PCSG_REPLICA_PLACEMENT"
+	errCodeRestampPodClique                              grovecorev1beta1.ErrorCode = "ERR_RESTAMP_PODCLIQUE"
 )
 
 var (
@@ -261,7 +262,7 @@ func (r _resource) doCreate(ctx context.Context, logger logr.Logger, ss *syncSna
 	logger.V(1).Info("Running CreateOrUpdate PodClique", "pclqObjectKey", pclqObjectKey)
 	pclq := emptyPodClique(pclqObjectKey)
 	pcsgObjKey := client.ObjectKeyFromObject(pclq)
-	if err := r.buildResource(logger, ss, pcsgReplicaIndex, pclq, false); err != nil {
+	if err := r.buildResource(ctx, logger, ss, pcsgReplicaIndex, pclq, false); err != nil {
 		return err
 	}
 	if err := r.client.Create(ctx, pclq); err != nil {
@@ -289,7 +290,7 @@ func (r _resource) doCreateOrUpdate(ctx context.Context, logger logr.Logger, ss 
 	pcsgObjKey := client.ObjectKeyFromObject(ss.pcsg)
 
 	opResult, err := k8sutils.CreateOrPatchSpec(ctx, r.client, pclq, func() error {
-		return r.buildResource(logger, ss, pcsgReplicaIndex, pclq, pclqExists)
+		return r.buildResource(ctx, logger, ss, pcsgReplicaIndex, pclq, pclqExists)
 	})
 	if err != nil {
 		r.eventRecorder.Eventf(ss.pcsg, corev1.EventTypeWarning, constants.ReasonPodCliqueCreateOrUpdateFailed, "PodClique %v creation or update failed: %v", pclqObjectKey, err)
@@ -306,8 +307,9 @@ func (r _resource) doCreateOrUpdate(ctx context.Context, logger logr.Logger, ss 
 }
 
 // buildResource constructs a PodClique resource from templates, setting up metadata, labels, dependencies and environment variables.
-// When pclqExists is true, the current replicas value is preserved to avoid overwriting HPA-managed scaling.
-func (r _resource) buildResource(logger logr.Logger, ss *syncSnapshot, pcsgReplicaIndex int, pclq *grovecorev1beta1.PodClique, pclqExists bool) error {
+// When pclqExists is true, the current replicas value is preserved to avoid overwriting HPA-managed scaling. The
+// pod template hash is computed only when the clique's pod template changes (see ResolvePodTemplateHash).
+func (r _resource) buildResource(ctx context.Context, logger logr.Logger, ss *syncSnapshot, pcsgReplicaIndex int, pclq *grovecorev1beta1.PodClique, pclqExists bool) error {
 	pcs, pcsg, pcsReplicaIndex := ss.pcs, ss.pcsg, ss.pcsReplicaIndex
 	pclqObjectKey, pcsObjectKey := client.ObjectKeyFromObject(pclq), client.ObjectKeyFromObject(pcs)
 	pclqTemplateSpec, ok := lo.Find(pcs.Spec.Template.Cliques, func(pclqTemplateSpec *grovecorev1beta1.PodCliqueTemplateSpec) bool {
@@ -342,7 +344,21 @@ func (r _resource) buildResource(logger logr.Logger, ss *syncSnapshot, pcsgRepli
 		)
 	}
 
-	pclq.Labels = getLabels(pcs, pcsReplicaIndex, pcsg, pcsgReplicaIndex, pclqObjectKey, pclqTemplateSpec, podGangName)
+	podTemplateHash, err := componentutils.ResolvePodTemplateHash(ctx, r.client, pcs, ss.targetRevision, pclqTemplateSpec.Name, pclq.Labels)
+	if err != nil {
+		return groveerr.WrapError(err,
+			errCodeBuildPodClique,
+			component.OperationSync,
+			fmt.Sprintf("failed to resolve the pod template hash for PodClique: %v", pclqObjectKey),
+		)
+	}
+	// Until the PodCliqueSet writes a target revision on the PodCliqueScalingGroup, an existing PodClique keeps the
+	// revision it was written from.
+	revision := ss.targetRevision
+	if revision == "" {
+		revision = pclq.Labels[apicommon.LabelPodCliqueSetRevision]
+	}
+	pclq.Labels = getLabels(pcs, pcsReplicaIndex, pcsg, pcsgReplicaIndex, pclqObjectKey, pclqTemplateSpec, podGangName, podTemplateHash, revision)
 	pclq.Annotations = maps.Clone(pclqTemplateSpec.Annotations)
 	if pclq.Annotations == nil {
 		pclq.Annotations = make(map[string]string)
@@ -452,7 +468,7 @@ func getPodCliqueSelectorLabels(pcsgObjectMeta metav1.ObjectMeta) map[string]str
 }
 
 // getLabels constructs the complete set of labels for a PodClique including Grove-specific, component, and template labels
-func getLabels(pcs *grovecorev1beta1.PodCliqueSet, pcsReplicaIndex int, pcsg *grovecorev1beta1.PodCliqueScalingGroup, pcsgReplicaIndex int, pclqObjectKey client.ObjectKey, pclqTemplateSpec *grovecorev1beta1.PodCliqueTemplateSpec, podGangName string) map[string]string {
+func getLabels(pcs *grovecorev1beta1.PodCliqueSet, pcsReplicaIndex int, pcsg *grovecorev1beta1.PodCliqueScalingGroup, pcsgReplicaIndex int, pclqObjectKey client.ObjectKey, pclqTemplateSpec *grovecorev1beta1.PodCliqueTemplateSpec, podGangName, podTemplateHash, revision string) map[string]string {
 	pclqComponentLabels := map[string]string{
 		apicommon.LabelAppNameKey:                        pclqObjectKey.Name,
 		apicommon.LabelComponentKey:                      apicommon.LabelComponentNamePodCliqueScalingGroupPodClique,
@@ -460,7 +476,10 @@ func getLabels(pcs *grovecorev1beta1.PodCliqueSet, pcsReplicaIndex int, pcsg *gr
 		apicommon.LabelPodGang:                           podGangName,
 		apicommon.LabelPodCliqueSetReplicaIndex:          strconv.Itoa(pcsReplicaIndex),
 		apicommon.LabelPodCliqueScalingGroupReplicaIndex: strconv.Itoa(pcsgReplicaIndex),
-		apicommon.LabelPodTemplateHash:                   componentutils.ComputePCLQPodTemplateHash(pclqTemplateSpec, pcs.Spec.Template.PriorityClassName),
+		apicommon.LabelPodTemplateHash:                   podTemplateHash,
+	}
+	if revision != "" {
+		pclqComponentLabels[apicommon.LabelPodCliqueSetRevision] = revision
 	}
 
 	return lo.Assign(

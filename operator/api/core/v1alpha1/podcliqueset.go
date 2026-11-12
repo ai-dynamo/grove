@@ -100,13 +100,17 @@ type PodCliqueSetStatus struct {
 	Selector *string `json:"hpaPodSelector,omitempty"`
 	// PodGangStatuses captures the status for all the PodGang's that are part of the PodCliqueSet.
 	PodGangStatutes []PodGangStatus `json:"podGangStatuses,omitempty"`
-	// CurrentGenerationHash is a hash value generated out of a collection of fields in a PodCliqueSet.
-	// Since only a subset of fields is taken into account when generating the hash, not every change in the PodCliqueSetSpec will
-	// be accounted for when generating this hash value. A field in PodCliqueSetSpec is included if a change to it triggers
-	// a rolling recreate of PodCliques and/or PodCliqueScalingGroups.
-	// Only if this value is not nil and the newly computed hash value is different from the persisted CurrentGenerationHash value
-	// then an update needs to be triggered.
+	// CurrentGenerationHash is a hash of the pod templates of UpdateRevision.
+	// It is set when the PodCliqueSet is created and recomputed only when a pod template changes.
+	// Use UpdateRevision and CurrentRevision to track updates.
 	CurrentGenerationHash *string `json:"currentGenerationHash,omitempty"`
+	// CurrentRevision is the name of the last ControllerRevision that every PodClique and PodCliqueScalingGroup reached.
+	// It moves to UpdateRevision once all of them reach it.
+	// +optional
+	CurrentRevision string `json:"currentRevision,omitempty"`
+	// UpdateRevision is the name of the ControllerRevision whose template matches spec.template.
+	// +optional
+	UpdateRevision string `json:"updateRevision,omitempty"`
 	// UpdateProgress represents the progress of an update.
 	UpdateProgress *PodCliqueSetUpdateProgress `json:"updateProgress,omitempty"`
 	// ScalingProgress records replica indices selected for scale-out or scale-in.
@@ -156,8 +160,7 @@ type PodCliqueSetUpdateProgress struct {
 	// 	  pending on Grove.
 	// +optional
 	UpdateEndedAt *metav1.Time `json:"updateEndedAt,omitempty"`
-	// UpdatedPodCliquesCount is the number of PodCliques that have been updated to the desired PodCliqueSet
-	// generation hash. Recomputed each reconcile from child generation-hash labels.
+	// UpdatedPodCliquesCount is the number of standalone PodCliques that have reached UpdateRevision.
 	// +optional
 	// +kubebuilder:default=0
 	UpdatedPodCliquesCount int32 `json:"updatedPodCliquesCount,omitempty"`
@@ -166,8 +169,7 @@ type PodCliqueSetUpdateProgress struct {
 	// +optional
 	// +kubebuilder:default=0
 	TotalPodCliquesCount int32 `json:"totalPodCliquesCount,omitempty"`
-	// UpdatedPodCliqueScalingGroupsCount is the number of PodCliqueScalingGroups that have been updated to the
-	// desired PodCliqueSet generation hash.
+	// UpdatedPodCliqueScalingGroupsCount is the number of PodCliqueScalingGroups that have reached UpdateRevision.
 	// +optional
 	// +kubebuilder:default=0
 	UpdatedPodCliqueScalingGroupsCount int32 `json:"updatedPodCliqueScalingGroupsCount,omitempty"`

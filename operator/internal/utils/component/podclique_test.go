@@ -22,10 +22,12 @@ import (
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
+	"github.com/ai-dynamo/grove/operator/internal/utils/controllerrevision"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	appsv1 "k8s.io/api/apps/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -445,46 +447,200 @@ func TestIsLastPCLQUpdateCompleted(t *testing.T) {
 // TestIsPCLQUpdateCompleteRejectsActiveUpdate models a PCS rollback during a partially completed
 // PCLQ update:
 //
-//  1. The PCLQ previously completed generation-1.
-//  2. The PCS changed to generation-2, and the PCLQ started updating to it.
-//  3. Before the PCLQ completed generation-2, the PCS changed back to generation-1.
+//  1. The PCLQ previously completed revision-1.
+//  2. The PCS changed to revision-2, and the PCLQ started updating to it.
+//  3. Before the PCLQ completed revision-2, the PCS changed back to revision-1.
 //
-// The PCLQ still reports generation-1 as its last completed generation, but its active progress for
-// generation-2 means some Pods may already belong to generation-2. The PCLQ must therefore remain
-// incomplete until the generation-2 progress is reset and every Pod converges to generation-1.
+// The PCLQ still reports revision-1 as its last reached revision, but its active progress for
+// revision-2 means some Pods may already belong to revision-2. The PCLQ must therefore remain
+// incomplete until the revision-2 progress is reset and every Pod converges to revision-1.
 func TestIsPCLQUpdateCompleteRejectsActiveUpdate(t *testing.T) {
 	pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "default", "uid").
 		WithPodCliqueParameters("worker", 1, nil).
 		Build()
-	pcs.Status.CurrentGenerationHash = new("generation-1")
+	pcs.Status.UpdateRevision = "revision-1"
 
+	pclq := newConvergedPCLQ("revision-1", "template-1")
+	// A later revision-2 update started but did not complete before the PCS was changed back to revision-1.
+	pclq.Status.UpdateProgress = &grovecorev1beta1.PodCliqueUpdateProgress{
+		PodCliqueSetRevision: "revision-2",
+		PodTemplateHash:      "template-2",
+	}
+
+	t.Run("active later update keeps rolled-back revision incomplete", func(t *testing.T) {
+		assert.False(t, IsPCLQUpdateComplete(pcs, pclq))
+	})
+
+	t.Run("ended update permits otherwise converged revision", func(t *testing.T) {
+		pclq.Status.UpdateProgress.UpdateEndedAt = new(metav1.Now())
+		assert.True(t, IsPCLQUpdateComplete(pcs, pclq))
+	})
+}
+
+// TestIsPCLQUpdateCompleteRequiresUpdateRevision checks that a PodClique is complete only when it was written from
+// and reached the PodCliqueSet update revision.
+func TestIsPCLQUpdateCompleteRequiresUpdateRevision(t *testing.T) {
+	tests := []struct {
+		name           string
+		updateRevision string
+		mutate         func(pclq *grovecorev1beta1.PodClique)
+		expected       bool
+	}{
+		{name: "reached update revision", updateRevision: "revision-1", expected: true},
+		{name: "no update revision yet", updateRevision: "", expected: false},
+		{
+			name:           "written from an older revision",
+			updateRevision: "revision-1",
+			mutate: func(pclq *grovecorev1beta1.PodClique) {
+				pclq.Labels[apicommon.LabelPodCliqueSetRevision] = "revision-0"
+			},
+			expected: false,
+		},
+		{
+			name:           "Pods have not reached the revision",
+			updateRevision: "revision-1",
+			mutate: func(pclq *grovecorev1beta1.PodClique) {
+				pclq.Status.CurrentPodCliqueSetRevision = "revision-0"
+			},
+			expected: false,
+		},
+		{
+			name:           "fewer than MinAvailable Pods ready",
+			updateRevision: "revision-1",
+			mutate: func(pclq *grovecorev1beta1.PodClique) {
+				pclq.Status.ReadyReplicas = 0
+			},
+			expected: false,
+		},
+		{
+			name:           "scaled to zero needs only the revision",
+			updateRevision: "revision-1",
+			mutate: func(pclq *grovecorev1beta1.PodClique) {
+				pclq.Spec.Replicas = 0
+				pclq.Status.ReadyReplicas, pclq.Status.UpdatedReplicas = 0, 0
+			},
+			expected: true,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "default", "uid").
+				WithPodCliqueParameters("worker", 1, nil).
+				Build()
+			pcs.Status.UpdateRevision = tc.updateRevision
+			pclq := newConvergedPCLQ("revision-1", "template-1")
+			if tc.mutate != nil {
+				tc.mutate(pclq)
+			}
+			assert.Equal(t, tc.expected, IsPCLQUpdateComplete(pcs, pclq))
+		})
+	}
+}
+
+// TestResolvePodTemplateHash checks that the pod template hash is computed only when the clique's pod template
+// changes, so a PodClique keeps its hash, and its Pods, across revisions that leave its pod template unchanged.
+func TestResolvePodTemplateHash(t *testing.T) {
+	const foreignHash = "hash-from-another-build"
+	pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "default", "pcs-uid").
+		WithPodCliqueParameters("worker", 1, nil).
+		Build()
+	computedHash := ComputePCLQPodTemplateHash(pcs.Spec.Template.Cliques[0], pcs.Spec.Template.PriorityClassName)
+
+	sameTemplate := pcs.Spec.Template.DeepCopy()
+	sameTemplate.Cliques[0].Spec.Replicas = 5
+	changedTemplate := pcs.Spec.Template.DeepCopy()
+	changedTemplate.Cliques[0].Spec.PodSpec.Containers[0].Image = "other-image"
+
+	cl := testutils.SetupFakeClient(
+		newTestRevision(t, pcs, "test-pcs-same", sameTemplate),
+		newTestRevision(t, pcs, "test-pcs-changed", changedTemplate),
+	)
+
+	tests := []struct {
+		name           string
+		existingLabels map[string]string
+		expected       string
+	}{
+		{name: "new PodClique gets a computed hash", existingLabels: nil, expected: computedHash},
+		{
+			name:           "PodClique already at the target revision keeps its hash",
+			existingLabels: map[string]string{apicommon.LabelPodTemplateHash: foreignHash, apicommon.LabelPodCliqueSetRevision: "test-pcs-target"},
+			expected:       foreignHash,
+		},
+		{
+			name:           "unchanged pod template keeps the hash",
+			existingLabels: map[string]string{apicommon.LabelPodTemplateHash: foreignHash, apicommon.LabelPodCliqueSetRevision: "test-pcs-same"},
+			expected:       foreignHash,
+		},
+		{
+			name:           "changed pod template gets a computed hash",
+			existingLabels: map[string]string{apicommon.LabelPodTemplateHash: foreignHash, apicommon.LabelPodCliqueSetRevision: "test-pcs-changed"},
+			expected:       computedHash,
+		},
+		{
+			name:           "missing revision counts as a change",
+			existingLabels: map[string]string{apicommon.LabelPodTemplateHash: foreignHash, apicommon.LabelPodCliqueSetRevision: "test-pcs-deleted"},
+			expected:       computedHash,
+		},
+		{
+			name:           "PodClique written by an older operator gets a computed hash",
+			existingLabels: map[string]string{apicommon.LabelPodTemplateHash: computedHash},
+			expected:       computedHash,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			hash, err := ResolvePodTemplateHash(context.Background(), cl, pcs, "test-pcs-target", "worker", tc.existingLabels)
+			require.NoError(t, err)
+			assert.Equal(t, tc.expected, hash)
+		})
+	}
+
+	t.Run("revision of another PodCliqueSet counts as a change", func(t *testing.T) {
+		other := pcs.DeepCopy()
+		other.UID = "other-uid"
+		otherClient := testutils.SetupFakeClient(newTestRevision(t, other, "test-pcs-same", sameTemplate))
+		hash, err := ResolvePodTemplateHash(context.Background(), otherClient, pcs, "test-pcs-target", "worker",
+			map[string]string{apicommon.LabelPodTemplateHash: foreignHash, apicommon.LabelPodCliqueSetRevision: "test-pcs-same"})
+		require.NoError(t, err)
+		assert.Equal(t, computedHash, hash)
+	})
+
+	t.Run("unknown clique is an error", func(t *testing.T) {
+		_, err := ResolvePodTemplateHash(context.Background(), cl, pcs, "test-pcs-target", "unknown", nil)
+		require.Error(t, err)
+	})
+}
+
+// newConvergedPCLQ returns a PodClique of the "worker" clique that was written from revision, runs podTemplateHash
+// on all of its Pods and has its MinAvailable Pods updated and ready.
+func newConvergedPCLQ(revision, podTemplateHash string) *grovecorev1beta1.PodClique {
 	pclq := testutils.NewPodCliqueBuilder("test-pcs", "uid", "worker", "default", 0).
 		WithReplicas(1).
 		WithMinAvailable(1).
 		Build()
-	expectedTemplateHash, err := GetExpectedPCLQPodTemplateHash(pcs, pclq.ObjectMeta)
-	require.NoError(t, err)
-	pclq.Labels[apicommon.LabelPodTemplateHash] = expectedTemplateHash
-	pclq.Status.CurrentPodTemplateHash = new(expectedTemplateHash)
-	// The PCLQ last fully completed generation-1.
-	pclq.Status.CurrentPodCliqueSetGenerationHash = new("generation-1")
+	pclq.Labels[apicommon.LabelPodTemplateHash] = podTemplateHash
+	pclq.Labels[apicommon.LabelPodCliqueSetRevision] = revision
+	pclq.Status.CurrentPodTemplateHash = new(podTemplateHash)
+	pclq.Status.CurrentPodCliqueSetRevision = revision
 	pclq.Status.UpdatedReplicas = 1
 	pclq.Status.ReadyReplicas = 1
-	// A later generation-2 update started but did not complete before the PCS was changed back to
-	// generation-1.
-	pclq.Status.UpdateProgress = &grovecorev1beta1.PodCliqueUpdateProgress{
-		PodCliqueSetGenerationHash: "generation-2",
-		PodTemplateHash:            "template-2",
+	return pclq
+}
+
+// newTestRevision returns a ControllerRevision of the PodCliqueSet that stores template.
+func newTestRevision(t *testing.T, pcs *grovecorev1beta1.PodCliqueSet, name string, template *grovecorev1beta1.PodCliqueSetTemplateSpec) *appsv1.ControllerRevision {
+	t.Helper()
+	data, err := controllerrevision.EncodeTemplate(template)
+	require.NoError(t, err)
+	return &appsv1.ControllerRevision{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:            name,
+			Namespace:       pcs.Namespace,
+			OwnerReferences: []metav1.OwnerReference{*metav1.NewControllerRef(pcs, grovecorev1beta1.SchemeGroupVersion.WithKind(constants.KindPodCliqueSet))},
+		},
+		Data: runtime.RawExtension{Raw: data},
 	}
-
-	t.Run("active later update keeps rolled-back generation incomplete", func(t *testing.T) {
-		assert.False(t, IsPCLQUpdateComplete(pcs, pclq))
-	})
-
-	t.Run("ended update permits otherwise converged generation", func(t *testing.T) {
-		pclq.Status.UpdateProgress.UpdateEndedAt = new(metav1.Now())
-		assert.True(t, IsPCLQUpdateComplete(pcs, pclq))
-	})
 }
 
 // TestWasPCLQEverScheduled verifies the signal used to gate gang-termination reads the durable

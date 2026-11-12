@@ -28,15 +28,19 @@ import (
 	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/sync"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
+	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
+	"github.com/ai-dynamo/grove/operator/internal/utils/controllerrevision"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/ptr"
@@ -490,7 +494,7 @@ func TestBuildResource_MNNVLInjection(t *testing.T) {
 				eventRecorder: record.NewFakeRecorder(10),
 			}
 
-			err := operator.buildResource(logr.Discard(), pcs, pcsReplica, false, pclq)
+			err := operator.buildResource(t.Context(), logr.Discard(), pcs, pcsReplica, false, pclq)
 			require.NoError(t, err)
 
 			// Verify pod-level claims
@@ -544,7 +548,7 @@ func TestBuildResource_StripsTopologyAnnotation(t *testing.T) {
 	}
 
 	operator := &_resource{scheme: groveclientscheme.Scheme}
-	err := operator.buildResource(logr.Discard(), pcs, 0, false, pclq)
+	err := operator.buildResource(t.Context(), logr.Discard(), pcs, 0, false, pclq)
 	require.NoError(t, err)
 	require.NotNil(t, pclq.Annotations)
 	assert.Equal(t, "yes", pclq.Annotations["example.com/keep"])
@@ -598,7 +602,7 @@ func TestBuildResource_PreservesRevisionForReplicaNotUnderCoherentUpdate(t *test
 
 			operator := &_resource{scheme: groveclientscheme.Scheme}
 
-			err := operator.buildResource(logr.Discard(), pcs, tc.pcsReplica, true, pclq)
+			err := operator.buildResource(t.Context(), logr.Discard(), pcs, tc.pcsReplica, true, pclq)
 			require.NoError(t, err)
 
 			if tc.expectPreserved {
@@ -650,10 +654,131 @@ func TestBuildResource_DoesNotWriteStartsAfter(t *testing.T) {
 	// pcsReplica 1 is not the replica under update, so it is preserved. Reconcile twice; the controller must
 	// leave StartsAfter untouched both times.
 	for i := range 2 {
-		err := operator.buildResource(logr.Discard(), pcs, pcsReplica, true, pclq)
+		err := operator.buildResource(t.Context(), logr.Discard(), pcs, pcsReplica, true, pclq)
 		require.NoError(t, err, "reconcile %d", i)
 		assert.Equal(t, staleStartsAfter, pclq.Spec.StartsAfter, "reconcile %d", i)
 	}
+}
+
+// TestBuildResource_PodTemplateHashAcrossRevisions verifies that the pod template hash label changes only when the
+// clique's pod template changes, so an operator upgrade that hashes differently does not replace Pods. The revision
+// label always records the update revision the PodClique was written from.
+func TestBuildResource_PodTemplateHashAcrossRevisions(t *testing.T) {
+	const (
+		cliqueName     = "worker"
+		foreignHash    = "hash-from-another-build"
+		updateRevision = "test-pcs-update"
+	)
+	newPCS := func(coherentUpdate bool) *grovecorev1beta1.PodCliqueSet {
+		template := testutils.NewPodCliqueTemplateSpecBuilder(cliqueName).Build()
+		template.Spec.PodSpec.Containers = []corev1.Container{{Name: "c", Image: "v1"}}
+		builder := testutils.NewPodCliqueSetBuilder(testPCSName, testPCSNamespace, "pcs-uid").
+			WithReplicas(2).
+			WithCliqueStartupType(ptr.To(grovecorev1beta1.CliqueStartupTypeAnyOrder)).
+			WithPodCliqueTemplateSpec(template).
+			WithUpdateRevision(updateRevision)
+		if coherentUpdate {
+			builder.WithUpdateStrategy(&grovecorev1beta1.PodCliqueSetUpdateStrategy{Type: grovecorev1beta1.CoherentStrategy}).
+				WithUpdateProgress(&grovecorev1beta1.PodCliqueSetUpdateProgress{
+					UpdateStartedAt:   metav1.Now(),
+					CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 0}},
+				})
+		}
+		return builder.Build()
+	}
+	newRevision := func(pcs *grovecorev1beta1.PodCliqueSet, name string, mutate func(*grovecorev1beta1.PodCliqueSetTemplateSpec)) *appsv1.ControllerRevision {
+		template := pcs.Spec.Template.DeepCopy()
+		mutate(template)
+		data, err := controllerrevision.EncodeTemplate(template)
+		require.NoError(t, err)
+		return &appsv1.ControllerRevision{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: name, Namespace: pcs.Namespace,
+				OwnerReferences: []metav1.OwnerReference{*metav1.NewControllerRef(pcs, grovecorev1beta1.SchemeGroupVersion.WithKind(apiconstants.KindPodCliqueSet))},
+			},
+			Data: runtime.RawExtension{Raw: data},
+		}
+	}
+	existingPCLQ := func(pcsReplica int, revision string) *grovecorev1beta1.PodClique {
+		return &grovecorev1beta1.PodClique{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      fmt.Sprintf("%s-%d-%s", testPCSName, pcsReplica, cliqueName),
+				Namespace: testPCSNamespace,
+				Labels:    map[string]string{apicommon.LabelPodTemplateHash: foreignHash, apicommon.LabelPodCliqueSetRevision: revision},
+			},
+			Spec: grovecorev1beta1.PodCliqueSpec{PodSpec: corev1.PodSpec{Containers: []corev1.Container{{Name: "c", Image: "v0"}}}},
+		}
+	}
+
+	testCases := []struct {
+		description      string
+		coherentUpdate   bool
+		pcsReplica       int
+		revisionMutation func(*grovecorev1beta1.PodCliqueSetTemplateSpec)
+		expectHashKept   bool
+		expectRevision   string
+	}{
+		{
+			description:      "an edit outside the pod template keeps the hash",
+			revisionMutation: func(template *grovecorev1beta1.PodCliqueSetTemplateSpec) { template.Cliques[0].Spec.Replicas = 9 },
+			expectHashKept:   true,
+			expectRevision:   updateRevision,
+		},
+		{
+			description: "a pod template edit computes a new hash",
+			revisionMutation: func(template *grovecorev1beta1.PodCliqueSetTemplateSpec) {
+				template.Cliques[0].Spec.PodSpec.Containers[0].Image = "v0"
+			},
+			expectHashKept: false,
+			expectRevision: updateRevision,
+		},
+		{
+			description:      "a preserved replica with the same pod template moves to the update revision",
+			coherentUpdate:   true,
+			pcsReplica:       1,
+			revisionMutation: func(template *grovecorev1beta1.PodCliqueSetTemplateSpec) { template.Cliques[0].Spec.Replicas = 9 },
+			expectHashKept:   true,
+			expectRevision:   updateRevision,
+		},
+		{
+			description:    "a preserved replica with another pod template keeps its revision",
+			coherentUpdate: true,
+			pcsReplica:     1,
+			revisionMutation: func(template *grovecorev1beta1.PodCliqueSetTemplateSpec) {
+				template.Cliques[0].Spec.PodSpec.Containers[0].Image = "v0"
+			},
+			expectHashKept: true,
+			expectRevision: "test-pcs-previous",
+		},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.description, func(t *testing.T) {
+			pcs := newPCS(tc.coherentUpdate)
+			previous := newRevision(pcs, "test-pcs-previous", tc.revisionMutation)
+			operator := &_resource{client: testutils.SetupFakeClient(pcs, previous), scheme: groveclientscheme.Scheme}
+			pclq := existingPCLQ(tc.pcsReplica, previous.Name)
+
+			require.NoError(t, operator.buildResource(t.Context(), logr.Discard(), pcs, tc.pcsReplica, true, pclq))
+
+			if tc.expectHashKept {
+				assert.Equal(t, foreignHash, pclq.Labels[apicommon.LabelPodTemplateHash])
+			} else {
+				assert.Equal(t, componentutils.ComputePCLQPodTemplateHash(pcs.Spec.Template.Cliques[0], pcs.Spec.Template.PriorityClassName), pclq.Labels[apicommon.LabelPodTemplateHash])
+			}
+			assert.Equal(t, tc.expectRevision, pclq.Labels[apicommon.LabelPodCliqueSetRevision])
+		})
+	}
+
+	t.Run("a new PodClique gets a computed hash and the update revision", func(t *testing.T) {
+		pcs := newPCS(false)
+		operator := &_resource{client: testutils.SetupFakeClient(pcs), scheme: groveclientscheme.Scheme}
+		pclq := &grovecorev1beta1.PodClique{ObjectMeta: metav1.ObjectMeta{Name: fmt.Sprintf("%s-0-%s", testPCSName, cliqueName), Namespace: testPCSNamespace}}
+
+		require.NoError(t, operator.buildResource(t.Context(), logr.Discard(), pcs, 0, false, pclq))
+
+		assert.Equal(t, componentutils.ComputePCLQPodTemplateHash(pcs.Spec.Template.Cliques[0], pcs.Spec.Template.PriorityClassName), pclq.Labels[apicommon.LabelPodTemplateHash])
+		assert.Equal(t, updateRevision, pclq.Labels[apicommon.LabelPodCliqueSetRevision])
+	})
 }
 
 // triageContainersByMNNVLClaim separates containers into those with MNNVL claim and those without.

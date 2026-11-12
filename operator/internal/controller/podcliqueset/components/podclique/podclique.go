@@ -258,7 +258,7 @@ func (r _resource) doCreateOrUpdate(ctx context.Context, logger logr.Logger, pcs
 	pcsObjKey := client.ObjectKeyFromObject(pcs)
 
 	opResult, err := k8sutils.CreateOrPatchSpec(ctx, r.client, pclq, func() error {
-		return r.buildResource(logger, pcs, pcsReplica, pclqExists, pclq)
+		return r.buildResource(ctx, logger, pcs, pcsReplica, pclqExists, pclq)
 	})
 	if err != nil {
 		r.eventRecorder.Eventf(pcs, corev1.EventTypeWarning, constants.ReasonPodCliqueCreateOrUpdateFailed, "PodClique %v creation or updation failed: %v", pclqObjectKey, err)
@@ -277,7 +277,7 @@ func (r _resource) doCreateOrUpdate(ctx context.Context, logger logr.Logger, pcs
 // buildResource configures a PodClique with the desired state from its template. During a coherent update
 // it applies the new template only to the replica under update and preserves the running revision on every
 // other replica (see preserveRunningRevision).
-func (r _resource) buildResource(logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, pcsReplica int, pclqExists bool, pclq *grovecorev1beta1.PodClique) error {
+func (r _resource) buildResource(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, pcsReplica int, pclqExists bool, pclq *grovecorev1beta1.PodClique) error {
 	cliqueName := apicommon.ExtractPodCliqueNameFromStandalonePCLQFQN(pclq.Name, apicommon.ResourceNameReplica{Name: pcs.Name, Replica: pcsReplica})
 	pclqTemplate := componentutils.FindPodCliqueTemplateSpecByName(pcs, cliqueName)
 	if pclqTemplate == nil {
@@ -291,16 +291,18 @@ func (r _resource) buildResource(logger logr.Logger, pcs *grovecorev1beta1.PodCl
 	preserveRevision := pclqExists &&
 		componentutils.IsCoherentUpdateInProgress(pcs) &&
 		!componentutils.IsPCSReplicaUnderCoherentUpdate(pcs, pcsReplica)
-	if err := r.setPodCliqueObjectMeta(pcs, pcsReplica, pclqTemplate, preserveRevision, pclq); err != nil {
+	if err := r.setPodCliqueObjectMeta(ctx, pcs, pcsReplica, pclqTemplate, preserveRevision, pclq); err != nil {
 		return err
 	}
 	return setPodCliqueSpec(logger, pcs, pcsReplica, pclqTemplate, pclqExists, preserveRevision, pclq)
 }
 
 // setPodCliqueObjectMeta sets the controller reference, finalizer, labels, and annotations on the
-// PodClique. A preserved replica keeps its running pod-template-hash label so its pods stay on the old
-// revision.
-func (r _resource) setPodCliqueObjectMeta(pcs *grovecorev1beta1.PodCliqueSet, pcsReplica int, pclqTemplate *grovecorev1beta1.PodCliqueTemplateSpec, preserveRevision bool, pclq *grovecorev1beta1.PodClique) error {
+// PodClique. The pod-template-hash label changes only when the clique's pod template changes (see
+// ResolvePodTemplateHash), and the revision label records the update revision it was written from. A preserved
+// replica keeps its running pod-template-hash label so its pods stay on the old revision. It moves to the update
+// revision only when that revision has the same pod template.
+func (r _resource) setPodCliqueObjectMeta(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet, pcsReplica int, pclqTemplate *grovecorev1beta1.PodCliqueTemplateSpec, preserveRevision bool, pclq *grovecorev1beta1.PodClique) error {
 	pclqObjectKey := client.ObjectKeyFromObject(pclq)
 	if err := controllerutil.SetControllerReference(pcs, pclq, r.scheme); err != nil {
 		return groveerr.WrapError(err, errSyncPodClique, component.OperationSync,
@@ -310,12 +312,24 @@ func (r _resource) setPodCliqueObjectMeta(pcs *grovecorev1beta1.PodCliqueSet, pc
 	// Add finalizer at creation so the PodClique controller does not need a separate PATCH on first reconcile.
 	controllerutil.AddFinalizer(pclq, apiconstants.FinalizerPodClique)
 
-	// Capture the running pod-template-hash before getLabels overwrites the labels with the current
-	// template hash, so a preserved replica keeps its running revision's hash.
+	// Capture the running labels before getLabels overwrites them, so the hash is carried forward or a preserved
+	// replica keeps its running revision.
 	runningPodTemplateHash := pclq.Labels[apicommon.LabelPodTemplateHash]
+	runningRevision := pclq.Labels[apicommon.LabelPodCliqueSetRevision]
+	podTemplateHash, err := componentutils.ResolvePodTemplateHash(ctx, r.client, pcs, pcs.Status.UpdateRevision, pclqTemplate.Name, pclq.Labels)
+	if err != nil {
+		return groveerr.WrapError(err, errSyncPodClique, component.OperationSync,
+			fmt.Sprintf("Error resolving the pod template hash for PodClique: %v", pclqObjectKey),
+		)
+	}
 	pclq.Labels = getLabels(pcs, pcsReplica, pclqObjectKey, pclqTemplate)
-	if preserveRevision && runningPodTemplateHash != "" {
-		pclq.Labels[apicommon.LabelPodTemplateHash] = runningPodTemplateHash
+	revision := pcs.Status.UpdateRevision
+	if preserveRevision && runningPodTemplateHash != "" && runningPodTemplateHash != podTemplateHash {
+		podTemplateHash, revision = runningPodTemplateHash, runningRevision
+	}
+	pclq.Labels[apicommon.LabelPodTemplateHash] = podTemplateHash
+	if revision != "" {
+		pclq.Labels[apicommon.LabelPodCliqueSetRevision] = revision
 	}
 
 	pclq.Annotations = maps.Clone(pclqTemplate.Annotations)
@@ -368,7 +382,8 @@ func getPodCliqueSelectorLabels(pcsObjectMeta metav1.ObjectMeta) map[string]stri
 	)
 }
 
-// getLabels constructs labels for a PodClique resource including pod template hash.
+// getLabels constructs labels for a PodClique resource. The pod template hash and revision labels are set by
+// setPodCliqueObjectMeta.
 func getLabels(pcs *grovecorev1beta1.PodCliqueSet, pcsReplica int, pclqObjectKey client.ObjectKey, pclqTemplateSpec *grovecorev1beta1.PodCliqueTemplateSpec) map[string]string {
 	// A standalone PodClique carries no grove.io/podgang label on its resource. Its pods can span several
 	// anchor PodGangs, so the binding lives on each pod and is set by the standalone distribution flow. See
@@ -377,7 +392,6 @@ func getLabels(pcs *grovecorev1beta1.PodCliqueSet, pcsReplica int, pclqObjectKey
 		apicommon.LabelAppNameKey:               pclqObjectKey.Name,
 		apicommon.LabelComponentKey:             apicommon.LabelComponentNamePodCliqueSetPodClique,
 		apicommon.LabelPodCliqueSetReplicaIndex: strconv.Itoa(pcsReplica),
-		apicommon.LabelPodTemplateHash:          componentutils.ComputePCLQPodTemplateHash(pclqTemplateSpec, pcs.Spec.Template.PriorityClassName),
 	}
 	return lo.Assign(
 		pclqTemplateSpec.Labels,

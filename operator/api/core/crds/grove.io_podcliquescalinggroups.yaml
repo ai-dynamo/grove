@@ -184,6 +184,10 @@ spec:
                   CurrentPodCliqueSetGenerationHash establishes a correlation to PodCliqueSet generation hash indicating
                   that the spec of the PodCliqueSet at this generation is fully realized in the PodCliqueScalingGroup.
                 type: string
+              currentPodCliqueSetRevision:
+                description: CurrentPodCliqueSetRevision is the name of the PodCliqueSet
+                  ControllerRevision that every member PodClique has reached.
+                type: string
               lastErrors:
                 description: LastErrors captures the last errors observed by the controller
                   when reconciling the PodClique.
@@ -247,6 +251,10 @@ spec:
                       PodCliqueScalingGroup should converge to. PodCliqueScalingGroupStatus.CurrentPodCliqueSetGenerationHash is set to
                       this hash once UpdateEndedAt is set, which marks the end of the update.
                     type: string
+                  podCliqueSetRevision:
+                    description: PodCliqueSetRevision is the name of the PodCliqueSet
+                      ControllerRevision that this update targets.
+                    type: string
                   totalPodCliquesCount:
                     default: 0
                     description: |-
@@ -270,8 +278,8 @@ spec:
                   updatedPodCliquesCount:
                     default: 0
                     description: |-
-                      UpdatedPodCliquesCount is the number of PodCliques that have been updated to the desired
-                      PodCliqueSet generation hash. Recomputed each reconcile from child generation-hash labels.
+                      UpdatedPodCliquesCount is the number of PodCliques that have reached the revision on the
+                      grove.io/podcliqueset-revision label.
                     format: int32
                     type: integer
                 required:
@@ -280,8 +288,9 @@ spec:
                 type: object
               updatedReplicas:
                 default: 0
-                description: UpdatedReplicas is the number of PodCliqueScalingGroup
-                  replicas that correspond with the latest PodCliqueSetGenerationHash.
+                description: |-
+                  UpdatedReplicas is the number of replicas whose PodCliques have reached the revision on the
+                  grove.io/podcliqueset-revision label.
                 format: int32
                 type: integer
             required:
@@ -466,6 +475,10 @@ spec:
                   CurrentPodCliqueSetGenerationHash establishes a correlation to PodCliqueSet generation hash indicating
                   that the spec of the PodCliqueSet at this generation is fully realized in the PodCliqueScalingGroup.
                 type: string
+              currentPodCliqueSetRevision:
+                description: CurrentPodCliqueSetRevision is the name of the PodCliqueSet
+                  ControllerRevision that every member PodClique has reached.
+                type: string
               lastErrors:
                 description: LastErrors captures the last errors observed by the controller
                   when reconciling the PodClique.
@@ -529,6 +542,10 @@ spec:
                       PodCliqueScalingGroup should converge to. PodCliqueScalingGroupStatus.CurrentPodCliqueSetGenerationHash is set to
                       this hash once UpdateEndedAt is set, which marks the end of the update.
                     type: string
+                  podCliqueSetRevision:
+                    description: PodCliqueSetRevision is the name of the PodCliqueSet
+                      ControllerRevision that this update targets.
+                    type: string
                   totalPodCliquesCount:
                     default: 0
                     description: |-
@@ -552,8 +569,8 @@ spec:
                   updatedPodCliquesCount:
                     default: 0
                     description: |-
-                      UpdatedPodCliquesCount is the number of PodCliques that have been updated to the desired
-                      PodCliqueSet generation hash. Recomputed each reconcile from child generation-hash labels.
+                      UpdatedPodCliquesCount is the number of PodCliques that have reached the revision on the
+                      grove.io/podcliqueset-revision label.
                     format: int32
                     type: integer
                 required:
@@ -562,8 +579,9 @@ spec:
                 type: object
               updatedReplicas:
                 default: 0
-                description: UpdatedReplicas is the number of PodCliqueScalingGroup
-                  replicas that correspond with the latest PodCliqueSetGenerationHash.
+                description: |-
+                  UpdatedReplicas is the number of replicas whose PodCliques have reached the revision on the
+                  grove.io/podcliqueset-revision label.
                 format: int32
                 type: integer
             required:
