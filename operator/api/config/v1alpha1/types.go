@@ -105,8 +105,27 @@ type SchedulerProfile struct {
 }
 
 // KaiSchedulerConfiguration defines the configuration for the kai-scheduler backend.
+//
+// The defaults match upstream KAI Scheduler. A distribution that bundles KAI under a different
+// scheduler name and label keys (for example NVIDIA Run:ai, which uses "runai-scheduler",
+// "runai/queue" and "runai/node-pool") must set the three options below to the values its KAI
+// Config uses; otherwise pods and PodGroups created by Grove are never picked up by that
+// scheduler. The profile name stays "kai-scheduler" either way, as it selects the backend.
 type KaiSchedulerConfiguration struct {
-	// Reserved for future kai-scheduler-specific options.
+	// SchedulerName is written to Pod.Spec.SchedulerName and is the name PodCliqueTemplateSpec
+	// podSpec.schedulerName must carry to select this backend. Defaults to "kai-scheduler".
+	// +optional
+	SchedulerName string `json:"schedulerName,omitempty"`
+
+	// QueueLabelKey is the label or annotation key on a PodCliqueSet or PodClique template that
+	// names the queue. Defaults to "kai.scheduler/queue".
+	// +optional
+	QueueLabelKey string `json:"queueLabelKey,omitempty"`
+
+	// NodePoolLabelKey is the label key KAI runtime components use to record a node pool on a
+	// PodGroup. Grove preserves it across updates. Defaults to "kai.scheduler/node-pool".
+	// +optional
+	NodePoolLabelKey string `json:"nodePoolLabelKey,omitempty"`
 }
 
 // KueueSchedulerConfiguration defines the configuration for the kueue backend.

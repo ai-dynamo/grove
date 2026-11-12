@@ -51,6 +51,10 @@ func New(cl, directClient client.Client, scheme *runtime.Scheme, eventRecorder r
 		if err != nil {
 			return nil, fmt.Errorf("failed to initialize %s backend: %w", p.Name, err)
 		}
+		// A backend's name keys the registry (kai-scheduler's can be configured), so two backends must not share one.
+		if _, exists := reg.backends[backend.Name()]; exists {
+			return nil, fmt.Errorf("scheduler profile %q: backend name %q is already used by another scheduler profile", p.Name, backend.Name())
+		}
 		reg.backends[backend.Name()] = backend
 		// It is assumed that scheduler configuration will be validated as part of OperatorConfiguration
 		// validation to ensure that there is at most one default scheduler backend.
