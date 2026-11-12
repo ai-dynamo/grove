@@ -367,6 +367,40 @@ func TestReconcileStatusConvergesWhenReadyPodMatchesDesiredHash(t *testing.T) {
 	assert.Equal(t, *pcs.Status.CurrentGenerationHash, *updatedPCLQ.Status.CurrentPodCliqueSetGenerationHash)
 }
 
+func TestReconcileStatusConvergesWhileReplacedPodIsTerminating(t *testing.T) {
+	pcs, pclq, templateHash := newPodCliqueHashConvergenceFixture(t)
+	pclq.UID = types.UID("pclq-uid")
+	pclq.Generation = 1
+	pclq.Spec = grovecorev1beta1.PodCliqueSpec{Replicas: 1, MinAvailable: ptr.To[int32](1)}
+	pclq.Status = grovecorev1beta1.PodCliqueStatus{
+		ObservedGeneration:                ptr.To[int64](1),
+		CurrentPodTemplateHash:            ptr.To("stale-template-hash"),
+		CurrentPodCliqueSetGenerationHash: ptr.To("old-generation-hash"),
+	}
+	readyPod := createReadyOwnedPodWithHash("replacement", pclq, templateHash)
+	terminatingPod := createReadyOwnedPodWithHash("evicted", pclq, templateHash)
+	terminatingPod.DeletionTimestamp = ptr.To(metav1.Now())
+	terminatingPod.Finalizers = []string{"test.grove.io/retain"}
+
+	cl := testutils.SetupFakeClient(pcs, pclq, readyPod, terminatingPod)
+	r := &Reconciler{client: cl, eventRecorder: record.NewFakeRecorder(1)}
+
+	result := r.reconcileStatus(context.Background(), logr.Discard(), pclq)
+	_, err := result.Result()
+	require.NoError(t, err)
+
+	updated := &grovecorev1beta1.PodClique{}
+	require.NoError(t, cl.Get(context.Background(), client.ObjectKeyFromObject(pclq), updated))
+	assert.Equal(t, int32(1), updated.Status.Replicas)
+	assert.Equal(t, int32(1), updated.Status.ReadyReplicas)
+	assert.Equal(t, int32(1), updated.Status.ScheduledReplicas)
+	assert.Equal(t, int32(1), updated.Status.UpdatedReplicas)
+	assert.Equal(t, ptr.To(templateHash), updated.Status.CurrentPodTemplateHash)
+	assert.Equal(t, pcs.Status.CurrentGenerationHash, updated.Status.CurrentPodCliqueSetGenerationHash)
+	// The hashes must converge while the evicted Pod remains in the API.
+	require.NoError(t, cl.Get(context.Background(), client.ObjectKeyFromObject(terminatingPod), &corev1.Pod{}))
+}
+
 // TestReconcileStatusRequeuesWithoutPatchWhenStatusUnchanged verifies that when a reconcile
 // recomputes a status identical to what is already persisted, reconcileStatus skips the patch and
 // returns without requesting a requeue. The periodic resync that recovers a stale status is applied
