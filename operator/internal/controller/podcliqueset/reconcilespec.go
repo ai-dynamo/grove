@@ -80,7 +80,7 @@ func (r *Reconciler) processGenerationHashChange(ctx context.Context, logger log
 
 	// If the generation status is not reflected correctly yet, requeue and allow the informer cache to catch up.
 	if !r.isGenerationStatusExpectationSatisfied(expectationKey, pcs.Status) {
-		return ctrlcommon.ReconcileAfter(constants.ComponentSyncRetryInterval, fmt.Sprintf("generation status is not up-to-date for PodCliqueSet: %v", pcsObjectKey))
+		return ctrlcommon.ReconcileAfter(constants.InformerCacheSyncRetryInterval, fmt.Sprintf("generation status is not up-to-date for PodCliqueSet: %v", pcsObjectKey))
 	}
 	r.pcsGenerationStatusExpectations.Delete(expectationKey)
 
@@ -115,7 +115,10 @@ func (r *Reconciler) establishGenerationHashBaseline(ctx context.Context, logger
 		logger.Error(err, "failed to establish generation hash baseline", "generationHash", generationHash)
 		return ctrlcommon.ReconcileWithErrors("error establishing generation hash baseline", err)
 	}
-	return ctrlcommon.ContinueReconcile()
+	return ctrlcommon.ReconcileAfter(
+		constants.InformerCacheSyncRetryInterval,
+		fmt.Sprintf("waiting for the generation status baseline to become visible in the informer cache for PodCliqueSet: %v", client.ObjectKeyFromObject(pcs)),
+	)
 }
 
 // migrateLegacyGenerationHash replaces an equivalent legacy hash with the combined hash without starting another update.
@@ -277,7 +280,7 @@ func (r *Reconciler) syncPodCliqueSetResources(ctx context.Context, logger logr.
 		return ctrlcommon.ReconcileWithErrors("error updating PodCliqueSet scale-in progress", err)
 	}
 	if scalingProgressChanged {
-		return ctrlcommon.ReconcileAfter(scalingProgressCacheSyncRetryInterval, fmt.Sprintf("waiting for updated scale-in progress to become visible in the informer cache for PodCliqueSet: %v", client.ObjectKeyFromObject(pcs)))
+		return ctrlcommon.ReconcileAfter(constants.InformerCacheSyncRetryInterval, fmt.Sprintf("waiting for updated scale-in progress to become visible in the informer cache for PodCliqueSet: %v", client.ObjectKeyFromObject(pcs)))
 	}
 	return ctrlcommon.ContinueReconcile()
 }

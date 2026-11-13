@@ -18,11 +18,11 @@ import (
 	"context"
 	"fmt"
 	"sync"
-	"time"
 
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
 	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
+	internalconstants "github.com/ai-dynamo/grove/operator/internal/constants"
 	ctrlcommon "github.com/ai-dynamo/grove/operator/internal/controller/common"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	pcscomponent "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components"
@@ -95,15 +95,13 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	return reconcileSpecFlowResult.Result()
 }
 
-const scalingProgressCacheSyncRetryInterval = 500 * time.Millisecond
-
 // ensureScalingProgressExpectationSatisfied waits until the informer cache contains the last persisted scaling progress.
 func (r *Reconciler) ensureScalingProgressExpectationSatisfied(pcs *grovecorev1beta1.PodCliqueSet) ctrlcommon.ReconcileStepResult {
 	if r.scalingProgressExpectations.ClearIfSatisfied(pcs.ObjectMeta, pcs.Status.ScalingProgress) {
 		return ctrlcommon.ContinueReconcile()
 	}
 	return ctrlcommon.ReconcileAfter(
-		scalingProgressCacheSyncRetryInterval,
+		internalconstants.InformerCacheSyncRetryInterval,
 		fmt.Sprintf("PodCliqueSet scaling progress is not yet visible in the informer cache: %v", ctrlclient.ObjectKeyFromObject(pcs)),
 	)
 }

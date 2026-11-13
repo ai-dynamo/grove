@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
+	"github.com/ai-dynamo/grove/operator/internal/constants"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
@@ -294,7 +295,7 @@ func TestProcessUpdateInitializesProgressWithoutActivePCSUpdate(t *testing.T) {
 
 	ctrlResult, err := result.Result()
 	require.NoError(t, err)
-	assert.Equal(t, updateProgressCacheSyncRetryInterval, ctrlResult.RequeueAfter)
+	assert.Equal(t, constants.InformerCacheSyncRetryInterval, ctrlResult.RequeueAfter)
 	updatedPCLQ := &grovecorev1beta1.PodClique{}
 	require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKeyFromObject(pclq), updatedPCLQ))
 	require.NotNil(t, updatedPCLQ.Status.UpdateProgress)
@@ -351,7 +352,7 @@ func TestProcessUpdateResetsPCLQProgressToSelectedPCSGeneration(t *testing.T) {
 	require.False(t, result.HasErrors())
 	ctrlResult, err := result.Result()
 	require.NoError(t, err)
-	assert.Equal(t, updateProgressCacheSyncRetryInterval, ctrlResult.RequeueAfter)
+	assert.Equal(t, constants.InformerCacheSyncRetryInterval, ctrlResult.RequeueAfter)
 	updatedPCLQ := &grovecorev1beta1.PodClique{}
 	require.NoError(t, fakeClient.Get(t.Context(), client.ObjectKeyFromObject(pclq), updatedPCLQ))
 	require.NotNil(t, updatedPCLQ.Status.UpdateProgress)

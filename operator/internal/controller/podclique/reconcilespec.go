@@ -17,7 +17,6 @@ package podclique
 import (
 	"context"
 	"fmt"
-	"time"
 
 	apiconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
@@ -66,8 +65,6 @@ func (r *Reconciler) ensureFinalizer(ctx context.Context, logger logr.Logger, pc
 	return ctrlcommon.ContinueReconcile()
 }
 
-const updateProgressCacheSyncRetryInterval = 500 * time.Millisecond
-
 // processUpdate handles update logic for PodClique when the owner PodCliqueSet has changes
 func (r *Reconciler) processUpdate(ctx context.Context, logger logr.Logger, pclq *grovecorev1beta1.PodClique) ctrlcommon.ReconcileStepResult {
 	pclqObjectKey := client.ObjectKeyFromObject(pclq)
@@ -103,7 +100,7 @@ func (r *Reconciler) processUpdate(ctx context.Context, logger logr.Logger, pclq
 			return ctrlcommon.ReconcileWithErrors("could not initialize RollingRecreate update", err)
 		}
 		return ctrlcommon.ReconcileAfter(
-			updateProgressCacheSyncRetryInterval,
+			constants.InformerCacheSyncRetryInterval,
 			fmt.Sprintf("waiting for PodClique update progress to become visible in the informer cache: %v", pclqObjectKey),
 		)
 	}
