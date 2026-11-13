@@ -67,10 +67,8 @@ func queueForPodGang(ctx context.Context, k8sClient client.Reader, podGang *grov
 		return queue, nil
 	}
 	owner := metav1.GetControllerOf(podGang)
-	if owner == nil || owner.Kind != constants.KindPodCliqueSet {
-		return DefaultQueue, nil
-	}
-	if ownerGV, err := schema.ParseGroupVersion(owner.APIVersion); err != nil || ownerGV.Group != grovecorev1beta1.SchemeGroupVersion.Group {
+	if owner == nil || owner.Kind != constants.KindPodCliqueSet ||
+		schema.FromAPIVersionAndKind(owner.APIVersion, owner.Kind).Group != grovecorev1beta1.SchemeGroupVersion.Group {
 		return DefaultQueue, nil
 	}
 	pcs := &grovecorev1beta1.PodCliqueSet{}
