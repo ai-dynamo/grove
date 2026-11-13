@@ -155,26 +155,87 @@ func TestRecordScalingSelectionEvents(t *testing.T) {
 	}, []string{<-eventRecorder.Events, <-eventRecorder.Events})
 }
 
-func TestProjectedReplicaIndices(t *testing.T) {
-	replicaInfos := replicaInfoByIndexForIndexTests()
-	scaleOutReplicaIndices := []int{2}
-	scaleInReplicaIndices := []int{1}
+func TestComputeClaimedReplicaIndices(t *testing.T) {
+	tests := []struct {
+		name              string
+		replicaInfos      pcsReplicaInfoByIndex
+		scalingIndices    pcsReplicaScalingIndices
+		replacementGroups pcsReplicaReplacementGroups
+		want              sets.Set[int]
+	}{
+		{
+			name:           "scaling commitments without replacements",
+			replicaInfos:   replicaInfoByIndexForIndexTests(),
+			scalingIndices: pcsReplicaScalingIndices{scaleOut: []int{2}, scaleIn: []int{1}},
+			want:           sets.New(0, 2, 4),
+		},
+		{
+			name:         "different-index active replacement exchanges source for target",
+			replicaInfos: pcsReplicaInfoByIndex{0: {}, 1: {}, 3: {}},
+			replacementGroups: pcsReplicaReplacementGroups{active: []pcsReplicaReplacement{
+				{sourcePCSReplicaIndex: 3, targetPCSReplicaIndex: 2},
+			}},
+			want: sets.New(0, 1, 2),
+		},
+		{
+			name:         "same-index active replacement remains projected",
+			replicaInfos: pcsReplicaInfoByIndex{0: {}, 1: {}},
+			replacementGroups: pcsReplicaReplacementGroups{active: []pcsReplicaReplacement{
+				{sourcePCSReplicaIndex: 1, targetPCSReplicaIndex: 1},
+			}},
+			want: sets.New(0, 1),
+		},
+		{
+			name:         "multiple active replacements are applied as a set",
+			replicaInfos: pcsReplicaInfoByIndex{2: {}, 3: {}},
+			replacementGroups: pcsReplicaReplacementGroups{active: []pcsReplicaReplacement{
+				{sourcePCSReplicaIndex: 2, targetPCSReplicaIndex: 0},
+				{sourcePCSReplicaIndex: 3, targetPCSReplicaIndex: 1},
+			}},
+			want: sets.New(0, 1),
+		},
+		{
+			name:         "canceled replacement removes source and target",
+			replicaInfos: pcsReplicaInfoByIndex{0: {}, 1: {}, 3: {}},
+			replacementGroups: pcsReplicaReplacementGroups{canceled: []pcsReplicaReplacement{
+				{sourcePCSReplicaIndex: 3, targetPCSReplicaIndex: 2},
+			}},
+			want: sets.New(0, 1),
+		},
+		{
+			name:           "overlapping commitments are idempotent",
+			replicaInfos:   pcsReplicaInfoByIndex{0: {}, 1: {}, 3: {}},
+			scalingIndices: pcsReplicaScalingIndices{scaleOut: []int{2}, scaleIn: []int{3}},
+			replacementGroups: pcsReplicaReplacementGroups{
+				active:   []pcsReplicaReplacement{{sourcePCSReplicaIndex: 3, targetPCSReplicaIndex: 2}},
+				canceled: []pcsReplicaReplacement{{sourcePCSReplicaIndex: 4, targetPCSReplicaIndex: 1}},
+			},
+			want: sets.New(0, 2),
+		},
+		{
+			name:           "same scaling index added and removed is absent",
+			replicaInfos:   pcsReplicaInfoByIndex{},
+			scalingIndices: pcsReplicaScalingIndices{scaleOut: []int{3}, scaleIn: []int{3}},
+			want:           sets.New[int](),
+		},
+	}
 
-	assert.Equal(t, sets.New(0, 2, 4), replicaInfos.projectedReplicaIndices(pcsReplicaScalingIndices{scaleOut: scaleOutReplicaIndices, scaleIn: scaleInReplicaIndices}))
-	assert.Equal(t, []int{2}, scaleOutReplicaIndices)
-	assert.Equal(t, []int{1}, scaleInReplicaIndices)
-	assert.Empty(t, pcsReplicaInfoByIndex{}.projectedReplicaIndices(pcsReplicaScalingIndices{scaleOut: []int{3}, scaleIn: []int{3}}))
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			scaleOutBefore := slices.Clone(tt.scalingIndices.scaleOut)
+			scaleInBefore := slices.Clone(tt.scalingIndices.scaleIn)
+			activeBefore := slices.Clone(tt.replacementGroups.active)
+			canceledBefore := slices.Clone(tt.replacementGroups.canceled)
 
-func TestReservedReplicaIndices(t *testing.T) {
-	replicaInfos := replicaInfoByIndexForIndexTests()
-	scaleOutReplicaIndices := []int{2}
-	scaleInReplicaIndices := []int{1}
+			got := tt.replicaInfos.computeClaimedReplicaIndices(tt.scalingIndices, tt.replacementGroups)
 
-	assert.Equal(t, sets.New(0, 1, 2, 4), replicaInfos.reservedReplicaIndices(pcsReplicaScalingIndices{scaleOut: scaleOutReplicaIndices, scaleIn: scaleInReplicaIndices}))
-	assert.Equal(t, []int{2}, scaleOutReplicaIndices)
-	assert.Equal(t, []int{1}, scaleInReplicaIndices)
-	assert.Equal(t, sets.New(3), pcsReplicaInfoByIndex{}.reservedReplicaIndices(pcsReplicaScalingIndices{scaleOut: []int{3}, scaleIn: []int{3}}))
+			assert.Equal(t, tt.want, got)
+			assert.Equal(t, scaleOutBefore, tt.scalingIndices.scaleOut)
+			assert.Equal(t, scaleInBefore, tt.scalingIndices.scaleIn)
+			assert.Equal(t, activeBefore, tt.replacementGroups.active)
+			assert.Equal(t, canceledBefore, tt.replacementGroups.canceled)
+		})
+	}
 }
 
 func TestComputeReplicaIndices(t *testing.T) {

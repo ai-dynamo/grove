@@ -197,31 +197,29 @@ func computeReplicaIndices(pcs *grovecorev1beta1.PodCliqueSet, replicaInfos pcsR
 	scaleOutReplicaIndicesWithExpectedPCLQsAndPCSGs := findScaleOutReplicaIndicesWithExpectedPCLQsAndPCSGs(pcs, scalingIndices.scaleOut, replicaInfos)
 	scaleOutIndices.Delete(scaleOutReplicaIndicesWithExpectedPCLQsAndPCSGs...)
 
-	projectedPCSReplicaIndices := replicaInfos.projectedReplicaIndices(pcsReplicaScalingIndices{
-		scaleOut: scaleOutIndices.UnsortedList(),
-		scaleIn:  scaleInIndices.UnsortedList(),
-	})
+	claimedPCSReplicaIndices := replicaInfos.existingReplicaIndices()
+	claimedPCSReplicaIndices.Insert(scaleOutIndices.UnsortedList()...)
+	claimedPCSReplicaIndices.Delete(scaleInIndices.UnsortedList()...)
 	desiredReplicaCount := int(pcs.Spec.Replicas)
 
-	if projectedPCSReplicaIndices.Len() > desiredReplicaCount {
-		numReplicasToRemove := projectedPCSReplicaIndices.Len() - desiredReplicaCount
-		selectedScaleInIndices := selectReplicaIndicesForScaleIn(pcs, replicaInfos, projectedPCSReplicaIndices, scaleOutIndices, numReplicasToRemove)
+	if claimedPCSReplicaIndices.Len() > desiredReplicaCount {
+		numReplicasToRemove := claimedPCSReplicaIndices.Len() - desiredReplicaCount
+		selectedScaleInIndices := selectReplicaIndicesForScaleIn(pcs, replicaInfos, claimedPCSReplicaIndices, scaleOutIndices, numReplicasToRemove)
 		scaleOutIndices.Delete(selectedScaleInIndices...)
 		scaleInIndices.Insert(selectedScaleInIndices...)
-		projectedPCSReplicaIndices.Delete(selectedScaleInIndices...)
-	} else if projectedPCSReplicaIndices.Len() < desiredReplicaCount {
-		numReplicasToAdd := desiredReplicaCount - projectedPCSReplicaIndices.Len()
-		reservedIndices := replicaInfos.reservedReplicaIndices(pcsReplicaScalingIndices{
-			scaleOut: scaleOutIndices.UnsortedList(),
-			scaleIn:  scaleInIndices.UnsortedList(),
-		})
-		selectedScaleOutIndices := utils.GetAvailableIndices(reservedIndices, numReplicasToAdd)
+		claimedPCSReplicaIndices.Delete(selectedScaleInIndices...)
+	} else if claimedPCSReplicaIndices.Len() < desiredReplicaCount {
+		numReplicasToAdd := desiredReplicaCount - claimedPCSReplicaIndices.Len()
+		reservedReplicaIndices := replicaInfos.existingReplicaIndices()
+		reservedReplicaIndices.Insert(scaleOutIndices.UnsortedList()...)
+		reservedReplicaIndices.Insert(scaleInIndices.UnsortedList()...)
+		selectedScaleOutIndices := utils.GetAvailableIndices(reservedReplicaIndices, numReplicasToAdd)
 		scaleOutIndices.Insert(selectedScaleOutIndices...)
-		projectedPCSReplicaIndices.Insert(selectedScaleOutIndices...)
+		claimedPCSReplicaIndices.Insert(selectedScaleOutIndices...)
 	}
 
 	return pcssync.State{
-		ExpectedReplicaIndices: sortedReplicaIndices(projectedPCSReplicaIndices),
+		ExpectedReplicaIndices: sortedReplicaIndices(claimedPCSReplicaIndices),
 		ScaleOutReplicaIndices: sortedReplicaIndices(scaleOutIndices),
 		ScaleInReplicaIndices:  sortedReplicaIndices(scaleInIndices),
 	}
@@ -258,7 +256,7 @@ func findScaleOutReplicaIndicesWithExpectedPCLQsAndPCSGs(
 func selectReplicaIndicesForScaleIn(
 	pcs *grovecorev1beta1.PodCliqueSet,
 	replicaInfos pcsReplicaInfoByIndex,
-	projectedReplicaIndices sets.Set[int],
+	claimedReplicaIndices sets.Set[int],
 	scaleOutReplicaIndices sets.Set[int],
 	count int) []int {
 	if count <= 0 {
@@ -272,7 +270,7 @@ func selectReplicaIndicesForScaleIn(
 		insufficientAvailableReplicaIndices []int
 		availableReplicaIndices             []int
 	)
-	for replicaIndex := range projectedReplicaIndices {
+	for replicaIndex := range claimedReplicaIndices {
 		if scaleOutReplicaIndices.Has(replicaIndex) {
 			continue
 		}

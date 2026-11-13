@@ -20,75 +20,83 @@ import (
 
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
-	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 
 	"k8s.io/apimachinery/pkg/util/sets"
 )
 
-// pcsReplicaReplacement identifies a structural replacement from one PCS replica index to another.
-// Its source and target correspond to ReplicaIndex and Replacement.TargetReplicaIndex in update progress.
-type pcsReplicaReplacement struct {
-	sourcePCSReplicaIndex int
-	targetPCSReplicaIndex int
+// pcsReplicaRecreationPlanner selects new replacement mappings from the current resource snapshot and persisted
+// commitments.
+type pcsReplicaRecreationPlanner struct {
+	pcs                 *grovecorev1beta1.PodCliqueSet
+	replicaInfosByIndex pcsReplicaInfoByIndex
+	scalingIndices      pcsReplicaScalingIndices
+	replacementGroups   pcsReplicaReplacementGroups
 }
 
-// getActivePCSReplicaReplacements returns incomplete structural replacements ordered by source PCS replica index.
-func getActivePCSReplicaReplacements(pcs *grovecorev1beta1.PodCliqueSet) []pcsReplicaReplacement {
-	if !componentutils.IsPCSReplicaRecreationInProgress(pcs) {
+// newPCSReplicaRecreationPlanner creates a planner for one reconciliation.
+func newPCSReplicaRecreationPlanner(pcs *grovecorev1beta1.PodCliqueSet, replicaInfosByIndex pcsReplicaInfoByIndex, scalingIndices pcsReplicaScalingIndices) *pcsReplicaRecreationPlanner {
+	return &pcsReplicaRecreationPlanner{
+		pcs:                 pcs,
+		replicaInfosByIndex: replicaInfosByIndex,
+		scalingIndices:      scalingIndices,
+		replacementGroups:   groupPCSReplicaReplacements(pcs.Status.UpdateProgress),
+	}
+}
+
+// next returns the next replacement mapping to persist, or nil when no new replacement can be selected during the
+// current reconciliation. A nil return does not mean replica recreation is complete. Persisted replacement work may
+// still require execution or cleanup. The caller determines completion from persisted progress and observed resources.
+func (p *pcsReplicaRecreationPlanner) next() *pcsReplicaReplacement {
+	remainingSlots := max(0, pcsReplicaRecreationBudget(p.pcs)-len(p.replacementGroups.active))
+	if remainingSlots == 0 {
 		return nil
 	}
-	replacements := make([]pcsReplicaReplacement, 0, len(pcs.Status.UpdateProgress.CurrentlyUpdating))
-	for _, updateProgress := range pcs.Status.UpdateProgress.CurrentlyUpdating {
-		if updateProgress.UpdateEndedAt != nil || updateProgress.Replacement == nil {
-			continue
-		}
-		replacements = append(replacements, pcsReplicaReplacement{
-			sourcePCSReplicaIndex: int(updateProgress.ReplicaIndex),
-			targetPCSReplicaIndex: int(updateProgress.Replacement.TargetReplicaIndex),
-		})
+
+	sourceReplicaIndices := p.selectSourceReplicaIndices(remainingSlots)
+	if len(sourceReplicaIndices) == 0 {
+		return nil
 	}
-	slices.SortFunc(replacements, func(a, b pcsReplicaReplacement) int {
-		return cmp.Compare(a.sourcePCSReplicaIndex, b.sourcePCSReplicaIndex)
-	})
-	return replacements
+
+	replacements := p.allocateReplacementTargets(sourceReplicaIndices)
+	return &replacements[0]
 }
 
-// selectPCSReplicaRecreationSourceIndices selects PCS replica indices for structural recreation.
+// selectSourceReplicaIndices selects PCS replica indices for structural recreation.
 //
 // Selection follows these rules:
 //   - PCS replicas already at the current generation are excluded.
-//   - Ordinary scale-in reservations are excluded.
+//   - PCS scale-in reservations are excluded.
 //   - Active replacement sources and targets are excluded.
-//   - Scale-out reservations without a PCLQ or PCSG continue ordinary scale-out and are excluded.
+//   - PCS scale-out reservations without a PCLQ or PCSG continue scale-out and are excluded.
 //   - Scale-out reservations with some but not all expected PCLQs and PCSGs are eligible.
 //   - Scale-out reservations with all expected PCLQs and PCSGs are excluded until scaling clears the reservation.
-func selectPCSReplicaRecreationSourceIndices(
-	pcs *grovecorev1beta1.PodCliqueSet,
-	pcsReplicaInfosByIndex pcsReplicaInfoByIndex,
-	pcsReplicaScalingIndices pcsReplicaScalingIndices,
-	remainingSlots int) []int {
-
+func (p *pcsReplicaRecreationPlanner) selectSourceReplicaIndices(remainingSlots int) []int {
 	if remainingSlots <= 0 {
 		return nil
 	}
 
-	scaleInPCSReplicaIndices := sets.New[int](pcsReplicaScalingIndices.scaleIn...)
-	scaleOutPCSReplicaIndices := sets.New[int](pcsReplicaScalingIndices.scaleOut...)
-	activePCSReplacementReplicaIndices := sets.New[int]()
-	for _, replacement := range getActivePCSReplicaReplacements(pcs) {
-		activePCSReplacementReplicaIndices.Insert(replacement.sourcePCSReplicaIndex, replacement.targetPCSReplicaIndex)
+	scaleInPCSReplicaIndices := sets.New[int](p.scalingIndices.scaleIn...)
+	scaleOutPCSReplicaIndices := sets.New[int](p.scalingIndices.scaleOut...)
+	replacementGroups := p.replacementGroups
+	replacementReplicaIndices := sets.New[int]()
+	for _, replacement := range replacementGroups.active {
+		replacementReplicaIndices.Insert(replacement.sourcePCSReplicaIndex, replacement.targetPCSReplicaIndex)
+	}
+	for _, replacement := range replacementGroups.canceled {
+		replacementReplicaIndices.Insert(replacement.sourcePCSReplicaIndex, replacement.targetPCSReplicaIndex)
 	}
 
 	scaleOutReplicaIndicesWithExpectedPCLQsAndPCSGs := sets.New(
-		findScaleOutReplicaIndicesWithExpectedPCLQsAndPCSGs(pcs, pcsReplicaScalingIndices.scaleOut, pcsReplicaInfosByIndex)...)
-	candidatePCSReplicaInfos := make([]pcsReplicaInfo, 0, len(pcsReplicaInfosByIndex))
-	for pcsReplicaIndex, sourcePCSReplicaInfo := range pcsReplicaInfosByIndex {
+		findScaleOutReplicaIndicesWithExpectedPCLQsAndPCSGs(p.pcs, p.scalingIndices.scaleOut, p.replicaInfosByIndex)...)
+	candidatePCSReplicaInfos := make([]pcsReplicaInfo, 0, len(p.replicaInfosByIndex))
+	for pcsReplicaIndex, sourcePCSReplicaInfo := range p.replicaInfosByIndex {
 		// replica index cannot be considered for recreation since it has been committed to be scaled-in.
 		if scaleInPCSReplicaIndices.Has(pcsReplicaIndex) {
 			continue
 		}
-		// replica index cannot be considered for recreation since it is participating as a source or target replica index in an active recreation.
-		if activePCSReplacementReplicaIndices.Has(pcsReplicaIndex) {
+		// replica index cannot be considered for recreation since it is participating as a source or target replica
+		// index in an active recreation.
+		if replacementReplicaIndices.Has(pcsReplicaIndex) {
 			continue
 		}
 		// replica index cannot be considered for recreation since it's committed to be scale-out and not even a single
@@ -107,45 +115,47 @@ func selectPCSReplicaRecreationSourceIndices(
 		if scaleOutReplicaIndicesWithExpectedPCLQsAndPCSGs.Has(pcsReplicaIndex) {
 			continue
 		}
-		// replica index does not require recreation if all of its expected PCLQs and PCSGs have converged to the current PCS generation.
-		hasConvergedToCurrentPCSGeneration := pcs.Status.CurrentGenerationHash != nil &&
-			sourcePCSReplicaInfo.hasConvergedToPCSGeneration(pcs, *pcs.Status.CurrentGenerationHash)
+		// replica index does not require recreation if all of its expected PCLQs and PCSGs have converged
+		// to the current PCS generation.
+		hasConvergedToCurrentPCSGeneration := p.pcs.Status.CurrentGenerationHash != nil &&
+			sourcePCSReplicaInfo.hasConvergedToPCSGeneration(p.pcs, *p.pcs.Status.CurrentGenerationHash)
 		if hasConvergedToCurrentPCSGeneration {
 			continue
 		}
 		candidatePCSReplicaInfos = append(candidatePCSReplicaInfos, sourcePCSReplicaInfo)
 	}
 
-	slices.SortFunc(candidatePCSReplicaInfos, orderPCSReplicaInfoBySchedulingConfigRolloutPriority(pcs))
+	slices.SortFunc(candidatePCSReplicaInfos, orderPCSReplicaInfoBySchedulingConfigRolloutPriority(p.pcs))
 	numSelected := min(remainingSlots, len(candidatePCSReplicaInfos))
 	return extractReplicaIndices(candidatePCSReplicaInfos[:numSelected])
 }
 
-// allocatePCSReplicaReplacementTargets allocates one target PCS replica index for each selected source.
+// allocateReplacementTargets allocates one target PCS replica index for each selected source.
 //
 // Allocation follows these rules:
 //   - Sources are processed in ascending PCS replica index order.
 //   - Each source receives the lowest available target PCS replica index.
 //   - Existing replicas, scaling reservations, and active replacements reserve their PCS replica indices.
-func allocatePCSReplicaReplacementTargets(
-	pcs *grovecorev1beta1.PodCliqueSet,
-	existingPCSReplicaIndices sets.Set[int],
-	selectedSourcePCSReplicaIndices []int) []pcsReplicaReplacement {
-	if len(selectedSourcePCSReplicaIndices) == 0 {
+func (p *pcsReplicaRecreationPlanner) allocateReplacementTargets(sourceReplicaIndices []int) []pcsReplicaReplacement {
+	if len(sourceReplicaIndices) == 0 {
 		return nil
 	}
 
-	reservedPCSReplicaIndices := existingPCSReplicaIndices.Clone()
-	activePCSReplicaScalingIndices := replicaScalingIndicesFromProgress(pcs.Status.ScalingProgress)
-	reservedPCSReplicaIndices.Insert(activePCSReplicaScalingIndices.activeScalingIndices()...)
-	for _, replacement := range getActivePCSReplicaReplacements(pcs) {
+	reservedPCSReplicaIndices := p.replicaInfosByIndex.existingReplicaIndices()
+	reservedPCSReplicaIndices.Insert(p.scalingIndices.activeScalingIndices()...)
+	replacementGroups := p.replacementGroups
+	for _, replacement := range replacementGroups.active {
+		reservedPCSReplicaIndices.Insert(replacement.sourcePCSReplicaIndex, replacement.targetPCSReplicaIndex)
+	}
+	for _, replacement := range replacementGroups.canceled {
 		reservedPCSReplicaIndices.Insert(replacement.sourcePCSReplicaIndex, replacement.targetPCSReplicaIndex)
 	}
 
-	selectedSourcePCSReplicaIndices = slices.Clone(selectedSourcePCSReplicaIndices)
-	slices.Sort(selectedSourcePCSReplicaIndices)
-	replacements := make([]pcsReplicaReplacement, 0, len(selectedSourcePCSReplicaIndices))
-	for _, sourcePCSReplicaIndex := range selectedSourcePCSReplicaIndices {
+	sourceReplicaIndices = slices.Clone(sourceReplicaIndices)
+	slices.Sort(sourceReplicaIndices)
+	replacements := make([]pcsReplicaReplacement, 0, len(sourceReplicaIndices))
+	for _, sourcePCSReplicaIndex := range sourceReplicaIndices {
+		// Release the selected source index so a dense PCS can recreate the replica at the same index.
 		reservedPCSReplicaIndices.Delete(sourcePCSReplicaIndex)
 		targetPCSReplicaIndex := utils.GetAvailableIndices(reservedPCSReplicaIndices, 1)[0]
 		replacements = append(replacements, pcsReplicaReplacement{
@@ -155,4 +165,59 @@ func allocatePCSReplicaReplacementTargets(
 		reservedPCSReplicaIndices.Insert(sourcePCSReplicaIndex, targetPCSReplicaIndex)
 	}
 	return replacements
+}
+
+// pcsReplicaRecreationBudget returns the number of concurrent PCS replica replacements allowed for the current update.
+func pcsReplicaRecreationBudget(_ *grovecorev1beta1.PodCliqueSet) int {
+	return 1
+}
+
+// pcsReplicaReplacement identifies a structural replacement from one PCS replica index to another.
+// Its source and target correspond to ReplicaIndex and Replacement.TargetReplicaIndex in update progress.
+type pcsReplicaReplacement struct {
+	sourcePCSReplicaIndex int
+	targetPCSReplicaIndex int
+}
+
+// pcsReplicaReplacementGroups contains incomplete replacement commitments grouped by lifecycle state.
+type pcsReplicaReplacementGroups struct {
+	// active contains incomplete replacements whose targets still contribute to the projected PCS identity set.
+	active []pcsReplicaReplacement
+	// canceled contains incomplete replacements whose sources and targets no longer contribute to the projected PCS
+	// identity set but remain reserved until cleanup completes.
+	canceled []pcsReplicaReplacement
+}
+
+// groupPCSReplicaReplacements returns incomplete replacement commitments grouped by lifecycle state and ordered by
+// source PCS replica index within each group.
+func groupPCSReplicaReplacements(progress *grovecorev1beta1.PodCliqueSetUpdateProgress) pcsReplicaReplacementGroups {
+	if progress == nil || !progress.RequiresReplicaRecreation || progress.UpdateEndedAt != nil {
+		return pcsReplicaReplacementGroups{}
+	}
+
+	groups := pcsReplicaReplacementGroups{}
+	for _, replicaProgress := range progress.CurrentlyUpdating {
+		if replicaProgress.UpdateEndedAt != nil || replicaProgress.Replacement == nil {
+			continue
+		}
+		replacement := pcsReplicaReplacement{
+			sourcePCSReplicaIndex: int(replicaProgress.ReplicaIndex),
+			targetPCSReplicaIndex: int(replicaProgress.Replacement.TargetReplicaIndex),
+		}
+		if replicaProgress.Replacement.CanceledAt != nil {
+			groups.canceled = append(groups.canceled, replacement)
+			continue
+		}
+		groups.active = append(groups.active, replacement)
+	}
+	sortPCSReplicaReplacements(groups.active)
+	sortPCSReplicaReplacements(groups.canceled)
+	return groups
+}
+
+// sortPCSReplicaReplacements sorts replacements by source PCS replica index.
+func sortPCSReplicaReplacements(replacements []pcsReplicaReplacement) {
+	slices.SortFunc(replacements, func(a, b pcsReplicaReplacement) int {
+		return cmp.Compare(a.sourcePCSReplicaIndex, b.sourcePCSReplicaIndex)
+	})
 }

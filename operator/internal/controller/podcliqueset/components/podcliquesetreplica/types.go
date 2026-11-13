@@ -48,22 +48,24 @@ func (infos pcsReplicaInfoByIndex) existingReplicaIndices() sets.Set[int] {
 	return existingIndices
 }
 
-// projectedReplicaIndices returns existing indices plus scale-out indices, excluding scale-in indices.
-func (infos pcsReplicaInfoByIndex) projectedReplicaIndices(scalingIndices pcsReplicaScalingIndices) sets.Set[int] {
-	projectedIndices := infos.existingReplicaIndices()
-	projectedIndices.Insert(scalingIndices.scaleOut...)
-	projectedIndices.Delete(scalingIndices.scaleIn...)
-	return projectedIndices
-}
-
-// reservedReplicaIndices returns existing indices and all indices committed to scaling.
-func (infos pcsReplicaInfoByIndex) reservedReplicaIndices(scalingIndices pcsReplicaScalingIndices) sets.Set[int] {
-	reservedIndices := infos.existingReplicaIndices()
-	reservedIndices.Insert(scalingIndices.activeScalingIndices()...)
-	return reservedIndices
+// computeClaimedReplicaIndices computes the PCS replica indices claimed by existing resources and persisted scaling
+// and replacement operations.
+func (infos pcsReplicaInfoByIndex) computeClaimedReplicaIndices(scalingIndices pcsReplicaScalingIndices, replacementGroups pcsReplicaReplacementGroups) sets.Set[int] {
+	claimedReplicaIndices := infos.existingReplicaIndices()
+	claimedReplicaIndices.Insert(scalingIndices.scaleOut...)
+	claimedReplicaIndices.Delete(scalingIndices.scaleIn...)
+	for _, replacement := range replacementGroups.active {
+		claimedReplicaIndices.Delete(replacement.sourcePCSReplicaIndex)
+		claimedReplicaIndices.Insert(replacement.targetPCSReplicaIndex)
+	}
+	for _, replacement := range replacementGroups.canceled {
+		claimedReplicaIndices.Delete(replacement.sourcePCSReplicaIndex, replacement.targetPCSReplicaIndex)
+	}
+	return claimedReplicaIndices
 }
 
 // pcsReplicaInfo contains the replica-scoped resources observed for one PCS replica index.
+
 type pcsReplicaInfo struct {
 	index           int
 	standalonePCLQs []grovecorev1beta1.PodClique
