@@ -194,7 +194,8 @@ func TestRefreshReadyPodsOfPodClique(t *testing.T) {
 			},
 			pod: &corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
-					Name: "podclique-a-pod-1",
+					Name:   "podclique-a-pod-1",
+					Labels: map[string]string{apicommon.LabelPodClique: "podclique-a"},
 				},
 				Status: corev1.PodStatus{
 					Conditions: []corev1.PodCondition{
@@ -218,7 +219,8 @@ func TestRefreshReadyPodsOfPodClique(t *testing.T) {
 			},
 			pod: &corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
-					Name: "podclique-a-pod-1",
+					Name:   "podclique-a-pod-1",
+					Labels: map[string]string{apicommon.LabelPodClique: "podclique-a"},
 				},
 				Status: corev1.PodStatus{
 					Conditions: []corev1.PodCondition{
@@ -242,7 +244,8 @@ func TestRefreshReadyPodsOfPodClique(t *testing.T) {
 			},
 			pod: &corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
-					Name: "podclique-a-pod-1",
+					Name:   "podclique-a-pod-1",
+					Labels: map[string]string{apicommon.LabelPodClique: "podclique-a"},
 				},
 			},
 			deletionEvent: true,
@@ -258,7 +261,8 @@ func TestRefreshReadyPodsOfPodClique(t *testing.T) {
 			},
 			pod: &corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
-					Name: "podclique-b-pod-1",
+					Name:   "podclique-b-pod-1",
+					Labels: map[string]string{apicommon.LabelPodClique: "podclique-b"},
 				},
 				Status: corev1.PodStatus{
 					Conditions: []corev1.PodCondition{
@@ -282,7 +286,8 @@ func TestRefreshReadyPodsOfPodClique(t *testing.T) {
 			},
 			pod: &corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
-					Name: "podclique-a-pod-1",
+					Name:   "podclique-a-pod-1",
+					Labels: map[string]string{apicommon.LabelPodClique: "podclique-a"},
 				},
 				Status: corev1.PodStatus{
 					Conditions: []corev1.PodCondition{
@@ -312,6 +317,78 @@ func TestRefreshReadyPodsOfPodClique(t *testing.T) {
 			deps.refreshReadyPodsOfPodClique(tt.pod, tt.deletionEvent)
 
 			assert.Equal(t, tt.expectedReadyPods, deps.currentPCLQReadyPods, "Ready pods state should match expected")
+		})
+	}
+}
+
+// TestRefreshReadyPodsOfPodCliqueOverlappingNames verifies that a pod is attributed to its own PodClique even when
+// another PodClique's FQN is a prefix of the pod name.
+func TestRefreshReadyPodsOfPodCliqueOverlappingNames(t *testing.T) {
+	readyPod := func(name, pclqFQN string) *corev1.Pod {
+		return &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   name,
+				Labels: map[string]string{apicommon.LabelPodClique: pclqFQN},
+			},
+			Status: corev1.PodStatus{
+				Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}},
+			},
+		}
+	}
+
+	tests := []struct {
+		// Test case name for identifying failures
+		name string
+		// Parent PodCliques being waited on
+		pclqFQNToMinAvailable map[string]int
+		// Pod object to process
+		pod *corev1.Pod
+		// Expected state after processing
+		expectedReadyPods map[string]sets.Set[string]
+	}{
+		{
+			// A ready pod of an untracked PodClique whose name extends a tracked parent's name must not count
+			name:                  "untracked_clique_with_parent_name_as_prefix",
+			pclqFQNToMinAvailable: map[string]int{"pcs-0-prefill": 1},
+			pod:                   readyPod("pcs-0-prefill-leader-x7k2p", "pcs-0-prefill-leader"),
+			expectedReadyPods: map[string]sets.Set[string]{
+				"pcs-0-prefill": sets.New[string](),
+			},
+		},
+		{
+			// When both PodCliques are parents the pod must land in its own clique's set
+			name:                  "both_cliques_tracked",
+			pclqFQNToMinAvailable: map[string]int{"pcs-0-prefill": 1, "pcs-0-prefill-leader": 1},
+			pod:                   readyPod("pcs-0-prefill-leader-x7k2p", "pcs-0-prefill-leader"),
+			expectedReadyPods: map[string]sets.Set[string]{
+				"pcs-0-prefill":        sets.New[string](),
+				"pcs-0-prefill-leader": sets.New("pcs-0-prefill-leader-x7k2p"),
+			},
+		},
+		{
+			// A pod without the PodClique label is ignored
+			name:                  "pod_without_podclique_label",
+			pclqFQNToMinAvailable: map[string]int{"pcs-0-prefill": 1},
+			pod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{Name: "pcs-0-prefill-x7k2p"},
+				Status: corev1.PodStatus{
+					Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}},
+				},
+			},
+			expectedReadyPods: map[string]sets.Set[string]{
+				"pcs-0-prefill": sets.New[string](),
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Run several times since map iteration order is random
+			for range 20 {
+				deps := newPodCliqueStateWithInfo(tt.pclqFQNToMinAvailable, "default", "pcs-0")
+				deps.refreshReadyPodsOfPodClique(tt.pod, false)
+				require.Equal(t, tt.expectedReadyPods, deps.currentPCLQReadyPods, "Ready pods state should match expected")
+			}
 		})
 	}
 }
