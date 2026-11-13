@@ -11350,12 +11350,40 @@ spec:
                             reporting LastReady, subsumed pods still coming up, or an availability
                             budget preventing further takedown. Cleared once all preconditions hold.
                           type: string
-                        replacementReplicaIndex:
+                        replacement:
                           description: |-
-                            ReplacementReplicaIndex is the target replica created from the latest PodCliqueSet template.
-                            It is populated only during replica recreation.
-                          format: int32
-                          type: integer
+                            Replacement captures structural replacement progress for the source replica identified by ReplicaIndex.
+                            It is populated only during PodCliqueSet replica recreation.
+                          properties:
+                            canceledAt:
+                              description: |-
+                                CanceledAt is the time when the replacement stopped contributing its target to the projected PodCliqueSet identity
+                                set.
+                              format: date-time
+                              type: string
+                            cancellationMessage:
+                              description: CancellationMessage explains why the replacement
+                                was canceled.
+                              type: string
+                            sourceCleanupCompletedAt:
+                              description: |-
+                                SourceCleanupCompletedAt is the time when every replica-scoped component stopped reporting the source index as
+                                awaiting resource cleanup. It is used only when ReplicaIndex equals TargetReplicaIndex. Cleanup and creation at
+                                the same index must run sequentially to prevent newly created target resources from being deleted as source
+                                resources. Grove persists this field after cleanup completes so target creation can proceed across operator
+                                restarts. Grove does not set or inspect this field when the indices differ because source deletion and target
+                                creation can proceed concurrently.
+                              format: date-time
+                              type: string
+                            targetReplicaIndex:
+                              description: TargetReplicaIndex is the PodCliqueSet
+                                replica index created from the latest PodCliqueSet
+                                template.
+                              format: int32
+                              type: integer
+                          required:
+                          - targetReplicaIndex
+                          type: object
                         replicaIndex:
                           description: ReplicaIndex is the replica being updated.
                             During replica recreation, it is the source replica being
@@ -22683,29 +22711,55 @@ spec:
                       properties:
                         inFlightEpochs:
                           description: |-
-                            InFlightEpochs are the grove.io/epochs of the PodGangs currently being rolled
-                            (in flight) for this replica's coherent update. The orchestrator waits for the
-                            PodGangs at these epochs to become ready before advancing to the next iteration.
-                            Today a single epoch is in flight at a time; the field is a list so that a future
-                            iteration supporting concurrent in-flight batches needs no API change. It is cleared
-                            once the coherent update for this replica completes.
+                            InFlightEpochs are the grove.io/epochs of the PodGangs currently being rolled (in flight) for this replica's
+                            coherent update. The orchestrator waits for the PodGangs at these epochs to become ready before advancing to the
+                            next iteration. Today a single epoch is in flight at a time; the field is a list so that a future iteration
+                            supporting concurrent in-flight batches needs no API change.
+                            It is cleared once the coherent update for this replica completes.
                           items:
                             type: string
                           type: array
                         message:
                           description: |-
-                            Message describes the current reason the orchestrator has not advanced
-                            the coherent update this reconcile. Populated whenever any advance
-                            precondition is not met: PodGangs at the current InFlightEpochs not yet
-                            reporting LastReady, subsumed pods still coming up, or an availability
-                            budget preventing further takedown. Cleared once all preconditions hold.
+                            Message describes the current reason the orchestrator has not advanced the coherent update this reconcile. Populated
+                            whenever any advance precondition is not met: PodGangs at the current InFlightEpochs not yet reporting LastReady,
+                            subsumed pods still coming up, or an availability budget preventing further takedown.
+                            Cleared once all preconditions hold.
                           type: string
-                        replacementReplicaIndex:
+                        replacement:
                           description: |-
-                            ReplacementReplicaIndex is the target replica created from the latest PodCliqueSet template.
-                            It is populated only during replica recreation.
-                          format: int32
-                          type: integer
+                            Replacement captures structural replacement progress for the source replica identified by ReplicaIndex.
+                            It is populated only during PodCliqueSet replica recreation.
+                          properties:
+                            canceledAt:
+                              description: |-
+                                CanceledAt is the time when the replacement stopped contributing its target to the projected PodCliqueSet
+                                identity set.
+                              format: date-time
+                              type: string
+                            cancellationMessage:
+                              description: CancellationMessage explains why the replacement
+                                was canceled.
+                              type: string
+                            sourceCleanupCompletedAt:
+                              description: |-
+                                SourceCleanupCompletedAt is the time when every replica-scoped component stopped reporting the source index as
+                                awaiting resource cleanup. It is used only when ReplicaIndex equals TargetReplicaIndex. Cleanup and creation at
+                                the same index must run sequentially to prevent newly created target resources from being deleted as source
+                                resources. Grove persists this field after cleanup completes so target creation can proceed across operator
+                                restarts. Grove does not set or inspect this field when the indices differ because source deletion and target
+                                creation can proceed concurrently.
+                              format: date-time
+                              type: string
+                            targetReplicaIndex:
+                              description: TargetReplicaIndex is the PodCliqueSet
+                                replica index created from the latest PodCliqueSet
+                                template.
+                              format: int32
+                              type: integer
+                          required:
+                          - targetReplicaIndex
+                          type: object
                         replicaIndex:
                           description: ReplicaIndex is the replica being updated.
                             During replica recreation, it is the source replica being

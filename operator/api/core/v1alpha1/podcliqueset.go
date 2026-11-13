@@ -228,10 +228,10 @@ type PodCliqueSetUpdateProgress struct {
 type PodCliqueSetReplicaUpdateProgress struct {
 	// ReplicaIndex is the replica being updated. During replica recreation, it is the source replica being replaced.
 	ReplicaIndex int32 `json:"replicaIndex"`
-	// ReplacementReplicaIndex is the target replica created from the latest PodCliqueSet template.
-	// It is populated only during replica recreation.
+	// Replacement captures structural replacement progress for the source replica identified by ReplicaIndex.
+	// It is populated only during PodCliqueSet replica recreation.
 	// +optional
-	ReplacementReplicaIndex *int32 `json:"replacementReplicaIndex,omitempty"`
+	Replacement *PodCliqueSetReplicaReplacementProgress `json:"replacement,omitempty"`
 	// UpdateStartedAt is the time at which the update started for this PodCliqueSet replica index.
 	UpdateStartedAt metav1.Time `json:"updateStartedAt,omitempty"`
 	// UpdateEndedAt is the time at which the update ended for this PodCliqueSet replica index.
@@ -254,6 +254,31 @@ type PodCliqueSetReplicaUpdateProgress struct {
 	// budget preventing further takedown. Cleared once all preconditions hold.
 	// +optional
 	Message *string `json:"message,omitempty"`
+}
+
+// PodCliqueSetReplicaReplacementProgress captures structural replacement progress for the source replica identified by
+// PodCliqueSetReplicaUpdateProgress.ReplicaIndex.
+type PodCliqueSetReplicaReplacementProgress struct {
+	// TargetReplicaIndex is the PodCliqueSet replica index created from the latest PodCliqueSet template.
+	TargetReplicaIndex int32 `json:"targetReplicaIndex"`
+
+	// SourceCleanupCompletedAt is the time when every replica-scoped component stopped reporting the source index as
+	// awaiting resource cleanup. It is used only when ReplicaIndex equals TargetReplicaIndex. Cleanup and creation at
+	// the same index must run sequentially to prevent newly created target resources from being deleted as source
+	// resources. Grove persists this field after cleanup completes so target creation can proceed across operator
+	// restarts. Grove does not set or inspect this field when the indices differ because source deletion and target
+	// creation can proceed concurrently.
+	// +optional
+	SourceCleanupCompletedAt *metav1.Time `json:"sourceCleanupCompletedAt,omitempty"`
+
+	// CanceledAt is the time when the replacement stopped contributing its target to the projected PodCliqueSet identity
+	// set.
+	// +optional
+	CanceledAt *metav1.Time `json:"canceledAt,omitempty"`
+
+	// CancellationMessage explains why the replacement was canceled.
+	// +optional
+	CancellationMessage *string `json:"cancellationMessage,omitempty"`
 }
 
 // RollingUpdateConfiguration carries per-component knobs for a rolling update. It attaches to each

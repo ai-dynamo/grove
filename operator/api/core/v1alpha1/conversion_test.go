@@ -169,6 +169,39 @@ func TestRoundTripFromBeta(t *testing.T) {
 	}
 }
 
+func TestConvertPodCliqueSetReplicaUpdateProgressRoundTrip(t *testing.T) {
+	sourceCleanupCompletedAt := metav1.Now()
+	canceledAt := metav1.Now()
+	cancellationMessage := "replica-count reduction selected the replacement target"
+	replacement := &v1beta1.PodCliqueSetReplicaReplacementProgress{
+		TargetReplicaIndex:       1,
+		SourceCleanupCompletedAt: &sourceCleanupCompletedAt,
+		CanceledAt:               &canceledAt,
+		CancellationMessage:      &cancellationMessage,
+	}
+
+	alphaReplacement := &PodCliqueSetReplicaReplacementProgress{}
+	require.NoError(t, Convert_v1beta1_PodCliqueSetReplicaReplacementProgress_To_v1alpha1_PodCliqueSetReplicaReplacementProgress(replacement, alphaReplacement, nil))
+	convertedReplacement := &v1beta1.PodCliqueSetReplicaReplacementProgress{}
+	require.NoError(t, Convert_v1alpha1_PodCliqueSetReplicaReplacementProgress_To_v1beta1_PodCliqueSetReplicaReplacementProgress(alphaReplacement, convertedReplacement, nil))
+	assert.Equal(t, replacement, convertedReplacement)
+
+	in := &v1beta1.PodCliqueSetReplicaUpdateProgress{
+		ReplicaIndex:    3,
+		Replacement:     replacement,
+		UpdateStartedAt: metav1.Now(),
+		InFlightEpochs:  []string{"100", "200"},
+		Message:         new("replacement is awaiting cleanup"),
+	}
+
+	alpha := &PodCliqueSetReplicaUpdateProgress{}
+	require.NoError(t, Convert_v1beta1_PodCliqueSetReplicaUpdateProgress_To_v1alpha1_PodCliqueSetReplicaUpdateProgress(in, alpha, nil))
+	out := &v1beta1.PodCliqueSetReplicaUpdateProgress{}
+	require.NoError(t, Convert_v1alpha1_PodCliqueSetReplicaUpdateProgress_To_v1beta1_PodCliqueSetReplicaUpdateProgress(alpha, out, nil))
+
+	assert.Equal(t, in, out)
+}
+
 // TestRoundTripFromAlpha checks that a v1alpha1 PodCliqueSet without the deprecated packDomain and the unused
 // podGangStatuses survives a conversion to v1beta1 and back unchanged.
 func TestRoundTripFromAlpha(t *testing.T) {

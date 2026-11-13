@@ -649,15 +649,25 @@ func TestIsUpdateOrchestratedByGrove(t *testing.T) {
 	assert.True(t, isUpdateOrchestratedByGrove(rollingPCS, false))
 }
 
-func TestCarryCurrentlyUpdatingReplicaProgress(t *testing.T) {
+func TestPreserveActiveReplicaSelectionsForSupersedingUpdate(t *testing.T) {
 	updateStartedAt := metav1.Now()
 	completedAt := metav1.Now()
+	sourceCleanupCompletedAt := metav1.Now()
+	canceledAt := metav1.Now()
+	cancellationMessage := "replica-count reduction selected the replacement target"
+	replacement := &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{
+		TargetReplicaIndex:       4,
+		SourceCleanupCompletedAt: &sourceCleanupCompletedAt,
+		CanceledAt:               &canceledAt,
+		CancellationMessage:      &cancellationMessage,
+	}
 	pcs := &grovecorev1beta1.PodCliqueSet{
 		Status: grovecorev1beta1.PodCliqueSetStatus{
 			UpdateProgress: &grovecorev1beta1.PodCliqueSetUpdateProgress{
 				CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{
-					{ReplicaIndex: 3, ReplacementReplicaIndex: ptr.To[int32](4)},
+					{ReplicaIndex: 3, Replacement: replacement},
 					{ReplicaIndex: 1},
+					{ReplicaIndex: 0},
 					{ReplicaIndex: 2, UpdateEndedAt: &completedAt},
 				},
 			},
@@ -667,15 +677,24 @@ func TestCarryCurrentlyUpdatingReplicaProgress(t *testing.T) {
 		},
 	}
 
-	got := carryCurrentlyUpdatingReplicaProgress(pcs, updateStartedAt)
+	got := preserveActiveReplicaSelectionsForSupersedingUpdate(pcs, updateStartedAt)
 
-	require.Len(t, got, 1)
-	assert.Equal(t, int32(3), got[0].ReplicaIndex)
-	require.NotNil(t, got[0].ReplacementReplicaIndex)
-	assert.Equal(t, int32(4), *got[0].ReplacementReplicaIndex)
+	require.Len(t, got, 2)
+	assert.Equal(t, int32(0), got[0].ReplicaIndex)
+	assert.Nil(t, got[0].Replacement)
 	assert.Equal(t, updateStartedAt, got[0].UpdateStartedAt)
 	assert.Nil(t, got[0].UpdateEndedAt)
-	assert.Nil(t, carryCurrentlyUpdatingReplicaProgress(&grovecorev1beta1.PodCliqueSet{}, updateStartedAt))
+
+	assert.Equal(t, int32(3), got[1].ReplicaIndex)
+	require.NotNil(t, got[1].Replacement)
+	assert.Equal(t, replacement, got[1].Replacement)
+	assert.NotSame(t, replacement, got[1].Replacement)
+	assert.NotSame(t, replacement.SourceCleanupCompletedAt, got[1].Replacement.SourceCleanupCompletedAt)
+	assert.NotSame(t, replacement.CanceledAt, got[1].Replacement.CanceledAt)
+	assert.NotSame(t, replacement.CancellationMessage, got[1].Replacement.CancellationMessage)
+	assert.Equal(t, updateStartedAt, got[1].UpdateStartedAt)
+	assert.Nil(t, got[1].UpdateEndedAt)
+	assert.Nil(t, preserveActiveReplicaSelectionsForSupersedingUpdate(&grovecorev1beta1.PodCliqueSet{}, updateStartedAt))
 }
 
 // TestPCSGenerationStatusExpectationKey verifies the generation-status expectation key includes the PCS UID so two
