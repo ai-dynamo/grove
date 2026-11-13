@@ -18,7 +18,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
@@ -233,11 +232,14 @@ func (c *ParentPodCliqueDependencies) registerEventHandler(factory informers.Sha
 
 // refreshReadyPodsOfPodClique updates the ready pod count for the PodClique that owns the given pod.
 func (c *ParentPodCliqueDependencies) refreshReadyPodsOfPodClique(pod *corev1.Pod, deletionEvent bool) {
-	// Find which parent PodClique this pod belongs to by name prefix matching
-	podCliqueName, ok := lo.Find(lo.Keys(c.pclqFQNToMinAvailable), func(podCliqueFQN string) bool {
-		return strings.HasPrefix(pod.Name, podCliqueFQN)
-	})
+	// Find which parent PodClique this pod belongs to using the PodClique label set on every Grove pod.
+	// Matching on the pod name prefix is ambiguous: pods are created with GenerateName "<pclqFQN>-", so a pod of
+	// PodClique "pcs-0-prefill-leader" also starts with "pcs-0-prefill" and would be counted towards that parent.
+	podCliqueName, ok := pod.Labels[apicommon.LabelPodClique]
 	if !ok {
+		return // Pod is not managed by a PodClique
+	}
+	if _, tracked := c.pclqFQNToMinAvailable[podCliqueName]; !tracked {
 		return // Pod doesn't belong to any tracked parent PodClique
 	}
 
