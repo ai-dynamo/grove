@@ -26,7 +26,7 @@ import (
 )
 
 // pcsReplicaReplacement identifies a structural replacement from one PCS replica index to another.
-// Its source and target correspond to ReplicaIndex and ReplacementReplicaIndex in update progress.
+// Its source and target correspond to ReplicaIndex and Replacement.TargetReplicaIndex in update progress.
 type pcsReplicaReplacement struct {
 	sourcePCSReplicaIndex int
 	targetPCSReplicaIndex int
@@ -39,12 +39,12 @@ func getActivePCSReplicaReplacements(pcs *grovecorev1beta1.PodCliqueSet) []pcsRe
 	}
 	replacements := make([]pcsReplicaReplacement, 0, len(pcs.Status.UpdateProgress.CurrentlyUpdating))
 	for _, updateProgress := range pcs.Status.UpdateProgress.CurrentlyUpdating {
-		if updateProgress.UpdateEndedAt != nil || updateProgress.ReplacementReplicaIndex == nil {
+		if updateProgress.UpdateEndedAt != nil || updateProgress.Replacement == nil {
 			continue
 		}
 		replacements = append(replacements, pcsReplicaReplacement{
 			sourcePCSReplicaIndex: int(updateProgress.ReplicaIndex),
-			targetPCSReplicaIndex: int(*updateProgress.ReplacementReplicaIndex),
+			targetPCSReplicaIndex: int(updateProgress.Replacement.TargetReplicaIndex),
 		})
 	}
 	slices.SortFunc(replacements, func(a, b pcsReplicaReplacement) int {

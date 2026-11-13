@@ -223,10 +223,10 @@ type PodCliqueSetUpdateProgress struct {
 type PodCliqueSetReplicaUpdateProgress struct {
 	// ReplicaIndex is the replica being updated. During replica recreation, it is the source replica being replaced.
 	ReplicaIndex int32 `json:"replicaIndex"`
-	// ReplacementReplicaIndex is the target replica created from the latest PodCliqueSet template.
-	// It is populated only during replica recreation.
+	// Replacement captures structural replacement progress for the source replica identified by ReplicaIndex.
+	// It is populated only during PodCliqueSet replica recreation.
 	// +optional
-	ReplacementReplicaIndex *int32 `json:"replacementReplicaIndex,omitempty"`
+	Replacement *PodCliqueSetReplicaReplacementProgress `json:"replacement,omitempty"`
 	// UpdateStartedAt is the time at which the update started for this PodCliqueSet replica index.
 	UpdateStartedAt metav1.Time `json:"updateStartedAt,omitempty"`
 	// UpdateEndedAt is the time at which the update ended for this PodCliqueSet replica index.
@@ -234,21 +234,44 @@ type PodCliqueSetReplicaUpdateProgress struct {
 	// running the latest specification.
 	// +optional
 	UpdateEndedAt *metav1.Time `json:"updateEndedAt,omitempty"`
-	// InFlightEpochs are the grove.io/epochs of the PodGangs currently being rolled
-	// (in flight) for this replica's coherent update. The orchestrator waits for the
-	// PodGangs at these epochs to become ready before advancing to the next iteration.
-	// Today a single epoch is in flight at a time; the field is a list so that a future
-	// iteration supporting concurrent in-flight batches needs no API change. It is cleared
-	// once the coherent update for this replica completes.
+	// InFlightEpochs are the grove.io/epochs of the PodGangs currently being rolled (in flight) for this replica's
+	// coherent update. The orchestrator waits for the PodGangs at these epochs to become ready before advancing to the
+	// next iteration. Today a single epoch is in flight at a time; the field is a list so that a future iteration
+	// supporting concurrent in-flight batches needs no API change.
+	// It is cleared once the coherent update for this replica completes.
 	// +optional
 	InFlightEpochs []string `json:"inFlightEpochs,omitempty"`
-	// Message describes the current reason the orchestrator has not advanced
-	// the coherent update this reconcile. Populated whenever any advance
-	// precondition is not met: PodGangs at the current InFlightEpochs not yet
-	// reporting LastReady, subsumed pods still coming up, or an availability
-	// budget preventing further takedown. Cleared once all preconditions hold.
+	// Message describes the current reason the orchestrator has not advanced the coherent update this reconcile. Populated
+	// whenever any advance precondition is not met: PodGangs at the current InFlightEpochs not yet reporting LastReady,
+	// subsumed pods still coming up, or an availability budget preventing further takedown.
+	// Cleared once all preconditions hold.
 	// +optional
 	Message *string `json:"message,omitempty"`
+}
+
+// PodCliqueSetReplicaReplacementProgress captures structural replacement progress for the source replica identified by
+// PodCliqueSetReplicaUpdateProgress.ReplicaIndex.
+type PodCliqueSetReplicaReplacementProgress struct {
+	// TargetReplicaIndex is the PodCliqueSet replica index created from the latest PodCliqueSet template.
+	TargetReplicaIndex int32 `json:"targetReplicaIndex"`
+
+	// SourceCleanupCompletedAt is the time when every replica-scoped component stopped reporting the source index as
+	// awaiting resource cleanup. It is used only when ReplicaIndex equals TargetReplicaIndex. Cleanup and creation at
+	// the same index must run sequentially to prevent newly created target resources from being deleted as source
+	// resources. Grove persists this field after cleanup completes so target creation can proceed across operator
+	// restarts. Grove does not set or inspect this field when the indices differ because source deletion and target
+	// creation can proceed concurrently.
+	// +optional
+	SourceCleanupCompletedAt *metav1.Time `json:"sourceCleanupCompletedAt,omitempty"`
+
+	// CanceledAt is the time when the replacement stopped contributing its target to the projected PodCliqueSet
+	// identity set.
+	// +optional
+	CanceledAt *metav1.Time `json:"canceledAt,omitempty"`
+
+	// CancellationMessage explains why the replacement was canceled.
+	// +optional
+	CancellationMessage *string `json:"cancellationMessage,omitempty"`
 }
 
 // RollingUpdateConfiguration carries per-component knobs for a rolling update. It attaches to each

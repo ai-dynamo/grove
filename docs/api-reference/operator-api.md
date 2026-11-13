@@ -420,6 +420,26 @@ PodCliqueSet is a set of PodGangs defining specification on how to spread and ma
 | `status` _[PodCliqueSetStatus](#podcliquesetstatus)_ | Status defines the status of the PodCliqueSet. |  |  |
 
 
+#### PodCliqueSetReplicaReplacementProgress
+
+
+
+PodCliqueSetReplicaReplacementProgress captures structural replacement progress for the source replica identified by
+PodCliqueSetReplicaUpdateProgress.ReplicaIndex.
+
+
+
+_Appears in:_
+- [PodCliqueSetReplicaUpdateProgress](#podcliquesetreplicaupdateprogress)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `targetReplicaIndex` _integer_ | TargetReplicaIndex is the PodCliqueSet replica index created from the latest PodCliqueSet template. |  |  |
+| `sourceCleanupCompletedAt` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#time-v1-meta)_ | SourceCleanupCompletedAt is the time when every replica-scoped component stopped reporting the source index as<br />awaiting resource cleanup. It is used only when ReplicaIndex equals TargetReplicaIndex. Cleanup and creation at<br />the same index must run sequentially to prevent newly created target resources from being deleted as source<br />resources. Grove persists this field after cleanup completes so target creation can proceed across operator<br />restarts. Grove does not set or inspect this field when the indices differ because source deletion and target<br />creation can proceed concurrently. |  |  |
+| `canceledAt` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#time-v1-meta)_ | CanceledAt is the time when the replacement stopped contributing its target to the projected PodCliqueSet identity<br />set. |  |  |
+| `cancellationMessage` _string_ | CancellationMessage explains why the replacement was canceled. |  |  |
+
+
 #### PodCliqueSetReplicaUpdateProgress
 
 
@@ -434,7 +454,7 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `replicaIndex` _integer_ | ReplicaIndex is the replica being updated. During replica recreation, it is the source replica being replaced. |  |  |
-| `replacementReplicaIndex` _integer_ | ReplacementReplicaIndex is the target replica created from the latest PodCliqueSet template.<br />It is populated only during replica recreation. |  |  |
+| `replacement` _[PodCliqueSetReplicaReplacementProgress](#podcliquesetreplicareplacementprogress)_ | Replacement captures structural replacement progress for the source replica identified by ReplicaIndex.<br />It is populated only during PodCliqueSet replica recreation. |  |  |
 | `updateStartedAt` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#time-v1-meta)_ | UpdateStartedAt is the time at which the update started for this PodCliqueSet replica index. |  |  |
 | `updateEndedAt` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#time-v1-meta)_ | UpdateEndedAt is the time at which the update ended for this PodCliqueSet replica index.<br />The update ends when all child resources have been updated with the latest specification, when all Pods are<br />running the latest specification. |  |  |
 | `inFlightEpochs` _string array_ | InFlightEpochs are the grove.io/epochs of the PodGangs currently being rolled<br />(in flight) for this replica's coherent update. The orchestrator waits for the<br />PodGangs at these epochs to become ready before advancing to the next iteration.<br />Today a single epoch is in flight at a time; the field is a list so that a future<br />iteration supporting concurrent in-flight batches needs no API change. It is cleared<br />once the coherent update for this replica completes. |  |  |
@@ -1391,6 +1411,26 @@ PodCliqueSet is a set of PodGangs defining specification on how to spread and ma
 | `status` _[PodCliqueSetStatus](#podcliquesetstatus)_ | Status defines the status of the PodCliqueSet. |  |  |
 
 
+#### PodCliqueSetReplicaReplacementProgress
+
+
+
+PodCliqueSetReplicaReplacementProgress captures structural replacement progress for the source replica identified by
+PodCliqueSetReplicaUpdateProgress.ReplicaIndex.
+
+
+
+_Appears in:_
+- [PodCliqueSetReplicaUpdateProgress](#podcliquesetreplicaupdateprogress)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `targetReplicaIndex` _integer_ | TargetReplicaIndex is the PodCliqueSet replica index created from the latest PodCliqueSet template. |  |  |
+| `sourceCleanupCompletedAt` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#time-v1-meta)_ | SourceCleanupCompletedAt is the time when every replica-scoped component stopped reporting the source index as<br />awaiting resource cleanup. It is used only when ReplicaIndex equals TargetReplicaIndex. Cleanup and creation at<br />the same index must run sequentially to prevent newly created target resources from being deleted as source<br />resources. Grove persists this field after cleanup completes so target creation can proceed across operator<br />restarts. Grove does not set or inspect this field when the indices differ because source deletion and target<br />creation can proceed concurrently. |  |  |
+| `canceledAt` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#time-v1-meta)_ | CanceledAt is the time when the replacement stopped contributing its target to the projected PodCliqueSet<br />identity set. |  |  |
+| `cancellationMessage` _string_ | CancellationMessage explains why the replacement was canceled. |  |  |
+
+
 #### PodCliqueSetReplicaUpdateProgress
 
 
@@ -1405,11 +1445,11 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `replicaIndex` _integer_ | ReplicaIndex is the replica being updated. During replica recreation, it is the source replica being replaced. |  |  |
-| `replacementReplicaIndex` _integer_ | ReplacementReplicaIndex is the target replica created from the latest PodCliqueSet template.<br />It is populated only during replica recreation. |  |  |
+| `replacement` _[PodCliqueSetReplicaReplacementProgress](#podcliquesetreplicareplacementprogress)_ | Replacement captures structural replacement progress for the source replica identified by ReplicaIndex.<br />It is populated only during PodCliqueSet replica recreation. |  |  |
 | `updateStartedAt` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#time-v1-meta)_ | UpdateStartedAt is the time at which the update started for this PodCliqueSet replica index. |  |  |
 | `updateEndedAt` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#time-v1-meta)_ | UpdateEndedAt is the time at which the update ended for this PodCliqueSet replica index.<br />The update ends when all child resources have been updated with the latest specification, when all Pods are<br />running the latest specification. |  |  |
-| `inFlightEpochs` _string array_ | InFlightEpochs are the grove.io/epochs of the PodGangs currently being rolled<br />(in flight) for this replica's coherent update. The orchestrator waits for the<br />PodGangs at these epochs to become ready before advancing to the next iteration.<br />Today a single epoch is in flight at a time; the field is a list so that a future<br />iteration supporting concurrent in-flight batches needs no API change. It is cleared<br />once the coherent update for this replica completes. |  |  |
-| `message` _string_ | Message describes the current reason the orchestrator has not advanced<br />the coherent update this reconcile. Populated whenever any advance<br />precondition is not met: PodGangs at the current InFlightEpochs not yet<br />reporting LastReady, subsumed pods still coming up, or an availability<br />budget preventing further takedown. Cleared once all preconditions hold. |  |  |
+| `inFlightEpochs` _string array_ | InFlightEpochs are the grove.io/epochs of the PodGangs currently being rolled (in flight) for this replica's<br />coherent update. The orchestrator waits for the PodGangs at these epochs to become ready before advancing to the<br />next iteration. Today a single epoch is in flight at a time; the field is a list so that a future iteration<br />supporting concurrent in-flight batches needs no API change.<br />It is cleared once the coherent update for this replica completes. |  |  |
+| `message` _string_ | Message describes the current reason the orchestrator has not advanced the coherent update this reconcile. Populated<br />whenever any advance precondition is not met: PodGangs at the current InFlightEpochs not yet reporting LastReady,<br />subsumed pods still coming up, or an availability budget preventing further takedown.<br />Cleared once all preconditions hold. |  |  |
 
 
 #### PodCliqueSetScalingProgress

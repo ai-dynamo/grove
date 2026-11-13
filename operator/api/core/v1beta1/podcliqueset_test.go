@@ -18,7 +18,33 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
+
+func TestPodCliqueSetReplicaUpdateProgressDeepCopy(t *testing.T) {
+	sourceCleanupCompletedAt := metav1.Now()
+	canceledAt := metav1.Now()
+	cancellationMessage := "replica-count reduction selected the replacement target"
+	original := &PodCliqueSetReplicaUpdateProgress{
+		Replacement: &PodCliqueSetReplicaReplacementProgress{
+			TargetReplicaIndex:       3,
+			SourceCleanupCompletedAt: &sourceCleanupCompletedAt,
+			CanceledAt:               &canceledAt,
+			CancellationMessage:      &cancellationMessage,
+		},
+	}
+
+	copied := original.DeepCopy()
+	copied.Replacement.TargetReplicaIndex = 5
+	copied.Replacement.SourceCleanupCompletedAt.Time = copied.Replacement.SourceCleanupCompletedAt.AddDate(0, 0, 1)
+	copied.Replacement.CanceledAt.Time = copied.Replacement.CanceledAt.AddDate(0, 0, 1)
+	*copied.Replacement.CancellationMessage = "changed"
+
+	assert.Equal(t, int32(3), original.Replacement.TargetReplicaIndex)
+	assert.Equal(t, sourceCleanupCompletedAt, *original.Replacement.SourceCleanupCompletedAt)
+	assert.Equal(t, canceledAt, *original.Replacement.CanceledAt)
+	assert.Equal(t, cancellationMessage, *original.Replacement.CancellationMessage)
+}
 
 func TestTopologyConstraintPackDomainHelpers(t *testing.T) {
 	tests := []struct {

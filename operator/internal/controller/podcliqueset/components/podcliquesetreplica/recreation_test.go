@@ -43,7 +43,7 @@ func TestGetActivePCSReplicaReplacements(t *testing.T) {
 			pcs: &grovecorev1beta1.PodCliqueSet{Status: grovecorev1beta1.PodCliqueSetStatus{
 				UpdateProgress: &grovecorev1beta1.PodCliqueSetUpdateProgress{
 					CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{
-						{ReplicaIndex: 2, ReplacementReplicaIndex: new(int32(1))},
+						{ReplicaIndex: 2, Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 1}},
 					},
 				},
 			}},
@@ -54,7 +54,7 @@ func TestGetActivePCSReplicaReplacements(t *testing.T) {
 				UpdateProgress: &grovecorev1beta1.PodCliqueSetUpdateProgress{
 					RequiresReplicaRecreation: true,
 					CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{
-						{ReplicaIndex: 2, ReplacementReplicaIndex: new(int32(1))},
+						{ReplicaIndex: 2, Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 1}},
 					},
 				},
 			}},
@@ -69,10 +69,10 @@ func TestGetActivePCSReplicaReplacements(t *testing.T) {
 				UpdateProgress: &grovecorev1beta1.PodCliqueSetUpdateProgress{
 					RequiresReplicaRecreation: true,
 					CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{
-						{ReplicaIndex: 5, ReplacementReplicaIndex: new(int32(3))},
+						{ReplicaIndex: 5, Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 3}},
 						{ReplicaIndex: 1},
-						{ReplicaIndex: 4, ReplacementReplicaIndex: new(int32(2)), UpdateEndedAt: &completedAt},
-						{ReplicaIndex: 2, ReplacementReplicaIndex: new(int32(1))},
+						{ReplicaIndex: 4, Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 2}, UpdateEndedAt: &completedAt},
+						{ReplicaIndex: 2, Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 1}},
 					},
 				},
 			}},
@@ -123,7 +123,7 @@ func TestSelectPCSReplicaRecreationSourceIndices(t *testing.T) {
 	t.Run("excludes scale-in and active replacement commitments", func(t *testing.T) {
 		pcs := schedulingConfigRolloutTestPCS()
 		pcs.Status.UpdateProgress.CurrentlyUpdating = []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{
-			{ReplicaIndex: 1, ReplacementReplicaIndex: new(int32(2))},
+			{ReplicaIndex: 1, Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 2}},
 		}
 		pcsReplicaInfosByIndex := pcsReplicaInfoByIndex{
 			0: rollingUpdateReplicaInfoAtGeneration(pcs, 0, "pending", false),
@@ -145,9 +145,9 @@ func TestSelectPCSReplicaRecreationSourceIndices(t *testing.T) {
 	t.Run("completed replacement no longer reserves its source or target", func(t *testing.T) {
 		pcs := schedulingConfigRolloutTestPCS()
 		pcs.Status.UpdateProgress.CurrentlyUpdating = []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{
-			ReplicaIndex:            0,
-			ReplacementReplicaIndex: new(int32(1)),
-			UpdateEndedAt:           new(metav1.Now()),
+			ReplicaIndex:  0,
+			Replacement:   &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 1},
+			UpdateEndedAt: new(metav1.Now()),
 		}}
 		pcsReplicaInfosByIndex := pcsReplicaInfoByIndex{
 			0: rollingUpdateReplicaInfoAtGeneration(pcs, 0, "pending", false),
@@ -300,7 +300,7 @@ func TestAllocatePCSReplicaReplacementTargets(t *testing.T) {
 			name:                      "active replacement source and target block allocation",
 			existingPCSReplicaIndices: sets.New(0, 3, 5),
 			currentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{
-				{ReplicaIndex: 3, ReplacementReplicaIndex: new(int32(1))},
+				{ReplicaIndex: 3, Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 1}},
 			},
 			selectedSourcePCSReplicaIndices: []int{5},
 			want: []pcsReplicaReplacement{
@@ -311,7 +311,7 @@ func TestAllocatePCSReplicaReplacementTargets(t *testing.T) {
 			name:                      "completed replacement does not block allocation",
 			existingPCSReplicaIndices: sets.New(0, 2),
 			currentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{
-				{ReplicaIndex: 5, ReplacementReplicaIndex: new(int32(1)), UpdateEndedAt: new(metav1.Now())},
+				{ReplicaIndex: 5, Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 1}, UpdateEndedAt: new(metav1.Now())},
 			},
 			selectedSourcePCSReplicaIndices: []int{2},
 			want: []pcsReplicaReplacement{

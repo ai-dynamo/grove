@@ -185,7 +185,7 @@ func (r *Reconciler) initOrResetUpdate(ctx context.Context, pcs *grovecorev1beta
 		UpdateStartedAt:                    updateStartedAt,
 	}
 	if isUpdateOrchestratedByGrove(pcs, requiresReplicaRecreation) {
-		updateProgress.CurrentlyUpdating = carryCurrentlyUpdatingReplicaProgress(pcs, updateStartedAt)
+		updateProgress.CurrentlyUpdating = preserveActiveReplicaSelectionsForSupersedingUpdate(pcs, updateStartedAt)
 	} else {
 		// Grove does not orchestrate ordinary OnDelete updates because it cannot know when every Pod has
 		// been manually deleted. Replica recreation is always orchestrated by Grove.
@@ -226,10 +226,10 @@ func isUpdateOrchestratedByGrove(pcs *grovecorev1beta1.PodCliqueSet, requiresRep
 	return requiresReplicaRecreation || componentutils.ResolveUpdateStrategyType(pcs) != grovecorev1beta1.OnDeleteStrategy
 }
 
-// carryCurrentlyUpdatingReplicaProgress returns active replica selections from the superseded update,
-// excluding identities already reserved for scale-in. Replica indices are treated as a set and returned
-// in ascending order with progress reset for the new update target.
-func carryCurrentlyUpdatingReplicaProgress(pcs *grovecorev1beta1.PodCliqueSet, updateStartedAt metav1.Time) []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress {
+// preserveActiveReplicaSelectionsForSupersedingUpdate returns active replica selections that remain committed after
+// update supersession. It resets update-specific progress while preserving structural replacement lifecycle state.
+// Identities already reserved for scale-in are excluded. Replica indices are returned in ascending order.
+func preserveActiveReplicaSelectionsForSupersedingUpdate(pcs *grovecorev1beta1.PodCliqueSet, updateStartedAt metav1.Time) []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress {
 	if pcs.Status.UpdateProgress == nil {
 		return nil
 	}
@@ -244,10 +244,14 @@ func carryCurrentlyUpdatingReplicaProgress(pcs *grovecorev1beta1.PodCliqueSet, u
 		if progress.UpdateEndedAt != nil || scaleInReplicaIndices.Has(progress.ReplicaIndex) {
 			continue
 		}
+		var replacement *grovecorev1beta1.PodCliqueSetReplicaReplacementProgress
+		if progress.Replacement != nil {
+			replacement = progress.Replacement.DeepCopy()
+		}
 		currentlyUpdating = append(currentlyUpdating, grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{
-			ReplicaIndex:            progress.ReplicaIndex,
-			ReplacementReplicaIndex: progress.ReplacementReplicaIndex,
-			UpdateStartedAt:         updateStartedAt,
+			ReplicaIndex:    progress.ReplicaIndex,
+			Replacement:     replacement,
+			UpdateStartedAt: updateStartedAt,
 		})
 	}
 	slices.SortFunc(currentlyUpdating, func(a, b grovecorev1beta1.PodCliqueSetReplicaUpdateProgress) int {
