@@ -36,7 +36,7 @@ jobs:
     needs: push-artifacts
     steps:
       - name: Checkout code
-        uses: actions/checkout@v2
+        uses: actions/checkout@v6
 
       - name: Extract package version from tag
         run: |
