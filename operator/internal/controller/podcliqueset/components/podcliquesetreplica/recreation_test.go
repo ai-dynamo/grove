@@ -27,70 +27,104 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 )
 
-func TestGetActivePCSReplicaReplacements(t *testing.T) {
+func TestGroupPCSReplicaReplacements(t *testing.T) {
 	completedAt := metav1.Now()
+	canceledAt := metav1.Now()
 	tests := []struct {
-		name string
-		pcs  *grovecorev1beta1.PodCliqueSet
-		want []pcsReplicaReplacement
+		name     string
+		progress *grovecorev1beta1.PodCliqueSetUpdateProgress
+		want     pcsReplicaReplacementGroups
 	}{
+		{name: "no update progress"},
 		{
-			name: "no update progress",
-			pcs:  &grovecorev1beta1.PodCliqueSet{},
-		},
-		{
-			name: "replica recreation not required ignores replacement indices",
-			pcs: &grovecorev1beta1.PodCliqueSet{Status: grovecorev1beta1.PodCliqueSetStatus{
-				UpdateProgress: &grovecorev1beta1.PodCliqueSetUpdateProgress{
-					CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{
-						{ReplicaIndex: 2, Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 1}},
-					},
-				},
-			}},
-		},
-		{
-			name: "one active replacement",
-			pcs: &grovecorev1beta1.PodCliqueSet{Status: grovecorev1beta1.PodCliqueSetStatus{
-				UpdateProgress: &grovecorev1beta1.PodCliqueSetUpdateProgress{
-					RequiresReplicaRecreation: true,
-					CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{
-						{ReplicaIndex: 2, Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 1}},
-					},
-				},
-			}},
-			want: []pcsReplicaReplacement{
-				{sourcePCSReplicaIndex: 2, targetPCSReplicaIndex: 1},
+			name: "replica recreation not required ignores replacement entries",
+			progress: &grovecorev1beta1.PodCliqueSetUpdateProgress{
+				CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{
+					ReplicaIndex: 2,
+					Replacement:  &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 1},
+				}},
 			},
 		},
 		{
-			// Multiple active replacements will be possible when MaxUnavailable-based concurrency is added by #888.
-			name: "multiple active replacements are sorted and incomplete entries are filtered",
-			pcs: &grovecorev1beta1.PodCliqueSet{Status: grovecorev1beta1.PodCliqueSetStatus{
-				UpdateProgress: &grovecorev1beta1.PodCliqueSetUpdateProgress{
-					RequiresReplicaRecreation: true,
-					CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{
-						{ReplicaIndex: 5, Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 3}},
-						{ReplicaIndex: 1},
-						{ReplicaIndex: 4, Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 2}, UpdateEndedAt: &completedAt},
-						{ReplicaIndex: 2, Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 1}},
-					},
+			name: "completed update ignores replacement entries",
+			progress: &grovecorev1beta1.PodCliqueSetUpdateProgress{
+				RequiresReplicaRecreation: true,
+				UpdateEndedAt:             &completedAt,
+				CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{
+					ReplicaIndex: 2,
+					Replacement:  &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 1},
+				}},
+			},
+		},
+		{
+			name: "groups and sorts incomplete replacement entries",
+			progress: &grovecorev1beta1.PodCliqueSetUpdateProgress{
+				RequiresReplicaRecreation: true,
+				CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{
+					{ReplicaIndex: 5, Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 3}},
+					{ReplicaIndex: 1},
+					{ReplicaIndex: 7, Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 6, CanceledAt: &canceledAt}},
+					{ReplicaIndex: 4, Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 2}, UpdateEndedAt: &completedAt},
+					{ReplicaIndex: 2, Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 1}},
+					{ReplicaIndex: 3, Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 0, CanceledAt: &canceledAt}},
 				},
-			}},
-			want: []pcsReplicaReplacement{
-				{sourcePCSReplicaIndex: 2, targetPCSReplicaIndex: 1},
-				{sourcePCSReplicaIndex: 5, targetPCSReplicaIndex: 3},
+			},
+			want: pcsReplicaReplacementGroups{
+				active: []pcsReplicaReplacement{
+					{sourcePCSReplicaIndex: 2, targetPCSReplicaIndex: 1},
+					{sourcePCSReplicaIndex: 5, targetPCSReplicaIndex: 3},
+				},
+				canceled: []pcsReplicaReplacement{
+					{sourcePCSReplicaIndex: 3, targetPCSReplicaIndex: 0},
+					{sourcePCSReplicaIndex: 7, targetPCSReplicaIndex: 6},
+				},
 			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, getActivePCSReplicaReplacements(tt.pcs))
+			assert.Equal(t, tt.want, groupPCSReplicaReplacements(tt.progress))
 		})
 	}
 }
 
-func TestSelectPCSReplicaRecreationSourceIndices(t *testing.T) {
+func TestPCSReplicaRecreationPlannerNext(t *testing.T) {
+	t.Run("selects the next replacement when no replacement is active", func(t *testing.T) {
+		pcs := schedulingConfigRolloutTestPCS()
+		replicaInfosByIndex := pcsReplicaInfoByIndex{
+			0: rollingUpdateReplicaInfoAtGeneration(pcs, 0, "pending", false),
+		}
+		planner := newPCSReplicaRecreationPlanner(pcs, replicaInfosByIndex, pcsReplicaScalingIndices{})
+
+		got := planner.next()
+
+		assert.Equal(t, &pcsReplicaReplacement{sourcePCSReplicaIndex: 0, targetPCSReplicaIndex: 0}, got)
+	})
+
+	t.Run("returns nil when an active replacement consumes the budget", func(t *testing.T) {
+		pcs := schedulingConfigRolloutTestPCS()
+		pcs.Status.UpdateProgress.CurrentlyUpdating = []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{
+			ReplicaIndex: 0,
+			Replacement:  &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 1},
+		}}
+		planner := newPCSReplicaRecreationPlanner(pcs, pcsReplicaInfoByIndex{}, pcsReplicaScalingIndices{})
+
+		assert.Nil(t, planner.next())
+	})
+
+	t.Run("returns nil when no source replica needs recreation", func(t *testing.T) {
+		pcs := schedulingConfigRolloutTestPCS()
+		replicaInfosByIndex := pcsReplicaInfoByIndex{
+			0: rollingUpdateReplicaInfoAtGeneration(pcs, 0, *pcs.Status.CurrentGenerationHash, true),
+		}
+		planner := newPCSReplicaRecreationPlanner(pcs, replicaInfosByIndex, pcsReplicaScalingIndices{})
+
+		assert.Nil(t, planner.next())
+	})
+}
+
+func TestPCSReplicaRecreationPlannerSelectSourceReplicaIndices(t *testing.T) {
 	t.Run("selects replicas in rollout priority order", func(t *testing.T) {
 		pcs := schedulingConfigRolloutTestPCS()
 		pcsReplicaInfosByIndex := pcsReplicaInfoByIndex{
@@ -103,7 +137,7 @@ func TestSelectPCSReplicaRecreationSourceIndices(t *testing.T) {
 			6: rollingUpdateReplicaInfoAtGeneration(pcs, 6, *pcs.Status.CurrentGenerationHash, true),
 		}
 
-		got := selectPCSReplicaRecreationSourceIndices(pcs, pcsReplicaInfosByIndex, pcsReplicaScalingIndices{}, len(pcsReplicaInfosByIndex))
+		got := newPCSReplicaRecreationPlanner(pcs, pcsReplicaInfosByIndex, pcsReplicaScalingIndices{}).selectSourceReplicaIndices(len(pcsReplicaInfosByIndex))
 
 		assert.Equal(t, []int{0, 3, 1, 4, 2, 5}, got)
 	})
@@ -115,7 +149,7 @@ func TestSelectPCSReplicaRecreationSourceIndices(t *testing.T) {
 			1: rollingUpdateReplicaInfoAtGeneration(pcs, 1, "pending", false),
 		}
 
-		got := selectPCSReplicaRecreationSourceIndices(pcs, pcsReplicaInfosByIndex, pcsReplicaScalingIndices{}, 1)
+		got := newPCSReplicaRecreationPlanner(pcs, pcsReplicaInfosByIndex, pcsReplicaScalingIndices{}).selectSourceReplicaIndices(1)
 
 		assert.Equal(t, []int{0}, got)
 	})
@@ -132,12 +166,32 @@ func TestSelectPCSReplicaRecreationSourceIndices(t *testing.T) {
 			3: rollingUpdateReplicaInfoAtGeneration(pcs, 3, "pending", false),
 		}
 
-		got := selectPCSReplicaRecreationSourceIndices(
+		got := newPCSReplicaRecreationPlanner(
 			pcs,
 			pcsReplicaInfosByIndex,
 			pcsReplicaScalingIndices{scaleIn: []int{0}},
-			len(pcsReplicaInfosByIndex),
-		)
+		).selectSourceReplicaIndices(len(pcsReplicaInfosByIndex))
+
+		assert.Equal(t, []int{3}, got)
+	})
+
+	t.Run("excludes canceled replacement source and target while cleanup is pending", func(t *testing.T) {
+		pcs := schedulingConfigRolloutTestPCS()
+		pcs.Status.UpdateProgress.CurrentlyUpdating = []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{
+			ReplicaIndex: 1,
+			Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{
+				TargetReplicaIndex: 2,
+				CanceledAt:         new(metav1.Now()),
+			},
+		}}
+		pcsReplicaInfosByIndex := pcsReplicaInfoByIndex{
+			1: rollingUpdateReplicaInfoAtGeneration(pcs, 1, "pending", false),
+			2: rollingUpdateReplicaInfoAtGeneration(pcs, 2, "pending", false),
+			3: rollingUpdateReplicaInfoAtGeneration(pcs, 3, "pending", false),
+		}
+		planner := newPCSReplicaRecreationPlanner(pcs, pcsReplicaInfosByIndex, pcsReplicaScalingIndices{})
+
+		got := planner.selectSourceReplicaIndices(len(pcsReplicaInfosByIndex))
 
 		assert.Equal(t, []int{3}, got)
 	})
@@ -154,12 +208,8 @@ func TestSelectPCSReplicaRecreationSourceIndices(t *testing.T) {
 			1: rollingUpdateReplicaInfoAtGeneration(pcs, 1, "pending", false),
 		}
 
-		got := selectPCSReplicaRecreationSourceIndices(
-			pcs,
-			pcsReplicaInfosByIndex,
-			pcsReplicaScalingIndices{},
-			len(pcsReplicaInfosByIndex),
-		)
+		got := newPCSReplicaRecreationPlanner(pcs, pcsReplicaInfosByIndex, pcsReplicaScalingIndices{}).
+			selectSourceReplicaIndices(len(pcsReplicaInfosByIndex))
 
 		assert.Equal(t, []int{0, 1}, got)
 	})
@@ -174,12 +224,11 @@ func TestSelectPCSReplicaRecreationSourceIndices(t *testing.T) {
 			4: replicaRecreationSelectionInfo(pcs, 4, "superseded", true, true),
 		}
 
-		got := selectPCSReplicaRecreationSourceIndices(
+		got := newPCSReplicaRecreationPlanner(
 			pcs,
 			pcsReplicaInfosByIndex,
 			pcsReplicaScalingIndices{scaleOut: []int{0, 1, 2, 3}},
-			len(pcsReplicaInfosByIndex),
-		)
+		).selectSourceReplicaIndices(len(pcsReplicaInfosByIndex))
 
 		assert.Equal(t, []int{1, 2, 4}, got)
 	})
@@ -190,18 +239,13 @@ func TestSelectPCSReplicaRecreationSourceIndices(t *testing.T) {
 			0: replicaRecreationSelectionInfo(pcs, 0, "superseded", true, true),
 		}
 
-		whileReserved := selectPCSReplicaRecreationSourceIndices(
+		whileReserved := newPCSReplicaRecreationPlanner(
 			pcs,
 			pcsReplicaInfosByIndex,
 			pcsReplicaScalingIndices{scaleOut: []int{0}},
-			1,
-		)
-		afterReservationClears := selectPCSReplicaRecreationSourceIndices(
-			pcs,
-			pcsReplicaInfosByIndex,
-			pcsReplicaScalingIndices{},
-			1,
-		)
+		).selectSourceReplicaIndices(1)
+		afterReservationClears := newPCSReplicaRecreationPlanner(pcs, pcsReplicaInfosByIndex, pcsReplicaScalingIndices{}).
+			selectSourceReplicaIndices(1)
 
 		assert.Empty(t, whileReserved)
 		assert.Equal(t, []int{0}, afterReservationClears)
@@ -213,12 +257,8 @@ func TestSelectPCSReplicaRecreationSourceIndices(t *testing.T) {
 			0: replicaRecreationSelectionInfo(pcs, 0, *pcs.Status.CurrentGenerationHash, true, true),
 		}
 
-		got := selectPCSReplicaRecreationSourceIndices(
-			pcs,
-			pcsReplicaInfosByIndex,
-			pcsReplicaScalingIndices{},
-			1,
-		)
+		got := newPCSReplicaRecreationPlanner(pcs, pcsReplicaInfosByIndex, pcsReplicaScalingIndices{}).
+			selectSourceReplicaIndices(1)
 
 		assert.Empty(t, got)
 	})
@@ -226,18 +266,17 @@ func TestSelectPCSReplicaRecreationSourceIndices(t *testing.T) {
 	t.Run("returns nil when no update slot remains", func(t *testing.T) {
 		pcs := schedulingConfigRolloutTestPCS()
 
-		got := selectPCSReplicaRecreationSourceIndices(
+		got := newPCSReplicaRecreationPlanner(
 			pcs,
 			pcsReplicaInfoByIndex{0: rollingUpdateReplicaInfoAtGeneration(pcs, 0, "pending", false)},
 			pcsReplicaScalingIndices{},
-			0,
-		)
+		).selectSourceReplicaIndices(0)
 
 		assert.Nil(t, got)
 	})
 }
 
-func TestAllocatePCSReplicaReplacementTargets(t *testing.T) {
+func TestPCSReplicaRecreationPlannerAllocateReplacementTargets(t *testing.T) {
 	tests := []struct {
 		name                            string
 		existingPCSReplicaIndices       sets.Set[int]
@@ -275,7 +314,7 @@ func TestAllocatePCSReplicaReplacementTargets(t *testing.T) {
 			},
 		},
 		{
-			name:                      "ordinary scale-out reservation blocks hole",
+			name:                      "PCS scale-out reservation blocks hole",
 			existingPCSReplicaIndices: sets.New(0, 2),
 			scalingProgress: &grovecorev1beta1.PodCliqueSetScalingProgress{
 				ScaleOutReplicaIndices: []int32{1},
@@ -286,7 +325,7 @@ func TestAllocatePCSReplicaReplacementTargets(t *testing.T) {
 			},
 		},
 		{
-			name:                      "ordinary scale-in reservation blocks hole",
+			name:                      "PCS scale-in reservation blocks hole",
 			existingPCSReplicaIndices: sets.New(0, 1, 3),
 			scalingProgress: &grovecorev1beta1.PodCliqueSetScalingProgress{
 				ScaleInReplicaIndices: []int32{2},
@@ -305,6 +344,23 @@ func TestAllocatePCSReplicaReplacementTargets(t *testing.T) {
 			selectedSourcePCSReplicaIndices: []int{5},
 			want: []pcsReplicaReplacement{
 				{sourcePCSReplicaIndex: 5, targetPCSReplicaIndex: 2},
+			},
+		},
+		{
+			name:                      "canceled replacement source and target block allocation",
+			existingPCSReplicaIndices: sets.New(0, 4),
+			currentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{
+				{
+					ReplicaIndex: 3,
+					Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{
+						TargetReplicaIndex: 1,
+						CanceledAt:         new(metav1.Now()),
+					},
+				},
+			},
+			selectedSourcePCSReplicaIndices: []int{4},
+			want: []pcsReplicaReplacement{
+				{sourcePCSReplicaIndex: 4, targetPCSReplicaIndex: 2},
 			},
 		},
 		{
@@ -338,14 +394,19 @@ func TestAllocatePCSReplicaReplacementTargets(t *testing.T) {
 					CurrentlyUpdating:         tt.currentlyUpdating,
 				},
 			}}
+			replicaInfosByIndex := make(pcsReplicaInfoByIndex, tt.existingPCSReplicaIndices.Len())
+			for replicaIndex := range tt.existingPCSReplicaIndices {
+				replicaInfosByIndex[replicaIndex] = pcsReplicaInfo{index: replicaIndex}
+			}
 			existingPCSReplicaIndicesBefore := tt.existingPCSReplicaIndices.Clone()
 			selectedSourcePCSReplicaIndicesBefore := slices.Clone(tt.selectedSourcePCSReplicaIndices)
+			planner := newPCSReplicaRecreationPlanner(pcs, replicaInfosByIndex, replicaScalingIndicesFromProgress(tt.scalingProgress))
 
-			got := allocatePCSReplicaReplacementTargets(pcs, tt.existingPCSReplicaIndices, tt.selectedSourcePCSReplicaIndices)
+			got := planner.allocateReplacementTargets(tt.selectedSourcePCSReplicaIndices)
 
 			assert.Equal(t, tt.want, got)
-			assert.Equal(t, existingPCSReplicaIndicesBefore, tt.existingPCSReplicaIndices, "allocatePCSReplicaReplacementTargets mutated existing replica indices")
-			assert.Equal(t, selectedSourcePCSReplicaIndicesBefore, tt.selectedSourcePCSReplicaIndices, "allocatePCSReplicaReplacementTargets mutated selected source replica indices")
+			assert.Equal(t, existingPCSReplicaIndicesBefore, tt.existingPCSReplicaIndices, "allocateReplacementTargets mutated existing replica indices")
+			assert.Equal(t, selectedSourcePCSReplicaIndicesBefore, tt.selectedSourcePCSReplicaIndices, "allocateReplacementTargets mutated selected source replica indices")
 		})
 	}
 }
