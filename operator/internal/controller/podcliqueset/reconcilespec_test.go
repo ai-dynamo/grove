@@ -24,6 +24,7 @@ import (
 
 	apiconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
+	"github.com/ai-dynamo/grove/operator/internal/constants"
 	ctrlcommon "github.com/ai-dynamo/grove/operator/internal/controller/common"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/sync"
@@ -758,7 +759,12 @@ func TestProcessGenerationHashChangeNotBlockedByStaleSameNameExpectation(t *test
 
 	result := r.processGenerationHashChange(context.Background(), logr.Discard(), newPCS)
 
-	require.False(t, result.NeedsRequeue(), "a same-name recreate must not be blocked by a stale expectation")
+	require.False(t, result.HasErrors())
+	require.True(t, result.NeedsRequeue())
+	assert.True(t, ctrlcommon.ShortCircuitReconcileFlow(result))
+	requeueResult, err := result.Result()
+	require.NoError(t, err)
+	assert.Equal(t, constants.InformerCacheSyncRetryInterval, requeueResult.RequeueAfter)
 	updated := &grovecorev1beta1.PodCliqueSet{}
 	require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKeyFromObject(newPCS), updated))
 	require.NotNil(t, updated.Status.CurrentGenerationHash, "generation hash should be set on the new PCS")
@@ -782,6 +788,11 @@ func TestProcessGenerationHashChangeBaselinesActiveLegacyUpdate(t *testing.T) {
 	result := reconciler.processGenerationHashChange(context.Background(), logr.Discard(), pcs)
 
 	require.False(t, result.HasErrors())
+	require.True(t, result.NeedsRequeue())
+	assert.True(t, ctrlcommon.ShortCircuitReconcileFlow(result))
+	requeueResult, err := result.Result()
+	require.NoError(t, err)
+	assert.Equal(t, constants.InformerCacheSyncRetryInterval, requeueResult.RequeueAfter)
 	updated := &grovecorev1beta1.PodCliqueSet{}
 	require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKeyFromObject(pcs), updated))
 	schedulingHash := computeSchedulingConfigurationHash(buildPCSSchedulingConfig(pcs))
@@ -899,12 +910,24 @@ func TestProcessGenerationHashChangePreservesLegacyContentUpdate(t *testing.T) {
 
 	fakeClient := testutils.SetupFakeClient(pcs)
 	reconciler := &Reconciler{client: fakeClient, pcsGenerationStatusExpectations: sync.Map{}}
+	stalePCS := pcs.DeepCopy()
+
 	baselineResult := reconciler.processGenerationHashChange(context.Background(), logr.Discard(), pcs)
 	require.False(t, baselineResult.HasErrors())
+	require.True(t, baselineResult.NeedsRequeue())
+	assert.True(t, ctrlcommon.ShortCircuitReconcileFlow(baselineResult))
+	baselineRequeueResult, err := baselineResult.Result()
+	require.NoError(t, err)
+	assert.Equal(t, constants.InformerCacheSyncRetryInterval, baselineRequeueResult.RequeueAfter)
+
+	staleResult := reconciler.processGenerationHashChange(context.Background(), logr.Discard(), stalePCS)
+	require.False(t, staleResult.HasErrors())
+	require.True(t, staleResult.NeedsRequeue())
+	assert.True(t, ctrlcommon.ShortCircuitReconcileFlow(staleResult))
+	assert.Contains(t, staleResult.GetDescription(), "generation status is not up-to-date")
 
 	baselined := &grovecorev1beta1.PodCliqueSet{}
 	require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKeyFromObject(pcs), baselined))
-	reconciler.pcsGenerationStatusExpectations.Delete(pcsGenHashesExpKey(baselined))
 	updateResult := reconciler.processGenerationHashChange(context.Background(), logr.Discard(), baselined)
 	require.False(t, updateResult.HasErrors())
 
