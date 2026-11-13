@@ -20,9 +20,13 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 
+	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/validation"
@@ -51,6 +55,53 @@ func effectiveQueueFromAnnotations(annotations map[string]string) string {
 		return DefaultQueue
 	}
 	return queue
+}
+
+// queueForPodGang returns the effective Volcano queue for the PodGang.
+// The PodGang mirrors the PodCliqueSet metadata annotations, so a queue set there is read from
+// the PodGang directly. A queue set only on the PodClique templates is not mirrored onto the
+// PodGang, so it is resolved from the controlling PodCliqueSet the same way the validating
+// webhook resolves it. Without either, the queue defaults to "default".
+func queueForPodGang(ctx context.Context, k8sClient client.Reader, podGang *groveschedulerv1alpha1.PodGang) (string, error) {
+	if queue := strings.TrimSpace(podGang.Annotations[QueueAnnotationKey]); queue != "" {
+		return queue, nil
+	}
+	owner := metav1.GetControllerOf(podGang)
+	if owner == nil || owner.Kind != constants.KindPodCliqueSet {
+		return DefaultQueue, nil
+	}
+	if ownerGV, err := schema.ParseGroupVersion(owner.APIVersion); err != nil || ownerGV.Group != grovecorev1beta1.SchemeGroupVersion.Group {
+		return DefaultQueue, nil
+	}
+	pcs := &grovecorev1beta1.PodCliqueSet{}
+	if err := k8sClient.Get(ctx, client.ObjectKey{Namespace: podGang.Namespace, Name: owner.Name}, pcs); err != nil {
+		if apierrors.IsNotFound(err) {
+			return DefaultQueue, nil
+		}
+		return "", fmt.Errorf("failed to get PodCliqueSet %s/%s to resolve the volcano queue: %w", podGang.Namespace, owner.Name, err)
+	}
+	if pcs.UID != owner.UID {
+		return DefaultQueue, nil
+	}
+	return queueForPodCliqueSet(pcs), nil
+}
+
+// queueForPodCliqueSet returns the effective Volcano queue for the PodCliqueSet. The validating
+// webhook guarantees that every PodClique resolves to the same queue, so the first queue found on
+// the PodCliqueSet metadata or on a PodClique template is the effective queue.
+func queueForPodCliqueSet(pcs *grovecorev1beta1.PodCliqueSet) string {
+	if queue := strings.TrimSpace(pcs.Annotations[QueueAnnotationKey]); queue != "" {
+		return queue
+	}
+	for _, cliqueTemplateSpec := range pcs.Spec.Template.Cliques {
+		if cliqueTemplateSpec == nil {
+			continue
+		}
+		if queue := strings.TrimSpace(cliqueTemplateSpec.Annotations[QueueAnnotationKey]); queue != "" {
+			return queue
+		}
+	}
+	return DefaultQueue
 }
 
 // resolvePodCliqueQueue returns the effective queue after applying the
