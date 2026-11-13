@@ -15,6 +15,7 @@
 package podgangmap
 
 import (
+	"slices"
 	"strconv"
 	"testing"
 	"time"
@@ -393,10 +394,10 @@ func TestReconcileStandaloneCliqueCountAcrossAnchors(t *testing.T) {
 	// the i-th count is anchor index len-1-i.
 	anchorsHighestFirst := func(countsByIndex ...int32) []*grovecorev1beta1.PodGangEntry {
 		anchors := make([]*grovecorev1beta1.PodGangEntry, 0, len(countsByIndex))
-		for i := len(countsByIndex) - 1; i >= 0; i-- {
+		for i, c := range slices.Backward(countsByIndex) {
 			entry := testutils.NewPodGangEntryBuilder(testGenHash, strconv.Itoa(100+i)).
 				WithRole(grovecorev1beta1.PodGangEntryRoleAnchor).
-				WithPodCliques(map[string]int32{clique: countsByIndex[i]}).
+				WithPodCliques(map[string]int32{clique: c}).
 				Build()
 			anchors = append(anchors, &entry)
 		}

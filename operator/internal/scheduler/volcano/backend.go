@@ -17,6 +17,7 @@ package volcano
 import (
 	"context"
 	"fmt"
+	"maps"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
@@ -101,9 +102,7 @@ func (b *schedulerBackend) SyncPodGang(ctx context.Context, podGang *groveschedu
 		if podGroup.Labels == nil {
 			podGroup.Labels = map[string]string{}
 		}
-		for key, value := range podGang.Labels {
-			podGroup.Labels[key] = value
-		}
+		maps.Copy(podGroup.Labels, podGang.Labels)
 
 		if err := controllerutil.SetControllerReference(podGang, podGroup, b.scheme); err != nil {
 			return err

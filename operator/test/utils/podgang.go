@@ -15,6 +15,7 @@
 package utils
 
 import (
+	"maps"
 	"time"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
@@ -87,9 +88,7 @@ func (b *PodGangBuilder) WithLabels(labels map[string]string) *PodGangBuilder {
 	if b.pg.Labels == nil {
 		b.pg.Labels = make(map[string]string)
 	}
-	for k, v := range labels {
-		b.pg.Labels[k] = v
-	}
+	maps.Copy(b.pg.Labels, labels)
 	return b
 }
 

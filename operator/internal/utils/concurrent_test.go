@@ -144,7 +144,7 @@ func createTasks(taskConfigs []testTaskConfig) []Task {
 
 func doCreateTasks(taskType taskType, namePrefix string, num int) []Task {
 	tasks := make([]Task, 0, num)
-	for i := 0; i < num; i++ {
+	for i := range num {
 		name := fmt.Sprintf("%s-%d", namePrefix, i)
 		task := Task{Name: name}
 		switch taskType {

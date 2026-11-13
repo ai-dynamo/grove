@@ -15,6 +15,7 @@
 package charts_test
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -42,9 +43,9 @@ func TestComputeDomainRBAC(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			values := map[string]interface{}{
-				"config": map[string]interface{}{
-					"network": map[string]interface{}{
+			values := map[string]any{
+				"config": map[string]any{
+					"network": map[string]any{
 						"autoMNNVLEnabled": test.autoMNNVLEnabled,
 					},
 				},
@@ -71,12 +72,7 @@ func TestComputeDomainRBAC(t *testing.T) {
 }
 
 func contains(values []string, target string) bool {
-	for _, value := range values {
-		if value == target {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(values, target)
 }
 
 func mapKeys(values map[string]struct{}) []string {
