@@ -298,10 +298,8 @@ func queueNameForPodCliqueSet(pcs *grovecorev1beta1.PodCliqueSet) (string, error
 // isCliqueInScalingGroup reports whether the named clique is a member of any PodCliqueScalingGroup.
 func isCliqueInScalingGroup(pcs *grovecorev1beta1.PodCliqueSet, cliqueName string) bool {
 	for _, config := range pcs.Spec.Template.PodCliqueScalingGroupConfigs {
-		for _, name := range config.CliqueNames {
-			if name == cliqueName {
-				return true
-			}
+		if slices.Contains(config.CliqueNames, cliqueName) {
+			return true
 		}
 	}
 	return false

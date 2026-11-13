@@ -106,7 +106,7 @@ func TestConvertPodCliqueSetNormalizesPackDomainAtEveryLevel(t *testing.T) {
 // TestRoundTripFromBeta checks that every v1beta1 object survives a conversion to v1alpha1 and back unchanged.
 func TestRoundTripFromBeta(t *testing.T) {
 	f := randfill.New().NilChance(0.2).NumElements(0, 2).MaxDepth(12)
-	for i := 0; i < roundTripIterations; i++ {
+	for i := range roundTripIterations {
 		t.Run(fmt.Sprintf("iteration-%d", i), func(t *testing.T) {
 			t.Run("PodCliqueSet", func(t *testing.T) {
 				in := &v1beta1.PodCliqueSet{}
@@ -173,7 +173,7 @@ func TestRoundTripFromBeta(t *testing.T) {
 // podGangStatuses survives a conversion to v1beta1 and back unchanged.
 func TestRoundTripFromAlpha(t *testing.T) {
 	f := randfill.New().NilChance(0.2).NumElements(0, 2).MaxDepth(12)
-	for i := 0; i < roundTripIterations; i++ {
+	for range roundTripIterations {
 		pcs := &PodCliqueSet{}
 		f.Fill(pcs)
 		pcs.TypeMeta = metav1.TypeMeta{}

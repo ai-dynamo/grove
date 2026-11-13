@@ -15,6 +15,7 @@
 package utils
 
 import (
+	"maps"
 	"strconv"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
@@ -75,9 +76,7 @@ func (b *PodCliqueScalingGroupBuilder) WithLabels(labels map[string]string) *Pod
 	if b.pcsg.Labels == nil {
 		b.pcsg.Labels = make(map[string]string)
 	}
-	for k, v := range labels {
-		b.pcsg.Labels[k] = v
-	}
+	maps.Copy(b.pcsg.Labels, labels)
 	return b
 }
 

@@ -16,7 +16,11 @@
 
 package scheduler
 
-import groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
+import (
+	"slices"
+
+	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
+)
 
 // RequiredTopologyKeyForPodGroup returns the required topology key for a PodGroup, preferring its own
 // constraint, then its TopologyConstraintGroupConfig's constraint (if it belongs to one), then the
@@ -63,10 +67,8 @@ func topologyKeyForPodGroup(podGang *groveschedulerv1alpha1.PodGang, podGroupNam
 // PodGroup's own), so a PodGroup belongs to at most one.
 func topologyConstraintGroupConfigFor(podGang *groveschedulerv1alpha1.PodGang, podGroupName string) *groveschedulerv1alpha1.TopologyConstraint {
 	for _, groupConfig := range podGang.Spec.TopologyConstraintGroupConfigs {
-		for _, name := range groupConfig.PodGroupNames {
-			if name == podGroupName {
-				return groupConfig.TopologyConstraint
-			}
+		if slices.Contains(groupConfig.PodGroupNames, podGroupName) {
+			return groupConfig.TopologyConstraint
 		}
 	}
 	return nil

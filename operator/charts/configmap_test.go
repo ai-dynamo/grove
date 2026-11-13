@@ -29,40 +29,40 @@ import (
 func TestSchedulerProfileConfig(t *testing.T) {
 	tests := []struct {
 		name     string
-		profiles []interface{}
+		profiles []any
 	}{
 		{
 			name: "omitted config",
-			profiles: []interface{}{
-				map[string]interface{}{"name": "default-scheduler"},
+			profiles: []any{
+				map[string]any{"name": "default-scheduler"},
 			},
 		},
 		{
 			name: "empty config",
-			profiles: []interface{}{
-				map[string]interface{}{"name": "default-scheduler", "config": map[string]interface{}{}},
+			profiles: []any{
+				map[string]any{"name": "default-scheduler", "config": map[string]any{}},
 			},
 		},
 		{
 			name: "configured profile",
-			profiles: []interface{}{
-				map[string]interface{}{"name": "default-scheduler", "config": map[string]interface{}{"gangScheduling": true}},
+			profiles: []any{
+				map[string]any{"name": "default-scheduler", "config": map[string]any{"gangScheduling": true}},
 			},
 		},
 		{
 			name: "false value followed by another profile",
-			profiles: []interface{}{
-				map[string]interface{}{"name": "default-scheduler", "config": map[string]interface{}{"gangScheduling": false}},
-				map[string]interface{}{"name": "kai-scheduler"},
+			profiles: []any{
+				map[string]any{"name": "default-scheduler", "config": map[string]any{"gangScheduling": false}},
+				map[string]any{"name": "kai-scheduler"},
 			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			values := map[string]interface{}{
-				"config": map[string]interface{}{
-					"scheduler": map[string]interface{}{"profiles": tt.profiles},
+			values := map[string]any{
+				"config": map[string]any{
+					"scheduler": map[string]any{"profiles": tt.profiles},
 				},
 			}
 			manifests := renderChart(t, values)
@@ -79,7 +79,7 @@ func TestSchedulerProfileConfig(t *testing.T) {
 			assert.Equal(t, configv1beta1.SchemeGroupVersion.String(), config.APIVersion)
 			require.Len(t, config.Scheduler.Profiles, len(tt.profiles))
 			for i, profile := range config.Scheduler.Profiles {
-				expected, ok := tt.profiles[i].(map[string]interface{})
+				expected, ok := tt.profiles[i].(map[string]any)
 				require.True(t, ok)
 				assert.Equal(t, expected["name"], string(profile.Name))
 				expectedConfig, configured := expected["config"]
@@ -88,7 +88,7 @@ func TestSchedulerProfileConfig(t *testing.T) {
 					continue
 				}
 				require.NotNil(t, profile.Config)
-				var actualConfig map[string]interface{}
+				var actualConfig map[string]any
 				require.NoError(t, json.Unmarshal(profile.Config.Raw, &actualConfig))
 				assert.Equal(t, expectedConfig, actualConfig)
 			}

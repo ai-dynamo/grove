@@ -29,9 +29,9 @@ import (
 // TestWebhookRulesMatchHubVersion verifies that every grove.io admission rule matches only the hub version
 // with matchPolicy Equivalent, so that requests for any served version reach the handlers as v1beta1 objects.
 func TestWebhookRulesMatchHubVersion(t *testing.T) {
-	manifests := renderChart(t, map[string]interface{}{
-		"config": map[string]interface{}{
-			"authorizer": map[string]interface{}{"enabled": true},
+	manifests := renderChart(t, map[string]any{
+		"config": map[string]any{
+			"authorizer": map[string]any{"enabled": true},
 		},
 	})
 
@@ -68,8 +68,8 @@ func TestWebhookRulesMatchHubVersion(t *testing.T) {
 // TestClusterRoleConversionCRDAccess verifies that the installer can patch or upgrade the CRDs and cert-controller
 // can inject the conversion CA.
 func TestClusterRoleConversionCRDAccess(t *testing.T) {
-	manifests := renderChart(t, map[string]interface{}{
-		"crdInstaller": map[string]interface{}{"upgradeCRDs": false},
+	manifests := renderChart(t, map[string]any{
+		"crdInstaller": map[string]any{"upgradeCRDs": false},
 	})
 	clusterRoleYAML, ok := manifests["grove-charts/templates/clusterrole.yaml"]
 	require.True(t, ok)
