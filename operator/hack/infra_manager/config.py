@@ -127,12 +127,15 @@ class KueueConfig(BaseModel):
         enabled: Install Kueue. Unlike Kai, Kueue is opt-in: the kueue scheduler backend is a POC
             and is not part of every e2e run.
         version: Kueue Helm chart version. Defaults to the version pinned in dependencies.yaml.
+        pods_ready_timeout: Overrides waitForPodsReady.timeout from kueue-values.yaml, e.g. "2m" for
+            real nodes, which start pods slower than KWOK. Kueue's recovery timeout defaults to it.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     enabled: bool = False
     version: str = Field(default=dep_value("kueue", "version", default="0.0.0"), pattern=r"^[\d.]+(-[\w.]+)?$")
+    pods_ready_timeout: str | None = Field(default=None, pattern=r"^(\d+[smh])+$")
 
 
 class SchedulerConfig(BaseModel):

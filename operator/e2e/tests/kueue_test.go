@@ -66,9 +66,9 @@ const (
 )
 
 // requireKueueCRD skips the test when the Kueue Workload CRD is not installed. This is
-// defense-in-depth only: the primary opt-in gate is the run-e2e-kueue-full Makefile target and the
-// "kueue" e2e CI matrix entry, which only ever run Test_Kueue* against a cluster brought up with
-// E2E_SCHEDULER__KUEUE__ENABLED=true (see operator/hack/infra_manager).
+// defense-in-depth only: the primary opt-in gate is the run-e2e-kueue-full and run-e2e-kueue-real-full
+// Makefile targets and their e2e CI matrix entries, which only ever run Test_Kueue* against a cluster
+// brought up with E2E_SCHEDULER__KUEUE__ENABLED=true (see operator/hack/infra_manager).
 func requireKueueCRD(t *testing.T, tc *testctx.TestContext) {
 	t.Helper()
 	apiExtClient, err := apiextensionsclientset.NewForConfig(tc.Client.RestConfig)
