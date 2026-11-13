@@ -479,6 +479,43 @@ func TestPodCliqueScalingGroupConfigValidation(t *testing.T) {
 			},
 		},
 		{
+			description: "Valid ScaleConfig.MaxReplicas == Replicas with MinReplicas below Replicas",
+			pcsName:     "inference",
+			scalingGroups: []grovecorev1beta1.PodCliqueScalingGroupConfig{
+				{
+					Name:         "workers",
+					CliqueNames:  []string{"prefill"},
+					Replicas:     ptr.To(int32(4)),
+					MinAvailable: ptr.To(int32(1)),
+					ScaleConfig: &grovecorev1beta1.AutoScalingConfig{
+						MinReplicas: ptr.To(int32(2)),
+						MaxReplicas: 4,
+					},
+				},
+			},
+			cliqueTemplates: []string{"prefill"},
+		},
+		{
+			description: "Invalid ScaleConfig.MaxReplicas < Replicas",
+			pcsName:     "inference",
+			scalingGroups: []grovecorev1beta1.PodCliqueScalingGroupConfig{
+				{
+					Name:         "workers",
+					CliqueNames:  []string{"prefill"},
+					Replicas:     ptr.To(int32(4)),
+					MinAvailable: ptr.To(int32(1)),
+					ScaleConfig: &grovecorev1beta1.AutoScalingConfig{
+						MinReplicas: ptr.To(int32(2)),
+						MaxReplicas: 3,
+					},
+				},
+			},
+			cliqueTemplates: []string{"prefill"},
+			errorMatchers: []testutils.ErrorMatcher{
+				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.podCliqueScalingGroups[0].scaleConfig.maxReplicas"},
+			},
+		},
+		{
 			description: "Valid with partial configuration",
 			pcsName:     "inference",
 			scalingGroups: []grovecorev1beta1.PodCliqueScalingGroupConfig{
