@@ -21,8 +21,8 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/samber/lo"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/util/dump"
 	"k8s.io/apimachinery/pkg/util/rand"
+	"k8s.io/utils/dump"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 

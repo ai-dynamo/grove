@@ -25,7 +25,6 @@ import (
 	unsafe "unsafe"
 
 	v1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
-	v2 "k8s.io/api/autoscaling/v2"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	conversion "k8s.io/apimachinery/pkg/conversion"
 	runtime "k8s.io/apimachinery/pkg/runtime"
@@ -492,9 +491,7 @@ func RegisterConversions(s *runtime.Scheme) error {
 }
 
 func autoConvert_v1alpha1_AutoScalingConfig_To_v1beta1_AutoScalingConfig(in *AutoScalingConfig, out *v1beta1.AutoScalingConfig, s conversion.Scope) error {
-	out.MinReplicas = (*int32)(unsafe.Pointer(in.MinReplicas))
-	out.MaxReplicas = in.MaxReplicas
-	out.Metrics = *(*[]v2.MetricSpec)(unsafe.Pointer(&in.Metrics))
+	*out = *(*v1beta1.AutoScalingConfig)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -504,9 +501,7 @@ func Convert_v1alpha1_AutoScalingConfig_To_v1beta1_AutoScalingConfig(in *AutoSca
 }
 
 func autoConvert_v1beta1_AutoScalingConfig_To_v1alpha1_AutoScalingConfig(in *v1beta1.AutoScalingConfig, out *AutoScalingConfig, s conversion.Scope) error {
-	out.MinReplicas = (*int32)(unsafe.Pointer(in.MinReplicas))
-	out.MaxReplicas = in.MaxReplicas
-	out.Metrics = *(*[]v2.MetricSpec)(unsafe.Pointer(&in.Metrics))
+	*out = *(*AutoScalingConfig)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -570,8 +565,7 @@ func Convert_v1beta1_ClusterTopologyBindingList_To_v1alpha1_ClusterTopologyBindi
 }
 
 func autoConvert_v1alpha1_ClusterTopologyBindingSpec_To_v1beta1_ClusterTopologyBindingSpec(in *ClusterTopologyBindingSpec, out *v1beta1.ClusterTopologyBindingSpec, s conversion.Scope) error {
-	out.Levels = *(*[]v1beta1.TopologyLevel)(unsafe.Pointer(&in.Levels))
-	out.SchedulerTopologyBindings = *(*[]v1beta1.SchedulerTopologyBinding)(unsafe.Pointer(&in.SchedulerTopologyBindings))
+	*out = *(*v1beta1.ClusterTopologyBindingSpec)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -581,8 +575,7 @@ func Convert_v1alpha1_ClusterTopologyBindingSpec_To_v1beta1_ClusterTopologyBindi
 }
 
 func autoConvert_v1beta1_ClusterTopologyBindingSpec_To_v1alpha1_ClusterTopologyBindingSpec(in *v1beta1.ClusterTopologyBindingSpec, out *ClusterTopologyBindingSpec, s conversion.Scope) error {
-	out.Levels = *(*[]TopologyLevel)(unsafe.Pointer(&in.Levels))
-	out.SchedulerTopologyBindings = *(*[]SchedulerTopologyBinding)(unsafe.Pointer(&in.SchedulerTopologyBindings))
+	*out = *(*ClusterTopologyBindingSpec)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -592,9 +585,7 @@ func Convert_v1beta1_ClusterTopologyBindingSpec_To_v1alpha1_ClusterTopologyBindi
 }
 
 func autoConvert_v1alpha1_ClusterTopologyBindingStatus_To_v1beta1_ClusterTopologyBindingStatus(in *ClusterTopologyBindingStatus, out *v1beta1.ClusterTopologyBindingStatus, s conversion.Scope) error {
-	out.ObservedGeneration = in.ObservedGeneration
-	out.Conditions = *(*[]v1.Condition)(unsafe.Pointer(&in.Conditions))
-	out.SchedulerTopologyStatuses = *(*[]v1beta1.SchedulerTopologyStatus)(unsafe.Pointer(&in.SchedulerTopologyStatuses))
+	*out = *(*v1beta1.ClusterTopologyBindingStatus)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -604,9 +595,7 @@ func Convert_v1alpha1_ClusterTopologyBindingStatus_To_v1beta1_ClusterTopologyBin
 }
 
 func autoConvert_v1beta1_ClusterTopologyBindingStatus_To_v1alpha1_ClusterTopologyBindingStatus(in *v1beta1.ClusterTopologyBindingStatus, out *ClusterTopologyBindingStatus, s conversion.Scope) error {
-	out.ObservedGeneration = in.ObservedGeneration
-	out.Conditions = *(*[]v1.Condition)(unsafe.Pointer(&in.Conditions))
-	out.SchedulerTopologyStatuses = *(*[]SchedulerTopologyStatus)(unsafe.Pointer(&in.SchedulerTopologyStatuses))
+	*out = *(*ClusterTopologyBindingStatus)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -616,7 +605,7 @@ func Convert_v1beta1_ClusterTopologyBindingStatus_To_v1alpha1_ClusterTopologyBin
 }
 
 func autoConvert_v1alpha1_HeadlessServiceConfig_To_v1beta1_HeadlessServiceConfig(in *HeadlessServiceConfig, out *v1beta1.HeadlessServiceConfig, s conversion.Scope) error {
-	out.PublishNotReadyAddresses = in.PublishNotReadyAddresses
+	*out = *(*v1beta1.HeadlessServiceConfig)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -626,7 +615,7 @@ func Convert_v1alpha1_HeadlessServiceConfig_To_v1beta1_HeadlessServiceConfig(in 
 }
 
 func autoConvert_v1beta1_HeadlessServiceConfig_To_v1alpha1_HeadlessServiceConfig(in *v1beta1.HeadlessServiceConfig, out *HeadlessServiceConfig, s conversion.Scope) error {
-	out.PublishNotReadyAddresses = in.PublishNotReadyAddresses
+	*out = *(*HeadlessServiceConfig)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -636,9 +625,7 @@ func Convert_v1beta1_HeadlessServiceConfig_To_v1alpha1_HeadlessServiceConfig(in 
 }
 
 func autoConvert_v1alpha1_LastError_To_v1beta1_LastError(in *LastError, out *v1beta1.LastError, s conversion.Scope) error {
-	out.Code = v1beta1.ErrorCode(in.Code)
-	out.Description = in.Description
-	out.ObservedAt = in.ObservedAt
+	*out = *(*v1beta1.LastError)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -648,9 +635,7 @@ func Convert_v1alpha1_LastError_To_v1beta1_LastError(in *LastError, out *v1beta1
 }
 
 func autoConvert_v1beta1_LastError_To_v1alpha1_LastError(in *v1beta1.LastError, out *LastError, s conversion.Scope) error {
-	out.Code = ErrorCode(in.Code)
-	out.Description = in.Description
-	out.ObservedAt = in.ObservedAt
+	*out = *(*LastError)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -660,7 +645,7 @@ func Convert_v1beta1_LastError_To_v1alpha1_LastError(in *v1beta1.LastError, out 
 }
 
 func autoConvert_v1alpha1_PCSGResourceSharingFilter_To_v1beta1_PCSGResourceSharingFilter(in *PCSGResourceSharingFilter, out *v1beta1.PCSGResourceSharingFilter, s conversion.Scope) error {
-	out.ChildCliqueNames = *(*[]string)(unsafe.Pointer(&in.ChildCliqueNames))
+	*out = *(*v1beta1.PCSGResourceSharingFilter)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -670,7 +655,7 @@ func Convert_v1alpha1_PCSGResourceSharingFilter_To_v1beta1_PCSGResourceSharingFi
 }
 
 func autoConvert_v1beta1_PCSGResourceSharingFilter_To_v1alpha1_PCSGResourceSharingFilter(in *v1beta1.PCSGResourceSharingFilter, out *PCSGResourceSharingFilter, s conversion.Scope) error {
-	out.ChildCliqueNames = *(*[]string)(unsafe.Pointer(&in.ChildCliqueNames))
+	*out = *(*PCSGResourceSharingFilter)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -680,10 +665,7 @@ func Convert_v1beta1_PCSGResourceSharingFilter_To_v1alpha1_PCSGResourceSharingFi
 }
 
 func autoConvert_v1alpha1_PCSGResourceSharingSpec_To_v1beta1_PCSGResourceSharingSpec(in *PCSGResourceSharingSpec, out *v1beta1.PCSGResourceSharingSpec, s conversion.Scope) error {
-	if err := Convert_v1alpha1_ResourceSharingSpec_To_v1beta1_ResourceSharingSpec(&in.ResourceSharingSpec, &out.ResourceSharingSpec, s); err != nil {
-		return err
-	}
-	out.Filter = (*v1beta1.PCSGResourceSharingFilter)(unsafe.Pointer(in.Filter))
+	*out = *(*v1beta1.PCSGResourceSharingSpec)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -693,10 +675,7 @@ func Convert_v1alpha1_PCSGResourceSharingSpec_To_v1beta1_PCSGResourceSharingSpec
 }
 
 func autoConvert_v1beta1_PCSGResourceSharingSpec_To_v1alpha1_PCSGResourceSharingSpec(in *v1beta1.PCSGResourceSharingSpec, out *PCSGResourceSharingSpec, s conversion.Scope) error {
-	if err := Convert_v1beta1_ResourceSharingSpec_To_v1alpha1_ResourceSharingSpec(&in.ResourceSharingSpec, &out.ResourceSharingSpec, s); err != nil {
-		return err
-	}
-	out.Filter = (*PCSGResourceSharingFilter)(unsafe.Pointer(in.Filter))
+	*out = *(*PCSGResourceSharingSpec)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -706,8 +685,7 @@ func Convert_v1beta1_PCSGResourceSharingSpec_To_v1alpha1_PCSGResourceSharingSpec
 }
 
 func autoConvert_v1alpha1_PCSResourceSharingFilter_To_v1beta1_PCSResourceSharingFilter(in *PCSResourceSharingFilter, out *v1beta1.PCSResourceSharingFilter, s conversion.Scope) error {
-	out.ChildCliqueNames = *(*[]string)(unsafe.Pointer(&in.ChildCliqueNames))
-	out.ChildScalingGroupNames = *(*[]string)(unsafe.Pointer(&in.ChildScalingGroupNames))
+	*out = *(*v1beta1.PCSResourceSharingFilter)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -717,8 +695,7 @@ func Convert_v1alpha1_PCSResourceSharingFilter_To_v1beta1_PCSResourceSharingFilt
 }
 
 func autoConvert_v1beta1_PCSResourceSharingFilter_To_v1alpha1_PCSResourceSharingFilter(in *v1beta1.PCSResourceSharingFilter, out *PCSResourceSharingFilter, s conversion.Scope) error {
-	out.ChildCliqueNames = *(*[]string)(unsafe.Pointer(&in.ChildCliqueNames))
-	out.ChildScalingGroupNames = *(*[]string)(unsafe.Pointer(&in.ChildScalingGroupNames))
+	*out = *(*PCSResourceSharingFilter)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -728,10 +705,7 @@ func Convert_v1beta1_PCSResourceSharingFilter_To_v1alpha1_PCSResourceSharingFilt
 }
 
 func autoConvert_v1alpha1_PCSResourceSharingSpec_To_v1beta1_PCSResourceSharingSpec(in *PCSResourceSharingSpec, out *v1beta1.PCSResourceSharingSpec, s conversion.Scope) error {
-	if err := Convert_v1alpha1_ResourceSharingSpec_To_v1beta1_ResourceSharingSpec(&in.ResourceSharingSpec, &out.ResourceSharingSpec, s); err != nil {
-		return err
-	}
-	out.Filter = (*v1beta1.PCSResourceSharingFilter)(unsafe.Pointer(in.Filter))
+	*out = *(*v1beta1.PCSResourceSharingSpec)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -741,10 +715,7 @@ func Convert_v1alpha1_PCSResourceSharingSpec_To_v1beta1_PCSResourceSharingSpec(i
 }
 
 func autoConvert_v1beta1_PCSResourceSharingSpec_To_v1alpha1_PCSResourceSharingSpec(in *v1beta1.PCSResourceSharingSpec, out *PCSResourceSharingSpec, s conversion.Scope) error {
-	if err := Convert_v1beta1_ResourceSharingSpec_To_v1alpha1_ResourceSharingSpec(&in.ResourceSharingSpec, &out.ResourceSharingSpec, s); err != nil {
-		return err
-	}
-	out.Filter = (*PCSResourceSharingFilter)(unsafe.Pointer(in.Filter))
+	*out = *(*PCSResourceSharingSpec)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -914,9 +885,7 @@ func Convert_v1beta1_PodCliqueScalingGroupList_To_v1alpha1_PodCliqueScalingGroup
 }
 
 func autoConvert_v1alpha1_PodCliqueScalingGroupSpec_To_v1beta1_PodCliqueScalingGroupSpec(in *PodCliqueScalingGroupSpec, out *v1beta1.PodCliqueScalingGroupSpec, s conversion.Scope) error {
-	out.Replicas = in.Replicas
-	out.MinAvailable = (*int32)(unsafe.Pointer(in.MinAvailable))
-	out.CliqueNames = *(*[]string)(unsafe.Pointer(&in.CliqueNames))
+	*out = *(*v1beta1.PodCliqueScalingGroupSpec)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -926,9 +895,7 @@ func Convert_v1alpha1_PodCliqueScalingGroupSpec_To_v1beta1_PodCliqueScalingGroup
 }
 
 func autoConvert_v1beta1_PodCliqueScalingGroupSpec_To_v1alpha1_PodCliqueScalingGroupSpec(in *v1beta1.PodCliqueScalingGroupSpec, out *PodCliqueScalingGroupSpec, s conversion.Scope) error {
-	out.Replicas = in.Replicas
-	out.MinAvailable = (*int32)(unsafe.Pointer(in.MinAvailable))
-	out.CliqueNames = *(*[]string)(unsafe.Pointer(&in.CliqueNames))
+	*out = *(*PodCliqueScalingGroupSpec)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -938,16 +905,7 @@ func Convert_v1beta1_PodCliqueScalingGroupSpec_To_v1alpha1_PodCliqueScalingGroup
 }
 
 func autoConvert_v1alpha1_PodCliqueScalingGroupStatus_To_v1beta1_PodCliqueScalingGroupStatus(in *PodCliqueScalingGroupStatus, out *v1beta1.PodCliqueScalingGroupStatus, s conversion.Scope) error {
-	out.Replicas = in.Replicas
-	out.ScheduledReplicas = in.ScheduledReplicas
-	out.AvailableReplicas = in.AvailableReplicas
-	out.UpdatedReplicas = in.UpdatedReplicas
-	out.Selector = (*string)(unsafe.Pointer(in.Selector))
-	out.ObservedGeneration = (*int64)(unsafe.Pointer(in.ObservedGeneration))
-	out.LastErrors = *(*[]v1beta1.LastError)(unsafe.Pointer(&in.LastErrors))
-	out.Conditions = *(*[]v1.Condition)(unsafe.Pointer(&in.Conditions))
-	out.CurrentPodCliqueSetGenerationHash = (*string)(unsafe.Pointer(in.CurrentPodCliqueSetGenerationHash))
-	out.UpdateProgress = (*v1beta1.PodCliqueScalingGroupUpdateProgress)(unsafe.Pointer(in.UpdateProgress))
+	*out = *(*v1beta1.PodCliqueScalingGroupStatus)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -957,16 +915,7 @@ func Convert_v1alpha1_PodCliqueScalingGroupStatus_To_v1beta1_PodCliqueScalingGro
 }
 
 func autoConvert_v1beta1_PodCliqueScalingGroupStatus_To_v1alpha1_PodCliqueScalingGroupStatus(in *v1beta1.PodCliqueScalingGroupStatus, out *PodCliqueScalingGroupStatus, s conversion.Scope) error {
-	out.Replicas = in.Replicas
-	out.ScheduledReplicas = in.ScheduledReplicas
-	out.AvailableReplicas = in.AvailableReplicas
-	out.UpdatedReplicas = in.UpdatedReplicas
-	out.Selector = (*string)(unsafe.Pointer(in.Selector))
-	out.ObservedGeneration = (*int64)(unsafe.Pointer(in.ObservedGeneration))
-	out.LastErrors = *(*[]LastError)(unsafe.Pointer(&in.LastErrors))
-	out.Conditions = *(*[]v1.Condition)(unsafe.Pointer(&in.Conditions))
-	out.CurrentPodCliqueSetGenerationHash = (*string)(unsafe.Pointer(in.CurrentPodCliqueSetGenerationHash))
-	out.UpdateProgress = (*PodCliqueScalingGroupUpdateProgress)(unsafe.Pointer(in.UpdateProgress))
+	*out = *(*PodCliqueScalingGroupStatus)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -976,12 +925,7 @@ func Convert_v1beta1_PodCliqueScalingGroupStatus_To_v1alpha1_PodCliqueScalingGro
 }
 
 func autoConvert_v1alpha1_PodCliqueScalingGroupUpdateProgress_To_v1beta1_PodCliqueScalingGroupUpdateProgress(in *PodCliqueScalingGroupUpdateProgress, out *v1beta1.PodCliqueScalingGroupUpdateProgress, s conversion.Scope) error {
-	out.UpdateStartedAt = in.UpdateStartedAt
-	out.UpdateEndedAt = (*v1.Time)(unsafe.Pointer(in.UpdateEndedAt))
-	out.LastProgressedAt = (*v1.Time)(unsafe.Pointer(in.LastProgressedAt))
-	out.PodCliqueSetGenerationHash = in.PodCliqueSetGenerationHash
-	out.UpdatedPodCliquesCount = in.UpdatedPodCliquesCount
-	out.TotalPodCliquesCount = in.TotalPodCliquesCount
+	*out = *(*v1beta1.PodCliqueScalingGroupUpdateProgress)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -991,12 +935,7 @@ func Convert_v1alpha1_PodCliqueScalingGroupUpdateProgress_To_v1beta1_PodCliqueSc
 }
 
 func autoConvert_v1beta1_PodCliqueScalingGroupUpdateProgress_To_v1alpha1_PodCliqueScalingGroupUpdateProgress(in *v1beta1.PodCliqueScalingGroupUpdateProgress, out *PodCliqueScalingGroupUpdateProgress, s conversion.Scope) error {
-	out.UpdateStartedAt = in.UpdateStartedAt
-	out.UpdateEndedAt = (*v1.Time)(unsafe.Pointer(in.UpdateEndedAt))
-	out.LastProgressedAt = (*v1.Time)(unsafe.Pointer(in.LastProgressedAt))
-	out.PodCliqueSetGenerationHash = in.PodCliqueSetGenerationHash
-	out.UpdatedPodCliquesCount = in.UpdatedPodCliquesCount
-	out.TotalPodCliquesCount = in.TotalPodCliquesCount
+	*out = *(*PodCliqueScalingGroupUpdateProgress)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -1080,11 +1019,7 @@ func Convert_v1beta1_PodCliqueSetList_To_v1alpha1_PodCliqueSetList(in *v1beta1.P
 }
 
 func autoConvert_v1alpha1_PodCliqueSetReplicaUpdateProgress_To_v1beta1_PodCliqueSetReplicaUpdateProgress(in *PodCliqueSetReplicaUpdateProgress, out *v1beta1.PodCliqueSetReplicaUpdateProgress, s conversion.Scope) error {
-	out.ReplicaIndex = in.ReplicaIndex
-	out.UpdateStartedAt = in.UpdateStartedAt
-	out.UpdateEndedAt = (*v1.Time)(unsafe.Pointer(in.UpdateEndedAt))
-	out.InFlightEpochs = *(*[]string)(unsafe.Pointer(&in.InFlightEpochs))
-	out.Message = (*string)(unsafe.Pointer(in.Message))
+	*out = *(*v1beta1.PodCliqueSetReplicaUpdateProgress)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -1094,11 +1029,7 @@ func Convert_v1alpha1_PodCliqueSetReplicaUpdateProgress_To_v1beta1_PodCliqueSetR
 }
 
 func autoConvert_v1beta1_PodCliqueSetReplicaUpdateProgress_To_v1alpha1_PodCliqueSetReplicaUpdateProgress(in *v1beta1.PodCliqueSetReplicaUpdateProgress, out *PodCliqueSetReplicaUpdateProgress, s conversion.Scope) error {
-	out.ReplicaIndex = in.ReplicaIndex
-	out.UpdateStartedAt = in.UpdateStartedAt
-	out.UpdateEndedAt = (*v1.Time)(unsafe.Pointer(in.UpdateEndedAt))
-	out.InFlightEpochs = *(*[]string)(unsafe.Pointer(&in.InFlightEpochs))
-	out.Message = (*string)(unsafe.Pointer(in.Message))
+	*out = *(*PodCliqueSetReplicaUpdateProgress)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -1108,8 +1039,7 @@ func Convert_v1beta1_PodCliqueSetReplicaUpdateProgress_To_v1alpha1_PodCliqueSetR
 }
 
 func autoConvert_v1alpha1_PodCliqueSetScalingProgress_To_v1beta1_PodCliqueSetScalingProgress(in *PodCliqueSetScalingProgress, out *v1beta1.PodCliqueSetScalingProgress, s conversion.Scope) error {
-	out.ScaleOutReplicaIndices = *(*[]int32)(unsafe.Pointer(&in.ScaleOutReplicaIndices))
-	out.ScaleInReplicaIndices = *(*[]int32)(unsafe.Pointer(&in.ScaleInReplicaIndices))
+	*out = *(*v1beta1.PodCliqueSetScalingProgress)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -1119,8 +1049,7 @@ func Convert_v1alpha1_PodCliqueSetScalingProgress_To_v1beta1_PodCliqueSetScaling
 }
 
 func autoConvert_v1beta1_PodCliqueSetScalingProgress_To_v1alpha1_PodCliqueSetScalingProgress(in *v1beta1.PodCliqueSetScalingProgress, out *PodCliqueSetScalingProgress, s conversion.Scope) error {
-	out.ScaleOutReplicaIndices = *(*[]int32)(unsafe.Pointer(&in.ScaleOutReplicaIndices))
-	out.ScaleInReplicaIndices = *(*[]int32)(unsafe.Pointer(&in.ScaleInReplicaIndices))
+	*out = *(*PodCliqueSetScalingProgress)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -1284,15 +1213,7 @@ func Convert_v1beta1_PodCliqueSetTemplateSpec_To_v1alpha1_PodCliqueSetTemplateSp
 }
 
 func autoConvert_v1alpha1_PodCliqueSetUpdateProgress_To_v1beta1_PodCliqueSetUpdateProgress(in *PodCliqueSetUpdateProgress, out *v1beta1.PodCliqueSetUpdateProgress, s conversion.Scope) error {
-	out.UpdateStartedAt = in.UpdateStartedAt
-	out.UpdateEndedAt = (*v1.Time)(unsafe.Pointer(in.UpdateEndedAt))
-	out.UpdatedPodCliquesCount = in.UpdatedPodCliquesCount
-	out.TotalPodCliquesCount = in.TotalPodCliquesCount
-	out.UpdatedPodCliqueScalingGroupsCount = in.UpdatedPodCliqueScalingGroupsCount
-	out.TotalPodCliqueScalingGroupsCount = in.TotalPodCliqueScalingGroupsCount
-	out.CurrentlyUpdating = *(*[]v1beta1.PodCliqueSetReplicaUpdateProgress)(unsafe.Pointer(&in.CurrentlyUpdating))
-	out.InScopeStandalonePodCliques = *(*[]string)(unsafe.Pointer(&in.InScopeStandalonePodCliques))
-	out.InScopePodCliqueScalingGroups = *(*[]string)(unsafe.Pointer(&in.InScopePodCliqueScalingGroups))
+	*out = *(*v1beta1.PodCliqueSetUpdateProgress)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -1302,15 +1223,7 @@ func Convert_v1alpha1_PodCliqueSetUpdateProgress_To_v1beta1_PodCliqueSetUpdatePr
 }
 
 func autoConvert_v1beta1_PodCliqueSetUpdateProgress_To_v1alpha1_PodCliqueSetUpdateProgress(in *v1beta1.PodCliqueSetUpdateProgress, out *PodCliqueSetUpdateProgress, s conversion.Scope) error {
-	out.UpdateStartedAt = in.UpdateStartedAt
-	out.UpdateEndedAt = (*v1.Time)(unsafe.Pointer(in.UpdateEndedAt))
-	out.UpdatedPodCliquesCount = in.UpdatedPodCliquesCount
-	out.TotalPodCliquesCount = in.TotalPodCliquesCount
-	out.UpdatedPodCliqueScalingGroupsCount = in.UpdatedPodCliqueScalingGroupsCount
-	out.TotalPodCliqueScalingGroupsCount = in.TotalPodCliqueScalingGroupsCount
-	out.CurrentlyUpdating = *(*[]PodCliqueSetReplicaUpdateProgress)(unsafe.Pointer(&in.CurrentlyUpdating))
-	out.InScopeStandalonePodCliques = *(*[]string)(unsafe.Pointer(&in.InScopeStandalonePodCliques))
-	out.InScopePodCliqueScalingGroups = *(*[]string)(unsafe.Pointer(&in.InScopePodCliqueScalingGroups))
+	*out = *(*PodCliqueSetUpdateProgress)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -1320,7 +1233,7 @@ func Convert_v1beta1_PodCliqueSetUpdateProgress_To_v1alpha1_PodCliqueSetUpdatePr
 }
 
 func autoConvert_v1alpha1_PodCliqueSetUpdateStrategy_To_v1beta1_PodCliqueSetUpdateStrategy(in *PodCliqueSetUpdateStrategy, out *v1beta1.PodCliqueSetUpdateStrategy, s conversion.Scope) error {
-	out.Type = v1beta1.UpdateStrategyType(in.Type)
+	*out = *(*v1beta1.PodCliqueSetUpdateStrategy)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -1330,7 +1243,7 @@ func Convert_v1alpha1_PodCliqueSetUpdateStrategy_To_v1beta1_PodCliqueSetUpdateSt
 }
 
 func autoConvert_v1beta1_PodCliqueSetUpdateStrategy_To_v1alpha1_PodCliqueSetUpdateStrategy(in *v1beta1.PodCliqueSetUpdateStrategy, out *PodCliqueSetUpdateStrategy, s conversion.Scope) error {
-	out.Type = UpdateStrategyType(in.Type)
+	*out = *(*PodCliqueSetUpdateStrategy)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -1340,12 +1253,7 @@ func Convert_v1beta1_PodCliqueSetUpdateStrategy_To_v1alpha1_PodCliqueSetUpdateSt
 }
 
 func autoConvert_v1alpha1_PodCliqueSpec_To_v1beta1_PodCliqueSpec(in *PodCliqueSpec, out *v1beta1.PodCliqueSpec, s conversion.Scope) error {
-	out.RoleName = in.RoleName
-	out.PodSpec = in.PodSpec
-	out.Replicas = in.Replicas
-	out.MinAvailable = (*int32)(unsafe.Pointer(in.MinAvailable))
-	out.StartsAfter = *(*[]string)(unsafe.Pointer(&in.StartsAfter))
-	out.ScaleConfig = (*v1beta1.AutoScalingConfig)(unsafe.Pointer(in.ScaleConfig))
+	*out = *(*v1beta1.PodCliqueSpec)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -1355,12 +1263,7 @@ func Convert_v1alpha1_PodCliqueSpec_To_v1beta1_PodCliqueSpec(in *PodCliqueSpec, 
 }
 
 func autoConvert_v1beta1_PodCliqueSpec_To_v1alpha1_PodCliqueSpec(in *v1beta1.PodCliqueSpec, out *PodCliqueSpec, s conversion.Scope) error {
-	out.RoleName = in.RoleName
-	out.PodSpec = in.PodSpec
-	out.Replicas = in.Replicas
-	out.MinAvailable = (*int32)(unsafe.Pointer(in.MinAvailable))
-	out.StartsAfter = *(*[]string)(unsafe.Pointer(&in.StartsAfter))
-	out.ScaleConfig = (*AutoScalingConfig)(unsafe.Pointer(in.ScaleConfig))
+	*out = *(*PodCliqueSpec)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -1370,19 +1273,7 @@ func Convert_v1beta1_PodCliqueSpec_To_v1alpha1_PodCliqueSpec(in *v1beta1.PodCliq
 }
 
 func autoConvert_v1alpha1_PodCliqueStatus_To_v1beta1_PodCliqueStatus(in *PodCliqueStatus, out *v1beta1.PodCliqueStatus, s conversion.Scope) error {
-	out.ObservedGeneration = (*int64)(unsafe.Pointer(in.ObservedGeneration))
-	out.LastErrors = *(*[]v1beta1.LastError)(unsafe.Pointer(&in.LastErrors))
-	out.Replicas = in.Replicas
-	out.ReadyReplicas = in.ReadyReplicas
-	out.UpdatedReplicas = in.UpdatedReplicas
-	out.ScheduleGatedReplicas = in.ScheduleGatedReplicas
-	out.ScheduledReplicas = in.ScheduledReplicas
-	out.LastScheduled = (*v1.Time)(unsafe.Pointer(in.LastScheduled))
-	out.Selector = (*string)(unsafe.Pointer(in.Selector))
-	out.Conditions = *(*[]v1.Condition)(unsafe.Pointer(&in.Conditions))
-	out.CurrentPodCliqueSetGenerationHash = (*string)(unsafe.Pointer(in.CurrentPodCliqueSetGenerationHash))
-	out.CurrentPodTemplateHash = (*string)(unsafe.Pointer(in.CurrentPodTemplateHash))
-	out.UpdateProgress = (*v1beta1.PodCliqueUpdateProgress)(unsafe.Pointer(in.UpdateProgress))
+	*out = *(*v1beta1.PodCliqueStatus)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -1392,19 +1283,7 @@ func Convert_v1alpha1_PodCliqueStatus_To_v1beta1_PodCliqueStatus(in *PodCliqueSt
 }
 
 func autoConvert_v1beta1_PodCliqueStatus_To_v1alpha1_PodCliqueStatus(in *v1beta1.PodCliqueStatus, out *PodCliqueStatus, s conversion.Scope) error {
-	out.ObservedGeneration = (*int64)(unsafe.Pointer(in.ObservedGeneration))
-	out.LastErrors = *(*[]LastError)(unsafe.Pointer(&in.LastErrors))
-	out.Replicas = in.Replicas
-	out.ReadyReplicas = in.ReadyReplicas
-	out.UpdatedReplicas = in.UpdatedReplicas
-	out.ScheduleGatedReplicas = in.ScheduleGatedReplicas
-	out.ScheduledReplicas = in.ScheduledReplicas
-	out.LastScheduled = (*v1.Time)(unsafe.Pointer(in.LastScheduled))
-	out.Selector = (*string)(unsafe.Pointer(in.Selector))
-	out.Conditions = *(*[]v1.Condition)(unsafe.Pointer(&in.Conditions))
-	out.CurrentPodCliqueSetGenerationHash = (*string)(unsafe.Pointer(in.CurrentPodCliqueSetGenerationHash))
-	out.CurrentPodTemplateHash = (*string)(unsafe.Pointer(in.CurrentPodTemplateHash))
-	out.UpdateProgress = (*PodCliqueUpdateProgress)(unsafe.Pointer(in.UpdateProgress))
+	*out = *(*PodCliqueStatus)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -1466,12 +1345,7 @@ func Convert_v1beta1_PodCliqueTemplateSpec_To_v1alpha1_PodCliqueTemplateSpec(in 
 }
 
 func autoConvert_v1alpha1_PodCliqueUpdateProgress_To_v1beta1_PodCliqueUpdateProgress(in *PodCliqueUpdateProgress, out *v1beta1.PodCliqueUpdateProgress, s conversion.Scope) error {
-	out.UpdateStartedAt = in.UpdateStartedAt
-	out.UpdateEndedAt = (*v1.Time)(unsafe.Pointer(in.UpdateEndedAt))
-	out.LastProgressedAt = (*v1.Time)(unsafe.Pointer(in.LastProgressedAt))
-	out.PodCliqueSetGenerationHash = in.PodCliqueSetGenerationHash
-	out.PodTemplateHash = in.PodTemplateHash
-	out.UpdatedScheduledReplicas = in.UpdatedScheduledReplicas
+	*out = *(*v1beta1.PodCliqueUpdateProgress)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -1481,12 +1355,7 @@ func Convert_v1alpha1_PodCliqueUpdateProgress_To_v1beta1_PodCliqueUpdateProgress
 }
 
 func autoConvert_v1beta1_PodCliqueUpdateProgress_To_v1alpha1_PodCliqueUpdateProgress(in *v1beta1.PodCliqueUpdateProgress, out *PodCliqueUpdateProgress, s conversion.Scope) error {
-	out.UpdateStartedAt = in.UpdateStartedAt
-	out.UpdateEndedAt = (*v1.Time)(unsafe.Pointer(in.UpdateEndedAt))
-	out.LastProgressedAt = (*v1.Time)(unsafe.Pointer(in.LastProgressedAt))
-	out.PodCliqueSetGenerationHash = in.PodCliqueSetGenerationHash
-	out.PodTemplateHash = in.PodTemplateHash
-	out.UpdatedScheduledReplicas = in.UpdatedScheduledReplicas
+	*out = *(*PodCliqueUpdateProgress)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -1496,12 +1365,7 @@ func Convert_v1beta1_PodCliqueUpdateProgress_To_v1alpha1_PodCliqueUpdateProgress
 }
 
 func autoConvert_v1alpha1_PodGangEntry_To_v1beta1_PodGangEntry(in *PodGangEntry, out *v1beta1.PodGangEntry, s conversion.Scope) error {
-	out.Epoch = in.Epoch
-	out.PodCliqueSetGenerationHash = in.PodCliqueSetGenerationHash
-	out.Role = v1beta1.PodGangEntryRole(in.Role)
-	out.PodCliques = *(*map[string]int32)(unsafe.Pointer(&in.PodCliques))
-	out.PCSGReplicaIndices = *(*map[string][]int32)(unsafe.Pointer(&in.PCSGReplicaIndices))
-	out.DependsOn = *(*[]string)(unsafe.Pointer(&in.DependsOn))
+	*out = *(*v1beta1.PodGangEntry)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -1511,12 +1375,7 @@ func Convert_v1alpha1_PodGangEntry_To_v1beta1_PodGangEntry(in *PodGangEntry, out
 }
 
 func autoConvert_v1beta1_PodGangEntry_To_v1alpha1_PodGangEntry(in *v1beta1.PodGangEntry, out *PodGangEntry, s conversion.Scope) error {
-	out.Epoch = in.Epoch
-	out.PodCliqueSetGenerationHash = in.PodCliqueSetGenerationHash
-	out.Role = PodGangEntryRole(in.Role)
-	out.PodCliques = *(*map[string]int32)(unsafe.Pointer(&in.PodCliques))
-	out.PCSGReplicaIndices = *(*map[string][]int32)(unsafe.Pointer(&in.PCSGReplicaIndices))
-	out.DependsOn = *(*[]string)(unsafe.Pointer(&in.DependsOn))
+	*out = *(*PodGangEntry)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -1574,8 +1433,7 @@ func Convert_v1beta1_PodGangMapList_To_v1alpha1_PodGangMapList(in *v1beta1.PodGa
 }
 
 func autoConvert_v1alpha1_PodGangMapSpec_To_v1beta1_PodGangMapSpec(in *PodGangMapSpec, out *v1beta1.PodGangMapSpec, s conversion.Scope) error {
-	out.PodCliqueSetReplicaIndex = in.PodCliqueSetReplicaIndex
-	out.Entries = *(*[]v1beta1.PodGangEntry)(unsafe.Pointer(&in.Entries))
+	*out = *(*v1beta1.PodGangMapSpec)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -1585,8 +1443,7 @@ func Convert_v1alpha1_PodGangMapSpec_To_v1beta1_PodGangMapSpec(in *PodGangMapSpe
 }
 
 func autoConvert_v1beta1_PodGangMapSpec_To_v1alpha1_PodGangMapSpec(in *v1beta1.PodGangMapSpec, out *PodGangMapSpec, s conversion.Scope) error {
-	out.PodCliqueSetReplicaIndex = in.PodCliqueSetReplicaIndex
-	out.Entries = *(*[]PodGangEntry)(unsafe.Pointer(&in.Entries))
+	*out = *(*PodGangMapSpec)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -1596,8 +1453,7 @@ func Convert_v1beta1_PodGangMapSpec_To_v1alpha1_PodGangMapSpec(in *v1beta1.PodGa
 }
 
 func autoConvert_v1alpha1_ResourceClaimTemplateConfig_To_v1beta1_ResourceClaimTemplateConfig(in *ResourceClaimTemplateConfig, out *v1beta1.ResourceClaimTemplateConfig, s conversion.Scope) error {
-	out.Name = in.Name
-	out.TemplateSpec = in.TemplateSpec
+	*out = *(*v1beta1.ResourceClaimTemplateConfig)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -1607,8 +1463,7 @@ func Convert_v1alpha1_ResourceClaimTemplateConfig_To_v1beta1_ResourceClaimTempla
 }
 
 func autoConvert_v1beta1_ResourceClaimTemplateConfig_To_v1alpha1_ResourceClaimTemplateConfig(in *v1beta1.ResourceClaimTemplateConfig, out *ResourceClaimTemplateConfig, s conversion.Scope) error {
-	out.Name = in.Name
-	out.TemplateSpec = in.TemplateSpec
+	*out = *(*ResourceClaimTemplateConfig)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -1618,9 +1473,7 @@ func Convert_v1beta1_ResourceClaimTemplateConfig_To_v1alpha1_ResourceClaimTempla
 }
 
 func autoConvert_v1alpha1_ResourceSharingSpec_To_v1beta1_ResourceSharingSpec(in *ResourceSharingSpec, out *v1beta1.ResourceSharingSpec, s conversion.Scope) error {
-	out.Name = in.Name
-	out.Namespace = in.Namespace
-	out.Scope = v1beta1.ResourceSharingScope(in.Scope)
+	*out = *(*v1beta1.ResourceSharingSpec)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -1630,9 +1483,7 @@ func Convert_v1alpha1_ResourceSharingSpec_To_v1beta1_ResourceSharingSpec(in *Res
 }
 
 func autoConvert_v1beta1_ResourceSharingSpec_To_v1alpha1_ResourceSharingSpec(in *v1beta1.ResourceSharingSpec, out *ResourceSharingSpec, s conversion.Scope) error {
-	out.Name = in.Name
-	out.Namespace = in.Namespace
-	out.Scope = ResourceSharingScope(in.Scope)
+	*out = *(*ResourceSharingSpec)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -1642,8 +1493,7 @@ func Convert_v1beta1_ResourceSharingSpec_To_v1alpha1_ResourceSharingSpec(in *v1b
 }
 
 func autoConvert_v1alpha1_RollingUpdateConfiguration_To_v1beta1_RollingUpdateConfiguration(in *RollingUpdateConfiguration, out *v1beta1.RollingUpdateConfiguration, s conversion.Scope) error {
-	out.MaxUnavailable = (*int32)(unsafe.Pointer(in.MaxUnavailable))
-	out.ProgressDeadline = (*v1.Duration)(unsafe.Pointer(in.ProgressDeadline))
+	*out = *(*v1beta1.RollingUpdateConfiguration)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -1653,8 +1503,7 @@ func Convert_v1alpha1_RollingUpdateConfiguration_To_v1beta1_RollingUpdateConfigu
 }
 
 func autoConvert_v1beta1_RollingUpdateConfiguration_To_v1alpha1_RollingUpdateConfiguration(in *v1beta1.RollingUpdateConfiguration, out *RollingUpdateConfiguration, s conversion.Scope) error {
-	out.MaxUnavailable = (*int32)(unsafe.Pointer(in.MaxUnavailable))
-	out.ProgressDeadline = (*v1.Duration)(unsafe.Pointer(in.ProgressDeadline))
+	*out = *(*RollingUpdateConfiguration)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -1664,8 +1513,7 @@ func Convert_v1beta1_RollingUpdateConfiguration_To_v1alpha1_RollingUpdateConfigu
 }
 
 func autoConvert_v1alpha1_SchedulerTopologyBinding_To_v1beta1_SchedulerTopologyBinding(in *SchedulerTopologyBinding, out *v1beta1.SchedulerTopologyBinding, s conversion.Scope) error {
-	out.SchedulerName = in.SchedulerName
-	out.TopologyReference = in.TopologyReference
+	*out = *(*v1beta1.SchedulerTopologyBinding)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -1675,8 +1523,7 @@ func Convert_v1alpha1_SchedulerTopologyBinding_To_v1beta1_SchedulerTopologyBindi
 }
 
 func autoConvert_v1beta1_SchedulerTopologyBinding_To_v1alpha1_SchedulerTopologyBinding(in *v1beta1.SchedulerTopologyBinding, out *SchedulerTopologyBinding, s conversion.Scope) error {
-	out.SchedulerName = in.SchedulerName
-	out.TopologyReference = in.TopologyReference
+	*out = *(*SchedulerTopologyBinding)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -1686,12 +1533,7 @@ func Convert_v1beta1_SchedulerTopologyBinding_To_v1alpha1_SchedulerTopologyBindi
 }
 
 func autoConvert_v1alpha1_SchedulerTopologyStatus_To_v1beta1_SchedulerTopologyStatus(in *SchedulerTopologyStatus, out *v1beta1.SchedulerTopologyStatus, s conversion.Scope) error {
-	if err := Convert_v1alpha1_SchedulerTopologyBinding_To_v1beta1_SchedulerTopologyBinding(&in.SchedulerTopologyBinding, &out.SchedulerTopologyBinding, s); err != nil {
-		return err
-	}
-	out.InSync = in.InSync
-	out.SchedulerBackendTopologyObservedGeneration = in.SchedulerBackendTopologyObservedGeneration
-	out.Message = in.Message
+	*out = *(*v1beta1.SchedulerTopologyStatus)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -1701,12 +1543,7 @@ func Convert_v1alpha1_SchedulerTopologyStatus_To_v1beta1_SchedulerTopologyStatus
 }
 
 func autoConvert_v1beta1_SchedulerTopologyStatus_To_v1alpha1_SchedulerTopologyStatus(in *v1beta1.SchedulerTopologyStatus, out *SchedulerTopologyStatus, s conversion.Scope) error {
-	if err := Convert_v1beta1_SchedulerTopologyBinding_To_v1alpha1_SchedulerTopologyBinding(&in.SchedulerTopologyBinding, &out.SchedulerTopologyBinding, s); err != nil {
-		return err
-	}
-	out.InSync = in.InSync
-	out.SchedulerBackendTopologyObservedGeneration = in.SchedulerBackendTopologyObservedGeneration
-	out.Message = in.Message
+	*out = *(*SchedulerTopologyStatus)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -1729,8 +1566,7 @@ func autoConvert_v1beta1_TopologyConstraint_To_v1alpha1_TopologyConstraint(in *v
 }
 
 func autoConvert_v1alpha1_TopologyLevel_To_v1beta1_TopologyLevel(in *TopologyLevel, out *v1beta1.TopologyLevel, s conversion.Scope) error {
-	out.Domain = v1beta1.TopologyDomain(in.Domain)
-	out.Key = in.Key
+	*out = *(*v1beta1.TopologyLevel)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -1740,8 +1576,7 @@ func Convert_v1alpha1_TopologyLevel_To_v1beta1_TopologyLevel(in *TopologyLevel, 
 }
 
 func autoConvert_v1beta1_TopologyLevel_To_v1alpha1_TopologyLevel(in *v1beta1.TopologyLevel, out *TopologyLevel, s conversion.Scope) error {
-	out.Domain = TopologyDomain(in.Domain)
-	out.Key = in.Key
+	*out = *(*TopologyLevel)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -1751,8 +1586,7 @@ func Convert_v1beta1_TopologyLevel_To_v1alpha1_TopologyLevel(in *v1beta1.Topolog
 }
 
 func autoConvert_v1alpha1_TopologyPackConstraint_To_v1beta1_TopologyPackConstraint(in *TopologyPackConstraint, out *v1beta1.TopologyPackConstraint, s conversion.Scope) error {
-	out.RequiredDomain = v1beta1.TopologyDomain(in.RequiredDomain)
-	out.PreferredDomain = v1beta1.TopologyDomain(in.PreferredDomain)
+	*out = *(*v1beta1.TopologyPackConstraint)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -1762,8 +1596,7 @@ func Convert_v1alpha1_TopologyPackConstraint_To_v1beta1_TopologyPackConstraint(i
 }
 
 func autoConvert_v1beta1_TopologyPackConstraint_To_v1alpha1_TopologyPackConstraint(in *v1beta1.TopologyPackConstraint, out *TopologyPackConstraint, s conversion.Scope) error {
-	out.RequiredDomain = TopologyDomain(in.RequiredDomain)
-	out.PreferredDomain = TopologyDomain(in.PreferredDomain)
+	*out = *(*TopologyPackConstraint)(unsafe.Pointer(in))
 	return nil
 }
 
