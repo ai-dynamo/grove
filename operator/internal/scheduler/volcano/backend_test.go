@@ -28,6 +28,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
@@ -334,6 +335,89 @@ func TestBackend_SyncPodGangQueueFromPodCliqueSet(t *testing.T) {
 			podGroup := &volcanov1beta1.PodGroup{}
 			require.NoError(t, cl.Get(context.Background(), client.ObjectKey{Name: "volcano-0", Namespace: "default"}, podGroup))
 			assert.Equal(t, tc.expectedQueue, podGroup.Spec.Queue)
+		})
+	}
+}
+
+func TestBackend_SyncPodGangPodCliqueSetReadError(t *testing.T) {
+	pcs := testutils.NewPodCliqueSetBuilder("volcano", "default", types.UID("pcs-uid")).
+		WithReplicas(1).
+		WithPodCliqueTemplateSpec(
+			testutils.NewPodCliqueTemplateSpecBuilder("worker").
+				WithReplicas(1).
+				WithRoleName("worker-role").
+				WithMinAvailable(1).
+				WithPodSpec(corev1.PodSpec{
+					SchedulerName: string(configv1beta1.SchedulerNameVolcano),
+					Containers:    []corev1.Container{{Name: "worker", Image: "test:latest"}},
+				}).
+				Build(),
+		).
+		Build()
+	pcs.Spec.Template.Cliques[0].Annotations = map[string]string{QueueAnnotationKey: "gpu-training"}
+	podGang := &groveschedulerv1alpha1.PodGang{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "volcano-0",
+			Namespace: "default",
+			UID:       "pg-uid",
+			OwnerReferences: []metav1.OwnerReference{{
+				APIVersion: grovecorev1beta1.SchemeGroupVersion.String(),
+				Kind:       "PodCliqueSet",
+				Name:       pcs.Name,
+				UID:        pcs.UID,
+				Controller: ptr.To(true),
+			}},
+		},
+		Spec: groveschedulerv1alpha1.PodGangSpec{
+			PodGroups: []groveschedulerv1alpha1.PodGroup{{Name: "volcano-0-worker", MinReplicas: 1}},
+		},
+	}
+	readErr := apierrors.NewTimeoutError("fake timeout", 1)
+
+	testCases := []struct {
+		description      string
+		existingPodGroup bool
+	}{
+		{
+			description:      "PodGroup is not created when the PodCliqueSet read fails",
+			existingPodGroup: false,
+		},
+		{
+			description:      "existing PodGroup is left untouched when the PodCliqueSet read fails",
+			existingPodGroup: true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.description, func(t *testing.T) {
+			objects := []client.Object{podGang.DeepCopy(), pcs.DeepCopy()}
+			if tc.existingPodGroup {
+				objects = append(objects, &volcanov1beta1.PodGroup{
+					ObjectMeta: metav1.ObjectMeta{Name: "volcano-0", Namespace: "default"},
+					Spec:       volcanov1beta1.PodGroupSpec{Queue: "existing-queue", MinMember: 1},
+				})
+			}
+			cl := testutils.NewTestClientBuilder().
+				WithScheme(schedulertest.NewVolcanoScheme(t)).
+				WithObjects(objects...).
+				RecordErrorForObjects(testutils.ClientMethodGet, readErr, client.ObjectKeyFromObject(pcs)).
+				Build()
+			b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameVolcano})
+
+			err := b.SyncPodGang(context.Background(), podGang)
+			require.Error(t, err)
+			assert.True(t, apierrors.IsTimeout(err))
+
+			podGroup := &volcanov1beta1.PodGroup{}
+			getErr := cl.Get(context.Background(), client.ObjectKey{Name: "volcano-0", Namespace: "default"}, podGroup)
+			if !tc.existingPodGroup {
+				assert.True(t, apierrors.IsNotFound(getErr))
+				return
+			}
+			require.NoError(t, getErr)
+			assert.Equal(t, "existing-queue", podGroup.Spec.Queue)
+			assert.Equal(t, int32(1), podGroup.Spec.MinMember)
+			assert.Empty(t, podGroup.OwnerReferences)
 		})
 	}
 }
