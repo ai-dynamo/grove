@@ -27,7 +27,8 @@ import (
 	apiconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
-	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/sync"
+	pcsexpectations "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/expectations"
+	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/sync"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
@@ -79,7 +80,7 @@ func TestPatchScalingProgress(t *testing.T) {
 		WithObjects(pcs).
 		WithStatusSubresource(pcs)
 	fakeClient := clientBuilder.Build()
-	expectations := &pcssync.ScalingProgressExpectations{}
+	expectations := &pcsexpectations.ScalingProgress{}
 	r := &_resource{client: fakeClient, scalingProgressExpectations: expectations}
 
 	err := r.patchScalingProgress(context.Background(), pcs, progress)
@@ -100,7 +101,7 @@ func TestPatchScalingProgressClearsProgress(t *testing.T) {
 		WithObjects(pcs).
 		WithStatusSubresource(pcs).
 		Build()
-	expectations := &pcssync.ScalingProgressExpectations{}
+	expectations := &pcsexpectations.ScalingProgress{}
 	r := &_resource{client: fakeClient, scalingProgressExpectations: expectations}
 
 	err := r.patchScalingProgress(context.Background(), pcs, nil)
@@ -122,7 +123,7 @@ func TestPatchScalingProgressRemovesExpectationOnPatchFailure(t *testing.T) {
 		WithStatusSubresource(pcs).
 		RecordErrorForObjects(testutils.ClientMethodStatusPatch, conflict, client.ObjectKeyFromObject(pcs)).
 		Build()
-	expectations := &pcssync.ScalingProgressExpectations{}
+	expectations := &pcsexpectations.ScalingProgress{}
 	r := &_resource{client: fakeClient, scalingProgressExpectations: expectations}
 	progress := &grovecorev1beta1.PodCliqueSetScalingProgress{ScaleOutReplicaIndices: []int32{1}}
 

@@ -21,7 +21,8 @@ import (
 	"testing"
 
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
-	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/sync"
+	pcsexpectations "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/expectations"
+	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/sync"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 
 	"github.com/go-logr/logr"
@@ -45,7 +46,7 @@ func TestNew(t *testing.T) {
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 	eventRecorder := &record.FakeRecorder{}
 
-	expectations := &pcssync.ScalingProgressExpectations{}
+	expectations := &pcsexpectations.ScalingProgress{}
 	operator := New(client, eventRecorder, expectations)
 
 	assert.NotNil(t, operator)
@@ -101,7 +102,7 @@ func TestSyncPersistsScaleOutFromZeroAndPopulatesState(t *testing.T) {
 	r := &_resource{
 		client:                      fakeClient,
 		eventRecorder:               &record.FakeRecorder{},
-		scalingProgressExpectations: &pcssync.ScalingProgressExpectations{},
+		scalingProgressExpectations: &pcsexpectations.ScalingProgress{},
 	}
 	state := &pcssync.State{}
 
@@ -136,7 +137,7 @@ func TestSyncGathersEachReplicaResourceTypeOnceForCoherentUpdate(t *testing.T) {
 	r := &_resource{
 		client:                      countingClient,
 		eventRecorder:               &record.FakeRecorder{},
-		scalingProgressExpectations: &pcssync.ScalingProgressExpectations{},
+		scalingProgressExpectations: &pcsexpectations.ScalingProgress{},
 	}
 
 	_, err := r.Sync(context.Background(), logr.Discard(), pcs, &pcssync.State{})
@@ -218,7 +219,7 @@ func TestSync(t *testing.T) {
 			r := &_resource{
 				client:                      fakeClient,
 				eventRecorder:               &record.FakeRecorder{},
-				scalingProgressExpectations: &pcssync.ScalingProgressExpectations{},
+				scalingProgressExpectations: &pcsexpectations.ScalingProgress{},
 			}
 
 			_, err := r.Sync(ctx, logger, tc.pcs, &pcssync.State{})
