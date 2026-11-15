@@ -17,6 +17,7 @@ package podclique
 import (
 	"context"
 	"fmt"
+	"strconv"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
@@ -76,7 +77,7 @@ func (r *Reconciler) reconcileStatus(ctx context.Context, logger logr.Logger, pc
 	if pclq.Status.ObservedGeneration != nil {
 		mutatePodCliqueScheduledCondition(pclq)
 		mutateLastScheduled(pclq, originalStatus)
-		mutateMinAvailableBreachedCondition(pclq,
+		mutateMinAvailableBreachedCondition(logger, pcs, pclq,
 			len(podCategories[k8sutils.PodHasAtleastOneContainerWithNonZeroExitCode]),
 			len(podCategories[k8sutils.PodStartedButNotReady]))
 		progressDeadline, err := progressDeadlineForPCLQ(pcs, pclq)
@@ -220,16 +221,18 @@ func (r *Reconciler) emitAllScheduledReplicasLostIfNeeded(pclq *grovecorev1beta1
 }
 
 // mutateMinAvailableBreachedCondition updates the MinAvailableBreached condition based on pod availability
-func mutateMinAvailableBreachedCondition(pclq *grovecorev1beta1.PodClique, numNotReadyPodsWithContainersInError, numPodsStartedButNotReady int) {
-	newCondition := computeMinAvailableBreachedCondition(pclq, numNotReadyPodsWithContainersInError, numPodsStartedButNotReady)
+func mutateMinAvailableBreachedCondition(logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, pclq *grovecorev1beta1.PodClique, numNotReadyPodsWithContainersInError, numPodsStartedButNotReady int) {
+	newCondition := computeMinAvailableBreachedCondition(logger, pcs, pclq, numNotReadyPodsWithContainersInError, numPodsStartedButNotReady)
 	if k8sutils.HasConditionChanged(pclq.Status.Conditions, newCondition) {
 		meta.SetStatusCondition(&pclq.Status.Conditions, newCondition)
 	}
 }
 
 // computeMinAvailableBreachedCondition calculates the MinAvailableBreached condition status based on pod availability
-func computeMinAvailableBreachedCondition(pclq *grovecorev1beta1.PodClique, numPodsHavingAtleastOneContainerWithNonZeroExitCode, numPodsStartedButNotReady int) metav1.Condition {
-	if componentutils.IsPCLQRollingUpdateInProgress(pclq) {
+func computeMinAvailableBreachedCondition(logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, pclq *grovecorev1beta1.PodClique, numPodsHavingAtleastOneContainerWithNonZeroExitCode, numPodsStartedButNotReady int) metav1.Condition {
+	// Gang termination is disarmed while a PodClique rolling update is in progress, and while the owning PCS
+	// replica is being replaced. Both hold the condition at Unknown so a breach is not acted upon.
+	if componentutils.IsPCLQRollingUpdateInProgress(pclq) || isOwningPCSReplicaInReplacement(logger, pcs, pclq) {
 		return metav1.Condition{
 			Type:    constants.ConditionTypeMinAvailableBreached,
 			Status:  metav1.ConditionUnknown,
@@ -293,6 +296,23 @@ func computeMinAvailableBreachedCondition(pclq *grovecorev1beta1.PodClique, numP
 		Message:            fmt.Sprintf("Either sufficient ready or starting pods found. expected at least: %d, found: %d", minAvailable, readyOrStartingPods),
 		LastTransitionTime: now,
 	}
+}
+
+// isOwningPCSReplicaInReplacement reports whether the PodClique's owning PCS replica participates in a
+// PCS replica replacement. A missing or malformed replica-index label is treated as not in replacement
+// and logged, since the breach condition has no error channel.
+func isOwningPCSReplicaInReplacement(logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, pclq *grovecorev1beta1.PodClique) bool {
+	indexValue, ok := pclq.Labels[apicommon.LabelPodCliqueSetReplicaIndex]
+	if !ok {
+		logger.V(1).Info("PodClique is missing the PCS replica index label, treating it as not in replacement", "label", apicommon.LabelPodCliqueSetReplicaIndex)
+		return false
+	}
+	pcsReplicaIndex, err := strconv.Atoi(indexValue)
+	if err != nil {
+		logger.V(1).Info("PodClique has an invalid PCS replica index label, treating it as not in replacement", "label", apicommon.LabelPodCliqueSetReplicaIndex, "value", indexValue)
+		return false
+	}
+	return componentutils.IsPCSReplicaInReplacement(pcs, pcsReplicaIndex)
 }
 
 // mutatePodCliqueScheduledCondition updates the PodCliqueScheduled condition based on scheduled pod counts
