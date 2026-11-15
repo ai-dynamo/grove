@@ -46,15 +46,17 @@ func TestNew(t *testing.T) {
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 	eventRecorder := &record.FakeRecorder{}
 
-	expectations := &pcsexpectations.ScalingProgress{}
-	operator := New(client, eventRecorder, expectations)
+	scalingExpectations := &pcsexpectations.ScalingProgress{}
+	currentlyUpdatingExpectations := &pcsexpectations.CurrentlyUpdating{}
+	operator := New(client, eventRecorder, scalingExpectations, currentlyUpdatingExpectations)
 
 	assert.NotNil(t, operator)
 	resource, ok := operator.(*_resource)
 	assert.True(t, ok)
 	assert.Equal(t, client, resource.client)
 	assert.Equal(t, eventRecorder, resource.eventRecorder)
-	assert.Same(t, expectations, resource.scalingProgressExpectations)
+	assert.Same(t, scalingExpectations, resource.scalingProgressExpectations)
+	assert.Same(t, currentlyUpdatingExpectations, resource.currentlyUpdatingExpectations)
 }
 
 // TestGetExistingResourceNames tests the GetExistingResourceNames function
@@ -100,9 +102,10 @@ func TestSyncPersistsScaleOutFromZeroAndPopulatesState(t *testing.T) {
 		WithStatusSubresource(pcs).
 		Build()
 	r := &_resource{
-		client:                      fakeClient,
-		eventRecorder:               &record.FakeRecorder{},
-		scalingProgressExpectations: &pcsexpectations.ScalingProgress{},
+		client:                        fakeClient,
+		eventRecorder:                 &record.FakeRecorder{},
+		scalingProgressExpectations:   &pcsexpectations.ScalingProgress{},
+		currentlyUpdatingExpectations: &pcsexpectations.CurrentlyUpdating{},
 	}
 	state := &pcssync.State{}
 
@@ -135,9 +138,10 @@ func TestSyncGathersEachReplicaResourceTypeOnceForCoherentUpdate(t *testing.T) {
 		listCounts: make(map[string]int),
 	}
 	r := &_resource{
-		client:                      countingClient,
-		eventRecorder:               &record.FakeRecorder{},
-		scalingProgressExpectations: &pcsexpectations.ScalingProgress{},
+		client:                        countingClient,
+		eventRecorder:                 &record.FakeRecorder{},
+		scalingProgressExpectations:   &pcsexpectations.ScalingProgress{},
+		currentlyUpdatingExpectations: &pcsexpectations.CurrentlyUpdating{},
 	}
 
 	_, err := r.Sync(context.Background(), logr.Discard(), pcs, &pcssync.State{})
@@ -217,9 +221,10 @@ func TestSync(t *testing.T) {
 				Build()
 
 			r := &_resource{
-				client:                      fakeClient,
-				eventRecorder:               &record.FakeRecorder{},
-				scalingProgressExpectations: &pcsexpectations.ScalingProgress{},
+				client:                        fakeClient,
+				eventRecorder:                 &record.FakeRecorder{},
+				scalingProgressExpectations:   &pcsexpectations.ScalingProgress{},
+				currentlyUpdatingExpectations: &pcsexpectations.CurrentlyUpdating{},
 			}
 
 			_, err := r.Sync(ctx, logger, tc.pcs, &pcssync.State{})

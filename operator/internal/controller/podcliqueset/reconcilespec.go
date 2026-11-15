@@ -207,6 +207,7 @@ func (r *Reconciler) initOrResetUpdate(ctx context.Context, pcs *grovecorev1beta
 	if err := r.setGenerationHashAndUpdateStatus(ctx, pcs, expectationKey, newGenerationHash); err != nil {
 		return fmt.Errorf("could not set UpdateProgress for PodCliqueSet: %v: %w", client.ObjectKeyFromObject(pcs), err)
 	}
+	r.currentlyUpdatingExpectations.Record(pcs.ObjectMeta, updateProgress.CurrentlyUpdating)
 	return nil
 }
 
