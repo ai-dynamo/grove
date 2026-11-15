@@ -17,7 +17,6 @@ package podcliquesetreplica
 import (
 	"cmp"
 	"context"
-	"fmt"
 	"slices"
 
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
@@ -35,32 +34,31 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// syncScalingProgress computes and persists replica-index selections and populates the state shared with later components.
+// syncScalingProgress computes and persists replica-index selections.
+// It returns the pcs replica scaling indices, a boolean indicating that the scaling progress has changed.
+// An error returned if the patch of scaling progress failed.
 func (r *_resource) syncScalingProgress(
 	ctx context.Context,
 	logger logr.Logger,
 	pcs *grovecorev1beta1.PodCliqueSet,
-	pcsReplicaInfosByIndex pcsReplicaInfoByIndex,
-	state *pcssync.State) (bool, error) {
+	pcsReplicaInfosByIndex pcsReplicaInfoByIndex) (pcsReplicaScalingIndices, bool, error) {
 
 	scalingIndices := replicaScalingIndicesFromProgress(pcs.Status.ScalingProgress)
-	computedState := computeReplicaIndices(pcs, pcsReplicaInfosByIndex, scalingIndices)
-	computedProgress := scalingProgressFromState(computedState)
+	computedScalingIndices := computePCSReplicaScalingIndices(pcs, pcsReplicaInfosByIndex, scalingIndices)
+	computedProgress := scalingProgressFromScalingIndices(computedScalingIndices)
 	scalingProgressChanged := !pcssync.ScalingProgressEqual(pcs.Status.ScalingProgress, computedProgress)
 	if scalingProgressChanged {
 		if err := r.patchScalingProgress(ctx, pcs, computedProgress); err != nil {
-			return false, err
+			return pcsReplicaScalingIndices{}, false, err
 		}
-		r.recordNewScalingSelectionEvents(logger, pcs, scalingIndices.scaleOut, scalingIndices.scaleIn, computedState)
+		r.recordNewScalingSelectionEvents(logger, pcs, scalingIndices, computedScalingIndices)
 	}
-
-	*state = computedState
-	return scalingProgressChanged, nil
+	return computedScalingIndices, scalingProgressChanged, nil
 }
 
 // recordNewScalingSelectionEvents records newly selected scale-in indices and newly reserved scale-out indices.
-func (r *_resource) recordNewScalingSelectionEvents(logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, previousScaleOutReplicaIndices, previousScaleInReplicaIndices []int, computedState pcssync.State) {
-	newScaleOutReplicaIndices := sets.New(computedState.ScaleOutReplicaIndices...).Difference(sets.New(previousScaleOutReplicaIndices...))
+func (r *_resource) recordNewScalingSelectionEvents(logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, previousScalingIndices, computedScalingIndices pcsReplicaScalingIndices) {
+	newScaleOutReplicaIndices := sets.New(computedScalingIndices.scaleOut...).Difference(sets.New(previousScalingIndices.scaleOut...))
 	if newScaleOutReplicaIndices.Len() > 0 {
 		pcsReplicaIndices := sets.List(newScaleOutReplicaIndices)
 		logger.Info("Reserved PCS replica indices for scale-out", "pcsReplicaIndices", pcsReplicaIndices)
@@ -73,7 +71,7 @@ func (r *_resource) recordNewScalingSelectionEvents(logger logr.Logger, pcs *gro
 		)
 	}
 
-	newScaleInReplicaIndices := sets.New(computedState.ScaleInReplicaIndices...).Difference(sets.New(previousScaleInReplicaIndices...))
+	newScaleInReplicaIndices := sets.New(computedScalingIndices.scaleIn...).Difference(sets.New(previousScalingIndices.scaleIn...))
 	if newScaleInReplicaIndices.Len() > 0 {
 		pcsReplicaIndices := sets.List(newScaleInReplicaIndices)
 		logger.Info("Selected PCS replica indices for scale-in", "pcsReplicaIndices", pcsReplicaIndices)
@@ -87,86 +85,66 @@ func (r *_resource) recordNewScalingSelectionEvents(logger logr.Logger, pcs *gro
 	}
 }
 
-// gatherPCSReplicaInfosByIndex gathers observed replica-scoped resources and groups their information by PCS replica index.
-// PodGangMaps are gathered only during a Coherent update.
-func (r *_resource) gatherPCSReplicaInfosByIndex(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet) (pcsReplicaInfoByIndex, error) {
-	standalonePCLQsByPCSReplicaIndex, err := componentutils.GetStandalonePCLQsByPCSReplicaIndex(ctx, r.client, pcs.ObjectMeta)
-	if err != nil {
-		return nil, groveerr.WrapError(err,
-			errCodeListPCLQs,
-			component.OperationSync,
-			fmt.Sprintf("failed to list standalone PodCliques by replica for PodCliqueSet: %v", client.ObjectKeyFromObject(pcs)),
-		)
-	}
-	pcsgsByPCSReplicaIndex, err := componentutils.GetPCSGsByPCSReplicaIndex(ctx, r.client, pcs.ObjectMeta)
-	if err != nil {
-		return nil, groveerr.WrapError(err,
-			errCodeListPCSGs,
-			component.OperationSync,
-			fmt.Sprintf("failed to list PodCliqueScalingGroups by replica for PodCliqueSet: %v", client.ObjectKeyFromObject(pcs)),
-		)
-	}
-	// Gang termination deletes every PodClique for a PCS replica but keeps its headless Service. Include
-	// the Service so a standalone-only replica keeps the same index while its PodCliques are recreated.
-	// If gang termination later deletes every resource for the replica, this lookup can be removed and
-	// reconciliation can allocate the lowest available index instead.
-	headlessServicesByPCSReplicaIndex, err := componentutils.GetHeadlessServicesByPCSReplicaIndex(ctx, r.client, pcs.ObjectMeta)
-	if err != nil {
-		return nil, groveerr.WrapError(err,
-			errCodeListServices,
-			component.OperationSync,
-			fmt.Sprintf("failed to list headless Services by replica for PodCliqueSet: %v", client.ObjectKeyFromObject(pcs)),
-		)
-	}
-	var podGangMapsByPCSReplicaIndex map[int]*grovecorev1beta1.PodGangMap
-	if componentutils.IsCoherentUpdateInProgress(pcs) {
-		podGangMaps, listErr := componentutils.ListPodGangMapsForPCS(ctx, r.client, pcs.ObjectMeta)
-		if listErr != nil {
-			return nil, groveerr.WrapError(listErr,
-				errCodeGetPodGangMap,
-				component.OperationSync,
-				fmt.Sprintf("could not list PodGangMaps for PCS: %v", client.ObjectKeyFromObject(pcs)),
-			)
-		}
-		podGangMapsByPCSReplicaIndex, err = componentutils.PodGangMapByPCSReplicaIndex(podGangMaps)
-		if err != nil {
-			return nil, groveerr.WrapError(err,
-				errCodeGetPodGangMap,
-				component.OperationSync,
-				fmt.Sprintf("could not index PodGangMaps by PCS replica for PCS: %v", client.ObjectKeyFromObject(pcs)),
-			)
-		}
+// scalingProgressFromScalingIndices converts reconcile-local scaling indices to their API representation.
+func scalingProgressFromScalingIndices(scalingIndices pcsReplicaScalingIndices) *grovecorev1beta1.PodCliqueSetScalingProgress {
+	if len(scalingIndices.scaleOut) == 0 && len(scalingIndices.scaleIn) == 0 {
+		return nil
 	}
 
-	existingPCSReplicaIndices := sets.New[int]()
-	for pcsReplicaIndex := range standalonePCLQsByPCSReplicaIndex {
-		existingPCSReplicaIndices.Insert(pcsReplicaIndex)
+	progress := &grovecorev1beta1.PodCliqueSetScalingProgress{}
+	if len(scalingIndices.scaleOut) > 0 {
+		progress.ScaleOutReplicaIndices = make([]int32, len(scalingIndices.scaleOut))
+		for i, replicaIndex := range scalingIndices.scaleOut {
+			progress.ScaleOutReplicaIndices[i] = int32(replicaIndex)
+		}
 	}
-	for pcsReplicaIndex := range pcsgsByPCSReplicaIndex {
-		existingPCSReplicaIndices.Insert(pcsReplicaIndex)
+	if len(scalingIndices.scaleIn) > 0 {
+		progress.ScaleInReplicaIndices = make([]int32, len(scalingIndices.scaleIn))
+		for i, replicaIndex := range scalingIndices.scaleIn {
+			progress.ScaleInReplicaIndices[i] = int32(replicaIndex)
+		}
 	}
-	for pcsReplicaIndex := range headlessServicesByPCSReplicaIndex {
-		existingPCSReplicaIndices.Insert(pcsReplicaIndex)
-	}
-	for pcsReplicaIndex := range podGangMapsByPCSReplicaIndex {
-		existingPCSReplicaIndices.Insert(pcsReplicaIndex)
+	return progress
+}
+
+// patchScalingProgress persists scaling progress and records the value that must be observed through the informer cache.
+func (r *_resource) patchScalingProgress(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet, progress *grovecorev1beta1.PodCliqueSetScalingProgress) error {
+	r.scalingProgressExpectations.Record(pcs.ObjectMeta, progress)
+
+	patchedPCS := pcs.DeepCopy()
+	patchedPCS.Status.ScalingProgress = progress
+	patch := client.MergeFromWithOptions(pcs, client.MergeFromWithOptimisticLock{})
+	if err := r.client.Status().Patch(ctx, patchedPCS, patch); err != nil {
+		r.scalingProgressExpectations.Forget(pcs.ObjectMeta)
+		return groveerr.WrapError(
+			err,
+			errCodeUpdatePCSStatus,
+			component.OperationSync,
+			"failed to patch PodCliqueSet scaling progress",
+		)
 	}
 
-	pcsReplicaInfosByIndex := make(pcsReplicaInfoByIndex, existingPCSReplicaIndices.Len())
-	for pcsReplicaIndex := range existingPCSReplicaIndices {
-		var podGangMapEntries []grovecorev1beta1.PodGangEntry
-		if podGangMap := podGangMapsByPCSReplicaIndex[pcsReplicaIndex]; podGangMap != nil {
-			podGangMapEntries = podGangMap.Spec.Entries
-		}
-		pcsReplicaInfosByIndex[pcsReplicaIndex] = pcsReplicaInfo{
-			index:           pcsReplicaIndex,
-			standalonePCLQs: standalonePCLQsByPCSReplicaIndex[pcsReplicaIndex],
-			pcsgs:           pcsgsByPCSReplicaIndex[pcsReplicaIndex],
-			headlessSvcs:    headlessServicesByPCSReplicaIndex[pcsReplicaIndex],
-			pgmEntries:      podGangMapEntries,
-		}
+	pcs.ResourceVersion = patchedPCS.ResourceVersion
+	if progress == nil {
+		pcs.Status.ScalingProgress = nil
+	} else {
+		pcs.Status.ScalingProgress = progress.DeepCopy()
 	}
-	return pcsReplicaInfosByIndex, nil
+	return nil
+}
+
+// pcsReplicaScalingIndices contains sorted, unique replica indices committed to scale-out and scale-in.
+// The scale-out and scale-in slices must remain disjoint.
+type pcsReplicaScalingIndices struct {
+	scaleOut []int
+	scaleIn  []int
+}
+
+// activeScalingIndices returns a combined slice of unique scale-in and scale-out indices that are currently active.
+func (si pcsReplicaScalingIndices) activeScalingIndices() []int {
+	indices := sets.New[int](si.scaleIn...)
+	indices.Insert(si.scaleOut...)
+	return indices.UnsortedList()
 }
 
 // replicaScalingIndicesFromProgress converts API scaling progress to reconcile-local indices.
@@ -180,14 +158,14 @@ func replicaScalingIndicesFromProgress(progress *grovecorev1beta1.PodCliqueSetSc
 	}
 }
 
-// computeReplicaIndices determines which replica indices must exist and which are being added or removed.
+// computePCSReplicaScalingIndices determines which PCS replica indices must be scaled out or scaled in.
 // It uses the observed resources, the recorded scaling progress, and the desired replica count.
-// All returned slices are sorted in ascending order.
-func computeReplicaIndices(pcs *grovecorev1beta1.PodCliqueSet, replicaInfos pcsReplicaInfoByIndex, scalingIndices pcsReplicaScalingIndices) pcssync.State {
+// Both returned index slices are sorted in ascending order and remain disjoint.
+func computePCSReplicaScalingIndices(pcs *grovecorev1beta1.PodCliqueSet, replicaInfos pcsReplicaInfoByIndex, scalingIndices pcsReplicaScalingIndices) pcsReplicaScalingIndices {
 	// An unobserved PCS is still being provisioned for the first time. Its initial
 	// identities are not scale-out work and therefore do not require reservations.
 	if pcs.Status.ObservedGeneration == nil {
-		return pcssync.State{ExpectedReplicaIndices: lo.Range(int(pcs.Spec.Replicas))}
+		return pcsReplicaScalingIndices{}
 	}
 
 	scaleOutIndices := sets.New(scalingIndices.scaleOut...)
@@ -218,10 +196,9 @@ func computeReplicaIndices(pcs *grovecorev1beta1.PodCliqueSet, replicaInfos pcsR
 		claimedPCSReplicaIndices.Insert(selectedScaleOutIndices...)
 	}
 
-	return pcssync.State{
-		ExpectedReplicaIndices: sortedReplicaIndices(claimedPCSReplicaIndices),
-		ScaleOutReplicaIndices: sortedReplicaIndices(scaleOutIndices),
-		ScaleInReplicaIndices:  sortedReplicaIndices(scaleInIndices),
+	return pcsReplicaScalingIndices{
+		scaleOut: sortedReplicaIndices(scaleOutIndices),
+		scaleIn:  sortedReplicaIndices(scaleInIndices),
 	}
 }
 
@@ -319,62 +296,4 @@ func sortReplicaIndicesDescending(replicaIndices []int) {
 	slices.SortFunc(replicaIndices, func(a, b int) int {
 		return cmp.Compare(b, a)
 	})
-}
-
-// sortedReplicaIndices returns replica indices in ascending order.
-func sortedReplicaIndices(replicaIndices sets.Set[int]) []int {
-	if replicaIndices.Len() == 0 {
-		return nil
-	}
-	indices := replicaIndices.UnsortedList()
-	slices.Sort(indices)
-	return indices
-}
-
-// scalingProgressFromState converts reconcile-local scaling progress to its API representation.
-func scalingProgressFromState(state pcssync.State) *grovecorev1beta1.PodCliqueSetScalingProgress {
-	if len(state.ScaleOutReplicaIndices) == 0 && len(state.ScaleInReplicaIndices) == 0 {
-		return nil
-	}
-
-	progress := &grovecorev1beta1.PodCliqueSetScalingProgress{}
-	if len(state.ScaleOutReplicaIndices) > 0 {
-		progress.ScaleOutReplicaIndices = make([]int32, len(state.ScaleOutReplicaIndices))
-		for i, replicaIndex := range state.ScaleOutReplicaIndices {
-			progress.ScaleOutReplicaIndices[i] = int32(replicaIndex)
-		}
-	}
-	if len(state.ScaleInReplicaIndices) > 0 {
-		progress.ScaleInReplicaIndices = make([]int32, len(state.ScaleInReplicaIndices))
-		for i, replicaIndex := range state.ScaleInReplicaIndices {
-			progress.ScaleInReplicaIndices[i] = int32(replicaIndex)
-		}
-	}
-	return progress
-}
-
-// patchScalingProgress persists scaling progress and records the value that must be observed through the informer cache.
-func (r *_resource) patchScalingProgress(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet, progress *grovecorev1beta1.PodCliqueSetScalingProgress) error {
-	r.scalingProgressExpectations.Record(pcs.ObjectMeta, progress)
-
-	patchedPCS := pcs.DeepCopy()
-	patchedPCS.Status.ScalingProgress = progress
-	patch := client.MergeFromWithOptions(pcs, client.MergeFromWithOptimisticLock{})
-	if err := r.client.Status().Patch(ctx, patchedPCS, patch); err != nil {
-		r.scalingProgressExpectations.Forget(pcs.ObjectMeta)
-		return groveerr.WrapError(
-			err,
-			errCodeUpdatePCSStatus,
-			component.OperationSync,
-			"failed to patch PodCliqueSet scaling progress",
-		)
-	}
-
-	pcs.ResourceVersion = patchedPCS.ResourceVersion
-	if progress == nil {
-		pcs.Status.ScalingProgress = nil
-	} else {
-		pcs.Status.ScalingProgress = progress.DeepCopy()
-	}
-	return nil
 }

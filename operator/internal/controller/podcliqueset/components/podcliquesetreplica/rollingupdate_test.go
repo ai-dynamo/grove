@@ -48,9 +48,9 @@ func TestCurrentlyUpdatingReplicaInfos(t *testing.T) {
 func TestPCSReplicaUpdateSelectionBudget(t *testing.T) {
 	pcs := &grovecorev1beta1.PodCliqueSet{}
 
-	assert.Equal(t, 1, pcsReplicaUpdateSelectionBudget(pcs, nil))
-	assert.Equal(t, 0, pcsReplicaUpdateSelectionBudget(pcs, []pcsReplicaInfo{{index: 0}}))
-	assert.Equal(t, 0, pcsReplicaUpdateSelectionBudget(pcs, []pcsReplicaInfo{{index: 0}, {index: 1}}))
+	assert.Equal(t, 1, pcsReplicaUpdateSelectionBudget(pcs, 0))
+	assert.Equal(t, 0, pcsReplicaUpdateSelectionBudget(pcs, 1))
+	assert.Equal(t, 0, pcsReplicaUpdateSelectionBudget(pcs, 2))
 }
 
 func TestSelectReplicasToUpdate(t *testing.T) {

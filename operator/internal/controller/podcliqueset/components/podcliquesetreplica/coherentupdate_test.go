@@ -99,7 +99,7 @@ func TestPCSReplicaInfosExcludingTerminationIndices(t *testing.T) {
 		2: {index: 2},
 	}
 
-	got := pcsReplicaInfosExcludingTerminationIndices(
+	got := pcsReplicaInfosForUpdate(
 		pcsReplicaInfosByIndex,
 		expectedPCSReplicaIndices,
 		pcsReplicaIndicesToTerminate)
