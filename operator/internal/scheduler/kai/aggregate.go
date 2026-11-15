@@ -158,7 +158,7 @@ func newAggregatePodGroup(pcs *grovecorev1beta1.PodCliqueSet, replica int, spec 
 		labels = make(map[string]string)
 	}
 	maps.Copy(labels, apicommon.GetDefaultLabelsForPodCliqueSetManagedResources(pcs.Name))
-	labels[apicommon.LabelComponentKey] = apicommon.LabelComponentNameAggregatePodGroup
+	labels[apicommon.LabelComponentKey] = apicommon.LabelComponentNamePodCliqueSetReplicaPodGroup
 	labels[apicommon.LabelPodCliqueSetReplicaIndex] = strconv.Itoa(replica)
 
 	return &kaischedulingv2alpha2.PodGroup{
