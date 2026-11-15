@@ -88,6 +88,31 @@ func TestResourceNamingValidation(t *testing.T) {
 			},
 		},
 		{
+			description: "PodCliqueSet name with a dot",
+			pcsName:     "llama-3.1-8b",
+			cliqueNames: []string{"worker"},
+			errorMatchers: []testutils.ErrorMatcher{
+				{ErrorType: field.ErrorTypeInvalid, Field: "metadata.name"},
+			},
+		},
+		{
+			description: "PodClique template name with a dot",
+			pcsName:     "inference",
+			cliqueNames: []string{"worker.v2"},
+			errorMatchers: []testutils.ErrorMatcher{
+				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.cliques[0].name"},
+			},
+		},
+		{
+			description:   "Scaling group name with a dot",
+			pcsName:       "inference",
+			cliqueNames:   []string{"prefill"},
+			scalingGroups: []grovecorev1beta1.PodCliqueScalingGroupConfig{createScalingGroupConfig("workers.v2", []string{"prefill"})},
+			errorMatchers: []testutils.ErrorMatcher{
+				{ErrorType: field.ErrorTypeInvalid, Field: "spec.template.podCliqueScalingGroups[0].name"},
+			},
+		},
+		{
 			description:   "Scaling group with long names",
 			pcsName:       "verylongpodcliquesetname",
 			cliqueNames:   []string{"verylongpodcliquename"},
@@ -156,6 +181,31 @@ func TestResourceNamingValidation(t *testing.T) {
 			assert.Empty(t, warnings, "No warnings expected for these test cases")
 		})
 	}
+}
+
+// TestResourceNamingValidationOnUpdate verifies that names with dots, which are rejected on create, do not
+// block an update of an existing PodCliqueSet since these names are immutable.
+func TestResourceNamingValidationOnUpdate(t *testing.T) {
+	pcs := testutils.NewPodCliqueSetBuilder("llama-3.1-8b", "default", uuid.NewUUID()).
+		WithReplicas(1).
+		WithTerminationDelay(4 * time.Hour).
+		WithCliqueStartupType(ptr.To(grovecorev1beta1.CliqueStartupTypeAnyOrder)).
+		WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("worker.v2").
+			WithReplicas(1).
+			WithRoleName("dummy-worker-role").
+			WithMinAvailable(1).
+			Build()).
+		WithPodCliqueScalingGroupConfig(createScalingGroupConfig("workers.v2", []string{"worker.v2"})).
+		Build()
+
+	validator := newPCSValidator(pcs, admissionv1.Update, defaultTASConfig(), groveconfigv1beta1.SchedulerConfiguration{
+		Profiles: []groveconfigv1beta1.SchedulerProfile{
+			{Name: groveconfigv1beta1.SchedulerNameKube},
+		},
+		DefaultProfileName: string(groveconfigv1beta1.SchedulerNameKube),
+	}, nil, testutils.NewDefaultFakeRegistry())
+	_, errs := validator.validate()
+	assert.NoError(t, errs.ToAggregate())
 }
 
 func TestValidateSchedulerNames(t *testing.T) {
