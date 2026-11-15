@@ -24,6 +24,47 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 )
 
+var _ updateStrategyHooks = (*pcsReplicaRecreationStrategyHooks)(nil)
+
+type pcsReplicaRecreationStrategyHooks struct {
+	pcs                 *grovecorev1beta1.PodCliqueSet
+	replicaInfosByIndex pcsReplicaInfoByIndex
+	scalingIndices      pcsReplicaScalingIndices
+}
+
+func newPCSReplicaRecreationStrategyHooks(
+	pcs *grovecorev1beta1.PodCliqueSet,
+	replicaInfosByIndex pcsReplicaInfoByIndex,
+	scalingIndices pcsReplicaScalingIndices) *pcsReplicaRecreationStrategyHooks {
+	return &pcsReplicaRecreationStrategyHooks{
+		pcs:                 pcs,
+		replicaInfosByIndex: replicaInfosByIndex,
+		scalingIndices:      scalingIndices,
+	}
+}
+
+// reconcileCurrentlyUpdatingReplicas leaves replacement progress unchanged until execution and completion are implemented.
+func (h *pcsReplicaRecreationStrategyHooks) reconcileCurrentlyUpdatingReplicas(_ []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress) (reconcileCurrentlyUpdatingResult, error) {
+	return reconcileCurrentlyUpdatingResult{}, nil
+}
+
+// selectReplicasToUpdate selects the next source-to-target PCS replica replacement.
+func (h *pcsReplicaRecreationStrategyHooks) selectReplicasToUpdate() []pcsReplicaUpdateSelection {
+	replacement := newPCSReplicaRecreationPlanner(h.pcs, h.replicaInfosByIndex, h.scalingIndices).next()
+	if replacement == nil {
+		return nil
+	}
+	return []pcsReplicaUpdateSelection{{
+		replicaIndex:       replacement.sourcePCSReplicaIndex,
+		targetReplicaIndex: &replacement.targetPCSReplicaIndex,
+	}}
+}
+
+// isUpdateComplete returns false until PCS replica recreation completion is implemented.
+func (h *pcsReplicaRecreationStrategyHooks) isUpdateComplete() bool {
+	return false
+}
+
 // pcsReplicaRecreationPlanner selects new replacement mappings from the current resource snapshot and persisted
 // commitments.
 type pcsReplicaRecreationPlanner struct {

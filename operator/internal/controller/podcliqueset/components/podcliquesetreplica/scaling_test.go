@@ -59,17 +59,17 @@ func TestReplicaScalingIndicesFromProgress(t *testing.T) {
 	assert.Equal(t, pcsReplicaScalingIndices{}, replicaScalingIndicesFromProgress(nil))
 }
 
-func TestScalingProgressFromState(t *testing.T) {
-	state := pcssync.State{
-		ScaleOutReplicaIndices: []int{1, 3},
-		ScaleInReplicaIndices:  []int{2, 4},
+func TestScalingProgressFromScalingIndices(t *testing.T) {
+	scalingIndices := pcsReplicaScalingIndices{
+		scaleOut: []int{1, 3},
+		scaleIn:  []int{2, 4},
 	}
 
 	assert.Equal(t, &grovecorev1beta1.PodCliqueSetScalingProgress{
 		ScaleOutReplicaIndices: []int32{1, 3},
 		ScaleInReplicaIndices:  []int32{2, 4},
-	}, scalingProgressFromState(state))
-	assert.Nil(t, scalingProgressFromState(pcssync.State{}))
+	}, scalingProgressFromScalingIndices(scalingIndices))
+	assert.Nil(t, scalingProgressFromScalingIndices(pcsReplicaScalingIndices{}))
 }
 
 func TestPatchScalingProgress(t *testing.T) {
@@ -141,11 +141,10 @@ func TestRecordScalingSelectionEvents(t *testing.T) {
 	r.recordNewScalingSelectionEvents(
 		logr.Discard(),
 		pcs,
-		[]int{0},
-		[]int{5},
-		pcssync.State{
-			ScaleOutReplicaIndices: []int{0, 2, 4},
-			ScaleInReplicaIndices:  []int{1, 3, 5},
+		pcsReplicaScalingIndices{scaleOut: []int{0}, scaleIn: []int{5}},
+		pcsReplicaScalingIndices{
+			scaleOut: []int{0, 2, 4},
+			scaleIn:  []int{1, 3, 5},
 		},
 	)
 
@@ -238,7 +237,7 @@ func TestComputeClaimedReplicaIndices(t *testing.T) {
 	}
 }
 
-func TestComputeReplicaIndices(t *testing.T) {
+func TestComputePCSReplicaState(t *testing.T) {
 	newPCS := func(replicas int32) *grovecorev1beta1.PodCliqueSet {
 		pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "default", types.UID("test-pcs-uid")).
 			WithReplicas(replicas).
@@ -370,11 +369,15 @@ func TestComputeReplicaIndices(t *testing.T) {
 			scaleOutBefore := slices.Clone(test.scaleOutReplicaIndices)
 			scaleInBefore := slices.Clone(test.scaleInReplicaIndices)
 
-			got := computeReplicaIndices(
-				test.pcs,
-				test.replicaInfos,
-				pcsReplicaScalingIndices{scaleOut: test.scaleOutReplicaIndices, scaleIn: test.scaleInReplicaIndices},
-			)
+			got := func() pcssync.State {
+				scalingIndices := computePCSReplicaScalingIndices(
+					test.pcs,
+					test.replicaInfos,
+					pcsReplicaScalingIndices{scaleOut: test.scaleOutReplicaIndices, scaleIn: test.scaleInReplicaIndices},
+				)
+				expectedReplicaIndices := expectedReplicaIndicesFromScaling(test.replicaInfos.existingReplicaIndices(), scalingIndices)
+				return computePCSReplicaState(test.pcs, test.replicaInfos, scalingIndices, expectedReplicaIndices, pcsReplicaReplacementGroups{})
+			}()
 
 			assert.Equal(t, test.want, got)
 			assert.Equal(t, scaleOutBefore, test.scaleOutReplicaIndices)

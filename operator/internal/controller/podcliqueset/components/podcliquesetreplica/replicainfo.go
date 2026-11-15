@@ -15,26 +15,18 @@
 package podcliquesetreplica
 
 import (
+	"context"
+	"fmt"
+
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
+	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
+	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
-
-// pcsReplicaScalingIndices contains sorted, unique replica indices committed to scale-out and scale-in.
-// The scale-out and scale-in slices must remain disjoint.
-type pcsReplicaScalingIndices struct {
-	scaleOut []int
-	scaleIn  []int
-}
-
-// activeScalingIndices returns a combined slice of unique scale-in and scale-out indices that are currently active.
-func (si pcsReplicaScalingIndices) activeScalingIndices() []int {
-	indices := sets.New[int](si.scaleIn...)
-	indices.Insert(si.scaleOut...)
-	return indices.UnsortedList()
-}
 
 // pcsReplicaInfoByIndex contains PCS replica information keyed by replica index.
 type pcsReplicaInfoByIndex map[int]pcsReplicaInfo
@@ -65,7 +57,6 @@ func (infos pcsReplicaInfoByIndex) computeClaimedReplicaIndices(scalingIndices p
 }
 
 // pcsReplicaInfo contains the replica-scoped resources observed for one PCS replica index.
-
 type pcsReplicaInfo struct {
 	index           int
 	standalonePCLQs []grovecorev1beta1.PodClique
@@ -174,4 +165,86 @@ func (pri *pcsReplicaInfo) getNumScheduledPods(pcs *grovecorev1beta1.PodCliqueSe
 		}
 	}
 	return noScheduled
+}
+
+// gatherPCSReplicaInfosByIndex gathers observed replica-scoped resources and groups their information by PCS replica index.
+// PodGangMaps are gathered only during a Coherent update.
+func (r *_resource) gatherPCSReplicaInfosByIndex(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet) (pcsReplicaInfoByIndex, error) {
+	standalonePCLQsByPCSReplicaIndex, err := componentutils.GetStandalonePCLQsByPCSReplicaIndex(ctx, r.client, pcs.ObjectMeta)
+	if err != nil {
+		return nil, groveerr.WrapError(err,
+			errCodeListPCLQs,
+			component.OperationSync,
+			fmt.Sprintf("failed to list standalone PodCliques by replica for PodCliqueSet: %v", client.ObjectKeyFromObject(pcs)),
+		)
+	}
+	pcsgsByPCSReplicaIndex, err := componentutils.GetPCSGsByPCSReplicaIndex(ctx, r.client, pcs.ObjectMeta)
+	if err != nil {
+		return nil, groveerr.WrapError(err,
+			errCodeListPCSGs,
+			component.OperationSync,
+			fmt.Sprintf("failed to list PodCliqueScalingGroups by replica for PodCliqueSet: %v", client.ObjectKeyFromObject(pcs)),
+		)
+	}
+	// Gang termination deletes every PodClique for a PCS replica but keeps its headless Service. Include
+	// the Service so a standalone-only replica keeps the same index while its PodCliques are recreated.
+	// If gang termination later deletes every resource for the replica, this lookup can be removed and
+	// reconciliation can allocate the lowest available index instead.
+	headlessServicesByPCSReplicaIndex, err := componentutils.GetHeadlessServicesByPCSReplicaIndex(ctx, r.client, pcs.ObjectMeta)
+	if err != nil {
+		return nil, groveerr.WrapError(err,
+			errCodeListServices,
+			component.OperationSync,
+			fmt.Sprintf("failed to list headless Services by replica for PodCliqueSet: %v", client.ObjectKeyFromObject(pcs)),
+		)
+	}
+	var podGangMapsByPCSReplicaIndex map[int]*grovecorev1beta1.PodGangMap
+	if componentutils.IsCoherentUpdateInProgress(pcs) {
+		podGangMaps, listErr := componentutils.ListPodGangMapsForPCS(ctx, r.client, pcs.ObjectMeta)
+		if listErr != nil {
+			return nil, groveerr.WrapError(listErr,
+				errCodeGetPodGangMap,
+				component.OperationSync,
+				fmt.Sprintf("could not list PodGangMaps for PCS: %v", client.ObjectKeyFromObject(pcs)),
+			)
+		}
+		podGangMapsByPCSReplicaIndex, err = componentutils.PodGangMapByPCSReplicaIndex(podGangMaps)
+		if err != nil {
+			return nil, groveerr.WrapError(err,
+				errCodeGetPodGangMap,
+				component.OperationSync,
+				fmt.Sprintf("could not index PodGangMaps by PCS replica for PCS: %v", client.ObjectKeyFromObject(pcs)),
+			)
+		}
+	}
+
+	existingPCSReplicaIndices := sets.New[int]()
+	for pcsReplicaIndex := range standalonePCLQsByPCSReplicaIndex {
+		existingPCSReplicaIndices.Insert(pcsReplicaIndex)
+	}
+	for pcsReplicaIndex := range pcsgsByPCSReplicaIndex {
+		existingPCSReplicaIndices.Insert(pcsReplicaIndex)
+	}
+	for pcsReplicaIndex := range headlessServicesByPCSReplicaIndex {
+		existingPCSReplicaIndices.Insert(pcsReplicaIndex)
+	}
+	for pcsReplicaIndex := range podGangMapsByPCSReplicaIndex {
+		existingPCSReplicaIndices.Insert(pcsReplicaIndex)
+	}
+
+	pcsReplicaInfosByIndex := make(pcsReplicaInfoByIndex, existingPCSReplicaIndices.Len())
+	for pcsReplicaIndex := range existingPCSReplicaIndices {
+		var podGangMapEntries []grovecorev1beta1.PodGangEntry
+		if podGangMap := podGangMapsByPCSReplicaIndex[pcsReplicaIndex]; podGangMap != nil {
+			podGangMapEntries = podGangMap.Spec.Entries
+		}
+		pcsReplicaInfosByIndex[pcsReplicaIndex] = pcsReplicaInfo{
+			index:           pcsReplicaIndex,
+			standalonePCLQs: standalonePCLQsByPCSReplicaIndex[pcsReplicaIndex],
+			pcsgs:           pcsgsByPCSReplicaIndex[pcsReplicaIndex],
+			headlessSvcs:    headlessServicesByPCSReplicaIndex[pcsReplicaIndex],
+			pgmEntries:      podGangMapEntries,
+		}
+	}
+	return pcsReplicaInfosByIndex, nil
 }

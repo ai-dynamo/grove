@@ -17,6 +17,7 @@ package podcliquesetreplica
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
@@ -30,6 +31,91 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
+
+var _ updateStrategyHooks = (*coherentStrategyHooks)(nil)
+
+// coherentStrategyHooks supplies Coherent behavior to the rolling-update orchestrator.
+type coherentStrategyHooks struct {
+	pcs                                   *grovecorev1beta1.PodCliqueSet
+	replicaInfos                          []pcsReplicaInfo
+	minAvailableBreachedPCSReplicaIndices []int
+	selectedPCSReplicaIndices             sets.Set[int]
+}
+
+// newCoherentStrategyHooks creates hooks for a Coherent update.
+func newCoherentStrategyHooks(
+	pcs *grovecorev1beta1.PodCliqueSet,
+	replicaInfos []pcsReplicaInfo,
+	minAvailableBreachedPCSReplicaIndices []int,
+) *coherentStrategyHooks {
+	return &coherentStrategyHooks{
+		pcs:                                   pcs,
+		replicaInfos:                          replicaInfos,
+		minAvailableBreachedPCSReplicaIndices: minAvailableBreachedPCSReplicaIndices,
+		selectedPCSReplicaIndices:             sets.New[int](),
+	}
+}
+
+// reconcileCurrentlyUpdatingReplicas refreshes Coherent progress and returns completed PCS replica indices.
+func (h *coherentStrategyHooks) reconcileCurrentlyUpdatingReplicas(currentlyUpdating []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress) (reconcileCurrentlyUpdatingResult, error) {
+	result, selectedPCSReplicaIndices := reconcileCurrentlyUpdatingPCSReplicasForConfiguredStrategy(
+		h.pcs,
+		h.replicaInfos,
+		currentlyUpdating,
+	)
+	h.selectedPCSReplicaIndices = selectedPCSReplicaIndices
+
+	for _, replicaInfo := range h.replicaInfos {
+		if !selectedPCSReplicaIndices.Has(replicaInfo.index) {
+			continue
+		}
+		position := slices.IndexFunc(currentlyUpdating, func(progress grovecorev1beta1.PodCliqueSetReplicaUpdateProgress) bool {
+			return progress.ReplicaIndex == int32(replicaInfo.index)
+		})
+		if err := refreshCoherentReplicaProgress(h.pcs, &currentlyUpdating[position], replicaInfo); err != nil {
+			return reconcileCurrentlyUpdatingResult{}, err
+		}
+	}
+	return result, nil
+}
+
+// selectReplicasToUpdate selects pending PCS replicas for the available update slots.
+func (h *coherentStrategyHooks) selectReplicasToUpdate() []pcsReplicaUpdateSelection {
+	return selectPCSReplicasForConfiguredStrategy(
+		h.pcs,
+		h.replicaInfos,
+		h.selectedPCSReplicaIndices,
+		h.minAvailableBreachedPCSReplicaIndices,
+	)
+}
+
+// isUpdateComplete reports whether every relevant PCS replica completed its update.
+func (h *coherentStrategyHooks) isUpdateComplete() bool {
+	return isConfiguredStrategyUpdateComplete(h.pcs, h.replicaInfos)
+}
+
+// refreshCoherentReplicaProgress refreshes observability fields from the gathered replica snapshot.
+func refreshCoherentReplicaProgress(
+	pcs *grovecorev1beta1.PodCliqueSet,
+	progress *grovecorev1beta1.PodCliqueSetReplicaUpdateProgress,
+	replicaInfo pcsReplicaInfo) error {
+	latestEpoch, err := componentutils.LatestEpochForGenerationHash(replicaInfo.pgmEntries, *pcs.Status.CurrentGenerationHash)
+	if err != nil {
+		return groveerr.WrapError(
+			err,
+			errCodeInvalidEpoch,
+			component.OperationSync,
+			fmt.Sprintf("could not determine the latest current-hash epoch for PodCliqueSet %v replica %d", client.ObjectKeyFromObject(pcs), replicaInfo.index),
+		)
+	}
+	if latestEpoch == nil {
+		progress.InFlightEpochs = nil
+	} else {
+		progress.InFlightEpochs = []string{*latestEpoch}
+	}
+	progress.Message = coherentProgressMessage(pcs, replicaInfo)
+	return nil
+}
 
 // updateCoherentReplicaProgress records the observability fields for the replica currently under a
 // coherent update. InFlightEpochs mirrors the latest current-hash epoch on the replica's PodGangMap, and

@@ -71,14 +71,18 @@ func (r *_resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecore
 	if err != nil {
 		return pcssync.Result{}, err
 	}
-	scalingProgressChanged, err := r.syncScalingProgress(ctx, logger, pcs, pcsReplicaInfosByIndex, state)
+	scalingIndices, scalingProgressChanged, err := r.syncScalingProgress(ctx, logger, pcs, pcsReplicaInfosByIndex)
 	if err != nil {
 		return pcssync.Result{}, err
 	}
 
-	pcsObjectKey := client.ObjectKeyFromObject(pcs)
+	// Expected replica indices implied by the scaling decision alone. Gang termination and update
+	// eligibility use these before any replacement overlay is applied.
+	expectedReplicaIndices := expectedReplicaIndicesFromScaling(pcsReplicaInfosByIndex.existingReplicaIndices(), scalingIndices)
+	sortedExpectedPCSReplicaIndices := sortedReplicaIndices(expectedReplicaIndices)
 
-	delWork, err := r.getPCSReplicaDeletionWork(ctx, logger, pcs, state.ExpectedReplicaIndices)
+	pcsObjectKey := client.ObjectKeyFromObject(pcs)
+	delWork, err := r.getPCSReplicaDeletionWork(ctx, logger, pcs, sortedExpectedPCSReplicaIndices)
 	if err != nil {
 		return pcssync.Result{}, groveerr.WrapError(err,
 			errCodeComputingPCSReplicaDeletionWork,
@@ -96,14 +100,27 @@ func (r *_resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecore
 		}
 	}
 
-	// Orchestrate the rolling update (RollingRecreate or Coherent) while one is in progress.
+	// Orchestrate the active rolling update.
 	if componentutils.IsRollingUpdateInProgress(pcs) || componentutils.IsPCSReplicaRecreationInProgress(pcs) {
-		pcsReplicaInfos := pcsReplicaInfosExcludingTerminationIndices(pcsReplicaInfosByIndex, state.ExpectedReplicaIndices, delWork.pcsIndicesToTerminate)
+		pcsReplicaInfos := pcsReplicaInfosForUpdate(pcsReplicaInfosByIndex, sortedExpectedPCSReplicaIndices, delWork.pcsIndicesToTerminate)
 		minAvailableBreachedPCSReplicaIndices := slices.Collect(maps.Keys(delWork.minAvailableBreachedConstituents))
-		if err := r.orchestrateRollingUpdate(ctx, logger, pcs, pcsReplicaInfos, minAvailableBreachedPCSReplicaIndices); err != nil {
+		workingPCS := pcs.DeepCopy()
+		updateHooks := newUpdateStrategyHooks(
+			workingPCS,
+			pcsReplicaInfosByIndex,
+			pcsReplicaInfos,
+			minAvailableBreachedPCSReplicaIndices,
+		)
+		orchestrator := newRollingUpdateOrchestrator(r.client.Status(), workingPCS, updateHooks)
+		orchestrationCtx := logr.NewContext(ctx, logger)
+		if err := orchestrator.orchestrate(orchestrationCtx, pcs); err != nil {
 			return pcssync.Result{}, err
 		}
 	}
+
+	// Build the component-facing state once, after scaling and any replacement mapping have been persisted
+	// back into the reconcile-local pcs. It overlays persisted replacement progress onto the scaling indices.
+	*state = computePCSReplicaState(pcs, pcsReplicaInfosByIndex, scalingIndices, expectedReplicaIndices, groupPCSReplicaReplacements(pcs.Status.UpdateProgress))
 
 	if delWork.shouldRequeue() {
 		return pcssync.Result{}, groveerr.NewContinueReconcileAndRequeue(
@@ -125,9 +142,10 @@ func (r *_resource) Delete(_ context.Context, _ logr.Logger, _ metav1.ObjectMeta
 	return nil
 }
 
-// pcsReplicaInfosExcludingTerminationIndices returns information for expected PCS replicas that are not selected
-// for termination. The result retains the order of expectedPCSReplicaIndices.
-func pcsReplicaInfosExcludingTerminationIndices(
+// pcsReplicaInfosForUpdate returns information for PCS replicas eligible to participate in update orchestration.
+// It follows expectedPCSReplicaIndices, so replicas selected for scale-in are excluded, and also excludes replicas
+// selected for gang termination. The result preserves the order of expectedPCSReplicaIndices.
+func pcsReplicaInfosForUpdate(
 	pcsReplicaInfosByIndex pcsReplicaInfoByIndex,
 	expectedPCSReplicaIndices []int,
 	pcsReplicaIndicesToTerminate []int) []pcsReplicaInfo {
