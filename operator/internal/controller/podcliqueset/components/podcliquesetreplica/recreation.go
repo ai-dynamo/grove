@@ -104,9 +104,29 @@ func (h *pcsReplicaRecreationStrategyHooks) selectReplicasToUpdate() []pcsReplic
 	}}
 }
 
-// isUpdateComplete returns false until PCS replica recreation completion is implemented.
+// isUpdateComplete reports whether the whole PCS replica recreation has finished. It is complete when no active
+// or canceled replacement remains and every expected replica has converged to the current generation and is
+// available. By the time this runs in the shared orchestration flow, reconcileCurrentlyUpdatingReplicas has
+// already stamped UpdateEndedAt on replacements that converged this reconcile, so groupPCSReplicaReplacements
+// reflects those completions.
 func (h *pcsReplicaRecreationStrategyHooks) isUpdateComplete() bool {
-	return false
+	groups := groupPCSReplicaReplacements(h.pcs.Status.UpdateProgress)
+	if len(groups.active) > 0 || len(groups.canceled) > 0 {
+		return false
+	}
+
+	expectedReplicaIndices := expectedReplicaIndicesFromScaling(h.replicaInfosByIndex.existingReplicaIndices(), h.scalingIndices)
+	for expectedReplicaIndex := range expectedReplicaIndices {
+		replicaInfo, exists := h.replicaInfosByIndex[expectedReplicaIndex]
+		if !exists {
+			return false
+		}
+		replicaInfo.index = expectedReplicaIndex
+		if !replicaInfo.isUpdateComplete(h.pcs) || !replicaInfo.isAvailable(h.pcs) {
+			return false
+		}
+	}
+	return true
 }
 
 // pcsReplicaRecreationPlanner selects new replacement mappings from the current resource snapshot and persisted

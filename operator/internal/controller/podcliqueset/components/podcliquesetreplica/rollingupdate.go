@@ -132,6 +132,10 @@ func (o *rollingUpdateOrchestrator) orchestrate(ctx context.Context, originalPCS
 		logger.Info("Rolling update has completed")
 		o.pcs.Status.UpdateProgress.UpdateEndedAt = new(metav1.Now())
 		o.pcs.Status.UpdateProgress.CurrentlyUpdating = nil
+		// Advance the applied scheduling configuration hash to the persisted target. For a configured-strategy
+		// update the target equals the applied hash, so this is a no-op; for a replica recreation it records the
+		// scheduling configuration the completed replicas now realize.
+		o.pcs.Status.AppliedSchedulingConfigurationHash = new(o.pcs.Status.UpdateProgress.TargetSchedulingConfigurationHash)
 	} else {
 		selectedPCSReplicas = o.updateHooks.selectReplicasToUpdate()
 		currentlyUpdating = mergeReplicaUpdateSelections(currentlyUpdating, selectedPCSReplicas)
