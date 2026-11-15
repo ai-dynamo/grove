@@ -50,6 +50,27 @@ func TestStableKAINamesAreValidAndCollisionResistant(t *testing.T) {
 	assert.NotEqual(t, structuralKAIName("a/b", "c"), structuralKAIName("a", "b/c"))
 }
 
+func TestStableKAINamesDoNotChange(t *testing.T) {
+	tests := []struct {
+		name     string
+		actual   string
+		expected string
+	}{
+		{name: "aggregate PodGroup", actual: aggregatePodGroupName("job", 0), expected: "grove-job-0"},
+		{name: "sanitized aggregate PodGroup", actual: aggregatePodGroupName("My_Job.v2", 3), expected: "grove-my-job-v2-3-0a5efdb4c1"},
+		{name: "over-length aggregate PodGroup", actual: aggregatePodGroupName(strings.Repeat("a", 70), 1), expected: "grove-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-157ee39d2e"},
+		{name: "anchor branch", actual: anchorBranchName("job-0-1000"), expected: "1-job-0-1000"},
+		{name: "non-anchor branch", actual: podGangBranchName("job-0-workers-1-2000"), expected: "job-0-workers-1-2000"},
+		{name: "topology group", actual: topologyGroupName("job-0-1000", "rack"), expected: "job-0-1000-group-rack-518cd639d2"},
+		{name: "PodGroup leaf", actual: podGroupLeafName("job-0-1000", "job-0-worker"), expected: "job-0-1000-leaf-job-0-worker-31d6df63d5"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, tt.actual)
+		})
+	}
+}
+
 func TestBuildAggregatePlanRoleAwareHierarchy(t *testing.T) {
 	pcs := newPodCliqueSet("job", "team-a")
 	anchorA := aggregateTestPodGang(pcs, "job-0-1000", grovecorev1beta1.PodGangEntryRoleAnchor,
@@ -169,6 +190,44 @@ func TestBuildAggregatePlanAppliesReplicaAndTopology(t *testing.T) {
 	assert.Equal(t, "1", plan.podGroup.Labels[apicommon.LabelPodCliqueSetReplicaIndex])
 	assert.Equal(t, "kai-topology", plan.podGroup.Spec.TopologyConstraint.Topology)
 	assert.Equal(t, rack, plan.podGroup.Spec.TopologyConstraint.RequiredTopologyLevel)
+}
+
+func TestBuildAggregatePlanTreatsEmptyRootTopologyConstraintAsUnset(t *testing.T) {
+	pcs := newPodCliqueSet("job", "team-a")
+	anchor := aggregateTestPodGang(pcs, "job-0-1000", grovecorev1beta1.PodGangEntryRoleAnchor,
+		groveschedulerv1alpha1.PodGroup{Name: "worker", MinReplicas: 1},
+	)
+	empty := aggregateTestPodGang(pcs, "job-0-2000", grovecorev1beta1.PodGangEntryRoleAnchor,
+		groveschedulerv1alpha1.PodGroup{Name: "worker", MinReplicas: 1},
+	)
+	empty.PodGang.Spec.TopologyConstraint = &groveschedulerv1alpha1.TopologyConstraint{}
+	emptyPack := aggregateTestPodGang(pcs, "job-0-3000", grovecorev1beta1.PodGangEntryRoleAnchor,
+		groveschedulerv1alpha1.PodGroup{Name: "worker", MinReplicas: 1},
+	)
+	emptyPack.PodGang.Spec.TopologyConstraint = &groveschedulerv1alpha1.TopologyConstraint{
+		PackConstraint: &groveschedulerv1alpha1.TopologyPackConstraint{},
+	}
+
+	plan, err := testAggregateBackend(t).buildAggregatePlan(pcs, 0, []componentutils.MaterializedPodGang{anchor, empty, emptyPack}, "")
+	require.NoError(t, err)
+	assert.Empty(t, plan.podGroup.Spec.TopologyConstraint.Topology)
+}
+
+func TestBuildAggregatePlanSkipsGroveMetadataFromPodCliqueSet(t *testing.T) {
+	pcs := newPodCliqueSet("job", "team-a")
+	pcs.Labels["team"] = "a"
+	pcs.Labels["grove.io/internal"] = "label"
+	pcs.Annotations = map[string]string{"owner": "a", "grove.io/internal": "annotation"}
+	anchor := aggregateTestPodGang(pcs, "job-0-1000", grovecorev1beta1.PodGangEntryRoleAnchor,
+		groveschedulerv1alpha1.PodGroup{Name: "worker", MinReplicas: 1},
+	)
+
+	plan, err := testAggregateBackend(t).buildAggregatePlan(pcs, 0, []componentutils.MaterializedPodGang{anchor}, "")
+	require.NoError(t, err)
+	assert.Equal(t, "a", plan.podGroup.Labels["team"])
+	assert.NotContains(t, plan.podGroup.Labels, "grove.io/internal")
+	assert.Equal(t, "0", plan.podGroup.Labels[apicommon.LabelPodCliqueSetReplicaIndex])
+	assert.Equal(t, map[string]string{"owner": "a"}, plan.podGroup.Annotations)
 }
 
 func TestBuildAggregatePlanRejectsInconsistentInputs(t *testing.T) {

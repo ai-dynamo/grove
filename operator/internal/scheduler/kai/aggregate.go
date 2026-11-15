@@ -19,12 +19,12 @@ import (
 	"encoding/hex"
 	"fmt"
 	"maps"
-	"reflect"
 	"sort"
 	"strconv"
 	"strings"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
+	apicommonconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
@@ -67,24 +67,21 @@ func prepareAggregateInputs(
 		if item.PodGang == nil || item.Entry == nil {
 			return nil, fmt.Errorf("materialized PodGang must include PodGang and PodGangMap entry")
 		}
-		if len(item.PodGang.Spec.PodGroups) == 0 {
-			return nil, fmt.Errorf("PodGang %s/%s has no PodGroups", item.PodGang.Namespace, item.PodGang.Name)
-		}
 	}
 	podGangs := append([]componentutils.MaterializedPodGang(nil), materialized...)
 	sort.Slice(podGangs, func(i, j int) bool { return podGangs[i].PodGang.Name < podGangs[j].PodGang.Name })
 	reference := podGangs[0].PodGang
+	inputs := &aggregateInputs{reference: reference}
 	for _, item := range podGangs {
+		if len(item.PodGang.Spec.PodGroups) == 0 {
+			return nil, fmt.Errorf("PodGang %s/%s has no PodGroups", item.PodGang.Namespace, item.PodGang.Name)
+		}
 		if item.PodGang.Spec.PriorityClassName != reference.Spec.PriorityClassName {
 			return nil, fmt.Errorf("PodGangs %s and %s have conflicting priority classes", reference.Name, item.PodGang.Name)
 		}
-		if !reflect.DeepEqual(item.PodGang.Spec.TopologyConstraint, reference.Spec.TopologyConstraint) {
+		if packLevels(item.PodGang.Spec.TopologyConstraint) != packLevels(reference.Spec.TopologyConstraint) {
 			return nil, fmt.Errorf("PodGangs %s and %s have conflicting root topology constraints", reference.Name, item.PodGang.Name)
 		}
-	}
-
-	inputs := &aggregateInputs{reference: reference}
-	for _, item := range podGangs {
 		switch item.Entry.Role {
 		case grovecorev1beta1.PodGangEntryRoleAnchor:
 			inputs.anchors = append(inputs.anchors, item.PodGang)
@@ -94,10 +91,27 @@ func prepareAggregateInputs(
 			return nil, fmt.Errorf("PodGang %s/%s has unsupported role %q", item.PodGang.Namespace, item.PodGang.Name, item.Entry.Role)
 		}
 	}
+	// LPX-scheduled PodGroups are removed before KAI sees a PodGang, and a PodGang left with none is
+	// dropped, so the Anchor can be absent from the KAI aggregate of an LPX workload.
 	if len(inputs.anchors) == 0 && reference.Labels[apicommon.LabelSchedulerName] != string(configv1beta1.SchedulerNameLPX) {
 		return nil, fmt.Errorf("PodGangMap for PodCliqueSet %s/%s replica %d has no materialized Anchor PodGang", pcs.Namespace, pcs.Name, replica)
 	}
 	return inputs, nil
+}
+
+type packConstraintLevels struct {
+	required  string
+	preferred string
+}
+
+func packLevels(topologyConstraint *groveschedulerv1alpha1.TopologyConstraint) packConstraintLevels {
+	if topologyConstraint == nil || topologyConstraint.PackConstraint == nil {
+		return packConstraintLevels{}
+	}
+	return packConstraintLevels{
+		required:  ptr.Deref(topologyConstraint.PackConstraint.Required, ""),
+		preferred: ptr.Deref(topologyConstraint.PackConstraint.Preferred, ""),
+	}
 }
 
 func (b *schedulerBackend) buildAggregatePlan(
@@ -139,7 +153,7 @@ func (b *schedulerBackend) buildAggregatePlan(
 }
 
 func newAggregatePodGroup(pcs *grovecorev1beta1.PodCliqueSet, replica int, spec kaischedulingv2alpha2.PodGroupSpec) *kaischedulingv2alpha2.PodGroup {
-	labels := maps.Clone(pcs.Labels)
+	labels := withoutGroveKeys(pcs.Labels)
 	if labels == nil {
 		labels = make(map[string]string)
 	}
@@ -152,10 +166,24 @@ func newAggregatePodGroup(pcs *grovecorev1beta1.PodCliqueSet, replica int, spec 
 			Name:        aggregatePodGroupName(pcs.Name, replica),
 			Namespace:   pcs.Namespace,
 			Labels:      labels,
-			Annotations: maps.Clone(pcs.Annotations),
+			Annotations: withoutGroveKeys(pcs.Annotations),
 		},
 		Spec: spec,
 	}
+}
+
+func withoutGroveKeys(entries map[string]string) map[string]string {
+	var result map[string]string
+	for key, value := range entries {
+		if strings.HasPrefix(key, apicommonconstants.GroveDomainPrefix) {
+			continue
+		}
+		if result == nil {
+			result = make(map[string]string, len(entries))
+		}
+		result[key] = value
+	}
+	return result
 }
 
 type subGroupBuilder struct {
@@ -192,6 +220,8 @@ func (b *subGroupBuilder) appendAggregateHierarchy(inputs *aggregateInputs) (int
 
 func (b *subGroupBuilder) appendNonAnchorBranches(podGangs []*groveschedulerv1alpha1.PodGang) error {
 	collection := nonAnchorPodGangsSubGroupName
+	// KAI requires no child for an explicit minSubGroup of 0 and every child for an unset one
+	// (SubGroupSet.GetMinMembersToSatisfy), which makes the non-Anchor PodGangs optional.
 	if err := b.add(kaischedulingv2alpha2.SubGroup{
 		Name:        collection,
 		MinSubGroup: ptr.To[int32](0),
