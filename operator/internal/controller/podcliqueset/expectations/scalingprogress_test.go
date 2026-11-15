@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package sync
+package expectations
 
 import (
 	"testing"
@@ -51,7 +51,7 @@ func TestScalingProgressExpectationsRecord(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			expectations := &ScalingProgressExpectations{}
+			expectations := &ScalingProgress{}
 
 			expectations.Record(objectMeta, test.progress)
 			if test.progress != nil {
@@ -104,7 +104,7 @@ func TestScalingProgressExpectationsClearIfSatisfied(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			expectations := &ScalingProgressExpectations{}
+			expectations := &ScalingProgress{}
 			if test.hasExpectation {
 				expectations.expectations.Store(scalingProgressExpectationKey(objectMeta), test.expectedProgress)
 			}
@@ -122,7 +122,7 @@ func TestScalingProgressExpectationsClearIfSatisfied(t *testing.T) {
 	}
 
 	t.Run("clears only the satisfied PodCliqueSet expectation", func(t *testing.T) {
-		expectations := &ScalingProgressExpectations{}
+		expectations := &ScalingProgress{}
 		otherObjectMeta := metav1.ObjectMeta{Namespace: "default", Name: "other-pcs", UID: types.UID("other-uid")}
 		expectedProgress := &grovev1beta1.PodCliqueSetScalingProgress{ScaleOutReplicaIndices: []int32{1}}
 		expectations.expectations.Store(scalingProgressExpectationKey(objectMeta), expectedProgress)
@@ -139,7 +139,7 @@ func TestScalingProgressExpectationsClearIfSatisfied(t *testing.T) {
 }
 
 func TestScalingProgressExpectationsForget(t *testing.T) {
-	expectations := &ScalingProgressExpectations{}
+	expectations := &ScalingProgress{}
 	objectMeta := metav1.ObjectMeta{Namespace: "default", Name: "pcs", UID: types.UID("uid")}
 	expectations.expectations.Store(
 		scalingProgressExpectationKey(objectMeta),

@@ -19,7 +19,7 @@ import (
 
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	ctrlcommon "github.com/ai-dynamo/grove/operator/internal/controller/common"
-	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/sync"
+	pcsexpectations "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/expectations"
 
 	"github.com/stretchr/testify/assert"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -29,7 +29,7 @@ import (
 func TestEnsureScalingProgressExpectationSatisfied(t *testing.T) {
 	objectMeta := metav1.ObjectMeta{Namespace: "default", Name: "pcs", UID: types.UID("uid")}
 	expectedProgress := &grovecorev1beta1.PodCliqueSetScalingProgress{ScaleOutReplicaIndices: []int32{1}}
-	expectations := &pcssync.ScalingProgressExpectations{}
+	expectations := &pcsexpectations.ScalingProgress{}
 	expectations.Record(objectMeta, expectedProgress)
 	reconciler := &Reconciler{scalingProgressExpectations: expectations}
 	pcs := &grovecorev1beta1.PodCliqueSet{ObjectMeta: objectMeta}

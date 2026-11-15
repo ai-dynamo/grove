@@ -27,7 +27,8 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/constants"
 	ctrlcommon "github.com/ai-dynamo/grove/operator/internal/controller/common"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
-	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/sync"
+	pcsexpectations "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/expectations"
+	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/sync"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
@@ -130,7 +131,7 @@ func TestRemoveCompletedScaleInPCSReplicaIndices(t *testing.T) {
 			reconciler := &Reconciler{
 				client:                      fakeClient,
 				eventRecorder:               record.NewFakeRecorder(10),
-				scalingProgressExpectations: &pcssync.ScalingProgressExpectations{},
+				scalingProgressExpectations: &pcsexpectations.ScalingProgress{},
 			}
 
 			changed, err := reconciler.removeCompletedScaleInPCSReplicaIndices(context.Background(), logr.Discard(), pcs, test.syncResults)
@@ -165,7 +166,7 @@ func TestRemoveCompletedScaleInPCSReplicaIndicesPatchFailure(t *testing.T) {
 	reconciler := &Reconciler{
 		client:                      fakeClient,
 		eventRecorder:               record.NewFakeRecorder(10),
-		scalingProgressExpectations: &pcssync.ScalingProgressExpectations{},
+		scalingProgressExpectations: &pcsexpectations.ScalingProgress{},
 	}
 
 	changed, err := reconciler.removeCompletedScaleInPCSReplicaIndices(context.Background(), logr.Discard(), pcs, nil)
@@ -993,7 +994,7 @@ func TestTriggerDeletionFlowClearsGenerationStatusExpectation(t *testing.T) {
 		operatorRegistry:                component.NewOperatorRegistry[grovecorev1beta1.PodCliqueSet, pcssync.State, pcssync.Result](),
 		reconcileStatusRecorder:         ctrlcommon.NewReconcileErrorRecorder(fakeClient),
 		pcsGenerationStatusExpectations: sync.Map{},
-		scalingProgressExpectations:     &pcssync.ScalingProgressExpectations{},
+		scalingProgressExpectations:     &pcsexpectations.ScalingProgress{},
 	}
 	key := pcsGenHashesExpKey(pcs)
 	r.pcsGenerationStatusExpectations.Store(key, generationHashesExpectation{currentGenerationHash: "some-hash"})

@@ -22,7 +22,7 @@ import (
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
-	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/sync"
+	pcsexpectations "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/expectations"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
@@ -46,7 +46,7 @@ func (r *_resource) syncScalingProgress(
 	scalingIndices := replicaScalingIndicesFromProgress(pcs.Status.ScalingProgress)
 	computedScalingIndices := computePCSReplicaScalingIndices(pcs, pcsReplicaInfosByIndex, scalingIndices)
 	computedProgress := scalingProgressFromScalingIndices(computedScalingIndices)
-	scalingProgressChanged := !pcssync.ScalingProgressEqual(pcs.Status.ScalingProgress, computedProgress)
+	scalingProgressChanged := !pcsexpectations.ScalingProgressEqual(pcs.Status.ScalingProgress, computedProgress)
 	if scalingProgressChanged {
 		if err := r.patchScalingProgress(ctx, pcs, computedProgress); err != nil {
 			return pcsReplicaScalingIndices{}, false, err

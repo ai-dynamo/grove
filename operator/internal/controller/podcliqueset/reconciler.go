@@ -26,7 +26,8 @@ import (
 	ctrlcommon "github.com/ai-dynamo/grove/operator/internal/controller/common"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	pcscomponent "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components"
-	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/sync"
+	pcsexpectations "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/expectations"
+	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/sync"
 	ctrlutils "github.com/ai-dynamo/grove/operator/internal/controller/utils"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 
@@ -47,14 +48,14 @@ type Reconciler struct {
 	reconcileStatusRecorder         ctrlcommon.ReconcileErrorRecorder
 	operatorRegistry                component.OperatorRegistry[grovecorev1beta1.PodCliqueSet, pcssync.State, pcssync.Result]
 	pcsGenerationStatusExpectations sync.Map
-	scalingProgressExpectations     *pcssync.ScalingProgressExpectations
+	scalingProgressExpectations     *pcsexpectations.ScalingProgress
 }
 
 // NewReconciler creates a new reconciler for PodCliqueSet.
 func NewReconciler(mgr ctrl.Manager, controllerCfg configv1beta1.PodCliqueSetControllerConfiguration, topologyAwareSchedulingConfig configv1beta1.TopologyAwareSchedulingConfiguration, networkConfig configv1beta1.NetworkAcceleration, schedRegistry scheduler.Registry) *Reconciler {
 	eventRecorder := mgr.GetEventRecorderFor(controllerName)
 	client := mgr.GetClient()
-	scalingProgressExpectations := &pcssync.ScalingProgressExpectations{}
+	scalingProgressExpectations := &pcsexpectations.ScalingProgress{}
 	return &Reconciler{
 		config:                          controllerCfg,
 		tasConfig:                       topologyAwareSchedulingConfig,

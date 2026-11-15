@@ -32,7 +32,8 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/satokensecret"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/service"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/serviceaccount"
-	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/sync"
+	pcsexpectations "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/expectations"
+	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/sync"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 
 	"k8s.io/client-go/tools/record"
@@ -47,7 +48,7 @@ func CreateOperatorRegistry(mgr manager.Manager,
 	topologyAwareSchedulingConfig configv1beta1.TopologyAwareSchedulingConfiguration,
 	networkConfig configv1beta1.NetworkAcceleration,
 	schedRegistry scheduler.Registry,
-	scalingProgressExpectations *pcssync.ScalingProgressExpectations) component.OperatorRegistry[v1beta1.PodCliqueSet, pcssync.State, pcssync.Result] {
+	scalingProgressExpectations *pcsexpectations.ScalingProgress) component.OperatorRegistry[v1beta1.PodCliqueSet, pcssync.State, pcssync.Result] {
 	cl := mgr.GetClient()
 	reg := component.NewOperatorRegistry[v1beta1.PodCliqueSet, pcssync.State, pcssync.Result]()
 	reg.Register(component.KindPodClique, podclique.New(cl, mgr.GetScheme(), eventRecorder))

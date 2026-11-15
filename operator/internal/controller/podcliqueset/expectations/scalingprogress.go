@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package sync
+package expectations
 
 import (
 	"fmt"
@@ -24,15 +24,15 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 )
 
-// ScalingProgressExpectations tracks scaling progress that must appear in the informer cache
+// ScalingProgress tracks scaling progress that must appear in the informer cache
 // before the next PodCliqueSet reconciliation proceeds.
-type ScalingProgressExpectations struct {
+type ScalingProgress struct {
 	expectations sync.Map
 }
 
 // Record stores the scaling progress that must be observed through the informer cache.
 // Nil progress records the expectation that the status field is cleared.
-func (e *ScalingProgressExpectations) Record(pcsObjectMeta metav1.ObjectMeta, progress *grovev1beta1.PodCliqueSetScalingProgress) {
+func (e *ScalingProgress) Record(pcsObjectMeta metav1.ObjectMeta, progress *grovev1beta1.PodCliqueSetScalingProgress) {
 	expectationKey := scalingProgressExpectationKey(pcsObjectMeta)
 	expectedProgress := &grovev1beta1.PodCliqueSetScalingProgress{}
 	if progress != nil {
@@ -43,7 +43,7 @@ func (e *ScalingProgressExpectations) Record(pcsObjectMeta metav1.ObjectMeta, pr
 
 // ClearIfSatisfied reports whether no expectation exists or the cached scaling progress matches it.
 // A matching expectation is removed.
-func (e *ScalingProgressExpectations) ClearIfSatisfied(pcsObjectMeta metav1.ObjectMeta, progress *grovev1beta1.PodCliqueSetScalingProgress) bool {
+func (e *ScalingProgress) ClearIfSatisfied(pcsObjectMeta metav1.ObjectMeta, progress *grovev1beta1.PodCliqueSetScalingProgress) bool {
 	expectationKey := scalingProgressExpectationKey(pcsObjectMeta)
 	storedExpectation, exists := e.expectations.Load(expectationKey)
 	if !exists {
@@ -57,7 +57,7 @@ func (e *ScalingProgressExpectations) ClearIfSatisfied(pcsObjectMeta metav1.Obje
 }
 
 // Forget removes the scaling-progress expectation for the PodCliqueSet.
-func (e *ScalingProgressExpectations) Forget(pcsObjectMeta metav1.ObjectMeta) {
+func (e *ScalingProgress) Forget(pcsObjectMeta metav1.ObjectMeta) {
 	e.expectations.Delete(scalingProgressExpectationKey(pcsObjectMeta))
 }
 
