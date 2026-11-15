@@ -411,6 +411,115 @@ func TestPCSReplicaRecreationPlannerAllocateReplacementTargets(t *testing.T) {
 	}
 }
 
+func TestReconcileCurrentlyUpdatingReplicasReportsCompletedReplacements(t *testing.T) {
+	pcs := rollingUpdateTestPCS()
+	pcs.Status.UpdateProgress.RequiresReplicaRecreation = true
+	canceledAt := metav1.Now()
+	endedAt := metav1.Now()
+	barrierCompletedAt := metav1.Now()
+
+	differentIndex := func() grovecorev1beta1.PodCliqueSetReplicaUpdateProgress {
+		return grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{
+			ReplicaIndex: 0,
+			Replacement:  &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 2},
+		}
+	}
+	sameIndexWithBarrier := func() grovecorev1beta1.PodCliqueSetReplicaUpdateProgress {
+		return grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{
+			ReplicaIndex: 1,
+			Replacement:  &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 1, SourceCleanupCompletedAt: &barrierCompletedAt},
+		}
+	}
+	convergedUnavailableInfo := func(replicaIndex int) pcsReplicaInfo {
+		info := rollingUpdateReplicaInfo(pcs, replicaIndex, true, 1)
+		info.standalonePCLQs[0].DeletionTimestamp = &canceledAt
+		return info
+	}
+
+	tests := []struct {
+		name              string
+		currentlyUpdating []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress
+		replicaInfos      pcsReplicaInfoByIndex
+		want              []int
+	}{
+		{
+			name:              "completes a different-index replacement once its source is gone and its target converged",
+			currentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{differentIndex()},
+			replicaInfos:      pcsReplicaInfoByIndex{2: rollingUpdateReplicaInfo(pcs, 2, true, 1)},
+			want:              []int{0},
+		},
+		{
+			name:              "keeps a different-index replacement active while its source resources remain",
+			currentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{differentIndex()},
+			replicaInfos:      pcsReplicaInfoByIndex{0: rollingUpdateReplicaInfo(pcs, 0, true, 1), 2: rollingUpdateReplicaInfo(pcs, 2, true, 1)},
+		},
+		{
+			name:              "keeps a different-index replacement active while its target has not converged",
+			currentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{differentIndex()},
+			replicaInfos:      pcsReplicaInfoByIndex{2: rollingUpdateReplicaInfo(pcs, 2, false, 1)},
+		},
+		{
+			name:              "keeps a different-index replacement active while its target is converged but unavailable",
+			currentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{differentIndex()},
+			replicaInfos:      pcsReplicaInfoByIndex{2: convergedUnavailableInfo(2)},
+		},
+		{
+			name:              "completes a same-index replacement once its barrier is set and its target converged",
+			currentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{sameIndexWithBarrier()},
+			replicaInfos:      pcsReplicaInfoByIndex{1: rollingUpdateReplicaInfo(pcs, 1, true, 1)},
+			want:              []int{1},
+		},
+		{
+			name: "keeps a same-index replacement active while its cleanup barrier is unset",
+			currentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{
+				ReplicaIndex: 1,
+				Replacement:  &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 1},
+			}},
+			replicaInfos: pcsReplicaInfoByIndex{1: rollingUpdateReplicaInfo(pcs, 1, true, 1)},
+		},
+		{
+			name:              "keeps a same-index replacement active while its target has not converged",
+			currentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{sameIndexWithBarrier()},
+			replicaInfos:      pcsReplicaInfoByIndex{1: rollingUpdateReplicaInfo(pcs, 1, false, 1)},
+		},
+		{
+			name: "does not report a canceled replacement as completed",
+			currentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{
+				ReplicaIndex: 0,
+				Replacement:  &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 2, CanceledAt: &canceledAt},
+			}},
+			replicaInfos: pcsReplicaInfoByIndex{2: rollingUpdateReplicaInfo(pcs, 2, true, 1)},
+		},
+		{
+			name: "does not re-report an already completed replacement",
+			currentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{
+				ReplicaIndex:  0,
+				Replacement:   &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 2},
+				UpdateEndedAt: &endedAt,
+			}},
+			replicaInfos: pcsReplicaInfoByIndex{2: rollingUpdateReplicaInfo(pcs, 2, true, 1)},
+		},
+		{
+			name:              "reports multiple completed replacements together",
+			currentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{differentIndex(), sameIndexWithBarrier()},
+			replicaInfos:      pcsReplicaInfoByIndex{1: rollingUpdateReplicaInfo(pcs, 1, true, 1), 2: rollingUpdateReplicaInfo(pcs, 2, true, 1)},
+			want:              []int{0, 1},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			hooks := newPCSReplicaRecreationStrategyHooks(pcs, tc.replicaInfos, pcsReplicaScalingIndices{})
+
+			result, err := hooks.reconcileCurrentlyUpdatingReplicas(tc.currentlyUpdating)
+
+			assert.NoError(t, err)
+			assert.Equal(t, tc.want, result.completedPCSReplicaIndices)
+			assert.Empty(t, result.pcsReplicaUpdateIndicesToRemove)
+		})
+	}
+}
+
 func replicaRecreationSelectionTestPCS() *grovecorev1beta1.PodCliqueSet {
 	pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "default", "test-uid").
 		WithStandaloneClique("frontend").
