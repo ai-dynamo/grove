@@ -134,6 +134,25 @@ func IsPCSReplicaRecreationInProgress(pcs *grovecorev1beta1.PodCliqueSet) bool {
 	return updateInProgress(pcs) && pcs.Status.UpdateProgress.RequiresReplicaRecreation
 }
 
+// IsPCSReplicaInReplacement reports whether the given PCS replica index participates as the source or
+// target of an active or canceled PCS replica replacement. Gang termination is disarmed for such a replica
+// because the replacement already deletes and recreates it.
+func IsPCSReplicaInReplacement(pcs *grovecorev1beta1.PodCliqueSet, pcsReplicaIndex int) bool {
+	if !IsPCSReplicaRecreationInProgress(pcs) {
+		return false
+	}
+	for _, replicaProgress := range pcs.Status.UpdateProgress.CurrentlyUpdating {
+		if replicaProgress.UpdateEndedAt != nil || replicaProgress.Replacement == nil {
+			continue
+		}
+		if int(replicaProgress.ReplicaIndex) == pcsReplicaIndex ||
+			int(replicaProgress.Replacement.TargetReplicaIndex) == pcsReplicaIndex {
+			return true
+		}
+	}
+	return false
+}
+
 // IsCoherentUpdateInProgress returns true when an active update is executing Coherent semantics. A PCS
 // replica recreation rollout does not execute the configured Coherent strategy.
 func IsCoherentUpdateInProgress(pcs *grovecorev1beta1.PodCliqueSet) bool {

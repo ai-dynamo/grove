@@ -578,7 +578,7 @@ func TestComputeMinAvailableBreachedConditionPartialScheduleRegression(t *testin
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			condition := computeMinAvailableBreachedCondition(tt.pclq,
+			condition := computeMinAvailableBreachedCondition(logr.Discard(), &grovecorev1beta1.PodCliqueSet{}, tt.pclq,
 				tt.numPodsHavingAtleastOneContainerWithNonZeroExitCode,
 				tt.numPodsStartedButNotReady)
 			assert.Equal(t, constants.ConditionTypeMinAvailableBreached, condition.Type)
@@ -586,6 +586,59 @@ func TestComputeMinAvailableBreachedConditionPartialScheduleRegression(t *testin
 			assert.Equal(t, tt.wantReason, condition.Reason, "MinAvailableBreached reason mismatch")
 		})
 	}
+}
+
+// TestComputeMinAvailableBreachedConditionDisarmedForReplacement verifies that the condition is held at
+// Unknown when the owning PCS replica participates in a PCS replica replacement, so gang termination is
+// not acted upon while replacement drains the replica.
+func TestComputeMinAvailableBreachedConditionDisarmedForReplacement(t *testing.T) {
+	breachedPCLQ := func(pcsReplicaIndex string) *grovecorev1beta1.PodClique {
+		return &grovecorev1beta1.PodClique{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "pcs-worker",
+				Labels: map[string]string{apicommon.LabelPodCliqueSetReplicaIndex: pcsReplicaIndex},
+			},
+			Spec: grovecorev1beta1.PodCliqueSpec{
+				Replicas:     3,
+				MinAvailable: ptr.To(int32(3)),
+			},
+			Status: grovecorev1beta1.PodCliqueStatus{
+				ObservedGeneration: ptr.To(int64(1)),
+				Replicas:           3,
+				ScheduledReplicas:  0,
+			},
+		}
+	}
+	recreationPCS := func() *grovecorev1beta1.PodCliqueSet {
+		return &grovecorev1beta1.PodCliqueSet{
+			Status: grovecorev1beta1.PodCliqueSetStatus{
+				UpdateProgress: &grovecorev1beta1.PodCliqueSetUpdateProgress{
+					RequiresReplicaRecreation: true,
+					CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{
+						ReplicaIndex: 2,
+						Replacement:  &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 1},
+					}},
+				},
+			},
+		}
+	}
+
+	t.Run("source replica index is disarmed", func(t *testing.T) {
+		condition := computeMinAvailableBreachedCondition(logr.Discard(), recreationPCS(), breachedPCLQ("2"), 0, 0)
+		assert.Equal(t, metav1.ConditionUnknown, condition.Status)
+		assert.Equal(t, constants.ConditionReasonUpdateInProgress, condition.Reason)
+	})
+
+	t.Run("target replica index is disarmed", func(t *testing.T) {
+		condition := computeMinAvailableBreachedCondition(logr.Discard(), recreationPCS(), breachedPCLQ("1"), 0, 0)
+		assert.Equal(t, metav1.ConditionUnknown, condition.Status)
+	})
+
+	t.Run("unrelated replica index still breaches", func(t *testing.T) {
+		condition := computeMinAvailableBreachedCondition(logr.Discard(), recreationPCS(), breachedPCLQ("0"), 0, 0)
+		assert.Equal(t, metav1.ConditionTrue, condition.Status)
+		assert.Equal(t, constants.ConditionReasonScheduledReplicasBelowMinAvailable, condition.Reason)
+	})
 }
 
 // TestReconcileStatusRequeuesOnConflict verifies that when the optimistic-locked status patch is
