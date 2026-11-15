@@ -67,6 +67,9 @@ func prepareAggregateInputs(
 		if item.PodGang == nil || item.Entry == nil {
 			return nil, fmt.Errorf("materialized PodGang must include PodGang and PodGangMap entry")
 		}
+		if len(item.PodGang.Spec.PodGroups) == 0 {
+			return nil, fmt.Errorf("PodGang %s/%s has no PodGroups", item.PodGang.Namespace, item.PodGang.Name)
+		}
 	}
 	podGangs := append([]componentutils.MaterializedPodGang(nil), materialized...)
 	sort.Slice(podGangs, func(i, j int) bool { return podGangs[i].PodGang.Name < podGangs[j].PodGang.Name })
@@ -191,20 +194,12 @@ func (b *subGroupBuilder) appendNonAnchorBranches(podGangs []*groveschedulerv1al
 	collection := nonAnchorPodGangsSubGroupName
 	if err := b.add(kaischedulingv2alpha2.SubGroup{
 		Name:        collection,
-		MinSubGroup: ptr.To(int32(len(podGangs))),
+		MinSubGroup: ptr.To[int32](0),
 	}); err != nil {
 		return err
 	}
 	for _, podGang := range podGangs {
-		utilityName := utilityParentName(podGang.Name)
-		if err := b.add(kaischedulingv2alpha2.SubGroup{
-			Name:        utilityName,
-			Parent:      &collection,
-			MinSubGroup: ptr.To[int32](0),
-		}); err != nil {
-			return err
-		}
-		if err := b.appendPodGangBranch(podGang, podGangBranchName(podGang.Name), &utilityName); err != nil {
+		if err := b.appendPodGangBranch(podGang, podGangBranchName(podGang.Name), &collection); err != nil {
 			return err
 		}
 	}
@@ -342,10 +337,6 @@ func anchorBranchName(podGangName string) string {
 
 func podGangBranchName(podGangName string) string {
 	return stableKAIName(podGangName)
-}
-
-func utilityParentName(podGangName string) string {
-	return structuralKAIName("utility", podGangName)
 }
 
 func topologyGroupName(podGangName, groupName string) string {
