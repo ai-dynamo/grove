@@ -55,6 +55,7 @@ func (r *Reconciler) triggerDeletionFlow(ctx context.Context, logger logr.Logger
 	// Remove in-memory expectations so they do not retain entries for the deleted PodCliqueSet.
 	r.pcsGenerationStatusExpectations.Delete(pcsGenHashesExpKey(pcs))
 	r.scalingProgressExpectations.Forget(pcs.ObjectMeta)
+	r.currentlyUpdatingExpectations.Forget(pcs.ObjectMeta)
 	return ctrlcommon.DoNotRequeue()
 }
 

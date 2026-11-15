@@ -23,6 +23,7 @@ import (
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
+	pcsexpectations "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/expectations"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 
@@ -69,20 +70,23 @@ type pcsReplicaUpdateSelection struct {
 
 // rollingUpdateOrchestrator drives one reconciliation of a PodCliqueSet rolling update.
 type rollingUpdateOrchestrator struct {
-	statusWriter client.SubResourceWriter
-	updateHooks  updateStrategyHooks
-	pcs          *grovecorev1beta1.PodCliqueSet
+	statusWriter                  client.SubResourceWriter
+	currentlyUpdatingExpectations *pcsexpectations.CurrentlyUpdating
+	updateHooks                   updateStrategyHooks
+	pcs                           *grovecorev1beta1.PodCliqueSet
 }
 
 // newRollingUpdateOrchestrator creates an orchestrator using the supplied update strategy hooks.
 func newRollingUpdateOrchestrator(
 	statusWriter client.SubResourceWriter,
+	currentlyUpdatingExpectations *pcsexpectations.CurrentlyUpdating,
 	pcs *grovecorev1beta1.PodCliqueSet,
 	updateHooks updateStrategyHooks) *rollingUpdateOrchestrator {
 	return &rollingUpdateOrchestrator{
-		statusWriter: statusWriter,
-		updateHooks:  updateHooks,
-		pcs:          pcs,
+		statusWriter:                  statusWriter,
+		currentlyUpdatingExpectations: currentlyUpdatingExpectations,
+		updateHooks:                   updateHooks,
+		pcs:                           pcs,
 	}
 }
 
@@ -246,8 +250,11 @@ func activePCSReplicaUpdateIndices(updateProgress *grovecorev1beta1.PodCliqueSet
 
 // persistUpdateProgress persists the working update progress and updates the original PCS after success.
 func (o *rollingUpdateOrchestrator) persistUpdateProgress(ctx context.Context, originalPCS *grovecorev1beta1.PodCliqueSet) error {
+	o.currentlyUpdatingExpectations.Record(o.pcs.ObjectMeta, o.pcs.Status.UpdateProgress.CurrentlyUpdating)
+
 	patch := client.MergeFromWithOptions(originalPCS, client.MergeFromWithOptimisticLock{})
 	if err := o.statusWriter.Patch(ctx, o.pcs, patch); err != nil {
+		o.currentlyUpdatingExpectations.Forget(o.pcs.ObjectMeta)
 		return groveerr.WrapError(
 			err,
 			errCodeUpdatePCSStatus,

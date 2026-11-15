@@ -49,15 +49,17 @@ const (
 type _resource struct {
 	client                      client.Client
 	eventRecorder               record.EventRecorder
-	scalingProgressExpectations *pcsexpectations.ScalingProgress
+	scalingProgressExpectations   *pcsexpectations.ScalingProgress
+	currentlyUpdatingExpectations *pcsexpectations.CurrentlyUpdating
 }
 
 // New creates a new instance of the PodCliqueSetReplica operator.
-func New(client client.Client, eventRecorder record.EventRecorder, scalingProgressExpectations *pcsexpectations.ScalingProgress) component.Operator[grovecorev1beta1.PodCliqueSet, pcssync.State, pcssync.Result] {
+func New(client client.Client, eventRecorder record.EventRecorder, scalingProgressExpectations *pcsexpectations.ScalingProgress, currentlyUpdatingExpectations *pcsexpectations.CurrentlyUpdating) component.Operator[grovecorev1beta1.PodCliqueSet, pcssync.State, pcssync.Result] {
 	return &_resource{
-		client:                      client,
-		eventRecorder:               eventRecorder,
-		scalingProgressExpectations: scalingProgressExpectations,
+		client:                        client,
+		eventRecorder:                 eventRecorder,
+		scalingProgressExpectations:   scalingProgressExpectations,
+		currentlyUpdatingExpectations: currentlyUpdatingExpectations,
 	}
 }
 
@@ -112,7 +114,7 @@ func (r *_resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecore
 			pcsReplicaInfos,
 			minAvailableBreachedPCSReplicaIndices,
 		)
-		orchestrator := newRollingUpdateOrchestrator(r.client.Status(), workingPCS, updateHooks)
+		orchestrator := newRollingUpdateOrchestrator(r.client.Status(), r.currentlyUpdatingExpectations, workingPCS, updateHooks)
 		orchestrationCtx := logr.NewContext(ctx, logger)
 		if err := orchestrator.orchestrate(orchestrationCtx, pcs); err != nil {
 			return pcssync.Result{}, err

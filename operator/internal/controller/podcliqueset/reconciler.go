@@ -49,6 +49,7 @@ type Reconciler struct {
 	operatorRegistry                component.OperatorRegistry[grovecorev1beta1.PodCliqueSet, pcssync.State, pcssync.Result]
 	pcsGenerationStatusExpectations sync.Map
 	scalingProgressExpectations     *pcsexpectations.ScalingProgress
+	currentlyUpdatingExpectations   *pcsexpectations.CurrentlyUpdating
 }
 
 // NewReconciler creates a new reconciler for PodCliqueSet.
@@ -56,15 +57,17 @@ func NewReconciler(mgr ctrl.Manager, controllerCfg configv1beta1.PodCliqueSetCon
 	eventRecorder := mgr.GetEventRecorderFor(controllerName)
 	client := mgr.GetClient()
 	scalingProgressExpectations := &pcsexpectations.ScalingProgress{}
+	currentlyUpdatingExpectations := &pcsexpectations.CurrentlyUpdating{}
 	return &Reconciler{
 		config:                          controllerCfg,
 		tasConfig:                       topologyAwareSchedulingConfig,
 		client:                          client,
 		eventRecorder:                   eventRecorder,
 		reconcileStatusRecorder:         ctrlcommon.NewReconcileErrorRecorder(client),
-		operatorRegistry:                pcscomponent.CreateOperatorRegistry(mgr, eventRecorder, topologyAwareSchedulingConfig, networkConfig, schedRegistry, scalingProgressExpectations),
+		operatorRegistry:                pcscomponent.CreateOperatorRegistry(mgr, eventRecorder, topologyAwareSchedulingConfig, networkConfig, schedRegistry, scalingProgressExpectations, currentlyUpdatingExpectations),
 		pcsGenerationStatusExpectations: sync.Map{},
 		scalingProgressExpectations:     scalingProgressExpectations,
+		currentlyUpdatingExpectations:   currentlyUpdatingExpectations,
 	}
 }
 
@@ -81,6 +84,9 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		return result.Result()
 	}
 	if result := r.ensureScalingProgressExpectationSatisfied(pcs); ctrlcommon.ShortCircuitReconcileFlow(result) {
+		return result.Result()
+	}
+	if result := r.ensureCurrentlyUpdatingExpectationSatisfied(pcs); ctrlcommon.ShortCircuitReconcileFlow(result) {
 		return result.Result()
 	}
 
@@ -104,6 +110,23 @@ func (r *Reconciler) ensureScalingProgressExpectationSatisfied(pcs *grovecorev1b
 	return ctrlcommon.ReconcileAfter(
 		internalconstants.InformerCacheSyncRetryInterval,
 		fmt.Sprintf("PodCliqueSet scaling progress is not yet visible in the informer cache: %v", ctrlclient.ObjectKeyFromObject(pcs)),
+	)
+}
+
+// ensureCurrentlyUpdatingExpectationSatisfied waits until the informer cache reflects the last persisted
+// CurrentlyUpdating selection. This chiefly prevents PCS replica recreation from planning a replacement
+// against a stale selection.
+func (r *Reconciler) ensureCurrentlyUpdatingExpectationSatisfied(pcs *grovecorev1beta1.PodCliqueSet) ctrlcommon.ReconcileStepResult {
+	var currentlyUpdating []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress
+	if pcs.Status.UpdateProgress != nil {
+		currentlyUpdating = pcs.Status.UpdateProgress.CurrentlyUpdating
+	}
+	if r.currentlyUpdatingExpectations.ClearIfSatisfied(pcs.ObjectMeta, currentlyUpdating) {
+		return ctrlcommon.ContinueReconcile()
+	}
+	return ctrlcommon.ReconcileAfter(
+		internalconstants.InformerCacheSyncRetryInterval,
+		fmt.Sprintf("PodCliqueSet CurrentlyUpdating selection is not yet visible in the informer cache: %v", ctrlclient.ObjectKeyFromObject(pcs)),
 	)
 }
 
