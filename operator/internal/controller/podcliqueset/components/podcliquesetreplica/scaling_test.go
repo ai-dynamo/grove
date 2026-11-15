@@ -371,11 +371,13 @@ func TestComputePCSReplicaState(t *testing.T) {
 			scaleInBefore := slices.Clone(test.scaleInReplicaIndices)
 
 			got := func() pcssync.State {
-				scalingIndices := computePCSReplicaScalingIndices(
+				scalingWork := computePCSReplicaScalingWork(
 					test.pcs,
 					test.replicaInfos,
 					pcsReplicaScalingIndices{scaleOut: test.scaleOutReplicaIndices, scaleIn: test.scaleInReplicaIndices},
+					pcsReplicaReplacementGroups{},
 				)
+				scalingIndices := scalingWork.scalingIndices
 				expectedReplicaIndices := expectedReplicaIndicesFromScaling(test.replicaInfos.existingReplicaIndices(), scalingIndices)
 				return computePCSReplicaState(test.pcs, test.replicaInfos, scalingIndices, expectedReplicaIndices, pcsReplicaReplacementGroups{})
 			}()
@@ -440,6 +442,7 @@ func TestSelectReplicaIndicesForScaleIn(t *testing.T) {
 				replicaInfos,
 				projectedReplicaIndices,
 				scaleOutReplicaIndices,
+				sets.New[int](),
 				test.count,
 			)
 			assert.Equal(t, test.want, got)
@@ -456,14 +459,97 @@ func TestSelectReplicaIndicesForScaleIn(t *testing.T) {
 			4: {index: 4, standalonePCLQs: []grovecorev1beta1.PodClique{warmingPCLQ}},
 		}
 
-		got := selectReplicaIndicesForScaleIn(pcs, replicaInfos, sets.New(1, 4), sets.New[int](), 1)
+		got := selectReplicaIndicesForScaleIn(pcs, replicaInfos, sets.New(1, 4), sets.New[int](), sets.New[int](), 1)
 
 		assert.Equal(t, []int{1}, got)
 	})
 }
 
-func TestSortAndCoalesceReplicaIndices(t *testing.T) {
-	got := sortAndCoalesceReplicaIndices(
+func TestSelectReplicaIndicesForScaleInRanksReplacementTargetsAndConvergedReplicasLast(t *testing.T) {
+	pcs := rollingUpdateTestPCS()
+
+	t.Run("ranks a replacement target in scale-out below a non-target in scale-out", func(t *testing.T) {
+		replicaInfos := pcsReplicaInfoByIndex{
+			2: rollingUpdateReplicaInfo(pcs, 2, false, 1),
+			3: rollingUpdateReplicaInfo(pcs, 3, false, 1),
+		}
+		claimed := sets.New(2, 3)
+		scaleOut := sets.New(2, 3)
+		targets := sets.New(3)
+
+		got := selectReplicaIndicesForScaleIn(pcs, replicaInfos, claimed, scaleOut, targets, 2)
+
+		// Both are in scale-out, so the non-target (2) precedes the target (3).
+		assert.Equal(t, []int{2, 3}, got)
+	})
+
+	t.Run("ranks an available converged replica below an available unconverged one", func(t *testing.T) {
+		replicaInfos := pcsReplicaInfoByIndex{
+			0: rollingUpdateReplicaInfo(pcs, 0, false, 1), // available, not converged (old spec)
+			1: rollingUpdateReplicaInfo(pcs, 1, true, 1),  // available, converged (new spec)
+		}
+		claimed := sets.New(0, 1)
+
+		got := selectReplicaIndicesForScaleIn(pcs, replicaInfos, claimed, sets.New[int](), sets.New[int](), 2)
+
+		// Old-spec available (0) precedes new-spec available (1).
+		assert.Equal(t, []int{0, 1}, got)
+	})
+}
+
+func TestComputePCSReplicaScalingWorkCancelsReplacementWhenScaleInSelectsTarget(t *testing.T) {
+	pcs := rollingUpdateTestPCS()
+	pcs.Status.ObservedGeneration = new(pcs.Generation)
+	pcs.Spec.Replicas = 1
+	pcs.Status.UpdateProgress.RequiresReplicaRecreation = true
+	pcs.Status.UpdateProgress.CurrentlyUpdating = []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{
+		{ReplicaIndex: 0, Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 2}},
+	}
+	// Source 0 and target 2 exist. An active replacement projects source->target, so claimed is {1, 2}. With
+	// desired 1, one unit must be reclaimed. Target 2 is in scale-out and ranks after the non-target 1, but 1
+	// is available (converged) while 2 is an unconverged scale-out target, so 2 is selected first and canceled.
+	replicaInfos := pcsReplicaInfoByIndex{
+		0: rollingUpdateReplicaInfo(pcs, 0, true, 1),
+		1: rollingUpdateReplicaInfo(pcs, 1, true, 1),
+		2: rollingUpdateReplicaInfo(pcs, 2, false, 1),
+	}
+	replacementGroups := groupPCSReplicaReplacements(pcs.Status.UpdateProgress)
+
+	work := computePCSReplicaScalingWork(pcs, replicaInfos, pcsReplicaScalingIndices{scaleOut: []int{2}}, replacementGroups)
+
+	assert.Equal(t, []int{0}, work.replacementSourcesToCancel)
+	assert.Empty(t, work.scalingIndices.scaleIn)
+}
+
+func TestComputePCSReplicaScalingWorkScalesInNonTarget(t *testing.T) {
+	pcs := rollingUpdateTestPCS()
+	pcs.Status.ObservedGeneration = new(pcs.Generation)
+	pcs.Spec.Replicas = 1
+	replicaInfos := pcsReplicaInfoByIndex{
+		0: rollingUpdateReplicaInfo(pcs, 0, true, 1),
+		1: rollingUpdateReplicaInfo(pcs, 1, true, 1),
+	}
+
+	work := computePCSReplicaScalingWork(pcs, replicaInfos, pcsReplicaScalingIndices{}, pcsReplicaReplacementGroups{})
+
+	assert.Equal(t, []int{1}, work.scalingIndices.scaleIn)
+	assert.Empty(t, work.replacementSourcesToCancel)
+}
+
+func TestClaimedReservedIndicesReservesReplacementIndices(t *testing.T) {
+	replicaInfos := pcsReplicaInfoByIndex{0: {}}
+	replacementGroups := pcsReplicaReplacementGroups{
+		active:   []pcsReplicaReplacement{{sourcePCSReplicaIndex: 1, targetPCSReplicaIndex: 2}},
+		canceled: []pcsReplicaReplacement{{sourcePCSReplicaIndex: 3, targetPCSReplicaIndex: 4}},
+	}
+
+	reserved := claimedReservedIndices(replicaInfos, sets.New(5), sets.New(6), replacementGroups)
+
+	assert.Equal(t, sets.New(0, 1, 2, 3, 4, 5, 6), reserved)
+}
+
+func TestCoalesceDescending(t *testing.T) {
+	got := coalesceDescending(
 		[]int{0, 7},
 		[]int{1, 6},
 		[]int{2, 5},

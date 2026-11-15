@@ -16,6 +16,7 @@ package podcliquesetreplica
 
 import (
 	"testing"
+	"time"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
@@ -23,6 +24,7 @@ import (
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -158,6 +160,54 @@ func TestIsConfiguredStrategyUpdateComplete(t *testing.T) {
 	t.Run("incomplete when a replica has not converged", func(t *testing.T) {
 		infos := []pcsReplicaInfo{rollingUpdateReplicaInfo(pcs, 0, false, 1)}
 		assert.False(t, isConfiguredStrategyUpdateComplete(pcs, infos))
+	})
+}
+
+func TestCancelReplacements(t *testing.T) {
+	newProgress := func() []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress {
+		return []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{
+			{ReplicaIndex: 0, Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 3}},
+			{ReplicaIndex: 1},
+			{ReplicaIndex: 2, Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 4}},
+		}
+	}
+
+	t.Run("stamps CanceledAt and message on the named replacement source", func(t *testing.T) {
+		currentlyUpdating := newProgress()
+		cancelReplacements(currentlyUpdating, []int{0})
+
+		require.NotNil(t, currentlyUpdating[0].Replacement.CanceledAt)
+		require.NotNil(t, currentlyUpdating[0].Replacement.CancellationMessage)
+		assert.Equal(t, cancelReplacementMessage, *currentlyUpdating[0].Replacement.CancellationMessage)
+		assert.Nil(t, currentlyUpdating[2].Replacement.CanceledAt)
+	})
+
+	t.Run("leaves an entry without a replacement unchanged", func(t *testing.T) {
+		currentlyUpdating := newProgress()
+		cancelReplacements(currentlyUpdating, []int{1})
+
+		assert.Nil(t, currentlyUpdating[1].Replacement)
+	})
+
+	t.Run("does not re-stamp an already canceled replacement", func(t *testing.T) {
+		currentlyUpdating := newProgress()
+		canceledAt := metav1.NewTime(metav1.Now().Add(-time.Hour))
+		priorMessage := "prior"
+		currentlyUpdating[0].Replacement.CanceledAt = &canceledAt
+		currentlyUpdating[0].Replacement.CancellationMessage = &priorMessage
+
+		cancelReplacements(currentlyUpdating, []int{0})
+
+		assert.Equal(t, canceledAt, *currentlyUpdating[0].Replacement.CanceledAt)
+		assert.Equal(t, priorMessage, *currentlyUpdating[0].Replacement.CancellationMessage)
+	})
+
+	t.Run("is a no-op for an empty cancellation set", func(t *testing.T) {
+		currentlyUpdating := newProgress()
+		cancelReplacements(currentlyUpdating, nil)
+
+		assert.Nil(t, currentlyUpdating[0].Replacement.CanceledAt)
+		assert.Nil(t, currentlyUpdating[2].Replacement.CanceledAt)
 	})
 }
 

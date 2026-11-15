@@ -47,8 +47,8 @@ const (
 )
 
 type _resource struct {
-	client                      client.Client
-	eventRecorder               record.EventRecorder
+	client                        client.Client
+	eventRecorder                 record.EventRecorder
 	scalingProgressExpectations   *pcsexpectations.ScalingProgress
 	currentlyUpdatingExpectations *pcsexpectations.CurrentlyUpdating
 }
@@ -74,10 +74,11 @@ func (r *_resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecore
 	if err != nil {
 		return pcssync.Result{}, err
 	}
-	scalingIndices, scalingProgressChanged, err := r.syncScalingProgress(ctx, logger, pcs, pcsReplicaInfosByIndex)
+	scalingWork, scalingProgressChanged, err := r.syncScalingProgress(ctx, logger, pcs, pcsReplicaInfosByIndex)
 	if err != nil {
 		return pcssync.Result{}, err
 	}
+	scalingIndices := scalingWork.scalingIndices
 
 	// Expected replica indices implied by the scaling decision alone. Gang termination and update
 	// eligibility use these before any replacement overlay is applied.
@@ -103,7 +104,9 @@ func (r *_resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecore
 		}
 	}
 
-	// Orchestrate the active rolling update.
+	// Orchestrate the active rolling update. A non-empty scalingWork.replacementSourcesToCancel implies an
+	// active replacement, so PCS replica recreation is in progress and this block runs. The orchestrator owns
+	// UpdateProgress, including canceling the replacements that scaling reclaimed.
 	if componentutils.IsRollingUpdateInProgress(pcs) || componentutils.IsPCSReplicaRecreationInProgress(pcs) {
 		pcsReplicaInfos := pcsReplicaInfosForUpdate(pcsReplicaInfosByIndex, sortedExpectedPCSReplicaIndices, delWork.pcsIndicesToTerminate)
 		minAvailableBreachedPCSReplicaIndices := slices.Collect(maps.Keys(delWork.minAvailableBreachedConstituents))
@@ -116,7 +119,7 @@ func (r *_resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecore
 		)
 		orchestrator := newRollingUpdateOrchestrator(r.client.Status(), r.currentlyUpdatingExpectations, workingPCS, updateHooks)
 		orchestrationCtx := logr.NewContext(ctx, logger)
-		if err := orchestrator.orchestrate(orchestrationCtx, pcs); err != nil {
+		if err := orchestrator.orchestrate(orchestrationCtx, pcs, scalingWork.replacementSourcesToCancel); err != nil {
 			return pcssync.Result{}, err
 		}
 	}
