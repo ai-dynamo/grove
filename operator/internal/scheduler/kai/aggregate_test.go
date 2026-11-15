@@ -105,7 +105,7 @@ func TestBuildAggregatePlanRoleAwareHierarchy(t *testing.T) {
 	assert.Equal(t, aggregatePodGroupName(pcs.Name, 0), aggregate.Name)
 	assert.Equal(t, "job", aggregate.Labels[apicommon.LabelPartOfKey])
 	assert.Equal(t, "0", aggregate.Labels[apicommon.LabelPodCliqueSetReplicaIndex])
-	assert.Equal(t, apicommon.LabelComponentNameAggregatePodGroup, aggregate.Labels[apicommon.LabelComponentKey])
+	assert.Equal(t, apicommon.LabelComponentNamePodCliqueSetReplicaPodGroup, aggregate.Labels[apicommon.LabelComponentKey])
 	assert.Nil(t, aggregate.Spec.MinMember)
 	require.NotNil(t, aggregate.Spec.MinSubGroup)
 	assert.Equal(t, int32(3), *aggregate.Spec.MinSubGroup)
