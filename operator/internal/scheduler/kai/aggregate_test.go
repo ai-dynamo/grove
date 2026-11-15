@@ -38,6 +38,7 @@ func TestStableKAINamesAreValidAndCollisionResistant(t *testing.T) {
 		aggregatePodGroupName(longName, 42),
 		anchorBranchName(longName),
 		podGangBranchName(longName),
+		wrapperSubGroupName(longName),
 		topologyGroupName(longName, longName),
 		podGroupLeafName(longName, longName),
 	}
@@ -61,6 +62,7 @@ func TestStableKAINamesDoNotChange(t *testing.T) {
 		{name: "over-length aggregate PodGroup", actual: aggregatePodGroupName(strings.Repeat("a", 70), 1), expected: "grove-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-157ee39d2e"},
 		{name: "anchor branch", actual: anchorBranchName("job-0-1000"), expected: "1-job-0-1000"},
 		{name: "non-anchor branch", actual: podGangBranchName("job-0-workers-1-2000"), expected: "job-0-workers-1-2000"},
+		{name: "non-anchor wrapper", actual: wrapperSubGroupName("job-0-workers-1-2000"), expected: "utility-job-0-workers-1-2000-1729604876"},
 		{name: "topology group", actual: topologyGroupName("job-0-1000", "rack"), expected: "job-0-1000-group-rack-518cd639d2"},
 		{name: "PodGroup leaf", actual: podGroupLeafName("job-0-1000", "job-0-worker"), expected: "job-0-1000-leaf-job-0-worker-31d6df63d5"},
 	}
@@ -114,12 +116,18 @@ func TestBuildAggregatePlanRoleAwareHierarchy(t *testing.T) {
 	collection := requireSubGroup(t, aggregate, nonAnchorPodGangsSubGroupName)
 	assert.Nil(t, collection.Parent)
 	require.NotNil(t, collection.MinSubGroup)
-	assert.Zero(t, *collection.MinSubGroup)
+	assert.Equal(t, int32(2), *collection.MinSubGroup)
 
 	for _, item := range []componentutils.MaterializedPodGang{tail, scaleOut} {
+		wrapper := requireSubGroup(t, aggregate, wrapperSubGroupName(item.PodGang.Name))
+		require.NotNil(t, wrapper.Parent)
+		assert.Equal(t, collection.Name, *wrapper.Parent)
+		require.NotNil(t, wrapper.MinSubGroup)
+		assert.Zero(t, *wrapper.MinSubGroup)
+
 		branch := requireSubGroup(t, aggregate, podGangBranchName(item.PodGang.Name))
 		require.NotNil(t, branch.Parent)
-		assert.Equal(t, collection.Name, *branch.Parent)
+		assert.Equal(t, wrapper.Name, *branch.Parent)
 		require.NotNil(t, branch.MinSubGroup)
 		assert.Equal(t, int32(1), *branch.MinSubGroup)
 	}
@@ -243,7 +251,7 @@ func TestBuildAggregatePlanRejectsInconsistentInputs(t *testing.T) {
 	}{
 		{
 			name:          "no PodGangs",
-			wantErrSubstr: "materializes no PodGangs",
+			wantErrSubstr: "has no materialized PodGangs",
 		},
 		{
 			name: "no Anchor",
@@ -321,12 +329,12 @@ func TestBuildAggregatePlanRejectsInconsistentInputs(t *testing.T) {
 		{
 			name:          "nil PodGang",
 			materialized:  []componentutils.MaterializedPodGang{{Entry: anchor.Entry}},
-			wantErrSubstr: "must include PodGang and PodGangMap entry",
+			wantErrSubstr: "has a materialization without a PodGang",
 		},
 		{
 			name:          "nil PodGangMap entry",
 			materialized:  []componentutils.MaterializedPodGang{{PodGang: anchor.PodGang}},
-			wantErrSubstr: "must include PodGang and PodGangMap entry",
+			wantErrSubstr: "has no PodGangMap entry",
 		},
 	}
 

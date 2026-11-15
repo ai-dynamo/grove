@@ -38,9 +38,55 @@ import (
 )
 
 const (
-	aggregatePrefix               = "grove-"
+	// aggregatePrefix starts the name of every per-replica KAI PodGroup: grove-<pcs>-<replica>.
+	aggregatePrefix = "grove-"
+	// nonAnchorPodGangsSubGroupName is the top-level subgroup that holds all Tail and ScaleOut PodGangs.
+	// Its "0-" prefix sorts it ahead of the "1-" Anchor branches, which is how KAI breaks a tie
+	// between subgroups with the same allocation ratio.
 	nonAnchorPodGangsSubGroupName = "0-non-anchor-podgangs"
 )
+
+// buildAggregatePlan aggregates the PodGangs of one PodCliqueSet replica into a single KAI PodGroup.
+// Each Anchor PodGang becomes a required top-level branch, Tail and ScaleOut PodGangs become optional
+// branches under one collection subgroup, and inside a branch the topology groups are mid-level
+// subgroups and the PodGroups are leaves. The plan also records which leaf each Pod belongs to.
+func (b *schedulerBackend) buildAggregatePlan(
+	pcs *grovecorev1beta1.PodCliqueSet,
+	replica int,
+	materialized []componentutils.MaterializedPodGang,
+	topologyReference string,
+) (*aggregatePlan, error) {
+	inputs, err := prepareAggregateInputs(pcs, replica, materialized)
+	if err != nil {
+		return nil, err
+	}
+	queueName, err := resolveQueueNameForPodCliqueSet(pcs)
+	if err != nil {
+		return nil, err
+	}
+	rootTopology, err := toKAITopologyConstraint(inputs.reference.Spec.TopologyConstraint, topologyReference)
+	if err != nil {
+		return nil, err
+	}
+	builder := newSubGroupBuilder(topologyReference)
+	rootMinSubGroup, err := builder.appendAggregateHierarchy(inputs)
+	if err != nil {
+		return nil, err
+	}
+	result := newAggregatePodGroup(pcs, replica, kaischedulingv2alpha2.PodGroupSpec{
+		MinSubGroup:       ptr.To(rootMinSubGroup),
+		Queue:             queueName,
+		PriorityClassName: inputs.reference.Spec.PriorityClassName,
+		SubGroups:         builder.subGroups,
+	})
+	if rootTopology != nil {
+		result.Spec.TopologyConstraint = *rootTopology
+	}
+	if err = controllerutil.SetControllerReference(pcs, result, b.scheme); err != nil {
+		return nil, err
+	}
+	return &aggregatePlan{podGroup: result, podLeaves: builder.podLeaves}, nil
+}
 
 type aggregateInputs struct {
 	reference  *groveschedulerv1alpha1.PodGang
@@ -50,7 +96,7 @@ type aggregateInputs struct {
 
 type aggregatePlan struct {
 	podGroup *kaischedulingv2alpha2.PodGroup
-	// Each PodGang maps its PodGroup names (PodClique FQNs) to the emitted KAI leaves.
+	// podLeaves maps PodGang name -> PodGroup name (PodClique FQN) -> KAI leaf subgroup name.
 	podLeaves map[string]map[string]string
 }
 
@@ -60,12 +106,15 @@ func prepareAggregateInputs(
 	materialized []componentutils.MaterializedPodGang,
 ) (*aggregateInputs, error) {
 	if len(materialized) == 0 {
-		return nil, fmt.Errorf("PodGangMap for PodCliqueSet %s/%s replica %d materializes no PodGangs", pcs.Namespace, pcs.Name, replica)
+		return nil, fmt.Errorf("PodGangMap for PodCliqueSet %s/%s replica %d has no materialized PodGangs", pcs.Namespace, pcs.Name, replica)
 	}
 
 	for _, item := range materialized {
-		if item.PodGang == nil || item.Entry == nil {
-			return nil, fmt.Errorf("materialized PodGang must include PodGang and PodGangMap entry")
+		if item.PodGang == nil {
+			return nil, fmt.Errorf("PodGangMap for PodCliqueSet %s/%s replica %d has a materialization without a PodGang", pcs.Namespace, pcs.Name, replica)
+		}
+		if item.Entry == nil {
+			return nil, fmt.Errorf("PodGang %s/%s of PodCliqueSet %s replica %d has no PodGangMap entry", item.PodGang.Namespace, item.PodGang.Name, pcs.Name, replica)
 		}
 	}
 	podGangs := append([]componentutils.MaterializedPodGang(nil), materialized...)
@@ -114,44 +163,6 @@ func packLevels(topologyConstraint *groveschedulerv1alpha1.TopologyConstraint) p
 	}
 }
 
-func (b *schedulerBackend) buildAggregatePlan(
-	pcs *grovecorev1beta1.PodCliqueSet,
-	replica int,
-	materialized []componentutils.MaterializedPodGang,
-	topologyReference string,
-) (*aggregatePlan, error) {
-	inputs, err := prepareAggregateInputs(pcs, replica, materialized)
-	if err != nil {
-		return nil, err
-	}
-	queueName, err := resolveQueueNameForPodCliqueSet(pcs)
-	if err != nil {
-		return nil, err
-	}
-	rootTopology, err := toKAITopologyConstraint(inputs.reference.Spec.TopologyConstraint, topologyReference)
-	if err != nil {
-		return nil, err
-	}
-	builder := newSubGroupBuilder(topologyReference)
-	rootMinSubGroup, err := builder.appendAggregateHierarchy(inputs)
-	if err != nil {
-		return nil, err
-	}
-	result := newAggregatePodGroup(pcs, replica, kaischedulingv2alpha2.PodGroupSpec{
-		MinSubGroup:       ptr.To(rootMinSubGroup),
-		Queue:             queueName,
-		PriorityClassName: inputs.reference.Spec.PriorityClassName,
-		SubGroups:         builder.subGroups,
-	})
-	if rootTopology != nil {
-		result.Spec.TopologyConstraint = *rootTopology
-	}
-	if err = controllerutil.SetControllerReference(pcs, result, b.scheme); err != nil {
-		return nil, err
-	}
-	return &aggregatePlan{podGroup: result, podLeaves: builder.podLeaves}, nil
-}
-
 func newAggregatePodGroup(pcs *grovecorev1beta1.PodCliqueSet, replica int, spec kaischedulingv2alpha2.PodGroupSpec) *kaischedulingv2alpha2.PodGroup {
 	labels := withoutGroveKeys(pcs.Labels)
 	if labels == nil {
@@ -188,9 +199,11 @@ func withoutGroveKeys(entries map[string]string) map[string]string {
 
 type subGroupBuilder struct {
 	topologyReference string
-	names             map[string]struct{}
-	subGroups         []kaischedulingv2alpha2.SubGroup
-	podLeaves         map[string]map[string]string
+	// names is the set of subgroup names emitted so far, used to reject duplicates.
+	names     map[string]struct{}
+	subGroups []kaischedulingv2alpha2.SubGroup
+	// podLeaves maps PodGang name -> PodGroup name (PodClique FQN) -> KAI leaf subgroup name.
+	podLeaves map[string]map[string]string
 }
 
 func newSubGroupBuilder(topologyReference string) *subGroupBuilder {
@@ -220,16 +233,26 @@ func (b *subGroupBuilder) appendAggregateHierarchy(inputs *aggregateInputs) (int
 
 func (b *subGroupBuilder) appendNonAnchorBranches(podGangs []*groveschedulerv1alpha1.PodGang) error {
 	collection := nonAnchorPodGangsSubGroupName
-	// KAI requires no child for an explicit minSubGroup of 0 and every child for an unset one
-	// (SubGroupSet.GetMinMembersToSatisfy), which makes the non-Anchor PodGangs optional.
+	// The collection requires every wrapper, so KAI's subgroup ordering ranks it with the Anchor
+	// branches rather than behind them as it would an optional subgroup.
 	if err := b.add(kaischedulingv2alpha2.SubGroup{
 		Name:        collection,
-		MinSubGroup: ptr.To[int32](0),
+		MinSubGroup: ptr.To(int32(len(podGangs))),
 	}); err != nil {
 		return err
 	}
 	for _, podGang := range podGangs {
-		if err := b.appendPodGangBranch(podGang, podGangBranchName(podGang.Name), &collection); err != nil {
+		wrapperName := wrapperSubGroupName(podGang.Name)
+		// KAI requires no child for an explicit minSubGroup of 0 and every child for an unset one
+		// (SubGroupSet.GetMinMembersToSatisfy), which makes each non-Anchor PodGang optional.
+		if err := b.add(kaischedulingv2alpha2.SubGroup{
+			Name:        wrapperName,
+			Parent:      &collection,
+			MinSubGroup: ptr.To[int32](0),
+		}); err != nil {
+			return err
+		}
+		if err := b.appendPodGangBranch(podGang, podGangBranchName(podGang.Name), &wrapperName); err != nil {
 			return err
 		}
 	}
@@ -367,6 +390,10 @@ func anchorBranchName(podGangName string) string {
 
 func podGangBranchName(podGangName string) string {
 	return stableKAIName(podGangName)
+}
+
+func wrapperSubGroupName(podGangName string) string {
+	return structuralKAIName("utility", podGangName)
 }
 
 func topologyGroupName(podGangName, groupName string) string {
