@@ -22,7 +22,7 @@ RUN VERSION=${VERSION} make --directory=operator build-install-crds-${TARGETOS}-
 # Reference: https://github.com/opencontainers/image-spec/blob/main/annotations.md#pre-defined-annotation-keys
 
 # grove-initc
-FROM gcr.io/distroless/static-debian11:nonroot AS grove-initc
+FROM gcr.io/distroless/static-debian13:nonroot AS grove-initc
 # Version should be passed as a build argument.
 ARG VERSION
 
@@ -36,7 +36,7 @@ COPY --from=builder /go/src/github.com/ai-dynamo/grove/operator/bin/grove-initc 
 ENTRYPOINT ["/grove-initc"]
 
 # grove-operator
-FROM gcr.io/distroless/static-debian11:nonroot AS grove-operator
+FROM gcr.io/distroless/static-debian13:nonroot AS grove-operator
 # Version should be passed as a build argument.
 ARG VERSION
 
@@ -50,7 +50,7 @@ COPY --from=builder /go/src/github.com/ai-dynamo/grove/operator/bin/grove-operat
 ENTRYPOINT ["/grove-operator"]
 
 # grove-install-crds
-FROM gcr.io/distroless/static-debian11:nonroot AS grove-install-crds
+FROM gcr.io/distroless/static-debian13:nonroot AS grove-install-crds
 # Version should be passed as a build argument.
 ARG VERSION
 

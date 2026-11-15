@@ -379,6 +379,34 @@ func TestBackend_SyncPodGangSetsOwnerReferenceAndSkipAnnotation(t *testing.T) {
 	assert.Equal(t, annotationValSkipPGR, updatedPodGang.Annotations[annotationKeySkipPGR])
 }
 
+func TestBackend_SyncPodGang_IgnoresTerminatingPodGang(t *testing.T) {
+	pcs := newPodCliqueSet(
+		"owned-pcs",
+		"team-a",
+		podCliqueTemplateWithQueue("worker-template", "team-a"),
+	)
+	podGang := testutils.NewPodGangBuilder("terminating", "default").
+		WithPodGroup("worker-template", 1).
+		WithSchedulerName(string(configv1beta1.SchedulerNameKai)).
+		Build()
+	setPodCliqueSetControllerOwner(podGang, pcs)
+	now := metav1.Now()
+	podGang.DeletionTimestamp = &now
+	podGang.Finalizers = []string{"example.com/hold"}
+
+	cl := testutils.NewTestClientBuilder().WithObjects(pcs, podGang).Build()
+	b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameKai})
+	require.NoError(t, b.Init(cl))
+
+	require.NoError(t, b.SyncPodGang(t.Context(), podGang))
+
+	err := cl.Get(t.Context(), client.ObjectKeyFromObject(podGang), &kaischedulingv2alpha2.PodGroup{})
+	assert.True(t, apierrors.IsNotFound(err))
+	storedPodGang := &groveschedulerv1alpha1.PodGang{}
+	require.NoError(t, cl.Get(t.Context(), client.ObjectKeyFromObject(podGang), storedPodGang))
+	assert.NotContains(t, storedPodGang.Annotations, annotationKeySkipPGR)
+}
+
 func TestBackend_SyncPodGang_UsesUniquePodCliqueTemplateQueue(t *testing.T) {
 	pcs := newPodCliqueSet(
 		"template-queue-pcs",

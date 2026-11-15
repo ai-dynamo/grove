@@ -125,6 +125,9 @@ func (b *schedulerBackend) Init(directClient client.Client) error {
 // them together. Each replica above minAvailable has its own PodGang and Workload, created once the anchor is
 // scheduled.
 func (b *schedulerBackend) SyncPodGang(ctx context.Context, podGang *groveschedulerv1alpha1.PodGang) error {
+	if !podGang.DeletionTimestamp.IsZero() {
+		return nil
+	}
 	pcsName := podGang.Labels[apicommon.LabelPartOfKey]
 	if pcsName == "" {
 		return fmt.Errorf("PodGang %s/%s must set label %q", podGang.Namespace, podGang.Name, apicommon.LabelPartOfKey)
