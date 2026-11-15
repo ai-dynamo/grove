@@ -33,7 +33,6 @@ func computePCSReplicaState(
 	scalingIndices pcsReplicaScalingIndices,
 	expectedReplicaIndices sets.Set[int],
 	replacementGroups pcsReplicaReplacementGroups) pcssync.State {
-
 	// An unobserved PCS is still being provisioned for the first time. Its expected identities are the
 	// contiguous range for the desired replica count and require no scaling reservations.
 	if pcs.Status.ObservedGeneration == nil {
@@ -74,7 +73,6 @@ func overlayActiveReplacement(
 	pcs *grovecorev1beta1.PodCliqueSet,
 	replacement pcsReplicaReplacement,
 	expectedReplicaIndices, scaleInReplicaIndices, scaleOutReplicaIndices sets.Set[int]) {
-
 	source := replacement.sourcePCSReplicaIndex
 	target := replacement.targetPCSReplicaIndex
 

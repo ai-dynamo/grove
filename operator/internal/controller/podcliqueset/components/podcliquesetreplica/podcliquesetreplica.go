@@ -155,7 +155,6 @@ func pcsReplicaInfosForUpdate(
 	pcsReplicaInfosByIndex pcsReplicaInfoByIndex,
 	expectedPCSReplicaIndices []int,
 	pcsReplicaIndicesToTerminate []int) []pcsReplicaInfo {
-
 	pcsReplicaIndicesSelectedForTermination := sets.New(pcsReplicaIndicesToTerminate...)
 	pcsReplicaInfos := make([]pcsReplicaInfo, 0, len(expectedPCSReplicaIndices))
 	for _, pcsReplicaIndex := range expectedPCSReplicaIndices {
