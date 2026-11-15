@@ -111,9 +111,13 @@ func newUpdateStrategyHooks(
 }
 
 // orchestrate reconciles the active PodCliqueSet rolling update.
-func (o *rollingUpdateOrchestrator) orchestrate(ctx context.Context, originalPCS *grovecorev1beta1.PodCliqueSet) error {
+func (o *rollingUpdateOrchestrator) orchestrate(ctx context.Context, originalPCS *grovecorev1beta1.PodCliqueSet, replacementSourcesToCancel []int) error {
 	logger := logr.FromContextOrDiscard(ctx)
 	currentlyUpdating := o.pcs.Status.UpdateProgress.CurrentlyUpdating
+	// Cancel replacements whose target PCS scale-in reclaimed, before reconciling or selecting updates, so the
+	// rest of this reconciliation sees the canceled state. The recreation planner excludes canceled replacements
+	// from budget and re-selection, so a canceled entry simply drains through cleanup.
+	cancelReplacements(currentlyUpdating, replacementSourcesToCancel)
 	reconcileResult, err := o.updateHooks.reconcileCurrentlyUpdatingReplicas(currentlyUpdating)
 	if err != nil {
 		return err
@@ -167,6 +171,31 @@ func removePCSReplicaUpdates(currentlyUpdating []grovecorev1beta1.PodCliqueSetRe
 	return slices.DeleteFunc(currentlyUpdating, func(progress grovecorev1beta1.PodCliqueSetReplicaUpdateProgress) bool {
 		return indicesToRemove.Has(int(progress.ReplicaIndex))
 	})
+}
+
+// cancelReplacementMessage records why a PodCliqueSet replica replacement was canceled.
+const cancelReplacementMessage = "replacement canceled because its target was selected for PodCliqueSet scale-in"
+
+// cancelReplacements stamps CanceledAt and a cancellation message on the active replacements whose source
+// replica index is in sourceReplicaIndicesToCancel. An entry without a replacement, an already-canceled entry,
+// or an absent source index is left unchanged, so the operation is idempotent.
+func cancelReplacements(currentlyUpdating []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress, sourceReplicaIndicesToCancel []int) {
+	if len(sourceReplicaIndicesToCancel) == 0 {
+		return
+	}
+	sourcesToCancel := sets.New(sourceReplicaIndicesToCancel...)
+	canceledAt := metav1.Now()
+	message := cancelReplacementMessage
+	for i := range currentlyUpdating {
+		replicaProgress := &currentlyUpdating[i]
+		if replicaProgress.Replacement == nil || replicaProgress.Replacement.CanceledAt != nil {
+			continue
+		}
+		if sourcesToCancel.Has(int(replicaProgress.ReplicaIndex)) {
+			replicaProgress.Replacement.CanceledAt = &canceledAt
+			replicaProgress.Replacement.CancellationMessage = &message
+		}
+	}
 }
 
 // markPCSReplicaUpdatesCompleted stamps UpdateEndedAt on completed PCS replica updates.
