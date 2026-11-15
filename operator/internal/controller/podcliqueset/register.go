@@ -16,7 +16,6 @@ package podcliqueset
 
 import (
 	"context"
-	"reflect"
 
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
@@ -25,6 +24,7 @@ import (
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -246,8 +246,10 @@ func hasPodCliqueScalingGroupStatusChanged(oldPCSGStatus, newPCSGStatus *groveco
 }
 
 // hasUpdateStatusChanged reports whether the update progress has changed between the old and new states.
+// Semantic equality matches the status reconcilers and is robust to representation differences in
+// metav1.Time and nil-versus-empty slices.
 func hasUpdateStatusChanged(oldProgress, newProgress any) bool {
-	return !reflect.DeepEqual(oldProgress, newProgress)
+	return !equality.Semantic.DeepEqual(oldProgress, newProgress)
 }
 
 // stringPointersEqual reports whether two *string values are equal, treating nil pointers as equal only to other nil pointers.

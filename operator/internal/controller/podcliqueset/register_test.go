@@ -16,6 +16,7 @@ package podcliqueset
 
 import (
 	"testing"
+	"time"
 
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
@@ -368,4 +369,64 @@ func TestDeleteOnlyPredicate(t *testing.T) {
 	assert.False(t, pred.CreateFunc(event.CreateEvent{}), "create event must not enqueue")
 	assert.False(t, pred.UpdateFunc(event.UpdateEvent{}), "update event must not enqueue")
 	assert.False(t, pred.GenericFunc(event.GenericEvent{}), "generic event must not enqueue")
+}
+
+// TestHasUpdateStatusChanged asserts that update-progress comparison is semantic rather than
+// structural: the same instant carried in different time.Location representations (as happens
+// between a status decoded from the API server and one constructed in memory) must not be
+// reported as changed, while genuine changes must be.
+func TestHasUpdateStatusChanged(t *testing.T) {
+	utc := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	otherZone := time.FixedZone("UTC+1", 3600)
+
+	t.Run("same instant in different timezones is not a change", func(t *testing.T) {
+		oldProgress := &grovecorev1beta1.PodCliqueSetUpdateProgress{
+			UpdateStartedAt: metav1.NewTime(utc),
+			UpdateEndedAt:   ptr.To(metav1.NewTime(utc.Add(time.Hour))),
+		}
+		newProgress := &grovecorev1beta1.PodCliqueSetUpdateProgress{
+			UpdateStartedAt: metav1.NewTime(utc.In(otherZone)),
+			UpdateEndedAt:   ptr.To(metav1.NewTime(utc.Add(time.Hour).In(otherZone))),
+		}
+		assert.False(t, hasUpdateStatusChanged(oldProgress, newProgress),
+			"equal instants with different location representations must not count as changed")
+	})
+
+	t.Run("nil versus empty slices is not a change", func(t *testing.T) {
+		oldProgress := &grovecorev1beta1.PodCliqueSetUpdateProgress{
+			UpdateStartedAt: metav1.NewTime(utc),
+		}
+		newProgress := &grovecorev1beta1.PodCliqueSetUpdateProgress{
+			UpdateStartedAt:             metav1.NewTime(utc),
+			InScopeStandalonePodCliques: []string{},
+		}
+		assert.False(t, hasUpdateStatusChanged(oldProgress, newProgress),
+			"nil and empty slices must not count as changed")
+	})
+
+	t.Run("different instants are a change", func(t *testing.T) {
+		oldProgress := &grovecorev1beta1.PodCliqueSetUpdateProgress{
+			UpdateStartedAt: metav1.NewTime(utc),
+		}
+		newProgress := &grovecorev1beta1.PodCliqueSetUpdateProgress{
+			UpdateStartedAt: metav1.NewTime(utc.Add(time.Second)),
+		}
+		assert.True(t, hasUpdateStatusChanged(oldProgress, newProgress))
+	})
+
+	t.Run("changed counts are a change", func(t *testing.T) {
+		oldProgress := &grovecorev1beta1.PodCliqueUpdateProgress{
+			UpdateStartedAt:          metav1.NewTime(utc),
+			UpdatedScheduledReplicas: 1,
+		}
+		newProgress := &grovecorev1beta1.PodCliqueUpdateProgress{
+			UpdateStartedAt:          metav1.NewTime(utc),
+			UpdatedScheduledReplicas: 2,
+		}
+		assert.True(t, hasUpdateStatusChanged(oldProgress, newProgress))
+	})
+
+	t.Run("both nil is not a change", func(t *testing.T) {
+		assert.False(t, hasUpdateStatusChanged(nil, nil))
+	})
 }
