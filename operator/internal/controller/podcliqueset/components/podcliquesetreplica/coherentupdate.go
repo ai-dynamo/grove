@@ -15,7 +15,6 @@
 package podcliquesetreplica
 
 import (
-	"context"
 	"fmt"
 	"slices"
 	"strings"
@@ -26,8 +25,6 @@ import (
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 
-	"github.com/go-logr/logr"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -114,60 +111,6 @@ func refreshCoherentReplicaProgress(
 		progress.InFlightEpochs = []string{*latestEpoch}
 	}
 	progress.Message = coherentProgressMessage(pcs, replicaInfo)
-	return nil
-}
-
-// updateCoherentReplicaProgress records the observability fields for the replica currently under a
-// coherent update. InFlightEpochs mirrors the latest current-hash epoch on the replica's PodGangMap, and
-// Message summarizes the in-scope components that have not yet reached the current revision.
-func (r *_resource) updateCoherentReplicaProgress(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, replicaInfo pcsReplicaInfo) error {
-	inFlightEpochs, err := r.inFlightEpochsForReplica(ctx, pcs, replicaInfo.index)
-	if err != nil {
-		return err
-	}
-	original := pcs.DeepCopy()
-	current := updateProgressForReplica(pcs.Status.UpdateProgress, replicaInfo.index)
-	if current == nil {
-		return fmt.Errorf("PodCliqueSet replica index %d is not selected for update", replicaInfo.index)
-	}
-	current.InFlightEpochs = inFlightEpochs
-	current.Message = coherentProgressMessage(pcs, replicaInfo)
-	return r.patchUpdateProgressStatus(ctx, logger, pcs, original)
-}
-
-// inFlightEpochsForReplica returns the latest current-hash epoch on the replica's PodGangMap, the batch
-// the coherent engine is currently rolling. It is a list to leave room for a future iteration that rolls
-// more than one batch at a time. It is empty when no PodGangMap or no current-hash entry exists yet.
-func (r *_resource) inFlightEpochsForReplica(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet, pcsReplicaIndex int) ([]string, error) {
-	pgm, err := componentutils.GetPodGangMap(ctx, r.client, client.ObjectKeyFromObject(pcs), pcsReplicaIndex)
-	if err != nil {
-		if apierrors.IsNotFound(err) {
-			return nil, nil
-		}
-		return nil, groveerr.WrapError(err, errCodeGetPodGangMap, component.OperationSync,
-			fmt.Sprintf("could not get PodGangMap for PodCliqueSet %v replica %d", client.ObjectKeyFromObject(pcs), pcsReplicaIndex))
-	}
-	latestEpoch, err := componentutils.LatestEpochForGenerationHash(pgm.Spec.Entries, *pcs.Status.CurrentGenerationHash)
-	if err != nil {
-		return nil, groveerr.WrapError(err, errCodeInvalidEpoch, component.OperationSync,
-			fmt.Sprintf("could not determine the latest current-hash epoch for PodCliqueSet %v replica %d", client.ObjectKeyFromObject(pcs), pcsReplicaIndex))
-	}
-	if latestEpoch == nil {
-		return nil, nil
-	}
-	return []string{*latestEpoch}, nil
-}
-
-// updateProgressForReplica returns the update progress for the selected PCS replica index.
-func updateProgressForReplica(progress *grovecorev1beta1.PodCliqueSetUpdateProgress, replicaIndex int) *grovecorev1beta1.PodCliqueSetReplicaUpdateProgress {
-	if progress == nil {
-		return nil
-	}
-	for i := range progress.CurrentlyUpdating {
-		if int(progress.CurrentlyUpdating[i].ReplicaIndex) == replicaIndex {
-			return &progress.CurrentlyUpdating[i]
-		}
-	}
 	return nil
 }
 
