@@ -434,7 +434,7 @@ func TestReconcileCurrentlyUpdatingReplicasReportsCompletedReplacements(t *testi
 		}
 	}
 	convergedUnavailableInfo := func(replicaIndex int) pcsReplicaInfo {
-		info := rollingUpdateReplicaInfo(pcs, replicaIndex, true, 1)
+		info := rollingUpdateReplicaInfo(pcs, replicaIndex, true)
 		info.standalonePCLQs[0].DeletionTimestamp = &canceledAt
 		return info
 	}
@@ -448,18 +448,18 @@ func TestReconcileCurrentlyUpdatingReplicasReportsCompletedReplacements(t *testi
 		{
 			name:              "completes a different-index replacement once its source is gone and its target converged",
 			currentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{differentIndex()},
-			replicaInfos:      pcsReplicaInfoByIndex{2: rollingUpdateReplicaInfo(pcs, 2, true, 1)},
+			replicaInfos:      pcsReplicaInfoByIndex{2: rollingUpdateReplicaInfo(pcs, 2, true)},
 			want:              []int{0},
 		},
 		{
 			name:              "keeps a different-index replacement active while its source resources remain",
 			currentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{differentIndex()},
-			replicaInfos:      pcsReplicaInfoByIndex{0: rollingUpdateReplicaInfo(pcs, 0, true, 1), 2: rollingUpdateReplicaInfo(pcs, 2, true, 1)},
+			replicaInfos:      pcsReplicaInfoByIndex{0: rollingUpdateReplicaInfo(pcs, 0, true), 2: rollingUpdateReplicaInfo(pcs, 2, true)},
 		},
 		{
 			name:              "keeps a different-index replacement active while its target has not converged",
 			currentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{differentIndex()},
-			replicaInfos:      pcsReplicaInfoByIndex{2: rollingUpdateReplicaInfo(pcs, 2, false, 1)},
+			replicaInfos:      pcsReplicaInfoByIndex{2: rollingUpdateReplicaInfo(pcs, 2, false)},
 		},
 		{
 			name:              "keeps a different-index replacement active while its target is converged but unavailable",
@@ -469,7 +469,7 @@ func TestReconcileCurrentlyUpdatingReplicasReportsCompletedReplacements(t *testi
 		{
 			name:              "completes a same-index replacement once its barrier is set and its target converged",
 			currentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{sameIndexWithBarrier()},
-			replicaInfos:      pcsReplicaInfoByIndex{1: rollingUpdateReplicaInfo(pcs, 1, true, 1)},
+			replicaInfos:      pcsReplicaInfoByIndex{1: rollingUpdateReplicaInfo(pcs, 1, true)},
 			want:              []int{1},
 		},
 		{
@@ -478,12 +478,12 @@ func TestReconcileCurrentlyUpdatingReplicasReportsCompletedReplacements(t *testi
 				ReplicaIndex: 1,
 				Replacement:  &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 1},
 			}},
-			replicaInfos: pcsReplicaInfoByIndex{1: rollingUpdateReplicaInfo(pcs, 1, true, 1)},
+			replicaInfos: pcsReplicaInfoByIndex{1: rollingUpdateReplicaInfo(pcs, 1, true)},
 		},
 		{
 			name:              "keeps a same-index replacement active while its target has not converged",
 			currentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{sameIndexWithBarrier()},
-			replicaInfos:      pcsReplicaInfoByIndex{1: rollingUpdateReplicaInfo(pcs, 1, false, 1)},
+			replicaInfos:      pcsReplicaInfoByIndex{1: rollingUpdateReplicaInfo(pcs, 1, false)},
 		},
 		{
 			name: "does not report a canceled replacement as completed",
@@ -491,7 +491,7 @@ func TestReconcileCurrentlyUpdatingReplicasReportsCompletedReplacements(t *testi
 				ReplicaIndex: 0,
 				Replacement:  &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 2, CanceledAt: &canceledAt},
 			}},
-			replicaInfos: pcsReplicaInfoByIndex{2: rollingUpdateReplicaInfo(pcs, 2, true, 1)},
+			replicaInfos: pcsReplicaInfoByIndex{2: rollingUpdateReplicaInfo(pcs, 2, true)},
 		},
 		{
 			name: "does not re-report an already completed replacement",
@@ -500,12 +500,12 @@ func TestReconcileCurrentlyUpdatingReplicasReportsCompletedReplacements(t *testi
 				Replacement:   &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 2},
 				UpdateEndedAt: &endedAt,
 			}},
-			replicaInfos: pcsReplicaInfoByIndex{2: rollingUpdateReplicaInfo(pcs, 2, true, 1)},
+			replicaInfos: pcsReplicaInfoByIndex{2: rollingUpdateReplicaInfo(pcs, 2, true)},
 		},
 		{
 			name:              "reports multiple completed replacements together",
 			currentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{differentIndex(), sameIndexWithBarrier()},
-			replicaInfos:      pcsReplicaInfoByIndex{1: rollingUpdateReplicaInfo(pcs, 1, true, 1), 2: rollingUpdateReplicaInfo(pcs, 2, true, 1)},
+			replicaInfos:      pcsReplicaInfoByIndex{1: rollingUpdateReplicaInfo(pcs, 1, true), 2: rollingUpdateReplicaInfo(pcs, 2, true)},
 			want:              []int{0, 1},
 		},
 	}
@@ -533,7 +533,7 @@ func TestPCSReplicaRecreationIsUpdateComplete(t *testing.T) {
 
 	t.Run("complete when no replacement remains and every expected replica converged and is available", func(t *testing.T) {
 		pcs := newRecreatingPCS()
-		replicaInfos := pcsReplicaInfoByIndex{0: rollingUpdateReplicaInfo(pcs, 0, true, 1)}
+		replicaInfos := pcsReplicaInfoByIndex{0: rollingUpdateReplicaInfo(pcs, 0, true)}
 		hooks := newPCSReplicaRecreationStrategyHooks(pcs, replicaInfos, pcsReplicaScalingIndices{})
 
 		assert.True(t, hooks.isUpdateComplete())
@@ -544,7 +544,7 @@ func TestPCSReplicaRecreationIsUpdateComplete(t *testing.T) {
 		pcs.Status.UpdateProgress.CurrentlyUpdating = []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{
 			{ReplicaIndex: 0, Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 2}},
 		}
-		replicaInfos := pcsReplicaInfoByIndex{0: rollingUpdateReplicaInfo(pcs, 0, true, 1)}
+		replicaInfos := pcsReplicaInfoByIndex{0: rollingUpdateReplicaInfo(pcs, 0, true)}
 		hooks := newPCSReplicaRecreationStrategyHooks(pcs, replicaInfos, pcsReplicaScalingIndices{})
 
 		assert.False(t, hooks.isUpdateComplete())
@@ -555,7 +555,7 @@ func TestPCSReplicaRecreationIsUpdateComplete(t *testing.T) {
 		pcs.Status.UpdateProgress.CurrentlyUpdating = []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{
 			{ReplicaIndex: 0, Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 2, CanceledAt: &canceledAt}},
 		}
-		replicaInfos := pcsReplicaInfoByIndex{0: rollingUpdateReplicaInfo(pcs, 0, true, 1)}
+		replicaInfos := pcsReplicaInfoByIndex{0: rollingUpdateReplicaInfo(pcs, 0, true)}
 		hooks := newPCSReplicaRecreationStrategyHooks(pcs, replicaInfos, pcsReplicaScalingIndices{})
 
 		assert.False(t, hooks.isUpdateComplete())
@@ -570,7 +570,7 @@ func TestPCSReplicaRecreationIsUpdateComplete(t *testing.T) {
 
 	t.Run("incomplete while an expected replica has not converged", func(t *testing.T) {
 		pcs := newRecreatingPCS()
-		replicaInfos := pcsReplicaInfoByIndex{0: rollingUpdateReplicaInfo(pcs, 0, false, 1)}
+		replicaInfos := pcsReplicaInfoByIndex{0: rollingUpdateReplicaInfo(pcs, 0, false)}
 		hooks := newPCSReplicaRecreationStrategyHooks(pcs, replicaInfos, pcsReplicaScalingIndices{})
 
 		assert.False(t, hooks.isUpdateComplete())
@@ -578,7 +578,7 @@ func TestPCSReplicaRecreationIsUpdateComplete(t *testing.T) {
 
 	t.Run("incomplete while an expected replica is converged but unavailable", func(t *testing.T) {
 		pcs := newRecreatingPCS()
-		info := rollingUpdateReplicaInfo(pcs, 0, true, 1)
+		info := rollingUpdateReplicaInfo(pcs, 0, true)
 		info.standalonePCLQs[0].DeletionTimestamp = &canceledAt
 		replicaInfos := pcsReplicaInfoByIndex{0: info}
 		hooks := newPCSReplicaRecreationStrategyHooks(pcs, replicaInfos, pcsReplicaScalingIndices{})
@@ -595,7 +595,7 @@ func TestOrchestrateAdvancesAppliedHashOnReplacementCompletion(t *testing.T) {
 	pcs.Status.UpdateProgress.CurrentlyUpdating = []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{
 		{ReplicaIndex: 0, Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 0, SourceCleanupCompletedAt: new(metav1.Now())}},
 	}
-	replicaInfos := pcsReplicaInfoByIndex{0: rollingUpdateReplicaInfo(pcs, 0, true, 1)}
+	replicaInfos := pcsReplicaInfoByIndex{0: rollingUpdateReplicaInfo(pcs, 0, true)}
 	fakeClient := testutils.NewTestClientBuilder().WithObjects(pcs).WithStatusSubresource(pcs).Build()
 	hooks := newPCSReplicaRecreationStrategyHooks(pcs, replicaInfos, pcsReplicaScalingIndices{})
 	orchestrator := newRollingUpdateOrchestrator(fakeClient.Status(), &pcsexpectations.CurrentlyUpdating{}, pcs, hooks)

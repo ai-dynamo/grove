@@ -392,7 +392,6 @@ func (r *Reconciler) commitPCSCleanupStatus(
 	logger logr.Logger,
 	pcs, originalPCS *grovecorev1beta1.PodCliqueSet,
 	completedScaleInReplicaIndices, sourceCleanupCompletedReplicaIndices, removedCanceledReplicaIndices []int32) (bool, error) {
-
 	scalingProgressChanged := len(completedScaleInReplicaIndices) > 0
 	updateProgressChanged := len(sourceCleanupCompletedReplicaIndices) > 0 || len(removedCanceledReplicaIndices) > 0
 	if !scalingProgressChanged && !updateProgressChanged {

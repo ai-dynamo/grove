@@ -42,7 +42,6 @@ func (r *_resource) syncScalingProgress(
 	logger logr.Logger,
 	pcs *grovecorev1beta1.PodCliqueSet,
 	pcsReplicaInfosByIndex pcsReplicaInfoByIndex) (pcsReplicaScalingWork, bool, error) {
-
 	scalingIndices := replicaScalingIndicesFromProgress(pcs.Status.ScalingProgress)
 	replacementGroups := groupPCSReplicaReplacements(pcs.Status.UpdateProgress)
 	scalingWork := computePCSReplicaScalingWork(pcs, pcsReplicaInfosByIndex, scalingIndices, replacementGroups)

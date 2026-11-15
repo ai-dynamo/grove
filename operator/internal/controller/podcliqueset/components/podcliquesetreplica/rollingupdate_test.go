@@ -95,8 +95,8 @@ func TestReconcileCurrentlyUpdatingPCSReplicasForConfiguredStrategy(t *testing.T
 		{ReplicaIndex: 3},
 	}
 	replicaInfos := []pcsReplicaInfo{
-		rollingUpdateReplicaInfo(pcs, 0, true, 1),
-		rollingUpdateReplicaInfo(pcs, 1, false, 1),
+		rollingUpdateReplicaInfo(pcs, 0, true),
+		rollingUpdateReplicaInfo(pcs, 1, false),
 	}
 
 	result, stillUpdating := reconcileCurrentlyUpdatingPCSReplicasForConfiguredStrategy(pcs, replicaInfos, pcs.Status.UpdateProgress.CurrentlyUpdating)
@@ -110,8 +110,8 @@ func TestReconcileCurrentlyUpdatingPCSReplicasForConfiguredStrategyRetainsIncomp
 	pcs := rollingUpdateTestPCS()
 	pcs.Status.UpdateProgress.CurrentlyUpdating = []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 1}}
 	replicaInfos := []pcsReplicaInfo{
-		rollingUpdateReplicaInfo(pcs, 0, false, 1),
-		rollingUpdateReplicaInfo(pcs, 1, false, 1),
+		rollingUpdateReplicaInfo(pcs, 0, false),
+		rollingUpdateReplicaInfo(pcs, 1, false),
 	}
 
 	result, stillUpdating := reconcileCurrentlyUpdatingPCSReplicasForConfiguredStrategy(pcs, replicaInfos, pcs.Status.UpdateProgress.CurrentlyUpdating)
@@ -124,8 +124,8 @@ func TestReconcileCurrentlyUpdatingPCSReplicasForConfiguredStrategyRetainsIncomp
 func TestSelectPCSReplicasForConfiguredStrategy(t *testing.T) {
 	pcs := rollingUpdateTestPCS()
 	replicaInfos := []pcsReplicaInfo{
-		rollingUpdateReplicaInfo(pcs, 0, false, 1),
-		rollingUpdateReplicaInfo(pcs, 1, false, 1),
+		rollingUpdateReplicaInfo(pcs, 0, false),
+		rollingUpdateReplicaInfo(pcs, 1, false),
 	}
 
 	t.Run("selects a pending replica within budget", func(t *testing.T) {
@@ -140,9 +140,9 @@ func TestSelectPCSReplicasForConfiguredStrategy(t *testing.T) {
 
 	t.Run("excludes completed replicas and selects the next pending one", func(t *testing.T) {
 		infos := []pcsReplicaInfo{
-			rollingUpdateReplicaInfo(pcs, 0, true, 1),
-			rollingUpdateReplicaInfo(pcs, 1, false, 1),
-			rollingUpdateReplicaInfo(pcs, 2, false, 1),
+			rollingUpdateReplicaInfo(pcs, 0, true),
+			rollingUpdateReplicaInfo(pcs, 1, false),
+			rollingUpdateReplicaInfo(pcs, 2, false),
 		}
 		selections := selectPCSReplicasForConfiguredStrategy(pcs, infos, sets.New[int](), nil)
 		assert.Equal(t, []pcsReplicaUpdateSelection{{replicaIndex: 1}}, selections)
@@ -153,12 +153,12 @@ func TestIsConfiguredStrategyUpdateComplete(t *testing.T) {
 	pcs := rollingUpdateTestPCS()
 
 	t.Run("complete when every replica converged", func(t *testing.T) {
-		infos := []pcsReplicaInfo{rollingUpdateReplicaInfo(pcs, 0, true, 1)}
+		infos := []pcsReplicaInfo{rollingUpdateReplicaInfo(pcs, 0, true)}
 		assert.True(t, isConfiguredStrategyUpdateComplete(pcs, infos))
 	})
 
 	t.Run("incomplete when a replica has not converged", func(t *testing.T) {
-		infos := []pcsReplicaInfo{rollingUpdateReplicaInfo(pcs, 0, false, 1)}
+		infos := []pcsReplicaInfo{rollingUpdateReplicaInfo(pcs, 0, false)}
 		assert.False(t, isConfiguredStrategyUpdateComplete(pcs, infos))
 	})
 }
@@ -231,7 +231,7 @@ func rollingUpdateTestPCS() *grovecorev1beta1.PodCliqueSet {
 }
 
 func rollingUpdateReplicaInfoAtGeneration(pcs *grovecorev1beta1.PodCliqueSet, replicaIndex int, generationHash string, available bool) pcsReplicaInfo {
-	info := rollingUpdateReplicaInfo(pcs, replicaIndex, false, 1)
+	info := rollingUpdateReplicaInfo(pcs, replicaIndex, false)
 	info.standalonePCLQs[0].Status.CurrentPodCliqueSetGenerationHash = new(generationHash)
 	if available {
 		info.standalonePCLQs[0].Status.ReadyReplicas = 1
@@ -241,7 +241,7 @@ func rollingUpdateReplicaInfoAtGeneration(pcs *grovecorev1beta1.PodCliqueSet, re
 	return info
 }
 
-func rollingUpdateReplicaInfo(pcs *grovecorev1beta1.PodCliqueSet, replicaIndex int, complete bool, scheduledReplicas int32) pcsReplicaInfo {
+func rollingUpdateReplicaInfo(pcs *grovecorev1beta1.PodCliqueSet, replicaIndex int, complete bool) pcsReplicaInfo {
 	expectedPodTemplateHash := componentutils.ComputePCLQPodTemplateHash(pcs.Spec.Template.Cliques[0], pcs.Spec.Template.PriorityClassName)
 	podTemplateHash := "stale"
 	generationHash := "stale"
@@ -253,10 +253,10 @@ func rollingUpdateReplicaInfo(pcs *grovecorev1beta1.PodCliqueSet, replicaIndex i
 		WithMinAvailable(1).
 		WithLabels(map[string]string{apicommon.LabelPodTemplateHash: podTemplateHash}).
 		Build()
-	pclq.Status.CurrentPodTemplateHash = new(podTemplateHash)
-	pclq.Status.CurrentPodCliqueSetGenerationHash = new(generationHash)
+	pclq.Status.CurrentPodTemplateHash = &podTemplateHash
+	pclq.Status.CurrentPodCliqueSetGenerationHash = &generationHash
 	pclq.Status.UpdatedReplicas = 1
 	pclq.Status.ReadyReplicas = 1
-	pclq.Status.ScheduledReplicas = scheduledReplicas
+	pclq.Status.ScheduledReplicas = 1
 	return pcsReplicaInfo{index: replicaIndex, standalonePCLQs: []grovecorev1beta1.PodClique{*pclq}}
 }

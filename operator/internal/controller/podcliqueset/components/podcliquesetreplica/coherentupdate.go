@@ -129,7 +129,8 @@ func coherentProgressMessage(pcs *grovecorev1beta1.PodCliqueSet, replicaInfo pcs
 	if inScopePCSG > 0 {
 		parts = append(parts, fmt.Sprintf("%d/%d PodCliqueScalingGroups", updatedPCSG, inScopePCSG))
 	}
-	return new(fmt.Sprintf("%s updated to the current revision", strings.Join(parts, " and ")))
+	message := fmt.Sprintf("%s updated to the current revision", strings.Join(parts, " and "))
+	return &message
 }
 
 // inScopeUpdateCounts returns, for the update's in-scope components, how many are in scope and how many

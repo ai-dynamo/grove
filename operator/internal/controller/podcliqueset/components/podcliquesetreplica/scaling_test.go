@@ -470,8 +470,8 @@ func TestSelectReplicaIndicesForScaleInRanksReplacementTargetsAndConvergedReplic
 
 	t.Run("ranks a replacement target in scale-out below a non-target in scale-out", func(t *testing.T) {
 		replicaInfos := pcsReplicaInfoByIndex{
-			2: rollingUpdateReplicaInfo(pcs, 2, false, 1),
-			3: rollingUpdateReplicaInfo(pcs, 3, false, 1),
+			2: rollingUpdateReplicaInfo(pcs, 2, false),
+			3: rollingUpdateReplicaInfo(pcs, 3, false),
 		}
 		claimed := sets.New(2, 3)
 		scaleOut := sets.New(2, 3)
@@ -485,8 +485,8 @@ func TestSelectReplicaIndicesForScaleInRanksReplacementTargetsAndConvergedReplic
 
 	t.Run("ranks an available converged replica below an available unconverged one", func(t *testing.T) {
 		replicaInfos := pcsReplicaInfoByIndex{
-			0: rollingUpdateReplicaInfo(pcs, 0, false, 1), // available, not converged (old spec)
-			1: rollingUpdateReplicaInfo(pcs, 1, true, 1),  // available, converged (new spec)
+			0: rollingUpdateReplicaInfo(pcs, 0, false), // available, not converged (old spec)
+			1: rollingUpdateReplicaInfo(pcs, 1, true),  // available, converged (new spec)
 		}
 		claimed := sets.New(0, 1)
 
@@ -509,9 +509,9 @@ func TestComputePCSReplicaScalingWorkCancelsReplacementWhenScaleInSelectsTarget(
 	// desired 1, one unit must be reclaimed. Target 2 is in scale-out and ranks after the non-target 1, but 1
 	// is available (converged) while 2 is an unconverged scale-out target, so 2 is selected first and canceled.
 	replicaInfos := pcsReplicaInfoByIndex{
-		0: rollingUpdateReplicaInfo(pcs, 0, true, 1),
-		1: rollingUpdateReplicaInfo(pcs, 1, true, 1),
-		2: rollingUpdateReplicaInfo(pcs, 2, false, 1),
+		0: rollingUpdateReplicaInfo(pcs, 0, true),
+		1: rollingUpdateReplicaInfo(pcs, 1, true),
+		2: rollingUpdateReplicaInfo(pcs, 2, false),
 	}
 	replacementGroups := groupPCSReplicaReplacements(pcs.Status.UpdateProgress)
 
@@ -526,8 +526,8 @@ func TestComputePCSReplicaScalingWorkScalesInNonTarget(t *testing.T) {
 	pcs.Status.ObservedGeneration = new(pcs.Generation)
 	pcs.Spec.Replicas = 1
 	replicaInfos := pcsReplicaInfoByIndex{
-		0: rollingUpdateReplicaInfo(pcs, 0, true, 1),
-		1: rollingUpdateReplicaInfo(pcs, 1, true, 1),
+		0: rollingUpdateReplicaInfo(pcs, 0, true),
+		1: rollingUpdateReplicaInfo(pcs, 1, true),
 	}
 
 	work := computePCSReplicaScalingWork(pcs, replicaInfos, pcsReplicaScalingIndices{}, pcsReplicaReplacementGroups{})
