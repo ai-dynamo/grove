@@ -452,6 +452,69 @@ func waitForActiveReplacementTargetingIndex(tc *testctx.TestContext, targetRepli
 	return sourceReplicaIndex, nil
 }
 
+// watchPodCliqueSet starts watching changes after the workload's current resource version. Call it before
+// mutating the PCS so transient status changes are not lost. The caller owns the watch and must stop it.
+func watchPodCliqueSet(ctx context.Context, tc *testctx.TestContext) (watch.Interface, error) {
+	var pcs grovev1beta1.PodCliqueSet
+	key := types.NamespacedName{Namespace: tc.Namespace, Name: tc.Workload.Name}
+	if err := tc.Client.Get(ctx, key, &pcs); err != nil {
+		return nil, fmt.Errorf("get PodCliqueSet %s before watching: %w", key, err)
+	}
+	watchClient, err := client.NewWithWatch(tc.Client.RestConfig, client.Options{Scheme: tc.Client.Scheme()})
+	if err != nil {
+		return nil, fmt.Errorf("create PodCliqueSet watch client: %w", err)
+	}
+	watcher, err := watchClient.Watch(ctx, &grovev1beta1.PodCliqueSetList{},
+		client.InNamespace(tc.Namespace),
+		client.MatchingFields{"metadata.name": tc.Workload.Name},
+		&client.ListOptions{Raw: &metav1.ListOptions{ResourceVersion: pcs.ResourceVersion}},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("watch PodCliqueSet %s: %w", key, err)
+	}
+	return watcher, nil
+}
+
+// waitForCanceledReplacement consumes a watch established before scale-in and returns the cancellation message
+// for the expected source replica. It observes the cancellation event even if a later event already removed
+// the drained replacement from CurrentlyUpdating. The caller owns the watch and its lifetime.
+func waitForCanceledReplacement(ctx context.Context, watcher watch.Interface, sourceReplicaIndex int32) (string, error) {
+	for {
+		select {
+		case <-ctx.Done():
+			return "", fmt.Errorf("waiting for replacement of replica %d to be canceled: %w", sourceReplicaIndex, ctx.Err())
+		case event, open := <-watcher.ResultChan():
+			if !open {
+				return "", fmt.Errorf("PodCliqueSet watch closed before replacement of replica %d was canceled", sourceReplicaIndex)
+			}
+			switch event.Type {
+			case watch.Error:
+				return "", fmt.Errorf("PodCliqueSet watch failed: %w", apierrors.FromObject(event.Object))
+			case watch.Deleted:
+				return "", fmt.Errorf("PodCliqueSet deleted before replacement of replica %d was canceled", sourceReplicaIndex)
+			case watch.Added, watch.Modified:
+				pcs, ok := event.Object.(*grovev1beta1.PodCliqueSet)
+				if !ok {
+					return "", fmt.Errorf("unexpected PodCliqueSet watch object %T", event.Object)
+				}
+				if pcs.Status.UpdateProgress == nil {
+					continue
+				}
+				for _, replicaProgress := range pcs.Status.UpdateProgress.CurrentlyUpdating {
+					replacement := replicaProgress.Replacement
+					if replicaProgress.ReplicaIndex != sourceReplicaIndex || replacement == nil || replacement.CanceledAt == nil {
+						continue
+					}
+					if replacement.CancellationMessage != nil {
+						return *replacement.CancellationMessage, nil
+					}
+					return "", nil
+				}
+			}
+		}
+	}
+}
+
 // getClaimedPCSReplicaIndices returns the sorted PCS replica indices that currently have a PodGangMap, which
 // identifies the replicas whose resources exist.
 func getClaimedPCSReplicaIndices(tc *testctx.TestContext) ([]int, error) {

@@ -56,9 +56,9 @@ func TestComputePCSReplicaStateReplacementOverlay(t *testing.T) {
 			Replacement:  &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 1},
 		})
 		replicaInfos := pcsReplicaInfoByIndex{0: {index: 0}, 2: {index: 2}}
-		expected := sets.New(0, 2)
+		expected := replicaInfos.existingReplicaIndices()
 
-		got := computePCSReplicaState(pcs, replicaInfos, pcsReplicaScalingIndices{}, expected, groupPCSReplicaReplacements(pcs.Status.UpdateProgress))
+		got := computePCSReplicaState(pcs, pcsReplicaScalingIndices{}, expected, groupPCSReplicaReplacements(pcs.Status.UpdateProgress))
 
 		assert.Equal(t, []int{0, 1}, got.ExpectedReplicaIndices)
 		assert.Equal(t, []int{1}, got.ScaleOutReplicaIndices)
@@ -71,9 +71,9 @@ func TestComputePCSReplicaStateReplacementOverlay(t *testing.T) {
 			Replacement:  &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 1},
 		})
 		replicaInfos := pcsReplicaInfoByIndex{0: {index: 0}, 1: {index: 1}}
-		expected := sets.New(0, 1)
+		expected := replicaInfos.existingReplicaIndices()
 
-		got := computePCSReplicaState(pcs, replicaInfos, pcsReplicaScalingIndices{}, expected, groupPCSReplicaReplacements(pcs.Status.UpdateProgress))
+		got := computePCSReplicaState(pcs, pcsReplicaScalingIndices{}, expected, groupPCSReplicaReplacements(pcs.Status.UpdateProgress))
 
 		assert.Equal(t, []int{0}, got.ExpectedReplicaIndices)
 		assert.Empty(t, got.ScaleOutReplicaIndices)
@@ -90,9 +90,9 @@ func TestComputePCSReplicaStateReplacementOverlay(t *testing.T) {
 			},
 		})
 		replicaInfos := pcsReplicaInfoByIndex{0: {index: 0}}
-		expected := sets.New(0)
+		expected := replicaInfos.existingReplicaIndices()
 
-		got := computePCSReplicaState(pcs, replicaInfos, pcsReplicaScalingIndices{}, expected, groupPCSReplicaReplacements(pcs.Status.UpdateProgress))
+		got := computePCSReplicaState(pcs, pcsReplicaScalingIndices{}, expected, groupPCSReplicaReplacements(pcs.Status.UpdateProgress))
 
 		assert.Equal(t, []int{0, 1}, got.ExpectedReplicaIndices)
 		assert.Equal(t, []int{1}, got.ScaleOutReplicaIndices)
@@ -109,16 +109,16 @@ func TestComputePCSReplicaStateReplacementOverlay(t *testing.T) {
 			},
 		})
 		replicaInfos := pcsReplicaInfoByIndex{0: {index: 0}, 1: {index: 1}, 2: {index: 2}}
-		expected := sets.New(0, 1, 2)
+		expected := replicaInfos.existingReplicaIndices()
 
-		got := computePCSReplicaState(pcs, replicaInfos, pcsReplicaScalingIndices{}, expected, groupPCSReplicaReplacements(pcs.Status.UpdateProgress))
+		got := computePCSReplicaState(pcs, pcsReplicaScalingIndices{}, expected, groupPCSReplicaReplacements(pcs.Status.UpdateProgress))
 
 		assert.Equal(t, []int{0}, got.ExpectedReplicaIndices)
 		assert.Empty(t, got.ScaleOutReplicaIndices)
 		assert.Equal(t, []int{1, 2}, got.ScaleInReplicaIndices)
 	})
 
-	t.Run("canceled replacement omits absent target from scale-in", func(t *testing.T) {
+	t.Run("canceled replacement keeps absent target in scale-in for cleanup confirmation", func(t *testing.T) {
 		canceledAt := metav1.Now()
 		pcs := withReplacements(observedPCS(), grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{
 			ReplicaIndex: 2,
@@ -128,12 +128,57 @@ func TestComputePCSReplicaStateReplacementOverlay(t *testing.T) {
 			},
 		})
 		replicaInfos := pcsReplicaInfoByIndex{0: {index: 0}, 2: {index: 2}}
-		expected := sets.New(0, 2)
+		expected := replicaInfos.existingReplicaIndices()
 
-		got := computePCSReplicaState(pcs, replicaInfos, pcsReplicaScalingIndices{}, expected, groupPCSReplicaReplacements(pcs.Status.UpdateProgress))
+		got := computePCSReplicaState(pcs, pcsReplicaScalingIndices{}, expected, groupPCSReplicaReplacements(pcs.Status.UpdateProgress))
 
 		assert.Equal(t, []int{0}, got.ExpectedReplicaIndices)
-		assert.Equal(t, []int{2}, got.ScaleInReplicaIndices)
+		assert.Equal(t, []int{1, 2}, got.ScaleInReplicaIndices)
+	})
+
+	t.Run("canceled replacement keeps absent source and target in scale-in for cleanup confirmation", func(t *testing.T) {
+		canceledAt := metav1.Now()
+		pcs := withReplacements(observedPCS(), grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{
+			ReplicaIndex: 2,
+			Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{
+				TargetReplicaIndex: 1,
+				CanceledAt:         &canceledAt,
+			},
+		})
+		replicaInfos := pcsReplicaInfoByIndex{0: {index: 0}}
+		expected := replicaInfos.existingReplicaIndices()
+
+		got := computePCSReplicaState(pcs, pcsReplicaScalingIndices{}, expected, groupPCSReplicaReplacements(pcs.Status.UpdateProgress))
+
+		assert.Equal(t, []int{0}, got.ExpectedReplicaIndices)
+		assert.Empty(t, got.ScaleOutReplicaIndices)
+		assert.Equal(t, []int{1, 2}, got.ScaleInReplicaIndices)
+	})
+
+	t.Run("canceled same-index replacement keeps cleanup confirmation alongside an active replacement", func(t *testing.T) {
+		canceledAt := metav1.Now()
+		pcs := withReplacements(observedPCS(),
+			grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{
+				ReplicaIndex: 0,
+				Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{
+					TargetReplicaIndex: 0,
+					CanceledAt:         &canceledAt,
+				},
+			},
+			grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{
+				ReplicaIndex: 2,
+				Replacement:  &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 1},
+			},
+		)
+		pcs.Spec.Replicas = 1
+		replicaInfos := pcsReplicaInfoByIndex{1: {index: 1}}
+		expected := replicaInfos.existingReplicaIndices()
+
+		got := computePCSReplicaState(pcs, pcsReplicaScalingIndices{}, expected, groupPCSReplicaReplacements(pcs.Status.UpdateProgress))
+
+		assert.Equal(t, []int{1}, got.ExpectedReplicaIndices)
+		assert.Equal(t, []int{1}, got.ScaleOutReplicaIndices)
+		assert.Equal(t, []int{0, 2}, got.ScaleInReplicaIndices)
 	})
 
 	t.Run("does not mutate the caller expected set", func(t *testing.T) {
@@ -142,9 +187,9 @@ func TestComputePCSReplicaStateReplacementOverlay(t *testing.T) {
 			Replacement:  &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 1},
 		})
 		replicaInfos := pcsReplicaInfoByIndex{0: {index: 0}, 2: {index: 2}}
-		expected := sets.New(0, 2)
+		expected := replicaInfos.existingReplicaIndices()
 
-		computePCSReplicaState(pcs, replicaInfos, pcsReplicaScalingIndices{}, expected, groupPCSReplicaReplacements(pcs.Status.UpdateProgress))
+		computePCSReplicaState(pcs, pcsReplicaScalingIndices{}, expected, groupPCSReplicaReplacements(pcs.Status.UpdateProgress))
 
 		assert.Equal(t, sets.New(0, 2), expected)
 	})

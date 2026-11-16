@@ -292,24 +292,33 @@ func findScaleOutReplicaIndicesWithExpectedPCLQsAndPCSGs(
 	return scaleOutReplicaIndicesWithExpectedPCLQsAndPCSGs
 }
 
-// selectReplicaIndicesForScaleIn selects up to count claimed PCS replica indices for reclamation, in a fixed
-// priority order that disrupts already-unavailable and in-progress replicas before serving ones, so the
-// MaxUnavailable budget is spent last on available replicas. The order is:
+type pcsReplicaScaleInPriority int
+
+const (
+	scaleInUnavailablePendingRecreation pcsReplicaScaleInPriority = iota
+	scaleInInProgress
+	scaleInOtherUnavailable
+	scaleInAvailable
+)
+
+type pcsReplicaScaleInCandidate struct {
+	replicaIndex int
+	priority     pcsReplicaScaleInPriority
+	// tieBreaker prefers insufficient scheduled capacity for unavailable replicas, ordinary scale-out
+	// over replacement targets for in-progress work, and old-generation resources for available replicas.
+	tieBreaker int
+}
+
+// selectReplicaIndicesForScaleIn selects up to count claimed PCS replica indices for reclamation:
+//  1. unavailable replicas with existing old-generation resources and no active replacement
+//  2. in-progress work: ordinary scale-out, then unavailable active replacement targets
+//  3. other unavailable replicas
+//  4. available replicas, preferring those with existing old-generation resources
 //
-//  1. established replicas with insufficient scheduled capacity, not a replacement target
-//  2. established replicas scheduled but not available, not a replacement target
-//  3. replicas with scale-out in progress, not a replacement target
-//  4. replicas with scale-out in progress that are an active replacement target
-//  5. available replicas not yet converged to the current generation, not a replacement target
-//  6. available replicas already converged to the current generation, not a replacement target
-//
-// A selected replacement target (group 4) is reclaimed by canceling its replacement rather than by scale-in.
-// The caller routes each selected index accordingly. Higher indices are selected first within each group.
-//
-// Groups 5 and 6 distinguish not-yet-converged from converged replicas. This distinction is meaningful only
-// when a current generation exists to converge to, which the reconcile flow guarantees before selection runs:
-// processGenerationHashChange persists and requeues until Status.CurrentGenerationHash is set, so a replica
-// here is converged only relative to an established target.
+// Without active replacements, all established unavailable replicas have first priority, preserving ordinary
+// scale-in ordering. Missing children alone do not establish pending old-generation recreation. Replacement
+// targets are recognized from their mapping, independently of scale-out reservations. A selected target is
+// reclaimed by canceling its replacement rather than by scale-in. Higher indices break remaining ties.
 func selectReplicaIndicesForScaleIn(
 	pcs *grovecorev1beta1.PodCliqueSet,
 	replicaInfos pcsReplicaInfoByIndex,
@@ -322,71 +331,49 @@ func selectReplicaIndicesForScaleIn(
 	}
 	numExpectedStandalonePCLQs := componentutils.CountStandalonePCLQs(pcs)
 	numExpectedPCSGs := len(pcs.Spec.Template.PodCliqueScalingGroupConfigs)
-
-	var (
-		insufficientScheduledReplicaIndices []int
-		scheduledUnavailableReplicaIndices  []int
-		scaleOutNonTargetReplicaIndices     []int
-		scaleOutTargetReplicaIndices        []int
-		availableOldSpecReplicaIndices      []int
-		availableNewSpecReplicaIndices      []int
-	)
+	hasActiveReplacementTargets := activeReplacementTargetIndices.Len() > 0
+	candidates := make([]pcsReplicaScaleInCandidate, 0, claimedReplicaIndices.Len())
 	for replicaIndex := range claimedReplicaIndices {
-		// A scale-out index is always claimed, so scale-out replicas are classified here rather than appended
-		// wholesale. An active replacement target is itself a scale-out index, so it is distinguished only by
-		// its replacement role.
-		if scaleOutReplicaIndices.Has(replicaIndex) {
-			if activeReplacementTargetIndices.Has(replicaIndex) {
-				scaleOutTargetReplicaIndices = append(scaleOutTargetReplicaIndices, replicaIndex)
-			} else {
-				scaleOutNonTargetReplicaIndices = append(scaleOutNonTargetReplicaIndices, replicaIndex)
-			}
-			continue
-		}
 		replicaInfo := replicaInfos[replicaIndex]
-		standalonePCLQs := replicaInfo.standalonePCLQs
-		pcsgs := replicaInfo.pcsgs
-		if componentutils.IsPCSReplicaAvailable(numExpectedStandalonePCLQs, numExpectedPCSGs, standalonePCLQs, pcsgs) {
-			replicaInfo.index = replicaIndex
-			if replicaInfo.isUpdateComplete(pcs) {
-				availableNewSpecReplicaIndices = append(availableNewSpecReplicaIndices, replicaIndex)
-			} else {
-				availableOldSpecReplicaIndices = append(availableOldSpecReplicaIndices, replicaIndex)
+		replicaInfo.index = replicaIndex
+		isReplacementTarget := activeReplacementTargetIndices.Has(replicaIndex)
+		isAvailable := replicaInfo.isAvailable(pcs)
+		hasOldGenerationResources := pcs.Status.CurrentGenerationHash != nil &&
+			!replicaInfo.existingResourcesMatchPCSGeneration(*pcs.Status.CurrentGenerationHash)
+		candidate := pcsReplicaScaleInCandidate{replicaIndex: replicaIndex}
+		switch {
+		case scaleOutReplicaIndices.Has(replicaIndex) && !isReplacementTarget:
+			candidate.priority = scaleInInProgress
+		case !isAvailable && isReplacementTarget:
+			candidate.priority = scaleInInProgress
+			candidate.tieBreaker = 1
+		case isAvailable:
+			candidate.priority = scaleInAvailable
+			if !hasOldGenerationResources {
+				candidate.tieBreaker = 1
 			}
-			continue
+		default:
+			candidate.priority = scaleInUnavailablePendingRecreation
+			if hasActiveReplacementTargets && !hasOldGenerationResources {
+				candidate.priority = scaleInOtherUnavailable
+			}
+			if componentutils.HasSufficientScheduledReplicasForPCSReplica(numExpectedStandalonePCLQs, numExpectedPCSGs, replicaInfo.standalonePCLQs, replicaInfo.pcsgs) {
+				candidate.tieBreaker = 1
+			}
 		}
-		if !componentutils.HasSufficientScheduledReplicasForPCSReplica(numExpectedStandalonePCLQs, numExpectedPCSGs, standalonePCLQs, pcsgs) {
-			insufficientScheduledReplicaIndices = append(insufficientScheduledReplicaIndices, replicaIndex)
-			continue
-		}
-		scheduledUnavailableReplicaIndices = append(scheduledUnavailableReplicaIndices, replicaIndex)
+		candidates = append(candidates, candidate)
 	}
 
-	orderedReplicaIndices := coalesceDescending(
-		insufficientScheduledReplicaIndices,
-		scheduledUnavailableReplicaIndices,
-		scaleOutNonTargetReplicaIndices,
-		scaleOutTargetReplicaIndices,
-		availableOldSpecReplicaIndices,
-		availableNewSpecReplicaIndices,
-	)
-	return orderedReplicaIndices[:min(count, len(orderedReplicaIndices))]
-}
-
-// coalesceDescending sorts each group from highest to lowest index and concatenates the groups in the order
-// supplied. The groups are disjoint, so the result contains unique indices in scale-in priority order.
-func coalesceDescending(groups ...[]int) []int {
-	var orderedReplicaIndices []int
-	for _, group := range groups {
-		sortReplicaIndicesDescending(group)
-		orderedReplicaIndices = append(orderedReplicaIndices, group...)
-	}
-	return orderedReplicaIndices
-}
-
-// sortReplicaIndicesDescending sorts replica indices from highest to lowest.
-func sortReplicaIndicesDescending(replicaIndices []int) {
-	slices.SortFunc(replicaIndices, func(a, b int) int {
-		return cmp.Compare(b, a)
+	slices.SortFunc(candidates, func(a, b pcsReplicaScaleInCandidate) int {
+		return cmp.Or(
+			cmp.Compare(a.priority, b.priority),
+			cmp.Compare(a.tieBreaker, b.tieBreaker),
+			cmp.Compare(b.replicaIndex, a.replicaIndex),
+		)
 	})
+	selectedReplicaIndices := make([]int, min(count, len(candidates)))
+	for i := range selectedReplicaIndices {
+		selectedReplicaIndices[i] = candidates[i].replicaIndex
+	}
+	return selectedReplicaIndices
 }

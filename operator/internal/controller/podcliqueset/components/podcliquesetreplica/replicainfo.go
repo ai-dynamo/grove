@@ -123,14 +123,21 @@ func (pri *pcsReplicaInfo) hasConvergedToPCSGeneration(pcs *grovecorev1beta1.Pod
 	if len(pri.standalonePCLQs) != len(componentutils.GetPodCliqueFQNsForPCSReplicaNotInPCSG(pcs, pri.index)) {
 		return false
 	}
+	if len(pri.pcsgs) != len(pcs.Spec.Template.PodCliqueScalingGroupConfigs) {
+		return false
+	}
+	return pri.existingResourcesMatchPCSGeneration(generationHash)
+}
+
+// existingResourcesMatchPCSGeneration reports whether every observed standalone PodClique and PodCliqueScalingGroup
+// reports the given PCS generation. Missing children do not affect this check; an empty snapshot matches. Unlike
+// hasConvergedToPCSGeneration, it does not require all expected children to exist.
+func (pri *pcsReplicaInfo) existingResourcesMatchPCSGeneration(generationHash string) bool {
 	for i := range pri.standalonePCLQs {
 		currentGenerationHash := pri.standalonePCLQs[i].Status.CurrentPodCliqueSetGenerationHash
 		if currentGenerationHash == nil || *currentGenerationHash != generationHash {
 			return false
 		}
-	}
-	if len(pri.pcsgs) != len(pcs.Spec.Template.PodCliqueScalingGroupConfigs) {
-		return false
 	}
 	for i := range pri.pcsgs {
 		currentGenerationHash := pri.pcsgs[i].Status.CurrentPodCliqueSetGenerationHash

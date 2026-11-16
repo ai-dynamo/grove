@@ -17,6 +17,7 @@
 package update
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -286,4 +287,94 @@ func Test_RR3_DifferentIndexReplacementFillsIndexGap(t *testing.T) {
 	assert.NotEqual(t, beforeHash, afterHash, "applied scheduling hash should advance after recreation")
 	require.NoError(t, waitForClaimedPCSReplicaIndices(&tcLongTimeout, []int{0, 1}))
 	require.NoError(t, tc.WaitForPods(4))
+}
+
+// Test_RR4_ScaleInCancelsReplacement verifies that scaling in a PodCliqueSet whose claimed indices are being
+// recreated cancels the replacement whose target scale-in reclaims, rather than scaling the target in. The
+// canceled replacement records CanceledAt and a cancellation message, and both its source and target drain so
+// the PodCliqueSet converges to the desired replica count.
+//
+// Scenario:
+//  1. Deploy workload-recreation-standalone and drive it to claimed indices {0, 2} with a gap at index 1,
+//     keeping replica 1 blocked so a pod created at index 1 stays not-ready.
+//  2. Increase worker MinAvailable 1 -> 2 to trigger recreation, and observe a different-index replacement
+//     whose target is the gap index 1. The block keeps the target not-ready, so the replacement stays active.
+//  3. Start a PCS watch before scaling to 1 replica. Scale-in selects the in-progress target index 1, which
+//     cancels the replacement of source index 2 instead of scaling the target in.
+//  4. Observe cancellation through the PCS watch, even if the drained entry is immediately removed.
+//  5. Release the block and assert the PodCliqueSet converges to a single claimed index with no active
+//     replacement, and the applied scheduling hash advanced.
+func Test_RR4_ScaleInCancelsReplacement(t *testing.T) {
+	tests.Logger.Info("1. Deploy workload-recreation-standalone and create a gap at index 1")
+	tc, cleanup, _ := setupTest(t, testConfig{
+		workloadName:       "workload-recreation-standalone",
+		workloadYAML:       "../../yaml/workload-recreation-standalone.yaml",
+		workerNodes:        10,
+		expectedPods:       2,
+		initialPCSReplicas: 3,
+		postScalePods:      6,
+	})
+	defer cleanup()
+
+	beforeHash, err := getPCSAppliedSchedulingHash(tc)
+	require.NoError(t, err)
+	require.NotEmpty(t, beforeHash)
+
+	if err := kwok.ApplyStage(tc.Ctx, tc.Client, kwokStageReadyBlockedR1Path); err != nil {
+		t.Fatalf("failed to apply replica 1 readiness-block KWOK stage: %v", err)
+	}
+	blockRemoved := false
+	defer func() {
+		if !blockRemoved {
+			if err := kwok.DeleteStage(tc.Ctx, tc.Client, kwokStageReadyBlockedR1Name); err != nil {
+				t.Errorf("failed to delete replica 1 readiness-block KWOK stage: %v", err)
+			}
+		}
+	}()
+	require.NoError(t, deletePodsForReplica(tc, 1))
+	require.NoError(t, waitForStandaloneReplicaUnavailable(tc, "worker", 1))
+	if err := tc.ScalePCS(tc.Workload.Name, 2); err != nil {
+		t.Fatalf("failed to scale PodCliqueSet to 2 replicas: %v", err)
+	}
+	require.NoError(t, waitForClaimedPCSReplicaIndices(tc, []int{0, 2}))
+
+	tests.Logger.Info("2. Increase worker MinAvailable 1 -> 2 and observe an active replacement targeting index 1")
+	require.NoError(t, triggerStandalonePCLQMinAvailableChange(tc, "worker", 2))
+	sourceReplicaIndex, err := waitForActiveReplacementTargetingIndex(tc, 1)
+	require.NoError(t, err)
+	require.Equal(t, int32(2), sourceReplicaIndex)
+
+	tests.Logger.Info("3. Watch PCS status before scaling to 1 replica")
+	watchCtx, cancelWatch := context.WithTimeout(tc.Ctx, tc.Timeout)
+	defer cancelWatch()
+	pcsWatcher, err := watchPodCliqueSet(watchCtx, tc)
+	require.NoError(t, err)
+	defer pcsWatcher.Stop()
+
+	if err := tc.ScalePCS(tc.Workload.Name, 1); err != nil {
+		t.Fatalf("failed to scale PodCliqueSet to 1 replica: %v", err)
+	}
+
+	tests.Logger.Info("4. Observe the canceled replacement and its message through the PCS status watch")
+	cancellationMessage, err := waitForCanceledReplacement(watchCtx, pcsWatcher, sourceReplicaIndex)
+	require.NoError(t, err)
+	assert.NotEmpty(t, cancellationMessage, "a canceled replacement should record a cancellation message")
+
+	tests.Logger.Info("5. Release the block and assert convergence to a single replica with no active replacement")
+	if err := kwok.DeleteStage(tc.Ctx, tc.Client, kwokStageReadyBlockedR1Name); err != nil {
+		t.Fatalf("failed to delete replica 1 readiness-block KWOK stage: %v", err)
+	}
+	blockRemoved = true
+
+	tcLongTimeout := *tc
+	tcLongTimeout.Timeout = 2 * time.Minute
+	require.NoError(t, waitForReplicaRecreationComplete(&tcLongTimeout, 1))
+
+	afterHash, err := getPCSAppliedSchedulingHash(tc)
+	require.NoError(t, err)
+	assert.NotEqual(t, beforeHash, afterHash, "applied scheduling hash should advance after recreation")
+	claimed, err := getClaimedPCSReplicaIndices(tc)
+	require.NoError(t, err)
+	assert.Len(t, claimed, 1, "the PodCliqueSet should converge to a single claimed replica index")
+	require.NoError(t, tc.WaitForPods(2))
 }

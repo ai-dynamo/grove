@@ -74,6 +74,49 @@ func TestPCSReplicaInfoHasConvergedToPCSGeneration(t *testing.T) {
 	}
 }
 
+func TestPCSReplicaInfoExistingResourcesMatchPCSGeneration(t *testing.T) {
+	pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "default", types.UID("test-uid")).
+		WithStandaloneClique("frontend").
+		WithScalingGroup("workers", []string{"worker"}).
+		Build()
+	tests := []struct {
+		name         string
+		pclqHashes   []string
+		pcsgHashes   []string
+		wantExisting bool
+		wantComplete bool
+	}{
+		{name: "all expected children current", pclqHashes: []string{"current"}, pcsgHashes: []string{"current"}, wantExisting: true, wantComplete: true},
+		{name: "missing PCLQ with current PCSG", pcsgHashes: []string{"current"}, wantExisting: true},
+		{name: "missing PCSG with current PCLQ", pclqHashes: []string{"current"}, wantExisting: true},
+		{name: "no observed children", wantExisting: true},
+		{name: "existing PCLQ has old generation", pclqHashes: []string{"old"}, pcsgHashes: []string{"current"}},
+		{name: "existing PCSG has old generation", pclqHashes: []string{"current"}, pcsgHashes: []string{"old"}},
+		{name: "missing PCSG with old PCLQ", pclqHashes: []string{"old"}},
+		{name: "missing PCLQ with old PCSG", pcsgHashes: []string{"old"}},
+		{name: "mixed observed generations", pclqHashes: []string{"current", "old"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			info := pcsReplicaInfo{index: 0}
+			for _, hash := range tt.pclqHashes {
+				info.standalonePCLQs = append(info.standalonePCLQs, grovecorev1beta1.PodClique{
+					Status: grovecorev1beta1.PodCliqueStatus{CurrentPodCliqueSetGenerationHash: new(hash)},
+				})
+			}
+			for _, hash := range tt.pcsgHashes {
+				info.pcsgs = append(info.pcsgs, grovecorev1beta1.PodCliqueScalingGroup{
+					Status: grovecorev1beta1.PodCliqueScalingGroupStatus{CurrentPodCliqueSetGenerationHash: new(hash)},
+				})
+			}
+
+			assert.Equal(t, tt.wantExisting, info.existingResourcesMatchPCSGeneration("current"))
+			assert.Equal(t, tt.wantComplete, info.hasConvergedToPCSGeneration(pcs, "current"))
+		})
+	}
+}
+
 func TestPCSReplicaInfoIsAvailable(t *testing.T) {
 	pcs := rollingUpdateTestPCS()
 	available := rollingUpdateReplicaInfoAtGeneration(pcs, 0, "generation", true)
