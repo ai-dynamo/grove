@@ -377,7 +377,7 @@ func TestSyncUsesSparseReplicaIndices(t *testing.T) {
 	result, err := r.Sync(context.Background(), logr.Discard(), pcs, state)
 
 	require.NoError(t, err)
-	assert.Equal(t, []int{1}, result.ScaleInReplicaIndicesAwaitingResourceCleanup)
+	assert.Empty(t, result.CleanedUpReplicaIndices)
 	pcsgList := &grovecorev1beta1.PodCliqueScalingGroupList{}
 	require.NoError(t, fakeClient.List(context.Background(), pcsgList, client.InNamespace(pcs.Namespace)))
 	pcsgNames := make([]string, 0, len(pcsgList.Items))

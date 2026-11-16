@@ -45,25 +45,32 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-func TestScaleInPCSReplicaIndicesAwaitingResourceCleanup(t *testing.T) {
+func TestCleanedUpScaleInReplicaIndices(t *testing.T) {
+	reg := component.NewOperatorRegistry[grovecorev1beta1.PodCliqueSet, pcssync.State, pcssync.Result]()
+	reg.Register(component.KindPodClique, nil, component.AsReplicaScoped())
+	reg.Register(component.KindHeadlessService, nil, component.AsReplicaScoped())
+	reg.Register(component.KindPodGang, nil, component.AsReplicaScoped())
+	reg.Register(component.KindRole, nil)
+	reconciler := &Reconciler{operatorRegistry: reg}
+
+	// Index 5 is reported cleaned up by every replica-scoped participant, so it is cleaned up. Index 1 is reported
+	// by only one participant and index 3 by two, so neither reaches full coverage. The non-participant Role is
+	// ignored.
 	syncResults := map[component.Kind]pcssync.Result{
-		component.KindPodClique: {
-			ScaleInReplicaIndicesAwaitingResourceCleanup: []int{5, 1},
-		},
-		component.KindHeadlessService: {
-			ScaleInReplicaIndicesAwaitingResourceCleanup: []int{3, 5},
-		},
-		component.KindPodGang: {},
+		component.KindPodClique:       {CleanedUpReplicaIndices: []int{5, 1}},
+		component.KindHeadlessService: {CleanedUpReplicaIndices: []int{5, 3}},
+		component.KindPodGang:         {CleanedUpReplicaIndices: []int{5}},
+		component.KindRole:            {CleanedUpReplicaIndices: []int{1}},
 	}
 
-	assert.Equal(t, []int32{1, 3, 5}, sets.List(scaleInPCSReplicaIndicesAwaitingResourceCleanup(syncResults)))
+	assert.Equal(t, []int32{5}, sets.List(reconciler.cleanedUpScaleInReplicaIndices(syncResults)))
 }
 
 func TestRemoveCompletedScaleInPCSReplicaIndices(t *testing.T) {
 	tests := []struct {
 		name                            string
 		progress                        *grovecorev1beta1.PodCliqueSetScalingProgress
-		awaitingResourceCleanup         sets.Set[int32]
+		cleanedUpReplicaIndices         sets.Set[int32]
 		expectedProgress                *grovecorev1beta1.PodCliqueSetScalingProgress
 		expectedCompletedReplicaIndices []int32
 	}{
@@ -80,22 +87,22 @@ func TestRemoveCompletedScaleInPCSReplicaIndices(t *testing.T) {
 			},
 		},
 		{
-			name: "all replicas await cleanup",
+			name: "no replicas cleaned up",
 			progress: &grovecorev1beta1.PodCliqueSetScalingProgress{
 				ScaleInReplicaIndices: []int32{1, 3},
 			},
-			awaitingResourceCleanup: sets.New[int32](1, 3),
+			cleanedUpReplicaIndices: sets.New[int32](),
 			expectedProgress: &grovecorev1beta1.PodCliqueSetScalingProgress{
 				ScaleInReplicaIndices: []int32{1, 3},
 			},
 		},
 		{
-			name: "completed replicas are removed",
+			name: "cleaned-up replicas are removed",
 			progress: &grovecorev1beta1.PodCliqueSetScalingProgress{
 				ScaleOutReplicaIndices: []int32{4},
 				ScaleInReplicaIndices:  []int32{1, 3, 5},
 			},
-			awaitingResourceCleanup: sets.New[int32](3),
+			cleanedUpReplicaIndices: sets.New[int32](1, 5),
 			expectedProgress: &grovecorev1beta1.PodCliqueSetScalingProgress{
 				ScaleOutReplicaIndices: []int32{4},
 				ScaleInReplicaIndices:  []int32{3},
@@ -103,10 +110,11 @@ func TestRemoveCompletedScaleInPCSReplicaIndices(t *testing.T) {
 			expectedCompletedReplicaIndices: []int32{1, 5},
 		},
 		{
-			name: "completed scale-in clears scaling progress",
+			name: "all scale-in replicas cleaned up clears scaling progress",
 			progress: &grovecorev1beta1.PodCliqueSetScalingProgress{
 				ScaleInReplicaIndices: []int32{1, 3},
 			},
+			cleanedUpReplicaIndices:         sets.New[int32](1, 3),
 			expectedCompletedReplicaIndices: []int32{1, 3},
 		},
 	}
@@ -116,7 +124,7 @@ func TestRemoveCompletedScaleInPCSReplicaIndices(t *testing.T) {
 			pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, uuid.NewUUID()).Build()
 			pcs.Status.ScalingProgress = test.progress
 
-			completed := removeCompletedScaleInPCSReplicaIndices(logr.Discard(), pcs, test.awaitingResourceCleanup)
+			completed := removeCompletedScaleInPCSReplicaIndices(logr.Discard(), pcs, test.cleanedUpReplicaIndices)
 
 			assert.Equal(t, test.expectedCompletedReplicaIndices, completed)
 			assert.Equal(t, test.expectedProgress, pcs.Status.ScalingProgress)
@@ -143,7 +151,7 @@ func TestRecordReplacementCleanupWork(t *testing.T) {
 		pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, uuid.NewUUID()).Build()
 		pcs.Status.UpdateProgress = &grovecorev1beta1.PodCliqueSetUpdateProgress{CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{activeSameIndex()}}
 
-		sourceCleanupCompleted, removedCanceled := recordReplacementCleanupWork(logr.Discard(), pcs, sets.New[int32]())
+		sourceCleanupCompleted, removedCanceled := recordReplacementCleanupWork(logr.Discard(), pcs, sets.New[int32](1))
 
 		assert.Equal(t, []int32{1}, sourceCleanupCompleted)
 		assert.Empty(t, removedCanceled)
@@ -154,7 +162,7 @@ func TestRecordReplacementCleanupWork(t *testing.T) {
 		pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, uuid.NewUUID()).Build()
 		pcs.Status.UpdateProgress = &grovecorev1beta1.PodCliqueSetUpdateProgress{CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{activeSameIndex()}}
 
-		sourceCleanupCompleted, _ := recordReplacementCleanupWork(logr.Discard(), pcs, sets.New[int32](1))
+		sourceCleanupCompleted, _ := recordReplacementCleanupWork(logr.Discard(), pcs, sets.New[int32]())
 
 		assert.Empty(t, sourceCleanupCompleted)
 		assert.Nil(t, pcs.Status.UpdateProgress.CurrentlyUpdating[0].Replacement.SourceCleanupCompletedAt)
@@ -166,7 +174,7 @@ func TestRecordReplacementCleanupWork(t *testing.T) {
 		pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, uuid.NewUUID()).Build()
 		pcs.Status.UpdateProgress = &grovecorev1beta1.PodCliqueSetUpdateProgress{CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{entry}}
 
-		sourceCleanupCompleted, _ := recordReplacementCleanupWork(logr.Discard(), pcs, sets.New[int32]())
+		sourceCleanupCompleted, _ := recordReplacementCleanupWork(logr.Discard(), pcs, sets.New[int32](1))
 
 		assert.Empty(t, sourceCleanupCompleted)
 	})
@@ -177,7 +185,7 @@ func TestRecordReplacementCleanupWork(t *testing.T) {
 			{ReplicaIndex: 3, Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 2}},
 		}}
 
-		sourceCleanupCompleted, removedCanceled := recordReplacementCleanupWork(logr.Discard(), pcs, sets.New[int32]())
+		sourceCleanupCompleted, removedCanceled := recordReplacementCleanupWork(logr.Discard(), pcs, sets.New[int32](2, 3))
 
 		assert.Empty(t, sourceCleanupCompleted)
 		assert.Empty(t, removedCanceled)
@@ -189,7 +197,7 @@ func TestRecordReplacementCleanupWork(t *testing.T) {
 		pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, uuid.NewUUID()).Build()
 		pcs.Status.UpdateProgress = &grovecorev1beta1.PodCliqueSetUpdateProgress{CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{canceled()}}
 
-		sourceCleanupCompleted, removedCanceled := recordReplacementCleanupWork(logr.Discard(), pcs, sets.New[int32]())
+		sourceCleanupCompleted, removedCanceled := recordReplacementCleanupWork(logr.Discard(), pcs, sets.New[int32](2, 3))
 
 		assert.Empty(t, sourceCleanupCompleted)
 		assert.Equal(t, []int32{3}, removedCanceled)
@@ -200,7 +208,7 @@ func TestRecordReplacementCleanupWork(t *testing.T) {
 		pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, uuid.NewUUID()).Build()
 		pcs.Status.UpdateProgress = &grovecorev1beta1.PodCliqueSetUpdateProgress{CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{canceled()}}
 
-		_, removedCanceled := recordReplacementCleanupWork(logr.Discard(), pcs, sets.New[int32](2))
+		_, removedCanceled := recordReplacementCleanupWork(logr.Discard(), pcs, sets.New[int32](3))
 
 		assert.Empty(t, removedCanceled)
 		assert.Len(t, pcs.Status.UpdateProgress.CurrentlyUpdating, 1)
@@ -210,7 +218,7 @@ func TestRecordReplacementCleanupWork(t *testing.T) {
 		pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, uuid.NewUUID()).Build()
 		pcs.Status.UpdateProgress = &grovecorev1beta1.PodCliqueSetUpdateProgress{CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{activeSameIndex(), canceled()}}
 
-		sourceCleanupCompleted, removedCanceled := recordReplacementCleanupWork(logr.Discard(), pcs, sets.New[int32]())
+		sourceCleanupCompleted, removedCanceled := recordReplacementCleanupWork(logr.Discard(), pcs, sets.New[int32](1, 2, 3))
 
 		assert.Equal(t, []int32{1}, sourceCleanupCompleted)
 		assert.Equal(t, []int32{3}, removedCanceled)

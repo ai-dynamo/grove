@@ -27,6 +27,7 @@ import (
 	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/sync"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
+	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
 	"github.com/go-logr/logr"
@@ -95,7 +96,7 @@ func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev
 	}
 	logger.V(1).Info("Successfully synced HorizontalPodAutoscalers for PodCliqueSet")
 	return pcssync.Result{
-		ScaleInReplicaIndicesAwaitingResourceCleanup: replicaIndicesAwaitingResourceCleanup,
+		CleanedUpReplicaIndices: componentutils.ComputeCleanedUpReplicaIndices(state.ScaleInReplicaIndices, replicaIndicesAwaitingResourceCleanup),
 	}, nil
 }
 

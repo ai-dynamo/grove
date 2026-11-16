@@ -104,9 +104,10 @@ func (r *_resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecore
 		}
 	}
 
-	// Orchestrate the active rolling update. A non-empty scalingWork.replacementSourcesToCancel implies an
-	// active replacement, so PCS replica recreation is in progress and this block runs. The orchestrator owns
+	// Orchestrate the active update. A non-empty scalingWork.replacementSourcesToCancel implies an active
+	// replacement, so PCS replica recreation is in progress and this block runs. The orchestrator owns
 	// UpdateProgress, including canceling the replacements that scaling reclaimed.
+	pcsUpdateRequeueNeeded := false
 	if componentutils.IsRollingUpdateInProgress(pcs) || componentutils.IsPCSReplicaRecreationInProgress(pcs) {
 		pcsReplicaInfos := pcsReplicaInfosForUpdate(pcsReplicaInfosByIndex, sortedExpectedPCSReplicaIndices, delWork.pcsIndicesToTerminate)
 		minAvailableBreachedPCSReplicaIndices := slices.Collect(maps.Keys(delWork.minAvailableBreachedConstituents))
@@ -119,13 +120,16 @@ func (r *_resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecore
 		)
 		orchestrator := newRollingUpdateOrchestrator(r.client.Status(), r.currentlyUpdatingExpectations, workingPCS, updateHooks)
 		orchestrationCtx := logr.NewContext(ctx, logger)
-		if err := orchestrator.orchestrate(orchestrationCtx, pcs, scalingWork.replacementSourcesToCancel); err != nil {
+		shouldRequeue, err := orchestrator.orchestrate(orchestrationCtx, pcs, scalingWork.replacementSourcesToCancel)
+		if err != nil {
+			// A RequeueAfter (new selection awaiting cache sync) short-circuits before component state is built.
 			return pcssync.Result{}, err
 		}
+		pcsUpdateRequeueNeeded = shouldRequeue
 	}
 
-	// Build the component-facing state once, after scaling and any replacement mapping have been persisted
-	// back into the reconcile-local pcs. It overlays persisted replacement progress onto the scaling indices.
+	// Build the component-facing state once, after orchestration has mutated the reconcile-local pcs. It
+	// overlays persisted replacement progress onto the scaling indices.
 	*state = computePCSReplicaState(pcs, pcsReplicaInfosByIndex, scalingIndices, expectedReplicaIndices, groupPCSReplicaReplacements(pcs.Status.UpdateProgress))
 
 	if delWork.shouldRequeue() {
@@ -138,6 +142,12 @@ func (r *_resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecore
 		return pcssync.Result{}, groveerr.NewContinueReconcileAndRequeue(
 			component.OperationSync,
 			"Requeuing after updating PodCliqueSet scaling progress",
+		)
+	}
+	if pcsUpdateRequeueNeeded {
+		return pcssync.Result{}, groveerr.NewContinueReconcileAndRequeue(
+			component.OperationSync,
+			fmt.Sprintf("rolling update of PodCliqueSet replica indices %v is in progress", activePCSReplicaUpdateIndices(pcs.Status.UpdateProgress)),
 		)
 	}
 	return pcssync.Result{}, nil

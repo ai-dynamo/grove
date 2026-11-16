@@ -17,7 +17,6 @@ package podcliquesetreplica
 import (
 	"cmp"
 	"context"
-	"fmt"
 	"slices"
 
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
@@ -111,7 +110,7 @@ func newUpdateStrategyHooks(
 }
 
 // orchestrate reconciles the active PodCliqueSet rolling update.
-func (o *rollingUpdateOrchestrator) orchestrate(ctx context.Context, originalPCS *grovecorev1beta1.PodCliqueSet, replacementSourcesToCancel []int) error {
+func (o *rollingUpdateOrchestrator) orchestrate(ctx context.Context, originalPCS *grovecorev1beta1.PodCliqueSet, replacementSourcesToCancel []int) (bool, error) {
 	logger := logr.FromContextOrDiscard(ctx)
 	currentlyUpdating := o.pcs.Status.UpdateProgress.CurrentlyUpdating
 	// Cancel replacements whose target PCS scale-in reclaimed, before reconciling or selecting updates, so the
@@ -120,7 +119,7 @@ func (o *rollingUpdateOrchestrator) orchestrate(ctx context.Context, originalPCS
 	cancelReplacements(currentlyUpdating, replacementSourcesToCancel)
 	reconcileResult, err := o.updateHooks.reconcileCurrentlyUpdatingReplicas(currentlyUpdating)
 	if err != nil {
-		return err
+		return false, err
 	}
 	currentlyUpdating = removePCSReplicaUpdates(currentlyUpdating, reconcileResult.pcsReplicaUpdateIndicesToRemove)
 	markPCSReplicaUpdatesCompleted(currentlyUpdating, reconcileResult.completedPCSReplicaIndices)
@@ -144,25 +143,25 @@ func (o *rollingUpdateOrchestrator) orchestrate(ctx context.Context, originalPCS
 
 	if !apiequality.Semantic.DeepEqual(originalPCS.Status.UpdateProgress, o.pcs.Status.UpdateProgress) {
 		if err = o.persistUpdateProgress(ctx, originalPCS); err != nil {
-			return err
+			return false, err
 		}
 	}
 	if updateComplete {
-		return nil
+		return false, nil
 	}
-	// A newly selected replica must be visible through the informer cache before
-	// component state is derived from its persisted update progress.
+	// A newly selected replica must become visible through the informer cache before component state is derived
+	// from its persisted update progress. Short-circuit this reconcile by returning a RequeueAfter error; the
+	// next reconcile rebuilds component state from the cache-synced selection.
 	if len(selectedPCSReplicas) > 0 {
-		return groveerr.NewRequeueAfter(
+		return true, groveerr.NewRequeueAfter(
 			component.OperationSync,
 			"waiting for the PodCliqueSet replica update selection to become visible in the informer cache",
 			constants.InformerCacheSyncRetryInterval,
 		)
 	}
-	return groveerr.NewContinueReconcileAndRequeue(
-		component.OperationSync,
-		fmt.Sprintf("rolling update of PodCliqueSet replica indices %v is in progress", activePCSReplicaUpdateIndices(o.pcs.Status.UpdateProgress)),
-	)
+	// The update is in progress with no new selection this reconcile. The caller builds component state and then
+	// requeues to continue the update.
+	return true, nil
 }
 
 // removePCSReplicaUpdates removes progress entries whose work and cleanup have finished.

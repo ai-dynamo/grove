@@ -22,6 +22,7 @@ import (
 
 	"github.com/go-logr/logr"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/sets"
 )
 
 // Constants for operations that an Operator can perform.
@@ -104,27 +105,54 @@ const (
 // operator.
 type OperatorRegistry[T GroveCustomResourceType, S any, R any] interface {
 	// Register registers a components operator against the kind of components it operates on.
-	Register(kind Kind, operator Operator[T, S, R])
+	Register(kind Kind, operator Operator[T, S, R], opts ...RegisterOption)
 	// GetOperator gets a components operator that operates on the given kind.
 	GetOperator(kind Kind) (Operator[T, S, R], error)
 	// GetAllOperators returns all components operators.
 	GetAllOperators() map[Kind]Operator[T, S, R]
+	// ReplicaScopedKinds returns the kinds whose operators manage replica-scoped resources.
+	ReplicaScopedKinds() sets.Set[Kind]
+}
+
+// RegisterOption configures how an operator is registered.
+type RegisterOption func(*registrationOptions)
+
+type registrationOptions struct {
+	replicaScoped bool
+}
+
+// AsReplicaScoped marks the operator as one that manages PodCliqueSet-replica-scoped resources. Such operators
+// participate in per-replica cleanup-completion reporting, so the reconciler can determine deterministically when
+// every replica-scoped resource for a scale-in replica index has been removed.
+func AsReplicaScoped() RegisterOption {
+	return func(o *registrationOptions) {
+		o.replicaScoped = true
+	}
 }
 
 type _registry[T GroveCustomResourceType, S any, R any] struct {
-	operators map[Kind]Operator[T, S, R]
+	operators          map[Kind]Operator[T, S, R]
+	replicaScopedKinds sets.Set[Kind]
 }
 
 // NewOperatorRegistry creates an empty registry whose operators share the same T, S, and R contract.
 func NewOperatorRegistry[T GroveCustomResourceType, S any, R any]() OperatorRegistry[T, S, R] {
 	return &_registry[T, S, R]{
-		operators: make(map[Kind]Operator[T, S, R]),
+		operators:          make(map[Kind]Operator[T, S, R]),
+		replicaScopedKinds: sets.New[Kind](),
 	}
 }
 
 // Register registers an operator with its associated kind in the registry.
-func (r *_registry[T, S, R]) Register(kind Kind, operator Operator[T, S, R]) {
+func (r *_registry[T, S, R]) Register(kind Kind, operator Operator[T, S, R], opts ...RegisterOption) {
+	var options registrationOptions
+	for _, opt := range opts {
+		opt(&options)
+	}
 	r.operators[kind] = operator
+	if options.replicaScoped {
+		r.replicaScopedKinds.Insert(kind)
+	}
 }
 
 // GetOperator gets the operator associated with a kind from the registry.
@@ -139,4 +167,9 @@ func (r *_registry[T, S, R]) GetOperator(kind Kind) (Operator[T, S, R], error) {
 // GetAllOperators gets all operators registered.
 func (r *_registry[T, S, R]) GetAllOperators() map[Kind]Operator[T, S, R] {
 	return r.operators
+}
+
+// ReplicaScopedKinds returns the kinds whose operators were registered as managing replica-scoped resources.
+func (r *_registry[T, S, R]) ReplicaScopedKinds() sets.Set[Kind] {
+	return r.replicaScopedKinds.Clone()
 }

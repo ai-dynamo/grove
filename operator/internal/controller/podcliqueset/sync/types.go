@@ -31,12 +31,15 @@ type State struct {
 	ScaleInReplicaIndices []int
 }
 
-// Result reports replica-level deletion work still pending after a component
-// operator has synchronized its resources.
+// Result reports, per replica-scoped component, what the component observed for PCS replica cleanup after it
+// synchronized its resources.
 type Result struct {
-	// ScaleInReplicaIndicesAwaitingResourceCleanup identifies scale-in replica indices for which
-	// this component still observes managed resources, including resources with a deletion timestamp.
-	// The PodCliqueSet reconciler keeps an index in ScalingProgress.ScaleInReplicaIndices until every
-	// replica-scoped component stops reporting it here.
-	ScaleInReplicaIndicesAwaitingResourceCleanup []int
+	// NotApplicable indicates that the component manages no resources for this PodCliqueSet, because the feature
+	// it manages is not configured for this PodCliqueSet. Such a component is excluded from per-replica cleanup
+	// coverage, so it neither confirms nor blocks the release of a scale-in replica index.
+	NotApplicable bool
+	// CleanedUpReplicaIndices lists the scale-in PCS replica indices from State.ScaleInReplicaIndices for which
+	// this component observes none of its managed replica-scoped resources. It is populated only when the
+	// component did work, that is when NotApplicable is false.
+	CleanedUpReplicaIndices []int
 }

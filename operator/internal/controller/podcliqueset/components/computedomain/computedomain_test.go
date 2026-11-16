@@ -569,7 +569,7 @@ func TestSyncScaleIn(t *testing.T) {
 	})
 
 	require.NoError(t, err)
-	assert.Equal(t, []int{2, 3}, result.ScaleInReplicaIndicesAwaitingResourceCleanup)
+	assert.Empty(t, result.CleanedUpReplicaIndices)
 
 	// Verify CDs 0 and 1 still exist
 	for i := 0; i < 2; i++ {
@@ -593,7 +593,7 @@ func TestSyncScaleIn(t *testing.T) {
 		ScaleInReplicaIndices:  []int{2, 3},
 	})
 	require.NoError(t, err)
-	assert.Empty(t, result.ScaleInReplicaIndicesAwaitingResourceCleanup)
+	assert.Equal(t, []int{2, 3}, result.CleanedUpReplicaIndices)
 }
 
 // TestSyncScaleOut tests that Sync creates new ComputeDomains when scaling up.

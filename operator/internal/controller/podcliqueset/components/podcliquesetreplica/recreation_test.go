@@ -600,7 +600,7 @@ func TestOrchestrateAdvancesAppliedHashOnReplacementCompletion(t *testing.T) {
 	hooks := newPCSReplicaRecreationStrategyHooks(pcs, replicaInfos, pcsReplicaScalingIndices{})
 	orchestrator := newRollingUpdateOrchestrator(fakeClient.Status(), &pcsexpectations.CurrentlyUpdating{}, pcs, hooks)
 
-	err := orchestrator.orchestrate(context.Background(), pcs.DeepCopy(), nil)
+	_, err := orchestrator.orchestrate(context.Background(), pcs.DeepCopy(), nil)
 
 	assert.NoError(t, err)
 	require.NotNil(t, pcs.Status.AppliedSchedulingConfigurationHash)
