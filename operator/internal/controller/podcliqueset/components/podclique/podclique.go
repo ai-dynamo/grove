@@ -288,9 +288,14 @@ func (r _resource) buildResource(logger logr.Logger, pcs *grovecorev1beta1.PodCl
 	// During a coherent update only the replica under update adopts the new template. Every other replica
 	// keeps its running revision so a pod recreated on it (crash, eviction, or scale-out) does not come up
 	// on the new revision alongside the old, which would break version coherence within that replica.
+	//
+	// During a PCS replica recreation only the replica being recreated (the active replacement target) adopts
+	// the new template. Every other replica preserves its running revision so a scheduling-configuration change
+	// such as MinAvailable does not propagate in place to replicas that have not yet been recreated, which would
+	// let them converge without the structural recreation that the change requires.
 	preserveRevision := pclqExists &&
-		componentutils.IsCoherentUpdateInProgress(pcs) &&
-		!componentutils.IsPCSReplicaUnderCoherentUpdate(pcs, pcsReplica)
+		((componentutils.IsCoherentUpdateInProgress(pcs) && !componentutils.IsPCSReplicaUnderCoherentUpdate(pcs, pcsReplica)) ||
+			(componentutils.IsPCSReplicaRecreationInProgress(pcs) && !componentutils.IsPCSReplicaActiveReplacementTarget(pcs, pcsReplica)))
 	if err := r.setPodCliqueObjectMeta(pcs, pcsReplica, pclqTemplate, preserveRevision, pclq); err != nil {
 		return err
 	}

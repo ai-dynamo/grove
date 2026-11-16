@@ -364,6 +364,39 @@ func triggerPCSGMinAvailableChange(tc *testctx.TestContext, pcsgConfigName strin
 	return fmt.Errorf("PodCliqueScalingGroup config %s not found in PodCliqueSet %s", pcsgConfigName, tc.Workload.Name)
 }
 
+// triggerStandalonePCLQMinAvailableChange sets spec.template.cliques[cliqueName].minAvailable on the PodCliqueSet.
+// A MinAvailable change is a scheduling-configuration change that drives structural PCS replica recreation. Uses
+// tc.Workload.Name as the PCS name. It issues a targeted single-field merge patch, which applies on top of
+// concurrent status writes without clobbering them, so it needs no optimistic lock.
+func triggerStandalonePCLQMinAvailableChange(tc *testctx.TestContext, cliqueName string, minAvailable int32) error {
+	var pcs grovev1beta1.PodCliqueSet
+	if err := tc.Client.Get(tc.Ctx, types.NamespacedName{Name: tc.Workload.Name, Namespace: tc.Namespace}, &pcs); err != nil {
+		return fmt.Errorf("failed to get PodCliqueSet: %w", err)
+	}
+	base := pcs.DeepCopy()
+	for i := range pcs.Spec.Template.Cliques {
+		if pcs.Spec.Template.Cliques[i].Name == cliqueName {
+			pcs.Spec.Template.Cliques[i].Spec.MinAvailable = &minAvailable
+			return tc.Client.Patch(tc.Ctx, &pcs, client.MergeFrom(base))
+		}
+	}
+	return fmt.Errorf("clique %s not found in PodCliqueSet %s", cliqueName, tc.Workload.Name)
+}
+
+// getStandalonePCLQMinAvailable returns the MinAvailable recorded on the replica 0 standalone PodClique for the
+// named clique.
+func getStandalonePCLQMinAvailable(tc *testctx.TestContext, cliqueName string) (int32, error) {
+	var pclq grovev1beta1.PodClique
+	key := types.NamespacedName{Namespace: tc.Namespace, Name: standaloneCliqueFQN(tc, cliqueName)}
+	if err := tc.Client.Get(tc.Ctx, key, &pclq); err != nil {
+		return 0, err
+	}
+	if pclq.Spec.MinAvailable == nil {
+		return 0, fmt.Errorf("PodClique %s has no MinAvailable set", key.Name)
+	}
+	return *pclq.Spec.MinAvailable, nil
+}
+
 // getPCSAppliedSchedulingHash returns the PodCliqueSet Status.AppliedSchedulingConfigurationHash, or an empty
 // string when it is unset.
 func getPCSAppliedSchedulingHash(tc *testctx.TestContext) (string, error) {
@@ -391,6 +424,92 @@ func waitForActivePCSReplicaRecreation(tc *testctx.TestContext) error {
 	})
 	w := waiter.New[*grovev1beta1.PodCliqueSet]().WithTimeout(tc.Timeout).WithInterval(tc.Interval)
 	return w.WaitUntil(tc.Ctx, fetchPCS, predicate)
+}
+
+// waitForActiveReplacementTargetingIndex waits until an active replacement whose target is targetReplicaIndex is
+// present in UpdateProgress.CurrentlyUpdating, and returns the source replica index of that replacement. It is
+// used to observe a different-index replacement that fills an index gap.
+func waitForActiveReplacementTargetingIndex(tc *testctx.TestContext, targetReplicaIndex int32) (int32, error) {
+	var sourceReplicaIndex int32
+	fetchPCS := waiter.FetchByName(tc.Workload.Name, k8sclient.Getter[*grovev1beta1.PodCliqueSet](tc.Client, tc.Namespace))
+	predicate := waiter.Predicate[*grovev1beta1.PodCliqueSet](func(pcs *grovev1beta1.PodCliqueSet) bool {
+		if pcs == nil || pcs.Status.UpdateProgress == nil {
+			return false
+		}
+		for _, replicaProgress := range pcs.Status.UpdateProgress.CurrentlyUpdating {
+			replacement := replicaProgress.Replacement
+			if replacement != nil && replacement.CanceledAt == nil && replacement.TargetReplicaIndex == targetReplicaIndex {
+				sourceReplicaIndex = replicaProgress.ReplicaIndex
+				return true
+			}
+		}
+		return false
+	})
+	w := waiter.New[*grovev1beta1.PodCliqueSet]().WithTimeout(tc.Timeout).WithInterval(tc.Interval)
+	if err := w.WaitUntil(tc.Ctx, fetchPCS, predicate); err != nil {
+		return 0, err
+	}
+	return sourceReplicaIndex, nil
+}
+
+// getClaimedPCSReplicaIndices returns the sorted PCS replica indices that currently have a PodGangMap, which
+// identifies the replicas whose resources exist.
+func getClaimedPCSReplicaIndices(tc *testctx.TestContext) ([]int, error) {
+	pgmList := &grovev1beta1.PodGangMapList{}
+	if err := tc.Client.List(tc.Ctx, pgmList, client.InNamespace(tc.Namespace), client.MatchingLabels{common.LabelPartOfKey: tc.Workload.Name}); err != nil {
+		return nil, err
+	}
+	indices := make([]int, 0, len(pgmList.Items))
+	for i := range pgmList.Items {
+		replicaIndex, err := kubeutils.GetPodCliqueSetReplicaIndex(pgmList.Items[i].ObjectMeta)
+		if err != nil {
+			return nil, err
+		}
+		indices = append(indices, replicaIndex)
+	}
+	slices.Sort(indices)
+	return indices, nil
+}
+
+// waitForClaimedPCSReplicaIndices waits until the claimed PCS replica indices equal the expected set.
+func waitForClaimedPCSReplicaIndices(tc *testctx.TestContext, expectedReplicaIndices []int) error {
+	return wait.PollUntilContextTimeout(tc.Ctx, tc.Interval, tc.Timeout, true, func(context.Context) (bool, error) {
+		claimed, err := getClaimedPCSReplicaIndices(tc)
+		if err != nil {
+			return false, client.IgnoreNotFound(err)
+		}
+		return slices.Equal(claimed, expectedReplicaIndices), nil
+	})
+}
+
+// deletePodsForReplica deletes all pods of the given PCS replica index. The operator recreates them, and a
+// readiness-block KWOK stage applied beforehand catches the fresh pods and holds them not-ready, which makes the
+// replica unavailable.
+func deletePodsForReplica(tc *testctx.TestContext, pcsReplicaIndex int) error {
+	return tc.Client.DeleteAllOf(tc.Ctx, &corev1.Pod{},
+		client.InNamespace(tc.Namespace),
+		client.MatchingLabels{
+			common.LabelPartOfKey:                 tc.Workload.Name,
+			"grove.io/podcliqueset-replica-index": strconv.Itoa(pcsReplicaIndex),
+		},
+	)
+}
+
+// waitForStandaloneReplicaUnavailable waits until the named standalone PodClique on the given PCS replica index
+// reports fewer ready replicas than its MinAvailable, so the operator classifies that replica as unavailable.
+func waitForStandaloneReplicaUnavailable(tc *testctx.TestContext, cliqueName string, pcsReplicaIndex int) error {
+	fqn := common.GeneratePodCliqueName(common.ResourceNameReplica{Name: tc.Workload.Name, Replica: pcsReplicaIndex}, cliqueName)
+	return wait.PollUntilContextTimeout(tc.Ctx, tc.Interval, tc.Timeout, true, func(ctx context.Context) (bool, error) {
+		var pclq grovev1beta1.PodClique
+		if err := tc.Client.Get(ctx, types.NamespacedName{Namespace: tc.Namespace, Name: fqn}, &pclq); err != nil {
+			return false, client.IgnoreNotFound(err)
+		}
+		minAvailable := int32(1)
+		if pclq.Spec.MinAvailable != nil {
+			minAvailable = *pclq.Spec.MinAvailable
+		}
+		return pclq.Status.ReadyReplicas < minAvailable, nil
+	})
 }
 
 // waitForReplicaRecreationComplete waits until structural PCS replica recreation has finished: UpdateProgress
@@ -1636,6 +1755,8 @@ const (
 	kwokStageReadyDelayedName   = "pod-ready-delayed"
 	kwokStageReadyBlockedR0Path = "../../yaml/kwok/pod-ready-blocked-r0-standalone.yaml"
 	kwokStageReadyBlockedR0Name = "pod-ready-blocked-r0-standalone"
+	kwokStageReadyBlockedR1Path = "../../yaml/kwok/pod-ready-blocked-r1-standalone.yaml"
+	kwokStageReadyBlockedR1Name = "pod-ready-blocked-r1-standalone"
 	kwokStageCrashloopR1Path    = "../../yaml/kwok/pod-crashloop-r1-standalone.yaml"
 	kwokStageCrashloopR1Name    = "pod-crashloop-r1-standalone"
 	kwokStageCrashloopPath      = "../../yaml/kwok/pod-crashloop.yaml"
