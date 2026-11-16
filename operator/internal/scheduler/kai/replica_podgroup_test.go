@@ -37,7 +37,7 @@ func TestStableKAINamesAreValidAndCollisionResistant(t *testing.T) {
 	longName := strings.Repeat("Mixed_Name.", 10)
 	namer := newSubGroupNamer("job", 42)
 	names := []string{
-		aggregatePodGroupName(longName, 42),
+		replicaPodGroupName(longName, 42),
 		namer.nonAnchorCollection(),
 		namer.podGangBranch(longName),
 		namer.nonAnchorPodGang(longName),
@@ -59,9 +59,9 @@ func TestStableKAINamesDoNotChange(t *testing.T) {
 		actual   string
 		expected string
 	}{
-		{name: "aggregate PodGroup", actual: aggregatePodGroupName("job", 0), expected: "grove-job-0"},
-		{name: "sanitized aggregate PodGroup", actual: aggregatePodGroupName("My_Job.v2", 3), expected: "grove-my-job-v2-3-0a5efdb4c1"},
-		{name: "over-length aggregate PodGroup", actual: aggregatePodGroupName(strings.Repeat("a", 70), 1), expected: "grove-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-157ee39d2e"},
+		{name: "replica PodGroup", actual: replicaPodGroupName("job", 0), expected: "grove-job-0"},
+		{name: "sanitized replica PodGroup", actual: replicaPodGroupName("My_Job.v2", 3), expected: "grove-my-job-v2-3-0a5efdb4c1"},
+		{name: "over-length replica PodGroup", actual: replicaPodGroupName(strings.Repeat("a", 70), 1), expected: "grove-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-157ee39d2e"},
 		{name: "non-anchor collection", actual: namer.nonAnchorCollection(), expected: "non-anchors-r0"},
 		{name: "anchor branch", actual: namer.podGangBranch("job-0-1000"), expected: "podgang-r0-1000"},
 		{name: "non-anchor branch", actual: namer.podGangBranch("job-0-2000-workers-1"), expected: "podgang-r0-2000-workers-1"},
@@ -78,9 +78,9 @@ func TestStableKAINamesDoNotChange(t *testing.T) {
 	}
 }
 
-func TestBuildAggregatePlanRoleAwareHierarchy(t *testing.T) {
+func TestBuildReplicaPodGroupPlanRoleAwareHierarchy(t *testing.T) {
 	pcs := newPodCliqueSet("job", "team-a")
-	anchorA := aggregateTestPodGang(pcs, "job-0-1000", grovecorev1beta1.PodGangEntryRoleAnchor,
+	anchorA := materializedTestPodGang(pcs, "job-0-1000", grovecorev1beta1.PodGangEntryRoleAnchor,
 		groveschedulerv1alpha1.PodGroup{Name: "worker", MinReplicas: 2},
 		groveschedulerv1alpha1.PodGroup{Name: "server", MinReplicas: 1},
 	)
@@ -88,104 +88,104 @@ func TestBuildAggregatePlanRoleAwareHierarchy(t *testing.T) {
 		Name:          "rack",
 		PodGroupNames: []string{"worker"},
 	}, {Name: "empty"}}
-	anchorB := aggregateTestPodGang(pcs, "job-0-2000", grovecorev1beta1.PodGangEntryRoleAnchor,
+	anchorB := materializedTestPodGang(pcs, "job-0-2000", grovecorev1beta1.PodGangEntryRoleAnchor,
 		groveschedulerv1alpha1.PodGroup{Name: "worker", MinReplicas: 3},
 	)
-	tail := aggregateTestPodGang(pcs, "job-0-3000-workers-1", grovecorev1beta1.PodGangEntryRoleTail,
+	tail := materializedTestPodGang(pcs, "job-0-3000-workers-1", grovecorev1beta1.PodGangEntryRoleTail,
 		groveschedulerv1alpha1.PodGroup{Name: "worker", MinReplicas: 1},
 	)
-	scaleOut := aggregateTestPodGang(pcs, "job-0-4000-workers-2", grovecorev1beta1.PodGangEntryRoleScaleOut,
+	scaleOut := materializedTestPodGang(pcs, "job-0-4000-workers-2", grovecorev1beta1.PodGangEntryRoleScaleOut,
 		groveschedulerv1alpha1.PodGroup{Name: "worker", MinReplicas: 1},
 	)
 
-	backend := testAggregateBackend(t)
+	backend := testPlanBackend(t)
 	materialized := []componentutils.MaterializedPodGang{scaleOut, anchorB, tail, anchorA}
-	plan, err := backend.buildAggregatePlan(
+	plan, err := backend.buildReplicaPodGroupPlan(
 		pcs,
 		0,
 		materialized,
 		"",
 	)
 	require.NoError(t, err)
-	aggregate := plan.podGroup
+	podGroup := plan.podGroup
 
-	assert.Equal(t, aggregatePodGroupName(pcs.Name, 0), aggregate.Name)
-	assert.Equal(t, "job", aggregate.Labels[apicommon.LabelPartOfKey])
-	assert.Equal(t, "0", aggregate.Labels[apicommon.LabelPodCliqueSetReplicaIndex])
-	assert.Equal(t, apicommon.LabelComponentNamePodCliqueSetReplicaPodGroup, aggregate.Labels[apicommon.LabelComponentKey])
-	assert.Nil(t, aggregate.Spec.MinMember)
-	require.NotNil(t, aggregate.Spec.MinSubGroup)
-	assert.Equal(t, int32(3), *aggregate.Spec.MinSubGroup)
+	assert.Equal(t, replicaPodGroupName(pcs.Name, 0), podGroup.Name)
+	assert.Equal(t, "job", podGroup.Labels[apicommon.LabelPartOfKey])
+	assert.Equal(t, "0", podGroup.Labels[apicommon.LabelPodCliqueSetReplicaIndex])
+	assert.Equal(t, apicommon.LabelComponentNamePodCliqueSetReplicaPodGroup, podGroup.Labels[apicommon.LabelComponentKey])
+	assert.Nil(t, podGroup.Spec.MinMember)
+	require.NotNil(t, podGroup.Spec.MinSubGroup)
+	assert.Equal(t, int32(3), *podGroup.Spec.MinSubGroup)
 
-	collection := requireSubGroup(t, aggregate, "non-anchors-r0")
+	collection := requireSubGroup(t, podGroup, "non-anchors-r0")
 	assert.Nil(t, collection.Parent)
 	require.NotNil(t, collection.MinSubGroup)
 	assert.Equal(t, int32(2), *collection.MinSubGroup)
 
 	for _, podGang := range []string{"3000-workers-1", "4000-workers-2"} {
-		wrapper := requireSubGroup(t, aggregate, "non-anchor-r0-"+podGang)
+		wrapper := requireSubGroup(t, podGroup, "non-anchor-r0-"+podGang)
 		require.NotNil(t, wrapper.Parent)
 		assert.Equal(t, collection.Name, *wrapper.Parent)
 		require.NotNil(t, wrapper.MinSubGroup)
 		assert.Zero(t, *wrapper.MinSubGroup)
 
-		branch := requireSubGroup(t, aggregate, "podgang-r0-"+podGang)
+		branch := requireSubGroup(t, podGroup, "podgang-r0-"+podGang)
 		require.NotNil(t, branch.Parent)
 		assert.Equal(t, wrapper.Name, *branch.Parent)
 		require.NotNil(t, branch.MinSubGroup)
 		assert.Equal(t, int32(1), *branch.MinSubGroup)
 	}
 
-	anchorABranch := requireSubGroup(t, aggregate, "podgang-r0-1000")
+	anchorABranch := requireSubGroup(t, podGroup, "podgang-r0-1000")
 	assert.Nil(t, anchorABranch.Parent)
 	assert.Less(t, collection.Name, anchorABranch.Name, "the collection must sort ahead of the Anchor branches")
 	require.NotNil(t, anchorABranch.MinSubGroup)
 	assert.Equal(t, int32(2), *anchorABranch.MinSubGroup)
-	anchorAGroup := requireSubGroup(t, aggregate, "group-r0-rack-1000")
+	anchorAGroup := requireSubGroup(t, podGroup, "group-r0-rack-1000")
 	require.NotNil(t, anchorAGroup.MinSubGroup)
 	assert.Equal(t, int32(1), *anchorAGroup.MinSubGroup)
-	assert.Nil(t, findSubGroup(aggregate, "group-r0-empty-1000"))
+	assert.Nil(t, findSubGroup(podGroup, "group-r0-empty-1000"))
 
 	leafNames := make(map[string]struct{})
 	for _, item := range []componentutils.MaterializedPodGang{anchorA, anchorB, tail, scaleOut} {
-		leaf := requireSubGroup(t, aggregate, newSubGroupNamer(pcs.Name, 0).podGroupLeaf(item.PodGang.Name, "worker"))
+		leaf := requireSubGroup(t, podGroup, newSubGroupNamer(pcs.Name, 0).podGroupLeaf(item.PodGang.Name, "worker"))
 		require.NotNil(t, leaf.MinMember)
-		podLeaf, err := plan.leafForPod(legacyAggregatePod(pcs, item.PodGang, "worker"))
+		podLeaf, err := plan.leafForPod(legacyPodGangPod(pcs, item.PodGang, "worker"))
 		require.NoError(t, err)
 		assert.Equal(t, leaf.Name, podLeaf)
 		leafNames[leaf.Name] = struct{}{}
 	}
 	assert.Len(t, leafNames, 4, "same PodGroup name in different PodGangs must produce unique leaves")
-	assert.True(t, metav1.IsControlledBy(aggregate, pcs))
+	assert.True(t, metav1.IsControlledBy(podGroup, pcs))
 	assert.Equal(t, scaleOut.PodGang.Name, materialized[0].PodGang.Name, "building must not reorder the caller's materializations")
 	assert.Equal(t, "worker", anchorA.PodGang.Spec.PodGroups[0].Name, "building must not reorder PodGang PodGroups")
-	orderedPlan, err := backend.buildAggregatePlan(pcs, 0, []componentutils.MaterializedPodGang{anchorA, tail, anchorB, scaleOut}, "")
+	orderedPlan, err := backend.buildReplicaPodGroupPlan(pcs, 0, []componentutils.MaterializedPodGang{anchorA, tail, anchorB, scaleOut}, "")
 	require.NoError(t, err)
-	assert.Equal(t, plan, orderedPlan, "materialization order must not affect the aggregate or its leaf mapping")
+	assert.Equal(t, plan, orderedPlan, "materialization order must not affect the PodGroup or its leaf mapping")
 }
 
-func TestBuildAggregatePlanAnchorOnly(t *testing.T) {
+func TestBuildReplicaPodGroupPlanAnchorOnly(t *testing.T) {
 	pcs := newPodCliqueSet("job", "team-a")
-	anchor := aggregateTestPodGang(pcs, "job-0-1000", grovecorev1beta1.PodGangEntryRoleAnchor,
+	anchor := materializedTestPodGang(pcs, "job-0-1000", grovecorev1beta1.PodGangEntryRoleAnchor,
 		groveschedulerv1alpha1.PodGroup{Name: "worker", MinReplicas: 2},
 	)
 
-	plan, err := testAggregateBackend(t).buildAggregatePlan(
+	plan, err := testPlanBackend(t).buildReplicaPodGroupPlan(
 		pcs,
 		0,
 		[]componentutils.MaterializedPodGang{anchor},
 		"",
 	)
 	require.NoError(t, err)
-	aggregate := plan.podGroup
-	require.NotNil(t, aggregate.Spec.MinSubGroup)
-	assert.Equal(t, int32(1), *aggregate.Spec.MinSubGroup)
-	assert.Nil(t, findSubGroup(aggregate, "non-anchors-r0"))
+	podGroup := plan.podGroup
+	require.NotNil(t, podGroup.Spec.MinSubGroup)
+	assert.Equal(t, int32(1), *podGroup.Spec.MinSubGroup)
+	assert.Nil(t, findSubGroup(podGroup, "non-anchors-r0"))
 }
 
-func TestBuildAggregatePlanAppliesReplicaAndTopology(t *testing.T) {
+func TestBuildReplicaPodGroupPlanAppliesReplicaAndTopology(t *testing.T) {
 	pcs := newPodCliqueSet("job", "team-a")
-	anchor := aggregateTestPodGang(pcs, "job-1-1000", grovecorev1beta1.PodGangEntryRoleAnchor,
+	anchor := materializedTestPodGang(pcs, "job-1-1000", grovecorev1beta1.PodGangEntryRoleAnchor,
 		groveschedulerv1alpha1.PodGroup{Name: "worker", MinReplicas: 2},
 	)
 	rack := "topology.kubernetes.io/rack"
@@ -193,50 +193,50 @@ func TestBuildAggregatePlanAppliesReplicaAndTopology(t *testing.T) {
 		PackConstraint: &groveschedulerv1alpha1.TopologyPackConstraint{Required: &rack},
 	}
 
-	plan, err := testAggregateBackend(t).buildAggregatePlan(
+	plan, err := testPlanBackend(t).buildReplicaPodGroupPlan(
 		pcs,
 		1,
 		[]componentutils.MaterializedPodGang{anchor},
 		"kai-topology",
 	)
 	require.NoError(t, err)
-	assert.Equal(t, aggregatePodGroupName(pcs.Name, 1), plan.podGroup.Name)
+	assert.Equal(t, replicaPodGroupName(pcs.Name, 1), plan.podGroup.Name)
 	assert.Equal(t, "1", plan.podGroup.Labels[apicommon.LabelPodCliqueSetReplicaIndex])
 	assert.Equal(t, "kai-topology", plan.podGroup.Spec.TopologyConstraint.Topology)
 	assert.Equal(t, rack, plan.podGroup.Spec.TopologyConstraint.RequiredTopologyLevel)
 }
 
-func TestBuildAggregatePlanTreatsEmptyRootTopologyConstraintAsUnset(t *testing.T) {
+func TestBuildReplicaPodGroupPlanTreatsEmptyRootTopologyConstraintAsUnset(t *testing.T) {
 	pcs := newPodCliqueSet("job", "team-a")
-	anchor := aggregateTestPodGang(pcs, "job-0-1000", grovecorev1beta1.PodGangEntryRoleAnchor,
+	anchor := materializedTestPodGang(pcs, "job-0-1000", grovecorev1beta1.PodGangEntryRoleAnchor,
 		groveschedulerv1alpha1.PodGroup{Name: "worker", MinReplicas: 1},
 	)
-	empty := aggregateTestPodGang(pcs, "job-0-2000", grovecorev1beta1.PodGangEntryRoleAnchor,
+	empty := materializedTestPodGang(pcs, "job-0-2000", grovecorev1beta1.PodGangEntryRoleAnchor,
 		groveschedulerv1alpha1.PodGroup{Name: "worker", MinReplicas: 1},
 	)
 	empty.PodGang.Spec.TopologyConstraint = &groveschedulerv1alpha1.TopologyConstraint{}
-	emptyPack := aggregateTestPodGang(pcs, "job-0-3000", grovecorev1beta1.PodGangEntryRoleAnchor,
+	emptyPack := materializedTestPodGang(pcs, "job-0-3000", grovecorev1beta1.PodGangEntryRoleAnchor,
 		groveschedulerv1alpha1.PodGroup{Name: "worker", MinReplicas: 1},
 	)
 	emptyPack.PodGang.Spec.TopologyConstraint = &groveschedulerv1alpha1.TopologyConstraint{
 		PackConstraint: &groveschedulerv1alpha1.TopologyPackConstraint{},
 	}
 
-	plan, err := testAggregateBackend(t).buildAggregatePlan(pcs, 0, []componentutils.MaterializedPodGang{anchor, empty, emptyPack}, "")
+	plan, err := testPlanBackend(t).buildReplicaPodGroupPlan(pcs, 0, []componentutils.MaterializedPodGang{anchor, empty, emptyPack}, "")
 	require.NoError(t, err)
 	assert.Empty(t, plan.podGroup.Spec.TopologyConstraint.Topology)
 }
 
-func TestBuildAggregatePlanSkipsGroveMetadataFromPodCliqueSet(t *testing.T) {
+func TestBuildReplicaPodGroupPlanSkipsGroveMetadataFromPodCliqueSet(t *testing.T) {
 	pcs := newPodCliqueSet("job", "team-a")
 	pcs.Labels["team"] = "a"
 	pcs.Labels["grove.io/internal"] = "label"
 	pcs.Annotations = map[string]string{"owner": "a", "grove.io/internal": "annotation"}
-	anchor := aggregateTestPodGang(pcs, "job-0-1000", grovecorev1beta1.PodGangEntryRoleAnchor,
+	anchor := materializedTestPodGang(pcs, "job-0-1000", grovecorev1beta1.PodGangEntryRoleAnchor,
 		groveschedulerv1alpha1.PodGroup{Name: "worker", MinReplicas: 1},
 	)
 
-	plan, err := testAggregateBackend(t).buildAggregatePlan(pcs, 0, []componentutils.MaterializedPodGang{anchor}, "")
+	plan, err := testPlanBackend(t).buildReplicaPodGroupPlan(pcs, 0, []componentutils.MaterializedPodGang{anchor}, "")
 	require.NoError(t, err)
 	assert.Equal(t, "a", plan.podGroup.Labels["team"])
 	assert.NotContains(t, plan.podGroup.Labels, "grove.io/internal")
@@ -244,9 +244,9 @@ func TestBuildAggregatePlanSkipsGroveMetadataFromPodCliqueSet(t *testing.T) {
 	assert.Equal(t, map[string]string{"owner": "a"}, plan.podGroup.Annotations)
 }
 
-func TestBuildAggregatePlanRejectsInconsistentInputs(t *testing.T) {
+func TestBuildReplicaPodGroupPlanRejectsInconsistentInputs(t *testing.T) {
 	pcs := newPodCliqueSet("job", "team-a")
-	anchor := aggregateTestPodGang(pcs, "job-0-1000", grovecorev1beta1.PodGangEntryRoleAnchor,
+	anchor := materializedTestPodGang(pcs, "job-0-1000", grovecorev1beta1.PodGangEntryRoleAnchor,
 		groveschedulerv1alpha1.PodGroup{Name: "worker", MinReplicas: 1},
 	)
 
@@ -262,7 +262,7 @@ func TestBuildAggregatePlanRejectsInconsistentInputs(t *testing.T) {
 		{
 			name: "no Anchor",
 			materialized: []componentutils.MaterializedPodGang{
-				aggregateTestPodGang(pcs, "job-0-2000-workers-1", grovecorev1beta1.PodGangEntryRoleTail,
+				materializedTestPodGang(pcs, "job-0-2000-workers-1", grovecorev1beta1.PodGangEntryRoleTail,
 					groveschedulerv1alpha1.PodGroup{Name: "worker", MinReplicas: 1}),
 			},
 			wantErrSubstr: "has no materialized Anchor",
@@ -270,7 +270,7 @@ func TestBuildAggregatePlanRejectsInconsistentInputs(t *testing.T) {
 		{
 			name: "priority conflict",
 			materialized: func() []componentutils.MaterializedPodGang {
-				other := aggregateTestPodGang(pcs, "job-0-2000", grovecorev1beta1.PodGangEntryRoleAnchor,
+				other := materializedTestPodGang(pcs, "job-0-2000", grovecorev1beta1.PodGangEntryRoleAnchor,
 					groveschedulerv1alpha1.PodGroup{Name: "worker", MinReplicas: 1})
 				other.PodGang.Spec.PriorityClassName = "different"
 				return []componentutils.MaterializedPodGang{anchor, other}
@@ -280,7 +280,7 @@ func TestBuildAggregatePlanRejectsInconsistentInputs(t *testing.T) {
 		{
 			name: "unknown topology group member",
 			materialized: func() []componentutils.MaterializedPodGang {
-				invalid := aggregateTestPodGang(pcs, "job-0-3000", grovecorev1beta1.PodGangEntryRoleAnchor,
+				invalid := materializedTestPodGang(pcs, "job-0-3000", grovecorev1beta1.PodGangEntryRoleAnchor,
 					groveschedulerv1alpha1.PodGroup{Name: "worker", MinReplicas: 1})
 				invalid.PodGang.Spec.TopologyConstraintGroupConfigs = []groveschedulerv1alpha1.TopologyConstraintGroupConfig{{
 					Name:          "rack",
@@ -294,14 +294,14 @@ func TestBuildAggregatePlanRejectsInconsistentInputs(t *testing.T) {
 			name: "PodGang without PodGroups",
 			materialized: []componentutils.MaterializedPodGang{
 				anchor,
-				aggregateTestPodGang(pcs, "job-0-2000-workers-1", grovecorev1beta1.PodGangEntryRoleTail),
+				materializedTestPodGang(pcs, "job-0-2000-workers-1", grovecorev1beta1.PodGangEntryRoleTail),
 			},
 			wantErrSubstr: "has no PodGroups",
 		},
 		{
 			name: "root topology constraint conflict",
 			materialized: func() []componentutils.MaterializedPodGang {
-				other := aggregateTestPodGang(pcs, "job-0-2000", grovecorev1beta1.PodGangEntryRoleAnchor,
+				other := materializedTestPodGang(pcs, "job-0-2000", grovecorev1beta1.PodGangEntryRoleAnchor,
 					groveschedulerv1alpha1.PodGroup{Name: "worker", MinReplicas: 1})
 				rack := "topology.kubernetes.io/rack"
 				other.PodGang.Spec.TopologyConstraint = &groveschedulerv1alpha1.TopologyConstraint{
@@ -314,7 +314,7 @@ func TestBuildAggregatePlanRejectsInconsistentInputs(t *testing.T) {
 		{
 			name: "PodGroup in two topology groups",
 			materialized: func() []componentutils.MaterializedPodGang {
-				invalid := aggregateTestPodGang(pcs, "job-0-3000", grovecorev1beta1.PodGangEntryRoleAnchor,
+				invalid := materializedTestPodGang(pcs, "job-0-3000", grovecorev1beta1.PodGangEntryRoleAnchor,
 					groveschedulerv1alpha1.PodGroup{Name: "worker", MinReplicas: 1})
 				invalid.PodGang.Spec.TopologyConstraintGroupConfigs = []groveschedulerv1alpha1.TopologyConstraintGroupConfig{
 					{Name: "rack", PodGroupNames: []string{"worker"}},
@@ -327,7 +327,7 @@ func TestBuildAggregatePlanRejectsInconsistentInputs(t *testing.T) {
 		{
 			name: "unsupported role",
 			materialized: []componentutils.MaterializedPodGang{
-				aggregateTestPodGang(pcs, "job-0-4000", grovecorev1beta1.PodGangEntryRole("Unknown"),
+				materializedTestPodGang(pcs, "job-0-4000", grovecorev1beta1.PodGangEntryRole("Unknown"),
 					groveschedulerv1alpha1.PodGroup{Name: "worker", MinReplicas: 1}),
 			},
 			wantErrSubstr: "has unsupported role",
@@ -346,43 +346,43 @@ func TestBuildAggregatePlanRejectsInconsistentInputs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := testAggregateBackend(t).buildAggregatePlan(pcs, 0, tt.materialized, "")
+			_, err := testPlanBackend(t).buildReplicaPodGroupPlan(pcs, 0, tt.materialized, "")
 			require.ErrorContains(t, err, tt.wantErrSubstr)
 		})
 	}
 }
 
-func TestBuildAggregatePlanAllowsLPXWithoutAnchor(t *testing.T) {
+func TestBuildReplicaPodGroupPlanAllowsLPXWithoutAnchor(t *testing.T) {
 	pcs := newPodCliqueSet("job", "team-a")
-	tail := aggregateTestPodGang(pcs, "job-0-2000-workers-1", grovecorev1beta1.PodGangEntryRoleTail,
+	tail := materializedTestPodGang(pcs, "job-0-2000-workers-1", grovecorev1beta1.PodGangEntryRoleTail,
 		groveschedulerv1alpha1.PodGroup{Name: "worker", MinReplicas: 1},
 	)
 	tail.PodGang.Labels = map[string]string{apicommon.LabelSchedulerName: string(configv1beta1.SchedulerNameLPX)}
 
-	plan, err := testAggregateBackend(t).buildAggregatePlan(pcs, 0, []componentutils.MaterializedPodGang{tail}, "")
+	plan, err := testPlanBackend(t).buildReplicaPodGroupPlan(pcs, 0, []componentutils.MaterializedPodGang{tail}, "")
 	require.NoError(t, err)
 	require.NotNil(t, plan.podGroup.Spec.MinSubGroup)
 	assert.Equal(t, int32(1), *plan.podGroup.Spec.MinSubGroup)
 	requireSubGroup(t, plan.podGroup, "non-anchors-r0")
 }
 
-func TestAggregatePlanLeafForPodRejectsUnknownPods(t *testing.T) {
+func TestReplicaPodGroupPlanLeafForPodRejectsUnknownPods(t *testing.T) {
 	pcs := newPodCliqueSet("job", "team-a")
-	anchor := aggregateTestPodGang(pcs, "job-0-1000", grovecorev1beta1.PodGangEntryRoleAnchor,
+	anchor := materializedTestPodGang(pcs, "job-0-1000", grovecorev1beta1.PodGangEntryRoleAnchor,
 		groveschedulerv1alpha1.PodGroup{Name: "worker", MinReplicas: 1},
 	)
 	other := testutils.NewPodGangBuilder("job-1-1000", pcs.Namespace).Build()
-	plan, err := testAggregateBackend(t).buildAggregatePlan(pcs, 0, []componentutils.MaterializedPodGang{anchor}, "")
+	plan, err := testPlanBackend(t).buildReplicaPodGroupPlan(pcs, 0, []componentutils.MaterializedPodGang{anchor}, "")
 	require.NoError(t, err)
 
-	_, err = plan.leafForPod(legacyAggregatePod(pcs, other, "worker"))
-	require.ErrorContains(t, err, "outside aggregate")
+	_, err = plan.leafForPod(legacyPodGangPod(pcs, other, "worker"))
+	require.ErrorContains(t, err, "outside replica PodGroup")
 
-	_, err = plan.leafForPod(legacyAggregatePod(pcs, anchor.PodGang, "server"))
+	_, err = plan.leafForPod(legacyPodGangPod(pcs, anchor.PodGang, "server"))
 	require.ErrorContains(t, err, "maps to missing KAI subgroup")
 }
 
-func aggregateTestPodGang(
+func materializedTestPodGang(
 	pcs *grovecorev1beta1.PodCliqueSet,
 	name string,
 	role grovecorev1beta1.PodGangEntryRole,
@@ -395,7 +395,7 @@ func aggregateTestPodGang(
 	return componentutils.MaterializedPodGang{PodGang: podGang, Entry: entry}
 }
 
-func testAggregateBackend(t *testing.T) *schedulerBackend {
+func testPlanBackend(t *testing.T) *schedulerBackend {
 	t.Helper()
 	cl := testutils.NewTestClientBuilder().Build()
 	backend := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameKai}).(*schedulerBackend)
