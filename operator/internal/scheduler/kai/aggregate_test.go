@@ -35,13 +35,14 @@ import (
 
 func TestStableKAINamesAreValidAndCollisionResistant(t *testing.T) {
 	longName := strings.Repeat("Mixed_Name.", 10)
+	namer := newSubGroupNamer("job", 42)
 	names := []string{
 		aggregatePodGroupName(longName, 42),
-		nonAnchorCollectionName(42),
-		podGangBranchName(42, longName),
-		nonAnchorPodGangSubGroupName(42, longName),
-		topologyGroupName(42, longName, longName),
-		podGroupLeafName(42, longName, longName),
+		namer.nonAnchorCollection(),
+		namer.podGangBranch(longName),
+		namer.nonAnchorPodGang(longName),
+		namer.topologyGroup(longName, longName),
+		namer.podGroupLeaf(longName, longName),
 	}
 	for _, name := range names {
 		assert.Empty(t, validation.IsDNS1123Label(name), name)
@@ -52,6 +53,7 @@ func TestStableKAINamesAreValidAndCollisionResistant(t *testing.T) {
 }
 
 func TestStableKAINamesDoNotChange(t *testing.T) {
+	namer := newSubGroupNamer("job", 0)
 	tests := []struct {
 		name     string
 		actual   string
@@ -60,12 +62,14 @@ func TestStableKAINamesDoNotChange(t *testing.T) {
 		{name: "aggregate PodGroup", actual: aggregatePodGroupName("job", 0), expected: "grove-job-0"},
 		{name: "sanitized aggregate PodGroup", actual: aggregatePodGroupName("My_Job.v2", 3), expected: "grove-my-job-v2-3-0a5efdb4c1"},
 		{name: "over-length aggregate PodGroup", actual: aggregatePodGroupName(strings.Repeat("a", 70), 1), expected: "grove-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-157ee39d2e"},
-		{name: "non-anchor collection", actual: nonAnchorCollectionName(0), expected: "non-anchors-r0"},
-		{name: "anchor branch", actual: podGangBranchName(0, "1000"), expected: "podgang-r0-1000"},
-		{name: "non-anchor branch", actual: podGangBranchName(0, "2000-workers-1"), expected: "podgang-r0-2000-workers-1"},
-		{name: "non-anchor wrapper", actual: nonAnchorPodGangSubGroupName(0, "2000-workers-1"), expected: "non-anchor-r0-2000-workers-1"},
-		{name: "topology group", actual: topologyGroupName(0, "rack", "1000"), expected: "group-r0-rack-1000"},
-		{name: "PodGroup leaf", actual: podGroupLeafName(0, "worker", "1000"), expected: "leaf-r0-worker-1000"},
+		{name: "non-anchor collection", actual: namer.nonAnchorCollection(), expected: "non-anchors-r0"},
+		{name: "anchor branch", actual: namer.podGangBranch("job-0-1000"), expected: "podgang-r0-1000"},
+		{name: "non-anchor branch", actual: namer.podGangBranch("job-0-2000-workers-1"), expected: "podgang-r0-2000-workers-1"},
+		{name: "non-anchor wrapper", actual: namer.nonAnchorPodGang("job-0-2000-workers-1"), expected: "non-anchor-r0-2000-workers-1"},
+		{name: "topology group", actual: namer.topologyGroup("job-0-2000-workers-1", "job-0-workers-1"), expected: "group-r0-workers-1-2000"},
+		{name: "standalone PodGroup leaf", actual: namer.podGroupLeaf("job-0-1000", "job-0-server"), expected: "leaf-r0-server-1000"},
+		{name: "scaling group PodGroup leaf", actual: namer.podGroupLeaf("job-0-2000-workers-1", "job-0-workers-1-worker"), expected: "leaf-r0-workers-1-worker-2000"},
+		{name: "PodGang of another replica", actual: namer.podGangBranch("job-1-1000"), expected: "podgang-r0-job-1-1000"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -144,7 +148,7 @@ func TestBuildAggregatePlanRoleAwareHierarchy(t *testing.T) {
 
 	leafNames := make(map[string]struct{})
 	for _, item := range []componentutils.MaterializedPodGang{anchorA, anchorB, tail, scaleOut} {
-		leaf := requireSubGroup(t, aggregate, "leaf-r0-worker-"+item.Entry.Epoch)
+		leaf := requireSubGroup(t, aggregate, newSubGroupNamer(pcs.Name, 0).podGroupLeaf(item.PodGang.Name, "worker"))
 		require.NotNil(t, leaf.MinMember)
 		podLeaf, err := plan.leafForPod(legacyAggregatePod(pcs, item.PodGang, "worker"))
 		require.NoError(t, err)
@@ -176,7 +180,7 @@ func TestBuildAggregatePlanAnchorOnly(t *testing.T) {
 	aggregate := plan.podGroup
 	require.NotNil(t, aggregate.Spec.MinSubGroup)
 	assert.Equal(t, int32(1), *aggregate.Spec.MinSubGroup)
-	assert.Nil(t, findSubGroup(aggregate, nonAnchorCollectionName(0)))
+	assert.Nil(t, findSubGroup(aggregate, "non-anchors-r0"))
 }
 
 func TestBuildAggregatePlanAppliesReplicaAndTopology(t *testing.T) {
@@ -359,7 +363,7 @@ func TestBuildAggregatePlanAllowsLPXWithoutAnchor(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, plan.podGroup.Spec.MinSubGroup)
 	assert.Equal(t, int32(1), *plan.podGroup.Spec.MinSubGroup)
-	requireSubGroup(t, plan.podGroup, nonAnchorCollectionName(0))
+	requireSubGroup(t, plan.podGroup, "non-anchors-r0")
 }
 
 func TestAggregatePlanLeafForPodRejectsUnknownPods(t *testing.T) {
@@ -387,7 +391,7 @@ func aggregateTestPodGang(
 	podGang := testutils.NewPodGangBuilder(name, pcs.Namespace).Build()
 	setPodCliqueSetControllerOwner(podGang, pcs)
 	podGang.Spec.PodGroups = podGroups
-	entry := &grovecorev1beta1.PodGangEntry{Role: role, Epoch: strings.Split(name, "-")[2]}
+	entry := &grovecorev1beta1.PodGangEntry{Role: role}
 	return componentutils.MaterializedPodGang{PodGang: podGang, Entry: entry}
 }
 
