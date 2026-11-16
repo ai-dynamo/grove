@@ -153,6 +153,23 @@ func IsPCSReplicaInReplacement(pcs *grovecorev1beta1.PodCliqueSet, pcsReplicaInd
 	return false
 }
 
+// IsPCSReplicaActiveReplacementTarget reports whether the given PCS replica index is the target of an active
+// (not canceled and not ended) PCS replica replacement. The target is the replica being recreated, so it adopts
+// the new template, while every other replica preserves its running revision until it is itself recreated.
+func IsPCSReplicaActiveReplacementTarget(pcs *grovecorev1beta1.PodCliqueSet, pcsReplicaIndex int) bool {
+	if !IsPCSReplicaRecreationInProgress(pcs) {
+		return false
+	}
+	for _, replicaProgress := range pcs.Status.UpdateProgress.CurrentlyUpdating {
+		replacement := replicaProgress.Replacement
+		if replacement == nil || int(replacement.TargetReplicaIndex) != pcsReplicaIndex {
+			continue
+		}
+		return replacement.CanceledAt == nil && replicaProgress.UpdateEndedAt == nil
+	}
+	return false
+}
+
 // IsCoherentUpdateInProgress returns true when an active update is executing Coherent semantics. A PCS
 // replica recreation rollout does not execute the configured Coherent strategy.
 func IsCoherentUpdateInProgress(pcs *grovecorev1beta1.PodCliqueSet) bool {

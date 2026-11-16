@@ -117,19 +117,33 @@ func mutateCurrentHashes(logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet,
 		logger.V(1).Info("PodClique is currently updating, cannot set PodCliqueSet CurrentGenerationHash yet")
 		return nil
 	}
+	// During a PCS replica recreation only the replica being recreated (the active replacement target) may
+	// converge to the current generation. Every other replica is frozen at its old generation until it is
+	// itself recreated, so its CurrentPodCliqueSetGenerationHash must not be stamped from a matching
+	// pod-template hash. A scheduling-configuration change such as MinAvailable does not change the
+	// pod-template hash, so without this guard a frozen replica would be marked converged without recreation.
+	if componentutils.IsPCSReplicaRecreationInProgress(pcs) {
+		pcsReplicaIndex, err := k8sutils.GetPodCliqueSetReplicaIndex(pclq.ObjectMeta)
+		if err != nil {
+			return err
+		}
+		if !componentutils.IsPCSReplicaActiveReplacementTarget(pcs, pcsReplicaIndex) {
+			return nil
+		}
+	}
 	if pclq.Status.UpdateProgress == nil {
 		expectedPodTemplateHash, err := componentutils.GetExpectedPCLQPodTemplateHash(pcs, pclq.ObjectMeta)
 		if err != nil {
 			return err
 		}
 		if isPodCliqueTemplateHashCurrent(pclq, expectedPodTemplateHash) {
-			pclq.Status.CurrentPodTemplateHash = ptr.To(expectedPodTemplateHash)
+			pclq.Status.CurrentPodTemplateHash = new(expectedPodTemplateHash)
 			pclq.Status.CurrentPodCliqueSetGenerationHash = pcs.Status.CurrentGenerationHash
 		}
 	} else if componentutils.IsLastPCLQUpdateCompleted(pclq) {
 		logger.Info("PodClique update has completed, setting CurrentPodCliqueSetGenerationHash")
-		pclq.Status.CurrentPodTemplateHash = ptr.To(pclq.Status.UpdateProgress.PodTemplateHash)
-		pclq.Status.CurrentPodCliqueSetGenerationHash = ptr.To(pclq.Status.UpdateProgress.PodCliqueSetGenerationHash)
+		pclq.Status.CurrentPodTemplateHash = new(pclq.Status.UpdateProgress.PodTemplateHash)
+		pclq.Status.CurrentPodCliqueSetGenerationHash = new(pclq.Status.UpdateProgress.PodCliqueSetGenerationHash)
 	}
 	return nil
 }

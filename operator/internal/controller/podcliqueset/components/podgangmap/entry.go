@@ -102,8 +102,14 @@ func advanceEntriesGenerationHash(entries []grovecorev1beta1.PodGangEntry, pcsCu
 // Coherent update is skipped. A coherent update creates new-generation entries and drains old-generation
 // entries, so a PodGangMap deliberately holds entries for more than one generation hash at once.
 // Advancing all entries to the current hash would erase that distinction.
+// shouldAdvanceEntriesGenerationHash reports whether the existing PodGangMap entries of a replica may be
+// advanced to the current generation in place. In-place advancement is only valid when a generation change is
+// realized by rolling pods under the existing PodGangs (RollingRecreate, OnDelete), where the PodGang identity
+// is preserved. A Coherent update and a PCS replica recreation both rebuild the PodGangMap of the replica under
+// update from bootstrap entries at the new generation and keep every other replica frozen at its old
+// generation, so neither advances entries in place.
 func shouldAdvanceEntriesGenerationHash(pcs *grovecorev1beta1.PodCliqueSet, entries []grovecorev1beta1.PodGangEntry) bool {
-	if componentutils.IsCoherentStrategy(pcs) {
+	if componentutils.IsCoherentStrategy(pcs) || componentutils.IsPCSReplicaRecreationInProgress(pcs) {
 		return false
 	}
 	currentHash := *pcs.Status.CurrentGenerationHash
