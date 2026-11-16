@@ -103,7 +103,7 @@ func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev
 	}
 
 	return pcssync.Result{
-		ScaleInReplicaIndicesAwaitingResourceCleanup: replicaIndicesAwaitingResourceCleanup,
+		CleanedUpReplicaIndices: componentutils.ComputeCleanedUpReplicaIndices(state.ScaleInReplicaIndices, replicaIndicesAwaitingResourceCleanup),
 	}, nil
 }
 

@@ -345,6 +345,74 @@ func triggerPodCliqueUpdateWithRevision(tc *testctx.TestContext, updateValue str
 	})
 }
 
+// triggerPCSGMinAvailableChange sets spec.template.podCliqueScalingGroups[pcsgConfigName].minAvailable on the
+// PodCliqueSet. A MinAvailable change is a scheduling-configuration change that drives structural PCS replica
+// recreation. Uses tc.Workload.Name as the PCS name. It issues a targeted single-field merge patch, which
+// applies on top of concurrent status writes without clobbering them, so it needs no optimistic lock.
+func triggerPCSGMinAvailableChange(tc *testctx.TestContext, pcsgConfigName string, minAvailable int32) error {
+	var pcs grovev1beta1.PodCliqueSet
+	if err := tc.Client.Get(tc.Ctx, types.NamespacedName{Name: tc.Workload.Name, Namespace: tc.Namespace}, &pcs); err != nil {
+		return fmt.Errorf("failed to get PodCliqueSet: %w", err)
+	}
+	base := pcs.DeepCopy()
+	for i := range pcs.Spec.Template.PodCliqueScalingGroupConfigs {
+		if pcs.Spec.Template.PodCliqueScalingGroupConfigs[i].Name == pcsgConfigName {
+			pcs.Spec.Template.PodCliqueScalingGroupConfigs[i].MinAvailable = &minAvailable
+			return tc.Client.Patch(tc.Ctx, &pcs, client.MergeFrom(base))
+		}
+	}
+	return fmt.Errorf("PodCliqueScalingGroup config %s not found in PodCliqueSet %s", pcsgConfigName, tc.Workload.Name)
+}
+
+// getPCSAppliedSchedulingHash returns the PodCliqueSet Status.AppliedSchedulingConfigurationHash, or an empty
+// string when it is unset.
+func getPCSAppliedSchedulingHash(tc *testctx.TestContext) (string, error) {
+	pcs, err := getPCS(tc, tc.Workload.Name)
+	if err != nil {
+		return "", err
+	}
+	if pcs.Status.AppliedSchedulingConfigurationHash == nil {
+		return "", nil
+	}
+	return *pcs.Status.AppliedSchedulingConfigurationHash, nil
+}
+
+// waitForActivePCSReplicaRecreation waits until the PodCliqueSet reports an active structural replica
+// recreation: UpdateProgress is set with RequiresReplicaRecreation true and UpdateEndedAt nil. The
+// readiness-delay KWOK stage keeps the recreation active long enough for this milestone to be observed.
+func waitForActivePCSReplicaRecreation(tc *testctx.TestContext) error {
+	fetchPCS := waiter.FetchByName(tc.Workload.Name, k8sclient.Getter[*grovev1beta1.PodCliqueSet](tc.Client, tc.Namespace))
+	predicate := waiter.Predicate[*grovev1beta1.PodCliqueSet](func(pcs *grovev1beta1.PodCliqueSet) bool {
+		if pcs == nil || pcs.Status.UpdateProgress == nil {
+			return false
+		}
+		progress := pcs.Status.UpdateProgress
+		return progress.RequiresReplicaRecreation && progress.UpdateEndedAt == nil
+	})
+	w := waiter.New[*grovev1beta1.PodCliqueSet]().WithTimeout(tc.Timeout).WithInterval(tc.Interval)
+	return w.WaitUntil(tc.Ctx, fetchPCS, predicate)
+}
+
+// waitForReplicaRecreationComplete waits until structural PCS replica recreation has finished: UpdateProgress
+// has UpdateEndedAt set, AppliedSchedulingConfigurationHash equals the target scheduling hash the update
+// converged to, and UpdatedReplicas matches expectedReplicas.
+func waitForReplicaRecreationComplete(tc *testctx.TestContext, expectedReplicas int32) error {
+	fetchPCS := waiter.FetchByName(tc.Workload.Name, k8sclient.Getter[*grovev1beta1.PodCliqueSet](tc.Client, tc.Namespace))
+	predicate := waiter.Predicate[*grovev1beta1.PodCliqueSet](func(pcs *grovev1beta1.PodCliqueSet) bool {
+		if pcs == nil || pcs.Status.UpdateProgress == nil {
+			return false
+		}
+		progress := pcs.Status.UpdateProgress
+		if progress.UpdateEndedAt == nil || pcs.Status.UpdatedReplicas != expectedReplicas {
+			return false
+		}
+		return pcs.Status.AppliedSchedulingConfigurationHash != nil &&
+			*pcs.Status.AppliedSchedulingConfigurationHash == progress.TargetSchedulingConfigurationHash
+	})
+	w := waiter.New[*grovev1beta1.PodCliqueSet]().WithTimeout(tc.Timeout).WithInterval(tc.Interval)
+	return w.WaitUntil(tc.Ctx, fetchPCS, predicate)
+}
+
 // waitForActiveChildUpdateProgressGeneration waits until the selected standalone PCLQ or PCSG has
 // active update progress whose captured PCS generation hash equals generationHash. The readiness-delay
 // KWOK stage keeps the update active long enough for this milestone to be observed.

@@ -342,6 +342,21 @@ func GetStandalonePCLQReplicasFromPCSTemplateSpec(pcs *grovecorev1beta1.PodCliqu
 	return result
 }
 
+// ComputeCleanedUpReplicaIndices returns the scale-in replica indices that are not in the awaiting set, that is
+// the indices for which a component observes none of its managed resources. A component reports the result for
+// the scale-in indices it assessed during the current reconciliation.
+func ComputeCleanedUpReplicaIndices(scaleInReplicaIndices, awaitingReplicaIndices []int) []int {
+	awaiting := sets.New(awaitingReplicaIndices...)
+	cleanedUp := make([]int, 0, len(scaleInReplicaIndices))
+	for _, replicaIndex := range scaleInReplicaIndices {
+		if !awaiting.Has(replicaIndex) {
+			cleanedUp = append(cleanedUp, replicaIndex)
+		}
+	}
+	slices.Sort(cleanedUp)
+	return cleanedUp
+}
+
 // GetPCSGMinAvailableFromPCSTemplateSpec returns the MinAvailable replica count per PodCliqueScalingGroup from the PCS template spec.
 func GetPCSGMinAvailableFromPCSTemplateSpec(pcs *grovecorev1beta1.PodCliqueSet) map[string]int32 {
 	result := make(map[string]int32)

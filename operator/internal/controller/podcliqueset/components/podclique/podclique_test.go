@@ -145,7 +145,7 @@ func TestSyncUsesSparseReplicaIndices(t *testing.T) {
 	result, err := operator.Sync(context.Background(), logr.Discard(), pcs, state)
 
 	require.NoError(t, err)
-	assert.Equal(t, []int{1}, result.ScaleInReplicaIndicesAwaitingResourceCleanup)
+	assert.Empty(t, result.CleanedUpReplicaIndices)
 	pclqs := getExistingPodCliques(t, cl, pcs.ObjectMeta)
 	pclqNames := make([]string, 0, len(pclqs))
 	for _, pclq := range pclqs {

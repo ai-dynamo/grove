@@ -282,7 +282,7 @@ func TestSyncUsesSparseReplicaIndices(t *testing.T) {
 	result, err := r.Sync(context.Background(), logr.Discard(), pcs, state)
 
 	require.NoError(t, err)
-	assert.Equal(t, []int{1}, result.ScaleInReplicaIndicesAwaitingResourceCleanup)
+	assert.Empty(t, result.CleanedUpReplicaIndices)
 	for _, replicaIndex := range []int{0, 2, 4} {
 		rc := &resourcev1.ResourceClaim{}
 		require.NoError(t, cl.Get(context.Background(), types.NamespacedName{

@@ -271,7 +271,7 @@ func TestSyncUsesSparsePCSReplicaIndices(t *testing.T) {
 	result, err := operator.Sync(context.Background(), logr.Discard(), pcs, state)
 
 	require.NoError(t, err)
-	assert.Equal(t, []int{1}, result.ScaleInReplicaIndicesAwaitingResourceCleanup)
+	assert.Empty(t, result.CleanedUpReplicaIndices)
 	assertPodGangMapExists(t, cl, "pcs-0")
 	assertPodGangMapExists(t, cl, "pcs-2")
 	assertPodGangMapExists(t, cl, "pcs-4")

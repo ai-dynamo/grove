@@ -276,14 +276,16 @@ func (r *Reconciler) syncPodCliqueSetResources(ctx context.Context, logger logr.
 			return *result
 		}
 	}
-	if len(continueReconcileAndRequeueKinds) > 0 {
-		return ctrlcommon.ReconcileAfter(constants.ComponentSyncRetryInterval, fmt.Sprintf("requeueing sync due to components(s) %v after %s", continueReconcileAndRequeueKinds, constants.ComponentSyncRetryInterval))
-	}
 
-	awaitingResourceCleanup := scaleInPCSReplicaIndicesAwaitingResourceCleanup(syncResults)
+	// Post-sync cleanup runs before honoring a soft component requeue, because an in-progress PCS replica
+	// recreation depends on it to advance the same-index cleanup barrier and retire drained replacements.
+	// Reaching here means no group hard-stopped, so every registered replica-scoped participant was dispatched
+	// and its result (if any) is recorded. The PodCliqueSetReplica orchestrator is not a replica-scoped
+	// participant, so its in-progress requeue does not gate this cleanup.
+	cleanedUpReplicaIndices := r.cleanedUpScaleInReplicaIndices(syncResults)
 	originalPCS := pcs.DeepCopy()
-	completedScaleInReplicaIndices := removeCompletedScaleInPCSReplicaIndices(logger, pcs, awaitingResourceCleanup)
-	sourceCleanupCompletedReplicaIndices, removedCanceledReplicaIndices := recordReplacementCleanupWork(logger, pcs, awaitingResourceCleanup)
+	completedScaleInReplicaIndices := removeCompletedScaleInPCSReplicaIndices(logger, pcs, cleanedUpReplicaIndices)
+	sourceCleanupCompletedReplicaIndices, removedCanceledReplicaIndices := recordReplacementCleanupWork(logger, pcs, cleanedUpReplicaIndices)
 
 	cleanupStatusChanged, err := r.commitPCSCleanupStatus(ctx, logger, pcs, originalPCS, completedScaleInReplicaIndices, sourceCleanupCompletedReplicaIndices, removedCanceledReplicaIndices)
 	if err != nil {
@@ -292,19 +294,57 @@ func (r *Reconciler) syncPodCliqueSetResources(ctx context.Context, logger logr.
 	if cleanupStatusChanged {
 		return ctrlcommon.ReconcileAfter(constants.InformerCacheSyncRetryInterval, fmt.Sprintf("waiting for updated cleanup progress to become visible in the informer cache for PodCliqueSet: %v", client.ObjectKeyFromObject(pcs)))
 	}
+	if len(continueReconcileAndRequeueKinds) > 0 {
+		return ctrlcommon.ReconcileAfter(constants.ComponentSyncRetryInterval, fmt.Sprintf("requeueing sync due to components(s) %v after %s", continueReconcileAndRequeueKinds, constants.ComponentSyncRetryInterval))
+	}
 	return ctrlcommon.ContinueReconcile()
+}
+
+// cleanedUpScaleInReplicaIndices returns the scale-in replica indices that every applicable replica-scoped
+// participant confirmed cleaned up this reconcile. It returns an empty set when any registered replica-scoped
+// participant produced no Result this reconcile, for example because it errored or requested a requeue, because
+// coverage is then incomplete and no index may be released. A participant that reported NotApplicable manages no
+// resources for this PodCliqueSet and is excluded from coverage, so it neither confirms nor blocks a release.
+func (r *Reconciler) cleanedUpScaleInReplicaIndices(syncResults map[component.Kind]pcssync.Result) sets.Set[int32] {
+	participants := r.operatorRegistry.ReplicaScopedKinds()
+	// Coverage gate. Every registered replica-scoped participant must have produced a Result this reconcile.
+	for kind := range participants {
+		if _, reported := syncResults[kind]; !reported {
+			return sets.New[int32]()
+		}
+	}
+
+	applicableParticipantCount := 0
+	doneCountByReplicaIndex := make(map[int32]int)
+	for kind, result := range syncResults {
+		if !participants.Has(kind) || result.NotApplicable {
+			continue
+		}
+		applicableParticipantCount++
+		for _, replicaIndex := range result.CleanedUpReplicaIndices {
+			doneCountByReplicaIndex[int32(replicaIndex)]++
+		}
+	}
+
+	cleanedUp := sets.New[int32]()
+	for replicaIndex, doneCount := range doneCountByReplicaIndex {
+		if doneCount == applicableParticipantCount {
+			cleanedUp.Insert(replicaIndex)
+		}
+	}
+	return cleanedUp
 }
 
 // removeCompletedScaleInPCSReplicaIndices removes replica indices whose resources have been cleaned up from the
 // in-memory scaling progress and returns the completed indices in ascending order. It does not persist status or
 // emit events. The caller persists the mutated PodCliqueSet once for all post-sync cleanup.
-func removeCompletedScaleInPCSReplicaIndices(logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, awaitingResourceCleanup sets.Set[int32]) []int32 {
+func removeCompletedScaleInPCSReplicaIndices(logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, cleanedUpReplicaIndices sets.Set[int32]) []int32 {
 	if pcs.Status.ScalingProgress == nil || len(pcs.Status.ScalingProgress.ScaleInReplicaIndices) == 0 {
 		return nil
 	}
 
 	currentScaleInPCSReplicaIndices := sets.New(pcs.Status.ScalingProgress.ScaleInReplicaIndices...)
-	completedPCSReplicaIndices := currentScaleInPCSReplicaIndices.Difference(awaitingResourceCleanup)
+	completedPCSReplicaIndices := currentScaleInPCSReplicaIndices.Intersection(cleanedUpReplicaIndices)
 	if completedPCSReplicaIndices.Len() == 0 {
 		return nil
 	}
@@ -321,25 +361,14 @@ func removeCompletedScaleInPCSReplicaIndices(logger logr.Logger, pcs *grovecorev
 	return completed
 }
 
-// scaleInPCSReplicaIndicesAwaitingResourceCleanup returns all scale-in replica indices still reported by components.
-func scaleInPCSReplicaIndicesAwaitingResourceCleanup(syncResults map[component.Kind]pcssync.Result) sets.Set[int32] {
-	awaitingResourceCleanup := sets.New[int32]()
-	for _, syncResult := range syncResults {
-		for _, pcsReplicaIndex := range syncResult.ScaleInReplicaIndicesAwaitingResourceCleanup {
-			awaitingResourceCleanup.Insert(int32(pcsReplicaIndex))
-		}
-	}
-	return awaitingResourceCleanup
-}
-
 // recordReplacementCleanupWork advances replacement lifecycle state in the in-memory update progress from the
-// aggregate component cleanup results. It records the same-index delete-phase completion (SourceCleanupCompletedAt)
-// once the shared source resources are gone, and removes a canceled replacement entry once neither its source nor
-// its target has resources awaiting cleanup. A different-index active replacement is left untouched. It never
-// stamps UpdateEndedAt, which belongs to replacement completion. It does not persist status or emit events. The
-// caller persists the mutated PodCliqueSet once for all post-sync cleanup. It returns the source replica indices
-// whose delete-phase completion was recorded and whose canceled entry was removed.
-func recordReplacementCleanupWork(logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, awaitingResourceCleanup sets.Set[int32]) (sourceCleanupCompletedReplicaIndices, removedCanceledReplicaIndices []int32) {
+// cleaned-up scale-in replica indices. It records the same-index delete-phase completion (SourceCleanupCompletedAt)
+// once the shared source index is cleaned up, and removes a canceled replacement entry once both its source and
+// its target are cleaned up. A different-index active replacement is left untouched. It never stamps UpdateEndedAt,
+// which belongs to replacement completion. It does not persist status or emit events. The caller persists the
+// mutated PodCliqueSet once for all post-sync cleanup. It returns the source replica indices whose delete-phase
+// completion was recorded and whose canceled entry was removed.
+func recordReplacementCleanupWork(logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, cleanedUpReplicaIndices sets.Set[int32]) (sourceCleanupCompletedReplicaIndices, removedCanceledReplicaIndices []int32) {
 	if pcs.Status.UpdateProgress == nil || len(pcs.Status.UpdateProgress.CurrentlyUpdating) == 0 {
 		return nil, nil
 	}
@@ -353,14 +382,14 @@ func recordReplacementCleanupWork(logger logr.Logger, pcs *grovecorev1beta1.PodC
 		}
 		sourceReplicaIndex := replicaProgress.ReplicaIndex
 		if replacement.CanceledAt != nil {
-			if !awaitingResourceCleanup.Has(sourceReplicaIndex) && !awaitingResourceCleanup.Has(replacement.TargetReplicaIndex) {
+			if cleanedUpReplicaIndices.Has(sourceReplicaIndex) && cleanedUpReplicaIndices.Has(replacement.TargetReplicaIndex) {
 				removedCanceledReplicaIndices = append(removedCanceledReplicaIndices, sourceReplicaIndex)
 			}
 			continue
 		}
 		if sourceReplicaIndex == replacement.TargetReplicaIndex &&
 			replacement.SourceCleanupCompletedAt == nil &&
-			!awaitingResourceCleanup.Has(sourceReplicaIndex) {
+			cleanedUpReplicaIndices.Has(sourceReplicaIndex) {
 			cleanupCompletedAt := metav1.Now()
 			replacement.SourceCleanupCompletedAt = &cleanupCompletedAt
 			sourceCleanupCompletedReplicaIndices = append(sourceCleanupCompletedReplicaIndices, sourceReplicaIndex)
