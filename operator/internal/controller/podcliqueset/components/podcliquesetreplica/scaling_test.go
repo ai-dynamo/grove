@@ -379,7 +379,7 @@ func TestComputePCSReplicaState(t *testing.T) {
 				)
 				scalingIndices := scalingWork.scalingIndices
 				expectedReplicaIndices := expectedReplicaIndicesFromScaling(test.replicaInfos.existingReplicaIndices(), scalingIndices)
-				return computePCSReplicaState(test.pcs, test.replicaInfos, scalingIndices, expectedReplicaIndices, pcsReplicaReplacementGroups{})
+				return computePCSReplicaState(test.pcs, scalingIndices, expectedReplicaIndices, pcsReplicaReplacementGroups{})
 			}()
 
 			assert.Equal(t, test.want, got)
@@ -497,6 +497,130 @@ func TestSelectReplicaIndicesForScaleInRanksReplacementTargetsAndConvergedReplic
 	})
 }
 
+func TestComputePCSReplicaScalingWorkDuringRecreation(t *testing.T) {
+	tests := []struct {
+		name            string
+		generationHash  string
+		observedPCLQs   int
+		available       bool
+		scheduled       bool
+		targetAvailable bool
+		wantScaleIn     []int
+		wantCanceled    []int
+	}{
+		{
+			name:           "preserves replacement when unavailable old replica is unscheduled",
+			generationHash: "old",
+			observedPCLQs:  2,
+			wantScaleIn:    []int{2},
+		},
+		{
+			name:           "preserves replacement when unavailable old replica is scheduled",
+			generationHash: "old",
+			observedPCLQs:  2,
+			scheduled:      true,
+			wantScaleIn:    []int{2},
+		},
+		{
+			name:           "missing child does not hide an existing old-generation child",
+			generationHash: "old",
+			observedPCLQs:  1,
+			wantScaleIn:    []int{2},
+		},
+		{
+			name:           "cancels replacement to preserve available old replica",
+			generationHash: "old",
+			observedPCLQs:  2,
+			available:      true,
+			wantCanceled:   []int{0},
+		},
+		{
+			name:           "cancels replacement to preserve available current replica",
+			generationHash: "current",
+			observedPCLQs:  2,
+			available:      true,
+			wantCanceled:   []int{0},
+		},
+		{
+			name:           "unavailable current replica does not get pending-recreation preference",
+			generationHash: "current",
+			observedPCLQs:  2,
+			wantCanceled:   []int{0},
+		},
+		{
+			name:           "scheduled unavailable current replica does not get pending-recreation preference",
+			generationHash: "current",
+			observedPCLQs:  2,
+			scheduled:      true,
+			wantCanceled:   []int{0},
+		},
+		{
+			name:           "missing child with only current-generation children does not imply pending recreation",
+			generationHash: "current",
+			observedPCLQs:  1,
+			wantCanceled:   []int{0},
+		},
+		{
+			name:           "no observed children does not imply pending old-generation recreation",
+			generationHash: "current",
+			wantCanceled:   []int{0},
+		},
+		{
+			name:            "preserves an available replacement target over an unavailable current replica",
+			generationHash:  "current",
+			observedPCLQs:   2,
+			targetAvailable: true,
+			wantScaleIn:     []int{2},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "default", types.UID("test-pcs-uid")).
+				WithStandaloneClique("worker").
+				WithStandaloneClique("metrics").
+				WithPodCliqueSetGenerationHash(new("current")).
+				WithReplicas(1).
+				Build()
+			pcs.Status.ObservedGeneration = new(pcs.Generation)
+			pcs.Status.UpdateProgress = &grovecorev1beta1.PodCliqueSetUpdateProgress{
+				RequiresReplicaRecreation: true,
+				CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{
+					ReplicaIndex: 0,
+					Replacement:  &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 0},
+				}},
+			}
+			replicaInfos := pcsReplicaInfoByIndex{0: {index: 0}, 2: {index: 2}}
+			for replicaIndex, replicaInfo := range replicaInfos {
+				numPCLQs := tt.observedPCLQs
+				generationHash := tt.generationHash
+				available := tt.available
+				if replicaIndex == 0 {
+					numPCLQs = 2
+					generationHash = "current"
+					available = tt.targetAvailable
+				}
+				for i := range numPCLQs {
+					pclq := pclqWithAvailability(pcs, replicaIndex, available)
+					pclq.Name = fmt.Sprintf("%s-%d-%s", pcs.Name, replicaIndex, pcs.Spec.Template.Cliques[i].Name)
+					pclq.Status.CurrentPodCliqueSetGenerationHash = &generationHash
+					if available || (replicaIndex == 2 && tt.scheduled) {
+						pclq.Status.ScheduledReplicas = *pclq.Spec.MinAvailable
+					}
+					replicaInfo.standalonePCLQs = append(replicaInfo.standalonePCLQs, pclq)
+				}
+				replicaInfos[replicaIndex] = replicaInfo
+			}
+
+			// The active same-index replacement has no persisted scale-out reservation.
+			work := computePCSReplicaScalingWork(pcs, replicaInfos, pcsReplicaScalingIndices{}, groupPCSReplicaReplacements(pcs.Status.UpdateProgress))
+
+			assert.Equal(t, tt.wantScaleIn, work.scalingIndices.scaleIn)
+			assert.Equal(t, tt.wantCanceled, work.replacementSourcesToCancel)
+		})
+	}
+}
+
 func TestComputePCSReplicaScalingWorkCancelsReplacementWhenScaleInSelectsTarget(t *testing.T) {
 	pcs := rollingUpdateTestPCS()
 	pcs.Status.ObservedGeneration = new(pcs.Generation)
@@ -546,25 +670,6 @@ func TestClaimedReservedIndicesReservesReplacementIndices(t *testing.T) {
 	reserved := claimedReservedIndices(replicaInfos, sets.New(5), sets.New(6), replacementGroups)
 
 	assert.Equal(t, sets.New(0, 1, 2, 3, 4, 5, 6), reserved)
-}
-
-func TestCoalesceDescending(t *testing.T) {
-	got := coalesceDescending(
-		[]int{0, 7},
-		[]int{1, 6},
-		[]int{2, 5},
-		[]int{3, 4},
-	)
-
-	assert.Equal(t, []int{7, 0, 6, 1, 5, 2, 4, 3}, got)
-}
-
-func TestSortReplicaIndicesDescending(t *testing.T) {
-	replicaIndices := []int{1, 4, 2, 3}
-
-	sortReplicaIndicesDescending(replicaIndices)
-
-	assert.Equal(t, []int{4, 3, 2, 1}, replicaIndices)
 }
 
 func TestFindScaleOutReplicaIndicesWithExpectedPCLQsAndPCSGs(t *testing.T) {

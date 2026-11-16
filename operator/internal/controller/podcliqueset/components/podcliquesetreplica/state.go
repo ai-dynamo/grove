@@ -29,7 +29,6 @@ import (
 // implied by scaling alone, computed once by the caller.
 func computePCSReplicaState(
 	pcs *grovecorev1beta1.PodCliqueSet,
-	replicaInfos pcsReplicaInfoByIndex,
 	scalingIndices pcsReplicaScalingIndices,
 	expectedReplicaIndices sets.Set[int],
 	replacementGroups pcsReplicaReplacementGroups) pcssync.State {
@@ -48,7 +47,7 @@ func computePCSReplicaState(
 		overlayActiveReplacement(pcs, replacement, expectedReplicaIndices, scaleInReplicaIndices, scaleOutReplicaIndices)
 	}
 	for _, replacement := range replacementGroups.canceled {
-		overlayCanceledReplacement(replacement, replicaInfos, expectedReplicaIndices, scaleInReplicaIndices, scaleOutReplicaIndices)
+		overlayCanceledReplacement(replacement, expectedReplicaIndices, scaleInReplicaIndices, scaleOutReplicaIndices)
 	}
 
 	return pcssync.State{
@@ -100,10 +99,10 @@ func overlayActiveReplacement(
 // overlayCanceledReplacement projects a canceled PodCliqueSet replica replacement awaiting cleanup onto the
 // reconcile-local index sets. A replacement is canceled when PCS scale-in selects its active target. Neither
 // the source nor the target is a desired identity anymore, so both leave the expected and scale-out sets.
-// Resources that still exist at either index drain through scale-in.
+// Both indices remain in scale-in until every replica-scoped participant confirms cleanup, even when no
+// resources are observed there. Omitting an absent index would prevent post-sync cleanup from retiring the entry.
 func overlayCanceledReplacement(
 	replacement pcsReplicaReplacement,
-	replicaInfos pcsReplicaInfoByIndex,
 	expectedReplicaIndices, scaleInReplicaIndices, scaleOutReplicaIndices sets.Set[int]) {
 	source := replacement.sourcePCSReplicaIndex
 	target := replacement.targetPCSReplicaIndex
@@ -111,12 +110,7 @@ func overlayCanceledReplacement(
 	expectedReplicaIndices.Delete(source, target)
 	scaleOutReplicaIndices.Delete(source, target)
 
-	if _, exists := replicaInfos[source]; exists {
-		scaleInReplicaIndices.Insert(source)
-	}
-	if _, exists := replicaInfos[target]; exists {
-		scaleInReplicaIndices.Insert(target)
-	}
+	scaleInReplicaIndices.Insert(source, target)
 }
 
 // isReplacementSourceCleanupCompleted reports whether the same-index replacement keyed by the source replica index

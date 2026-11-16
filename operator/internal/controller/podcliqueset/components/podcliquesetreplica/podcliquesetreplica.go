@@ -130,7 +130,7 @@ func (r *_resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecore
 
 	// Build the component-facing state once, after orchestration has mutated the reconcile-local pcs. It
 	// overlays persisted replacement progress onto the scaling indices.
-	*state = computePCSReplicaState(pcs, pcsReplicaInfosByIndex, scalingIndices, expectedReplicaIndices, groupPCSReplicaReplacements(pcs.Status.UpdateProgress))
+	*state = computePCSReplicaState(pcs, scalingIndices, expectedReplicaIndices, groupPCSReplicaReplacements(pcs.Status.UpdateProgress))
 
 	if delWork.shouldRequeue() {
 		return pcssync.Result{}, groveerr.NewContinueReconcileAndRequeue(
