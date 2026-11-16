@@ -711,7 +711,7 @@ func setPodCliqueSetControllerOwner(podGang *groveschedulerv1alpha1.PodGang, pcs
 	}}
 }
 
-func legacyAggregatePod(pcs *grovecorev1beta1.PodCliqueSet, podGang *groveschedulerv1alpha1.PodGang, podCliqueName string) *corev1.Pod {
+func legacyPodGangPod(pcs *grovecorev1beta1.PodCliqueSet, podGang *groveschedulerv1alpha1.PodGang, podCliqueName string) *corev1.Pod {
 	labels := apicommon.GetDefaultLabelsForPodCliqueSetManagedResources(pcs.Name)
 	labels[apicommon.LabelPodCliqueSetReplicaIndex] = podGang.Labels[apicommon.LabelPodCliqueSetReplicaIndex]
 	labels[apicommon.LabelPodGang] = podGang.Name

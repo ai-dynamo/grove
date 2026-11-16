@@ -38,8 +38,8 @@ import (
 )
 
 const (
-	// aggregatePrefix starts the name of every per-replica KAI PodGroup: grove-<pcs>-<replica>.
-	aggregatePrefix = "grove-"
+	// replicaPodGroupPrefix starts the name of every per-replica KAI PodGroup: grove-<pcs>-<replica>.
+	replicaPodGroupPrefix = "grove-"
 	// The subgroup kinds start every subgroup name: <kind>-r<replica>-<rest>.
 	// KAI breaks a tie between subgroups with the same allocation ratio by name, and
 	// "non-anchors" sorts the collection ahead of the "podgang" Anchor branches.
@@ -50,17 +50,17 @@ const (
 	subGroupKindPodGroup            = "leaf"
 )
 
-// buildAggregatePlan aggregates the PodGangs of one PodCliqueSet replica into a single KAI PodGroup.
+// buildReplicaPodGroupPlan combines the PodGangs of one PodCliqueSet replica into a single KAI PodGroup.
 // Each Anchor PodGang becomes a required top-level branch, Tail and ScaleOut PodGangs become optional
 // branches under one collection subgroup, and inside a branch the topology groups are mid-level
 // subgroups and the PodGroups are leaves. The plan also records which leaf each Pod belongs to.
-func (b *schedulerBackend) buildAggregatePlan(
+func (b *schedulerBackend) buildReplicaPodGroupPlan(
 	pcs *grovecorev1beta1.PodCliqueSet,
 	replica int,
 	materialized []componentutils.MaterializedPodGang,
 	topologyReference string,
-) (*aggregatePlan, error) {
-	inputs, err := prepareAggregateInputs(pcs, replica, materialized)
+) (*replicaPodGroupPlan, error) {
+	inputs, err := prepareReplicaPodGroupInputs(pcs, replica, materialized)
 	if err != nil {
 		return nil, err
 	}
@@ -73,11 +73,11 @@ func (b *schedulerBackend) buildAggregatePlan(
 		return nil, err
 	}
 	builder := newSubGroupBuilder(pcs.Name, replica, topologyReference)
-	rootMinSubGroup, err := builder.appendAggregateHierarchy(inputs)
+	rootMinSubGroup, err := builder.appendReplicaHierarchy(inputs)
 	if err != nil {
 		return nil, err
 	}
-	result := newAggregatePodGroup(pcs, replica, kaischedulingv2alpha2.PodGroupSpec{
+	result := newReplicaPodGroup(pcs, replica, kaischedulingv2alpha2.PodGroupSpec{
 		MinSubGroup:       ptr.To(rootMinSubGroup),
 		Queue:             queueName,
 		PriorityClassName: inputs.reference.Spec.PriorityClassName,
@@ -89,26 +89,26 @@ func (b *schedulerBackend) buildAggregatePlan(
 	if err = controllerutil.SetControllerReference(pcs, result, b.scheme); err != nil {
 		return nil, err
 	}
-	return &aggregatePlan{podGroup: result, podLeaves: builder.podLeaves}, nil
+	return &replicaPodGroupPlan{podGroup: result, podLeaves: builder.podLeaves}, nil
 }
 
-type aggregateInputs struct {
+type replicaPodGroupInputs struct {
 	reference  *groveschedulerv1alpha1.PodGang
 	anchors    []*groveschedulerv1alpha1.PodGang
 	nonAnchors []*groveschedulerv1alpha1.PodGang
 }
 
-type aggregatePlan struct {
+type replicaPodGroupPlan struct {
 	podGroup *kaischedulingv2alpha2.PodGroup
 	// podLeaves maps PodGang name -> PodGroup name (PodClique FQN) -> KAI leaf subgroup name.
 	podLeaves map[string]map[string]string
 }
 
-func prepareAggregateInputs(
+func prepareReplicaPodGroupInputs(
 	pcs *grovecorev1beta1.PodCliqueSet,
 	replica int,
 	materialized []componentutils.MaterializedPodGang,
-) (*aggregateInputs, error) {
+) (*replicaPodGroupInputs, error) {
 	if len(materialized) == 0 {
 		return nil, fmt.Errorf("PodGangMap for PodCliqueSet %s/%s replica %d has no materialized PodGangs", pcs.Namespace, pcs.Name, replica)
 	}
@@ -124,7 +124,7 @@ func prepareAggregateInputs(
 	podGangs := append([]componentutils.MaterializedPodGang(nil), materialized...)
 	sort.Slice(podGangs, func(i, j int) bool { return podGangs[i].PodGang.Name < podGangs[j].PodGang.Name })
 	reference := podGangs[0].PodGang
-	inputs := &aggregateInputs{reference: reference}
+	inputs := &replicaPodGroupInputs{reference: reference}
 	for _, item := range podGangs {
 		if len(item.PodGang.Spec.PodGroups) == 0 {
 			return nil, fmt.Errorf("PodGang %s/%s has no PodGroups", item.PodGang.Namespace, item.PodGang.Name)
@@ -145,7 +145,7 @@ func prepareAggregateInputs(
 		}
 	}
 	// LPX-scheduled PodGroups are removed before KAI sees a PodGang, and a PodGang left with none is
-	// dropped, so the Anchor can be absent from the KAI aggregate of an LPX workload.
+	// dropped, so the Anchor can be absent from the KAI PodGroup of an LPX workload.
 	if len(inputs.anchors) == 0 && reference.Labels[apicommon.LabelSchedulerName] != string(configv1beta1.SchedulerNameLPX) {
 		return nil, fmt.Errorf("PodGangMap for PodCliqueSet %s/%s replica %d has no materialized Anchor PodGang", pcs.Namespace, pcs.Name, replica)
 	}
@@ -167,7 +167,7 @@ func packLevels(topologyConstraint *groveschedulerv1alpha1.TopologyConstraint) p
 	}
 }
 
-func newAggregatePodGroup(pcs *grovecorev1beta1.PodCliqueSet, replica int, spec kaischedulingv2alpha2.PodGroupSpec) *kaischedulingv2alpha2.PodGroup {
+func newReplicaPodGroup(pcs *grovecorev1beta1.PodCliqueSet, replica int, spec kaischedulingv2alpha2.PodGroupSpec) *kaischedulingv2alpha2.PodGroup {
 	labels := withoutGroveKeys(pcs.Labels)
 	if labels == nil {
 		labels = make(map[string]string)
@@ -178,7 +178,7 @@ func newAggregatePodGroup(pcs *grovecorev1beta1.PodCliqueSet, replica int, spec 
 
 	return &kaischedulingv2alpha2.PodGroup{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:        aggregatePodGroupName(pcs.Name, replica),
+			Name:        replicaPodGroupName(pcs.Name, replica),
 			Namespace:   pcs.Namespace,
 			Labels:      labels,
 			Annotations: withoutGroveKeys(pcs.Annotations),
@@ -220,7 +220,7 @@ func newSubGroupBuilder(pcsName string, replica int, topologyReference string) *
 	}
 }
 
-func (b *subGroupBuilder) appendAggregateHierarchy(inputs *aggregateInputs) (int32, error) {
+func (b *subGroupBuilder) appendReplicaHierarchy(inputs *replicaPodGroupInputs) (int32, error) {
 	for _, anchor := range inputs.anchors {
 		if err := b.appendPodGangBranch(anchor, nil); err != nil {
 			return 0, err
@@ -386,8 +386,8 @@ func (b *subGroupBuilder) appendPodGroupLeaves(podGangName, branchName string, h
 	return nil
 }
 
-func aggregatePodGroupName(pcsName string, replica int) string {
-	return stableKAIName(fmt.Sprintf("%s%s-%d", aggregatePrefix, pcsName, replica))
+func replicaPodGroupName(pcsName string, replica int) string {
+	return stableKAIName(fmt.Sprintf("%s%s-%d", replicaPodGroupPrefix, pcsName, replica))
 }
 
 // subGroupNamer names the subgroups of one PodCliqueSet replica as <kind>-r<replica>-<rest>.
@@ -472,11 +472,11 @@ func stableKAIName(value string) string {
 	return name + "-" + suffix
 }
 
-func (p *aggregatePlan) leafForPod(pod *corev1.Pod) (string, error) {
+func (p *replicaPodGroupPlan) leafForPod(pod *corev1.Pod) (string, error) {
 	podGangName := pod.Labels[apicommon.LabelPodGang]
 	leaves, found := p.podLeaves[podGangName]
 	if !found {
-		return "", fmt.Errorf("pod %s/%s references PodGang %q outside aggregate %q", pod.Namespace, pod.Name, podGangName, p.podGroup.Name)
+		return "", fmt.Errorf("pod %s/%s references PodGang %q outside replica PodGroup %q", pod.Namespace, pod.Name, podGangName, p.podGroup.Name)
 	}
 	podGroupName := pod.Labels[apicommon.LabelPodClique]
 	leaf, found := leaves[podGroupName]
