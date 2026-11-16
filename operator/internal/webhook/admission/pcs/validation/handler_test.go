@@ -471,21 +471,13 @@ func TestValidateUpdateTemplateReplicasChange(t *testing.T) {
 			newObj: newPCS(2, 2, 1),
 		},
 		{
-			name:   "standalone clique, member clique and scaling group replicas changes each produce a warning and an event",
+			name:   "standalone clique, member clique and scaling group replicas changes each produce a warning",
 			oldObj: newPCS(2, 2, 1),
 			newObj: newPCS(3, 4, 2),
 			expectedWarnings: []string{
 				"spec.template.cliques[standalone].spec.replicas changed from 2 to 3: the new value applies only to PodCliques created from now on; existing ones must be scaled directly with kubectl scale pclq",
 				"spec.template.cliques[member].spec.replicas changed from 2 to 4: the new value applies only to PodCliques created from now on; existing ones must be scaled directly with kubectl scale pclq",
 				"spec.template.podCliqueScalingGroups[sg].replicas changed from 1 to 2: the new value applies only to PodCliqueScalingGroups created from now on; existing ones must be scaled directly with kubectl scale pcsg",
-			},
-		},
-		{
-			name:   "dry run produces a warning but no event",
-			oldObj: newPCS(2, 2, 1),
-			newObj: newPCS(3, 2, 1),
-			expectedWarnings: []string{
-				"spec.template.cliques[standalone].spec.replicas changed from 2 to 3",
 			},
 		},
 	}
