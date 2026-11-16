@@ -60,8 +60,8 @@ func (h *Handler) ValidateCreate(ctx context.Context, obj runtime.Object) (admis
 	if err != nil {
 		return nil, err
 	}
-	allErrs := validateClusterTopology(ct, h.enabledBackends, h.topologyAwareBackends)
-	return nil, allErrs.ToAggregate()
+	warnings, allErrs := validateClusterTopology(ct, h.enabledBackends, h.topologyAwareBackends)
+	return warnings, allErrs.ToAggregate()
 }
 
 // ValidateUpdate validates a ClusterTopologyBinding update request.
@@ -74,8 +74,8 @@ func (h *Handler) ValidateUpdate(ctx context.Context, _, newObj runtime.Object) 
 	if err != nil {
 		return nil, err
 	}
-	allErrs := validateClusterTopology(ct, h.enabledBackends, h.topologyAwareBackends)
-	return nil, allErrs.ToAggregate()
+	warnings, allErrs := validateClusterTopology(ct, h.enabledBackends, h.topologyAwareBackends)
+	return warnings, allErrs.ToAggregate()
 }
 
 // ValidateDelete validates a ClusterTopologyBinding delete request.
