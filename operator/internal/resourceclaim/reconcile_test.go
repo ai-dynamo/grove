@@ -96,8 +96,9 @@ func TestFilterMatches(t *testing.T) {
 		ref := &grovecorev1beta1.PCSResourceSharingSpec{
 			Filter: &grovecorev1beta1.PCSResourceSharingFilter{ChildScalingGroupNames: []string{"sga", "sgb"}},
 		}
-		assert.True(t, ref.FilterMatches("sga"))
-		assert.False(t, ref.FilterMatches("sgc"))
+		assert.True(t, ref.FilterMatches("worker", "sga"))
+		assert.False(t, ref.FilterMatches("worker", "sgc"))
+		assert.False(t, ref.FilterMatches("sga"))
 	})
 
 	t.Run("PCS filter with mixed match", func(t *testing.T) {
@@ -108,7 +109,7 @@ func TestFilterMatches(t *testing.T) {
 			},
 		}
 		assert.True(t, ref.FilterMatches("worker"))
-		assert.True(t, ref.FilterMatches("sga"))
+		assert.True(t, ref.FilterMatches("other-worker", "sga"))
 		assert.False(t, ref.FilterMatches("unknown"))
 	})
 

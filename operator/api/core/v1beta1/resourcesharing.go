@@ -27,18 +27,17 @@ func (s *PCSResourceSharingSpec) GetBase() *ResourceSharingSpec {
 	return &s.ResourceSharingSpec
 }
 
-// FilterMatches checks whether the PCS filter allows injection for the given names.
+// FilterMatches checks whether the PCS filter allows injection for a PodClique template
+// name followed by its optional parent PodCliqueScalingGroup config name.
 // When Filter is nil or no matchNames are provided, all children match (broadcast).
 func (s *PCSResourceSharingSpec) FilterMatches(matchNames ...string) bool {
 	if s.Filter == nil || len(matchNames) == 0 {
 		return true
 	}
-	for _, name := range matchNames {
-		if slices.Contains(s.Filter.ChildCliqueNames, name) || slices.Contains(s.Filter.ChildScalingGroupNames, name) {
-			return true
-		}
+	if slices.Contains(s.Filter.ChildCliqueNames, matchNames[0]) {
+		return true
 	}
-	return false
+	return len(matchNames) > 1 && slices.Contains(s.Filter.ChildScalingGroupNames, matchNames[1])
 }
 
 // GetBase returns the base resource sharing fields.
