@@ -125,7 +125,7 @@ func TestValidateCreate(t *testing.T) {
 				{SchedulerName: string(configv1beta1.SchedulerNameKai), TopologyReference: "kai-topology-b"},
 			},
 			expectError: true,
-			errContains: "spec.schedulerTopologyReferences[1].schedulerName",
+			errContains: "spec.schedulerTopologyBindings[1].schedulerName",
 		},
 		{
 			name: "unknown scheduler backend reference",
