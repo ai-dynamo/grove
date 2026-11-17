@@ -700,6 +700,11 @@ func TestInitOrResetUpdate(t *testing.T) {
 }
 
 func TestInitOrResetUpdatePreservesReplicaRecreationAcrossSupersession(t *testing.T) {
+	sourceCleanupCompletedAt := metav1.Now()
+	replacement := &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{
+		TargetReplicaIndex:       1,
+		SourceCleanupCompletedAt: &sourceCleanupCompletedAt,
+	}
 	pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, uuid.NewUUID()).
 		WithReplicas(2).
 		WithPodCliqueParameters("worker", 1, nil).
@@ -707,7 +712,7 @@ func TestInitOrResetUpdatePreservesReplicaRecreationAcrossSupersession(t *testin
 		WithPodCliqueSetGenerationHash(new("old-hash")).
 		WithUpdateProgress(&grovecorev1beta1.PodCliqueSetUpdateProgress{
 			RequiresReplicaRecreation: true,
-			CurrentlyUpdating:         []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 1}},
+			CurrentlyUpdating:         []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 1, Replacement: replacement}},
 		}).
 		Build()
 	pcs.Status.AppliedSchedulingConfigurationHash = new("applied-scheduling-hash")
@@ -724,6 +729,12 @@ func TestInitOrResetUpdatePreservesReplicaRecreationAcrossSupersession(t *testin
 	assert.Empty(t, updated.Status.UpdateProgress.InScopeStandalonePodCliques)
 	require.Len(t, updated.Status.UpdateProgress.CurrentlyUpdating, 1)
 	assert.Equal(t, int32(1), updated.Status.UpdateProgress.CurrentlyUpdating[0].ReplicaIndex)
+	updatedReplacement := updated.Status.UpdateProgress.CurrentlyUpdating[0].Replacement
+	require.NotNil(t, updatedReplacement)
+	assert.Equal(t, int32(1), updatedReplacement.TargetReplicaIndex)
+	assert.Nil(t, updatedReplacement.SourceCleanupCompletedAt)
+	assert.Equal(t, &sourceCleanupCompletedAt, replacement.SourceCleanupCompletedAt)
+	assert.True(t, r.currentlyUpdatingExpectations.ClearIfSatisfied(updated.ObjectMeta, updated.Status.UpdateProgress.CurrentlyUpdating))
 }
 
 func TestRequiresPCSReplicaRecreation(t *testing.T) {
@@ -808,6 +819,67 @@ func TestPreserveActiveReplicaSelectionsForSupersedingUpdate(t *testing.T) {
 	assert.Equal(t, updateStartedAt, got[1].UpdateStartedAt)
 	assert.Nil(t, got[1].UpdateEndedAt)
 	assert.Nil(t, preserveActiveReplicaSelectionsForSupersedingUpdate(&grovecorev1beta1.PodCliqueSet{}, updateStartedAt))
+}
+
+func TestPreserveActiveReplicaSelectionsResetsReplacementCleanup(t *testing.T) {
+	sourceCleanupCompletedAt := metav1.Now()
+	canceledAt := metav1.Now()
+	tests := []struct {
+		name                     string
+		targetPCSReplicaIndex    int32
+		sourceCleanupCompletedAt *metav1.Time
+		canceledAt               *metav1.Time
+		wantCleanupCompletedAt   *metav1.Time
+	}{
+		{
+			name:                     "active same-index replacement restarts cleanup",
+			sourceCleanupCompletedAt: &sourceCleanupCompletedAt,
+		},
+		{
+			name: "active same-index replacement already deleting",
+		},
+		{
+			name:                     "canceled replacement preserves cleanup progress",
+			sourceCleanupCompletedAt: &sourceCleanupCompletedAt,
+			canceledAt:               &canceledAt,
+			wantCleanupCompletedAt:   &sourceCleanupCompletedAt,
+		},
+		{
+			name:                  "different-index replacement has no cleanup marker",
+			targetPCSReplicaIndex: 1,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, uuid.NewUUID()).
+				WithUpdateProgress(&grovecorev1beta1.PodCliqueSetUpdateProgress{
+					CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{
+						ReplicaIndex: 0,
+						Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{
+							TargetReplicaIndex:       tc.targetPCSReplicaIndex,
+							SourceCleanupCompletedAt: tc.sourceCleanupCompletedAt,
+							CanceledAt:               tc.canceledAt,
+						},
+					}},
+				}).Build()
+			before := pcs.DeepCopy()
+			updateStartedAt := metav1.Now()
+
+			got := preserveActiveReplicaSelectionsForSupersedingUpdate(pcs, updateStartedAt)
+
+			require.Len(t, got, 1)
+			assert.Equal(t, int32(0), got[0].ReplicaIndex)
+			assert.Equal(t, updateStartedAt, got[0].UpdateStartedAt)
+			assert.Nil(t, got[0].UpdateEndedAt)
+			require.NotNil(t, got[0].Replacement)
+			assert.Equal(t, tc.targetPCSReplicaIndex, got[0].Replacement.TargetReplicaIndex)
+			assert.Equal(t, tc.wantCleanupCompletedAt, got[0].Replacement.SourceCleanupCompletedAt)
+			assert.Equal(t, tc.canceledAt, got[0].Replacement.CanceledAt)
+			assert.NotSame(t, pcs.Status.UpdateProgress.CurrentlyUpdating[0].Replacement, got[0].Replacement)
+			assert.Equal(t, before, pcs, "supersession must not mutate the input progress")
+		})
+	}
 }
 
 // TestPCSGenerationStatusExpectationKey verifies the generation-status expectation key includes the PCS UID so two

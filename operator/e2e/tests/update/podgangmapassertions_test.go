@@ -153,6 +153,7 @@ func assertEntriesUnchangedExceptHashForNonCoherentUpdate(t *testing.T, before, 
 // means the workload has no tail entry (PodCliqueScalingGroup replicas equal MinAvailable). A nil
 // scaleOutIndices means the scale-out entry carries no indices (nothing has scaled out).
 type expectedReplicaPodGangMap struct {
+	generationHash      string // If set, every entry must carry this hash.
 	standalonePodCounts map[string]int32
 	pcsgName            string
 	anchorIndices       []int32
@@ -160,9 +161,9 @@ type expectedReplicaPodGangMap struct {
 	scaleOutIndices     []int32
 }
 
-// assertReplicaPodGangMap asserts a replica's PodGangMap entries match want. It verifies the anchor entry,
-// the tail entry when want.tailIndices is set, and the scale-out entry, checking each entry's PCSG indices
-// and that the tail and scale-out entries depend on the anchor epoch.
+// assertReplicaPodGangMap asserts the exact roles, standalone pod counts, and PCSG replica indices of a
+// replica's PodGangMap. Tail and scale-out entries must depend on the anchor and carry no standalone pods.
+// If want.generationHash is set, every entry must carry it.
 func assertReplicaPodGangMap(t *testing.T, entries []grovev1beta1.PodGangEntry, want expectedReplicaPodGangMap) {
 	t.Helper()
 	wantRoles := []grovev1beta1.PodGangEntryRole{
@@ -173,20 +174,32 @@ func assertReplicaPodGangMap(t *testing.T, entries []grovev1beta1.PodGangEntry, 
 		wantRoles = append(wantRoles, grovev1beta1.PodGangEntryRoleTail)
 	}
 	assertEntryRoles(t, entries, wantRoles...)
+	if want.generationHash != "" {
+		for _, entry := range entries {
+			assert.Equalf(t, want.generationHash, entry.PodCliqueSetGenerationHash,
+				"entry %s (%s) must carry the expected generation hash", entry.Epoch, entry.Role)
+		}
+	}
 
 	anchor := requireSingleEntryByRole(t, entries, grovev1beta1.PodGangEntryRoleAnchor)
 	assertStandalonePCLQPodCounts(t, anchor, want.standalonePodCounts)
-	assertPodGangEntryPCSGIndices(t, anchor, want.pcsgName, want.anchorIndices)
+	assert.Equal(t, map[string][]int32{want.pcsgName: want.anchorIndices}, anchor.PCSGReplicaIndices)
 	assertPodGangEntryDependsOn(t, anchor, nil)
 
 	if want.tailIndices != nil {
 		tail := requireSingleEntryByRole(t, entries, grovev1beta1.PodGangEntryRoleTail)
-		assertPodGangEntryPCSGIndices(t, tail, want.pcsgName, want.tailIndices)
+		assertStandalonePCLQPodCounts(t, tail, nil)
+		assert.Equal(t, map[string][]int32{want.pcsgName: want.tailIndices}, tail.PCSGReplicaIndices)
 		assertPodGangEntryDependsOn(t, tail, []string{anchor.Epoch})
 	}
 
 	scaleOut := requireSingleEntryByRole(t, entries, grovev1beta1.PodGangEntryRoleScaleOut)
-	assertPodGangEntryPCSGIndices(t, scaleOut, want.pcsgName, want.scaleOutIndices)
+	assertStandalonePCLQPodCounts(t, scaleOut, nil)
+	if len(want.scaleOutIndices) == 0 {
+		assert.Empty(t, scaleOut.PCSGReplicaIndices)
+	} else {
+		assert.Equal(t, map[string][]int32{want.pcsgName: want.scaleOutIndices}, scaleOut.PCSGReplicaIndices)
+	}
 	assertPodGangEntryDependsOn(t, scaleOut, []string{anchor.Epoch})
 }
 

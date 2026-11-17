@@ -27,6 +27,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"k8s.io/apimachinery/pkg/types"
 )
 
 // Test_RR1_PCSGMinAvailableIncreaseRecreatesReplica verifies that increasing a PodCliqueScalingGroup
@@ -377,4 +378,193 @@ func Test_RR4_ScaleInCancelsReplacement(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, claimed, 1, "the PodCliqueSet should converge to a single claimed replica index")
 	require.NoError(t, tc.WaitForPods(2))
+}
+
+// Test_RR5_SchedulingChangeSupersedesActiveRecreation verifies that a second scheduling change during
+// replica recreation preserves the active replacement and converges to the latest configuration.
+//
+// Scenario:
+//  1. Deploy workload2 and verify the baseline PGM: pc-a has two anchor pods; sg-x replica 0 is on the
+//     anchor and replica 1 is on the tail. An empty scale-out entry depends on the anchor.
+//  2. Block new standalone pods on replica 0 and change pc-a MinAvailable 1 -> 2 (S1).
+//  3. Wait for source cleanup and replacement children to exist. Verify the active 0->0 replacement and
+//     the same PGM composition, now at S1's generation.
+//  4. Change sg-x MinAvailable 1 -> 2 (S2) while readiness remains blocked. Watch PCS status to verify
+//     supersession preserves the replacement mapping and clears the cleanup marker, with no cancellation
+//     or premature completion.
+//  5. Wait for S1 cleanup to complete again and verify S2 recreates the PCLQ, PCSG, and PGM resources.
+//     The PGM anchor must hold pc-a's two pods and both sg-x replicas, with no tail and an empty scale-out entry.
+//  6. Release readiness and verify convergence to S2.
+func Test_RR5_SchedulingChangeSupersedesActiveRecreation(t *testing.T) {
+	tests.Logger.Info("1. Deploy workload2 and verify the S0 anchor, tail, and scale-out entries")
+	tc, cleanup, _ := setupTest(t, testConfig{
+		workloadName: "workload2",
+		workloadYAML: "../../yaml/workload2.yaml",
+		workerNodes:  10,
+		expectedPods: 10,
+	})
+	defer cleanup()
+
+	beforePCS, err := getPCS(tc, tc.Workload.Name)
+	require.NoError(t, err)
+	require.NotNil(t, beforePCS.Status.CurrentGenerationHash)
+	require.NotNil(t, beforePCS.Status.AppliedSchedulingConfigurationHash)
+	baselineSchedulingHash := *beforePCS.Status.AppliedSchedulingConfigurationHash
+	require.NotEmpty(t, baselineSchedulingHash)
+
+	pclqKey := types.NamespacedName{Namespace: tc.Namespace, Name: standaloneCliqueFQN(tc, "pc-a")}
+	pcsgKey := types.NamespacedName{Namespace: tc.Namespace, Name: pcsgFQN(tc, "sg-x")}
+	var beforePCLQ grovev1beta1.PodClique
+	var beforePCSG grovev1beta1.PodCliqueScalingGroup
+	require.NoError(t, tc.Client.Get(tc.Ctx, pclqKey, &beforePCLQ))
+	require.NoError(t, tc.Client.Get(tc.Ctx, pcsgKey, &beforePCSG))
+	beforePGM, err := getReplicaPodGangMap(tc, 0)
+	require.NoError(t, err)
+	wantPGM := expectedReplicaPodGangMap{
+		generationHash:      *beforePCS.Status.CurrentGenerationHash,
+		standalonePodCounts: map[string]int32{"pc-a": 2},
+		pcsgName:            "sg-x",
+		anchorIndices:       []int32{0},
+		tailIndices:         []int32{1},
+	}
+	assertReplicaPodGangMap(t, beforePGM.Spec.Entries, wantPGM)
+
+	tests.Logger.Info("2. Block replica 0 readiness and change pc-a MinAvailable 1 -> 2 (S1)")
+	require.NoError(t, kwok.ApplyStage(tc.Ctx, tc.Client, kwokStageReadyBlockedR0Path))
+	blockRemoved := false
+	defer func() {
+		if !blockRemoved {
+			if err := kwok.DeleteStage(tc.Ctx, tc.Client, kwokStageReadyBlockedR0Name); err != nil {
+				t.Errorf("failed to delete replica 0 readiness-block KWOK stage: %v", err)
+			}
+		}
+	}()
+	require.NoError(t, triggerStandalonePCLQMinAvailableChange(tc, "pc-a", 2))
+
+	tests.Logger.Info("3. Wait for the active 0->0 replacement's source cleanup and S1 child resources")
+	firstPCS, err := waitForSameIndexReplacementCleanup(tc, 0)
+	require.NoError(t, err, "S1 source cleanup must complete while the replacement remains active")
+	firstGenerationHash := *firstPCS.Status.CurrentGenerationHash
+	require.NotEqual(t, *beforePCS.Status.CurrentGenerationHash, firstGenerationHash)
+
+	recreatedPCLQ, err := waitForRecreatedPCLQ(tc, &beforePCLQ)
+	require.NoError(t, err)
+	require.NotNil(t, recreatedPCLQ.Spec.MinAvailable)
+	assert.Equal(t, int32(2), *recreatedPCLQ.Spec.MinAvailable)
+	require.NoError(t, waitForStandaloneReplicaUnavailable(tc, "pc-a", 0))
+
+	recreatedPCSG, err := waitForRecreatedPCSG(tc, &beforePCSG)
+	require.NoError(t, err)
+	require.NotNil(t, recreatedPCSG.Spec.MinAvailable)
+	assert.Equal(t, int32(1), *recreatedPCSG.Spec.MinAvailable)
+
+	firstPGM, err := waitForRecreatedPodGangMap(tc, beforePGM, firstGenerationHash)
+	require.NoError(t, err)
+	wantPGM.generationHash = firstGenerationHash
+	assertReplicaPodGangMap(t, firstPGM.Spec.Entries, wantPGM)
+
+	firstPCS, err = getPCS(tc, tc.Workload.Name)
+	require.NoError(t, err)
+	require.NotNil(t, firstPCS.Status.CurrentGenerationHash)
+	require.Equal(t, firstGenerationHash, *firstPCS.Status.CurrentGenerationHash)
+	require.NotNil(t, firstPCS.Status.UpdateProgress)
+	require.True(t, firstPCS.Status.UpdateProgress.RequiresReplicaRecreation)
+	require.Nil(t, firstPCS.Status.UpdateProgress.UpdateEndedAt)
+	require.Len(t, firstPCS.Status.UpdateProgress.CurrentlyUpdating, 1)
+	firstReplicaProgress := firstPCS.Status.UpdateProgress.CurrentlyUpdating[0]
+	require.Equal(t, int32(0), firstReplicaProgress.ReplicaIndex)
+	require.Nil(t, firstReplicaProgress.UpdateEndedAt)
+	require.NotNil(t, firstReplicaProgress.Replacement)
+	require.Equal(t, int32(0), firstReplicaProgress.Replacement.TargetReplicaIndex)
+	require.NotNil(t, firstReplicaProgress.Replacement.SourceCleanupCompletedAt)
+	require.Nil(t, firstReplicaProgress.Replacement.CanceledAt)
+	firstSchedulingHash := firstPCS.Status.UpdateProgress.TargetSchedulingConfigurationHash
+	require.NotEmpty(t, firstSchedulingHash)
+	require.NotEqual(t, baselineSchedulingHash, firstSchedulingHash)
+	require.NotNil(t, firstPCS.Status.AppliedSchedulingConfigurationHash)
+	require.Equal(t, baselineSchedulingHash, *firstPCS.Status.AppliedSchedulingConfigurationHash)
+
+	tests.Logger.Info("4. Watch PCS status while changing sg-x MinAvailable 1 -> 2 (S2)")
+	watchCtx, cancelWatch := context.WithTimeout(tc.Ctx, tc.Timeout)
+	defer cancelWatch()
+	pcsWatcher, err := watchPodCliqueSet(watchCtx, tc)
+	require.NoError(t, err)
+	defer pcsWatcher.Stop()
+	require.NoError(t, triggerPCSGMinAvailableChange(tc, "sg-x", 2))
+
+	secondPCS, err := waitForRecreationSupersession(watchCtx, pcsWatcher, firstPCS)
+	require.NoError(t, err, "S2 must preserve the active replacement and restart cleanup without completing or applying it")
+	require.Nil(t, secondPCS.Status.UpdateProgress.CurrentlyUpdating[0].Replacement.SourceCleanupCompletedAt)
+	secondGenerationHash := *secondPCS.Status.CurrentGenerationHash
+	secondSchedulingHash := secondPCS.Status.UpdateProgress.TargetSchedulingConfigurationHash
+	require.NotEmpty(t, secondSchedulingHash)
+	require.NotEqual(t, baselineSchedulingHash, secondSchedulingHash)
+	require.NotNil(t, secondPCS.Status.UpdateProgress.PreviousPodCliqueSetGenerationHash)
+	assert.Equal(t, firstGenerationHash, *secondPCS.Status.UpdateProgress.PreviousPodCliqueSetGenerationHash)
+	assert.Equal(t, secondPCS.Status.UpdateProgress.UpdateStartedAt,
+		secondPCS.Status.UpdateProgress.CurrentlyUpdating[0].UpdateStartedAt,
+		"the preserved replica must use S2's update start time")
+
+	tests.Logger.Info("5. Wait for S1 cleanup and verify S2 recreates the children and PodGangMap")
+	secondCleanupPCS, err := waitForSameIndexReplacementCleanup(tc, 0)
+	require.NoError(t, err, "S1 resources must be cleaned up before S2 target creation")
+	require.Equal(t, secondGenerationHash, *secondCleanupPCS.Status.CurrentGenerationHash)
+	secondCleanupAt := secondCleanupPCS.Status.UpdateProgress.CurrentlyUpdating[0].Replacement.SourceCleanupCompletedAt
+	require.NotNil(t, secondCleanupAt)
+	assert.False(t, secondCleanupAt.Before(&secondPCS.Status.UpdateProgress.UpdateStartedAt),
+		"S2 cleanup completion must not predate supersession")
+
+	secondPCLQ, err := waitForRecreatedPCLQ(tc, recreatedPCLQ)
+	require.NoError(t, err)
+	require.NotNil(t, secondPCLQ.Spec.MinAvailable)
+	assert.Equal(t, int32(2), *secondPCLQ.Spec.MinAvailable)
+	require.NoError(t, waitForStandaloneReplicaUnavailable(tc, "pc-a", 0))
+	secondPCSG, err := waitForRecreatedPCSG(tc, recreatedPCSG)
+	require.NoError(t, err)
+	require.NotNil(t, secondPCSG.Spec.MinAvailable)
+	assert.Equal(t, int32(2), *secondPCSG.Spec.MinAvailable)
+	secondPGM, err := getReplicaPodGangMap(tc, 0)
+	require.NoError(t, err)
+	require.NotEqual(t, firstPGM.UID, secondPGM.UID, "S2 must recreate the S1 PodGangMap")
+	wantPGM.generationHash = secondGenerationHash
+	wantPGM.anchorIndices = []int32{0, 1}
+	wantPGM.tailIndices = nil
+	assertReplicaPodGangMap(t, secondPGM.Spec.Entries, wantPGM)
+
+	tests.Logger.Info("6. Release readiness and verify S2 convergence and the exact PGM composition")
+	require.NoError(t, kwok.DeleteStage(tc.Ctx, tc.Client, kwokStageReadyBlockedR0Name))
+	blockRemoved = true
+	// KWOK may retain the old delayed action. Recreate only held pods, never the PCLQ or PCSG resources.
+	deleteNotReadyPodsOnReplica(t, tc, 0)
+	tcLongTimeout := *tc
+	tcLongTimeout.Timeout = 2 * time.Minute
+	// Inspect the final state even on timeout so a failure also reports the actual S2 PGM composition.
+	assert.NoError(t, waitForReplicaRecreationComplete(&tcLongTimeout, 1))
+	require.NoError(t, tc.WaitForPods(10))
+
+	afterPCS, err := getPCS(tc, tc.Workload.Name)
+	require.NoError(t, err)
+	require.NotNil(t, afterPCS.Status.CurrentGenerationHash)
+	require.NotNil(t, afterPCS.Status.AppliedSchedulingConfigurationHash)
+	assert.Equal(t, secondGenerationHash, *afterPCS.Status.CurrentGenerationHash)
+	assert.Equal(t, secondSchedulingHash, *afterPCS.Status.AppliedSchedulingConfigurationHash)
+	require.NotNil(t, afterPCS.Status.UpdateProgress)
+	assert.Equal(t, secondSchedulingHash, afterPCS.Status.UpdateProgress.TargetSchedulingConfigurationHash)
+	assert.NotNil(t, afterPCS.Status.UpdateProgress.UpdateEndedAt)
+	assert.Empty(t, afterPCS.Status.UpdateProgress.CurrentlyUpdating)
+	assert.Equal(t, int32(1), afterPCS.Status.AvailableReplicas)
+	assert.Equal(t, int32(1), afterPCS.Status.UpdatedReplicas)
+	require.NoError(t, waitForClaimedPCSReplicaIndices(tc, []int{0}))
+
+	var afterPCLQ grovev1beta1.PodClique
+	var afterPCSG grovev1beta1.PodCliqueScalingGroup
+	require.NoError(t, tc.Client.Get(tc.Ctx, pclqKey, &afterPCLQ))
+	require.NoError(t, tc.Client.Get(tc.Ctx, pcsgKey, &afterPCSG))
+	require.NotNil(t, afterPCLQ.Spec.MinAvailable)
+	require.NotNil(t, afterPCSG.Spec.MinAvailable)
+	assert.Equal(t, int32(2), *afterPCLQ.Spec.MinAvailable)
+	assert.Equal(t, int32(2), *afterPCSG.Spec.MinAvailable)
+	assert.Equal(t, int32(2), afterPCSG.Spec.Replicas)
+	assertReplicaPodGangMap(t, getPodGangMapEntries(t, tc, 0), wantPGM)
+	assertGenerationHashConverged(tc)
 }

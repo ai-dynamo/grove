@@ -46,6 +46,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apimachinery/pkg/watch"
+	watchtools "k8s.io/client-go/tools/watch"
 	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -452,6 +453,72 @@ func waitForActiveReplacementTargetingIndex(tc *testctx.TestContext, targetRepli
 	return sourceReplicaIndex, nil
 }
 
+// waitForSameIndexReplacementCleanup waits for an active replacement at replicaIndex to finish deleting
+// its source resources. It checks PCS progress only. Replacement child resources may not exist yet.
+func waitForSameIndexReplacementCleanup(tc *testctx.TestContext, replicaIndex int32) (*grovev1beta1.PodCliqueSet, error) {
+	fetchPCS := waiter.FetchByName(tc.Workload.Name, k8sclient.Getter[*grovev1beta1.PodCliqueSet](tc.Client, tc.Namespace))
+	predicate := waiter.Predicate[*grovev1beta1.PodCliqueSet](func(pcs *grovev1beta1.PodCliqueSet) bool {
+		if pcs == nil || pcs.Status.CurrentGenerationHash == nil || pcs.Status.UpdateProgress == nil {
+			return false
+		}
+		progress := pcs.Status.UpdateProgress
+		if !progress.RequiresReplicaRecreation || progress.UpdateEndedAt != nil {
+			return false
+		}
+		for _, replicaProgress := range progress.CurrentlyUpdating {
+			replacement := replicaProgress.Replacement
+			if replicaProgress.ReplicaIndex != replicaIndex || replicaProgress.UpdateEndedAt != nil || replacement == nil {
+				continue
+			}
+			if replacement.TargetReplicaIndex == replicaIndex && replacement.CanceledAt == nil && replacement.SourceCleanupCompletedAt != nil {
+				return true
+			}
+		}
+		return false
+	})
+	return waiter.New[*grovev1beta1.PodCliqueSet]().WithTimeout(tc.Timeout).WithInterval(tc.Interval).
+		WaitFor(tc.Ctx, fetchPCS, predicate)
+}
+
+// waitForRecreatedPCLQ waits for the PodClique to reappear with a new UID. Its spec is asserted by the caller.
+func waitForRecreatedPCLQ(tc *testctx.TestContext, previous *grovev1beta1.PodClique) (*grovev1beta1.PodClique, error) {
+	fetchPCLQ := waiter.FetchByName(previous.Name, k8sclient.Getter[*grovev1beta1.PodClique](tc.Client, previous.Namespace))
+	predicate := waiter.Predicate[*grovev1beta1.PodClique](func(pclq *grovev1beta1.PodClique) bool {
+		return pclq != nil && pclq.DeletionTimestamp == nil && pclq.UID != previous.UID
+	})
+	return waiter.New[*grovev1beta1.PodClique]().WithTimeout(tc.Timeout).WithInterval(tc.Interval).
+		WaitFor(tc.Ctx, fetchPCLQ, predicate)
+}
+
+// waitForRecreatedPCSG waits for the scaling group to reappear with a new UID. Its spec is asserted by the caller.
+func waitForRecreatedPCSG(tc *testctx.TestContext, previous *grovev1beta1.PodCliqueScalingGroup) (*grovev1beta1.PodCliqueScalingGroup, error) {
+	fetchPCSG := waiter.FetchByName(previous.Name, k8sclient.Getter[*grovev1beta1.PodCliqueScalingGroup](tc.Client, previous.Namespace))
+	predicate := waiter.Predicate[*grovev1beta1.PodCliqueScalingGroup](func(pcsg *grovev1beta1.PodCliqueScalingGroup) bool {
+		return pcsg != nil && pcsg.DeletionTimestamp == nil && pcsg.UID != previous.UID
+	})
+	return waiter.New[*grovev1beta1.PodCliqueScalingGroup]().WithTimeout(tc.Timeout).WithInterval(tc.Interval).
+		WaitFor(tc.Ctx, fetchPCSG, predicate)
+}
+
+// waitForRecreatedPodGangMap waits for a new map with the previous entry count and the requested generation.
+// The caller asserts each entry's composition after this milestone.
+func waitForRecreatedPodGangMap(tc *testctx.TestContext, previous *grovev1beta1.PodGangMap, generationHash string) (*grovev1beta1.PodGangMap, error) {
+	fetchPGM := waiter.FetchByName(previous.Name, k8sclient.Getter[*grovev1beta1.PodGangMap](tc.Client, previous.Namespace))
+	predicate := waiter.Predicate[*grovev1beta1.PodGangMap](func(pgm *grovev1beta1.PodGangMap) bool {
+		if pgm == nil || pgm.DeletionTimestamp != nil || pgm.UID == previous.UID || len(pgm.Spec.Entries) != len(previous.Spec.Entries) {
+			return false
+		}
+		for _, entry := range pgm.Spec.Entries {
+			if entry.PodCliqueSetGenerationHash != generationHash {
+				return false
+			}
+		}
+		return true
+	})
+	return waiter.New[*grovev1beta1.PodGangMap]().WithTimeout(tc.Timeout).WithInterval(tc.Interval).
+		WaitFor(tc.Ctx, fetchPGM, predicate)
+}
+
 // watchPodCliqueSet starts watching changes after the workload's current resource version. Call it before
 // mutating the PCS so transient status changes are not lost. The caller owns the watch and must stop it.
 func watchPodCliqueSet(ctx context.Context, tc *testctx.TestContext) (watch.Interface, error) {
@@ -473,6 +540,84 @@ func watchPodCliqueSet(ctx context.Context, tc *testctx.TestContext) (watch.Inte
 		return nil, fmt.Errorf("watch PodCliqueSet %s: %w", key, err)
 	}
 	return watcher, nil
+}
+
+// waitForRecreationSupersession observes a new generation and scheduling target on a watch started before
+// the second change. UntilWithoutRetry stops the supplied watch on return; losing the watch fails this test
+// rather than relisting and potentially skipping the intermediate status changes we need to check.
+func waitForRecreationSupersession(ctx context.Context, watcher watch.Interface, previous *grovev1beta1.PodCliqueSet) (*grovev1beta1.PodCliqueSet, error) {
+	event, err := watchtools.UntilWithoutRetry(ctx, watcher, recreationSupersessionCondition(previous))
+	if err != nil {
+		if ctx.Err() != nil {
+			err = ctx.Err()
+		}
+		return nil, fmt.Errorf("waiting for recreation supersession: %w", err)
+	}
+	pcs, ok := event.Object.(*grovev1beta1.PodCliqueSet)
+	if !ok {
+		return nil, fmt.Errorf("unexpected PCS supersession watch object %T", event.Object)
+	}
+	return pcs.DeepCopy(), nil
+}
+
+// recreationSupersessionCondition validates each PCS status update while readiness is blocked, then succeeds
+// when both the generation hash and scheduling target differ from the previous update.
+func recreationSupersessionCondition(previous *grovev1beta1.PodCliqueSet) watchtools.ConditionFunc {
+	return func(event watch.Event) (bool, error) {
+		switch event.Type {
+		case watch.Error:
+			return false, apierrors.FromObject(event.Object)
+		case watch.Deleted:
+			return false, fmt.Errorf("PCS deleted before recreation was superseded")
+		case watch.Added, watch.Modified:
+		default:
+			return false, nil
+		}
+		pcs, ok := event.Object.(*grovev1beta1.PodCliqueSet)
+		if !ok {
+			return false, fmt.Errorf("unexpected PCS watch object %T", event.Object)
+		}
+		if err := validateRecreationWhileBlocked(previous, pcs); err != nil {
+			return false, err
+		}
+		return pcs.Status.CurrentGenerationHash != nil &&
+			*pcs.Status.CurrentGenerationHash != *previous.Status.CurrentGenerationHash &&
+			pcs.Status.UpdateProgress.TargetSchedulingConfigurationHash != previous.Status.UpdateProgress.TargetSchedulingConfigurationHash, nil
+	}
+}
+
+// validateRecreationWhileBlocked checks that the update is still active and unapplied, and that the active
+// replacement mappings and cancellation details have not changed. Supersession must clear active replacement
+// cleanup markers before deleting the obsolete targets. Per-update start times may change.
+func validateRecreationWhileBlocked(previous, current *grovev1beta1.PodCliqueSet) error {
+	progress := current.Status.UpdateProgress
+	if progress == nil || !progress.RequiresReplicaRecreation || progress.UpdateEndedAt != nil {
+		return fmt.Errorf("recreation stopped while replacement readiness was blocked")
+	}
+	if current.Status.AppliedSchedulingConfigurationHash == nil ||
+		!assert.ObjectsAreEqual(previous.Status.AppliedSchedulingConfigurationHash, current.Status.AppliedSchedulingConfigurationHash) {
+		return fmt.Errorf("scheduling configuration was marked applied while replacement readiness was blocked")
+	}
+	previousSelections := previous.Status.UpdateProgress.CurrentlyUpdating
+	if len(progress.CurrentlyUpdating) != len(previousSelections) {
+		return fmt.Errorf("replica selections changed during supersession: before %d, after %d", len(previousSelections), len(progress.CurrentlyUpdating))
+	}
+	hasSupersededGeneration := current.Status.CurrentGenerationHash != nil &&
+		*current.Status.CurrentGenerationHash != *previous.Status.CurrentGenerationHash
+	for i, replicaProgress := range progress.CurrentlyUpdating {
+		before := previousSelections[i]
+		if replicaProgress.UpdateEndedAt != nil {
+			return fmt.Errorf("replica %d update ended while replacement readiness was blocked", replicaProgress.ReplicaIndex)
+		}
+		expectedReplacement := before.Replacement.DeepCopy()
+		if hasSupersededGeneration && expectedReplacement != nil && expectedReplacement.CanceledAt == nil {
+			expectedReplacement.SourceCleanupCompletedAt = nil
+		}
+		if replicaProgress.ReplicaIndex != before.ReplicaIndex || !assert.ObjectsAreEqual(expectedReplacement, replicaProgress.Replacement) {
+			return fmt.Errorf("unexpected replacement mapping, cleanup marker, or cancellation details during supersession for replica %d", before.ReplicaIndex)
+		}
+	}
+	return nil
 }
 
 // waitForCanceledReplacement consumes a watch established before scale-in and returns the cancellation message
