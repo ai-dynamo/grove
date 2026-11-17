@@ -59,8 +59,11 @@ const (
 	// maxPodSetsPerTopologyGroup is how many PodSets of one podSetGroupName Kueue TAS places together: it reads only
 	// the first two as leader and workers (findLeaderAndWorkers) and ignores the rest (ai-dynamo/grove#867).
 	maxPodSetsPerTopologyGroup = 2
-	roleHashAnnotation         = "kueue.x-k8s.io/role-hash"
-	isGroupWorkloadAnnotation  = "kueue.x-k8s.io/is-group-workload"
+	// topologyGroupLeaderPodCount is the Pod count Kueue TAS assumes for the leader of a two-PodSet group: it places
+	// a single leader Pod whatever the PodSet's count (ai-dynamo/grove#867).
+	topologyGroupLeaderPodCount = 1
+	roleHashAnnotation          = "kueue.x-k8s.io/role-hash"
+	isGroupWorkloadAnnotation   = "kueue.x-k8s.io/is-group-workload"
 	// priorityClassLabel on a PodCliqueSet names the Kueue WorkloadPriorityClass of its Workloads. Grove mirrors
 	// PodCliqueSet labels onto its PodGangs, so the backend reads it from the PodGang.
 	priorityClassLabel = "kueue.x-k8s.io/priority-class"
@@ -278,7 +281,9 @@ func (b *schedulerBackend) buildPrebuiltWorkload(ctx context.Context, pcs *grove
 		podSets = append(podSets, podSet)
 		podSetGroups[podSet.Name] = topologyGroupNameForPodGroup(podGang, podGroup.Name)
 	}
-	setPodSetGroupNames(podSets, podSetGroups)
+	if b.config.EnablePodSetGroupTopology {
+		setPodSetGroupNames(podSets, podSetGroups)
+	}
 	// Kueue checks a prebuilt Workload against its pods' PodSets sorted by name, and finishes it as OutOfSync
 	// if the Workload lists them in another order.
 	slices.SortFunc(podSets, func(a, b kueuev1beta2.PodSet) int { return cmp.Compare(a.Name, b.Name) })
@@ -392,9 +397,14 @@ func topologyConstraintGroupConfig(podGang *groveschedulerv1alpha1.PodGang, podG
 }
 
 // setPodSetGroupNames sets podSetGroupName so Kueue TAS places each topology group (e.g. a tensor-parallel leader and
-// its workers) in one domain instead of placing each PodSet independently. A group is emitted only when every member
-// carries a required or preferred topology (Kueue rejects the name otherwise) and it has at most
-// maxPodSetsPerTopologyGroup members, since Kueue would silently ignore the rest.
+// its workers) in one domain instead of placing each PodSet independently. Kueue TAS supports only part of this
+// (ai-dynamo/grove#867), so a group is emitted only when Kueue places it as asked:
+//   - every member carries a required or preferred topology, since Kueue rejects the name otherwise;
+//   - it has at most maxPodSetsPerTopologyGroup members, since Kueue silently ignores the rest;
+//   - a two-member group has a member with topologyGroupLeaderPodCount Pods, since Kueue places only that many Pods
+//     of the leader, the member with the smaller count.
+//
+// Any other group keeps per-PodSet placement.
 func setPodSetGroupNames(podSets []kueuev1beta2.PodSet, groupByPodSet map[kueuev1beta2.PodSetReference]string) {
 	members := map[string][]int{}
 	for i := range podSets {
@@ -407,6 +417,10 @@ func setPodSetGroupNames(podSets []kueuev1beta2.PodSet, groupByPodSet map[kueuev
 			continue
 		}
 		if !lo.EveryBy(idxs, func(i int) bool { return hasTopologyDomain(podSets[i].TopologyRequest) }) {
+			continue
+		}
+		if len(idxs) == maxPodSetsPerTopologyGroup &&
+			!lo.SomeBy(idxs, func(i int) bool { return podSets[i].Count == topologyGroupLeaderPodCount }) {
 			continue
 		}
 		for _, i := range idxs {
