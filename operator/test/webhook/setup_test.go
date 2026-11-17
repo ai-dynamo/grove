@@ -66,6 +66,7 @@ func TestSetup(t *testing.T) {
 		"/webhooks/validate-podcliqueset",
 		"/webhooks/validate-podclique",
 		"/webhooks/validate-podcliquescalinggroup",
+		"/webhooks/validate-scale",
 	}, registeredPaths(server.handlers))
 }
 

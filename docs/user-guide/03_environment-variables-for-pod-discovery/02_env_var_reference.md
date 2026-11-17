@@ -29,11 +29,11 @@ A common source of confusion is the difference between a pod's **name** and its 
 
 ### Pod Name (Kubernetes Resource Identifier)
 
-The **pod name** is the unique identifier for the Pod resource in Kubernetes (stored in `metadata.name`). When Grove creates pods, it uses Kubernetes' `generateName` feature, which appends a random 5-character suffix to ensure uniqueness:
+The **pod name** is the unique identifier for the Pod resource in Kubernetes (stored in `metadata.name`). When Grove creates pods, it includes the PodClique pod index and appends a random 5-character suffix to ensure uniqueness:
 
 ```
-<pclq-name>-<random-suffix>
-Example: env-demo-standalone-0-frontend-abc12
+<pclq-name>-<pod-index>-<random-suffix>
+Example: env-demo-standalone-0-frontend-0-abc7d
 ```
 
 This name is what you see when running `kubectl get pods`. However, you **cannot use this name for DNS-based pod discovery** because the random suffix is unpredictable.
@@ -65,7 +65,7 @@ env-demo-standalone-0-frontend-0.env-demo-standalone-0.default.svc.cluster.local
 | Attribute | Pod Name | Hostname |
 |-----------|----------|----------|
 | Source | `metadata.name` | `spec.hostname` |
-| Pattern | `<pclq-name>-<random-suffix>` | `<pclq-name>-<pod-index>` |
+| Pattern | `<pclq-name>-<pod-index>-<random-suffix>` | `<pclq-name>-<pod-index>` |
 | Predictable? | ❌ No (random suffix) | ✅ Yes (index-based) |
 | DNS resolvable? | ❌ No | ✅ Yes (with headless service) |
 | Use case | `kubectl` commands, logs | Pod discovery, pod-to-pod communication |

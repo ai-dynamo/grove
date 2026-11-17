@@ -145,6 +145,8 @@ jobs:
             test_pattern: "^Test_CONV"
           - test_name: resource_sharing
             test_pattern: "^Test_RS"
+          - test_name: name_validation
+            test_pattern: "^Test_N"
           - test_name: podgangmap_reconstruct
             test_pattern: "^Test_PGMR"
           - test_name: version_upgrade
@@ -232,6 +234,7 @@ jobs:
           - test_name: crd_installer
           - test_name: api_conversion
           - test_name: resource_sharing
+          - test_name: name_validation
           - test_name: podgangmap_reconstruct
           - test_name: version_upgrade
           - test_name: version_downgrade

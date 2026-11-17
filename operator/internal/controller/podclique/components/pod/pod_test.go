@@ -18,6 +18,7 @@ package pod
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -36,6 +37,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/utils/ptr"
 )
 
@@ -116,7 +118,8 @@ func TestBuildResourceWithLPXBackend(t *testing.T) {
 	require.NoError(t, resource.buildResource(pcs, pclq, podGangName, pod, 0, nil))
 
 	assert.Equal(t, string(configv1beta1.SchedulerNameLPX), pod.Spec.SchedulerName)
-	assert.Equal(t, pclq.Name+"-", pod.GenerateName)
+	assert.Empty(t, pod.GenerateName)
+	assert.Regexp(t, regexp.MustCompile(`^model-0-gpu-worker-0-[a-z0-9]{5}$`), pod.Name)
 	assert.Equal(t, podGangName, pod.Labels[common.LabelPodGang])
 	require.Len(t, pod.Spec.SchedulingGates, 1)
 	assert.Equal(t, podGangSchedulingGate, pod.Spec.SchedulingGates[0].Name)
@@ -223,6 +226,65 @@ func TestGetSelectorLabelsForPods_PCSGOwnedPodClique(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestBuildResourceSetsPodNameWithPodIndex(t *testing.T) {
+	scheme := runtime.NewScheme()
+	utilruntime.Must(grovecorev1beta1.AddToScheme(scheme))
+	utilruntime.Must(corev1.AddToScheme(scheme))
+
+	pcs := &grovecorev1beta1.PodCliqueSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "workload",
+			Namespace: "default",
+		},
+		Spec: grovecorev1beta1.PodCliqueSetSpec{
+			Template: grovecorev1beta1.PodCliqueSetTemplateSpec{
+				StartupType: ptr.To(grovecorev1beta1.CliqueStartupTypeAnyOrder),
+				Cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
+					{
+						Name: "worker",
+						Spec: grovecorev1beta1.PodCliqueSpec{
+							PodSpec: corev1.PodSpec{
+								Containers: []corev1.Container{{Name: "app", Image: "busybox"}},
+							},
+							Replicas: 1,
+						},
+					},
+				},
+			},
+		},
+	}
+	pclq := &grovecorev1beta1.PodClique{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "workload-0-worker",
+			Namespace: "default",
+			Labels: map[string]string{
+				common.LabelPartOfKey:                "workload",
+				common.LabelPodCliqueSetReplicaIndex: "0",
+				common.LabelPodClique:                "workload-0-worker",
+			},
+		},
+		Spec: grovecorev1beta1.PodCliqueSpec{
+			PodSpec: corev1.PodSpec{
+				Containers: []corev1.Container{{Name: "app", Image: "busybox"}},
+			},
+			Replicas: 1,
+		},
+	}
+
+	pod := &corev1.Pod{}
+	r := _resource{
+		scheme:        scheme,
+		schedRegistry: testutils.NewDefaultFakeRegistry(),
+	}
+
+	err := r.buildResource(pcs, pclq, "workload-0", pod, 7, nil)
+
+	assert.NoError(t, err)
+	assert.Empty(t, pod.GenerateName)
+	assert.Regexp(t, regexp.MustCompile(`^workload-0-worker-7-[a-z0-9]{5}$`), pod.Name)
+	assert.Equal(t, "workload-0-worker-7", pod.Spec.Hostname)
 }
 
 func TestAddEnvironmentVariables(t *testing.T) {
