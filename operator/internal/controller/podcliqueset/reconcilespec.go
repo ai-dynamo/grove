@@ -227,9 +227,13 @@ func isUpdateOrchestratedByGrove(pcs *grovecorev1beta1.PodCliqueSet, requiresRep
 	return requiresReplicaRecreation || componentutils.ResolveUpdateStrategyType(pcs) != grovecorev1beta1.OnDeleteStrategy
 }
 
-// preserveActiveReplicaSelectionsForSupersedingUpdate returns active replica selections that remain committed after
-// update supersession. It resets update-specific progress while preserving structural replacement lifecycle state.
-// Identities already reserved for scale-in are excluded. Replica indices are returned in ascending order.
+// preserveActiveReplicaSelectionsForSupersedingUpdate keeps unfinished replica updates when a new update
+// replaces the current one, so replacements already being created or drained can continue.
+// Completed replicas and replicas selected for scale-in are left out. Each remaining replica gets fresh
+// update progress starting at updateStartedAt, but keeps its replacement mapping and cancellation details.
+// Active same-index replacements restart source cleanup so targets created for the superseded generation
+// are deleted before the new generation is created. Canceled replacements keep their cleanup progress.
+// The result is sorted by replica index in ascending order.
 func preserveActiveReplicaSelectionsForSupersedingUpdate(pcs *grovecorev1beta1.PodCliqueSet, updateStartedAt metav1.Time) []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress {
 	if pcs.Status.UpdateProgress == nil {
 		return nil
@@ -248,6 +252,9 @@ func preserveActiveReplicaSelectionsForSupersedingUpdate(pcs *grovecorev1beta1.P
 		var replacement *grovecorev1beta1.PodCliqueSetReplicaReplacementProgress
 		if progress.Replacement != nil {
 			replacement = progress.Replacement.DeepCopy()
+			if replacement.CanceledAt == nil {
+				replacement.SourceCleanupCompletedAt = nil
+			}
 		}
 		currentlyUpdating = append(currentlyUpdating, grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{
 			ReplicaIndex:    progress.ReplicaIndex,
