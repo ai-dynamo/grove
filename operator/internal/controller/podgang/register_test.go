@@ -24,6 +24,7 @@ import (
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	"github.com/stretchr/testify/assert"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -37,6 +38,7 @@ type predicateTestCase struct {
 	generationChanged       bool
 	deletionStarted         bool
 	labelsChanged           bool
+	alreadyTerminating      bool
 	shouldAllowCreateEvent  bool
 	shouldAllowDeleteEvent  bool
 	shouldAllowGenericEvent bool
@@ -106,6 +108,16 @@ func TestPodGangChangePredicate(t *testing.T) {
 			shouldAllowUpdateEvent:  true,
 		},
 		{
+			name:                    "managed PodGang update while already terminating",
+			managedOld:              true,
+			managedNew:              true,
+			alreadyTerminating:      true,
+			shouldAllowCreateEvent:  true,
+			shouldAllowDeleteEvent:  true,
+			shouldAllowGenericEvent: false,
+			shouldAllowUpdateEvent:  false,
+		},
+		{
 			name:                    "update with old managed and new unmanaged",
 			managedOld:              true,
 			managedNew:              false,
@@ -165,7 +177,11 @@ func TestPodGangChangePredicate(t *testing.T) {
 					newPG.Labels[k] = v
 				}
 			}
-
+			if tc.alreadyTerminating {
+				now := metav1.Now()
+				oldPG.SetDeletionTimestamp(&now)
+				newPG.SetDeletionTimestamp(&now)
+			}
 			assert.Equal(t, tc.shouldAllowCreateEvent, pred.Create(event.CreateEvent{Object: newPG}), "Create")
 			assert.Equal(t, tc.shouldAllowDeleteEvent, pred.Delete(event.DeleteEvent{Object: newPG}), "Delete")
 			assert.Equal(t, tc.shouldAllowGenericEvent, pred.Generic(event.GenericEvent{Object: newPG}), "Generic")

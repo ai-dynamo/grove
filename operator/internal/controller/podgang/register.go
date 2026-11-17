@@ -68,7 +68,7 @@ func podGangChangePredicate() predicate.Predicate {
 			return grovectrlutils.IsManagedPodGang(e.ObjectOld) &&
 				grovectrlutils.IsManagedPodGang(e.ObjectNew) &&
 				(e.ObjectOld.GetGeneration() != e.ObjectNew.GetGeneration() ||
-					e.ObjectOld.GetDeletionTimestamp().IsZero() && !e.ObjectNew.GetDeletionTimestamp().IsZero() ||
+					(e.ObjectOld.GetDeletionTimestamp().IsZero() && !e.ObjectNew.GetDeletionTimestamp().IsZero()) ||
 					!maps.Equal(e.ObjectOld.GetLabels(), e.ObjectNew.GetLabels()))
 		},
 		GenericFunc: func(_ event.GenericEvent) bool { return false },
