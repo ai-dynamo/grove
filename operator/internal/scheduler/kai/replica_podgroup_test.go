@@ -131,14 +131,15 @@ func TestBuildReplicaPodGroupPlanRoleAwareHierarchy(t *testing.T) {
 	assert.Equal(t, apicommon.LabelComponentNamePodCliqueSetReplicaPodGroup, podGroup.Labels[apicommon.LabelComponentKey])
 	assert.Nil(t, podGroup.Spec.MinMember)
 	require.NotNil(t, podGroup.Spec.MinSubGroup)
-	assert.Equal(t, int32(3), *podGroup.Spec.MinSubGroup)
+	assert.Equal(t, int32(2), *podGroup.Spec.MinSubGroup, "only the newest Anchor and the collection are required")
 
 	collection := requireSubGroup(t, podGroup, "non-anchors")
 	assert.Nil(t, collection.Parent)
 	require.NotNil(t, collection.MinSubGroup)
-	assert.Equal(t, int32(2), *collection.MinSubGroup)
+	assert.Equal(t, int32(3), *collection.MinSubGroup)
 
-	for _, podGang := range []string{"3000-workers-1", "4000-workers-2"} {
+	branchMinSubGroup := map[string]int32{"1000": 2, "3000-workers-1": 1, "4000-workers-2": 1}
+	for _, podGang := range []string{"1000", "3000-workers-1", "4000-workers-2"} {
 		wrapper := requireSubGroup(t, podGroup, "non-anchor-"+podGang)
 		require.NotNil(t, wrapper.Parent)
 		assert.Equal(t, collection.Name, *wrapper.Parent)
@@ -149,14 +150,14 @@ func TestBuildReplicaPodGroupPlanRoleAwareHierarchy(t *testing.T) {
 		require.NotNil(t, branch.Parent)
 		assert.Equal(t, wrapper.Name, *branch.Parent)
 		require.NotNil(t, branch.MinSubGroup)
-		assert.Equal(t, int32(1), *branch.MinSubGroup)
+		assert.Equal(t, branchMinSubGroup[podGang], *branch.MinSubGroup)
 	}
 
-	anchorABranch := requireSubGroup(t, podGroup, "podgang-1000")
-	assert.Nil(t, anchorABranch.Parent)
-	assert.Less(t, collection.Name, anchorABranch.Name, "the collection must sort ahead of the Anchor branches")
-	require.NotNil(t, anchorABranch.MinSubGroup)
-	assert.Equal(t, int32(2), *anchorABranch.MinSubGroup)
+	newestAnchorBranch := requireSubGroup(t, podGroup, "podgang-2000")
+	assert.Nil(t, newestAnchorBranch.Parent, "the newest Anchor is required at the root")
+	assert.Less(t, collection.Name, newestAnchorBranch.Name, "the collection must sort ahead of the Anchor branch")
+	require.NotNil(t, newestAnchorBranch.MinSubGroup)
+	assert.Equal(t, int32(1), *newestAnchorBranch.MinSubGroup)
 	anchorAGroup := requireSubGroup(t, podGroup, "group-rack-1000")
 	require.NotNil(t, anchorAGroup.MinSubGroup)
 	assert.Equal(t, int32(1), *anchorAGroup.MinSubGroup)
@@ -178,6 +179,14 @@ func TestBuildReplicaPodGroupPlanRoleAwareHierarchy(t *testing.T) {
 	orderedPlan, err := backend.buildReplicaPodGroupPlan(pcs, 0, []componentutils.MaterializedPodGang{anchorA, tail, anchorB, scaleOut}, "")
 	require.NoError(t, err)
 	assert.Equal(t, plan, orderedPlan, "materialization order must not affect the PodGroup or its leaf mapping")
+}
+
+func TestEpochIsNewer(t *testing.T) {
+	assert.True(t, epochIsNewer("2000", "1000"))
+	assert.False(t, epochIsNewer("1000", "2000"))
+	assert.False(t, epochIsNewer("1000", "1000"))
+	assert.True(t, epochIsNewer("10000", "9999"), "a longer epoch is a larger number")
+	assert.False(t, epochIsNewer("9999", "10000"))
 }
 
 func TestBuildReplicaPodGroupPlanAnchorOnly(t *testing.T) {

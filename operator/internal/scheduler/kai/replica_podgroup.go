@@ -270,19 +270,26 @@ func newSubGroupBuilder(pcsName string, replica int, topologyReference string) *
 }
 
 func (b *subGroupBuilder) appendReplicaHierarchy(inputs *replicaPodGroupInputs) (int32, error) {
-	for _, anchor := range inputs.anchors {
-		names, err := b.namer.forPodGang(anchor.Name)
+	var rootMinSubGroup int32
+	optional := inputs.nonAnchors
+	if len(inputs.anchors) > 0 {
+		newest, superseded, err := b.splitAnchors(inputs.anchors)
 		if err != nil {
 			return 0, err
 		}
-		if err = b.appendPodGangBranch(anchor, names, nil); err != nil {
+		names, err := b.namer.forPodGang(newest.Name)
+		if err != nil {
 			return 0, err
 		}
+		if err = b.appendPodGangBranch(newest, names, nil); err != nil {
+			return 0, err
+		}
+		rootMinSubGroup = 1
+		optional = append(superseded, inputs.nonAnchors...)
 	}
-	rootMinSubGroup := int32(len(inputs.anchors))
-	if len(inputs.nonAnchors) > 0 {
+	if len(optional) > 0 {
 		rootMinSubGroup++
-		if err := b.appendNonAnchorBranches(inputs.nonAnchors); err != nil {
+		if err := b.appendNonAnchorBranches(optional); err != nil {
 			return 0, err
 		}
 	}
@@ -290,10 +297,38 @@ func (b *subGroupBuilder) appendReplicaHierarchy(inputs *replicaPodGroupInputs) 
 	return rootMinSubGroup, nil
 }
 
+// splitAnchors separates the Anchor of the newest epoch from the Anchors it supersedes. A superseded
+// Anchor only drains during an update and its lost Pods are never replaced, so requiring it would
+// block the newest Anchor from scheduling.
+func (b *subGroupBuilder) splitAnchors(anchors []*groveschedulerv1alpha1.PodGang) (*groveschedulerv1alpha1.PodGang, []*groveschedulerv1alpha1.PodGang, error) {
+	newestIndex, newestEpoch := 0, ""
+	for i, anchor := range anchors {
+		names, err := b.namer.forPodGang(anchor.Name)
+		if err != nil {
+			return nil, nil, err
+		}
+		if i == 0 || epochIsNewer(names.epoch, newestEpoch) {
+			newestIndex, newestEpoch = i, names.epoch
+		}
+	}
+	superseded := make([]*groveschedulerv1alpha1.PodGang, 0, len(anchors)-1)
+	superseded = append(superseded, anchors[:newestIndex]...)
+	superseded = append(superseded, anchors[newestIndex+1:]...)
+	return anchors[newestIndex], superseded, nil
+}
+
+// epochIsNewer compares two epochs, which are decimal numbers without leading zeros.
+func epochIsNewer(epoch, other string) bool {
+	if len(epoch) != len(other) {
+		return len(epoch) > len(other)
+	}
+	return epoch > other
+}
+
 func (b *subGroupBuilder) appendNonAnchorBranches(nonAnchors []*groveschedulerv1alpha1.PodGang) error {
 	collection := b.namer.nonAnchorCollection()
-	// The collection requires every wrapper, so KAI's subgroup ordering ranks it with the Anchor
-	// branches rather than behind them as it would an optional subgroup.
+	// The collection requires every wrapper, so KAI's subgroup ordering ranks it with the newest
+	// Anchor branch rather than behind it as it would an optional subgroup.
 	if err := b.add(kaischedulingv2alpha2.SubGroup{
 		Name:        collection,
 		MinSubGroup: ptr.To(int32(len(nonAnchors))),
@@ -307,7 +342,7 @@ func (b *subGroupBuilder) appendNonAnchorBranches(nonAnchors []*groveschedulerv1
 		}
 		wrapperName := names.nonAnchorWrapper()
 		// KAI requires no child for an explicit minSubGroup of 0 and every child for an unset one
-		// (SubGroupSet.GetMinMembersToSatisfy), which makes each non-Anchor PodGang optional.
+		// (SubGroupSet.GetMinMembersToSatisfy), which makes each of these PodGangs optional.
 		if err = b.add(kaischedulingv2alpha2.SubGroup{
 			Name:        wrapperName,
 			Parent:      &collection,
