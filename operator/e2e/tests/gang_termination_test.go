@@ -25,6 +25,7 @@ import (
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
+	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -39,6 +40,14 @@ const terminationDelayInWorkloadYAML = 10 * time.Second
 // gangTerminationGrace is how long we wait past terminationDelay before
 // asserting outcomes. Adds slack for reconcile + apiserver latency.
 const gangTerminationGrace = 15 * time.Second
+
+// initialStartupWindow is how long after its creation a PodCliqueScalingGroup breach still counts as
+// initial startup, which Grove does not gang-terminate. A test that expects gang termination must
+// break the workload only after this window.
+const initialStartupWindow = componentutils.InitialScheduleGrace + 2*time.Second
+
+// pcCReplicas is the replica count of the pc-c PodClique in both workloads.
+const pcCReplicas = 3
 
 // totalWL1Pods: pc-a(2) + sg-x[2]*(pc-b(1)+pc-c(3)) = 2 + 2*4 = 10
 // totalWL2Pods: same shape (counts are identical, only minAvailable differs)
@@ -84,6 +93,8 @@ func runFullReplicasScenario(t *testing.T, workloadName, yamlFile, targetCliqueF
 	if err := tc.WaitForReadyPods(totalWLPods); err != nil {
 		t.Fatalf("Failed to wait for pods to be ready: %v", err)
 	}
+
+	time.Sleep(initialStartupWindow)
 
 	Logger.Infof("3. Snapshot pod UIDs, cordon a node hosting a ready pod from %s, then delete that pod", targetCliqueFQN)
 	pods, err := tc.ListPods()
@@ -236,13 +247,16 @@ func Test_GT4_GangTerminationMinReplicasPCSGOwned(t *testing.T) {
 	// withheld; UID survival of pc-a is the primary no-PCS-level-termination signal.
 	verifyNoGangTermination(t, tc, pcAUIDsBeforeStep5, totalWLPods-5)
 
-	Logger.Info("6. Kill the remaining 2 ready pods from sg-x-1-pc-c — test plan expects all PCS pods terminated")
+	Logger.Info("6. Kill every ready pod from sg-x-1-pc-c — test plan expects all PCS pods terminated")
 	pods, err = tc.ListPods()
 	if err != nil {
 		t.Fatalf("Failed to list pods: %v", err)
 	}
 	finalOriginalUIDs := capturePodUIDs(pods)
-	_, cordonedD := cordonAndKillPodsFromClique(ctx, t, tc, pcsg1Target, 2)
+	// The replacement for the pod killed in step 5 can be Ready by now: step 4 freed the node of
+	// PCSG-0's pc-b pod without cordoning it. Kill it too, so that no pc-c pod stays scheduled.
+	readyTargets := len(findReadyPodsFromPodClique(pods, pcsg1Target, pcCReplicas))
+	_, cordonedD := cordonAndKillPodsFromClique(ctx, t, tc, pcsg1Target, readyTargets)
 	time.Sleep(terminationDelayInWorkloadYAML + gangTerminationGrace)
 	verifyAllPodsRecreated(t, tc, finalOriginalUIDs, totalWLPods)
 
