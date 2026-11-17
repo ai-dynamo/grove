@@ -17,6 +17,7 @@ package kai
 import (
 	"context"
 	"testing"
+	"time"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
@@ -432,6 +433,64 @@ func TestBackend_SyncPodGang_UsesUniquePodCliqueTemplateQueue(t *testing.T) {
 	podGroup := &kaischedulingv2alpha2.PodGroup{}
 	require.NoError(t, cl.Get(ctx, client.ObjectKeyFromObject(podGang), podGroup))
 	assert.Equal(t, "team-a", podGroup.Spec.Queue)
+}
+
+func TestBackend_SyncPodGang_SetsStalenessGracePeriod(t *testing.T) {
+	tests := []struct {
+		name        string
+		annotations map[string]string
+		want        time.Duration
+		wantErr     bool
+	}{
+		{name: "eviction disabled by default", want: -1 * time.Second},
+		{
+			name:        "annotation sets the period",
+			annotations: map[string]string{annotationKeyStalenessGracePeriod: "5m"},
+			want:        5 * time.Minute,
+		},
+		{
+			name:        "invalid annotation",
+			annotations: map[string]string{annotationKeyStalenessGracePeriod: "soon"},
+			wantErr:     true,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			pcs := newPodCliqueSet("staleness-pcs", "team-a")
+			podGang := testutils.NewPodGangBuilder("staleness-podgang", "default").
+				WithPodGroup("worker", 1).
+				WithSchedulerName(string(configv1beta1.SchedulerNameKai)).
+				Build()
+			podGang.Annotations = tc.annotations
+			setPodCliqueSetControllerOwner(podGang, pcs)
+
+			cl := testutils.NewTestClientBuilder().WithObjects(pcs, podGang).Build()
+			b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameKai})
+			require.NoError(t, b.Init(cl))
+
+			ctx := context.Background()
+			err := b.SyncPodGang(ctx, podGang)
+			podGroup := &kaischedulingv2alpha2.PodGroup{}
+			if tc.wantErr {
+				require.ErrorContains(t, err, annotationKeyStalenessGracePeriod)
+				assert.True(t, apierrors.IsNotFound(cl.Get(ctx, client.ObjectKeyFromObject(podGang), podGroup)))
+				return
+			}
+			require.NoError(t, err)
+			require.NoError(t, cl.Get(ctx, client.ObjectKeyFromObject(podGang), podGroup))
+			require.NotNil(t, podGroup.Spec.StalenessGracePeriod)
+			assert.Equal(t, tc.want, podGroup.Spec.StalenessGracePeriod.Duration)
+		})
+	}
+}
+
+func TestBackend_ValidatePodCliqueSetRejectsInvalidStalenessGracePeriod(t *testing.T) {
+	pcs := newPodCliqueSet("staleness-pcs", "team-a")
+	pcs.Annotations = map[string]string{annotationKeyStalenessGracePeriod: "soon"}
+	cl := testutils.NewTestClientBuilder().Build()
+	b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameKai})
+
+	require.ErrorContains(t, b.ValidatePodCliqueSet(context.Background(), pcs), annotationKeyStalenessGracePeriod)
 }
 
 func TestBackend_ValidatePodCliqueSetQueues(t *testing.T) {
