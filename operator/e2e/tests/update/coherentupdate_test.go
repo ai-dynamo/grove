@@ -69,8 +69,9 @@ func Test_CU1_CoherentBootstrapLayout(t *testing.T) {
 }
 
 // Test_CU2_CoherentUpdateStandaloneClique verifies that a coherent update of only the standalone frontend
-// PodClique completes, clears UpdateInProgress, converges every component to the latest generation hash,
-// and leaves all pods Ready.
+// PodClique completes, clears UpdateInProgress, and advances the empty ScaleOut with its surviving
+// out-of-scope anchor without changing its epoch or dependency. A later inference scale-out must reuse
+// that entry, and all pods must become Ready.
 func Test_CU2_CoherentUpdateStandaloneClique(t *testing.T) {
 	tests.Logger.Info("1. Deploy workload-coherent and verify 6 pods")
 	tc, cleanup, _ := setupTest(t, testConfig{
@@ -80,6 +81,15 @@ func Test_CU2_CoherentUpdateStandaloneClique(t *testing.T) {
 		expectedPods: coherentExpectedPods,
 	})
 	defer cleanup()
+
+	beforePGM, err := updateutils.GetReplicaPodGangMap(tc, 0)
+	require.NoError(t, err)
+	beforeScaleOut := updateutils.RequireSingleEntryByRole(t, beforePGM.Spec.Entries, grovev1beta1.PodGangEntryRoleScaleOut)
+	beforeAnchor := updateutils.RequireSingleEntryByRole(t, beforePGM.Spec.Entries, grovev1beta1.PodGangEntryRoleAnchor)
+	require.Empty(t, beforeScaleOut.PodCliques)
+	require.Empty(t, beforeScaleOut.PCSGReplicaIndices)
+	require.Equal(t, []string{beforeAnchor.Epoch}, beforeScaleOut.DependsOn)
+	require.Equal(t, beforeAnchor.PodCliqueSetGenerationHash, beforeScaleOut.PodCliqueSetGenerationHash)
 
 	tests.Logger.Info("2. Trigger a coherent update of the frontend PodClique")
 	if err := triggerPodCliqueUpdate(tc, "frontend"); err != nil {
@@ -98,6 +108,32 @@ func Test_CU2_CoherentUpdateStandaloneClique(t *testing.T) {
 	if err := tc.WaitForPods(coherentExpectedPods); err != nil {
 		t.Fatalf("pods did not become Ready after the coherent update: %v", err)
 	}
+	afterPGM, err := updateutils.GetReplicaPodGangMap(tc, 0)
+	require.NoError(t, err)
+	wantScaleOut := beforeScaleOut
+	wantScaleOut.PodCliqueSetGenerationHash = getPCSGenerationHash(t, tc)
+	require.NotEqual(t, beforeScaleOut.PodCliqueSetGenerationHash, wantScaleOut.PodCliqueSetGenerationHash)
+	require.Equal(t, wantScaleOut, updateutils.RequireSingleEntryByRole(t, afterPGM.Spec.Entries, grovev1beta1.PodGangEntryRoleScaleOut),
+		"the empty ScaleOut must advance with its original anchor without changing identity")
+
+	tests.Logger.Info("5. Scale inference to three replicas and verify the preserved ScaleOut is reused")
+	tc.ScalePCSGAcrossAllReplicasAndWait(coherentWorkloadName, "inference", 1, 3, coherentExpectedPods+2, 0)
+	wantScaleOut.PCSGReplicaIndices = map[string][]int32{"inference": {2}}
+	require.EventuallyWithT(t, func(collect *assert.CollectT) {
+		pgm, err := updateutils.GetReplicaPodGangMap(tc, 0)
+		if !assert.NoError(collect, err) {
+			return
+		}
+		scaleOuts := make([]grovev1beta1.PodGangEntry, 0, 1)
+		for _, entry := range pgm.Spec.Entries {
+			if entry.Role == grovev1beta1.PodGangEntryRoleScaleOut {
+				scaleOuts = append(scaleOuts, entry)
+			}
+		}
+		if assert.Len(collect, scaleOuts, 1) {
+			assert.Equal(collect, wantScaleOut, scaleOuts[0], "scale-out must reuse the original epoch and dependency")
+		}
+	}, tc.Timeout, tc.Interval)
 }
 
 // Test_CU3_CoherentUpdatePCSGMemberClique verifies that a coherent update of only the inference

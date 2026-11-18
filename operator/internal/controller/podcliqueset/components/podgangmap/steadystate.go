@@ -185,7 +185,7 @@ func reconcileEntries(clk clock.Clock,
 	if err := reconcilePCSGReplicaIndices(entries, pcs, pcsgs, pcsReplicaIndex); err != nil {
 		return nil, err
 	}
-	return removeEmptyEntries(entries, *pcs.Status.CurrentGenerationHash), nil
+	return removeEmptyEntries(entries), nil
 }
 
 // refreshStandalonePodCliqueCounts updates the per-anchor pod counts of each standalone PodClique to
@@ -341,30 +341,25 @@ func removePCSGReplicaIndicesAtOrAbove(entries []grovecorev1beta1.PodGangEntry, 
 	}
 }
 
-// removeEmptyEntries drops entries that carry no pods and no replica indices. A ScaleOut entry of the
-// current generation is kept even when empty, but only while a current-generation anchor entry
-// survives. A ScaleOut entry depends on its generation's anchor, so once the last current-generation
-// anchor drains to empty it is removed and its ScaleOut entry is removed with it. A ScaleOut entry of
-// an older generation is never kept when empty.
-func removeEmptyEntries(entries []grovecorev1beta1.PodGangEntry, currentGenerationHash string) []grovecorev1beta1.PodGangEntry {
-	keepCurrentGenerationScaleOut := hasNonEmptyCurrentGenerationAnchor(entries, currentGenerationHash)
+// removeEmptyEntries drops entries that carry no pods and no replica indices, except an empty ScaleOut
+// whose DependsOn anchor survives with the same PCS generation hash. The PCS target generation does not
+// affect the lifetime of a frozen replica's ScaleOut entry.
+func removeEmptyEntries(entries []grovecorev1beta1.PodGangEntry) []grovecorev1beta1.PodGangEntry {
+	entriesByEpoch := componentutils.IndexPodGangEntriesByEpoch(entries)
+
 	return slices.DeleteFunc(entries, func(entry grovecorev1beta1.PodGangEntry) bool {
-		if keepCurrentGenerationScaleOut &&
-			entry.Role == grovecorev1beta1.PodGangEntryRoleScaleOut &&
-			entry.PodCliqueSetGenerationHash == currentGenerationHash {
+		if !isPodGangEntryEmpty(entry) {
 			return false
 		}
-		return isPodGangEntryEmpty(entry)
-	})
-}
-
-// hasNonEmptyCurrentGenerationAnchor reports whether entries contains a current-generation anchor
-// entry that carries at least one pod or replica index, meaning it will survive empty-entry removal.
-func hasNonEmptyCurrentGenerationAnchor(entries []grovecorev1beta1.PodGangEntry, currentGenerationHash string) bool {
-	return slices.ContainsFunc(entries, func(entry grovecorev1beta1.PodGangEntry) bool {
-		return entry.Role == grovecorev1beta1.PodGangEntryRoleAnchor &&
-			entry.PodCliqueSetGenerationHash == currentGenerationHash &&
-			!isPodGangEntryEmpty(entry)
+		// ScaleOut entries are created with exactly one anchor dependency.
+		if entry.Role != grovecorev1beta1.PodGangEntryRoleScaleOut || len(entry.DependsOn) != 1 {
+			return true
+		}
+		anchorEntry, found := entriesByEpoch[entry.DependsOn[0]]
+		if !found || isPodGangEntryEmpty(anchorEntry) {
+			return true
+		}
+		return anchorEntry.PodCliqueSetGenerationHash != entry.PodCliqueSetGenerationHash
 	})
 }
 
@@ -373,7 +368,7 @@ func hasNonEmptyCurrentGenerationAnchor(entries []grovecorev1beta1.PodGangEntry,
 // ScaleOut entry is present yet. The entry depends on the lowest-epoch current-generation anchor. It uses
 // scaleOutEpoch when set, and a freshly minted epoch otherwise. Entries are returned unchanged when a
 // current-generation ScaleOut already exists, or when no current-generation anchor exists yet, which
-// happens for a replica still frozen at the old generation during a coherent update.
+// happens for a replica still frozen at the old generation during a coherent update or replica recreation.
 func ensureScaleOutEntry(clk clock.Clock, entries []grovecorev1beta1.PodGangEntry, pcs *grovecorev1beta1.PodCliqueSet, scaleOutEpoch string) ([]grovecorev1beta1.PodGangEntry, error) {
 	if len(pcs.Spec.Template.PodCliqueScalingGroupConfigs) == 0 {
 		return entries, nil

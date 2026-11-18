@@ -95,29 +95,48 @@ func (r _resource) buildCoherentUpdateEntries(ctx context.Context, syncSnap *syn
 	if err != nil {
 		return nil, err
 	}
-	applied = advanceFullyDrainedEntries(applied, *syncSnap.pcs.Status.CurrentGenerationHash, planner.mvu)
 	syncSnap.logger.V(1).Info("Applied coherent update sub-step", "pcsReplicaIndex", pcsReplicaIndex, "entries", formatPodGangEntries(applied))
 	return applied, nil
 }
 
-// heldEntries returns the current entries for a reconcile that emits no sub-step, advancing any fully
-// drained old entry to the current generation. The committed content is otherwise unchanged.
+// heldEntries reconverges a copy of the current entries for a reconcile that emits no sub-step.
+// The committed placement and the snapshot's PodGangMap remain unchanged.
 func (p *subStepPlanner) heldEntries() []grovecorev1beta1.PodGangEntry {
-	return advanceFullyDrainedEntries(clonePodGangEntries(p.entries), *p.pcs.Status.CurrentGenerationHash, p.mvu)
+	return p.reconvergeEntries(clonePodGangEntries(p.entries))
 }
 
-// advanceFullyDrainedEntries reconverges the PodGangMap during a coherent update. It bumps an entry's
-// generation hash to the current hash once the entry holds no in-scope drainable content and is
-// non-empty, so each entry moves to the current generation as its in-scope content finishes draining
-// and the map is single-generation by the time the update completes. Empty entries are left for
-// removeEmptyEntries to drop, and entries still holding in-scope content keep their generation so the
-// engine keeps draining them.
+// reconvergeEntries advances surviving entries before removing drained entries and empty ScaleOut
+// entries whose anchor dependency is no longer valid. Both emitted and held sub-steps use this order
+// so an empty old-generation entry cannot prevent coherent update completion.
+func (p *subStepPlanner) reconvergeEntries(entries []grovecorev1beta1.PodGangEntry) []grovecorev1beta1.PodGangEntry {
+	entries = advanceFullyDrainedEntries(entries, *p.pcs.Status.CurrentGenerationHash, p.mvu)
+	return removeEmptyEntries(entries)
+}
+
+// advanceFullyDrainedEntries advances non-empty entries once their in-scope content has drained.
+// An empty ScaleOut follows its referenced anchor only when their PCS generation hashes matched
+// before the anchor advanced. Its epoch and DependsOn remain unchanged.
 func advanceFullyDrainedEntries(entries []grovecorev1beta1.PodGangEntry, pcsCurrentGenerationHash string, mvu *mvuTemplate) []grovecorev1beta1.PodGangEntry {
+	oldHashByAdvancedAnchorEpoch := make(map[string]string)
 	for i := range entries {
-		if entries[i].PodCliqueSetGenerationHash == pcsCurrentGenerationHash || isPodGangEntryEmpty(entries[i]) || entryHoldsInScopeContent(entries[i], mvu) {
+		entry := &entries[i]
+		if entry.PodCliqueSetGenerationHash == pcsCurrentGenerationHash || isPodGangEntryEmpty(*entry) || entryHoldsInScopeContent(*entry, mvu) {
 			continue
 		}
-		entries[i].PodCliqueSetGenerationHash = pcsCurrentGenerationHash
+		if entry.Role == grovecorev1beta1.PodGangEntryRoleAnchor {
+			oldHashByAdvancedAnchorEpoch[entry.Epoch] = entry.PodCliqueSetGenerationHash
+		}
+		entry.PodCliqueSetGenerationHash = pcsCurrentGenerationHash
+	}
+	for i := range entries {
+		entry := &entries[i]
+		if entry.Role != grovecorev1beta1.PodGangEntryRoleScaleOut || !isPodGangEntryEmpty(*entry) || len(entry.DependsOn) != 1 {
+			continue
+		}
+		oldAnchorHash, anchorAdvanced := oldHashByAdvancedAnchorEpoch[entry.DependsOn[0]]
+		if anchorAdvanced && entry.PodCliqueSetGenerationHash == oldAnchorHash {
+			entry.PodCliqueSetGenerationHash = pcsCurrentGenerationHash
+		}
 	}
 	return entries
 }
