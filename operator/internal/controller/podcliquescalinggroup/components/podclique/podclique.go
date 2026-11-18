@@ -342,7 +342,22 @@ func (r _resource) buildResource(logger logr.Logger, ss *syncSnapshot, pcsgRepli
 		)
 	}
 
+	preserveRevision := pclqExists && componentutils.ShouldPreservePCSReplicaRevision(pcs, pcsReplicaIndex)
+	runningPodTemplateHash := pclq.Labels[apicommon.LabelPodTemplateHash]
+	resourceGenerationHash := pclq.Labels[apicommon.LabelPodCliqueSetGenerationHash]
+	if preserveRevision {
+		// Migrate an existing resource using only its previously reconciled generation.
+		if resourceGenerationHash == "" && pclq.Status.CurrentPodCliqueSetGenerationHash != nil {
+			resourceGenerationHash = *pclq.Status.CurrentPodCliqueSetGenerationHash
+		}
+	} else {
+		resourceGenerationHash = *pcs.Status.CurrentGenerationHash
+	}
 	pclq.Labels = getLabels(pcs, pcsReplicaIndex, pcsg, pcsgReplicaIndex, pclqObjectKey, pclqTemplateSpec, podGangName)
+	if preserveRevision && runningPodTemplateHash != "" {
+		pclq.Labels[apicommon.LabelPodTemplateHash] = runningPodTemplateHash
+	}
+	componentutils.SetMaterializedPCSGenerationHash(&pclq.ObjectMeta, resourceGenerationHash)
 	pclq.Annotations = maps.Clone(pclqTemplateSpec.Annotations)
 	if pclq.Annotations == nil {
 		pclq.Annotations = make(map[string]string)
@@ -358,6 +373,10 @@ func (r _resource) buildResource(logger logr.Logger, ss *syncSnapshot, pcsgRepli
 	pclq.Annotations[apiconstants.AnnotationPodCliqueScalingGroupPodIndexOffset] = strconv.Itoa(pcsgPodIndexOffset)
 	// PodGang owns topology selection; do not propagate a template topology annotation to PodClique pods.
 	delete(pclq.Annotations, apiconstants.AnnotationTopologyName)
+	// Frozen members retain their running spec, including injected environment and resource claims.
+	if preserveRevision {
+		return nil
+	}
 	// set PodCliqueSpec
 	// ------------------------------------
 	if pclqExists {

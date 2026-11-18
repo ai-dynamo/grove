@@ -48,6 +48,131 @@ const (
 	testPCSNamespace = "cobalt-ns"
 )
 
+func TestBuildResourcePreservesUnreconciledPriorGeneration(t *testing.T) {
+	t.Parallel()
+	template := testutils.NewPodCliqueTemplateSpecBuilder("worker").WithReplicas(4).WithMinAvailable(1).WithPodSpec(corev1.PodSpec{Containers: []corev1.Container{{Name: "worker", Image: "old"}}}).Build()
+	pcs := testutils.NewPodCliqueSetBuilder("pcs", "default", "pcs-uid").WithReplicas(3).WithPodCliqueSetGenerationHash(new("S0")).WithPodCliqueTemplateSpec(template).Build()
+	child := &grovecorev1beta1.PodClique{ObjectMeta: metav1.ObjectMeta{Name: "pcs-1-worker", Namespace: "default"}}
+	r := _resource{scheme: groveclientscheme.Scheme}
+	build := func(c *grovecorev1beta1.PodClique, index int, exists bool) {
+		require.NoError(t, r.buildResource(logr.Discard(), pcs, index, exists, c))
+	}
+
+	build(child, 1, false)
+	assert.Equal(t, "S0", child.Labels[apicommon.LabelPodCliqueSetGenerationHash])
+	require.Nil(t, child.Status.CurrentPodCliqueSetGenerationHash)
+	sourceS0 := child.DeepCopy()
+	pcs.Status.UpdateProgress = &grovecorev1beta1.PodCliqueSetUpdateProgress{RequiresReplicaRecreation: true, CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 0, Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 0}}}}
+	pcs.Status.CurrentGenerationHash = new("S1")
+	pcs.Spec.Template.Cliques[0].Spec.MinAvailable = new(int32(2))
+	pcs.Spec.Template.Cliques[0].Spec.PodSpec.Containers[0].Image = "new"
+
+	build(child, 1, true)
+	assert.Equal(t, sourceS0.Spec, child.Spec, "S0 creation must not become S1 after its first status write failed")
+	assert.Equal(t, "S0", child.Labels[apicommon.LabelPodCliqueSetGenerationHash])
+	require.Nil(t, child.Status.CurrentPodCliqueSetGenerationHash)
+	fresh := &grovecorev1beta1.PodClique{ObjectMeta: metav1.ObjectMeta{Name: "pcs-2-worker", Namespace: "default"}}
+	build(fresh, 2, false)
+	assert.Equal(t, "S1", fresh.Labels[apicommon.LabelPodCliqueSetGenerationHash], "same scheduling update and scale-out applies S1 on creation")
+	assert.Equal(t, int32(2), *fresh.Spec.MinAvailable)
+	require.Nil(t, fresh.Status.CurrentPodCliqueSetGenerationHash)
+	sourceS1 := fresh.DeepCopy()
+	pcs.Status.CurrentGenerationHash = new("S2")
+	build(fresh, 2, true)
+	assert.Equal(t, sourceS1.Spec, fresh.Spec, "supersession must preserve an unselected S1-born child")
+	assert.Equal(t, "S1", fresh.Labels[apicommon.LabelPodCliqueSetGenerationHash])
+	build(child, 1, true)
+	assert.Equal(t, sourceS0.Spec, child.Spec)
+	assert.Equal(t, "S0", child.Labels[apicommon.LabelPodCliqueSetGenerationHash])
+}
+
+func TestBuildResourceGenerationAndRevision(t *testing.T) {
+	cases := []struct {
+		name          string
+		exists        bool
+		index         int
+		marker        string
+		statusHash    *string
+		coherent      bool
+		noUpdate      bool
+		ended         bool
+		canceled      bool
+		wantPreserved bool
+		wantMarker    string
+	}{
+		{name: "fresh scale-out during scheduling update", index: 1, wantMarker: "S1"},
+		{name: "active replacement applies S1", exists: true, marker: "S0", statusHash: new("S0"), wantMarker: "S1"},
+		{name: "pending replica retains S0", exists: true, index: 1, marker: "S0", statusHash: new("S0"), wantPreserved: true, wantMarker: "S0"},
+		{name: "S0 status write never succeeded", exists: true, index: 1, marker: "S0", wantPreserved: true, wantMarker: "S0"},
+		{name: "legacy marker migrates from recorded S0", exists: true, index: 1, statusHash: new("S0"), wantPreserved: true, wantMarker: "S0"},
+		{name: "legacy resource with unknown generation remains unknown", exists: true, index: 1, wantPreserved: true},
+		{name: "marker wins over stale reconciled status", exists: true, index: 1, marker: "S0", statusHash: new("older"), wantPreserved: true, wantMarker: "S0"},
+		{name: "existing S1 scale-out remains S1 before status", exists: true, index: 1, marker: "S1", wantPreserved: true, wantMarker: "S1"},
+		{name: "selected resource supersedes old marker", exists: true, marker: "older", wantMarker: "S1"},
+		{name: "coherent pending replica stays on S0", exists: true, index: 1, marker: "S0", coherent: true, wantPreserved: true, wantMarker: "S0"},
+		{name: "coherent selected replica applies S1", exists: true, marker: "S0", coherent: true, wantMarker: "S1"},
+		{name: "coherent fresh scale-out applies S1", index: 1, coherent: true, wantMarker: "S1"},
+		{name: "steady state applies current template", exists: true, index: 1, marker: "S0", noUpdate: true, wantMarker: "S1"},
+		{name: "completed replacement is no longer active", exists: true, marker: "S0", ended: true, wantPreserved: true, wantMarker: "S0"},
+		{name: "canceled replacement does not apply S1", exists: true, marker: "S0", canceled: true, wantPreserved: true, wantMarker: "S0"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			strategy := grovecorev1beta1.RollingRecreateStrategy
+			if tc.coherent {
+				strategy = grovecorev1beta1.CoherentStrategy
+			}
+			selection := grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{ReplicaIndex: 0}
+			if !tc.coherent {
+				selection.Replacement = &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 0}
+			}
+			if tc.ended {
+				selection.UpdateEndedAt = new(metav1.Now())
+			}
+			if tc.canceled {
+				selection.Replacement.CanceledAt = new(metav1.Now())
+			}
+			progress := &grovecorev1beta1.PodCliqueSetUpdateProgress{RequiresReplicaRecreation: !tc.coherent, CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{selection}}
+			if tc.noUpdate {
+				progress = nil
+			}
+			template := testutils.NewPodCliqueTemplateSpecBuilder("worker").WithReplicas(4).WithMinAvailable(2).
+				WithPodSpec(corev1.PodSpec{Containers: []corev1.Container{{Name: "worker", Image: "new"}}}).Build()
+			pcs := testutils.NewPodCliqueSetBuilder("pcs", "default", "pcs-uid").WithReplicas(3).
+				WithPodCliqueSetGenerationHash(new("S1")).WithUpdateProgress(progress).
+				WithUpdateStrategy(&grovecorev1beta1.PodCliqueSetUpdateStrategy{Type: strategy}).
+				WithPodCliqueTemplateSpec(template).Build()
+			child := &grovecorev1beta1.PodClique{ObjectMeta: metav1.ObjectMeta{Name: fmt.Sprintf("pcs-%d-worker", tc.index), Namespace: "default", Labels: map[string]string{apicommon.LabelPodTemplateHash: "old-template", apicommon.LabelPodCliqueSetGenerationHash: tc.marker}},
+				Spec:   grovecorev1beta1.PodCliqueSpec{Replicas: 7, MinAvailable: new(int32(1)), PodSpec: corev1.PodSpec{Containers: []corev1.Container{{Name: "worker", Image: "old"}}}},
+				Status: grovecorev1beta1.PodCliqueStatus{CurrentPodCliqueSetGenerationHash: tc.statusHash}}
+			before := child.DeepCopy()
+			r := _resource{scheme: groveclientscheme.Scheme}
+			require.NoError(t, r.buildResource(logr.Discard(), pcs, tc.index, tc.exists, child))
+			assert.Equal(t, tc.wantMarker, child.Labels[apicommon.LabelPodCliqueSetGenerationHash])
+			if tc.wantMarker == "" {
+				assert.NotContains(t, child.Labels, apicommon.LabelPodCliqueSetGenerationHash)
+			}
+			assert.Equal(t, before.Status, child.Status, "spec writer must not change reconciled status")
+			require.Len(t, child.OwnerReferences, 1)
+			assert.NotEmpty(t, child.Finalizers)
+			if tc.wantPreserved {
+				assert.Equal(t, before.Spec, child.Spec)
+				assert.Equal(t, "old-template", child.Labels[apicommon.LabelPodTemplateHash])
+			} else {
+				assert.Equal(t, int32(2), *child.Spec.MinAvailable)
+				assert.Equal(t, "new", child.Spec.PodSpec.Containers[0].Image)
+				assert.NotEqual(t, "old-template", child.Labels[apicommon.LabelPodTemplateHash])
+				if tc.exists {
+					assert.Equal(t, int32(7), child.Spec.Replicas, "retain autoscaled replicas")
+				} else {
+					assert.Equal(t, int32(4), child.Spec.Replicas)
+				}
+			}
+		})
+	}
+}
+
 func TestGetExistingResourceNames(t *testing.T) {
 	testCases := []struct {
 		description                 string
@@ -102,6 +227,7 @@ func TestGetExistingResourceNames(t *testing.T) {
 			t.Parallel()
 			// Create a PodCliqueSet with the specified number of replicas and PodCliques
 			pcsBuilder := testutils.NewPodCliqueSetBuilder(testPCSName, testPCSNamespace, uuid.NewUUID()).
+				WithPodCliqueSetGenerationHash(new("current-generation")).
 				WithReplicas(tc.pcsReplicas).
 				WithCliqueStartupType(ptr.To(grovecorev1beta1.CliqueStartupTypeAnyOrder))
 			for _, pclqTemplateName := range tc.podCliqueTemplateNames {
@@ -127,6 +253,7 @@ func TestGetExistingResourceNames(t *testing.T) {
 
 func TestSyncUsesSparseReplicaIndices(t *testing.T) {
 	pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testPCSNamespace, uuid.NewUUID()).
+		WithPodCliqueSetGenerationHash(new("current-generation")).
 		WithReplicas(3).
 		WithStandaloneClique("howl").
 		Build()
@@ -460,6 +587,7 @@ func TestBuildResource_MNNVLInjection(t *testing.T) {
 
 			// Build PCS with the test case's containers
 			pcsBuilder := testutils.NewPodCliqueSetBuilder(testPCSName, testPCSNamespace, uuid.NewUUID()).
+				WithPodCliqueSetGenerationHash(new("current-generation")).
 				WithReplicas(1).
 				WithCliqueStartupType(ptr.To(grovecorev1beta1.CliqueStartupTypeAnyOrder)).
 				WithAnnotations(tc.pcsAnnotations)
@@ -524,6 +652,7 @@ func TestBuildResource_MNNVLInjection(t *testing.T) {
 
 func TestBuildResource_StripsTopologyAnnotation(t *testing.T) {
 	pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testPCSNamespace, uuid.NewUUID()).
+		WithPodCliqueSetGenerationHash(new("current-generation")).
 		WithReplicas(1).
 		WithCliqueStartupType(ptr.To(grovecorev1beta1.CliqueStartupTypeAnyOrder)).
 		WithPodCliqueTemplateSpec(
@@ -570,6 +699,7 @@ func TestBuildResource_PreservesRevisionForReplicaNotUnderCoherentUpdate(t *test
 	for _, tc := range testCases {
 		t.Run(tc.description, func(t *testing.T) {
 			pcsBuilder := testutils.NewPodCliqueSetBuilder(testPCSName, testPCSNamespace, uuid.NewUUID()).
+				WithPodCliqueSetGenerationHash(new("current-generation")).
 				WithReplicas(2).
 				WithCliqueStartupType(ptr.To(grovecorev1beta1.CliqueStartupTypeAnyOrder)).
 				WithUpdateStrategy(&grovecorev1beta1.PodCliqueSetUpdateStrategy{Type: grovecorev1beta1.CoherentStrategy})
@@ -623,6 +753,7 @@ func TestBuildResource_DoesNotWriteStartsAfter(t *testing.T) {
 		pcsReplica   = 1
 	)
 	pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testPCSNamespace, uuid.NewUUID()).
+		WithPodCliqueSetGenerationHash(new("current-generation")).
 		WithReplicas(2).
 		WithCliqueStartupType(ptr.To(grovecorev1beta1.CliqueStartupTypeExplicit)).
 		WithUpdateStrategy(&grovecorev1beta1.PodCliqueSetUpdateStrategy{Type: grovecorev1beta1.CoherentStrategy}).

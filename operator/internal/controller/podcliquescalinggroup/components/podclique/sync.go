@@ -83,6 +83,11 @@ func (r _resource) prepareSyncContext(ctx context.Context, pcsg *grovecorev1beta
 		)
 	}
 
+	if syncSnap.pcs.Status.CurrentGenerationHash == nil {
+		return nil, groveerr.NewRequeueAfter(component.OperationSync,
+			"waiting for PCS generation initialization", constants.InformerCacheSyncRetryInterval)
+	}
+
 	// Resolve PCS replica index and matching PCSG config for resource sharing
 	syncSnap.pcsReplicaIndex, err = getPCSReplicaFromPCSG(pcsg)
 	if err != nil {

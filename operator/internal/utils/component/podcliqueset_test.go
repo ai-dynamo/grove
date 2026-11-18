@@ -31,6 +31,33 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
+func TestShouldPreservePCSReplicaRevision(t *testing.T) {
+	cases := []struct {
+		name     string
+		strategy grovecorev1beta1.UpdateStrategyType
+		progress *grovecorev1beta1.PodCliqueSetUpdateProgress
+		index    int
+		want     bool
+	}{
+		{name: "initial creation has no update"},
+		{name: "ordinary rolling update does not freeze spec", strategy: grovecorev1beta1.RollingRecreateStrategy, progress: &grovecorev1beta1.PodCliqueSetUpdateProgress{}},
+		{name: "OnDelete does not freeze spec", strategy: grovecorev1beta1.OnDeleteStrategy, progress: &grovecorev1beta1.PodCliqueSetUpdateProgress{}},
+		{name: "coherent unselected replica", strategy: grovecorev1beta1.CoherentStrategy, progress: &grovecorev1beta1.PodCliqueSetUpdateProgress{}, want: true},
+		{name: "coherent selected replica", strategy: grovecorev1beta1.CoherentStrategy, progress: &grovecorev1beta1.PodCliqueSetUpdateProgress{CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 0}}}},
+		{name: "completed overall update does not freeze", strategy: grovecorev1beta1.CoherentStrategy, progress: &grovecorev1beta1.PodCliqueSetUpdateProgress{UpdateEndedAt: new(metav1.Now())}},
+		{name: "recreation source is frozen with different target", progress: &grovecorev1beta1.PodCliqueSetUpdateProgress{RequiresReplicaRecreation: true, CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 0, Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 2}}}}, want: true},
+		{name: "different-index replacement target applies revision", index: 2, progress: &grovecorev1beta1.PodCliqueSetUpdateProgress{RequiresReplicaRecreation: true, CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 0, Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 2}}}}},
+		{name: "recreation overrides coherent selected source", strategy: grovecorev1beta1.CoherentStrategy, progress: &grovecorev1beta1.PodCliqueSetUpdateProgress{RequiresReplicaRecreation: true, CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 0, Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 2}}}}, want: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			pcs := testutils.NewPodCliqueSetBuilder("pcs", "default", "uid").WithUpdateStrategy(&grovecorev1beta1.PodCliqueSetUpdateStrategy{Type: tc.strategy}).WithUpdateProgress(tc.progress).Build()
+			assert.Equal(t, tc.want, ShouldPreservePCSReplicaRevision(pcs, tc.index))
+		})
+	}
+}
+
 func TestGetPCSGFQNsForPCSReplica(t *testing.T) {
 	pcs := &grovecorev1beta1.PodCliqueSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-pcs"},

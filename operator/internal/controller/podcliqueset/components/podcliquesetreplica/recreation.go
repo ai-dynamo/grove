@@ -220,11 +220,11 @@ func (p *pcsReplicaRecreationPlanner) selectSourceReplicaIndices(remainingSlots 
 		if scaleOutReplicaIndicesWithExpectedPCLQsAndPCSGs.Has(pcsReplicaIndex) {
 			continue
 		}
-		// replica index does not require recreation if all of its expected PCLQs and PCSGs have converged
-		// to the current PCS generation.
-		hasConvergedToCurrentPCSGeneration := p.pcs.Status.CurrentGenerationHash != nil &&
-			sourcePCSReplicaInfo.hasConvergedToPCSGeneration(p.pcs, *p.pcs.Status.CurrentGenerationHash)
-		if hasConvergedToCurrentPCSGeneration {
+		// Fresh scale-out resources already apply the current template. Wait for their status and
+		// readiness rather than recreating them merely because bootstrap status has not caught up.
+		hasMaterializedCurrentPCSGeneration := p.pcs.Status.CurrentGenerationHash != nil &&
+			sourcePCSReplicaInfo.hasMaterializedPCSGeneration(p.pcs, *p.pcs.Status.CurrentGenerationHash)
+		if hasMaterializedCurrentPCSGeneration {
 			continue
 		}
 		candidatePCSReplicaInfos = append(candidatePCSReplicaInfos, sourcePCSReplicaInfo)

@@ -293,12 +293,20 @@ func (r _resource) buildResource(logger logr.Logger, pcs *grovecorev1beta1.PodCl
 	// the new template. Every other replica preserves its running revision so a scheduling-configuration change
 	// such as MinAvailable does not propagate in place to replicas that have not yet been recreated, which would
 	// let them converge without the structural recreation that the change requires.
-	preserveRevision := pclqExists &&
-		((componentutils.IsCoherentUpdateInProgress(pcs) && !componentutils.IsPCSReplicaUnderCoherentUpdate(pcs, pcsReplica)) ||
-			(componentutils.IsPCSReplicaRecreationInProgress(pcs) && !componentutils.IsPCSReplicaActiveReplacementTarget(pcs, pcsReplica)))
+	preserveRevision := pclqExists && componentutils.ShouldPreservePCSReplicaRevision(pcs, pcsReplica)
+	resourceGenerationHash := pclq.Labels[apicommon.LabelPodCliqueSetGenerationHash]
+	if preserveRevision {
+		// Migrate an existing resource using only its previously reconciled generation.
+		if resourceGenerationHash == "" && pclq.Status.CurrentPodCliqueSetGenerationHash != nil {
+			resourceGenerationHash = *pclq.Status.CurrentPodCliqueSetGenerationHash
+		}
+	} else {
+		resourceGenerationHash = *pcs.Status.CurrentGenerationHash
+	}
 	if err := r.setPodCliqueObjectMeta(pcs, pcsReplica, pclqTemplate, preserveRevision, pclq); err != nil {
 		return err
 	}
+	componentutils.SetMaterializedPCSGenerationHash(&pclq.ObjectMeta, resourceGenerationHash)
 	return setPodCliqueSpec(logger, pcs, pcsReplica, pclqTemplate, pclqExists, preserveRevision, pclq)
 }
 

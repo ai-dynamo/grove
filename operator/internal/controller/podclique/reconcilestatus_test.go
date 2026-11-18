@@ -42,6 +42,67 @@ import (
 )
 
 // TestMutateUpdatedReplica tests the mutateUpdatedReplica function across different PodClique states
+func TestMutateCurrentHashesDuringReplicaRecreation(t *testing.T) {
+	cases := []struct {
+		name           string
+		marker         string
+		initialHash    *string
+		active         bool
+		missingPCSHash bool
+		staleTemplate  bool
+		unfinishedPods bool
+		inFlight       bool
+		wantAdvance    bool
+	}{
+		{name: "fresh S1 scale-out can bootstrap", marker: "current-generation-hash", wantAdvance: true},
+		{name: "active S1 replacement can bootstrap", marker: "current-generation-hash", active: true, wantAdvance: true},
+		{name: "frozen S0 cannot stamp S1 despite matching pod template", marker: "S0", initialHash: new("S0")},
+		{name: "S0 with failed first status write cannot stamp S1", marker: "S0"},
+		{name: "missing marker with recorded status is not proof of S1", initialHash: new("S0")},
+		{name: "missing marker and status remains unknown"},
+		{name: "active target must still carry S1 marker", marker: "S0", active: true},
+		{name: "superseded marker cannot stamp current generation", marker: "older", initialHash: new("older")},
+		{name: "missing PCS generation waits", marker: "current-generation-hash", missingPCSHash: true},
+		{name: "S1 marker does not bypass template match", marker: "current-generation-hash", staleTemplate: true},
+		{name: "S1 marker does not bypass pod completion", marker: "current-generation-hash", unfinishedPods: true},
+		{name: "S1 marker does not bypass in-flight update", marker: "current-generation-hash", inFlight: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			pcs, pclq, expectedTemplate := newPodCliqueHashConvergenceFixture(t)
+			pcs.Status.UpdateProgress = &grovecorev1beta1.PodCliqueSetUpdateProgress{RequiresReplicaRecreation: true}
+			if tc.active {
+				pcs.Status.UpdateProgress.CurrentlyUpdating = []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 0, Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 0}}}
+			}
+			if tc.missingPCSHash {
+				pcs.Status.CurrentGenerationHash = nil
+			}
+			pclq.Labels[apicommon.LabelPodCliqueSetGenerationHash] = tc.marker
+			pclq.Status.CurrentPodCliqueSetGenerationHash = tc.initialHash
+			pclq.Status.Replicas = 2
+			pclq.Status.UpdatedReplicas = 2
+			if tc.staleTemplate {
+				pclq.Labels[apicommon.LabelPodTemplateHash] = "stale"
+			}
+			if tc.unfinishedPods {
+				pclq.Status.UpdatedReplicas = 1
+			}
+			if tc.inFlight {
+				pclq.Status.UpdateProgress = &grovecorev1beta1.PodCliqueUpdateProgress{UpdateStartedAt: metav1.Now()}
+			}
+			before := pclq.DeepCopy()
+			require.NoError(t, mutateCurrentHashes(logr.Discard(), pcs, pclq))
+			if tc.wantAdvance {
+				assert.Equal(t, pcs.Status.CurrentGenerationHash, pclq.Status.CurrentPodCliqueSetGenerationHash)
+				assert.Equal(t, ptr.To(expectedTemplate), pclq.Status.CurrentPodTemplateHash)
+			} else {
+				assert.Equal(t, before.Status, pclq.Status)
+			}
+		})
+	}
+}
+
 func TestMutateUpdatedReplica(t *testing.T) {
 	tests := []struct {
 		name                    string
