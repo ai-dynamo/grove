@@ -25,8 +25,8 @@ import (
 
 // applySubStep applies the sub-step to a copy of the current entries and returns the resulting entry set,
 // leaving the snapshot's PodGangMap untouched. It drains the sub-step's old-hash take-down, grows the target
-// new-hash anchor with the subsumed standalone PodClique pods, appends the sub-step's new-hash entry, and
-// drops any entry drained to empty.
+// new-hash anchor with the subsumed standalone PodClique pods, appends the sub-step's new-hash entry,
+// reconverges surviving entries, and drops empty entries whose lifetime has ended.
 func (p *subStepPlanner) applySubStep(ss subStep) ([]grovecorev1beta1.PodGangEntry, error) {
 	entries := clonePodGangEntries(p.entries)
 	currentHash := *p.pcs.Status.CurrentGenerationHash
@@ -45,7 +45,7 @@ func (p *subStepPlanner) applySubStep(ss subStep) ([]grovecorev1beta1.PodGangEnt
 		entries = append(entries, newEntry)
 	}
 
-	return removeEmptyEntries(entries, currentHash), nil
+	return p.reconvergeEntries(entries), nil
 }
 
 // drainStandalonePCLQs removes each standalone PodClique take-down count from the old-version anchor entries.

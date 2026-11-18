@@ -21,6 +21,7 @@ import (
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
+	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
@@ -498,9 +499,8 @@ func TestReconcileStandaloneCliqueCountWithNilAnchorMap(t *testing.T) {
 	})
 }
 
-// TestRemoveEmptyEntries verifies removeEmptyEntries keeps a current-generation empty ScaleOut entry
-// only while a current-generation anchor survives, drops the ScaleOut once its anchor drains to empty
-// and is removed, and never keeps an empty ScaleOut of an older generation.
+// TestRemoveEmptyEntries verifies an empty ScaleOut survives only while its referenced anchor is
+// non-empty and carries the same PCS generation hash.
 func TestRemoveEmptyEntries(t *testing.T) {
 	olderGenerationScaleOut := testutils.NewPodGangEntryBuilder("hash0", "099").
 		WithRole(grovecorev1beta1.PodGangEntryRoleScaleOut).
@@ -543,7 +543,7 @@ func TestRemoveEmptyEntries(t *testing.T) {
 			},
 		},
 		{
-			name: "empty ScaleOut of an older generation is removed even when a current anchor survives",
+			name: "an unrelated surviving anchor does not retain an empty ScaleOut whose dependency is missing",
 			entries: []grovecorev1beta1.PodGangEntry{
 				anchorEntry(nil, map[string][]int32{testPCSGName: {0, 1}}),
 				olderGenerationScaleOut,
@@ -555,7 +555,7 @@ func TestRemoveEmptyEntries(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			retained := removeEmptyEntries(tc.entries, testGenHash)
+			retained := removeEmptyEntries(tc.entries)
 			actualRoles := make([]grovecorev1beta1.PodGangEntryRole, 0, len(retained))
 			for _, entry := range retained {
 				actualRoles = append(actualRoles, entry.Role)
@@ -631,6 +631,205 @@ func podGangWithEpochRole(name, epoch string, role grovecorev1beta1.PodGangEntry
 			apicommon.LabelEpoch:       epoch,
 			apicommon.LabelPodGangRole: string(role),
 		}).Build()
+}
+
+// TestRemoveEmptyScaleOutEntries checks dependency-relative retention, including older generations,
+// missing and drained anchors, and deletion that compacts the slice before visiting the ScaleOut.
+func TestRemoveEmptyScaleOutEntries(t *testing.T) {
+	tests := []struct {
+		name            string
+		anchorHash      string
+		anchorPods      int32
+		dependsOn       []string
+		scaleOutIndices map[string][]int32
+		wantScaleOut    bool
+	}{
+		{name: "matching old-generation anchor", anchorHash: "old", anchorPods: 1, dependsOn: []string{"100"}, wantScaleOut: true},
+		{name: "mismatched anchor generation", anchorHash: "new", anchorPods: 1, dependsOn: []string{"100"}},
+		{name: "missing dependency despite surviving anchor", anchorHash: "old", anchorPods: 1, dependsOn: []string{"99"}},
+		{name: "drained anchor", anchorHash: "old", dependsOn: []string{"100"}},
+		{name: "no anchor dependency", anchorHash: "old", anchorPods: 1},
+		{name: "multiple dependencies", anchorHash: "old", anchorPods: 1, dependsOn: []string{"100", "99"}},
+		{name: "non-empty ScaleOut survives missing dependency", anchorHash: "old", anchorPods: 1, dependsOn: []string{"99"}, scaleOutIndices: map[string][]int32{"inference": {2}}, wantScaleOut: true},
+		{name: "non-empty ScaleOut survives drained anchor", anchorHash: "old", dependsOn: []string{"100"}, scaleOutIndices: map[string][]int32{"inference": {2}}, wantScaleOut: true},
+		{name: "non-empty ScaleOut survives mismatched hash", anchorHash: "new", anchorPods: 1, dependsOn: []string{"100"}, scaleOutIndices: map[string][]int32{"inference": {2}}, wantScaleOut: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			anchor := testutils.NewPodGangEntryBuilder(tc.anchorHash, "100").
+				WithRole(grovecorev1beta1.PodGangEntryRoleAnchor).
+				WithPodCliques(map[string]int32{"router": tc.anchorPods}).Build()
+			scaleOut := testutils.NewPodGangEntryBuilder("old", "102").
+				WithRole(grovecorev1beta1.PodGangEntryRoleScaleOut).
+				WithDependsOn(tc.dependsOn...).WithPCSGReplicaIndices(tc.scaleOutIndices).Build()
+			emptyTail := testutils.NewPodGangEntryBuilder("old", "101").WithRole(grovecorev1beta1.PodGangEntryRoleTail).Build()
+			got := removeEmptyEntries([]grovecorev1beta1.PodGangEntry{emptyTail, anchor, scaleOut})
+			want := make([]grovecorev1beta1.PodGangEntry, 0, 2)
+			if tc.anchorPods > 0 {
+				want = append(want, anchor)
+			}
+			if tc.wantScaleOut {
+				want = append(want, scaleOut)
+			}
+			assert.Equal(t, want, got)
+		})
+	}
+}
+
+// TestAdvanceEmptyScaleOutWithAnchor checks lockstep advancement in either entry order and verifies
+// that only a matching ScaleOut follows an anchor that actually advances in this pass.
+func TestAdvanceEmptyScaleOutWithAnchor(t *testing.T) {
+	tests := []struct {
+		name          string
+		anchorHash    string
+		anchorPods    map[string]int32
+		scaleOutHash  string
+		dependsOn     []string
+		scaleOutFirst bool
+		wantAnchor    string
+		wantScaleOut  string
+	}{
+		{name: "advancing anchor", anchorHash: "old", anchorPods: map[string]int32{"router": 1}, scaleOutHash: "old", dependsOn: []string{"100"}, wantAnchor: "new", wantScaleOut: "new"},
+		{name: "ScaleOut precedes advancing anchor", anchorHash: "old", anchorPods: map[string]int32{"router": 1}, scaleOutHash: "old", dependsOn: []string{"100"}, scaleOutFirst: true, wantAnchor: "new", wantScaleOut: "new"},
+		{name: "anchor still holds in-scope content", anchorHash: "old", anchorPods: map[string]int32{"frontend": 1, "router": 1}, scaleOutHash: "old", dependsOn: []string{"100"}, wantAnchor: "old", wantScaleOut: "old"},
+		{name: "anchor was already current", anchorHash: "new", anchorPods: map[string]int32{"router": 1}, scaleOutHash: "old", dependsOn: []string{"100"}, wantAnchor: "new", wantScaleOut: "old"},
+		{name: "pre-existing mismatch is not repaired", anchorHash: "old", anchorPods: map[string]int32{"router": 1}, scaleOutHash: "older", dependsOn: []string{"100"}, wantAnchor: "new", wantScaleOut: "older"},
+		{name: "missing dependency", anchorHash: "old", anchorPods: map[string]int32{"router": 1}, scaleOutHash: "old", dependsOn: []string{"99"}, wantAnchor: "new", wantScaleOut: "old"},
+		{name: "drained anchor does not advance", anchorHash: "old", scaleOutHash: "old", dependsOn: []string{"100"}, wantAnchor: "old", wantScaleOut: "old"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			entries := []grovecorev1beta1.PodGangEntry{
+				testutils.NewPodGangEntryBuilder(tc.anchorHash, "100").WithRole(grovecorev1beta1.PodGangEntryRoleAnchor).WithPodCliques(tc.anchorPods).Build(),
+				testutils.NewPodGangEntryBuilder(tc.scaleOutHash, "102").WithRole(grovecorev1beta1.PodGangEntryRoleScaleOut).WithDependsOn(tc.dependsOn...).Build(),
+			}
+			want := clonePodGangEntries(entries)
+			want[0].PodCliqueSetGenerationHash = tc.wantAnchor
+			want[1].PodCliqueSetGenerationHash = tc.wantScaleOut
+			if tc.scaleOutFirst {
+				entries[0], entries[1] = entries[1], entries[0]
+				want[0], want[1] = want[1], want[0]
+			}
+			mvu := &mvuTemplate{standalonePCLQs: map[string]int32{"frontend": 1}}
+			got := advanceFullyDrainedEntries(entries, "new", mvu)
+			assert.Equal(t, want, got, "only the generation hashes may change")
+		})
+	}
+}
+
+// TestHeldEntriesReconvergesEmptyScaleOut covers the held and no-more-substeps return path. It must
+// advance a matching ScaleOut, remove stale empty entries, and leave the planner snapshot untouched.
+func TestHeldEntriesReconvergesEmptyScaleOut(t *testing.T) {
+	tests := []struct {
+		name         string
+		anchorPods   int32
+		scaleOutHash string
+		wantScaleOut bool
+	}{
+		{name: "matching ScaleOut advances", anchorPods: 1, scaleOutHash: "old", wantScaleOut: true},
+		{name: "mismatched ScaleOut is removed", anchorPods: 1, scaleOutHash: "older"},
+		{name: "drained anchor and ScaleOut are removed", scaleOutHash: "old"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			anchor := testutils.NewPodGangEntryBuilder("old", "100").WithRole(grovecorev1beta1.PodGangEntryRoleAnchor).
+				WithPodCliques(map[string]int32{"router": tc.anchorPods}).Build()
+			scaleOut := testutils.NewPodGangEntryBuilder(tc.scaleOutHash, "102").WithRole(grovecorev1beta1.PodGangEntryRoleScaleOut).WithDependsOn("100").Build()
+			planner := &subStepPlanner{
+				pcs: pcsWithCurrentHash("new"), mvu: &mvuTemplate{standalonePCLQs: map[string]int32{"frontend": 1}},
+				entries: []grovecorev1beta1.PodGangEntry{anchor, scaleOut},
+			}
+			before := clonePodGangEntries(planner.entries)
+			want := make([]grovecorev1beta1.PodGangEntry, 0, 2)
+			if tc.anchorPods > 0 {
+				anchor.PodCliqueSetGenerationHash = "new"
+				want = append(want, anchor)
+			}
+			if tc.wantScaleOut {
+				scaleOut.PodCliqueSetGenerationHash = "new"
+				want = append(want, scaleOut)
+			}
+			got := planner.heldEntries()
+			assert.Equal(t, want, got)
+			assert.Equal(t, before, planner.entries, "held reconvergence must not mutate the snapshot")
+			planner.entries = got
+			assert.Equal(t, got, planner.heldEntries(), "repeated held reconvergence must be idempotent")
+		})
+	}
+}
+
+// TestApplySubStepAdvancesEmptyScaleOut verifies that the final frontend drain advances an old anchor
+// still holding out-of-scope inference, along with its empty ScaleOut, before cleanup runs.
+func TestApplySubStepAdvancesEmptyScaleOut(t *testing.T) {
+	entries := []grovecorev1beta1.PodGangEntry{
+		testutils.NewPodGangEntryBuilder("old", "100").WithRole(grovecorev1beta1.PodGangEntryRoleAnchor).
+			WithPodCliques(map[string]int32{"frontend": 1}).WithPCSGReplicaIndices(map[string][]int32{"inference": {0}}).Build(),
+		testutils.NewPodGangEntryBuilder("old", "102").WithRole(grovecorev1beta1.PodGangEntryRoleScaleOut).WithDependsOn("100").Build(),
+	}
+	planner := &subStepPlanner{
+		pcs: pcsWithCurrentHash("new"), mvu: &mvuTemplate{standalonePCLQs: map[string]int32{"frontend": 1}}, entries: entries,
+	}
+	before := clonePodGangEntries(entries)
+	got, err := planner.applySubStep(subStep{
+		epoch: "200", opensAnchor: true, drainStandalonePCLQCounts: map[string]int32{"frontend": 1},
+	})
+	require.NoError(t, err)
+	require.Len(t, got, 3)
+	wantAnchor := *before[0].DeepCopy()
+	wantAnchor.PodCliques["frontend"] = 0
+	wantAnchor.PodCliqueSetGenerationHash = "new"
+	wantScaleOut := before[1]
+	wantScaleOut.PodCliqueSetGenerationHash = "new"
+	assert.Equal(t, wantAnchor, got[0])
+	assert.Equal(t, wantScaleOut, got[1])
+	assert.True(t, componentutils.IsPodGangMapAtSingleGeneration(got, "new"))
+	assert.Equal(t, before, planner.entries, "applying a sub-step must not mutate the snapshot")
+}
+
+// TestReconcileEntriesPreservesScaleOutIdentity exercises frozen coherent and recreation replicas,
+// ordinary RollingRecreate advancement, and same-pass replacement of a missing current ScaleOut.
+func TestReconcileEntriesPreservesScaleOutIdentity(t *testing.T) {
+	tests := []struct {
+		name          string
+		strategy      grovecorev1beta1.UpdateStrategyType
+		recreation    bool
+		anchorHash    string
+		scaleOutEpoch string
+		wantHash      string
+		wantEpoch     string
+	}{
+		{name: "frozen coherent replica", strategy: grovecorev1beta1.CoherentStrategy, anchorHash: "old", scaleOutEpoch: "102", wantHash: "old", wantEpoch: "102"},
+		{name: "frozen recreation replica", strategy: grovecorev1beta1.RollingRecreateStrategy, recreation: true, anchorHash: "old", scaleOutEpoch: "102", wantHash: "old", wantEpoch: "102"},
+		{name: "ordinary rolling recreate", strategy: grovecorev1beta1.RollingRecreateStrategy, anchorHash: "old", scaleOutEpoch: "102", wantHash: "new", wantEpoch: "102"},
+		{name: "same-pass creation and mismatch removal", strategy: grovecorev1beta1.CoherentStrategy, anchorHash: "new", scaleOutEpoch: "102", wantHash: "new", wantEpoch: "5000"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "uid").
+				WithScalingGroupConfig(testPCSGName, []string{"c"}, 2, 2).
+				WithPodCliqueSetGenerationHash(ptr.To("new")).
+				WithUpdateStrategy(&grovecorev1beta1.PodCliqueSetUpdateStrategy{Type: tc.strategy}).Build()
+			if tc.recreation {
+				pcs.Status.UpdateProgress = &grovecorev1beta1.PodCliqueSetUpdateProgress{RequiresReplicaRecreation: true}
+			}
+			entries := []grovecorev1beta1.PodGangEntry{
+				testutils.NewPodGangEntryBuilder(tc.anchorHash, "100").WithRole(grovecorev1beta1.PodGangEntryRoleAnchor).
+					WithPCSGReplicaIndices(map[string][]int32{testPCSGName: {0, 1}}).Build(),
+				testutils.NewPodGangEntryBuilder("old", tc.scaleOutEpoch).WithRole(grovecorev1beta1.PodGangEntryRoleScaleOut).WithDependsOn("100").Build(),
+			}
+			pgm := &grovecorev1beta1.PodGangMap{Spec: grovecorev1beta1.PodGangMapSpec{Entries: entries}}
+			before := pgm.DeepCopy()
+			got, err := reconcileEntries(clocktesting.NewFakeClock(time.Unix(0, 5000)), pcs, 0, pgm, nil, nil, []grovecorev1beta1.PodCliqueScalingGroup{pcsg(2)})
+			require.NoError(t, err)
+			require.Len(t, got, 2)
+			scaleOut := testutils.EntryByRole(got, grovecorev1beta1.PodGangEntryRoleScaleOut)
+			assert.Equal(t, tc.wantHash, scaleOut.PodCliqueSetGenerationHash)
+			assert.Equal(t, tc.wantEpoch, scaleOut.Epoch)
+			assert.Equal(t, []string{"100"}, scaleOut.DependsOn)
+			assert.True(t, isPodGangEntryEmpty(scaleOut))
+			assert.Equal(t, before, pgm, "steady-state reconciliation must not mutate the snapshot")
+		})
+	}
 }
 
 func anchorEntry(podCliques map[string]int32, pcsgIndices map[string][]int32) grovecorev1beta1.PodGangEntry {
