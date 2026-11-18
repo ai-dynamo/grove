@@ -148,6 +148,31 @@ func TestTopologyGroup_DisabledByDefault(t *testing.T) {
 	}
 }
 
+// An unset option is defaulted to false, so that a later change of the default leaves an explicit false alone.
+func TestTopologyGroup_OptionDefaulting(t *testing.T) {
+	tests := []struct {
+		name   string
+		config *runtime.RawExtension
+		want   bool
+	}{
+		{name: "no config", config: nil, want: false},
+		{name: "unset", config: &runtime.RawExtension{Raw: []byte(`{}`)}, want: false},
+		{name: "null", config: &runtime.RawExtension{Raw: []byte(`{"enablePodSetGroupTopology":null}`)}, want: false},
+		{name: "explicit false", config: &runtime.RawExtension{Raw: []byte(`{"enablePodSetGroupTopology":false}`)}, want: false},
+		{name: "explicit true", config: &runtime.RawExtension{Raw: []byte(`{"enablePodSetGroupTopology":true}`)}, want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cl := testutils.NewTestClientBuilder().Build()
+			profile := configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameKueue, Config: tt.config}
+			b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), profile).(*schedulerBackend)
+			require.NoError(t, b.Init(nil))
+			require.NotNil(t, b.config.EnablePodSetGroupTopology)
+			assert.Equal(t, tt.want, *b.config.EnablePodSetGroupTopology)
+		})
+	}
+}
+
 // Kueue TAS places a group together only as a single leader Pod and its workers (ai-dynamo/grove#867), so any other
 // group is left ungrouped rather than placed differently from what the PodGang asks for.
 func TestTopologyGroup_SkipsGroupsKueueCannotPlace(t *testing.T) {

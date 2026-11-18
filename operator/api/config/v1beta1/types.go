@@ -115,7 +115,7 @@ type KueueSchedulerConfiguration struct {
 	// one of which has a single Pod (a leader and its workers), so other groups keep per-PodSet placement.
 	// Defaults to false: each PodSet is placed in its own domain.
 	// +optional
-	EnablePodSetGroupTopology bool `json:"enablePodSetGroupTopology,omitempty"`
+	EnablePodSetGroupTopology *bool `json:"enablePodSetGroupTopology,omitempty"`
 }
 
 // KubeSchedulerConfig holds the configuration for the default scheduler.

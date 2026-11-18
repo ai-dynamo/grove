@@ -281,7 +281,7 @@ func (b *schedulerBackend) buildPrebuiltWorkload(ctx context.Context, pcs *grove
 		podSets = append(podSets, podSet)
 		podSetGroups[podSet.Name] = topologyGroupNameForPodGroup(podGang, podGroup.Name)
 	}
-	if b.config.EnablePodSetGroupTopology {
+	if ptr.Deref(b.config.EnablePodSetGroupTopology, false) {
 		setPodSetGroupNames(podSets, podSetGroups)
 	}
 	// Kueue checks a prebuilt Workload against its pods' PodSets sorted by name, and finishes it as OutOfSync
@@ -748,7 +748,8 @@ func (b *schedulerBackend) ValidatePodCliqueScale(_ context.Context, oldReplicas
 
 func defaultConfig() configv1beta1.KueueSchedulerConfiguration {
 	return configv1beta1.KueueSchedulerConfiguration{
-		UnderlyingSchedulerName: string(configv1beta1.SchedulerNameKube),
+		UnderlyingSchedulerName:   string(configv1beta1.SchedulerNameKube),
+		EnablePodSetGroupTopology: ptr.To(false),
 	}
 }
 
@@ -756,6 +757,9 @@ func withDefaults(cfg configv1beta1.KueueSchedulerConfiguration) configv1beta1.K
 	defaults := defaultConfig()
 	if cfg.UnderlyingSchedulerName == "" {
 		cfg.UnderlyingSchedulerName = defaults.UnderlyingSchedulerName
+	}
+	if cfg.EnablePodSetGroupTopology == nil {
+		cfg.EnablePodSetGroupTopology = defaults.EnablePodSetGroupTopology
 	}
 	return cfg
 }
