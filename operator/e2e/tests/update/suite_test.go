@@ -18,11 +18,10 @@ package update
 
 import (
 	"context"
-	"os"
-	"testing"
-
 	"github.com/ai-dynamo/grove/operator/e2e/setup"
 	"github.com/ai-dynamo/grove/operator/e2e/tests"
+	"os"
+	"testing"
 )
 
 // TestMain manages the lifecycle of the shared cluster for update tests.

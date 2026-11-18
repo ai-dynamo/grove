@@ -35,6 +35,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/e2e/setup"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
 	"github.com/ai-dynamo/grove/operator/e2e/tests"
+	updateutils "github.com/ai-dynamo/grove/operator/e2e/tests/update/utils"
 	"github.com/ai-dynamo/grove/operator/e2e/waiter"
 	kubeutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 	"github.com/stretchr/testify/assert"
@@ -50,19 +51,6 @@ import (
 	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
-
-// ============================================================================
-// Common update utilities
-// ============================================================================
-
-// getPCS fetches a PodCliqueSet by name using the K8s client.
-func getPCS(tc *testctx.TestContext, pcsName string) (*grovev1beta1.PodCliqueSet, error) {
-	var pcs grovev1beta1.PodCliqueSet
-	if err := tc.Client.Get(tc.Ctx, types.NamespacedName{Name: pcsName, Namespace: tc.Namespace}, &pcs); err != nil {
-		return nil, err
-	}
-	return &pcs, nil
-}
 
 // captureExistingPodNames returns a map of all current pod names for the workload.
 func captureExistingPodNames(tc *testctx.TestContext) (map[string]bool, error) {
@@ -240,7 +228,7 @@ func verifyPodsStillPresent(tc *testctx.TestContext, expectedPods map[string]boo
 
 	pods, err := tc.ListPods()
 	if err != nil {
-		tc.T.Fatalf("Failed to list pods: %v", err)
+		tc.T.Fatalf("Failed to list Pods: %v", err)
 	}
 
 	currentPods := make(map[string]bool, len(pods.Items))
@@ -274,7 +262,7 @@ func updatePCSUpdateStrategy(tc *testctx.TestContext, strategyType grovev1beta1.
 		}
 		pcs.Spec.UpdateStrategy.Type = strategyType
 
-		// Switching to OnDelete requires removing any RollingUpdate configuration: the validating webhook
+		// Switching to OnDelete requires removing any RollingUpdate Configuration: the validating webhook
 		// rejects a RollingUpdate that is set under OnDelete, and defaulting no longer clears it. This
 		// mirrors what a consumer must do when changing the strategy.
 		if strategyType == grovev1beta1.OnDeleteStrategy {
@@ -401,7 +389,7 @@ func getStandalonePCLQMinAvailable(tc *testctx.TestContext, cliqueName string) (
 // getPCSAppliedSchedulingHash returns the PodCliqueSet Status.AppliedSchedulingConfigurationHash, or an empty
 // string when it is unset.
 func getPCSAppliedSchedulingHash(tc *testctx.TestContext) (string, error) {
-	pcs, err := getPCS(tc, tc.Workload.Name)
+	pcs, err := updateutils.GetPCS(tc, tc.Workload.Name)
 	if err != nil {
 		return "", err
 	}
@@ -451,72 +439,6 @@ func waitForActiveReplacementTargetingIndex(tc *testctx.TestContext, targetRepli
 		return 0, err
 	}
 	return sourceReplicaIndex, nil
-}
-
-// waitForSameIndexReplacementCleanup waits for an active replacement at replicaIndex to finish deleting
-// its source resources. It checks PCS progress only. Replacement child resources may not exist yet.
-func waitForSameIndexReplacementCleanup(tc *testctx.TestContext, replicaIndex int32) (*grovev1beta1.PodCliqueSet, error) {
-	fetchPCS := waiter.FetchByName(tc.Workload.Name, k8sclient.Getter[*grovev1beta1.PodCliqueSet](tc.Client, tc.Namespace))
-	predicate := waiter.Predicate[*grovev1beta1.PodCliqueSet](func(pcs *grovev1beta1.PodCliqueSet) bool {
-		if pcs == nil || pcs.Status.CurrentGenerationHash == nil || pcs.Status.UpdateProgress == nil {
-			return false
-		}
-		progress := pcs.Status.UpdateProgress
-		if !progress.RequiresReplicaRecreation || progress.UpdateEndedAt != nil {
-			return false
-		}
-		for _, replicaProgress := range progress.CurrentlyUpdating {
-			replacement := replicaProgress.Replacement
-			if replicaProgress.ReplicaIndex != replicaIndex || replicaProgress.UpdateEndedAt != nil || replacement == nil {
-				continue
-			}
-			if replacement.TargetReplicaIndex == replicaIndex && replacement.CanceledAt == nil && replacement.SourceCleanupCompletedAt != nil {
-				return true
-			}
-		}
-		return false
-	})
-	return waiter.New[*grovev1beta1.PodCliqueSet]().WithTimeout(tc.Timeout).WithInterval(tc.Interval).
-		WaitFor(tc.Ctx, fetchPCS, predicate)
-}
-
-// waitForRecreatedPCLQ waits for the PodClique to reappear with a new UID. Its spec is asserted by the caller.
-func waitForRecreatedPCLQ(tc *testctx.TestContext, previous *grovev1beta1.PodClique) (*grovev1beta1.PodClique, error) {
-	fetchPCLQ := waiter.FetchByName(previous.Name, k8sclient.Getter[*grovev1beta1.PodClique](tc.Client, previous.Namespace))
-	predicate := waiter.Predicate[*grovev1beta1.PodClique](func(pclq *grovev1beta1.PodClique) bool {
-		return pclq != nil && pclq.DeletionTimestamp == nil && pclq.UID != previous.UID
-	})
-	return waiter.New[*grovev1beta1.PodClique]().WithTimeout(tc.Timeout).WithInterval(tc.Interval).
-		WaitFor(tc.Ctx, fetchPCLQ, predicate)
-}
-
-// waitForRecreatedPCSG waits for the scaling group to reappear with a new UID. Its spec is asserted by the caller.
-func waitForRecreatedPCSG(tc *testctx.TestContext, previous *grovev1beta1.PodCliqueScalingGroup) (*grovev1beta1.PodCliqueScalingGroup, error) {
-	fetchPCSG := waiter.FetchByName(previous.Name, k8sclient.Getter[*grovev1beta1.PodCliqueScalingGroup](tc.Client, previous.Namespace))
-	predicate := waiter.Predicate[*grovev1beta1.PodCliqueScalingGroup](func(pcsg *grovev1beta1.PodCliqueScalingGroup) bool {
-		return pcsg != nil && pcsg.DeletionTimestamp == nil && pcsg.UID != previous.UID
-	})
-	return waiter.New[*grovev1beta1.PodCliqueScalingGroup]().WithTimeout(tc.Timeout).WithInterval(tc.Interval).
-		WaitFor(tc.Ctx, fetchPCSG, predicate)
-}
-
-// waitForRecreatedPodGangMap waits for a new map with the previous entry count and the requested generation.
-// The caller asserts each entry's composition after this milestone.
-func waitForRecreatedPodGangMap(tc *testctx.TestContext, previous *grovev1beta1.PodGangMap, generationHash string) (*grovev1beta1.PodGangMap, error) {
-	fetchPGM := waiter.FetchByName(previous.Name, k8sclient.Getter[*grovev1beta1.PodGangMap](tc.Client, previous.Namespace))
-	predicate := waiter.Predicate[*grovev1beta1.PodGangMap](func(pgm *grovev1beta1.PodGangMap) bool {
-		if pgm == nil || pgm.DeletionTimestamp != nil || pgm.UID == previous.UID || len(pgm.Spec.Entries) != len(previous.Spec.Entries) {
-			return false
-		}
-		for _, entry := range pgm.Spec.Entries {
-			if entry.PodCliqueSetGenerationHash != generationHash {
-				return false
-			}
-		}
-		return true
-	})
-	return waiter.New[*grovev1beta1.PodGangMap]().WithTimeout(tc.Timeout).WithInterval(tc.Interval).
-		WaitFor(tc.Ctx, fetchPGM, predicate)
 }
 
 // watchPodCliqueSet starts watching changes after the workload's current resource version. Call it before
@@ -577,47 +499,13 @@ func recreationSupersessionCondition(previous *grovev1beta1.PodCliqueSet) watcht
 		if !ok {
 			return false, fmt.Errorf("unexpected PCS watch object %T", event.Object)
 		}
-		if err := validateRecreationWhileBlocked(previous, pcs); err != nil {
+		if err := updateutils.ValidateRecreationWhileBlocked(previous, pcs); err != nil {
 			return false, err
 		}
 		return pcs.Status.CurrentGenerationHash != nil &&
 			*pcs.Status.CurrentGenerationHash != *previous.Status.CurrentGenerationHash &&
 			pcs.Status.UpdateProgress.TargetSchedulingConfigurationHash != previous.Status.UpdateProgress.TargetSchedulingConfigurationHash, nil
 	}
-}
-
-// validateRecreationWhileBlocked checks that the update is still active and unapplied, and that the active
-// replacement mappings and cancellation details have not changed. Supersession must clear active replacement
-// cleanup markers before deleting the obsolete targets. Per-update start times may change.
-func validateRecreationWhileBlocked(previous, current *grovev1beta1.PodCliqueSet) error {
-	progress := current.Status.UpdateProgress
-	if progress == nil || !progress.RequiresReplicaRecreation || progress.UpdateEndedAt != nil {
-		return fmt.Errorf("recreation stopped while replacement readiness was blocked")
-	}
-	if current.Status.AppliedSchedulingConfigurationHash == nil ||
-		!assert.ObjectsAreEqual(previous.Status.AppliedSchedulingConfigurationHash, current.Status.AppliedSchedulingConfigurationHash) {
-		return fmt.Errorf("scheduling configuration was marked applied while replacement readiness was blocked")
-	}
-	previousSelections := previous.Status.UpdateProgress.CurrentlyUpdating
-	if len(progress.CurrentlyUpdating) != len(previousSelections) {
-		return fmt.Errorf("replica selections changed during supersession: before %d, after %d", len(previousSelections), len(progress.CurrentlyUpdating))
-	}
-	hasSupersededGeneration := current.Status.CurrentGenerationHash != nil &&
-		*current.Status.CurrentGenerationHash != *previous.Status.CurrentGenerationHash
-	for i, replicaProgress := range progress.CurrentlyUpdating {
-		before := previousSelections[i]
-		if replicaProgress.UpdateEndedAt != nil {
-			return fmt.Errorf("replica %d update ended while replacement readiness was blocked", replicaProgress.ReplicaIndex)
-		}
-		expectedReplacement := before.Replacement.DeepCopy()
-		if hasSupersededGeneration && expectedReplacement != nil && expectedReplacement.CanceledAt == nil {
-			expectedReplacement.SourceCleanupCompletedAt = nil
-		}
-		if replicaProgress.ReplicaIndex != before.ReplicaIndex || !assert.ObjectsAreEqual(expectedReplacement, replicaProgress.Replacement) {
-			return fmt.Errorf("unexpected replacement mapping, cleanup marker, or cancellation details during supersession for replica %d", before.ReplicaIndex)
-		}
-	}
-	return nil
 }
 
 // waitForCanceledReplacement consumes a watch established before scale-in and returns the cancellation message
@@ -660,36 +548,6 @@ func waitForCanceledReplacement(ctx context.Context, watcher watch.Interface, so
 	}
 }
 
-// getClaimedPCSReplicaIndices returns the sorted PCS replica indices that currently have a PodGangMap, which
-// identifies the replicas whose resources exist.
-func getClaimedPCSReplicaIndices(tc *testctx.TestContext) ([]int, error) {
-	pgmList := &grovev1beta1.PodGangMapList{}
-	if err := tc.Client.List(tc.Ctx, pgmList, client.InNamespace(tc.Namespace), client.MatchingLabels{common.LabelPartOfKey: tc.Workload.Name}); err != nil {
-		return nil, err
-	}
-	indices := make([]int, 0, len(pgmList.Items))
-	for i := range pgmList.Items {
-		replicaIndex, err := kubeutils.GetPodCliqueSetReplicaIndex(pgmList.Items[i].ObjectMeta)
-		if err != nil {
-			return nil, err
-		}
-		indices = append(indices, replicaIndex)
-	}
-	slices.Sort(indices)
-	return indices, nil
-}
-
-// waitForClaimedPCSReplicaIndices waits until the claimed PCS replica indices equal the expected set.
-func waitForClaimedPCSReplicaIndices(tc *testctx.TestContext, expectedReplicaIndices []int) error {
-	return wait.PollUntilContextTimeout(tc.Ctx, tc.Interval, tc.Timeout, true, func(context.Context) (bool, error) {
-		claimed, err := getClaimedPCSReplicaIndices(tc)
-		if err != nil {
-			return false, client.IgnoreNotFound(err)
-		}
-		return slices.Equal(claimed, expectedReplicaIndices), nil
-	})
-}
-
 // deletePodsForReplica deletes all pods of the given PCS replica index. The operator recreates them, and a
 // readiness-block KWOK stage applied beforehand catches the fresh pods and holds them not-ready, which makes the
 // replica unavailable.
@@ -701,43 +559,6 @@ func deletePodsForReplica(tc *testctx.TestContext, pcsReplicaIndex int) error {
 			"grove.io/podcliqueset-replica-index": strconv.Itoa(pcsReplicaIndex),
 		},
 	)
-}
-
-// waitForStandaloneReplicaUnavailable waits until the named standalone PodClique on the given PCS replica index
-// reports fewer ready replicas than its MinAvailable, so the operator classifies that replica as unavailable.
-func waitForStandaloneReplicaUnavailable(tc *testctx.TestContext, cliqueName string, pcsReplicaIndex int) error {
-	fqn := common.GeneratePodCliqueName(common.ResourceNameReplica{Name: tc.Workload.Name, Replica: pcsReplicaIndex}, cliqueName)
-	return wait.PollUntilContextTimeout(tc.Ctx, tc.Interval, tc.Timeout, true, func(ctx context.Context) (bool, error) {
-		var pclq grovev1beta1.PodClique
-		if err := tc.Client.Get(ctx, types.NamespacedName{Namespace: tc.Namespace, Name: fqn}, &pclq); err != nil {
-			return false, client.IgnoreNotFound(err)
-		}
-		minAvailable := int32(1)
-		if pclq.Spec.MinAvailable != nil {
-			minAvailable = *pclq.Spec.MinAvailable
-		}
-		return pclq.Status.ReadyReplicas < minAvailable, nil
-	})
-}
-
-// waitForReplicaRecreationComplete waits until structural PCS replica recreation has finished: UpdateProgress
-// has UpdateEndedAt set, AppliedSchedulingConfigurationHash equals the target scheduling hash the update
-// converged to, and UpdatedReplicas matches expectedReplicas.
-func waitForReplicaRecreationComplete(tc *testctx.TestContext, expectedReplicas int32) error {
-	fetchPCS := waiter.FetchByName(tc.Workload.Name, k8sclient.Getter[*grovev1beta1.PodCliqueSet](tc.Client, tc.Namespace))
-	predicate := waiter.Predicate[*grovev1beta1.PodCliqueSet](func(pcs *grovev1beta1.PodCliqueSet) bool {
-		if pcs == nil || pcs.Status.UpdateProgress == nil {
-			return false
-		}
-		progress := pcs.Status.UpdateProgress
-		if progress.UpdateEndedAt == nil || pcs.Status.UpdatedReplicas != expectedReplicas {
-			return false
-		}
-		return pcs.Status.AppliedSchedulingConfigurationHash != nil &&
-			*pcs.Status.AppliedSchedulingConfigurationHash == progress.TargetSchedulingConfigurationHash
-	})
-	w := waiter.New[*grovev1beta1.PodCliqueSet]().WithTimeout(tc.Timeout).WithInterval(tc.Interval)
-	return w.WaitUntil(tc.Ctx, fetchPCS, predicate)
 }
 
 // waitForActiveChildUpdateProgressGeneration waits until the selected standalone PCLQ or PCSG has
@@ -792,30 +613,6 @@ func assertAffectedPodsAtRevision(tc *testctx.TestContext, cliqueName, updateVal
 		assert.True(tc.T, found, "Pod %s does not carry UPDATE_TRIGGER=%q", pod.Name, updateValue)
 	}
 	require.Positive(tc.T, matched, "no Pods found for clique %s", cliqueName)
-}
-
-// assertNoActiveChildUpdates fails if any PCLQ or PCSG owned by the workload still has unfinished
-// update progress after the PCS reports completion.
-func assertNoActiveChildUpdates(tc *testctx.TestContext) {
-	tc.T.Helper()
-	matchingPCS := client.MatchingLabels{common.LabelPartOfKey: tc.Workload.Name}
-	inNamespace := client.InNamespace(tc.Namespace)
-
-	var pclqs grovev1beta1.PodCliqueList
-	require.NoError(tc.T, tc.Client.List(tc.Ctx, &pclqs, inNamespace, matchingPCS))
-	for i := range pclqs.Items {
-		progress := pclqs.Items[i].Status.UpdateProgress
-		assert.False(tc.T, progress != nil && progress.UpdateEndedAt == nil,
-			"PodClique %s still has an active update", pclqs.Items[i].Name)
-	}
-
-	var pcsgs grovev1beta1.PodCliqueScalingGroupList
-	require.NoError(tc.T, tc.Client.List(tc.Ctx, &pcsgs, inNamespace, matchingPCS))
-	for i := range pcsgs.Items {
-		progress := pcsgs.Items[i].Status.UpdateProgress
-		assert.False(tc.T, progress != nil && progress.UpdateEndedAt == nil,
-			"PodCliqueScalingGroup %s still has an active update", pcsgs.Items[i].Name)
-	}
 }
 
 // patchPCSWithSIGTERMIgnoringCommand patches all containers in the PCS to use a command that ignores SIGTERM
@@ -1532,7 +1329,7 @@ func verifyOnePCSGReplicaDeletedAtATime(tc *testctx.TestContext, events []podEve
 				i, event.pod.Name, replicaKey, deletedCount[replicaKey], addedCount[replicaKey])
 		}
 
-		// Calculate "actively rolling" replicas: those where DELETE count > ADDED count.
+		// Calculate "actively rolling" Replicas: those where DELETE count > ADDED count.
 		// This means more pods have been deleted than replaced, so the replica is still rolling.
 		activelyRolling := make(map[string]int)
 		for replica, deletes := range deletedCount {
@@ -1708,7 +1505,7 @@ func scalePodClique(tc *testctx.TestContext, cliqueName string, replicas int32, 
 func waitForOnDeleteUpdateComplete(tc *testctx.TestContext) error {
 	pollCount := 0
 	fetchPCS := waiter.FetchFunc[*grovev1beta1.PodCliqueSet](func(_ context.Context) (*grovev1beta1.PodCliqueSet, error) {
-		return getPCS(tc, tc.Workload.Name)
+		return updateutils.GetPCS(tc, tc.Workload.Name)
 	})
 	predicate := waiter.Predicate[*grovev1beta1.PodCliqueSet](func(pcs *grovev1beta1.PodCliqueSet) bool {
 		pollCount++
@@ -1731,7 +1528,7 @@ func waitForOnDeleteUpdateComplete(tc *testctx.TestContext) error {
 func verifyUpdateProgressFields(tc *testctx.TestContext) {
 	tc.T.Helper()
 
-	pcs, err := getPCS(tc, tc.Workload.Name)
+	pcs, err := updateutils.GetPCS(tc, tc.Workload.Name)
 	if err != nil {
 		tc.T.Fatalf("Failed to get PCS for UpdateProgress: %v", err)
 	}
@@ -1817,7 +1614,7 @@ func verifyNoAutomaticDeletionAfterUpdate(
 
 	pods, err := tc.ListPods()
 	if err != nil {
-		tc.T.Fatalf("Failed to list pods: %v", err)
+		tc.T.Fatalf("Failed to list Pods: %v", err)
 	}
 
 	if len(pods.Items) != expectedPods {
@@ -2005,7 +1802,7 @@ func deleteNotReadyPodsOnReplica(t *testing.T, tc *testctx.TestContext, pcsRepli
 	t.Helper()
 	podList, err := tc.ListPods()
 	if err != nil {
-		t.Fatalf("failed to list pods: %v", err)
+		t.Fatalf("failed to list Pods: %v", err)
 	}
 	wantReplica := strconv.Itoa(pcsReplicaIndex)
 	for i := range podList.Items {
@@ -2017,16 +1814,6 @@ func deleteNotReadyPodsOnReplica(t *testing.T, tc *testctx.TestContext, pcsRepli
 			t.Fatalf("failed to delete not-ready pod %s during replica %d recovery: %v", pod.Name, pcsReplicaIndex, err)
 		}
 	}
-}
-
-// getReplicaPodGangMap fetches the PodGangMap object of the given PCS replica.
-func getReplicaPodGangMap(tc *testctx.TestContext, pcsReplicaIndex int) (*grovev1beta1.PodGangMap, error) {
-	pgmName := common.GeneratePodGangMapName(common.ResourceNameReplica{Name: tc.Workload.Name, Replica: pcsReplicaIndex})
-	var pgm grovev1beta1.PodGangMap
-	if err := tc.Client.Get(tc.Ctx, types.NamespacedName{Namespace: tc.Namespace, Name: pgmName}, &pgm); err != nil {
-		return nil, err
-	}
-	return &pgm, nil
 }
 
 // gangTerminateReplicaAndWaitForPodGangMapRebuild breaches MinAvailable on the given PodClique of the
@@ -2041,7 +1828,7 @@ func getReplicaPodGangMap(tc *testctx.TestContext, pcsReplicaIndex int) (*grovev
 // advances to this replica, and the poll fails fast if it ever does, rather than waiting out the deadline.
 func gangTerminateReplicaAndWaitForPodGangMapRebuild(t *testing.T, tc *testctx.TestContext, cliqueName string, pcsReplicaIndex int) {
 	t.Helper()
-	pgmBefore, err := getReplicaPodGangMap(tc, pcsReplicaIndex)
+	pgmBefore, err := updateutils.GetReplicaPodGangMap(tc, pcsReplicaIndex)
 	if err != nil {
 		t.Fatalf("failed to read PodGangMap for replica %d: %v", pcsReplicaIndex, err)
 	}
@@ -2066,7 +1853,7 @@ func gangTerminateReplicaAndWaitForPodGangMapRebuild(t *testing.T, tc *testctx.T
 		// the replica being gang terminated, the rebuild can never happen, so fail fast with a clear message
 		// instead of polling to the deadline. The readiness-hold on the rolling replica keeps the
 		// orchestrator parked there, so in a healthy run this guard never trips.
-		pcs, err := getPCS(tc, tc.Workload.Name)
+		pcs, err := updateutils.GetPCS(tc, tc.Workload.Name)
 		if err != nil {
 			return false, err
 		}
@@ -2074,7 +1861,7 @@ func gangTerminateReplicaAndWaitForPodGangMapRebuild(t *testing.T, tc *testctx.T
 			int(up.CurrentlyUpdating[0].ReplicaIndex) == pcsReplicaIndex {
 			return false, fmt.Errorf("orchestrator advanced to replica %d under gang termination; its MinAvailableBreached is suppressed while it updates, so the PodGangMap cannot be rebuilt", pcsReplicaIndex)
 		}
-		pgm, err := getReplicaPodGangMap(tc, pcsReplicaIndex)
+		pgm, err := updateutils.GetReplicaPodGangMap(tc, pcsReplicaIndex)
 		if err != nil {
 			if apierrors.IsNotFound(err) {
 				return false, nil // briefly absent between delete and recreate
@@ -2095,12 +1882,7 @@ func standaloneCliqueFQN(tc *testctx.TestContext, cliqueName string) string {
 
 // pcsgFQN returns the PodCliqueScalingGroup name for a config in PCS replica 0.
 func pcsgFQN(tc *testctx.TestContext, pcsgConfigName string) string {
-	return pcsgFQNForReplica(tc, pcsgConfigName, 0)
-}
-
-// pcsgFQNForReplica returns the fully qualified PodCliqueScalingGroup name for the given PCS replica.
-func pcsgFQNForReplica(tc *testctx.TestContext, pcsgConfigName string, pcsReplicaIndex int) string {
-	return common.GeneratePodCliqueScalingGroupName(common.ResourceNameReplica{Name: tc.Workload.Name, Replica: pcsReplicaIndex}, pcsgConfigName)
+	return updateutils.PcsgFQNForReplica(tc, pcsgConfigName, 0)
 }
 
 // updateInProgressConditionMet builds a predicate satisfied when the UpdateInProgress condition read
@@ -2115,7 +1897,7 @@ func updateInProgressConditionMet[T any](getConds func(T) []metav1.Condition, wa
 // waitForPCSUpdateCondition waits for the PodCliqueSet UpdateInProgress condition to match.
 func waitForPCSUpdateCondition(tc *testctx.TestContext, wantStatus metav1.ConditionStatus, wantReason string) error {
 	fetch := waiter.FetchFunc[*grovev1beta1.PodCliqueSet](func(context.Context) (*grovev1beta1.PodCliqueSet, error) {
-		return getPCS(tc, tc.Workload.Name)
+		return updateutils.GetPCS(tc, tc.Workload.Name)
 	})
 	_, err := waiter.New[*grovev1beta1.PodCliqueSet]().WithTimeout(tc.Timeout).WithInterval(tc.Interval).WithRetryOnError().
 		WaitFor(tc.Ctx, fetch, updateInProgressConditionMet(func(p *grovev1beta1.PodCliqueSet) []metav1.Condition { return p.Status.Conditions }, wantStatus, wantReason))
@@ -2203,44 +1985,6 @@ func assertUpdateInProgressCleared(tc *testctx.TestContext) {
 	}
 }
 
-// assertGenerationHashConverged fails the test unless every PodClique and PodCliqueScalingGroup of the
-// workload reports CurrentPodCliqueSetGenerationHash equal to the PodCliqueSet's CurrentGenerationHash.
-func assertGenerationHashConverged(tc *testctx.TestContext) {
-	tc.T.Helper()
-	pcs, err := getPCS(tc, tc.Workload.Name)
-	if err != nil {
-		tc.T.Fatalf("failed to get PodCliqueSet: %v", err)
-	}
-	if pcs.Status.CurrentGenerationHash == nil {
-		tc.T.Fatalf("PodCliqueSet %s has no CurrentGenerationHash", pcs.Name)
-	}
-	want := *pcs.Status.CurrentGenerationHash
-	inNamespace := client.InNamespace(tc.Namespace)
-	matchingPCS := client.MatchingLabels{common.LabelPartOfKey: pcs.Name}
-
-	var pclqList grovev1beta1.PodCliqueList
-	if err := tc.Client.List(tc.Ctx, &pclqList, inNamespace, matchingPCS); err != nil {
-		tc.T.Fatalf("failed to list PodCliques: %v", err)
-	}
-	for i := range pclqList.Items {
-		pclq := &pclqList.Items[i]
-		if pclq.Status.CurrentPodCliqueSetGenerationHash == nil || *pclq.Status.CurrentPodCliqueSetGenerationHash != want {
-			tc.T.Fatalf("PodClique %s did not converge to generation hash %s, got %v", pclq.Name, want, pclq.Status.CurrentPodCliqueSetGenerationHash)
-		}
-	}
-
-	var pcsgList grovev1beta1.PodCliqueScalingGroupList
-	if err := tc.Client.List(tc.Ctx, &pcsgList, inNamespace, matchingPCS); err != nil {
-		tc.T.Fatalf("failed to list PodCliqueScalingGroups: %v", err)
-	}
-	for i := range pcsgList.Items {
-		pcsg := &pcsgList.Items[i]
-		if pcsg.Status.CurrentPodCliqueSetGenerationHash == nil || *pcsg.Status.CurrentPodCliqueSetGenerationHash != want {
-			tc.T.Fatalf("PodCliqueScalingGroup %s did not converge to generation hash %s, got %v", pcsg.Name, want, pcsg.Status.CurrentPodCliqueSetGenerationHash)
-		}
-	}
-}
-
 // assertPodCliqueUpdateNotComplete fails the test unless the named standalone PodClique has a rolling
 // update still in progress (UpdateProgress set with UpdateEndedAt nil). This guards against premature
 // completion while replacements are not yet Ready (issue #786).
@@ -2275,7 +2019,7 @@ func assertGangTerminationSuspended(tc *testctx.TestContext, cliqueName string) 
 // assertMaxUnavailableOmitted fails the test unless the named clique keeps an omitted MaxUnavailable unset.
 func assertMaxUnavailableOmitted(tc *testctx.TestContext, cliqueName string) {
 	tc.T.Helper()
-	pcs, err := getPCS(tc, tc.Workload.Name)
+	pcs, err := updateutils.GetPCS(tc, tc.Workload.Name)
 	if err != nil {
 		tc.T.Fatalf("failed to get PodCliqueSet: %v", err)
 	}
@@ -2329,7 +2073,7 @@ func waitForReplicaMidCoherentRoll(t *testing.T, tc *testctx.TestContext, pcsRep
 	t.Helper()
 	deadline := time.Now().Add(tc.Timeout)
 	for time.Now().Before(deadline) {
-		if pgm, err := getReplicaPodGangMap(tc, pcsReplicaIndex); err == nil {
+		if pgm, err := updateutils.GetReplicaPodGangMap(tc, pcsReplicaIndex); err == nil {
 			generations := make(map[string]struct{})
 			for _, entry := range pgm.Spec.Entries {
 				generations[entry.PodCliqueSetGenerationHash] = struct{}{}

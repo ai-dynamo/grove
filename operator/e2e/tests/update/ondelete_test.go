@@ -18,13 +18,13 @@ package update
 
 import (
 	"fmt"
+	grovev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
+	"github.com/ai-dynamo/grove/operator/e2e/tests"
+	updateutils "github.com/ai-dynamo/grove/operator/e2e/tests/update/utils"
+	"k8s.io/apimachinery/pkg/types"
 	"slices"
 	"testing"
 	"time"
-
-	grovev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
-	"github.com/ai-dynamo/grove/operator/e2e/tests"
-	"k8s.io/apimachinery/pkg/types"
 )
 
 // Test_OD1_NoAutomaticDeletionOnSpecChange tests that OnDelete strategy does not automatically delete pods when spec changes.
@@ -47,7 +47,7 @@ func Test_OD1_NoAutomaticDeletionOnSpecChange(t *testing.T) {
 
 	existingPodNames, err := captureExistingPodNames(tc)
 	if err != nil {
-		t.Fatalf("Failed to capture existing pods: %v", err)
+		t.Fatalf("Failed to capture existing Pods: %v", err)
 	}
 	// Capture the PodGangMap entries and generation hash before the update.
 	oldHash := getPCSGenerationHash(t, tc)
@@ -92,7 +92,7 @@ func Test_OD2_ManualDeletionCreatesUpdatedPod(t *testing.T) {
 
 	existingPodNames, err := captureExistingPodNames(tc)
 	if err != nil {
-		t.Fatalf("Failed to capture existing pods: %v", err)
+		t.Fatalf("Failed to capture existing Pods: %v", err)
 	}
 
 	podToDelete, err := getFirstPodForClique(tc, "pc-a")
@@ -233,7 +233,7 @@ func Test_OD3_ScaleInPrefersOutdatedPods(t *testing.T) {
 		t.Fatalf("Failed to scale in PodClique pc-a: %v", err)
 	}
 
-	// Wait for scale-in to complete (9 total pods: 1 pc-a + 8 others)
+	// Wait for scale-in to complete (9 total Pods: 1 pc-a + 8 others)
 	if err = tc.WaitForPods(9); err != nil {
 		t.Fatalf("Failed to wait for pods after pc-a scale-in: %v", err)
 	}
@@ -279,7 +279,7 @@ func Test_OD4_PCSGNoAutomaticDeletionOnSpecChange(t *testing.T) {
 
 	existingPodNames, err := captureExistingPodNames(tc)
 	if err != nil {
-		t.Fatalf("Failed to capture existing pods: %v", err)
+		t.Fatalf("Failed to capture existing Pods: %v", err)
 	}
 
 	tests.Logger.Info("3. Change the specification of pc-b (part of PCSG sg-x)")
@@ -313,7 +313,7 @@ func Test_OD5_PCSGManualDeletionCreatesUpdatedReplica(t *testing.T) {
 
 	existingPodNames, err := captureExistingPodNames(tc)
 	if err != nil {
-		t.Fatalf("Failed to capture existing pods: %v", err)
+		t.Fatalf("Failed to capture existing Pods: %v", err)
 	}
 
 	podToDelete, err := getFirstPodForClique(tc, "pc-c")
@@ -378,7 +378,7 @@ func Test_OD6_MixedPCLQsAndPCSG(t *testing.T) {
 
 	existingPodNames, err := captureExistingPodNames(tc)
 	if err != nil {
-		t.Fatalf("Failed to capture existing pods: %v", err)
+		t.Fatalf("Failed to capture existing Pods: %v", err)
 	}
 
 	tests.Logger.Info("3. Change the specification of ALL PodCliques (pc-a, pc-b, pc-c)")
@@ -469,7 +469,7 @@ func Test_OD7_MultipleReplicasPCS(t *testing.T) {
 
 	existingPodNames, err := captureExistingPodNames(tc)
 	if err != nil {
-		t.Fatalf("Failed to capture existing pods: %v", err)
+		t.Fatalf("Failed to capture existing Pods: %v", err)
 	}
 	// Capture each replica's PodGangMap entries and the generation hash before the update.
 	oldHash := getPCSGenerationHash(t, tc)
@@ -521,7 +521,7 @@ func Test_OD8_NodeFailureRecoveryWorkflow(t *testing.T) {
 
 	existingPodNames, err := captureExistingPodNames(tc)
 	if err != nil {
-		t.Fatalf("Failed to capture existing pods: %v", err)
+		t.Fatalf("Failed to capture existing Pods: %v", err)
 	}
 
 	tests.Logger.Info("3. Identify a node running a pc-a pod (simulating a 'failed node')")
@@ -602,7 +602,7 @@ func Test_OD9_StrategyTransition(t *testing.T) {
 
 	existingPodNames, err := captureExistingPodNames(tc)
 	if err != nil {
-		t.Fatalf("Failed to capture existing pods: %v", err)
+		t.Fatalf("Failed to capture existing Pods: %v", err)
 	}
 
 	tests.Logger.Info("3. Update pc-a's spec and verify no auto-deletion (OnDelete behavior confirmed)")
@@ -718,16 +718,16 @@ func Test_OD10_ScaleOutAfterOnDeleteUpdateNoTail(t *testing.T) {
 	tests.Logger.Info("3. Assert the initial PodGangMap has an anchor and a scale-out entry, and no tail entry")
 	oldHash := getPCSGenerationHash(t, tc)
 	before := getPodGangMapEntries(t, tc, 0)
-	assertEntryRoles(t, before, grovev1beta1.PodGangEntryRoleAnchor, grovev1beta1.PodGangEntryRoleScaleOut)
+	updateutils.AssertEntryRoles(t, before, grovev1beta1.PodGangEntryRoleAnchor, grovev1beta1.PodGangEntryRoleScaleOut)
 
-	anchorEntry := requireSingleEntryByRole(t, before, grovev1beta1.PodGangEntryRoleAnchor)
-	assertStandalonePCLQPodCounts(t, anchorEntry, map[string]int32{"pc-a": 2})
+	anchorEntry := updateutils.RequireSingleEntryByRole(t, before, grovev1beta1.PodGangEntryRoleAnchor)
+	updateutils.AssertStandalonePCLQPodCounts(t, anchorEntry, map[string]int32{"pc-a": 2})
 	assertPodGangEntryPCSGIndices(t, anchorEntry, "sg-x", []int32{0, 1})
-	assertPodGangEntryDependsOn(t, anchorEntry, nil)
+	updateutils.AssertPodGangEntryDependsOn(t, anchorEntry, nil)
 
-	scaleOutEntry := requireSingleEntryByRole(t, before, grovev1beta1.PodGangEntryRoleScaleOut)
+	scaleOutEntry := updateutils.RequireSingleEntryByRole(t, before, grovev1beta1.PodGangEntryRoleScaleOut)
 	assertPodGangEntryPCSGIndices(t, scaleOutEntry, "sg-x", nil)
-	assertPodGangEntryDependsOn(t, scaleOutEntry, []string{anchorEntry.Epoch})
+	updateutils.AssertPodGangEntryDependsOn(t, scaleOutEntry, []string{anchorEntry.Epoch})
 
 	tests.Logger.Info("4. Trigger an OnDelete update on pc-c, then wait for it to complete")
 	if err := triggerPodCliqueUpdate(tc, "pc-c"); err != nil {
@@ -751,9 +751,9 @@ func Test_OD10_ScaleOutAfterOnDeleteUpdateNoTail(t *testing.T) {
 	tc.ScalePCSGAcrossAllReplicasAndWait(tc.Workload.Name, "sg-x", 1, 3, 14, 0)
 
 	afterScaleOut := getPodGangMapEntries(t, tc, 0)
-	scaleOutEntry = requireSingleEntryByRole(t, afterScaleOut, grovev1beta1.PodGangEntryRoleScaleOut)
+	scaleOutEntry = updateutils.RequireSingleEntryByRole(t, afterScaleOut, grovev1beta1.PodGangEntryRoleScaleOut)
 	assertPodGangEntryPCSGIndices(t, scaleOutEntry, "sg-x", []int32{2})
-	assertPodGangEntryDependsOn(t, scaleOutEntry, []string{anchorEntry.Epoch})
+	updateutils.AssertPodGangEntryDependsOn(t, scaleOutEntry, []string{anchorEntry.Epoch})
 
 	tests.Logger.Info("7. Verify all pods including the scaled-out replica become running, none stranded gated")
 	if err := tc.WaitForRunningPods(14); err != nil {
@@ -789,23 +789,23 @@ func Test_OD11_ScaleOutAfterOnDeleteUpdateWithTail(t *testing.T) {
 	tests.Logger.Info("3. Assert the initial PodGangMap has an anchor, a tail, and a scale-out entry")
 	oldHash := getPCSGenerationHash(t, tc)
 	before := getPodGangMapEntries(t, tc, 0)
-	assertEntryRoles(t, before,
+	updateutils.AssertEntryRoles(t, before,
 		grovev1beta1.PodGangEntryRoleAnchor,
 		grovev1beta1.PodGangEntryRoleTail,
 		grovev1beta1.PodGangEntryRoleScaleOut)
 
-	anchorEntry := requireSingleEntryByRole(t, before, grovev1beta1.PodGangEntryRoleAnchor)
-	assertStandalonePCLQPodCounts(t, anchorEntry, map[string]int32{"pc-a": 2})
+	anchorEntry := updateutils.RequireSingleEntryByRole(t, before, grovev1beta1.PodGangEntryRoleAnchor)
+	updateutils.AssertStandalonePCLQPodCounts(t, anchorEntry, map[string]int32{"pc-a": 2})
 	assertPodGangEntryPCSGIndices(t, anchorEntry, "sg-x", []int32{0})
-	assertPodGangEntryDependsOn(t, anchorEntry, nil)
+	updateutils.AssertPodGangEntryDependsOn(t, anchorEntry, nil)
 
-	tailEntry := requireSingleEntryByRole(t, before, grovev1beta1.PodGangEntryRoleTail)
+	tailEntry := updateutils.RequireSingleEntryByRole(t, before, grovev1beta1.PodGangEntryRoleTail)
 	assertPodGangEntryPCSGIndices(t, tailEntry, "sg-x", []int32{1})
-	assertPodGangEntryDependsOn(t, tailEntry, []string{anchorEntry.Epoch})
+	updateutils.AssertPodGangEntryDependsOn(t, tailEntry, []string{anchorEntry.Epoch})
 
-	scaleOutEntry := requireSingleEntryByRole(t, before, grovev1beta1.PodGangEntryRoleScaleOut)
+	scaleOutEntry := updateutils.RequireSingleEntryByRole(t, before, grovev1beta1.PodGangEntryRoleScaleOut)
 	assertPodGangEntryPCSGIndices(t, scaleOutEntry, "sg-x", nil)
-	assertPodGangEntryDependsOn(t, scaleOutEntry, []string{anchorEntry.Epoch})
+	updateutils.AssertPodGangEntryDependsOn(t, scaleOutEntry, []string{anchorEntry.Epoch})
 
 	tests.Logger.Info("4. Trigger an OnDelete update on pc-c, then wait for it to complete")
 	if err := triggerPodCliqueUpdate(tc, "pc-c"); err != nil {
@@ -827,9 +827,9 @@ func Test_OD11_ScaleOutAfterOnDeleteUpdateWithTail(t *testing.T) {
 	tc.ScalePCSGAcrossAllReplicasAndWait(tc.Workload.Name, "sg-x", 1, 3, 14, 0)
 
 	afterScaleOut := getPodGangMapEntries(t, tc, 0)
-	scaleOutEntry = requireSingleEntryByRole(t, afterScaleOut, grovev1beta1.PodGangEntryRoleScaleOut)
+	scaleOutEntry = updateutils.RequireSingleEntryByRole(t, afterScaleOut, grovev1beta1.PodGangEntryRoleScaleOut)
 	assertPodGangEntryPCSGIndices(t, scaleOutEntry, "sg-x", []int32{2})
-	assertPodGangEntryDependsOn(t, scaleOutEntry, []string{anchorEntry.Epoch})
+	updateutils.AssertPodGangEntryDependsOn(t, scaleOutEntry, []string{anchorEntry.Epoch})
 
 	tests.Logger.Info("7. Verify all pods including the scaled-out replica become running, none stranded gated")
 	if err := tc.WaitForRunningPods(14); err != nil {

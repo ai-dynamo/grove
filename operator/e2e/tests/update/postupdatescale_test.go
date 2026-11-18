@@ -17,13 +17,12 @@
 package update
 
 import (
-	"sort"
-	"testing"
-
 	grovev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/e2e/tests"
-
+	updateutils "github.com/ai-dynamo/grove/operator/e2e/tests/update/utils"
 	"github.com/stretchr/testify/assert"
+	"sort"
+	"testing"
 )
 
 // Test_PCUS1_ScaleInAfterCoherentUpdateKeepsPodGangMapConsistent verifies steady-state PodGangMap scale
@@ -71,7 +70,7 @@ func Test_PCUS1_ScaleInAfterCoherentUpdateKeepsPodGangMapConsistent(t *testing.T
 		t.Fatalf("coherent update did not complete: %v", err)
 	}
 	assertUpdateInProgressCleared(tc)
-	assertGenerationHashConverged(tc)
+	updateutils.AssertGenerationHashConverged(tc)
 
 	tests.Logger.Info("5. Verify anchors carry inference indices {0} and {2}, so a high index sits in an anchor")
 	newHash := getPCSGenerationHash(t, tc)
@@ -109,7 +108,7 @@ func Test_PCUS1_ScaleInAfterCoherentUpdateKeepsPodGangMapConsistent(t *testing.T
 		t.Fatalf("the second coherent update did not complete: %v", err)
 	}
 	assertUpdateInProgressCleared(tc)
-	assertGenerationHashConverged(tc)
+	updateutils.AssertGenerationHashConverged(tc)
 	// The second coherent update changes only the standalone frontend, so it opens a fresh anchor holding
 	// both frontend replicas and no PodCliqueScalingGroup indices, while the pre-existing inference-bearing
 	// anchor keeps index 0 (shedding its frontend pods to the new anchor) and the tail keeps index 1. The
@@ -122,7 +121,7 @@ func Test_PCUS1_ScaleInAfterCoherentUpdateKeepsPodGangMapConsistent(t *testing.T
 		{standalone: map[string]int32{"frontend": 2}, pcsgIndices: nil},
 	})
 	assert.Equal(t, []int32{1}, newHashTailPCSGIndices(entries, newHash, "inference"), "the tail must keep inference index 1")
-	scaleOutEntry := requireSingleEntryByRole(t, entries, grovev1beta1.PodGangEntryRoleScaleOut)
+	scaleOutEntry := updateutils.RequireSingleEntryByRole(t, entries, grovev1beta1.PodGangEntryRoleScaleOut)
 	assert.Empty(t, scaleOutEntry.PCSGReplicaIndices, "the scale-out entry must carry no inference indices after scaling back in")
 	assert.Equal(t, []int32{0, 1}, allPCSGIndices(entries, "inference"), "the second update must preserve the reconciled inference replicas")
 }

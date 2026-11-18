@@ -19,13 +19,12 @@ package update
 import (
 	"context"
 	"fmt"
-	"sync"
-	"time"
-
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/watch"
+	"sync"
+	"time"
 )
 
 // podEvent represents a pod lifecycle event during an update
