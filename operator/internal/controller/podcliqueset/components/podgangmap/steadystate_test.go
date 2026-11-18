@@ -771,7 +771,7 @@ func TestApplySubStepAdvancesEmptyScaleOut(t *testing.T) {
 	}
 	before := clonePodGangEntries(entries)
 	got, err := planner.applySubStep(subStep{
-		epoch: "200", opensAnchor: true, drainStandalonePCLQCounts: map[string]int32{"frontend": 1},
+		epoch: "200", opensAnchor: true, standalonePCLQCountsToRoll: map[string]int32{"frontend": 1},
 	})
 	require.NoError(t, err)
 	require.Len(t, got, 3)

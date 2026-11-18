@@ -655,7 +655,8 @@ func Test_CU12_CoherentUpdateWithPodCliqueScalingGroupScaledToZero(t *testing.T)
 // Test_CU13_CoherentUpdateWithStandaloneScaledToZero verifies that a coherent update completes when an
 // in-scope standalone PodClique is scaled to zero before the update. The standalone PodClique has no pods
 // to roll, yet its resource still advances to the new revision, so a later scale-out launches new-revision
-// pods. The active inference PCSG rolls normally.
+// pods. No new anchor commits frontend pods while its live desired replicas are zero, even though the
+// PCS template still has positive Replicas and MinAvailable. The active inference PCSG rolls normally.
 func Test_CU13_CoherentUpdateWithStandaloneScaledToZero(t *testing.T) {
 	tests.Logger.Info("1. Deploy workload-coherent and verify 6 pods")
 	tc, cleanup, _ := setupTest(t, testConfig{
@@ -683,6 +684,18 @@ func Test_CU13_CoherentUpdateWithStandaloneScaledToZero(t *testing.T) {
 	assertUpdateInProgressCleared(tc)
 	updateutils.AssertGenerationHashConverged(tc)
 	assertPodGangMapSingleGeneration(t, tc)
+
+	pgm, err := updateutils.GetReplicaPodGangMap(tc, 0)
+	require.NoError(t, err)
+	for _, entry := range pgm.Spec.Entries {
+		require.NotContains(t, entry.PodCliques, "frontend", "epoch %s must not commit zero-replica frontend pods", entry.Epoch)
+	}
+	var frontend grovev1beta1.PodClique
+	require.NoError(t, tc.Client.Get(tc.Ctx, types.NamespacedName{
+		Namespace: tc.Namespace, Name: coherentWorkloadName + "-0-frontend",
+	}, &frontend))
+	require.Equal(t, int32(0), frontend.Spec.Replicas, "frontend must remain scaled to zero until explicitly scaled back up")
+	require.NoError(t, tc.WaitForPods(4))
 
 	tests.Logger.Info("5. Scale the frontend back to 2 and verify new-revision pods launch")
 	tc.ScalePodCliqueAndWait(coherentWorkloadName+"-0-frontend", 2, coherentExpectedPods, 0)
