@@ -1,0 +1,33 @@
+// Copyright 2026 The Grove Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package component
+
+import (
+	apicommon "github.com/ai-dynamo/grove/operator/api/common"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+)
+
+// SetMaterializedPCSGenerationHash records the PCS generation whose template was applied to a resource.
+// An unknown generation leaves the marker absent.
+func SetMaterializedPCSGenerationHash(objectMeta *metav1.ObjectMeta, generationHash string) {
+	if generationHash == "" {
+		delete(objectMeta.Labels, apicommon.LabelPodCliqueSetGenerationHash)
+		return
+	}
+	if objectMeta.Labels == nil {
+		objectMeta.Labels = make(map[string]string)
+	}
+	objectMeta.Labels[apicommon.LabelPodCliqueSetGenerationHash] = generationHash
+}

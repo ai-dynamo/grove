@@ -258,9 +258,20 @@ func (r _resource) buildResource(pcsg *grovecorev1beta1.PodCliqueScalingGroup, p
 	if !pcsgExists {
 		pcsg.Spec.Replicas = *pcsgConfig.Replicas
 	}
-	pcsg.Spec.MinAvailable = pcsgConfig.MinAvailable
-	pcsg.Spec.CliqueNames = pcsgConfig.CliqueNames
+	preserveRevision := pcsgExists && componentutils.ShouldPreservePCSReplicaRevision(pcs, pcsReplica)
+	resourceGenerationHash := pcsg.Labels[apicommon.LabelPodCliqueSetGenerationHash]
+	if preserveRevision {
+		// Migrate an existing resource using only its previously reconciled generation.
+		if resourceGenerationHash == "" && pcsg.Status.CurrentPodCliqueSetGenerationHash != nil {
+			resourceGenerationHash = *pcsg.Status.CurrentPodCliqueSetGenerationHash
+		}
+	} else {
+		resourceGenerationHash = *pcs.Status.CurrentGenerationHash
+		pcsg.Spec.MinAvailable = pcsgConfig.MinAvailable
+		pcsg.Spec.CliqueNames = pcsgConfig.CliqueNames
+	}
 	pcsg.Labels = getLabels(pcs, pcsReplica, client.ObjectKeyFromObject(pcsg))
+	componentutils.SetMaterializedPCSGenerationHash(&pcsg.ObjectMeta, resourceGenerationHash)
 	pcsg.Annotations = getAnnotations(pcsgConfig)
 	pcsg.Annotations = propagateMNNVLAnnotations(pcsg.Annotations, pcs.Annotations)
 	// A PCS pod-template change does not necessarily change the PCSG spec, so it would not trigger

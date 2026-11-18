@@ -390,6 +390,14 @@ func TestComputePCSReplicaState(t *testing.T) {
 	}
 }
 
+func TestScaleInMaySelectMaterializedCurrentGenerationReplica(t *testing.T) {
+	pcs := replicaRecreationSelectionTestPCS()
+	info := replicaRecreationSelectionInfo(pcs, 1, "current", true, true)
+	assert.True(t, info.hasMaterializedPCSGeneration(pcs, "current"))
+	selected := selectReplicaIndicesForScaleIn(pcs, pcsReplicaInfoByIndex{1: info}, sets.New(1), sets.New[int](), sets.New[int](), 1)
+	assert.Equal(t, []int{1}, selected, "current template marker must not protect excess replicas from scale-in")
+}
+
 func TestSelectReplicaIndicesForScaleIn(t *testing.T) {
 	pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "default", types.UID("test-pcs-uid")).
 		WithStandaloneClique("worker").

@@ -134,6 +134,16 @@ func IsPCSReplicaRecreationInProgress(pcs *grovecorev1beta1.PodCliqueSet) bool {
 	return updateInProgress(pcs) && pcs.Status.UpdateProgress.RequiresReplicaRecreation
 }
 
+// ShouldPreservePCSReplicaRevision reports whether an existing resource must retain its running
+// template during the active PCS update. Callers handle fresh creation independently.
+func ShouldPreservePCSReplicaRevision(pcs *grovecorev1beta1.PodCliqueSet, pcsReplicaIndex int) bool {
+	isUnselectedDuringCoherentUpdate := IsCoherentUpdateInProgress(pcs) &&
+		!IsPCSReplicaUnderCoherentUpdate(pcs, pcsReplicaIndex)
+	isUnselectedDuringReplicaRecreation := IsPCSReplicaRecreationInProgress(pcs) &&
+		!IsPCSReplicaActiveReplacementTarget(pcs, pcsReplicaIndex)
+	return isUnselectedDuringCoherentUpdate || isUnselectedDuringReplicaRecreation
+}
+
 // IsPCSReplicaInReplacement reports whether the given PCS replica index participates as the source or
 // target of an active or canceled PCS replica replacement. Gang termination is disarmed for such a replica
 // because the replacement already deletes and recreates it.

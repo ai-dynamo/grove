@@ -117,17 +117,12 @@ func mutateCurrentHashes(logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet,
 		logger.V(1).Info("PodClique is currently updating, cannot set PodCliqueSet CurrentGenerationHash yet")
 		return nil
 	}
-	// During a PCS replica recreation only the replica being recreated (the active replacement target) may
-	// converge to the current generation. Every other replica is frozen at its old generation until it is
-	// itself recreated, so its CurrentPodCliqueSetGenerationHash must not be stamped from a matching
-	// pod-template hash. A scheduling-configuration change such as MinAvailable does not change the
-	// pod-template hash, so without this guard a frozen replica would be marked converged without recreation.
+	// A matching pod-template hash does not establish the scheduling generation. The spec writer
+	// records the generation actually applied: frozen old children keep their old marker, while
+	// replacements and fresh scale-out children can bootstrap the current generation.
 	if componentutils.IsPCSReplicaRecreationInProgress(pcs) {
-		pcsReplicaIndex, err := k8sutils.GetPodCliqueSetReplicaIndex(pclq.ObjectMeta)
-		if err != nil {
-			return err
-		}
-		if !componentutils.IsPCSReplicaActiveReplacementTarget(pcs, pcsReplicaIndex) {
+		if pcs.Status.CurrentGenerationHash == nil ||
+			pclq.Labels[apicommon.LabelPodCliqueSetGenerationHash] != *pcs.Status.CurrentGenerationHash {
 			return nil
 		}
 	}

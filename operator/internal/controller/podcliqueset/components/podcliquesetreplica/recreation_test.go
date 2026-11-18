@@ -19,6 +19,7 @@ import (
 	"slices"
 	"testing"
 
+	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	pcsexpectations "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/expectations"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
@@ -119,12 +120,60 @@ func TestPCSReplicaRecreationPlannerNext(t *testing.T) {
 	t.Run("returns nil when no source replica needs recreation", func(t *testing.T) {
 		pcs := schedulingConfigRolloutTestPCS()
 		replicaInfosByIndex := pcsReplicaInfoByIndex{
-			0: rollingUpdateReplicaInfoAtGeneration(pcs, 0, *pcs.Status.CurrentGenerationHash, true),
+			0: replicaRecreationSelectionInfo(pcs, 0, *pcs.Status.CurrentGenerationHash, true, false),
 		}
 		planner := newPCSReplicaRecreationPlanner(pcs, replicaInfosByIndex, pcsReplicaScalingIndices{})
 
 		assert.Nil(t, planner.next())
 	})
+}
+
+func TestRecreationSelectionUsesAppliedTemplatesNotBootstrapStatus(t *testing.T) {
+	cases := []struct {
+		name             string
+		marker           string
+		recordedHash     *string
+		reservedScaleOut bool
+		reservedScaleIn  bool
+		want             []int
+	}{
+		{name: "fresh S1 after scale-out reservation clears", marker: "current", want: []int{}},
+		{name: "S1 materialized with old status", marker: "current", recordedHash: new("superseded"), want: []int{}},
+		{name: "S0 bootstrap interrupted by S1", marker: "superseded", want: []int{0}},
+		{name: "S0 status cannot substitute for missing marker", recordedHash: new("superseded"), want: []int{0}},
+		{name: "unknown resource remains eligible", want: []int{0}},
+		{name: "S0 reservation still excludes recreation", marker: "superseded", reservedScaleOut: true, want: []int{}},
+		{name: "scale-in excludes old replica from recreation", marker: "superseded", reservedScaleIn: true, want: []int{}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			pcs := replicaRecreationSelectionTestPCS()
+			info := replicaRecreationSelectionInfo(pcs, 0, tc.marker, true, true)
+			info.standalonePCLQs[0].Status.CurrentPodCliqueSetGenerationHash = tc.recordedHash
+			info.pcsgs[0].Status.CurrentPodCliqueSetGenerationHash = tc.recordedHash
+			scaling := pcsReplicaScalingIndices{}
+			if tc.reservedScaleOut {
+				scaling.scaleOut = []int{0}
+			}
+			if tc.reservedScaleIn {
+				scaling.scaleIn = []int{0}
+			}
+			got := newPCSReplicaRecreationPlanner(pcs, pcsReplicaInfoByIndex{0: info}, scaling).selectSourceReplicaIndices(1)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
+func TestRecreationCompletionWaitsForMaterializedScaleOutStatus(t *testing.T) {
+	pcs := replicaRecreationSelectionTestPCS()
+	pcs.Spec.Replicas = 1
+	info := replicaRecreationSelectionInfo(pcs, 0, "current", true, true)
+	info.standalonePCLQs[0].Status = grovecorev1beta1.PodCliqueStatus{}
+	info.pcsgs[0].Status = grovecorev1beta1.PodCliqueScalingGroupStatus{}
+	assert.True(t, info.hasMaterializedPCSGeneration(pcs, "current"))
+	hooks := newPCSReplicaRecreationStrategyHooks(pcs, pcsReplicaInfoByIndex{0: info}, pcsReplicaScalingIndices{})
+	assert.False(t, hooks.isUpdateComplete(), "marker cannot replace status convergence or availability")
 }
 
 func TestPCSReplicaRecreationPlannerSelectSourceReplicaIndices(t *testing.T) {
@@ -137,7 +186,7 @@ func TestPCSReplicaRecreationPlannerSelectSourceReplicaIndices(t *testing.T) {
 			2: rollingUpdateReplicaInfoAtGeneration(pcs, 2, "superseded", true),
 			1: rollingUpdateReplicaInfoAtGeneration(pcs, 1, "pending", true),
 			0: rollingUpdateReplicaInfoAtGeneration(pcs, 0, "pending", false),
-			6: rollingUpdateReplicaInfoAtGeneration(pcs, 6, *pcs.Status.CurrentGenerationHash, true),
+			6: replicaRecreationSelectionInfo(pcs, 6, *pcs.Status.CurrentGenerationHash, true, false),
 		}
 
 		got := newPCSReplicaRecreationPlanner(pcs, pcsReplicaInfosByIndex, pcsReplicaScalingIndices{}).selectSourceReplicaIndices(len(pcsReplicaInfosByIndex))
@@ -636,6 +685,7 @@ func replicaRecreationSelectionInfo(
 			WithMinAvailable(1).
 			Build()
 		pclq.Name = pclqName
+		pclq.Labels[apicommon.LabelPodCliqueSetGenerationHash] = pcsGenerationHash
 		pclq.Status.CurrentPodCliqueSetGenerationHash = new(pcsGenerationHash)
 		pclq.Status.ReadyReplicas = 1
 		pcsReplicaInfoForSelection.standalonePCLQs = []grovecorev1beta1.PodClique{*pclq}
@@ -643,6 +693,7 @@ func replicaRecreationSelectionInfo(
 	if includePCSG {
 		pcsgName := componentutils.GetPCSGFQNsForPCSReplica(pcs, pcsReplicaIndex)[0]
 		pcsg := testutils.NewPodCliqueScalingGroupBuilder(pcsgName, pcs.Namespace, pcs.Name, pcsReplicaIndex).Build()
+		pcsg.Labels[apicommon.LabelPodCliqueSetGenerationHash] = pcsGenerationHash
 		pcsg.Status.CurrentPodCliqueSetGenerationHash = new(pcsGenerationHash)
 		pcsg.Status.AvailableReplicas = 1
 		pcsReplicaInfoForSelection.pcsgs = []grovecorev1beta1.PodCliqueScalingGroup{*pcsg}

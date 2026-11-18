@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 
+	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
@@ -127,6 +128,29 @@ func (pri *pcsReplicaInfo) hasConvergedToPCSGeneration(pcs *grovecorev1beta1.Pod
 		return false
 	}
 	return pri.existingResourcesMatchPCSGeneration(generationHash)
+}
+
+// hasMaterializedPCSGeneration reports whether every expected resource exists with the given
+// template generation applied. It does not imply pod readiness or status convergence.
+func (pri *pcsReplicaInfo) hasMaterializedPCSGeneration(pcs *grovecorev1beta1.PodCliqueSet, generationHash string) bool {
+	if generationHash == "" {
+		return false
+	}
+	if len(pri.standalonePCLQs) != len(componentutils.GetPodCliqueFQNsForPCSReplicaNotInPCSG(pcs, pri.index)) ||
+		len(pri.pcsgs) != len(pcs.Spec.Template.PodCliqueScalingGroupConfigs) {
+		return false
+	}
+	for i := range pri.standalonePCLQs {
+		if pri.standalonePCLQs[i].Labels[apicommon.LabelPodCliqueSetGenerationHash] != generationHash {
+			return false
+		}
+	}
+	for i := range pri.pcsgs {
+		if pri.pcsgs[i].Labels[apicommon.LabelPodCliqueSetGenerationHash] != generationHash {
+			return false
+		}
+	}
+	return true
 }
 
 // existingResourcesMatchPCSGeneration reports whether every observed standalone PodClique and PodCliqueScalingGroup
