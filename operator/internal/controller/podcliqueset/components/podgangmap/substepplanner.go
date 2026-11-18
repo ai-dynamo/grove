@@ -45,14 +45,14 @@ type subStep struct {
 	// the update.
 	dependsOn []string
 	// opensAnchor is true when this sub-step opens an anchor-bearing step, so it creates a new anchor
-	// entry carrying MinAvailable of every standalone PodClique plus anchorPCSGReplicaIndices. It is the
+	// entry carrying standalonePCLQCountsToRoll plus anchorPCSGReplicaIndices. It is the
 	// discriminator between an anchor sub-step and a tail or leftover sub-step, independent of whether the
 	// update includes any PodCliqueScalingGroup.
 	opensAnchor bool
 	// anchorPCSGReplicaIndices are the PodCliqueScalingGroup replica indices the new anchor entry
 	// carries, keyed by PCSG name. It is set only on an anchor sub-step and is empty when the update
-	// includes no PodCliqueScalingGroups. The anchor's standalone PodClique count is not carried here. It
-	// is MinAvailable per PodClique, read from the mvuTemplate when the entry is materialized.
+	// includes no PodCliqueScalingGroups. The anchor's standalone pod counts come from
+	// standalonePCLQCountsToRoll, which excludes components with zero live desired replicas.
 	anchorPCSGReplicaIndices map[string][]int32
 	// subsumeStandalonePCLQCounts are the standalone PodClique pod counts this sub-step adds to an
 	// existing anchor entry, keyed by PodClique name.
@@ -63,25 +63,37 @@ type subStep struct {
 	// new hash outside the anchor, keyed by PCSG name. The indices of one PCSG collapse into a single
 	// tail entry that the PodGang materializer later expands into one PodGang per index.
 	tailPCSGReplicaIndices map[string][]int32
-	// drainStandalonePCLQCounts are the old-hash standalone PodClique pod counts this sub-step takes
-	// down, keyed by PodClique name.
-	drainStandalonePCLQCounts map[string]int32
-	// drainPCSGReplicaIndices are the old-hash PodCliqueScalingGroup replica indices this sub-step takes
-	// down, keyed by PCSG name.
-	drainPCSGReplicaIndices map[string][]int32
+	// standalonePCLQCountsToRoll holds the per-sub-step standalone pod counts to move
+	// from old-hash anchors to current-hash anchors, keyed by PodClique name.
+	// The same quantities drive both old-hash draining and new-hash placement:
+	//   - An anchor sub-step places them in its new anchor.
+	//   - A tail or leftover sub-step adds them to its existing target anchor.
+	//
+	// These are placement counts, not counts of running pods or final replica totals.
+	// Components with zero live desired replicas are omitted, even when MinAvailable
+	// in the PCS template is positive.
+	standalonePCLQCountsToRoll map[string]int32
+	// pcsgReplicaIndicesToRoll holds the PodCliqueScalingGroup replica indices to move
+	// from old-hash entries to current-hash entries, keyed by scaling group name.
+	// The same indices drive both old-hash draining and new-hash placement:
+	//   - An anchor sub-step places them in its new anchor.
+	//   - A tail or leftover sub-step places them in a new tail entry.
+	//
+	// Components with zero live desired replicas are omitted.
+	pcsgReplicaIndicesToRoll map[string][]int32
 }
 
 // String renders the sub-step in a compact single line form for tracing.
 func (s subStep) String() string {
-	return fmt.Sprintf("subStep(epoch=%s opensAnchor=%t anchorPCSG=%v subsumePCLQ=%v subsumeAnchorEpoch=%s tailPCSG=%v drainPCLQ=%v drainPCSG=%v dependsOn=%v)",
-		s.epoch, s.opensAnchor, s.anchorPCSGReplicaIndices, s.subsumeStandalonePCLQCounts, s.subsumeAnchorEpoch, s.tailPCSGReplicaIndices, s.drainStandalonePCLQCounts, s.drainPCSGReplicaIndices, s.dependsOn)
+	return fmt.Sprintf("subStep(epoch=%s opensAnchor=%t anchorPCSG=%v subsumePCLQ=%v subsumeAnchorEpoch=%s tailPCSG=%v rollPCLQ=%v rollPCSG=%v dependsOn=%v)",
+		s.epoch, s.opensAnchor, s.anchorPCSGReplicaIndices, s.subsumeStandalonePCLQCounts, s.subsumeAnchorEpoch, s.tailPCSGReplicaIndices, s.standalonePCLQCountsToRoll, s.pcsgReplicaIndicesToRoll, s.dependsOn)
 }
 
 // drainCountByComponent returns how many replicas of each in-scope component this sub-step takes down.
 func (s subStep) drainCountByComponent() map[string]int32 {
-	drainByComponent := make(map[string]int32, len(s.drainStandalonePCLQCounts)+len(s.drainPCSGReplicaIndices))
-	maps.Copy(drainByComponent, s.drainStandalonePCLQCounts)
-	for componentName, indices := range s.drainPCSGReplicaIndices {
+	drainByComponent := make(map[string]int32, len(s.standalonePCLQCountsToRoll)+len(s.pcsgReplicaIndicesToRoll))
+	maps.Copy(drainByComponent, s.standalonePCLQCountsToRoll)
+	for componentName, indices := range s.pcsgReplicaIndicesToRoll {
 		drainByComponent[componentName] = int32(len(indices))
 	}
 	return drainByComponent
@@ -91,12 +103,12 @@ func (s subStep) drainCountByComponent() map[string]int32 {
 // headroom capping leaves nothing to roll this reconcile, so the roll waits instead of emitting an empty
 // sub-step.
 func (s subStep) drainsNothing() bool {
-	for _, count := range s.drainStandalonePCLQCounts {
+	for _, count := range s.standalonePCLQCountsToRoll {
 		if count > 0 {
 			return false
 		}
 	}
-	for _, indices := range s.drainPCSGReplicaIndices {
+	for _, indices := range s.pcsgReplicaIndicesToRoll {
 		if len(indices) > 0 {
 			return false
 		}
@@ -492,12 +504,12 @@ func (p *subStepPlanner) buildAnchorBearingSubStep() (*subStep, error) {
 		anchorStandalonePCLQCounts[pclqName] = minAvailable
 	}
 	return &subStep{
-		epoch:                     newEpoch(p.clk),
-		dependsOn:                 dependsOn,
-		opensAnchor:               true,
-		anchorPCSGReplicaIndices:  anchorPCSGIndices,
-		drainStandalonePCLQCounts: anchorStandalonePCLQCounts,
-		drainPCSGReplicaIndices:   anchorPCSGIndices,
+		epoch:                      newEpoch(p.clk),
+		dependsOn:                  dependsOn,
+		opensAnchor:                true,
+		anchorPCSGReplicaIndices:   anchorPCSGIndices,
+		standalonePCLQCountsToRoll: anchorStandalonePCLQCounts,
+		pcsgReplicaIndicesToRoll:   anchorPCSGIndices,
 	}, nil
 }
 
@@ -547,9 +559,9 @@ func (p *subStepPlanner) buildNonAnchorSubStep(epoch, anchorEpoch string, remain
 		dependsOn:                   dependsOn,
 		subsumeAnchorEpoch:          anchorEpoch,
 		subsumeStandalonePCLQCounts: map[string]int32{},
-		drainStandalonePCLQCounts:   map[string]int32{},
+		standalonePCLQCountsToRoll:  map[string]int32{},
 		tailPCSGReplicaIndices:      map[string][]int32{},
-		drainPCSGReplicaIndices:     map[string][]int32{},
+		pcsgReplicaIndicesToRoll:    map[string][]int32{},
 	}
 	for componentName, remaining := range remainingByComponent {
 		// rollBudget is how many old-version slots this sub-step drains for the component. It is the
@@ -567,10 +579,10 @@ func (p *subStepPlanner) buildNonAnchorSubStep(epoch, anchorEpoch string, remain
 		if _, isPCSG := p.mvu.pcsgs[componentName]; isPCSG {
 			indices := p.nextOldPCSGIndicesToRoll(componentName, rollBudget)
 			ss.tailPCSGReplicaIndices[componentName] = indices
-			ss.drainPCSGReplicaIndices[componentName] = indices
+			ss.pcsgReplicaIndicesToRoll[componentName] = indices
 		} else {
 			ss.subsumeStandalonePCLQCounts[componentName] = rollBudget
-			ss.drainStandalonePCLQCounts[componentName] = rollBudget
+			ss.standalonePCLQCountsToRoll[componentName] = rollBudget
 		}
 	}
 	return ss, nil

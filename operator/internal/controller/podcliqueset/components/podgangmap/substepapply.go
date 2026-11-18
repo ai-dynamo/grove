@@ -37,8 +37,8 @@ func (p *subStepPlanner) applySubStep(ss subStep) ([]grovecorev1beta1.PodGangEnt
 		return nil, err
 	}
 
-	drainStandalonePCLQs(entries, currentHash, ss.drainStandalonePCLQCounts, p.pclqPodCounts.livePodCountsByAnchor)
-	drainPCSGIndices(entries, currentHash, ss.drainPCSGReplicaIndices)
+	drainStandalonePCLQs(entries, currentHash, ss.standalonePCLQCountsToRoll, p.pclqPodCounts.livePodCountsByAnchor)
+	drainPCSGIndices(entries, currentHash, ss.pcsgReplicaIndicesToRoll)
 	subsumeIntoAnchor(entries, ss.subsumeAnchorEpoch, ss.subsumeStandalonePCLQCounts)
 
 	if newEntry, ok := p.newHashEntryForSubStep(ss); ok {
@@ -197,8 +197,9 @@ func subsumeIntoAnchor(entries []grovecorev1beta1.PodGangEntry, anchorEpoch stri
 }
 
 // newHashEntryForSubStep builds the one new-hash entry a sub-step adds, if any. An anchor sub-step adds an
-// anchor entry carrying MinAvailable of every standalone PodClique plus the sub-step's PCSG MinAvailable indices. A
-// sub-step that rolls PCSG tail indices adds a single tail entry holding them. A sub-step that only subsumes
+// anchor entry carrying the sub-step's standalonePCLQCountsToRoll and anchorPCSGReplicaIndices, so a
+// zero-replica standalone component is not added back from the MVU. A sub-step that rolls PCSG tail
+// indices adds a single tail entry holding them. A sub-step that only subsumes
 // standalone PodClique pods into an existing anchor adds no entry. So a sub-step yields at most one entry,
 // returned with ok true, or ok false when it adds none.
 func (p *subStepPlanner) newHashEntryForSubStep(ss subStep) (grovecorev1beta1.PodGangEntry, bool) {
@@ -207,7 +208,7 @@ func (p *subStepPlanner) newHashEntryForSubStep(ss subStep) (grovecorev1beta1.Po
 	if ss.opensAnchor {
 		anchorEntry := newPodGangEntry(ss.epoch, currentHash, ss.dependsOn)
 		anchorEntry.Role = grovecorev1beta1.PodGangEntryRoleAnchor
-		anchorEntry.PodCliques = maps.Clone(p.mvu.standalonePCLQs)
+		anchorEntry.PodCliques = maps.Clone(ss.standalonePCLQCountsToRoll)
 		anchorEntry.PCSGReplicaIndices = ss.anchorPCSGReplicaIndices
 		return anchorEntry, true
 	}

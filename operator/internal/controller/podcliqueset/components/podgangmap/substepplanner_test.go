@@ -338,9 +338,9 @@ func TestBuildNonAnchorSubStep(t *testing.T) {
 		assert.Equal(t, []string{"100"}, ss.dependsOn)
 		assert.Equal(t, "100", ss.subsumeAnchorEpoch)
 		assert.Equal(t, map[string][]int32{"decode": {2, 3, 4}}, ss.tailPCSGReplicaIndices) // min(3,4)=3 worst-off old indices, starting at 2
-		assert.Equal(t, map[string][]int32{"decode": {2, 3, 4}}, ss.drainPCSGReplicaIndices)
+		assert.Equal(t, map[string][]int32{"decode": {2, 3, 4}}, ss.pcsgReplicaIndicesToRoll)
 		assert.Equal(t, map[string]int32{"frontend": 2}, ss.subsumeStandalonePCLQCounts) // min(5,2)=2
-		assert.Equal(t, map[string]int32{"frontend": 2}, ss.drainStandalonePCLQCounts)
+		assert.Equal(t, map[string]int32{"frontend": 2}, ss.standalonePCLQCountsToRoll)
 	})
 	t.Run("returns nil when nothing remains", func(t *testing.T) {
 		ss, err := planner.buildNonAnchorSubStep(newEpoch(planner.clk), "100", map[string]int32{}, nil)
@@ -373,8 +373,20 @@ func TestBuildAnchorBearingSubStep(t *testing.T) {
 	assert.Equal(t, []string{"100"}, ss.dependsOn)
 	assert.True(t, ss.opensAnchor)
 	assert.Equal(t, map[string][]int32{"prefill": {3, 4, 5}, "decode": {6, 7, 8}}, ss.anchorPCSGReplicaIndices)
-	assert.Equal(t, map[string][]int32{"prefill": {3, 4, 5}, "decode": {6, 7, 8}}, ss.drainPCSGReplicaIndices)
-	assert.Equal(t, map[string]int32{"frontend": 2}, ss.drainStandalonePCLQCounts)
+	assert.Equal(t, map[string][]int32{"prefill": {3, 4, 5}, "decode": {6, 7, 8}}, ss.pcsgReplicaIndicesToRoll)
+	assert.Equal(t, map[string]int32{"frontend": 2}, ss.standalonePCLQCountsToRoll)
+
+	t.Run("zero-replica standalone is omitted from the roll quantities", func(t *testing.T) {
+		zeroReplicaPlanner := newTestPlanner(testingclock.NewFakeClock(time.Unix(0, 999)), "v2", nil, map[string]testComponent{
+			"frontend":  {liveReplicas: 0, minAvailable: 1, maxUnavailable: 1, standalone: true},
+			"inference": {liveReplicas: 2, minAvailable: 1, maxUnavailable: 1},
+		})
+		zeroReplicaSubStep, err := zeroReplicaPlanner.buildAnchorBearingSubStep()
+		require.NoError(t, err)
+		assert.Empty(t, zeroReplicaSubStep.standalonePCLQCountsToRoll)
+		assert.Equal(t, map[string][]int32{"inference": {0}}, zeroReplicaSubStep.anchorPCSGReplicaIndices)
+		assert.Equal(t, map[string][]int32{"inference": {0}}, zeroReplicaSubStep.pcsgReplicaIndicesToRoll)
+	})
 }
 
 func TestBuildAnchorBearingSubStepPicksWorstOffFirst(t *testing.T) {
@@ -391,7 +403,7 @@ func TestBuildAnchorBearingSubStepPicksWorstOffFirst(t *testing.T) {
 	ss, err := planner.buildAnchorBearingSubStep()
 	require.NoError(t, err)
 	assert.Equal(t, map[string][]int32{"decode": {1}}, ss.anchorPCSGReplicaIndices)
-	assert.Equal(t, map[string][]int32{"decode": {1}}, ss.drainPCSGReplicaIndices)
+	assert.Equal(t, map[string][]int32{"decode": {1}}, ss.pcsgReplicaIndicesToRoll)
 }
 
 // TestBuildAnchorBearingSubStepRequeuesWhenPCSGShortOfMinAvailable verifies that when the step plan expects
@@ -593,12 +605,12 @@ func TestNextForStandaloneOnlyMVU(t *testing.T) {
 			description: "nothing committed opens the single anchor with each PodClique's MinAvailable",
 			position:    planPosition{currentAnchorStepCountByComponent: map[string]int32{"frontend": 0, "router": 0}},
 			want: &subStep{
-				epoch:                     "1",
-				dependsOn:                 []string{"100"},
-				opensAnchor:               true,
-				anchorPCSGReplicaIndices:  map[string][]int32{},
-				drainStandalonePCLQCounts: map[string]int32{"frontend": 2, "router": 1},
-				drainPCSGReplicaIndices:   map[string][]int32{},
+				epoch:                      "1",
+				dependsOn:                  []string{"100"},
+				opensAnchor:                true,
+				anchorPCSGReplicaIndices:   map[string][]int32{},
+				standalonePCLQCountsToRoll: map[string]int32{"frontend": 2, "router": 1},
+				pcsgReplicaIndicesToRoll:   map[string][]int32{},
 			},
 		},
 		{
@@ -609,9 +621,9 @@ func TestNextForStandaloneOnlyMVU(t *testing.T) {
 				dependsOn:                   []string{"100"},
 				subsumeAnchorEpoch:          "100",
 				subsumeStandalonePCLQCounts: map[string]int32{"frontend": 3, "router": 2},
-				drainStandalonePCLQCounts:   map[string]int32{"frontend": 3, "router": 2},
+				standalonePCLQCountsToRoll:  map[string]int32{"frontend": 3, "router": 2},
 				tailPCSGReplicaIndices:      map[string][]int32{},
-				drainPCSGReplicaIndices:     map[string][]int32{},
+				pcsgReplicaIndicesToRoll:    map[string][]int32{},
 			},
 		},
 		{
@@ -622,9 +634,9 @@ func TestNextForStandaloneOnlyMVU(t *testing.T) {
 				dependsOn:                   []string{"100"},
 				subsumeAnchorEpoch:          "100",
 				subsumeStandalonePCLQCounts: map[string]int32{"frontend": 2, "router": 1},
-				drainStandalonePCLQCounts:   map[string]int32{"frontend": 2, "router": 1},
+				standalonePCLQCountsToRoll:  map[string]int32{"frontend": 2, "router": 1},
 				tailPCSGReplicaIndices:      map[string][]int32{},
-				drainPCSGReplicaIndices:     map[string][]int32{},
+				pcsgReplicaIndicesToRoll:    map[string][]int32{},
 			},
 		},
 	}
@@ -669,12 +681,12 @@ func TestNextForPCSGOnlyMVU(t *testing.T) {
 			committed:   nil,
 			position:    planPosition{anchorBearingStepsDone: 0, currentAnchorStepCountByComponent: map[string]int32{"prefill": 0, "decode": 0}},
 			want: &subStep{
-				epoch:                     "1",
-				dependsOn:                 []string{"100"},
-				opensAnchor:               true,
-				anchorPCSGReplicaIndices:  map[string][]int32{"prefill": {0, 1, 2}, "decode": {0, 1, 2}},
-				drainStandalonePCLQCounts: map[string]int32{},
-				drainPCSGReplicaIndices:   map[string][]int32{"prefill": {0, 1, 2}, "decode": {0, 1, 2}},
+				epoch:                      "1",
+				dependsOn:                  []string{"100"},
+				opensAnchor:                true,
+				anchorPCSGReplicaIndices:   map[string][]int32{"prefill": {0, 1, 2}, "decode": {0, 1, 2}},
+				standalonePCLQCountsToRoll: map[string]int32{},
+				pcsgReplicaIndicesToRoll:   map[string][]int32{"prefill": {0, 1, 2}, "decode": {0, 1, 2}},
 			},
 		},
 		{
@@ -686,9 +698,9 @@ func TestNextForPCSGOnlyMVU(t *testing.T) {
 				dependsOn:                   []string{"100"},
 				subsumeAnchorEpoch:          "100",
 				subsumeStandalonePCLQCounts: map[string]int32{},
-				drainStandalonePCLQCounts:   map[string]int32{},
+				standalonePCLQCountsToRoll:  map[string]int32{},
 				tailPCSGReplicaIndices:      map[string][]int32{"decode": {3, 4, 5}},
-				drainPCSGReplicaIndices:     map[string][]int32{"decode": {3, 4, 5}},
+				pcsgReplicaIndicesToRoll:    map[string][]int32{"decode": {3, 4, 5}},
 			},
 		},
 		{
@@ -700,9 +712,9 @@ func TestNextForPCSGOnlyMVU(t *testing.T) {
 				dependsOn:                   []string{"100"},
 				subsumeAnchorEpoch:          "100",
 				subsumeStandalonePCLQCounts: map[string]int32{},
-				drainStandalonePCLQCounts:   map[string]int32{},
+				standalonePCLQCountsToRoll:  map[string]int32{},
 				tailPCSGReplicaIndices:      map[string][]int32{"prefill": {9}, "decode": {18, 19}},
-				drainPCSGReplicaIndices:     map[string][]int32{"prefill": {9}, "decode": {18, 19}},
+				pcsgReplicaIndicesToRoll:    map[string][]int32{"prefill": {9}, "decode": {18, 19}},
 			},
 		},
 	}
@@ -750,9 +762,9 @@ func TestBuildNonAnchorSubStepCapsByHeadroom(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, ss)
 	assert.Equal(t, map[string]int32{"frontend": 1}, ss.subsumeStandalonePCLQCounts)
-	assert.Equal(t, map[string]int32{"frontend": 1}, ss.drainStandalonePCLQCounts)
+	assert.Equal(t, map[string]int32{"frontend": 1}, ss.standalonePCLQCountsToRoll)
 	assert.Equal(t, map[string][]int32{"decode": {2, 3}}, ss.tailPCSGReplicaIndices)
-	assert.Equal(t, map[string][]int32{"decode": {2, 3}}, ss.drainPCSGReplicaIndices)
+	assert.Equal(t, map[string][]int32{"decode": {2, 3}}, ss.pcsgReplicaIndicesToRoll)
 }
 
 func TestBuildNonAnchorSubStepHeadroomZeroDrainsNothing(t *testing.T) {
@@ -772,8 +784,8 @@ func TestBuildNonAnchorSubStepHeadroomZeroDrainsNothing(t *testing.T) {
 
 func TestSubStepDrainCountAndDrainsNothing(t *testing.T) {
 	ss := subStep{
-		drainStandalonePCLQCounts: map[string]int32{"frontend": 2},
-		drainPCSGReplicaIndices:   map[string][]int32{"decode": {0, 1, 2}},
+		standalonePCLQCountsToRoll: map[string]int32{"frontend": 2},
+		pcsgReplicaIndicesToRoll:   map[string][]int32{"decode": {0, 1, 2}},
 	}
 	assert.Equal(t, map[string]int32{"frontend": 2, "decode": 3}, ss.drainCountByComponent())
 	assert.False(t, ss.drainsNothing())
