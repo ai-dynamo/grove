@@ -24,6 +24,7 @@ import (
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	"github.com/stretchr/testify/assert"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -35,18 +36,21 @@ type predicateTestCase struct {
 	managedOld              bool
 	managedNew              bool
 	generationChanged       bool
+	deletionStarted         bool
+	labelsChanged           bool
+	alreadyTerminating      bool
 	shouldAllowCreateEvent  bool
 	shouldAllowDeleteEvent  bool
 	shouldAllowGenericEvent bool
 	shouldAllowUpdateEvent  bool
 }
 
-func TestPodGangSpecChangePredicate(t *testing.T) {
-	pred := podGangSpecChangePredicate()
+func TestPodGangChangePredicate(t *testing.T) {
+	pred := podGangChangePredicate()
 
 	tests := []predicateTestCase{
 		{
-			name:                    "managed PodGang create",
+			name:                    "managed PodGang create or initial-list add",
 			managedOld:              true,
 			managedNew:              true,
 			shouldAllowCreateEvent:  true,
@@ -78,6 +82,36 @@ func TestPodGangSpecChangePredicate(t *testing.T) {
 			managedOld:              true,
 			managedNew:              true,
 			generationChanged:       false,
+			shouldAllowCreateEvent:  true,
+			shouldAllowDeleteEvent:  true,
+			shouldAllowGenericEvent: false,
+			shouldAllowUpdateEvent:  false,
+		},
+		{
+			name:                    "managed PodGang update when deletion starts",
+			managedOld:              true,
+			managedNew:              true,
+			deletionStarted:         true,
+			shouldAllowCreateEvent:  true,
+			shouldAllowDeleteEvent:  true,
+			shouldAllowGenericEvent: false,
+			shouldAllowUpdateEvent:  true,
+		},
+		{
+			name:                    "managed PodGang update with label-only change (generation unchanged)",
+			managedOld:              true,
+			managedNew:              true,
+			labelsChanged:           true,
+			shouldAllowCreateEvent:  true,
+			shouldAllowDeleteEvent:  true,
+			shouldAllowGenericEvent: false,
+			shouldAllowUpdateEvent:  true,
+		},
+		{
+			name:                    "managed PodGang update while already terminating",
+			managedOld:              true,
+			managedNew:              true,
+			alreadyTerminating:      true,
 			shouldAllowCreateEvent:  true,
 			shouldAllowDeleteEvent:  true,
 			shouldAllowGenericEvent: false,
@@ -129,7 +163,25 @@ func TestPodGangSpecChangePredicate(t *testing.T) {
 			if tc.generationChanged {
 				newPG.SetGeneration(oldPG.GetGeneration() + 1)
 			}
-
+			if tc.deletionStarted {
+				newPG = testutils.NewPodGangBuilder("test-pg", "default").
+					WithGeneration(oldPG.GetGeneration()).
+					WithManaged(tc.managedNew).
+					WithPodGroup("pg0", 1).
+					WithDeletionTimestamp().
+					Build()
+			}
+			if tc.labelsChanged {
+				newPG.SetLabels(map[string]string{"example.com/mirrored-from-pcs": "changed"})
+				for k, v := range oldPG.GetLabels() {
+					newPG.Labels[k] = v
+				}
+			}
+			if tc.alreadyTerminating {
+				now := metav1.Now()
+				oldPG.SetDeletionTimestamp(&now)
+				newPG.SetDeletionTimestamp(&now)
+			}
 			assert.Equal(t, tc.shouldAllowCreateEvent, pred.Create(event.CreateEvent{Object: newPG}), "Create")
 			assert.Equal(t, tc.shouldAllowDeleteEvent, pred.Delete(event.DeleteEvent{Object: newPG}), "Delete")
 			assert.Equal(t, tc.shouldAllowGenericEvent, pred.Generic(event.GenericEvent{Object: newPG}), "Generic")
