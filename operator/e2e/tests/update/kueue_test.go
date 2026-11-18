@@ -17,20 +17,19 @@
 package update
 
 import (
-	"testing"
-
 	"github.com/ai-dynamo/grove/operator/api/common"
 	"github.com/ai-dynamo/grove/operator/e2e/grove/kueueworkload"
 	"github.com/ai-dynamo/grove/operator/e2e/grove/podgang"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
 	"github.com/ai-dynamo/grove/operator/e2e/tests"
+	updateutils "github.com/ai-dynamo/grove/operator/e2e/tests/update/utils"
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
-
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 	kueuev1beta2 "sigs.k8s.io/kueue/apis/kueue/v1beta2"
+	"testing"
 )
 
 // The Test_KueueUpdate* scenarios run on a cluster with Kueue installed (make run-e2e-kueue-full
@@ -126,7 +125,7 @@ func updateAllKueueComponents(t *testing.T, tc *testctx.TestContext) {
 		t.Fatalf("Update did not complete: %v", err)
 	}
 	assertUpdateInProgressCleared(tc)
-	assertGenerationHashConverged(tc)
+	updateutils.AssertGenerationHashConverged(tc)
 	if err := tc.WaitForPods(kueueUpdateExpectedPods); err != nil {
 		t.Fatalf("Pods did not become ready after the update: %v", err)
 	}

@@ -18,10 +18,9 @@ package update
 
 import (
 	"context"
+	"github.com/ai-dynamo/grove/operator/e2e/testctx"
 	"testing"
 	"time"
-
-	"github.com/ai-dynamo/grove/operator/e2e/testctx"
 )
 
 // testConfig holds configuration for update strategy test setup (both RollingUpdate and OnDelete).

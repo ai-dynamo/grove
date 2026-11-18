@@ -17,14 +17,12 @@
 package update
 
 import (
-	"testing"
-
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
-
 	"github.com/stretchr/testify/assert"
 	"k8s.io/apimachinery/pkg/types"
+	"testing"
 )
 
 // getPCSGenerationHash returns the PodCliqueSet's current generation hash from its status.
@@ -63,41 +61,6 @@ func assertPodGangMapSingleGeneration(t *testing.T, tc *testctx.TestContext) {
 	}
 }
 
-// requireSingleEntryByRole returns the single entry with the given role, failing if there is not exactly one.
-func requireSingleEntryByRole(t *testing.T, entries []grovev1beta1.PodGangEntry, role grovev1beta1.PodGangEntryRole) grovev1beta1.PodGangEntry {
-	t.Helper()
-	var found []grovev1beta1.PodGangEntry
-	for i := range entries {
-		if entries[i].Role == role {
-			found = append(found, entries[i])
-		}
-	}
-	if len(found) != 1 {
-		t.Fatalf("expected exactly one %s entry, found %d", role, len(found))
-	}
-	return found[0]
-}
-
-// assertEntryRoles fails unless entries carry exactly the given roles, one entry per role.
-func assertEntryRoles(t *testing.T, entries []grovev1beta1.PodGangEntry, roles ...grovev1beta1.PodGangEntryRole) {
-	t.Helper()
-	actual := make([]grovev1beta1.PodGangEntryRole, 0, len(entries))
-	for i := range entries {
-		actual = append(actual, entries[i].Role)
-	}
-	assert.ElementsMatch(t, roles, actual)
-}
-
-// assertStandalonePCLQPodCounts fails unless the entry's PodCliques equal expected. A nil expected means empty.
-func assertStandalonePCLQPodCounts(t *testing.T, entry grovev1beta1.PodGangEntry, expected map[string]int32) {
-	t.Helper()
-	if len(expected) == 0 {
-		assert.Empty(t, entry.PodCliques)
-		return
-	}
-	assert.Equal(t, expected, entry.PodCliques)
-}
-
 // assertPodGangEntryPCSGIndices fails unless the entry's replica indices for pcsgName equal expected. A nil
 // expected means the entry carries no indices for pcsgName.
 func assertPodGangEntryPCSGIndices(t *testing.T, entry grovev1beta1.PodGangEntry, pcsgName string, expected []int32) {
@@ -107,16 +70,6 @@ func assertPodGangEntryPCSGIndices(t *testing.T, entry grovev1beta1.PodGangEntry
 		return
 	}
 	assert.Equal(t, expected, entry.PCSGReplicaIndices[pcsgName])
-}
-
-// assertPodGangEntryDependsOn fails unless the entry's DependsOn equals expected. A nil expected means empty.
-func assertPodGangEntryDependsOn(t *testing.T, entry grovev1beta1.PodGangEntry, expected []string) {
-	t.Helper()
-	if len(expected) == 0 {
-		assert.Empty(t, entry.DependsOn)
-		return
-	}
-	assert.Equal(t, expected, entry.DependsOn)
 }
 
 // assertEntriesUnchangedExceptHashForNonCoherentUpdate asserts the PodGangMap invariant that holds for
@@ -147,60 +100,6 @@ func assertEntriesUnchangedExceptHashForNonCoherentUpdate(t *testing.T, before, 
 		b.PodCliqueSetGenerationHash = newHash
 		assert.Equal(t, b, a, "entry with epoch %s changed across the update beyond its generation hash", b.Epoch)
 	}
-}
-
-// expectedReplicaPodGangMap describes the expected entries of one replica's PodGangMap. A nil tailIndices
-// means the workload has no tail entry (PodCliqueScalingGroup replicas equal MinAvailable). A nil
-// scaleOutIndices means the scale-out entry carries no indices (nothing has scaled out).
-type expectedReplicaPodGangMap struct {
-	generationHash      string // If set, every entry must carry this hash.
-	standalonePodCounts map[string]int32
-	pcsgName            string
-	anchorIndices       []int32
-	tailIndices         []int32
-	scaleOutIndices     []int32
-}
-
-// assertReplicaPodGangMap asserts the exact roles, standalone pod counts, and PCSG replica indices of a
-// replica's PodGangMap. Tail and scale-out entries must depend on the anchor and carry no standalone pods.
-// If want.generationHash is set, every entry must carry it.
-func assertReplicaPodGangMap(t *testing.T, entries []grovev1beta1.PodGangEntry, want expectedReplicaPodGangMap) {
-	t.Helper()
-	wantRoles := []grovev1beta1.PodGangEntryRole{
-		grovev1beta1.PodGangEntryRoleAnchor,
-		grovev1beta1.PodGangEntryRoleScaleOut,
-	}
-	if want.tailIndices != nil {
-		wantRoles = append(wantRoles, grovev1beta1.PodGangEntryRoleTail)
-	}
-	assertEntryRoles(t, entries, wantRoles...)
-	if want.generationHash != "" {
-		for _, entry := range entries {
-			assert.Equalf(t, want.generationHash, entry.PodCliqueSetGenerationHash,
-				"entry %s (%s) must carry the expected generation hash", entry.Epoch, entry.Role)
-		}
-	}
-
-	anchor := requireSingleEntryByRole(t, entries, grovev1beta1.PodGangEntryRoleAnchor)
-	assertStandalonePCLQPodCounts(t, anchor, want.standalonePodCounts)
-	assert.Equal(t, map[string][]int32{want.pcsgName: want.anchorIndices}, anchor.PCSGReplicaIndices)
-	assertPodGangEntryDependsOn(t, anchor, nil)
-
-	if want.tailIndices != nil {
-		tail := requireSingleEntryByRole(t, entries, grovev1beta1.PodGangEntryRoleTail)
-		assertStandalonePCLQPodCounts(t, tail, nil)
-		assert.Equal(t, map[string][]int32{want.pcsgName: want.tailIndices}, tail.PCSGReplicaIndices)
-		assertPodGangEntryDependsOn(t, tail, []string{anchor.Epoch})
-	}
-
-	scaleOut := requireSingleEntryByRole(t, entries, grovev1beta1.PodGangEntryRoleScaleOut)
-	assertStandalonePCLQPodCounts(t, scaleOut, nil)
-	if len(want.scaleOutIndices) == 0 {
-		assert.Empty(t, scaleOut.PCSGReplicaIndices)
-	} else {
-		assert.Equal(t, map[string][]int32{want.pcsgName: want.scaleOutIndices}, scaleOut.PCSGReplicaIndices)
-	}
-	assertPodGangEntryDependsOn(t, scaleOut, []string{anchor.Epoch})
 }
 
 // assertEachPodGangSingleRevision fails the test if any PodGang carries pods of more than one pod template

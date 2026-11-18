@@ -19,20 +19,19 @@ package update
 import (
 	"context"
 	"fmt"
-	"sort"
-	"strings"
-	"testing"
-	"time"
-
 	grovev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/kwok"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
 	"github.com/ai-dynamo/grove/operator/e2e/tests"
-
+	updateutils "github.com/ai-dynamo/grove/operator/e2e/tests/update/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sort"
+	"strings"
+	"testing"
+	"time"
 )
 
 const (
@@ -61,11 +60,11 @@ func Test_CU1_CoherentBootstrapLayout(t *testing.T) {
 	defer cleanup()
 
 	tests.Logger.Info("2. Verify the initial PodGangMap anchor, tail, and scale-out entries")
-	assertReplicaPodGangMap(t, getPodGangMapEntries(t, tc, 0), expectedReplicaPodGangMap{
-		standalonePodCounts: map[string]int32{"frontend": 2},
-		pcsgName:            "inference",
-		anchorIndices:       []int32{0},
-		tailIndices:         []int32{1},
+	updateutils.AssertReplicaPodGangMap(t, getPodGangMapEntries(t, tc, 0), updateutils.ExpectedReplicaPodGangMap{
+		StandalonePodCounts: map[string]int32{"frontend": 2},
+		PCSGName:            "inference",
+		AnchorIndices:       []int32{0},
+		TailIndices:         []int32{1},
 	})
 }
 
@@ -94,7 +93,7 @@ func Test_CU2_CoherentUpdateStandaloneClique(t *testing.T) {
 
 	tests.Logger.Info("4. Verify completion, convergence, and readiness")
 	assertUpdateInProgressCleared(tc)
-	assertGenerationHashConverged(tc)
+	updateutils.AssertGenerationHashConverged(tc)
 	assertPodGangMapSingleGeneration(t, tc)
 	if err := tc.WaitForPods(coherentExpectedPods); err != nil {
 		t.Fatalf("pods did not become Ready after the coherent update: %v", err)
@@ -126,7 +125,7 @@ func Test_CU3_CoherentUpdatePCSGMemberClique(t *testing.T) {
 
 	tests.Logger.Info("4. Verify completion, convergence, and readiness")
 	assertUpdateInProgressCleared(tc)
-	assertGenerationHashConverged(tc)
+	updateutils.AssertGenerationHashConverged(tc)
 	if err := tc.WaitForPods(coherentExpectedPods); err != nil {
 		t.Fatalf("pods did not become Ready after the coherent update: %v", err)
 	}
@@ -165,7 +164,7 @@ func Test_CU4_CoherentUpdateStandaloneAndPCSGAnchorOnly(t *testing.T) {
 		t.Fatalf("coherent update did not complete: %v", err)
 	}
 	assertUpdateInProgressCleared(tc)
-	assertGenerationHashConverged(tc)
+	updateutils.AssertGenerationHashConverged(tc)
 
 	tests.Logger.Info("4. Verify the converged PodGangMap holds two Minimum Viable Unit anchors and no leftover tail")
 	newHash := getPCSGenerationHash(t, tc)
@@ -207,7 +206,7 @@ func Test_CU5_CoherentUpdateStandaloneAndPCSGWithLeftover(t *testing.T) {
 		t.Fatalf("coherent update did not complete: %v", err)
 	}
 	assertUpdateInProgressCleared(tc)
-	assertGenerationHashConverged(tc)
+	updateutils.AssertGenerationHashConverged(tc)
 
 	tests.Logger.Info("5. Verify two anchors plus a leftover tail carrying inference index 2")
 	newHash := getPCSGenerationHash(t, tc)
@@ -264,7 +263,7 @@ func Test_CU6_CoherentUpdateBlocksScaling(t *testing.T) {
 		if assert.Errorf(t, pclqScaleErr, "a direct PodClique replica change on replica %d must be rejected while a coherent update is in progress", replicaIndex) {
 			assert.Contains(t, pclqScaleErr.Error(), "coherent update is in progress")
 		}
-		pcsgScaleErr := tc.ScalePCSG(pcsgFQNForReplica(tc, "inference", replicaIndex), 3)
+		pcsgScaleErr := tc.ScalePCSG(updateutils.PcsgFQNForReplica(tc, "inference", replicaIndex), 3)
 		if assert.Errorf(t, pcsgScaleErr, "a PodCliqueScalingGroup scale change on replica %d must be rejected while a coherent update is in progress", replicaIndex) {
 			assert.Contains(t, pcsgScaleErr.Error(), "coherent update is in progress")
 		}
@@ -282,7 +281,7 @@ func Test_CU6_CoherentUpdateBlocksScaling(t *testing.T) {
 	if err := tc.ScalePodClique(fmt.Sprintf("%s-0-frontend", coherentWorkloadName), 3); err != nil {
 		t.Fatalf("scaling the PodClique must be allowed after the coherent update completes: %v", err)
 	}
-	if err := tc.ScalePCSG(pcsgFQNForReplica(tc, "inference", 0), 3); err != nil {
+	if err := tc.ScalePCSG(updateutils.PcsgFQNForReplica(tc, "inference", 0), 3); err != nil {
 		t.Fatalf("scaling the PodCliqueScalingGroup must be allowed after the coherent update completes: %v", err)
 	}
 }
@@ -335,7 +334,7 @@ func Test_CU7_CoherentBackToBackUpdates(t *testing.T) {
 		t.Fatalf("coherent update did not complete: %v", err)
 	}
 	assertUpdateInProgressCleared(tc)
-	assertGenerationHashConverged(tc)
+	updateutils.AssertGenerationHashConverged(tc)
 	if err := tc.WaitForPods(coherentExpectedPods); err != nil {
 		t.Fatalf("pods did not become Ready after the coherent updates: %v", err)
 	}
@@ -390,7 +389,7 @@ func Test_CU8_CoherentUpdateResumesAfterOperatorRestart(t *testing.T) {
 		t.Fatalf("coherent update did not complete after the operator restart: %v", err)
 	}
 	assertUpdateInProgressCleared(tc)
-	assertGenerationHashConverged(tc)
+	updateutils.AssertGenerationHashConverged(tc)
 	assertPodGangMapSingleGeneration(t, tc)
 	if err := tc.WaitForPods(coherentExpectedPods); err != nil {
 		t.Fatalf("pods did not become Ready after the resumed coherent update: %v", err)
@@ -543,7 +542,7 @@ func Test_CU11_GangTerminationDuringCoherentUpdateRebuildsPodGangMap(t *testing.
 	gangTerminateReplicaAndWaitForPodGangMapRebuild(t, tc, "frontend", 1)
 
 	tests.Logger.Info("5. Confirm replica 0 was still under update when replica 1 was gang terminated")
-	pcs, err := getPCS(tc, tc.Workload.Name)
+	pcs, err := updateutils.GetPCS(tc, tc.Workload.Name)
 	if err != nil {
 		t.Fatalf("failed to read PodCliqueSet: %v", err)
 	}
@@ -606,12 +605,12 @@ func Test_CU12_CoherentUpdateWithPodCliqueScalingGroupScaledToZero(t *testing.T)
 		t.Fatalf("coherent update did not complete: %v", err)
 	}
 	assertUpdateInProgressCleared(tc)
-	assertGenerationHashConverged(tc)
+	updateutils.AssertGenerationHashConverged(tc)
 	assertPodGangMapSingleGeneration(t, tc)
 
 	tests.Logger.Info("5. Scale the inference PCSG back to 2 and verify new-revision pods launch")
 	tc.ScalePCSGAcrossAllReplicasAndWait(coherentWorkloadName, "inference", 1, 2, coherentExpectedPods, 0)
-	assertGenerationHashConverged(tc)
+	updateutils.AssertGenerationHashConverged(tc)
 	if err := tc.WaitForPods(coherentExpectedPods); err != nil {
 		t.Fatalf("pods did not become Ready after scaling the inference PCSG back up: %v", err)
 	}
@@ -646,12 +645,12 @@ func Test_CU13_CoherentUpdateWithStandaloneScaledToZero(t *testing.T) {
 		t.Fatalf("coherent update did not complete: %v", err)
 	}
 	assertUpdateInProgressCleared(tc)
-	assertGenerationHashConverged(tc)
+	updateutils.AssertGenerationHashConverged(tc)
 	assertPodGangMapSingleGeneration(t, tc)
 
 	tests.Logger.Info("5. Scale the frontend back to 2 and verify new-revision pods launch")
 	tc.ScalePodCliqueAndWait(coherentWorkloadName+"-0-frontend", 2, coherentExpectedPods, 0)
-	assertGenerationHashConverged(tc)
+	updateutils.AssertGenerationHashConverged(tc)
 	if err := tc.WaitForPods(coherentExpectedPods); err != nil {
 		t.Fatalf("pods did not become Ready after scaling the frontend back up: %v", err)
 	}
@@ -687,13 +686,13 @@ func Test_CU14_CoherentUpdateWithAllComponentsScaledToZero(t *testing.T) {
 		t.Fatalf("coherent update did not complete: %v", err)
 	}
 	assertUpdateInProgressCleared(tc)
-	assertGenerationHashConverged(tc)
+	updateutils.AssertGenerationHashConverged(tc)
 	assert.Empty(t, getPodGangMapEntries(t, tc, 0), "an all-zero replica must leave the PodGangMap with no entries")
 
 	tests.Logger.Info("5. Scale the frontend and the inference PCSG back up and verify new-revision pods launch")
 	tc.ScalePodCliqueAndWait(coherentWorkloadName+"-0-frontend", 2, 2, 0)
 	tc.ScalePCSGAcrossAllReplicasAndWait(coherentWorkloadName, "inference", 1, 2, coherentExpectedPods, 0)
-	assertGenerationHashConverged(tc)
+	updateutils.AssertGenerationHashConverged(tc)
 	if err := tc.WaitForPods(coherentExpectedPods); err != nil {
 		t.Fatalf("pods did not become Ready after scaling both components back up: %v", err)
 	}
@@ -762,7 +761,7 @@ func Test_CU15_CoherentUpdateRecoversFromOldVersionPodLoss(t *testing.T) {
 	}
 	assertUpdateInProgressCleared(tc)
 	assertPodGangMapSingleGeneration(t, tc)
-	assertGenerationHashConverged(tc)
+	updateutils.AssertGenerationHashConverged(tc)
 	assertEachPodGangSingleRevision(t, tc, "frontend", 0)
 }
 
@@ -822,7 +821,7 @@ func Test_CU16_CoherentUpdateSelfHealsCurrentVersionPodLoss(t *testing.T) {
 	}
 	assertUpdateInProgressCleared(tc)
 	assertPodGangMapSingleGeneration(t, tc)
-	assertGenerationHashConverged(tc)
+	updateutils.AssertGenerationHashConverged(tc)
 	assertEachPodGangSingleRevision(t, tc, "frontend", 0)
 }
 
@@ -988,7 +987,7 @@ func Test_CU17_CoherentCorrectiveUpdateRecoversUnavailableReplicas(t *testing.T)
 			// Let the first generation fully reconcile before correcting, so the correction is a coherent
 			// update rather than part of initial pod creation. Confirm the workload is unavailable.
 			require.EventuallyWithT(t, func(c *assert.CollectT) {
-				pcs, err := getPCS(tc, tc.Workload.Name)
+				pcs, err := updateutils.GetPCS(tc, tc.Workload.Name)
 				require.NoError(c, err)
 				require.NotNil(c, pcs.Status.ObservedGeneration)
 				assert.Equal(c, pcs.Generation, *pcs.Status.ObservedGeneration)
@@ -1015,7 +1014,7 @@ func Test_CU17_CoherentCorrectiveUpdateRecoversUnavailableReplicas(t *testing.T)
 				assert.False(t, oldUIDs[p.UID], "every unavailable pod must be replaced")
 			}
 			assertUpdateInProgressCleared(tc)
-			assertGenerationHashConverged(tc)
+			updateutils.AssertGenerationHashConverged(tc)
 			assertPodGangMapSingleGeneration(t, tc)
 		})
 	}
@@ -1101,7 +1100,7 @@ func Test_CU18_MaxUnavailableAboveTemplateReplicas(t *testing.T) {
 // removeUnschedulableSelector removes the impossible node selector from the first clique of the workload's
 // PCS template, letting its Pending pods schedule and bumping the generation hash to trigger the update.
 func removeUnschedulableSelector(t *testing.T, tc *testctx.TestContext) {
-	pcs, err := getPCS(tc, tc.Workload.Name)
+	pcs, err := updateutils.GetPCS(tc, tc.Workload.Name)
 	require.NoError(t, err)
 	original := pcs.DeepCopy()
 	delete(pcs.Spec.Template.Cliques[0].Spec.PodSpec.NodeSelector, "e2e.grove.io/unschedulable")

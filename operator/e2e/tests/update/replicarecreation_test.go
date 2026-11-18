@@ -24,6 +24,7 @@ import (
 	grovev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/kwok"
 	"github.com/ai-dynamo/grove/operator/e2e/tests"
+	updateutils "github.com/ai-dynamo/grove/operator/e2e/tests/update/utils"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -57,9 +58,9 @@ func Test_RR1_PCSGMinAvailableIncreaseRecreatesReplica(t *testing.T) {
 
 	tests.Logger.Info("2. Capture the pre-change PodGangMap entries and applied scheduling hash")
 	beforeEntries := getPodGangMapEntries(t, tc, 0)
-	beforeAnchor := requireSingleEntryByRole(t, beforeEntries, grovev1beta1.PodGangEntryRoleAnchor)
+	beforeAnchor := updateutils.RequireSingleEntryByRole(t, beforeEntries, grovev1beta1.PodGangEntryRoleAnchor)
 	assertPodGangEntryPCSGIndices(t, beforeAnchor, "sg-x", []int32{0})
-	beforeTail := requireSingleEntryByRole(t, beforeEntries, grovev1beta1.PodGangEntryRoleTail)
+	beforeTail := updateutils.RequireSingleEntryByRole(t, beforeEntries, grovev1beta1.PodGangEntryRoleTail)
 	assertPodGangEntryPCSGIndices(t, beforeTail, "sg-x", []int32{1})
 
 	beforeHash, err := getPCSAppliedSchedulingHash(tc)
@@ -93,7 +94,7 @@ func Test_RR1_PCSGMinAvailableIncreaseRecreatesReplica(t *testing.T) {
 
 	tcLongTimeout := *tc
 	tcLongTimeout.Timeout = 2 * time.Minute
-	require.NoError(t, waitForReplicaRecreationComplete(&tcLongTimeout, 1))
+	require.NoError(t, updateutils.WaitForReplicaRecreationComplete(&tcLongTimeout, 1))
 
 	tests.Logger.Info("7. Assert the applied scheduling hash advanced and the PodGangMap was reshaped")
 	afterHash, err := getPCSAppliedSchedulingHash(tc)
@@ -102,7 +103,7 @@ func Test_RR1_PCSGMinAvailableIncreaseRecreatesReplica(t *testing.T) {
 
 	currentHash := getPCSGenerationHash(t, tc)
 	afterEntries := getPodGangMapEntries(t, tc, 0)
-	afterAnchor := requireSingleEntryByRole(t, afterEntries, grovev1beta1.PodGangEntryRoleAnchor)
+	afterAnchor := updateutils.RequireSingleEntryByRole(t, afterEntries, grovev1beta1.PodGangEntryRoleAnchor)
 	assertPodGangEntryPCSGIndices(t, afterAnchor, "sg-x", []int32{0, 1})
 	for _, entry := range afterEntries {
 		assert.Equalf(t, currentHash, entry.PodCliqueSetGenerationHash,
@@ -143,8 +144,8 @@ func Test_RR2_StandalonePCLQMinAvailableIncreaseRecreatesReplica(t *testing.T) {
 	beforeHash, err := getPCSAppliedSchedulingHash(tc)
 	require.NoError(t, err)
 	require.NotEmpty(t, beforeHash)
-	beforeAnchor := requireSingleEntryByRole(t, getPodGangMapEntries(t, tc, 0), grovev1beta1.PodGangEntryRoleAnchor)
-	assertStandalonePCLQPodCounts(t, beforeAnchor, map[string]int32{"pc-a": 2})
+	beforeAnchor := updateutils.RequireSingleEntryByRole(t, getPodGangMapEntries(t, tc, 0), grovev1beta1.PodGangEntryRoleAnchor)
+	updateutils.AssertStandalonePCLQPodCounts(t, beforeAnchor, map[string]int32{"pc-a": 2})
 
 	tests.Logger.Info("3. Apply the readiness-delay KWOK stage so recreation stays observable")
 	if err := kwok.ApplyStage(tc.Ctx, tc.Client, kwokStageReadyDelayedPath); err != nil {
@@ -173,7 +174,7 @@ func Test_RR2_StandalonePCLQMinAvailableIncreaseRecreatesReplica(t *testing.T) {
 
 	tcLongTimeout := *tc
 	tcLongTimeout.Timeout = 2 * time.Minute
-	require.NoError(t, waitForReplicaRecreationComplete(&tcLongTimeout, 1))
+	require.NoError(t, updateutils.WaitForReplicaRecreationComplete(&tcLongTimeout, 1))
 
 	tests.Logger.Info("7. Assert the applied scheduling hash advanced and the recreated PodClique records the new MinAvailable")
 	afterHash, err := getPCSAppliedSchedulingHash(tc)
@@ -181,8 +182,8 @@ func Test_RR2_StandalonePCLQMinAvailableIncreaseRecreatesReplica(t *testing.T) {
 	assert.NotEqual(t, beforeHash, afterHash, "applied scheduling hash should advance after recreation")
 
 	currentHash := getPCSGenerationHash(t, tc)
-	afterAnchor := requireSingleEntryByRole(t, getPodGangMapEntries(t, tc, 0), grovev1beta1.PodGangEntryRoleAnchor)
-	assertStandalonePCLQPodCounts(t, afterAnchor, map[string]int32{"pc-a": 2})
+	afterAnchor := updateutils.RequireSingleEntryByRole(t, getPodGangMapEntries(t, tc, 0), grovev1beta1.PodGangEntryRoleAnchor)
+	updateutils.AssertStandalonePCLQPodCounts(t, afterAnchor, map[string]int32{"pc-a": 2})
 	for _, entry := range getPodGangMapEntries(t, tc, 0) {
 		assert.Equalf(t, currentHash, entry.PodCliqueSetGenerationHash,
 			"PodGangMap entry (role %s, epoch %s) should be at the current generation hash", entry.Role, entry.Epoch)
@@ -219,7 +220,7 @@ func Test_RR3_DifferentIndexReplacementFillsIndexGap(t *testing.T) {
 	})
 	defer cleanup()
 
-	claimed, err := getClaimedPCSReplicaIndices(tc)
+	claimed, err := updateutils.GetClaimedPCSReplicaIndices(tc)
 	require.NoError(t, err)
 	require.Equal(t, []int{0, 1, 2}, claimed)
 
@@ -243,12 +244,12 @@ func Test_RR3_DifferentIndexReplacementFillsIndexGap(t *testing.T) {
 	// Delete replica 1's pods so the operator recreates them. The readiness-block stage catches the fresh pods
 	// and holds them not-ready, which makes replica 1 the unavailable replica that scale-in selects.
 	require.NoError(t, deletePodsForReplica(tc, 1))
-	require.NoError(t, waitForStandaloneReplicaUnavailable(tc, "worker", 1))
+	require.NoError(t, updateutils.WaitForStandaloneReplicaUnavailable(tc, "worker", 1))
 
 	if err := tc.ScalePCS(tc.Workload.Name, 2); err != nil {
 		t.Fatalf("failed to scale PodCliqueSet to 2 replicas: %v", err)
 	}
-	require.NoError(t, waitForClaimedPCSReplicaIndices(tc, []int{0, 2}))
+	require.NoError(t, updateutils.WaitForClaimedPCSReplicaIndices(tc, []int{0, 2}))
 
 	tests.Logger.Info("3. Release the block and increase worker MinAvailable 1 -> 2")
 	if err := kwok.DeleteStage(tc.Ctx, tc.Client, kwokStageReadyBlockedR1Name); err != nil {
@@ -281,12 +282,12 @@ func Test_RR3_DifferentIndexReplacementFillsIndexGap(t *testing.T) {
 
 	tcLongTimeout := *tc
 	tcLongTimeout.Timeout = 2 * time.Minute
-	require.NoError(t, waitForReplicaRecreationComplete(&tcLongTimeout, 2))
+	require.NoError(t, updateutils.WaitForReplicaRecreationComplete(&tcLongTimeout, 2))
 
 	afterHash, err := getPCSAppliedSchedulingHash(tc)
 	require.NoError(t, err)
 	assert.NotEqual(t, beforeHash, afterHash, "applied scheduling hash should advance after recreation")
-	require.NoError(t, waitForClaimedPCSReplicaIndices(&tcLongTimeout, []int{0, 1}))
+	require.NoError(t, updateutils.WaitForClaimedPCSReplicaIndices(&tcLongTimeout, []int{0, 1}))
 	require.NoError(t, tc.WaitForPods(4))
 }
 
@@ -333,11 +334,11 @@ func Test_RR4_ScaleInCancelsReplacement(t *testing.T) {
 		}
 	}()
 	require.NoError(t, deletePodsForReplica(tc, 1))
-	require.NoError(t, waitForStandaloneReplicaUnavailable(tc, "worker", 1))
+	require.NoError(t, updateutils.WaitForStandaloneReplicaUnavailable(tc, "worker", 1))
 	if err := tc.ScalePCS(tc.Workload.Name, 2); err != nil {
 		t.Fatalf("failed to scale PodCliqueSet to 2 replicas: %v", err)
 	}
-	require.NoError(t, waitForClaimedPCSReplicaIndices(tc, []int{0, 2}))
+	require.NoError(t, updateutils.WaitForClaimedPCSReplicaIndices(tc, []int{0, 2}))
 
 	tests.Logger.Info("2. Increase worker MinAvailable 1 -> 2 and observe an active replacement targeting index 1")
 	require.NoError(t, triggerStandalonePCLQMinAvailableChange(tc, "worker", 2))
@@ -369,12 +370,12 @@ func Test_RR4_ScaleInCancelsReplacement(t *testing.T) {
 
 	tcLongTimeout := *tc
 	tcLongTimeout.Timeout = 2 * time.Minute
-	require.NoError(t, waitForReplicaRecreationComplete(&tcLongTimeout, 1))
+	require.NoError(t, updateutils.WaitForReplicaRecreationComplete(&tcLongTimeout, 1))
 
 	afterHash, err := getPCSAppliedSchedulingHash(tc)
 	require.NoError(t, err)
 	assert.NotEqual(t, beforeHash, afterHash, "applied scheduling hash should advance after recreation")
-	claimed, err := getClaimedPCSReplicaIndices(tc)
+	claimed, err := updateutils.GetClaimedPCSReplicaIndices(tc)
 	require.NoError(t, err)
 	assert.Len(t, claimed, 1, "the PodCliqueSet should converge to a single claimed replica index")
 	require.NoError(t, tc.WaitForPods(2))
@@ -405,7 +406,7 @@ func Test_RR5_SchedulingChangeSupersedesActiveRecreation(t *testing.T) {
 	})
 	defer cleanup()
 
-	beforePCS, err := getPCS(tc, tc.Workload.Name)
+	beforePCS, err := updateutils.GetPCS(tc, tc.Workload.Name)
 	require.NoError(t, err)
 	require.NotNil(t, beforePCS.Status.CurrentGenerationHash)
 	require.NotNil(t, beforePCS.Status.AppliedSchedulingConfigurationHash)
@@ -418,16 +419,16 @@ func Test_RR5_SchedulingChangeSupersedesActiveRecreation(t *testing.T) {
 	var beforePCSG grovev1beta1.PodCliqueScalingGroup
 	require.NoError(t, tc.Client.Get(tc.Ctx, pclqKey, &beforePCLQ))
 	require.NoError(t, tc.Client.Get(tc.Ctx, pcsgKey, &beforePCSG))
-	beforePGM, err := getReplicaPodGangMap(tc, 0)
+	beforePGM, err := updateutils.GetReplicaPodGangMap(tc, 0)
 	require.NoError(t, err)
-	wantPGM := expectedReplicaPodGangMap{
-		generationHash:      *beforePCS.Status.CurrentGenerationHash,
-		standalonePodCounts: map[string]int32{"pc-a": 2},
-		pcsgName:            "sg-x",
-		anchorIndices:       []int32{0},
-		tailIndices:         []int32{1},
+	wantPGM := updateutils.ExpectedReplicaPodGangMap{
+		GenerationHash:      *beforePCS.Status.CurrentGenerationHash,
+		StandalonePodCounts: map[string]int32{"pc-a": 2},
+		PCSGName:            "sg-x",
+		AnchorIndices:       []int32{0},
+		TailIndices:         []int32{1},
 	}
-	assertReplicaPodGangMap(t, beforePGM.Spec.Entries, wantPGM)
+	updateutils.AssertReplicaPodGangMap(t, beforePGM.Spec.Entries, wantPGM)
 
 	tests.Logger.Info("2. Block replica 0 readiness and change pc-a MinAvailable 1 -> 2 (S1)")
 	require.NoError(t, kwok.ApplyStage(tc.Ctx, tc.Client, kwokStageReadyBlockedR0Path))
@@ -442,28 +443,28 @@ func Test_RR5_SchedulingChangeSupersedesActiveRecreation(t *testing.T) {
 	require.NoError(t, triggerStandalonePCLQMinAvailableChange(tc, "pc-a", 2))
 
 	tests.Logger.Info("3. Wait for the active 0->0 replacement's source cleanup and S1 child resources")
-	firstPCS, err := waitForSameIndexReplacementCleanup(tc, 0)
+	firstPCS, err := updateutils.WaitForSameIndexReplacementCleanup(tc, 0)
 	require.NoError(t, err, "S1 source cleanup must complete while the replacement remains active")
 	firstGenerationHash := *firstPCS.Status.CurrentGenerationHash
 	require.NotEqual(t, *beforePCS.Status.CurrentGenerationHash, firstGenerationHash)
 
-	recreatedPCLQ, err := waitForRecreatedPCLQ(tc, &beforePCLQ)
+	recreatedPCLQ, err := updateutils.WaitForRecreatedPCLQ(tc, &beforePCLQ)
 	require.NoError(t, err)
 	require.NotNil(t, recreatedPCLQ.Spec.MinAvailable)
 	assert.Equal(t, int32(2), *recreatedPCLQ.Spec.MinAvailable)
-	require.NoError(t, waitForStandaloneReplicaUnavailable(tc, "pc-a", 0))
+	require.NoError(t, updateutils.WaitForStandaloneReplicaUnavailable(tc, "pc-a", 0))
 
-	recreatedPCSG, err := waitForRecreatedPCSG(tc, &beforePCSG)
+	recreatedPCSG, err := updateutils.WaitForRecreatedPCSG(tc, &beforePCSG)
 	require.NoError(t, err)
 	require.NotNil(t, recreatedPCSG.Spec.MinAvailable)
 	assert.Equal(t, int32(1), *recreatedPCSG.Spec.MinAvailable)
 
-	firstPGM, err := waitForRecreatedPodGangMap(tc, beforePGM, firstGenerationHash)
+	firstPGM, err := updateutils.WaitForRecreatedPodGangMap(tc, beforePGM, firstGenerationHash, len(beforePGM.Spec.Entries))
 	require.NoError(t, err)
-	wantPGM.generationHash = firstGenerationHash
-	assertReplicaPodGangMap(t, firstPGM.Spec.Entries, wantPGM)
+	wantPGM.GenerationHash = firstGenerationHash
+	updateutils.AssertReplicaPodGangMap(t, firstPGM.Spec.Entries, wantPGM)
 
-	firstPCS, err = getPCS(tc, tc.Workload.Name)
+	firstPCS, err = updateutils.GetPCS(tc, tc.Workload.Name)
 	require.NoError(t, err)
 	require.NotNil(t, firstPCS.Status.CurrentGenerationHash)
 	require.Equal(t, firstGenerationHash, *firstPCS.Status.CurrentGenerationHash)
@@ -506,7 +507,7 @@ func Test_RR5_SchedulingChangeSupersedesActiveRecreation(t *testing.T) {
 		"the preserved replica must use S2's update start time")
 
 	tests.Logger.Info("5. Wait for S1 cleanup and verify S2 recreates the children and PodGangMap")
-	secondCleanupPCS, err := waitForSameIndexReplacementCleanup(tc, 0)
+	secondCleanupPCS, err := updateutils.WaitForSameIndexReplacementCleanup(tc, 0)
 	require.NoError(t, err, "S1 resources must be cleaned up before S2 target creation")
 	require.Equal(t, secondGenerationHash, *secondCleanupPCS.Status.CurrentGenerationHash)
 	secondCleanupAt := secondCleanupPCS.Status.UpdateProgress.CurrentlyUpdating[0].Replacement.SourceCleanupCompletedAt
@@ -514,22 +515,22 @@ func Test_RR5_SchedulingChangeSupersedesActiveRecreation(t *testing.T) {
 	assert.False(t, secondCleanupAt.Before(&secondPCS.Status.UpdateProgress.UpdateStartedAt),
 		"S2 cleanup completion must not predate supersession")
 
-	secondPCLQ, err := waitForRecreatedPCLQ(tc, recreatedPCLQ)
+	secondPCLQ, err := updateutils.WaitForRecreatedPCLQ(tc, recreatedPCLQ)
 	require.NoError(t, err)
 	require.NotNil(t, secondPCLQ.Spec.MinAvailable)
 	assert.Equal(t, int32(2), *secondPCLQ.Spec.MinAvailable)
-	require.NoError(t, waitForStandaloneReplicaUnavailable(tc, "pc-a", 0))
-	secondPCSG, err := waitForRecreatedPCSG(tc, recreatedPCSG)
+	require.NoError(t, updateutils.WaitForStandaloneReplicaUnavailable(tc, "pc-a", 0))
+	secondPCSG, err := updateutils.WaitForRecreatedPCSG(tc, recreatedPCSG)
 	require.NoError(t, err)
 	require.NotNil(t, secondPCSG.Spec.MinAvailable)
 	assert.Equal(t, int32(2), *secondPCSG.Spec.MinAvailable)
-	secondPGM, err := getReplicaPodGangMap(tc, 0)
+	secondPGM, err := updateutils.GetReplicaPodGangMap(tc, 0)
 	require.NoError(t, err)
 	require.NotEqual(t, firstPGM.UID, secondPGM.UID, "S2 must recreate the S1 PodGangMap")
-	wantPGM.generationHash = secondGenerationHash
-	wantPGM.anchorIndices = []int32{0, 1}
-	wantPGM.tailIndices = nil
-	assertReplicaPodGangMap(t, secondPGM.Spec.Entries, wantPGM)
+	wantPGM.GenerationHash = secondGenerationHash
+	wantPGM.AnchorIndices = []int32{0, 1}
+	wantPGM.TailIndices = nil
+	updateutils.AssertReplicaPodGangMap(t, secondPGM.Spec.Entries, wantPGM)
 
 	tests.Logger.Info("6. Release readiness and verify S2 convergence and the exact PGM composition")
 	require.NoError(t, kwok.DeleteStage(tc.Ctx, tc.Client, kwokStageReadyBlockedR0Name))
@@ -539,10 +540,10 @@ func Test_RR5_SchedulingChangeSupersedesActiveRecreation(t *testing.T) {
 	tcLongTimeout := *tc
 	tcLongTimeout.Timeout = 2 * time.Minute
 	// Inspect the final state even on timeout so a failure also reports the actual S2 PGM composition.
-	assert.NoError(t, waitForReplicaRecreationComplete(&tcLongTimeout, 1))
+	assert.NoError(t, updateutils.WaitForReplicaRecreationComplete(&tcLongTimeout, 1))
 	require.NoError(t, tc.WaitForPods(10))
 
-	afterPCS, err := getPCS(tc, tc.Workload.Name)
+	afterPCS, err := updateutils.GetPCS(tc, tc.Workload.Name)
 	require.NoError(t, err)
 	require.NotNil(t, afterPCS.Status.CurrentGenerationHash)
 	require.NotNil(t, afterPCS.Status.AppliedSchedulingConfigurationHash)
@@ -554,7 +555,7 @@ func Test_RR5_SchedulingChangeSupersedesActiveRecreation(t *testing.T) {
 	assert.Empty(t, afterPCS.Status.UpdateProgress.CurrentlyUpdating)
 	assert.Equal(t, int32(1), afterPCS.Status.AvailableReplicas)
 	assert.Equal(t, int32(1), afterPCS.Status.UpdatedReplicas)
-	require.NoError(t, waitForClaimedPCSReplicaIndices(tc, []int{0}))
+	require.NoError(t, updateutils.WaitForClaimedPCSReplicaIndices(tc, []int{0}))
 
 	var afterPCLQ grovev1beta1.PodClique
 	var afterPCSG grovev1beta1.PodCliqueScalingGroup
@@ -565,6 +566,6 @@ func Test_RR5_SchedulingChangeSupersedesActiveRecreation(t *testing.T) {
 	assert.Equal(t, int32(2), *afterPCLQ.Spec.MinAvailable)
 	assert.Equal(t, int32(2), *afterPCSG.Spec.MinAvailable)
 	assert.Equal(t, int32(2), afterPCSG.Spec.Replicas)
-	assertReplicaPodGangMap(t, getPodGangMapEntries(t, tc, 0), wantPGM)
-	assertGenerationHashConverged(tc)
+	updateutils.AssertReplicaPodGangMap(t, getPodGangMapEntries(t, tc, 0), wantPGM)
+	updateutils.AssertGenerationHashConverged(tc)
 }

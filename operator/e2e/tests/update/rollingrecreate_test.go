@@ -19,14 +19,12 @@ package update
 import (
 	"context"
 	"fmt"
-	"testing"
-	"time"
-
 	apiconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/kwok"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
 	"github.com/ai-dynamo/grove/operator/e2e/tests"
+	updateutils "github.com/ai-dynamo/grove/operator/e2e/tests/update/utils"
 	"github.com/ai-dynamo/grove/operator/e2e/waiter"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -34,6 +32,8 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/watch"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"testing"
+	"time"
 )
 
 // Test_RU7_RollingUpdatePCSPodClique tests rolling update when PCS-owned Podclique spec is updated
@@ -213,7 +213,7 @@ func Test_RU10_RollingUpdateInsufficientResources(t *testing.T) {
 	// Capture the existing pods before starting the tracker
 	existingPods, err := tc.ListPods()
 	if err != nil {
-		t.Fatalf("Failed to list existing pods: %v", err)
+		t.Fatalf("Failed to list existing Pods: %v", err)
 	}
 
 	// Capture the existing pods names for verification later
@@ -338,7 +338,7 @@ func Test_RU11_RollingUpdateWithPCSScaleOut(t *testing.T) {
 	tests.Logger.Info("5. Verify the scaled out replica is created with the correct specifications")
 	pods, err := tc.ListPods()
 	if err != nil {
-		t.Fatalf("Failed to list pods: %v", err)
+		t.Fatalf("Failed to list Pods: %v", err)
 	}
 	if len(pods.Items) != 30 {
 		t.Fatalf("Expected 30 pods, got %d", len(pods.Items))
@@ -419,7 +419,7 @@ func Test_RU12_RollingUpdateWithPCSScaleInDuringUpdate(t *testing.T) {
 
 	pods, err := tc.ListPods()
 	if err != nil {
-		t.Fatalf("Failed to list pods: %v", err)
+		t.Fatalf("Failed to list Pods: %v", err)
 	}
 	if len(pods.Items) != 10 {
 		t.Fatalf("Expected 10 pods, got %d", len(pods.Items))
@@ -471,7 +471,7 @@ func Test_RU13_RollingUpdateWithPCSScaleInAfterFinalOrdinal(t *testing.T) {
 	tests.Logger.Info("6. Verify the update goes through successfully")
 	pods, err := tc.ListPods()
 	if err != nil {
-		t.Fatalf("Failed to list pods: %v", err)
+		t.Fatalf("Failed to list Pods: %v", err)
 	}
 	if len(pods.Items) != 10 {
 		t.Fatalf("Expected 10 pods, got %d", len(pods.Items))
@@ -511,15 +511,15 @@ func Test_RU14_RollingUpdateWithPCSGScaleOutDuringUpdate(t *testing.T) {
 	tests.Logger.Info("3. Assert each replica's PodGangMap starts with an anchor and a scale-out entry")
 	oldHash := getPCSGenerationHash(t, tc)
 	// Each replica has its own PodGangMap, but they share this expected shape since the workload template
-	// is uniform across replicas. Only the epochs differ per replica, which assertReplicaPodGangMap reads
+	// is uniform across replicas. Only the epochs differ per replica, which updateutils.AssertReplicaPodGangMap reads
 	// from each replica's own entries.
-	wantPGM := expectedReplicaPodGangMap{
-		standalonePodCounts: map[string]int32{"pc-a": 2},
-		pcsgName:            "sg-x",
-		anchorIndices:       []int32{0, 1},
+	wantPGM := updateutils.ExpectedReplicaPodGangMap{
+		StandalonePodCounts: map[string]int32{"pc-a": 2},
+		PCSGName:            "sg-x",
+		AnchorIndices:       []int32{0, 1},
 	}
 	for _, pcsReplicaIndex := range []int{0, 1} {
-		assertReplicaPodGangMap(t, getPodGangMapEntries(t, tc, pcsReplicaIndex), wantPGM)
+		updateutils.AssertReplicaPodGangMap(t, getPodGangMapEntries(t, tc, pcsReplicaIndex), wantPGM)
 	}
 
 	// Widen replica 0's update window so waitForOrdinalUpdating reliably observes it. On KWOK the whole
@@ -567,10 +567,10 @@ func Test_RU14_RollingUpdateWithPCSGScaleOutDuringUpdate(t *testing.T) {
 	if newHash == oldHash {
 		t.Fatalf("PodCliqueSet generation hash did not change after the update: %s", newHash)
 	}
-	wantPGM.scaleOutIndices = []int32{2}
+	wantPGM.ScaleOutIndices = []int32{2}
 	for _, pcsReplicaIndex := range []int{0, 1} {
 		entries := getPodGangMapEntries(t, tc, pcsReplicaIndex)
-		assertReplicaPodGangMap(t, entries, wantPGM)
+		updateutils.AssertReplicaPodGangMap(t, entries, wantPGM)
 		for _, entry := range entries {
 			assert.Equal(t, newHash, entry.PodCliqueSetGenerationHash, "entry %s must carry the new generation hash", entry.Epoch)
 		}
@@ -608,15 +608,15 @@ func Test_RU15_RollingUpdateWithPCSGScaleOutBeforeUpdate(t *testing.T) {
 	tests.Logger.Info("3. Assert each replica's PodGangMap starts with an anchor and a scale-out entry")
 	oldHash := getPCSGenerationHash(t, tc)
 	// Each replica has its own PodGangMap, but they share this expected shape since the workload template
-	// is uniform across replicas. Only the epochs differ per replica, which assertReplicaPodGangMap reads
+	// is uniform across replicas. Only the epochs differ per replica, which updateutils.AssertReplicaPodGangMap reads
 	// from each replica's own entries.
-	wantPGM := expectedReplicaPodGangMap{
-		standalonePodCounts: map[string]int32{"pc-a": 2},
-		pcsgName:            "sg-x",
-		anchorIndices:       []int32{0, 1},
+	wantPGM := updateutils.ExpectedReplicaPodGangMap{
+		StandalonePodCounts: map[string]int32{"pc-a": 2},
+		PCSGName:            "sg-x",
+		AnchorIndices:       []int32{0, 1},
 	}
 	for _, pcsReplicaIndex := range []int{0, 1} {
-		assertReplicaPodGangMap(t, getPodGangMapEntries(t, tc, pcsReplicaIndex), wantPGM)
+		updateutils.AssertReplicaPodGangMap(t, getPodGangMapEntries(t, tc, pcsReplicaIndex), wantPGM)
 	}
 
 	tests.Logger.Info("4. Scale out sg-x from 2 to 3 across all replicas and wait for it to complete")
@@ -642,10 +642,10 @@ func Test_RU15_RollingUpdateWithPCSGScaleOutBeforeUpdate(t *testing.T) {
 	if newHash == oldHash {
 		t.Fatalf("PodCliqueSet generation hash did not change after the update: %s", newHash)
 	}
-	wantPGM.scaleOutIndices = []int32{2}
+	wantPGM.ScaleOutIndices = []int32{2}
 	for _, pcsReplicaIndex := range []int{0, 1} {
 		entries := getPodGangMapEntries(t, tc, pcsReplicaIndex)
-		assertReplicaPodGangMap(t, entries, wantPGM)
+		updateutils.AssertReplicaPodGangMap(t, entries, wantPGM)
 		for _, entry := range entries {
 			assert.Equal(t, newHash, entry.PodCliqueSetGenerationHash, "entry %s must carry the new generation hash", entry.Epoch)
 		}
@@ -687,7 +687,7 @@ func Test_RU16_RollingUpdateWithPCSGScaleInDuringUpdate(t *testing.T) {
 	tests.Logger.Info("5. Scale in the PCSG during its rolling update (in parallel)")
 	// Scaling PCSG instances directly (workload1-0-sg-x, workload1-1-sg-x) since the PCS controller
 	// only sets replicas during initial PCSG creation to support HPA scaling.
-	// After scaling sg-x back to 2 replicas: 2 PCS replicas x (2 pc-a + 2 sg-x x 4 pods) = 2 x 10 = 20 pods
+	// After scaling sg-x back to 2 Replicas: 2 PCS replicas x (2 pc-a + 2 sg-x x 4 pods) = 2 x 10 = 20 pods
 	scaleWait := tcLongTimeout.ScalePCSGAcrossAllReplicasAsync("workload1", "sg-x", 2, 2, 20, 0, 100) // 100ms delay so update is "first"
 
 	tests.Logger.Info("6. Verify the update goes through successfully")
@@ -703,7 +703,7 @@ func Test_RU16_RollingUpdateWithPCSGScaleInDuringUpdate(t *testing.T) {
 	// 2 PCS replicas x (2 pc-a + 2 sg-x x 4 pods) = 2 x 10 = 20 pods
 	pods, err := tc.ListPods()
 	if err != nil {
-		t.Fatalf("Failed to list pods: %v", err)
+		t.Fatalf("Failed to list Pods: %v", err)
 	}
 	if len(pods.Items) != 20 {
 		t.Fatalf("Expected 20 pods, got %d", len(pods.Items))
@@ -748,7 +748,7 @@ func Test_RU17_RollingUpdateWithPCSGScaleInBeforeUpdate(t *testing.T) {
 	tests.Logger.Info("5. Change the specification of pc-a, pc-b and pc-c")
 	// Scaling PCSG instances directly (workload1-0-sg-x, workload1-1-sg-x) since the PCS controller
 	// only sets replicas during initial PCSG creation to support HPA scaling.
-	// After scaling sg-x back to 2 replicas: 2 PCS replicas x (2 pc-a + 2 sg-x x 4 pods) = 2 x 10 = 20 pods
+	// After scaling sg-x back to 2 Replicas: 2 PCS replicas x (2 pc-a + 2 sg-x x 4 pods) = 2 x 10 = 20 pods
 
 	tests.Logger.Info("6. Verify the update goes through successfully")
 
@@ -767,7 +767,7 @@ func Test_RU17_RollingUpdateWithPCSGScaleInBeforeUpdate(t *testing.T) {
 	// 2 PCS replicas x (2 pc-a + 2 sg-x x 4 pods) = 2 x 10 = 20 pods
 	pods, err := tc.ListPods()
 	if err != nil {
-		t.Fatalf("Failed to list pods: %v", err)
+		t.Fatalf("Failed to list Pods: %v", err)
 	}
 	if len(pods.Items) != 20 {
 		t.Fatalf("Expected 20 pods, got %d", len(pods.Items))
@@ -842,7 +842,7 @@ func Test_RU18_RollingUpdateWithPodCliqueScaleOutDuringUpdate(t *testing.T) {
 
 	pods, err := tc.ListPods()
 	if err != nil {
-		t.Fatalf("Failed to list pods: %v", err)
+		t.Fatalf("Failed to list Pods: %v", err)
 	}
 
 	if len(pods.Items) != 24 {
@@ -896,7 +896,7 @@ func Test_RU19_RollingUpdateWithPodCliqueScaleOutBeforeUpdate(t *testing.T) {
 
 	pods, err := tc.ListPods()
 	if err != nil {
-		t.Fatalf("Failed to list pods: %v", err)
+		t.Fatalf("Failed to list Pods: %v", err)
 	}
 	if len(pods.Items) != 24 {
 		t.Fatalf("Expected 24 pods, got %d", len(pods.Items))
@@ -960,7 +960,7 @@ func Test_RU20_RollingUpdateWithPodCliqueScaleInDuringUpdate(t *testing.T) {
 	// After scale-in from 3 to 2 pc-a: 2 PCS replicas × (2 pc-a + 8 sg-x) = 2 × 10 = 20 pods
 	pods, err := tc.ListPods()
 	if err != nil {
-		t.Fatalf("Failed to list pods: %v", err)
+		t.Fatalf("Failed to list Pods: %v", err)
 	}
 	if len(pods.Items) != 20 {
 		t.Fatalf("Expected 20 pods, got %d", len(pods.Items))
@@ -1026,7 +1026,7 @@ func Test_RU21_RollingUpdateWithPodCliqueScaleInBeforeUpdate(t *testing.T) {
 	// After scale-in from 3 to 2 pc-a: 2 PCS replicas × (2 pc-a + 8 sg-x) = 2 × 10 = 20 pods
 	pods, err := tc.ListPods()
 	if err != nil {
-		t.Fatalf("Failed to list pods: %v", err)
+		t.Fatalf("Failed to list Pods: %v", err)
 	}
 	if len(pods.Items) != 20 {
 		t.Fatalf("Expected 20 pods, got %d", len(pods.Items))
@@ -1237,7 +1237,7 @@ func Test_RU25_RollingUpdateStuckThenCorrective(t *testing.T) {
 	}
 
 	tests.Logger.Info("6. Verify all components converged to the latest generation hash")
-	assertGenerationHashConverged(tc)
+	updateutils.AssertGenerationHashConverged(tc)
 }
 
 // Test_RU26_CorrectiveUpdateReplacesUnschedulablePods verifies that a RollingRecreate still makes
@@ -1313,7 +1313,7 @@ func Test_RU26_CorrectiveUpdateReplacesUnschedulablePods(t *testing.T) {
 			// triggering a rolling update, which is the path under test. Also confirm the workload is
 			// unavailable first.
 			require.EventuallyWithT(t, func(c *assert.CollectT) {
-				pcs, err := getPCS(tc, tc.Workload.Name)
+				pcs, err := updateutils.GetPCS(tc, tc.Workload.Name)
 				require.NoError(c, err)
 				require.NotNil(c, pcs.Status.ObservedGeneration)
 				assert.Equal(c, pcs.Generation, *pcs.Status.ObservedGeneration)
@@ -1324,7 +1324,7 @@ func Test_RU26_CorrectiveUpdateReplacesUnschedulablePods(t *testing.T) {
 			}, tc.Timeout, tc.Interval, "initial generation must reconcile with the workload unavailable")
 
 			tests.Logger.Info("2. Remove the impossible node selector from the PCS template")
-			pcs, err := getPCS(tc, tc.Workload.Name)
+			pcs, err := updateutils.GetPCS(tc, tc.Workload.Name)
 			require.NoError(t, err)
 			original := pcs.DeepCopy()
 			delete(pcs.Spec.Template.Cliques[0].Spec.PodSpec.NodeSelector, "e2e.grove.io/unschedulable")
@@ -1346,9 +1346,9 @@ func Test_RU26_CorrectiveUpdateReplacesUnschedulablePods(t *testing.T) {
 				assert.NotContains(t, p.Spec.NodeSelector, "e2e.grove.io/unschedulable")
 			}
 			assertUpdateInProgressCleared(tc)
-			assertGenerationHashConverged(tc)
+			updateutils.AssertGenerationHashConverged(tc)
 			require.EventuallyWithT(t, func(c *assert.CollectT) {
-				current, err := getPCS(tc, tc.Workload.Name)
+				current, err := updateutils.GetPCS(tc, tc.Workload.Name)
 				require.NoError(c, err)
 				require.NotNil(c, current.Status.ObservedGeneration)
 				assert.Equal(c, pcs.Generation, *current.Status.ObservedGeneration)
@@ -1384,11 +1384,11 @@ func Test_RU27_RollingRecreateWithComponentScaledToZero(t *testing.T) {
 		t.Fatalf("rolling update did not complete: %v", err)
 	}
 	assertUpdateInProgressCleared(tc)
-	assertGenerationHashConverged(tc)
+	updateutils.AssertGenerationHashConverged(tc)
 
 	tests.Logger.Info("5. Scale pc-a back to 2 and verify new-revision pods launch")
 	tc.ScalePodCliqueAndWait("workload1-0-pc-a", 2, 10, 0)
-	assertGenerationHashConverged(tc)
+	updateutils.AssertGenerationHashConverged(tc)
 	if err := tc.WaitForPods(10); err != nil {
 		t.Fatalf("pods did not become Ready after scaling pc-a back up: %v", err)
 	}
@@ -1540,9 +1540,9 @@ func Test_RU29_RapidRevisionChangesConvergeToLatestTarget(t *testing.T) {
 			require.NoError(t, waitForRollingUpdateComplete(&tcLong, 1))
 			require.NoError(t, tcLong.WaitForPods(10))
 			assertUpdateInProgressCleared(&tcLong)
-			assertGenerationHashConverged(&tcLong)
+			updateutils.AssertGenerationHashConverged(&tcLong)
 			assertAffectedPodsAtRevision(&tcLong, tt.cliqueName, revision2)
-			assertNoActiveChildUpdates(&tcLong)
+			updateutils.AssertNoActiveChildUpdates(&tcLong)
 		})
 	}
 }
