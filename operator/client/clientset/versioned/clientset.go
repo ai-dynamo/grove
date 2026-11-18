@@ -30,7 +30,7 @@ import (
 )
 
 type Interface interface {
-	Discovery() discovery.DiscoveryInterface
+	Discovery() discovery.DiscoveryInterfaces
 	GroveV1alpha1() grovev1alpha1.GroveV1alpha1Interface
 	GroveV1beta1() grovev1beta1.GroveV1beta1Interface
 }
@@ -53,7 +53,7 @@ func (c *Clientset) GroveV1beta1() grovev1beta1.GroveV1beta1Interface {
 }
 
 // Discovery retrieves the DiscoveryClient
-func (c *Clientset) Discovery() discovery.DiscoveryInterface {
+func (c *Clientset) Discovery() discovery.DiscoveryInterfaces {
 	if c == nil {
 		return nil
 	}

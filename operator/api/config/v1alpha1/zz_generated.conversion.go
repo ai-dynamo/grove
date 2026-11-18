@@ -230,8 +230,7 @@ func RegisterConversions(s *runtime.Scheme) error {
 }
 
 func autoConvert_v1alpha1_AuthorizerConfig_To_v1beta1_AuthorizerConfig(in *AuthorizerConfig, out *v1beta1.AuthorizerConfig, s conversion.Scope) error {
-	out.Enabled = in.Enabled
-	out.ExemptServiceAccountUserNames = *(*[]string)(unsafe.Pointer(&in.ExemptServiceAccountUserNames))
+	*out = *(*v1beta1.AuthorizerConfig)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -241,8 +240,7 @@ func Convert_v1alpha1_AuthorizerConfig_To_v1beta1_AuthorizerConfig(in *Authorize
 }
 
 func autoConvert_v1beta1_AuthorizerConfig_To_v1alpha1_AuthorizerConfig(in *v1beta1.AuthorizerConfig, out *AuthorizerConfig, s conversion.Scope) error {
-	out.Enabled = in.Enabled
-	out.ExemptServiceAccountUserNames = *(*[]string)(unsafe.Pointer(&in.ExemptServiceAccountUserNames))
+	*out = *(*AuthorizerConfig)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -252,10 +250,7 @@ func Convert_v1beta1_AuthorizerConfig_To_v1alpha1_AuthorizerConfig(in *v1beta1.A
 }
 
 func autoConvert_v1alpha1_ClientConnectionConfiguration_To_v1beta1_ClientConnectionConfiguration(in *ClientConnectionConfiguration, out *v1beta1.ClientConnectionConfiguration, s conversion.Scope) error {
-	out.QPS = in.QPS
-	out.Burst = in.Burst
-	out.ContentType = in.ContentType
-	out.AcceptContentTypes = in.AcceptContentTypes
+	*out = *(*v1beta1.ClientConnectionConfiguration)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -265,10 +260,7 @@ func Convert_v1alpha1_ClientConnectionConfiguration_To_v1beta1_ClientConnectionC
 }
 
 func autoConvert_v1beta1_ClientConnectionConfiguration_To_v1alpha1_ClientConnectionConfiguration(in *v1beta1.ClientConnectionConfiguration, out *ClientConnectionConfiguration, s conversion.Scope) error {
-	out.QPS = in.QPS
-	out.Burst = in.Burst
-	out.ContentType = in.ContentType
-	out.AcceptContentTypes = in.AcceptContentTypes
+	*out = *(*ClientConnectionConfiguration)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -278,18 +270,7 @@ func Convert_v1beta1_ClientConnectionConfiguration_To_v1alpha1_ClientConnectionC
 }
 
 func autoConvert_v1alpha1_ControllerConfiguration_To_v1beta1_ControllerConfiguration(in *ControllerConfiguration, out *v1beta1.ControllerConfiguration, s conversion.Scope) error {
-	if err := Convert_v1alpha1_PodCliqueSetControllerConfiguration_To_v1beta1_PodCliqueSetControllerConfiguration(&in.PodCliqueSet, &out.PodCliqueSet, s); err != nil {
-		return err
-	}
-	if err := Convert_v1alpha1_PodCliqueControllerConfiguration_To_v1beta1_PodCliqueControllerConfiguration(&in.PodClique, &out.PodClique, s); err != nil {
-		return err
-	}
-	if err := Convert_v1alpha1_PodCliqueScalingGroupControllerConfiguration_To_v1beta1_PodCliqueScalingGroupControllerConfiguration(&in.PodCliqueScalingGroup, &out.PodCliqueScalingGroup, s); err != nil {
-		return err
-	}
-	if err := Convert_v1alpha1_PodGangControllerConfiguration_To_v1beta1_PodGangControllerConfiguration(&in.PodGang, &out.PodGang, s); err != nil {
-		return err
-	}
+	*out = *(*v1beta1.ControllerConfiguration)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -299,18 +280,7 @@ func Convert_v1alpha1_ControllerConfiguration_To_v1beta1_ControllerConfiguration
 }
 
 func autoConvert_v1beta1_ControllerConfiguration_To_v1alpha1_ControllerConfiguration(in *v1beta1.ControllerConfiguration, out *ControllerConfiguration, s conversion.Scope) error {
-	if err := Convert_v1beta1_PodCliqueSetControllerConfiguration_To_v1alpha1_PodCliqueSetControllerConfiguration(&in.PodCliqueSet, &out.PodCliqueSet, s); err != nil {
-		return err
-	}
-	if err := Convert_v1beta1_PodCliqueControllerConfiguration_To_v1alpha1_PodCliqueControllerConfiguration(&in.PodClique, &out.PodClique, s); err != nil {
-		return err
-	}
-	if err := Convert_v1beta1_PodCliqueScalingGroupControllerConfiguration_To_v1alpha1_PodCliqueScalingGroupControllerConfiguration(&in.PodCliqueScalingGroup, &out.PodCliqueScalingGroup, s); err != nil {
-		return err
-	}
-	if err := Convert_v1beta1_PodGangControllerConfiguration_To_v1alpha1_PodGangControllerConfiguration(&in.PodGang, &out.PodGang, s); err != nil {
-		return err
-	}
+	*out = *(*ControllerConfiguration)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -320,9 +290,7 @@ func Convert_v1beta1_ControllerConfiguration_To_v1alpha1_ControllerConfiguration
 }
 
 func autoConvert_v1alpha1_DebuggingConfiguration_To_v1beta1_DebuggingConfiguration(in *DebuggingConfiguration, out *v1beta1.DebuggingConfiguration, s conversion.Scope) error {
-	out.EnableProfiling = (*bool)(unsafe.Pointer(in.EnableProfiling))
-	out.PprofBindHost = (*string)(unsafe.Pointer(in.PprofBindHost))
-	out.PprofBindPort = (*int)(unsafe.Pointer(in.PprofBindPort))
+	*out = *(*v1beta1.DebuggingConfiguration)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -332,9 +300,7 @@ func Convert_v1alpha1_DebuggingConfiguration_To_v1beta1_DebuggingConfiguration(i
 }
 
 func autoConvert_v1beta1_DebuggingConfiguration_To_v1alpha1_DebuggingConfiguration(in *v1beta1.DebuggingConfiguration, out *DebuggingConfiguration, s conversion.Scope) error {
-	out.EnableProfiling = (*bool)(unsafe.Pointer(in.EnableProfiling))
-	out.PprofBindHost = (*string)(unsafe.Pointer(in.PprofBindHost))
-	out.PprofBindPort = (*int)(unsafe.Pointer(in.PprofBindPort))
+	*out = *(*DebuggingConfiguration)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -344,7 +310,7 @@ func Convert_v1beta1_DebuggingConfiguration_To_v1alpha1_DebuggingConfiguration(i
 }
 
 func autoConvert_v1alpha1_KubeSchedulerConfig_To_v1beta1_KubeSchedulerConfig(in *KubeSchedulerConfig, out *v1beta1.KubeSchedulerConfig, s conversion.Scope) error {
-	out.GangScheduling = in.GangScheduling
+	*out = *(*v1beta1.KubeSchedulerConfig)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -354,7 +320,7 @@ func Convert_v1alpha1_KubeSchedulerConfig_To_v1beta1_KubeSchedulerConfig(in *Kub
 }
 
 func autoConvert_v1beta1_KubeSchedulerConfig_To_v1alpha1_KubeSchedulerConfig(in *v1beta1.KubeSchedulerConfig, out *KubeSchedulerConfig, s conversion.Scope) error {
-	out.GangScheduling = in.GangScheduling
+	*out = *(*KubeSchedulerConfig)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -364,7 +330,7 @@ func Convert_v1beta1_KubeSchedulerConfig_To_v1alpha1_KubeSchedulerConfig(in *v1b
 }
 
 func autoConvert_v1alpha1_KueueSchedulerConfiguration_To_v1beta1_KueueSchedulerConfiguration(in *KueueSchedulerConfiguration, out *v1beta1.KueueSchedulerConfiguration, s conversion.Scope) error {
-	out.UnderlyingSchedulerName = in.UnderlyingSchedulerName
+	*out = *(*v1beta1.KueueSchedulerConfiguration)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -374,7 +340,7 @@ func Convert_v1alpha1_KueueSchedulerConfiguration_To_v1beta1_KueueSchedulerConfi
 }
 
 func autoConvert_v1beta1_KueueSchedulerConfiguration_To_v1alpha1_KueueSchedulerConfiguration(in *v1beta1.KueueSchedulerConfiguration, out *KueueSchedulerConfiguration, s conversion.Scope) error {
-	out.UnderlyingSchedulerName = in.UnderlyingSchedulerName
+	*out = *(*KueueSchedulerConfiguration)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -384,13 +350,7 @@ func Convert_v1beta1_KueueSchedulerConfiguration_To_v1alpha1_KueueSchedulerConfi
 }
 
 func autoConvert_v1alpha1_LeaderElectionConfiguration_To_v1beta1_LeaderElectionConfiguration(in *LeaderElectionConfiguration, out *v1beta1.LeaderElectionConfiguration, s conversion.Scope) error {
-	out.Enabled = in.Enabled
-	out.LeaseDuration = in.LeaseDuration
-	out.RenewDeadline = in.RenewDeadline
-	out.RetryPeriod = in.RetryPeriod
-	out.ResourceLock = in.ResourceLock
-	out.ResourceName = in.ResourceName
-	out.ResourceNamespace = in.ResourceNamespace
+	*out = *(*v1beta1.LeaderElectionConfiguration)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -400,13 +360,7 @@ func Convert_v1alpha1_LeaderElectionConfiguration_To_v1beta1_LeaderElectionConfi
 }
 
 func autoConvert_v1beta1_LeaderElectionConfiguration_To_v1alpha1_LeaderElectionConfiguration(in *v1beta1.LeaderElectionConfiguration, out *LeaderElectionConfiguration, s conversion.Scope) error {
-	out.Enabled = in.Enabled
-	out.LeaseDuration = in.LeaseDuration
-	out.RenewDeadline = in.RenewDeadline
-	out.RetryPeriod = in.RetryPeriod
-	out.ResourceLock = in.ResourceLock
-	out.ResourceName = in.ResourceName
-	out.ResourceNamespace = in.ResourceNamespace
+	*out = *(*LeaderElectionConfiguration)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -416,7 +370,7 @@ func Convert_v1beta1_LeaderElectionConfiguration_To_v1alpha1_LeaderElectionConfi
 }
 
 func autoConvert_v1alpha1_NetworkAcceleration_To_v1beta1_NetworkAcceleration(in *NetworkAcceleration, out *v1beta1.NetworkAcceleration, s conversion.Scope) error {
-	out.AutoMNNVLEnabled = in.AutoMNNVLEnabled
+	*out = *(*v1beta1.NetworkAcceleration)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -426,7 +380,7 @@ func Convert_v1alpha1_NetworkAcceleration_To_v1beta1_NetworkAcceleration(in *Net
 }
 
 func autoConvert_v1beta1_NetworkAcceleration_To_v1alpha1_NetworkAcceleration(in *v1beta1.NetworkAcceleration, out *NetworkAcceleration, s conversion.Scope) error {
-	out.AutoMNNVLEnabled = in.AutoMNNVLEnabled
+	*out = *(*NetworkAcceleration)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -508,7 +462,7 @@ func Convert_v1beta1_OperatorConfiguration_To_v1alpha1_OperatorConfiguration(in 
 }
 
 func autoConvert_v1alpha1_PodCliqueControllerConfiguration_To_v1beta1_PodCliqueControllerConfiguration(in *PodCliqueControllerConfiguration, out *v1beta1.PodCliqueControllerConfiguration, s conversion.Scope) error {
-	out.ConcurrentSyncs = (*int)(unsafe.Pointer(in.ConcurrentSyncs))
+	*out = *(*v1beta1.PodCliqueControllerConfiguration)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -518,7 +472,7 @@ func Convert_v1alpha1_PodCliqueControllerConfiguration_To_v1beta1_PodCliqueContr
 }
 
 func autoConvert_v1beta1_PodCliqueControllerConfiguration_To_v1alpha1_PodCliqueControllerConfiguration(in *v1beta1.PodCliqueControllerConfiguration, out *PodCliqueControllerConfiguration, s conversion.Scope) error {
-	out.ConcurrentSyncs = (*int)(unsafe.Pointer(in.ConcurrentSyncs))
+	*out = *(*PodCliqueControllerConfiguration)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -528,7 +482,7 @@ func Convert_v1beta1_PodCliqueControllerConfiguration_To_v1alpha1_PodCliqueContr
 }
 
 func autoConvert_v1alpha1_PodCliqueScalingGroupControllerConfiguration_To_v1beta1_PodCliqueScalingGroupControllerConfiguration(in *PodCliqueScalingGroupControllerConfiguration, out *v1beta1.PodCliqueScalingGroupControllerConfiguration, s conversion.Scope) error {
-	out.ConcurrentSyncs = (*int)(unsafe.Pointer(in.ConcurrentSyncs))
+	*out = *(*v1beta1.PodCliqueScalingGroupControllerConfiguration)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -538,7 +492,7 @@ func Convert_v1alpha1_PodCliqueScalingGroupControllerConfiguration_To_v1beta1_Po
 }
 
 func autoConvert_v1beta1_PodCliqueScalingGroupControllerConfiguration_To_v1alpha1_PodCliqueScalingGroupControllerConfiguration(in *v1beta1.PodCliqueScalingGroupControllerConfiguration, out *PodCliqueScalingGroupControllerConfiguration, s conversion.Scope) error {
-	out.ConcurrentSyncs = (*int)(unsafe.Pointer(in.ConcurrentSyncs))
+	*out = *(*PodCliqueScalingGroupControllerConfiguration)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -548,7 +502,7 @@ func Convert_v1beta1_PodCliqueScalingGroupControllerConfiguration_To_v1alpha1_Po
 }
 
 func autoConvert_v1alpha1_PodCliqueSetControllerConfiguration_To_v1beta1_PodCliqueSetControllerConfiguration(in *PodCliqueSetControllerConfiguration, out *v1beta1.PodCliqueSetControllerConfiguration, s conversion.Scope) error {
-	out.ConcurrentSyncs = (*int)(unsafe.Pointer(in.ConcurrentSyncs))
+	*out = *(*v1beta1.PodCliqueSetControllerConfiguration)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -558,7 +512,7 @@ func Convert_v1alpha1_PodCliqueSetControllerConfiguration_To_v1beta1_PodCliqueSe
 }
 
 func autoConvert_v1beta1_PodCliqueSetControllerConfiguration_To_v1alpha1_PodCliqueSetControllerConfiguration(in *v1beta1.PodCliqueSetControllerConfiguration, out *PodCliqueSetControllerConfiguration, s conversion.Scope) error {
-	out.ConcurrentSyncs = (*int)(unsafe.Pointer(in.ConcurrentSyncs))
+	*out = *(*PodCliqueSetControllerConfiguration)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -568,7 +522,7 @@ func Convert_v1beta1_PodCliqueSetControllerConfiguration_To_v1alpha1_PodCliqueSe
 }
 
 func autoConvert_v1alpha1_PodGangControllerConfiguration_To_v1beta1_PodGangControllerConfiguration(in *PodGangControllerConfiguration, out *v1beta1.PodGangControllerConfiguration, s conversion.Scope) error {
-	out.ConcurrentSyncs = (*int)(unsafe.Pointer(in.ConcurrentSyncs))
+	*out = *(*v1beta1.PodGangControllerConfiguration)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -578,7 +532,7 @@ func Convert_v1alpha1_PodGangControllerConfiguration_To_v1beta1_PodGangControlle
 }
 
 func autoConvert_v1beta1_PodGangControllerConfiguration_To_v1alpha1_PodGangControllerConfiguration(in *v1beta1.PodGangControllerConfiguration, out *PodGangControllerConfiguration, s conversion.Scope) error {
-	out.ConcurrentSyncs = (*int)(unsafe.Pointer(in.ConcurrentSyncs))
+	*out = *(*PodGangControllerConfiguration)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -588,8 +542,7 @@ func Convert_v1beta1_PodGangControllerConfiguration_To_v1alpha1_PodGangControlle
 }
 
 func autoConvert_v1alpha1_SchedulerConfiguration_To_v1beta1_SchedulerConfiguration(in *SchedulerConfiguration, out *v1beta1.SchedulerConfiguration, s conversion.Scope) error {
-	out.Profiles = *(*[]v1beta1.SchedulerProfile)(unsafe.Pointer(&in.Profiles))
-	out.DefaultProfileName = in.DefaultProfileName
+	*out = *(*v1beta1.SchedulerConfiguration)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -599,8 +552,7 @@ func Convert_v1alpha1_SchedulerConfiguration_To_v1beta1_SchedulerConfiguration(i
 }
 
 func autoConvert_v1beta1_SchedulerConfiguration_To_v1alpha1_SchedulerConfiguration(in *v1beta1.SchedulerConfiguration, out *SchedulerConfiguration, s conversion.Scope) error {
-	out.Profiles = *(*[]SchedulerProfile)(unsafe.Pointer(&in.Profiles))
-	out.DefaultProfileName = in.DefaultProfileName
+	*out = *(*SchedulerConfiguration)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -610,8 +562,7 @@ func Convert_v1beta1_SchedulerConfiguration_To_v1alpha1_SchedulerConfiguration(i
 }
 
 func autoConvert_v1alpha1_SchedulerProfile_To_v1beta1_SchedulerProfile(in *SchedulerProfile, out *v1beta1.SchedulerProfile, s conversion.Scope) error {
-	out.Name = v1beta1.SchedulerName(in.Name)
-	out.Config = (*runtime.RawExtension)(unsafe.Pointer(in.Config))
+	*out = *(*v1beta1.SchedulerProfile)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -621,8 +572,7 @@ func Convert_v1alpha1_SchedulerProfile_To_v1beta1_SchedulerProfile(in *Scheduler
 }
 
 func autoConvert_v1beta1_SchedulerProfile_To_v1alpha1_SchedulerProfile(in *v1beta1.SchedulerProfile, out *SchedulerProfile, s conversion.Scope) error {
-	out.Name = SchedulerName(in.Name)
-	out.Config = (*runtime.RawExtension)(unsafe.Pointer(in.Config))
+	*out = *(*SchedulerProfile)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -632,8 +582,7 @@ func Convert_v1beta1_SchedulerProfile_To_v1alpha1_SchedulerProfile(in *v1beta1.S
 }
 
 func autoConvert_v1alpha1_Server_To_v1beta1_Server(in *Server, out *v1beta1.Server, s conversion.Scope) error {
-	out.BindAddress = in.BindAddress
-	out.Port = in.Port
+	*out = *(*v1beta1.Server)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -643,8 +592,7 @@ func Convert_v1alpha1_Server_To_v1beta1_Server(in *Server, out *v1beta1.Server, 
 }
 
 func autoConvert_v1beta1_Server_To_v1alpha1_Server(in *v1beta1.Server, out *Server, s conversion.Scope) error {
-	out.BindAddress = in.BindAddress
-	out.Port = in.Port
+	*out = *(*Server)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -654,11 +602,7 @@ func Convert_v1beta1_Server_To_v1alpha1_Server(in *v1beta1.Server, out *Server, 
 }
 
 func autoConvert_v1alpha1_ServerConfiguration_To_v1beta1_ServerConfiguration(in *ServerConfiguration, out *v1beta1.ServerConfiguration, s conversion.Scope) error {
-	if err := Convert_v1alpha1_WebhookServer_To_v1beta1_WebhookServer(&in.Webhooks, &out.Webhooks, s); err != nil {
-		return err
-	}
-	out.HealthProbes = (*v1beta1.Server)(unsafe.Pointer(in.HealthProbes))
-	out.Metrics = (*v1beta1.Server)(unsafe.Pointer(in.Metrics))
+	*out = *(*v1beta1.ServerConfiguration)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -668,11 +612,7 @@ func Convert_v1alpha1_ServerConfiguration_To_v1beta1_ServerConfiguration(in *Ser
 }
 
 func autoConvert_v1beta1_ServerConfiguration_To_v1alpha1_ServerConfiguration(in *v1beta1.ServerConfiguration, out *ServerConfiguration, s conversion.Scope) error {
-	if err := Convert_v1beta1_WebhookServer_To_v1alpha1_WebhookServer(&in.Webhooks, &out.Webhooks, s); err != nil {
-		return err
-	}
-	out.HealthProbes = (*Server)(unsafe.Pointer(in.HealthProbes))
-	out.Metrics = (*Server)(unsafe.Pointer(in.Metrics))
+	*out = *(*ServerConfiguration)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -682,7 +622,7 @@ func Convert_v1beta1_ServerConfiguration_To_v1alpha1_ServerConfiguration(in *v1b
 }
 
 func autoConvert_v1alpha1_TopologyAwareSchedulingConfiguration_To_v1beta1_TopologyAwareSchedulingConfiguration(in *TopologyAwareSchedulingConfiguration, out *v1beta1.TopologyAwareSchedulingConfiguration, s conversion.Scope) error {
-	out.Enabled = in.Enabled
+	*out = *(*v1beta1.TopologyAwareSchedulingConfiguration)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -692,7 +632,7 @@ func Convert_v1alpha1_TopologyAwareSchedulingConfiguration_To_v1beta1_TopologyAw
 }
 
 func autoConvert_v1beta1_TopologyAwareSchedulingConfiguration_To_v1alpha1_TopologyAwareSchedulingConfiguration(in *v1beta1.TopologyAwareSchedulingConfiguration, out *TopologyAwareSchedulingConfiguration, s conversion.Scope) error {
-	out.Enabled = in.Enabled
+	*out = *(*TopologyAwareSchedulingConfiguration)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -702,12 +642,7 @@ func Convert_v1beta1_TopologyAwareSchedulingConfiguration_To_v1alpha1_TopologyAw
 }
 
 func autoConvert_v1alpha1_WebhookServer_To_v1beta1_WebhookServer(in *WebhookServer, out *v1beta1.WebhookServer, s conversion.Scope) error {
-	if err := Convert_v1alpha1_Server_To_v1beta1_Server(&in.Server, &out.Server, s); err != nil {
-		return err
-	}
-	out.ServerCertDir = in.ServerCertDir
-	out.SecretName = in.SecretName
-	out.CertProvisionMode = v1beta1.CertProvisionMode(in.CertProvisionMode)
+	*out = *(*v1beta1.WebhookServer)(unsafe.Pointer(in))
 	return nil
 }
 
@@ -717,12 +652,7 @@ func Convert_v1alpha1_WebhookServer_To_v1beta1_WebhookServer(in *WebhookServer, 
 }
 
 func autoConvert_v1beta1_WebhookServer_To_v1alpha1_WebhookServer(in *v1beta1.WebhookServer, out *WebhookServer, s conversion.Scope) error {
-	if err := Convert_v1beta1_Server_To_v1alpha1_Server(&in.Server, &out.Server, s); err != nil {
-		return err
-	}
-	out.ServerCertDir = in.ServerCertDir
-	out.SecretName = in.SecretName
-	out.CertProvisionMode = CertProvisionMode(in.CertProvisionMode)
+	*out = *(*WebhookServer)(unsafe.Pointer(in))
 	return nil
 }
 
