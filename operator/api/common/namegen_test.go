@@ -185,6 +185,35 @@ func TestExtractScalingGroupNameFromPCSGFQN_Consistency(t *testing.T) {
 	}
 }
 
+func TestExtractEpochFromPodGangName(t *testing.T) {
+	pcsNameReplica := ResourceNameReplica{Name: "simple1", Replica: 0}
+	tests := []struct {
+		name        string
+		podGangName string
+		expected    string
+		wantErr     bool
+	}{
+		{name: "anchor PodGang", podGangName: GenerateAnchorPodGangName(pcsNameReplica, "1700000000"), expected: "1700000000"},
+		{name: "non-anchor PodGang", podGangName: GenerateNonAnchorPodGangName(pcsNameReplica, "1700000001", "sga", 2), expected: "1700000001"},
+		{name: "PodGang of another replica", podGangName: "simple1-1-1700000000", wantErr: true},
+		{name: "PodGang of another PodCliqueSet", podGangName: "simple2-0-1700000000", wantErr: true},
+		{name: "legacy base PodGang", podGangName: GenerateBasePodGangName(pcsNameReplica), wantErr: true},
+		{name: "legacy scaled PodGang", podGangName: CreatePodGangNameFromPCSGFQN("simple1-0-sga", 0), wantErr: true},
+		{name: "empty epoch", podGangName: "simple1-0--sga-0", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			epoch, err := ExtractEpochFromPodGangName(tt.podGangName, pcsNameReplica)
+			if tt.wantErr {
+				assert.Error(t, err)
+				return
+			}
+			assert.NoError(t, err)
+			assert.Equal(t, tt.expected, epoch)
+		})
+	}
+}
+
 func TestGeneratePodGangNameForPodCliqueOwnedByPodCliqueSet(t *testing.T) {
 	// Create a PodCliqueSet for testing
 	pcs := &v1alpha1.PodCliqueSet{
