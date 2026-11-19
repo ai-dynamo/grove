@@ -1,5 +1,7 @@
 # Workload: Disaggregated Inference - Multi-replica PCS with 3-level topology hierarchy
 # Test scenario: PCS (block) with 2 replicas, 2 PCSGs (rack), and PCLQ-level constraint (host)
+# The base PodGang of a replica has 7 pods, one more than the smallest block holds, so a replica never starts
+# in a block that its scaled PodGangs cannot join.
 ---
 apiVersion: grove.io/v1beta1
 kind: PodCliqueSet
@@ -169,8 +171,8 @@ spec:
           kai.scheduler/queue: test
         spec:
           roleName: router
-          replicas: 2
-          minAvailable: 2
+          replicas: 3
+          minAvailable: 3
           podSpec:
             terminationGracePeriodSeconds: 5
             schedulerName: kai-scheduler
