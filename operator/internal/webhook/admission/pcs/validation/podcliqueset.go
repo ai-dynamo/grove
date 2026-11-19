@@ -109,6 +109,13 @@ func (v *pcsValidator) validatePodCliqueSetSpec(fldPath *field.Path) ([]string, 
 func (v *pcsValidator) validatePodCliqueSetTemplateSpec(fldPath *field.Path) ([]string, field.ErrorList) {
 	allErrs := field.ErrorList{}
 
+	// Kubernetes validates PriorityClass names as DNS subdomains.
+	if name := v.pcs.Spec.Template.PriorityClassName; name != "" {
+		if msgs := k8svalidation.IsDNS1123Subdomain(name); len(msgs) > 0 {
+			allErrs = append(allErrs, field.Invalid(fldPath.Child("priorityClassName"), name, strings.Join(msgs, ", ")))
+		}
+	}
+
 	allErrs = append(allErrs, validateEnumType(v.pcs.Spec.Template.StartupType, allowedStartupTypes, fldPath.Child("cliqueStartupType"))...)
 	allErrs = append(allErrs, v.validateResourceClaimTemplates(fldPath.Child("resourceClaimTemplates"))...)
 	allErrs = append(allErrs, v.validatePCSResourceSharing(v.pcs.Spec.Template.ResourceSharing, fldPath.Child("resourceSharing"))...)
