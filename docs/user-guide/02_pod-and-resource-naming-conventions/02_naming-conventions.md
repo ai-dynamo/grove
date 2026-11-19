@@ -58,27 +58,28 @@ Looking at this name, you can immediately tell:
 
 ## Naming Best Practices
 
-### Kubernetes Name Length Limit
+### Name Length Limit
 
-Kubernetes has a **63-character limit** for pod names. Since Grove constructs full pod names by combining multiple components, you need to be mindful of name lengths when choosing names for your resources.
+Grove gives every pod a hostname (`spec.hostname`) for service discovery, and a hostname is a DNS label, which Kubernetes limits to **63 characters**. The hostname is built from the same components as the pod name, with the pod's index in its PodClique in place of the random suffix:
 
-**How Grove constructs names:**
-
-For standalone PodCliques, the final pod name is:
+For standalone PodCliques:
 ```
-<pcs-name>-<pcs-replica-idx>-<pclq-name>-<5-char-suffix>
+<pcs-name>-<pcs-replica-idx>-<pclq-name>-<pod-idx>
 ```
 
-For PodCliques in a PCSG, the final pod name is:
+For PodCliques in a PCSG:
 ```
-<pcs-name>-<pcs-replica-idx>-<pcsg-name>-<pcsg-replica-idx>-<pclq-name>-<5-char-suffix>
+<pcs-name>-<pcs-replica-idx>-<pcsg-name>-<pcsg-replica-idx>-<pclq-name>-<pod-idx>
 ```
 
 **Character budget breakdown:**
-- `<5-char-suffix>`: 5 characters (fixed by Kubernetes)
-- `-` separators: 3-5 characters depending on structure
-- Replica indices: 1+ characters each (single digit for 0-9, two digits for 10-99, etc.)
-- Your chosen names: Remaining characters
+- `-` separators: 3 characters for a standalone PodClique, 5 in a PCSG
+- Replica indices: Grove reserves 3 digits for each (up to 1000 replicas of the PodCliqueSet, the PCSG and the PodClique)
+- Your chosen names: the rest, which the admission webhook enforces:
+  - standalone PodClique: `len(pcs-name) + len(pclq-name) <= 54`
+  - PodClique in a PCSG: `len(pcs-name) + len(pcsg-name) + len(pclq-name) <= 49`
+
+Pod names themselves may be longer than 63 characters (Kubernetes allows up to 253), since Grove sets the hostname explicitly rather than deriving it from the pod name.
 
 ### Naming Guidelines
 
@@ -134,7 +135,7 @@ Let's plan names for a multi-node disaggregated inference system with a frontend
 - 3-digit indices for PCS and PCSG (100-999): 39 chars → scales to 999 × 999 replicas ✅
 - 7-digit indices for PCS and PCSG: 47 chars → scales to millions of replicas ✅
 
-With these name choices, you could scale to millions of replicas on both dimensions without hitting the limit. All names are well under the 63-character limit with room for scaling growth while remaining descriptive!
+With these name choices, you could scale to millions of replicas on both dimensions without hitting the limit. The longest combination (`mn-disagg` + `prefill` + `pworker`, 23 characters) is also well within the 49-character admission budget for PodCliques in a PCSG, while remaining descriptive!
 
 To deploy a PodCliqueSet with this structure and explore the naming hierarchy through `kubectl`, continue to the [Hands-On Example](./03_hands-on-example.md).
 
@@ -199,7 +200,7 @@ For the whole workload, use `kind: PodCliqueSet` and the PodCliqueSet name. For 
 
 1. **Self-Documenting Hierarchy**: Pod names encode the complete hierarchy from PodCliqueSet → PCSG (if applicable) → PodClique → Pod, making `kubectl get pods` output immediately understandable.
 
-2. **63-Character Limit**: Kubernetes enforces a 63-character limit on resource names. Use short, meaningful names for your resources, especially PodCliqueSet and PCSG names which appear in every generated name.
+2. **63-Character Limit**: Pod hostnames, and the PodClique names they are built from, are limited to 63 characters. Use short, meaningful names for your resources, especially PodCliqueSet and PCSG names which appear in every generated name.
 
 3. **Unique PodClique Names**: All PodClique names must be unique within a PodCliqueSet. When you have similar roles in multiple PCSGs (e.g., leader/worker in both prefill and decode), use prefixes or abbreviations (e.g., `pleader`/`pworker` and `dleader`/`dworker`).
 

@@ -142,6 +142,8 @@ func (b *schedulerBackend) SyncPodGang(ctx context.Context, podGang *groveschedu
 // PodGangs that podGang depends on are scheduled. An existing Workload that is no longer usable (Finished, or
 // deactivated by Kueue) is deleted and rebuilt from scratch instead of repaired in place, since Kueue Workload
 // podSets are immutable once admitted. A usable Workload only has its priority class kept in step with the PodGang.
+// A Workload of the same name that podGang does not own belongs to an earlier PodGang of that name and is left to
+// garbage collection (see workloadOwnedByPodGang).
 // Grove has no watch on Workloads, so PreparePod also calls this for every Pod it prepares. It returns an
 // error, so the caller requeues, while the old Workload is still being deleted.
 //
@@ -153,11 +155,15 @@ func (b *schedulerBackend) ensureWorkload(ctx context.Context, podGang *grovesch
 	err := reader.Get(ctx, client.ObjectKey{Namespace: podGang.Namespace, Name: podGang.Name}, existing)
 	switch {
 	case err == nil:
+		usable, err := workloadUsableBy(existing, podGang)
+		if err != nil {
+			return err
+		}
+		if usable {
+			return b.syncWorkloadPriorityClass(ctx, existing, podGang)
+		}
 		if existing.DeletionTimestamp != nil {
 			return fmt.Errorf("prebuilt kueue Workload %s/%s is still being deleted", podGang.Namespace, podGang.Name)
-		}
-		if !workloadNeedsReplacement(existing) {
-			return b.syncWorkloadPriorityClass(ctx, existing, podGang)
 		}
 		// The preconditions keep a stale read from deleting a replacement that another caller already created.
 		preconditions := client.Preconditions{UID: &existing.UID, ResourceVersion: &existing.ResourceVersion}
@@ -197,7 +203,11 @@ func (b *schedulerBackend) ensureWorkload(ctx context.Context, podGang *grovesch
 		if err := b.directReader.Get(ctx, client.ObjectKeyFromObject(workload), current); err != nil {
 			return fmt.Errorf("failed to get prebuilt kueue Workload %s/%s: %w", podGang.Namespace, podGang.Name, err)
 		}
-		if current.DeletionTimestamp != nil || workloadNeedsReplacement(current) {
+		usable, err := workloadUsableBy(current, podGang)
+		if err != nil {
+			return err
+		}
+		if !usable {
 			return fmt.Errorf("prebuilt kueue Workload %s/%s is still being replaced", podGang.Namespace, podGang.Name)
 		}
 		log.FromContext(ctx).V(4).Info("Prebuilt Kueue Workload already recreated by a concurrent caller", "workload", client.ObjectKeyFromObject(workload))
@@ -205,6 +215,26 @@ func (b *schedulerBackend) ensureWorkload(ctx context.Context, podGang *grovesch
 	}
 	log.FromContext(ctx).Info("Created prebuilt Kueue Workload", "workload", client.ObjectKeyFromObject(workload))
 	return nil
+}
+
+// workloadOwnedByPodGang reports whether wl was created for this incarnation of podGang. A scaled-in PodGang can be
+// recreated under the same name while its Workload is still alive: Kueue adds the admitted Pods as owners, so
+// garbage collection removes only the deleted PodGang's owner reference and keeps the Workload until those Pods are
+// gone. Matching on the UID keeps the recreated PodGang from adopting that Workload and its admission.
+func workloadOwnedByPodGang(wl *kueuev1beta2.Workload, podGang *groveschedulerv1alpha1.PodGang) bool {
+	return slices.ContainsFunc(wl.OwnerReferences, func(ref metav1.OwnerReference) bool { return ref.UID == podGang.UID })
+}
+
+// workloadUsableBy reports whether wl, the Workload found under podGang's name, can serve podGang as it is. It is false
+// while wl is being deleted or needs replacement (see workloadNeedsReplacement). It returns an error, so the caller
+// requeues, while wl belongs to an earlier PodGang of the same name: Grove neither uses nor deletes that Workload, and
+// leaves it to garbage collection, which removes it once the Pods it admitted are gone. Ownership is checked first so
+// that such a Workload is never deleted as stale.
+func workloadUsableBy(wl *kueuev1beta2.Workload, podGang *groveschedulerv1alpha1.PodGang) (bool, error) {
+	if !workloadOwnedByPodGang(wl, podGang) {
+		return false, fmt.Errorf("prebuilt kueue Workload %s/%s is not owned by PodGang UID %s; waiting for the Workload of an earlier PodGang of the same name to be garbage collected", podGang.Namespace, podGang.Name, podGang.UID)
+	}
+	return wl.DeletionTimestamp == nil && !workloadNeedsReplacement(wl), nil
 }
 
 // workloadNeedsReplacement reports whether wl is permanently unusable and must be deleted and rebuilt.
