@@ -1106,6 +1106,59 @@ func TestProcessGenerationHashChangeMigratesIdleLegacyHashWithoutUpdate(t *testi
 	assert.Nil(t, updated.Status.UpdateProgress)
 }
 
+func TestProcessGenerationHashChangeStartsRecreationForLegacySchedulingChange(t *testing.T) {
+	t.Parallel()
+
+	testCases := []grovecorev1beta1.UpdateStrategyType{
+		grovecorev1beta1.OnDeleteStrategy,
+		grovecorev1beta1.RollingRecreateStrategy,
+		grovecorev1beta1.CoherentStrategy,
+	}
+	for _, tc := range testCases {
+		t.Run(string(tc), func(t *testing.T) {
+			t.Parallel()
+
+			pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, uuid.NewUUID()).
+				WithReplicas(2).
+				WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("worker").WithReplicas(3).WithMinAvailable(2).Build()).
+				WithUpdateStrategy(&grovecorev1beta1.PodCliqueSetUpdateStrategy{Type: tc}).
+				Build()
+			legacyGenerationHash, appliedSchedulingHash, _ := computePCSHashes(pcs)
+			pcs.Status.CurrentGenerationHash = ptr.To(legacyGenerationHash)
+			pcs.Status.AppliedSchedulingConfigurationHash = ptr.To(appliedSchedulingHash)
+			pcs.Status.UpdatedReplicas = pcs.Spec.Replicas
+
+			pcs.Spec.Template.Cliques[0].Spec.MinAvailable = ptr.To[int32](1)
+			targetLegacyGenerationHash, targetSchedulingHash, targetGenerationHash := computePCSHashes(pcs)
+			require.Equal(t, legacyGenerationHash, targetLegacyGenerationHash)
+			require.NotEqual(t, appliedSchedulingHash, targetSchedulingHash)
+
+			fakeClient := testutils.SetupFakeClient(pcs)
+			reconciler := &Reconciler{
+				client:                        fakeClient,
+				currentlyUpdatingExpectations: &pcsexpectations.CurrentlyUpdating{},
+			}
+			result := reconciler.processGenerationHashChange(t.Context(), logr.Discard(), pcs)
+
+			require.False(t, result.HasErrors())
+			updated := &grovecorev1beta1.PodCliqueSet{}
+			require.NoError(t, fakeClient.Get(t.Context(), client.ObjectKeyFromObject(pcs), updated))
+			require.NotNil(t, updated.Status.CurrentGenerationHash)
+			assert.Equal(t, targetGenerationHash, *updated.Status.CurrentGenerationHash)
+			require.NotNil(t, updated.Status.AppliedSchedulingConfigurationHash)
+			assert.Equal(t, appliedSchedulingHash, *updated.Status.AppliedSchedulingConfigurationHash)
+			require.NotNil(t, updated.Status.UpdateProgress)
+			assert.True(t, updated.Status.UpdateProgress.RequiresReplicaRecreation)
+			assert.Equal(t, targetSchedulingHash, updated.Status.UpdateProgress.TargetSchedulingConfigurationHash)
+			require.NotNil(t, updated.Status.UpdateProgress.PreviousPodCliqueSetGenerationHash)
+			assert.Equal(t, legacyGenerationHash, *updated.Status.UpdateProgress.PreviousPodCliqueSetGenerationHash)
+			assert.False(t, updated.Status.UpdateProgress.UpdateStartedAt.IsZero())
+			assert.Nil(t, updated.Status.UpdateProgress.UpdateEndedAt)
+			assert.Zero(t, updated.Status.UpdatedReplicas)
+		})
+	}
+}
+
 func TestProcessGenerationHashChangePreservesLegacyContentUpdate(t *testing.T) {
 	pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, uuid.NewUUID()).
 		WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("worker").WithReplicas(3).WithMinAvailable(2).Build()).
