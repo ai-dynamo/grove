@@ -82,7 +82,7 @@ func (v *pcsValidator) validate() ([]string, field.ErrorList) {
 	allErrs := field.ErrorList{}
 
 	allErrs = append(allErrs, apivalidation.ValidateObjectMeta(&v.pcs.ObjectMeta, true,
-		apivalidation.NameIsDNSSubdomain, field.NewPath("metadata"))...)
+		v.nameValidationFunc(), field.NewPath("metadata"))...)
 	fldPath := field.NewPath("spec")
 	warnings, errs := v.validatePodCliqueSetSpec(fldPath)
 	if len(errs) != 0 {
@@ -90,6 +90,19 @@ func (v *pcsValidator) validate() ([]string, field.ErrorList) {
 	}
 
 	return warnings, allErrs
+}
+
+// nameValidationFunc returns the validation for the PodCliqueSet name and the PodClique template and
+// PodCliqueScalingGroup names. These names are part of the headless Service name (<pcs-name>-<pcs-index>),
+// which is also the Pod subdomain, and of the Pod hostname (<pclq-fqn>-<pod-index>). Kubernetes requires all
+// of them to be DNS-1123 labels, which unlike DNS subdomains cannot contain dots, so a new PodCliqueSet must
+// use DNS label names. These names are immutable, so an update keeps the DNS subdomain check and does not
+// block updates, such as finalizer removal, of an existing PodCliqueSet.
+func (v *pcsValidator) nameValidationFunc() apivalidation.ValidateNameFunc {
+	if v.operation == admissionv1.Create {
+		return apivalidation.NameIsDNSLabel
+	}
+	return apivalidation.NameIsDNSSubdomain
 }
 
 // validatePodCliqueSetSpec validates the specification of a PodCliqueSet object.
@@ -311,12 +324,12 @@ func (v *pcsValidator) validateSchedulerNames(schedulerNames []string, fldPath *
 	return allErrs
 }
 
-// validatePodCliqueNameConstraints validates that PodClique names meet DNS subdomain requirements and pod naming constraints.
+// validatePodCliqueNameConstraints validates that PodClique names meet DNS naming requirements and pod naming constraints.
 func (v *pcsValidator) validatePodCliqueNameConstraints(fldPath *field.Path, cliqueTemplateSpec *grovecorev1beta1.PodCliqueTemplateSpec, scalingGroupCliqueNames sets.Set[string]) field.ErrorList {
 	allErrs := field.ErrorList{}
-	if err := apivalidation.NameIsDNSSubdomain(cliqueTemplateSpec.Name, false); err != nil {
+	if errs := v.nameValidationFunc()(cliqueTemplateSpec.Name, false); len(errs) > 0 {
 		allErrs = append(allErrs, field.Invalid(fldPath.Child("name"), cliqueTemplateSpec.Name,
-			"invalid PodCliqueTemplateSpec name, must be a valid DNS subdomain"))
+			"invalid PodCliqueTemplateSpec name: "+strings.Join(errs, "; ")))
 	}
 
 	// Only validate pod name constraints for PodCliques that are NOT part of any scaling group
@@ -349,9 +362,9 @@ func (v *pcsValidator) validatePodCliqueScalingGroupConfigs(fldPath *field.Path)
 	var cliqueNamesAcrossAllScalingGroups []string
 
 	for i, scalingGroupConfig := range v.pcs.Spec.Template.PodCliqueScalingGroupConfigs {
-		if err := apivalidation.NameIsDNSSubdomain(scalingGroupConfig.Name, false); err != nil {
+		if errs := v.nameValidationFunc()(scalingGroupConfig.Name, false); len(errs) > 0 {
 			allErrs = append(allErrs, field.Invalid(fldPath.Index(i).Child("name"), scalingGroupConfig.Name,
-				"invalid PodCliqueScalingGroupConfig name, must be a valid DNS subdomain"))
+				"invalid PodCliqueScalingGroupConfig name: "+strings.Join(errs, "; ")))
 		}
 		pclqScalingGroupNames = append(pclqScalingGroupNames, scalingGroupConfig.Name)
 		cliqueNamesAcrossAllScalingGroups = append(cliqueNamesAcrossAllScalingGroups, scalingGroupConfig.CliqueNames...)
