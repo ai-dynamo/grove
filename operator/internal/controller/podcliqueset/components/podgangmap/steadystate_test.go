@@ -787,21 +787,23 @@ func TestApplySubStepAdvancesEmptyScaleOut(t *testing.T) {
 }
 
 // TestReconcileEntriesPreservesScaleOutIdentity exercises frozen coherent and recreation replicas,
-// ordinary RollingRecreate advancement, and same-pass replacement of a missing current ScaleOut.
+// idle Coherent and ordinary RollingRecreate advancement, and same-pass replacement of a missing current ScaleOut.
 func TestReconcileEntriesPreservesScaleOutIdentity(t *testing.T) {
 	tests := []struct {
-		name          string
-		strategy      grovecorev1beta1.UpdateStrategyType
-		recreation    bool
-		anchorHash    string
-		scaleOutEpoch string
-		wantHash      string
-		wantEpoch     string
+		name             string
+		strategy         grovecorev1beta1.UpdateStrategyType
+		coherentUpdating bool
+		recreation       bool
+		anchorHash       string
+		scaleOutEpoch    string
+		wantHash         string
+		wantEpoch        string
 	}{
-		{name: "frozen coherent replica", strategy: grovecorev1beta1.CoherentStrategy, anchorHash: "old", scaleOutEpoch: "102", wantHash: "old", wantEpoch: "102"},
+		{name: "frozen coherent replica", strategy: grovecorev1beta1.CoherentStrategy, coherentUpdating: true, anchorHash: "old", scaleOutEpoch: "102", wantHash: "old", wantEpoch: "102"},
 		{name: "frozen recreation replica", strategy: grovecorev1beta1.RollingRecreateStrategy, recreation: true, anchorHash: "old", scaleOutEpoch: "102", wantHash: "old", wantEpoch: "102"},
+		{name: "idle coherent preserves scale-out epoch during normalization", strategy: grovecorev1beta1.CoherentStrategy, anchorHash: "old", scaleOutEpoch: "102", wantHash: "new", wantEpoch: "102"},
 		{name: "ordinary rolling recreate", strategy: grovecorev1beta1.RollingRecreateStrategy, anchorHash: "old", scaleOutEpoch: "102", wantHash: "new", wantEpoch: "102"},
-		{name: "same-pass creation and mismatch removal", strategy: grovecorev1beta1.CoherentStrategy, anchorHash: "new", scaleOutEpoch: "102", wantHash: "new", wantEpoch: "5000"},
+		{name: "same-pass creation and mismatch removal", strategy: grovecorev1beta1.CoherentStrategy, coherentUpdating: true, anchorHash: "new", scaleOutEpoch: "102", wantHash: "new", wantEpoch: "5000"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -809,8 +811,8 @@ func TestReconcileEntriesPreservesScaleOutIdentity(t *testing.T) {
 				WithScalingGroupConfig(testPCSGName, []string{"c"}, 2, 2).
 				WithPodCliqueSetGenerationHash(ptr.To("new")).
 				WithUpdateStrategy(&grovecorev1beta1.PodCliqueSetUpdateStrategy{Type: tc.strategy}).Build()
-			if tc.recreation {
-				pcs.Status.UpdateProgress = &grovecorev1beta1.PodCliqueSetUpdateProgress{RequiresReplicaRecreation: true}
+			if tc.coherentUpdating || tc.recreation {
+				pcs.Status.UpdateProgress = &grovecorev1beta1.PodCliqueSetUpdateProgress{RequiresReplicaRecreation: tc.recreation}
 			}
 			entries := []grovecorev1beta1.PodGangEntry{
 				testutils.NewPodGangEntryBuilder(tc.anchorHash, "100").WithRole(grovecorev1beta1.PodGangEntryRoleAnchor).

@@ -94,22 +94,15 @@ func advanceEntriesGenerationHash(entries []grovecorev1beta1.PodGangEntry, pcsCu
 	}
 }
 
-// shouldAdvanceEntriesGenerationHash reports whether the PodGangMap entries should be advanced to the
-// current PodCliqueSet generation hash. RollingRecreate and OnDelete both preserve the PodGangs and
-// entries across an update, so every entry always belongs to the current generation. When any entry
-// lags the current hash it is advanced so the anchor and scale-out entries stay matchable by
-// CurrentGenerationHash.
-// Coherent update is skipped. A coherent update creates new-generation entries and drains old-generation
-// entries, so a PodGangMap deliberately holds entries for more than one generation hash at once.
-// Advancing all entries to the current hash would erase that distinction.
-// shouldAdvanceEntriesGenerationHash reports whether the existing PodGangMap entries of a replica may be
-// advanced to the current generation in place. In-place advancement is only valid when a generation change is
-// realized by rolling pods under the existing PodGangs (RollingRecreate, OnDelete), where the PodGang identity
-// is preserved. A Coherent update and a PCS replica recreation both rebuild the PodGangMap of the replica under
-// update from bootstrap entries at the new generation and keep every other replica frozen at its old
-// generation, so neither advances entries in place.
+// shouldAdvanceEntriesGenerationHash reports whether existing entries may advance to the current PCS
+// generation in place. RollingRecreate and OnDelete preserve PodGang identities across template updates.
+// An idle Coherent PCS also normalizes stale hashes, including equivalent legacy generation identities,
+// so its anchors and scale-out entries remain matchable by CurrentGenerationHash.
+// During an active Coherent update, entries deliberately hold multiple generations while old entries
+// drain; in-place advancement would erase that distinction. Active PCS replica recreation also keeps
+// existing entries frozen until their replica is recreated. Neither operation permits advancement here.
 func shouldAdvanceEntriesGenerationHash(pcs *grovecorev1beta1.PodCliqueSet, entries []grovecorev1beta1.PodGangEntry) bool {
-	if componentutils.IsCoherentStrategy(pcs) || componentutils.IsPCSReplicaRecreationInProgress(pcs) {
+	if componentutils.IsCoherentUpdateInProgress(pcs) || componentutils.IsPCSReplicaRecreationInProgress(pcs) {
 		return false
 	}
 	currentHash := *pcs.Status.CurrentGenerationHash

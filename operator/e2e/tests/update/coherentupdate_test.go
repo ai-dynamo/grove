@@ -28,6 +28,7 @@ import (
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/kwok"
+	"github.com/ai-dynamo/grove/operator/e2e/setup"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
 	"github.com/ai-dynamo/grove/operator/e2e/tests"
 	updateutils "github.com/ai-dynamo/grove/operator/e2e/tests/update/utils"
@@ -35,8 +36,10 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -1100,6 +1103,123 @@ func Test_CU18_MaxUnavailableAboveTemplateReplicas(t *testing.T) {
 	updateutils.AssertUpdateInProgressCleared(tc)
 }
 
+// Test_CU19_LegacyGenerationMigrationPreservesStandaloneScaling verifies that an existing standalone
+// PodClique remains scalable after its PCS migrates from the legacy pod-template-only generation hash
+// to the combined content-and-scheduling hash, without a real Coherent update.
+//
+// A hash-only migration must not strand the existing PodGangMap anchor at the legacy generation:
+// ordinary Coherent reconciliation does not advance entry hashes, and standalone count refresh needs
+// an anchor matching the PCS's current generation. Otherwise scaling frontend from 2 to 3 leaves its
+// anchor committing only 2 pods, so the third pod is never created.
+//
+// Scenario:
+//  1. Deploy workload-coherent with one PCS replica and 6 pods: standalone frontend has 2 pods, and
+//     inference has 2 PCSG replicas with one prefill and one decode pod each. Capture the combined
+//     generation hash, applied scheduling hash, existing pod UIDs, and anchor epoch.
+//  2. Stop the operator to prevent reconciliation from racing fixture setup. Set PCS.CurrentGenerationHash
+//     and every existing PodGangMap entry to the legacy hash, and clear AppliedSchedulingConfigurationHash.
+//     Leave the workload spec, epochs, dependencies, and placement unchanged. This seeds the relevant
+//     persisted upgrade state without depending on a particular released operator version.
+//  3. Resume the operator and wait for migration to the original combined hash. Verify the scheduling
+//     baseline is restored, no Coherent update is started, the PCS generation is unchanged, and all
+//     existing pod UIDs survive.
+//  4. Scale the existing frontend PodClique directly from 2 to 3. Verify 7 pods become Ready, the anchor
+//     commits 3 frontend pods without changing its epoch, and all PodGangMap entries match the PCS hash.
+func Test_CU19_LegacyGenerationMigrationPreservesStandaloneScaling(t *testing.T) {
+	tests.Logger.Info("1. Deploy workload-coherent and verify 6 pods")
+	tc, cleanup, _ := setupTest(t, testConfig{
+		workloadName: coherentWorkloadName,
+		workloadYAML: coherentWorkloadYAML,
+		workerNodes:  10,
+		expectedPods: coherentExpectedPods,
+	})
+	t.Cleanup(cleanup)
+
+	pcs, err := updateutils.GetPCS(tc, tc.Workload.Name)
+	require.NoError(t, err)
+	require.NotNil(t, pcs.Status.CurrentGenerationHash)
+	require.NotNil(t, pcs.Status.AppliedSchedulingConfigurationHash)
+	require.Nil(t, pcs.Status.UpdateProgress, "a fresh workload must not have an update in progress")
+	combinedHash := *pcs.Status.CurrentGenerationHash
+	schedulingHash := *pcs.Status.AppliedSchedulingConfigurationHash
+	legacyHash := legacyCoherentPCSGenerationHash(pcs)
+	require.NotEqual(t, combinedHash, legacyHash)
+	beforePods, err := tc.ListPods()
+	require.NoError(t, err)
+	beforeEntries := updateutils.PodGangMapEntries(t, tc, 0)
+	beforeAnchor := updateutils.RequireSingleEntryByRole(t, beforeEntries, grovev1beta1.PodGangEntryRoleAnchor)
+	require.Equal(t, int32(2), beforeAnchor.PodCliques["frontend"])
+
+	tests.Logger.Info("2. Stop the operator and seed the existing PCS and PodGangMap with legacy generation hashes")
+	operatorKey := client.ObjectKey{Namespace: setup.OperatorNamespace, Name: setup.OperatorDeploymentName}
+	var deployment appsv1.Deployment
+	require.NoError(t, tc.Client.Get(tc.Ctx, operatorKey, &deployment))
+	require.NotNil(t, deployment.Spec.Replicas)
+	operatorReplicas := *deployment.Spec.Replicas
+	require.Positive(t, operatorReplicas)
+	// Register restoration after workload cleanup so it runs first, even if fixture setup fails.
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(tc.Ctx), tc.Timeout)
+		defer cancel()
+		assert.NoError(t, setCoherentTestOperatorReplicas(ctx, tc, operatorReplicas))
+	})
+	require.NoError(t, setCoherentTestOperatorReplicas(tc.Ctx, tc, 0))
+
+	pgmName := apicommon.GeneratePodGangMapName(apicommon.ResourceNameReplica{Name: pcs.Name, Replica: 0})
+	var pgm grovev1beta1.PodGangMap
+	require.NoError(t, tc.Client.Get(tc.Ctx, client.ObjectKey{Namespace: tc.Namespace, Name: pgmName}, &pgm))
+	originalPGM := pgm.DeepCopy()
+	for i := range pgm.Spec.Entries {
+		pgm.Spec.Entries[i].PodCliqueSetGenerationHash = legacyHash
+	}
+	require.NoError(t, tc.Client.Patch(tc.Ctx, &pgm, client.MergeFrom(originalPGM)))
+	require.NoError(t, tc.Client.Get(tc.Ctx, client.ObjectKeyFromObject(pcs), pcs))
+	originalPCS := pcs.DeepCopy()
+	pcs.Status.CurrentGenerationHash = &legacyHash
+	pcs.Status.AppliedSchedulingConfigurationHash = nil
+	require.NoError(t, tc.Client.Status().Patch(tc.Ctx, pcs, client.MergeFrom(originalPCS)))
+
+	tests.Logger.Info("3. Resume the operator and wait for hash migration without triggering a workload update")
+	require.NoError(t, setCoherentTestOperatorReplicas(tc.Ctx, tc, operatorReplicas))
+	require.NoError(t, updateutils.WaitForGenerationHashChange(tc, legacyHash))
+	pcs, err = updateutils.GetPCS(tc, tc.Workload.Name)
+	require.NoError(t, err)
+	require.Equal(t, combinedHash, *pcs.Status.CurrentGenerationHash)
+	require.NotNil(t, pcs.Status.AppliedSchedulingConfigurationHash)
+	assert.Equal(t, schedulingHash, *pcs.Status.AppliedSchedulingConfigurationHash)
+	require.Nil(t, pcs.Status.UpdateProgress, "hash migration must not start a Coherent update")
+	assert.Equal(t, originalPCS.Generation, pcs.Generation, "migration must not change the workload spec")
+	afterMigrationPods, err := tc.ListPods()
+	require.NoError(t, err)
+	beforeUIDs := make([]types.UID, 0, len(beforePods.Items))
+	for _, pod := range beforePods.Items {
+		beforeUIDs = append(beforeUIDs, pod.UID)
+	}
+	afterUIDs := make([]types.UID, 0, len(afterMigrationPods.Items))
+	for _, pod := range afterMigrationPods.Items {
+		afterUIDs = append(afterUIDs, pod.UID)
+	}
+	require.ElementsMatch(t, beforeUIDs, afterUIDs, "hash migration must preserve existing pods")
+
+	tests.Logger.Info("4. Scale the frontend standalone clique from 2 to 3 and verify the additional pod is created")
+	frontendName := coherentWorkloadName + "-0-frontend"
+	require.NoError(t, tc.ScalePodClique(frontendName, 3))
+	total, running, pending, scaleErr := tc.WaitForPodConditions(coherentExpectedPods+1, 0)
+	var frontend grovev1beta1.PodClique
+	require.NoError(t, tc.Client.Get(tc.Ctx, client.ObjectKey{Namespace: tc.Namespace, Name: frontendName}, &frontend))
+	entries := updateutils.PodGangMapEntries(t, tc, 0)
+	anchor := updateutils.RequireSingleEntryByRole(t, entries, grovev1beta1.PodGangEntryRoleAnchor)
+	require.NoErrorf(t, scaleErr,
+		"standalone scaling 2 -> 3 after legacy hash migration did not converge: desired=%d, anchorPods=%d, anchorHash=%s, pcsHash=%s, total=%d, running=%d, pending=%d (want total=%d)",
+		frontend.Spec.Replicas, anchor.PodCliques["frontend"], anchor.PodCliqueSetGenerationHash,
+		*pcs.Status.CurrentGenerationHash, total, running, pending, coherentExpectedPods+1)
+	assert.Equal(t, int32(3), frontend.Spec.Replicas)
+	assert.Equal(t, int32(3), anchor.PodCliques["frontend"])
+	assert.Equal(t, beforeAnchor.Epoch, anchor.Epoch, "scaling must reuse the existing anchor PodGang")
+	updateutils.AssertPodGangMapSingleGeneration(t, tc)
+	require.NoError(t, tc.WaitForPods(coherentExpectedPods+1))
+}
+
 type coherentAnchor struct {
 	standalone  map[string]int32
 	pcsgIndices []int32
@@ -1334,4 +1454,50 @@ func removeUnschedulableSelector(t *testing.T, tc *testctx.TestContext) {
 func recoverFromCrashloopAndTriggerUpdate(t *testing.T, tc *testctx.TestContext) {
 	require.NoError(t, kwok.DeleteStage(tc.Ctx, tc.Client, kwokStageCrashloopName))
 	require.NoError(t, updateutils.TriggerPodCliqueUpdate(tc, "worker"))
+}
+
+// legacyCoherentPCSGenerationHash reproduces the generation identity used before scheduling
+// configuration contributed to PCS hashing. Keep it independent of the new combined-hash implementation.
+func legacyCoherentPCSGenerationHash(pcs *grovev1beta1.PodCliqueSet) string {
+	podTemplates := make([]*corev1.PodTemplateSpec, 0, len(pcs.Spec.Template.Cliques))
+	for _, clique := range pcs.Spec.Template.Cliques {
+		podTemplate := &corev1.PodTemplateSpec{
+			ObjectMeta: metav1.ObjectMeta{Labels: clique.Labels, Annotations: clique.Annotations},
+			Spec:       clique.Spec.PodSpec,
+		}
+		podTemplate.Spec.PriorityClassName = pcs.Spec.Template.PriorityClassName
+		podTemplates = append(podTemplates, podTemplate)
+	}
+	return kubeutils.ComputeHash(podTemplates...)
+}
+
+// setCoherentTestOperatorReplicas stops or resumes the operator for legacy-state fixture setup.
+// Stopping waits for all operator pods to disappear, so no reconciliation can race the status patches.
+func setCoherentTestOperatorReplicas(ctx context.Context, tc *testctx.TestContext, replicas int32) error {
+	deployment := &appsv1.Deployment{}
+	deploymentKey := client.ObjectKey{Namespace: setup.OperatorNamespace, Name: setup.OperatorDeploymentName}
+	if err := tc.Client.Get(ctx, deploymentKey, deployment); err != nil {
+		return fmt.Errorf("get Grove operator deployment: %w", err)
+	}
+	original := deployment.DeepCopy()
+	deployment.Spec.Replicas = &replicas
+	if err := tc.Client.Patch(ctx, deployment, client.MergeFrom(original)); err != nil {
+		return fmt.Errorf("scale Grove operator to %d replicas: %w", replicas, err)
+	}
+	if err := wait.PollUntilContextTimeout(ctx, tc.Interval, tc.Timeout, true, func(ctx context.Context) (bool, error) {
+		if replicas == 0 {
+			var pods corev1.PodList
+			if err := tc.Client.List(ctx, &pods, client.InNamespace(setup.OperatorNamespace), setup.OperatorPodLabels); err != nil {
+				return false, err
+			}
+			return len(pods.Items) == 0, nil
+		}
+		if err := tc.Client.Get(ctx, deploymentKey, deployment); err != nil {
+			return false, err
+		}
+		return deployment.Status.ObservedGeneration >= deployment.Generation && deployment.Status.ReadyReplicas == replicas, nil
+	}); err != nil {
+		return fmt.Errorf("wait for Grove operator at %d replicas: %w", replicas, err)
+	}
+	return nil
 }
