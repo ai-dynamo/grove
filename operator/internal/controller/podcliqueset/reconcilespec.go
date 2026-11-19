@@ -91,7 +91,8 @@ func (r *Reconciler) processGenerationHashChange(ctx context.Context, logger log
 	if generationHash == *pcs.Status.CurrentGenerationHash {
 		return ctrlcommon.ContinueReconcile()
 	}
-	if legacyGenerationHash == *pcs.Status.CurrentGenerationHash {
+	if legacyGenerationHash == *pcs.Status.CurrentGenerationHash &&
+		schedulingConfigurationHash == *pcs.Status.AppliedSchedulingConfigurationHash {
 		return r.migrateLegacyGenerationHash(ctx, pcs, expectationKey, generationHash)
 	}
 	if err := r.initOrResetUpdate(ctx, pcs, expectationKey, generationHash, schedulingConfigurationHash); err != nil {
