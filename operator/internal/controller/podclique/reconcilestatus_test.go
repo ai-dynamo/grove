@@ -700,6 +700,43 @@ func TestComputeMinAvailableBreachedConditionDisarmedForReplacement(t *testing.T
 		assert.Equal(t, metav1.ConditionTrue, condition.Status)
 		assert.Equal(t, constants.ConditionReasonScheduledReplicasBelowMinAvailable, condition.Reason)
 	})
+
+	testCases := []struct {
+		name   string
+		labels map[string]string
+	}{
+		{
+			name: "missing replica index is disarmed only during recreation",
+		},
+		{
+			name:   "empty replica index is disarmed only during recreation",
+			labels: map[string]string{apicommon.LabelPodCliqueSetReplicaIndex: ""},
+		},
+		{
+			name:   "malformed replica index is disarmed only during recreation",
+			labels: map[string]string{apicommon.LabelPodCliqueSetReplicaIndex: "not-an-index"},
+		},
+		{
+			name:   "overflowing replica index is disarmed only during recreation",
+			labels: map[string]string{apicommon.LabelPodCliqueSetReplicaIndex: "999999999999999999999999999999999999"},
+		},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			pclq := breachedPCLQ("0")
+			pclq.Labels = tc.labels
+
+			condition := computeMinAvailableBreachedCondition(logr.Discard(), recreationPCS(), pclq, 0, 0)
+			assert.Equal(t, constants.ConditionTypeMinAvailableBreached, condition.Type)
+			assert.Equal(t, metav1.ConditionUnknown, condition.Status, "unknown replica identity must disarm termination during recreation")
+			assert.Equal(t, constants.ConditionReasonUpdateInProgress, condition.Reason)
+
+			condition = computeMinAvailableBreachedCondition(logr.Discard(), &grovecorev1beta1.PodCliqueSet{}, pclq, 0, 0)
+			assert.Equal(t, metav1.ConditionTrue, condition.Status, "ordinary breach handling must remain enabled outside recreation")
+			assert.Equal(t, constants.ConditionReasonScheduledReplicasBelowMinAvailable, condition.Reason)
+		})
+	}
 }
 
 // TestReconcileStatusRequeuesOnConflict verifies that when the optimistic-locked status patch is
