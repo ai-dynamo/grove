@@ -11449,6 +11449,7 @@ spec:
                     description: |-
                       TargetSchedulingConfigurationHash identifies the scheduling configuration that this update must converge to.
                       On successful completion, it is copied to PodCliqueSetStatus.AppliedSchedulingConfigurationHash.
+                      Older operators may omit this field during upgrades and downgrades.
                     type: string
                   totalPodCliqueScalingGroupsCount:
                     default: 0
@@ -11495,8 +11496,6 @@ spec:
                       generation hash. Recomputed each reconcile from child generation-hash labels.
                     format: int32
                     type: integer
-                required:
-                - targetSchedulingConfigurationHash
                 type: object
               updatedReplicas:
                 default: 0
@@ -22825,6 +22824,7 @@ spec:
                     description: |-
                       TargetSchedulingConfigurationHash identifies the scheduling configuration that this update must converge to.
                       On successful completion, it is copied to PodCliqueSetStatus.AppliedSchedulingConfigurationHash.
+                      Older operators may omit this field during upgrades and downgrades.
                     type: string
                   totalPodCliqueScalingGroupsCount:
                     default: 0
@@ -22871,8 +22871,6 @@ spec:
                       generation hash. Recomputed each reconcile from child generation-hash labels.
                     format: int32
                     type: integer
-                required:
-                - targetSchedulingConfigurationHash
                 type: object
               updatedReplicas:
                 default: 0
