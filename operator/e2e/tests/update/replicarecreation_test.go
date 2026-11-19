@@ -25,6 +25,7 @@ import (
 	"time"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
+	apiconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/k8sclient"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/kwok"
@@ -34,13 +35,16 @@ import (
 	"github.com/ai-dynamo/grove/operator/e2e/waiter"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 	kubeutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
+	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apimachinery/pkg/watch"
 	watchtools "k8s.io/client-go/tools/watch"
@@ -725,7 +729,7 @@ func Test_RR7_MultiplePCSReplicasRecreateSerially(t *testing.T) {
 //  6. Remove the KWOK stage and delete the NotReady pods so fresh pods can become Ready. Verify recreation
 //     completes at the original target without recreating the replacement resources again.
 func Test_RR8_ReplicaRecreationResumesAfterOperatorRestart(t *testing.T) {
-	tests.Logger.Info("1. Deploy workload2 and hold replica 0 source cleanup and target readiness")
+	tests.Logger.Info("1. Deploy workload2, block replica 0 source cleanup with a test finalizer, and block replacement pod readiness with KWOK")
 	tc, cleanup, _ := setupTest(t, testConfig{
 		workloadName: "workload2", workloadYAML: "../../yaml/workload2.yaml", workerNodes: 10, expectedPods: 10,
 	})
@@ -735,9 +739,11 @@ func Test_RR8_ReplicaRecreationResumesAfterOperatorRestart(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { assert.NoError(t, releaseSource()) }()
 	require.NoError(t, kwok.ApplyStage(tc.Ctx, tc.Client, kwokStageReadyBlockedR0Path))
-	defer func() { assert.NoError(t, kwok.DeleteStage(tc.Ctx, tc.Client, kwokStageReadyBlockedR0Name)) }()
+	defer func() {
+		assert.NoError(t, kwok.DeleteStage(tc.Ctx, tc.Client, kwokStageReadyBlockedR0Name))
+	}()
 
-	tests.Logger.Info("2. Increase sg-x MinAvailable 1 -> 2 and wait for blocked source deletion")
+	tests.Logger.Info("2. Increase sg-x MinAvailable 1 -> 2 and wait for the source PodClique to become terminating")
 	require.NoError(t, triggerPCSGMinAvailableChange(tc, "sg-x", 2))
 	require.NoError(t, waitForReplicaSourceDeletion(tc, before.PCLQ))
 	blockedPCS, err := updateutils.GetPCS(tc, tc.Workload.Name)
@@ -746,7 +752,7 @@ func Test_RR8_ReplicaRecreationResumesAfterOperatorRestart(t *testing.T) {
 	blockedReplacement := requireActiveReplacement(t, blockedPCS.Status.UpdateProgress, expectedReplicaReplacement{
 		SourcePCSReplicaIndex: 0, TargetPCSReplicaIndex: 0,
 	})
-	require.Nil(t, blockedReplacement.Replacement.SourceCleanupCompletedAt, "held source must prevent cleanup completion")
+	require.Nil(t, blockedReplacement.Replacement.SourceCleanupCompletedAt, "test finalizer must prevent source cleanup completion")
 
 	tests.Logger.Info("3. Restart before cleanup completes and verify the original source remains terminating")
 	require.NoError(t, updateutils.RestartOperator(tc))
@@ -758,7 +764,7 @@ func Test_RR8_ReplicaRecreationResumesAfterOperatorRestart(t *testing.T) {
 	assert.Equal(t, before.PCLQ.UID, heldSource.UID, "restart must not create a target before deleting the source")
 	require.NotNil(t, heldSource.DeletionTimestamp)
 
-	tests.Logger.Info("4. Release source cleanup and wait for the persisted barrier and fresh target resources")
+	tests.Logger.Info("4. Remove the test finalizer and wait for the cleanup marker and new replacement resources")
 	require.NoError(t, releaseSource())
 	_, err = waitForSameIndexReplacementCleanup(tc, 0)
 	require.NoError(t, err)
@@ -779,7 +785,7 @@ func Test_RR8_ReplicaRecreationResumesAfterOperatorRestart(t *testing.T) {
 	assertReplicaConfiguration(t, resumed, want)
 	require.NoError(t, waitForStandaloneReplicaUnavailable(tc, "pc-a", 0))
 
-	tests.Logger.Info("6. Release readiness and verify completion without recreating the targets again")
+	tests.Logger.Info("6. Remove the KWOK readiness block and verify completion without recreating replacement resources")
 	require.NoError(t, kwok.DeleteStage(tc.Ctx, tc.Client, kwokStageReadyBlockedR0Name))
 	updateutils.DeleteNotReadyPodsOnReplica(t, tc, 0)
 	requireReplicaRecreationConverged(t, tc, expectedReplicaRecreationCompletion{
@@ -804,14 +810,16 @@ func Test_RR8_ReplicaRecreationResumesAfterOperatorRestart(t *testing.T) {
 //  4. Remove the KWOK stage and delete replica 0's NotReady pods so fresh pods can become Ready.
 //     Verify all three replicas converge at the original target without recreating their resources again.
 func Test_RR9_ScaleOutDuringActiveReplicaRecreation(t *testing.T) {
-	tests.Logger.Info("1. Deploy workload2 and hold replica 0 while changing sg-x MinAvailable 1 -> 2")
+	tests.Logger.Info("1. Deploy workload2 and block readiness of replica 0's replacement standalone pods while changing sg-x MinAvailable 1 -> 2")
 	tc, cleanup, _ := setupTest(t, testConfig{
 		workloadName: "workload2", workloadYAML: "../../yaml/workload2.yaml", workerNodes: 30, expectedPods: 10,
 	})
 	defer cleanup()
 	before := requireReplicaSnapshot(t, tc)
 	require.NoError(t, kwok.ApplyStage(tc.Ctx, tc.Client, kwokStageReadyBlockedR0Path))
-	defer func() { assert.NoError(t, kwok.DeleteStage(tc.Ctx, tc.Client, kwokStageReadyBlockedR0Name)) }()
+	defer func() {
+		assert.NoError(t, kwok.DeleteStage(tc.Ctx, tc.Client, kwokStageReadyBlockedR0Name))
+	}()
 	require.NoError(t, triggerPCSGMinAvailableChange(tc, "sg-x", 2))
 	firstPCS, err := waitForSameIndexReplacementCleanup(tc, 0)
 	require.NoError(t, err)
@@ -851,7 +859,7 @@ func Test_RR9_ScaleOutDuringActiveReplicaRecreation(t *testing.T) {
 	assertReplicaResourceUIDsUnchanged(t, first, held)
 	require.NoError(t, waitForStandaloneReplicaUnavailable(tc, "pc-a", 0))
 
-	tests.Logger.Info("4. Release replica 0 and verify convergence without recreating the scale-out replicas")
+	tests.Logger.Info("4. Remove replica 0's KWOK readiness block and verify convergence without recreating the scale-out replicas")
 	require.NoError(t, kwok.DeleteStage(tc.Ctx, tc.Client, kwokStageReadyBlockedR0Name))
 	updateutils.DeleteNotReadyPodsOnReplica(t, tc, 0)
 	requireReplicaRecreationConverged(t, tc, expectedReplicaRecreationCompletion{
@@ -863,6 +871,492 @@ func Test_RR9_ScaleOutDuringActiveReplicaRecreation(t *testing.T) {
 		after := requireReplicaSnapshotForIndex(t, tc, pcsReplicaIndex)
 		assertReplicaResourceUIDsUnchanged(t, addedByPCSReplicaIndex[pcsReplicaIndex], after)
 		assertReplicaConfiguration(t, after, want)
+	}
+}
+
+// Test_RR10_NonTargetScaleInDuringActiveReplicaRecreation verifies that scale-in removes unavailable
+// S0 replicas before an unavailable active replacement. The replacement keeps its resources, cleanup
+// commitment, and scheduling target while the other replicas drain, then converges after its replacement pods become Ready.
+//
+// Scenario:
+//  1. Deploy workload2 with three Ready PCS replicas and capture their S0 resources and scheduling baseline.
+//  2. Block readiness of fresh standalone pods on replica 0 with a KWOK stage, increase sg-x MinAvailable
+//     1 -> 2, and wait for source cleanup and the new same-index replacement resources.
+//  3. Block readiness of fresh standalone pods on replicas 1 and 2 with KWOK stages and delete their existing
+//     pods. Verify both replicas become unavailable while retaining their S0 specs, generation hashes,
+//     and PodGangMap entries.
+//  4. Start a PCS watch and scale 3 -> 1. Check every event until scale-in selects and removes exactly
+//     replicas 1 and 2 without canceling replacement 0, resetting its cleanup marker, or changing the target.
+//  5. Verify replica 0 remains unavailable with the same replacement resources and unapplied scheduling target.
+//  6. Remove replica 0's KWOK stage and delete its NotReady pods so fresh pods can become Ready.
+//     Verify one Ready replica at the original target, without recreating its resources again.
+func Test_RR10_NonTargetScaleInDuringActiveReplicaRecreation(t *testing.T) {
+	tests.Logger.Info("1. Deploy workload2 with three Ready PCS replicas and capture their S0 resources")
+	tc, cleanup, _ := setupTest(t, testConfig{
+		workloadName: "workload2", workloadYAML: "../../yaml/workload2.yaml",
+		workerNodes: 30, expectedPods: 10, initialPCSReplicas: 3, postScalePods: 30,
+	})
+	defer cleanup()
+	require.NoError(t, waitForClaimedPCSReplicaIndices(tc, []int{0, 1, 2}))
+	updateutils.AssertGenerationHashConverged(tc)
+	beforeByPCSReplicaIndex := make(map[int]replicaRecreationSnapshot, 3)
+	for pcsReplicaIndex := range 3 {
+		beforeByPCSReplicaIndex[pcsReplicaIndex] = requireReplicaSnapshotForIndex(t, tc, pcsReplicaIndex)
+	}
+	before := beforeByPCSReplicaIndex[0]
+
+	tests.Logger.Info("2. Block readiness of replica 0's replacement standalone pods while changing sg-x MinAvailable from 1 to 2")
+	require.NoError(t, kwok.ApplyStage(tc.Ctx, tc.Client, kwokStageReadyBlockedR0Path))
+	defer func() {
+		assert.NoError(t, kwok.DeleteStage(tc.Ctx, tc.Client, kwokStageReadyBlockedR0Name))
+	}()
+	require.NoError(t, triggerPCSGMinAvailableChange(tc, "sg-x", 2))
+	firstPCS, err := waitForSameIndexReplacementCleanup(tc, 0)
+	require.NoError(t, err)
+	target := requireSchedulingTargetChanged(t, before.PCS, firstPCS)
+	want := expectedReplicaConfiguration{
+		StandaloneMinAvailable: 1, PCSGMinAvailable: 2, PCSGReplicas: 2,
+		PodGangMap: updateutils.ExpectedReplicaPodGangMap{
+			GenerationHash: target.GenerationHash, StandalonePodCounts: map[string]int32{"pc-a": 2},
+			PCSGName: "sg-x", AnchorIndices: []int32{0, 1},
+		},
+	}
+	first := requireRecreatedReplica(t, tc, before, want)
+
+	tests.Logger.Info("3. Make replicas 1 and 2 unavailable while they retain their S0 resources")
+	// Ready non-target replicas would make scale-in cancel replacement 0 instead. Block them only
+	// after replica 0 is selected so recreation cannot choose an unavailable non-target first.
+	require.NoError(t, kwok.ApplyStage(tc.Ctx, tc.Client, kwokStageReadyBlockedR1Path))
+	defer func() {
+		assert.NoError(t, kwok.DeleteStage(tc.Ctx, tc.Client, kwokStageReadyBlockedR1Name))
+	}()
+	require.NoError(t, kwok.ApplyStage(tc.Ctx, tc.Client, kwokStageReadyBlockedR2Path))
+	defer func() {
+		assert.NoError(t, kwok.DeleteStage(tc.Ctx, tc.Client, kwokStageReadyBlockedR2Name))
+	}()
+	for _, pcsReplicaIndex := range []int{1, 2} {
+		require.NoError(t, deletePodsForReplica(tc, pcsReplicaIndex))
+		require.NoError(t, waitForStandaloneReplicaUnavailable(tc, "pc-a", pcsReplicaIndex))
+		frozenBefore := beforeByPCSReplicaIndex[pcsReplicaIndex]
+		frozen := requireReplicaSnapshotForIndex(t, tc, pcsReplicaIndex)
+		assertReplicaResourceUIDsUnchanged(t, frozenBefore, frozen)
+		assert.Equal(t, frozenBefore.PCLQ.Spec, frozen.PCLQ.Spec, "non-target pc-a must retain its S0 spec")
+		assert.Equal(t, frozenBefore.PCSG.Spec, frozen.PCSG.Spec, "non-target sg-x must retain its S0 spec")
+		assert.Equal(t, frozenBefore.PGM.Spec.Entries, frozen.PGM.Spec.Entries, "non-target PGM must retain all S0 entries")
+		require.Equal(t, before.PCS.Status.CurrentGenerationHash, frozen.PCLQ.Status.CurrentPodCliqueSetGenerationHash,
+			"unavailable non-target pc-a must still report S0 for scale-in selection")
+		require.Equal(t, before.PCS.Status.CurrentGenerationHash, frozen.PCSG.Status.CurrentPodCliqueSetGenerationHash,
+			"non-target sg-x must still report S0 for scale-in selection")
+	}
+
+	tests.Logger.Info("4. Watch every PCS status event through scale-in from three replicas to one")
+	watchCtx, cancelWatch := context.WithTimeout(tc.Ctx, tc.Timeout)
+	defer cancelWatch()
+	pcsWatcher, err := watchPodCliqueSet(watchCtx, tc)
+	require.NoError(t, err)
+	defer pcsWatcher.Stop()
+	require.NoError(t, tc.ScalePCS(tc.Workload.Name, 1))
+	_, err = waitForRecreationScaleIn(watchCtx, pcsWatcher, first.PCS, []int32{1, 2})
+	require.NoError(t, err, "scale-in must remove replicas 1 and 2 without disturbing replacement 0")
+	require.NoError(t, waitForClaimedPCSReplicaIndices(tc, []int{0}))
+
+	tests.Logger.Info("5. Verify replica 0 remains unavailable with the same replacement resources, cleanup marker, and target")
+	held := requireReplicaSnapshot(t, tc)
+	require.NoError(t, validateRecreationWhileBlocked(first.PCS, held.PCS))
+	assert.Equal(t, first.PCS.Status.CurrentGenerationHash, held.PCS.Status.CurrentGenerationHash)
+	assert.Equal(t, target.SchedulingHash, held.PCS.Status.UpdateProgress.TargetSchedulingConfigurationHash)
+	assert.Equal(t, first.PCS.Status.UpdateProgress.UpdateStartedAt, held.PCS.Status.UpdateProgress.UpdateStartedAt)
+	assertReplicaResourceUIDsUnchanged(t, first, held)
+	assertReplicaConfiguration(t, held, want)
+	require.NoError(t, waitForStandaloneReplicaUnavailable(tc, "pc-a", 0))
+
+	tests.Logger.Info("6. Remove replica 0's KWOK readiness block and verify one Ready replica at the unchanged scheduling target")
+	require.NoError(t, kwok.DeleteStage(tc.Ctx, tc.Client, kwokStageReadyBlockedR0Name))
+	updateutils.DeleteNotReadyPodsOnReplica(t, tc, 0)
+	requireReplicaRecreationConverged(t, tc, expectedReplicaRecreationCompletion{
+		GenerationHash: target.GenerationHash, SchedulingHash: target.SchedulingHash, Replicas: 1,
+		Pods: 10, PCSReplicaIndices: []int{0}, Configuration: want,
+	})
+	assertReplicaResourceUIDsUnchanged(t, first, requireReplicaSnapshot(t, tc))
+}
+
+// Test_RR11_MinAvailableChangeDuringTemplateUpdate verifies that a MinAvailable change switches an active
+// Coherent or RollingRecreate template update to full PCS replica recreation. The recreated resources
+// and final pods must use both the template revision and the new scheduling configuration.
+//
+// Scenario:
+//  1. Deploy workload2 with one Ready PCS replica, select the strategy, and capture the S0 resources.
+//  2. Block fresh standalone pod readiness with a KWOK stage and change the pc-a template. Wait for an
+//     S1 pod to exist and remain NotReady. Under Coherent, verify the full four-entry PodGangMap,
+//     including the old and new anchors, the unchanged ScaleOut, and the advanced out-of-scope tail.
+//     Under RollingRecreate, verify only the entries' generation hashes change.
+//  3. Start a PCS watch and increase sg-x MinAvailable 1 -> 2. Verify the S2 update requires replica
+//     recreation, clears coherent scope and in-flight epochs, and keeps the scheduling baseline unapplied.
+//  4. Wait for source cleanup and verify pc-a, sg-x, and the PodGangMap are recreated at S2. Their
+//     configuration must include the template revision and sg-x MinAvailable 2 while pc-a stays unavailable.
+//  5. Remove the KWOK stage and delete NotReady pods. Verify convergence to S2 without recreating
+//     the replacement resources again, and check every pc-a pod uses the template revision.
+func Test_RR11_MinAvailableChangeDuringTemplateUpdate(t *testing.T) {
+	for _, strategyType := range []grovev1beta1.UpdateStrategyType{grovev1beta1.CoherentStrategy, grovev1beta1.RollingRecreateStrategy} {
+		t.Run(string(strategyType), func(t *testing.T) {
+			tests.Logger.Infof("1. Deploy workload2 with one Ready PCS replica under %s", strategyType)
+			tc, cleanup, _ := setupTest(t, testConfig{
+				workloadName: "workload2", workloadYAML: "../../yaml/workload2.yaml",
+				workerNodes: 10, expectedPods: 10,
+			})
+			defer cleanup()
+			require.NoError(t, updateutils.UpdatePCSUpdateStrategy(tc, strategyType))
+			updateutils.AssertGenerationHashConverged(tc)
+			before := requireReplicaSnapshot(t, tc)
+			require.Equal(t, strategyType, before.PCS.Spec.UpdateStrategy.Type)
+
+			tests.Logger.Info("2. Block fresh standalone pod readiness with KWOK and verify the active pc-a update's PGM composition")
+			require.NoError(t, kwok.ApplyStage(tc.Ctx, tc.Client, kwokStageReadyBlockedR0Path))
+			defer func() {
+				assert.NoError(t, kwok.DeleteStage(tc.Ctx, tc.Client, kwokStageReadyBlockedR0Name))
+			}()
+			const templateRevision = "rr11-template"
+			require.NoError(t, updateutils.TriggerPodCliqueUpdateWithRevision(tc, templateRevision, "pc-a"))
+			require.NoError(t, updateutils.WaitForGenerationHashChange(tc, *before.PCS.Status.CurrentGenerationHash))
+			require.NoError(t, updateutils.WaitForOrdinalUpdating(tc, 0))
+			require.NoError(t, waitForNotReadyPodAtRevision(tc, templateRevision))
+			if strategyType == grovev1beta1.CoherentStrategy {
+				updateutils.WaitForReplicaMidCoherentRoll(t, tc, 0)
+				require.NoError(t, waitForInFlightCoherentEpochs(tc))
+			}
+			first := requireReplicaSnapshot(t, tc)
+			assertReplicaResourceUIDsUnchanged(t, before, first)
+			firstProgress := first.PCS.Status.UpdateProgress
+			require.NotNil(t, firstProgress)
+			require.False(t, firstProgress.RequiresReplicaRecreation, "the first update must be an ordinary template update")
+			require.Nil(t, firstProgress.UpdateEndedAt)
+			require.Len(t, firstProgress.CurrentlyUpdating, 1)
+			require.Equal(t, int32(0), firstProgress.CurrentlyUpdating[0].ReplicaIndex)
+			require.Nil(t, firstProgress.CurrentlyUpdating[0].Replacement)
+			switch strategyType {
+			case grovev1beta1.CoherentStrategy:
+				require.ElementsMatch(t, []string{"pc-a"}, firstProgress.InScopeStandalonePodCliques)
+				assertWorkload2MidCoherentPodGangMap(t, before, first)
+			case grovev1beta1.RollingRecreateStrategy:
+				updateutils.AssertEntriesUnchangedExceptHashForNonCoherentUpdate(t, before.PGM.Spec.Entries, first.PGM.Spec.Entries,
+					*first.PCS.Status.CurrentGenerationHash)
+			}
+			assert.Equal(t, before.PCS.Status.AppliedSchedulingConfigurationHash, first.PCS.Status.AppliedSchedulingConfigurationHash)
+
+			tests.Logger.Info("3. Watch the MinAvailable change switch the active template update to replica recreation")
+			watchCtx, cancelWatch := context.WithTimeout(tc.Ctx, tc.Timeout)
+			defer cancelWatch()
+			pcsWatcher, err := watchPodCliqueSet(watchCtx, tc)
+			require.NoError(t, err)
+			defer pcsWatcher.Stop()
+			require.NoError(t, triggerPCSGMinAvailableChange(tc, "sg-x", 2))
+			secondPCS, err := waitForRecreationSupersession(watchCtx, pcsWatcher, first.PCS)
+			require.NoError(t, err, "MinAvailable must supersede the unfinished template update with replica recreation")
+			target := requireSchedulingTargetChanged(t, first.PCS, secondPCS)
+			require.Equal(t, first.PCS.Status.CurrentGenerationHash, secondPCS.Status.UpdateProgress.PreviousPodCliqueSetGenerationHash)
+
+			tests.Logger.Info("4. Verify source cleanup and fresh replacement resources include both changes")
+			_, err = waitForSameIndexReplacementCleanup(tc, 0)
+			require.NoError(t, err)
+			want := expectedReplicaConfiguration{
+				StandaloneMinAvailable: 1, PCSGMinAvailable: 2, PCSGReplicas: 2,
+				PodGangMap: updateutils.ExpectedReplicaPodGangMap{
+					GenerationHash: target.GenerationHash, StandalonePodCounts: map[string]int32{"pc-a": 2},
+					PCSGName: "sg-x", AnchorIndices: []int32{0, 1},
+				},
+			}
+			second := requireRecreatedReplica(t, tc, first, want)
+			require.NoError(t, waitForNotReadyPodAtRevision(tc, templateRevision))
+
+			tests.Logger.Info("5. Remove the KWOK readiness block and verify the latest template and scheduling target converge")
+			require.NoError(t, kwok.DeleteStage(tc.Ctx, tc.Client, kwokStageReadyBlockedR0Name))
+			updateutils.DeleteNotReadyPodsOnReplica(t, tc, 0)
+			requireReplicaRecreationConverged(t, tc, expectedReplicaRecreationCompletion{
+				GenerationHash: target.GenerationHash, SchedulingHash: target.SchedulingHash, Replicas: 1,
+				Pods: 10, PCSReplicaIndices: []int{0}, Configuration: want,
+			})
+			assertReplicaResourceUIDsUnchanged(t, second, requireReplicaSnapshot(t, tc))
+			updateutils.AssertAffectedPodsAtRevision(tc, "pc-a", templateRevision)
+		})
+	}
+}
+
+// Test_RR12_TemplateChangeRejectedDuringReplicaRecreation verifies admission rejects pod-template
+// changes during a same-index recreation. Retrying after recreation finishes uses the configured
+// Coherent or RollingRecreate strategy without recreating the PCS replica again.
+//
+// Scenario:
+//  1. Deploy one Ready workload2 PCS replica under Coherent or RollingRecreate.
+//  2. Keep replacement standalone pods NotReady using a KWOK stage and increase sg-x MinAvailable 1 -> 2.
+//     Wait for source cleanup and fresh S1 replacement resources.
+//  3. Attempt standalone and PCSG-member template changes. Verify rejection and unchanged PCS spec,
+//     generation, replacement mapping, timestamps, resource identities and PGM entries.
+//  4. Remove the KWOK stage and delete NotReady pods. Verify the original recreation completes at S1.
+//  5. Retry the template change with fresh replica-0 standalone pods kept NotReady using KWOK. Verify an
+//     ordinary update, remove the stage and delete NotReady pods, then check all latest pod templates.
+func Test_RR12_TemplateChangeRejectedDuringReplicaRecreation(t *testing.T) {
+	for _, strategyType := range []grovev1beta1.UpdateStrategyType{grovev1beta1.CoherentStrategy, grovev1beta1.RollingRecreateStrategy} {
+		t.Run(string(strategyType), func(t *testing.T) {
+			tests.Logger.Infof("1. Deploy workload2 with one Ready PCS replica under %s", strategyType)
+			tc, cleanup, _ := setupTest(t, testConfig{
+				workloadName: "workload2", workloadYAML: "../../yaml/workload2.yaml",
+				workerNodes: 10, expectedPods: 10,
+			})
+			defer cleanup()
+			require.NoError(t, updateutils.UpdatePCSUpdateStrategy(tc, strategyType))
+			updateutils.AssertGenerationHashConverged(tc)
+			before := requireReplicaSnapshot(t, tc)
+			require.Equal(t, strategyType, before.PCS.Spec.UpdateStrategy.Type)
+
+			tests.Logger.Info("2. Block replacement standalone pod readiness with KWOK and change sg-x MinAvailable from 1 to 2")
+			require.NoError(t, kwok.ApplyStage(tc.Ctx, tc.Client, kwokStageReadyBlockedR0Path))
+			defer func() {
+				assert.NoError(t, kwok.DeleteStage(tc.Ctx, tc.Client, kwokStageReadyBlockedR0Name))
+			}()
+			require.NoError(t, triggerPCSGMinAvailableChange(tc, "sg-x", 2))
+			firstPCS, err := waitForSameIndexReplacementCleanup(tc, 0)
+			require.NoError(t, err)
+			firstTarget := requireSchedulingTargetChanged(t, before.PCS, firstPCS)
+			want := expectedReplicaConfiguration{
+				StandaloneMinAvailable: 1, PCSGMinAvailable: 2, PCSGReplicas: 2,
+				PodGangMap: updateutils.ExpectedReplicaPodGangMap{
+					GenerationHash: firstTarget.GenerationHash, StandalonePodCounts: map[string]int32{"pc-a": 2},
+					PCSGName: "sg-x", AnchorIndices: []int32{0, 1},
+				},
+			}
+			first := requireRecreatedReplica(t, tc, before, want)
+
+			tests.Logger.Info("3. Reject standalone and PCSG-member template changes while preserving the active replacement")
+			const templateRevision = "rr12-template"
+			requirePodTemplateChangesRejectedDuringRecreation(tc, first.PCS, templateRevision)
+			unchanged := requireReplicaSnapshot(t, tc)
+			assertReplicaResourceUIDsUnchanged(t, first, unchanged)
+			require.Equal(t, first.PCLQ.Spec, unchanged.PCLQ.Spec)
+			require.Equal(t, first.PCSG.Spec, unchanged.PCSG.Spec)
+			require.Equal(t, first.PGM.Spec.Entries, unchanged.PGM.Spec.Entries)
+
+			tests.Logger.Info("4. Remove the KWOK stage and verify recreation finishes at its original generation")
+			require.NoError(t, kwok.DeleteStage(tc.Ctx, tc.Client, kwokStageReadyBlockedR0Name))
+			updateutils.DeleteNotReadyPodsOnReplica(t, tc, 0)
+			requireReplicaRecreationConverged(t, tc, expectedReplicaRecreationCompletion{
+				GenerationHash: firstTarget.GenerationHash, SchedulingHash: firstTarget.SchedulingHash, Replicas: 1,
+				Pods: 10, PCSReplicaIndices: []int{0}, Configuration: want,
+			})
+			completed := requireReplicaSnapshot(t, tc)
+			assertReplicaResourceUIDsUnchanged(t, first, completed)
+
+			tests.Logger.Info("5. Retry the template change after recreation and verify an ordinary configured-strategy update")
+			requireWorkload2TemplateUpdateAfterRecreation(tc, []replicaRecreationSnapshot{completed}, templateRevision)
+		})
+	}
+}
+
+// Test_RR13_TemplateChangeRejectedDuringDifferentIndexReplacement verifies admission rejects
+// template changes after a different-index replacement's source is gone. The completed replica and
+// active target retain S1, then both final indices receive the template update after recreation completes.
+//
+// Scenario:
+//  1. Deploy three Ready workload2 PCS replicas under Coherent or RollingRecreate.
+//  2. Keep replica 1's fresh standalone pods NotReady using KWOK and scale 3 -> 2, leaving indices 0 and 2.
+//  3. Increase sg-x MinAvailable 1 -> 2. Allow replica 0 to complete at S1, then wait for an active 2 -> 1
+//     replacement at S1. Source 2 is fully deleted and target 1 remains unavailable.
+//  4. Attempt standalone and PCSG-member template changes. Verify rejection, unchanged update progress,
+//     and unchanged completed-replica and replacement-target resources at S1.
+//  5. Remove the replica-1 KWOK stage and delete NotReady pods. Verify recreation finishes at S1 on 0 and 1.
+//  6. Retry the template change after recreation. Verify an ordinary configured-strategy update without
+//     another PCS replica recreation and latest full pod templates on every final index.
+func Test_RR13_TemplateChangeRejectedDuringDifferentIndexReplacement(t *testing.T) {
+	for _, strategyType := range []grovev1beta1.UpdateStrategyType{grovev1beta1.CoherentStrategy, grovev1beta1.RollingRecreateStrategy} {
+		t.Run(string(strategyType), func(t *testing.T) {
+			tests.Logger.Infof("1. Deploy workload2 with three Ready PCS replicas under %s", strategyType)
+			tc, cleanup, _ := setupTest(t, testConfig{
+				workloadName: "workload2", workloadYAML: "../../yaml/workload2.yaml",
+				workerNodes: 30, expectedPods: 10, initialPCSReplicas: 3, postScalePods: 30,
+			})
+			defer cleanup()
+			require.NoError(t, updateutils.UpdatePCSUpdateStrategy(tc, strategyType))
+			updateutils.AssertGenerationHashConverged(tc)
+			require.NoError(t, waitForClaimedPCSReplicaIndices(tc, []int{0, 1, 2}))
+
+			tests.Logger.Info("2. Keep replica 1's standalone pods NotReady with KWOK and scale 3 -> 2 to create a gap")
+			require.NoError(t, kwok.ApplyStage(tc.Ctx, tc.Client, kwokStageReadyBlockedR1Path))
+			defer func() {
+				assert.NoError(t, kwok.DeleteStage(tc.Ctx, tc.Client, kwokStageReadyBlockedR1Name))
+			}()
+			require.NoError(t, deletePodsForReplica(tc, 1))
+			require.NoError(t, waitForStandaloneReplicaUnavailable(tc, "pc-a", 1))
+			require.NoError(t, tc.ScalePCS(tc.Workload.Name, 2))
+			require.NoError(t, waitForClaimedPCSReplicaIndices(tc, []int{0, 2}))
+			require.NoError(t, tc.WaitForPods(20))
+			original := requireReplicaSnapshot(t, tc)
+			source := requireReplicaSnapshotForIndex(t, tc, 2)
+
+			tests.Logger.Info("3. Change sg-x MinAvailable 1 -> 2 and verify completed replica 0 alongside active replacement 2 -> 1")
+			require.NoError(t, triggerPCSGMinAvailableChange(tc, "sg-x", 2))
+			sourcePCSReplicaIndex, err := waitForActiveReplacementTargetingIndex(tc, 1)
+			require.NoError(t, err)
+			require.Equal(t, int32(2), sourcePCSReplicaIndex)
+			firstPCS, err := updateutils.GetPCS(tc, tc.Workload.Name)
+			require.NoError(t, err)
+			firstTarget := requireSchedulingTargetChanged(t, source.PCS, firstPCS)
+			require.NoError(t, waitForWorkload2ReplicaAtGeneration(tc, 1, firstTarget.GenerationHash))
+			require.NoError(t, waitForReplicaResourcesDeleted(tc, client.MatchingLabels{
+				apicommon.LabelPartOfKey: tc.Workload.Name, apicommon.LabelPodCliqueSetReplicaIndex: "2",
+			}))
+			first := requireReplicaSnapshotForIndex(t, tc, 1)
+			want := expectedReplicaConfiguration{
+				StandaloneMinAvailable: 1, PCSGMinAvailable: 2, PCSGReplicas: 2,
+				PodGangMap: updateutils.ExpectedReplicaPodGangMap{
+					GenerationHash: firstTarget.GenerationHash, StandalonePodCounts: map[string]int32{"pc-a": 2},
+					PCSGName: "sg-x", AnchorIndices: []int32{0, 1},
+				},
+			}
+			assertReplicaConfiguration(t, first, want)
+			require.NoError(t, waitForStandaloneReplicaUnavailable(tc, "pc-a", 1))
+			requireActiveReplacement(t, requireActiveReplicaRecreation(t, first.PCS), expectedReplicaReplacement{
+				SourcePCSReplicaIndex: 2, TargetPCSReplicaIndex: 1,
+			})
+			firstProgress := first.PCS.Status.UpdateProgress
+			require.Len(t, firstProgress.CurrentlyUpdating, 2, "the completed mapping must remain alongside replacement 2 -> 1")
+			completedSelection := firstProgress.CurrentlyUpdating[0]
+			require.Equal(t, int32(0), completedSelection.ReplicaIndex)
+			require.NotNil(t, completedSelection.UpdateEndedAt)
+			require.NotNil(t, completedSelection.Replacement)
+			require.Equal(t, int32(0), completedSelection.Replacement.TargetReplicaIndex)
+			completed := requireReplicaSnapshot(t, tc)
+			requireReplicaResourceUIDsChanged(t, original, completed)
+			assertReplicaConfiguration(t, completed, want)
+
+			tests.Logger.Info("4. Reject template changes and preserve the completed replica and active replacement at S1")
+			const templateRevision = "rr13-template"
+			requirePodTemplateChangesRejectedDuringRecreation(tc, first.PCS, templateRevision)
+			pending := requireReplicaSnapshot(t, tc)
+			assertReplicaResourceUIDsUnchanged(t, completed, pending)
+			require.Equal(t, completed.PCLQ.Spec, pending.PCLQ.Spec)
+			require.Equal(t, completed.PCSG.Spec, pending.PCSG.Spec)
+			require.Equal(t, completed.PGM.Spec.Entries, pending.PGM.Spec.Entries)
+			unchangedTarget := requireReplicaSnapshotForIndex(t, tc, 1)
+			assertReplicaResourceUIDsUnchanged(t, first, unchangedTarget)
+			require.Equal(t, first.PCLQ.Spec, unchangedTarget.PCLQ.Spec)
+			require.Equal(t, first.PCSG.Spec, unchangedTarget.PCSG.Spec)
+			require.Equal(t, first.PGM.Spec.Entries, unchangedTarget.PGM.Spec.Entries)
+
+			tests.Logger.Info("5. Remove the replica-1 KWOK stage and verify recreation completes at its original generation")
+			require.NoError(t, kwok.DeleteStage(tc.Ctx, tc.Client, kwokStageReadyBlockedR1Name))
+			updateutils.DeleteNotReadyPodsOnReplica(t, tc, 1)
+			requireReplicaRecreationConverged(t, tc, expectedReplicaRecreationCompletion{
+				GenerationHash: firstTarget.GenerationHash, SchedulingHash: firstTarget.SchedulingHash, Replicas: 2,
+				Pods: 20, PCSReplicaIndices: []int{0, 1}, Configuration: want,
+			})
+			after0 := requireReplicaSnapshot(t, tc)
+			after1 := requireReplicaSnapshotForIndex(t, tc, 1)
+			assertReplicaResourceUIDsUnchanged(t, completed, after0)
+			assertReplicaResourceUIDsUnchanged(t, first, after1)
+			assertReplicaConfiguration(t, after1, want)
+
+			tests.Logger.Info("6. Retry the template change and verify every final replica receives the ordinary configured-strategy update")
+			requireWorkload2TemplateUpdateAfterRecreation(tc, []replicaRecreationSnapshot{after0, after1}, templateRevision)
+		})
+	}
+}
+
+// Test_RR14_ScaleToZeroCancelsSameIndexReplacement verifies that scaling to zero cancels an active
+// same-index replacement, cleans up every replica resource, and permits scale-out at the latest configuration.
+//
+// Scenario:
+//  1. Deploy workload2 with one Ready PCS replica under Coherent or RollingRecreate.
+//  2. Keep replacement 0's standalone pods NotReady using a KWOK stage, increase sg-x MinAvailable
+//     1 -> 2, and wait for the same-index source cleanup and fresh S1 replacement resources.
+//  3. Add a test finalizer to the replacement standalone PodClique and start a PCS watch before scaling
+//     1 -> 0. Verify replacement 0 is canceled and remains unapplied while the finalizer blocks cleanup.
+//  4. Remove the test finalizer. Verify all replica resources disappear, recreation completes with zero
+//     replicas, and no replacement commitment or claimed replica index remains.
+//  5. Remove the KWOK stage and scale 0 -> 1. Verify fresh resources use the latest MinAvailable,
+//     full pod templates, and exact S1 PodGangMap composition without another recreation.
+func Test_RR14_ScaleToZeroCancelsSameIndexReplacement(t *testing.T) {
+	for _, strategyType := range []grovev1beta1.UpdateStrategyType{grovev1beta1.CoherentStrategy, grovev1beta1.RollingRecreateStrategy} {
+		t.Run(string(strategyType), func(t *testing.T) {
+			tests.Logger.Infof("1. Deploy workload2 with one Ready PCS replica under %s", strategyType)
+			tc, cleanup, _ := setupTest(t, testConfig{
+				workloadName: "workload2", workloadYAML: "../../yaml/workload2.yaml", workerNodes: 10, expectedPods: 10,
+			})
+			defer cleanup()
+			require.NoError(t, updateutils.UpdatePCSUpdateStrategy(tc, strategyType))
+			updateutils.AssertGenerationHashConverged(tc)
+			before := requireReplicaSnapshot(t, tc)
+
+			tests.Logger.Info("2. Keep replacement 0's standalone pods NotReady with KWOK and change sg-x MinAvailable 1 -> 2")
+			require.NoError(t, kwok.ApplyStage(tc.Ctx, tc.Client, kwokStageReadyBlockedR0Path))
+			defer func() {
+				assert.NoError(t, kwok.DeleteStage(tc.Ctx, tc.Client, kwokStageReadyBlockedR0Name))
+			}()
+			require.NoError(t, triggerPCSGMinAvailableChange(tc, "sg-x", 2))
+			firstPCS, err := waitForSameIndexReplacementCleanup(tc, 0)
+			require.NoError(t, err)
+			target := requireSchedulingTargetChanged(t, before.PCS, firstPCS)
+			want := expectedReplicaConfiguration{
+				StandaloneMinAvailable: 1, PCSGMinAvailable: 2, PCSGReplicas: 2,
+				PodGangMap: updateutils.ExpectedReplicaPodGangMap{
+					GenerationHash: target.GenerationHash, StandalonePodCounts: map[string]int32{"pc-a": 2},
+					PCSGName: "sg-x", AnchorIndices: []int32{0, 1},
+				},
+			}
+			first := requireRecreatedReplica(t, tc, before, want)
+
+			tests.Logger.Info("3. Block replacement cleanup with a test finalizer and watch scale 1 -> 0 cancel replacement 0")
+			removeFinalizer, err := holdReplicaSourceCleanup(tc, first.PCLQ)
+			require.NoError(t, err)
+			defer func() { assert.NoError(t, removeFinalizer()) }()
+			watchCtx, cancelWatch := context.WithTimeout(tc.Ctx, tc.Timeout)
+			defer cancelWatch()
+			pcsWatcher, err := watchPodCliqueSet(watchCtx, tc)
+			require.NoError(t, err)
+			defer pcsWatcher.Stop()
+			require.NoError(t, tc.ScalePCS(tc.Workload.Name, 0))
+			cancellationMessage, err := waitForCanceledReplacement(watchCtx, pcsWatcher, 0)
+			require.NoError(t, err)
+			require.NotEmpty(t, cancellationMessage)
+			require.NoError(t, waitForReplicaSourceDeletion(tc, first.PCLQ))
+			zeroPCS, err := updateutils.GetPCS(tc, tc.Workload.Name)
+			require.NoError(t, err)
+			progress := requireActiveReplicaRecreation(t, zeroPCS)
+			require.Len(t, progress.CurrentlyUpdating, 1)
+			canceled := progress.CurrentlyUpdating[0]
+			require.Equal(t, int32(0), canceled.ReplicaIndex)
+			require.NotNil(t, canceled.Replacement)
+			require.Equal(t, int32(0), canceled.Replacement.TargetReplicaIndex)
+			require.NotNil(t, canceled.Replacement.CanceledAt)
+			require.Nil(t, canceled.UpdateEndedAt)
+			require.Equal(t, target.GenerationHash, *zeroPCS.Status.CurrentGenerationHash)
+			require.Equal(t, target.SchedulingHash, progress.TargetSchedulingConfigurationHash)
+			require.Equal(t, first.PCS.Status.AppliedSchedulingConfigurationHash, zeroPCS.Status.AppliedSchedulingConfigurationHash,
+				"zero desired replicas must not complete recreation before canceled resources are cleaned up")
+
+			tests.Logger.Info("4. Remove the test finalizer and verify zero replicas, no replica resources, and no replacement commitments")
+			require.NoError(t, removeFinalizer())
+			require.NoError(t, waitForReplicaResourcesDeleted(tc, client.MatchingLabels{apicommon.LabelPartOfKey: tc.Workload.Name}))
+			require.NoError(t, waitForReplicaRecreationComplete(tc, 0))
+			zeroPCS, err = updateutils.GetPCS(tc, tc.Workload.Name)
+			require.NoError(t, err)
+			assertReplicaRecreationCompleted(t, zeroPCS, expectedReplicaRecreationCompletion{
+				GenerationHash: target.GenerationHash, SchedulingHash: target.SchedulingHash, Replicas: 0,
+			})
+			require.Equal(t, int32(0), zeroPCS.Spec.Replicas)
+			require.Equal(t, int32(0), zeroPCS.Status.Replicas)
+			require.Nil(t, zeroPCS.Status.ScalingProgress)
+			require.NoError(t, waitForClaimedPCSReplicaIndices(tc, []int{}))
+			updateutils.AssertUpdateInProgressCleared(tc)
+
+			tests.Logger.Info("5. Remove the KWOK stage and scale 0 -> 1 using the latest configuration")
+			require.NoError(t, kwok.DeleteStage(tc.Ctx, tc.Client, kwokStageReadyBlockedR0Name))
+			require.NoError(t, tc.ScalePCS(tc.Workload.Name, 1))
+			requireReplicaRecreationConverged(t, tc, expectedReplicaRecreationCompletion{
+				GenerationHash: target.GenerationHash, SchedulingHash: target.SchedulingHash, Replicas: 1,
+				Pods: 10, PCSReplicaIndices: []int{0}, Configuration: want,
+			})
+			requireReplicaResourceUIDsChanged(t, first, requireReplicaSnapshot(t, tc))
+			assertLatestPodTemplatesOnPCSReplicas(tc, []int{0})
+		})
 	}
 }
 
@@ -1047,6 +1541,10 @@ const (
 	kwokStageReadyBlockedR1Path = "../../yaml/kwok/pod-ready-blocked-r1-standalone.yaml"
 	// kwokStageReadyBlockedR1Name is the KWOK stage name.
 	kwokStageReadyBlockedR1Name = "pod-ready-blocked-r1-standalone"
+	// kwokStageReadyBlockedR2Path is the KWOK stage fixture path.
+	kwokStageReadyBlockedR2Path = "../../yaml/kwok/pod-ready-blocked-r2-standalone.yaml"
+	// kwokStageReadyBlockedR2Name is the KWOK stage name.
+	kwokStageReadyBlockedR2Name = "pod-ready-blocked-r2-standalone"
 )
 
 // deletePodsForReplica deletes all pods of the given PCS replica index. The operator recreates them, and a
@@ -1357,14 +1855,22 @@ func requireActiveReplacement(
 ) *grovev1beta1.PodCliqueSetReplicaUpdateProgress {
 	t.Helper()
 	require.NotNil(t, progress)
-	require.Len(t, progress.CurrentlyUpdating, 1, "expected a single selected replacement")
-	replicaProgress := &progress.CurrentlyUpdating[0]
+	selections := unfinishedPCSReplicaSelections(progress)
+	require.Len(t, selections, 1, "expected a single unfinished replacement")
+	replicaProgress := &selections[0]
 	require.Equal(t, want.SourcePCSReplicaIndex, replicaProgress.ReplicaIndex, "replacement source index")
 	require.Nil(t, replicaProgress.UpdateEndedAt, "replica %d replacement must remain unfinished", want.SourcePCSReplicaIndex)
 	require.NotNil(t, replicaProgress.Replacement, "replica %d must have replacement progress", want.SourcePCSReplicaIndex)
 	require.Equal(t, want.TargetPCSReplicaIndex, replicaProgress.Replacement.TargetReplicaIndex, "replacement target index")
 	require.Nil(t, replicaProgress.Replacement.CanceledAt, "replica %d replacement must not be canceled", want.SourcePCSReplicaIndex)
 	return replicaProgress
+}
+
+// unfinishedPCSReplicaSelections returns a shallow copy of unfinished selections in their original order.
+func unfinishedPCSReplicaSelections(progress *grovev1beta1.PodCliqueSetUpdateProgress) []grovev1beta1.PodCliqueSetReplicaUpdateProgress {
+	return slices.DeleteFunc(slices.Clone(progress.CurrentlyUpdating), func(selection grovev1beta1.PodCliqueSetReplicaUpdateProgress) bool {
+		return selection.UpdateEndedAt != nil
+	})
 }
 
 // requireSchedulingTargetChanged verifies a new structural target without advancing the applied baseline.
@@ -1422,12 +1928,46 @@ func recreationSupersessionCondition(previous *grovev1beta1.PodCliqueSet) watcht
 		if !ok {
 			return false, fmt.Errorf("unexpected PCS watch object %T", event.Object)
 		}
-		if err := validateRecreationWhileBlocked(previous, pcs); err != nil {
-			return false, err
+		progress := pcs.Status.UpdateProgress
+		if progress == nil || progress.UpdateEndedAt != nil {
+			return false, fmt.Errorf("update stopped while fresh pod readiness was blocked")
 		}
-		return pcs.Status.CurrentGenerationHash != nil &&
-			*pcs.Status.CurrentGenerationHash != *previous.Status.CurrentGenerationHash &&
-			pcs.Status.UpdateProgress.TargetSchedulingConfigurationHash != previous.Status.UpdateProgress.TargetSchedulingConfigurationHash, nil
+		if !assert.ObjectsAreEqual(previous.Status.AppliedSchedulingConfigurationHash, pcs.Status.AppliedSchedulingConfigurationHash) {
+			return false, fmt.Errorf("scheduling baseline changed while fresh pod readiness was blocked")
+		}
+		if previous.Status.UpdateProgress.RequiresReplicaRecreation {
+			if err := validateRecreationWhileBlocked(previous, pcs); err != nil {
+				return false, err
+			}
+		}
+		if pcs.Status.CurrentGenerationHash == nil || *pcs.Status.CurrentGenerationHash == *previous.Status.CurrentGenerationHash {
+			return false, nil
+		}
+		if !progress.RequiresReplicaRecreation {
+			return false, fmt.Errorf("superseding generation must require replica recreation")
+		}
+		if progress.TargetSchedulingConfigurationHash == previous.Status.UpdateProgress.TargetSchedulingConfigurationHash {
+			return false, fmt.Errorf("superseding generation must change the scheduling target")
+		}
+		if len(progress.InScopeStandalonePodCliques) != 0 || len(progress.InScopePodCliqueScalingGroups) != 0 {
+			return false, fmt.Errorf("replica recreation retained coherent update scope")
+		}
+		// Existing recreation selections were checked above, including completed selections being dropped.
+		if !previous.Status.UpdateProgress.RequiresReplicaRecreation && len(progress.CurrentlyUpdating) != len(previous.Status.UpdateProgress.CurrentlyUpdating) {
+			return false, fmt.Errorf("supersession changed the active replica selection count")
+		}
+		for i, replicaProgress := range progress.CurrentlyUpdating {
+			if !previous.Status.UpdateProgress.RequiresReplicaRecreation && replicaProgress.ReplicaIndex != previous.Status.UpdateProgress.CurrentlyUpdating[i].ReplicaIndex {
+				return false, fmt.Errorf("supersession changed the active replica selection")
+			}
+			if replicaProgress.UpdateEndedAt != nil {
+				return false, fmt.Errorf("supersession completed the active replica selection")
+			}
+			if len(replicaProgress.InFlightEpochs) != 0 {
+				return false, fmt.Errorf("replica recreation retained coherent in-flight epochs")
+			}
+		}
+		return true, nil
 	}
 }
 
@@ -1444,16 +1984,19 @@ func validateRecreationWhileBlocked(previous, current *grovev1beta1.PodCliqueSet
 		!assert.ObjectsAreEqual(previous.Status.AppliedSchedulingConfigurationHash, current.Status.AppliedSchedulingConfigurationHash) {
 		return fmt.Errorf("scheduling configuration was marked applied while replacement readiness was blocked")
 	}
-	previousSelections := previous.Status.UpdateProgress.CurrentlyUpdating
-	if len(progress.CurrentlyUpdating) != len(previousSelections) {
-		return fmt.Errorf("replica selections changed during supersession: before %d, after %d", len(previousSelections), len(progress.CurrentlyUpdating))
-	}
 	hasSupersededGeneration := current.Status.CurrentGenerationHash != nil &&
 		*current.Status.CurrentGenerationHash != *previous.Status.CurrentGenerationHash
+	previousSelections := previous.Status.UpdateProgress.CurrentlyUpdating
+	if hasSupersededGeneration {
+		previousSelections = unfinishedPCSReplicaSelections(previous.Status.UpdateProgress)
+	}
+	if len(progress.CurrentlyUpdating) != len(previousSelections) {
+		return fmt.Errorf("replica selections changed during supersession: expected %d, got %d", len(previousSelections), len(progress.CurrentlyUpdating))
+	}
 	for i, replicaProgress := range progress.CurrentlyUpdating {
 		before := previousSelections[i]
-		if replicaProgress.UpdateEndedAt != nil {
-			return fmt.Errorf("replica %d update ended while replacement readiness was blocked", replicaProgress.ReplicaIndex)
+		if !assert.ObjectsAreEqual(before.UpdateEndedAt, replicaProgress.UpdateEndedAt) {
+			return fmt.Errorf("replica %d completion changed while replacement readiness was blocked", replicaProgress.ReplicaIndex)
 		}
 		expectedReplacement := before.Replacement.DeepCopy()
 		if hasSupersededGeneration && expectedReplacement != nil && expectedReplacement.CanceledAt == nil {
@@ -1470,16 +2013,19 @@ func validateRecreationWhileBlocked(previous, current *grovev1beta1.PodCliqueSet
 // cleanup reset, and update timestamps, returning the new target even when it matches the applied configuration.
 func requireRecreationSuperseded(t *testing.T, before, after *grovev1beta1.PodCliqueSet) recreationTarget {
 	t.Helper()
+	requireSchedulingTargetChanged(t, before, after)
 	beforeProgress := requireActiveReplicaRecreation(t, before)
-	require.Len(t, beforeProgress.CurrentlyUpdating, 1)
-	beforeReplicaProgress := beforeProgress.CurrentlyUpdating[0]
+	beforeSelections := unfinishedPCSReplicaSelections(beforeProgress)
+	require.Len(t, beforeSelections, 1)
+	beforeReplicaProgress := beforeSelections[0]
 	require.NotNil(t, beforeReplicaProgress.Replacement)
 	wantReplacement := expectedReplicaReplacement{
 		SourcePCSReplicaIndex: beforeReplicaProgress.ReplicaIndex,
 		TargetPCSReplicaIndex: beforeReplicaProgress.Replacement.TargetReplicaIndex,
 	}
 	requireActiveReplacement(t, beforeProgress, wantReplacement)
-	target := requireSchedulingTargetChanged(t, before, after)
+	require.NotNil(t, after.Status.CurrentGenerationHash)
+	require.NotEqual(t, *before.Status.CurrentGenerationHash, *after.Status.CurrentGenerationHash, "supersession must change the PCS generation")
 	progress := requireActiveReplicaRecreation(t, after)
 	replicaProgress := requireActiveReplacement(t, progress, wantReplacement)
 	require.NoError(t, validateRecreationWhileBlocked(before, after), "supersession must preserve replacement commitments")
@@ -1487,7 +2033,7 @@ func requireRecreationSuperseded(t *testing.T, before, after *grovev1beta1.PodCl
 	require.NotNil(t, progress.PreviousPodCliqueSetGenerationHash)
 	assert.Equal(t, *before.Status.CurrentGenerationHash, *progress.PreviousPodCliqueSetGenerationHash)
 	assert.Equal(t, progress.UpdateStartedAt, replicaProgress.UpdateStartedAt, "replacement must use the new update's start time")
-	return target
+	return recreationTarget{GenerationHash: *after.Status.CurrentGenerationHash, SchedulingHash: progress.TargetSchedulingConfigurationHash}
 }
 
 // requireCleanupAfterSupersession waits for a fresh same-index cleanup barrier at the superseding target.
@@ -1875,6 +2421,22 @@ func requireRecreationResumed(t *testing.T, before, after *grovev1beta1.PodCliqu
 // waitForRecreationReplicaCount observes a scale change without permitting active replacement commitments to change.
 // The watch must be started before scaling. Watch loss is an error, not a reason to skip intermediate statuses.
 func waitForRecreationReplicaCount(ctx context.Context, watcher watch.Interface, before *grovev1beta1.PodCliqueSet, pcsReplicas int32) (*grovev1beta1.PodCliqueSet, error) {
+	pcs, err := waitForRecreationScaling(ctx, watcher, before, func(pcs *grovev1beta1.PodCliqueSet) (bool, error) {
+		return pcs.Spec.Replicas == pcsReplicas, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("waiting for recreation scale to %d replicas: %w", pcsReplicas, err)
+	}
+	return pcs, nil
+}
+
+// waitForRecreationScaling validates the held commitment on every event, then checks the scaling milestone.
+func waitForRecreationScaling(
+	ctx context.Context,
+	watcher watch.Interface,
+	before *grovev1beta1.PodCliqueSet,
+	reached func(*grovev1beta1.PodCliqueSet) (bool, error),
+) (*grovev1beta1.PodCliqueSet, error) {
 	event, err := watchtools.UntilWithoutRetry(ctx, watcher, func(event watch.Event) (bool, error) {
 		switch event.Type {
 		case watch.Error:
@@ -1896,10 +2458,21 @@ func waitForRecreationReplicaCount(ctx context.Context, watcher watch.Interface,
 			before.Status.UpdateProgress.TargetSchedulingConfigurationHash != pcs.Status.UpdateProgress.TargetSchedulingConfigurationHash {
 			return false, fmt.Errorf("PCS scaling superseded the scheduling target")
 		}
-		return pcs.Spec.Replicas == pcsReplicas, nil
+		if !before.Status.UpdateProgress.UpdateStartedAt.Equal(&pcs.Status.UpdateProgress.UpdateStartedAt) {
+			return false, fmt.Errorf("PCS scaling restarted recreation")
+		}
+		for i, replicaProgress := range pcs.Status.UpdateProgress.CurrentlyUpdating {
+			if !before.Status.UpdateProgress.CurrentlyUpdating[i].UpdateStartedAt.Equal(&replicaProgress.UpdateStartedAt) {
+				return false, fmt.Errorf("PCS scaling restarted replacement of replica %d", replicaProgress.ReplicaIndex)
+			}
+		}
+		return reached(pcs)
 	})
 	if err != nil {
-		return nil, fmt.Errorf("waiting for recreation scale to %d replicas: %w", pcsReplicas, err)
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return nil, err
 	}
 	return event.Object.(*grovev1beta1.PodCliqueSet).DeepCopy(), nil
 }
@@ -1925,5 +2498,394 @@ func waitForReplicaReadyPods(tc *testctx.TestContext, pcsReplicaIndex, expectedP
 			}
 		}
 		return live == expectedPods && ready == expectedPods, nil
+	})
+}
+
+// waitForRecreationScaleIn checks each PCS event until the specified non-target replicas have been
+// selected and fully removed. The held replacement and scheduling target must stay unchanged throughout.
+// The watch must start before scale-in and is stopped on return.
+func waitForRecreationScaleIn(
+	ctx context.Context,
+	watcher watch.Interface,
+	before *grovev1beta1.PodCliqueSet,
+	pcsReplicaIndices []int32,
+) (*grovev1beta1.PodCliqueSet, error) {
+	wantPCSReplicaIndices := sets.New(pcsReplicaIndices...)
+	selectedPCSReplicaIndices := sets.New[int32]()
+	wantPCSReplicas := before.Spec.Replicas - int32(wantPCSReplicaIndices.Len())
+	pcs, err := waitForRecreationScaling(ctx, watcher, before, func(pcs *grovev1beta1.PodCliqueSet) (bool, error) {
+		if scalingProgress := pcs.Status.ScalingProgress; scalingProgress != nil {
+			if len(scalingProgress.ScaleOutReplicaIndices) != 0 {
+				return false, fmt.Errorf("unexpected scale-out during recreation scale-in: %v", scalingProgress.ScaleOutReplicaIndices)
+			}
+			for _, pcsReplicaIndex := range scalingProgress.ScaleInReplicaIndices {
+				if !wantPCSReplicaIndices.Has(pcsReplicaIndex) {
+					return false, fmt.Errorf("scale-in selected PCS replica %d, expected only %v", pcsReplicaIndex, pcsReplicaIndices)
+				}
+				selectedPCSReplicaIndices.Insert(pcsReplicaIndex)
+			}
+		}
+		return selectedPCSReplicaIndices.Equal(wantPCSReplicaIndices) &&
+			pcs.Spec.Replicas == wantPCSReplicas && pcs.Status.Replicas == wantPCSReplicas &&
+			pcs.Status.ScalingProgress == nil, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("waiting for recreation scale-in of PCS replicas %v: %w", pcsReplicaIndices, err)
+	}
+	return pcs, nil
+}
+
+// waitForNotReadyPodAtRevision waits for a live workload pod at the requested UPDATE_TRIGGER revision
+// that remains NotReady. This makes the first template update observable before another change supersedes it.
+func waitForNotReadyPodAtRevision(tc *testctx.TestContext, updateValue string) error {
+	return wait.PollUntilContextTimeout(tc.Ctx, tc.Interval, tc.Timeout, true, func(ctx context.Context) (bool, error) {
+		var workloadPods corev1.PodList
+		if err := tc.Client.List(ctx, &workloadPods, client.InNamespace(tc.Namespace),
+			client.MatchingLabels{apicommon.LabelPartOfKey: tc.Workload.Name}); err != nil {
+			return false, err
+		}
+		for _, pod := range workloadPods.Items {
+			if pod.DeletionTimestamp != nil || kubeutils.IsPodReady(&pod) {
+				continue
+			}
+			for _, env := range pod.Spec.Containers[0].Env {
+				if env.Name == "UPDATE_TRIGGER" && env.Value == updateValue {
+					return true, nil
+				}
+			}
+		}
+		return false, nil
+	})
+}
+
+// waitForInFlightCoherentEpochs waits until the active replica has recorded coherent epochs, so
+// supersession can check that existing epoch references are cleared rather than checking an empty field.
+func waitForInFlightCoherentEpochs(tc *testctx.TestContext) error {
+	return wait.PollUntilContextTimeout(tc.Ctx, tc.Interval, tc.Timeout, true, func(ctx context.Context) (bool, error) {
+		var pcs grovev1beta1.PodCliqueSet
+		key := types.NamespacedName{Namespace: tc.Namespace, Name: tc.Workload.Name}
+		if err := tc.Client.Get(ctx, key, &pcs); err != nil {
+			return false, err
+		}
+		if pcs.Status.UpdateProgress == nil {
+			return false, nil
+		}
+		for _, replicaProgress := range pcs.Status.UpdateProgress.CurrentlyUpdating {
+			if replicaProgress.UpdateEndedAt == nil && len(replicaProgress.InFlightEpochs) != 0 {
+				return true, nil
+			}
+		}
+		return false, nil
+	})
+}
+
+// assertWorkload2MidCoherentPodGangMap checks the full first pc-a-only coherent sub-step while its new
+// pod remains NotReady. The old anchor and the new anchor each carry one pc-a pod. The sg-x indices
+// remain in the original anchor and tail, and the empty ScaleOut retains its original identity.
+func assertWorkload2MidCoherentPodGangMap(t *testing.T, before, after replicaRecreationSnapshot) {
+	t.Helper()
+	oldHash := *before.PCS.Status.CurrentGenerationHash
+	newHash := *after.PCS.Status.CurrentGenerationHash
+	require.NotEqual(t, oldHash, newHash)
+	updateutils.AssertReplicaPodGangMap(t, before.PGM.Spec.Entries, updateutils.ExpectedReplicaPodGangMap{
+		GenerationHash: oldHash, StandalonePodCounts: map[string]int32{"pc-a": 2},
+		PCSGName: "sg-x", AnchorIndices: []int32{0}, TailIndices: []int32{1},
+	})
+
+	wantOldAnchor := updateutils.RequireSingleEntryByRole(t, before.PGM.Spec.Entries, grovev1beta1.PodGangEntryRoleAnchor)
+	wantOldAnchor.PodCliques = map[string]int32{"pc-a": 1}
+	wantTail := updateutils.RequireSingleEntryByRole(t, before.PGM.Spec.Entries, grovev1beta1.PodGangEntryRoleTail)
+	// sg-x is outside the template update scope, so its tail advances without moving its replica index.
+	wantTail.PodCliqueSetGenerationHash = newHash
+	wantScaleOut := updateutils.RequireSingleEntryByRole(t, before.PGM.Spec.Entries, grovev1beta1.PodGangEntryRoleScaleOut)
+
+	inFlightEpochs := after.PCS.Status.UpdateProgress.CurrentlyUpdating[0].InFlightEpochs
+	require.Len(t, inFlightEpochs, 1, "the first coherent sub-step must track its new anchor epoch")
+	for _, entry := range before.PGM.Spec.Entries {
+		require.NotEqual(t, entry.Epoch, inFlightEpochs[0], "the coherent update must create a new anchor epoch")
+	}
+	wantNewAnchor := grovev1beta1.PodGangEntry{
+		Epoch: inFlightEpochs[0], Role: grovev1beta1.PodGangEntryRoleAnchor,
+		PodCliqueSetGenerationHash: newHash, PodCliques: map[string]int32{"pc-a": 1},
+	}
+	require.ElementsMatch(t, []grovev1beta1.PodGangEntry{wantOldAnchor, wantTail, wantScaleOut, wantNewAnchor},
+		after.PGM.Spec.Entries, "the blocked coherent update must retain the exact old and new entry composition")
+}
+
+// requirePodTemplateChangesRejectedDuringRecreation watches the commitment throughout rejected
+// standalone and PCSG-member edits. Existing member PodCliques must retain their specs and UIDs.
+func requirePodTemplateChangesRejectedDuringRecreation(tc *testctx.TestContext, before *grovev1beta1.PodCliqueSet, revision string) {
+	tc.T.Helper()
+	var beforeCliques grovev1beta1.PodCliqueList
+	require.NoError(tc.T, tc.Client.List(tc.Ctx, &beforeCliques, client.InNamespace(tc.Namespace),
+		client.MatchingLabels{apicommon.LabelPartOfKey: tc.Workload.Name}))
+	watchCtx, cancel := context.WithTimeout(tc.Ctx, 2*tc.Interval)
+	defer cancel()
+	watcher, err := watchPodCliqueSet(watchCtx, tc)
+	require.NoError(tc.T, err)
+	defer watcher.Stop()
+	for _, names := range [][]string{{"pc-a"}, {"pc-b"}, {"pc-c"}, {"pc-a", "pc-b", "pc-c"}} {
+		err := updateutils.TriggerPodCliqueUpdateWithRevision(tc, revision, names...)
+		require.ErrorContains(tc.T, err, "admission webhook", "template edit for %v must fail admission", names)
+		require.ErrorContains(tc.T, err, "pod templates cannot be changed while PCS replica recreation is in progress")
+		require.ErrorContains(tc.T, err, "Retry after recreation completes")
+	}
+	validate := func(pcs *grovev1beta1.PodCliqueSet) error {
+		if pcs.Generation != before.Generation || !assert.ObjectsAreEqual(before.Spec, pcs.Spec) ||
+			!assert.ObjectsAreEqual(before.Status.CurrentGenerationHash, pcs.Status.CurrentGenerationHash) {
+			return fmt.Errorf("rejected template edit changed the PCS spec or generation")
+		}
+		if err := validateRecreationWhileBlocked(before, pcs); err != nil {
+			return err
+		}
+		if !before.Status.UpdateProgress.UpdateStartedAt.Equal(&pcs.Status.UpdateProgress.UpdateStartedAt) {
+			return fmt.Errorf("rejected template edit restarted replica recreation")
+		}
+		for i, progress := range pcs.Status.UpdateProgress.CurrentlyUpdating {
+			if !before.Status.UpdateProgress.CurrentlyUpdating[i].UpdateStartedAt.Equal(&progress.UpdateStartedAt) {
+				return fmt.Errorf("rejected template edit restarted replacement for PCS replica %d", progress.ReplicaIndex)
+			}
+		}
+		return nil
+	}
+	_, err = watchtools.UntilWithoutRetry(watchCtx, watcher, func(event watch.Event) (bool, error) {
+		switch event.Type {
+		case watch.Error:
+			return false, apierrors.FromObject(event.Object)
+		case watch.Deleted:
+			return false, fmt.Errorf("PCS deleted after rejected template edit")
+		case watch.Added, watch.Modified:
+		default:
+			return false, nil
+		}
+		pcs, ok := event.Object.(*grovev1beta1.PodCliqueSet)
+		if !ok {
+			return false, fmt.Errorf("unexpected PCS watch object %T", event.Object)
+		}
+		return false, validate(pcs)
+	})
+	require.True(tc.T, wait.Interrupted(err), "recreation changed or the watch ended before the observation window: %v", err)
+	require.ErrorIs(tc.T, watchCtx.Err(), context.DeadlineExceeded)
+	after, err := updateutils.GetPCS(tc, tc.Workload.Name)
+	require.NoError(tc.T, err)
+	require.NoError(tc.T, validate(after))
+	for _, beforeClique := range beforeCliques.Items {
+		var afterClique grovev1beta1.PodClique
+		require.NoError(tc.T, tc.Client.Get(tc.Ctx, client.ObjectKeyFromObject(&beforeClique), &afterClique))
+		require.Equal(tc.T, beforeClique.UID, afterClique.UID, "%s must not be recreated", beforeClique.Name)
+		require.Equal(tc.T, beforeClique.Spec, afterClique.Spec, "%s spec must remain unchanged", beforeClique.Name)
+	}
+}
+
+// requireWorkload2TemplateUpdateAfterRecreation checks that retrying the template edit starts an ordinary
+// update. KWOK makes that update observable before it completes, and every final index must converge.
+func requireWorkload2TemplateUpdateAfterRecreation(tc *testctx.TestContext, before []replicaRecreationSnapshot, revision string) {
+	tc.T.Helper()
+	pcsBefore := before[0].PCS
+	require.NoError(tc.T, kwok.ApplyStage(tc.Ctx, tc.Client, kwokStageReadyBlockedR0Path))
+	defer func() {
+		assert.NoError(tc.T, kwok.DeleteStage(tc.Ctx, tc.Client, kwokStageReadyBlockedR0Name))
+	}()
+	require.NoError(tc.T, updateutils.TriggerPodCliqueUpdateWithRevision(tc, revision, "pc-a", "pc-b", "pc-c"))
+	require.NoError(tc.T, updateutils.WaitForGenerationHashChange(tc, *pcsBefore.Status.CurrentGenerationHash))
+	require.NoError(tc.T, waitForNotReadyPodAtRevision(tc, revision))
+	if pcsBefore.Spec.UpdateStrategy.Type == grovev1beta1.CoherentStrategy {
+		updateutils.WaitForReplicaMidCoherentRoll(tc.T, tc, 0)
+		require.NoError(tc.T, waitForInFlightCoherentEpochs(tc))
+	}
+	active, err := updateutils.GetPCS(tc, tc.Workload.Name)
+	require.NoError(tc.T, err)
+	require.NotNil(tc.T, active.Status.UpdateProgress)
+	require.Nil(tc.T, active.Status.UpdateProgress.UpdateEndedAt)
+	require.False(tc.T, active.Status.UpdateProgress.RequiresReplicaRecreation, "retry must use the configured template-update strategy")
+	require.Equal(tc.T, pcsBefore.Status.AppliedSchedulingConfigurationHash, active.Status.AppliedSchedulingConfigurationHash)
+	require.Equal(tc.T, *pcsBefore.Status.AppliedSchedulingConfigurationHash, active.Status.UpdateProgress.TargetSchedulingConfigurationHash)
+	for _, selection := range active.Status.UpdateProgress.CurrentlyUpdating {
+		require.Nil(tc.T, selection.Replacement, "ordinary template update must not select a replacement")
+	}
+	if pcsBefore.Spec.UpdateStrategy.Type == grovev1beta1.CoherentStrategy {
+		require.Equal(tc.T, []string{"pc-a"}, active.Status.UpdateProgress.InScopeStandalonePodCliques)
+		require.Equal(tc.T, []string{"sg-x"}, active.Status.UpdateProgress.InScopePodCliqueScalingGroups)
+	} else {
+		pgm, err := updateutils.GetReplicaPodGangMap(tc, 0)
+		require.NoError(tc.T, err)
+		updateutils.AssertEntriesUnchangedExceptHashForNonCoherentUpdate(tc.T, before[0].PGM.Spec.Entries, pgm.Spec.Entries, *active.Status.CurrentGenerationHash)
+	}
+	for pcsReplicaIndex, snapshot := range before {
+		assertReplicaResourceUIDsUnchanged(tc.T, snapshot, requireReplicaSnapshotForIndex(tc.T, tc, pcsReplicaIndex))
+	}
+	require.NoError(tc.T, kwok.DeleteStage(tc.Ctx, tc.Client, kwokStageReadyBlockedR0Name))
+	updateutils.DeleteNotReadyPodsOnReplica(tc.T, tc, 0)
+	require.NoError(tc.T, updateutils.WaitForRollingUpdateComplete(tc, pcsBefore.Spec.Replicas))
+	require.NoError(tc.T, tc.WaitForPods(10*len(before)))
+	pcsReplicaIndices := make([]int, 0, len(before))
+	for pcsReplicaIndex, snapshot := range before {
+		pcsReplicaIndices = append(pcsReplicaIndices, pcsReplicaIndex)
+		assertReplicaResourceUIDsUnchanged(tc.T, snapshot, requireReplicaSnapshotForIndex(tc.T, tc, pcsReplicaIndex))
+	}
+	updateutils.AssertGenerationHashConverged(tc)
+	updateutils.AssertNoActiveChildUpdates(tc)
+	assertLatestPodTemplatesOnPCSReplicas(tc, pcsReplicaIndices)
+	for _, cliqueName := range []string{"pc-a", "pc-b", "pc-c"} {
+		updateutils.AssertAffectedPodsAtRevision(tc, cliqueName, revision)
+	}
+}
+
+// assertLatestPodTemplatesOnPCSReplicas checks every standalone and group-member PodClique against
+// the current PCS PodSpec. It requires the exact child counts and verifies every pod uses its latest hash.
+func assertLatestPodTemplatesOnPCSReplicas(tc *testctx.TestContext, pcsReplicaIndices []int) {
+	tc.T.Helper()
+	pcs, err := updateutils.GetPCS(tc, tc.Workload.Name)
+	require.NoError(tc.T, err)
+	require.NotNil(tc.T, pcs.Status.CurrentGenerationHash)
+	wantPCLQCountsByCliqueName := make(map[string]int, len(pcs.Spec.Template.Cliques))
+	for _, clique := range pcs.Spec.Template.Cliques {
+		wantPCLQCountsByCliqueName[clique.Name] = 1
+	}
+	for _, config := range pcs.Spec.Template.PodCliqueScalingGroupConfigs {
+		require.NotNil(tc.T, config.Replicas, "group %s must have a configured replica count", config.Name)
+		for _, cliqueName := range config.CliqueNames {
+			wantPCLQCountsByCliqueName[cliqueName] = int(*config.Replicas)
+		}
+	}
+	wantPCSGEnvironmentByCliqueName := expectedPCSGEnvironment(tc.T, pcs)
+	for _, pcsReplicaIndex := range pcsReplicaIndices {
+		labels := client.MatchingLabels{
+			apicommon.LabelPartOfKey: tc.Workload.Name, apicommon.LabelPodCliqueSetReplicaIndex: strconv.Itoa(pcsReplicaIndex),
+		}
+		var pclqs grovev1beta1.PodCliqueList
+		require.NoError(tc.T, tc.Client.List(tc.Ctx, &pclqs, client.InNamespace(tc.Namespace), labels))
+		pclqCountsByCliqueName := make(map[string]int, len(wantPCLQCountsByCliqueName))
+		wantPodTemplateHashByPCLQName := make(map[string]string, len(pclqs.Items))
+		wantPodCount := 0
+		for _, pclq := range pclqs.Items {
+			require.Nil(tc.T, pclq.DeletionTimestamp, "PodClique %s must not be terminating", pclq.Name)
+			cliqueName, err := componentutils.GetPodCliqueNameFromPodCliqueFQN(pclq.ObjectMeta)
+			require.NoError(tc.T, err)
+			template := componentutils.FindPodCliqueTemplateSpecByName(pcs, cliqueName)
+			require.NotNil(tc.T, template, "PodClique %s must have a PCS template", pclq.Name)
+			pclqCountsByCliqueName[cliqueName]++
+			wantPodSpec := template.Spec.PodSpec.DeepCopy()
+			if envVars, isPCSGMember := wantPCSGEnvironmentByCliqueName[cliqueName]; isPCSGMember {
+				componentutils.PrependEnvVarsToContainers(wantPodSpec.Containers, envVars)
+				componentutils.PrependEnvVarsToContainers(wantPodSpec.InitContainers, envVars)
+			}
+			require.Equal(tc.T, *wantPodSpec, pclq.Spec.PodSpec, "replica %d PodClique %s must use the latest full PodSpec", pcsReplicaIndex, pclq.Name)
+			wantHash := componentutils.ComputePCLQPodTemplateHash(template, pcs.Spec.Template.PriorityClassName)
+			require.Equal(tc.T, wantHash, pclq.Labels[apicommon.LabelPodTemplateHash], "PodClique %s template hash", pclq.Name)
+			require.Equal(tc.T, &wantHash, pclq.Status.CurrentPodTemplateHash, "PodClique %s completed template hash", pclq.Name)
+			require.Equal(tc.T, *pcs.Status.CurrentGenerationHash, pclq.Labels[apicommon.LabelPodCliqueSetGenerationHash], "PodClique %s applied generation", pclq.Name)
+			require.Equal(tc.T, pcs.Status.CurrentGenerationHash, pclq.Status.CurrentPodCliqueSetGenerationHash, "PodClique %s completed generation", pclq.Name)
+			wantPodTemplateHashByPCLQName[pclq.Name] = wantHash
+			wantPodCount += int(pclq.Spec.Replicas)
+		}
+		require.Equal(tc.T, wantPCLQCountsByCliqueName, pclqCountsByCliqueName, "replica %d must have every expected standalone and group-member PodClique", pcsReplicaIndex)
+		var pods corev1.PodList
+		require.NoError(tc.T, tc.Client.List(tc.Ctx, &pods, client.InNamespace(tc.Namespace), labels))
+		require.Len(tc.T, pods.Items, wantPodCount, "replica %d must have every expected pod", pcsReplicaIndex)
+		for _, pod := range pods.Items {
+			require.Nil(tc.T, pod.DeletionTimestamp, "Pod %s must not be terminating", pod.Name)
+			wantHash, found := wantPodTemplateHashByPCLQName[pod.Labels[apicommon.LabelPodClique]]
+			require.True(tc.T, found, "Pod %s must belong to an expected PodClique", pod.Name)
+			require.Equal(tc.T, wantHash, pod.Labels[apicommon.LabelPodTemplateHash], "replica %d Pod %s must use the latest template", pcsReplicaIndex, pod.Name)
+		}
+	}
+}
+
+// expectedPCSGEnvironment describes the Grove runtime variables added to each group-member template.
+// Including these variables preserves an exact PodSpec comparison instead of ignoring generated fields.
+func expectedPCSGEnvironment(t *testing.T, pcs *grovev1beta1.PodCliqueSet) map[string][]corev1.EnvVar {
+	t.Helper()
+	environmentByCliqueName := make(map[string][]corev1.EnvVar, len(pcs.Spec.Template.Cliques))
+	for _, config := range pcs.Spec.Template.PodCliqueScalingGroupConfigs {
+		templatePodCount := 0
+		for _, cliqueName := range config.CliqueNames {
+			template := componentutils.FindPodCliqueTemplateSpecByName(pcs, cliqueName)
+			require.NotNil(t, template, "group %s member %s must have a PCS template", config.Name, cliqueName)
+			templatePodCount += int(template.Spec.Replicas)
+		}
+		envVars := []corev1.EnvVar{
+			{
+				Name: apiconstants.EnvVarPodCliqueScalingGroupName,
+				ValueFrom: &corev1.EnvVarSource{
+					FieldRef: &corev1.ObjectFieldSelector{
+						FieldPath: fmt.Sprintf("metadata.labels['%s']", apicommon.LabelPodCliqueScalingGroup),
+					},
+				},
+			},
+			{Name: apiconstants.EnvVarPodCliqueScalingGroupTemplateNumPods, Value: strconv.Itoa(templatePodCount)},
+			{
+				Name: apiconstants.EnvVarPodCliqueScalingGroupIndex,
+				ValueFrom: &corev1.EnvVarSource{
+					FieldRef: &corev1.ObjectFieldSelector{
+						FieldPath: fmt.Sprintf("metadata.labels['%s']", apicommon.LabelPodCliqueScalingGroupReplicaIndex),
+					},
+				},
+			},
+		}
+		for _, cliqueName := range config.CliqueNames {
+			environmentByCliqueName[cliqueName] = envVars
+		}
+	}
+	return environmentByCliqueName
+}
+
+// waitForWorkload2ReplicaAtGeneration waits for pc-a, sg-x, and the full replacement PodGangMap
+// to materialize at the requested generation. Standalone pod readiness is checked separately.
+func waitForWorkload2ReplicaAtGeneration(tc *testctx.TestContext, pcsReplicaIndex int, pcsGenerationHash string) error {
+	pcsReplica := apicommon.ResourceNameReplica{Name: tc.Workload.Name, Replica: pcsReplicaIndex}
+	pclqKey := client.ObjectKey{Namespace: tc.Namespace, Name: apicommon.GeneratePodCliqueName(pcsReplica, "pc-a")}
+	pcsgKey := client.ObjectKey{Namespace: tc.Namespace, Name: updateutils.PCSGFQNForReplica(tc, "sg-x", pcsReplicaIndex)}
+	return wait.PollUntilContextTimeout(tc.Ctx, tc.Interval, tc.Timeout, true, func(ctx context.Context) (bool, error) {
+		var pclq grovev1beta1.PodClique
+		if err := tc.Client.Get(ctx, pclqKey, &pclq); err != nil {
+			return false, client.IgnoreNotFound(err)
+		}
+		var pcsg grovev1beta1.PodCliqueScalingGroup
+		if err := tc.Client.Get(ctx, pcsgKey, &pcsg); err != nil {
+			return false, client.IgnoreNotFound(err)
+		}
+		if pclq.DeletionTimestamp != nil || pcsg.DeletionTimestamp != nil ||
+			pclq.Labels[apicommon.LabelPodCliqueSetGenerationHash] != pcsGenerationHash ||
+			pcsg.Labels[apicommon.LabelPodCliqueSetGenerationHash] != pcsGenerationHash {
+			return false, nil
+		}
+		pgm, err := updateutils.GetReplicaPodGangMap(tc, pcsReplicaIndex)
+		if err != nil {
+			return false, client.IgnoreNotFound(err)
+		}
+		if pgm.DeletionTimestamp != nil || len(pgm.Spec.Entries) != 2 {
+			return false, nil
+		}
+		for _, entry := range pgm.Spec.Entries {
+			if entry.PodCliqueSetGenerationHash != pcsGenerationHash {
+				return false, nil
+			}
+		}
+		return true, nil
+	})
+}
+
+// waitForReplicaResourcesDeleted waits until no replica-scoped resources match the supplied labels.
+// PCS-wide resources such as its ServiceAccount and Role remain when only replicas are scaled to zero.
+func waitForReplicaResourcesDeleted(tc *testctx.TestContext, labels client.MatchingLabels) error {
+	resourceLists := []client.ObjectList{
+		&grovev1beta1.PodCliqueList{}, &grovev1beta1.PodCliqueScalingGroupList{}, &grovev1beta1.PodGangMapList{},
+		&groveschedulerv1alpha1.PodGangList{}, &corev1.PodList{}, &corev1.ServiceList{},
+	}
+	return wait.PollUntilContextTimeout(tc.Ctx, tc.Interval, tc.Timeout, true, func(ctx context.Context) (bool, error) {
+		for _, resourceList := range resourceLists {
+			if err := tc.Client.List(ctx, resourceList, client.InNamespace(tc.Namespace), labels); err != nil {
+				return false, fmt.Errorf("list %T during replica cleanup: %w", resourceList, err)
+			}
+			items, err := meta.ExtractList(resourceList)
+			if err != nil {
+				return false, fmt.Errorf("extract %T during replica cleanup: %w", resourceList, err)
+			}
+			if len(items) != 0 {
+				return false, nil
+			}
+		}
+		return true, nil
 	})
 }

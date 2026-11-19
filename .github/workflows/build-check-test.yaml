@@ -123,6 +123,8 @@ jobs:
             test_pattern: "^Test_PCSS"
           - test_name: rolling_updates
             test_pattern: "^Test_RU"
+          - test_name: replica_recreation
+            test_pattern: "^Test_RR"
           - test_name: ondelete_updates
             test_pattern: "^Test_OD"
           - test_name: coherent_updates
@@ -222,6 +224,7 @@ jobs:
           - test_name: gang_termination
           - test_name: pcs_scaling
           - test_name: rolling_updates
+          - test_name: replica_recreation
           - test_name: coherent_updates
           - test_name: ondelete_updates
           - test_name: startup_ordering
