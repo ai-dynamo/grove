@@ -17,14 +17,26 @@
 package update
 
 import (
+	"context"
 	"fmt"
-	grovev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
-	"github.com/ai-dynamo/grove/operator/e2e/tests"
-	updateutils "github.com/ai-dynamo/grove/operator/e2e/tests/update/utils"
-	"k8s.io/apimachinery/pkg/types"
 	"slices"
+	"strings"
 	"testing"
 	"time"
+
+	apicommon "github.com/ai-dynamo/grove/operator/api/common"
+	grovev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
+	"github.com/ai-dynamo/grove/operator/e2e/grove/workload"
+	"github.com/ai-dynamo/grove/operator/e2e/testctx"
+	"github.com/ai-dynamo/grove/operator/e2e/tests"
+	updateutils "github.com/ai-dynamo/grove/operator/e2e/tests/update/utils"
+	"github.com/ai-dynamo/grove/operator/e2e/waiter"
+
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/watch"
+	"k8s.io/client-go/util/retry"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // Test_OD1_NoAutomaticDeletionOnSpecChange tests that OnDelete strategy does not automatically delete pods when spec changes.
@@ -50,11 +62,11 @@ func Test_OD1_NoAutomaticDeletionOnSpecChange(t *testing.T) {
 		t.Fatalf("Failed to capture existing Pods: %v", err)
 	}
 	// Capture the PodGangMap entries and generation hash before the update.
-	oldHash := getPCSGenerationHash(t, tc)
-	entriesBefore := getPodGangMapEntries(t, tc, 0)
+	oldHash := updateutils.PCSGenerationHash(t, tc)
+	entriesBefore := updateutils.PodGangMapEntries(t, tc, 0)
 
 	tests.Logger.Info("3. Change the specification of pc-a")
-	if err := triggerPodCliqueUpdate(tc, "pc-a"); err != nil {
+	if err := updateutils.TriggerPodCliqueUpdate(tc, "pc-a"); err != nil {
 		t.Fatalf("Failed to update PodClique spec: %v", err)
 	}
 
@@ -63,11 +75,11 @@ func Test_OD1_NoAutomaticDeletionOnSpecChange(t *testing.T) {
 	verifyNoAutomaticDeletionAfterUpdate(tc, tracker, existingPodNames, 10, true)
 
 	tests.Logger.Info("6. Verify the PodGangMap entries advanced to the new generation hash, otherwise unchanged")
-	newHash := getPCSGenerationHash(t, tc)
+	newHash := updateutils.PCSGenerationHash(t, tc)
 	if newHash == oldHash {
 		t.Fatalf("PodCliqueSet generation hash did not change after the update: %s", newHash)
 	}
-	assertEntriesUnchangedExceptHashForNonCoherentUpdate(t, entriesBefore, getPodGangMapEntries(t, tc, 0), newHash)
+	updateutils.AssertEntriesUnchangedExceptHashForNonCoherentUpdate(t, entriesBefore, updateutils.PodGangMapEntries(t, tc, 0), newHash)
 
 	tests.Logger.Info("OnDelete Update - No Automatic Deletion test (OD-1) completed successfully!")
 }
@@ -95,14 +107,14 @@ func Test_OD2_ManualDeletionCreatesUpdatedPod(t *testing.T) {
 		t.Fatalf("Failed to capture existing Pods: %v", err)
 	}
 
-	podToDelete, err := getFirstPodForClique(tc, "pc-a")
+	podToDelete, err := firstPodForClique(tc, "pc-a")
 	if err != nil {
 		t.Fatalf("Failed to get pod for pc-a: %v", err)
 	}
 	tests.Logger.Debugf("Will delete pod %s after spec change", podToDelete)
 
 	tests.Logger.Info("3. Change the specification of pc-a")
-	if err = triggerPodCliqueUpdate(tc, "pc-a"); err != nil {
+	if err = updateutils.TriggerPodCliqueUpdate(tc, "pc-a"); err != nil {
 		t.Fatalf("Failed to update PodClique spec: %v", err)
 	}
 
@@ -113,7 +125,7 @@ func Test_OD2_ManualDeletionCreatesUpdatedPod(t *testing.T) {
 
 	tests.Logger.Info("4. Delete a pod manually and verify the replacement uses the new template")
 	// Delete the pod
-	if err = deletePodAndWaitForTermination(tc, podToDelete); err != nil {
+	if err = updateutils.DeletePodAndWaitForTermination(tc, podToDelete); err != nil {
 		t.Fatalf("Failed to delete pod and wait for replacement: %v", err)
 	}
 
@@ -129,7 +141,7 @@ func Test_OD2_ManualDeletionCreatesUpdatedPod(t *testing.T) {
 	tests.Logger.Debugf("New replacement pod: %s", newPodName)
 
 	// Verify the new pod has the updated spec
-	if err = verifyPodHasUpdatedSpec(tc, newPodName); err != nil {
+	if err = updateutils.VerifyPodHasUpdatedSpec(tc, newPodName); err != nil {
 		t.Fatalf("Replacement pod does not have updated spec: %v", err)
 	}
 
@@ -170,7 +182,7 @@ func Test_OD3_ScaleInPrefersOutdatedPods(t *testing.T) {
 	defer cleanup()
 
 	// Get the current pods for pc-a BEFORE the update
-	oldPcaPods, err := getPodsForClique(tc, "pc-a")
+	oldPcaPods, err := podsForClique(tc, "pc-a")
 	if err != nil {
 		t.Fatalf("Failed to get pods for pc-a: %v", err)
 	}
@@ -181,7 +193,7 @@ func Test_OD3_ScaleInPrefersOutdatedPods(t *testing.T) {
 	}
 
 	tests.Logger.Info("3. Change the specification of pc-a (triggering OnDelete update)")
-	if err = triggerPodCliqueUpdate(tc, "pc-a"); err != nil {
+	if err = updateutils.TriggerPodCliqueUpdate(tc, "pc-a"); err != nil {
 		t.Fatalf("Failed to update PodClique spec: %v", err)
 	}
 
@@ -193,7 +205,7 @@ func Test_OD3_ScaleInPrefersOutdatedPods(t *testing.T) {
 	tests.Logger.Info("4. Manually delete ONE pc-a pod to update it")
 	// Delete the first pod from pc-a to create one with updated spec
 	podToUpdate := oldPcaPods[0]
-	if err = deletePodAndWaitForTermination(tc, podToUpdate); err != nil {
+	if err = updateutils.DeletePodAndWaitForTermination(tc, podToUpdate); err != nil {
 		t.Fatalf("Failed to delete pod and wait for replacement: %v", err)
 	}
 
@@ -203,7 +215,7 @@ func Test_OD3_ScaleInPrefersOutdatedPods(t *testing.T) {
 	}
 
 	// Get the new pc-a pods
-	updatedPcaPods, err := getPodsForClique(tc, "pc-a")
+	updatedPcaPods, err := podsForClique(tc, "pc-a")
 	if err != nil {
 		t.Fatalf("Failed to get pods for pc-a after update: %v", err)
 	}
@@ -229,7 +241,7 @@ func Test_OD3_ScaleInPrefersOutdatedPods(t *testing.T) {
 	tests.Logger.Debugf("Updated pod: %s, remaining outdated pod: %s", updatedPod, oldPcaPods[1])
 
 	tests.Logger.Info("5. Scale in pc-a from 2 to 1 replica")
-	if err = scalePodCliqueInPCS(tc, "pc-a", 1); err != nil {
+	if err = updateutils.ScalePodCliqueInPCS(tc, "pc-a", 1); err != nil {
 		t.Fatalf("Failed to scale in PodClique pc-a: %v", err)
 	}
 
@@ -240,7 +252,7 @@ func Test_OD3_ScaleInPrefersOutdatedPods(t *testing.T) {
 
 	tests.Logger.Info("6. Verify pods with outdated templates are deleted first (not the updated one)")
 	// Get the remaining pc-a pods
-	remainingPcaPods, err := getPodsForClique(tc, "pc-a")
+	remainingPcaPods, err := podsForClique(tc, "pc-a")
 	if err != nil {
 		t.Fatalf("Failed to get remaining pods for pc-a: %v", err)
 	}
@@ -283,7 +295,7 @@ func Test_OD4_PCSGNoAutomaticDeletionOnSpecChange(t *testing.T) {
 	}
 
 	tests.Logger.Info("3. Change the specification of pc-b (part of PCSG sg-x)")
-	if err = triggerPodCliqueUpdate(tc, "pc-b"); err != nil {
+	if err = updateutils.TriggerPodCliqueUpdate(tc, "pc-b"); err != nil {
 		t.Fatalf("Failed to update PodClique spec: %v", err)
 	}
 
@@ -316,14 +328,14 @@ func Test_OD5_PCSGManualDeletionCreatesUpdatedReplica(t *testing.T) {
 		t.Fatalf("Failed to capture existing Pods: %v", err)
 	}
 
-	podToDelete, err := getFirstPodForClique(tc, "pc-c")
+	podToDelete, err := firstPodForClique(tc, "pc-c")
 	if err != nil {
 		t.Fatalf("Failed to get pod for pc-c: %v", err)
 	}
 	tests.Logger.Debugf("Will delete pod %s after spec change", podToDelete)
 
 	tests.Logger.Info("3. Change the specification of pc-c (part of PCSG sg-x)")
-	if err = triggerPodCliqueUpdate(tc, "pc-c"); err != nil {
+	if err = updateutils.TriggerPodCliqueUpdate(tc, "pc-c"); err != nil {
 		t.Fatalf("Failed to update PodClique spec: %v", err)
 	}
 
@@ -334,7 +346,7 @@ func Test_OD5_PCSGManualDeletionCreatesUpdatedReplica(t *testing.T) {
 
 	tests.Logger.Info("4. Delete a pc-c pod manually and verify the replacement uses the new template")
 	// Delete the pod
-	if err = deletePodAndWaitForTermination(tc, podToDelete); err != nil {
+	if err = updateutils.DeletePodAndWaitForTermination(tc, podToDelete); err != nil {
 		t.Fatalf("Failed to delete pod and wait for replacement: %v", err)
 	}
 
@@ -350,7 +362,7 @@ func Test_OD5_PCSGManualDeletionCreatesUpdatedReplica(t *testing.T) {
 	tests.Logger.Debugf("New replacement pod: %s", newPodName)
 
 	// Verify the new pod has the updated spec
-	if err = verifyPodHasUpdatedSpec(tc, newPodName); err != nil {
+	if err = updateutils.VerifyPodHasUpdatedSpec(tc, newPodName); err != nil {
 		t.Fatalf("Replacement pod does not have updated spec: %v", err)
 	}
 
@@ -383,7 +395,7 @@ func Test_OD6_MixedPCLQsAndPCSG(t *testing.T) {
 
 	tests.Logger.Info("3. Change the specification of ALL PodCliques (pc-a, pc-b, pc-c)")
 	for _, cliqueName := range []string{"pc-a", "pc-b", "pc-c"} {
-		if err = triggerPodCliqueUpdate(tc, cliqueName); err != nil {
+		if err = updateutils.TriggerPodCliqueUpdate(tc, cliqueName); err != nil {
 			t.Fatalf("Failed to update PodClique %s spec: %v", cliqueName, err)
 		}
 	}
@@ -392,19 +404,19 @@ func Test_OD6_MixedPCLQsAndPCSG(t *testing.T) {
 	verifyNoAutomaticDeletionAfterUpdate(tc, tracker, existingPodNames, 10, true)
 
 	tests.Logger.Info("5. Manually delete one pod from each type (standalone and PCSG)")
-	standalonePodToDelete, err := getFirstPodForClique(tc, "pc-a")
+	standalonePodToDelete, err := firstPodForClique(tc, "pc-a")
 	if err != nil {
 		t.Fatalf("Failed to get pod for pc-a: %v", err)
 	}
 
-	pcsgPodToDelete, err := getFirstPodForClique(tc, "pc-c")
+	pcsgPodToDelete, err := firstPodForClique(tc, "pc-c")
 	if err != nil {
 		t.Fatalf("Failed to get pod for pc-c: %v", err)
 	}
 
 	// Delete standalone pod
 	tests.Logger.Debugf("Deleting standalone pod: %s", standalonePodToDelete)
-	if err = deletePodAndWaitForTermination(tc, standalonePodToDelete); err != nil {
+	if err = updateutils.DeletePodAndWaitForTermination(tc, standalonePodToDelete); err != nil {
 		t.Fatalf("Failed to delete standalone pod and wait for replacement: %v", err)
 	}
 
@@ -414,7 +426,7 @@ func Test_OD6_MixedPCLQsAndPCSG(t *testing.T) {
 
 	// Delete PCSG pod
 	tests.Logger.Debugf("Deleting PCSG pod: %s", pcsgPodToDelete)
-	if err = deletePodAndWaitForTermination(tc, pcsgPodToDelete); err != nil {
+	if err = updateutils.DeletePodAndWaitForTermination(tc, pcsgPodToDelete); err != nil {
 		t.Fatalf("Failed to delete PCSG pod and wait for replacement: %v", err)
 	}
 
@@ -434,7 +446,7 @@ func Test_OD6_MixedPCLQsAndPCSG(t *testing.T) {
 	for _, pod := range finalPods.Items {
 		if !existingPodNames[pod.Name] {
 			newPodsFound++
-			if err := verifyPodHasUpdatedSpec(tc, pod.Name); err != nil {
+			if err := updateutils.VerifyPodHasUpdatedSpec(tc, pod.Name); err != nil {
 				t.Fatalf("New pod %s does not have updated spec: %v", pod.Name, err)
 			}
 		}
@@ -472,14 +484,14 @@ func Test_OD7_MultipleReplicasPCS(t *testing.T) {
 		t.Fatalf("Failed to capture existing Pods: %v", err)
 	}
 	// Capture each replica's PodGangMap entries and the generation hash before the update.
-	oldHash := getPCSGenerationHash(t, tc)
+	oldHash := updateutils.PCSGenerationHash(t, tc)
 	entriesBefore := map[int][]grovev1beta1.PodGangEntry{}
 	for _, pcsReplicaIndex := range []int{0, 1} {
-		entriesBefore[pcsReplicaIndex] = getPodGangMapEntries(t, tc, pcsReplicaIndex)
+		entriesBefore[pcsReplicaIndex] = updateutils.PodGangMapEntries(t, tc, pcsReplicaIndex)
 	}
 
 	tests.Logger.Info("3. Change the specification of pc-a")
-	if err = triggerPodCliqueUpdate(tc, "pc-a"); err != nil {
+	if err = updateutils.TriggerPodCliqueUpdate(tc, "pc-a"); err != nil {
 		t.Fatalf("Failed to update PodClique spec: %v", err)
 	}
 
@@ -487,12 +499,12 @@ func Test_OD7_MultipleReplicasPCS(t *testing.T) {
 	verifyNoAutomaticDeletionAfterUpdate(tc, tracker, existingPodNames, 20, false)
 
 	tests.Logger.Info("5. Verify every replica's PodGangMap entries advanced to the new generation hash, otherwise unchanged")
-	newHash := getPCSGenerationHash(t, tc)
+	newHash := updateutils.PCSGenerationHash(t, tc)
 	if newHash == oldHash {
 		t.Fatalf("PodCliqueSet generation hash did not change after the update: %s", newHash)
 	}
 	for _, pcsReplicaIndex := range []int{0, 1} {
-		assertEntriesUnchangedExceptHashForNonCoherentUpdate(t, entriesBefore[pcsReplicaIndex], getPodGangMapEntries(t, tc, pcsReplicaIndex), newHash)
+		updateutils.AssertEntriesUnchangedExceptHashForNonCoherentUpdate(t, entriesBefore[pcsReplicaIndex], updateutils.PodGangMapEntries(t, tc, pcsReplicaIndex), newHash)
 	}
 
 	tests.Logger.Info("OnDelete Update - Multiple PCS Replicas test (OD-7) completed successfully!")
@@ -525,18 +537,18 @@ func Test_OD8_NodeFailureRecoveryWorkflow(t *testing.T) {
 	}
 
 	tests.Logger.Info("3. Identify a node running a pc-a pod (simulating a 'failed node')")
-	podToEvict, err := getFirstPodForClique(tc, "pc-a")
+	podToEvict, err := firstPodForClique(tc, "pc-a")
 	if err != nil {
 		t.Fatalf("Failed to get pod for pc-a: %v", err)
 	}
 
-	failedNodeName, err := getNodeForPod(tc, podToEvict)
+	failedNodeName, err := nodeForPod(tc, podToEvict)
 	if err != nil {
 		t.Fatalf("Failed to get node for pod %s: %v", podToEvict, err)
 	}
 	tests.Logger.Debugf("Simulated failed node: %s (running pod %s)", failedNodeName, podToEvict)
 
-	podsOnFailedNode, err := getPodsOnNode(tc, failedNodeName)
+	podsOnFailedNode, err := podNamesOnNode(tc, failedNodeName)
 	if err != nil {
 		t.Fatalf("Failed to get pods on failed node: %v", err)
 	}
@@ -554,7 +566,7 @@ func Test_OD8_NodeFailureRecoveryWorkflow(t *testing.T) {
 	verifyNoAutomaticDeletionAfterUpdate(tc, tracker, existingPodNames, 10, true)
 
 	tests.Logger.Info("6. Manually delete the pod on the 'failed node' (simulating eviction)")
-	if err = deletePodAndWaitForTermination(tc, podToEvict); err != nil {
+	if err = updateutils.DeletePodAndWaitForTermination(tc, podToEvict); err != nil {
 		t.Fatalf("Failed to delete pod (simulating eviction): %v", err)
 	}
 
@@ -606,14 +618,14 @@ func Test_OD9_StrategyTransition(t *testing.T) {
 	}
 
 	tests.Logger.Info("3. Update pc-a's spec and verify no auto-deletion (OnDelete behavior confirmed)")
-	if err = triggerPodCliqueUpdate(tc, "pc-a"); err != nil {
+	if err = updateutils.TriggerPodCliqueUpdate(tc, "pc-a"); err != nil {
 		t.Fatalf("Failed to update PodClique pc-a spec: %v", err)
 	}
 
 	verifyNoAutomaticDeletionAfterUpdate(tc, tracker, existingPodNames, 10, true)
 
 	tests.Logger.Info("4. Switch strategy from OnDelete to RollingRecreate")
-	if err = updatePCSUpdateStrategy(tc, grovev1beta1.RollingRecreateStrategy); err != nil {
+	if err = updateutils.UpdatePCSUpdateStrategy(tc, grovev1beta1.RollingRecreateStrategy); err != nil {
 		t.Fatalf("Failed to switch update strategy to RollingRecreate: %v", err)
 	}
 
@@ -625,7 +637,7 @@ func Test_OD9_StrategyTransition(t *testing.T) {
 	}
 
 	// Trigger update on pc-b — with RollingRecreate, this should automatically recreate pods
-	if err = triggerPodCliqueUpdate(tc, "pc-b"); err != nil {
+	if err = updateutils.TriggerPodCliqueUpdate(tc, "pc-b"); err != nil {
 		t.Fatalf("Failed to update PodClique pc-b spec: %v", err)
 	}
 
@@ -634,7 +646,7 @@ func Test_OD9_StrategyTransition(t *testing.T) {
 	// RollingRecreate should handle the update automatically
 	tcLongTimeout := *tc
 	tcLongTimeout.Timeout = 2 * time.Minute
-	if err = waitForRollingUpdateComplete(&tcLongTimeout, 1); err != nil {
+	if err = updateutils.WaitForRollingUpdateComplete(&tcLongTimeout, 1); err != nil {
 		t.Fatalf("Rolling update did not complete after strategy switch to RollingRecreate: %v", err)
 	}
 
@@ -662,7 +674,7 @@ func Test_OD9_StrategyTransition(t *testing.T) {
 	tests.Logger.Debugf("RollingRecreate automatically recreated %d pods", newPodsCreated)
 
 	tests.Logger.Info("6. Switch strategy back from RollingRecreate to OnDelete")
-	if err = updatePCSUpdateStrategy(tc, grovev1beta1.OnDeleteStrategy); err != nil {
+	if err = updateutils.UpdatePCSUpdateStrategy(tc, grovev1beta1.OnDeleteStrategy); err != nil {
 		t.Fatalf("Failed to switch update strategy back to OnDelete: %v", err)
 	}
 
@@ -674,13 +686,13 @@ func Test_OD9_StrategyTransition(t *testing.T) {
 	}
 
 	// Start a new tracker for the OnDelete verification
-	tracker2 := newUpdateTracker()
-	if err = tracker2.start(tc); err != nil {
+	tracker2 := updateutils.NewUpdateTracker()
+	if err = tracker2.Start(tc); err != nil {
 		t.Fatalf("Failed to start new tracker: %v", err)
 	}
-	defer tracker2.stop()
+	defer tracker2.Stop()
 
-	if err = triggerPodCliqueUpdate(tc, "pc-c"); err != nil {
+	if err = updateutils.TriggerPodCliqueUpdate(tc, "pc-c"); err != nil {
 		t.Fatalf("Failed to update PodClique pc-c spec: %v", err)
 	}
 
@@ -716,21 +728,21 @@ func Test_OD10_ScaleOutAfterOnDeleteUpdateNoTail(t *testing.T) {
 	defer cleanup()
 
 	tests.Logger.Info("3. Assert the initial PodGangMap has an anchor and a scale-out entry, and no tail entry")
-	oldHash := getPCSGenerationHash(t, tc)
-	before := getPodGangMapEntries(t, tc, 0)
+	oldHash := updateutils.PCSGenerationHash(t, tc)
+	before := updateutils.PodGangMapEntries(t, tc, 0)
 	updateutils.AssertEntryRoles(t, before, grovev1beta1.PodGangEntryRoleAnchor, grovev1beta1.PodGangEntryRoleScaleOut)
 
 	anchorEntry := updateutils.RequireSingleEntryByRole(t, before, grovev1beta1.PodGangEntryRoleAnchor)
 	updateutils.AssertStandalonePCLQPodCounts(t, anchorEntry, map[string]int32{"pc-a": 2})
-	assertPodGangEntryPCSGIndices(t, anchorEntry, "sg-x", []int32{0, 1})
+	updateutils.AssertPodGangEntryPCSGIndices(t, anchorEntry, "sg-x", []int32{0, 1})
 	updateutils.AssertPodGangEntryDependsOn(t, anchorEntry, nil)
 
 	scaleOutEntry := updateutils.RequireSingleEntryByRole(t, before, grovev1beta1.PodGangEntryRoleScaleOut)
-	assertPodGangEntryPCSGIndices(t, scaleOutEntry, "sg-x", nil)
+	updateutils.AssertPodGangEntryPCSGIndices(t, scaleOutEntry, "sg-x", nil)
 	updateutils.AssertPodGangEntryDependsOn(t, scaleOutEntry, []string{anchorEntry.Epoch})
 
 	tests.Logger.Info("4. Trigger an OnDelete update on pc-c, then wait for it to complete")
-	if err := triggerPodCliqueUpdate(tc, "pc-c"); err != nil {
+	if err := updateutils.TriggerPodCliqueUpdate(tc, "pc-c"); err != nil {
 		t.Fatalf("Failed to update PodClique pc-c spec: %v", err)
 	}
 	if err := waitForOnDeleteUpdateCompleteWithTimeout(tc, 1*time.Minute); err != nil {
@@ -738,21 +750,21 @@ func Test_OD10_ScaleOutAfterOnDeleteUpdateNoTail(t *testing.T) {
 	}
 
 	tests.Logger.Info("5. Assert the entries are unchanged except that all now carry the new generation hash")
-	newHash := getPCSGenerationHash(t, tc)
+	newHash := updateutils.PCSGenerationHash(t, tc)
 	if newHash == oldHash {
 		t.Fatalf("PodCliqueSet generation hash did not change after the update: %s", newHash)
 	}
-	after := getPodGangMapEntries(t, tc, 0)
-	assertEntriesUnchangedExceptHashForNonCoherentUpdate(t, before, after, newHash)
+	after := updateutils.PodGangMapEntries(t, tc, 0)
+	updateutils.AssertEntriesUnchangedExceptHashForNonCoherentUpdate(t, before, after, newHash)
 
 	tests.Logger.Info("6. Scale out sg-x from 2 to 3 replicas, and assert the new index lands in the scale-out entry")
 	// sg-x holds pc-b (1) + pc-c (3) = 4 pods per PCSG replica. With pc-a (2 standalone) the totals are
 	// 2 + 4*2 = 10 at 2 replicas and 2 + 4*3 = 14 at 3 replicas.
 	tc.ScalePCSGAcrossAllReplicasAndWait(tc.Workload.Name, "sg-x", 1, 3, 14, 0)
 
-	afterScaleOut := getPodGangMapEntries(t, tc, 0)
+	afterScaleOut := updateutils.PodGangMapEntries(t, tc, 0)
 	scaleOutEntry = updateutils.RequireSingleEntryByRole(t, afterScaleOut, grovev1beta1.PodGangEntryRoleScaleOut)
-	assertPodGangEntryPCSGIndices(t, scaleOutEntry, "sg-x", []int32{2})
+	updateutils.AssertPodGangEntryPCSGIndices(t, scaleOutEntry, "sg-x", []int32{2})
 	updateutils.AssertPodGangEntryDependsOn(t, scaleOutEntry, []string{anchorEntry.Epoch})
 
 	tests.Logger.Info("7. Verify all pods including the scaled-out replica become running, none stranded gated")
@@ -787,8 +799,8 @@ func Test_OD11_ScaleOutAfterOnDeleteUpdateWithTail(t *testing.T) {
 	defer cleanup()
 
 	tests.Logger.Info("3. Assert the initial PodGangMap has an anchor, a tail, and a scale-out entry")
-	oldHash := getPCSGenerationHash(t, tc)
-	before := getPodGangMapEntries(t, tc, 0)
+	oldHash := updateutils.PCSGenerationHash(t, tc)
+	before := updateutils.PodGangMapEntries(t, tc, 0)
 	updateutils.AssertEntryRoles(t, before,
 		grovev1beta1.PodGangEntryRoleAnchor,
 		grovev1beta1.PodGangEntryRoleTail,
@@ -796,19 +808,19 @@ func Test_OD11_ScaleOutAfterOnDeleteUpdateWithTail(t *testing.T) {
 
 	anchorEntry := updateutils.RequireSingleEntryByRole(t, before, grovev1beta1.PodGangEntryRoleAnchor)
 	updateutils.AssertStandalonePCLQPodCounts(t, anchorEntry, map[string]int32{"pc-a": 2})
-	assertPodGangEntryPCSGIndices(t, anchorEntry, "sg-x", []int32{0})
+	updateutils.AssertPodGangEntryPCSGIndices(t, anchorEntry, "sg-x", []int32{0})
 	updateutils.AssertPodGangEntryDependsOn(t, anchorEntry, nil)
 
 	tailEntry := updateutils.RequireSingleEntryByRole(t, before, grovev1beta1.PodGangEntryRoleTail)
-	assertPodGangEntryPCSGIndices(t, tailEntry, "sg-x", []int32{1})
+	updateutils.AssertPodGangEntryPCSGIndices(t, tailEntry, "sg-x", []int32{1})
 	updateutils.AssertPodGangEntryDependsOn(t, tailEntry, []string{anchorEntry.Epoch})
 
 	scaleOutEntry := updateutils.RequireSingleEntryByRole(t, before, grovev1beta1.PodGangEntryRoleScaleOut)
-	assertPodGangEntryPCSGIndices(t, scaleOutEntry, "sg-x", nil)
+	updateutils.AssertPodGangEntryPCSGIndices(t, scaleOutEntry, "sg-x", nil)
 	updateutils.AssertPodGangEntryDependsOn(t, scaleOutEntry, []string{anchorEntry.Epoch})
 
 	tests.Logger.Info("4. Trigger an OnDelete update on pc-c, then wait for it to complete")
-	if err := triggerPodCliqueUpdate(tc, "pc-c"); err != nil {
+	if err := updateutils.TriggerPodCliqueUpdate(tc, "pc-c"); err != nil {
 		t.Fatalf("Failed to update PodClique pc-c spec: %v", err)
 	}
 	if err := waitForOnDeleteUpdateCompleteWithTimeout(tc, 1*time.Minute); err != nil {
@@ -816,19 +828,19 @@ func Test_OD11_ScaleOutAfterOnDeleteUpdateWithTail(t *testing.T) {
 	}
 
 	tests.Logger.Info("5. Assert the entries are unchanged except that all now carry the new generation hash")
-	newHash := getPCSGenerationHash(t, tc)
+	newHash := updateutils.PCSGenerationHash(t, tc)
 	if newHash == oldHash {
 		t.Fatalf("PodCliqueSet generation hash did not change after the update: %s", newHash)
 	}
-	after := getPodGangMapEntries(t, tc, 0)
-	assertEntriesUnchangedExceptHashForNonCoherentUpdate(t, before, after, newHash)
+	after := updateutils.PodGangMapEntries(t, tc, 0)
+	updateutils.AssertEntriesUnchangedExceptHashForNonCoherentUpdate(t, before, after, newHash)
 
 	tests.Logger.Info("6. Scale out sg-x from 2 to 3 replicas, and assert the new index lands in the scale-out entry")
 	tc.ScalePCSGAcrossAllReplicasAndWait(tc.Workload.Name, "sg-x", 1, 3, 14, 0)
 
-	afterScaleOut := getPodGangMapEntries(t, tc, 0)
+	afterScaleOut := updateutils.PodGangMapEntries(t, tc, 0)
 	scaleOutEntry = updateutils.RequireSingleEntryByRole(t, afterScaleOut, grovev1beta1.PodGangEntryRoleScaleOut)
-	assertPodGangEntryPCSGIndices(t, scaleOutEntry, "sg-x", []int32{2})
+	updateutils.AssertPodGangEntryPCSGIndices(t, scaleOutEntry, "sg-x", []int32{2})
 	updateutils.AssertPodGangEntryDependsOn(t, scaleOutEntry, []string{anchorEntry.Epoch})
 
 	tests.Logger.Info("7. Verify all pods including the scaled-out replica become running, none stranded gated")
@@ -837,4 +849,356 @@ func Test_OD11_ScaleOutAfterOnDeleteUpdateWithTail(t *testing.T) {
 	}
 
 	tests.Logger.Info("OnDelete Update - Scale-Out After OnDelete Update (with tail) test (OD-11) completed successfully!")
+}
+
+// captureExistingPodNames returns a map of all current pod names for the workload.
+func captureExistingPodNames(tc *testctx.TestContext) (map[string]bool, error) {
+	pods, err := tc.ListPods()
+	if err != nil {
+		return nil, err
+	}
+
+	existingPodNames := make(map[string]bool, len(pods.Items))
+	for _, pod := range pods.Items {
+		existingPodNames[pod.Name] = true
+	}
+
+	tests.Logger.Debugf("Captured %d existing pods before spec change", len(existingPodNames))
+	return existingPodNames, nil
+}
+
+// verifyNoAutomaticDeletionAfterUpdate checks that an OnDelete template edit preserves existing pods until manual deletion.
+func verifyNoAutomaticDeletionAfterUpdate(
+	tc *testctx.TestContext,
+	tracker *updateutils.UpdateTracker,
+	existingPodNames map[string]bool,
+	expectedPods int,
+	verifyProgressFields bool,
+) {
+	tc.T.Helper()
+
+	time.Sleep(10 * time.Second)
+
+	if err := waitForOnDeleteUpdateCompleteWithTimeout(tc, 1*time.Minute); err != nil {
+		tc.T.Fatalf("Failed to verify OnDelete update completion: %v", err)
+	}
+
+	if verifyProgressFields {
+		verifyUpdateProgressFields(tc)
+	}
+
+	tracker.Stop()
+	events := tracker.Events()
+	verifyNoPodsDeleted(tc, events, existingPodNames)
+
+	pods, err := tc.ListPods()
+	if err != nil {
+		tc.T.Fatalf("Failed to list Pods: %v", err)
+	}
+
+	if len(pods.Items) != expectedPods {
+		tc.T.Fatalf("Expected %d pods to still be running, but got %d", expectedPods, len(pods.Items))
+	}
+}
+
+// waitForOnDeleteUpdateCompleteWithTimeout waits for OnDelete update completion with the supplied timeout.
+//
+//nolint:unparam // Keep the caller's observation deadline explicit.
+func waitForOnDeleteUpdateCompleteWithTimeout(tc *testctx.TestContext, timeout time.Duration) error {
+	tcWithTimeout := *tc
+	tcWithTimeout.Timeout = timeout
+	return waitForOnDeleteUpdateComplete(&tcWithTimeout)
+}
+
+func waitForOnDeleteUpdateComplete(tc *testctx.TestContext) error {
+	pollCount := 0
+	fetchPCS := waiter.FetchFunc[*grovev1beta1.PodCliqueSet](func(_ context.Context) (*grovev1beta1.PodCliqueSet, error) {
+		return updateutils.GetPCS(tc, tc.Workload.Name)
+	})
+	predicate := waiter.Predicate[*grovev1beta1.PodCliqueSet](func(pcs *grovev1beta1.PodCliqueSet) bool {
+		pollCount++
+		if pcs == nil {
+			// A transient cache miss returns a nil object. Keep polling.
+			return false
+		}
+		if workload.IsOnDeleteUpdateComplete(pcs) {
+			tests.Logger.Debugf("[waitForOnDeleteUpdateComplete] OnDelete update marked complete after %d polls (UpdatedReplicas=%d)",
+				pollCount, pcs.Status.UpdatedReplicas)
+			return true
+		}
+		return false
+	})
+	w := waiter.New[*grovev1beta1.PodCliqueSet]().WithTimeout(tc.Timeout).WithInterval(tc.Interval)
+	_, err := w.WaitFor(tc.Ctx, fetchPCS, predicate)
+	return err
+}
+
+func verifyUpdateProgressFields(tc *testctx.TestContext) {
+	tc.T.Helper()
+
+	pcs, err := updateutils.GetPCS(tc, tc.Workload.Name)
+	if err != nil {
+		tc.T.Fatalf("Failed to get PCS for UpdateProgress: %v", err)
+	}
+	updateProgress := pcs.Status.UpdateProgress
+
+	if updateProgress == nil {
+		tc.T.Fatalf("UpdateProgress should not be nil after OnDelete update")
+	}
+
+	if updateProgress.UpdateStartedAt.IsZero() {
+		tc.T.Fatalf("UpdateProgress.UpdateStartedAt should be set")
+	}
+
+	if updateProgress.UpdateEndedAt == nil {
+		tc.T.Fatalf("UpdateProgress.UpdateEndedAt should be set for OnDelete strategy")
+	}
+
+	if updateProgress.CurrentlyUpdating != nil {
+		tc.T.Fatalf("UpdateProgress.CurrentlyUpdating should be nil for OnDelete strategy, got %v", updateProgress.CurrentlyUpdating)
+	}
+
+	// For OnDelete, UpdateEndedAt is set immediately when the update is initiated — it does not
+	// imply that PCLQs have converged to the new generation hash. Pods are replaced only after
+	// the user manually deletes them, so UpdatedPodCliquesCount may legitimately be 0 (no manual
+	// deletes) or partial (some manual deletes). The assertions below check sanity (counts
+	// derived, non-negative, updated <= total), not convergence.
+	if updateProgress.TotalPodCliquesCount == 0 && updateProgress.TotalPodCliqueScalingGroupsCount == 0 {
+		tc.T.Fatalf("UpdateProgress totals are 0/0 — count derivation did not run on a non-empty PCS")
+	}
+	if updateProgress.UpdatedPodCliquesCount > updateProgress.TotalPodCliquesCount {
+		tc.T.Fatalf("UpdateProgress.UpdatedPodCliquesCount = %d > TotalPodCliquesCount = %d (counts cannot exceed totals)",
+			updateProgress.UpdatedPodCliquesCount, updateProgress.TotalPodCliquesCount)
+	}
+	if updateProgress.UpdatedPodCliqueScalingGroupsCount > updateProgress.TotalPodCliqueScalingGroupsCount {
+		tc.T.Fatalf("UpdateProgress.UpdatedPodCliqueScalingGroupsCount = %d > TotalPodCliqueScalingGroupsCount = %d (counts cannot exceed totals)",
+			updateProgress.UpdatedPodCliqueScalingGroupsCount, updateProgress.TotalPodCliqueScalingGroupsCount)
+	}
+}
+
+func verifyNoPodsDeleted(tc *testctx.TestContext, events []updateutils.PodEvent, existingPodNames map[string]bool) {
+	tc.T.Helper()
+
+	deletedPods := []string{}
+	for _, event := range events {
+		if event.EventType == watch.Deleted && existingPodNames[event.Pod.Name] {
+			deletedPods = append(deletedPods, event.Pod.Name)
+		}
+	}
+
+	if len(deletedPods) > 0 {
+		tc.T.Fatalf("OnDelete strategy violated: pods were automatically deleted when spec changed: %v", deletedPods)
+	}
+}
+
+// firstPodForClique returns the name of the first pod belonging to the specified clique.
+func firstPodForClique(tc *testctx.TestContext, cliqueName string) (string, error) {
+	cliquePods, err := podsForClique(tc, cliqueName)
+	if err != nil {
+		return "", err
+	}
+	if len(cliquePods) == 0 {
+		return "", fmt.Errorf("no pods found for %s", cliqueName)
+	}
+	return cliquePods[0], nil
+}
+
+// podsForClique returns the names of all pods belonging to the specified clique.
+func podsForClique(tc *testctx.TestContext, cliqueName string) ([]string, error) {
+	tc.T.Helper()
+
+	pods, err := tc.ListPods()
+	if err != nil {
+		return nil, err
+	}
+
+	var cliquePods []string
+	for _, pod := range pods.Items {
+		if pod.Labels == nil {
+			continue
+		}
+		if pclq, ok := pod.Labels[apicommon.LabelPodClique]; ok && strings.HasSuffix(pclq, "-"+cliqueName) {
+			cliquePods = append(cliquePods, pod.Name)
+		}
+	}
+
+	return cliquePods, nil
+}
+
+// findFirstNewPodName returns the name of the first pod not present in the given set.
+func findFirstNewPodName(tc *testctx.TestContext, existingPodNames map[string]bool) (string, error) {
+	pods, err := tc.ListPods()
+	if err != nil {
+		return "", err
+	}
+
+	for _, pod := range pods.Items {
+		if !existingPodNames[pod.Name] {
+			return pod.Name, nil
+		}
+	}
+
+	return "", fmt.Errorf("could not find newly created replacement pod")
+}
+
+// nodeForPod returns the node name where the specified pod is scheduled.
+func nodeForPod(tc *testctx.TestContext, podName string) (string, error) {
+	tc.T.Helper()
+
+	var pod corev1.Pod
+	if err := tc.Client.Get(tc.Ctx, types.NamespacedName{Namespace: tc.Namespace, Name: podName}, &pod); err != nil {
+		return "", fmt.Errorf("failed to get pod %s: %w", podName, err)
+	}
+	if pod.Spec.NodeName == "" {
+		return "", fmt.Errorf("pod %s has no node assignment", podName)
+	}
+	return pod.Spec.NodeName, nil
+}
+
+// podNamesOnNode returns the names of pods scheduled on the specified node.
+func podNamesOnNode(tc *testctx.TestContext, nodeName string) ([]string, error) {
+	tc.T.Helper()
+
+	pods, err := tc.ListPods()
+	if err != nil {
+		return nil, err
+	}
+
+	var podsOnNode []string
+	for _, pod := range pods.Items {
+		if pod.Spec.NodeName == nodeName {
+			podsOnNode = append(podsOnNode, pod.Name)
+		}
+	}
+
+	return podsOnNode, nil
+}
+
+// identifyHealthyNodePods returns the set of pod names that are NOT on the specified node.
+func identifyHealthyNodePods(allPods map[string]bool, podsOnExcludedNode []string) map[string]bool {
+	healthyNodePods := make(map[string]bool)
+	excludedSet := make(map[string]bool, len(podsOnExcludedNode))
+	for _, name := range podsOnExcludedNode {
+		excludedSet[name] = true
+	}
+	for name := range allPods {
+		if !excludedSet[name] {
+			healthyNodePods[name] = true
+		}
+	}
+	return healthyNodePods
+}
+
+// excludeNodeFromPodCliqueAffinity updates the PCS spec to add a nodeAffinity exclusion
+// (kubernetes.io/hostname NotIn [nodeName]) to the specified PodClique's nodeAffinity.
+// This simulates the node failure recovery workflow from GREP-291 Example Usage,
+// where a failed node is excluded by adding a NotIn matchExpression for its hostname.
+func excludeNodeFromPodCliqueAffinity(tc *testctx.TestContext, cliqueName string, nodeName string) error {
+	tc.T.Helper()
+
+	pcsName := tc.Workload.Name
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		var pcs grovev1beta1.PodCliqueSet
+		if err := tc.Client.Get(tc.Ctx, types.NamespacedName{Name: pcsName, Namespace: tc.Namespace}, &pcs); err != nil {
+			return fmt.Errorf("failed to get PodCliqueSet: %w", err)
+		}
+		pcs.SetGroupVersionKind(grovev1beta1.SchemeGroupVersion.WithKind("PodCliqueSet"))
+		pcs.SetManagedFields(nil)
+		pcs.SetResourceVersion("")
+
+		found := false
+		for i, clique := range pcs.Spec.Template.Cliques {
+			if clique.Name == cliqueName {
+				affinity := pcs.Spec.Template.Cliques[i].Spec.PodSpec.Affinity
+				if affinity == nil || affinity.NodeAffinity == nil ||
+					affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution == nil ||
+					len(affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms) == 0 {
+					return fmt.Errorf("clique %s has no existing nodeAffinity nodeSelectorTerms to append to", cliqueName)
+				}
+
+				// Append a NotIn matchExpression to the first nodeSelectorTerm, matching the GREP-291 Example Usage:
+				//   - key: kubernetes.io/hostname
+				//     operator: NotIn
+				//     values: [<failed-node-name>]
+				terms := &affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms[0]
+				terms.MatchExpressions = append(terms.MatchExpressions, corev1.NodeSelectorRequirement{
+					Key:      "kubernetes.io/hostname",
+					Operator: corev1.NodeSelectorOpNotIn,
+					Values:   []string{nodeName},
+				})
+
+				found = true
+				break
+			}
+		}
+
+		if !found {
+			return fmt.Errorf("clique %s not found in PodCliqueSet %s", cliqueName, pcsName)
+		}
+
+		return tc.Client.Patch(tc.Ctx, &pcs, client.Apply, client.FieldOwner("e2e-rolling-update-test"), client.ForceOwnership)
+	})
+}
+
+// verifyPodHasNodeAffinityExclusion checks that the given pod's spec contains a
+// kubernetes.io/hostname NotIn matchExpression that excludes the specified node name.
+func verifyPodHasNodeAffinityExclusion(tc *testctx.TestContext, podName string, excludedNode string) error {
+	tc.T.Helper()
+
+	var pod corev1.Pod
+	if err := tc.Client.Get(tc.Ctx, types.NamespacedName{Namespace: tc.Namespace, Name: podName}, &pod); err != nil {
+		return fmt.Errorf("failed to get pod %s: %w", podName, err)
+	}
+
+	if pod.Spec.Affinity == nil || pod.Spec.Affinity.NodeAffinity == nil ||
+		pod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution == nil {
+		return fmt.Errorf("pod %s has no requiredDuringSchedulingIgnoredDuringExecution nodeAffinity", podName)
+	}
+
+	for _, term := range pod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms {
+		for _, expr := range term.MatchExpressions {
+			if expr.Key == "kubernetes.io/hostname" && expr.Operator == corev1.NodeSelectorOpNotIn {
+				if slices.Contains(expr.Values, excludedNode) {
+					return nil
+				}
+			}
+		}
+	}
+
+	return fmt.Errorf("pod %s does not have kubernetes.io/hostname NotIn [%s] in its nodeAffinity", podName, excludedNode)
+}
+
+// verifyPodNotOnNode asserts that the specified pod is not scheduled on the given node.
+func verifyPodNotOnNode(tc *testctx.TestContext, podName string, excludedNodeName string) {
+	tc.T.Helper()
+
+	nodeName, err := nodeForPod(tc, podName)
+	if err != nil {
+		tc.T.Fatalf("Failed to get node for pod %s: %v", podName, err)
+	}
+	if nodeName == excludedNodeName {
+		tc.T.Fatalf("Pod %s is scheduled on excluded node %s — nodeAffinity exclusion not enforced", podName, excludedNodeName)
+	}
+	tests.Logger.Debugf("Pod %s is on node %s (not on excluded node %s)", podName, nodeName, excludedNodeName)
+}
+
+// verifyPodsStillPresent asserts that all pods in the given set are still present in the cluster.
+func verifyPodsStillPresent(tc *testctx.TestContext, expectedPods map[string]bool) {
+	tc.T.Helper()
+
+	pods, err := tc.ListPods()
+	if err != nil {
+		tc.T.Fatalf("Failed to list Pods: %v", err)
+	}
+
+	currentPods := make(map[string]bool, len(pods.Items))
+	for _, pod := range pods.Items {
+		currentPods[pod.Name] = true
+	}
+
+	for podName := range expectedPods {
+		if !currentPods[podName] {
+			tc.T.Fatalf("Pod %s was disrupted (deleted/recreated) — update strategy violated", podName)
+		}
+	}
 }

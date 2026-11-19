@@ -17,12 +17,14 @@
 package update
 
 import (
+	"sort"
+	"testing"
+
 	grovev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/e2e/tests"
 	updateutils "github.com/ai-dynamo/grove/operator/e2e/tests/update/utils"
+
 	"github.com/stretchr/testify/assert"
-	"sort"
-	"testing"
 )
 
 // Test_PCUS1_ScaleInAfterCoherentUpdateKeepsPodGangMapConsistent verifies steady-state PodGangMap scale
@@ -60,21 +62,21 @@ func Test_PCUS1_ScaleInAfterCoherentUpdateKeepsPodGangMapConsistent(t *testing.T
 
 	tests.Logger.Info("3. Trigger a coherent update of both frontend and the inference PCSG")
 	for _, cliqueName := range []string{"frontend", "prefill"} {
-		if err := triggerPodCliqueUpdate(tc, cliqueName); err != nil {
+		if err := updateutils.TriggerPodCliqueUpdate(tc, cliqueName); err != nil {
 			t.Fatalf("failed to trigger update of %s: %v", cliqueName, err)
 		}
 	}
 
 	tests.Logger.Info("4. Wait for the coherent update to complete")
-	if err := waitForRollingUpdateComplete(tc, 1); err != nil {
+	if err := updateutils.WaitForRollingUpdateComplete(tc, 1); err != nil {
 		t.Fatalf("coherent update did not complete: %v", err)
 	}
-	assertUpdateInProgressCleared(tc)
+	updateutils.AssertUpdateInProgressCleared(tc)
 	updateutils.AssertGenerationHashConverged(tc)
 
 	tests.Logger.Info("5. Verify anchors carry inference indices {0} and {2}, so a high index sits in an anchor")
-	newHash := getPCSGenerationHash(t, tc)
-	entries := getPodGangMapEntries(t, tc, 0)
+	newHash := updateutils.PCSGenerationHash(t, tc)
+	entries := updateutils.PodGangMapEntries(t, tc, 0)
 	assertCoherentAnchorCompositions(t, entries, newHash, "inference", []coherentAnchor{
 		{standalone: map[string]int32{"frontend": 1}, pcsgIndices: []int32{0}},
 		{standalone: map[string]int32{"frontend": 1}, pcsgIndices: []int32{2}},
@@ -83,7 +85,7 @@ func Test_PCUS1_ScaleInAfterCoherentUpdateKeepsPodGangMapConsistent(t *testing.T
 
 	tests.Logger.Info("6. Scale the inference PCSG out from 4 to 5 so a ScaleOut entry carries index 4 (12 pods)")
 	tc.ScalePCSGAcrossAllReplicasAndWait(coherentWorkloadName, "inference", 1, 5, 12, 0)
-	entries = getPodGangMapEntries(t, tc, 0)
+	entries = updateutils.PodGangMapEntries(t, tc, 0)
 	assert.Equal(t, []int32{4}, pcsgIndicesForRole(entries, grovev1beta1.PodGangEntryRoleScaleOut, "inference"), "the ScaleOut entry must carry inference index 4")
 	assert.NotEmpty(t, pcsgIndicesForRole(entries, grovev1beta1.PodGangEntryRoleTail, "inference"), "a tail entry must still be present alongside the ScaleOut entry")
 
@@ -91,31 +93,31 @@ func Test_PCUS1_ScaleInAfterCoherentUpdateKeepsPodGangMapConsistent(t *testing.T
 	tc.ScalePCSGAcrossAllReplicasAndWait(coherentWorkloadName, "inference", 1, 2, 6, 0)
 
 	tests.Logger.Info("8. The PodGangMap must record exactly the surviving inference replicas {0,1}")
-	entries = getPodGangMapEntries(t, tc, 0)
+	entries = updateutils.PodGangMapEntries(t, tc, 0)
 	assert.Equal(t, []int32{0, 1}, allPCSGIndices(entries, "inference"), "the PodGangMap must record the same replicas the PCSG reconciler kept")
 
 	tests.Logger.Info("9. A further coherent update still converges over the reconciled layout")
-	prevHash := getPCSGenerationHash(t, tc)
-	if err := triggerPodCliqueUpdate(tc, "frontend"); err != nil {
+	prevHash := updateutils.PCSGenerationHash(t, tc)
+	if err := updateutils.TriggerPodCliqueUpdate(tc, "frontend"); err != nil {
 		t.Fatalf("failed to trigger the second update of frontend: %v", err)
 	}
 	// Wait until the second update is observed before waiting for completion, otherwise the first
 	// update's UpdateEndedAt is still set and the completion wait returns on the stale state (issue #863).
-	if err := waitForGenerationHashChange(tc, prevHash); err != nil {
+	if err := updateutils.WaitForGenerationHashChange(tc, prevHash); err != nil {
 		t.Fatalf("the second coherent update did not start: %v", err)
 	}
-	if err := waitForRollingUpdateComplete(tc, 1); err != nil {
+	if err := updateutils.WaitForRollingUpdateComplete(tc, 1); err != nil {
 		t.Fatalf("the second coherent update did not complete: %v", err)
 	}
-	assertUpdateInProgressCleared(tc)
+	updateutils.AssertUpdateInProgressCleared(tc)
 	updateutils.AssertGenerationHashConverged(tc)
 	// The second coherent update changes only the standalone frontend, so it opens a fresh anchor holding
 	// both frontend replicas and no PodCliqueScalingGroup indices, while the pre-existing inference-bearing
 	// anchor keeps index 0 (shedding its frontend pods to the new anchor) and the tail keeps index 1. The
 	// map must reconverge to a single generation with the inference index set still exactly {0,1}.
-	newHash = getPCSGenerationHash(t, tc)
-	assertPodGangMapSingleGeneration(t, tc)
-	entries = getPodGangMapEntries(t, tc, 0)
+	newHash = updateutils.PCSGenerationHash(t, tc)
+	updateutils.AssertPodGangMapSingleGeneration(t, tc)
+	entries = updateutils.PodGangMapEntries(t, tc, 0)
 	assertCoherentAnchorCompositions(t, entries, newHash, "inference", []coherentAnchor{
 		{standalone: map[string]int32{"frontend": 0}, pcsgIndices: []int32{0}},
 		{standalone: map[string]int32{"frontend": 2}, pcsgIndices: nil},

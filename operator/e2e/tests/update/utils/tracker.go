@@ -1,6 +1,4 @@
-//go:build e2e
-
-// Copyright 2025 The Grove Authors.
+// Copyright 2026 The Grove Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,42 +12,50 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package update
+//go:build e2e
+
+package utils
 
 import (
 	"context"
 	"fmt"
+	"sync"
+	"time"
+
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
+
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/watch"
-	"sync"
-	"time"
 )
 
-// podEvent represents a pod lifecycle event during an update
-type podEvent struct {
-	eventType watch.EventType
-	pod       *corev1.Pod
-	timestamp time.Time
+// PodEvent represents a pod lifecycle event during an update.
+type PodEvent struct {
+	// EventType is the Kubernetes watch event kind.
+	EventType watch.EventType
+	// Pod is the pod snapshot recorded for the event.
+	Pod *corev1.Pod
+	// Timestamp is when the watch event was recorded.
+	Timestamp time.Time
 }
 
-// updateTracker tracks pod events during updates (rolling, ondelete, etc.)
-type updateTracker struct {
-	events  []podEvent
-	mu      sync.Mutex
+// UpdateTracker tracks pod events during updates (rolling, ondelete, etc.).
+type UpdateTracker struct {
+	events  []PodEvent
+	mu      sync.Mutex // mu protects events.
 	watcher watch.Interface
 	cancel  context.CancelFunc
 }
 
-// newUpdateTracker creates a new update tracker
-func newUpdateTracker() *updateTracker {
-	return &updateTracker{}
+// NewUpdateTracker creates a new update tracker.
+func NewUpdateTracker() *UpdateTracker {
+	return &UpdateTracker{}
 }
 
-// start begins watching pod events and blocks until the watcher is ready.
+// Start begins watching pod events and blocks until the watcher is ready.
 // Uses tc.Ctx, tc.Client, tc.Namespace, and tc.Workload.GetLabelSelector() for watch configuration.
-func (t *updateTracker) start(tc *testctx.TestContext) error {
+// The caller must call Stop after a successful Start to clean up the watch.
+func (t *UpdateTracker) Start(tc *testctx.TestContext) error {
 	watcherCtx, cancel := context.WithCancel(tc.Ctx)
 	t.cancel = cancel
 
@@ -92,8 +98,18 @@ func (t *updateTracker) start(tc *testctx.TestContext) error {
 	}
 }
 
-// stop stops the watcher and cleans up resources
-func (t *updateTracker) stop() {
+func (t *UpdateTracker) recordEvent(eventType watch.EventType, pod *corev1.Pod) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.events = append(t.events, PodEvent{
+		EventType: eventType,
+		Pod:       pod.DeepCopy(),
+		Timestamp: time.Now(),
+	})
+}
+
+// Stop stops the watcher and cleans up resources.
+func (t *UpdateTracker) Stop() {
 	if t.watcher != nil {
 		t.watcher.Stop()
 	}
@@ -102,19 +118,9 @@ func (t *updateTracker) stop() {
 	}
 }
 
-func (t *updateTracker) recordEvent(eventType watch.EventType, pod *corev1.Pod) {
+// Events returns a copy of the recorded event slice. Pod snapshots are shared.
+func (t *UpdateTracker) Events() []PodEvent {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.events = append(t.events, podEvent{
-		eventType: eventType,
-		pod:       pod.DeepCopy(),
-		timestamp: time.Now(),
-	})
-}
-
-// getEvents returns a copy of all recorded events
-func (t *updateTracker) getEvents() []podEvent {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	return append([]podEvent{}, t.events...)
+	return append([]PodEvent{}, t.events...)
 }
