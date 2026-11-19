@@ -1,0 +1,60 @@
+# Workload: Scaled PodGangs within the required block
+# Test scenario: PCS with block constraint, PCSG with replicas=7/minAvailable=3, PCLQ with host constraint.
+# The whole replica fits in the block its base PodGang lands in, while other blocks have free hosts.
+---
+apiVersion: grove.io/v1beta1
+kind: PodCliqueSet
+metadata:
+  name: tas-scale-in-block
+  labels:
+    app: tas-scale-in-block
+spec:
+  replicas: 1
+  template:
+    topologyConstraint:
+      topologyName: grove-topology
+      pack:
+        required: block
+    podCliqueScalingGroups:
+      - name: workers
+        replicas: 7
+        minAvailable: 3
+        topologyConstraint:
+        cliqueNames:
+          - worker
+    cliques:
+      - name: worker
+        labels:
+          kai.scheduler/queue: test
+        topologyConstraint:
+          topologyName: grove-topology
+          pack:
+            required: host
+        spec:
+          roleName: worker
+          replicas: 2
+          minAvailable: 2
+          podSpec:
+            terminationGracePeriodSeconds: 5
+            schedulerName: kai-scheduler
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: node_role.e2e.grove.nvidia.com
+                          operator: In
+                          values:
+                            - agent
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: worker
+                image: registry:5001/busybox:latest
+                command: ["sleep", "infinity"]
+                resources:
+                  requests:
+                    memory: 40Mi
