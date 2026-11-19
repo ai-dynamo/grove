@@ -159,6 +159,40 @@ func TestResourceNamingValidation(t *testing.T) {
 	}
 }
 
+func TestValidatePriorityClassName(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		value string
+		valid bool
+	}{
+		{name: "empty", valid: true},
+		{name: "hyphenated", value: "high-priority", valid: true},
+		{name: "dotted", value: "high.priority", valid: true},
+		{name: "system node", value: "system-node-critical", valid: true},
+		{name: "system cluster", value: "system-cluster-critical", valid: true},
+		{name: "maximum length", value: strings.Repeat("a.", 126) + "a", valid: true},
+		{name: "uppercase and space", value: "High Priority"},
+		{name: "too long", value: strings.Repeat("a.", 126) + "aa"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pcs := createTestPodCliqueSet("test")
+			pcs.Spec.Template.PriorityClassName = tc.value
+			validator := newPCSValidator(pcs, admissionv1.Create, defaultTASConfig(),
+				groveconfigv1beta1.SchedulerConfiguration{}, nil, testutils.NewDefaultFakeRegistry())
+			_, errs := validator.validate()
+			if tc.valid {
+				require.Empty(t, errs)
+				return
+			}
+			require.Len(t, errs, 1)
+			assert.Equal(t, field.ErrorTypeInvalid, errs[0].Type)
+			assert.Equal(t, "spec.template.priorityClassName", errs[0].Field)
+			assert.Equal(t, tc.value, errs[0].BadValue)
+			assert.NotEmpty(t, errs[0].Detail)
+		})
+	}
+}
+
 func TestValidateSchedulerNames(t *testing.T) {
 	specPath := field.NewPath("cliques").Child("spec").Child("podSpec").Child("schedulerName")
 	tests := []struct {
