@@ -160,7 +160,9 @@ type PodCliqueSetUpdateProgress struct {
 	RequiresReplicaRecreation bool `json:"requiresReplicaRecreation,omitempty"`
 	// TargetSchedulingConfigurationHash identifies the scheduling configuration that this update must converge to.
 	// On successful completion, it is copied to PodCliqueSetStatus.AppliedSchedulingConfigurationHash.
-	TargetSchedulingConfigurationHash string `json:"targetSchedulingConfigurationHash"`
+	// Older operators may omit this field during upgrades and downgrades.
+	// +optional
+	TargetSchedulingConfigurationHash string `json:"targetSchedulingConfigurationHash,omitempty"`
 	// PreviousPodCliqueSetGenerationHash identifies the PodCliqueSet generation that was the update target immediately
 	// before the current update was initialized. It distinguishes replicas that had converged to the previous target from
 	// replicas that had not.
