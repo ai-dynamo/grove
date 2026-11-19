@@ -20,6 +20,7 @@ import (
 	"maps"
 	"reflect"
 	"sort"
+	"time"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	apicommonconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
@@ -60,6 +61,9 @@ const (
 	annotationValSkipPGR = "true"
 	annotationPodGroup   = "pod-group-name"
 	labelSubGroup        = "kai.scheduler/subgroup-name"
+
+	annotationKeyStalenessGracePeriod = "kai.scheduler/staleness-grace-period"
+	stalenessGracePeriodNeverEvict    = -1 * time.Second
 )
 
 // New creates a new KAI backend instance. profile is the scheduler profile for kai-scheduler;
@@ -168,8 +172,25 @@ func (b *schedulerBackend) PodGangMembershipAnnotations(newPodGangName string) m
 
 // ValidatePodCliqueSet runs KAI-specific validations on the PodCliqueSet.
 func (b *schedulerBackend) ValidatePodCliqueSet(_ context.Context, pcs *grovecorev1beta1.PodCliqueSet, _ ...scheduler.ValidateOption) error {
-	_, err := resolveQueueNameForPodCliqueSet(pcs)
+	if _, err := resolveQueueNameForPodCliqueSet(pcs); err != nil {
+		return err
+	}
+	_, err := resolveStalenessGracePeriod(pcs.Annotations)
 	return err
+}
+
+// resolveStalenessGracePeriod returns the staleness grace period for a KAI PodGroup. KAI stale gang
+// eviction is disabled unless the annotation requests a period, because Grove terminates gangs itself.
+func resolveStalenessGracePeriod(annotations map[string]string) (*metav1.Duration, error) {
+	value, found := annotations[annotationKeyStalenessGracePeriod]
+	if !found {
+		return &metav1.Duration{Duration: stalenessGracePeriodNeverEvict}, nil
+	}
+	gracePeriod, err := kaischedulingv2alpha2.ParseStalenessGracePeriod(value)
+	if err != nil {
+		return nil, fmt.Errorf("invalid annotation %q: %w", annotationKeyStalenessGracePeriod, err)
+	}
+	return gracePeriod, nil
 }
 
 // buildPodGroupForPodGang translates a Grove PodGang into a KAI PodGroup object.
@@ -184,6 +205,10 @@ func (b *schedulerBackend) buildPodGroupForPodGang(ctx context.Context, podGang 
 		return nil, err
 	}
 	queueName, err := b.resolveQueueName(ctx, podGang)
+	if err != nil {
+		return nil, err
+	}
+	stalenessGracePeriod, err := resolveStalenessGracePeriod(podGang.Annotations)
 	if err != nil {
 		return nil, err
 	}
@@ -237,10 +262,11 @@ func (b *schedulerBackend) buildPodGroupForPodGang(ctx context.Context, podGang 
 			Annotations: maps.Clone(podGang.Annotations),
 		},
 		Spec: kaischedulingv2alpha2.PodGroupSpec{
-			MinMember:         ptr.To(minMember),
-			Queue:             queueName,
-			PriorityClassName: podGang.Spec.PriorityClassName,
-			SubGroups:         subGroups,
+			MinMember:            ptr.To(minMember),
+			Queue:                queueName,
+			PriorityClassName:    podGang.Spec.PriorityClassName,
+			SubGroups:            subGroups,
+			StalenessGracePeriod: stalenessGracePeriod,
 		},
 	}
 	if topologyConstraint != nil {
