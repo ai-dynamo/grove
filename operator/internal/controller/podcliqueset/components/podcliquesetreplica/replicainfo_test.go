@@ -15,10 +15,12 @@
 package podcliquesetreplica
 
 import (
+	"testing"
+
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
+
 	"github.com/stretchr/testify/assert"
-	"testing"
 )
 
 func TestHasMaterializedPCSGeneration(t *testing.T) {

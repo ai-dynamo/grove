@@ -699,7 +699,7 @@ func TestInitOrResetUpdate(t *testing.T) {
 	}
 }
 
-func TestInitOrResetUpdatePreservesReplicaRecreationAcrossSupersession(t *testing.T) {
+func TestInitOrResetUpdatePreservesReplicaRecreationAcrossSchedulingRollback(t *testing.T) {
 	sourceCleanupCompletedAt := metav1.Now()
 	replacement := &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{
 		TargetReplicaIndex:       1,
@@ -711,8 +711,9 @@ func TestInitOrResetUpdatePreservesReplicaRecreationAcrossSupersession(t *testin
 		WithUpdateStrategy(&grovecorev1beta1.PodCliqueSetUpdateStrategy{Type: grovecorev1beta1.CoherentStrategy}).
 		WithPodCliqueSetGenerationHash(new("old-hash")).
 		WithUpdateProgress(&grovecorev1beta1.PodCliqueSetUpdateProgress{
-			RequiresReplicaRecreation: true,
-			CurrentlyUpdating:         []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 1, Replacement: replacement}},
+			RequiresReplicaRecreation:         true,
+			TargetSchedulingConfigurationHash: "superseded-scheduling-hash",
+			CurrentlyUpdating:                 []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 1, Replacement: replacement}},
 		}).
 		Build()
 	pcs.Status.AppliedSchedulingConfigurationHash = new("applied-scheduling-hash")

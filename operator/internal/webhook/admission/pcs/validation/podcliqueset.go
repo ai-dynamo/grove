@@ -31,6 +31,7 @@ import (
 	"github.com/samber/lo"
 	admissionv1 "k8s.io/api/admission/v1"
 	corev1 "k8s.io/api/core/v1"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apivalidation "k8s.io/apimachinery/pkg/api/validation"
 	metav1validation "k8s.io/apimachinery/pkg/apis/meta/v1/validation"
@@ -717,6 +718,7 @@ func (v *pcsValidator) validatePodCliqueSetSpecUpdate(oldPCS *grovecorev1beta1.P
 func (v *pcsValidator) validatePodCliqueSetTemplateSpecUpdate(oldPCS *grovecorev1beta1.PodCliqueSet, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 
+	allErrs = append(allErrs, v.validatePodTemplateUpdatesDuringReplicaRecreation(oldPCS, fldPath)...)
 	allErrs = append(allErrs, v.validatePodCliqueUpdate(oldPCS.Spec.Template.Cliques, fldPath.Child("cliques"))...)
 	allErrs = append(allErrs, apivalidation.ValidateImmutableField(v.pcs.Spec.Template.StartupType, oldPCS.Spec.Template.StartupType, fldPath.Child("cliqueStartupType"))...)
 	allErrs = append(allErrs, v.validatePodCliqueScalingGroupConfigsUpdate(oldPCS.Spec.Template.PodCliqueScalingGroupConfigs, fldPath.Child("podCliqueScalingGroups"))...)
@@ -724,6 +726,40 @@ func (v *pcsValidator) validatePodCliqueSetTemplateSpecUpdate(oldPCS *grovecorev
 	allErrs = append(allErrs, apivalidation.ValidateImmutableField(v.pcs.Spec.Template.ResourceClaimTemplates, oldPCS.Spec.Template.ResourceClaimTemplates, fldPath.Child("resourceClaimTemplates"))...)
 	allErrs = append(allErrs, apivalidation.ValidateImmutableField(v.pcs.Spec.Template.ResourceSharing, oldPCS.Spec.Template.ResourceSharing, fldPath.Child("resourceSharing"))...)
 
+	return allErrs
+}
+
+// validatePodTemplateUpdatesDuringReplicaRecreation keeps the pod templates fixed until recreation finishes.
+func (v *pcsValidator) validatePodTemplateUpdatesDuringReplicaRecreation(oldPCS *grovecorev1beta1.PodCliqueSet, fldPath *field.Path) field.ErrorList {
+	if !componentutils.IsPCSReplicaRecreationInProgress(oldPCS) {
+		return nil
+	}
+
+	const message = "pod templates cannot be changed while PCS replica recreation is in progress. Retry after recreation completes"
+	allErrs := field.ErrorList{}
+	if v.pcs.Spec.Template.PriorityClassName != oldPCS.Spec.Template.PriorityClassName {
+		allErrs = append(allErrs, field.Forbidden(fldPath.Child("priorityClassName"), message))
+	}
+	for i, clique := range v.pcs.Spec.Template.Cliques {
+		oldClique := componentutils.FindPodCliqueTemplateSpecByName(oldPCS, clique.Name)
+		if oldClique == nil {
+			// Clique composition changes are rejected by validatePodCliqueUpdate.
+			continue
+		}
+		cliqueFldPath := fldPath.Child("cliques").Index(i)
+		newPodSpec, oldPodSpec := clique.Spec.PodSpec, oldClique.Spec.PodSpec
+		// The PCS priority class overrides the value in each clique's PodSpec.
+		newPodSpec.PriorityClassName, oldPodSpec.PriorityClassName = "", ""
+		if !apiequality.Semantic.DeepEqual(newPodSpec, oldPodSpec) {
+			allErrs = append(allErrs, field.Forbidden(cliqueFldPath.Child("spec", "podSpec"), message))
+		}
+		if !apiequality.Semantic.DeepEqual(clique.Labels, oldClique.Labels) {
+			allErrs = append(allErrs, field.Forbidden(cliqueFldPath.Child("labels"), message))
+		}
+		if !apiequality.Semantic.DeepEqual(clique.Annotations, oldClique.Annotations) {
+			allErrs = append(allErrs, field.Forbidden(cliqueFldPath.Child("annotations"), message))
+		}
+	}
 	return allErrs
 }
 
