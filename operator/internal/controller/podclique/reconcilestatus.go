@@ -17,7 +17,6 @@ package podclique
 import (
 	"context"
 	"fmt"
-	"strconv"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
@@ -308,18 +307,17 @@ func computeMinAvailableBreachedCondition(logger logr.Logger, pcs *grovecorev1be
 }
 
 // isOwningPCSReplicaInReplacement reports whether the PodClique's owning PCS replica participates in a
-// PCS replica replacement. A missing or malformed replica-index label is treated as not in replacement
-// and logged, since the breach condition has no error channel.
+// PCS replica replacement. During PCS replica recreation, a missing or malformed replica-index label is
+// treated as in replacement and logged as an error so an unknown identity cannot enable gang termination.
 func isOwningPCSReplicaInReplacement(logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, pclq *grovecorev1beta1.PodClique) bool {
-	indexValue, ok := pclq.Labels[apicommon.LabelPodCliqueSetReplicaIndex]
-	if !ok {
-		logger.V(1).Info("PodClique is missing the PCS replica index label, treating it as not in replacement", "label", apicommon.LabelPodCliqueSetReplicaIndex)
+	if !componentutils.IsPCSReplicaRecreationInProgress(pcs) {
 		return false
 	}
-	pcsReplicaIndex, err := strconv.Atoi(indexValue)
+	pcsReplicaIndex, err := k8sutils.GetPodCliqueSetReplicaIndex(pclq.ObjectMeta)
 	if err != nil {
-		logger.V(1).Info("PodClique has an invalid PCS replica index label, treating it as not in replacement", "label", apicommon.LabelPodCliqueSetReplicaIndex, "value", indexValue)
-		return false
+		logger.Error(err, "Could not determine owning PCS replica, keeping gang termination disarmed",
+			"pclqObjectKey", client.ObjectKeyFromObject(pclq))
+		return true
 	}
 	return componentutils.IsPCSReplicaInReplacement(pcs, pcsReplicaIndex)
 }
