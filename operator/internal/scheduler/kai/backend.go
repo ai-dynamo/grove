@@ -196,9 +196,6 @@ func (b *schedulerBackend) buildPodGroupForPodGang(ctx context.Context, podGang 
 	if err != nil {
 		return nil, err
 	}
-	// Admission rejects an invalid value, but an object admitted before this
-	// check existed may carry one. Ignore it as KAI's podgrouper does rather
-	// than leave the gang without a PodGroup.
 	preemptibility, err := resolvePreemptibilityForPodCliqueSet(pcs)
 	if err != nil {
 		b.recordWarning(podGang, "InvalidKAIPreemptibility", err)
