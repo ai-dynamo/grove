@@ -266,6 +266,23 @@ type PodCliqueSetReplicaReplacementProgress struct {
 	// +optional
 	SourceCleanupCompletedAt *metav1.Time `json:"sourceCleanupCompletedAt,omitempty"`
 
+	// RetiredSourceReplicaIndices contains the indices of previous sources whose cleanup remains pending after a
+	// superseding update restarts a replacement at its target index. For example, if a replacement from replica
+	// index 2 to replica index 1 is superseded, the new replacement recreates replica index 1 in place and records
+	// replica index 2 here until its remaining resources have been removed. A retired source no longer contributes
+	// to the desired PCS replica identity set, but its index remains reserved so scaling or another replacement
+	// cannot reuse it during cleanup. Retired-source cleanup may proceed concurrently with target recreation.
+	//
+	// Grove persists these cleanup obligations across operator restarts, further superseding updates, and
+	// cancellation. An index is removed only after every applicable replica-scoped component confirms that its
+	// resources have been cleaned up. Absence from a single resource snapshot is not sufficient. The replacement
+	// cannot complete, or have its canceled progress removed, while this list is non-empty. These obligations are
+	// specific to this replacement and do not include unrelated PCS scale-in work. A nil or empty list means no
+	// retired-source cleanup remains pending.
+	// +optional
+	// +listType=set
+	RetiredSourceReplicaIndices []int32 `json:"retiredSourceReplicaIndices,omitempty"`
+
 	// CanceledAt is the time when the replacement stopped contributing its target to the projected PodCliqueSet
 	// identity set.
 	// +optional

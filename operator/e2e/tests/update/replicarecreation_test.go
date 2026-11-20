@@ -1199,7 +1199,7 @@ func Test_RR13_TemplateChangeRejectedDuringDifferentIndexReplacement(t *testing.
 			firstPCS, err := updateutils.GetPCS(tc, tc.Workload.Name)
 			require.NoError(t, err)
 			firstTarget := requireSchedulingTargetChanged(t, source.PCS, firstPCS)
-			require.NoError(t, waitForWorkload2ReplicaAtGeneration(tc, 1, firstTarget.GenerationHash))
+			require.NoError(t, waitForWorkload2ReplicaAtGeneration(tc, 1, firstTarget.GenerationHash, 2))
 			require.NoError(t, waitForReplicaResourcesDeleted(tc, client.MatchingLabels{
 				apicommon.LabelPartOfKey: tc.Workload.Name, apicommon.LabelPodCliqueSetReplicaIndex: "2",
 			}))
@@ -1358,6 +1358,144 @@ func Test_RR14_ScaleToZeroCancelsSameIndexReplacement(t *testing.T) {
 			assertLatestPodTemplatesOnPCSReplicas(tc, []int{0})
 		})
 	}
+}
+
+// Test_RR15_SchedulingSupersessionRecreatesDifferentIndexTarget verifies that superseding an active
+// different-index replacement recreates its already-materialized target rather than patching obsolete gang
+// membership in place. The configured strategy is Coherent, but both scheduling changes execute replica
+// recreation. Holding the old source's deletion makes its replacement-owned cleanup observable across handoff.
+//
+// Scenario:
+//  1. Deploy workload2 under Coherent with three Ready PCS replicas at indices 0, 1, and 2.
+//  2. Block fresh standalone pods at index 1, delete its existing pods, and wait for unavailability before
+//     scaling to two replicas. Scale-in removes index 1, leaving the gap between indices 0 and 2.
+//  3. Hold source 2's pc-a deletion and increase pc-a MinAvailable 1 -> 2 (S1). Observe replacement 2 -> 1
+//     and its target resources. The target's sg-x anchor contains index 0 and its tail contains index 1.
+//  4. Increase sg-x MinAvailable 1 -> 2 (S2). Observe handoff to 1 -> 1, retirement of source 2, and a reset
+//     cleanup barrier. Verify new target resource UIDs and an sg-x anchor containing both indices with no tail.
+//  5. Release source 2 deletion while target readiness remains blocked. Verify all retired resources disappear
+//     and retirement clears without completing the update or advancing the applied scheduling hash.
+//  6. Release target readiness and verify two Ready replicas at indices 0 and 1, the exact S2 gang layout,
+//     generation convergence, and completion at the S2 scheduling hash.
+func Test_RR15_SchedulingSupersessionRecreatesDifferentIndexTarget(t *testing.T) {
+	tests.Logger.Info("1. Deploy workload2 with three Ready PCS replicas under Coherent")
+	tc, cleanup, _ := setupTest(t, testConfig{
+		workloadName: "workload2", workloadYAML: "../../yaml/workload2.yaml",
+		workerNodes: 30, expectedPods: 10,
+	})
+	t.Cleanup(cleanup)
+	require.NoError(t, updateutils.UpdatePCSUpdateStrategy(tc, grovev1beta1.CoherentStrategy))
+	tc.ScalePCSAndWait(tc.Workload.Name, 3, 30, 0)
+	updateutils.AssertGenerationHashConverged(tc)
+	require.NoError(t, waitForClaimedPCSReplicaIndices(tc, []int{0, 1, 2}))
+
+	tests.Logger.Info("2. Make replica 1 unavailable before scale-in and wait for complete removal")
+	require.NoError(t, kwok.ApplyStage(tc.Ctx, tc.Client, kwokStageReadyBlockedR1Path))
+	blockRemoved := false
+	t.Cleanup(func() {
+		if !blockRemoved {
+			assert.NoError(t, kwok.DeleteStage(tc.Ctx, tc.Client, kwokStageReadyBlockedR1Name))
+		}
+	})
+	require.NoError(t, deletePodsForReplica(tc, 1))
+	require.NoError(t, waitForStandaloneReplicaUnavailable(tc, "pc-a", 1))
+	require.NoError(t, tc.ScalePCS(tc.Workload.Name, 2))
+	require.NoError(t, waitForClaimedPCSReplicaIndices(tc, []int{0, 2}))
+	replicaOneLabels := client.MatchingLabels{
+		apicommon.LabelPartOfKey: tc.Workload.Name, apicommon.LabelPodCliqueSetReplicaIndex: "1",
+	}
+	require.NoError(t, waitForReplicaResourcesDeleted(tc, replicaOneLabels))
+	baseline := requireReplicaSnapshotForIndex(t, tc, 2)
+	require.Equal(t, grovev1beta1.CoherentStrategy, baseline.PCS.Spec.UpdateStrategy.Type)
+
+	tests.Logger.Info("3. Hold source 2 deletion and materialize the S1 different-index target at index 1")
+	releaseSource, err := holdReplicaSourceCleanup(tc, baseline.PCLQ)
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, releaseSource()) })
+	require.NoError(t, triggerStandalonePCLQMinAvailableChange(tc, "pc-a", 2))
+	sourcePCSReplicaIndex, err := waitForActiveReplacementTargetingIndex(tc, 1)
+	require.NoError(t, err)
+	require.Equal(t, int32(2), sourcePCSReplicaIndex)
+	require.NoError(t, waitForReplicaSourceDeletion(tc, baseline.PCLQ))
+	firstPCS, err := updateutils.GetPCS(tc, tc.Workload.Name)
+	require.NoError(t, err)
+	firstTarget := requireSchedulingTargetChanged(t, baseline.PCS, firstPCS)
+	require.NoError(t, waitForWorkload2ReplicaAtGeneration(tc, 1, firstTarget.GenerationHash, 3))
+	require.NoError(t, waitForStandaloneReplicaUnavailable(tc, "pc-a", 1))
+	first := requireReplicaSnapshotForIndex(t, tc, 1)
+	firstProgress := requireActiveReplicaRecreation(t, first.PCS)
+	requireActiveReplacement(t, firstProgress, expectedReplicaReplacement{SourcePCSReplicaIndex: 2, TargetPCSReplicaIndex: 1})
+	wantS1 := expectedReplicaConfiguration{
+		StandaloneMinAvailable: 2, PCSGMinAvailable: 1, PCSGReplicas: 2,
+		PodGangMap: updateutils.ExpectedReplicaPodGangMap{
+			GenerationHash: firstTarget.GenerationHash, StandalonePodCounts: map[string]int32{"pc-a": 2},
+			PCSGName: "sg-x", AnchorIndices: []int32{0}, TailIndices: []int32{1},
+		},
+	}
+	assertReplicaConfiguration(t, first, wantS1)
+
+	tests.Logger.Info("4. Supersede S1, observe the retired source handoff, and verify fresh S2 target resources")
+	watchCtx, cancelWatch := context.WithTimeout(tc.Ctx, tc.Timeout)
+	defer cancelWatch()
+	pcsWatcher, err := watchPodCliqueSet(watchCtx, tc)
+	require.NoError(t, err)
+	defer pcsWatcher.Stop()
+	require.NoError(t, triggerPCSGMinAvailableChange(tc, "sg-x", 2))
+	secondPCS, err := waitForDifferentIndexReplacementHandoff(watchCtx, pcsWatcher, first.PCS)
+	require.NoError(t, err)
+	secondTarget := requireSchedulingTargetChanged(t, first.PCS, secondPCS)
+	handoffProgress := requireActiveReplacement(t, requireActiveReplicaRecreation(t, secondPCS), expectedReplicaReplacement{
+		SourcePCSReplicaIndex: 1, TargetPCSReplicaIndex: 1,
+	})
+	require.Equal(t, []int32{2}, handoffProgress.Replacement.RetiredSourceReplicaIndices)
+	require.Nil(t, handoffProgress.Replacement.SourceCleanupCompletedAt)
+	require.Equal(t, secondPCS.Status.UpdateProgress.UpdateStartedAt, handoffProgress.UpdateStartedAt)
+	requireCleanupAfterSupersession(t, tc, secondPCS)
+	require.NoError(t, waitForWorkload2ReplicaAtGeneration(tc, 1, secondTarget.GenerationHash, 2))
+	second := requireReplicaSnapshotForIndex(t, tc, 1)
+	requireReplicaResourceUIDsChanged(t, first, second)
+	wantS2 := wantS1
+	wantS2.PCSGMinAvailable = 2
+	wantS2.PodGangMap.GenerationHash = secondTarget.GenerationHash
+	wantS2.PodGangMap.AnchorIndices = []int32{0, 1}
+	wantS2.PodGangMap.TailIndices = nil
+	assertReplicaConfiguration(t, second, wantS2)
+	secondProgress := requireActiveReplacement(t, requireActiveReplicaRecreation(t, second.PCS), expectedReplicaReplacement{
+		SourcePCSReplicaIndex: 1, TargetPCSReplicaIndex: 1,
+	})
+	require.Equal(t, []int32{2}, secondProgress.Replacement.RetiredSourceReplicaIndices)
+	require.NotNil(t, secondProgress.Replacement.SourceCleanupCompletedAt)
+	require.NoError(t, waitForStandaloneReplicaUnavailable(tc, "pc-a", 1))
+	var heldSource grovev1beta1.PodClique
+	require.NoError(t, tc.Client.Get(tc.Ctx, client.ObjectKeyFromObject(baseline.PCLQ), &heldSource))
+	require.Equal(t, baseline.PCLQ.UID, heldSource.UID)
+	require.NotNil(t, heldSource.DeletionTimestamp)
+	if second.PCS.Status.ScalingProgress != nil {
+		assert.NotContains(t, second.PCS.Status.ScalingProgress.ScaleInReplicaIndices, int32(2), "retirement must not become ordinary scale-in")
+	}
+
+	tests.Logger.Info("5. Finish retired-source cleanup while target 1 remains unavailable")
+	require.NoError(t, releaseSource())
+	require.NoError(t, waitForReplicaResourcesDeleted(tc, client.MatchingLabels{
+		apicommon.LabelPartOfKey: tc.Workload.Name, apicommon.LabelPodCliqueSetReplicaIndex: "2",
+	}))
+	cleanupPCS, err := waitForReplacementRetirementCleared(tc, 1, secondTarget.GenerationHash)
+	require.NoError(t, err)
+	requireActiveReplicaRecreation(t, cleanupPCS)
+	assert.Equal(t, baseline.PCS.Status.AppliedSchedulingConfigurationHash, cleanupPCS.Status.AppliedSchedulingConfigurationHash)
+	require.NoError(t, waitForStandaloneReplicaUnavailable(tc, "pc-a", 1))
+
+	tests.Logger.Info("6. Release readiness and verify S2 completion, stable target UIDs, and exact gang membership")
+	require.NoError(t, kwok.DeleteStage(tc.Ctx, tc.Client, kwokStageReadyBlockedR1Name))
+	blockRemoved = true
+	updateutils.DeleteNotReadyPodsOnReplica(t, tc, 1)
+	requireReplicaRecreationConverged(t, tc, expectedReplicaRecreationCompletion{
+		GenerationHash: secondTarget.GenerationHash, SchedulingHash: secondTarget.SchedulingHash,
+		Replicas: 2, Pods: 20, PCSReplicaIndices: []int{0, 1}, Configuration: wantS2,
+	})
+	finalTarget := requireReplicaSnapshotForIndex(t, tc, 1)
+	assertReplicaConfiguration(t, finalTarget, wantS2)
+	assertReplicaResourceUIDsUnchanged(t, second, finalTarget)
 }
 
 // replicaRecreationSnapshot captures the PCS and one replica's pc-a, sg-x, and PodGangMap resources.
@@ -1908,6 +2046,100 @@ func waitForRecreationSupersession(ctx context.Context, watcher watch.Interface,
 		return nil, fmt.Errorf("unexpected PCS supersession watch object %T", event.Object)
 	}
 	return pcs.DeepCopy(), nil
+}
+
+// waitForDifferentIndexReplacementHandoff observes the first superseding generation on a PCS watch.
+// The old target must become the same-index source, and the old source must remain retired cleanup.
+// The caller starts the watch before changing the specification. UntilWithoutRetry stops it on return.
+func waitForDifferentIndexReplacementHandoff(
+	ctx context.Context,
+	watcher watch.Interface,
+	previous *grovev1beta1.PodCliqueSet,
+) (*grovev1beta1.PodCliqueSet, error) {
+	beforeSelections := unfinishedPCSReplicaSelections(previous.Status.UpdateProgress)
+	if len(beforeSelections) != 1 || beforeSelections[0].Replacement == nil {
+		return nil, fmt.Errorf("handoff requires exactly one existing replacement")
+	}
+	before := beforeSelections[0]
+	if before.ReplicaIndex == before.Replacement.TargetReplicaIndex {
+		return nil, fmt.Errorf("handoff requires a different-index replacement")
+	}
+	event, err := watchtools.UntilWithoutRetry(ctx, watcher, func(event watch.Event) (bool, error) {
+		switch event.Type {
+		case watch.Error:
+			return false, apierrors.FromObject(event.Object)
+		case watch.Deleted:
+			return false, fmt.Errorf("PCS deleted before replacement handoff")
+		case watch.Added, watch.Modified:
+		default:
+			return false, nil
+		}
+		pcs, ok := event.Object.(*grovev1beta1.PodCliqueSet)
+		if !ok || pcs == nil {
+			return false, fmt.Errorf("unexpected handoff watch object %T", event.Object)
+		}
+		if pcs.Status.CurrentGenerationHash == nil || *pcs.Status.CurrentGenerationHash == *previous.Status.CurrentGenerationHash {
+			return false, nil
+		}
+		progress := pcs.Status.UpdateProgress
+		if progress == nil || !progress.RequiresReplicaRecreation || progress.UpdateEndedAt != nil || len(progress.CurrentlyUpdating) != 1 {
+			return false, fmt.Errorf("supersession did not retain one unfinished replacement")
+		}
+		after := progress.CurrentlyUpdating[0]
+		replacement := after.Replacement
+		if after.ReplicaIndex != before.Replacement.TargetReplicaIndex || replacement == nil || replacement.TargetReplicaIndex != after.ReplicaIndex {
+			return false, fmt.Errorf("supersession did not rebase replacement %d -> %d to its target", before.ReplicaIndex, before.Replacement.TargetReplicaIndex)
+		}
+		if after.UpdateEndedAt != nil || replacement.CanceledAt != nil || replacement.SourceCleanupCompletedAt != nil {
+			return false, fmt.Errorf("handoff completed, canceled, or failed to reset source cleanup")
+		}
+		if !slices.Contains(replacement.RetiredSourceReplicaIndices, before.ReplicaIndex) {
+			return false, fmt.Errorf("handoff lost retired source %d", before.ReplicaIndex)
+		}
+		if !assert.ObjectsAreEqual(previous.Status.AppliedSchedulingConfigurationHash, pcs.Status.AppliedSchedulingConfigurationHash) {
+			return false, fmt.Errorf("handoff advanced the applied scheduling hash before completion")
+		}
+		return true, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("waiting for different-index replacement handoff: %w", err)
+	}
+	pcs, ok := event.Object.(*grovev1beta1.PodCliqueSet)
+	if !ok || pcs == nil {
+		return nil, fmt.Errorf("unexpected handoff result %T", event.Object)
+	}
+	return pcs.DeepCopy(), nil
+}
+
+// waitForReplacementRetirementCleared waits for participant-confirmed retirement at an active same-index
+// replacement. Completing or changing the update while readiness is blocked is a failure rather than success.
+func waitForReplacementRetirementCleared(tc *testctx.TestContext, pcsReplicaIndex int32, generationHash string) (*grovev1beta1.PodCliqueSet, error) {
+	var observed *grovev1beta1.PodCliqueSet
+	err := wait.PollUntilContextTimeout(tc.Ctx, tc.Interval, tc.Timeout, true, func(context.Context) (bool, error) {
+		pcs, err := updateutils.GetPCS(tc, tc.Workload.Name)
+		if err != nil {
+			return false, err
+		}
+		if pcs.Status.CurrentGenerationHash == nil || *pcs.Status.CurrentGenerationHash != generationHash {
+			return false, fmt.Errorf("PCS generation changed during retired-source cleanup")
+		}
+		progress := pcs.Status.UpdateProgress
+		if progress == nil || progress.UpdateEndedAt != nil {
+			return false, fmt.Errorf("update completed before target readiness was released")
+		}
+		for _, replicaProgress := range progress.CurrentlyUpdating {
+			if replicaProgress.ReplicaIndex != pcsReplicaIndex || replicaProgress.Replacement == nil {
+				continue
+			}
+			if replicaProgress.UpdateEndedAt != nil || replicaProgress.Replacement.CanceledAt != nil {
+				return false, fmt.Errorf("replacement completed or canceled while target readiness was blocked")
+			}
+			observed = pcs
+			return len(replicaProgress.Replacement.RetiredSourceReplicaIndices) == 0, nil
+		}
+		return false, fmt.Errorf("replacement %d disappeared during retirement", pcsReplicaIndex)
+	})
+	return observed, err
 }
 
 // recreationSupersessionCondition validates each PCS status update while fresh pod readiness is blocked,
@@ -2832,7 +3064,7 @@ func expectedPCSGEnvironment(t *testing.T, pcs *grovev1beta1.PodCliqueSet) map[s
 
 // waitForWorkload2ReplicaAtGeneration waits for pc-a, sg-x, and the full replacement PodGangMap
 // to materialize at the requested generation. Standalone pod readiness is checked separately.
-func waitForWorkload2ReplicaAtGeneration(tc *testctx.TestContext, pcsReplicaIndex int, pcsGenerationHash string) error {
+func waitForWorkload2ReplicaAtGeneration(tc *testctx.TestContext, pcsReplicaIndex int, pcsGenerationHash string, expectedEntryCount int) error {
 	pcsReplica := apicommon.ResourceNameReplica{Name: tc.Workload.Name, Replica: pcsReplicaIndex}
 	pclqKey := client.ObjectKey{Namespace: tc.Namespace, Name: apicommon.GeneratePodCliqueName(pcsReplica, "pc-a")}
 	pcsgKey := client.ObjectKey{Namespace: tc.Namespace, Name: updateutils.PCSGFQNForReplica(tc, "sg-x", pcsReplicaIndex)}
@@ -2854,7 +3086,7 @@ func waitForWorkload2ReplicaAtGeneration(tc *testctx.TestContext, pcsReplicaInde
 		if err != nil {
 			return false, client.IgnoreNotFound(err)
 		}
-		if pgm.DeletionTimestamp != nil || len(pgm.Spec.Entries) != 2 {
+		if pgm.DeletionTimestamp != nil || len(pgm.Spec.Entries) != expectedEntryCount {
 			return false, nil
 		}
 		for _, entry := range pgm.Spec.Entries {

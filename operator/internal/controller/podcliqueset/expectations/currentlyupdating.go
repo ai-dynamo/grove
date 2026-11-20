@@ -77,12 +77,26 @@ func currentlyUpdatingExpectationKey(pcsObjectMeta metav1.ObjectMeta) string {
 // Adding a non-comparable field, or a pointer whose identity differs across reconciliations, would break
 // ClearIfSatisfied.
 type replicaUpdateProgressDigest struct {
-	replicaIndex           int32
-	hasReplacement         bool
-	targetReplicaIndex     int32
-	canceled               bool
+	// replicaIndex identifies the PCS replica selected for update. For replica recreation, it identifies
+	// the replacement source rather than the target.
+	replicaIndex int32
+	// hasReplacement reports whether the entry records a source-to-target PCS replica replacement.
+	// It distinguishes a replacement targeting index zero from an entry without replacement progress.
+	hasReplacement bool
+	// targetReplicaIndex identifies the replacement target PCS replica. It is meaningful only when
+	// hasReplacement is true.
+	targetReplicaIndex int32
+	// canceled reports whether the replacement's CanceledAt is set. The timestamp value is not compared.
+	canceled bool
+	// sourceCleanupCompleted reports whether SourceCleanupCompletedAt is set. The timestamp value is
+	// ignored, and retired-source cleanup is compared separately.
 	sourceCleanupCompleted bool
-	ended                  bool
+	// ended reports whether the replica update's UpdateEndedAt is set. It distinguishes completed entries
+	// from unfinished work without comparing when completion occurred.
+	ended bool
+	// retiredSourcePCSReplicaIndices encodes the sorted retired-source set as a string so the digest remains
+	// comparable. Ordering and duplicates are ignored, and nil and empty lists are equivalent.
+	retiredSourcePCSReplicaIndices string
 }
 
 // digestCurrentlyUpdating reduces the CurrentlyUpdating entries to the set of facts the expectation compares.
@@ -98,6 +112,8 @@ func digestCurrentlyUpdating(currentlyUpdating []grovev1beta1.PodCliqueSetReplic
 			digest.targetReplicaIndex = replicaProgress.Replacement.TargetReplicaIndex
 			digest.canceled = replicaProgress.Replacement.CanceledAt != nil
 			digest.sourceCleanupCompleted = replicaProgress.Replacement.SourceCleanupCompletedAt != nil
+			retiredSourcePCSReplicaIndices := sets.New(replicaProgress.Replacement.RetiredSourceReplicaIndices...)
+			digest.retiredSourcePCSReplicaIndices = fmt.Sprint(sets.List(retiredSourcePCSReplicaIndices))
 		}
 		digests.Insert(digest)
 	}

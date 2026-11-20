@@ -189,21 +189,21 @@ func computePCSReplicaScalingWork(
 	scaleOutReplicaIndicesWithExpectedPCLQsAndPCSGs := findScaleOutReplicaIndicesWithExpectedPCLQsAndPCSGs(pcs, scalingIndices.scaleOut, replicaInfos)
 	scaleOutIndices.Delete(scaleOutReplicaIndicesWithExpectedPCLQsAndPCSGs...)
 
-	// Claimed identities account for persisted replacements: an active replacement contributes its target,
-	// a canceled replacement contributes neither source nor target.
+	// Pending creation already commits replica capacity, so an absent scale-out or replacement target
+	// must not cause another replica to be allocated for the same capacity.
 	workingScalingIndices := pcsReplicaScalingIndices{
 		scaleOut: scaleOutIndices.UnsortedList(),
 		scaleIn:  scaleInIndices.UnsortedList(),
 	}
-	claimedPCSReplicaIndices := replicaInfos.computeClaimedReplicaIndices(workingScalingIndices, replacementGroups)
+	committedPCSReplicaIndices := replicaInfos.computeCommittedReplicaIndices(workingScalingIndices, replacementGroups)
 	desiredReplicaCount := int(pcs.Spec.Replicas)
 
 	var replacementSourcesToCancel []int
-	if claimedPCSReplicaIndices.Len() > desiredReplicaCount {
-		numReplicasToRemove := claimedPCSReplicaIndices.Len() - desiredReplicaCount
+	if committedPCSReplicaIndices.Len() > desiredReplicaCount {
+		numReplicasToRemove := committedPCSReplicaIndices.Len() - desiredReplicaCount
 		activeTargetToSource := activeReplacementTargetToSource(replacementGroups.active)
 		activeReplacementTargetIndices := activeReplacementTargetIndexSet(activeTargetToSource)
-		selectedReplicaIndices := selectReplicaIndicesForScaleIn(pcs, replicaInfos, claimedPCSReplicaIndices, scaleOutIndices, activeReplacementTargetIndices, numReplicasToRemove)
+		selectedReplicaIndices := selectReplicaIndicesForScaleIn(pcs, replicaInfos, committedPCSReplicaIndices, scaleOutIndices, activeReplacementTargetIndices, numReplicasToRemove)
 		for _, replicaIndex := range selectedReplicaIndices {
 			if sourceReplicaIndex, isActiveTarget := activeTargetToSource[replicaIndex]; isActiveTarget {
 				// Reclaim this unit by canceling the replacement. Scaling persists nothing for it: the
@@ -214,10 +214,10 @@ func computePCSReplicaScalingWork(
 			scaleOutIndices.Delete(replicaIndex)
 			scaleInIndices.Insert(replicaIndex)
 		}
-	} else if claimedPCSReplicaIndices.Len() < desiredReplicaCount {
-		numReplicasToAdd := desiredReplicaCount - claimedPCSReplicaIndices.Len()
-		reservedReplicaIndices := claimedReservedIndices(replicaInfos, scaleOutIndices, scaleInIndices, replacementGroups)
-		selectedScaleOutIndices := utils.GetAvailableIndices(reservedReplicaIndices, numReplicasToAdd)
+	} else if committedPCSReplicaIndices.Len() < desiredReplicaCount {
+		numReplicasToAdd := desiredReplicaCount - committedPCSReplicaIndices.Len()
+		reservedPCSReplicaIndices := computeReservedReplicaIndices(replicaInfos, scaleOutIndices, scaleInIndices, replacementGroups)
+		selectedScaleOutIndices := utils.GetAvailableIndices(reservedPCSReplicaIndices, numReplicasToAdd)
 		scaleOutIndices.Insert(selectedScaleOutIndices...)
 	}
 
@@ -249,23 +249,25 @@ func activeReplacementTargetIndexSet(targetToSource map[int]int) sets.Set[int] {
 	return targetIndices
 }
 
-// claimedReservedIndices returns the replica indices reserved against new scale-out allocation: existing
-// resources, committed scale-out and scale-in, and every active and canceled replacement source and target.
-// Reserving replacement indices prevents scale-out from reusing an index already committed to a replacement.
-func claimedReservedIndices(
+// computeReservedReplicaIndices returns PCS replica indices unavailable for allocation to another replica.
+// Reservation protects index ownership rather than contributing to the committed replica count. An index
+// can remain reserved even when no resources exist.
+//
+// Observed resources, pending scale-out and scale-in, and active or canceled replacement sources and targets
+// reserve their indices. Pending creation both commits replica capacity and reserves an index. Pending
+// scale-in and canceled replacement cleanup reserve indices without committing replica capacity.
+// Retired sources remain reserved while their replacement-owned cleanup is pending, even when no
+// resources are observed at those indices. They reserve indices without committing replica capacity.
+func computeReservedReplicaIndices(
 	replicaInfos pcsReplicaInfoByIndex,
 	scaleOutIndices, scaleInIndices sets.Set[int],
-	replacementGroups pcsReplicaReplacementGroups) sets.Set[int] {
-	reserved := replicaInfos.existingReplicaIndices()
-	reserved.Insert(scaleOutIndices.UnsortedList()...)
-	reserved.Insert(scaleInIndices.UnsortedList()...)
-	for _, replacement := range replacementGroups.active {
-		reserved.Insert(replacement.sourcePCSReplicaIndex, replacement.targetPCSReplicaIndex)
-	}
-	for _, replacement := range replacementGroups.canceled {
-		reserved.Insert(replacement.sourcePCSReplicaIndex, replacement.targetPCSReplicaIndex)
-	}
-	return reserved
+	replacementGroups pcsReplicaReplacementGroups,
+) sets.Set[int] {
+	reservedPCSReplicaIndices := replicaInfos.existingReplicaIndices()
+	reservedPCSReplicaIndices.Insert(scaleOutIndices.UnsortedList()...)
+	reservedPCSReplicaIndices.Insert(scaleInIndices.UnsortedList()...)
+	reservedPCSReplicaIndices.Insert(replacementGroups.reservedReplicaIndices().UnsortedList()...)
+	return reservedPCSReplicaIndices
 }
 
 // findScaleOutReplicaIndicesWithExpectedPCLQsAndPCSGs returns scale-out PCS replica indices for which every
@@ -309,7 +311,7 @@ type pcsReplicaScaleInCandidate struct {
 	tieBreaker int
 }
 
-// selectReplicaIndicesForScaleIn selects up to count claimed PCS replica indices for reclamation:
+// selectReplicaIndicesForScaleIn selects up to count committed PCS replica indices for reclamation:
 //  1. unavailable replicas with existing old-generation resources and no active replacement
 //  2. in-progress work: ordinary scale-out, then unavailable active replacement targets
 //  3. other unavailable replicas
@@ -322,7 +324,7 @@ type pcsReplicaScaleInCandidate struct {
 func selectReplicaIndicesForScaleIn(
 	pcs *grovecorev1beta1.PodCliqueSet,
 	replicaInfos pcsReplicaInfoByIndex,
-	claimedReplicaIndices sets.Set[int],
+	committedPCSReplicaIndices sets.Set[int],
 	scaleOutReplicaIndices sets.Set[int],
 	activeReplacementTargetIndices sets.Set[int],
 	count int) []int {
@@ -332,8 +334,8 @@ func selectReplicaIndicesForScaleIn(
 	numExpectedStandalonePCLQs := componentutils.CountStandalonePCLQs(pcs)
 	numExpectedPCSGs := len(pcs.Spec.Template.PodCliqueScalingGroupConfigs)
 	hasActiveReplacementTargets := activeReplacementTargetIndices.Len() > 0
-	candidates := make([]pcsReplicaScaleInCandidate, 0, claimedReplicaIndices.Len())
-	for replicaIndex := range claimedReplicaIndices {
+	candidates := make([]pcsReplicaScaleInCandidate, 0, committedPCSReplicaIndices.Len())
+	for replicaIndex := range committedPCSReplicaIndices {
 		replicaInfo := replicaInfos[replicaIndex]
 		replicaInfo.index = replicaIndex
 		isReplacementTarget := activeReplacementTargetIndices.Has(replicaIndex)

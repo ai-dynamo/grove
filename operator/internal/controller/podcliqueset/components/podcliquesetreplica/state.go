@@ -27,6 +27,8 @@ import (
 // computePCSReplicaState builds the component-facing state by overlaying the scaling indices and persisted
 // replacement progress onto the observed replica identities. expectedReplicaIndices carries the expected set
 // implied by scaling alone, computed once by the caller.
+// For an observed PCS, retired sources are cleanup-only indices. They remain in scale-in even when absent,
+// and are excluded from expected and scale-out indices.
 func computePCSReplicaState(
 	pcs *grovecorev1beta1.PodCliqueSet,
 	scalingIndices pcsReplicaScalingIndices,
@@ -48,6 +50,19 @@ func computePCSReplicaState(
 	}
 	for _, replacement := range replacementGroups.canceled {
 		overlayCanceledReplacement(replacement, expectedReplicaIndices, scaleInReplicaIndices, scaleOutReplicaIndices)
+	}
+
+	// Retired-source cleanup takes precedence over creation work so these indices cannot be recreated
+	// through an existing scaling or replacement selection.
+	for _, replacement := range replacementGroups.active {
+		expectedReplicaIndices.Delete(replacement.retiredSourcePCSReplicaIndices...)
+		scaleOutReplicaIndices.Delete(replacement.retiredSourcePCSReplicaIndices...)
+		scaleInReplicaIndices.Insert(replacement.retiredSourcePCSReplicaIndices...)
+	}
+	for _, replacement := range replacementGroups.canceled {
+		expectedReplicaIndices.Delete(replacement.retiredSourcePCSReplicaIndices...)
+		scaleOutReplicaIndices.Delete(replacement.retiredSourcePCSReplicaIndices...)
+		scaleInReplicaIndices.Insert(replacement.retiredSourcePCSReplicaIndices...)
 	}
 
 	return pcssync.State{

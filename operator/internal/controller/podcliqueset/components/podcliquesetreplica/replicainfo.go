@@ -41,20 +41,28 @@ func (infos pcsReplicaInfoByIndex) existingReplicaIndices() sets.Set[int] {
 	return existingIndices
 }
 
-// computeClaimedReplicaIndices computes the PCS replica indices claimed by existing resources and persisted scaling
-// and replacement operations.
-func (infos pcsReplicaInfoByIndex) computeClaimedReplicaIndices(scalingIndices pcsReplicaScalingIndices, replacementGroups pcsReplicaReplacementGroups) sets.Set[int] {
-	claimedReplicaIndices := infos.existingReplicaIndices()
-	claimedReplicaIndices.Insert(scalingIndices.scaleOut...)
-	claimedReplicaIndices.Delete(scalingIndices.scaleIn...)
+// computeCommittedReplicaIndices returns the PCS replica indices accounted for by observed resources and
+// persisted scale-out or active replacement commitments. Their count determines whether additional scaling
+// is needed. Membership does not imply that resources exist or that a replica is ready.
+//
+// Ordinary scale-in and replacement-owned retired sources do not contribute to this count. An active
+// replacement contributes its target instead of a separate source replica, even before target resources
+// exist. Canceled replacements contribute neither source nor target. Cleanup indices can remain reserved
+// even though they do not count.
+func (infos pcsReplicaInfoByIndex) computeCommittedReplicaIndices(scalingIndices pcsReplicaScalingIndices, replacementGroups pcsReplicaReplacementGroups) sets.Set[int] {
+	committedPCSReplicaIndices := infos.existingReplicaIndices()
+	committedPCSReplicaIndices.Insert(scalingIndices.scaleOut...)
+	committedPCSReplicaIndices.Delete(scalingIndices.scaleIn...)
 	for _, replacement := range replacementGroups.active {
-		claimedReplicaIndices.Delete(replacement.sourcePCSReplicaIndex)
-		claimedReplicaIndices.Insert(replacement.targetPCSReplicaIndex)
+		committedPCSReplicaIndices.Delete(replacement.sourcePCSReplicaIndex)
+		committedPCSReplicaIndices.Insert(replacement.targetPCSReplicaIndex)
+		committedPCSReplicaIndices.Delete(replacement.retiredSourcePCSReplicaIndices...)
 	}
 	for _, replacement := range replacementGroups.canceled {
-		claimedReplicaIndices.Delete(replacement.sourcePCSReplicaIndex, replacement.targetPCSReplicaIndex)
+		committedPCSReplicaIndices.Delete(replacement.sourcePCSReplicaIndex, replacement.targetPCSReplicaIndex)
+		committedPCSReplicaIndices.Delete(replacement.retiredSourcePCSReplicaIndices...)
 	}
-	return claimedReplicaIndices
+	return committedPCSReplicaIndices
 }
 
 // pcsReplicaInfo contains the replica-scoped resources observed for one PCS replica index.

@@ -34,6 +34,7 @@ import (
 
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -186,7 +187,7 @@ func (r *Reconciler) initOrResetUpdate(ctx context.Context, pcs *grovecorev1beta
 		UpdateStartedAt:                    updateStartedAt,
 	}
 	if isUpdateOrchestratedByGrove(pcs, requiresReplicaRecreation) {
-		updateProgress.CurrentlyUpdating = preserveActiveReplicaSelectionsForSupersedingUpdate(pcs, updateStartedAt)
+		updateProgress.CurrentlyUpdating = prepareReplicaSelectionsForUpdate(pcs, updateStartedAt)
 	} else {
 		// Grove does not orchestrate ordinary OnDelete updates because it cannot know when every Pod has
 		// been manually deleted. Replica recreation is always orchestrated by Grove.
@@ -228,41 +229,56 @@ func isUpdateOrchestratedByGrove(pcs *grovecorev1beta1.PodCliqueSet, requiresRep
 	return requiresReplicaRecreation || componentutils.ResolveUpdateStrategyType(pcs) != grovecorev1beta1.OnDeleteStrategy
 }
 
-// preserveActiveReplicaSelectionsForSupersedingUpdate keeps unfinished replica updates when a new update
-// replaces the current one, so replacements already being created or drained can continue.
-// Completed replicas and replicas selected for scale-in are left out. Each remaining replica gets fresh
-// update progress starting at updateStartedAt, but keeps its replacement mapping and cancellation details.
-// Active same-index replacements restart source cleanup so targets created for the superseded generation
-// are deleted before the new generation is created. Canceled replacements keep their cleanup progress.
-// The result is sorted by replica index in ascending order.
-func preserveActiveReplicaSelectionsForSupersedingUpdate(pcs *grovecorev1beta1.PodCliqueSet, updateStartedAt metav1.Time) []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress {
+// prepareReplicaSelectionsForUpdate prepares existing PCS replica selections for a new update.
+// With no existing update progress, it returns no selections.
+// Ordinary selections already committed to scale-in are excluded. Active replacements restart at their target
+// index with a fresh same-index cleanup barrier and retain cleanup obligations for their previous sources.
+// Canceled replacements retain their existing mapping and cleanup progress. Returned progress does not alias
+// the existing update progress.
+func prepareReplicaSelectionsForUpdate(pcs *grovecorev1beta1.PodCliqueSet, updateStartedAt metav1.Time) []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress {
 	if pcs.Status.UpdateProgress == nil {
 		return nil
 	}
 
-	scaleInReplicaIndices := sets.New[int32]()
+	scaleInPCSReplicaIndices := sets.New[int32]()
 	if pcs.Status.ScalingProgress != nil {
-		scaleInReplicaIndices.Insert(pcs.Status.ScalingProgress.ScaleInReplicaIndices...)
+		scaleInPCSReplicaIndices.Insert(pcs.Status.ScalingProgress.ScaleInReplicaIndices...)
 	}
 
-	currentlyUpdating := make([]grovecorev1beta1.PodCliqueSetReplicaUpdateProgress, 0, len(pcs.Status.UpdateProgress.CurrentlyUpdating))
-	for _, progress := range pcs.Status.UpdateProgress.CurrentlyUpdating {
-		if progress.UpdateEndedAt != nil || scaleInReplicaIndices.Has(progress.ReplicaIndex) {
+	previouslyUpdatingPCSReplicas := pcs.Status.UpdateProgress.CurrentlyUpdating
+	currentlyUpdating := make([]grovecorev1beta1.PodCliqueSetReplicaUpdateProgress, 0, len(previouslyUpdatingPCSReplicas))
+
+	for _, progress := range previouslyUpdatingPCSReplicas {
+		if progress.UpdateEndedAt != nil {
 			continue
 		}
-		var replacement *grovecorev1beta1.PodCliqueSetReplicaReplacementProgress
-		if progress.Replacement != nil {
-			replacement = progress.Replacement.DeepCopy()
-			if replacement.CanceledAt == nil {
-				replacement.SourceCleanupCompletedAt = nil
-			}
+		if progress.Replacement == nil &&
+			scaleInPCSReplicaIndices.Has(progress.ReplicaIndex) {
+			continue
 		}
-		currentlyUpdating = append(currentlyUpdating, grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{
-			ReplicaIndex:    progress.ReplicaIndex,
-			Replacement:     replacement,
-			UpdateStartedAt: updateStartedAt,
-		})
+
+		pcsReplicaIndex := progress.ReplicaIndex
+		replacement := progress.Replacement.DeepCopy()
+
+		if replacement != nil && replacement.CanceledAt == nil {
+			if pcsReplicaIndex != replacement.TargetReplicaIndex {
+				retiredSourcePCSReplicaIndices := sets.New(replacement.RetiredSourceReplicaIndices...)
+				retiredSourcePCSReplicaIndices.Insert(pcsReplicaIndex)
+				replacement.RetiredSourceReplicaIndices = sets.List(retiredSourcePCSReplicaIndices)
+				pcsReplicaIndex = replacement.TargetReplicaIndex
+			}
+			replacement.SourceCleanupCompletedAt = nil
+		}
+
+		currentlyUpdating = append(currentlyUpdating,
+			grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{
+				ReplicaIndex:    pcsReplicaIndex,
+				Replacement:     replacement,
+				UpdateStartedAt: updateStartedAt,
+			},
+		)
 	}
+
 	slices.SortFunc(currentlyUpdating, func(a, b grovecorev1beta1.PodCliqueSetReplicaUpdateProgress) int {
 		return cmp.Compare(a.ReplicaIndex, b.ReplicaIndex)
 	})
@@ -293,9 +309,9 @@ func (r *Reconciler) syncPodCliqueSetResources(ctx context.Context, logger logr.
 	cleanedUpReplicaIndices := r.cleanedUpScaleInReplicaIndices(syncResults)
 	originalPCS := pcs.DeepCopy()
 	completedScaleInReplicaIndices := removeCompletedScaleInPCSReplicaIndices(logger, pcs, cleanedUpReplicaIndices)
-	sourceCleanupCompletedReplicaIndices, removedCanceledReplicaIndices := recordReplacementCleanupWork(logger, pcs, cleanedUpReplicaIndices)
+	recordReplacementCleanupWork(logger, pcs, cleanedUpReplicaIndices)
 
-	cleanupStatusChanged, err := r.commitPCSCleanupStatus(ctx, logger, pcs, originalPCS, completedScaleInReplicaIndices, sourceCleanupCompletedReplicaIndices, removedCanceledReplicaIndices)
+	cleanupStatusChanged, err := r.commitPCSCleanupStatus(ctx, logger, pcs, originalPCS, completedScaleInReplicaIndices)
 	if err != nil {
 		return ctrlcommon.ReconcileWithErrors("error persisting PodCliqueSet cleanup status", err)
 	}
@@ -369,38 +385,30 @@ func removeCompletedScaleInPCSReplicaIndices(logger logr.Logger, pcs *grovecorev
 	return completed
 }
 
-// recordReplacementCleanupWork advances replacement lifecycle state in the in-memory update progress from the
-// cleaned-up scale-in replica indices. It records the same-index delete-phase completion (SourceCleanupCompletedAt)
-// once the shared source index is cleaned up, and removes a canceled replacement entry once both its source and
-// its target are cleaned up. A different-index active replacement is left untouched. It never stamps UpdateEndedAt,
-// which belongs to replacement completion. It does not persist status or emit events. The caller persists the
-// mutated PodCliqueSet once for all post-sync cleanup. It returns the source replica indices whose delete-phase
-// completion was recorded and whose canceled entry was removed.
-func recordReplacementCleanupWork(logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, cleanedUpReplicaIndices sets.Set[int32]) (sourceCleanupCompletedReplicaIndices, removedCanceledReplicaIndices []int32) {
+// recordReplacementCleanupWork advances in-memory replacement cleanup from participant-confirmed indices.
+// It clears confirmed retired sources, records same-index source cleanup, and removes canceled entries only
+// after all their cleanup obligations are satisfied. It never stamps UpdateEndedAt or persists status.
+// The caller persists all post-sync cleanup mutations together.
+func recordReplacementCleanupWork(
+	logger logr.Logger,
+	pcs *grovecorev1beta1.PodCliqueSet,
+	cleanedUpReplicaIndices sets.Set[int32]) {
+
 	if pcs.Status.UpdateProgress == nil || len(pcs.Status.UpdateProgress.CurrentlyUpdating) == 0 {
-		return nil, nil
+		return
 	}
 
+	var removedCanceledReplicaIndices []int32
 	currentlyUpdating := pcs.Status.UpdateProgress.CurrentlyUpdating
 	for i := range currentlyUpdating {
 		replicaProgress := &currentlyUpdating[i]
-		replacement := replicaProgress.Replacement
-		if replacement == nil || replicaProgress.UpdateEndedAt != nil {
+		if replicaProgress.Replacement == nil || replicaProgress.UpdateEndedAt != nil {
 			continue
 		}
-		sourceReplicaIndex := replicaProgress.ReplicaIndex
-		if replacement.CanceledAt != nil {
-			if cleanedUpReplicaIndices.Has(sourceReplicaIndex) && cleanedUpReplicaIndices.Has(replacement.TargetReplicaIndex) {
-				removedCanceledReplicaIndices = append(removedCanceledReplicaIndices, sourceReplicaIndex)
-			}
-			continue
-		}
-		if sourceReplicaIndex == replacement.TargetReplicaIndex &&
-			replacement.SourceCleanupCompletedAt == nil &&
-			cleanedUpReplicaIndices.Has(sourceReplicaIndex) {
-			cleanupCompletedAt := metav1.Now()
-			replacement.SourceCleanupCompletedAt = &cleanupCompletedAt
-			sourceCleanupCompletedReplicaIndices = append(sourceCleanupCompletedReplicaIndices, sourceReplicaIndex)
+
+		canceledCleanupComplete := recordPCSReplicaReplacementCleanup(logger, replicaProgress, cleanedUpReplicaIndices)
+		if canceledCleanupComplete {
+			removedCanceledReplicaIndices = append(removedCanceledReplicaIndices, replicaProgress.ReplicaIndex)
 		}
 	}
 
@@ -411,26 +419,64 @@ func recordReplacementCleanupWork(logger logr.Logger, pcs *grovecorev1beta1.PodC
 		})
 	}
 
-	if len(sourceCleanupCompletedReplicaIndices) > 0 {
-		logger.Info("Recorded same-index replacement source cleanup completion", "sourcePCSReplicaIndices", sourceCleanupCompletedReplicaIndices)
-	}
 	if len(removedCanceledReplicaIndices) > 0 {
 		logger.Info("Removed canceled replacements after resource cleanup", "sourcePCSReplicaIndices", removedCanceledReplicaIndices)
 	}
-	return sourceCleanupCompletedReplicaIndices, removedCanceledReplicaIndices
 }
 
-// commitPCSCleanupStatus persists the post-sync cleanup mutations applied to pcs in a single status patch and
-// emits the corresponding events on success. originalPCS is the pre-mutation snapshot used for the optimistic
-// lock. It records the scaling-progress and currently-updating cache expectations for the fields that changed and
-// forgets them if the patch fails. It returns whether anything was persisted.
+// recordPCSReplicaReplacementCleanup updates one unfinished replacement from participant-confirmed cleanup.
+// It returns whether the canceled entry can be removed. The caller excludes completed entries and entries
+// without replacement progress. Recording a new same-index source-cleanup barrier is logged immediately.
+func recordPCSReplicaReplacementCleanup(
+	logger logr.Logger,
+	replicaProgress *grovecorev1beta1.PodCliqueSetReplicaUpdateProgress,
+	cleanedUpReplicaIndices sets.Set[int32]) (canceledCleanupComplete bool) {
+
+	replacement := replicaProgress.Replacement
+	replacement.RetiredSourceReplicaIndices = slices.DeleteFunc(
+		replacement.RetiredSourceReplicaIndices,
+		func(pcsReplicaIndex int32) bool {
+			return cleanedUpReplicaIndices.Has(pcsReplicaIndex)
+		},
+	)
+
+	sourcePCSReplicaIndex := replicaProgress.ReplicaIndex
+	if replacement.CanceledAt != nil {
+		// Cancellation may follow source cleanup and partial target creation. Preserve any existing
+		// barrier, but do not record a new creation barrier while draining canceled resources.
+		canceledCleanupComplete = len(replacement.RetiredSourceReplicaIndices) == 0 &&
+			cleanedUpReplicaIndices.Has(sourcePCSReplicaIndex) &&
+			cleanedUpReplicaIndices.Has(replacement.TargetReplicaIndex)
+		return canceledCleanupComplete
+	}
+
+	// Only same-index recreation needs a source-cleanup barrier before target creation. Do not record
+	// a barrier for different indices, overwrite an existing timestamp, or advance without confirmed
+	// source cleanup.
+	if sourcePCSReplicaIndex != replacement.TargetReplicaIndex ||
+		replacement.SourceCleanupCompletedAt != nil ||
+		!cleanedUpReplicaIndices.Has(sourcePCSReplicaIndex) {
+		return false
+	}
+
+	cleanupCompletedAt := metav1.Now()
+	replacement.SourceCleanupCompletedAt = &cleanupCompletedAt
+	logger.Info("Recorded same-index replacement source cleanup completion", "sourcePCSReplicaIndex", sourcePCSReplicaIndex)
+	return false
+}
+
+// commitPCSCleanupStatus persists post-sync cleanup mutations in a single optimistic-lock status patch.
+// Actual differences from originalPCS determine which expectations are recorded. completedScaleInReplicaIndices
+// is used only for scale-in completion events. Expectations are forgotten if the patch fails.
+// It returns whether anything was persisted.
 func (r *Reconciler) commitPCSCleanupStatus(
 	ctx context.Context,
 	logger logr.Logger,
 	pcs, originalPCS *grovecorev1beta1.PodCliqueSet,
-	completedScaleInReplicaIndices, sourceCleanupCompletedReplicaIndices, removedCanceledReplicaIndices []int32) (bool, error) {
-	scalingProgressChanged := len(completedScaleInReplicaIndices) > 0
-	updateProgressChanged := len(sourceCleanupCompletedReplicaIndices) > 0 || len(removedCanceledReplicaIndices) > 0
+	completedScaleInReplicaIndices []int32) (bool, error) {
+
+	scalingProgressChanged := !apiequality.Semantic.DeepEqual(originalPCS.Status.ScalingProgress, pcs.Status.ScalingProgress)
+	updateProgressChanged := !apiequality.Semantic.DeepEqual(originalPCS.Status.UpdateProgress, pcs.Status.UpdateProgress)
 	if !scalingProgressChanged && !updateProgressChanged {
 		return false, nil
 	}
