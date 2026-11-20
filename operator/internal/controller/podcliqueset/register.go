@@ -16,6 +16,7 @@ package podcliqueset
 
 import (
 	"context"
+	"maps"
 	"reflect"
 
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
@@ -69,7 +70,10 @@ func (r *Reconciler) RegisterWithManager(mgr manager.Manager) error {
 		Complete(r)
 }
 
-// podCliqueSetPredicate returns a predicate that allows spec changes and explicit no-op reconcile triggers.
+// podCliqueSetPredicate returns a predicate that allows spec changes, label changes and explicit no-op reconcile
+// triggers. Labels are included because they are mirrored onto the PodCliqueSet's PodGangs, where a scheduler
+// backend may act on them (the Kueue backend's priority class, for example); without a reconcile a label edit
+// would only reach them on the next unrelated reconcile.
 func podCliqueSetPredicate() predicate.Predicate {
 	return predicate.Funcs{
 		CreateFunc: func(_ event.CreateEvent) bool { return true },
@@ -79,6 +83,7 @@ func podCliqueSetPredicate() predicate.Predicate {
 				return false
 			}
 			return hasSpecChanged(updateEvent) ||
+				!maps.Equal(updateEvent.ObjectOld.GetLabels(), updateEvent.ObjectNew.GetLabels()) ||
 				hasAnnotationChanged(updateEvent.ObjectOld.GetAnnotations(), updateEvent.ObjectNew.GetAnnotations(), constants.AnnotationReconcileTrigger)
 		},
 		GenericFunc: func(_ event.GenericEvent) bool { return true },

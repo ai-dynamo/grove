@@ -102,6 +102,10 @@ func TestPodPredicateUpdate(t *testing.T) {
 		}
 		return b.Build()
 	}
+	withPhase := func(pod *corev1.Pod, phase corev1.PodPhase) *corev1.Pod {
+		pod.Status.Phase = phase
+		return pod
+	}
 	scheduled := corev1.PodCondition{Type: corev1.PodScheduled, Status: corev1.ConditionTrue}
 	notScheduled := corev1.PodCondition{Type: corev1.PodScheduled, Status: corev1.ConditionFalse}
 	ready := corev1.PodCondition{Type: corev1.PodReady, Status: corev1.ConditionTrue}
@@ -129,6 +133,14 @@ func TestPodPredicateUpdate(t *testing.T) {
 			name:     "Ready False to True enqueues",
 			oldPod:   managedPod(scheduled, notReady),
 			newPod:   managedPod(scheduled, ready),
+			wantFire: true,
+		},
+		{
+			// The kubelet fails a Pod whose containers are still waiting, e.g. evicted mid image pull:
+			// no condition or container status changes, only the phase.
+			name:     "phase Pending to Failed enqueues",
+			oldPod:   withPhase(managedPod(scheduled), corev1.PodPending),
+			newPod:   withPhase(managedPod(scheduled), corev1.PodFailed),
 			wantFire: true,
 		},
 		{

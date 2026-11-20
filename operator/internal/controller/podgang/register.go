@@ -16,6 +16,7 @@ package podgang
 
 import (
 	"context"
+	"maps"
 	"slices"
 	"strconv"
 
@@ -51,7 +52,10 @@ func (r *Reconciler) RegisterWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
-// podGangChangePredicate filters out status-only updates while retaining changes used by scheduler backends.
+// podGangChangePredicate filters out status-only updates (like the Initialized condition) while retaining
+// changes used by scheduler backends: spec changes, the start of deletion, and label changes. Labels are
+// included because a backend may map labels that the PodCliqueSet mirrors onto its PodGangs onto its own
+// objects (the Kueue backend's priority class, for example).
 func podGangChangePredicate() predicate.Predicate {
 	return predicate.Funcs{
 		CreateFunc: func(e event.CreateEvent) bool {
@@ -64,7 +68,8 @@ func podGangChangePredicate() predicate.Predicate {
 			return grovectrlutils.IsManagedPodGang(e.ObjectOld) &&
 				grovectrlutils.IsManagedPodGang(e.ObjectNew) &&
 				(e.ObjectOld.GetGeneration() != e.ObjectNew.GetGeneration() ||
-					e.ObjectOld.GetDeletionTimestamp().IsZero() && !e.ObjectNew.GetDeletionTimestamp().IsZero())
+					(e.ObjectOld.GetDeletionTimestamp().IsZero() && !e.ObjectNew.GetDeletionTimestamp().IsZero()) ||
+					!maps.Equal(e.ObjectOld.GetLabels(), e.ObjectNew.GetLabels()))
 		},
 		GenericFunc: func(_ event.GenericEvent) bool { return false },
 	}
