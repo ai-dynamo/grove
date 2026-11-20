@@ -1092,6 +1092,7 @@ func Convert_v1beta1_PodCliqueSetList_To_v1alpha1_PodCliqueSetList(in *v1beta1.P
 func autoConvert_v1alpha1_PodCliqueSetReplicaReplacementProgress_To_v1beta1_PodCliqueSetReplicaReplacementProgress(in *PodCliqueSetReplicaReplacementProgress, out *v1beta1.PodCliqueSetReplicaReplacementProgress, s conversion.Scope) error {
 	out.TargetReplicaIndex = in.TargetReplicaIndex
 	out.SourceCleanupCompletedAt = (*v1.Time)(unsafe.Pointer(in.SourceCleanupCompletedAt))
+	out.RetiredSourceReplicaIndices = *(*[]int32)(unsafe.Pointer(&in.RetiredSourceReplicaIndices))
 	out.CanceledAt = (*v1.Time)(unsafe.Pointer(in.CanceledAt))
 	out.CancellationMessage = (*string)(unsafe.Pointer(in.CancellationMessage))
 	return nil
@@ -1105,6 +1106,7 @@ func Convert_v1alpha1_PodCliqueSetReplicaReplacementProgress_To_v1beta1_PodCliqu
 func autoConvert_v1beta1_PodCliqueSetReplicaReplacementProgress_To_v1alpha1_PodCliqueSetReplicaReplacementProgress(in *v1beta1.PodCliqueSetReplicaReplacementProgress, out *PodCliqueSetReplicaReplacementProgress, s conversion.Scope) error {
 	out.TargetReplicaIndex = in.TargetReplicaIndex
 	out.SourceCleanupCompletedAt = (*v1.Time)(unsafe.Pointer(in.SourceCleanupCompletedAt))
+	out.RetiredSourceReplicaIndices = *(*[]int32)(unsafe.Pointer(&in.RetiredSourceReplicaIndices))
 	out.CanceledAt = (*v1.Time)(unsafe.Pointer(in.CanceledAt))
 	out.CancellationMessage = (*string)(unsafe.Pointer(in.CancellationMessage))
 	return nil

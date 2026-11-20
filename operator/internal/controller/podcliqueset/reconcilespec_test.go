@@ -17,6 +17,7 @@ package podcliqueset
 import (
 	"context"
 	"errors"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -35,6 +36,7 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -151,10 +153,8 @@ func TestRecordReplacementCleanupWork(t *testing.T) {
 		pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, uuid.NewUUID()).Build()
 		pcs.Status.UpdateProgress = &grovecorev1beta1.PodCliqueSetUpdateProgress{CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{activeSameIndex()}}
 
-		sourceCleanupCompleted, removedCanceled := recordReplacementCleanupWork(logr.Discard(), pcs, sets.New[int32](1))
+		recordReplacementCleanupWork(logr.Discard(), pcs, sets.New[int32](1))
 
-		assert.Equal(t, []int32{1}, sourceCleanupCompleted)
-		assert.Empty(t, removedCanceled)
 		require.NotNil(t, pcs.Status.UpdateProgress.CurrentlyUpdating[0].Replacement.SourceCleanupCompletedAt)
 	})
 
@@ -162,9 +162,8 @@ func TestRecordReplacementCleanupWork(t *testing.T) {
 		pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, uuid.NewUUID()).Build()
 		pcs.Status.UpdateProgress = &grovecorev1beta1.PodCliqueSetUpdateProgress{CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{activeSameIndex()}}
 
-		sourceCleanupCompleted, _ := recordReplacementCleanupWork(logr.Discard(), pcs, sets.New[int32]())
+		recordReplacementCleanupWork(logr.Discard(), pcs, sets.New[int32]())
 
-		assert.Empty(t, sourceCleanupCompleted)
 		assert.Nil(t, pcs.Status.UpdateProgress.CurrentlyUpdating[0].Replacement.SourceCleanupCompletedAt)
 	})
 
@@ -174,9 +173,10 @@ func TestRecordReplacementCleanupWork(t *testing.T) {
 		pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, uuid.NewUUID()).Build()
 		pcs.Status.UpdateProgress = &grovecorev1beta1.PodCliqueSetUpdateProgress{CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{entry}}
 
-		sourceCleanupCompleted, _ := recordReplacementCleanupWork(logr.Discard(), pcs, sets.New[int32](1))
+		before := pcs.DeepCopy()
+		recordReplacementCleanupWork(logr.Discard(), pcs, sets.New[int32](1))
 
-		assert.Empty(t, sourceCleanupCompleted)
+		assert.Equal(t, before, pcs, "an existing source-cleanup barrier must not be overwritten")
 	})
 
 	t.Run("leaves a different-index active replacement untouched", func(t *testing.T) {
@@ -185,10 +185,8 @@ func TestRecordReplacementCleanupWork(t *testing.T) {
 			{ReplicaIndex: 3, Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 2}},
 		}}
 
-		sourceCleanupCompleted, removedCanceled := recordReplacementCleanupWork(logr.Discard(), pcs, sets.New[int32](2, 3))
+		recordReplacementCleanupWork(logr.Discard(), pcs, sets.New[int32](2, 3))
 
-		assert.Empty(t, sourceCleanupCompleted)
-		assert.Empty(t, removedCanceled)
 		assert.Len(t, pcs.Status.UpdateProgress.CurrentlyUpdating, 1)
 		assert.Nil(t, pcs.Status.UpdateProgress.CurrentlyUpdating[0].Replacement.SourceCleanupCompletedAt)
 	})
@@ -197,10 +195,8 @@ func TestRecordReplacementCleanupWork(t *testing.T) {
 		pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, uuid.NewUUID()).Build()
 		pcs.Status.UpdateProgress = &grovecorev1beta1.PodCliqueSetUpdateProgress{CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{canceled()}}
 
-		sourceCleanupCompleted, removedCanceled := recordReplacementCleanupWork(logr.Discard(), pcs, sets.New[int32](2, 3))
+		recordReplacementCleanupWork(logr.Discard(), pcs, sets.New[int32](2, 3))
 
-		assert.Empty(t, sourceCleanupCompleted)
-		assert.Equal(t, []int32{3}, removedCanceled)
 		assert.Empty(t, pcs.Status.UpdateProgress.CurrentlyUpdating)
 	})
 
@@ -208,9 +204,8 @@ func TestRecordReplacementCleanupWork(t *testing.T) {
 		pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, uuid.NewUUID()).Build()
 		pcs.Status.UpdateProgress = &grovecorev1beta1.PodCliqueSetUpdateProgress{CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{canceled()}}
 
-		_, removedCanceled := recordReplacementCleanupWork(logr.Discard(), pcs, sets.New[int32](3))
+		recordReplacementCleanupWork(logr.Discard(), pcs, sets.New[int32](3))
 
-		assert.Empty(t, removedCanceled)
 		assert.Len(t, pcs.Status.UpdateProgress.CurrentlyUpdating, 1)
 	})
 
@@ -218,43 +213,527 @@ func TestRecordReplacementCleanupWork(t *testing.T) {
 		pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, uuid.NewUUID()).Build()
 		pcs.Status.UpdateProgress = &grovecorev1beta1.PodCliqueSetUpdateProgress{CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{activeSameIndex(), canceled()}}
 
-		sourceCleanupCompleted, removedCanceled := recordReplacementCleanupWork(logr.Discard(), pcs, sets.New[int32](1, 2, 3))
+		recordReplacementCleanupWork(logr.Discard(), pcs, sets.New[int32](1, 2, 3))
 
-		assert.Equal(t, []int32{1}, sourceCleanupCompleted)
-		assert.Equal(t, []int32{3}, removedCanceled)
 		require.Len(t, pcs.Status.UpdateProgress.CurrentlyUpdating, 1)
 		assert.Equal(t, int32(1), pcs.Status.UpdateProgress.CurrentlyUpdating[0].ReplicaIndex)
 	})
 }
 
-func TestCommitPCSCleanupStatus(t *testing.T) {
-	pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, uuid.NewUUID()).Build()
-	pcs.Status.ScalingProgress = &grovecorev1beta1.PodCliqueSetScalingProgress{ScaleInReplicaIndices: []int32{3}}
-	pcs.Status.UpdateProgress = &grovecorev1beta1.PodCliqueSetUpdateProgress{CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 1}}}
-	fakeClient := testutils.NewTestClientBuilder().WithObjects(pcs).WithStatusSubresource(pcs).Build()
-	reconciler := &Reconciler{
-		client:                        fakeClient,
-		eventRecorder:                 record.NewFakeRecorder(10),
-		scalingProgressExpectations:   &pcsexpectations.ScalingProgress{},
-		currentlyUpdatingExpectations: &pcsexpectations.CurrentlyUpdating{},
+// TestRecordPCSReplicaReplacementCleanup covers retired-source confirmation, recording a new source barrier,
+// and canceled cleanup completion. A recorded source barrier and completed cancellation are mutually exclusive.
+func TestRecordPCSReplicaReplacementCleanup(t *testing.T) {
+	t.Parallel()
+	previousCleanupAt := metav1.NewTime(time.Unix(100, 0).UTC())
+	canceledAt := metav1.NewTime(time.Unix(150, 0).UTC())
+	tests := []struct {
+		name                        string
+		sourcePCSReplicaIndex       int32
+		targetPCSReplicaIndex       int32
+		retiredSourceReplicaIndices []int32
+		sourceCleanupCompletedAt    *metav1.Time
+		canceledAt                  *metav1.Time
+		confirmedPCSReplicaIndices  sets.Set[int32]
+		wantRetiredSourceIndices    []int32
+		wantRecordedSourceBarrier   bool
+		wantCanceledCleanupComplete bool
+	}{
+		{name: "unconfirmed same-index cleanup stays pending", sourcePCSReplicaIndex: 1, targetPCSReplicaIndex: 1},
+		{name: "empty retired list imposes no additional obligation", sourcePCSReplicaIndex: 1, targetPCSReplicaIndex: 1, retiredSourceReplicaIndices: []int32{}},
+		{name: "confirmed same-index source records a new barrier", sourcePCSReplicaIndex: 1, targetPCSReplicaIndex: 1, confirmedPCSReplicaIndices: sets.New[int32](1), wantRecordedSourceBarrier: true},
+		{name: "source index zero can record a same-index barrier", confirmedPCSReplicaIndices: sets.New[int32](0), wantRecordedSourceBarrier: true},
+		{name: "an existing barrier is not recorded again", sourcePCSReplicaIndex: 1, targetPCSReplicaIndex: 1, sourceCleanupCompletedAt: &previousCleanupAt, confirmedPCSReplicaIndices: sets.New[int32](1)},
+		{name: "an existing barrier is preserved without new confirmation", sourcePCSReplicaIndex: 1, targetPCSReplicaIndex: 1, sourceCleanupCompletedAt: &previousCleanupAt},
+		{name: "different-index source cleanup records no shared-index barrier", sourcePCSReplicaIndex: 2, targetPCSReplicaIndex: 1, confirmedPCSReplicaIndices: sets.New[int32](1, 2)},
+		{name: "different-index source zero needs no barrier", targetPCSReplicaIndex: 1, confirmedPCSReplicaIndices: sets.New[int32](0)},
+		{
+			name:                  "partial retirement confirmation preserves unconfirmed sources",
+			sourcePCSReplicaIndex: 2, targetPCSReplicaIndex: 1,
+			retiredSourceReplicaIndices: []int32{4, 3, 5}, confirmedPCSReplicaIndices: sets.New[int32](3, 99),
+			wantRetiredSourceIndices: []int32{4, 5},
+		},
+		{
+			name:                  "retirement can complete without recording a source barrier",
+			sourcePCSReplicaIndex: 2, targetPCSReplicaIndex: 1,
+			retiredSourceReplicaIndices: []int32{3, 4}, confirmedPCSReplicaIndices: sets.New[int32](3, 4),
+		},
+		{
+			name:                  "retirement progresses while same-index source cleanup remains pending",
+			sourcePCSReplicaIndex: 1, targetPCSReplicaIndex: 1,
+			retiredSourceReplicaIndices: []int32{2}, confirmedPCSReplicaIndices: sets.New[int32](2),
+		},
+		{
+			name:                  "source barrier can advance while retired cleanup remains pending",
+			sourcePCSReplicaIndex: 1, targetPCSReplicaIndex: 1,
+			retiredSourceReplicaIndices: []int32{2}, confirmedPCSReplicaIndices: sets.New[int32](1),
+			wantRetiredSourceIndices: []int32{2}, wantRecordedSourceBarrier: true,
+		},
+		{
+			name:                  "source barrier and retired cleanup can advance together",
+			sourcePCSReplicaIndex: 1, targetPCSReplicaIndex: 1,
+			retiredSourceReplicaIndices: []int32{2}, confirmedPCSReplicaIndices: sets.New[int32](1, 2),
+			wantRecordedSourceBarrier: true,
+		},
+		{
+			name:                  "unrelated cleanup confirmation cannot release a retired source",
+			sourcePCSReplicaIndex: 1, targetPCSReplicaIndex: 1,
+			retiredSourceReplicaIndices: []int32{2}, confirmedPCSReplicaIndices: sets.New[int32](99),
+			wantRetiredSourceIndices: []int32{2},
+		},
+		{name: "canceled cleanup stays pending without source or target confirmation", sourcePCSReplicaIndex: 2, targetPCSReplicaIndex: 1, canceledAt: &canceledAt},
+		{name: "source confirmation alone cannot complete different-index cancellation", sourcePCSReplicaIndex: 2, targetPCSReplicaIndex: 1, canceledAt: &canceledAt, confirmedPCSReplicaIndices: sets.New[int32](2)},
+		{name: "target confirmation alone cannot complete different-index cancellation", sourcePCSReplicaIndex: 2, targetPCSReplicaIndex: 1, canceledAt: &canceledAt, confirmedPCSReplicaIndices: sets.New[int32](1)},
+		{name: "confirmed canceled source and target allow removal", sourcePCSReplicaIndex: 2, targetPCSReplicaIndex: 1, canceledAt: &canceledAt, confirmedPCSReplicaIndices: sets.New[int32](1, 2), wantCanceledCleanupComplete: true},
+		{
+			name:                  "cancellation waits for every retired source despite confirmed source and target",
+			sourcePCSReplicaIndex: 2, targetPCSReplicaIndex: 1, canceledAt: &canceledAt,
+			retiredSourceReplicaIndices: []int32{3, 4}, confirmedPCSReplicaIndices: sets.New[int32](1, 2, 3),
+			wantRetiredSourceIndices: []int32{4},
+		},
+		{
+			name:                  "canceled retirement can finish before source and target cleanup",
+			sourcePCSReplicaIndex: 2, targetPCSReplicaIndex: 1, canceledAt: &canceledAt,
+			retiredSourceReplicaIndices: []int32{3, 4}, confirmedPCSReplicaIndices: sets.New[int32](3, 4),
+		},
+		{
+			name:                  "all confirmed cancellation obligations allow removal",
+			sourcePCSReplicaIndex: 2, targetPCSReplicaIndex: 1, canceledAt: &canceledAt,
+			retiredSourceReplicaIndices: []int32{3, 4}, confirmedPCSReplicaIndices: sets.New[int32](1, 2, 3, 4),
+			wantCanceledCleanupComplete: true,
+		},
+		{
+			name:                  "cancellation after target creation starts preserves the barrier and waits for target deletion",
+			sourcePCSReplicaIndex: 1, targetPCSReplicaIndex: 1, canceledAt: &canceledAt,
+			sourceCleanupCompletedAt: &previousCleanupAt, retiredSourceReplicaIndices: []int32{2},
+			confirmedPCSReplicaIndices: sets.New[int32](2),
+		},
+		{
+			name:                  "completed cancellation preserves the previously recorded source barrier",
+			sourcePCSReplicaIndex: 1, targetPCSReplicaIndex: 1, canceledAt: &canceledAt,
+			sourceCleanupCompletedAt: &previousCleanupAt, retiredSourceReplicaIndices: []int32{2},
+			confirmedPCSReplicaIndices: sets.New[int32](1, 2), wantCanceledCleanupComplete: true,
+		},
+		{name: "canceled source zero is a valid cleanup obligation", targetPCSReplicaIndex: 1, canceledAt: &canceledAt, confirmedPCSReplicaIndices: sets.New[int32](0, 1), wantCanceledCleanupComplete: true},
+		{name: "canceled target zero is a valid cleanup obligation", sourcePCSReplicaIndex: 1, canceledAt: &canceledAt, confirmedPCSReplicaIndices: sets.New[int32](0, 1), wantCanceledCleanupComplete: true},
 	}
-	originalPCS := pcs.DeepCopy()
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			progress := &grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{
+				ReplicaIndex:    tc.sourcePCSReplicaIndex,
+				UpdateStartedAt: previousCleanupAt,
+				InFlightEpochs:  []string{"existing-epoch"},
+				Message:         new("existing wait reason"),
+				Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{
+					TargetReplicaIndex:          tc.targetPCSReplicaIndex,
+					RetiredSourceReplicaIndices: slices.Clone(tc.retiredSourceReplicaIndices),
+					SourceCleanupCompletedAt:    tc.sourceCleanupCompletedAt,
+					CanceledAt:                  tc.canceledAt,
+				},
+			}
+			progress = progress.DeepCopy()
+			before := progress.DeepCopy()
+			confirmedBefore := tc.confirmedPCSReplicaIndices.Clone()
 
-	t.Run("persists nothing when no cleanup occurred", func(t *testing.T) {
-		changed, err := reconciler.commitPCSCleanupStatus(context.Background(), logr.Discard(), pcs, originalPCS, nil, nil, nil)
+			canceledCleanupComplete := recordPCSReplicaReplacementCleanup(logr.Discard(), progress, tc.confirmedPCSReplicaIndices)
 
-		require.NoError(t, err)
-		assert.False(t, changed)
+			assert.Equal(t, tc.wantCanceledCleanupComplete, canceledCleanupComplete)
+			want := before.DeepCopy()
+			if len(tc.wantRetiredSourceIndices) == 0 {
+				assert.Empty(t, progress.Replacement.RetiredSourceReplicaIndices)
+				want.Replacement.RetiredSourceReplicaIndices = progress.Replacement.RetiredSourceReplicaIndices
+			} else {
+				want.Replacement.RetiredSourceReplicaIndices = tc.wantRetiredSourceIndices
+			}
+			if tc.wantRecordedSourceBarrier {
+				require.NotNil(t, progress.Replacement.SourceCleanupCompletedAt)
+				assert.False(t, progress.Replacement.SourceCleanupCompletedAt.IsZero())
+				want.Replacement.SourceCleanupCompletedAt = progress.Replacement.SourceCleanupCompletedAt
+			}
+			assert.Equal(t, want, progress, "cleanup must preserve all other update progress")
+			assert.True(t, confirmedBefore.Equal(tc.confirmedPCSReplicaIndices), "cleanup must not mutate component confirmation")
+		})
+	}
+}
+
+// TestRetiredSourceCleanupRequiresParticipantConfirmation verifies that every applicable replica-scoped
+// component must confirm cleanup. Missing results and partial confirmation preserve the cleanup obligation.
+func TestRetiredSourceCleanupRequiresParticipantConfirmation(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		results     map[component.Kind]pcssync.Result
+		wantPending []int32
+	}{
+		{
+			name: "every applicable participant confirms the retired source",
+			results: map[component.Kind]pcssync.Result{
+				component.KindPodClique:       {CleanedUpReplicaIndices: []int{2}},
+				component.KindHeadlessService: {CleanedUpReplicaIndices: []int{2}},
+				component.KindPodGang:         {CleanedUpReplicaIndices: []int{2}},
+			},
+		},
+		{
+			name: "missing participant result preserves the retired source",
+			results: map[component.Kind]pcssync.Result{
+				component.KindPodClique:       {CleanedUpReplicaIndices: []int{2}},
+				component.KindHeadlessService: {CleanedUpReplicaIndices: []int{2}},
+			},
+			wantPending: []int32{2},
+		},
+		{
+			name: "one participant still owning resources preserves the retired source",
+			results: map[component.Kind]pcssync.Result{
+				component.KindPodClique:       {CleanedUpReplicaIndices: []int{2}},
+				component.KindHeadlessService: {CleanedUpReplicaIndices: []int{2}},
+				component.KindPodGang:         {},
+			},
+			wantPending: []int32{2},
+		},
+		{
+			name: "reported non-applicable participants do not block cleanup",
+			results: map[component.Kind]pcssync.Result{
+				component.KindPodClique:       {CleanedUpReplicaIndices: []int{2}},
+				component.KindHeadlessService: {CleanedUpReplicaIndices: []int{2}},
+				component.KindPodGang:         {NotApplicable: true},
+			},
+		},
+		{
+			name: "non-participants cannot provide the missing confirmation",
+			results: map[component.Kind]pcssync.Result{
+				component.KindPodClique:       {CleanedUpReplicaIndices: []int{2}},
+				component.KindHeadlessService: {},
+				component.KindPodGang:         {CleanedUpReplicaIndices: []int{2}},
+				component.KindRole:            {CleanedUpReplicaIndices: []int{2}},
+			},
+			wantPending: []int32{2},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			registry := component.NewOperatorRegistry[grovecorev1beta1.PodCliqueSet, pcssync.State, pcssync.Result]()
+			registry.Register(component.KindPodClique, nil, component.AsReplicaScoped())
+			registry.Register(component.KindHeadlessService, nil, component.AsReplicaScoped())
+			registry.Register(component.KindPodGang, nil, component.AsReplicaScoped())
+			registry.Register(component.KindRole, nil)
+			reconciler := &Reconciler{operatorRegistry: registry}
+			pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "uid").
+				WithUpdateProgress(&grovecorev1beta1.PodCliqueSetUpdateProgress{
+					CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{
+						ReplicaIndex: 1,
+						Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{
+							TargetReplicaIndex: 1, RetiredSourceReplicaIndices: []int32{2},
+						},
+					}},
+				}).Build()
+
+			confirmed := reconciler.cleanedUpScaleInReplicaIndices(tc.results)
+			recordReplacementCleanupWork(logr.Discard(), pcs, confirmed)
+
+			assert.Nil(t, pcs.Status.UpdateProgress.CurrentlyUpdating[0].Replacement.SourceCleanupCompletedAt, "retired-source confirmation does not confirm the current source")
+			pending := pcs.Status.UpdateProgress.CurrentlyUpdating[0].Replacement.RetiredSourceReplicaIndices
+			if len(tc.wantPending) == 0 {
+				assert.Empty(t, pending)
+			} else {
+				assert.Equal(t, tc.wantPending, pending)
+			}
+		})
+	}
+}
+
+// TestRecordReplacementCleanupWorkRetiredSources covers retirement-only updates, cancellation retention,
+// removal after complete confirmation, and entries excluded from cleanup processing.
+func TestRecordReplacementCleanupWorkRetiredSources(t *testing.T) {
+	t.Parallel()
+	canceledAt := metav1.NewTime(time.Unix(150, 0).UTC())
+	t.Run("partial cancellation cleanup retains the entry and remaining obligation", func(t *testing.T) {
+		t.Parallel()
+		pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "uid").WithUpdateProgress(
+			&grovecorev1beta1.PodCliqueSetUpdateProgress{CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{
+				ReplicaIndex: 3,
+				Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{
+					TargetReplicaIndex: 2, CanceledAt: &canceledAt, RetiredSourceReplicaIndices: []int32{4, 5},
+				},
+			}}},
+		).Build()
+
+		recordReplacementCleanupWork(logr.Discard(), pcs, sets.New[int32](2, 3, 4))
+
+		require.Len(t, pcs.Status.UpdateProgress.CurrentlyUpdating, 1)
+		assert.Equal(t, []int32{5}, pcs.Status.UpdateProgress.CurrentlyUpdating[0].Replacement.RetiredSourceReplicaIndices)
 	})
+	t.Run("complete cancellation cleanup removes the entry in the same sweep", func(t *testing.T) {
+		t.Parallel()
+		pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "uid").WithUpdateProgress(
+			&grovecorev1beta1.PodCliqueSetUpdateProgress{CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{
+				ReplicaIndex: 3,
+				Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{
+					TargetReplicaIndex: 2, CanceledAt: &canceledAt, RetiredSourceReplicaIndices: []int32{4, 5},
+				},
+			}}},
+		).Build()
 
-	t.Run("persists both scaling and update progress and emits a scale-in event", func(t *testing.T) {
-		changed, err := reconciler.commitPCSCleanupStatus(context.Background(), logr.Discard(), pcs, originalPCS, []int32{2}, []int32{1}, nil)
+		recordReplacementCleanupWork(logr.Discard(), pcs, sets.New[int32](2, 3, 4, 5))
 
-		require.NoError(t, err)
-		assert.True(t, changed)
-		eventRecorder := reconciler.eventRecorder.(*record.FakeRecorder)
-		assert.Equal(t, "Normal PodCliqueSetReplicaScaleInCompleted PCS replica index 2 completed scale-in", <-eventRecorder.Events)
+		assert.Empty(t, pcs.Status.UpdateProgress.CurrentlyUpdating)
 	})
+	t.Run("different-index retirement changes progress without source or cancellation flags", func(t *testing.T) {
+		t.Parallel()
+		pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "uid").WithUpdateProgress(
+			&grovecorev1beta1.PodCliqueSetUpdateProgress{CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{
+				ReplicaIndex: 3,
+				Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{
+					TargetReplicaIndex: 2, RetiredSourceReplicaIndices: []int32{4},
+				},
+			}}},
+		).Build()
+
+		recordReplacementCleanupWork(logr.Discard(), pcs, sets.New[int32](4))
+
+		require.Len(t, pcs.Status.UpdateProgress.CurrentlyUpdating, 1)
+		assert.Empty(t, pcs.Status.UpdateProgress.CurrentlyUpdating[0].Replacement.RetiredSourceReplicaIndices)
+		assert.Nil(t, pcs.Status.UpdateProgress.CurrentlyUpdating[0].Replacement.SourceCleanupCompletedAt)
+	})
+	for _, tc := range []struct {
+		name     string
+		progress *grovecorev1beta1.PodCliqueSetUpdateProgress
+	}{
+		{name: "no progress remains untouched"},
+		{name: "empty progress remains untouched", progress: &grovecorev1beta1.PodCliqueSetUpdateProgress{}},
+		{
+			name:     "ordinary entry remains untouched",
+			progress: &grovecorev1beta1.PodCliqueSetUpdateProgress{CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 1}}},
+		},
+		{
+			name: "completed entry remains untouched",
+			progress: &grovecorev1beta1.PodCliqueSetUpdateProgress{CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{
+				ReplicaIndex: 1, UpdateEndedAt: &canceledAt,
+				Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 1},
+			}}},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "uid").WithUpdateProgress(tc.progress.DeepCopy()).Build()
+			before := pcs.DeepCopy()
+
+			recordReplacementCleanupWork(logr.Discard(), pcs, sets.New[int32](1))
+
+			assert.Equal(t, before, pcs)
+		})
+	}
+}
+
+// TestCommitPCSCleanupStatusRetiredSources covers retirement-only status patches, skipped no-change patches,
+// and optimistic-lock failures. Retirement must not emit ordinary scale-in events or disappear on failure.
+func TestCommitPCSCleanupStatusRetiredSources(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name                       string
+		confirmedPCSReplicaIndices sets.Set[int32]
+		rejectPatch                bool
+		wantPending                []int32
+		wantChanged                bool
+		wantError                  bool
+	}{
+		{name: "unchanged retirement skips the patch", rejectPatch: true, wantPending: []int32{3, 4}},
+		{name: "unrelated confirmation skips the patch", confirmedPCSReplicaIndices: sets.New[int32](99), rejectPatch: true, wantPending: []int32{3, 4}},
+		{name: "partial retirement persists without other cleanup flags", confirmedPCSReplicaIndices: sets.New[int32](3), wantPending: []int32{4}, wantChanged: true},
+		{name: "complete retirement persists without other cleanup flags", confirmedPCSReplicaIndices: sets.New[int32](3, 4), wantChanged: true},
+		{name: "failed partial retirement patch preserves server obligations", confirmedPCSReplicaIndices: sets.New[int32](3), rejectPatch: true, wantPending: []int32{3, 4}, wantError: true},
+		{name: "failed complete retirement patch preserves server obligations", confirmedPCSReplicaIndices: sets.New[int32](3, 4), rejectPatch: true, wantPending: []int32{3, 4}, wantError: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "uid").WithUpdateProgress(
+				&grovecorev1beta1.PodCliqueSetUpdateProgress{CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{
+					ReplicaIndex: 2,
+					Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{
+						TargetReplicaIndex: 1, RetiredSourceReplicaIndices: []int32{3, 4},
+					},
+				}}},
+			).Build()
+			conflict := apierrors.NewConflict(schema.GroupResource{Group: "grove.io", Resource: "podcliquesets"}, pcs.Name, errors.New("stale resource version"))
+			clientBuilder := testutils.NewTestClientBuilder().WithObjects(pcs).WithStatusSubresource(pcs)
+			if tc.rejectPatch {
+				clientBuilder = clientBuilder.RecordErrorForObjects(testutils.ClientMethodStatusPatch, conflict, client.ObjectKeyFromObject(pcs))
+			}
+			fakeClient := clientBuilder.Build()
+			events := record.NewFakeRecorder(10)
+			currentlyUpdatingExpectations := &pcsexpectations.CurrentlyUpdating{}
+			reconciler := &Reconciler{
+				client:                        fakeClient,
+				eventRecorder:                 events,
+				scalingProgressExpectations:   &pcsexpectations.ScalingProgress{},
+				currentlyUpdatingExpectations: currentlyUpdatingExpectations,
+			}
+			originalPCS := pcs.DeepCopy()
+			recordReplacementCleanupWork(logr.Discard(), pcs, tc.confirmedPCSReplicaIndices)
+			require.Len(t, pcs.Status.UpdateProgress.CurrentlyUpdating, 1)
+			assert.Nil(t, pcs.Status.UpdateProgress.CurrentlyUpdating[0].Replacement.SourceCleanupCompletedAt)
+			assert.Nil(t, pcs.Status.UpdateProgress.CurrentlyUpdating[0].Replacement.CanceledAt)
+
+			changed, err := reconciler.commitPCSCleanupStatus(t.Context(), logr.Discard(), pcs, originalPCS, nil)
+
+			assert.Equal(t, tc.wantChanged, changed)
+			if tc.wantError {
+				assert.ErrorIs(t, err, conflict)
+			} else {
+				require.NoError(t, err)
+			}
+			storedPCS := &grovecorev1beta1.PodCliqueSet{}
+			require.NoError(t, fakeClient.Get(t.Context(), client.ObjectKeyFromObject(pcs), storedPCS))
+			require.Len(t, storedPCS.Status.UpdateProgress.CurrentlyUpdating, 1)
+			pending := storedPCS.Status.UpdateProgress.CurrentlyUpdating[0].Replacement.RetiredSourceReplicaIndices
+			if len(tc.wantPending) == 0 {
+				assert.Empty(t, pending)
+			} else {
+				assert.Equal(t, tc.wantPending, pending)
+			}
+			assert.Nil(t, storedPCS.Status.ScalingProgress, "retirement must not create ordinary scaling progress")
+			assert.Empty(t, events.Events, "retirement must not emit an ordinary scale-in completion event")
+			wrongSelection := []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 99}}
+			if tc.wantChanged {
+				assert.False(t, currentlyUpdatingExpectations.ClearIfSatisfied(pcs.ObjectMeta, wrongSelection), "successful patches must record an expectation")
+				assert.True(t, currentlyUpdatingExpectations.ClearIfSatisfied(pcs.ObjectMeta, storedPCS.Status.UpdateProgress.CurrentlyUpdating))
+			} else {
+				assert.True(t, currentlyUpdatingExpectations.ClearIfSatisfied(pcs.ObjectMeta, wrongSelection), "failed or skipped patches must leave no expectation")
+			}
+		})
+	}
+}
+
+// TestCommitPCSCleanupStatus covers skipped no-change patches and persistence of actual scaling and update
+// mutations. Stored status and completion events must match the cleanup that was performed.
+func TestCommitPCSCleanupStatus(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name                       string
+		confirmedPCSReplicaIndices sets.Set[int32]
+		wantChanged                bool
+	}{
+		{name: "persists nothing when no cleanup occurred"},
+		{name: "persists scaling and update progress and emits the real scale-in event", confirmedPCSReplicaIndices: sets.New[int32](1, 3), wantChanged: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "uid").
+				WithScalingProgress(&grovecorev1beta1.PodCliqueSetScalingProgress{ScaleInReplicaIndices: []int32{3}}).
+				WithUpdateProgress(&grovecorev1beta1.PodCliqueSetUpdateProgress{
+					CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{
+						ReplicaIndex: 1,
+						Replacement:  &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 1},
+					}},
+				}).Build()
+			fakeClient := testutils.NewTestClientBuilder().WithObjects(pcs).WithStatusSubresource(pcs).Build()
+			events := record.NewFakeRecorder(10)
+			reconciler := &Reconciler{
+				client:                        fakeClient,
+				eventRecorder:                 events,
+				scalingProgressExpectations:   &pcsexpectations.ScalingProgress{},
+				currentlyUpdatingExpectations: &pcsexpectations.CurrentlyUpdating{},
+			}
+			originalPCS := pcs.DeepCopy()
+			completedScaleInReplicaIndices := removeCompletedScaleInPCSReplicaIndices(logr.Discard(), pcs, tc.confirmedPCSReplicaIndices)
+			recordReplacementCleanupWork(logr.Discard(), pcs, tc.confirmedPCSReplicaIndices)
+
+			changed, err := reconciler.commitPCSCleanupStatus(t.Context(), logr.Discard(), pcs, originalPCS, completedScaleInReplicaIndices)
+
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantChanged, changed)
+			storedPCS := &grovecorev1beta1.PodCliqueSet{}
+			require.NoError(t, fakeClient.Get(t.Context(), client.ObjectKeyFromObject(pcs), storedPCS))
+			if tc.wantChanged {
+				assert.Nil(t, storedPCS.Status.ScalingProgress)
+				require.Len(t, storedPCS.Status.UpdateProgress.CurrentlyUpdating, 1)
+				assert.NotNil(t, storedPCS.Status.UpdateProgress.CurrentlyUpdating[0].Replacement.SourceCleanupCompletedAt)
+				assert.Len(t, events.Events, 1)
+				assert.Equal(t, "Normal PodCliqueSetReplicaScaleInCompleted PCS replica index 3 completed scale-in", <-events.Events)
+			} else {
+				assert.Equal(t, originalPCS.Status, storedPCS.Status)
+				assert.Empty(t, events.Events)
+			}
+		})
+	}
+}
+
+// TestCommitPCSCleanupStatusSnapshotDifferences verifies that equal list lengths do not hide changed indices.
+// Completion-event metadata alone must not trigger a patch when both status snapshots are unchanged.
+func TestCommitPCSCleanupStatusSnapshotDifferences(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name                           string
+		beforeScaling                  *grovecorev1beta1.PodCliqueSetScalingProgress
+		afterScaling                   *grovecorev1beta1.PodCliqueSetScalingProgress
+		beforeUpdate                   *grovecorev1beta1.PodCliqueSetUpdateProgress
+		afterUpdate                    *grovecorev1beta1.PodCliqueSetUpdateProgress
+		completedScaleInReplicaIndices []int32
+		wantChanged                    bool
+	}{
+		{
+			name:          "different scaling indices with equal lengths require a patch",
+			beforeScaling: &grovecorev1beta1.PodCliqueSetScalingProgress{ScaleInReplicaIndices: []int32{3}},
+			afterScaling:  &grovecorev1beta1.PodCliqueSetScalingProgress{ScaleInReplicaIndices: []int32{4}},
+			wantChanged:   true,
+		},
+		{
+			name:         "different update selections with equal lengths require a patch",
+			beforeUpdate: &grovecorev1beta1.PodCliqueSetUpdateProgress{CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 1}}},
+			afterUpdate:  &grovecorev1beta1.PodCliqueSetUpdateProgress{CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 2}}},
+			wantChanged:  true,
+		},
+		{
+			name: "different retired indices with equal lengths require a patch",
+			beforeUpdate: &grovecorev1beta1.PodCliqueSetUpdateProgress{CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{
+				ReplicaIndex: 2, Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 1, RetiredSourceReplicaIndices: []int32{3}},
+			}}},
+			afterUpdate: &grovecorev1beta1.PodCliqueSetUpdateProgress{CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{
+				ReplicaIndex: 2, Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 1, RetiredSourceReplicaIndices: []int32{4}},
+			}}},
+			wantChanged: true,
+		},
+		{
+			name:                           "completion metadata cannot force a patch without status differences",
+			beforeScaling:                  &grovecorev1beta1.PodCliqueSetScalingProgress{ScaleInReplicaIndices: []int32{3}},
+			afterScaling:                   &grovecorev1beta1.PodCliqueSetScalingProgress{ScaleInReplicaIndices: []int32{3}},
+			completedScaleInReplicaIndices: []int32{3},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "uid").
+				WithScalingProgress(tc.beforeScaling.DeepCopy()).
+				WithUpdateProgress(tc.beforeUpdate.DeepCopy()).Build()
+			clientBuilder := testutils.NewTestClientBuilder().WithObjects(pcs).WithStatusSubresource(pcs)
+			if !tc.wantChanged {
+				clientBuilder = clientBuilder.RecordErrorForObjects(testutils.ClientMethodStatusPatch, apierrors.NewInternalError(errors.New("unexpected status patch")), client.ObjectKeyFromObject(pcs))
+			}
+			fakeClient := clientBuilder.Build()
+			events := record.NewFakeRecorder(10)
+			reconciler := &Reconciler{
+				client: fakeClient, eventRecorder: events,
+				scalingProgressExpectations:   &pcsexpectations.ScalingProgress{},
+				currentlyUpdatingExpectations: &pcsexpectations.CurrentlyUpdating{},
+			}
+			originalPCS := pcs.DeepCopy()
+			pcs.Status.ScalingProgress = tc.afterScaling.DeepCopy()
+			pcs.Status.UpdateProgress = tc.afterUpdate.DeepCopy()
+
+			changed, err := reconciler.commitPCSCleanupStatus(t.Context(), logr.Discard(), pcs, originalPCS, tc.completedScaleInReplicaIndices)
+
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantChanged, changed)
+			storedPCS := &grovecorev1beta1.PodCliqueSet{}
+			require.NoError(t, fakeClient.Get(t.Context(), client.ObjectKeyFromObject(pcs), storedPCS))
+			assert.Equal(t, tc.afterScaling, storedPCS.Status.ScalingProgress)
+			assert.Equal(t, tc.afterUpdate, storedPCS.Status.UpdateProgress)
+			assert.Empty(t, events.Events, "no actual scale-in completion occurred")
+		})
+	}
 }
 
 func TestCommitPCSCleanupStatusPatchFailure(t *testing.T) {
@@ -279,7 +758,8 @@ func TestCommitPCSCleanupStatusPatchFailure(t *testing.T) {
 	}
 	originalPCS := pcs.DeepCopy()
 
-	changed, err := reconciler.commitPCSCleanupStatus(context.Background(), logr.Discard(), pcs, originalPCS, []int32{1}, nil, nil)
+	completedScaleInReplicaIndices := removeCompletedScaleInPCSReplicaIndices(logr.Discard(), pcs, sets.New[int32](1))
+	changed, err := reconciler.commitPCSCleanupStatus(t.Context(), logr.Discard(), pcs, originalPCS, completedScaleInReplicaIndices)
 
 	assert.False(t, changed)
 	assert.ErrorIs(t, err, conflict)
@@ -699,6 +1179,118 @@ func TestInitOrResetUpdate(t *testing.T) {
 	}
 }
 
+// TestInitOrResetUpdateFailureIsolationAndRetry verifies that a failed supersession status update stops
+// reconciliation without persisting prepared replacement progress. Error recording preserves server cleanup
+// obligations, and a retry from freshly fetched status performs the handoff exactly once.
+func TestInitOrResetUpdateFailureIsolationAndRetry(t *testing.T) {
+	t.Parallel()
+	cleanupCompletedAt := metav1.NewTime(time.Unix(100, 0).UTC())
+	tests := []struct {
+		name                               string
+		progress                           grovecorev1beta1.PodCliqueSetReplicaUpdateProgress
+		wantRetiredSourcePCSReplicaIndices []int32
+	}{
+		{
+			name: "different-index handoff is not persisted by error recording",
+			progress: grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{
+				ReplicaIndex: 2,
+				Replacement:  &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 1},
+			},
+			wantRetiredSourcePCSReplicaIndices: []int32{2},
+		},
+		{
+			name: "same-index barrier and existing retired obligations survive failure",
+			progress: grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{
+				ReplicaIndex: 1,
+				Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{
+					TargetReplicaIndex:          1,
+					RetiredSourceReplicaIndices: []int32{2, 4},
+					SourceCleanupCompletedAt:    &cleanupCompletedAt,
+				},
+			},
+			wantRetiredSourcePCSReplicaIndices: []int32{2, 4},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "test-uid").
+				WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("worker").WithMinAvailable(1).Build()).
+				WithUpdateStrategy(&grovecorev1beta1.PodCliqueSetUpdateStrategy{Type: grovecorev1beta1.CoherentStrategy}).
+				WithPodCliqueSetGenerationHash(new("old-generation")).
+				WithAppliedSchedulingConfigurationHash(new("applied-scheduling")).
+				WithLastErrors(grovecorev1beta1.LastError{
+					Code: "PREVIOUS_ERROR", Description: "previous reconciliation failed", ObservedAt: cleanupCompletedAt,
+				}).
+				WithUpdateProgress(&grovecorev1beta1.PodCliqueSetUpdateProgress{
+					RequiresReplicaRecreation:         true,
+					TargetSchedulingConfigurationHash: "superseded-scheduling",
+					UpdateStartedAt:                   cleanupCompletedAt,
+					CurrentlyUpdating:                 []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{*tc.progress.DeepCopy()},
+				}).Build()
+			conflict := apierrors.NewConflict(schema.GroupResource{Group: "grove.io", Resource: "podcliquesets"}, pcs.Name, errors.New("stale resource version"))
+			fakeClient := testutils.NewTestClientBuilder().WithObjects(pcs).WithStatusSubresource(pcs).
+				RecordErrorForObjectsNTimes(testutils.ClientMethodStatusUpdate, conflict, 1, client.ObjectKeyFromObject(pcs)).Build()
+			currentlyUpdatingExpectations := &pcsexpectations.CurrentlyUpdating{}
+			reconciler := &Reconciler{
+				client:                        fakeClient,
+				currentlyUpdatingExpectations: currentlyUpdatingExpectations,
+				reconcileStatusRecorder:       ctrlcommon.NewReconcileErrorRecorder(fakeClient),
+			}
+			before := pcs.DeepCopy()
+			_, targetSchedulingHash, targetGenerationHash := computePCSHashes(pcs)
+
+			failedResult := reconciler.processGenerationHashChange(t.Context(), logr.Discard(), pcs)
+
+			require.True(t, failedResult.HasErrors())
+			assert.True(t, ctrlcommon.ShortCircuitReconcileFlow(failedResult), "failed initialization must stop the spec reconciliation before child sync")
+			assert.ErrorIs(t, errors.Join(failedResult.GetErrors()...), conflict)
+			assert.Equal(t, targetGenerationHash, *pcs.Status.CurrentGenerationHash, "initialization prepares the new generation in memory before the write fails")
+			assert.False(t, apiequality.Semantic.DeepEqual(before.Status.UpdateProgress, pcs.Status.UpdateProgress))
+			_, generationExpectationPresent := reconciler.pcsGenerationStatusExpectations.Load(pcsGenHashesExpKey(pcs))
+			assert.False(t, generationExpectationPresent, "a failed status write must not record a generation expectation")
+			assert.True(t, currentlyUpdatingExpectations.ClearIfSatisfied(pcs.ObjectMeta, nil), "a failed status write must not record an update-selection expectation")
+
+			require.NoError(t, reconciler.reconcileStatusRecorder.RecordErrors(t.Context(), pcs, &failedResult))
+
+			storedPCS := &grovecorev1beta1.PodCliqueSet{}
+			require.NoError(t, fakeClient.Get(t.Context(), client.ObjectKeyFromObject(pcs), storedPCS))
+			assert.Equal(t, before.Status.CurrentGenerationHash, storedPCS.Status.CurrentGenerationHash)
+			assert.Equal(t, before.Status.AppliedSchedulingConfigurationHash, storedPCS.Status.AppliedSchedulingConfigurationHash)
+			assert.True(t, apiequality.Semantic.DeepEqual(before.Status.UpdateProgress, storedPCS.Status.UpdateProgress), "the LastErrors patch must preserve the original replacement mapping, barrier, and retired sources")
+			// The recorder maps only GroveError values. This path returns a plain wrapped API conflict,
+			// so it clears the previous error rather than recording the current one.
+			assert.Empty(t, storedPCS.Status.LastErrors)
+			require.Len(t, before.Status.LastErrors, 1)
+			assert.Equal(t, before.Status.ScalingProgress, storedPCS.Status.ScalingProgress)
+
+			retryResult := reconciler.processGenerationHashChange(t.Context(), logr.Discard(), storedPCS)
+
+			require.False(t, retryResult.HasErrors())
+			updatedPCS := &grovecorev1beta1.PodCliqueSet{}
+			require.NoError(t, fakeClient.Get(t.Context(), client.ObjectKeyFromObject(pcs), updatedPCS))
+			assert.Equal(t, targetGenerationHash, *updatedPCS.Status.CurrentGenerationHash)
+			assert.Equal(t, before.Status.AppliedSchedulingConfigurationHash, updatedPCS.Status.AppliedSchedulingConfigurationHash)
+			require.NotNil(t, updatedPCS.Status.UpdateProgress)
+			assert.True(t, updatedPCS.Status.UpdateProgress.RequiresReplicaRecreation)
+			assert.Equal(t, targetSchedulingHash, updatedPCS.Status.UpdateProgress.TargetSchedulingConfigurationHash)
+			assert.Equal(t, before.Status.CurrentGenerationHash, updatedPCS.Status.UpdateProgress.PreviousPodCliqueSetGenerationHash)
+			require.Len(t, updatedPCS.Status.UpdateProgress.CurrentlyUpdating, 1)
+			updatedProgress := updatedPCS.Status.UpdateProgress.CurrentlyUpdating[0]
+			assert.Equal(t, int32(1), updatedProgress.ReplicaIndex)
+			require.NotNil(t, updatedProgress.Replacement)
+			assert.Equal(t, int32(1), updatedProgress.Replacement.TargetReplicaIndex)
+			assert.Equal(t, tc.wantRetiredSourcePCSReplicaIndices, updatedProgress.Replacement.RetiredSourceReplicaIndices)
+			assert.Nil(t, updatedProgress.Replacement.SourceCleanupCompletedAt)
+			assert.Nil(t, updatedProgress.UpdateEndedAt)
+			assert.False(t, reconciler.isGenerationStatusExpectationSatisfied(pcsGenHashesExpKey(pcs), before.Status))
+			assert.True(t, reconciler.isGenerationStatusExpectationSatisfied(pcsGenHashesExpKey(pcs), updatedPCS.Status))
+			assert.False(t, currentlyUpdatingExpectations.ClearIfSatisfied(updatedPCS.ObjectMeta, before.Status.UpdateProgress.CurrentlyUpdating))
+			assert.True(t, currentlyUpdatingExpectations.ClearIfSatisfied(updatedPCS.ObjectMeta, updatedPCS.Status.UpdateProgress.CurrentlyUpdating))
+		})
+	}
+}
+
 func TestInitOrResetUpdatePreservesReplicaRecreationAcrossSchedulingRollback(t *testing.T) {
 	sourceCleanupCompletedAt := metav1.Now()
 	replacement := &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{
@@ -774,111 +1366,509 @@ func TestIsUpdateOrchestratedByGrove(t *testing.T) {
 	assert.True(t, isUpdateOrchestratedByGrove(rollingPCS, false))
 }
 
-func TestPreserveActiveReplicaSelectionsForSupersedingUpdate(t *testing.T) {
-	updateStartedAt := metav1.Now()
-	completedAt := metav1.Now()
-	sourceCleanupCompletedAt := metav1.Now()
-	canceledAt := metav1.Now()
-	cancellationMessage := "replica-count reduction selected the replacement target"
-	replacement := &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{
-		TargetReplicaIndex:       4,
-		SourceCleanupCompletedAt: &sourceCleanupCompletedAt,
-		CanceledAt:               &canceledAt,
-		CancellationMessage:      &cancellationMessage,
+// TestPrepareReplicaSelectionsForUpdateSelectionRetention covers missing or empty progress,
+// completed selections, ordinary scale-in exclusions, and fresh progress for retained ordinary selections.
+func TestPrepareReplicaSelectionsForUpdateSelectionRetention(t *testing.T) {
+	t.Parallel()
+	previousStartedAt := metav1.NewTime(time.Unix(100, 0).UTC())
+	updateStartedAt := metav1.NewTime(time.Unix(200, 0).UTC())
+	completedAt := metav1.NewTime(time.Unix(150, 0).UTC())
+	ordinaryProgress := grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{
+		ReplicaIndex:    2,
+		UpdateStartedAt: previousStartedAt,
+		InFlightEpochs:  []string{"previous-epoch"},
+		Message:         new("waiting for the previous generation"),
 	}
-	pcs := &grovecorev1beta1.PodCliqueSet{
-		Status: grovecorev1beta1.PodCliqueSetStatus{
-			UpdateProgress: &grovecorev1beta1.PodCliqueSetUpdateProgress{
-				CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{
-					{ReplicaIndex: 3, Replacement: replacement},
-					{ReplicaIndex: 1},
-					{ReplicaIndex: 0},
-					{ReplicaIndex: 2, UpdateEndedAt: &completedAt},
-				},
-			},
-			ScalingProgress: &grovecorev1beta1.PodCliqueSetScalingProgress{
-				ScaleInReplicaIndices: []int32{1},
-			},
-		},
+	ordinaryZeroProgress := ordinaryProgress.DeepCopy()
+	ordinaryZeroProgress.ReplicaIndex = 0
+	completedProgress := ordinaryProgress.DeepCopy()
+	completedProgress.UpdateEndedAt = &completedAt
+	completedReplacement := completedProgress.DeepCopy()
+	completedReplacement.Replacement = &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{
+		TargetReplicaIndex: 1,
 	}
+	wantOrdinaryProgress := []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{
+		ReplicaIndex:    2,
+		UpdateStartedAt: updateStartedAt,
+	}}
 
-	got := preserveActiveReplicaSelectionsForSupersedingUpdate(pcs, updateStartedAt)
-
-	require.Len(t, got, 2)
-	assert.Equal(t, int32(0), got[0].ReplicaIndex)
-	assert.Nil(t, got[0].Replacement)
-	assert.Equal(t, updateStartedAt, got[0].UpdateStartedAt)
-	assert.Nil(t, got[0].UpdateEndedAt)
-
-	assert.Equal(t, int32(3), got[1].ReplicaIndex)
-	require.NotNil(t, got[1].Replacement)
-	assert.Equal(t, replacement, got[1].Replacement)
-	assert.NotSame(t, replacement, got[1].Replacement)
-	assert.NotSame(t, replacement.SourceCleanupCompletedAt, got[1].Replacement.SourceCleanupCompletedAt)
-	assert.NotSame(t, replacement.CanceledAt, got[1].Replacement.CanceledAt)
-	assert.NotSame(t, replacement.CancellationMessage, got[1].Replacement.CancellationMessage)
-	assert.Equal(t, updateStartedAt, got[1].UpdateStartedAt)
-	assert.Nil(t, got[1].UpdateEndedAt)
-	assert.Nil(t, preserveActiveReplicaSelectionsForSupersedingUpdate(&grovecorev1beta1.PodCliqueSet{}, updateStartedAt))
-}
-
-func TestPreserveActiveReplicaSelectionsResetsReplacementCleanup(t *testing.T) {
-	sourceCleanupCompletedAt := metav1.Now()
-	canceledAt := metav1.Now()
 	tests := []struct {
-		name                     string
-		targetPCSReplicaIndex    int32
-		sourceCleanupCompletedAt *metav1.Time
-		canceledAt               *metav1.Time
-		wantCleanupCompletedAt   *metav1.Time
+		name            string
+		updateProgress  *grovecorev1beta1.PodCliqueSetUpdateProgress
+		scalingProgress *grovecorev1beta1.PodCliqueSetScalingProgress
+		want            []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress
 	}{
 		{
-			name:                     "active same-index replacement restarts cleanup",
-			sourceCleanupCompletedAt: &sourceCleanupCompletedAt,
+			name: "no update progress",
 		},
 		{
-			name: "active same-index replacement already deleting",
+			name: "no update progress with pending scale-in",
+			scalingProgress: &grovecorev1beta1.PodCliqueSetScalingProgress{
+				ScaleInReplicaIndices: []int32{2},
+			},
 		},
 		{
-			name:                     "canceled replacement preserves cleanup progress",
-			sourceCleanupCompletedAt: &sourceCleanupCompletedAt,
-			canceledAt:               &canceledAt,
-			wantCleanupCompletedAt:   &sourceCleanupCompletedAt,
+			name:           "nil current selections",
+			updateProgress: &grovecorev1beta1.PodCliqueSetUpdateProgress{},
 		},
 		{
-			name:                  "different-index replacement has no cleanup marker",
-			targetPCSReplicaIndex: 1,
+			name: "empty current selections",
+			updateProgress: &grovecorev1beta1.PodCliqueSetUpdateProgress{
+				CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{},
+			},
+		},
+		{
+			name: "ordinary selection gets fresh progress without scaling progress",
+			updateProgress: &grovecorev1beta1.PodCliqueSetUpdateProgress{
+				CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{ordinaryProgress},
+			},
+			want: wantOrdinaryProgress,
+		},
+		{
+			name: "ordinary selection survives empty scaling progress",
+			updateProgress: &grovecorev1beta1.PodCliqueSetUpdateProgress{
+				CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{ordinaryProgress},
+			},
+			scalingProgress: &grovecorev1beta1.PodCliqueSetScalingProgress{},
+			want:            wantOrdinaryProgress,
+		},
+		{
+			name: "ordinary selection committed to scale-in is excluded",
+			updateProgress: &grovecorev1beta1.PodCliqueSetUpdateProgress{
+				CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{ordinaryProgress},
+			},
+			scalingProgress: &grovecorev1beta1.PodCliqueSetScalingProgress{
+				ScaleInReplicaIndices: []int32{2},
+			},
+		},
+		{
+			name: "ordinary replica zero committed to scale-in is excluded",
+			updateProgress: &grovecorev1beta1.PodCliqueSetUpdateProgress{
+				CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{*ordinaryZeroProgress},
+			},
+			scalingProgress: &grovecorev1beta1.PodCliqueSetScalingProgress{
+				ScaleInReplicaIndices: []int32{0},
+			},
+		},
+		{
+			name: "ordinary selection is not excluded by unrelated scale-in",
+			updateProgress: &grovecorev1beta1.PodCliqueSetUpdateProgress{
+				CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{ordinaryProgress},
+			},
+			scalingProgress: &grovecorev1beta1.PodCliqueSetScalingProgress{
+				ScaleInReplicaIndices: []int32{7},
+			},
+			want: wantOrdinaryProgress,
+		},
+		{
+			name: "scale-out does not exclude an ordinary selection",
+			updateProgress: &grovecorev1beta1.PodCliqueSetUpdateProgress{
+				CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{ordinaryProgress},
+			},
+			scalingProgress: &grovecorev1beta1.PodCliqueSetScalingProgress{
+				ScaleOutReplicaIndices: []int32{2},
+			},
+			want: wantOrdinaryProgress,
+		},
+		{
+			name: "completed ordinary selection is excluded",
+			updateProgress: &grovecorev1beta1.PodCliqueSetUpdateProgress{
+				CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{*completedProgress},
+			},
+		},
+		{
+			name: "completed replacement is excluded",
+			updateProgress: &grovecorev1beta1.PodCliqueSetUpdateProgress{
+				CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{*completedReplacement},
+			},
 		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, uuid.NewUUID()).
+			pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "uid").
+				WithUpdateProgress(tc.updateProgress.DeepCopy()).
+				WithScalingProgress(tc.scalingProgress.DeepCopy()).Build()
+			before := pcs.DeepCopy()
+
+			got := prepareReplicaSelectionsForUpdate(pcs, updateStartedAt)
+
+			require.Len(t, got, len(tc.want))
+			for i, want := range tc.want {
+				assert.Equal(t, want, got[i])
+			}
+			if tc.updateProgress == nil {
+				assert.Nil(t, got)
+			}
+			assert.Equal(t, before, pcs, "preparation must not mutate the input PCS")
+		})
+	}
+}
+
+// TestPrepareReplicaSelectionsForUpdateReplacementHandoffAndCancellation covers
+// active replacement handoff, retired-source cleanup obligations, and fresh cleanup barriers. Canceled
+// replacements retain their mapping, cancellation details, and cleanup progress.
+func TestPrepareReplicaSelectionsForUpdateReplacementHandoffAndCancellation(t *testing.T) {
+	t.Parallel()
+	previousStartedAt := metav1.NewTime(time.Unix(100, 0).UTC())
+	cleanupCompletedAt := metav1.NewTime(time.Unix(150, 0).UTC())
+	canceledAt := metav1.NewTime(time.Unix(175, 0).UTC())
+	updateStartedAt := metav1.NewTime(time.Unix(200, 0).UTC())
+	tests := []struct {
+		name                            string
+		sourcePCSReplicaIndex           int32
+		targetPCSReplicaIndex           int32
+		retiredSourcePCSReplicaIndices  []int32
+		sourceCleanupCompletedAt        *metav1.Time
+		canceledAt                      *metav1.Time
+		scaleInPCSReplicaIndices        []int32
+		wantPCSReplicaIndex             int32
+		wantRetiredSourceReplicaIndices []int32
+		wantCleanupCompletedAt          *metav1.Time
+	}{
+		{
+			name:                  "active same-index replacement already deleting",
+			sourcePCSReplicaIndex: 1, targetPCSReplicaIndex: 1, wantPCSReplicaIndex: 1,
+		},
+		{
+			name:                  "active same-index replacement restarts completed cleanup",
+			sourcePCSReplicaIndex: 1, targetPCSReplicaIndex: 1, wantPCSReplicaIndex: 1,
+			sourceCleanupCompletedAt: &cleanupCompletedAt,
+		},
+		{
+			name:                  "active same-index replacement preserves retired sources",
+			sourcePCSReplicaIndex: 1, targetPCSReplicaIndex: 1, wantPCSReplicaIndex: 1,
+			retiredSourcePCSReplicaIndices:  []int32{4, 2},
+			sourceCleanupCompletedAt:        &cleanupCompletedAt,
+			wantRetiredSourceReplicaIndices: []int32{4, 2},
+		},
+		{
+			name:                  "different-index replacement retires its previous source",
+			sourcePCSReplicaIndex: 2, targetPCSReplicaIndex: 1, wantPCSReplicaIndex: 1,
+			wantRetiredSourceReplicaIndices: []int32{2},
+		},
+		{
+			name:                  "replica index zero is a valid source",
+			sourcePCSReplicaIndex: 0, targetPCSReplicaIndex: 2, wantPCSReplicaIndex: 2,
+			wantRetiredSourceReplicaIndices: []int32{0},
+		},
+		{
+			name:                  "replica index zero is a valid target",
+			sourcePCSReplicaIndex: 2, targetPCSReplicaIndex: 0, wantPCSReplicaIndex: 0,
+			wantRetiredSourceReplicaIndices: []int32{2},
+		},
+		{
+			name:                  "target index may be greater than source index",
+			sourcePCSReplicaIndex: 1, targetPCSReplicaIndex: 3, wantPCSReplicaIndex: 3,
+			wantRetiredSourceReplicaIndices: []int32{1},
+		},
+		{
+			name:                  "different-index replacement resets a previous cleanup marker",
+			sourcePCSReplicaIndex: 2, targetPCSReplicaIndex: 1, wantPCSReplicaIndex: 1,
+			sourceCleanupCompletedAt:        &cleanupCompletedAt,
+			wantRetiredSourceReplicaIndices: []int32{2},
+		},
+		{
+			name:                  "previous source is merged with existing cleanup obligations",
+			sourcePCSReplicaIndex: 2, targetPCSReplicaIndex: 1, wantPCSReplicaIndex: 1,
+			retiredSourcePCSReplicaIndices:  []int32{4, 3},
+			wantRetiredSourceReplicaIndices: []int32{2, 3, 4},
+		},
+		{
+			name:                  "a source already recorded as retired is not duplicated",
+			sourcePCSReplicaIndex: 2, targetPCSReplicaIndex: 1, wantPCSReplicaIndex: 1,
+			retiredSourcePCSReplicaIndices:  []int32{4, 2},
+			wantRetiredSourceReplicaIndices: []int32{2, 4},
+		},
+		{
+			name:                  "active replacement is retained when its source is queued for scale-in",
+			sourcePCSReplicaIndex: 2, targetPCSReplicaIndex: 1, wantPCSReplicaIndex: 1,
+			scaleInPCSReplicaIndices:        []int32{2},
+			wantRetiredSourceReplicaIndices: []int32{2},
+		},
+		{
+			name:                  "active same-index replacement retains cleanup despite scale-in",
+			sourcePCSReplicaIndex: 1, targetPCSReplicaIndex: 1, wantPCSReplicaIndex: 1,
+			retiredSourcePCSReplicaIndices:  []int32{2},
+			scaleInPCSReplicaIndices:        []int32{1},
+			wantRetiredSourceReplicaIndices: []int32{2},
+		},
+		{
+			name:                  "target scale-in does not discard active replacement progress",
+			sourcePCSReplicaIndex: 2, targetPCSReplicaIndex: 1, wantPCSReplicaIndex: 1,
+			scaleInPCSReplicaIndices:        []int32{1},
+			wantRetiredSourceReplicaIndices: []int32{2},
+		},
+		{
+			name:                  "canceled same-index replacement preserves its cleanup barrier",
+			sourcePCSReplicaIndex: 1, targetPCSReplicaIndex: 1, wantPCSReplicaIndex: 1,
+			retiredSourcePCSReplicaIndices:  []int32{2},
+			sourceCleanupCompletedAt:        &cleanupCompletedAt,
+			canceledAt:                      &canceledAt,
+			wantRetiredSourceReplicaIndices: []int32{2},
+			wantCleanupCompletedAt:          &cleanupCompletedAt,
+		},
+		{
+			name:                  "canceled different-index replacement preserves mapping and retired sources",
+			sourcePCSReplicaIndex: 2, targetPCSReplicaIndex: 1, wantPCSReplicaIndex: 2,
+			retiredSourcePCSReplicaIndices:  []int32{4, 3},
+			sourceCleanupCompletedAt:        &cleanupCompletedAt,
+			canceledAt:                      &canceledAt,
+			wantRetiredSourceReplicaIndices: []int32{4, 3},
+			wantCleanupCompletedAt:          &cleanupCompletedAt,
+		},
+		{
+			name:                  "canceled replacement still deleting preserves a nil cleanup marker",
+			sourcePCSReplicaIndex: 2, targetPCSReplicaIndex: 1, wantPCSReplicaIndex: 2,
+			canceledAt: &canceledAt,
+		},
+		{
+			name:                  "scale-in cannot discard canceled replacement cleanup obligations",
+			sourcePCSReplicaIndex: 2, targetPCSReplicaIndex: 1, wantPCSReplicaIndex: 2,
+			retiredSourcePCSReplicaIndices:  []int32{4},
+			sourceCleanupCompletedAt:        &cleanupCompletedAt,
+			canceledAt:                      &canceledAt,
+			scaleInPCSReplicaIndices:        []int32{2, 1},
+			wantRetiredSourceReplicaIndices: []int32{4},
+			wantCleanupCompletedAt:          &cleanupCompletedAt,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var cancellationMessage *string
+			if tc.canceledAt != nil {
+				cancellationMessage = new("replica-count reduction selected the replacement target")
+			}
+			updateProgress := &grovecorev1beta1.PodCliqueSetUpdateProgress{
+				UpdateStartedAt: previousStartedAt,
+				CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{
+					ReplicaIndex:    tc.sourcePCSReplicaIndex,
+					UpdateStartedAt: previousStartedAt,
+					InFlightEpochs:  []string{"previous-epoch"},
+					Message:         new("waiting for the previous generation"),
+					Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{
+						TargetReplicaIndex:          tc.targetPCSReplicaIndex,
+						RetiredSourceReplicaIndices: tc.retiredSourcePCSReplicaIndices,
+						SourceCleanupCompletedAt:    tc.sourceCleanupCompletedAt,
+						CanceledAt:                  tc.canceledAt,
+						CancellationMessage:         cancellationMessage,
+					},
+				}},
+			}
+			scalingProgress := &grovecorev1beta1.PodCliqueSetScalingProgress{
+				ScaleInReplicaIndices: tc.scaleInPCSReplicaIndices,
+			}
+			pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "uid").
+				WithUpdateProgress(updateProgress.DeepCopy()).
+				WithScalingProgress(scalingProgress.DeepCopy()).Build()
+			before := pcs.DeepCopy()
+
+			got := prepareReplicaSelectionsForUpdate(pcs, updateStartedAt)
+
+			require.Len(t, got, 1)
+			want := grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{
+				ReplicaIndex:    tc.wantPCSReplicaIndex,
+				UpdateStartedAt: updateStartedAt,
+				Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{
+					TargetReplicaIndex:          tc.targetPCSReplicaIndex,
+					RetiredSourceReplicaIndices: tc.wantRetiredSourceReplicaIndices,
+					SourceCleanupCompletedAt:    tc.wantCleanupCompletedAt,
+					CanceledAt:                  tc.canceledAt,
+					CancellationMessage:         cancellationMessage,
+				},
+			}
+			assert.Equal(t, want, got[0])
+			assert.Equal(t, before, pcs, "preparation must not mutate the input PCS")
+		})
+	}
+}
+
+// TestPrepareReplicaSelectionsForUpdateSortsByPreparedReplicaIndex verifies
+// ascending order by prepared PCS replica indices, including when handoff changes an already-sorted source
+// order. It also covers sorting after completed selections and ordinary scale-in selections are excluded.
+func TestPrepareReplicaSelectionsForUpdateSortsByPreparedReplicaIndex(t *testing.T) {
+	t.Parallel()
+	updateStartedAt := metav1.NewTime(time.Unix(200, 0).UTC())
+	canceledAt := metav1.NewTime(time.Unix(175, 0).UTC())
+	canceledProgress := grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{
+		ReplicaIndex: 0,
+		Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{
+			TargetReplicaIndex: 6,
+			CanceledAt:         &canceledAt,
+		},
+	}
+	ordinaryProgress := grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{ReplicaIndex: 2}
+	activeProgress := grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{
+		ReplicaIndex: 5,
+		Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{
+			TargetReplicaIndex: 1,
+		},
+	}
+	completedAt := metav1.NewTime(time.Unix(150, 0).UTC())
+	completedProgress := grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{
+		ReplicaIndex: 9, UpdateEndedAt: &completedAt,
+	}
+	scaleInProgress := grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{ReplicaIndex: 8}
+	tests := []struct {
+		name                     string
+		currentlyUpdating        []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress
+		scaleInPCSReplicaIndices []int32
+	}{
+		{
+			name:              "unsorted input",
+			currentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{activeProgress, canceledProgress, ordinaryProgress},
+		},
+		{
+			name:              "sorted sources must be reordered after target handoff",
+			currentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{canceledProgress, ordinaryProgress, activeProgress},
+		},
+		{
+			name: "excluded entries do not discard subsequent selections or canceled cleanup",
+			currentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{
+				completedProgress, scaleInProgress, ordinaryProgress, activeProgress, canceledProgress,
+			},
+			scaleInPCSReplicaIndices: []int32{8, 0},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			updateProgress := &grovecorev1beta1.PodCliqueSetUpdateProgress{CurrentlyUpdating: tc.currentlyUpdating}
+			pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "uid").
+				WithUpdateProgress(updateProgress.DeepCopy()).
+				WithScalingProgress(&grovecorev1beta1.PodCliqueSetScalingProgress{
+					ScaleInReplicaIndices: tc.scaleInPCSReplicaIndices,
+				}).Build()
+			before := pcs.DeepCopy()
+
+			got := prepareReplicaSelectionsForUpdate(pcs, updateStartedAt)
+
+			want := []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{
+				{ReplicaIndex: 0, UpdateStartedAt: updateStartedAt, Replacement: canceledProgress.Replacement},
+				{
+					ReplicaIndex:    1,
+					UpdateStartedAt: updateStartedAt,
+					Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{
+						TargetReplicaIndex:          1,
+						RetiredSourceReplicaIndices: []int32{5},
+					},
+				},
+				{ReplicaIndex: 2, UpdateStartedAt: updateStartedAt},
+			}
+			assert.Equal(t, want, got)
+			assert.Equal(t, before, pcs, "sorting must not reorder or modify the input progress")
+		})
+	}
+}
+
+// TestPrepareReplicaSelectionsForUpdateRepeatedSupersession covers successive generations
+// retaining the original retired source and restarting target cleanup without retiring the target itself.
+func TestPrepareReplicaSelectionsForUpdateRepeatedSupersession(t *testing.T) {
+	t.Parallel()
+	updateProgress := &grovecorev1beta1.PodCliqueSetUpdateProgress{
+		CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{
+			ReplicaIndex: 2,
+			Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{
+				TargetReplicaIndex: 1,
+			},
+		}},
+	}
+	for _, updateStartedAt := range []metav1.Time{
+		metav1.NewTime(time.Unix(200, 0).UTC()),
+		metav1.NewTime(time.Unix(300, 0).UTC()),
+		metav1.NewTime(time.Unix(400, 0).UTC()),
+	} {
+		pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "uid").
+			WithUpdateProgress(updateProgress.DeepCopy()).Build()
+		before := pcs.DeepCopy()
+
+		got := prepareReplicaSelectionsForUpdate(pcs, updateStartedAt)
+
+		want := []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{
+			ReplicaIndex:    1,
+			UpdateStartedAt: updateStartedAt,
+			Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{
+				TargetReplicaIndex:          1,
+				RetiredSourceReplicaIndices: []int32{2},
+			},
+		}}
+		require.Equal(t, want, got, "unexpected handoff for generation started at %s", updateStartedAt.String())
+		assert.Equal(t, before, pcs, "supersession must not mutate the previous generation")
+
+		// Cleanup at the target applies only to the current generation. A later update must reset its barrier
+		// without adding the target to the retired sources.
+		cleanupCompletedAt := metav1.NewTime(updateStartedAt.Add(time.Second))
+		nextProgress := got[0].DeepCopy()
+		nextProgress.Replacement.SourceCleanupCompletedAt = &cleanupCompletedAt
+		updateProgress = &grovecorev1beta1.PodCliqueSetUpdateProgress{
+			CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{*nextProgress},
+		}
+	}
+}
+
+// TestPrepareReplicaSelectionsForUpdateCopyIsolation verifies that returned progress,
+// retired-source slices, and pointer fields do not alias the source or independently prepared results.
+func TestPrepareReplicaSelectionsForUpdateCopyIsolation(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name                  string
+		sourcePCSReplicaIndex int32
+		isCanceled            bool
+	}{
+		{name: "active different-index replacement", sourcePCSReplicaIndex: 2},
+		{name: "active same-index replacement", sourcePCSReplicaIndex: 1},
+		{name: "canceled different-index replacement", sourcePCSReplicaIndex: 2, isCanceled: true},
+		{name: "canceled same-index replacement", sourcePCSReplicaIndex: 1, isCanceled: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cleanupCompletedAt := metav1.NewTime(time.Unix(150, 0).UTC())
+			updateStartedAt := metav1.NewTime(time.Unix(200, 0).UTC())
+			replacement := &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{
+				TargetReplicaIndex:          1,
+				RetiredSourceReplicaIndices: []int32{4, 3},
+				SourceCleanupCompletedAt:    &cleanupCompletedAt,
+			}
+			if tc.isCanceled {
+				canceledAt := metav1.NewTime(time.Unix(175, 0).UTC())
+				replacement.CanceledAt = &canceledAt
+				replacement.CancellationMessage = new("replica-count reduction selected the replacement target")
+			}
+			pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "uid").
 				WithUpdateProgress(&grovecorev1beta1.PodCliqueSetUpdateProgress{
 					CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{
-						ReplicaIndex: 0,
-						Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{
-							TargetReplicaIndex:       tc.targetPCSReplicaIndex,
-							SourceCleanupCompletedAt: tc.sourceCleanupCompletedAt,
-							CanceledAt:               tc.canceledAt,
-						},
+						ReplicaIndex: tc.sourcePCSReplicaIndex,
+						Replacement:  replacement,
 					}},
 				}).Build()
 			before := pcs.DeepCopy()
-			updateStartedAt := metav1.Now()
 
-			got := preserveActiveReplicaSelectionsForSupersedingUpdate(pcs, updateStartedAt)
+			got := prepareReplicaSelectionsForUpdate(pcs, updateStartedAt)
+			again := prepareReplicaSelectionsForUpdate(pcs, updateStartedAt)
 
 			require.Len(t, got, 1)
-			assert.Equal(t, int32(0), got[0].ReplicaIndex)
-			assert.Equal(t, updateStartedAt, got[0].UpdateStartedAt)
-			assert.Nil(t, got[0].UpdateEndedAt)
+			require.Equal(t, got, again, "repeated preparation must produce the same progress")
+			assert.Equal(t, before, pcs, "preparation must not mutate the source")
+			beforeResult := got[0].DeepCopy()
 			require.NotNil(t, got[0].Replacement)
-			assert.Equal(t, tc.targetPCSReplicaIndex, got[0].Replacement.TargetReplicaIndex)
-			assert.Equal(t, tc.wantCleanupCompletedAt, got[0].Replacement.SourceCleanupCompletedAt)
-			assert.Equal(t, tc.canceledAt, got[0].Replacement.CanceledAt)
-			assert.NotSame(t, pcs.Status.UpdateProgress.CurrentlyUpdating[0].Replacement, got[0].Replacement)
-			assert.Equal(t, before, pcs, "supersession must not mutate the input progress")
+			require.NotEmpty(t, got[0].Replacement.RetiredSourceReplicaIndices)
+			got[0].ReplicaIndex = 9
+			got[0].UpdateStartedAt.Time = time.Unix(999, 0).UTC()
+			got[0].Replacement.TargetReplicaIndex = 8
+			got[0].Replacement.RetiredSourceReplicaIndices[0] = 7
+			if tc.isCanceled {
+				require.NotNil(t, got[0].Replacement.SourceCleanupCompletedAt)
+				require.NotNil(t, got[0].Replacement.CanceledAt)
+				require.NotNil(t, got[0].Replacement.CancellationMessage)
+				got[0].Replacement.SourceCleanupCompletedAt.Time = time.Unix(998, 0).UTC()
+				got[0].Replacement.CanceledAt.Time = time.Unix(997, 0).UTC()
+				*got[0].Replacement.CancellationMessage = "changed cancellation reason"
+			}
+
+			assert.Equal(t, before, pcs, "mutating returned progress must not mutate the source")
+			assert.Equal(t, *beforeResult, again[0], "independent preparation results must not alias each other")
 		})
 	}
 }

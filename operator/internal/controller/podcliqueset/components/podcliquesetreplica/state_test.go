@@ -15,9 +15,13 @@
 package podcliquesetreplica
 
 import (
+	"slices"
 	"testing"
+	"time"
 
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
+	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/sync"
+	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/stretchr/testify/assert"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -193,4 +197,177 @@ func TestComputePCSReplicaStateReplacementOverlay(t *testing.T) {
 
 		assert.Equal(t, sets.New(0, 2), expected)
 	})
+}
+
+// TestComputePCSReplicaStateRetiredSourceCleanup covers cleanup-only projection before and after the source
+// barrier, cancellation, absent resources, stale scale-out, and preservation of ordinary scaling selections.
+func TestComputePCSReplicaStateRetiredSourceCleanup(t *testing.T) {
+	t.Parallel()
+	cleanupCompletedAt := metav1.NewTime(time.Unix(150, 0).UTC())
+	canceledAt := metav1.NewTime(time.Unix(175, 0).UTC())
+	tests := []struct {
+		name                           string
+		observedPCSReplicaIndices      sets.Set[int]
+		scalingIndices                 pcsReplicaScalingIndices
+		desiredPCSReplicas             int32
+		sourcePCSReplicaIndex          int32
+		targetPCSReplicaIndex          int32
+		retiredSourcePCSReplicaIndices []int32
+		sourceCleanupCompletedAt       *metav1.Time
+		canceledAt                     *metav1.Time
+		want                           pcssync.State
+	}{
+		{
+			name:                      "nil retirement list preserves same-index cleanup",
+			observedPCSReplicaIndices: sets.New(0, 1), desiredPCSReplicas: 2,
+			sourcePCSReplicaIndex: 1, targetPCSReplicaIndex: 1,
+			want: pcssync.State{ExpectedReplicaIndices: []int{0}, ScaleInReplicaIndices: []int{1}},
+		},
+		{
+			name:                      "empty retirement list preserves same-index cleanup",
+			observedPCSReplicaIndices: sets.New(0, 1), desiredPCSReplicas: 2,
+			sourcePCSReplicaIndex: 1, targetPCSReplicaIndex: 1,
+			retiredSourcePCSReplicaIndices: []int32{},
+			want:                           pcssync.State{ExpectedReplicaIndices: []int{0}, ScaleInReplicaIndices: []int{1}},
+		},
+		{
+			name:                      "same-index cleanup includes the retired source before the barrier",
+			observedPCSReplicaIndices: sets.New(0, 1, 2), desiredPCSReplicas: 2,
+			sourcePCSReplicaIndex: 1, targetPCSReplicaIndex: 1,
+			retiredSourcePCSReplicaIndices: []int32{2},
+			want:                           pcssync.State{ExpectedReplicaIndices: []int{0}, ScaleInReplicaIndices: []int{1, 2}},
+		},
+		{
+			name:                      "target creation proceeds alongside retired cleanup after the barrier",
+			observedPCSReplicaIndices: sets.New(0, 1, 2), desiredPCSReplicas: 2,
+			sourcePCSReplicaIndex: 1, targetPCSReplicaIndex: 1,
+			retiredSourcePCSReplicaIndices: []int32{2}, sourceCleanupCompletedAt: &cleanupCompletedAt,
+			want: pcssync.State{
+				ExpectedReplicaIndices: []int{0, 1}, ScaleOutReplicaIndices: []int{1}, ScaleInReplicaIndices: []int{2},
+			},
+		},
+		{
+			name:                      "different-index creation proceeds alongside current and retired source cleanup",
+			observedPCSReplicaIndices: sets.New(0, 2, 3), desiredPCSReplicas: 2,
+			sourcePCSReplicaIndex: 2, targetPCSReplicaIndex: 1,
+			retiredSourcePCSReplicaIndices: []int32{3},
+			want: pcssync.State{
+				ExpectedReplicaIndices: []int{0, 1}, ScaleOutReplicaIndices: []int{1}, ScaleInReplicaIndices: []int{2, 3},
+			},
+		},
+		{
+			name:                      "canceled same-index replacement drains its current and retired sources",
+			observedPCSReplicaIndices: sets.New(0, 1, 2), desiredPCSReplicas: 1,
+			sourcePCSReplicaIndex: 1, targetPCSReplicaIndex: 1,
+			retiredSourcePCSReplicaIndices: []int32{2}, canceledAt: &canceledAt,
+			want: pcssync.State{ExpectedReplicaIndices: []int{0}, ScaleInReplicaIndices: []int{1, 2}},
+		},
+		{
+			name:                      "canceled different-index replacement drains source target and retired sources",
+			observedPCSReplicaIndices: sets.New(0, 1, 2, 3), desiredPCSReplicas: 1,
+			sourcePCSReplicaIndex: 2, targetPCSReplicaIndex: 1,
+			retiredSourcePCSReplicaIndices: []int32{3}, canceledAt: &canceledAt,
+			want: pcssync.State{ExpectedReplicaIndices: []int{0}, ScaleInReplicaIndices: []int{1, 2, 3}},
+		},
+		{
+			name:                      "absent retired source still requires cleanup confirmation after the barrier",
+			observedPCSReplicaIndices: sets.New(0), desiredPCSReplicas: 2,
+			sourcePCSReplicaIndex: 1, targetPCSReplicaIndex: 1,
+			retiredSourcePCSReplicaIndices: []int32{2}, sourceCleanupCompletedAt: &cleanupCompletedAt,
+			want: pcssync.State{
+				ExpectedReplicaIndices: []int{0, 1}, ScaleOutReplicaIndices: []int{1}, ScaleInReplicaIndices: []int{2},
+			},
+		},
+		{
+			name:                      "absent canceled and retired indices all require cleanup confirmation",
+			observedPCSReplicaIndices: sets.New(0), desiredPCSReplicas: 1,
+			sourcePCSReplicaIndex: 2, targetPCSReplicaIndex: 1,
+			retiredSourcePCSReplicaIndices: []int32{3}, canceledAt: &canceledAt,
+			want: pcssync.State{ExpectedReplicaIndices: []int{0}, ScaleInReplicaIndices: []int{1, 2, 3}},
+		},
+		{
+			name:                      "retired cleanup overrides a stale scale-out selection",
+			observedPCSReplicaIndices: sets.New(0, 1, 2), desiredPCSReplicas: 2,
+			scalingIndices:        pcsReplicaScalingIndices{scaleOut: []int{2}},
+			sourcePCSReplicaIndex: 1, targetPCSReplicaIndex: 1,
+			retiredSourcePCSReplicaIndices: []int32{2}, sourceCleanupCompletedAt: &cleanupCompletedAt,
+			want: pcssync.State{
+				ExpectedReplicaIndices: []int{0, 1}, ScaleOutReplicaIndices: []int{1}, ScaleInReplicaIndices: []int{2},
+			},
+		},
+		{
+			name:                      "retired cleanup preserves unrelated ordinary scale-out and scale-in",
+			observedPCSReplicaIndices: sets.New(0, 1, 2, 4), desiredPCSReplicas: 3,
+			scalingIndices:        pcsReplicaScalingIndices{scaleOut: []int{3}, scaleIn: []int{4}},
+			sourcePCSReplicaIndex: 1, targetPCSReplicaIndex: 1,
+			retiredSourcePCSReplicaIndices: []int32{2}, sourceCleanupCompletedAt: &cleanupCompletedAt,
+			want: pcssync.State{
+				ExpectedReplicaIndices: []int{0, 1, 3}, ScaleOutReplicaIndices: []int{1, 3}, ScaleInReplicaIndices: []int{2, 4},
+			},
+		},
+		{
+			name:                      "multiple retired sources produce sorted cleanup indices",
+			observedPCSReplicaIndices: sets.New(0, 1, 2, 4), desiredPCSReplicas: 2,
+			sourcePCSReplicaIndex: 1, targetPCSReplicaIndex: 1,
+			retiredSourcePCSReplicaIndices: []int32{4, 2},
+			want:                           pcssync.State{ExpectedReplicaIndices: []int{0}, ScaleInReplicaIndices: []int{1, 2, 4}},
+		},
+		{
+			name:                      "retired index zero is cleanup rather than creation work",
+			observedPCSReplicaIndices: sets.New(0, 1), desiredPCSReplicas: 1,
+			sourcePCSReplicaIndex: 1, targetPCSReplicaIndex: 1,
+			retiredSourcePCSReplicaIndices: []int32{0}, sourceCleanupCompletedAt: &cleanupCompletedAt,
+			want: pcssync.State{
+				ExpectedReplicaIndices: []int{1}, ScaleOutReplicaIndices: []int{1}, ScaleInReplicaIndices: []int{0},
+			},
+		},
+		{
+			name:                      "ordinary scale-in and retired cleanup share one deletion index",
+			observedPCSReplicaIndices: sets.New(0, 1, 2), desiredPCSReplicas: 2,
+			scalingIndices:        pcsReplicaScalingIndices{scaleIn: []int{2}},
+			sourcePCSReplicaIndex: 1, targetPCSReplicaIndex: 1,
+			retiredSourcePCSReplicaIndices: []int32{2}, sourceCleanupCompletedAt: &cleanupCompletedAt,
+			want: pcssync.State{
+				ExpectedReplicaIndices: []int{0, 1}, ScaleOutReplicaIndices: []int{1}, ScaleInReplicaIndices: []int{2},
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			progress := &grovecorev1beta1.PodCliqueSetUpdateProgress{
+				RequiresReplicaRecreation: true,
+				CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{
+					ReplicaIndex: tc.sourcePCSReplicaIndex,
+					Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{
+						TargetReplicaIndex:          tc.targetPCSReplicaIndex,
+						RetiredSourceReplicaIndices: tc.retiredSourcePCSReplicaIndices,
+						SourceCleanupCompletedAt:    tc.sourceCleanupCompletedAt,
+						CanceledAt:                  tc.canceledAt,
+					},
+				}},
+			}
+			pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "default", "uid").
+				WithReplicas(tc.desiredPCSReplicas).
+				WithObservedGeneration(new(int64(0))).
+				WithScalingProgress(scalingProgressFromScalingIndices(tc.scalingIndices)).
+				WithUpdateProgress(progress.DeepCopy()).Build()
+			expected := expectedReplicaIndicesFromScaling(tc.observedPCSReplicaIndices, tc.scalingIndices)
+			expectedBefore := expected.Clone()
+			scaleInBefore := slices.Clone(tc.scalingIndices.scaleIn)
+			scaleOutBefore := slices.Clone(tc.scalingIndices.scaleOut)
+			groups := groupPCSReplicaReplacements(pcs.Status.UpdateProgress)
+			groupsBefore := groupPCSReplicaReplacements(pcs.Status.UpdateProgress)
+			before := pcs.DeepCopy()
+
+			got := computePCSReplicaState(pcs, tc.scalingIndices, expected, groups)
+
+			assert.Equal(t, tc.want, got)
+			assert.Equal(t, expectedBefore, expected, "projection must not mutate the caller's expected set")
+			assert.Equal(t, scaleInBefore, tc.scalingIndices.scaleIn, "projection must not mutate scaling selections")
+			assert.Equal(t, scaleOutBefore, tc.scalingIndices.scaleOut, "projection must not mutate scaling selections")
+			assert.Equal(t, groupsBefore, groups, "projection must not mutate grouped cleanup obligations")
+			assert.Equal(t, before, pcs, "reconcile-local cleanup must not be persisted as ordinary scaling progress")
+		})
+	}
 }

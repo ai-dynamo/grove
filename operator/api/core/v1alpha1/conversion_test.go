@@ -174,10 +174,11 @@ func TestConvertPodCliqueSetReplicaUpdateProgressRoundTrip(t *testing.T) {
 	canceledAt := metav1.Now()
 	cancellationMessage := "replica-count reduction selected the replacement target"
 	replacement := &v1beta1.PodCliqueSetReplicaReplacementProgress{
-		TargetReplicaIndex:       1,
-		SourceCleanupCompletedAt: &sourceCleanupCompletedAt,
-		CanceledAt:               &canceledAt,
-		CancellationMessage:      &cancellationMessage,
+		TargetReplicaIndex:          1,
+		RetiredSourceReplicaIndices: []int32{2},
+		SourceCleanupCompletedAt:    &sourceCleanupCompletedAt,
+		CanceledAt:                  &canceledAt,
+		CancellationMessage:         &cancellationMessage,
 	}
 
 	alphaReplacement := &PodCliqueSetReplicaReplacementProgress{}

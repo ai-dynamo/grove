@@ -645,6 +645,11 @@ func (in *PodCliqueSetReplicaReplacementProgress) DeepCopyInto(out *PodCliqueSet
 		in, out := &in.SourceCleanupCompletedAt, &out.SourceCleanupCompletedAt
 		*out = (*in).DeepCopy()
 	}
+	if in.RetiredSourceReplicaIndices != nil {
+		in, out := &in.RetiredSourceReplicaIndices, &out.RetiredSourceReplicaIndices
+		*out = make([]int32, len(*in))
+		copy(*out, *in)
+	}
 	if in.CanceledAt != nil {
 		in, out := &in.CanceledAt, &out.CanceledAt
 		*out = (*in).DeepCopy()
