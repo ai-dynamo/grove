@@ -29,6 +29,7 @@ import (
 	grovev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/k8sclient"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/kwok"
+	"github.com/ai-dynamo/grove/operator/e2e/setup"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
 	"github.com/ai-dynamo/grove/operator/e2e/tests"
 	updateutils "github.com/ai-dynamo/grove/operator/e2e/tests/update/utils"
@@ -39,6 +40,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -1496,6 +1498,159 @@ func Test_RR15_SchedulingSupersessionRecreatesDifferentIndexTarget(t *testing.T)
 	finalTarget := requireReplicaSnapshotForIndex(t, tc, 1)
 	assertReplicaConfiguration(t, finalTarget, wantS2)
 	assertReplicaResourceUIDsUnchanged(t, second, finalTarget)
+}
+
+// Test_RR16_LegacyUpgradePreservesUnappliedSchedulingChange verifies that scheduling edits are rejected
+// until an existing PCS's applied scheduling baseline is initialized. The upgraded operator must initialize
+// that baseline automatically from its startup watch without requiring a specification edit. Once initialized,
+// a MinAvailable change must be admitted and execute replica recreation rather than hash-only migration.
+//
+// The fixture seeds the relevant legacy generation status rather than depending on a released operator version.
+// Admission remains enabled throughout. The rejection check clears only status while the webhook is running.
+// Its specification update carries that status write's resource version, so concurrent initialization causes
+// a conflict and a retry instead of a misleading admission result. Fresh replacement readiness is blocked
+// only after initialization to keep recreation and its unapplied scheduling target observable.
+//
+// Scenario:
+//  1. Deploy workload2 under Coherent with one Ready PCS replica and 10 pods. Verify sg-x has replicas=2,
+//     MinAvailable=1, an anchor containing index 0, and a tail containing index 1.
+//  2. Clear the applied scheduling hash with the webhook running. Attempt sg-x MinAvailable 1 -> 2 and
+//     require an initialization rejection. Verify the persisted spec and replica resources remain unchanged.
+//  3. Stop the operator and seed legacy PCS and PodGangMap generation hashes with no applied scheduling
+//     baseline. Restart it without changing the spec and verify automatic initialization and hash migration
+//     preserve the original configuration, resource UIDs, and gang layout without starting an update.
+//  4. Block fresh standalone pods at index 0 and retry sg-x MinAvailable 1 -> 2. Require acceptance and
+//     active replica recreation while the applied scheduling hash still identifies the original configuration.
+//  5. Verify fresh PodClique, PodCliqueScalingGroup, and PodGangMap UIDs and an sg-x anchor containing
+//     indices 0 and 1 with no tail, while blocked readiness prevents completion.
+//  6. Release readiness and verify 10 Ready pods, generation and scheduling-hash convergence, the exact
+//     new gang layout, and stable replacement resource UIDs.
+func Test_RR16_LegacyUpgradePreservesUnappliedSchedulingChange(t *testing.T) {
+	tests.Logger.Info("1. Deploy workload2 under Coherent and verify the original sg-x gang layout")
+	tc, cleanup, _ := setupTest(t, testConfig{
+		workloadName: "workload2",
+		workloadYAML: "../../yaml/workload2.yaml",
+		workerNodes:  10,
+		expectedPods: 10,
+	})
+	t.Cleanup(cleanup)
+	require.NoError(t, updateutils.UpdatePCSUpdateStrategy(tc, grovev1beta1.CoherentStrategy))
+	updateutils.AssertGenerationHashConverged(tc)
+	before := requireReplicaSnapshot(t, tc)
+	require.Nil(t, before.PCS.Status.UpdateProgress, "the upgrade fixture must start without an active update")
+	want := expectedReplicaConfiguration{
+		StandaloneMinAvailable: 1, PCSGMinAvailable: 1, PCSGReplicas: 2,
+		PodGangMap: updateutils.ExpectedReplicaPodGangMap{
+			GenerationHash:      *before.PCS.Status.CurrentGenerationHash,
+			StandalonePodCounts: map[string]int32{"pc-a": 2},
+			PCSGName:            "sg-x", AnchorIndices: []int32{0}, TailIndices: []int32{1},
+		},
+	}
+	assertReplicaConfiguration(t, before, want)
+	legacyHash := legacyCoherentPCSGenerationHash(before.PCS)
+	require.NotEqual(t, *before.PCS.Status.CurrentGenerationHash, legacyHash)
+
+	tests.Logger.Info("2. Reject a version-locked scheduling edit before baseline initialization")
+	var admissionErr error
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		pcs, err := updateutils.GetPCS(tc, tc.Workload.Name)
+		if err != nil {
+			return err
+		}
+		pcs.Status.AppliedSchedulingConfigurationHash = nil
+		if err := tc.Client.Status().Update(tc.Ctx, pcs); err != nil {
+			return err
+		}
+		for i := range pcs.Spec.Template.PodCliqueScalingGroupConfigs {
+			if pcs.Spec.Template.PodCliqueScalingGroupConfigs[i].Name == "sg-x" {
+				pcs.Spec.Template.PodCliqueScalingGroupConfigs[i].MinAvailable = new(int32(2))
+				break
+			}
+		}
+		admissionErr = tc.Client.Update(tc.Ctx, pcs)
+		if apierrors.IsConflict(admissionErr) {
+			return admissionErr
+		}
+		return nil
+	})
+	require.NoError(t, err, "establish a version-locked admission request before initialization")
+	require.ErrorContains(t, admissionErr, "scheduling configuration is not initialized yet. Retry after Grove initializes it")
+	rejectedPCS, err := updateutils.GetPCS(tc, tc.Workload.Name)
+	require.NoError(t, err)
+	require.Equal(t, before.PCS.Spec, rejectedPCS.Spec, "a rejected scheduling edit must leave the stored specification unchanged")
+	require.Equal(t, before.PCS.Generation, rejectedPCS.Generation)
+	var existingPCSG grovev1beta1.PodCliqueScalingGroup
+	require.NoError(t, tc.Client.Get(tc.Ctx, client.ObjectKeyFromObject(before.PCSG), &existingPCSG))
+	require.Equal(t, before.PCSG.UID, existingPCSG.UID)
+	require.NotNil(t, existingPCSG.Spec.MinAvailable)
+	require.Equal(t, int32(1), *existingPCSG.Spec.MinAvailable)
+
+	tests.Logger.Info("3. Restart with legacy status and verify automatic baseline initialization without a spec edit")
+	operatorKey := client.ObjectKey{Namespace: setup.OperatorNamespace, Name: setup.OperatorDeploymentName}
+	var deployment appsv1.Deployment
+	require.NoError(t, tc.Client.Get(tc.Ctx, operatorKey, &deployment))
+	require.NotNil(t, deployment.Spec.Replicas)
+	operatorReplicas := *deployment.Spec.Replicas
+	require.Positive(t, operatorReplicas)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(tc.Ctx), tc.Timeout)
+		defer cancel()
+		assert.NoError(t, setCoherentTestOperatorReplicas(ctx, tc, operatorReplicas))
+	})
+	require.NoError(t, setCoherentTestOperatorReplicas(tc.Ctx, tc, 0))
+	legacyPGM := before.PGM.DeepCopy()
+	for i := range legacyPGM.Spec.Entries {
+		legacyPGM.Spec.Entries[i].PodCliqueSetGenerationHash = legacyHash
+	}
+	require.NoError(t, tc.Client.Patch(tc.Ctx, legacyPGM, client.MergeFrom(before.PGM)))
+	pcs, err := updateutils.GetPCS(tc, tc.Workload.Name)
+	require.NoError(t, err)
+	originalPCS := pcs.DeepCopy()
+	pcs.Status.CurrentGenerationHash = &legacyHash
+	pcs.Status.AppliedSchedulingConfigurationHash = nil
+	require.NoError(t, tc.Client.Status().Patch(tc.Ctx, pcs, client.MergeFrom(originalPCS)))
+	require.NoError(t, setCoherentTestOperatorReplicas(tc.Ctx, tc, operatorReplicas))
+	require.NoError(t, updateutils.WaitForGenerationHashChange(tc, legacyHash))
+	initialized := requireReplicaSnapshot(t, tc)
+	require.Equal(t, *before.PCS.Status.CurrentGenerationHash, *initialized.PCS.Status.CurrentGenerationHash)
+	require.Equal(t, *before.PCS.Status.AppliedSchedulingConfigurationHash, *initialized.PCS.Status.AppliedSchedulingConfigurationHash)
+	require.Equal(t, before.PCS.Spec, initialized.PCS.Spec)
+	require.Equal(t, before.PCS.Generation, initialized.PCS.Generation)
+	require.Nil(t, initialized.PCS.Status.UpdateProgress, "baseline initialization and migration must not start an update")
+	assertReplicaResourceUIDsUnchanged(t, before, initialized)
+	assertReplicaConfiguration(t, initialized, want)
+
+	tests.Logger.Info("4. Admit sg-x MinAvailable after initialization and observe structural recreation")
+	require.NoError(t, kwok.ApplyStage(tc.Ctx, tc.Client, kwokStageReadyBlockedR0Path))
+	blockRemoved := false
+	t.Cleanup(func() {
+		if !blockRemoved {
+			assert.NoError(t, kwok.DeleteStage(tc.Ctx, tc.Client, kwokStageReadyBlockedR0Name))
+		}
+	})
+	require.NoError(t, triggerPCSGMinAvailableChange(tc, "sg-x", 2))
+	require.NoError(t, updateutils.WaitForGenerationHashChange(tc, *initialized.PCS.Status.CurrentGenerationHash))
+	observedPCS, err := updateutils.GetPCS(tc, tc.Workload.Name)
+	require.NoError(t, err)
+	target := requireSchedulingTargetChanged(t, initialized.PCS, observedPCS)
+
+	tests.Logger.Info("5. Verify structural recreation and an sg-x anchor containing both replicas with no tail")
+	want.PCSGMinAvailable = 2
+	want.PodGangMap.GenerationHash = target.GenerationHash
+	want.PodGangMap.AnchorIndices = []int32{0, 1}
+	want.PodGangMap.TailIndices = nil
+	recreated := requireRecreatedReplica(t, tc, initialized, want)
+
+	tests.Logger.Info("6. Release readiness and verify the scheduling change actually converges")
+	require.NoError(t, kwok.DeleteStage(tc.Ctx, tc.Client, kwokStageReadyBlockedR0Name))
+	blockRemoved = true
+	updateutils.DeleteNotReadyPodsOnReplica(t, tc, 0)
+	requireReplicaRecreationConverged(t, tc, expectedReplicaRecreationCompletion{
+		GenerationHash: target.GenerationHash, SchedulingHash: target.SchedulingHash,
+		Replicas: 1, Pods: 10, PCSReplicaIndices: []int{0}, Configuration: want,
+	})
+	final := requireReplicaSnapshot(t, tc)
+	assertReplicaResourceUIDsUnchanged(t, recreated, final)
 }
 
 // replicaRecreationSnapshot captures the PCS and one replica's pc-a, sg-x, and PodGangMap resources.
