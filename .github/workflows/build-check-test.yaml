@@ -40,22 +40,23 @@ jobs:
     outputs:
       e2e-relevant: ${{ steps.filter.outputs.e2e-relevant }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dorny/paths-filter@v3
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dorny/paths-filter@d1c1ffe0248fe513906c8e24db8ea791d46f8590 # v3.0.3
         id: filter
         with:
           base: main
           filters: |
             e2e-relevant:
               - 'operator/**'
+              - 'hack/**'
               - '.github/**'
 
   test:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Set up Go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@7b8cf10d4e4a01d4992d18a89f4d7dc5a3e6d6f4 # v4.3.0
         with:
           go-version: "1.26.10"
           cache: true
@@ -71,9 +72,9 @@ jobs:
   build:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Set up Go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@7b8cf10d4e4a01d4992d18a89f4d7dc5a3e6d6f4 # v4.3.0
         with:
           go-version: "1.26.10"
           cache: true
@@ -85,9 +86,9 @@ jobs:
   check:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Set up Go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@7b8cf10d4e4a01d4992d18a89f4d7dc5a3e6d6f4 # v4.3.0
         with:
           go-version: "1.26.10"
           cache: true
@@ -96,7 +97,7 @@ jobs:
         run: make check
 
   # E2E tests - only run after build, check, and test jobs succeed
-  # Only triggered by changes to operator or .github folders
+  # Only triggered by changes to operator, hack, or .github folders
   #
   # Matrix entries can set:
   #   test_name     (required) - name shown in the GitHub Actions UI
@@ -108,7 +109,8 @@ jobs:
     if: |
       startsWith(github.ref, 'refs/heads/pull-request/') &&
       needs.changes.outputs.e2e-relevant == 'true'
-    # use NVIDIA self-hosted runner setting is on Velonix repository
+    # NVIDIA manages this self-hosted runner in the Velonix repository.
+    # It provides dedicated DinD capacity; e2e-setup owns tool versions.
     runs-on: prod-grove-e2e-v1
     timeout-minutes: 60
     strategy:
@@ -168,7 +170,7 @@ jobs:
           echo "RAM: $(free -h | awk '/^Mem:/ {print $2}')"
 
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Pull registry image from GHCR to avoid Docker Hub rate limits
         run: |
@@ -198,7 +200,7 @@ jobs:
       # Uses 'warn' since this only runs on failure and missing files indicates a problem.
       - name: Upload test logs on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: e2e-test-logs-${{ matrix.test_name }}
           path: operator/e2e-diagnostics/
@@ -240,7 +242,7 @@ jobs:
     name: E2E - ${{ matrix.test_name }}
     steps:
       - name: Skip E2E (no relevant changes)
-        run: echo "E2E skipped — no changes to operator/ or .github/"
+        run: echo "E2E skipped — no changes to operator/, hack/, or .github/"
 
   kubernetes-compatibility:
     needs: [test, build, check, changes, e2e]
@@ -271,7 +273,7 @@ jobs:
           echo "RAM: $(free -h | awk '/^Mem:/ {print $2}')"
 
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Pull registry image from GHCR to avoid Docker Hub rate limits
         run: |
@@ -296,7 +298,7 @@ jobs:
 
       - name: Upload test logs on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: kubernetes-compatibility-test-logs-${{ matrix.kubernetes_version }}
           path: operator/e2e-diagnostics/
