@@ -20,6 +20,7 @@
     - [Normal flow](#normal-flow-1)
     - [Failure](#failure)
   - [Member mapping and reuse](#member-mapping-and-reuse)
+    - [Existing group snapshots](#existing-group-snapshots)
   - [Monitoring](#monitoring)
   - [Open Questions](#open-questions)
     - [Capture retries](#capture-retries)
@@ -295,8 +296,8 @@ policy remains open.
 
 ### Member mapping and reuse
 
-Each captured Pod gets a stable member ID from its clique and Pod index within
-that clique:
+For automatic capture, Grove assigns each Pod a stable member ID from its clique
+and Pod index within that clique:
 
 | Member ID | Capture source | Restore target |
 | --- | --- | --- |
@@ -304,13 +305,42 @@ that clique:
 | `worker-0` | Original worker 0 | New worker 0 |
 | `worker-1` | Original worker 1 | New worker 1 |
 
-Grove lists members in `snapshot.cliques` order, then Pod index order. Snapshot
-records that order, but restore matches by member ID. New Pod names, UIDs, and
-nodes do not change the mapping. The first member need not be the workload
-leader. IDs must be unique and fit Snapshot's name limits.
+Grove lists capture members in `snapshot.cliques` order, then Pod index order.
+Snapshot records that order, but restore matches by member ID. New Pod names,
+UIDs, and nodes do not change the mapping. The first member need not be the
+workload leader. IDs must be unique and fit Snapshot's name limits.
+
+#### Existing group snapshots
+
+By default, Grove expects the same member IDs when using an existing snapshot.
+If that snapshot uses different IDs, users can set `memberIDs` on each selected
+clique. For example, with one leader Pod and two worker Pods:
+
+```yaml
+snapshot:
+  snapshotRef: existing-capture
+  cliques:
+    - name: leader
+      containers: [engine]
+      memberIDs: [saved-head]
+    - name: worker
+      containers: [engine]
+      memberIDs: [saved-worker-a, saved-worker-b]
+```
+
+Each `memberIDs` entry names a captured member for the corresponding Pod index
+within that clique: `saved-head` goes to leader Pod 0; `saved-worker-a` and
+`saved-worker-b` go to worker Pods 0 and 1. Grove then writes these IDs and the new
+Pod names and UIDs into the `PodGroupRestore` targets.
+
+Before creating restore targets, Grove checks that each selected clique has one
+ID per Pod, that IDs are unique across cliques, and that every captured member
+is mapped exactly once. It never guesses the mapping from the snapshot's list
+order.
 
 Reuse also requires a matching workload configuration, such as images, container
-settings, and member counts. Which settings to compare remains open below.
+settings, and member counts. Checks compare the mapped members. Which settings
+to compare remains open below.
 
 ### Monitoring
 
@@ -376,6 +406,8 @@ would require extending Snapshot to restore existing standalone snapshots throug
 Extend the PodClique and PCSG controller tests and add end-to-end coverage for:
 
 - Container selection, helpers, and member mapping into new Pod identities.
+- Default member IDs and explicit mappings for existing group snapshots; refuse
+  missing, extra, duplicate, or incorrectly sized mappings.
 - Both startup policies, with automatic capture and existing snapshots.
 - One startup decision per replica across reconciles and controller restarts.
 - Waiting for the capture result before replacing replica 0 in restore mode.
