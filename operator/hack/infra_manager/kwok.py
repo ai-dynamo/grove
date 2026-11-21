@@ -173,7 +173,7 @@ def install_kwok_controller(version: str, timeout: int = 120) -> None:
     """Install KWOK controller and wait for it to be available.
 
     Args:
-        version: KWOK release version tag (e.g. ``v0.7.0``).
+        version: KWOK release version tag (e.g. ``v0.8.0``).
         timeout: Maximum seconds to wait for the controller deployment.
 
     Raises:
