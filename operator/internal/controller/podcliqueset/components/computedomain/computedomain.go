@@ -308,7 +308,6 @@ func (r _resource) triggerDeletionOfComputeDomainsByName(ctx context.Context, lo
 func (r _resource) buildDeletionTasks(logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, targetCDFQNs []string) []utils.Task {
 	deleteTasks := make([]utils.Task, 0, len(targetCDFQNs))
 	for _, cdName := range targetCDFQNs {
-		cdName := cdName // Capture loop variable
 		cdObjKey := client.ObjectKey{Name: cdName, Namespace: pcs.Namespace}
 		task := utils.Task{
 			Name: "DeleteComputeDomain-" + cdObjKey.Name,
@@ -384,7 +383,6 @@ func (r _resource) createComputeDomains(ctx context.Context, logger logr.Logger,
 
 	tasks := make([]utils.Task, 0, len(cds))
 	for _, cd := range cds {
-		cd := cd
 		cdObjKey := client.ObjectKey{Name: cd.fullName(), Namespace: pcs.Namespace}
 		task := utils.Task{
 			Name: fmt.Sprintf("CreateComputeDomain-%s", cdObjKey),

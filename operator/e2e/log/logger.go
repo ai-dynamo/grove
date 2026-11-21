@@ -102,42 +102,42 @@ func NewTestLoggerWithOutput(verbosity LogLevel, output io.Writer) *Logger {
 }
 
 // Debugf logs a formatted debug message
-func (l *Logger) Debugf(format string, args ...interface{}) {
+func (l *Logger) Debugf(format string, args ...any) {
 	l.logr.V(1).Info(fmt.Sprintf(format, args...))
 }
 
 // Debug logs a debug message
-func (l *Logger) Debug(args ...interface{}) {
+func (l *Logger) Debug(args ...any) {
 	l.logr.V(1).Info(fmt.Sprint(args...))
 }
 
 // Infof logs a formatted info message
-func (l *Logger) Infof(format string, args ...interface{}) {
+func (l *Logger) Infof(format string, args ...any) {
 	l.logr.Info(fmt.Sprintf(format, args...))
 }
 
 // Info logs an info message
-func (l *Logger) Info(args ...interface{}) {
+func (l *Logger) Info(args ...any) {
 	l.logr.Info(fmt.Sprint(args...))
 }
 
 // Warnf logs a formatted warning message
-func (l *Logger) Warnf(format string, args ...interface{}) {
+func (l *Logger) Warnf(format string, args ...any) {
 	l.logr.Info(fmt.Sprintf("WARN: "+format, args...))
 }
 
 // Warn logs a warning message
-func (l *Logger) Warn(args ...interface{}) {
+func (l *Logger) Warn(args ...any) {
 	l.logr.Info("WARN: " + fmt.Sprint(args...))
 }
 
 // Errorf logs a formatted error message
-func (l *Logger) Errorf(format string, args ...interface{}) {
+func (l *Logger) Errorf(format string, args ...any) {
 	l.logr.Error(nil, fmt.Sprintf(format, args...))
 }
 
 // Error logs an error message
-func (l *Logger) Error(args ...interface{}) {
+func (l *Logger) Error(args ...any) {
 	l.logr.Error(nil, fmt.Sprint(args...))
 }
 

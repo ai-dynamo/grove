@@ -46,9 +46,6 @@ func (c *TimerCondition) Progress(_ context.Context) string {
 	if !c.startOnce {
 		return fmt.Sprintf("%s remaining", c.Duration)
 	}
-	remaining := c.Duration - time.Since(c.startedAt)
-	if remaining < 0 {
-		remaining = 0
-	}
+	remaining := max(c.Duration-time.Since(c.startedAt), 0)
 	return fmt.Sprintf("%s remaining", remaining.Round(time.Second))
 }

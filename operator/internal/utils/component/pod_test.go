@@ -126,7 +126,7 @@ func TestGetPCLQPods(t *testing.T) {
 		}
 
 		pods := []*corev1.Pod{}
-		for i := 0; i < 3; i++ {
+		for i := range 3 {
 			pod := &corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "pod-" + string(rune('a'+i)),

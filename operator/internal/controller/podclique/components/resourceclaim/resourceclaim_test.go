@@ -16,6 +16,7 @@ package resourceclaim
 
 import (
 	"context"
+	"maps"
 	"testing"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
@@ -285,9 +286,7 @@ func TestSync(t *testing.T) {
 		pclqLabels := pclqResourceClaimLabels(pclq.ObjectMeta)
 
 		staleLabels := make(map[string]string, len(pclqLabels)+1)
-		for k, v := range pclqLabels {
-			staleLabels[k] = v
-		}
+		maps.Copy(staleLabels, pclqLabels)
 		staleLabels[apicommon.LabelPodCliquePodIndex] = "2"
 		staleRC := newRC(pclqName+"-2-gpu-mps", staleLabels, pclqName, "pclq-uid")
 

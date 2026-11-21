@@ -450,7 +450,7 @@ func pcsgPCLQWithPods(pcsReplicaIndex, pcsgReplicaIndex int, cliqueName, podGang
 // labels as their owner PodClique and the labels the migrator selects on.
 func podsForPCLQ(pcsReplicaIndex int, pclqName, podGangName, basePodGangName string) []client.Object {
 	pods := make([]client.Object, 0, podsPerPCLQ)
-	for i := 0; i < podsPerPCLQ; i++ {
+	for i := range podsPerPCLQ {
 		labels := legacyPodGangLabels(podGangName, basePodGangName)
 		labels[apicommon.LabelPodClique] = pclqName
 		labels[apicommon.LabelPodCliqueSetReplicaIndex] = strconv.Itoa(pcsReplicaIndex)

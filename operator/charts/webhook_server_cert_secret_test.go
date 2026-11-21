@@ -43,7 +43,7 @@ func TestWebhookServerSecret(t *testing.T) {
 	tests := []struct {
 		name     string
 		secret   *corev1.Secret
-		values   map[string]interface{}
+		values   map[string]any
 		wantData map[string][]byte
 		wantOmit bool
 	}{
@@ -77,13 +77,13 @@ func TestWebhookServerSecret(t *testing.T) {
 		},
 		{
 			name:     "disabled secret does not query cluster",
-			values:   map[string]interface{}{"webhookServerSecret": map[string]interface{}{"enabled": false}},
+			values:   map[string]any{"webhookServerSecret": map[string]any{"enabled": false}},
 			wantOmit: true,
 		},
 		{
 			name: "manual certificates do not query cluster",
-			values: map[string]interface{}{"config": map[string]interface{}{
-				"server": map[string]interface{}{"webhooks": map[string]interface{}{"certProvisionMode": "manual"}},
+			values: map[string]any{"config": map[string]any{
+				"server": map[string]any{"webhooks": map[string]any{"certProvisionMode": "manual"}},
 			}},
 			wantOmit: true,
 		},
@@ -157,7 +157,7 @@ func (p *webhookSecretClientProvider) GetClientFor(apiVersion, kind string) (dyn
 	return p.client.Resource(schema.GroupVersionResource{Version: "v1", Resource: "secrets"}), true, nil
 }
 
-func renderChartWithSecretClient(t *testing.T, values map[string]interface{}, provider engine.ClientProvider) (map[string]string, error) {
+func renderChartWithSecretClient(t *testing.T, values map[string]any, provider engine.ClientProvider) (map[string]string, error) {
 	t.Helper()
 	chart, err := loader.Load(".")
 	require.NoError(t, err)
