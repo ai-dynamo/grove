@@ -108,6 +108,28 @@ func TestOperatorImagePullSecrets(t *testing.T) {
 	}
 }
 
+func TestOperatorUsesKubeletManagedServiceAccountToken(t *testing.T) {
+	manifests := renderChart(t, nil)
+
+	deployment := &appsv1.Deployment{}
+	require.NoError(t, yaml.UnmarshalStrict([]byte(manifests["grove-charts/templates/deployment.yaml"]), deployment))
+	assert.Nil(t, deployment.Spec.Template.Spec.AutomountServiceAccountToken)
+	for _, volume := range deployment.Spec.Template.Spec.Volumes {
+		assert.NotEqual(t, "kube-api-access-grove", volume.Name)
+	}
+	containers := append(append([]corev1.Container{}, deployment.Spec.Template.Spec.InitContainers...), deployment.Spec.Template.Spec.Containers...)
+	for _, container := range containers {
+		for _, mount := range container.VolumeMounts {
+			assert.NotEqual(t, "kube-api-access-grove", mount.Name, container.Name)
+		}
+	}
+
+	serviceAccount := &corev1.ServiceAccount{}
+	require.NoError(t, yaml.UnmarshalStrict([]byte(manifests["grove-charts/templates/serviceaccount.yaml"]), serviceAccount))
+	require.NotNil(t, serviceAccount.AutomountServiceAccountToken)
+	assert.True(t, *serviceAccount.AutomountServiceAccountToken)
+}
+
 // TestDeploymentServiceName verifies that the operator and the CRD installer get the name of the operator Service,
 // which the webhook certificates and the conversion webhook of the CRDs refer to.
 func TestDeploymentServiceName(t *testing.T) {

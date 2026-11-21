@@ -65,6 +65,12 @@ func TestGetWebhooks(t *testing.T) {
 	})
 }
 
+func TestNewCertRotatorDoesNotRestartOnSecretRefresh(t *testing.T) {
+	rotator := newCertRotator("default", "grove-operator", "/tmp/certs", "webhook-certs", false, make(chan struct{}))
+
+	assert.False(t, rotator.RestartOnSecretRefresh)
+}
+
 // assertConversionCRDs asserts that webhooks injects the CA into the spec.conversion of each converted CRD.
 func assertConversionCRDs(t *testing.T, webhooks []cert.WebhookInfo) {
 	t.Helper()
