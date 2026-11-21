@@ -172,20 +172,35 @@ func (s *ExpectationsStore) getExpectations(controlleeKey string) (*ControlleeEx
 func (s *ExpectationsStore) SyncExpectations(controlleeKey string, existingNonTerminatingUIDs []types.UID, existingTerminatingUIDs []types.UID) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if exp, exists, _ := s.getExpectations(controlleeKey); exists {
-		// Remove the UIDs from `uidsToAdd` if the informer cache is already up-to-date and certain events have
-		// been missed/dropped by the watch resulting in missed calls to `CreationObserved`.
-		exp.uidsToAdd.Delete(existingNonTerminatingUIDs...)
-		// Remove stale entries in `uidsToDelete` if the `existingUIDS` no longer has those UIDs.
-		staleUIDs := exp.uidsToDelete.Difference(sets.New(existingNonTerminatingUIDs...))
-		exp.uidsToDelete.Delete(staleUIDs.UnsortedList()...)
-		// Re-add existing termination UIDs if they are not already present in uidsToDelete.
-		// This can happen if a resource was terminated (deletionTimestamp is set) but the resource continues to exist
-		// due to TerminationGracePeriodSeconds not being reached yet. In the meantime, the operator dies and comes back up.
-		// In this case, the expectations store will not have the termination UIDs in uidsToDelete. During the sync
-		// we re-add the termination UIDs to uidsToDelete.
-		exp.uidsToDelete.Insert(existingTerminatingUIDs...)
+	exp, exists, _ := s.getExpectations(controlleeKey)
+	if !exists {
+		// After an operator restart the store is empty while terminating objects can still be in the
+		// informer. Without an entry they would count as live, so seed one from the terminating UIDs.
+		if len(existingTerminatingUIDs) == 0 {
+			return
+		}
+		exp = &ControlleeExpectations{
+			key:          controlleeKey,
+			uidsToAdd:    sets.New[types.UID](),
+			uidsToDelete: sets.New(existingTerminatingUIDs...),
+		}
+		if err := s.Add(exp); err != nil {
+			return
+		}
 	}
+	// Remove the UIDs from `uidsToAdd` once the informer cache has observed the
+	// created object. A Pod can be observed for the first time after another
+	// controller has already set its deletion timestamp, so both terminating and
+	// non-terminating objects satisfy the creation expectation.
+	exp.uidsToAdd.Delete(existingNonTerminatingUIDs...)
+	exp.uidsToAdd.Delete(existingTerminatingUIDs...)
+	// Remove stale entries in `uidsToDelete` if the `existingUIDS` no longer has those UIDs.
+	staleUIDs := exp.uidsToDelete.Difference(sets.New(existingNonTerminatingUIDs...))
+	exp.uidsToDelete.Delete(staleUIDs.UnsortedList()...)
+	// Re-add existing termination UIDs if they are not already present in uidsToDelete.
+	// This also restores delete expectations when the operator restarted with an
+	// empty in-memory store while terminating objects remained in the informer.
+	exp.uidsToDelete.Insert(existingTerminatingUIDs...)
 }
 
 // GetCreateExpectations is a convenience method which gives a slice of resource UIDs for which creation has not yet been synced
