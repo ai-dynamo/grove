@@ -1,0 +1,151 @@
+# Copyright 2026 NVIDIA CORPORATION
+# SPDX-License-Identifier: Apache-2.0
+#
+# Workload for Test_Kueue14_TopologyGroupPlacesLeaderAndWorkersTogether, submitted through the
+# TAS-bound grove-e2e-topology queue (kueue-queues-topology.yaml). Each PodCliqueScalingGroup packs
+# its replica into one rack:
+#   - tp: a 1-Pod leader and 2 workers, the shape Kueue TAS can place as one group, so the backend
+#     sets podSetGroupName on both PodSets.
+#   - tp-wide: 2 leaders and 4 workers. Kueue TAS places only one Pod of a group's leader, so the
+#     backend leaves this group's PodSets without podSetGroupName.
+# No clique name ends with another, which would hit ai-dynamo/grove#906.
+apiVersion: grove.io/v1beta1
+kind: PodCliqueSet
+metadata:
+  name: kueue-tg
+  labels:
+    app: kueue-tg
+    kueue.x-k8s.io/queue-name: grove-e2e-topology
+spec:
+  replicas: 1
+  template:
+    cliques:
+      - name: tp-leader
+        spec:
+          roleName: tp-leader
+          replicas: 1
+          minAvailable: 1
+          podSpec:
+            schedulerName: kueue
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: type
+                          operator: In
+                          values:
+                            - kwok
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: tp-leader
+                image: registry:5001/nginx:alpine-slim
+                resources:
+                  requests:
+                    memory: 1Mi
+      - name: tp-worker
+        spec:
+          roleName: tp-worker
+          replicas: 2
+          minAvailable: 2
+          podSpec:
+            schedulerName: kueue
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: type
+                          operator: In
+                          values:
+                            - kwok
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: tp-worker
+                image: registry:5001/nginx:alpine-slim
+                resources:
+                  requests:
+                    memory: 1Mi
+      - name: wide-leader
+        spec:
+          roleName: wide-leader
+          replicas: 2
+          minAvailable: 2
+          podSpec:
+            schedulerName: kueue
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: type
+                          operator: In
+                          values:
+                            - kwok
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: wide-leader
+                image: registry:5001/nginx:alpine-slim
+                resources:
+                  requests:
+                    memory: 1Mi
+      - name: wide-worker
+        spec:
+          roleName: wide-worker
+          replicas: 4
+          minAvailable: 4
+          podSpec:
+            schedulerName: kueue
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: type
+                          operator: In
+                          values:
+                            - kwok
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: wide-worker
+                image: registry:5001/nginx:alpine-slim
+                resources:
+                  requests:
+                    memory: 1Mi
+    podCliqueScalingGroups:
+      - name: tp
+        replicas: 1
+        minAvailable: 1
+        topologyConstraint:
+          topologyName: grove-topology
+          pack:
+            required: rack
+        cliqueNames:
+          - tp-leader
+          - tp-worker
+      - name: tp-wide
+        replicas: 1
+        minAvailable: 1
+        topologyConstraint:
+          topologyName: grove-topology
+          pack:
+            required: rack
+        cliqueNames:
+          - wide-leader
+          - wide-worker
