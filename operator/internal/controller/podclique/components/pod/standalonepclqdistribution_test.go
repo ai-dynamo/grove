@@ -17,6 +17,9 @@ package pod
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -620,6 +623,8 @@ func TestReconcileStandalonePCLQDistributionCreateAndDelete(t *testing.T) {
 
 		assert.Len(t, listPodsForPodGang(t, cl, anchor0), 1)
 		assert.Len(t, listPodsForPodGang(t, cl, anchor1), 2)
+		// The replacements reuse the indices of the pods deleted in the same pass.
+		assert.ElementsMatch(t, []int{0, 1, 2}, hostnameIndicesForPodGangs(t, cl, anchor0, anchor1))
 	})
 
 	t.Run("redistribution creates no replacements when the delete on the shrinking anchor fails", func(t *testing.T) {
@@ -644,6 +649,69 @@ func TestReconcileStandalonePCLQDistributionCreateAndDelete(t *testing.T) {
 		// Deletes run before creates, so a delete failure short-circuits before any replacement is created.
 		assert.Empty(t, listPodsForPodGang(t, cl, anchor1))
 	})
+}
+
+// TestCoherentRedistributionReusesReplacedIndices covers a Coherent sub-step of a standalone
+// PodClique, which drains the old anchor PodGang and grows the new one in the same pass.
+func TestCoherentRedistributionReusesReplacedIndices(t *testing.T) {
+	anchor0 := podGangNameForEpoch(testAnchor0Epoch)
+	anchor1 := podGangNameForEpoch(testAnchor1Epoch)
+	podSpec := corev1.PodSpec{
+		SchedulerName: string(configv1alpha1.SchedulerNameKube),
+		Containers:    []corev1.Container{{Name: "worker", Image: "worker"}},
+	}
+	pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "uid").
+		WithCliqueStartupType(ptr.To(grovecorev1alpha1.CliqueStartupTypeInOrder)).
+		WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder(testCliqueName).WithPodSpec(podSpec).Build()).
+		Build()
+
+	for _, tc := range []struct {
+		name     string
+		replicas int32
+		entries  []grovecorev1alpha1.PodGangEntry
+	}{
+		{
+			name:     "three pods, two move to the new anchor PodGang",
+			replicas: 3,
+			entries: []grovecorev1alpha1.PodGangEntry{
+				anchorEntryWithCliques(testAnchor0Epoch, map[string]int32{testCliqueName: 1}),
+				anchorEntryWithCliques(testAnchor1Epoch, map[string]int32{testCliqueName: 2}),
+			},
+		},
+		{
+			name:     "a one-pod leader clique moves to the new anchor PodGang",
+			replicas: 1,
+			entries: []grovecorev1alpha1.PodGangEntry{
+				anchorEntryWithCliques(testAnchor1Epoch, map[string]int32{testCliqueName: 1}),
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pclq := testutils.NewPodCliqueBuilder(testPCSName, "uid", testCliqueName, testNamespace, int32(testPCSReplicaIndex)).WithReplicas(tc.replicas).Build()
+			pclq.Spec.PodSpec = *podSpec.DeepCopy()
+			live := make([]*corev1.Pod, 0, tc.replicas)
+			objects := []client.Object{pclq}
+			wantIndices := make([]int, 0, tc.replicas)
+			for i := 0; i < int(tc.replicas); i++ {
+				pod := nonTerminatingPodInPodGang(fmt.Sprintf("old-%d", i), anchor0, fmt.Sprintf("%s-%d", pclq.Name, i))
+				live = append(live, pod)
+				objects = append(objects, pod)
+				wantIndices = append(wantIndices, i)
+			}
+			cl := testutils.NewTestClientBuilder().WithObjects(objects...).Build()
+			r := _resource{client: cl, scheme: cl.Scheme(), schedRegistry: testutils.NewDefaultFakeRegistry(), eventRecorder: record.NewFakeRecorder(64), expectationsStore: expect.NewExpectationsStore()}
+			ss := &syncSnapshot{
+				pcs: pcs, pclq: pclq, pcsReplicaIndex: testPCSReplicaIndex, cliqueName: testCliqueName,
+				pgm:              pgmWithEntries(tc.entries...),
+				existingPCLQPods: live,
+			}
+
+			require.NoError(t, r.reconcileStandalonePCLQDistribution(context.Background(), logr.Discard(), ss))
+
+			gotIndices := hostnameIndicesForPodGangs(t, cl, anchor0, anchor1)
+			assert.ElementsMatch(t, wantIndices, gotIndices, "replacements should reuse the indices of the pods deleted in the same pass")
+		})
+	}
 }
 
 // TestGroupPodsByPodGang verifies pods are grouped by their grove.io/podgang label into their
@@ -705,33 +773,32 @@ func TestSumCounts(t *testing.T) {
 	}
 }
 
-// TestBuildPerPodGangDeletionTasks verifies one deletion task is built per excess pod, that the
-// DeletionSorter prefers the Pending pod, and that non-negative deltas and empty groups build no
-// tasks.
-func TestBuildPerPodGangDeletionTasks(t *testing.T) {
-	r := &_resource{expectationsStore: expect.NewExpectationsStore()}
+// TestSelectPerPodGangPodsToDelete verifies one pod is selected per excess pod, that the
+// DeletionSorter prefers the Pending pod, and that non-negative deltas and empty groups select no
+// pods.
+func TestSelectPerPodGangPodsToDelete(t *testing.T) {
 	ss := &syncSnapshot{pcs: pcs(), pclq: pclqWithReplicas(1), cliqueName: testCliqueName}
 
-	t.Run("builds one task per excess pod picking the Pending pod first", func(t *testing.T) {
+	t.Run("selects one pod per excess pod picking the Pending pod first", func(t *testing.T) {
 		pending := testutils.NewPodBuilder("pod-pending", testNamespace).WithPhase(corev1.PodPending).Build()
 		running := testutils.NewPodBuilder("pod-running", testNamespace).WithPhase(corev1.PodRunning).Build()
 		podsByPodGang := map[string]podGangPods{"pg-a": {nonTerminating: []*corev1.Pod{running, pending}}}
 
-		tasks := r.buildPerPodGangDeletionTasks(logr.Discard(), ss, map[string]int32{"pg-a": -1}, []string{"pg-a"}, podsByPodGang)
+		podsToDelete := selectPerPodGangPodsToDelete(ss, map[string]int32{"pg-a": -1}, []string{"pg-a"}, podsByPodGang)
 
-		require.Len(t, tasks, 1)
-		assert.Contains(t, tasks[0].Name, "pod-pending")
+		require.Len(t, podsToDelete, 1)
+		assert.Equal(t, "pod-pending", podsToDelete[0].Name)
 	})
 
 	t.Run("skips a PodGang whose delta is non-negative", func(t *testing.T) {
 		podsByPodGang := map[string]podGangPods{"pg-a": {nonTerminating: []*corev1.Pod{nonTerminatingPodInPodGang("pod-a", "pg-a", "")}}}
-		tasks := r.buildPerPodGangDeletionTasks(logr.Discard(), ss, map[string]int32{"pg-a": 0}, []string{"pg-a"}, podsByPodGang)
-		assert.Empty(t, tasks)
+		podsToDelete := selectPerPodGangPodsToDelete(ss, map[string]int32{"pg-a": 0}, []string{"pg-a"}, podsByPodGang)
+		assert.Empty(t, podsToDelete)
 	})
 
 	t.Run("skips a PodGang with no live pods", func(t *testing.T) {
-		tasks := r.buildPerPodGangDeletionTasks(logr.Discard(), ss, map[string]int32{"pg-a": -2}, []string{"pg-a"}, map[string]podGangPods{})
-		assert.Empty(t, tasks)
+		podsToDelete := selectPerPodGangPodsToDelete(ss, map[string]int32{"pg-a": -2}, []string{"pg-a"}, map[string]podGangPods{})
+		assert.Empty(t, podsToDelete)
 	})
 }
 
@@ -742,13 +809,13 @@ func TestBuildPerPodGangCreationTasks(t *testing.T) {
 	ss := &syncSnapshot{pcs: pcs(), pclq: pclqWithReplicas(1), cliqueName: testCliqueName}
 
 	t.Run("builds one task per deficit pod across PodGangs", func(t *testing.T) {
-		tasks, err := r.buildPerPodGangCreationTasks(logr.Discard(), ss, map[string]int32{"pg-a": 2, "pg-b": 1}, []string{"pg-a", "pg-b"})
+		tasks, err := r.buildPerPodGangCreationTasks(logr.Discard(), ss, map[string]int32{"pg-a": 2, "pg-b": 1}, []string{"pg-a", "pg-b"}, nil)
 		require.NoError(t, err)
 		assert.Len(t, tasks, 3)
 	})
 
 	t.Run("builds no tasks when there is no deficit", func(t *testing.T) {
-		tasks, err := r.buildPerPodGangCreationTasks(logr.Discard(), ss, map[string]int32{"pg-a": -1}, []string{"pg-a"})
+		tasks, err := r.buildPerPodGangCreationTasks(logr.Discard(), ss, map[string]int32{"pg-a": -1}, []string{"pg-a"}, nil)
 		require.NoError(t, err)
 		assert.Nil(t, tasks)
 	})
@@ -822,6 +889,21 @@ func listPodsForPodGang(t *testing.T, cl client.Client, podGangName string) []co
 		}
 	}
 	return matching
+}
+
+// hostnameIndicesForPodGangs returns the host-name indices of the pods in the given PodGangs, parsed
+// from the suffix of each pod's hostname.
+func hostnameIndicesForPodGangs(t *testing.T, cl client.Client, podGangNames ...string) []int {
+	t.Helper()
+	var indices []int
+	for _, podGangName := range podGangNames {
+		for _, pod := range listPodsForPodGang(t, cl, podGangName) {
+			podIndex, err := strconv.Atoi(pod.Spec.Hostname[strings.LastIndex(pod.Spec.Hostname, "-")+1:])
+			require.NoError(t, err, "pod %s hostname %q should end in its index", pod.Name, pod.Spec.Hostname)
+			indices = append(indices, podIndex)
+		}
+	}
+	return indices
 }
 
 // podNamesOf returns the names of the given pods.
