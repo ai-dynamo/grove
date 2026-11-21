@@ -76,7 +76,7 @@ func (r *Reconciler) reconcileStatus(ctx context.Context, logger logr.Logger, pc
 	if pclq.Status.ObservedGeneration != nil {
 		mutatePodCliqueScheduledCondition(pclq)
 		mutateLastScheduled(pclq, originalStatus)
-		mutateMinAvailableBreachedCondition(pclq,
+		mutateMinAvailableBreachedCondition(logger, pcs, pclq,
 			len(podCategories[k8sutils.PodHasAtleastOneContainerWithNonZeroExitCode]),
 			len(podCategories[k8sutils.PodStartedButNotReady]))
 		progressDeadline, err := progressDeadlineForPCLQ(pcs, pclq)
@@ -116,19 +116,28 @@ func mutateCurrentHashes(logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet,
 		logger.V(1).Info("PodClique is currently updating, cannot set PodCliqueSet CurrentGenerationHash yet")
 		return nil
 	}
+	// A matching pod-template hash does not establish the scheduling generation. The spec writer
+	// records the generation actually applied: frozen old children keep their old marker, while
+	// replacements and fresh scale-out children can bootstrap the current generation.
+	if componentutils.IsPCSReplicaRecreationInProgress(pcs) {
+		if pcs.Status.CurrentGenerationHash == nil ||
+			pclq.Labels[apicommon.LabelPodCliqueSetGenerationHash] != *pcs.Status.CurrentGenerationHash {
+			return nil
+		}
+	}
 	if pclq.Status.UpdateProgress == nil {
 		expectedPodTemplateHash, err := componentutils.GetExpectedPCLQPodTemplateHash(pcs, pclq.ObjectMeta)
 		if err != nil {
 			return err
 		}
 		if isPodCliqueTemplateHashCurrent(pclq, expectedPodTemplateHash) {
-			pclq.Status.CurrentPodTemplateHash = ptr.To(expectedPodTemplateHash)
+			pclq.Status.CurrentPodTemplateHash = new(expectedPodTemplateHash)
 			pclq.Status.CurrentPodCliqueSetGenerationHash = pcs.Status.CurrentGenerationHash
 		}
 	} else if componentutils.IsLastPCLQUpdateCompleted(pclq) {
 		logger.Info("PodClique update has completed, setting CurrentPodCliqueSetGenerationHash")
-		pclq.Status.CurrentPodTemplateHash = ptr.To(pclq.Status.UpdateProgress.PodTemplateHash)
-		pclq.Status.CurrentPodCliqueSetGenerationHash = ptr.To(pclq.Status.UpdateProgress.PodCliqueSetGenerationHash)
+		pclq.Status.CurrentPodTemplateHash = new(pclq.Status.UpdateProgress.PodTemplateHash)
+		pclq.Status.CurrentPodCliqueSetGenerationHash = new(pclq.Status.UpdateProgress.PodCliqueSetGenerationHash)
 	}
 	return nil
 }
@@ -220,16 +229,18 @@ func (r *Reconciler) emitAllScheduledReplicasLostIfNeeded(pclq *grovecorev1beta1
 }
 
 // mutateMinAvailableBreachedCondition updates the MinAvailableBreached condition based on pod availability
-func mutateMinAvailableBreachedCondition(pclq *grovecorev1beta1.PodClique, numNotReadyPodsWithContainersInError, numPodsStartedButNotReady int) {
-	newCondition := computeMinAvailableBreachedCondition(pclq, numNotReadyPodsWithContainersInError, numPodsStartedButNotReady)
+func mutateMinAvailableBreachedCondition(logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, pclq *grovecorev1beta1.PodClique, numNotReadyPodsWithContainersInError, numPodsStartedButNotReady int) {
+	newCondition := computeMinAvailableBreachedCondition(logger, pcs, pclq, numNotReadyPodsWithContainersInError, numPodsStartedButNotReady)
 	if k8sutils.HasConditionChanged(pclq.Status.Conditions, newCondition) {
 		meta.SetStatusCondition(&pclq.Status.Conditions, newCondition)
 	}
 }
 
 // computeMinAvailableBreachedCondition calculates the MinAvailableBreached condition status based on pod availability
-func computeMinAvailableBreachedCondition(pclq *grovecorev1beta1.PodClique, numPodsHavingAtleastOneContainerWithNonZeroExitCode, numPodsStartedButNotReady int) metav1.Condition {
-	if componentutils.IsPCLQRollingUpdateInProgress(pclq) {
+func computeMinAvailableBreachedCondition(logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, pclq *grovecorev1beta1.PodClique, numPodsHavingAtleastOneContainerWithNonZeroExitCode, numPodsStartedButNotReady int) metav1.Condition {
+	// Gang termination is disarmed while a PodClique rolling update is in progress, and while the owning PCS
+	// replica is being replaced. Both hold the condition at Unknown so a breach is not acted upon.
+	if componentutils.IsPCLQRollingUpdateInProgress(pclq) || isOwningPCSReplicaInReplacement(logger, pcs, pclq) {
 		return metav1.Condition{
 			Type:    constants.ConditionTypeMinAvailableBreached,
 			Status:  metav1.ConditionUnknown,
@@ -293,6 +304,22 @@ func computeMinAvailableBreachedCondition(pclq *grovecorev1beta1.PodClique, numP
 		Message:            fmt.Sprintf("Either sufficient ready or starting pods found. expected at least: %d, found: %d", minAvailable, readyOrStartingPods),
 		LastTransitionTime: now,
 	}
+}
+
+// isOwningPCSReplicaInReplacement reports whether the PodClique's owning PCS replica participates in a
+// PCS replica replacement. During PCS replica recreation, a missing or malformed replica-index label is
+// treated as in replacement and logged as an error so an unknown identity cannot enable gang termination.
+func isOwningPCSReplicaInReplacement(logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, pclq *grovecorev1beta1.PodClique) bool {
+	if !componentutils.IsPCSReplicaRecreationInProgress(pcs) {
+		return false
+	}
+	pcsReplicaIndex, err := k8sutils.GetPodCliqueSetReplicaIndex(pclq.ObjectMeta)
+	if err != nil {
+		logger.Error(err, "Could not determine owning PCS replica, keeping gang termination disarmed",
+			"pclqObjectKey", client.ObjectKeyFromObject(pclq))
+		return true
+	}
+	return componentutils.IsPCSReplicaInReplacement(pcs, pcsReplicaIndex)
 }
 
 // mutatePodCliqueScheduledCondition updates the PodCliqueScheduled condition based on scheduled pod counts

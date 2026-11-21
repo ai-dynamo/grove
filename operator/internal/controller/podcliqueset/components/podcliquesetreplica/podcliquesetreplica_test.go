@@ -16,11 +16,13 @@ package podcliquesetreplica
 
 import (
 	"context"
+	"reflect"
 	"slices"
 	"testing"
 
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
-	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/sync"
+	pcsexpectations "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/expectations"
+	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/sync"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 
 	"github.com/go-logr/logr"
@@ -30,6 +32,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
@@ -43,15 +46,17 @@ func TestNew(t *testing.T) {
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 	eventRecorder := &record.FakeRecorder{}
 
-	expectations := &pcssync.ScalingProgressExpectations{}
-	operator := New(client, eventRecorder, expectations)
+	scalingExpectations := &pcsexpectations.ScalingProgress{}
+	currentlyUpdatingExpectations := &pcsexpectations.CurrentlyUpdating{}
+	operator := New(client, eventRecorder, scalingExpectations, currentlyUpdatingExpectations)
 
 	assert.NotNil(t, operator)
 	resource, ok := operator.(*_resource)
 	assert.True(t, ok)
 	assert.Equal(t, client, resource.client)
 	assert.Equal(t, eventRecorder, resource.eventRecorder)
-	assert.Same(t, expectations, resource.scalingProgressExpectations)
+	assert.Same(t, scalingExpectations, resource.scalingProgressExpectations)
+	assert.Same(t, currentlyUpdatingExpectations, resource.currentlyUpdatingExpectations)
 }
 
 // TestGetExistingResourceNames tests the GetExistingResourceNames function
@@ -97,9 +102,10 @@ func TestSyncPersistsScaleOutFromZeroAndPopulatesState(t *testing.T) {
 		WithStatusSubresource(pcs).
 		Build()
 	r := &_resource{
-		client:                      fakeClient,
-		eventRecorder:               &record.FakeRecorder{},
-		scalingProgressExpectations: &pcssync.ScalingProgressExpectations{},
+		client:                        fakeClient,
+		eventRecorder:                 &record.FakeRecorder{},
+		scalingProgressExpectations:   &pcsexpectations.ScalingProgress{},
+		currentlyUpdatingExpectations: &pcsexpectations.CurrentlyUpdating{},
 	}
 	state := &pcssync.State{}
 
@@ -113,6 +119,40 @@ func TestSyncPersistsScaleOutFromZeroAndPopulatesState(t *testing.T) {
 	assert.Equal(t, &grovecorev1beta1.PodCliqueSetScalingProgress{
 		ScaleOutReplicaIndices: []int32{0, 1},
 	}, pcs.Status.ScalingProgress)
+}
+
+func TestSyncGathersEachReplicaResourceTypeOnceForCoherentUpdate(t *testing.T) {
+	pcs := coherentTestPCS([]string{"frontend"}, nil)
+	pcs.Spec.Replicas = 0
+	pcs.Spec.Template.TerminationDelay = &metav1.Duration{}
+	scheme := runtime.NewScheme()
+	require.NoError(t, grovecorev1beta1.AddToScheme(scheme))
+	require.NoError(t, corev1.AddToScheme(scheme))
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(pcs).
+		WithStatusSubresource(pcs).
+		Build()
+	countingClient := &listCountingClient{
+		Client:     fakeClient,
+		listCounts: make(map[string]int),
+	}
+	r := &_resource{
+		client:                        countingClient,
+		eventRecorder:                 &record.FakeRecorder{},
+		scalingProgressExpectations:   &pcsexpectations.ScalingProgress{},
+		currentlyUpdatingExpectations: &pcsexpectations.CurrentlyUpdating{},
+	}
+
+	_, err := r.Sync(context.Background(), logr.Discard(), pcs, &pcssync.State{})
+
+	assert.NoError(t, err)
+	assert.Equal(t, map[string]int{
+		"PodCliqueList":             1,
+		"PodCliqueScalingGroupList": 1,
+		"ServiceList":               1,
+		"PodGangMapList":            1,
+	}, countingClient.listCounts)
 }
 
 // TestSync tests the Sync function
@@ -181,9 +221,10 @@ func TestSync(t *testing.T) {
 				Build()
 
 			r := &_resource{
-				client:                      fakeClient,
-				eventRecorder:               &record.FakeRecorder{},
-				scalingProgressExpectations: &pcssync.ScalingProgressExpectations{},
+				client:                        fakeClient,
+				eventRecorder:                 &record.FakeRecorder{},
+				scalingProgressExpectations:   &pcsexpectations.ScalingProgress{},
+				currentlyUpdatingExpectations: &pcsexpectations.CurrentlyUpdating{},
 			}
 
 			_, err := r.Sync(ctx, logger, tc.pcs, &pcssync.State{})
@@ -202,4 +243,14 @@ func TestSync(t *testing.T) {
 			}
 		})
 	}
+}
+
+type listCountingClient struct {
+	client.Client
+	listCounts map[string]int
+}
+
+func (c *listCountingClient) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
+	c.listCounts[reflect.TypeOf(list).Elem().Name()]++
+	return c.Client.List(ctx, list, opts...)
 }

@@ -17,10 +17,7 @@ package podclique
 import (
 	"context"
 	"fmt"
-	"strconv"
-	"time"
 
-	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	apiconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
@@ -29,6 +26,7 @@ import (
 	ctrlutils "github.com/ai-dynamo/grove/operator/internal/controller/utils"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
+	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
 	"github.com/go-logr/logr"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -67,8 +65,6 @@ func (r *Reconciler) ensureFinalizer(ctx context.Context, logger logr.Logger, pc
 	return ctrlcommon.ContinueReconcile()
 }
 
-const updateProgressCacheSyncRetryInterval = 500 * time.Millisecond
-
 // processUpdate handles update logic for PodClique when the owner PodCliqueSet has changes
 func (r *Reconciler) processUpdate(ctx context.Context, logger logr.Logger, pclq *grovecorev1beta1.PodClique) ctrlcommon.ReconcileStepResult {
 	pclqObjectKey := client.ObjectKeyFromObject(pclq)
@@ -104,7 +100,7 @@ func (r *Reconciler) processUpdate(ctx context.Context, logger logr.Logger, pclq
 			return ctrlcommon.ReconcileWithErrors("could not initialize RollingRecreate update", err)
 		}
 		return ctrlcommon.ReconcileAfter(
-			updateProgressCacheSyncRetryInterval,
+			constants.InformerCacheSyncRetryInterval,
 			fmt.Sprintf("waiting for PodClique update progress to become visible in the informer cache: %v", pclqObjectKey),
 		)
 	}
@@ -131,14 +127,12 @@ func shouldCheckPendingUpdatesForPCLQ(logger logr.Logger, pcs *grovecorev1beta1.
 		return false, nil
 	}
 
-	// check if this PCLQ belongs to PCS index that is currently getting updated.
-	pcsReplicaInUpdating := pcs.Status.UpdateProgress.CurrentlyUpdating[0].ReplicaIndex
-	pcsReplicaIndexStr, ok := pclq.Labels[apicommon.LabelPodCliqueSetReplicaIndex]
-	if !ok {
-		return false, fmt.Errorf("could not determine PodCliqueSet index for this PodClique %v. Required label %s is missing", client.ObjectKeyFromObject(pclq), apicommon.LabelPodCliqueSetReplicaIndex)
+	pcsReplicaIndex, err := k8sutils.GetPodCliqueSetReplicaIndex(pclq.ObjectMeta)
+	if err != nil {
+		return false, fmt.Errorf("could not determine PodCliqueSet replica index for PodClique %v: %w", client.ObjectKeyFromObject(pclq), err)
 	}
-	if pcsReplicaIndexStr != strconv.Itoa(int(pcsReplicaInUpdating)) {
-		logger.V(1).Info("PodCliqueSet is currently under update. Skipping processing update for this PodClique as it does not belong to the PodCliqueSet Index currently being updated", "currentlyUpdatingPCSIndex", pcsReplicaInUpdating, "pcsIndexForPCLQ", pcsReplicaIndexStr)
+	if !componentutils.IsPCSReplicaSelectedForUpdate(pcs, pcsReplicaIndex) {
+		logger.V(1).Info("PodCliqueSet is under update. Skipping update processing for a PodClique outside the selected replica set", "pcsIndexForPCLQ", pcsReplicaIndex)
 		return false, nil
 	}
 

@@ -22,13 +22,15 @@ import (
 
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
-	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/sync"
+	pcsexpectations "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/expectations"
+	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/sync"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 
 	"github.com/go-logr/logr"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -45,17 +47,19 @@ const (
 )
 
 type _resource struct {
-	client                      client.Client
-	eventRecorder               record.EventRecorder
-	scalingProgressExpectations *pcssync.ScalingProgressExpectations
+	client                        client.Client
+	eventRecorder                 record.EventRecorder
+	scalingProgressExpectations   *pcsexpectations.ScalingProgress
+	currentlyUpdatingExpectations *pcsexpectations.CurrentlyUpdating
 }
 
 // New creates a new instance of the PodCliqueSetReplica operator.
-func New(client client.Client, eventRecorder record.EventRecorder, scalingProgressExpectations *pcssync.ScalingProgressExpectations) component.Operator[grovecorev1beta1.PodCliqueSet, pcssync.State, pcssync.Result] {
+func New(client client.Client, eventRecorder record.EventRecorder, scalingProgressExpectations *pcsexpectations.ScalingProgress, currentlyUpdatingExpectations *pcsexpectations.CurrentlyUpdating) component.Operator[grovecorev1beta1.PodCliqueSet, pcssync.State, pcssync.Result] {
 	return &_resource{
-		client:                      client,
-		eventRecorder:               eventRecorder,
-		scalingProgressExpectations: scalingProgressExpectations,
+		client:                        client,
+		eventRecorder:                 eventRecorder,
+		scalingProgressExpectations:   scalingProgressExpectations,
+		currentlyUpdatingExpectations: currentlyUpdatingExpectations,
 	}
 }
 
@@ -66,14 +70,23 @@ func (r *_resource) GetExistingResourceNames(_ context.Context, _ logr.Logger, _
 
 // Sync orchestrates replica deletion and rolling updates for the PodCliqueSet.
 func (r *_resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, state *pcssync.State) (pcssync.Result, error) {
-	scalingProgressChanged, err := r.syncScalingProgress(ctx, logger, pcs, state)
+	pcsReplicaInfosByIndex, err := r.gatherPCSReplicaInfosByIndex(ctx, pcs)
 	if err != nil {
 		return pcssync.Result{}, err
 	}
+	scalingWork, scalingProgressChanged, err := r.syncScalingProgress(ctx, logger, pcs, pcsReplicaInfosByIndex)
+	if err != nil {
+		return pcssync.Result{}, err
+	}
+	scalingIndices := scalingWork.scalingIndices
+
+	// Expected replica indices implied by the scaling decision alone. Gang termination and update
+	// eligibility use these before any replacement overlay is applied.
+	expectedReplicaIndices := expectedReplicaIndicesFromScaling(pcsReplicaInfosByIndex.existingReplicaIndices(), scalingIndices)
+	sortedExpectedPCSReplicaIndices := sortedReplicaIndices(expectedReplicaIndices)
 
 	pcsObjectKey := client.ObjectKeyFromObject(pcs)
-
-	delWork, err := r.getPCSReplicaDeletionWork(ctx, logger, pcs, state.ExpectedReplicaIndices)
+	delWork, err := r.getPCSReplicaDeletionWork(ctx, logger, pcs, sortedExpectedPCSReplicaIndices)
 	if err != nil {
 		return pcssync.Result{}, groveerr.WrapError(err,
 			errCodeComputingPCSReplicaDeletionWork,
@@ -91,13 +104,33 @@ func (r *_resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecore
 		}
 	}
 
-	// Orchestrate the rolling update (RollingRecreate or Coherent) while one is in progress.
-	if componentutils.IsRollingUpdateInProgress(pcs) {
+	// Orchestrate the active update. A non-empty scalingWork.replacementSourcesToCancel implies an active
+	// replacement, so PCS replica recreation is in progress and this block runs. The orchestrator owns
+	// UpdateProgress, including canceling the replacements that scaling reclaimed.
+	pcsUpdateRequeueNeeded := false
+	if componentutils.IsRollingUpdateInProgress(pcs) || componentutils.IsPCSReplicaRecreationInProgress(pcs) {
+		pcsReplicaInfos := pcsReplicaInfosForUpdate(pcsReplicaInfosByIndex, sortedExpectedPCSReplicaIndices, delWork.pcsIndicesToTerminate)
 		minAvailableBreachedPCSReplicaIndices := slices.Collect(maps.Keys(delWork.minAvailableBreachedConstituents))
-		if err := r.orchestrateRollingUpdate(ctx, logger, pcs, state.ExpectedReplicaIndices, delWork.pcsIndicesToTerminate, minAvailableBreachedPCSReplicaIndices); err != nil {
+		workingPCS := pcs.DeepCopy()
+		updateHooks := newUpdateStrategyHooks(
+			workingPCS,
+			pcsReplicaInfosByIndex,
+			pcsReplicaInfos,
+			minAvailableBreachedPCSReplicaIndices,
+		)
+		orchestrator := newRollingUpdateOrchestrator(r.client.Status(), r.currentlyUpdatingExpectations, workingPCS, updateHooks)
+		orchestrationCtx := logr.NewContext(ctx, logger)
+		shouldRequeue, err := orchestrator.orchestrate(orchestrationCtx, pcs, scalingWork.replacementSourcesToCancel)
+		if err != nil {
+			// A RequeueAfter (new selection awaiting cache sync) short-circuits before component state is built.
 			return pcssync.Result{}, err
 		}
+		pcsUpdateRequeueNeeded = shouldRequeue
 	}
+
+	// Build the component-facing state once, after orchestration has mutated the reconcile-local pcs. It
+	// overlays persisted replacement progress onto the scaling indices.
+	*state = computePCSReplicaState(pcs, scalingIndices, expectedReplicaIndices, groupPCSReplicaReplacements(pcs.Status.UpdateProgress))
 
 	if delWork.shouldRequeue() {
 		return pcssync.Result{}, groveerr.NewContinueReconcileAndRequeue(
@@ -111,10 +144,36 @@ func (r *_resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecore
 			"Requeuing after updating PodCliqueSet scaling progress",
 		)
 	}
+	if pcsUpdateRequeueNeeded {
+		return pcssync.Result{}, groveerr.NewContinueReconcileAndRequeue(
+			component.OperationSync,
+			fmt.Sprintf("rolling update of PodCliqueSet replica indices %v is in progress", activePCSReplicaUpdateIndices(pcs.Status.UpdateProgress)),
+		)
+	}
 	return pcssync.Result{}, nil
 }
 
 // Delete is a no-op.
 func (r *_resource) Delete(_ context.Context, _ logr.Logger, _ metav1.ObjectMeta) error {
 	return nil
+}
+
+// pcsReplicaInfosForUpdate returns information for PCS replicas eligible to participate in update orchestration.
+// It follows expectedPCSReplicaIndices, so replicas selected for scale-in are excluded, and also excludes replicas
+// selected for gang termination. The result preserves the order of expectedPCSReplicaIndices.
+func pcsReplicaInfosForUpdate(
+	pcsReplicaInfosByIndex pcsReplicaInfoByIndex,
+	expectedPCSReplicaIndices []int,
+	pcsReplicaIndicesToTerminate []int) []pcsReplicaInfo {
+	pcsReplicaIndicesSelectedForTermination := sets.New(pcsReplicaIndicesToTerminate...)
+	pcsReplicaInfos := make([]pcsReplicaInfo, 0, len(expectedPCSReplicaIndices))
+	for _, pcsReplicaIndex := range expectedPCSReplicaIndices {
+		if pcsReplicaIndicesSelectedForTermination.Has(pcsReplicaIndex) {
+			continue
+		}
+		pcsReplicaInfoForUpdate := pcsReplicaInfosByIndex[pcsReplicaIndex]
+		pcsReplicaInfoForUpdate.index = pcsReplicaIndex
+		pcsReplicaInfos = append(pcsReplicaInfos, pcsReplicaInfoForUpdate)
+	}
+	return pcsReplicaInfos
 }

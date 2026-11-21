@@ -1,0 +1,45 @@
+# Workload for replica-recreation tests: a single standalone PodClique with two replicas and no
+# PodCliqueScalingGroup. Two pods per PCS replica keeps the footprint small for multi-replica tests, and a
+# MinAvailable below the replica count leaves room to increase MinAvailable to trigger structural recreation.
+---
+apiVersion: grove.io/v1beta1
+kind: PodCliqueSet
+metadata:
+  name: workload-recreation-standalone
+  labels:
+    app: workload-recreation-standalone
+spec:
+  replicas: 1
+  template:
+    cliques:
+      - name: worker
+        labels:
+          kai.scheduler/queue: test
+        spec:
+          roleName: worker
+          replicas: 2
+          minAvailable: 1
+          podSpec:
+            terminationGracePeriodSeconds: 5
+            schedulerName: kai-scheduler
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: node_role.e2e.grove.nvidia.com
+                          operator: In
+                          values:
+                            - agent
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: worker
+                image: registry:5001/busybox:latest
+                command: ["sleep", "infinity"]
+                resources:
+                  requests:
+                    memory: 80Mi

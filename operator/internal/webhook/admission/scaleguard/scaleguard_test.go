@@ -84,6 +84,7 @@ func TestHandle(t *testing.T) {
 		targetPresent             bool
 		pcsPresent                bool
 		pcsUpdatingReplicaIndices []int32
+		pcsRequiresRecreation     bool
 		wantAllowed               bool
 	}{
 		{
@@ -115,6 +116,12 @@ func TestHandle(t *testing.T) {
 			operation:   admissionv1.Update, subResource: "scale",
 			targetPresent: true, pcsPresent: true, pcsUpdatingReplicaIndices: []int32{0},
 			oldReplicas: 2, newReplicas: 4, wantAllowed: false,
+		},
+		{
+			description:   "a replica change is allowed during PCS replica recreation despite the Coherent strategy",
+			operation:     admissionv1.Update,
+			targetPresent: true, pcsPresent: true, pcsUpdatingReplicaIndices: []int32{0}, pcsRequiresRecreation: true,
+			oldReplicas: 2, newReplicas: 4, wantAllowed: true,
 		},
 		{
 			description:        "a replica change is rejected on a replica not itself under update while a coherent update is in progress",
@@ -181,7 +188,11 @@ func TestHandle(t *testing.T) {
 					objects = append(objects, target)
 				}
 				if tc.pcsPresent {
-					objects = append(objects, coherentPCS(tc.pcsUpdatingReplicaIndices))
+					pcs := coherentPCS(tc.pcsUpdatingReplicaIndices)
+					if pcs.Status.UpdateProgress != nil {
+						pcs.Status.UpdateProgress.RequiresReplicaRecreation = tc.pcsRequiresRecreation
+					}
+					objects = append(objects, pcs)
 				}
 				cl := testutils.NewTestClientBuilder().WithObjects(objects...).Build()
 

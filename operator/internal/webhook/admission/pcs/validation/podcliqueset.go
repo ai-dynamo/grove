@@ -31,6 +31,7 @@ import (
 	"github.com/samber/lo"
 	admissionv1 "k8s.io/api/admission/v1"
 	corev1 "k8s.io/api/core/v1"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apivalidation "k8s.io/apimachinery/pkg/api/validation"
 	metav1validation "k8s.io/apimachinery/pkg/apis/meta/v1/validation"
@@ -724,9 +725,10 @@ func (v *pcsValidator) validatePodCliqueSetSpecUpdate(oldPCS *grovecorev1beta1.P
 func (v *pcsValidator) validatePodCliqueSetTemplateSpecUpdate(oldPCS *grovecorev1beta1.PodCliqueSet, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 
-	allErrs = append(allErrs, v.validatePodCliqueUpdate(oldPCS.Spec.Template.Cliques, fldPath.Child("cliques"))...)
+	allErrs = append(allErrs, v.validatePodTemplateUpdatesDuringReplicaRecreation(oldPCS, fldPath)...)
+	allErrs = append(allErrs, v.validatePodCliqueUpdate(oldPCS, fldPath.Child("cliques"))...)
 	allErrs = append(allErrs, apivalidation.ValidateImmutableField(v.pcs.Spec.Template.StartupType, oldPCS.Spec.Template.StartupType, fldPath.Child("cliqueStartupType"))...)
-	allErrs = append(allErrs, v.validatePodCliqueScalingGroupConfigsUpdate(oldPCS.Spec.Template.PodCliqueScalingGroupConfigs, fldPath.Child("podCliqueScalingGroups"))...)
+	allErrs = append(allErrs, v.validatePodCliqueScalingGroupConfigsUpdate(oldPCS, fldPath.Child("podCliqueScalingGroups"))...)
 	allErrs = append(allErrs, v.validateTopologyConstraintsUpdate(oldPCS)...)
 	allErrs = append(allErrs, apivalidation.ValidateImmutableField(v.pcs.Spec.Template.ResourceClaimTemplates, oldPCS.Spec.Template.ResourceClaimTemplates, fldPath.Child("resourceClaimTemplates"))...)
 	allErrs = append(allErrs, apivalidation.ValidateImmutableField(v.pcs.Spec.Template.ResourceSharing, oldPCS.Spec.Template.ResourceSharing, fldPath.Child("resourceSharing"))...)
@@ -734,9 +736,44 @@ func (v *pcsValidator) validatePodCliqueSetTemplateSpecUpdate(oldPCS *grovecorev
 	return allErrs
 }
 
-// validatePodCliqueScalingGroupConfigsUpdate validates immutable fields in PodCliqueScalingGroupConfigs.
-func (v *pcsValidator) validatePodCliqueScalingGroupConfigsUpdate(oldConfigs []grovecorev1beta1.PodCliqueScalingGroupConfig, fldPath *field.Path) field.ErrorList {
+// validatePodTemplateUpdatesDuringReplicaRecreation keeps the pod templates fixed until recreation finishes.
+func (v *pcsValidator) validatePodTemplateUpdatesDuringReplicaRecreation(oldPCS *grovecorev1beta1.PodCliqueSet, fldPath *field.Path) field.ErrorList {
+	if !componentutils.IsPCSReplicaRecreationInProgress(oldPCS) {
+		return nil
+	}
+
+	const message = "pod templates cannot be changed while PCS replica recreation is in progress. Retry after recreation completes"
 	allErrs := field.ErrorList{}
+	if v.pcs.Spec.Template.PriorityClassName != oldPCS.Spec.Template.PriorityClassName {
+		allErrs = append(allErrs, field.Forbidden(fldPath.Child("priorityClassName"), message))
+	}
+	for i, clique := range v.pcs.Spec.Template.Cliques {
+		oldClique := componentutils.FindPodCliqueTemplateSpecByName(oldPCS, clique.Name)
+		if oldClique == nil {
+			// Clique composition changes are rejected by validatePodCliqueUpdate.
+			continue
+		}
+		cliqueFldPath := fldPath.Child("cliques").Index(i)
+		newPodSpec, oldPodSpec := clique.Spec.PodSpec, oldClique.Spec.PodSpec
+		// The PCS priority class overrides the value in each clique's PodSpec.
+		newPodSpec.PriorityClassName, oldPodSpec.PriorityClassName = "", ""
+		if !apiequality.Semantic.DeepEqual(newPodSpec, oldPodSpec) {
+			allErrs = append(allErrs, field.Forbidden(cliqueFldPath.Child("spec", "podSpec"), message))
+		}
+		if !apiequality.Semantic.DeepEqual(clique.Labels, oldClique.Labels) {
+			allErrs = append(allErrs, field.Forbidden(cliqueFldPath.Child("labels"), message))
+		}
+		if !apiequality.Semantic.DeepEqual(clique.Annotations, oldClique.Annotations) {
+			allErrs = append(allErrs, field.Forbidden(cliqueFldPath.Child("annotations"), message))
+		}
+	}
+	return allErrs
+}
+
+// validatePodCliqueScalingGroupConfigsUpdate validates immutable fields in PodCliqueScalingGroupConfigs.
+func (v *pcsValidator) validatePodCliqueScalingGroupConfigsUpdate(oldPCS *grovecorev1beta1.PodCliqueSet, fldPath *field.Path) field.ErrorList {
+	allErrs := field.ErrorList{}
+	oldConfigs := oldPCS.Spec.Template.PodCliqueScalingGroupConfigs
 	newConfigs := v.pcs.Spec.Template.PodCliqueScalingGroupConfigs
 	// Validate that scaling group composition hasn't changed
 	if len(newConfigs) != len(oldConfigs) {
@@ -750,17 +787,23 @@ func (v *pcsValidator) validatePodCliqueScalingGroupConfigsUpdate(oldConfigs []g
 	})
 
 	// Validate each new config against its corresponding old config by name
-	for _, newConfig := range newConfigs {
+	for newConfigIndex, newConfig := range newConfigs {
 		oldConfig, exists := oldConfigMap[newConfig.Name]
 		if !exists {
 			allErrs = append(allErrs, field.Forbidden(fldPath.Child("name"), fmt.Sprintf("not allowed to change scaling group composition, new scaling group name '%s' is not allowed", newConfig.Name)))
 			continue
 		}
 
+		oldMinAvailable := ptr.Deref(oldConfig.MinAvailable, int32(1))
+		newMinAvailable := ptr.Deref(newConfig.MinAvailable, int32(1))
+		allErrs = append(allErrs, validateMinAvailableUpdate(
+			oldPCS, oldMinAvailable, newMinAvailable,
+			fldPath.Index(newConfigIndex).Child("minAvailable"),
+		)...)
+
 		// Validate immutable fields
 		configFldPath := fldPath
 		allErrs = append(allErrs, apivalidation.ValidateImmutableField(newConfig.CliqueNames, oldConfig.CliqueNames, configFldPath.Child("cliqueNames"))...)
-		allErrs = append(allErrs, apivalidation.ValidateImmutableField(newConfig.MinAvailable, oldConfig.MinAvailable, configFldPath.Child("minAvailable"))...)
 		allErrs = append(allErrs, apivalidation.ValidateImmutableField(newConfig.ResourceSharing, oldConfig.ResourceSharing, configFldPath.Child("resourceSharing"))...)
 	}
 
@@ -1030,8 +1073,9 @@ func requiresOrderValidation(startupType *grovecorev1beta1.CliqueStartupType) bo
 }
 
 // validatePodCliqueUpdate validates that PodClique updates maintain composition, order (when required), and immutable fields.
-func (v *pcsValidator) validatePodCliqueUpdate(oldCliques []*grovecorev1beta1.PodCliqueTemplateSpec, fldPath *field.Path) field.ErrorList {
+func (v *pcsValidator) validatePodCliqueUpdate(oldPCS *grovecorev1beta1.PodCliqueSet, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
+	oldCliques := oldPCS.Spec.Template.Cliques
 	newCliques := v.pcs.Spec.Template.Cliques
 	if len(newCliques) != len(oldCliques) {
 		allErrs = append(allErrs, field.Forbidden(fldPath, "not allowed to change clique composition"))
@@ -1063,16 +1107,38 @@ func (v *pcsValidator) validatePodCliqueUpdate(oldCliques []*grovecorev1beta1.Po
 					oldIndexCliqueTuple.B.Name, newCliqueIndex, newClique.Name)))
 		}
 
+		oldClique := oldIndexCliqueTuple.B
+		oldMinAvailable := ptr.Deref(oldClique.Spec.MinAvailable, oldClique.Spec.Replicas)
+		newMinAvailable := ptr.Deref(newClique.Spec.MinAvailable, newClique.Spec.Replicas)
+		allErrs = append(allErrs, validateMinAvailableUpdate(
+			oldPCS, oldMinAvailable, newMinAvailable,
+			fldPath.Index(newCliqueIndex).Child("spec", "minAvailable"),
+		)...)
+
 		// Validate immutable PodClique fields
 		cliqueFldPath := fldPath.Child("spec")
 		allErrs = append(allErrs, apivalidation.ValidateImmutableField(newClique.Spec.RoleName, oldIndexCliqueTuple.B.Spec.RoleName, cliqueFldPath.Child("roleName"))...)
-		allErrs = append(allErrs, apivalidation.ValidateImmutableField(newClique.Spec.MinAvailable, oldIndexCliqueTuple.B.Spec.MinAvailable, cliqueFldPath.Child("minAvailable"))...)
 		allErrs = append(allErrs, apivalidation.ValidateImmutableField(newClique.Spec.StartsAfter, oldIndexCliqueTuple.B.Spec.StartsAfter, cliqueFldPath.Child("startsAfter"))...)
 		allErrs = append(allErrs, apivalidation.ValidateImmutableField(newClique.Spec.PodSpec.SchedulerName, oldIndexCliqueTuple.B.Spec.PodSpec.SchedulerName, cliqueFldPath.Child("podSpec", "schedulerName"))...)
 		allErrs = append(allErrs, apivalidation.ValidateImmutableField(newClique.ResourceSharing, oldIndexCliqueTuple.B.ResourceSharing, fldPath.Index(newCliqueIndex).Child("resourceSharing"))...)
 	}
 
 	return allErrs
+}
+
+// validateMinAvailableUpdate rejects a scheduling change until the old PCS has an
+// initialized applied scheduling baseline.
+func validateMinAvailableUpdate(
+	oldPCS *grovecorev1beta1.PodCliqueSet,
+	oldMinAvailable, newMinAvailable int32,
+	fldPath *field.Path) field.ErrorList {
+
+	if oldPCS.Status.AppliedSchedulingConfigurationHash != nil || oldMinAvailable == newMinAvailable {
+		return nil
+	}
+	return field.ErrorList{field.Forbidden(
+		fldPath, "scheduling configuration is not initialized yet. Retry after Grove initializes it"),
+	}
 }
 
 // validatePodNameConstraints validates that the names a user picks for a PodCliqueSet, PodCliqueScalingGroup and

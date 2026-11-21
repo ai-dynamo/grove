@@ -18,10 +18,32 @@ package update
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
+	grovev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
+	updateutils "github.com/ai-dynamo/grove/operator/e2e/tests/update/utils"
+
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/util/retry"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+)
+
+const (
+	// kwokStageReadyDelayedPath is the KWOK stage fixture path.
+	kwokStageReadyDelayedPath = "../../yaml/kwok/pod-ready-delayed.yaml"
+	// kwokStageReadyDelayedName is the KWOK stage name.
+	kwokStageReadyDelayedName = "pod-ready-delayed"
+	// kwokStageReadyBlockedR0Path is the KWOK stage fixture path.
+	kwokStageReadyBlockedR0Path = "../../yaml/kwok/pod-ready-blocked-r0-standalone.yaml"
+	// kwokStageReadyBlockedR0Name is the KWOK stage name.
+	kwokStageReadyBlockedR0Name = "pod-ready-blocked-r0-standalone"
+	// kwokStageCrashloopPath is the KWOK stage fixture path.
+	kwokStageCrashloopPath = "../../yaml/kwok/pod-crashloop.yaml"
+	// kwokStageCrashloopName is the KWOK stage name.
+	kwokStageCrashloopName = "pod-crashloop"
 )
 
 // testConfig holds configuration for update strategy test setup (both RollingUpdate and OnDelete).
@@ -64,8 +86,8 @@ type testConfig struct {
 // Returns:
 //   - tc: TestContext for the test
 //   - cleanup: Function that should be deferred by the caller (stops tracker and cleans up cluster)
-//   - tracker: Started update tracker - caller can use tracker.GetEvents() after stopping
-func setupTest(t *testing.T, cfg testConfig) (*testctx.TestContext, func(), *updateTracker) {
+//   - tracker: Started update tracker - caller can use tracker.Events() after stopping
+func setupTest(t *testing.T, cfg testConfig) (*testctx.TestContext, func(), *updateutils.UpdateTracker) {
 	t.Helper()
 	ctx := context.Background()
 
@@ -119,7 +141,7 @@ func setupTest(t *testing.T, cfg testConfig) (*testctx.TestContext, func(), *upd
 
 		tcLongTimeout := *tc
 		tcLongTimeout.Timeout = 2 * time.Minute
-		if err := waitForRollingUpdateComplete(&tcLongTimeout, 1); err != nil {
+		if err := updateutils.WaitForRollingUpdateComplete(&tcLongTimeout, 1); err != nil {
 			clusterCleanup()
 			t.Fatalf("Failed to wait for SIGTERM patch rolling update to complete: %v", err)
 		}
@@ -145,8 +167,8 @@ func setupTest(t *testing.T, cfg testConfig) (*testctx.TestContext, func(), *upd
 	}
 
 	// Step 7: Create and start tracker
-	tracker := newUpdateTracker()
-	if err := tracker.start(tc); err != nil {
+	tracker := updateutils.NewUpdateTracker()
+	if err := tracker.Start(tc); err != nil {
 		clusterCleanup()
 		t.Fatalf("Failed to start tracker: %v", err)
 	}
@@ -154,9 +176,35 @@ func setupTest(t *testing.T, cfg testConfig) (*testctx.TestContext, func(), *upd
 	// Create combined cleanup function
 	// Note: clusterCleanup already handles diagnostics collection on failure
 	cleanup := func() {
-		tracker.stop()
+		tracker.Stop()
 		clusterCleanup()
 	}
 
 	return tc, cleanup, tracker
+}
+
+// patchPCSWithSIGTERMIgnoringCommand patches all containers in the PCS to use a command that ignores SIGTERM
+// and sets the termination grace period to 5 seconds. This makes pods ignore graceful shutdown but still
+// allows updates to progress in a reasonable time for testing.
+func patchPCSWithSIGTERMIgnoringCommand(tc *testctx.TestContext) error {
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		var pcs grovev1beta1.PodCliqueSet
+		if err := tc.Client.Get(tc.Ctx, types.NamespacedName{Name: tc.Workload.Name, Namespace: tc.Namespace}, &pcs); err != nil {
+			return fmt.Errorf("failed to get PodCliqueSet: %w", err)
+		}
+		pcs.SetGroupVersionKind(grovev1beta1.SchemeGroupVersion.WithKind("PodCliqueSet"))
+		pcs.SetManagedFields(nil)
+		pcs.SetResourceVersion("")
+
+		terminationGracePeriod := int64(5)
+		for i := range pcs.Spec.Template.Cliques {
+			pcs.Spec.Template.Cliques[i].Spec.PodSpec.TerminationGracePeriodSeconds = &terminationGracePeriod
+			for j := range pcs.Spec.Template.Cliques[i].Spec.PodSpec.Containers {
+				container := &pcs.Spec.Template.Cliques[i].Spec.PodSpec.Containers[j]
+				container.Command = []string{"/bin/sh", "-c", "trap '' TERM; sleep infinity"}
+			}
+		}
+
+		return tc.Client.Patch(tc.Ctx, &pcs, client.Apply, client.FieldOwner("e2e-rolling-update-test"), client.ForceOwnership)
+	})
 }

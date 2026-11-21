@@ -73,8 +73,9 @@ const (
 	// PodGangEntryRoleScaleOut marks the entry that holds PodCliqueScalingGroup replicas added by a
 	// steady-state scale-out beyond the template. It materializes into one PodGang per replica index.
 	// The entry is created for every PodCliqueSet that has a PodCliqueScalingGroup, starting empty, and
-	// is kept even when empty for the current generation. It offers a stable scale-out epoch that
-	// downstream reconcilers use when independently constructing PodGang names.
+	// is kept while its DependsOn anchor is non-empty and carries the same generation hash. An empty
+	// ScaleOut advances with its anchor without changing its epoch or dependency. It offers a stable
+	// scale-out epoch that downstream reconcilers use when independently constructing PodGang names.
 	PodGangEntryRoleScaleOut PodGangEntryRole = "ScaleOut"
 )
 

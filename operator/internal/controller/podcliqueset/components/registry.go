@@ -32,7 +32,8 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/satokensecret"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/service"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/serviceaccount"
-	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/sync"
+	pcsexpectations "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/expectations"
+	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/sync"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 
 	"k8s.io/client-go/tools/record"
@@ -47,24 +48,25 @@ func CreateOperatorRegistry(mgr manager.Manager,
 	topologyAwareSchedulingConfig configv1beta1.TopologyAwareSchedulingConfiguration,
 	networkConfig configv1beta1.NetworkAcceleration,
 	schedRegistry scheduler.Registry,
-	scalingProgressExpectations *pcssync.ScalingProgressExpectations) component.OperatorRegistry[v1beta1.PodCliqueSet, pcssync.State, pcssync.Result] {
+	scalingProgressExpectations *pcsexpectations.ScalingProgress,
+	currentlyUpdatingExpectations *pcsexpectations.CurrentlyUpdating) component.OperatorRegistry[v1beta1.PodCliqueSet, pcssync.State, pcssync.Result] {
 	cl := mgr.GetClient()
 	reg := component.NewOperatorRegistry[v1beta1.PodCliqueSet, pcssync.State, pcssync.Result]()
-	reg.Register(component.KindPodClique, podclique.New(cl, mgr.GetScheme(), eventRecorder))
-	reg.Register(component.KindHeadlessService, service.New(cl, mgr.GetScheme()))
+	reg.Register(component.KindPodClique, podclique.New(cl, mgr.GetScheme(), eventRecorder), component.AsReplicaScoped())
+	reg.Register(component.KindHeadlessService, service.New(cl, mgr.GetScheme()), component.AsReplicaScoped())
 	reg.Register(component.KindRole, role.New(cl, mgr.GetScheme()))
 	reg.Register(component.KindRoleBinding, rolebinding.New(cl, mgr.GetScheme()))
 	reg.Register(component.KindServiceAccount, serviceaccount.New(cl, mgr.GetScheme()))
 	reg.Register(component.KindServiceAccountTokenSecret, satokensecret.New(cl, mgr.GetScheme()))
-	reg.Register(component.KindResourceClaim, resourceclaim.New(cl, mgr.GetScheme()))
-	reg.Register(component.KindPodCliqueScalingGroup, podcliquescalinggroup.New(cl, mgr.GetScheme(), eventRecorder))
-	reg.Register(component.KindHorizontalPodAutoscaler, hpa.New(cl, mgr.GetScheme()))
-	reg.Register(component.KindPodGang, podgang.New(cl, mgr.GetScheme(), eventRecorder, topologyAwareSchedulingConfig, schedRegistry))
-	reg.Register(component.KindPodGangMap, podgangmap.New(cl, mgr.GetScheme(), clock.RealClock{}))
+	reg.Register(component.KindResourceClaim, resourceclaim.New(cl, mgr.GetScheme()), component.AsReplicaScoped())
+	reg.Register(component.KindPodCliqueScalingGroup, podcliquescalinggroup.New(cl, mgr.GetScheme(), eventRecorder), component.AsReplicaScoped())
+	reg.Register(component.KindHorizontalPodAutoscaler, hpa.New(cl, mgr.GetScheme()), component.AsReplicaScoped())
+	reg.Register(component.KindPodGang, podgang.New(cl, mgr.GetScheme(), eventRecorder, topologyAwareSchedulingConfig, schedRegistry), component.AsReplicaScoped())
+	reg.Register(component.KindPodGangMap, podgangmap.New(cl, mgr.GetScheme(), clock.RealClock{}), component.AsReplicaScoped())
 	reg.Register(component.KindPodGangMigrator, podgangmigrator.New(cl, mgr.GetScheme(), schedRegistry))
-	reg.Register(component.KindPodCliqueSetReplica, podcliquesetreplica.New(cl, eventRecorder, scalingProgressExpectations))
+	reg.Register(component.KindPodCliqueSetReplica, podcliquesetreplica.New(cl, eventRecorder, scalingProgressExpectations, currentlyUpdatingExpectations))
 	if computedomain.ShouldRegister(mgr.GetRESTMapper(), networkConfig.AutoMNNVLEnabled, ctrl.Log.WithName("computedomain")) {
-		reg.Register(component.KindComputeDomain, computedomain.New(cl, mgr.GetScheme(), eventRecorder, !networkConfig.AutoMNNVLEnabled))
+		reg.Register(component.KindComputeDomain, computedomain.New(cl, mgr.GetScheme(), eventRecorder, !networkConfig.AutoMNNVLEnabled), component.AsReplicaScoped())
 	}
 
 	return reg

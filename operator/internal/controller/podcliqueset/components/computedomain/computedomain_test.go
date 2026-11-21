@@ -24,7 +24,7 @@ import (
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
-	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/sync"
+	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/sync"
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
@@ -569,7 +569,7 @@ func TestSyncScaleIn(t *testing.T) {
 	})
 
 	require.NoError(t, err)
-	assert.Equal(t, []int{2, 3}, result.ScaleInReplicaIndicesAwaitingResourceCleanup)
+	assert.Empty(t, result.CleanedUpReplicaIndices)
 
 	// Verify CDs 0 and 1 still exist
 	for i := 0; i < 2; i++ {
@@ -593,7 +593,7 @@ func TestSyncScaleIn(t *testing.T) {
 		ScaleInReplicaIndices:  []int{2, 3},
 	})
 	require.NoError(t, err)
-	assert.Empty(t, result.ScaleInReplicaIndicesAwaitingResourceCleanup)
+	assert.Equal(t, []int{2, 3}, result.CleanedUpReplicaIndices)
 }
 
 // TestSyncScaleOut tests that Sync creates new ComputeDomains when scaling up.

@@ -225,22 +225,20 @@ func TestProcessUpdateResetsStaleProgressForSelectedPCSReplica(t *testing.T) {
 
 	pcsUID := uuid.NewUUID()
 	pcs := testutils.NewPodCliqueSetBuilder(testPCSNamePCSG, testNamespacePCSG, pcsUID).
-		WithReplicas(1).
+		WithReplicas(3).
 		WithScalingGroup(testPCSGName, []string{"worker"}).
 		WithUpdateStrategy(&grovecorev1beta1.PodCliqueSetUpdateStrategy{Type: grovecorev1beta1.RollingRecreateStrategy}).
 		WithPodCliqueSetGenerationHash(ptr.To(currentGeneration)).
 		WithUpdateProgress(&grovecorev1beta1.PodCliqueSetUpdateProgress{
 			UpdateStartedAt: metav1.Now(),
 			CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{
-				{
-					ReplicaIndex:    0,
-					UpdateStartedAt: metav1.Now(),
-				},
+				{ReplicaIndex: 0, UpdateStartedAt: metav1.Now()},
+				{ReplicaIndex: 2, UpdateStartedAt: metav1.Now()},
 			},
 		}).
 		Build()
 
-	pcsg := testutils.NewPodCliqueScalingGroupBuilder(testPCSGName, testNamespacePCSG, testPCSNamePCSG, 0).
+	pcsg := testutils.NewPodCliqueScalingGroupBuilder(testPCSGName, testNamespacePCSG, testPCSNamePCSG, 2).
 		WithReplicas(1).
 		WithOwnerReference("PodCliqueSet", testPCSNamePCSG, pcsUID).
 		Build()

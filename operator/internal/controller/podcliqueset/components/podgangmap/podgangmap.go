@@ -22,8 +22,9 @@ import (
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
-	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/sync"
+	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/sync"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
+	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
 	"github.com/go-logr/logr"
@@ -96,7 +97,7 @@ func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev
 		return pcssync.Result{}, err
 	}
 	return pcssync.Result{
-		ScaleInReplicaIndicesAwaitingResourceCleanup: pcsReplicaIndicesAwaitingResourceCleanup,
+		CleanedUpReplicaIndices: componentutils.ComputeCleanedUpReplicaIndices(state.ScaleInReplicaIndices, pcsReplicaIndicesAwaitingResourceCleanup),
 	}, nil
 }
 

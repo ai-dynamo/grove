@@ -23,6 +23,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
 )
 
@@ -105,11 +106,14 @@ func TestIsPodGangEntryEmpty(t *testing.T) {
 }
 
 func TestShouldAdvanceEntriesGenerationHash(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
-		name         string
-		strategyType *grovecorev1beta1.UpdateStrategyType
-		entryHashes  []string
-		expected     bool
+		name           string
+		strategyType   *grovecorev1beta1.UpdateStrategyType
+		updateProgress *grovecorev1beta1.PodCliqueSetUpdateProgress
+		entryHashes    []string
+		expected       bool
 	}{
 		{
 			name:        "nil strategy defaults to RollingRecreate and advances when entries lag",
@@ -141,20 +145,64 @@ func TestShouldAdvanceEntriesGenerationHash(t *testing.T) {
 			expected:     false,
 		},
 		{
-			name:         "Coherent never advances even when entries lag",
+			name:         "idle Coherent advances when entries lag",
 			strategyType: ptr.To(grovecorev1beta1.CoherentStrategy),
 			entryHashes:  []string{"old"},
+			expected:     true,
+		},
+		{
+			name:         "idle Coherent does not advance when all entries are current",
+			strategyType: ptr.To(grovecorev1beta1.CoherentStrategy),
+			entryHashes:  []string{"new", "new"},
 			expected:     false,
+		},
+		{
+			name:           "active Coherent preserves mixed generation entries",
+			strategyType:   ptr.To(grovecorev1beta1.CoherentStrategy),
+			updateProgress: &grovecorev1beta1.PodCliqueSetUpdateProgress{},
+			entryHashes:    []string{"new", "old"},
+			expected:       false,
+		},
+		{
+			name:           "completed Coherent update permits normalization",
+			strategyType:   ptr.To(grovecorev1beta1.CoherentStrategy),
+			updateProgress: &grovecorev1beta1.PodCliqueSetUpdateProgress{UpdateEndedAt: &metav1.Time{}},
+			entryHashes:    []string{"old"},
+			expected:       true,
+		},
+		{
+			name:           "Coherent replica recreation preserves old entries",
+			strategyType:   ptr.To(grovecorev1beta1.CoherentStrategy),
+			updateProgress: &grovecorev1beta1.PodCliqueSetUpdateProgress{RequiresReplicaRecreation: true},
+			entryHashes:    []string{"old"},
+			expected:       false,
+		},
+		{
+			name:           "RollingRecreate replica recreation preserves old entries",
+			strategyType:   ptr.To(grovecorev1beta1.RollingRecreateStrategy),
+			updateProgress: &grovecorev1beta1.PodCliqueSetUpdateProgress{RequiresReplicaRecreation: true},
+			entryHashes:    []string{"old"},
+			expected:       false,
+		},
+		{
+			name:           "OnDelete replica recreation preserves old entries",
+			strategyType:   ptr.To(grovecorev1beta1.OnDeleteStrategy),
+			updateProgress: &grovecorev1beta1.PodCliqueSetUpdateProgress{RequiresReplicaRecreation: true},
+			entryHashes:    []string{"old"},
+			expected:       false,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			pcsBuilder := testutils.NewPodCliqueSetBuilder("pcs", "default", "uid").
 				WithPodCliqueSetGenerationHash(new("new"))
 			if tt.strategyType != nil {
 				pcsBuilder.WithUpdateStrategy(&grovecorev1beta1.PodCliqueSetUpdateStrategy{Type: *tt.strategyType})
 			}
 			pcs := pcsBuilder.Build()
+			pcs.Status.UpdateProgress = tt.updateProgress
 			entries := entriesWithGenerationHashes(tt.entryHashes)
 
 			actual := shouldAdvanceEntriesGenerationHash(pcs, entries)

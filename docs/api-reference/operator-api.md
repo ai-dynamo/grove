@@ -420,6 +420,27 @@ PodCliqueSet is a set of PodGangs defining specification on how to spread and ma
 | `status` _[PodCliqueSetStatus](#podcliquesetstatus)_ | Status defines the status of the PodCliqueSet. |  |  |
 
 
+#### PodCliqueSetReplicaReplacementProgress
+
+
+
+PodCliqueSetReplicaReplacementProgress captures structural replacement progress for the source replica identified by
+PodCliqueSetReplicaUpdateProgress.ReplicaIndex.
+
+
+
+_Appears in:_
+- [PodCliqueSetReplicaUpdateProgress](#podcliquesetreplicaupdateprogress)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `targetReplicaIndex` _integer_ | TargetReplicaIndex is the PodCliqueSet replica index created from the latest PodCliqueSet template. |  |  |
+| `sourceCleanupCompletedAt` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#time-v1-meta)_ | SourceCleanupCompletedAt is the time when every replica-scoped component stopped reporting the source index as<br />awaiting resource cleanup. It is used only when ReplicaIndex equals TargetReplicaIndex. Cleanup and creation at<br />the same index must run sequentially to prevent newly created target resources from being deleted as source<br />resources. Grove persists this field after cleanup completes so target creation can proceed across operator<br />restarts. Grove does not set or inspect this field when the indices differ because source deletion and target<br />creation can proceed concurrently. |  |  |
+| `retiredSourceReplicaIndices` _integer array_ | RetiredSourceReplicaIndices contains the indices of previous sources whose cleanup remains pending after a<br />superseding update restarts a replacement at its target index. For example, if a replacement from replica<br />index 2 to replica index 1 is superseded, the new replacement recreates replica index 1 in place and records<br />replica index 2 here until its remaining resources have been removed. A retired source no longer contributes<br />to the desired PCS replica identity set, but its index remains reserved so scaling or another replacement<br />cannot reuse it during cleanup. Retired-source cleanup may proceed concurrently with target recreation.<br />Grove persists these cleanup obligations across operator restarts, further superseding updates, and<br />cancellation. An index is removed only after every applicable replica-scoped component confirms that its<br />resources have been cleaned up. Absence from a single resource snapshot is not sufficient. The replacement<br />cannot complete, or have its canceled progress removed, while this list is non-empty. These obligations are<br />specific to this replacement and do not include unrelated PCS scale-in work. A nil or empty list means no<br />retired-source cleanup remains pending. |  |  |
+| `canceledAt` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#time-v1-meta)_ | CanceledAt is the time when the replacement stopped contributing its target to the projected PodCliqueSet identity<br />set. |  |  |
+| `cancellationMessage` _string_ | CancellationMessage explains why the replacement was canceled. |  |  |
+
+
 #### PodCliqueSetReplicaUpdateProgress
 
 
@@ -433,7 +454,8 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `replicaIndex` _integer_ | ReplicaIndex is the replica index of the PodCliqueSet that is being updated. |  |  |
+| `replicaIndex` _integer_ | ReplicaIndex is the replica being updated. During replica recreation, it is the source replica being replaced. |  |  |
+| `replacement` _[PodCliqueSetReplicaReplacementProgress](#podcliquesetreplicareplacementprogress)_ | Replacement captures structural replacement progress for the source replica identified by ReplicaIndex.<br />It is populated only during PodCliqueSet replica recreation. |  |  |
 | `updateStartedAt` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#time-v1-meta)_ | UpdateStartedAt is the time at which the update started for this PodCliqueSet replica index. |  |  |
 | `updateEndedAt` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#time-v1-meta)_ | UpdateEndedAt is the time at which the update ended for this PodCliqueSet replica index.<br />The update ends when all child resources have been updated with the latest specification, when all Pods are<br />running the latest specification. |  |  |
 | `inFlightEpochs` _string array_ | InFlightEpochs are the grove.io/epochs of the PodGangs currently being rolled<br />(in flight) for this replica's coherent update. The orchestrator waits for the<br />PodGangs at these epochs to become ready before advancing to the next iteration.<br />Today a single epoch is in flight at a time; the field is a list so that a future<br />iteration supporting concurrent in-flight batches needs no API change. It is cleared<br />once the coherent update for this replica completes. |  |  |
@@ -497,6 +519,7 @@ _Appears in:_
 | `hpaPodSelector` _string_ | Selector is the label selector that determines which pods are part of the PodGang.<br />PodGang is a unit of scale and this selector is used by HPA to scale the PodGang based on metrics captured for<br />the pods that match this selector. |  |  |
 | `podGangStatuses` _[PodGangStatus](#podgangstatus) array_ | PodGangStatuses captures the status for all the PodGang's that are part of the PodCliqueSet. |  |  |
 | `currentGenerationHash` _string_ | CurrentGenerationHash is a hash value generated out of a collection of fields in a PodCliqueSet.<br />Since only a subset of fields is taken into account when generating the hash, not every change in the PodCliqueSetSpec will<br />be accounted for when generating this hash value. A field in PodCliqueSetSpec is included if a change to it triggers<br />a rolling recreate of PodCliques and/or PodCliqueScalingGroups.<br />Only if this value is not nil and the newly computed hash value is different from the persisted CurrentGenerationHash value<br />then an update needs to be triggered. |  |  |
+| `appliedSchedulingConfigurationHash` _string_ | AppliedSchedulingConfigurationHash identifies the scheduling configuration<br />fully realized by all expected PodCliqueSet replicas. The scheduling<br />configuration currently comprises the effective MinAvailable values of all<br />PodClique templates and PodCliqueScalingGroup configs.<br />A nil value identifies an object created before scheduling-configuration<br />hashing was introduced. |  |  |
 | `updateProgress` _[PodCliqueSetUpdateProgress](#podcliquesetupdateprogress)_ | UpdateProgress represents the progress of an update. |  |  |
 | `scalingProgress` _[PodCliqueSetScalingProgress](#podcliquesetscalingprogress)_ | ScalingProgress records replica indices selected for scale-out or scale-in.<br />Availability-aware scale-in can remove replicas out of index order, so active replica indices may no longer<br />form the contiguous range [0, spec.replicas). Persisting selections ensures all components reconcile the same<br />sparse set of replica identities while scaling is in progress. It is nil when no scaling operation is in progress. |  |  |
 
@@ -543,6 +566,9 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
+| `requiresReplicaRecreation` _boolean_ | RequiresReplicaRecreation indicates that this update must replace PodCliqueSet replicas instead of only executing<br />spec.updateStrategy. Grove sets this field when scheduling configuration changes and preserves it across superseding<br />updates until replica recreation completes. |  |  |
+| `targetSchedulingConfigurationHash` _string_ | TargetSchedulingConfigurationHash identifies the scheduling configuration that this update must converge to.<br />On successful completion, it is copied to PodCliqueSetStatus.AppliedSchedulingConfigurationHash.<br />Older operators may omit this field during upgrades and downgrades. |  |  |
+| `previousPodCliqueSetGenerationHash` _string_ | PreviousPodCliqueSetGenerationHash identifies the PodCliqueSet generation that was the update target immediately<br />before the current update was initialized. It distinguishes replicas that had converged to the previous target from<br />replicas that had not. |  |  |
 | `updateStartedAt` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#time-v1-meta)_ | UpdateStartedAt is the time at which the update started for the PodCliqueSet. |  |  |
 | `updateEndedAt` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#time-v1-meta)_ | UpdateEndedAt is the time at which Grove does not have any work pending to manifest the update according to the<br />configured update strategy.<br /> - For rolling update strategies where Grove handles the orchestration, while the update is still in progress<br />   it will be nil, and will be set once the update finishes where all child resources are updated by Grove with<br />   the latest specification.<br /> - For the OnDelete strategy, it is set to the same time as UpdateStartedAt, which implies that there is no work<br />	  pending on Grove. |  |  |
 | `updatedPodCliquesCount` _integer_ | UpdatedPodCliquesCount is the number of PodCliques that have been updated to the desired PodCliqueSet<br />generation hash. Recomputed each reconcile from child generation-hash labels. | 0 |  |
@@ -1386,6 +1412,27 @@ PodCliqueSet is a set of PodGangs defining specification on how to spread and ma
 | `status` _[PodCliqueSetStatus](#podcliquesetstatus)_ | Status defines the status of the PodCliqueSet. |  |  |
 
 
+#### PodCliqueSetReplicaReplacementProgress
+
+
+
+PodCliqueSetReplicaReplacementProgress captures structural replacement progress for the source replica identified by
+PodCliqueSetReplicaUpdateProgress.ReplicaIndex.
+
+
+
+_Appears in:_
+- [PodCliqueSetReplicaUpdateProgress](#podcliquesetreplicaupdateprogress)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `targetReplicaIndex` _integer_ | TargetReplicaIndex is the PodCliqueSet replica index created from the latest PodCliqueSet template. |  |  |
+| `sourceCleanupCompletedAt` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#time-v1-meta)_ | SourceCleanupCompletedAt is the time when every replica-scoped component stopped reporting the source index as<br />awaiting resource cleanup. It is used only when ReplicaIndex equals TargetReplicaIndex. Cleanup and creation at<br />the same index must run sequentially to prevent newly created target resources from being deleted as source<br />resources. Grove persists this field after cleanup completes so target creation can proceed across operator<br />restarts. Grove does not set or inspect this field when the indices differ because source deletion and target<br />creation can proceed concurrently. |  |  |
+| `retiredSourceReplicaIndices` _integer array_ | RetiredSourceReplicaIndices contains the indices of previous sources whose cleanup remains pending after a<br />superseding update restarts a replacement at its target index. For example, if a replacement from replica<br />index 2 to replica index 1 is superseded, the new replacement recreates replica index 1 in place and records<br />replica index 2 here until its remaining resources have been removed. A retired source no longer contributes<br />to the desired PCS replica identity set, but its index remains reserved so scaling or another replacement<br />cannot reuse it during cleanup. Retired-source cleanup may proceed concurrently with target recreation.<br />Grove persists these cleanup obligations across operator restarts, further superseding updates, and<br />cancellation. An index is removed only after every applicable replica-scoped component confirms that its<br />resources have been cleaned up. Absence from a single resource snapshot is not sufficient. The replacement<br />cannot complete, or have its canceled progress removed, while this list is non-empty. These obligations are<br />specific to this replacement and do not include unrelated PCS scale-in work. A nil or empty list means no<br />retired-source cleanup remains pending. |  |  |
+| `canceledAt` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#time-v1-meta)_ | CanceledAt is the time when the replacement stopped contributing its target to the projected PodCliqueSet<br />identity set. |  |  |
+| `cancellationMessage` _string_ | CancellationMessage explains why the replacement was canceled. |  |  |
+
+
 #### PodCliqueSetReplicaUpdateProgress
 
 
@@ -1399,11 +1446,12 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `replicaIndex` _integer_ | ReplicaIndex is the replica index of the PodCliqueSet that is being updated. |  |  |
+| `replicaIndex` _integer_ | ReplicaIndex is the replica being updated. During replica recreation, it is the source replica being replaced. |  |  |
+| `replacement` _[PodCliqueSetReplicaReplacementProgress](#podcliquesetreplicareplacementprogress)_ | Replacement captures structural replacement progress for the source replica identified by ReplicaIndex.<br />It is populated only during PodCliqueSet replica recreation. |  |  |
 | `updateStartedAt` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#time-v1-meta)_ | UpdateStartedAt is the time at which the update started for this PodCliqueSet replica index. |  |  |
 | `updateEndedAt` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#time-v1-meta)_ | UpdateEndedAt is the time at which the update ended for this PodCliqueSet replica index.<br />The update ends when all child resources have been updated with the latest specification, when all Pods are<br />running the latest specification. |  |  |
-| `inFlightEpochs` _string array_ | InFlightEpochs are the grove.io/epochs of the PodGangs currently being rolled<br />(in flight) for this replica's coherent update. The orchestrator waits for the<br />PodGangs at these epochs to become ready before advancing to the next iteration.<br />Today a single epoch is in flight at a time; the field is a list so that a future<br />iteration supporting concurrent in-flight batches needs no API change. It is cleared<br />once the coherent update for this replica completes. |  |  |
-| `message` _string_ | Message describes the current reason the orchestrator has not advanced<br />the coherent update this reconcile. Populated whenever any advance<br />precondition is not met: PodGangs at the current InFlightEpochs not yet<br />reporting LastReady, subsumed pods still coming up, or an availability<br />budget preventing further takedown. Cleared once all preconditions hold. |  |  |
+| `inFlightEpochs` _string array_ | InFlightEpochs are the grove.io/epochs of the PodGangs currently being rolled (in flight) for this replica's<br />coherent update. The orchestrator waits for the PodGangs at these epochs to become ready before advancing to the<br />next iteration. Today a single epoch is in flight at a time; the field is a list so that a future iteration<br />supporting concurrent in-flight batches needs no API change.<br />It is cleared once the coherent update for this replica completes. |  |  |
+| `message` _string_ | Message describes the current reason the orchestrator has not advanced the coherent update this reconcile. Populated<br />whenever any advance precondition is not met: PodGangs at the current InFlightEpochs not yet reporting LastReady,<br />subsumed pods still coming up, or an availability budget preventing further takedown.<br />Cleared once all preconditions hold. |  |  |
 
 
 #### PodCliqueSetScalingProgress
@@ -1462,6 +1510,7 @@ _Appears in:_
 | `availableReplicas` _integer_ | AvailableReplicas is the number of PodCliqueSet replicas that are available.<br />A PodCliqueSet replica is considered available when all standalone PodCliques within that replica<br />have MinAvailableBreached condition = False AND all PodCliqueScalingGroups (PCSG) within that replica<br />have MinAvailableBreached condition = False. | 0 |  |
 | `hpaPodSelector` _string_ | Selector is the label selector that determines which pods are part of the PodGang.<br />PodGang is a unit of scale and this selector is used by HPA to scale the PodGang based on metrics captured for<br />the pods that match this selector. |  |  |
 | `currentGenerationHash` _string_ | CurrentGenerationHash is a hash value generated out of a collection of fields in a PodCliqueSet.<br />Since only a subset of fields is taken into account when generating the hash, not every change in the PodCliqueSetSpec will<br />be accounted for when generating this hash value. A field in PodCliqueSetSpec is included if a change to it triggers<br />a rolling recreate of PodCliques and/or PodCliqueScalingGroups.<br />Only if this value is not nil and the newly computed hash value is different from the persisted CurrentGenerationHash value<br />then an update needs to be triggered. |  |  |
+| `appliedSchedulingConfigurationHash` _string_ | AppliedSchedulingConfigurationHash identifies the scheduling configuration<br />fully realized by all expected PodCliqueSet replicas. The scheduling<br />configuration currently comprises the effective MinAvailable values of all<br />PodClique templates and PodCliqueScalingGroup configs.<br />A nil value identifies an object created before scheduling-configuration<br />hashing was introduced. |  |  |
 | `updateProgress` _[PodCliqueSetUpdateProgress](#podcliquesetupdateprogress)_ | UpdateProgress represents the progress of an update. |  |  |
 | `scalingProgress` _[PodCliqueSetScalingProgress](#podcliquesetscalingprogress)_ | ScalingProgress records replica indices selected for scale-out or scale-in.<br />Availability-aware scale-in can remove replicas out of index order, so active replica indices may no longer<br />form the contiguous range [0, spec.replicas). Persisting selections ensures all components reconcile the same<br />sparse set of replica identities while scaling is in progress. It is nil when no scaling operation is in progress. |  |  |
 
@@ -1508,6 +1557,9 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
+| `requiresReplicaRecreation` _boolean_ | RequiresReplicaRecreation indicates that this update must replace PodCliqueSet replicas instead of only executing<br />spec.updateStrategy. Grove sets this field when scheduling configuration changes and preserves it across superseding<br />updates until replica recreation completes. |  |  |
+| `targetSchedulingConfigurationHash` _string_ | TargetSchedulingConfigurationHash identifies the scheduling configuration that this update must converge to.<br />On successful completion, it is copied to PodCliqueSetStatus.AppliedSchedulingConfigurationHash.<br />Older operators may omit this field during upgrades and downgrades. |  |  |
+| `previousPodCliqueSetGenerationHash` _string_ | PreviousPodCliqueSetGenerationHash identifies the PodCliqueSet generation that was the update target immediately<br />before the current update was initialized. It distinguishes replicas that had converged to the previous target from<br />replicas that had not. |  |  |
 | `updateStartedAt` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#time-v1-meta)_ | UpdateStartedAt is the time at which the update started for the PodCliqueSet. |  |  |
 | `updateEndedAt` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.33/#time-v1-meta)_ | UpdateEndedAt is the time at which Grove does not have any work pending to manifest the update according to the<br />configured update strategy.<br /> - For rolling update strategies where Grove handles the orchestration, while the update is still in progress<br />   it will be nil, and will be set once the update finishes where all child resources are updated by Grove with<br />   the latest specification.<br /> - For the OnDelete strategy, it is set to the same time as UpdateStartedAt, which implies that there is no work<br />	  pending on Grove. |  |  |
 | `updatedPodCliquesCount` _integer_ | UpdatedPodCliquesCount is the number of PodCliques that have been updated to the desired PodCliqueSet<br />generation hash. Recomputed each reconcile from child generation-hash labels. | 0 |  |
@@ -1667,7 +1719,7 @@ _Appears in:_
 | --- | --- |
 | `Anchor` | PodGangEntryRoleAnchor marks the entry that carries the MinAvailable replicas.<br />It holds every standalone PodClique and each PodCliqueScalingGroup's MinAvailable replicas.<br />It materializes into a single PodGang.<br /> |
 | `Tail` | PodGangEntryRoleTail marks a non-anchor entry that holds a PodCliqueScalingGroup's replica<br />indices above MinAvailable, as declared by the template. It materializes into one PodGang per<br />replica index.<br /> |
-| `ScaleOut` | PodGangEntryRoleScaleOut marks the entry that holds PodCliqueScalingGroup replicas added by a<br />steady-state scale-out beyond the template. It materializes into one PodGang per replica index.<br />The entry is created for every PodCliqueSet that has a PodCliqueScalingGroup, starting empty, and<br />is kept even when empty for the current generation. It offers a stable scale-out epoch that<br />downstream reconcilers use when independently constructing PodGang names.<br /> |
+| `ScaleOut` | PodGangEntryRoleScaleOut marks the entry that holds PodCliqueScalingGroup replicas added by a<br />steady-state scale-out beyond the template. It materializes into one PodGang per replica index.<br />The entry is created for every PodCliqueSet that has a PodCliqueScalingGroup, starting empty, and<br />is kept while its DependsOn anchor is non-empty and carries the same generation hash. An empty<br />ScaleOut advances with its anchor without changing its epoch or dependency. It offers a stable<br />scale-out epoch that downstream reconcilers use when independently constructing PodGang names.<br /> |
 
 
 #### PodGangMap

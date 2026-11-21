@@ -83,12 +83,15 @@ func TestMapPCSToPCSG(t *testing.T) {
 		}
 	}
 
-	t.Run("maps selected sparse replica", func(t *testing.T) {
+	t.Run("maps every selected sparse replica", func(t *testing.T) {
 		pcs := newPCS(grovecorev1beta1.RollingRecreateStrategy, &grovecorev1beta1.PodCliqueSetUpdateProgress{
-			CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 4}},
+			CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 1}, {ReplicaIndex: 4}},
 		})
 		got := mapFn(t.Context(), pcs)
-		assert.Equal(t, []reconcile.Request{{NamespacedName: types.NamespacedName{Namespace: "default", Name: "pcs-4-workers"}}}, got)
+		assert.Equal(t, []reconcile.Request{
+			{NamespacedName: types.NamespacedName{Namespace: "default", Name: "pcs-1-workers"}},
+			{NamespacedName: types.NamespacedName{Namespace: "default", Name: "pcs-4-workers"}},
+		}, got)
 	})
 
 	t.Run("does not map OnDelete", func(t *testing.T) {
@@ -100,21 +103,6 @@ func TestMapPCSToPCSG(t *testing.T) {
 		pcs := newPCS(grovecorev1beta1.RollingRecreateStrategy, &grovecorev1beta1.PodCliqueSetUpdateProgress{})
 		assert.Empty(t, mapFn(t.Context(), pcs))
 	})
-}
-
-func TestHasNewPCSReplicaBeenSelectedForUpdate(t *testing.T) {
-	progress := func(indices ...int32) *grovecorev1beta1.PodCliqueSetUpdateProgress {
-		result := &grovecorev1beta1.PodCliqueSetUpdateProgress{}
-		for _, index := range indices {
-			result.CurrentlyUpdating = append(result.CurrentlyUpdating, grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{ReplicaIndex: index})
-		}
-		return result
-	}
-
-	assert.True(t, hasNewPCSReplicaBeenSelectedForUpdate(nil, progress(4)))
-	assert.True(t, hasNewPCSReplicaBeenSelectedForUpdate(progress(1), progress(4)))
-	assert.False(t, hasNewPCSReplicaBeenSelectedForUpdate(progress(4), progress(4)))
-	assert.False(t, hasNewPCSReplicaBeenSelectedForUpdate(progress(4), progress()))
 }
 
 // TestPodGangMapPredicate verifies the PodGangMap watch predicate. It must fire on Create so a

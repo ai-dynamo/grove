@@ -11083,6 +11083,15 @@ spec:
           status:
             description: Status defines the status of the PodCliqueSet.
             properties:
+              appliedSchedulingConfigurationHash:
+                description: |-
+                  AppliedSchedulingConfigurationHash identifies the scheduling configuration
+                  fully realized by all expected PodCliqueSet replicas. The scheduling
+                  configuration currently comprises the effective MinAvailable values of all
+                  PodClique templates and PodCliqueScalingGroup configs.
+                  A nil value identifies an object created before scheduling-configuration
+                  hashing was introduced.
+                type: string
               availableReplicas:
                 default: 0
                 description: |-
@@ -11341,9 +11350,64 @@ spec:
                             reporting LastReady, subsumed pods still coming up, or an availability
                             budget preventing further takedown. Cleared once all preconditions hold.
                           type: string
+                        replacement:
+                          description: |-
+                            Replacement captures structural replacement progress for the source replica identified by ReplicaIndex.
+                            It is populated only during PodCliqueSet replica recreation.
+                          properties:
+                            canceledAt:
+                              description: |-
+                                CanceledAt is the time when the replacement stopped contributing its target to the projected PodCliqueSet identity
+                                set.
+                              format: date-time
+                              type: string
+                            cancellationMessage:
+                              description: CancellationMessage explains why the replacement
+                                was canceled.
+                              type: string
+                            retiredSourceReplicaIndices:
+                              description: |-
+                                RetiredSourceReplicaIndices contains the indices of previous sources whose cleanup remains pending after a
+                                superseding update restarts a replacement at its target index. For example, if a replacement from replica
+                                index 2 to replica index 1 is superseded, the new replacement recreates replica index 1 in place and records
+                                replica index 2 here until its remaining resources have been removed. A retired source no longer contributes
+                                to the desired PCS replica identity set, but its index remains reserved so scaling or another replacement
+                                cannot reuse it during cleanup. Retired-source cleanup may proceed concurrently with target recreation.
+
+                                Grove persists these cleanup obligations across operator restarts, further superseding updates, and
+                                cancellation. An index is removed only after every applicable replica-scoped component confirms that its
+                                resources have been cleaned up. Absence from a single resource snapshot is not sufficient. The replacement
+                                cannot complete, or have its canceled progress removed, while this list is non-empty. These obligations are
+                                specific to this replacement and do not include unrelated PCS scale-in work. A nil or empty list means no
+                                retired-source cleanup remains pending.
+                              items:
+                                format: int32
+                                type: integer
+                              type: array
+                              x-kubernetes-list-type: set
+                            sourceCleanupCompletedAt:
+                              description: |-
+                                SourceCleanupCompletedAt is the time when every replica-scoped component stopped reporting the source index as
+                                awaiting resource cleanup. It is used only when ReplicaIndex equals TargetReplicaIndex. Cleanup and creation at
+                                the same index must run sequentially to prevent newly created target resources from being deleted as source
+                                resources. Grove persists this field after cleanup completes so target creation can proceed across operator
+                                restarts. Grove does not set or inspect this field when the indices differ because source deletion and target
+                                creation can proceed concurrently.
+                              format: date-time
+                              type: string
+                            targetReplicaIndex:
+                              description: TargetReplicaIndex is the PodCliqueSet
+                                replica index created from the latest PodCliqueSet
+                                template.
+                              format: int32
+                              type: integer
+                          required:
+                          - targetReplicaIndex
+                          type: object
                         replicaIndex:
-                          description: ReplicaIndex is the replica index of the PodCliqueSet
-                            that is being updated.
+                          description: ReplicaIndex is the replica being updated.
+                            During replica recreation, it is the source replica being
+                            replaced.
                           format: int32
                           type: integer
                         updateEndedAt:
@@ -11362,6 +11426,9 @@ spec:
                       - replicaIndex
                       type: object
                     type: array
+                    x-kubernetes-list-map-keys:
+                    - replicaIndex
+                    x-kubernetes-list-type: map
                   inScopePodCliqueScalingGroups:
                     description: |-
                       InScopePodCliqueScalingGroups captures the config names of PodCliqueScalingGroups that had at
@@ -11386,6 +11453,24 @@ spec:
                     items:
                       type: string
                     type: array
+                  previousPodCliqueSetGenerationHash:
+                    description: |-
+                      PreviousPodCliqueSetGenerationHash identifies the PodCliqueSet generation that was the update target immediately
+                      before the current update was initialized. It distinguishes replicas that had converged to the previous target from
+                      replicas that had not.
+                    type: string
+                  requiresReplicaRecreation:
+                    description: |-
+                      RequiresReplicaRecreation indicates that this update must replace PodCliqueSet replicas instead of only executing
+                      spec.updateStrategy. Grove sets this field when scheduling configuration changes and preserves it across superseding
+                      updates until replica recreation completes.
+                    type: boolean
+                  targetSchedulingConfigurationHash:
+                    description: |-
+                      TargetSchedulingConfigurationHash identifies the scheduling configuration that this update must converge to.
+                      On successful completion, it is copied to PodCliqueSetStatus.AppliedSchedulingConfigurationHash.
+                      Older operators may omit this field during upgrades and downgrades.
+                    type: string
                   totalPodCliqueScalingGroupsCount:
                     default: 0
                     description: |-
@@ -22477,6 +22562,15 @@ spec:
           status:
             description: Status defines the status of the PodCliqueSet.
             properties:
+              appliedSchedulingConfigurationHash:
+                description: |-
+                  AppliedSchedulingConfigurationHash identifies the scheduling configuration
+                  fully realized by all expected PodCliqueSet replicas. The scheduling
+                  configuration currently comprises the effective MinAvailable values of all
+                  PodClique templates and PodCliqueScalingGroup configs.
+                  A nil value identifies an object created before scheduling-configuration
+                  hashing was introduced.
+                type: string
               availableReplicas:
                 default: 0
                 description: |-
@@ -22636,26 +22730,79 @@ spec:
                       properties:
                         inFlightEpochs:
                           description: |-
-                            InFlightEpochs are the grove.io/epochs of the PodGangs currently being rolled
-                            (in flight) for this replica's coherent update. The orchestrator waits for the
-                            PodGangs at these epochs to become ready before advancing to the next iteration.
-                            Today a single epoch is in flight at a time; the field is a list so that a future
-                            iteration supporting concurrent in-flight batches needs no API change. It is cleared
-                            once the coherent update for this replica completes.
+                            InFlightEpochs are the grove.io/epochs of the PodGangs currently being rolled (in flight) for this replica's
+                            coherent update. The orchestrator waits for the PodGangs at these epochs to become ready before advancing to the
+                            next iteration. Today a single epoch is in flight at a time; the field is a list so that a future iteration
+                            supporting concurrent in-flight batches needs no API change.
+                            It is cleared once the coherent update for this replica completes.
                           items:
                             type: string
                           type: array
                         message:
                           description: |-
-                            Message describes the current reason the orchestrator has not advanced
-                            the coherent update this reconcile. Populated whenever any advance
-                            precondition is not met: PodGangs at the current InFlightEpochs not yet
-                            reporting LastReady, subsumed pods still coming up, or an availability
-                            budget preventing further takedown. Cleared once all preconditions hold.
+                            Message describes the current reason the orchestrator has not advanced the coherent update this reconcile. Populated
+                            whenever any advance precondition is not met: PodGangs at the current InFlightEpochs not yet reporting LastReady,
+                            subsumed pods still coming up, or an availability budget preventing further takedown.
+                            Cleared once all preconditions hold.
                           type: string
+                        replacement:
+                          description: |-
+                            Replacement captures structural replacement progress for the source replica identified by ReplicaIndex.
+                            It is populated only during PodCliqueSet replica recreation.
+                          properties:
+                            canceledAt:
+                              description: |-
+                                CanceledAt is the time when the replacement stopped contributing its target to the projected PodCliqueSet
+                                identity set.
+                              format: date-time
+                              type: string
+                            cancellationMessage:
+                              description: CancellationMessage explains why the replacement
+                                was canceled.
+                              type: string
+                            retiredSourceReplicaIndices:
+                              description: |-
+                                RetiredSourceReplicaIndices contains the indices of previous sources whose cleanup remains pending after a
+                                superseding update restarts a replacement at its target index. For example, if a replacement from replica
+                                index 2 to replica index 1 is superseded, the new replacement recreates replica index 1 in place and records
+                                replica index 2 here until its remaining resources have been removed. A retired source no longer contributes
+                                to the desired PCS replica identity set, but its index remains reserved so scaling or another replacement
+                                cannot reuse it during cleanup. Retired-source cleanup may proceed concurrently with target recreation.
+
+                                Grove persists these cleanup obligations across operator restarts, further superseding updates, and
+                                cancellation. An index is removed only after every applicable replica-scoped component confirms that its
+                                resources have been cleaned up. Absence from a single resource snapshot is not sufficient. The replacement
+                                cannot complete, or have its canceled progress removed, while this list is non-empty. These obligations are
+                                specific to this replacement and do not include unrelated PCS scale-in work. A nil or empty list means no
+                                retired-source cleanup remains pending.
+                              items:
+                                format: int32
+                                type: integer
+                              type: array
+                              x-kubernetes-list-type: set
+                            sourceCleanupCompletedAt:
+                              description: |-
+                                SourceCleanupCompletedAt is the time when every replica-scoped component stopped reporting the source index as
+                                awaiting resource cleanup. It is used only when ReplicaIndex equals TargetReplicaIndex. Cleanup and creation at
+                                the same index must run sequentially to prevent newly created target resources from being deleted as source
+                                resources. Grove persists this field after cleanup completes so target creation can proceed across operator
+                                restarts. Grove does not set or inspect this field when the indices differ because source deletion and target
+                                creation can proceed concurrently.
+                              format: date-time
+                              type: string
+                            targetReplicaIndex:
+                              description: TargetReplicaIndex is the PodCliqueSet
+                                replica index created from the latest PodCliqueSet
+                                template.
+                              format: int32
+                              type: integer
+                          required:
+                          - targetReplicaIndex
+                          type: object
                         replicaIndex:
-                          description: ReplicaIndex is the replica index of the PodCliqueSet
-                            that is being updated.
+                          description: ReplicaIndex is the replica being updated.
+                            During replica recreation, it is the source replica being
+                            replaced.
                           format: int32
                           type: integer
                         updateEndedAt:
@@ -22674,6 +22821,9 @@ spec:
                       - replicaIndex
                       type: object
                     type: array
+                    x-kubernetes-list-map-keys:
+                    - replicaIndex
+                    x-kubernetes-list-type: map
                   inScopePodCliqueScalingGroups:
                     description: |-
                       InScopePodCliqueScalingGroups captures the config names of PodCliqueScalingGroups that had at
@@ -22698,6 +22848,24 @@ spec:
                     items:
                       type: string
                     type: array
+                  previousPodCliqueSetGenerationHash:
+                    description: |-
+                      PreviousPodCliqueSetGenerationHash identifies the PodCliqueSet generation that was the update target immediately
+                      before the current update was initialized. It distinguishes replicas that had converged to the previous target from
+                      replicas that had not.
+                    type: string
+                  requiresReplicaRecreation:
+                    description: |-
+                      RequiresReplicaRecreation indicates that this update must replace PodCliqueSet replicas instead of only executing
+                      spec.updateStrategy. Grove sets this field when scheduling configuration changes and preserves it across superseding
+                      updates until replica recreation completes.
+                    type: boolean
+                  targetSchedulingConfigurationHash:
+                    description: |-
+                      TargetSchedulingConfigurationHash identifies the scheduling configuration that this update must converge to.
+                      On successful completion, it is copied to PodCliqueSetStatus.AppliedSchedulingConfigurationHash.
+                      Older operators may omit this field during upgrades and downgrades.
+                    type: string
                   totalPodCliqueScalingGroupsCount:
                     default: 0
                     description: |-

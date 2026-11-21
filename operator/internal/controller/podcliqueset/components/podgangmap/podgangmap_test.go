@@ -24,7 +24,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	groveclientscheme "github.com/ai-dynamo/grove/operator/internal/client"
-	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/sync"
+	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/sync"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
@@ -271,7 +271,7 @@ func TestSyncUsesSparsePCSReplicaIndices(t *testing.T) {
 	result, err := operator.Sync(context.Background(), logr.Discard(), pcs, state)
 
 	require.NoError(t, err)
-	assert.Equal(t, []int{1}, result.ScaleInReplicaIndicesAwaitingResourceCleanup)
+	assert.Empty(t, result.CleanedUpReplicaIndices)
 	assertPodGangMapExists(t, cl, "pcs-0")
 	assertPodGangMapExists(t, cl, "pcs-2")
 	assertPodGangMapExists(t, cl, "pcs-4")
