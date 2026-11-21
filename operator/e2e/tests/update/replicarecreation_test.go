@@ -1653,6 +1653,145 @@ func Test_RR16_LegacyUpgradePreservesUnappliedSchedulingChange(t *testing.T) {
 	assertReplicaResourceUIDsUnchanged(t, recreated, final)
 }
 
+// Test_RR17_ReplicaRecreationBeforeFirstCompletedReconcile verifies that persisted replacement work is
+// honored before the PCS has completed its first spec reconciliation. The fixture models an interruption
+// after hash initialization and child creation but before ObservedGeneration is written. It preserves the
+// current and applied scheduling hashes so this test does not exercise legacy baseline initialization.
+//
+// The operator is stopped while the fixture status and scheduling edit are installed. Admission is
+// temporarily exempted only for the test PCS because the stopped operator has no webhook endpoints.
+// Admission is restored before restart, and the controller must select and execute the replacement itself.
+//
+// Scenario:
+//  1. Deploy workload2 and capture replica 0's original resources and initialized scheduling baseline.
+//  2. Block fresh standalone pod readiness, stop the operator, and clear only ObservedGeneration.
+//     Verify the hashes, specification, resource UIDs, and ordinary scaling progress are unchanged.
+//  3. Increase sg-x MinAvailable 1 -> 2 while stopped, restore admission, and resume the operator.
+//  4. Require a persisted same-index source-cleanup barrier while ObservedGeneration remains nil.
+//  5. Verify fresh PodClique, PCSG, and PodGangMap UIDs and the new sg-x anchor containing indices 0
+//     and 1 with no tail. Blocked readiness must keep recreation active and the scheduling target unapplied.
+//  6. Release readiness and verify recreation completion, 10 Ready pods, stable replacement UIDs, and
+//     ObservedGeneration matching the current metadata generation after the first successful reconciliation.
+func Test_RR17_ReplicaRecreationBeforeFirstCompletedReconcile(t *testing.T) {
+	tests.Logger.Info("1. Deploy workload2 and capture replica 0's resources and scheduling baseline")
+	tc, cleanup, _ := setupTest(t, testConfig{
+		workloadName: "workload2",
+		workloadYAML: "../../yaml/workload2.yaml",
+		workerNodes:  10,
+		expectedPods: 10,
+	})
+	t.Cleanup(cleanup)
+	updateutils.AssertGenerationHashConverged(tc)
+	before := requireReplicaSnapshot(t, tc)
+	require.NotNil(t, before.PCS.Status.ObservedGeneration)
+	require.Equal(t, before.PCS.Generation, *before.PCS.Status.ObservedGeneration)
+	require.Nil(t, before.PCS.Status.UpdateProgress, "the fixture must start without a recorded update")
+	require.Nil(t, before.PCS.Status.ScalingProgress, "the fixture must not contain ordinary scaling work")
+	want := expectedReplicaConfiguration{
+		StandaloneMinAvailable: 1, PCSGMinAvailable: 1, PCSGReplicas: 2,
+		PodGangMap: updateutils.ExpectedReplicaPodGangMap{
+			GenerationHash:      *before.PCS.Status.CurrentGenerationHash,
+			StandalonePodCounts: map[string]int32{"pc-a": 2},
+			PCSGName:            "sg-x", AnchorIndices: []int32{0}, TailIndices: []int32{1},
+		},
+	}
+	assertReplicaConfiguration(t, before, want)
+
+	tests.Logger.Info("2. Stop the operator and simulate interrupted provisioning by clearing only ObservedGeneration")
+	operatorKey := client.ObjectKey{Namespace: setup.OperatorNamespace, Name: setup.OperatorDeploymentName}
+	var deployment appsv1.Deployment
+	require.NoError(t, tc.Client.Get(tc.Ctx, operatorKey, &deployment))
+	require.NotNil(t, deployment.Spec.Replicas)
+	operatorReplicas := *deployment.Spec.Replicas
+	require.Positive(t, operatorReplicas)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(tc.Ctx), tc.Timeout)
+		defer cancel()
+		assert.NoError(t, setCoherentTestOperatorReplicas(ctx, tc, operatorReplicas))
+	})
+	require.NoError(t, kwok.ApplyStage(tc.Ctx, tc.Client, kwokStageReadyBlockedR0Path))
+	blockRemoved := false
+	t.Cleanup(func() {
+		if !blockRemoved {
+			assert.NoError(t, kwok.DeleteStage(tc.Ctx, tc.Client, kwokStageReadyBlockedR0Name))
+		}
+	})
+	updateutils.ExemptPCSFromAdmissionForUpgradeFixture(t, tc)
+	require.NoError(t, setCoherentTestOperatorReplicas(tc.Ctx, tc, 0))
+	pcs, err := updateutils.GetPCS(tc, tc.Workload.Name)
+	require.NoError(t, err)
+	originalPCS := pcs.DeepCopy()
+	pcs.Status.ObservedGeneration = nil
+	require.NoError(t, tc.Client.Status().Patch(tc.Ctx, pcs, client.MergeFrom(originalPCS)))
+	unobserved := requireReplicaSnapshot(t, tc)
+	require.Nil(t, unobserved.PCS.Status.ObservedGeneration)
+	require.Equal(t, before.PCS.Status.CurrentGenerationHash, unobserved.PCS.Status.CurrentGenerationHash)
+	require.Equal(t, before.PCS.Status.AppliedSchedulingConfigurationHash, unobserved.PCS.Status.AppliedSchedulingConfigurationHash)
+	require.Equal(t, before.PCS.Spec, unobserved.PCS.Spec)
+	require.Equal(t, before.PCS.Generation, unobserved.PCS.Generation)
+	require.Nil(t, unobserved.PCS.Status.UpdateProgress)
+	require.Nil(t, unobserved.PCS.Status.ScalingProgress)
+	assertReplicaResourceUIDsUnchanged(t, before, unobserved)
+
+	tests.Logger.Info("3. Edit sg-x MinAvailable while stopped, restore admission, and resume reconciliation")
+	require.NoError(t, triggerPCSGMinAvailableChange(tc, "sg-x", 2))
+	editedPCS, err := updateutils.GetPCS(tc, tc.Workload.Name)
+	require.NoError(t, err)
+	require.Nil(t, editedPCS.Status.ObservedGeneration)
+	require.Equal(t, unobserved.PCS.Generation+1, editedPCS.Generation)
+	require.Equal(t, unobserved.PCS.Spec.Replicas, editedPCS.Spec.Replicas, "the scheduling edit must not scale the PCS")
+	require.Equal(t, unobserved.PCS.Status.CurrentGenerationHash, editedPCS.Status.CurrentGenerationHash)
+	require.Equal(t, unobserved.PCS.Status.AppliedSchedulingConfigurationHash, editedPCS.Status.AppliedSchedulingConfigurationHash)
+	require.Nil(t, editedPCS.Status.UpdateProgress, "replacement selection must be performed by the controller")
+	updateutils.RestorePCSAdmissionAfterUpgradeFixture(t, tc)
+	require.NoError(t, setCoherentTestOperatorReplicas(tc.Ctx, tc, operatorReplicas))
+
+	tests.Logger.Info("4. Require source cleanup to complete without acknowledging the first reconciliation")
+	cleanupPCS, err := waitForSameIndexReplacementCleanup(tc, 0)
+	require.NoError(t, err, "an unobserved PCS must execute replacement source cleanup instead of retaining the source")
+	require.Nil(t, cleanupPCS.Status.ObservedGeneration, "source cleanup must not acknowledge an unfinished recreation")
+	require.Nil(t, cleanupPCS.Status.ScalingProgress, "replacement cleanup must not become ordinary scaling work")
+	target := requireSchedulingTargetChanged(t, unobserved.PCS, cleanupPCS)
+	cleanupProgress := requireActiveReplacement(t, cleanupPCS.Status.UpdateProgress, expectedReplicaReplacement{
+		SourcePCSReplicaIndex: 0, TargetPCSReplicaIndex: 0,
+	})
+
+	tests.Logger.Info("5. Verify fresh replacement resources and the new gang layout while readiness stays blocked")
+	want.PCSGMinAvailable = 2
+	want.PodGangMap.GenerationHash = target.GenerationHash
+	want.PodGangMap.AnchorIndices = []int32{0, 1}
+	want.PodGangMap.TailIndices = nil
+	recreated := requireRecreatedReplica(t, tc, unobserved, want)
+	require.Nil(t, recreated.PCS.Status.ObservedGeneration, "an unavailable replacement must keep the first reconciliation incomplete")
+	require.Nil(t, recreated.PCS.Status.ScalingProgress)
+	recreatedProgress := requireActiveReplacement(t, recreated.PCS.Status.UpdateProgress, expectedReplicaReplacement{
+		SourcePCSReplicaIndex: 0, TargetPCSReplicaIndex: 0,
+	})
+	require.Equal(t, cleanupProgress.Replacement.SourceCleanupCompletedAt, recreatedProgress.Replacement.SourceCleanupCompletedAt,
+		"target provisioning must preserve the confirmed source-cleanup barrier")
+
+	tests.Logger.Info("6. Release readiness and require recreation and the first successful reconciliation to complete")
+	require.NoError(t, kwok.DeleteStage(tc.Ctx, tc.Client, kwokStageReadyBlockedR0Name))
+	blockRemoved = true
+	updateutils.DeleteNotReadyPodsOnReplica(t, tc, 0)
+	requireReplicaRecreationConverged(t, tc, expectedReplicaRecreationCompletion{
+		GenerationHash: target.GenerationHash, SchedulingHash: target.SchedulingHash,
+		Replicas: 1, Pods: 10, PCSReplicaIndices: []int{0}, Configuration: want,
+	})
+	require.NoError(t, wait.PollUntilContextTimeout(tc.Ctx, tc.Interval, tc.Timeout, true, func(ctx context.Context) (bool, error) {
+		var pcs grovev1beta1.PodCliqueSet
+		if err := tc.Client.Get(ctx, client.ObjectKeyFromObject(editedPCS), &pcs); err != nil {
+			return false, err
+		}
+		return pcs.Status.ObservedGeneration != nil && *pcs.Status.ObservedGeneration == pcs.Generation, nil
+	}), "the first successful reconciliation must record the current observed generation")
+	final := requireReplicaSnapshot(t, tc)
+	require.NotNil(t, final.PCS.Status.ObservedGeneration)
+	require.Equal(t, editedPCS.Generation, final.PCS.Generation)
+	require.Equal(t, final.PCS.Generation, *final.PCS.Status.ObservedGeneration)
+	assertReplicaResourceUIDsUnchanged(t, recreated, final)
+}
+
 // replicaRecreationSnapshot captures the PCS and one replica's pc-a, sg-x, and PodGangMap resources.
 type replicaRecreationSnapshot struct {
 	PCS  *grovev1beta1.PodCliqueSet
