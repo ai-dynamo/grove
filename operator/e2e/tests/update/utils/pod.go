@@ -26,7 +26,6 @@ import (
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/pods"
-	"github.com/ai-dynamo/grove/operator/e2e/setup"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
 	"github.com/ai-dynamo/grove/operator/e2e/tests"
 	"github.com/ai-dynamo/grove/operator/e2e/waiter"
@@ -38,7 +37,6 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/util/wait"
 )
 
 // MaxUnavailablePods runs runUpdate (which triggers the rolling update and waits for it to complete)
@@ -92,39 +90,6 @@ func NotReadyPodForPCSG(tc *testctx.TestContext, pcsgConfigName string) func(*co
 		}
 		return pod.Labels[apicommon.LabelPodCliqueScalingGroup] == name && !podReady(pod)
 	}
-}
-
-// RestartOperator simulates a Grove operator crash by deleting its pod in the operator namespace and
-// waiting for the Deployment to bring up a fresh Ready replica. It lets a test assert the operator resumes
-// in-flight work from persisted state after a restart.
-func RestartOperator(tc *testctx.TestContext) error {
-	pm := pods.NewPodManager(tc.Client, tests.Logger)
-	before, err := pm.List(tc.Ctx, setup.OperatorNamespace, "")
-	if err != nil {
-		return fmt.Errorf("failed to list operator pods in %s: %w", setup.OperatorNamespace, err)
-	}
-	oldPodUIDs := make(map[types.UID]struct{}, len(before.Items))
-	for i := range before.Items {
-		oldPodUIDs[before.Items[i].UID] = struct{}{}
-		if err := tc.Client.Delete(tc.Ctx, &before.Items[i]); err != nil && !apierrors.IsNotFound(err) {
-			return fmt.Errorf("failed to delete operator pod %s: %w", before.Items[i].Name, err)
-		}
-	}
-	// Wait until exactly one operator pod, none of the deleted ones, is Ready.
-	return wait.PollUntilContextTimeout(tc.Ctx, tc.Interval, tc.Timeout, true, func(ctx context.Context) (bool, error) {
-		current, err := pm.List(ctx, setup.OperatorNamespace, "")
-		if err != nil {
-			return false, nil //nolint:nilerr // Retry transient API read failures until the polling deadline.
-		}
-		if len(current.Items) != 1 {
-			return false, nil
-		}
-		pod := &current.Items[0]
-		if _, isOld := oldPodUIDs[pod.UID]; isOld {
-			return false, nil
-		}
-		return kubeutils.IsPodReady(pod), nil
-	})
 }
 
 // VerifyPodHasUpdatedSpec verifies that a pod has the UPDATE_TRIGGER environment variable,

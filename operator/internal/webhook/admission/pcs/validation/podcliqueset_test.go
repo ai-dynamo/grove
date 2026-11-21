@@ -636,7 +636,7 @@ func TestPodCliqueUpdateValidation(t *testing.T) {
 			// Create validator and validate update
 			validator := newPCSValidator(newPCS, admissionv1.Update, defaultTASConfig(), groveconfigv1beta1.SchedulerConfiguration{Profiles: []groveconfigv1beta1.SchedulerProfile{{Name: groveconfigv1beta1.SchedulerNameKube}}, DefaultProfileName: string(groveconfigv1beta1.SchedulerNameKube)}, nil, testutils.NewDefaultFakeRegistry())
 			fldPath := field.NewPath("spec").Child("template").Child("cliques")
-			validationErrors := validator.validatePodCliqueUpdate(oldPCS.Spec.Template.Cliques, fldPath)
+			validationErrors := validator.validatePodCliqueUpdate(oldPCS, fldPath)
 
 			if tc.expectError {
 				assert.NotEmpty(t, validationErrors, "Expected validation errors for test case: %s", tc.name)
@@ -694,6 +694,7 @@ func TestImmutableFieldsValidation(t *testing.T) {
 			name: "Valid: MinAvailable can be updated",
 			setupOldPCS: func() *grovecorev1beta1.PodCliqueSet {
 				pcs := createTestPodCliqueSet("test")
+				pcs.Status.AppliedSchedulingConfigurationHash = new("initialized")
 				pcs.Spec.Template.Cliques[0].Spec.MinAvailable = ptr.To(int32(1))
 				return pcs
 			},
@@ -849,6 +850,102 @@ func TestImmutableFieldsValidation(t *testing.T) {
 				assert.Contains(t, err.Error(), tc.expectedErrMsg, "Error message should contain expected text")
 			} else {
 				assert.NoError(t, err, "Expected no validation error for test case: %s", tc.name)
+			}
+		})
+	}
+}
+
+// TestMinAvailableUpdatesRequireSchedulingBaseline verifies admission uses the old PCS's applied baseline.
+// Effective defaults are compared by value, and scheduling changes remain allowed after initialization even
+// when ObservedGeneration is nil. The guard must not block unrelated template changes.
+func TestMinAvailableUpdatesRequireSchedulingBaseline(t *testing.T) {
+	t.Parallel()
+	components := []struct {
+		name                string
+		cliqueName          string
+		scalingGroupName    string
+		defaultMinAvailable int32
+		fieldPath           string
+	}{
+		{name: "standalone clique", cliqueName: "frontend", defaultMinAvailable: 3, fieldPath: "spec.template.cliques[0].spec.minAvailable"},
+		{name: "scaling-group member clique", cliqueName: "worker", defaultMinAvailable: 3, fieldPath: "spec.template.cliques[1].spec.minAvailable"},
+		{name: "scaling group", scalingGroupName: "sg-y", defaultMinAvailable: 1, fieldPath: "spec.template.podCliqueScalingGroups[1].minAvailable"},
+	}
+	for _, component := range components {
+		t.Run(component.name, func(t *testing.T) {
+			t.Parallel()
+			buildPCS := func(appliedHash *string, minAvailable *int32) *grovecorev1beta1.PodCliqueSet {
+				builder := testutils.NewPodCliqueSetBuilder("test-pcs", "default", "pcs-uid").
+					WithPodCliqueSetGenerationHash(new("legacy")).
+					WithAppliedSchedulingConfigurationHash(appliedHash)
+				for _, name := range []string{"frontend", "worker", "peer"} {
+					cliqueMinAvailable := new(int32(1))
+					if name == component.cliqueName {
+						cliqueMinAvailable = minAvailable
+					}
+					clique := testutils.NewPodCliqueTemplateSpecBuilder(name).WithReplicas(3)
+					if cliqueMinAvailable != nil {
+						clique.WithMinAvailable(*cliqueMinAvailable)
+					}
+					builder.WithPodCliqueTemplateSpec(clique.Build())
+				}
+				for _, config := range []grovecorev1beta1.PodCliqueScalingGroupConfig{
+					{Name: "sg-x", CliqueNames: []string{"worker"}, Replicas: new(int32(2)), MinAvailable: new(int32(1))},
+					{Name: "sg-y", CliqueNames: []string{"peer"}, Replicas: new(int32(2)), MinAvailable: new(int32(1))},
+				} {
+					if config.Name == component.scalingGroupName {
+						config.MinAvailable = minAvailable
+					}
+					builder.WithPodCliqueScalingGroupConfig(config)
+				}
+				return builder.Build()
+			}
+			tests := []struct {
+				name              string
+				oldAppliedHash    *string
+				newAppliedHash    *string
+				oldMinAvailable   *int32
+				newMinAvailable   *int32
+				changeAnnotations bool
+				wantForbidden     bool
+			}{
+				{name: "missing baseline rejects an increase", oldMinAvailable: new(int32(1)), newMinAvailable: new(int32(2)), wantForbidden: true},
+				{name: "missing baseline rejects a decrease", oldMinAvailable: new(int32(2)), newMinAvailable: new(int32(1)), wantForbidden: true},
+				{name: "initialized baseline permits a change", oldAppliedHash: new("initialized"), newMinAvailable: new(int32(2)), oldMinAvailable: new(int32(1))},
+				{name: "unchanged value needs no baseline", oldMinAvailable: new(int32(1)), newMinAvailable: new(int32(1))},
+				{name: "new status cannot claim initialization", newAppliedHash: new("claimed"), oldMinAvailable: new(int32(1)), newMinAvailable: new(int32(2)), wantForbidden: true},
+				{name: "old initialized status permits a change even when new status omits it", oldAppliedHash: new("initialized"), oldMinAvailable: new(int32(1)), newMinAvailable: new(int32(2))},
+				{name: "nil and explicit default are equivalent", newMinAvailable: new(component.defaultMinAvailable)},
+				{name: "explicit default and nil are equivalent", oldMinAvailable: new(component.defaultMinAvailable)},
+				{name: "nil defaults are unchanged"},
+				{name: "changed effective default needs a baseline", newMinAvailable: new(component.defaultMinAvailable + 1), wantForbidden: true},
+				{name: "unrelated annotations need no baseline", oldMinAvailable: new(int32(1)), newMinAvailable: new(int32(1)), changeAnnotations: true},
+			}
+			for _, tc := range tests {
+				t.Run(tc.name, func(t *testing.T) {
+					t.Parallel()
+					oldPCS := buildPCS(tc.oldAppliedHash, tc.oldMinAvailable)
+					newPCS := buildPCS(tc.newAppliedHash, tc.newMinAvailable)
+					if tc.changeAnnotations {
+						newPCS.Spec.Template.Cliques[0].Annotations = map[string]string{"revision": "new"}
+					}
+					beforeOld, beforeNew := oldPCS.DeepCopy(), newPCS.DeepCopy()
+					validator := newPCSValidator(newPCS, admissionv1.Update, defaultTASConfig(),
+						groveconfigv1beta1.SchedulerConfiguration{}, nil, testutils.NewDefaultFakeRegistry())
+
+					errs := validator.validatePodCliqueSetTemplateSpecUpdate(oldPCS, field.NewPath("spec", "template"))
+
+					if tc.wantForbidden {
+						require.Len(t, errs, 1)
+						assert.Equal(t, field.ErrorTypeForbidden, errs[0].Type)
+						assert.Equal(t, component.fieldPath, errs[0].Field)
+						assert.Equal(t, "scheduling configuration is not initialized yet. Retry after Grove initializes it", errs[0].Detail)
+					} else {
+						assert.Empty(t, errs, "unchanged or initialized scheduling must be admitted")
+					}
+					assert.Equal(t, beforeOld, oldPCS, "admission must not mutate the old object")
+					assert.Equal(t, beforeNew, newPCS, "admission must not mutate the new object")
+				})
 			}
 		})
 	}
@@ -1053,6 +1150,7 @@ func TestPodCliqueScalingGroupConfigsUpdateValidation(t *testing.T) {
 			// Create old and new PCS objects
 			oldPCS := createTestPodCliqueSet("test")
 			oldPCS.Spec.Template.PodCliqueScalingGroupConfigs = tc.oldConfigs
+			oldPCS.Status.AppliedSchedulingConfigurationHash = new("initialized")
 
 			newPCS := createTestPodCliqueSet("test")
 			newPCS.Spec.Template.PodCliqueScalingGroupConfigs = tc.newConfigs
@@ -1060,7 +1158,7 @@ func TestPodCliqueScalingGroupConfigsUpdateValidation(t *testing.T) {
 			// Create validator and validate update
 			validator := newPCSValidator(newPCS, admissionv1.Update, defaultTASConfig(), groveconfigv1beta1.SchedulerConfiguration{Profiles: []groveconfigv1beta1.SchedulerProfile{{Name: groveconfigv1beta1.SchedulerNameKube}}, DefaultProfileName: string(groveconfigv1beta1.SchedulerNameKube)}, nil, testutils.NewDefaultFakeRegistry())
 			fldPath := field.NewPath("spec", "template", "podCliqueScalingGroupConfigs")
-			validationErrors := validator.validatePodCliqueScalingGroupConfigsUpdate(tc.oldConfigs, fldPath)
+			validationErrors := validator.validatePodCliqueScalingGroupConfigsUpdate(oldPCS, fldPath)
 
 			if tc.expectedErrors {
 				assert.NotEmpty(t, validationErrors, "Expected validation errors for test case: %s", tc.name)
@@ -2045,6 +2143,7 @@ func TestPodTemplateUpdatesDuringReplicaRecreation(t *testing.T) {
 						WithPodCliqueTemplateSpec(&grovecorev1beta1.PodCliqueTemplateSpec{Name: "member", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 2, MinAvailable: ptr.To[int32](1), PodSpec: corev1.PodSpec{Containers: []corev1.Container{{Name: "workload", Image: "s1-member"}}}}}).
 						WithPodCliqueScalingGroupConfig(grovecorev1beta1.PodCliqueScalingGroupConfig{Name: "group", CliqueNames: []string{"member"}, Replicas: ptr.To[int32](2), MinAvailable: ptr.To[int32](1)}).
 						WithUpdateStrategy(&grovecorev1beta1.PodCliqueSetUpdateStrategy{Type: strategy}).
+						WithAppliedSchedulingConfigurationHash(new("initialized")).
 						WithUpdateProgress(tc.progress.DeepCopy()).Build()
 					newPCS := oldPCS.DeepCopy()
 					tc.mutate(newPCS)

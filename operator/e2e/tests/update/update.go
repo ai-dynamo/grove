@@ -86,7 +86,7 @@ type testConfig struct {
 // Returns:
 //   - tc: TestContext for the test
 //   - cleanup: Function that should be deferred by the caller (stops tracker and cleans up cluster)
-//   - tracker: Started update tracker - caller can use tracker.GetEvents() after stopping
+//   - tracker: Started update tracker - caller can use tracker.Events() after stopping
 func setupTest(t *testing.T, cfg testConfig) (*testctx.TestContext, func(), *updateutils.UpdateTracker) {
 	t.Helper()
 	ctx := context.Background()
