@@ -16,13 +16,20 @@ package clustertopology
 
 import (
 	"context"
+	"fmt"
+	"net"
+	"net/url"
+	"os"
+	"syscall"
 	"testing"
+	"time"
 
 	apicommonconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler/kai"
+	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 	schedulertest "github.com/ai-dynamo/grove/operator/test/utils/scheduler"
 
@@ -34,6 +41,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/uuid"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -149,6 +157,91 @@ func TestSynchronizeTopologyListError(t *testing.T) {
 
 	err := SynchronizeTopology(ctx, cl, logger, newKAIBackendMap(t, cl))
 	assert.Error(t, err)
+}
+
+// TestSynchronizeTopologyRetriedAfterTransientListErrors verifies that an API status error and a
+// connection error returned by the list call are both retried through the error wrapping that
+// SynchronizeTopology adds, and that the synchronization completes once the list call succeeds.
+func TestSynchronizeTopologyRetriedAfterTransientListErrors(t *testing.T) {
+	ctx := context.Background()
+	ct := createTestClusterTopology(topologyName, []grovecorev1beta1.TopologyLevel{
+		{Domain: grovecorev1beta1.TopologyDomainHost, Key: "kubernetes.io/hostname"},
+	})
+	connectionRefused := &url.Error{Op: "Get", URL: "https://10.96.0.1:443/apis", Err: &net.OpError{
+		Op: "dial", Net: "tcp", Err: os.NewSyscallError("connect", syscall.ECONNREFUSED),
+	}}
+	cl := &flakyClient{
+		Client:   schedulertest.NewKAIClient(t, ct),
+		listErrs: []error{apierrors.NewServiceUnavailable("unavailable"), connectionRefused},
+	}
+	backends := newKAIBackendMap(t, cl)
+
+	var retries []int
+	err := k8sutils.RetryOnError(ctx, testRetryBackoff, k8sutils.IsRetriableError,
+		func(attempt int, _ error) { retries = append(retries, attempt) },
+		func(ctx context.Context) error {
+			return SynchronizeTopology(ctx, cl, logr.Discard(), backends)
+		})
+
+	require.NoError(t, err)
+	assert.Equal(t, 3, cl.listCalls)
+	assert.Equal(t, []int{1, 2}, retries)
+	require.NoError(t, cl.Get(ctx, client.ObjectKey{Name: topologyName}, &kaitopologyv1alpha1.Topology{}))
+}
+
+// TestSynchronizeTopologyRetriedAfterPartialSync verifies that repeating the whole synchronization
+// after it failed midway is safe: the topology that was already created is left alone and the one
+// that failed is created.
+func TestSynchronizeTopologyRetriedAfterPartialSync(t *testing.T) {
+	ctx := context.Background()
+	ct1 := createTestClusterTopology("topology-a", []grovecorev1beta1.TopologyLevel{
+		{Domain: grovecorev1beta1.TopologyDomainZone, Key: "topology.kubernetes.io/zone"},
+	})
+	ct2 := createTestClusterTopology("topology-b", []grovecorev1beta1.TopologyLevel{
+		{Domain: grovecorev1beta1.TopologyDomainHost, Key: "kubernetes.io/hostname"},
+	})
+	cl := &flakyClient{
+		Client:     schedulertest.NewKAIClient(t, ct1, ct2),
+		createErrs: map[string][]error{"topology-b": {apierrors.NewInternalError(assert.AnError)}},
+	}
+	backends := newKAIBackendMap(t, cl)
+
+	err := k8sutils.RetryOnError(ctx, testRetryBackoff, k8sutils.IsRetriableError, nil,
+		func(ctx context.Context) error {
+			return SynchronizeTopology(ctx, cl, logr.Discard(), backends)
+		})
+
+	require.NoError(t, err)
+	assert.Equal(t, 2, cl.listCalls)
+	assert.Equal(t, map[string]int{"topology-a": 1, "topology-b": 2}, cl.createCalls)
+	for _, ct := range []*grovecorev1beta1.ClusterTopologyBinding{ct1, ct2} {
+		kaiTopology := &kaitopologyv1alpha1.Topology{}
+		require.NoError(t, cl.Get(ctx, client.ObjectKey{Name: ct.Name}, kaiTopology))
+		assert.True(t, metav1.IsControlledBy(kaiTopology, ct))
+	}
+}
+
+// TestSynchronizeTopologyNotRetriedOnPermanentListError verifies that a permanent error is
+// returned after a single attempt.
+func TestSynchronizeTopologyNotRetriedOnPermanentListError(t *testing.T) {
+	ctx := context.Background()
+	forbidden := apierrors.NewForbidden(
+		schema.GroupResource{Group: apicommonconstants.OperatorGroupName, Resource: "clustertopologybindings"}, "", assert.AnError)
+	cl := &flakyClient{
+		Client:   schedulertest.NewKAIClient(t),
+		listErrs: []error{forbidden, forbidden, forbidden},
+	}
+	backends := newKAIBackendMap(t, cl)
+
+	err := k8sutils.RetryOnError(ctx, testRetryBackoff, k8sutils.IsRetriableError,
+		func(int, error) { t.Error("a permanent error must not be retried") },
+		func(ctx context.Context) error {
+			return SynchronizeTopology(ctx, cl, logr.Discard(), backends)
+		})
+
+	require.Error(t, err)
+	assert.True(t, apierrors.IsForbidden(err))
+	assert.Equal(t, 1, cl.listCalls)
 }
 
 func TestGetClusterTopologyLevels(t *testing.T) {
@@ -292,6 +385,41 @@ func TestBuildSchedulerReferenceMap(t *testing.T) {
 	assert.Equal(t, "kai-topo", m["kai-scheduler"].TopologyReference)
 	assert.Nil(t, m["nonexistent"])
 	assert.Empty(t, BuildSchedulerReferenceMap(nil))
+}
+
+var testRetryBackoff = wait.Backoff{Duration: time.Millisecond, Factor: 1.0, Steps: 5}
+
+// flakyClient returns the queued errors, in order, from List and from Create of the named object
+// before delegating to the wrapped client. It also counts the calls.
+type flakyClient struct {
+	client.Client
+	listErrs    []error
+	createErrs  map[string][]error
+	listCalls   int
+	createCalls map[string]int
+}
+
+func (c *flakyClient) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
+	c.listCalls++
+	if len(c.listErrs) > 0 {
+		err := c.listErrs[0]
+		c.listErrs = c.listErrs[1:]
+		return err
+	}
+	return c.Client.List(ctx, list, opts...)
+}
+
+func (c *flakyClient) Create(ctx context.Context, obj client.Object, opts ...client.CreateOption) error {
+	if c.createCalls == nil {
+		c.createCalls = map[string]int{}
+	}
+	name := obj.GetName()
+	c.createCalls[name]++
+	if errs := c.createErrs[name]; len(errs) > 0 {
+		c.createErrs[name] = errs[1:]
+		return fmt.Errorf("create %s: %w", name, errs[0])
+	}
+	return c.Client.Create(ctx, obj, opts...)
 }
 
 func newKAIBackendMap(t *testing.T, cl client.Client) map[string]scheduler.TopologyAwareBackend {
