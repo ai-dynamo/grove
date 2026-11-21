@@ -1,0 +1,43 @@
+# Workload for the scale-in cost tests: three replicas of one standalone PodClique with two pods each, so a
+# PodCliqueSet replica is a gang of two pods and a mark on one of them speaks for the replica.
+# minAvailable equals replicas so that losing one pod's readiness makes the replica unavailable. The
+# terminationDelay is long enough that gang termination never runs during a test.
+apiVersion: grove.io/v1beta1
+kind: PodCliqueSet
+metadata:
+  name: pcs-scale-in-cost
+  labels:
+    app: pcs-scale-in-cost
+spec:
+  replicas: 3
+  template:
+    terminationDelay: 10m
+    cliques:
+      - name: worker
+        spec:
+          roleName: worker
+          replicas: 2
+          minAvailable: 2
+          podSpec:
+            terminationGracePeriodSeconds: 0
+            schedulerName: default-scheduler
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: type
+                          operator: In
+                          values:
+                            - kwok
+            tolerations:
+              - key: node_role.e2e.grove.nvidia.com
+                operator: Equal
+                value: agent
+                effect: NoSchedule
+            containers:
+              - name: worker
+                image: registry:5001/nginx:alpine-slim
+                resources:
+                  requests:
+                    memory: 1Mi

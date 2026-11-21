@@ -60,6 +60,10 @@ config.yaml: |
   topologyAwareScheduling:
     enabled: {{ .Values.config.topologyAwareScheduling.enabled }}
   {{- end }}
+  {{- if and .Values.config.scaleIn .Values.config.scaleIn.costSource }}
+  scaleIn:
+    costSource: {{ .Values.config.scaleIn.costSource }}
+  {{- end }}
   {{- if .Values.config.authorizer.enabled }}
   authorizer:
     enabled: {{ .Values.config.authorizer.enabled }}

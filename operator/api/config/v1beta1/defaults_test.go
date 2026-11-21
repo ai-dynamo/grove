@@ -124,3 +124,16 @@ func TestSetDefaults_SchedulerConfiguration(t *testing.T) {
 		})
 	}
 }
+
+func TestSetDefaults_OperatorConfigurationScaleIn(t *testing.T) {
+	t.Run("empty cost source defaults to none", func(t *testing.T) {
+		cfg := &OperatorConfiguration{}
+		SetDefaults_OperatorConfiguration(cfg)
+		assert.Equal(t, ScaleInCostSourceNone, cfg.ScaleIn.CostSource)
+	})
+	t.Run("a configured cost source is kept", func(t *testing.T) {
+		cfg := &OperatorConfiguration{ScaleIn: ScaleInConfiguration{CostSource: ScaleInCostSourcePodDeletionCost}}
+		SetDefaults_OperatorConfiguration(cfg)
+		assert.Equal(t, ScaleInCostSourcePodDeletionCost, cfg.ScaleIn.CostSource)
+	})
+}

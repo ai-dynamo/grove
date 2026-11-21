@@ -2543,6 +2543,39 @@ _Appears in:_
 | `concurrentSyncs` _integer_ | ConcurrentSyncs is the number of workers used for the controller to concurrently work on events. |  |  |
 
 
+#### ScaleInConfiguration
+
+
+
+ScaleInConfiguration configures how a scale-in chooses what to remove.
+
+
+
+_Appears in:_
+- [OperatorConfiguration](#operatorconfiguration)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `costSource` _[ScaleInCostSourceName](#scaleincostsourcename)_ | CostSource names where a pod's scale-in cost is read from. Within the availability order a<br />scale-in already applies, the candidates with the lowest cost are removed first: a PodCliqueSet<br />replica's cost is the minimum over its pods, and a PodClique's pods are ordered by their own cost.<br />With "none" every pod costs 0 and selection is unchanged.<br />Default: none |  |  |
+
+
+#### ScaleInCostSourceName
+
+_Underlying type:_ _string_
+
+ScaleInCostSourceName names a source of per-pod scale-in costs.
+
+
+
+_Appears in:_
+- [ScaleInConfiguration](#scaleinconfiguration)
+
+| Field | Description |
+| --- | --- |
+| `none` | ScaleInCostSourceNone reads no cost: every pod costs 0 and a scale-in selects in the order Grove<br />produces without a cost. This is the default.<br /> |
+| `pod-deletion-cost` | ScaleInCostSourcePodDeletionCost reads the value of the controller.kubernetes.io/pod-deletion-cost<br />annotation on each pod, the key a ReplicaSet reads.<br /> |
+
+
 #### SchedulerConfiguration
 
 

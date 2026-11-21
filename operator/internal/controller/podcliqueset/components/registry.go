@@ -33,6 +33,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/service"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/serviceaccount"
 	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/sync"
+	"github.com/ai-dynamo/grove/operator/internal/scalein"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 
 	"k8s.io/client-go/tools/record"
@@ -47,7 +48,8 @@ func CreateOperatorRegistry(mgr manager.Manager,
 	topologyAwareSchedulingConfig configv1beta1.TopologyAwareSchedulingConfiguration,
 	networkConfig configv1beta1.NetworkAcceleration,
 	schedRegistry scheduler.Registry,
-	scalingProgressExpectations *pcssync.ScalingProgressExpectations) component.OperatorRegistry[v1beta1.PodCliqueSet, pcssync.State, pcssync.Result] {
+	scalingProgressExpectations *pcssync.ScalingProgressExpectations,
+	scaleInCostSource scalein.CostSource) component.OperatorRegistry[v1beta1.PodCliqueSet, pcssync.State, pcssync.Result] {
 	cl := mgr.GetClient()
 	reg := component.NewOperatorRegistry[v1beta1.PodCliqueSet, pcssync.State, pcssync.Result]()
 	reg.Register(component.KindPodClique, podclique.New(cl, mgr.GetScheme(), eventRecorder))
@@ -62,7 +64,7 @@ func CreateOperatorRegistry(mgr manager.Manager,
 	reg.Register(component.KindPodGang, podgang.New(cl, mgr.GetScheme(), eventRecorder, topologyAwareSchedulingConfig, schedRegistry))
 	reg.Register(component.KindPodGangMap, podgangmap.New(cl, mgr.GetScheme(), clock.RealClock{}))
 	reg.Register(component.KindPodGangMigrator, podgangmigrator.New(cl, mgr.GetScheme(), schedRegistry))
-	reg.Register(component.KindPodCliqueSetReplica, podcliquesetreplica.New(cl, eventRecorder, scalingProgressExpectations))
+	reg.Register(component.KindPodCliqueSetReplica, podcliquesetreplica.New(cl, eventRecorder, scalingProgressExpectations, scaleInCostSource))
 	if computedomain.ShouldRegister(mgr.GetRESTMapper(), networkConfig.AutoMNNVLEnabled, ctrl.Log.WithName("computedomain")) {
 		reg.Register(component.KindComputeDomain, computedomain.New(cl, mgr.GetScheme(), eventRecorder, !networkConfig.AutoMNNVLEnabled))
 	}

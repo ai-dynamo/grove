@@ -48,6 +48,32 @@ var (
 	AllLogFormats = []LogFormat{LogFormatJSON, LogFormatText}
 )
 
+// ScaleInCostSourceName names a source of per-pod scale-in costs.
+type ScaleInCostSourceName string
+
+const (
+	// ScaleInCostSourceNone reads no cost: every pod costs 0 and a scale-in selects in the order Grove
+	// produces without a cost. This is the default.
+	ScaleInCostSourceNone ScaleInCostSourceName = "none"
+	// ScaleInCostSourcePodDeletionCost reads the value of the controller.kubernetes.io/pod-deletion-cost
+	// annotation on each pod, the key a ReplicaSet reads.
+	ScaleInCostSourcePodDeletionCost ScaleInCostSourceName = "pod-deletion-cost"
+)
+
+// AllScaleInCostSourceNames is a slice of all supported scale-in cost sources.
+var AllScaleInCostSourceNames = []ScaleInCostSourceName{ScaleInCostSourceNone, ScaleInCostSourcePodDeletionCost}
+
+// ScaleInConfiguration configures how a scale-in chooses what to remove.
+type ScaleInConfiguration struct {
+	// CostSource names where a pod's scale-in cost is read from. Within the availability order a
+	// scale-in already applies, the candidates with the lowest cost are removed first: a PodCliqueSet
+	// replica's cost is the minimum over its pods, and a PodClique's pods are ordered by their own cost.
+	// With "none" every pod costs 0 and selection is unchanged.
+	// Default: none
+	// +optional
+	CostSource ScaleInCostSourceName `json:"costSource,omitempty"`
+}
+
 // SchedulerName defines the name of the scheduler backend (used in OperatorConfiguration scheduler.profiles[].name).
 type SchedulerName string
 
@@ -137,6 +163,9 @@ type OperatorConfiguration struct {
 	Network NetworkAcceleration `json:"network,omitempty"` // Network is the configuration for network acceleration features like MNNVL.
 	// Scheduler configures which scheduler backends are active and their per-backend options.
 	Scheduler SchedulerConfiguration `json:"scheduler"`
+	// ScaleIn configures how a scale-in chooses what to remove.
+	// +optional
+	ScaleIn ScaleInConfiguration `json:"scaleIn,omitempty"`
 }
 
 // LeaderElectionConfiguration defines the configuration for the leader election.

@@ -118,6 +118,10 @@ See the [Certificate Management Guide](user-guide/certificate-management.md) for
 
 On clusters with NVIDIA MNNVL support, you can enable automatic Multi-Node NVLink for GPU workloads by setting `config.network.autoMNNVLEnabled: true` in the operator configuration (e.g. via Helm `--set config.network.autoMNNVLEnabled=true`). See the [Auto MNNVL user guide](user-guide/auto-mnnvl.md) for prerequisites, enabling the feature, and usage.
 
+## Scale-in cost
+
+By default a scale-in removes replicas and pods in Grove's own order. To let a platform controller steer which ones leave first, for example the gang on a node being drained, set `config.scaleIn.costSource: pod-deletion-cost` in the operator configuration (e.g. via Helm `--set config.scaleIn.costSource=pod-deletion-cost`). Grove then reads the standard `controller.kubernetes.io/pod-deletion-cost` annotation off the pods when a scale-in chooses. See the [scale-in cost user guide](user-guide/scale-in-cost.md).
+
 ## Verify Installation
 
 Follow the instructions in the [quickstart guide](quickstart.md) to deploy a PodCliqueSet and validate your installation.
