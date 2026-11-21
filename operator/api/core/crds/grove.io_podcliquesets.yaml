@@ -9395,8 +9395,10 @@ spec:
                               - containers
                               type: object
                             replicas:
-                              description: Replicas is the number of replicas of the
-                                pods in the clique. It cannot be less than 1.
+                              description: |-
+                                Replicas is the number of replicas of the pods in the clique. It cannot be less than 1.
+                                In a PodCliqueSet clique template, a change applies only to PodCliques created from now on;
+                                existing ones must be scaled directly with kubectl scale pclq.
                               format: int32
                               type: integer
                             roleName:
@@ -20842,8 +20844,10 @@ spec:
                               - containers
                               type: object
                             replicas:
-                              description: Replicas is the number of replicas of the
-                                pods in the clique. It cannot be less than 1.
+                              description: |-
+                                Replicas is the number of replicas of the pods in the clique. It cannot be less than 1.
+                                In a PodCliqueSet clique template, a change applies only to PodCliques created from now on;
+                                existing ones must be scaled directly with kubectl scale pclq.
                               format: int32
                               type: integer
                             roleName:
