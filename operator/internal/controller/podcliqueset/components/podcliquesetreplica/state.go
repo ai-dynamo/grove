@@ -24,24 +24,25 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 )
 
-// computePCSReplicaState builds the component-facing state by overlaying the scaling indices and persisted
-// replacement progress onto the observed replica identities. expectedReplicaIndices carries the expected set
+// computePCSReplicaState builds the component-facing state by overlaying scaling indices and persisted replacement
+// progress onto the expected replica identities. Before the first completed reconciliation, the base identities
+// are the contiguous range for the desired replica count. Otherwise, expectedReplicaIndices supplies the set
 // implied by scaling alone, computed once by the caller.
-// For an observed PCS, retired sources are cleanup-only indices. They remain in scale-in even when absent,
-// and are excluded from expected and scale-out indices.
+// Retired sources are cleanup-only indices. They remain in scale-in even when absent, and are excluded from
+// expected and scale-out indices.
 func computePCSReplicaState(
 	pcs *grovecorev1beta1.PodCliqueSet,
 	scalingIndices pcsReplicaScalingIndices,
 	expectedReplicaIndices sets.Set[int],
 	replacementGroups pcsReplicaReplacementGroups) pcssync.State {
-	// An unobserved PCS is still being provisioned for the first time. Its expected identities are the
-	// contiguous range for the desired replica count and require no scaling reservations.
+	// Before the first completed reconciliation, observed resources may cover only part of the desired replicas.
+	// Use the initial contiguous range as the base, but still honor persisted replacement work.
 	if pcs.Status.ObservedGeneration == nil {
-		return pcssync.State{ExpectedReplicaIndices: lo.Range(int(pcs.Spec.Replicas))}
+		expectedReplicaIndices = sets.New(lo.Range(int(pcs.Spec.Replicas))...)
+	} else {
+		// The overlay mutates the index sets, so clone the caller's expected set to avoid aliasing.
+		expectedReplicaIndices = expectedReplicaIndices.Clone()
 	}
-
-	// The overlay mutates the index sets, so clone the caller's expected set to avoid aliasing.
-	expectedReplicaIndices = expectedReplicaIndices.Clone()
 	scaleOutReplicaIndices := sets.New(scalingIndices.scaleOut...)
 	scaleInReplicaIndices := sets.New(scalingIndices.scaleIn...)
 
