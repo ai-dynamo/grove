@@ -16,6 +16,8 @@ package pod
 
 import (
 	"context"
+	"fmt"
+	"math/rand"
 	"slices"
 	"testing"
 	"time"
@@ -89,9 +91,9 @@ func TestSyncPCSGPodIndexLabels(t *testing.T) {
 	assert.Equal(t, types.UID("unchanged-uid"), updatedPod.UID)
 }
 
-// TestIsPodInPodReferences verifies isPodInPodReferences reports whether a pod appears in the
-// PodGroup for a given PodClique FQN.
-func TestIsPodInPodReferences(t *testing.T) {
+// TestPodNamesInClique verifies podNamesInClique reports the set of pod names recorded in the
+// PodGroup for a given PodClique FQN, and nil when the PodClique is not part of the PodGang.
+func TestPodNamesInClique(t *testing.T) {
 	podGang := testutils.NewPodGangBuilder(podGangNameForEpoch(testAnchor0Epoch), testNamespace).
 		WithPodGroupPods(testCliqueName, "pod-a", "pod-b").
 		Build()
@@ -107,7 +109,7 @@ func TestIsPodInPodReferences(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			actual := isPodInPodReferences(podGang, tc.pclqFQN, tc.podName)
+			_, actual := podNamesInClique(podGang, tc.pclqFQN)[tc.podName]
 			assert.Equal(t, tc.expected, actual)
 		})
 	}
@@ -141,7 +143,14 @@ func TestCanRemoveSchedulingGate(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			actual := canRemoveSchedulingGate(logr.Discard(), pod, testCliqueName, tc.podGangByName, tc.dependencySatisfiedByEpoch)
+			podNamesByGangName := make(map[string]map[string]struct{}, len(tc.podGangByName))
+			for podGangName, podGang := range tc.podGangByName {
+				if podGang == nil {
+					continue
+				}
+				podNamesByGangName[podGangName] = podNamesInClique(podGang, testCliqueName)
+			}
+			actual := canRemoveSchedulingGate(logr.Discard(), pod, tc.podGangByName, podNamesByGangName, tc.dependencySatisfiedByEpoch)
 			assert.Equal(t, tc.expected, actual)
 		})
 	}
@@ -772,4 +781,54 @@ func TestListPredecessorPods(t *testing.T) {
 	pods, err := r.listPredecessorPods(context.Background(), pclq)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"predecessor"}, lo.Map(pods, func(pod *corev1.Pod, _ int) string { return pod.Name }))
+}
+
+// oldScanPodInPodReferences replicates the linear PodReferences scan that
+// checkAndRemovePodSchedulingGates performed per gated pod before the per-sync precomputation.
+// It is kept here only to property-test that podNamesInClique preserves the exact semantics.
+func oldScanPodInPodReferences(podGang *groveschedulerv1alpha1.PodGang, pclqFQN, podName string) bool {
+	for _, podGroup := range podGang.Spec.PodGroups {
+		if podGroup.Name != pclqFQN {
+			continue
+		}
+		for _, ref := range podGroup.PodReferences {
+			if ref.Name == podName {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// TestPodNamesInCliqueEquivalentToLinearScan fuzz-compares podNamesInClique membership against
+// the previous linear scan over randomized PodGang shapes, covering duplicate PodReferences,
+// duplicate PodGroup names, empty reference lists, names recorded only under a different
+// PodClique's PodGroup, and PodGangs with no matching PodGroup.
+func TestPodNamesInCliqueEquivalentToLinearScan(t *testing.T) {
+	rng := rand.New(rand.NewSource(42))
+	cliqueNames := []string{"clique-a", "clique-b", "clique-c"}
+	namePool := make([]string, 0, 40)
+	for i := 0; i < 40; i++ {
+		namePool = append(namePool, fmt.Sprintf("pod-%d", i))
+	}
+	for iter := 0; iter < 20000; iter++ {
+		podGang := &groveschedulerv1alpha1.PodGang{}
+		numGroups := rng.Intn(4)
+		for g := 0; g < numGroups; g++ {
+			group := groveschedulerv1alpha1.PodGroup{Name: cliqueNames[rng.Intn(len(cliqueNames))]}
+			numRefs := rng.Intn(8)
+			for r := 0; r < numRefs; r++ {
+				group.PodReferences = append(group.PodReferences, groveschedulerv1alpha1.NamespacedName{
+					Name: namePool[rng.Intn(len(namePool))],
+				})
+			}
+			podGang.Spec.PodGroups = append(podGang.Spec.PodGroups, group)
+		}
+		set := podNamesInClique(podGang, "clique-a")
+		for _, candidate := range namePool {
+			_, inSet := set[candidate]
+			inScan := oldScanPodInPodReferences(podGang, "clique-a", candidate)
+			assert.Equal(t, inScan, inSet, "iter %d pod %q", iter, candidate)
+		}
+	}
 }
