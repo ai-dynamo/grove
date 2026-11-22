@@ -21,6 +21,7 @@ import (
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
+	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 	schedulertest "github.com/ai-dynamo/grove/operator/test/utils/scheduler"
 
@@ -390,6 +391,116 @@ func TestBackend_ValidatePodCliqueSetQueues(t *testing.T) {
 				if tc.errorNotContains != "" {
 					assert.NotContains(t, err.Error(), tc.errorNotContains)
 				}
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
+}
+
+func TestBackend_ValidatePodCliqueSetQueueOnUpdate(t *testing.T) {
+	makePCS := func(queue string) *grovecorev1beta1.PodCliqueSet {
+		pcs := testutils.NewPodCliqueSetBuilder("volcano", "default", "test-uid").
+			WithReplicas(1).
+			WithPodCliqueTemplateSpec(
+				testutils.NewPodCliqueTemplateSpecBuilder("worker").
+					WithReplicas(1).
+					WithRoleName("worker-role").
+					WithMinAvailable(1).
+					WithPodSpec(corev1.PodSpec{
+						SchedulerName: string(configv1beta1.SchedulerNameVolcano),
+						Containers:    []corev1.Container{{Name: "worker", Image: "test:latest"}},
+					}).
+					Build(),
+			).
+			Build()
+		if queue != "" {
+			pcs.Annotations = map[string]string{QueueAnnotationKey: queue}
+		}
+		return pcs
+	}
+	makeQueue := func(name string, state volcanov1beta1.QueueState) *volcanov1beta1.Queue {
+		return &volcanov1beta1.Queue{
+			ObjectMeta: metav1.ObjectMeta{Name: name},
+			Status:     volcanov1beta1.QueueStatus{State: state},
+		}
+	}
+	now := metav1.Now()
+
+	testCases := []struct {
+		description   string
+		oldQueue      string
+		newQueue      string
+		terminating   bool
+		existingObjs  []client.Object
+		errorContains string
+	}{
+		{
+			description:  "unchanged queue that was closed is not re-checked",
+			oldQueue:     "team-a",
+			newQueue:     "team-a",
+			existingObjs: []client.Object{makeQueue("team-a", volcanov1beta1.QueueStateClosing)},
+		},
+		{
+			description: "unchanged queue that was deleted is not re-checked",
+			oldQueue:    "team-a",
+			newQueue:    "team-a",
+		},
+		{
+			description: "unchanged default queue is not re-checked",
+		},
+		{
+			description:  "terminating PodCliqueSet is not re-checked",
+			oldQueue:     "team-a",
+			newQueue:     "team-a",
+			terminating:  true,
+			existingObjs: []client.Object{makeQueue("team-a", volcanov1beta1.QueueStateClosed)},
+		},
+		{
+			description:   "moving to a queue that is not Open is rejected",
+			oldQueue:      "team-a",
+			newQueue:      "team-b",
+			existingObjs:  []client.Object{makeQueue("team-a", volcanov1beta1.QueueStateOpen), makeQueue("team-b", volcanov1beta1.QueueStateClosed)},
+			errorContains: `volcano queue "team-b" is not Open`,
+		},
+		{
+			description:   "moving to a queue that does not exist is rejected",
+			oldQueue:      "team-a",
+			newQueue:      "team-b",
+			existingObjs:  []client.Object{makeQueue("team-a", volcanov1beta1.QueueStateOpen)},
+			errorContains: `volcano queue "team-b" does not exist`,
+		},
+		{
+			description:  "moving to an Open queue is allowed",
+			oldQueue:     "team-a",
+			newQueue:     "team-b",
+			existingObjs: []client.Object{makeQueue("team-b", volcanov1beta1.QueueStateOpen)},
+		},
+		{
+			description:   "an invalid queue name is still rejected",
+			oldQueue:      "team-a",
+			newQueue:      "Invalid_Queue",
+			errorContains: "metadata.annotations[scheduling.grove.io/volcano-queue]",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.description, func(t *testing.T) {
+			oldPCS := makePCS(tc.oldQueue)
+			newPCS := makePCS(tc.newQueue)
+			if tc.terminating {
+				newPCS.DeletionTimestamp = &now
+				newPCS.Finalizers = nil
+			}
+			cl := schedulertest.NewVolcanoClient(t, tc.existingObjs...)
+			recorder := record.NewFakeRecorder(10)
+			profile := configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameVolcano}
+			b := New(cl, cl.Scheme(), recorder, profile)
+
+			err := b.ValidatePodCliqueSet(context.Background(), newPCS, scheduler.WithOldPodCliqueSet(oldPCS))
+			if tc.errorContains != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tc.errorContains)
 				return
 			}
 			require.NoError(t, err)
