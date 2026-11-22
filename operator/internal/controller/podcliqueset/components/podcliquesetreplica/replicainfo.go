@@ -150,11 +150,10 @@ func (pri *pcsReplicaInfo) hasRecordedUpdateCompletion(pcs *grovecorev1beta1.Pod
 		}
 
 		if int(targetPCSReplicaIndex) == pri.index {
-			if replicaProgress.UpdateEndedAt != nil {
-				completionRecorded = true
-			} else {
+			if replicaProgress.UpdateEndedAt == nil {
 				return false
 			}
+			completionRecorded = true
 		}
 	}
 	return completionRecorded

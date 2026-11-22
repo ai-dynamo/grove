@@ -393,7 +393,6 @@ func recordReplacementCleanupWork(
 	logger logr.Logger,
 	pcs *grovecorev1beta1.PodCliqueSet,
 	cleanedUpReplicaIndices sets.Set[int32]) {
-
 	if pcs.Status.UpdateProgress == nil || len(pcs.Status.UpdateProgress.CurrentlyUpdating) == 0 {
 		return
 	}
@@ -431,7 +430,6 @@ func recordPCSReplicaReplacementCleanup(
 	logger logr.Logger,
 	replicaProgress *grovecorev1beta1.PodCliqueSetReplicaUpdateProgress,
 	cleanedUpReplicaIndices sets.Set[int32]) (canceledCleanupComplete bool) {
-
 	replacement := replicaProgress.Replacement
 	replacement.RetiredSourceReplicaIndices = slices.DeleteFunc(
 		replacement.RetiredSourceReplicaIndices,
@@ -472,7 +470,6 @@ func (r *Reconciler) commitPCSCleanupStatus(
 	logger logr.Logger,
 	pcs, originalPCS *grovecorev1beta1.PodCliqueSet,
 	completedScaleInReplicaIndices []int32) (bool, error) {
-
 	scalingProgressChanged := !apiequality.Semantic.DeepEqual(originalPCS.Status.ScalingProgress, pcs.Status.ScalingProgress)
 	updateProgressChanged := !apiequality.Semantic.DeepEqual(originalPCS.Status.UpdateProgress, pcs.Status.UpdateProgress)
 	if !scalingProgressChanged && !updateProgressChanged {

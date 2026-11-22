@@ -1132,7 +1132,6 @@ func validateMinAvailableUpdate(
 	oldPCS *grovecorev1beta1.PodCliqueSet,
 	oldMinAvailable, newMinAvailable int32,
 	fldPath *field.Path) field.ErrorList {
-
 	if oldPCS.Status.AppliedSchedulingConfigurationHash != nil || oldMinAvailable == newMinAvailable {
 		return nil
 	}
