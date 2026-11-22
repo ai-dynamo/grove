@@ -99,7 +99,10 @@ func (r *Reconciler) processGenerationHashChange(ctx context.Context, logger log
 	if err := r.initOrResetUpdate(ctx, pcs, expectationKey, generationHash, schedulingConfigurationHash); err != nil {
 		return ctrlcommon.ReconcileWithErrors(fmt.Sprintf("could not initialize or reset update for PodCliqueSet: %v", pcsObjectKey), err)
 	}
-	return ctrlcommon.ContinueReconcile()
+	return ctrlcommon.ReconcileAfter(
+		constants.InformerCacheSyncRetryInterval,
+		fmt.Sprintf("waiting for update initialization to become visible in the informer cache for PodCliqueSet: %v", pcsObjectKey),
+	)
 }
 
 // establishGenerationHashBaseline initializes generation identities without starting an update. For a PodCliqueSet

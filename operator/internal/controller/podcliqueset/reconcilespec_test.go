@@ -22,11 +22,14 @@ import (
 	"testing"
 	"time"
 
+	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	apiconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
 	ctrlcommon "github.com/ai-dynamo/grove/operator/internal/controller/common"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
+	pclqcomponent "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/podclique"
+	pcsreplicacomponent "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/podcliquesetreplica"
 	pcsexpectations "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/expectations"
 	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/sync"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
@@ -2047,6 +2050,129 @@ func TestProcessGenerationHashChangeNotBlockedByStaleSameNameExpectation(t *test
 	require.NotNil(t, updated.Status.AppliedSchedulingConfigurationHash)
 	assert.Equal(t, computeSchedulingConfigurationHash(buildPCSSchedulingConfig(newPCS)), *updated.Status.AppliedSchedulingConfigurationHash)
 	assert.Nil(t, updated.Status.UpdateProgress)
+}
+
+// TestSchedulingChangeAtZeroReplicasConsumesInitializationBeforeCompletion exercises the real replica
+// orchestrator and PodClique component. Initialization must stop before zero-replica completion can advance
+// the applied hash. Stale cache reads preserve the expectation, and scale-out is allowed whether its event
+// arrives before initialization is acknowledged or after the zero-replica update completes.
+func TestSchedulingChangeAtZeroReplicasConsumesInitializationBeforeCompletion(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name                         string
+		strategy                     grovecorev1beta1.UpdateStrategyType
+		scaleOutBeforeAcknowledgment bool
+	}{
+		{name: "RollingRecreate scales after zero-replica completion", strategy: grovecorev1beta1.RollingRecreateStrategy},
+		{name: "RollingRecreate scales before initialization acknowledgment", strategy: grovecorev1beta1.RollingRecreateStrategy, scaleOutBeforeAcknowledgment: true},
+		{name: "Coherent scales after zero-replica completion", strategy: grovecorev1beta1.CoherentStrategy},
+		{name: "Coherent scales before initialization acknowledgment", strategy: grovecorev1beta1.CoherentStrategy, scaleOutBeforeAcknowledgment: true},
+		{name: "OnDelete scales after zero-replica completion", strategy: grovecorev1beta1.OnDeleteStrategy},
+		{name: "OnDelete scales before initialization acknowledgment", strategy: grovecorev1beta1.OnDeleteStrategy, scaleOutBeforeAcknowledgment: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			baseline := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "test-uid").
+				WithReplicas(0).
+				WithTerminationDelay(time.Minute).
+				WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("worker").WithReplicas(2).WithMinAvailable(1).Build()).
+				WithUpdateStrategy(&grovecorev1beta1.PodCliqueSetUpdateStrategy{Type: tc.strategy}).Build()
+			_, appliedSchedulingHash, previousGenerationHash := computePCSHashes(baseline)
+			pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "test-uid").
+				WithReplicas(0).
+				WithTerminationDelay(time.Minute).
+				WithObservedGeneration(new(int64(0))).
+				WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("worker").WithReplicas(2).WithMinAvailable(2).Build()).
+				WithUpdateStrategy(&grovecorev1beta1.PodCliqueSetUpdateStrategy{Type: tc.strategy}).
+				WithPodCliqueSetGenerationHash(new(previousGenerationHash)).
+				WithAppliedSchedulingConfigurationHash(new(appliedSchedulingHash)).Build()
+			_, targetSchedulingHash, targetGenerationHash := computePCSHashes(pcs)
+			require.NotEqual(t, appliedSchedulingHash, targetSchedulingHash)
+			fakeClient := testutils.NewTestClientBuilder().WithObjects(pcs).WithStatusSubresource(pcs).Build()
+			scalingExpectations := &pcsexpectations.ScalingProgress{}
+			selectionExpectations := &pcsexpectations.CurrentlyUpdating{}
+			eventRecorder := record.NewFakeRecorder(50)
+			registry := component.NewOperatorRegistry[grovecorev1beta1.PodCliqueSet, pcssync.State, pcssync.Result]()
+			registry.Register(component.KindPodCliqueSetReplica, pcsreplicacomponent.New(fakeClient, eventRecorder, scalingExpectations, selectionExpectations))
+			registry.Register(component.KindPodClique, pclqcomponent.New(fakeClient, fakeClient.Scheme(), eventRecorder), component.AsReplicaScoped())
+			reconciler := &Reconciler{
+				client:                        fakeClient,
+				operatorRegistry:              registry,
+				currentlyUpdatingExpectations: selectionExpectations,
+				scalingProgressExpectations:   scalingExpectations,
+				reconcileStatusRecorder:       ctrlcommon.NewReconcileErrorRecorder(fakeClient),
+			}
+			require.Empty(t, reconciler.ensureFinalizer(t.Context(), logr.Discard(), pcs).GetErrors())
+			stalePCS := pcs.DeepCopy()
+
+			initializationResult := reconciler.reconcileSpec(t.Context(), logr.Discard(), pcs, &pcssync.State{})
+
+			require.Empty(t, initializationResult.GetErrors())
+			require.True(t, ctrlcommon.ShortCircuitReconcileFlow(initializationResult))
+			initializationRequeue, err := initializationResult.Result()
+			require.NoError(t, err)
+			require.Equal(t, constants.InformerCacheSyncRetryInterval, initializationRequeue.RequeueAfter)
+			initializedPCS := &grovecorev1beta1.PodCliqueSet{}
+			require.NoError(t, fakeClient.Get(t.Context(), client.ObjectKeyFromObject(pcs), initializedPCS))
+			require.Equal(t, targetGenerationHash, *initializedPCS.Status.CurrentGenerationHash)
+			require.Equal(t, appliedSchedulingHash, *initializedPCS.Status.AppliedSchedulingConfigurationHash)
+			require.NotNil(t, initializedPCS.Status.UpdateProgress)
+			require.True(t, initializedPCS.Status.UpdateProgress.RequiresReplicaRecreation)
+			require.Equal(t, targetSchedulingHash, initializedPCS.Status.UpdateProgress.TargetSchedulingConfigurationHash)
+			require.Nil(t, initializedPCS.Status.UpdateProgress.UpdateEndedAt, "initialization must not reach the zero-replica completion path")
+			expectationKey := pcsGenHashesExpKey(pcs)
+			expected, exists := reconciler.pcsGenerationStatusExpectations.Load(expectationKey)
+			require.True(t, exists)
+			require.Equal(t, generationHashesExpectation{
+				currentGenerationHash: targetGenerationHash, appliedSchedulingConfigurationHash: new(appliedSchedulingHash),
+			}, expected)
+
+			if tc.scaleOutBeforeAcknowledgment {
+				base := initializedPCS.DeepCopy()
+				initializedPCS.Spec.Replicas = 1
+				require.NoError(t, fakeClient.Patch(t.Context(), initializedPCS, client.MergeFrom(base)))
+				stalePCS.Spec.Replicas = 1
+			}
+			staleResult := reconciler.reconcileSpec(t.Context(), logr.Discard(), stalePCS, &pcssync.State{})
+			require.Empty(t, staleResult.GetErrors())
+			require.True(t, staleResult.NeedsRequeue())
+			require.Contains(t, staleResult.GetDescription(), "generation status is not up-to-date")
+			_, exists = reconciler.pcsGenerationStatusExpectations.Load(expectationKey)
+			require.True(t, exists, "a stale cache read must not consume the initialization expectation")
+			var beforeAcknowledgment grovecorev1beta1.PodCliqueList
+			require.NoError(t, fakeClient.List(t.Context(), &beforeAcknowledgment))
+			require.Empty(t, beforeAcknowledgment.Items, "no child synchronization may run before initialization is acknowledged")
+
+			acknowledgedPCS := &grovecorev1beta1.PodCliqueSet{}
+			require.NoError(t, fakeClient.Get(t.Context(), client.ObjectKeyFromObject(pcs), acknowledgedPCS))
+			completionResult := reconciler.reconcileSpec(t.Context(), logr.Discard(), acknowledgedPCS, &pcssync.State{})
+			require.Empty(t, completionResult.GetErrors())
+			_, exists = reconciler.pcsGenerationStatusExpectations.Load(expectationKey)
+			require.False(t, exists, "the initialization expectation must be consumed before completion")
+			completedPCS := &grovecorev1beta1.PodCliqueSet{}
+			require.NoError(t, fakeClient.Get(t.Context(), client.ObjectKeyFromObject(pcs), completedPCS))
+			require.Equal(t, targetSchedulingHash, *completedPCS.Status.AppliedSchedulingConfigurationHash)
+			require.NotNil(t, completedPCS.Status.UpdateProgress.UpdateEndedAt)
+			require.Empty(t, completedPCS.Status.UpdateProgress.CurrentlyUpdating)
+
+			if !tc.scaleOutBeforeAcknowledgment {
+				base := completedPCS.DeepCopy()
+				completedPCS.Spec.Replicas = 1
+				require.NoError(t, fakeClient.Patch(t.Context(), completedPCS, client.MergeFrom(base)))
+				scaleResult := reconciler.reconcileSpec(t.Context(), logr.Discard(), completedPCS, &pcssync.State{})
+				require.Empty(t, scaleResult.GetErrors(), "completed scheduling update must not block subsequent scale-out")
+			}
+			var pclq grovecorev1beta1.PodClique
+			pclqKey := client.ObjectKey{Namespace: testNamespace, Name: apicommon.GeneratePodCliqueName(
+				apicommon.ResourceNameReplica{Name: testPCSName, Replica: 0}, "worker",
+			)}
+			require.NoError(t, fakeClient.Get(t.Context(), pclqKey, &pclq), "scale-out must materialize replica 0 without restarting the reconciler")
+			require.Equal(t, int32(2), *pclq.Spec.MinAvailable)
+			require.Equal(t, targetGenerationHash, pclq.Labels[apicommon.LabelPodCliqueSetGenerationHash])
+			require.True(t, reconciler.isGenerationStatusExpectationSatisfied(expectationKey, completedPCS.Status))
+		})
+	}
 }
 
 func TestProcessGenerationHashChangeBaselinesActiveLegacyUpdate(t *testing.T) {
