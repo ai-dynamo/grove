@@ -31,7 +31,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -149,6 +151,35 @@ func TestBackendSyncPodGangMixedWorkload(t *testing.T) {
 	require.NoError(t, cl.Get(t.Context(), client.ObjectKeyFromObject(podGang), storedPodGang))
 	require.Len(t, storedPodGang.Spec.PodGroups, 2)
 	assert.Equal(t, "true", storedPodGang.Annotations["kai.scheduler/skip-podgrouper"])
+}
+
+func TestBackendSyncPodGangIgnoresTerminatingPodGang(t *testing.T) {
+	pcs := testutils.NewPodCliqueSetBuilder("terminating-workload", "default", types.UID("pcs-uid")).
+		WithLabels(map[string]string{"kai.scheduler/queue": "default"}).
+		Build()
+
+	podGang := testutils.NewPodGangBuilder("terminating-workload-0", pcs.Namespace).
+		WithPodGroups([]groveschedulerv1alpha1.PodGroup{{Name: "deleted-worker", MinReplicas: 1}}).
+		WithOwnerReference(constants.KindPodCliqueSet, pcs.Name, pcs.UID).
+		Build()
+	now := metav1.Now()
+	podGang.DeletionTimestamp = &now
+	podGang.Finalizers = []string{"example.com/hold"}
+
+	scheme := schedulertest.NewKAIScheme(t)
+	require.NoError(t, corev1.AddToScheme(scheme))
+	require.NoError(t, groveschedulerv1alpha1.AddToScheme(scheme))
+
+	cl := testutils.NewTestClientBuilder().WithScheme(scheme).WithObjects(pcs, podGang).Build()
+
+	kaiBackend := kai.New(cl, scheme, nil, configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameKai})
+	backend := New(cl, configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameLPX}, kaiBackend)
+	require.NoError(t, backend.Init(cl))
+
+	require.NoError(t, backend.SyncPodGang(t.Context(), podGang))
+
+	err := cl.Get(t.Context(), client.ObjectKeyFromObject(podGang), &kaischedulingv2alpha2.PodGroup{})
+	assert.True(t, apierrors.IsNotFound(err))
 }
 
 func TestBackendValidatePodCliqueSet(t *testing.T) {

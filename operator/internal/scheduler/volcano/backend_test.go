@@ -591,3 +591,25 @@ func TestBackend_ValidatePodCliqueSetQueues(t *testing.T) {
 		})
 	}
 }
+
+func TestBackend_SyncPodGangIgnoresTerminatingPodGang(t *testing.T) {
+	now := metav1.Now()
+	podGang := &groveschedulerv1alpha1.PodGang{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "pg-terminating",
+			Namespace:         "default",
+			UID:               "uid-terminating",
+			DeletionTimestamp: &now,
+			Finalizers:        []string{"example.com/hold"},
+		},
+		Spec: groveschedulerv1alpha1.PodGangSpec{
+			PodGroups: []groveschedulerv1alpha1.PodGroup{{Name: "worker", MinReplicas: 1}},
+		},
+	}
+	cl := schedulertest.NewVolcanoClient(t, podGang)
+	b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameVolcano})
+
+	require.NoError(t, b.SyncPodGang(context.Background(), podGang))
+	err := cl.Get(context.Background(), client.ObjectKeyFromObject(podGang), &volcanov1beta1.PodGroup{})
+	assert.True(t, apierrors.IsNotFound(err))
+}

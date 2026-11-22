@@ -90,6 +90,10 @@ func (b *schedulerBackend) Init(directClient client.Client) error {
 }
 
 func (b *schedulerBackend) SyncPodGang(ctx context.Context, podGang *groveschedulerv1alpha1.PodGang) error {
+	if !podGang.DeletionTimestamp.IsZero() {
+		return nil
+	}
+
 	queue, err := queueForPodGang(ctx, b.client, podGang)
 	if err != nil {
 		return fmt.Errorf("failed to sync Volcano PodGroup for PodGang %s/%s: %w", podGang.Namespace, podGang.Name, err)
