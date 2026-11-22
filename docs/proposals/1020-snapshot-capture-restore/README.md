@@ -284,12 +284,14 @@ sequenceDiagram
     G->>K: Create Pods with restore annotations and labels
     Note over K,W: Schedule Pods and start waiting destination containers
     S->>K: Find a complete group of restore Pods
-    S->>K: Create PodGroupRestore, claim Pods, and pin identities
+    S->>K: Create PodGroupRestore with replica labels
+    S->>K: Claim Pods and pin identities
     S->>W: Restore selected containers and signal resume
     S->>K: Report restore result
+    K-->>G: PodGroupRestore status and failures
     K->>W: Check normal workload readiness
     W-->>K: Ready
-    K-->>G: Pod and restore status updates
+    K-->>G: Pod readiness updates
 ```
 
 Grove prepares and creates the selected Pods. Their destination command waits
@@ -314,8 +316,9 @@ waits for old Pods to be deleted before reusing the same replica identity.
 
 Snapshot waits until every member has a scheduled, running destination container
 on a group-capable node. It then creates `PodGroupRestore` and records the target
-Pod names and UIDs itself. Grove observes the Pods and the attempt's outcome; it
-does not create the attempt. Normal workload probes determine serving readiness.
+Pod names and UIDs itself. The attempt carries the same PCSG name and
+replica-index labels as its targets. Grove uses those labels to find and watch
+the attempt. Normal workload probes determine serving readiness.
 
 #### Startup dependencies
 
@@ -342,10 +345,10 @@ not run again; the restored process resumes from its saved state.
 
 #### Failure
 
-A failed restore can leave some members running. Grove deletes the whole failed
-replica and waits for every Pod to terminate before any retry. A failed attempt
-for older Pod UIDs must not trigger deletion of a newer replica. The restore
-retry policy remains open.
+Grove watches `PodGroupRestore` failures and deletes the whole failed replica,
+including any members already running. It first checks the target Pod UIDs so an
+old failure cannot delete a newer replica. All old Pods must terminate before any
+retry. The restore retry policy remains open.
 
 Before Snapshot creates an attempt, a lost Pod's replacement can join the waiting
 group. After the attempt exists, its Pod membership is fixed: losing a Pod fails
@@ -468,6 +471,7 @@ Extend the PodClique and PCSG controller tests and add end-to-end coverage for:
   separate PCSG replicas, and missing, extra, duplicate, or incorrectly sized IDs.
 - Snapshot creating a restore attempt from prepared Pods, with no request from
   Grove; a replacement before the attempt joins, while a loss after it fails it.
+- Finding and watching attempts by their PCSG name and replica-index labels.
 - Skipping internal restore-group waits, keeping outside dependencies, refusing
   cycles across cliques and replicas, and preserving capture and cold startup
   order.
