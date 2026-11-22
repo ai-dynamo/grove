@@ -128,9 +128,12 @@ func (r *_resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecore
 		pcsUpdateRequeueNeeded = shouldRequeue
 	}
 
-	// Build the component-facing state once, after orchestration has mutated the reconcile-local pcs. It
-	// overlays persisted replacement progress onto the scaling indices.
-	*state = computePCSReplicaState(pcs, scalingIndices, expectedReplicaIndices, groupPCSReplicaReplacements(pcs.Status.UpdateProgress))
+	// Initial provisioning is separate from scaling and update-source selection. Calculate its missing
+	// identities after orchestration so active targets and canceled cleanup retain their ownership.
+	replacementGroups := groupPCSReplicaReplacements(pcs.Status.UpdateProgress)
+	initialPCSReplicaIndices := computeInitialPCSReplicaProvisioningIndices(pcs, pcsReplicaInfosByIndex, scalingIndices, replacementGroups)
+	expectedReplicaIndices.Insert(initialPCSReplicaIndices...)
+	*state = computePCSReplicaState(pcs, scalingIndices, expectedReplicaIndices, replacementGroups)
 
 	if delWork.shouldRequeue() {
 		return pcssync.Result{}, groveerr.NewContinueReconcileAndRequeue(

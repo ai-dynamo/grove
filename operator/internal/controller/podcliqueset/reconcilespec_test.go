@@ -2175,6 +2175,76 @@ func TestSchedulingChangeAtZeroReplicasConsumesInitializationBeforeCompletion(t 
 	}
 }
 
+func TestScaleInBeforeFirstCompletedReconcilePreservesRetainedTarget(t *testing.T) {
+	t.Parallel()
+	cleanupTime := metav1.NewTime(time.Unix(150, 0).UTC())
+	baseline := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "test-uid").
+		WithReplicas(1).WithTerminationDelay(time.Minute).
+		WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("worker").WithReplicas(1).WithMinAvailable(1).Build()).Build()
+	_, currentSchedulingHash, currentGenerationHash := computePCSHashes(baseline)
+	pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "test-uid").
+		WithReplicas(1).
+		WithTerminationDelay(time.Minute).
+		WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("worker").WithReplicas(1).WithMinAvailable(1).Build()).
+		WithPodCliqueSetGenerationHash(new(currentGenerationHash)).
+		WithAppliedSchedulingConfigurationHash(new("previous-scheduling")).
+		WithUpdateProgress(&grovecorev1beta1.PodCliqueSetUpdateProgress{
+			RequiresReplicaRecreation: true, TargetSchedulingConfigurationHash: currentSchedulingHash,
+			CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{
+				ReplicaIndex: 1,
+				Replacement:  &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 1, SourceCleanupCompletedAt: &cleanupTime},
+			}},
+		}).Build()
+	oldPCLQ := testutils.NewPodCliqueBuilder(pcs.Name, pcs.UID, "worker", pcs.Namespace, 0).
+		WithLabels(map[string]string{apicommon.LabelPodCliqueSetGenerationHash: "previous"}).
+		WithOptions(testutils.WithPCLQCurrentPCSGenerationHash("previous")).Build()
+	targetPCLQ := testutils.NewPodCliqueBuilder(pcs.Name, pcs.UID, "worker", pcs.Namespace, 1).
+		WithLabels(map[string]string{apicommon.LabelPodCliqueSetGenerationHash: currentGenerationHash}).
+		WithOptions(testutils.WithPCLQCurrentPCSGenerationHash(currentGenerationHash)).Build()
+	fakeClient := testutils.NewTestClientBuilder().WithObjects(pcs, oldPCLQ, targetPCLQ).WithStatusSubresource(pcs).Build()
+	scalingExpectations := &pcsexpectations.ScalingProgress{}
+	selectionExpectations := &pcsexpectations.CurrentlyUpdating{}
+	eventRecorder := record.NewFakeRecorder(50)
+	registry := component.NewOperatorRegistry[grovecorev1beta1.PodCliqueSet, pcssync.State, pcssync.Result]()
+	registry.Register(component.KindPodCliqueSetReplica, pcsreplicacomponent.New(fakeClient, eventRecorder, scalingExpectations, selectionExpectations))
+	registry.Register(component.KindPodClique, pclqcomponent.New(fakeClient, fakeClient.Scheme(), eventRecorder), component.AsReplicaScoped())
+	reconciler := &Reconciler{
+		client: fakeClient, operatorRegistry: registry, eventRecorder: eventRecorder,
+		currentlyUpdatingExpectations: selectionExpectations, scalingProgressExpectations: scalingExpectations,
+		reconcileStatusRecorder: ctrlcommon.NewReconcileErrorRecorder(fakeClient),
+	}
+	for pass := range 3 {
+		freshPCS := &grovecorev1beta1.PodCliqueSet{}
+		require.NoError(t, fakeClient.Get(t.Context(), client.ObjectKeyFromObject(pcs), freshPCS))
+		state := &pcssync.State{}
+
+		result := reconciler.reconcileSpec(t.Context(), logr.Discard(), freshPCS, state)
+
+		require.Empty(t, result.GetErrors(), "reconciliation pass %d", pass)
+		require.True(t, result.NeedsRequeue(), "the unavailable target must keep the update active")
+		require.Equal(t, []int{1}, state.ExpectedReplicaIndices, "scale-in must not recreate bootstrap index 0 on pass %d", pass)
+		storedPCS := &grovecorev1beta1.PodCliqueSet{}
+		require.NoError(t, fakeClient.Get(t.Context(), client.ObjectKeyFromObject(pcs), storedPCS))
+		require.Nil(t, storedPCS.Status.ObservedGeneration)
+		require.Nil(t, storedPCS.Status.UpdateProgress.UpdateEndedAt)
+		require.Len(t, storedPCS.Status.UpdateProgress.CurrentlyUpdating, 1)
+		require.Nil(t, storedPCS.Status.UpdateProgress.CurrentlyUpdating[0].Replacement.CanceledAt, "scale-in must retain active target 1")
+		if pass == 0 {
+			require.Equal(t, []int{0}, state.ScaleInReplicaIndices)
+			require.NotNil(t, storedPCS.Status.ScalingProgress)
+			require.Equal(t, []int32{0}, storedPCS.Status.ScalingProgress.ScaleInReplicaIndices)
+		}
+		if pass > 0 {
+			require.Nil(t, storedPCS.Status.ScalingProgress, "participant-confirmed cleanup must remove the ordinary selection")
+		}
+		var missing grovecorev1beta1.PodClique
+		require.True(t, apierrors.IsNotFound(fakeClient.Get(t.Context(), client.ObjectKeyFromObject(oldPCLQ), &missing)), "replica 0 must remain deleted")
+		var retained grovecorev1beta1.PodClique
+		require.NoError(t, fakeClient.Get(t.Context(), client.ObjectKeyFromObject(targetPCLQ), &retained))
+		require.True(t, metav1.IsControlledBy(&retained, pcs))
+	}
+}
+
 func TestProcessGenerationHashChangeBaselinesActiveLegacyUpdate(t *testing.T) {
 	pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, uuid.NewUUID()).
 		WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("worker").WithReplicas(3).WithMinAvailable(2).Build()).

@@ -164,6 +164,12 @@ func (b *PodCliqueSetBuilder) WithScalingProgress(progress *grovecorev1beta1.Pod
 	return b
 }
 
+// WithGeneration sets the metadata generation of the PodCliqueSet.
+func (b *PodCliqueSetBuilder) WithGeneration(generation int64) *PodCliqueSetBuilder {
+	b.pcs.Generation = generation
+	return b
+}
+
 // WithObservedGeneration sets the ObservedGeneration in the PodCliqueSet status.
 func (b *PodCliqueSetBuilder) WithObservedGeneration(observedGeneration *int64) *PodCliqueSetBuilder {
 	b.pcs.Status.ObservedGeneration = observedGeneration

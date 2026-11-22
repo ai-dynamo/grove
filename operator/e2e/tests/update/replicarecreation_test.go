@@ -1780,8 +1780,12 @@ func Test_RR16_LegacyUpgradePreservesUnappliedSchedulingChange(t *testing.T) {
 //  4. Require a persisted same-index source-cleanup barrier while ObservedGeneration remains nil.
 //  5. Verify fresh PodClique, PCSG, and PodGangMap UIDs and the new sg-x anchor containing indices 0
 //     and 1 with no tail. Blocked readiness must keep recreation active and the scheduling target unapplied.
-//  6. Release readiness and verify recreation completion, 10 Ready pods, stable replacement UIDs, and
-//     ObservedGeneration matching the current metadata generation after the first successful reconciliation.
+//  6. Hold the fresh target's deletion and scale to zero while readiness is still blocked. Require the
+//     controller to record cancellation while ObservedGeneration stays nil and preserve source cleanup.
+//  7. Release deletion without releasing readiness. Require all replica resources to disappear, recreation
+//     to complete, and the first successful spec reconciliation to record ObservedGeneration at zero replicas.
+//  8. Release readiness and scale to one. Verify 10 Ready pods with the latest scheduling configuration,
+//     new resource UIDs, no new update attempt, and observation of the final metadata generation.
 func Test_RR17_ReplicaRecreationBeforeFirstCompletedReconcile(t *testing.T) {
 	tests.Logger.Info("1. Deploy workload2 and capture replica 0's resources and scheduling baseline")
 	tc, cleanup, _ := setupTest(t, testConfig{
@@ -1880,26 +1884,73 @@ func Test_RR17_ReplicaRecreationBeforeFirstCompletedReconcile(t *testing.T) {
 	require.Equal(t, cleanupProgress.Replacement.SourceCleanupCompletedAt, recreatedProgress.Replacement.SourceCleanupCompletedAt,
 		"target provisioning must preserve the confirmed source-cleanup barrier")
 
-	tests.Logger.Info("6. Release readiness and require recreation and the first successful reconciliation to complete")
+	tests.Logger.Info("6. Hold target deletion and require controller cancellation while readiness remains blocked")
+	releaseTarget, err := holdReplicaSourceCleanup(tc, recreated.PCLQ)
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, releaseTarget()) })
+	watchCtx, cancelWatch := context.WithTimeout(tc.Ctx, tc.Timeout)
+	defer cancelWatch()
+	watcher, err := watchPodCliqueSet(watchCtx, tc)
+	require.NoError(t, err)
+	defer watcher.Stop()
+	require.NoError(t, tc.ScalePCS(tc.Workload.Name, 0))
+	cancellationMessage, err := waitForCanceledReplacement(watchCtx, watcher, 0)
+	require.NoError(t, err)
+	require.NotEmpty(t, cancellationMessage)
+	require.NoError(t, waitForReplicaSourceDeletion(tc, recreated.PCLQ))
+	canceledPCS, err := updateutils.GetPCS(tc, tc.Workload.Name)
+	require.NoError(t, err)
+	require.Nil(t, canceledPCS.Status.ObservedGeneration, "cancellation must not acknowledge an incomplete spec reconciliation")
+	require.Nil(t, canceledPCS.Status.ScalingProgress, "replacement cancellation must not become ordinary scale-in")
+	canceledProgress := requireActiveReplicaRecreation(t, canceledPCS)
+	require.Len(t, canceledProgress.CurrentlyUpdating, 1)
+	canceled := canceledProgress.CurrentlyUpdating[0]
+	require.NotNil(t, canceled.Replacement.CanceledAt)
+	require.Nil(t, canceled.UpdateEndedAt)
+	require.Equal(t, recreatedProgress.Replacement.SourceCleanupCompletedAt, canceled.Replacement.SourceCleanupCompletedAt)
+	require.Equal(t, unobserved.PCS.Status.AppliedSchedulingConfigurationHash, canceledPCS.Status.AppliedSchedulingConfigurationHash)
+
+	tests.Logger.Info("7. Release deletion and complete the first spec reconciliation at zero without releasing readiness")
+	require.NoError(t, releaseTarget())
+	require.NoError(t, waitForReplicaResourcesDeleted(tc, client.MatchingLabels{apicommon.LabelPartOfKey: tc.Workload.Name}))
+	require.NoError(t, waitForReplicaRecreationComplete(tc, 0))
+	require.NoError(t, wait.PollUntilContextTimeout(tc.Ctx, tc.Interval, tc.Timeout, true, func(ctx context.Context) (bool, error) {
+		pcs, err := updateutils.GetPCS(tc, tc.Workload.Name)
+		if err != nil {
+			return false, err
+		}
+		return pcs.Status.ObservedGeneration != nil && *pcs.Status.ObservedGeneration == pcs.Generation, nil
+	}), "zero replicas must allow the first completed reconciliation while target readiness remains blocked")
+	zeroPCS, err := updateutils.GetPCS(tc, tc.Workload.Name)
+	require.NoError(t, err)
+	assertReplicaRecreationCompleted(t, zeroPCS, expectedReplicaRecreationCompletion{
+		GenerationHash: target.GenerationHash, SchedulingHash: target.SchedulingHash, Replicas: 0,
+	})
+	require.Equal(t, editedPCS.Generation+1, zeroPCS.Generation)
+	require.Nil(t, zeroPCS.Status.ScalingProgress)
+	require.NoError(t, waitForClaimedPCSReplicaIndices(tc, []int{}))
+
+	tests.Logger.Info("8. Release readiness and scale to one using the completed scheduling configuration")
 	require.NoError(t, kwok.DeleteStage(tc.Ctx, tc.Client, kwokStageReadyBlockedR0Name))
 	blockRemoved = true
-	updateutils.DeleteNotReadyPodsOnReplica(t, tc, 0)
+	require.NoError(t, tc.ScalePCS(tc.Workload.Name, 1))
 	requireReplicaRecreationConverged(t, tc, expectedReplicaRecreationCompletion{
 		GenerationHash: target.GenerationHash, SchedulingHash: target.SchedulingHash,
 		Replicas: 1, Pods: 10, PCSReplicaIndices: []int{0}, Configuration: want,
 	})
 	require.NoError(t, wait.PollUntilContextTimeout(tc.Ctx, tc.Interval, tc.Timeout, true, func(ctx context.Context) (bool, error) {
-		var pcs grovev1beta1.PodCliqueSet
-		if err := tc.Client.Get(ctx, client.ObjectKeyFromObject(editedPCS), &pcs); err != nil {
+		pcs, err := updateutils.GetPCS(tc, tc.Workload.Name)
+		if err != nil {
 			return false, err
 		}
 		return pcs.Status.ObservedGeneration != nil && *pcs.Status.ObservedGeneration == pcs.Generation, nil
-	}), "the first successful reconciliation must record the current observed generation")
+	}), "ordinary scale-out must complete the final spec reconciliation")
 	final := requireReplicaSnapshot(t, tc)
-	require.NotNil(t, final.PCS.Status.ObservedGeneration)
-	require.Equal(t, editedPCS.Generation, final.PCS.Generation)
+	require.Equal(t, zeroPCS.Generation+1, final.PCS.Generation)
 	require.Equal(t, final.PCS.Generation, *final.PCS.Status.ObservedGeneration)
-	assertReplicaResourceUIDsUnchanged(t, recreated, final)
+	require.Equal(t, zeroPCS.Status.UpdateProgress.UpdateStartedAt, final.PCS.Status.UpdateProgress.UpdateStartedAt)
+	require.Equal(t, zeroPCS.Status.UpdateProgress.UpdateEndedAt, final.PCS.Status.UpdateProgress.UpdateEndedAt)
+	requireReplicaResourceUIDsChanged(t, recreated, final)
 }
 
 // Test_RR18_CompletedReplacementLossDoesNotDelayUpdate verifies that recorded replacement completion

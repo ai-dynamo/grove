@@ -19,15 +19,14 @@ import (
 
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/sync"
+	"github.com/ai-dynamo/grove/operator/internal/utils"
 
-	"github.com/samber/lo"
 	"k8s.io/apimachinery/pkg/util/sets"
 )
 
 // computePCSReplicaState builds the component-facing state by overlaying scaling indices and persisted replacement
-// progress onto the expected replica identities. Before the first completed reconciliation, the base identities
-// are the contiguous range for the desired replica count. Otherwise, expectedReplicaIndices supplies the set
-// implied by scaling alone, computed once by the caller.
+// progress onto the expected replica identities. The caller supplies the identities retained by scaling and any
+// additional initial provisioning identities. State construction does not change that allocation decision.
 // Retired sources are cleanup-only indices. They remain in scale-in even when absent, and are excluded from
 // expected and scale-out indices.
 func computePCSReplicaState(
@@ -35,14 +34,7 @@ func computePCSReplicaState(
 	scalingIndices pcsReplicaScalingIndices,
 	expectedReplicaIndices sets.Set[int],
 	replacementGroups pcsReplicaReplacementGroups) pcssync.State {
-	// Before the first completed reconciliation, observed resources may cover only part of the desired replicas.
-	// Use the initial contiguous range as the base, but still honor persisted replacement work.
-	if pcs.Status.ObservedGeneration == nil {
-		expectedReplicaIndices = sets.New(lo.Range(int(pcs.Spec.Replicas))...)
-	} else {
-		// The overlay mutates the index sets, so clone the caller's expected set to avoid aliasing.
-		expectedReplicaIndices = expectedReplicaIndices.Clone()
-	}
+	expectedReplicaIndices = expectedReplicaIndices.Clone()
 	scaleOutReplicaIndices := sets.New(scalingIndices.scaleOut...)
 	scaleInReplicaIndices := sets.New(scalingIndices.scaleIn...)
 
@@ -71,6 +63,34 @@ func computePCSReplicaState(
 		ScaleOutReplicaIndices: sortedReplicaIndices(scaleOutReplicaIndices),
 		ScaleInReplicaIndices:  sortedReplicaIndices(scaleInReplicaIndices),
 	}
+}
+
+// computeInitialPCSReplicaProvisioningIndices chooses missing initial replicas.
+// It accounts for existing resources and replacement targets, and excludes
+// indices already owned by scaling or replacement work. It records no reservations.
+func computeInitialPCSReplicaProvisioningIndices(
+	pcs *grovecorev1beta1.PodCliqueSet,
+	replicaInfos pcsReplicaInfoByIndex,
+	scalingIndices pcsReplicaScalingIndices,
+	replacementGroups pcsReplicaReplacementGroups,
+) []int {
+	if pcs.Status.ObservedGeneration != nil {
+		return nil
+	}
+
+	committedIndices := replicaInfos.computeCommittedReplicaIndices(scalingIndices, replacementGroups)
+	numReplicasToCreate := int(pcs.Spec.Replicas) - committedIndices.Len()
+	if numReplicasToCreate <= 0 {
+		return nil
+	}
+
+	reservedIndices := computeReservedReplicaIndices(
+		replicaInfos,
+		sets.New(scalingIndices.scaleOut...),
+		sets.New(scalingIndices.scaleIn...),
+		replacementGroups,
+	)
+	return utils.GetAvailableIndices(reservedIndices, numReplicasToCreate)
 }
 
 // expectedReplicaIndicesFromScaling returns the expected PCS replica indices implied by the scaling decision

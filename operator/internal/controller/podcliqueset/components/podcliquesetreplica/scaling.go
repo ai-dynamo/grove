@@ -176,12 +176,6 @@ func computePCSReplicaScalingWork(
 	replicaInfos pcsReplicaInfoByIndex,
 	scalingIndices pcsReplicaScalingIndices,
 	replacementGroups pcsReplicaReplacementGroups) pcsReplicaScalingWork {
-	// An unobserved PCS is still being provisioned for the first time. Its initial
-	// identities are not scale-out work and therefore do not require reservations.
-	if pcs.Status.ObservedGeneration == nil {
-		return pcsReplicaScalingWork{}
-	}
-
 	scaleOutIndices := sets.New(scalingIndices.scaleOut...)
 	scaleInIndices := sets.New(scalingIndices.scaleIn...)
 
@@ -214,7 +208,7 @@ func computePCSReplicaScalingWork(
 			scaleOutIndices.Delete(replicaIndex)
 			scaleInIndices.Insert(replicaIndex)
 		}
-	} else if committedPCSReplicaIndices.Len() < desiredReplicaCount {
+	} else if committedPCSReplicaIndices.Len() < desiredReplicaCount && pcs.Status.ObservedGeneration != nil {
 		numReplicasToAdd := desiredReplicaCount - committedPCSReplicaIndices.Len()
 		reservedPCSReplicaIndices := computeReservedReplicaIndices(replicaInfos, scaleOutIndices, scaleInIndices, replacementGroups)
 		selectedScaleOutIndices := utils.GetAvailableIndices(reservedPCSReplicaIndices, numReplicasToAdd)

@@ -65,32 +65,32 @@ func TestComputePCSReplicaStateBeforeFirstCompletedReconcile(t *testing.T) {
 		{
 			name: "different index source and target are disjoint", desiredPCSReplicas: 2, observedPCSReplicaIndices: []int{1}, sourcePCSReplicaIndex: 1,
 			replacementProgress: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 0},
-			want:                pcssync.State{ExpectedReplicaIndices: []int{0}, ScaleOutReplicaIndices: []int{0}, ScaleInReplicaIndices: []int{1}},
+			want:                pcssync.State{ExpectedReplicaIndices: []int{0, 2}, ScaleOutReplicaIndices: []int{0}, ScaleInReplicaIndices: []int{1}},
 		},
 		{
 			name: "canceled same index drains without recreation", desiredPCSReplicas: 2, observedPCSReplicaIndices: []int{0, 1},
 			replacementProgress: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 0, CanceledAt: &progressTimestamp},
-			want:                pcssync.State{ExpectedReplicaIndices: []int{1}, ScaleInReplicaIndices: []int{0}},
+			want:                pcssync.State{ExpectedReplicaIndices: []int{1, 2}, ScaleInReplicaIndices: []int{0}},
 		},
 		{
 			name: "canceled different index drains absent source and target", desiredPCSReplicas: 2, sourcePCSReplicaIndex: 1,
 			replacementProgress: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 0, CanceledAt: &progressTimestamp},
-			want:                pcssync.State{ScaleInReplicaIndices: []int{0, 1}},
+			want:                pcssync.State{ExpectedReplicaIndices: []int{2, 3}, ScaleInReplicaIndices: []int{0, 1}},
 		},
 		{
 			name: "retired initial index stays cleanup only before barrier", desiredPCSReplicas: 3, observedPCSReplicaIndices: []int{0, 1, 2},
 			replacementProgress: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 0, RetiredSourceReplicaIndices: []int32{2}},
-			want:                pcssync.State{ExpectedReplicaIndices: []int{1}, ScaleInReplicaIndices: []int{0, 2}},
+			want:                pcssync.State{ExpectedReplicaIndices: []int{1, 3}, ScaleInReplicaIndices: []int{0, 2}},
 		},
 		{
 			name: "retired initial index stays cleanup only after barrier", desiredPCSReplicas: 3, observedPCSReplicaIndices: []int{1},
 			replacementProgress: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 0, SourceCleanupCompletedAt: &progressTimestamp, RetiredSourceReplicaIndices: []int32{2}},
-			want:                pcssync.State{ExpectedReplicaIndices: []int{0, 1}, ScaleOutReplicaIndices: []int{0}, ScaleInReplicaIndices: []int{2}},
+			want:                pcssync.State{ExpectedReplicaIndices: []int{0, 1, 3}, ScaleOutReplicaIndices: []int{0}, ScaleInReplicaIndices: []int{2}},
 		},
 		{
 			name: "canceled retirement outside initial range remains cleanup work", desiredPCSReplicas: 2, sourcePCSReplicaIndex: 2,
 			replacementProgress: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 1, CanceledAt: &progressTimestamp, RetiredSourceReplicaIndices: []int32{3}},
-			want:                pcssync.State{ExpectedReplicaIndices: []int{0}, ScaleInReplicaIndices: []int{1, 2, 3}},
+			want:                pcssync.State{ExpectedReplicaIndices: []int{0, 4}, ScaleInReplicaIndices: []int{1, 2, 3}},
 		},
 		{
 			name: "completed entry does not restart source cleanup", desiredPCSReplicas: 2, observedPCSReplicaIndices: []int{0, 1}, replicaUpdateCompleted: true,
@@ -129,7 +129,14 @@ func TestComputePCSReplicaStateBeforeFirstCompletedReconcile(t *testing.T) {
 			replacementGroups := groupPCSReplicaReplacements(updateProgress)
 			replacementGroupsBefore := groupPCSReplicaReplacements(updateProgress)
 
-			got := computePCSReplicaState(pcs, pcsReplicaScalingIndices{}, expected, replacementGroups)
+			replicaInfos := make(pcsReplicaInfoByIndex, len(tc.observedPCSReplicaIndices))
+			for _, pcsReplicaIndex := range tc.observedPCSReplicaIndices {
+				replicaInfos[pcsReplicaIndex] = pcsReplicaInfo{index: pcsReplicaIndex}
+			}
+			initialPCSReplicaIndices := computeInitialPCSReplicaProvisioningIndices(pcs, replicaInfos, pcsReplicaScalingIndices{}, replacementGroups)
+			expectedWithInitialProvisioning := expected.Clone()
+			expectedWithInitialProvisioning.Insert(initialPCSReplicaIndices...)
+			got := computePCSReplicaState(pcs, pcsReplicaScalingIndices{}, expectedWithInitialProvisioning, replacementGroups)
 
 			assert.ElementsMatch(t, tc.want.ExpectedReplicaIndices, got.ExpectedReplicaIndices)
 			assert.True(t, slices.IsSorted(got.ExpectedReplicaIndices), "expected indices must be ordered")
@@ -141,6 +148,89 @@ func TestComputePCSReplicaStateBeforeFirstCompletedReconcile(t *testing.T) {
 			assert.Nil(t, pcs.Status.ObservedGeneration, "state construction must not acknowledge reconciliation")
 			assert.Empty(t, sets.New(got.ExpectedReplicaIndices...).Intersection(sets.New(got.ScaleInReplicaIndices...)), "expected and cleanup indices must remain disjoint")
 			assert.Empty(t, sets.New(got.ScaleOutReplicaIndices...).Intersection(sets.New(got.ScaleInReplicaIndices...)), "creation and cleanup indices must remain disjoint")
+		})
+	}
+}
+
+func TestComputeInitialPCSReplicaProvisioningIndices(t *testing.T) {
+	t.Parallel()
+	cleanupTime := metav1.NewTime(time.Unix(150, 0).UTC())
+	activeSame := grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{
+		ReplicaIndex: 1,
+		Replacement:  &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 1},
+	}
+	activeDifferent := grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{
+		ReplicaIndex: 2,
+		Replacement:  &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 1},
+	}
+	canceled := grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{
+		ReplicaIndex: 0,
+		Replacement:  &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 0, CanceledAt: &cleanupTime},
+	}
+	retired := grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{
+		ReplicaIndex: 1,
+		Replacement:  &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 1, RetiredSourceReplicaIndices: []int32{0, 2}},
+	}
+	canceledRetired := *retired.DeepCopy()
+	canceledRetired.Replacement.CanceledAt = &cleanupTime
+	tests := []struct {
+		name               string
+		desiredReplicas    int32
+		observedGeneration *int64
+		observedIndices    []int
+		scalingIndices     pcsReplicaScalingIndices
+		progress           []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress
+		want               []int
+	}{
+		{name: "fresh three-replica creation", desiredReplicas: 3, want: []int{0, 1, 2}},
+		{name: "partial creation fills the missing index", desiredReplicas: 3, observedIndices: []int{0, 2}, want: []int{1}},
+		{name: "all initial identities already exist", desiredReplicas: 3, observedIndices: []int{0, 1, 2}},
+		{name: "zero replicas needs no initial creation"},
+		{name: "excess observed capacity is not initial creation", desiredReplicas: 1, observedIndices: []int{0, 1}},
+		{name: "completed spec reconciliation uses ordinary scale-out", desiredReplicas: 3, observedGeneration: new(int64(1))},
+		{name: "stale non-nil observation does not restart initial creation", desiredReplicas: 3, observedGeneration: new(int64(0))},
+		{name: "absent recorded scale-out already covers capacity", desiredReplicas: 2, observedIndices: []int{0}, scalingIndices: pcsReplicaScalingIndices{scaleOut: []int{4}}},
+		{name: "pending scale-out plus one initial identity", desiredReplicas: 3, observedIndices: []int{0}, scalingIndices: pcsReplicaScalingIndices{scaleOut: []int{4}}, want: []int{1}},
+		{name: "scale-in identity remains unavailable", desiredReplicas: 2, observedIndices: []int{0, 1}, scalingIndices: pcsReplicaScalingIndices{scaleIn: []int{0}}, want: []int{2}},
+		{name: "absent same-index target already covers one replica", desiredReplicas: 1, progress: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{activeSame}},
+		{name: "sparse active target does not invent index zero", desiredReplicas: 1, observedIndices: []int{1}, progress: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{activeSame}},
+		{name: "different-index source and target count once", desiredReplicas: 2, observedIndices: []int{1, 2}, progress: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{activeDifferent}, want: []int{0}},
+		{name: "absent replacement target plus missing initial replica", desiredReplicas: 2, progress: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{activeSame}, want: []int{0}},
+		{name: "canceled live target is cleanup not capacity", desiredReplicas: 1, observedIndices: []int{0}, progress: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{canceled}, want: []int{1}},
+		{name: "absent canceled target remains unavailable", desiredReplicas: 1, progress: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{canceled}, want: []int{1}},
+		{name: "absent retirement remains unavailable", desiredReplicas: 2, progress: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{retired}, want: []int{3}},
+		{name: "live retirement does not cover desired capacity", desiredReplicas: 2, observedIndices: []int{0, 1, 2}, progress: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{retired}, want: []int{3}},
+		{name: "canceled and retired cleanup exclude all owned indices", desiredReplicas: 2, progress: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{canceledRetired}, want: []int{3, 4}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			pcs := testutils.NewPodCliqueSetBuilder("pcs", "default", "uid").
+				WithReplicas(tc.desiredReplicas).
+				WithGeneration(1).
+				WithObservedGeneration(tc.observedGeneration).
+				WithUpdateProgress((&grovecorev1beta1.PodCliqueSetUpdateProgress{RequiresReplicaRecreation: true, CurrentlyUpdating: tc.progress}).DeepCopy()).Build()
+			replicaInfos := make(pcsReplicaInfoByIndex, len(tc.observedIndices))
+			for _, pcsReplicaIndex := range tc.observedIndices {
+				replicaInfos[pcsReplicaIndex] = pcsReplicaInfo{index: pcsReplicaIndex}
+			}
+			groups := groupPCSReplicaReplacements(pcs.Status.UpdateProgress)
+			before := pcs.DeepCopy()
+			groupsBefore := groupPCSReplicaReplacements(pcs.Status.UpdateProgress)
+			scaleInBefore := slices.Clone(tc.scalingIndices.scaleIn)
+			scaleOutBefore := slices.Clone(tc.scalingIndices.scaleOut)
+
+			got := computeInitialPCSReplicaProvisioningIndices(pcs, replicaInfos, tc.scalingIndices, groups)
+
+			assert.Equal(t, tc.want, got)
+			assert.Equal(t, before, pcs, "initial creation must not write status or acknowledge the spec")
+			assert.Equal(t, groupsBefore, groups, "initial creation must not change replacement ownership")
+			assert.Equal(t, scaleInBefore, tc.scalingIndices.scaleIn)
+			assert.Equal(t, scaleOutBefore, tc.scalingIndices.scaleOut)
+			if len(got) > 0 {
+				got[0] = -1
+				assert.Equal(t, tc.want, computeInitialPCSReplicaProvisioningIndices(pcs, replicaInfos, tc.scalingIndices, groups), "returned indices must be independently owned")
+			}
 		})
 	}
 }

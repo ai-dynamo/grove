@@ -443,6 +443,8 @@ func TestComputePCSReplicaState(t *testing.T) {
 				)
 				scalingIndices := scalingWork.scalingIndices
 				expectedReplicaIndices := expectedReplicaIndicesFromScaling(test.replicaInfos.existingReplicaIndices(), scalingIndices)
+				initialPCSReplicaIndices := computeInitialPCSReplicaProvisioningIndices(test.pcs, test.replicaInfos, scalingIndices, pcsReplicaReplacementGroups{})
+				expectedReplicaIndices.Insert(initialPCSReplicaIndices...)
 				return computePCSReplicaState(test.pcs, scalingIndices, expectedReplicaIndices, pcsReplicaReplacementGroups{})
 			}()
 
@@ -567,6 +569,77 @@ func TestSelectReplicaIndicesForScaleInRanksReplacementTargetsAndConvergedReplic
 		// Old-spec available (0) precedes new-spec available (1).
 		assert.Equal(t, []int{0, 1}, got)
 	})
+}
+
+func TestComputePCSReplicaScalingWorkBeforeFirstCompletedReconcile(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name            string
+		desiredReplicas int32
+		observedIndices []int
+		scalingIndices  pcsReplicaScalingIndices
+		progress        []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress
+		wantScaleIn     []int
+		wantScaleOut    []int
+		wantCanceled    []int
+	}{
+		{name: "fresh creation is not ordinary scale-out", desiredReplicas: 3},
+		{name: "partial creation is not ordinary scale-out", desiredReplicas: 3, observedIndices: []int{0}},
+		{name: "existing absent scale-out remains recorded", desiredReplicas: 1, scalingIndices: pcsReplicaScalingIndices{scaleOut: []int{2}}, wantScaleOut: []int{2}},
+		{name: "pending live scale-in remains recorded", desiredReplicas: 1, observedIndices: []int{2}, scalingIndices: pcsReplicaScalingIndices{scaleIn: []int{2}}, wantScaleIn: []int{2}},
+		{name: "absent scale-in waits for participant confirmation", scalingIndices: pcsReplicaScalingIndices{scaleIn: []int{2}}, wantScaleIn: []int{2}},
+		{name: "zero desired replicas removes ordinary live capacity", observedIndices: []int{0, 2}, wantScaleIn: []int{0, 2}},
+		{
+			name:         "zero desired replicas cancels absent same-index target",
+			progress:     []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 0, Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 0}}},
+			wantCanceled: []int{0},
+		},
+		{
+			name:         "zero desired replicas cancels absent different-index target",
+			progress:     []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 2, Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 1}}},
+			wantCanceled: []int{2},
+		},
+		{
+			name: "zero desired replicas cancels live target and removes unrelated capacity", observedIndices: []int{0, 1},
+			progress:     []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 0, Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 0}}},
+			wantCanceled: []int{0}, wantScaleIn: []int{1},
+		},
+		{
+			name: "positive scale-in preserves active target over unavailable old source", desiredReplicas: 1, observedIndices: []int{0, 1},
+			progress:    []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 1, Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 1}}},
+			wantScaleIn: []int{0},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			pcs := testutils.NewPodCliqueSetBuilder("pcs", "default", "uid").
+				WithReplicas(tc.desiredReplicas).
+				WithStandaloneClique("worker").
+				WithPodCliqueSetGenerationHash(new("current")).
+				WithUpdateProgress((&grovecorev1beta1.PodCliqueSetUpdateProgress{RequiresReplicaRecreation: true, CurrentlyUpdating: tc.progress}).DeepCopy()).Build()
+			groups := groupPCSReplicaReplacements(pcs.Status.UpdateProgress)
+			activeTargets := activeReplacementTargetToSource(groups.active)
+			replicaInfos := make(pcsReplicaInfoByIndex, len(tc.observedIndices))
+			for _, pcsReplicaIndex := range tc.observedIndices {
+				generationHash := "old"
+				if _, isActiveTarget := activeTargets[pcsReplicaIndex]; isActiveTarget {
+					generationHash = "current"
+				}
+				pclq := testutils.NewPodCliqueBuilder(pcs.Name, pcs.UID, "worker", pcs.Namespace, int32(pcsReplicaIndex)).
+					WithOptions(testutils.WithPCLQCurrentPCSGenerationHash(generationHash)).Build()
+				replicaInfos[pcsReplicaIndex] = pcsReplicaInfo{index: pcsReplicaIndex, standalonePCLQs: []grovecorev1beta1.PodClique{*pclq}}
+			}
+			before := pcs.DeepCopy()
+
+			work := computePCSReplicaScalingWork(pcs, replicaInfos, tc.scalingIndices, groups)
+
+			assert.Equal(t, tc.wantScaleIn, work.scalingIndices.scaleIn)
+			assert.Equal(t, tc.wantScaleOut, work.scalingIndices.scaleOut)
+			assert.Equal(t, tc.wantCanceled, work.replacementSourcesToCancel)
+			assert.Equal(t, before, pcs, "computing scaling must not acknowledge the spec or mutate replacement progress")
+		})
+	}
 }
 
 func TestComputePCSReplicaScalingWorkDuringRecreation(t *testing.T) {
