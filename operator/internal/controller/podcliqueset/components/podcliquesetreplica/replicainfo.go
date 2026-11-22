@@ -95,12 +95,16 @@ func (pri *pcsReplicaInfo) pcsgNames() sets.Set[string] {
 	return pcsgNames
 }
 
-// isUpdateComplete reports whether every expected PodClique and PodCliqueScalingGroup of the replica has
-// converged to the current generation hash. A missing PodClique keeps the replica incomplete because the
-// count of converged PodCliques falls short of the expected count. Under a coherent update it also requires
-// the replica's PodGangMap to have reconverged to a single generation, so a mid-flight intermediate anchor
-// left by back-to-back updates is drained before the update is declared complete.
+// isUpdateComplete reports whether the replica has recorded completion in the current PCS update or its
+// resources satisfy completion. Recorded completion remains valid after resource loss. Otherwise, every
+// expected PodClique and PodCliqueScalingGroup must converge to the current generation. A coherent update
+// also requires the PodGangMap to reconverge to a single generation. An unfinished recreation requires
+// replica availability before completion can be recorded.
 func (pri *pcsReplicaInfo) isUpdateComplete(pcs *grovecorev1beta1.PodCliqueSet) bool {
+	if pri.hasRecordedUpdateCompletion(pcs) {
+		return true
+	}
+
 	completeStandalonePCLQs := 0
 	for i := range pri.standalonePCLQs {
 		if componentutils.IsPCLQUpdateComplete(pcs, &pri.standalonePCLQs[i]) {
@@ -123,7 +127,37 @@ func (pri *pcsReplicaInfo) isUpdateComplete(pcs *grovecorev1beta1.PodCliqueSet) 
 	if componentutils.IsCoherentUpdateInProgress(pcs) && !componentutils.IsPodGangMapAtSingleGeneration(pri.pgmEntries, currentGenerationHash) {
 		return false
 	}
+	if componentutils.IsPCSReplicaRecreationInProgress(pcs) {
+		return pri.isAvailable(pcs)
+	}
 	return true
+}
+
+// hasRecordedUpdateCompletion reports whether the current PCS update records completion for this replica.
+// A replacement records completion for its target index. An unfinished selection at a reused target index
+// takes precedence over an earlier completed selection.
+func (pri *pcsReplicaInfo) hasRecordedUpdateCompletion(pcs *grovecorev1beta1.PodCliqueSet) bool {
+	updateProgress := pcs.Status.UpdateProgress
+	if updateProgress == nil {
+		return false
+	}
+
+	completionRecorded := false
+	for _, replicaProgress := range updateProgress.CurrentlyUpdating {
+		targetPCSReplicaIndex := replicaProgress.ReplicaIndex
+		if replicaProgress.Replacement != nil {
+			targetPCSReplicaIndex = replicaProgress.Replacement.TargetReplicaIndex
+		}
+
+		if int(targetPCSReplicaIndex) == pri.index {
+			if replicaProgress.UpdateEndedAt != nil {
+				completionRecorded = true
+			} else {
+				return false
+			}
+		}
+	}
+	return completionRecorded
 }
 
 // hasConvergedToPCSGeneration reports whether every expected standalone PodClique and
@@ -148,13 +182,22 @@ func (pri *pcsReplicaInfo) hasMaterializedPCSGeneration(pcs *grovecorev1beta1.Po
 		len(pri.pcsgs) != len(pcs.Spec.Template.PodCliqueScalingGroupConfigs) {
 		return false
 	}
-	for i := range pri.standalonePCLQs {
-		if pri.standalonePCLQs[i].Labels[apicommon.LabelPodCliqueSetGenerationHash] != generationHash {
+	return pri.haveObservedResourcesAppliedPCSGeneration(generationHash)
+}
+
+// haveObservedResourcesAppliedPCSGeneration reports whether every observed PodClique and
+// PodCliqueScalingGroup has applied the given generation. Missing children do not invalidate this check.
+func (pri *pcsReplicaInfo) haveObservedResourcesAppliedPCSGeneration(generationHash string) bool {
+	if generationHash == "" {
+		return false
+	}
+	for _, pclq := range pri.standalonePCLQs {
+		if pclq.Labels[apicommon.LabelPodCliqueSetGenerationHash] != generationHash {
 			return false
 		}
 	}
-	for i := range pri.pcsgs {
-		if pri.pcsgs[i].Labels[apicommon.LabelPodCliqueSetGenerationHash] != generationHash {
+	for _, pcsg := range pri.pcsgs {
+		if pcsg.Labels[apicommon.LabelPodCliqueSetGenerationHash] != generationHash {
 			return false
 		}
 	}

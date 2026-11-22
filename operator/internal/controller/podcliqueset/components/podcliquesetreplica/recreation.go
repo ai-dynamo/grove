@@ -111,12 +111,9 @@ func (h *pcsReplicaRecreationStrategyHooks) isReplacementComplete(replicaProgres
 		return false
 	}
 
-	targetInfo, targetExists := h.replicaInfosByIndex[targetReplicaIndex]
-	if !targetExists {
-		return false
-	}
+	targetInfo := h.replicaInfosByIndex[targetReplicaIndex]
 	targetInfo.index = targetReplicaIndex
-	return targetInfo.isUpdateComplete(h.pcs) && targetInfo.isAvailable(h.pcs)
+	return targetInfo.isUpdateComplete(h.pcs)
 }
 
 // isReplacementSourceCleanedUp reports whether the replacement source resources are gone. A same-index
@@ -142,29 +139,36 @@ func (h *pcsReplicaRecreationStrategyHooks) selectReplicasToUpdate() []pcsReplic
 	}}
 }
 
-// isUpdateComplete reports whether the whole PCS replica recreation has finished. It is complete when no active
-// or canceled replacement remains and every expected replica has converged to the current generation and is
-// available. By the time this runs in the shared orchestration flow, reconcileCurrentlyUpdatingReplicas has
-// already stamped UpdateEndedAt on replacements that converged this reconcile, so groupPCSReplicaReplacements
-// reflects those completions.
+// isUpdateComplete reports whether the whole PCS replica recreation has finished. Recorded entries must
+// satisfy completion and no unselected source may still require recreation. Ordinary provisioning at the
+// target generation is not update progress. Resource loss does not invalidate a recorded completion.
+// reconcileCurrentlyUpdatingReplicas stamps UpdateEndedAt before this check, so replacement grouping
+// reflects completions recorded in the current reconciliation.
 func (h *pcsReplicaRecreationStrategyHooks) isUpdateComplete() bool {
 	groups := groupPCSReplicaReplacements(h.pcs.Status.UpdateProgress)
 	if len(groups.active) > 0 || len(groups.canceled) > 0 {
 		return false
 	}
 
-	expectedReplicaIndices := expectedReplicaIndicesFromScaling(h.replicaInfosByIndex.existingReplicaIndices(), h.scalingIndices)
-	for expectedReplicaIndex := range expectedReplicaIndices {
-		replicaInfo, exists := h.replicaInfosByIndex[expectedReplicaIndex]
-		if !exists {
-			return false
+	for _, replicaProgress := range h.pcs.Status.UpdateProgress.CurrentlyUpdating {
+		targetPCSReplicaIndex := int(replicaProgress.ReplicaIndex)
+		if replicaProgress.Replacement != nil {
+			targetPCSReplicaIndex = int(replicaProgress.Replacement.TargetReplicaIndex)
 		}
-		replicaInfo.index = expectedReplicaIndex
-		if !replicaInfo.isUpdateComplete(h.pcs) || !replicaInfo.isAvailable(h.pcs) {
+
+		replicaInfo := h.replicaInfosByIndex[targetPCSReplicaIndex]
+		replicaInfo.index = targetPCSReplicaIndex
+		if !replicaInfo.isUpdateComplete(h.pcs) {
 			return false
 		}
 	}
-	return true
+
+	pendingSourcePCSReplicaIndices := newPCSReplicaRecreationPlanner(
+		h.pcs,
+		h.replicaInfosByIndex,
+		h.scalingIndices,
+	).selectSourceReplicaIndices(1)
+	return len(pendingSourcePCSReplicaIndices) == 0
 }
 
 // pcsReplicaRecreationPlanner selects new replacement mappings from the current resource snapshot and persisted
@@ -207,11 +211,12 @@ func (p *pcsReplicaRecreationPlanner) next() *pcsReplicaReplacement {
 // selectSourceReplicaIndices selects PCS replica indices for structural recreation.
 //
 // Selection follows these rules
-//   - PCS replicas that have materialized the current generation are excluded.
+//   - Completed source keys and completed target identities are excluded.
+//   - PCS replicas whose observed workload resources apply the current generation are excluded.
 //   - PCS scale-in reservations are excluded.
 //   - Active and canceled replacement sources and targets are excluded.
 //   - PCS scale-out reservations without a PCLQ or PCSG continue scale-out and are excluded.
-//   - Scale-out reservations with some but not all expected PCLQs and PCSGs are eligible.
+//   - Scale-out reservations with partial workload resources at an older generation are eligible.
 //   - Scale-out reservations with all expected PCLQs and PCSGs are excluded until scaling clears the reservation.
 func (p *pcsReplicaRecreationPlanner) selectSourceReplicaIndices(remainingSlots int) []int {
 	if remainingSlots <= 0 {
@@ -221,10 +226,8 @@ func (p *pcsReplicaRecreationPlanner) selectSourceReplicaIndices(remainingSlots 
 	scaleInPCSReplicaIndices := sets.New[int](p.scalingIndices.scaleIn...)
 	scaleOutPCSReplicaIndices := sets.New[int](p.scalingIndices.scaleOut...)
 	replacementReplicaIndices := p.replacementGroups.reservedReplicaIndices()
-
-	scaleOutReplicaIndicesWithExpectedPCLQsAndPCSGs := sets.New(
-		findScaleOutReplicaIndicesWithExpectedPCLQsAndPCSGs(p.pcs, p.scalingIndices.scaleOut, p.replicaInfosByIndex)...,
-	)
+	completedSourcePCSReplicaIndices, completedTargetPCSReplicaIndices := collectCompletedPCSReplicaUpdateIndices(p.pcs.Status.UpdateProgress)
+	scaleOutReplicaIndicesWithExpectedPCLQsAndPCSGs := sets.New(findScaleOutReplicaIndicesWithExpectedPCLQsAndPCSGs(p.pcs, p.scalingIndices.scaleOut, p.replicaInfosByIndex)...)
 
 	candidatePCSReplicaInfos := make([]pcsReplicaInfo, 0, len(p.replicaInfosByIndex))
 	for pcsReplicaIndex, sourcePCSReplicaInfo := range p.replicaInfosByIndex {
@@ -237,6 +240,10 @@ func (p *pcsReplicaRecreationPlanner) selectSourceReplicaIndices(remainingSlots 
 		if replacementReplicaIndices.Has(pcsReplicaIndex) {
 			continue
 		}
+		if completedSourcePCSReplicaIndices.Has(pcsReplicaIndex) || completedTargetPCSReplicaIndices.Has(pcsReplicaIndex) {
+			continue
+		}
+		sourcePCSReplicaInfo.index = pcsReplicaIndex
 		// replica index cannot be considered for recreation since it's committed to be scale-out and not even a single
 		// PCLQ or PCSG resource exists. So chances are that these resources will already see the updated PCS spec so no
 		// recreation for this replica is required yet (it might change in the next reconcile).
@@ -253,11 +260,12 @@ func (p *pcsReplicaRecreationPlanner) selectSourceReplicaIndices(remainingSlots 
 		if scaleOutReplicaIndicesWithExpectedPCLQsAndPCSGs.Has(pcsReplicaIndex) {
 			continue
 		}
-		// Fresh scale-out resources already apply the current template. Wait for their status and
-		// readiness rather than recreating them merely because bootstrap status has not caught up.
-		hasMaterializedCurrentPCSGeneration := p.pcs.Status.CurrentGenerationHash != nil &&
-			sourcePCSReplicaInfo.hasMaterializedPCSGeneration(p.pcs, *p.pcs.Status.CurrentGenerationHash)
-		if hasMaterializedCurrentPCSGeneration {
+		// Missing children of resources already applying the target specification are ordinary
+		// provisioning work, not a reason to select another replacement.
+		hasObservedWorkloadResources := len(sourcePCSReplicaInfo.standalonePCLQs) > 0 || len(sourcePCSReplicaInfo.pcsgs) > 0
+		hasAppliedCurrentPCSGeneration := p.pcs.Status.CurrentGenerationHash != nil && hasObservedWorkloadResources &&
+			sourcePCSReplicaInfo.haveObservedResourcesAppliedPCSGeneration(*p.pcs.Status.CurrentGenerationHash)
+		if hasAppliedCurrentPCSGeneration {
 			continue
 		}
 		candidatePCSReplicaInfos = append(candidatePCSReplicaInfos, sourcePCSReplicaInfo)
@@ -266,6 +274,31 @@ func (p *pcsReplicaRecreationPlanner) selectSourceReplicaIndices(remainingSlots 
 	slices.SortFunc(candidatePCSReplicaInfos, orderPCSReplicaInfoBySchedulingConfigRolloutPriority(p.pcs))
 	numSelected := min(remainingSlots, len(candidatePCSReplicaInfos))
 	return extractReplicaIndices(candidatePCSReplicaInfos[:numSelected])
+}
+
+// collectCompletedPCSReplicaUpdateIndices returns owned sets of completed source keys and target identities.
+// A completed child-resource update contributes its unchanged replica index to both sets. A completed
+// replacement contributes its source key and replacement target separately. Unfinished entries are ignored.
+func collectCompletedPCSReplicaUpdateIndices(
+	updateProgress *grovecorev1beta1.PodCliqueSetUpdateProgress,
+) (completedSourcePCSReplicaIndices, completedTargetPCSReplicaIndices sets.Set[int]) {
+	completedSourcePCSReplicaIndices = sets.New[int]()
+	completedTargetPCSReplicaIndices = sets.New[int]()
+	if updateProgress == nil {
+		return completedSourcePCSReplicaIndices, completedTargetPCSReplicaIndices
+	}
+
+	for _, replicaProgress := range updateProgress.CurrentlyUpdating {
+		if replicaProgress.UpdateEndedAt != nil {
+			completedSourcePCSReplicaIndices.Insert(int(replicaProgress.ReplicaIndex))
+			targetPCSReplicaIndex := replicaProgress.ReplicaIndex
+			if replicaProgress.Replacement != nil {
+				targetPCSReplicaIndex = replicaProgress.Replacement.TargetReplicaIndex
+			}
+			completedTargetPCSReplicaIndices.Insert(int(targetPCSReplicaIndex))
+		}
+	}
+	return completedSourcePCSReplicaIndices, completedTargetPCSReplicaIndices
 }
 
 // allocateReplacementTargets allocates one target PCS replica index for each selected source.

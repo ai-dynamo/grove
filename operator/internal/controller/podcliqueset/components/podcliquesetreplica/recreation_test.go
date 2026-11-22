@@ -381,7 +381,7 @@ func TestRecreationSelectionUsesAppliedTemplatesNotBootstrapStatus(t *testing.T)
 	}
 }
 
-func TestRecreationCompletionWaitsForMaterializedScaleOutStatus(t *testing.T) {
+func TestRecreationCompletionDoesNotWaitForMaterializedScaleOutStatus(t *testing.T) {
 	pcs := replicaRecreationSelectionTestPCS()
 	pcs.Spec.Replicas = 1
 	info := replicaRecreationSelectionInfo(pcs, 0, "current", true, true)
@@ -389,7 +389,8 @@ func TestRecreationCompletionWaitsForMaterializedScaleOutStatus(t *testing.T) {
 	info.pcsgs[0].Status = grovecorev1beta1.PodCliqueScalingGroupStatus{}
 	assert.True(t, info.hasMaterializedPCSGeneration(pcs, "current"))
 	hooks := newPCSReplicaRecreationStrategyHooks(pcs, pcsReplicaInfoByIndex{0: info}, pcsReplicaScalingIndices{})
-	assert.False(t, hooks.isUpdateComplete(), "marker cannot replace status convergence or availability")
+	assert.False(t, info.isUpdateComplete(pcs), "this replica has not completed its live convergence")
+	assert.True(t, hooks.isUpdateComplete(), "fresh S1 scale-out with no update entry must not delay recreation progress")
 }
 
 func TestPCSReplicaRecreationPlannerSelectSourceReplicaIndices(t *testing.T) {
@@ -503,7 +504,7 @@ func TestPCSReplicaRecreationPlannerSelectSourceReplicaIndices(t *testing.T) {
 		})
 	}
 
-	t.Run("completed replacement no longer reserves its source or target", func(t *testing.T) {
+	t.Run("completed source keys and target identities cannot be reselected", func(t *testing.T) {
 		pcs := schedulingConfigRolloutTestPCS()
 		pcs.Status.UpdateProgress.CurrentlyUpdating = []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{
 			ReplicaIndex:  0,
@@ -518,7 +519,7 @@ func TestPCSReplicaRecreationPlannerSelectSourceReplicaIndices(t *testing.T) {
 		got := newPCSReplicaRecreationPlanner(pcs, pcsReplicaInfosByIndex, pcsReplicaScalingIndices{}).
 			selectSourceReplicaIndices(len(pcsReplicaInfosByIndex))
 
-		assert.Equal(t, []int{0, 1}, got)
+		assert.Empty(t, got)
 	})
 
 	t.Run("only scale-out with some expected PCLQs or PCSGs is eligible", func(t *testing.T) {
@@ -581,6 +582,191 @@ func TestPCSReplicaRecreationPlannerSelectSourceReplicaIndices(t *testing.T) {
 
 		assert.Nil(t, got)
 	})
+}
+
+func TestCollectCompletedPCSReplicaUpdateIndices(t *testing.T) {
+	t.Parallel()
+	completedAt := metav1.NewTime(time.Unix(150, 0).UTC())
+	tests := []struct {
+		name        string
+		progress    *grovecorev1beta1.PodCliqueSetUpdateProgress
+		wantSources []int
+		wantTargets []int
+	}{
+		{name: "nil update progress"},
+		{name: "empty update progress", progress: &grovecorev1beta1.PodCliqueSetUpdateProgress{}},
+		{
+			name:        "completed child-resource update uses its index in both sets",
+			progress:    &grovecorev1beta1.PodCliqueSetUpdateProgress{CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 0, UpdateEndedAt: &completedAt}}},
+			wantSources: []int{0}, wantTargets: []int{0},
+		},
+		{
+			name: "completed same-index replacement uses its index in both sets",
+			progress: &grovecorev1beta1.PodCliqueSetUpdateProgress{CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{
+				ReplicaIndex: 2, UpdateEndedAt: &completedAt,
+				Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 2},
+			}}},
+			wantSources: []int{2}, wantTargets: []int{2},
+		},
+		{
+			name: "completed different-index replacement keeps source and target separate",
+			progress: &grovecorev1beta1.PodCliqueSetUpdateProgress{CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{
+				ReplicaIndex: 2, UpdateEndedAt: &completedAt,
+				Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 1},
+			}}},
+			wantSources: []int{2}, wantTargets: []int{1},
+		},
+		{
+			name: "unfinished child-resource and replacement entries contribute no completed indices",
+			progress: &grovecorev1beta1.PodCliqueSetUpdateProgress{CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{
+				{ReplicaIndex: 0},
+				{ReplicaIndex: 2, Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 1}},
+				{ReplicaIndex: 3, Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 4, CanceledAt: &completedAt}},
+			}},
+		},
+		{
+			name: "mixed progress includes only completed sources and targets",
+			progress: &grovecorev1beta1.PodCliqueSetUpdateProgress{CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{
+				{ReplicaIndex: 0, UpdateEndedAt: &completedAt},
+				{ReplicaIndex: 2, UpdateEndedAt: &completedAt, Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 1}},
+				{ReplicaIndex: 3, Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 3}},
+			}},
+			wantSources: []int{0, 2}, wantTargets: []int{0, 1},
+		},
+		{
+			name: "multiple completed mappings deduplicate shared target identities",
+			progress: &grovecorev1beta1.PodCliqueSetUpdateProgress{CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{
+				{ReplicaIndex: 2, UpdateEndedAt: &completedAt, Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 1}},
+				{ReplicaIndex: 3, UpdateEndedAt: &completedAt, Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 1}},
+			}},
+			wantSources: []int{2, 3}, wantTargets: []int{1},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			before := tc.progress.DeepCopy()
+
+			sources, targets := collectCompletedPCSReplicaUpdateIndices(tc.progress)
+
+			assert.Equal(t, sets.New(tc.wantSources...), sources)
+			assert.Equal(t, sets.New(tc.wantTargets...), targets)
+			sources.Insert(95)
+			assert.False(t, targets.Has(95), "source and target sets must not alias")
+			targets.Insert(96)
+			assert.False(t, sources.Has(96), "target mutations must not affect sources")
+			assert.Equal(t, before, tc.progress, "collection must not mutate progress")
+			nextSources, nextTargets := collectCompletedPCSReplicaUpdateIndices(tc.progress)
+			assert.Equal(t, sets.New(tc.wantSources...), nextSources, "each call must return an owned source set")
+			assert.Equal(t, sets.New(tc.wantTargets...), nextTargets, "each call must return an owned target set")
+		})
+	}
+}
+
+// TestRecreationProgressSeparatesScaleOutAndPendingSources covers released target allocation and
+// completion bookkeeping without treating fresh scale-out resources as unfinished update sources.
+func TestRecreationProgressSeparatesScaleOutAndPendingSources(t *testing.T) {
+	t.Parallel()
+	completedAt := metav1.NewTime(time.Unix(150, 0).UTC())
+	tests := []struct {
+		name                      string
+		scaleOutIndices           []int
+		freshScaleOutReplicaIndex int
+		wantTargetPCSReplicaIndex int
+	}{
+		{name: "source 3 can use released index 2", freshScaleOutReplicaIndex: -1, wantTargetPCSReplicaIndex: 2},
+		{name: "scale-out reservation at 2 forces source 3 to reuse index 3", scaleOutIndices: []int{2}, freshScaleOutReplicaIndex: 2, wantTargetPCSReplicaIndex: 3},
+		{name: "fresh partial scale-out at an unrelated index is not an update source", scaleOutIndices: []int{4}, freshScaleOutReplicaIndex: 4, wantTargetPCSReplicaIndex: 2},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			scalingIndices := pcsReplicaScalingIndices{scaleOut: tc.scaleOutIndices}
+			pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "default", "uid").
+				WithReplicas(int32(3+len(tc.scaleOutIndices))).
+				WithStandaloneClique("frontend").
+				WithScalingGroup("workers", []string{"worker"}).
+				WithPodCliqueSetGenerationHash(new("current")).
+				WithScalingProgress(scalingProgressFromScalingIndices(scalingIndices)).
+				WithUpdateProgress(&grovecorev1beta1.PodCliqueSetUpdateProgress{
+					RequiresReplicaRecreation: true,
+					CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{
+						{ReplicaIndex: 0, UpdateEndedAt: &completedAt, Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 0}},
+						{ReplicaIndex: 2, UpdateEndedAt: &completedAt, Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 1}},
+					},
+				}).Build()
+			replicaInfos := pcsReplicaInfoByIndex{
+				0: replicaRecreationSelectionInfo(pcs, 0, "current", true, true),
+				1: replicaRecreationSelectionInfo(pcs, 1, "current", true, true),
+				3: replicaRecreationSelectionInfo(pcs, 3, "superseded", true, true),
+			}
+			if tc.freshScaleOutReplicaIndex >= 0 {
+				replicaInfos[tc.freshScaleOutReplicaIndex] = replicaRecreationSelectionInfo(pcs, tc.freshScaleOutReplicaIndex, "current", true, false)
+			}
+			before := pcs.DeepCopy()
+			hooks := newPCSReplicaRecreationStrategyHooks(pcs, replicaInfos, scalingIndices)
+			assert.False(t, hooks.isUpdateComplete(), "unselected source 3 still needs updating")
+
+			selections := hooks.selectReplicasToUpdate()
+
+			require.Len(t, selections, 1)
+			assert.Equal(t, 3, selections[0].replicaIndex)
+			require.NotNil(t, selections[0].targetReplicaIndex)
+			assert.Equal(t, tc.wantTargetPCSReplicaIndex, *selections[0].targetReplicaIndex)
+			pcs.Status.UpdateProgress.CurrentlyUpdating = mergeReplicaUpdateSelections(pcs.Status.UpdateProgress.CurrentlyUpdating, selections)
+			require.Len(t, pcs.Status.UpdateProgress.CurrentlyUpdating, 3)
+			assert.Equal(t, before.Status.UpdateProgress.CurrentlyUpdating, pcs.Status.UpdateProgress.CurrentlyUpdating[:2], "completed 0 -> 0 and 2 -> 1 must remain unchanged")
+			assert.Nil(t, pcs.Status.UpdateProgress.CurrentlyUpdating[2].UpdateEndedAt, "source 3 starts unfinished even when its target is index 2")
+			hooks = newPCSReplicaRecreationStrategyHooks(pcs, replicaInfos, scalingIndices)
+			assert.False(t, hooks.isUpdateComplete(), "the active source-3 replacement prevents completion")
+
+			// Model confirmed completion of source 3 followed by loss of its target resources. Fresh
+			// scale-out remains partial, but neither case may reopen the recorded update progress.
+			pcs.Status.UpdateProgress.CurrentlyUpdating[2].UpdateEndedAt = &completedAt
+			delete(replicaInfos, 3)
+			delete(replicaInfos, tc.wantTargetPCSReplicaIndex)
+			hooks = newPCSReplicaRecreationStrategyHooks(pcs, replicaInfos, scalingIndices)
+			assert.True(t, hooks.isUpdateComplete(), "completed entries and unrelated S1 provisioning must not keep recreation active")
+		})
+	}
+}
+
+func TestCompletedReplacementIsNotReselectedAfterChildLoss(t *testing.T) {
+	t.Parallel()
+	completedAt := metav1.NewTime(time.Unix(150, 0).UTC())
+	tests := []struct {
+		name                  string
+		sourcePCSReplicaIndex int32
+		targetPCSReplicaIndex int
+	}{
+		{name: "same-index completed target loses its scaling group"},
+		{name: "different-index completed target loses its scaling group", sourcePCSReplicaIndex: 2, targetPCSReplicaIndex: 1},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "default", "uid").
+				WithStandaloneClique("frontend").
+				WithScalingGroup("workers", []string{"worker"}).
+				WithPodCliqueSetGenerationHash(new("current")).
+				WithUpdateProgress(&grovecorev1beta1.PodCliqueSetUpdateProgress{
+					RequiresReplicaRecreation: true,
+					CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{
+						ReplicaIndex: tc.sourcePCSReplicaIndex, UpdateEndedAt: &completedAt,
+						Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: int32(tc.targetPCSReplicaIndex)},
+					}},
+				}).Build()
+			replicaInfos := pcsReplicaInfoByIndex{
+				tc.targetPCSReplicaIndex: replicaRecreationSelectionInfo(pcs, tc.targetPCSReplicaIndex, "current", true, false),
+				4:                        replicaRecreationSelectionInfo(pcs, 4, "superseded", true, true),
+			}
+			before := pcs.DeepCopy()
+			planner := newPCSReplicaRecreationPlanner(pcs, replicaInfos, pcsReplicaScalingIndices{})
+
+			assert.Equal(t, []int{4}, planner.selectSourceReplicaIndices(1), "select only the unfinished replica, not the completed target with a missing child")
+			assert.Equal(t, before, pcs, "selection must preserve completed progress and timestamps")
+		})
+	}
 }
 
 func TestPCSReplicaRecreationPlannerAllocateReplacementTargets(t *testing.T) {
@@ -945,6 +1131,100 @@ func TestReconcileCurrentlyUpdatingReplicasRetiredSourceCleanup(t *testing.T) {
 	}
 }
 
+// TestOrchestrateCompletedReplacementChildLoss checks that a completed target's resource loss cannot
+// trigger reselection or delay another replacement. Missing resources on the unfinished target remain
+// provisioning work until they reappear at the current generation and completion can be recorded.
+func TestOrchestrateCompletedReplacementChildLoss(t *testing.T) {
+	t.Parallel()
+	startedAt := metav1.NewTime(time.Unix(100, 0).UTC())
+	completedAt := metav1.NewTime(time.Unix(150, 0).UTC())
+	tests := []struct {
+		name                        string
+		completedSourceReplicaIndex int32
+		completedTargetReplicaIndex int
+		allCompletedResourcesLost   bool
+	}{
+		{name: "same-index completed target loses a child"},
+		{name: "different-index completed target loses a child", completedSourceReplicaIndex: 2, completedTargetReplicaIndex: 1},
+		{name: "completed target loses every resource", allCompletedResourcesLost: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var scalingProgress *grovecorev1beta1.PodCliqueSetScalingProgress
+			if tc.allCompletedResourcesLost {
+				scalingProgress = &grovecorev1beta1.PodCliqueSetScalingProgress{ScaleOutReplicaIndices: []int32{int32(tc.completedTargetReplicaIndex)}}
+			}
+			pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "default", "uid").
+				WithReplicas(2).
+				WithObservedGeneration(new(int64(1))).
+				WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("worker").WithMinAvailable(1).Build()).
+				WithScalingGroup("workers", []string{"member"}).
+				WithPodCliqueSetGenerationHash(new("current")).
+				WithAppliedSchedulingConfigurationHash(new("superseded")).
+				WithScalingProgress(scalingProgress).
+				WithUpdateProgress(&grovecorev1beta1.PodCliqueSetUpdateProgress{
+					RequiresReplicaRecreation:         true,
+					UpdateStartedAt:                   startedAt,
+					TargetSchedulingConfigurationHash: "target-scheduling",
+					CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{
+						{ReplicaIndex: tc.completedSourceReplicaIndex, UpdateStartedAt: startedAt, UpdateEndedAt: &completedAt,
+							Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: int32(tc.completedTargetReplicaIndex), SourceCleanupCompletedAt: &startedAt}},
+						{ReplicaIndex: 3, UpdateStartedAt: startedAt,
+							Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 3, SourceCleanupCompletedAt: &startedAt}},
+					},
+				}).Build()
+			fakeClient := testutils.NewTestClientBuilder().WithObjects(pcs).WithStatusSubresource(pcs).Build()
+			replicaInfos := pcsReplicaInfoByIndex{3: rollingUpdateReplicaInfo(pcs, 3, true)}
+			if !tc.allCompletedResourcesLost {
+				replicaInfos[tc.completedTargetReplicaIndex] = rollingUpdateReplicaInfo(pcs, tc.completedTargetReplicaIndex, true)
+			}
+			scalingIndices := replicaScalingIndicesFromProgress(pcs.Status.ScalingProgress)
+			before := pcs.DeepCopy()
+			hooks := newPCSReplicaRecreationStrategyHooks(pcs, replicaInfos, scalingIndices)
+			orchestrator := newRollingUpdateOrchestrator(fakeClient.Status(), &pcsexpectations.CurrentlyUpdating{}, pcs, hooks)
+
+			inProgress, err := orchestrator.orchestrate(t.Context(), pcs.DeepCopy(), nil)
+
+			require.NoError(t, err, "missing target resources must not cause a new-selection requeue that skips synchronization")
+			assert.True(t, inProgress)
+			require.Len(t, pcs.Status.UpdateProgress.CurrentlyUpdating, 2)
+			assert.Equal(t, before.Status.UpdateProgress.CurrentlyUpdating[0], pcs.Status.UpdateProgress.CurrentlyUpdating[0], "completed progress must remain unchanged after child loss")
+			assert.Nil(t, pcs.Status.UpdateProgress.CurrentlyUpdating[1].UpdateEndedAt, "the unfinished target is still missing its scaling group")
+			assert.Nil(t, pcs.Status.UpdateProgress.UpdateEndedAt)
+			expected := expectedReplicaIndicesFromScaling(replicaInfos.existingReplicaIndices(), scalingIndices)
+			state := computePCSReplicaState(pcs, scalingIndices, expected, groupPCSReplicaReplacements(pcs.Status.UpdateProgress))
+			assert.Equal(t, []int{tc.completedTargetReplicaIndex, 3}, state.ExpectedReplicaIndices, "component synchronization must be allowed to repair missing children")
+			assert.Contains(t, state.ScaleOutReplicaIndices, 3, "the unfinished target remains provisioning work")
+
+			// Model synchronization recreating the unfinished target's missing PCSG at S1. The completed
+			// target remains missing its resources, so it must not gate the update's completion.
+			pcsgName := componentutils.GetPCSGFQNsForPCSReplica(pcs, 3)[0]
+			pcsg := testutils.NewPodCliqueScalingGroupBuilder(pcsgName, pcs.Namespace, pcs.Name, 3).
+				WithMinAvailable(1).Build()
+			pcsg.Status.CurrentPodCliqueSetGenerationHash = new("current")
+			pcsg.Status.AvailableReplicas = 1
+			readyTarget := replicaInfos[3]
+			readyTarget.pcsgs = []grovecorev1beta1.PodCliqueScalingGroup{*pcsg}
+			replicaInfos[3] = readyTarget
+			hooks = newPCSReplicaRecreationStrategyHooks(pcs, replicaInfos, scalingIndices)
+			orchestrator = newRollingUpdateOrchestrator(fakeClient.Status(), &pcsexpectations.CurrentlyUpdating{}, pcs, hooks)
+
+			inProgress, err = orchestrator.orchestrate(t.Context(), pcs.DeepCopy(), nil)
+
+			require.NoError(t, err, "completed child loss must not cause repeated replacement selection")
+			assert.False(t, inProgress, "the whole update must complete once its unfinished target is ready")
+			storedPCS := &grovecorev1beta1.PodCliqueSet{}
+			require.NoError(t, fakeClient.Get(t.Context(), client.ObjectKeyFromObject(pcs), storedPCS))
+			require.NotNil(t, storedPCS.Status.UpdateProgress)
+			assert.NotNil(t, storedPCS.Status.UpdateProgress.UpdateEndedAt)
+			assert.Empty(t, storedPCS.Status.UpdateProgress.CurrentlyUpdating)
+			require.NotNil(t, storedPCS.Status.AppliedSchedulingConfigurationHash)
+			assert.Equal(t, "target-scheduling", *storedPCS.Status.AppliedSchedulingConfigurationHash)
+		})
+	}
+}
+
 // TestOrchestrateWaitsForRetiredSourceCleanup verifies that a ready target cannot end an update while retired
 // cleanup remains pending. Completion and the applied scheduling hash advance only after every retirement clears.
 func TestOrchestrateWaitsForRetiredSourceCleanup(t *testing.T) {
@@ -1035,9 +1315,11 @@ func TestPCSReplicaRecreationIsUpdateComplete(t *testing.T) {
 		return pcs
 	}
 
-	t.Run("complete when no replacement remains and every expected replica converged and is available", func(t *testing.T) {
+	t.Run("complete when no replacement remains and no source needs recreation", func(t *testing.T) {
 		pcs := newRecreatingPCS()
-		replicaInfos := pcsReplicaInfoByIndex{0: rollingUpdateReplicaInfo(pcs, 0, true)}
+		info := rollingUpdateReplicaInfo(pcs, 0, true)
+		info.standalonePCLQs[0].Labels[apicommon.LabelPodCliqueSetGenerationHash] = *pcs.Status.CurrentGenerationHash
+		replicaInfos := pcsReplicaInfoByIndex{0: info}
 		hooks := newPCSReplicaRecreationStrategyHooks(pcs, replicaInfos, pcsReplicaScalingIndices{})
 
 		assert.True(t, hooks.isUpdateComplete())
@@ -1065,23 +1347,25 @@ func TestPCSReplicaRecreationIsUpdateComplete(t *testing.T) {
 		assert.False(t, hooks.isUpdateComplete())
 	})
 
-	t.Run("incomplete while an expected replica is missing", func(t *testing.T) {
+	t.Run("ordinary scale-out with no update entry does not block completion", func(t *testing.T) {
 		pcs := newRecreatingPCS()
 		hooks := newPCSReplicaRecreationStrategyHooks(pcs, pcsReplicaInfoByIndex{}, pcsReplicaScalingIndices{scaleOut: []int{0}})
 
-		assert.False(t, hooks.isUpdateComplete())
+		assert.True(t, hooks.isUpdateComplete())
 	})
 
-	t.Run("incomplete while an expected replica has not converged", func(t *testing.T) {
+	t.Run("incomplete while a recorded child-resource update has not converged", func(t *testing.T) {
 		pcs := newRecreatingPCS()
+		pcs.Status.UpdateProgress.CurrentlyUpdating = []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 0}}
 		replicaInfos := pcsReplicaInfoByIndex{0: rollingUpdateReplicaInfo(pcs, 0, false)}
 		hooks := newPCSReplicaRecreationStrategyHooks(pcs, replicaInfos, pcsReplicaScalingIndices{})
 
 		assert.False(t, hooks.isUpdateComplete())
 	})
 
-	t.Run("incomplete while an expected replica is converged but unavailable", func(t *testing.T) {
+	t.Run("incomplete while a recorded child-resource update is converged but unavailable", func(t *testing.T) {
 		pcs := newRecreatingPCS()
+		pcs.Status.UpdateProgress.CurrentlyUpdating = []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 0}}
 		info := rollingUpdateReplicaInfo(pcs, 0, true)
 		info.standalonePCLQs[0].DeletionTimestamp = &canceledAt
 		replicaInfos := pcsReplicaInfoByIndex{0: info}

@@ -42,8 +42,10 @@ import (
 	"github.com/stretchr/testify/require"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -1790,6 +1792,280 @@ func Test_RR17_ReplicaRecreationBeforeFirstCompletedReconcile(t *testing.T) {
 	require.Equal(t, editedPCS.Generation, final.PCS.Generation)
 	require.Equal(t, final.PCS.Generation, *final.PCS.Status.ObservedGeneration)
 	assertReplicaResourceUIDsUnchanged(t, recreated, final)
+}
+
+// Test_RR18_CompletedReplacementLossDoesNotDelayUpdate verifies that recorded replacement completion
+// remains final when a target loses a child resource. A completed source index may subsequently identify a
+// different replacement's target without making that new attempt complete. Ordinary S1 scale-out must remain
+// separate from update progress even when only some of its workload resources have been created.
+//
+// The configured strategy is Coherent, but the scheduling change executes replica recreation. Workload2's
+// memory requests are reduced to 40Mi so its peak of 40 pods fits on the existing 30-worker test cluster.
+// A ResourceQuota holds PCSG creation, not merely pod readiness, to keep resource repair and scale-out
+// deterministically incomplete while the final original replacement finishes.
+//
+// Scenario:
+//  1. Deploy four Ready replicas at indices 0, 1, 2, and 3. Make replica 1 unavailable and scale in to three,
+//     leaving original sources 0, 2, and 3.
+//  2. Increase pc-a MinAvailable 1 -> 2. Allow 0 -> 0 and 2 -> 1 to complete, then hold fresh standalone
+//     readiness for 3 -> 2. Verify target 2 has fresh S1 resources and remains unfinished despite source 2's
+//     earlier completion record.
+//  3. Limit PCSG count to two after all three replacement targets have materialized. Delete completed
+//     target 1's PCSG and scale out to four replicas. Active source 3 and target 2 remain reserved, so ordinary
+//     scale-out uses index 4. Its standalone exists at S1 while its PCSG cannot be created.
+//  4. Release target 2 readiness without removing the quota. Validate every watched PCS status preserves
+//     completed selections until overall completion. Require the scheduling update to finish while target 1
+//     and scale-out 4 still lack PCSGs, with no update selection for the fresh scale-out.
+//  5. Remove the quota. Verify ordinary synchronization repairs target 1 and completes scale-out 4, yielding
+//     40 Ready pods at indices 0, 1, 2, and 4 with exact S1 gang membership and stable surviving resource UIDs.
+func Test_RR18_CompletedReplacementLossDoesNotDelayUpdate(t *testing.T) {
+	tests.Logger.Info("1. Deploy four replicas with smaller requests and scale in unavailable replica 1")
+	tc, cleanup, _ := setupTest(t, testConfig{
+		workloadName: "workload2", workloadYAML: "../../yaml/workload2.yaml",
+		workerNodes: 30, expectedPods: 10,
+	})
+	t.Cleanup(cleanup)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(tc.Ctx), tc.Timeout)
+		defer cancel()
+		assert.NoError(t, kwok.DeleteStage(ctx, tc.Client, kwokStageReadyBlockedR1Name))
+		assert.NoError(t, kwok.DeleteStage(ctx, tc.Client, kwokStageReadyBlockedR2Name))
+	})
+	require.NoError(t, updateutils.UpdatePCSUpdateStrategy(tc, grovev1beta1.CoherentStrategy))
+	pcs, err := updateutils.GetPCS(tc, tc.Workload.Name)
+	require.NoError(t, err)
+	base := pcs.DeepCopy()
+	for _, clique := range pcs.Spec.Template.Cliques {
+		for i := range clique.Spec.PodSpec.Containers {
+			clique.Spec.PodSpec.Containers[i].Resources.Requests[corev1.ResourceMemory] = resource.MustParse("40Mi")
+		}
+	}
+	require.NoError(t, tc.Client.Patch(tc.Ctx, pcs, client.MergeFrom(base)))
+	require.NoError(t, updateutils.WaitForRollingUpdateComplete(tc, 1))
+	tc.ScalePCSAndWait(tc.Workload.Name, 4, 40, 0)
+	updateutils.AssertGenerationHashConverged(tc)
+	require.NoError(t, waitForClaimedPCSReplicaIndices(tc, []int{0, 1, 2, 3}))
+	require.NoError(t, kwok.ApplyStage(tc.Ctx, tc.Client, kwokStageReadyBlockedR1Path))
+	require.NoError(t, deletePodsForReplica(tc, 1))
+	require.NoError(t, waitForStandaloneReplicaUnavailable(tc, "pc-a", 1))
+	require.NoError(t, tc.ScalePCS(tc.Workload.Name, 3))
+	require.NoError(t, waitForClaimedPCSReplicaIndices(tc, []int{0, 2, 3}))
+	require.NoError(t, waitForReplicaResourcesDeleted(tc, client.MatchingLabels{
+		apicommon.LabelPartOfKey: tc.Workload.Name, apicommon.LabelPodCliqueSetReplicaIndex: "1",
+	}))
+	require.NoError(t, kwok.DeleteStage(tc.Ctx, tc.Client, kwokStageReadyBlockedR1Name))
+	baseline := requireReplicaSnapshotForIndex(t, tc, 2)
+
+	tests.Logger.Info("2. Complete 2 -> 1 and hold the distinct replacement 3 -> 2 at fresh target readiness")
+	require.NoError(t, kwok.ApplyStage(tc.Ctx, tc.Client, kwokStageReadyBlockedR2Path))
+	require.NoError(t, triggerStandalonePCLQMinAvailableChange(tc, "pc-a", 2))
+	sourcePCSReplicaIndex, err := waitForActiveReplacementTargetingIndex(tc, 2)
+	require.NoError(t, err)
+	require.Equal(t, int32(3), sourcePCSReplicaIndex)
+	blockedPCS, err := updateutils.GetPCS(tc, tc.Workload.Name)
+	require.NoError(t, err)
+	target := requireSchedulingTargetChanged(t, baseline.PCS, blockedPCS)
+	require.NoError(t, waitForWorkload2ReplicaAtGeneration(tc, 2, target.GenerationHash, 3))
+	require.NoError(t, waitForStandaloneReplicaUnavailable(tc, "pc-a", 2))
+	require.NoError(t, waitForReplicaResourcesDeleted(tc, client.MatchingLabels{
+		apicommon.LabelPartOfKey: tc.Workload.Name, apicommon.LabelPodCliqueSetReplicaIndex: "3",
+	}))
+	lastTarget := requireReplicaSnapshotForIndex(t, tc, 2)
+	completedTarget := requireReplicaSnapshotForIndex(t, tc, 1)
+	blockedPCS = lastTarget.PCS
+	progress := requireActiveReplicaRecreation(t, blockedPCS)
+	require.Len(t, progress.CurrentlyUpdating, 3)
+	requireActiveReplacement(t, progress, expectedReplicaReplacement{SourcePCSReplicaIndex: 3, TargetPCSReplicaIndex: 2})
+	firstCompleted := findPCSReplicaUpdateSelection(progress, 0)
+	require.NotNil(t, firstCompleted)
+	require.NotNil(t, firstCompleted.UpdateEndedAt)
+	require.NotNil(t, firstCompleted.Replacement)
+	require.Equal(t, int32(0), firstCompleted.Replacement.TargetReplicaIndex)
+	completed := findPCSReplicaUpdateSelection(progress, 2)
+	require.NotNil(t, completed)
+	require.NotNil(t, completed.UpdateEndedAt)
+	require.NotNil(t, completed.Replacement)
+	require.Equal(t, int32(1), completed.Replacement.TargetReplicaIndex)
+	require.Nil(t, completed.Replacement.CanceledAt)
+	requireReplicaResourceUIDsChanged(t, baseline, lastTarget)
+	want := expectedReplicaConfiguration{
+		StandaloneMinAvailable: 2, PCSGMinAvailable: 1, PCSGReplicas: 2,
+		PodGangMap: updateutils.ExpectedReplicaPodGangMap{
+			GenerationHash: target.GenerationHash, StandalonePodCounts: map[string]int32{"pc-a": 2},
+			PCSGName: "sg-x", AnchorIndices: []int32{0}, TailIndices: []int32{1},
+		},
+	}
+	assertReplicaConfiguration(t, completedTarget, want)
+	assertReplicaConfiguration(t, lastTarget, want)
+
+	tests.Logger.Info("3. Hold PCSG repair and ordinary scale-out creation while retaining completed history")
+	const pcsgCountResource corev1.ResourceName = "count/podcliquescalinggroups.grove.io"
+	quota := &corev1.ResourceQuota{
+		ObjectMeta: metav1.ObjectMeta{Name: "workload2-rr18-pcsg-creation-hold", Namespace: tc.Namespace},
+		Spec:       corev1.ResourceQuotaSpec{Hard: corev1.ResourceList{pcsgCountResource: resource.MustParse("2")}},
+	}
+	require.NoError(t, tc.Client.Create(tc.Ctx, quota))
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(tc.Ctx), tc.Timeout)
+		defer cancel()
+		assert.NoError(t, client.IgnoreNotFound(tc.Client.Delete(ctx, quota)))
+	})
+	require.NoError(t, wait.PollUntilContextTimeout(tc.Ctx, tc.Interval, tc.Timeout, true, func(ctx context.Context) (bool, error) {
+		var current corev1.ResourceQuota
+		if err := tc.Client.Get(ctx, client.ObjectKeyFromObject(quota), &current); err != nil {
+			return false, err
+		}
+		used := current.Status.Used[pcsgCountResource]
+		return used.Value() == 3, nil
+	}), "quota must account for all existing PCSGs before child loss")
+	watchCtx, cancelWatch := context.WithTimeout(tc.Ctx, tc.Timeout)
+	defer cancelWatch()
+	pcsWatcher, err := watchPodCliqueSet(watchCtx, tc)
+	require.NoError(t, err)
+	defer pcsWatcher.Stop()
+	require.NoError(t, tc.Client.Delete(tc.Ctx, completedTarget.PCSG))
+	require.NoError(t, tc.ScalePCS(tc.Workload.Name, 4))
+	freshReplica := apicommon.ResourceNameReplica{Name: tc.Workload.Name, Replica: 4}
+	freshPCLQKey := client.ObjectKey{Namespace: tc.Namespace, Name: apicommon.GeneratePodCliqueName(freshReplica, "pc-a")}
+	missingPCSGKeys := []client.ObjectKey{
+		client.ObjectKeyFromObject(completedTarget.PCSG),
+		{Namespace: tc.Namespace, Name: updateutils.PCSGFQNForReplica(tc, "sg-x", 4)},
+	}
+	require.NoError(t, wait.PollUntilContextTimeout(tc.Ctx, tc.Interval, tc.Timeout, true, func(ctx context.Context) (bool, error) {
+		var freshPCLQ grovev1beta1.PodClique
+		if err := tc.Client.Get(ctx, freshPCLQKey, &freshPCLQ); err != nil {
+			return false, client.IgnoreNotFound(err)
+		}
+		if freshPCLQ.Labels[apicommon.LabelPodCliqueSetGenerationHash] != target.GenerationHash {
+			return false, fmt.Errorf("fresh scale-out replica 4 has generation %q, want %q", freshPCLQ.Labels[apicommon.LabelPodCliqueSetGenerationHash], target.GenerationHash)
+		}
+		for _, key := range missingPCSGKeys {
+			var pcsg grovev1beta1.PodCliqueScalingGroup
+			if err := tc.Client.Get(ctx, key, &pcsg); err != nil {
+				if apierrors.IsNotFound(err) {
+					continue
+				}
+				return false, err
+			}
+			return false, nil
+		}
+		return true, nil
+	}), "completed target 1 and fresh scale-out 4 must both lack PCSGs")
+	partialPCS, err := updateutils.GetPCS(tc, tc.Workload.Name)
+	require.NoError(t, err)
+	requireActiveReplacement(t, requireActiveReplicaRecreation(t, partialPCS), expectedReplicaReplacement{SourcePCSReplicaIndex: 3, TargetPCSReplicaIndex: 2})
+	require.NotNil(t, partialPCS.Status.ScalingProgress)
+	require.Contains(t, partialPCS.Status.ScalingProgress.ScaleOutReplicaIndices, int32(4))
+	require.Nil(t, findPCSReplicaUpdateSelection(partialPCS.Status.UpdateProgress, 4))
+
+	tests.Logger.Info("4. Complete the remaining original replacement without releasing PCSG creation")
+	require.NoError(t, kwok.DeleteStage(tc.Ctx, tc.Client, kwokStageReadyBlockedR2Name))
+	updateutils.DeleteNotReadyPodsOnReplica(t, tc, 2)
+	finishedPCS, err := waitForReplicaRecreationCompletionPreservingCompletedSelections(watchCtx, pcsWatcher, blockedPCS, 4)
+	require.NoError(t, err)
+	require.Equal(t, target.SchedulingHash, *finishedPCS.Status.AppliedSchedulingConfigurationHash)
+	require.Equal(t, int32(4), finishedPCS.Spec.Replicas)
+	require.Empty(t, finishedPCS.Status.UpdateProgress.CurrentlyUpdating)
+	for _, key := range missingPCSGKeys {
+		var missing grovev1beta1.PodCliqueScalingGroup
+		require.True(t, apierrors.IsNotFound(tc.Client.Get(tc.Ctx, key, &missing)), "PCSG %s must still be absent at update completion", key)
+	}
+	var freshPCLQ grovev1beta1.PodClique
+	require.NoError(t, tc.Client.Get(tc.Ctx, freshPCLQKey, &freshPCLQ))
+	require.Equal(t, target.GenerationHash, freshPCLQ.Labels[apicommon.LabelPodCliqueSetGenerationHash])
+
+	tests.Logger.Info("5. Release creation, repair the completed target, and converge to four Ready replicas")
+	require.NoError(t, tc.Client.Delete(tc.Ctx, quota))
+	requireReplicaRecreationConverged(t, tc, expectedReplicaRecreationCompletion{
+		GenerationHash: target.GenerationHash, SchedulingHash: target.SchedulingHash,
+		Replicas: 4, Pods: 40, PCSReplicaIndices: []int{0, 1, 2, 4}, Configuration: want,
+	})
+	repaired := requireReplicaSnapshotForIndex(t, tc, 1)
+	require.NotEqual(t, completedTarget.PCSG.UID, repaired.PCSG.UID)
+	require.Equal(t, completedTarget.PCLQ.UID, repaired.PCLQ.UID)
+	require.Equal(t, completedTarget.PGM.UID, repaired.PGM.UID)
+	assertReplicaResourceUIDsUnchanged(t, lastTarget, requireReplicaSnapshotForIndex(t, tc, 2))
+	require.Equal(t, freshPCLQ.UID, requireReplicaSnapshotForIndex(t, tc, 4).PCLQ.UID)
+}
+
+// findPCSReplicaUpdateSelection returns the source-keyed selection without copying or mutating its progress.
+func findPCSReplicaUpdateSelection(progress *grovev1beta1.PodCliqueSetUpdateProgress, sourcePCSReplicaIndex int32) *grovev1beta1.PodCliqueSetReplicaUpdateProgress {
+	if progress == nil {
+		return nil
+	}
+	for i := range progress.CurrentlyUpdating {
+		if progress.CurrentlyUpdating[i].ReplicaIndex == sourcePCSReplicaIndex {
+			return &progress.CurrentlyUpdating[i]
+		}
+	}
+	return nil
+}
+
+// waitForReplicaRecreationCompletionPreservingCompletedSelections validates every watched status until
+// completion. The initial PCS must contain every original source's selection. Completed selections must
+// remain unchanged while the update is active, and no additional sources may enter its selection history.
+// The caller owns the watch and its lifetime.
+func waitForReplicaRecreationCompletionPreservingCompletedSelections(
+	ctx context.Context,
+	watcher watch.Interface,
+	before *grovev1beta1.PodCliqueSet,
+	freshScaleOutPCSReplicaIndex int32,
+) (*grovev1beta1.PodCliqueSet, error) {
+	event, err := watchtools.UntilWithoutRetry(ctx, watcher, func(event watch.Event) (bool, error) {
+		switch event.Type {
+		case watch.Error:
+			return false, apierrors.FromObject(event.Object)
+		case watch.Deleted:
+			return false, fmt.Errorf("PCS deleted before recreation completed")
+		case watch.Bookmark:
+			return false, nil
+		case watch.Added, watch.Modified:
+		default:
+			return false, fmt.Errorf("unexpected PCS watch event %q", event.Type)
+		}
+		pcs, ok := event.Object.(*grovev1beta1.PodCliqueSet)
+		if !ok || pcs == nil {
+			return false, fmt.Errorf("unexpected PCS watch object %T", event.Object)
+		}
+		progress := pcs.Status.UpdateProgress
+		if progress == nil {
+			return false, fmt.Errorf("recreation progress disappeared before completion")
+		}
+		hasSameRecreationTarget := apiequality.Semantic.DeepEqual(pcs.Status.CurrentGenerationHash, before.Status.CurrentGenerationHash) &&
+			progress.TargetSchedulingConfigurationHash == before.Status.UpdateProgress.TargetSchedulingConfigurationHash
+		if !hasSameRecreationTarget || !progress.UpdateStartedAt.Equal(&before.Status.UpdateProgress.UpdateStartedAt) {
+			return false, fmt.Errorf("recreation target or update identity changed")
+		}
+		if progress.UpdateEndedAt != nil {
+			if pcs.Status.AppliedSchedulingConfigurationHash == nil ||
+				*pcs.Status.AppliedSchedulingConfigurationHash != progress.TargetSchedulingConfigurationHash ||
+				len(progress.CurrentlyUpdating) != 0 {
+				return false, fmt.Errorf("completed recreation did not apply its target and clear selections")
+			}
+			return true, nil
+		}
+		for _, completed := range before.Status.UpdateProgress.CurrentlyUpdating {
+			if completed.UpdateEndedAt != nil {
+				after := findPCSReplicaUpdateSelection(progress, completed.ReplicaIndex)
+				if after == nil || !apiequality.Semantic.DeepEqual(completed, *after) {
+					return false, fmt.Errorf("completed source %d selection changed after resource loss", completed.ReplicaIndex)
+				}
+			}
+		}
+		if findPCSReplicaUpdateSelection(progress, freshScaleOutPCSReplicaIndex) != nil {
+			return false, fmt.Errorf("ordinary S1 scale-out replica %d entered update progress", freshScaleOutPCSReplicaIndex)
+		}
+		for _, selection := range progress.CurrentlyUpdating {
+			if findPCSReplicaUpdateSelection(before.Status.UpdateProgress, selection.ReplicaIndex) == nil {
+				return false, fmt.Errorf("unexpected source %d selected after original replacements were committed", selection.ReplicaIndex)
+			}
+		}
+		return false, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("waiting for recreation completion with missing repair and scale-out resources: %w", err)
+	}
+	return event.Object.(*grovev1beta1.PodCliqueSet).DeepCopy(), nil
 }
 
 // replicaRecreationSnapshot captures the PCS and one replica's pc-a, sg-x, and PodGangMap resources.
