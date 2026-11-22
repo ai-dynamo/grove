@@ -95,36 +95,22 @@ func (h *pcsReplicaRecreationStrategyHooks) reconcileCurrentlyUpdatingReplicas(c
 	return reconcileCurrentlyUpdatingResult{completedPCSReplicaIndices: completedPCSReplicaIndices}, nil
 }
 
-// isReplacementComplete reports whether a replacement's source and retired sources are cleaned up and its
-// target PCS replica has converged to the current generation and is available. A retired source remains pending
-// until replica-scoped participants confirm cleanup and its index is removed from replacement progress.
-// It evaluates convergence only and does not consider lifecycle state, which the caller filters.
-func (h *pcsReplicaRecreationStrategyHooks) isReplacementComplete(replicaProgress grovecorev1beta1.PodCliqueSetReplicaUpdateProgress) bool {
+// isReplacementComplete reports whether the source and retired sources have participant-confirmed
+// cleanup and the target PCS replica has converged to the current generation and is available.
+// It does not consider lifecycle state, which the caller filters.
+func (h *pcsReplicaRecreationStrategyHooks) isReplacementComplete(
+	replicaProgress grovecorev1beta1.PodCliqueSetReplicaUpdateProgress,
+) bool {
 	replacement := replicaProgress.Replacement
-	if len(replacement.RetiredSourceReplicaIndices) > 0 {
+	if replacement.SourceCleanupCompletedAt == nil ||
+		len(replacement.RetiredSourceReplicaIndices) > 0 {
 		return false
 	}
 
-	sourceReplicaIndex := int(replicaProgress.ReplicaIndex)
-	targetReplicaIndex := int(replacement.TargetReplicaIndex)
-	if !h.isReplacementSourceCleanedUp(sourceReplicaIndex, targetReplicaIndex, replacement) {
-		return false
-	}
-
-	targetInfo := h.replicaInfosByIndex[targetReplicaIndex]
-	targetInfo.index = targetReplicaIndex
+	targetPCSReplicaIndex := int(replacement.TargetReplicaIndex)
+	targetInfo := h.replicaInfosByIndex[targetPCSReplicaIndex]
+	targetInfo.index = targetPCSReplicaIndex
 	return targetInfo.isUpdateComplete(h.pcs)
-}
-
-// isReplacementSourceCleanedUp reports whether the replacement source resources are gone. A same-index
-// replacement relies on the SourceCleanupCompletedAt barrier because the source keeps its headless Service. A
-// different-index replacement is cleaned up once the source index has no observed resources.
-func (h *pcsReplicaRecreationStrategyHooks) isReplacementSourceCleanedUp(sourceReplicaIndex, targetReplicaIndex int, replacement *grovecorev1beta1.PodCliqueSetReplicaReplacementProgress) bool {
-	if sourceReplicaIndex == targetReplicaIndex {
-		return replacement.SourceCleanupCompletedAt != nil
-	}
-	_, sourceExists := h.replicaInfosByIndex[sourceReplicaIndex]
-	return !sourceExists
 }
 
 // selectReplicasToUpdate selects the next source-to-target PCS replica replacement.

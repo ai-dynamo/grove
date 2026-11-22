@@ -344,6 +344,82 @@ func TestPCSReplicaRecreationPlannerNext(t *testing.T) {
 	})
 }
 
+// TestDifferentIndexCleanupConfirmationReleasesSourceForNextReplacement verifies that an absent source
+// remains reserved until participant-confirmed cleanup and target completion. After 2 -> 1 completes,
+// source 3 can allocate target 2 without reopening the historical source-2 completion record.
+func TestDifferentIndexCleanupConfirmationReleasesSourceForNextReplacement(t *testing.T) {
+	t.Parallel()
+	startedAt := metav1.NewTime(time.Unix(100, 0).UTC())
+	firstCompletedAt := metav1.NewTime(time.Unix(200, 0).UTC())
+	cleanupCompletedAt := metav1.NewTime(time.Unix(300, 0).UTC())
+	completedAt := metav1.NewTime(time.Unix(400, 0).UTC())
+	pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "default", "test-uid").
+		WithReplicas(3).
+		WithObservedGeneration(new(int64(1))).
+		WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("worker").WithMinAvailable(1).Build()).
+		WithPodCliqueSetGenerationHash(new("current")).
+		WithUpdateProgress(&grovecorev1beta1.PodCliqueSetUpdateProgress{
+			RequiresReplicaRecreation:          true,
+			UpdateStartedAt:                    startedAt,
+			PreviousPodCliqueSetGenerationHash: new("previous"),
+			CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{
+				{ReplicaIndex: 0, UpdateStartedAt: startedAt, UpdateEndedAt: &firstCompletedAt,
+					Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 0, SourceCleanupCompletedAt: &startedAt}},
+				{ReplicaIndex: 2, UpdateStartedAt: startedAt,
+					Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 1}},
+			},
+		}).Build()
+	replicaInfos := pcsReplicaInfoByIndex{
+		0: rollingUpdateReplicaInfo(pcs, 0, true),
+		1: rollingUpdateReplicaInfo(pcs, 1, true),
+		3: rollingUpdateReplicaInfoAtGeneration(pcs, 3, "previous", true),
+	}
+	hooks := newPCSReplicaRecreationStrategyHooks(pcs, replicaInfos, pcsReplicaScalingIndices{})
+
+	pending, err := hooks.reconcileCurrentlyUpdatingReplicas(pcs.Status.UpdateProgress.CurrentlyUpdating)
+
+	require.NoError(t, err)
+	assert.Empty(t, pending.completedPCSReplicaIndices, "source 2 absence cannot confirm cleanup")
+	assert.Empty(t, hooks.selectReplicasToUpdate(), "source 3 must wait for the active replacement")
+	groups := groupPCSReplicaReplacements(pcs.Status.UpdateProgress)
+	assert.True(t, groups.reservedReplicaIndices().Has(2), "source 2 remains reserved during cleanup")
+	state := computePCSReplicaState(pcs, pcsReplicaScalingIndices{}, replicaInfos.existingReplicaIndices(), groups)
+	assert.Equal(t, []int{2}, state.ScaleInReplicaIndices)
+	assert.Contains(t, state.ExpectedReplicaIndices, 1, "different-index target creation may overlap source cleanup")
+	assert.Contains(t, state.ScaleOutReplicaIndices, 1)
+
+	// Model post-sync participant confirmation, followed by the orchestrator recording completion.
+	pcs.Status.UpdateProgress.CurrentlyUpdating[1].Replacement.SourceCleanupCompletedAt = &cleanupCompletedAt
+	confirmed, err := hooks.reconcileCurrentlyUpdatingReplicas(pcs.Status.UpdateProgress.CurrentlyUpdating)
+	require.NoError(t, err)
+	require.Equal(t, []int{2}, confirmed.completedPCSReplicaIndices)
+	pcs.Status.UpdateProgress.CurrentlyUpdating[1].UpdateEndedAt = &completedAt
+	historicalCompletion := pcs.Status.UpdateProgress.CurrentlyUpdating[1].DeepCopy()
+
+	selected := hooks.selectReplicasToUpdate()
+
+	require.Equal(t, []pcsReplicaUpdateSelection{{replicaIndex: 3, targetReplicaIndex: new(2)}}, selected)
+	pcs.Status.UpdateProgress.CurrentlyUpdating = append(pcs.Status.UpdateProgress.CurrentlyUpdating,
+		grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{
+			ReplicaIndex:    3,
+			UpdateStartedAt: metav1.NewTime(time.Unix(500, 0).UTC()),
+			Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{
+				TargetReplicaIndex: 2, SourceCleanupCompletedAt: new(metav1.NewTime(time.Unix(600, 0).UTC())),
+			},
+		},
+	)
+	freshTarget := rollingUpdateReplicaInfo(pcs, 2, true)
+	freshTarget.standalonePCLQs[0].Status.ReadyReplicas = 0
+	replicaInfos[2] = freshTarget
+
+	reused, err := hooks.reconcileCurrentlyUpdatingReplicas(pcs.Status.UpdateProgress.CurrentlyUpdating)
+
+	require.NoError(t, err)
+	assert.Empty(t, reused.completedPCSReplicaIndices, "fresh target 2 cannot inherit source 2's historical completion")
+	assert.Nil(t, pcs.Status.UpdateProgress.CurrentlyUpdating[2].UpdateEndedAt)
+	assert.Equal(t, *historicalCompletion, pcs.Status.UpdateProgress.CurrentlyUpdating[1], "target reuse must preserve the historical 2 -> 1 completion")
+}
+
 func TestRecreationSelectionUsesAppliedTemplatesNotBootstrapStatus(t *testing.T) {
 	cases := []struct {
 		name             string
@@ -939,15 +1015,20 @@ func TestPCSReplicaRecreationPlannerAllocateReplacementTargets(t *testing.T) {
 func TestReconcileCurrentlyUpdatingReplicasReportsCompletedReplacements(t *testing.T) {
 	pcs := rollingUpdateTestPCS()
 	pcs.Status.UpdateProgress.RequiresReplicaRecreation = true
-	canceledAt := metav1.Now()
-	endedAt := metav1.Now()
-	barrierCompletedAt := metav1.Now()
+	canceledAt := metav1.NewTime(time.Unix(150, 0).UTC())
+	endedAt := metav1.NewTime(time.Unix(200, 0).UTC())
+	barrierCompletedAt := metav1.NewTime(time.Unix(100, 0).UTC())
 
 	differentIndex := func() grovecorev1beta1.PodCliqueSetReplicaUpdateProgress {
 		return grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{
 			ReplicaIndex: 0,
 			Replacement:  &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 2},
 		}
+	}
+	buildConfirmedDifferentIndexReplacement := func() grovecorev1beta1.PodCliqueSetReplicaUpdateProgress {
+		progress := differentIndex()
+		progress.Replacement.SourceCleanupCompletedAt = &barrierCompletedAt
+		return progress
 	}
 	sameIndexWithBarrier := func() grovecorev1beta1.PodCliqueSetReplicaUpdateProgress {
 		return grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{
@@ -968,9 +1049,20 @@ func TestReconcileCurrentlyUpdatingReplicasReportsCompletedReplacements(t *testi
 		want              []int
 	}{
 		{
-			name:              "completes a different-index replacement once its source is gone and its target converged",
+			name:              "completes a different-index replacement after source cleanup confirmation and target convergence",
+			currentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{buildConfirmedDifferentIndexReplacement()},
+			replicaInfos:      pcsReplicaInfoByIndex{2: rollingUpdateReplicaInfo(pcs, 2, true)},
+			want:              []int{0},
+		},
+		{
+			name:              "source snapshot absence cannot replace participant-confirmed different-index cleanup",
 			currentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{differentIndex()},
 			replicaInfos:      pcsReplicaInfoByIndex{2: rollingUpdateReplicaInfo(pcs, 2, true)},
+		},
+		{
+			name:              "confirmed different-index cleanup remains authoritative over a stale source snapshot",
+			currentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{buildConfirmedDifferentIndexReplacement()},
+			replicaInfos:      pcsReplicaInfoByIndex{0: rollingUpdateReplicaInfo(pcs, 0, true), 2: rollingUpdateReplicaInfo(pcs, 2, true)},
 			want:              []int{0},
 		},
 		{
@@ -980,12 +1072,12 @@ func TestReconcileCurrentlyUpdatingReplicasReportsCompletedReplacements(t *testi
 		},
 		{
 			name:              "keeps a different-index replacement active while its target has not converged",
-			currentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{differentIndex()},
+			currentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{buildConfirmedDifferentIndexReplacement()},
 			replicaInfos:      pcsReplicaInfoByIndex{2: rollingUpdateReplicaInfo(pcs, 2, false)},
 		},
 		{
 			name:              "keeps a different-index replacement active while its target is converged but unavailable",
-			currentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{differentIndex()},
+			currentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{buildConfirmedDifferentIndexReplacement()},
 			replicaInfos:      pcsReplicaInfoByIndex{2: convergedUnavailableInfo(2)},
 		},
 		{
@@ -1026,7 +1118,7 @@ func TestReconcileCurrentlyUpdatingReplicasReportsCompletedReplacements(t *testi
 		},
 		{
 			name:              "reports multiple completed replacements together",
-			currentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{differentIndex(), sameIndexWithBarrier()},
+			currentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{buildConfirmedDifferentIndexReplacement(), sameIndexWithBarrier()},
 			replicaInfos:      pcsReplicaInfoByIndex{1: rollingUpdateReplicaInfo(pcs, 1, true), 2: rollingUpdateReplicaInfo(pcs, 2, true)},
 			want:              []int{0, 1},
 		},
@@ -1082,9 +1174,7 @@ func TestReconcileCurrentlyUpdatingReplicasRetiredSourceCleanup(t *testing.T) {
 			replacement := &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{
 				TargetReplicaIndex:          tc.targetPCSReplicaIndex,
 				RetiredSourceReplicaIndices: slices.Clone(tc.retiredSourcePCSReplicaIndices),
-			}
-			if tc.sourcePCSReplicaIndex == tc.targetPCSReplicaIndex {
-				replacement.SourceCleanupCompletedAt = &cleanupCompletedAt
+				SourceCleanupCompletedAt:    &cleanupCompletedAt,
 			}
 			var scalingProgress *grovecorev1beta1.PodCliqueSetScalingProgress
 			if len(tc.ordinaryScaleInPCSReplicaIndices) > 0 {
@@ -1247,9 +1337,7 @@ func TestOrchestrateWaitsForRetiredSourceCleanup(t *testing.T) {
 			replacement := &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{
 				TargetReplicaIndex:          tc.targetPCSReplicaIndex,
 				RetiredSourceReplicaIndices: slices.Clone(tc.retiredSourcePCSReplicaIndices),
-			}
-			if tc.sourcePCSReplicaIndex == tc.targetPCSReplicaIndex {
-				replacement.SourceCleanupCompletedAt = &cleanupCompletedAt
+				SourceCleanupCompletedAt:    &cleanupCompletedAt,
 			}
 			pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "default", "test-uid").
 				WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("worker").WithMinAvailable(1).Build()).

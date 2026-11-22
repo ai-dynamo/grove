@@ -179,7 +179,7 @@ func TestRecordReplacementCleanupWork(t *testing.T) {
 		assert.Equal(t, before, pcs, "an existing source-cleanup barrier must not be overwritten")
 	})
 
-	t.Run("leaves a different-index active replacement untouched", func(t *testing.T) {
+	t.Run("records confirmed different-index source cleanup without completing the replacement", func(t *testing.T) {
 		pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, uuid.NewUUID()).Build()
 		pcs.Status.UpdateProgress = &grovecorev1beta1.PodCliqueSetUpdateProgress{CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{
 			{ReplicaIndex: 3, Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 2}},
@@ -187,8 +187,9 @@ func TestRecordReplacementCleanupWork(t *testing.T) {
 
 		recordReplacementCleanupWork(logr.Discard(), pcs, sets.New[int32](2, 3))
 
-		assert.Len(t, pcs.Status.UpdateProgress.CurrentlyUpdating, 1)
-		assert.Nil(t, pcs.Status.UpdateProgress.CurrentlyUpdating[0].Replacement.SourceCleanupCompletedAt)
+		require.Len(t, pcs.Status.UpdateProgress.CurrentlyUpdating, 1)
+		require.NotNil(t, pcs.Status.UpdateProgress.CurrentlyUpdating[0].Replacement.SourceCleanupCompletedAt)
+		assert.Nil(t, pcs.Status.UpdateProgress.CurrentlyUpdating[0].UpdateEndedAt)
 	})
 
 	t.Run("removes a canceled replacement once source and target resources are gone", func(t *testing.T) {
@@ -244,8 +245,12 @@ func TestRecordPCSReplicaReplacementCleanup(t *testing.T) {
 		{name: "source index zero can record a same-index barrier", confirmedPCSReplicaIndices: sets.New[int32](0), wantRecordedSourceBarrier: true},
 		{name: "an existing barrier is not recorded again", sourcePCSReplicaIndex: 1, targetPCSReplicaIndex: 1, sourceCleanupCompletedAt: &previousCleanupAt, confirmedPCSReplicaIndices: sets.New[int32](1)},
 		{name: "an existing barrier is preserved without new confirmation", sourcePCSReplicaIndex: 1, targetPCSReplicaIndex: 1, sourceCleanupCompletedAt: &previousCleanupAt},
-		{name: "different-index source cleanup records no shared-index barrier", sourcePCSReplicaIndex: 2, targetPCSReplicaIndex: 1, confirmedPCSReplicaIndices: sets.New[int32](1, 2)},
-		{name: "different-index source zero needs no barrier", targetPCSReplicaIndex: 1, confirmedPCSReplicaIndices: sets.New[int32](0)},
+		{name: "unconfirmed different-index cleanup stays pending", sourcePCSReplicaIndex: 2, targetPCSReplicaIndex: 1},
+		{name: "target confirmation does not confirm different-index source cleanup", sourcePCSReplicaIndex: 2, targetPCSReplicaIndex: 1, confirmedPCSReplicaIndices: sets.New[int32](1)},
+		{name: "confirmed different-index source records cleanup completion", sourcePCSReplicaIndex: 2, targetPCSReplicaIndex: 1, confirmedPCSReplicaIndices: sets.New[int32](1, 2), wantRecordedSourceBarrier: true},
+		{name: "source index zero can record different-index cleanup completion", targetPCSReplicaIndex: 1, confirmedPCSReplicaIndices: sets.New[int32](0), wantRecordedSourceBarrier: true},
+		{name: "existing different-index confirmation is not recorded again", sourcePCSReplicaIndex: 2, targetPCSReplicaIndex: 1, sourceCleanupCompletedAt: &previousCleanupAt, confirmedPCSReplicaIndices: sets.New[int32](2)},
+		{name: "existing different-index confirmation is preserved without new confirmation", sourcePCSReplicaIndex: 2, targetPCSReplicaIndex: 1, sourceCleanupCompletedAt: &previousCleanupAt},
 		{
 			name:                  "partial retirement confirmation preserves unconfirmed sources",
 			sourcePCSReplicaIndex: 2, targetPCSReplicaIndex: 1,
@@ -352,6 +357,81 @@ func TestRecordPCSReplicaReplacementCleanup(t *testing.T) {
 			}
 			assert.Equal(t, want, progress, "cleanup must preserve all other update progress")
 			assert.True(t, confirmedBefore.Equal(tc.confirmedPCSReplicaIndices), "cleanup must not mutate component confirmation")
+		})
+	}
+}
+
+// TestDifferentIndexSourceCleanupRequiresParticipantConfirmation verifies that source snapshot absence is
+// insufficient when ResourceClaims, ComputeDomains, or PodGangMaps still require cleanup. Missing participant
+// results prevent confirmation, while reported non-applicable participants do not block it.
+func TestDifferentIndexSourceCleanupRequiresParticipantConfirmation(t *testing.T) {
+	t.Parallel()
+	participants := []component.Kind{
+		component.KindPodClique, component.KindPodCliqueScalingGroup, component.KindHeadlessService,
+		component.KindPodGang, component.KindHorizontalPodAutoscaler, component.KindPodGangMap,
+		component.KindResourceClaim, component.KindComputeDomain,
+	}
+	tests := []struct {
+		name                     string
+		pendingParticipant       component.Kind
+		missingParticipant       component.Kind
+		notApplicableParticipant component.Kind
+		wantConfirmed            bool
+	}{
+		{name: "every applicable participant confirms source cleanup", wantConfirmed: true},
+		{name: "terminating ResourceClaims keep the source pending", pendingParticipant: component.KindResourceClaim},
+		{name: "terminating ComputeDomains keep the source pending", pendingParticipant: component.KindComputeDomain},
+		{name: "terminating PodGangMaps keep the source pending", pendingParticipant: component.KindPodGangMap},
+		{name: "missing ResourceClaim result cannot release the source", missingParticipant: component.KindResourceClaim},
+		{name: "missing ComputeDomain result cannot release the source", missingParticipant: component.KindComputeDomain},
+		{name: "missing PodGangMap result cannot release the source", missingParticipant: component.KindPodGangMap},
+		{name: "non-applicable ResourceClaims do not block source cleanup", notApplicableParticipant: component.KindResourceClaim, wantConfirmed: true},
+		{name: "non-applicable ComputeDomains do not block source cleanup", notApplicableParticipant: component.KindComputeDomain, wantConfirmed: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			registry := component.NewOperatorRegistry[grovecorev1beta1.PodCliqueSet, pcssync.State, pcssync.Result]()
+			syncResults := make(map[component.Kind]pcssync.Result, len(participants))
+			for _, kind := range participants {
+				registry.Register(kind, nil, component.AsReplicaScoped())
+				switch kind {
+				case tc.missingParticipant:
+					continue
+				case tc.pendingParticipant:
+					syncResults[kind] = pcssync.Result{CleanedUpReplicaIndices: []int{1}}
+				case tc.notApplicableParticipant:
+					syncResults[kind] = pcssync.Result{NotApplicable: true}
+				default:
+					syncResults[kind] = pcssync.Result{CleanedUpReplicaIndices: []int{1, 2}}
+				}
+			}
+			reconciler := &Reconciler{operatorRegistry: registry}
+			pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "uid").
+				WithUpdateProgress(&grovecorev1beta1.PodCliqueSetUpdateProgress{
+					RequiresReplicaRecreation: true,
+					CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{
+						ReplicaIndex: 2,
+						Replacement:  &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 1},
+					}},
+				}).Build()
+			before := pcs.DeepCopy()
+
+			confirmed := reconciler.cleanedUpScaleInReplicaIndices(syncResults)
+			recordReplacementCleanupWork(logr.Discard(), pcs, confirmed)
+
+			assert.Equal(t, tc.wantConfirmed, confirmed.Has(2), "every applicable participant must confirm source 2")
+			require.Len(t, pcs.Status.UpdateProgress.CurrentlyUpdating, 1)
+			progress := &pcs.Status.UpdateProgress.CurrentlyUpdating[0]
+			if tc.wantConfirmed {
+				require.NotNil(t, progress.Replacement.SourceCleanupCompletedAt)
+				assert.False(t, progress.Replacement.SourceCleanupCompletedAt.IsZero())
+				before.Status.UpdateProgress.CurrentlyUpdating[0].Replacement.SourceCleanupCompletedAt = progress.Replacement.SourceCleanupCompletedAt.DeepCopy()
+			} else {
+				assert.Nil(t, progress.Replacement.SourceCleanupCompletedAt)
+			}
+			assert.Nil(t, progress.UpdateEndedAt, "cleanup confirmation must not stamp replacement completion")
+			assert.Equal(t, before, pcs, "source cleanup must preserve the mapping and all other progress")
 		})
 	}
 }

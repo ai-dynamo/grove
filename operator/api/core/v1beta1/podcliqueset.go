@@ -165,13 +165,16 @@ type PodCliqueSetUpdateProgress struct {
 	PreviousPodCliqueSetGenerationHash *string `json:"previousPodCliqueSetGenerationHash,omitempty"`
 	// UpdateStartedAt is the time at which the update started for the PodCliqueSet.
 	UpdateStartedAt metav1.Time `json:"updateStartedAt,omitempty"`
-	// UpdateEndedAt is the time at which Grove does not have any work pending to manifest the update according to the
-	// configured update strategy.
-	//  - For rolling update strategies where Grove handles the orchestration, while the update is still in progress
-	//    it will be nil, and will be set once the update finishes where all child resources are updated by Grove with
-	//    the latest specification.
-	//  - For the OnDelete strategy, it is set to the same time as UpdateStartedAt, which implies that there is no work
-	// 	  pending on Grove.
+	// UpdateEndedAt is the time at which Grove does not have any work pending to manifest the update.
+	// For ordinary template-only updates, completion follows the configured update strategy:
+	//  - For rolling update strategies where Grove handles the orchestration, it remains nil while the update
+	//    is in progress and is set once Grove has updated all required child resources with the latest specification.
+	//  - For the OnDelete strategy, it is set to the same time as UpdateStartedAt because Grove does not
+	//    orchestrate replacement of existing Pods for an ordinary template-only update.
+	//
+	// A scheduling-configuration change requires structural replica recreation regardless of the configured
+	// strategy, including OnDelete. For such an update, this field remains nil until all required replacements
+	// complete and Grove advances AppliedSchedulingConfigurationHash to TargetSchedulingConfigurationHash.
 	// +optional
 	UpdateEndedAt *metav1.Time `json:"updateEndedAt,omitempty"`
 	// UpdatedPodCliquesCount is the number of PodCliques that have been updated to the desired PodCliqueSet
@@ -195,8 +198,10 @@ type PodCliqueSetUpdateProgress struct {
 	// +kubebuilder:default=0
 	TotalPodCliqueScalingGroupsCount int32 `json:"totalPodCliqueScalingGroupsCount,omitempty"`
 	// CurrentlyUpdating captures the progress of the PodCliqueSet replicas that are currently being updated.
-	// This field is only set for rolling update strategies where Grove handles the orchestration. It is not set for the
-	// OnDelete update strategy.
+	// For ordinary template-only updates, this field is populated only for rolling update strategies where
+	// Grove handles the orchestration. It is not set for ordinary template-only updates under OnDelete.
+	//
+	// Structural replica recreation populates this field regardless of the configured strategy, including OnDelete.
 	// +optional
 	// +listType=map
 	// +listMapKey=replicaIndex
@@ -257,12 +262,17 @@ type PodCliqueSetReplicaReplacementProgress struct {
 	// TargetReplicaIndex is the PodCliqueSet replica index created from the latest PodCliqueSet template.
 	TargetReplicaIndex int32 `json:"targetReplicaIndex"`
 
-	// SourceCleanupCompletedAt is the time when every replica-scoped component stopped reporting the source index as
-	// awaiting resource cleanup. It is used only when ReplicaIndex equals TargetReplicaIndex. Cleanup and creation at
-	// the same index must run sequentially to prevent newly created target resources from being deleted as source
-	// resources. Grove persists this field after cleanup completes so target creation can proceed across operator
-	// restarts. Grove does not set or inspect this field when the indices differ because source deletion and target
-	// creation can proceed concurrently.
+	// SourceCleanupCompletedAt is the time when every applicable replica-scoped component confirmed
+	// cleanup of the source replica identified by PodCliqueSetReplicaUpdateProgress.ReplicaIndex.
+	// Grove persists this confirmation across reconciliations and operator restarts.
+	//
+	// A same-index replacement requires this confirmation before creating target resources, so source
+	// cleanup cannot delete newly created resources at the shared index. A different-index replacement
+	// allows target creation while source cleanup is pending. Both replacement forms require confirmed
+	// source cleanup before completion can be recorded.
+	//
+	// This confirmation belongs to the source cleanup of this replacement attempt. Reusing the source
+	// index as another replacement's target does not invalidate it.
 	// +optional
 	SourceCleanupCompletedAt *metav1.Time `json:"sourceCleanupCompletedAt,omitempty"`
 

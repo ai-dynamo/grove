@@ -302,7 +302,7 @@ func (r *Reconciler) syncPodCliqueSetResources(ctx context.Context, logger logr.
 	}
 
 	// Post-sync cleanup runs before honoring a soft component requeue, because an in-progress PCS replica
-	// recreation depends on it to advance the same-index cleanup barrier and retire drained replacements.
+	// recreation depends on it to confirm source cleanup and retire drained replacements.
 	// Reaching here means no group hard-stopped, so every registered replica-scoped participant was dispatched
 	// and its result (if any) is recorded. The PodCliqueSetReplica orchestrator is not a replica-scoped
 	// participant, so its in-progress requeue does not gate this cleanup.
@@ -386,7 +386,7 @@ func removeCompletedScaleInPCSReplicaIndices(logger logr.Logger, pcs *grovecorev
 }
 
 // recordReplacementCleanupWork advances in-memory replacement cleanup from participant-confirmed indices.
-// It clears confirmed retired sources, records same-index source cleanup, and removes canceled entries only
+// It clears confirmed retired sources, records source cleanup, and removes canceled entries only
 // after all their cleanup obligations are satisfied. It never stamps UpdateEndedAt or persists status.
 // The caller persists all post-sync cleanup mutations together.
 func recordReplacementCleanupWork(
@@ -426,7 +426,7 @@ func recordReplacementCleanupWork(
 
 // recordPCSReplicaReplacementCleanup updates one unfinished replacement from participant-confirmed cleanup.
 // It returns whether the canceled entry can be removed. The caller excludes completed entries and entries
-// without replacement progress. Recording a new same-index source-cleanup barrier is logged immediately.
+// without replacement progress. Recording a new source-cleanup confirmation is logged immediately.
 func recordPCSReplicaReplacementCleanup(
 	logger logr.Logger,
 	replicaProgress *grovecorev1beta1.PodCliqueSetReplicaUpdateProgress,
@@ -450,18 +450,16 @@ func recordPCSReplicaReplacementCleanup(
 		return canceledCleanupComplete
 	}
 
-	// Only same-index recreation needs a source-cleanup barrier before target creation. Do not record
-	// a barrier for different indices, overwrite an existing timestamp, or advance without confirmed
-	// source cleanup.
-	if sourcePCSReplicaIndex != replacement.TargetReplicaIndex ||
-		replacement.SourceCleanupCompletedAt != nil ||
+	// Record source cleanup only after participant confirmation, and preserve an existing timestamp.
+	// Repeated confirmation while the target is still converging must not cause another status write.
+	if replacement.SourceCleanupCompletedAt != nil ||
 		!cleanedUpReplicaIndices.Has(sourcePCSReplicaIndex) {
 		return false
 	}
 
 	cleanupCompletedAt := metav1.Now()
 	replacement.SourceCleanupCompletedAt = &cleanupCompletedAt
-	logger.Info("Recorded same-index replacement source cleanup completion", "sourcePCSReplicaIndex", sourcePCSReplicaIndex)
+	logger.Info("Recorded replacement source cleanup completion", "sourcePCSReplicaIndex", sourcePCSReplicaIndex)
 	return false
 }
 
