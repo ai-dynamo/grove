@@ -8,8 +8,9 @@ When a PodCliqueSet (PCS) is scheduled by [KAI Scheduler](https://github.com/kai
 |---|---|---|---|
 | `kai.scheduler/queue` | PCS label, then PCS annotation, then the PodClique templates' labels and annotations | `queue` | Admission rejects the PCS |
 | `kai.scheduler/preemptibility` | PCS label | `preemptibility` | KAI derives preemptibility from the priority class |
+| `kai.scheduler/staleness-grace-period` | PCS annotation | `stalenessGracePeriod` | Grove disables KAI stale-gang eviction for the PodGroup |
 
-Both keys follow KAI's own contract, so a workload keeps the queue and preemptibility it would have had under KAI's podgrouper.
+The queue and preemptibility keys follow KAI's own contract, so a workload keeps the queue and preemptibility it would have had under KAI's podgrouper.
 
 ## Queue
 
@@ -22,6 +23,14 @@ KAI accepts one queue per PodGroup. A queue set on the PCS applies to the whole 
 Admission rejects any other value. If a PCS admitted before this check carries an invalid value, Grove records an `InvalidKAIPreemptibility` warning event on the PodGang and leaves the PodGroup's preemptibility unset.
 
 > **Note:** Grove reads preemptibility from the PCS label only, as KAI's podgrouper does. An annotation with this key is ignored.
+
+## Stale-gang eviction
+
+KAI evicts every running Pod of a PodGroup that stays below its minimum for longer than the staleness grace period. Grove terminates a gang itself after the PCS's `terminationDelay`, so it disables this eviction on the PodGroups it creates. This requires KAI v0.17.0+.
+
+To let KAI evict a stale gang, set `kai.scheduler/staleness-grace-period` on the PCS to a duration such as `5m`. A negative duration disables the eviction.
+
+Admission rejects a value that is not a duration.
 
 ## Example
 
