@@ -111,6 +111,12 @@ config:
     profiles:
       - name: default-scheduler
       - name: kai-scheduler
+        # Optional. Defaults match upstream KAI Scheduler. A distribution that bundles KAI under other
+        # names (for example NVIDIA Run:ai) must set them to the values its KAI Config uses:
+        # config:
+        #   schedulerName: runai-scheduler   # written to Pod.Spec.SchedulerName
+        #   queueLabelKey: runai/queue       # label/annotation naming the queue on a PodCliqueSet or clique
+        #   nodePoolLabelKey: runai/node-pool
       # Uncomment optional scheduler profiles only when their dependencies are installed.
       # - name: volcano
       # - name: lpx-scheduler

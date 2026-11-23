@@ -63,7 +63,7 @@ func (b *schedulerBackend) buildReplicaPodGroupPlan(
 	if err != nil {
 		return nil, err
 	}
-	queueName, err := resolveQueueNameForPodCliqueSet(pcs)
+	queueName, err := resolveQueueNameForPodCliqueSet(pcs, b.queueLabelKey)
 	if err != nil {
 		return nil, err
 	}
