@@ -76,6 +76,12 @@ func (b *schedulerBackend) buildReplicaPodGroupPlan(
 		b.recordWarning(pcs, "InvalidKAIPreemptibility", err)
 		preemptibility = ""
 	}
+	// KAI rejects an update that raises minSubGroup on a semi-preemptible PodGroup, and the replica
+	// PodGroup raises it whenever a PodGang is added.
+	if preemptibility == kaischedulingv2alpha2.SemiPreemptible {
+		b.recordWarning(pcs, "UnsupportedKAIPreemptibility", fmt.Errorf("KAI preemptibility %q is not supported on PodCliqueSet %s/%s, leaving it unset", preemptibility, pcs.Namespace, pcs.Name))
+		preemptibility = ""
+	}
 	rootTopology, err := toKAITopologyConstraint(inputs.reference.Spec.TopologyConstraint, topologyReference)
 	if err != nil {
 		return nil, err

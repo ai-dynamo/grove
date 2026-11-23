@@ -1041,6 +1041,7 @@ func TestBackend_SyncPodGang_SetsPreemptibilityFromPodCliqueSet(t *testing.T) {
 		labels      map[string]string
 		annotations map[string]string
 		want        kaischedulingv2alpha2.Preemptibility
+		wantWarning string
 	}{
 		{
 			name: "unset leaves KAI's priority-based default",
@@ -1050,6 +1051,12 @@ func TestBackend_SyncPodGang_SetsPreemptibilityFromPodCliqueSet(t *testing.T) {
 			name:   "label",
 			labels: map[string]string{labelKeyPreemptibility: "non-preemptible"},
 			want:   kaischedulingv2alpha2.NonPreemptible,
+		},
+		{
+			name:        "semi-preemptible is left unset",
+			labels:      map[string]string{labelKeyPreemptibility: "semi-preemptible"},
+			want:        "",
+			wantWarning: "Warning UnsupportedKAIPreemptibility",
 		},
 		{
 			name:        "annotation is ignored, as KAI's podgrouper ignores it",
@@ -1071,7 +1078,8 @@ func TestBackend_SyncPodGang_SetsPreemptibilityFromPodCliqueSet(t *testing.T) {
 			pgm := configureTestAnchorPodGang(pcs, podGang)
 
 			cl := testutils.NewTestClientBuilder().WithObjects(pcs, pgm, podGang).Build()
-			b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameKai})
+			recorder := record.NewFakeRecorder(10)
+			b := New(cl, cl.Scheme(), recorder, configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameKai})
 			require.NoError(t, b.Init(cl))
 
 			ctx := context.Background()
@@ -1080,6 +1088,12 @@ func TestBackend_SyncPodGang_SetsPreemptibilityFromPodCliqueSet(t *testing.T) {
 			podGroup := &kaischedulingv2alpha2.PodGroup{}
 			require.NoError(t, cl.Get(ctx, replicaPodGroupKey(pcs, 0), podGroup))
 			assert.Equal(t, tt.want, podGroup.Spec.Preemptibility)
+			if tt.wantWarning == "" {
+				assert.Empty(t, recorder.Events)
+			} else {
+				require.Len(t, recorder.Events, 1)
+				assert.Contains(t, <-recorder.Events, tt.wantWarning)
+			}
 		})
 	}
 }

@@ -21,9 +21,11 @@ import (
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
+	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler/kai"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
+	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
@@ -212,4 +214,31 @@ func TestUsesLPX(t *testing.T) {
 			assert.Equal(t, usesLPX(tt.podSpec), tt.usesLPX, "Pod spec expected usesLPX = %t: %+v", tt.usesLPX, tt.podSpec)
 		})
 	}
+}
+
+type recordingBackend struct {
+	scheduler.Backend
+	name   string
+	synced []*groveschedulerv1alpha1.PodGang
+}
+
+func (b *recordingBackend) Name() string { return b.name }
+
+func (b *recordingBackend) SyncPodGang(_ context.Context, podGang *groveschedulerv1alpha1.PodGang) error {
+	b.synced = append(b.synced, podGang)
+	return nil
+}
+
+func TestBackendSyncPodGangPassesTerminatingPodGangToRenamedFallback(t *testing.T) {
+	podGang := testutils.NewPodGangBuilder("terminating", "default").
+		WithPodGroup("deleted-podclique", 1).
+		WithSchedulerName(string(configv1beta1.SchedulerNameLPX)).
+		WithDeletionTimestamp().
+		Build()
+	fallback := &recordingBackend{name: "runai-scheduler"}
+	backend := New(testutils.NewTestClientBuilder().Build(), configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameLPX}, fallback)
+
+	require.NoError(t, backend.SyncPodGang(context.Background(), podGang))
+	require.Len(t, fallback.synced, 1)
+	assert.Same(t, podGang, fallback.synced[0])
 }
