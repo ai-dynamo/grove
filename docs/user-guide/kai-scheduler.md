@@ -23,6 +23,12 @@ Admission rejects any other value. If a PCS admitted before this check carries a
 
 > **Note:** Grove reads preemptibility from the PCS label only, as KAI's podgrouper does. An annotation with this key is ignored.
 
+## Stale-gang eviction
+
+KAI evicts every running Pod of a PodGroup that stays below its minimum for longer than the staleness grace period. Grove terminates a gang itself after the PCS's `terminationDelay`, so it disables this eviction on every PodGroup it creates. This requires KAI v0.17.0+.
+
+Grove ignores the `kai.scheduler/staleness-grace-period` annotation. To have a broken gang terminated sooner, set `terminationDelay` on the PCS.
+
 ## Example
 
 ```yaml

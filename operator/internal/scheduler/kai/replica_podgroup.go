@@ -77,10 +77,11 @@ func (b *schedulerBackend) buildReplicaPodGroupPlan(
 		return nil, err
 	}
 	result := newReplicaPodGroup(pcs, replica, kaischedulingv2alpha2.PodGroupSpec{
-		MinSubGroup:       ptr.To(rootMinSubGroup),
-		Queue:             queueName,
-		PriorityClassName: inputs.reference.Spec.PriorityClassName,
-		SubGroups:         builder.subGroups,
+		MinSubGroup:          ptr.To(rootMinSubGroup),
+		Queue:                queueName,
+		PriorityClassName:    inputs.reference.Spec.PriorityClassName,
+		SubGroups:            builder.subGroups,
+		StalenessGracePeriod: &metav1.Duration{Duration: stalenessGracePeriodNeverEvict},
 	})
 	if rootTopology != nil {
 		result.Spec.TopologyConstraint = *rootTopology

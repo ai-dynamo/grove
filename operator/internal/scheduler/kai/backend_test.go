@@ -17,6 +17,7 @@ package kai
 import (
 	"context"
 	"testing"
+	"time"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
@@ -432,6 +433,27 @@ func TestBackend_SyncPodGang_UsesUniquePodCliqueTemplateQueue(t *testing.T) {
 	podGroup := &kaischedulingv2alpha2.PodGroup{}
 	require.NoError(t, cl.Get(ctx, client.ObjectKeyFromObject(podGang), podGroup))
 	assert.Equal(t, "team-a", podGroup.Spec.Queue)
+}
+
+func TestBackend_SyncPodGang_DisablesStaleGangEviction(t *testing.T) {
+	pcs := newPodCliqueSet("staleness-pcs", "team-a")
+	podGang := testutils.NewPodGangBuilder("staleness-podgang", "default").
+		WithPodGroup("worker", 1).
+		WithSchedulerName(string(configv1beta1.SchedulerNameKai)).
+		Build()
+	podGang.Annotations = map[string]string{"kai.scheduler/staleness-grace-period": "5m"}
+	setPodCliqueSetControllerOwner(podGang, pcs)
+
+	cl := testutils.NewTestClientBuilder().WithObjects(pcs, podGang).Build()
+	b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameKai})
+	require.NoError(t, b.Init(cl))
+
+	ctx := context.Background()
+	require.NoError(t, b.SyncPodGang(ctx, podGang))
+	podGroup := &kaischedulingv2alpha2.PodGroup{}
+	require.NoError(t, cl.Get(ctx, client.ObjectKeyFromObject(podGang), podGroup))
+	require.NotNil(t, podGroup.Spec.StalenessGracePeriod)
+	assert.Equal(t, -1*time.Second, podGroup.Spec.StalenessGracePeriod.Duration)
 }
 
 func TestBackend_ValidatePodCliqueSetQueues(t *testing.T) {

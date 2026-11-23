@@ -17,6 +17,7 @@ package kai
 import (
 	"strings"
 	"testing"
+	"time"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
@@ -196,6 +197,23 @@ func TestBuildReplicaPodGroupPlanAnchorOnly(t *testing.T) {
 	require.NotNil(t, podGroup.Spec.MinSubGroup)
 	assert.Equal(t, int32(1), *podGroup.Spec.MinSubGroup)
 	assert.Nil(t, findSubGroup(podGroup, "non-anchors"))
+}
+
+func TestBuildReplicaPodGroupPlanDisablesStaleGangEviction(t *testing.T) {
+	pcs := newPodCliqueSet("job", "team-a")
+	anchor := materializedTestPodGang(pcs, "job-0-1000", grovecorev1beta1.PodGangEntryRoleAnchor,
+		groveschedulerv1alpha1.PodGroup{Name: "worker", MinReplicas: 2},
+	)
+
+	plan, err := testPlanBackend(t).buildReplicaPodGroupPlan(
+		pcs,
+		0,
+		[]componentutils.MaterializedPodGang{anchor},
+		"",
+	)
+	require.NoError(t, err)
+	require.NotNil(t, plan.podGroup.Spec.StalenessGracePeriod)
+	assert.Equal(t, -1*time.Second, plan.podGroup.Spec.StalenessGracePeriod.Duration)
 }
 
 func TestBuildReplicaPodGroupPlanAppliesReplicaAndTopology(t *testing.T) {

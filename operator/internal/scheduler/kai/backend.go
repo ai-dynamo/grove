@@ -22,6 +22,7 @@ import (
 	"maps"
 	"reflect"
 	"sort"
+	"time"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	apicommonconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
@@ -72,6 +73,9 @@ const (
 	annotationValSkipPGR   = "true"
 	annotationPodGroup     = "pod-group-name"
 	labelSubGroup          = "kai.scheduler/subgroup-name"
+
+	// stalenessGracePeriodNeverEvict disables KAI stale gang eviction, because Grove terminates gangs itself.
+	stalenessGracePeriodNeverEvict = -1 * time.Second
 )
 
 // New creates a new KAI backend instance. profile is the scheduler profile for kai-scheduler;
@@ -317,11 +321,12 @@ func (b *schedulerBackend) buildPodGroupForPodGang(ctx context.Context, podGang 
 			Annotations: maps.Clone(podGang.Annotations),
 		},
 		Spec: kaischedulingv2alpha2.PodGroupSpec{
-			MinMember:         ptr.To(minMember),
-			Queue:             queueName,
-			PriorityClassName: podGang.Spec.PriorityClassName,
-			Preemptibility:    preemptibility,
-			SubGroups:         subGroups,
+			MinMember:            ptr.To(minMember),
+			Queue:                queueName,
+			PriorityClassName:    podGang.Spec.PriorityClassName,
+			Preemptibility:       preemptibility,
+			SubGroups:            subGroups,
+			StalenessGracePeriod: &metav1.Duration{Duration: stalenessGracePeriodNeverEvict},
 		},
 	}
 	if topologyConstraint != nil {
