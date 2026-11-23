@@ -205,7 +205,7 @@ func TestValidateCreate_UnknownSchedulerBackendWarns(t *testing.T) {
 	warnings, err := handler.ValidateCreate(context.Background(), ct)
 	require.NoError(t, err)
 	require.Len(t, warnings, 1)
-	assert.Contains(t, warnings[0], "spec.schedulerTopologyReferences[1].schedulerName")
+	assert.Contains(t, warnings[0], "spec.schedulerTopologyBindings[1].schedulerName")
 	assert.Contains(t, warnings[0], `scheduler backend "unknown-scheduler" is not enabled in Grove`)
 }
 
@@ -220,7 +220,7 @@ func TestValidateCreate_DuplicateUnknownSchedulerBackend(t *testing.T) {
 
 	_, err := handler.ValidateCreate(context.Background(), ct)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "spec.schedulerTopologyReferences[1].schedulerName")
+	assert.Contains(t, err.Error(), "spec.schedulerTopologyBindings[1].schedulerName")
 }
 
 // TestValidateUpdate_UnknownSchedulerBackend covers enabling a new scheduler backend: the
