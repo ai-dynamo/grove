@@ -204,7 +204,6 @@ func TestBuildReplicaPodGroupPlanSetsStalenessGracePeriod(t *testing.T) {
 		name        string
 		annotations map[string]string
 		want        time.Duration
-		wantErr     bool
 	}{
 		{name: "eviction disabled by default", want: -1 * time.Second},
 		{
@@ -213,9 +212,9 @@ func TestBuildReplicaPodGroupPlanSetsStalenessGracePeriod(t *testing.T) {
 			want:        90 * time.Second,
 		},
 		{
-			name:        "invalid annotation",
+			name:        "invalid annotation falls back to the default",
 			annotations: map[string]string{annotationKeyStalenessGracePeriod: "soon"},
-			wantErr:     true,
+			want:        -1 * time.Second,
 		},
 	}
 	for _, tc := range tests {
@@ -232,10 +231,6 @@ func TestBuildReplicaPodGroupPlanSetsStalenessGracePeriod(t *testing.T) {
 				[]componentutils.MaterializedPodGang{anchor},
 				"",
 			)
-			if tc.wantErr {
-				require.ErrorContains(t, err, annotationKeyStalenessGracePeriod)
-				return
-			}
 			require.NoError(t, err)
 			require.NotNil(t, plan.podGroup.Spec.StalenessGracePeriod)
 			assert.Equal(t, tc.want, plan.podGroup.Spec.StalenessGracePeriod.Duration)

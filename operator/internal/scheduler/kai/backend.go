@@ -206,6 +206,18 @@ func resolveStalenessGracePeriod(annotations map[string]string) (*metav1.Duratio
 	return gracePeriod, nil
 }
 
+// stalenessGracePeriodOrDefault resolves the staleness grace period from annotations. An invalid value,
+// which only a PodCliqueSet admitted before the webhook check can carry, is reported as a warning event
+// on obj and replaced by the default.
+func (b *schedulerBackend) stalenessGracePeriodOrDefault(obj runtime.Object, annotations map[string]string) *metav1.Duration {
+	stalenessGracePeriod, err := resolveStalenessGracePeriod(annotations)
+	if err != nil {
+		b.recordWarning(obj, "InvalidKAIStalenessGracePeriod", err)
+		return &metav1.Duration{Duration: stalenessGracePeriodNeverEvict}
+	}
+	return stalenessGracePeriod
+}
+
 // buildPodGroupForPodGang translates a Grove PodGang into a KAI PodGroup object.
 func (b *schedulerBackend) buildPodGroupForPodGang(ctx context.Context, podGang *groveschedulerv1alpha1.PodGang) (*kaischedulingv2alpha2.PodGroup, error) {
 	bindingName := getTopologyName(podGang)
@@ -230,10 +242,7 @@ func (b *schedulerBackend) buildPodGroupForPodGang(ctx context.Context, podGang 
 		b.recordWarning(podGang, "InvalidKAIPreemptibility", err)
 		preemptibility = ""
 	}
-	stalenessGracePeriod, err := resolveStalenessGracePeriod(podGang.Annotations)
-	if err != nil {
-		return nil, err
-	}
+	stalenessGracePeriod := b.stalenessGracePeriodOrDefault(podGang, podGang.Annotations)
 
 	parentBySubGroupName := map[string]string{}
 	subGroups := make([]kaischedulingv2alpha2.SubGroup, 0, len(podGang.Spec.TopologyConstraintGroupConfigs)+len(podGang.Spec.PodGroups))

@@ -10,7 +10,7 @@ When a PodCliqueSet (PCS) is scheduled by [KAI Scheduler](https://github.com/kai
 | `kai.scheduler/preemptibility` | PCS label | `preemptibility` | KAI derives preemptibility from the priority class |
 | `kai.scheduler/staleness-grace-period` | PCS annotation | `stalenessGracePeriod` | Grove disables KAI stale-gang eviction for the PodGroup |
 
-The queue and preemptibility keys follow KAI's own contract, so a workload keeps the queue and preemptibility it would have had under KAI's podgrouper.
+All three keys follow KAI's own contract, so a workload keeps the queue and preemptibility it would have had under KAI's podgrouper. The staleness grace period differs in one way: without the annotation, KAI's podgrouper leaves the scheduler-wide default in place, and Grove disables the eviction.
 
 ## Queue
 
@@ -26,11 +26,11 @@ Admission rejects any other value. If a PCS admitted before this check carries a
 
 ## Stale-gang eviction
 
-KAI evicts every running Pod of a PodGroup that stays below its minimum for longer than the staleness grace period. Grove terminates a gang itself after the PCS's `terminationDelay`, so it disables this eviction on the PodGroups it creates. This requires KAI v0.17.0+.
+KAI evicts every running Pod of a PodGroup that stays below its minimum for longer than the staleness grace period. Grove terminates a gang itself after the PCS's `terminationDelay`, so it disables this eviction on the PodGroups it creates.
 
-To let KAI evict a stale gang, set `kai.scheduler/staleness-grace-period` on the PCS to a duration such as `5m`. A negative duration disables the eviction.
+To let KAI evict a stale gang, set `kai.scheduler/staleness-grace-period` on the PCS to a duration such as `5m`. A negative duration disables the eviction. With `0`, KAI evicts as soon as it sees the gang below its minimum.
 
-Admission rejects a value that is not a duration.
+Admission rejects a value that is not a duration. If a PCS admitted before this check carries an invalid value, Grove records an `InvalidKAIStalenessGracePeriod` warning event on the PodGang and disables the eviction.
 
 ## Example
 

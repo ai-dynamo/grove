@@ -441,7 +441,7 @@ func TestBackend_SyncPodGang_SetsStalenessGracePeriod(t *testing.T) {
 		name        string
 		annotations map[string]string
 		want        time.Duration
-		wantErr     bool
+		wantWarning bool
 	}{
 		{name: "eviction disabled by default", want: -1 * time.Second},
 		{
@@ -450,9 +450,10 @@ func TestBackend_SyncPodGang_SetsStalenessGracePeriod(t *testing.T) {
 			want:        5 * time.Minute,
 		},
 		{
-			name:        "invalid annotation",
+			name:        "invalid annotation falls back to the default",
 			annotations: map[string]string{annotationKeyStalenessGracePeriod: "soon"},
-			wantErr:     true,
+			want:        -1 * time.Second,
+			wantWarning: true,
 		},
 	}
 	for _, tc := range tests {
@@ -466,21 +467,22 @@ func TestBackend_SyncPodGang_SetsStalenessGracePeriod(t *testing.T) {
 			setPodCliqueSetControllerOwner(podGang, pcs)
 
 			cl := testutils.NewTestClientBuilder().WithObjects(pcs, podGang).Build()
-			b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameKai})
+			recorder := record.NewFakeRecorder(10)
+			b := New(cl, cl.Scheme(), recorder, configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameKai})
 			require.NoError(t, b.Init(cl))
 
 			ctx := context.Background()
-			err := b.SyncPodGang(ctx, podGang)
+			require.NoError(t, b.SyncPodGang(ctx, podGang))
 			podGroup := &kaischedulingv2alpha2.PodGroup{}
-			if tc.wantErr {
-				require.ErrorContains(t, err, annotationKeyStalenessGracePeriod)
-				assert.True(t, apierrors.IsNotFound(cl.Get(ctx, client.ObjectKeyFromObject(podGang), podGroup)))
-				return
-			}
-			require.NoError(t, err)
 			require.NoError(t, cl.Get(ctx, client.ObjectKeyFromObject(podGang), podGroup))
 			require.NotNil(t, podGroup.Spec.StalenessGracePeriod)
 			assert.Equal(t, tc.want, podGroup.Spec.StalenessGracePeriod.Duration)
+			if tc.wantWarning {
+				require.Len(t, recorder.Events, 1)
+				assert.Contains(t, <-recorder.Events, "InvalidKAIStalenessGracePeriod")
+			} else {
+				assert.Empty(t, recorder.Events)
+			}
 		})
 	}
 }

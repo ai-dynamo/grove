@@ -71,10 +71,7 @@ func (b *schedulerBackend) buildReplicaPodGroupPlan(
 	if err != nil {
 		return nil, err
 	}
-	stalenessGracePeriod, err := resolveStalenessGracePeriod(pcs.Annotations)
-	if err != nil {
-		return nil, err
-	}
+	stalenessGracePeriod := b.stalenessGracePeriodOrDefault(pcs, pcs.Annotations)
 	builder := newSubGroupBuilder(pcs.Name, replica, topologyReference)
 	rootMinSubGroup, err := builder.appendReplicaHierarchy(inputs)
 	if err != nil {
