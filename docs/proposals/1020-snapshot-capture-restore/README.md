@@ -284,7 +284,7 @@ sequenceDiagram
     G->>K: Create Pods with restore annotations and labels
     Note over K,W: Schedule Pods and start waiting destination containers
     S->>K: Find a complete group of restore Pods
-    S->>K: Create PodGroupRestore with replica labels
+    S->>K: Create PodGroupRestore with group labels
     S->>K: Claim Pods and pin identities
     S->>W: Restore selected containers and signal resume
     S->>K: Report restore result
@@ -305,14 +305,27 @@ IDs, Grove supplies:
 ```yaml
 annotations:
   nvidia.com/restore-from-group: prepared-model
-  nvidia.com/restore-replica-labels: >-
+  nvidia.com/restore-group-labels: >-
     grove.io/podcliquescalinggroup,grove.io/podcliquescalinggroup-replica-index
   nvidia.com/restore-member-label: grove.io/podcliquescalinggroup-pod-index
 ```
 
-The PCSG name and its replica index identify one workload replica. A PodGang can
-contain several such replicas, so its name alone is not the replica key. Grove
-waits for old Pods to be deleted before reusing the same replica identity.
+The PCSG name and its replica index identify one workload replica, and together
+they form its group key. A PodGang can contain several such replicas, so its name
+alone is not the group key. The key is reused: a replica index scaled in and out
+again, or a workload recreated under the same name, gets the same key. Grove
+therefore keeps generations apart.
+
+When Grove retires a restore replica, it creates no Pod under that replica's
+group key until every Pod of the retired replica has been deleted from the API.
+This applies to scale-in, failed restores, replica replacement, and workload
+deletion. Grove checks this per replica before creating any of its PodCliques:
+deleting each PodClique in the foreground would not cover the Pods of the
+replica's other cliques.
+
+Replacing an individual lost Pod before Snapshot creates a restore attempt does
+not retire the replica: the replacement joins the same generation. Once an
+attempt exists, losing a Pod requires retiring the whole replica.
 
 Snapshot waits until every member has a scheduled, running destination container
 on a group-capable node. It then creates `PodGroupRestore` and records the target
@@ -345,15 +358,16 @@ not run again; the restored process resumes from its saved state.
 
 #### Failure
 
-Grove watches `PodGroupRestore` failures and deletes the whole failed replica,
-including any members already running. It first checks the target Pod UIDs so an
-old failure cannot delete a newer replica. All old Pods must terminate before any
-retry. The restore retry policy remains open.
+Grove watches `PodGroupRestore` failures and retires the whole failed replica,
+including any members already running, under the rule above. It first checks the
+target Pod UIDs so an old failure cannot delete a newer replica. The restore
+retry policy remains open.
 
-Before Snapshot creates an attempt, a lost Pod's replacement can join the waiting
-group. After the attempt exists, its Pod membership is fixed: losing a Pod fails
-that attempt and requires replacing the whole replica. Snapshot bounds the
-attempt, but not the earlier wait for a complete group; Grove owns that wait.
+After an attempt exists, its Pod membership is fixed. While the attempt is
+unfinished, losing a Pod fails it, and Grove retires the whole replica. After a
+successful restore, losing a Pod still requires retiring the whole replica, but
+leaves the attempt's outcome successful. Snapshot bounds the attempt, but not
+the earlier wait for a complete group; Grove owns that wait.
 
 ### Member mapping and reuse
 
@@ -470,7 +484,8 @@ Extend the PodClique and PCSG controller tests and add end-to-end coverage for:
 - Native index labels and explicit member mappings, including excluded cliques,
   separate PCSG replicas, and missing, extra, duplicate, or incorrectly sized IDs.
 - Snapshot creating a restore attempt from prepared Pods, with no request from
-  Grove; a replacement before the attempt joins, while a loss after it fails it.
+  Grove; a replacement before the attempt joins, a loss during it fails it, and
+  a loss after it succeeds leaves it successful.
 - Finding and watching attempts by their PCSG name and replica-index labels.
 - Skipping internal restore-group waits, keeping outside dependencies, refusing
   cycles across cliques and replicas, and preserving capture and cold startup
@@ -481,6 +496,12 @@ Extend the PodClique and PCSG controller tests and add end-to-end coverage for:
 - Capture retries that wait for cleanup and stop at the limit across restarts.
 - Deleting the whole failed restore replica before any retry; an old attempt's
   failure must not delete newer Pods.
+- Generations under one group key: scaling a restore replica that is still
+  waiting for its group in and quickly out again, and deleting and recreating the
+  workload under the same name. No Pod of the new generation is created until
+  every Pod of the old one is deleted, so old and new Pods are never grouped. A
+  Pod lost after the attempt exists retires the whole replica, rather than being
+  replaced alone.
 - API errors causing no cold start, and external snapshots never being deleted.
 - Workloads without snapshot support keeping their existing behavior.
 
