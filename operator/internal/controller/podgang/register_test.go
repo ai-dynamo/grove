@@ -38,7 +38,6 @@ type predicateTestCase struct {
 	generationChanged       bool
 	deletionStarted         bool
 	labelsChanged           bool
-	annotations             map[string]string
 	alreadyTerminating      bool
 	shouldAllowCreateEvent  bool
 	shouldAllowDeleteEvent  bool
@@ -47,7 +46,7 @@ type predicateTestCase struct {
 }
 
 func TestPodGangChangePredicate(t *testing.T) {
-	pred := podGangChangePredicate([]string{"example.com/read-by-backend"})
+	pred := podGangChangePredicate()
 
 	tests := []predicateTestCase{
 		{
@@ -107,26 +106,6 @@ func TestPodGangChangePredicate(t *testing.T) {
 			shouldAllowDeleteEvent:  true,
 			shouldAllowGenericEvent: false,
 			shouldAllowUpdateEvent:  true,
-		},
-		{
-			name:                    "managed PodGang update with a backend annotation change (generation unchanged)",
-			managedOld:              true,
-			managedNew:              true,
-			annotations:             map[string]string{"example.com/read-by-backend": "changed"},
-			shouldAllowCreateEvent:  true,
-			shouldAllowDeleteEvent:  true,
-			shouldAllowGenericEvent: false,
-			shouldAllowUpdateEvent:  true,
-		},
-		{
-			name:                    "managed PodGang update with another annotation change (generation unchanged)",
-			managedOld:              true,
-			managedNew:              true,
-			annotations:             map[string]string{"example.com/other": "changed"},
-			shouldAllowCreateEvent:  true,
-			shouldAllowDeleteEvent:  true,
-			shouldAllowGenericEvent: false,
-			shouldAllowUpdateEvent:  false,
 		},
 		{
 			name:                    "managed PodGang update while already terminating",
@@ -197,9 +176,6 @@ func TestPodGangChangePredicate(t *testing.T) {
 				for k, v := range oldPG.GetLabels() {
 					newPG.Labels[k] = v
 				}
-			}
-			if tc.annotations != nil {
-				newPG.SetAnnotations(tc.annotations)
 			}
 			if tc.alreadyTerminating {
 				now := metav1.Now()

@@ -199,43 +199,21 @@ func TestBuildReplicaPodGroupPlanAnchorOnly(t *testing.T) {
 	assert.Nil(t, findSubGroup(podGroup, "non-anchors"))
 }
 
-func TestBuildReplicaPodGroupPlanSetsStalenessGracePeriod(t *testing.T) {
-	tests := []struct {
-		name        string
-		annotations map[string]string
-		want        time.Duration
-	}{
-		{name: "eviction disabled by default", want: -1 * time.Second},
-		{
-			name:        "annotation sets the period",
-			annotations: map[string]string{annotationKeyStalenessGracePeriod: "90s"},
-			want:        90 * time.Second,
-		},
-		{
-			name:        "invalid annotation falls back to the default",
-			annotations: map[string]string{annotationKeyStalenessGracePeriod: "soon"},
-			want:        -1 * time.Second,
-		},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			pcs := newPodCliqueSet("job", "team-a")
-			pcs.Annotations = tc.annotations
-			anchor := materializedTestPodGang(pcs, "job-0-1000", grovecorev1beta1.PodGangEntryRoleAnchor,
-				groveschedulerv1alpha1.PodGroup{Name: "worker", MinReplicas: 2},
-			)
+func TestBuildReplicaPodGroupPlanDisablesStaleGangEviction(t *testing.T) {
+	pcs := newPodCliqueSet("job", "team-a")
+	anchor := materializedTestPodGang(pcs, "job-0-1000", grovecorev1beta1.PodGangEntryRoleAnchor,
+		groveschedulerv1alpha1.PodGroup{Name: "worker", MinReplicas: 2},
+	)
 
-			plan, err := testPlanBackend(t).buildReplicaPodGroupPlan(
-				pcs,
-				0,
-				[]componentutils.MaterializedPodGang{anchor},
-				"",
-			)
-			require.NoError(t, err)
-			require.NotNil(t, plan.podGroup.Spec.StalenessGracePeriod)
-			assert.Equal(t, tc.want, plan.podGroup.Spec.StalenessGracePeriod.Duration)
-		})
-	}
+	plan, err := testPlanBackend(t).buildReplicaPodGroupPlan(
+		pcs,
+		0,
+		[]componentutils.MaterializedPodGang{anchor},
+		"",
+	)
+	require.NoError(t, err)
+	require.NotNil(t, plan.podGroup.Spec.StalenessGracePeriod)
+	assert.Equal(t, -1*time.Second, plan.podGroup.Spec.StalenessGracePeriod.Duration)
 }
 
 func TestBuildReplicaPodGroupPlanAppliesReplicaAndTopology(t *testing.T) {

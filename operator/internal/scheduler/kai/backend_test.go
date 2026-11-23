@@ -22,7 +22,6 @@ import (
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
-	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
@@ -436,72 +435,25 @@ func TestBackend_SyncPodGang_UsesUniquePodCliqueTemplateQueue(t *testing.T) {
 	assert.Equal(t, "team-a", podGroup.Spec.Queue)
 }
 
-func TestBackend_SyncPodGang_SetsStalenessGracePeriod(t *testing.T) {
-	tests := []struct {
-		name        string
-		annotations map[string]string
-		want        time.Duration
-		wantWarning bool
-	}{
-		{name: "eviction disabled by default", want: -1 * time.Second},
-		{
-			name:        "annotation sets the period",
-			annotations: map[string]string{annotationKeyStalenessGracePeriod: "5m"},
-			want:        5 * time.Minute,
-		},
-		{
-			name:        "invalid annotation falls back to the default",
-			annotations: map[string]string{annotationKeyStalenessGracePeriod: "soon"},
-			want:        -1 * time.Second,
-			wantWarning: true,
-		},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			pcs := newPodCliqueSet("staleness-pcs", "team-a")
-			podGang := testutils.NewPodGangBuilder("staleness-podgang", "default").
-				WithPodGroup("worker", 1).
-				WithSchedulerName(string(configv1beta1.SchedulerNameKai)).
-				Build()
-			podGang.Annotations = tc.annotations
-			setPodCliqueSetControllerOwner(podGang, pcs)
-
-			cl := testutils.NewTestClientBuilder().WithObjects(pcs, podGang).Build()
-			recorder := record.NewFakeRecorder(10)
-			b := New(cl, cl.Scheme(), recorder, configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameKai})
-			require.NoError(t, b.Init(cl))
-
-			ctx := context.Background()
-			require.NoError(t, b.SyncPodGang(ctx, podGang))
-			podGroup := &kaischedulingv2alpha2.PodGroup{}
-			require.NoError(t, cl.Get(ctx, client.ObjectKeyFromObject(podGang), podGroup))
-			require.NotNil(t, podGroup.Spec.StalenessGracePeriod)
-			assert.Equal(t, tc.want, podGroup.Spec.StalenessGracePeriod.Duration)
-			if tc.wantWarning {
-				require.Len(t, recorder.Events, 1)
-				assert.Contains(t, <-recorder.Events, "InvalidKAIStalenessGracePeriod")
-			} else {
-				assert.Empty(t, recorder.Events)
-			}
-		})
-	}
-}
-
-func TestBackend_ValidatePodCliqueSetRejectsInvalidStalenessGracePeriod(t *testing.T) {
+func TestBackend_SyncPodGang_DisablesStaleGangEviction(t *testing.T) {
 	pcs := newPodCliqueSet("staleness-pcs", "team-a")
-	pcs.Annotations = map[string]string{annotationKeyStalenessGracePeriod: "soon"}
-	cl := testutils.NewTestClientBuilder().Build()
+	podGang := testutils.NewPodGangBuilder("staleness-podgang", "default").
+		WithPodGroup("worker", 1).
+		WithSchedulerName(string(configv1beta1.SchedulerNameKai)).
+		Build()
+	podGang.Annotations = map[string]string{"kai.scheduler/staleness-grace-period": "5m"}
+	setPodCliqueSetControllerOwner(podGang, pcs)
+
+	cl := testutils.NewTestClientBuilder().WithObjects(pcs, podGang).Build()
 	b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameKai})
+	require.NoError(t, b.Init(cl))
 
-	require.ErrorContains(t, b.ValidatePodCliqueSet(context.Background(), pcs), annotationKeyStalenessGracePeriod)
-}
-
-func TestBackend_PodGangAnnotationKeys(t *testing.T) {
-	cl := testutils.NewTestClientBuilder().Build()
-	b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameKai})
-
-	registry := &testutils.FakeSchedulerRegistry{Backends: map[string]scheduler.Backend{b.Name(): b}}
-	assert.Equal(t, []string{annotationKeyStalenessGracePeriod}, scheduler.PodGangAnnotationKeys(registry))
+	ctx := context.Background()
+	require.NoError(t, b.SyncPodGang(ctx, podGang))
+	podGroup := &kaischedulingv2alpha2.PodGroup{}
+	require.NoError(t, cl.Get(ctx, client.ObjectKeyFromObject(podGang), podGroup))
+	require.NotNil(t, podGroup.Spec.StalenessGracePeriod)
+	assert.Equal(t, -1*time.Second, podGroup.Spec.StalenessGracePeriod.Duration)
 }
 
 func TestBackend_ValidatePodCliqueSetQueues(t *testing.T) {

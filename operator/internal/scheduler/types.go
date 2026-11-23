@@ -16,7 +16,6 @@ package scheduler
 
 import (
 	"context"
-	"slices"
 
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 
@@ -100,37 +99,6 @@ type Finalizer interface {
 	// controller creates its replacement only then. For example, Kueue keeps counting a deleted Pod while it
 	// runs, so an earlier replacement would push the pod group past its Workload's PodSet count.
 	IsPodFinalized(pod *corev1.Pod) bool
-}
-
-// PodGangAnnotationReader is an optional interface for backends whose SyncPodGang reads annotations that the
-// PodCliqueSet mirrors onto its PodGangs. A change to one of them reconciles the PodCliqueSet and its PodGangs.
-type PodGangAnnotationReader interface {
-	// PodGangAnnotationKeys returns the keys of those annotations.
-	PodGangAnnotationKeys() []string
-}
-
-// PodGangAnnotationKeys returns the annotation keys that the backends in registry read from a PodGang.
-func PodGangAnnotationKeys(registry Registry) []string {
-	if registry == nil {
-		return nil
-	}
-	var keys []string
-	for _, backend := range registry.All() {
-		if reader, ok := backend.(PodGangAnnotationReader); ok {
-			keys = append(keys, reader.PodGangAnnotationKeys()...)
-		}
-	}
-	slices.Sort(keys)
-	return slices.Compact(keys)
-}
-
-// AnnotationsChanged reports whether any of keys was added, removed or changed between the two annotation maps.
-func AnnotationsChanged(oldAnnotations, newAnnotations map[string]string, keys []string) bool {
-	return slices.ContainsFunc(keys, func(key string) bool {
-		oldValue, oldOK := oldAnnotations[key]
-		newValue, newOK := newAnnotations[key]
-		return oldOK != newOK || oldValue != newValue
-	})
 }
 
 // TopologyAwareBackend is an optional interface that Backend

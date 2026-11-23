@@ -52,10 +52,7 @@ type schedulerBackend struct {
 	profile       configv1beta1.SchedulerProfile
 }
 
-var (
-	_ scheduler.Backend                 = (*schedulerBackend)(nil)
-	_ scheduler.PodGangAnnotationReader = (*schedulerBackend)(nil)
-)
+var _ scheduler.Backend = (*schedulerBackend)(nil)
 
 const (
 	labelKeyQueueName = "kai.scheduler/queue"
@@ -67,8 +64,8 @@ const (
 	annotationPodGroup     = "pod-group-name"
 	labelSubGroup          = "kai.scheduler/subgroup-name"
 
-	annotationKeyStalenessGracePeriod = "kai.scheduler/staleness-grace-period"
-	stalenessGracePeriodNeverEvict    = -1 * time.Second
+	// stalenessGracePeriodNeverEvict disables KAI stale gang eviction, because Grove terminates gangs itself.
+	stalenessGracePeriodNeverEvict = -1 * time.Second
 )
 
 // New creates a new KAI backend instance. profile is the scheduler profile for kai-scheduler;
@@ -175,47 +172,13 @@ func (b *schedulerBackend) PodGangMembershipAnnotations(newPodGangName string) m
 	return map[string]string{annotationPodGroup: newPodGangName}
 }
 
-// PodGangAnnotationKeys returns the PodGang annotations that SyncPodGang maps onto the PodGroup.
-func (b *schedulerBackend) PodGangAnnotationKeys() []string {
-	return []string{annotationKeyStalenessGracePeriod}
-}
-
 // ValidatePodCliqueSet runs KAI-specific validations on the PodCliqueSet.
 func (b *schedulerBackend) ValidatePodCliqueSet(_ context.Context, pcs *grovecorev1beta1.PodCliqueSet, _ ...scheduler.ValidateOption) error {
 	if _, err := resolveQueueNameForPodCliqueSet(pcs); err != nil {
 		return err
 	}
-	if _, err := resolvePreemptibilityForPodCliqueSet(pcs); err != nil {
-		return err
-	}
-	_, err := resolveStalenessGracePeriod(pcs.Annotations)
+	_, err := resolvePreemptibilityForPodCliqueSet(pcs)
 	return err
-}
-
-// resolveStalenessGracePeriod returns the staleness grace period for a KAI PodGroup. KAI stale gang
-// eviction is disabled unless the annotation requests a period, because Grove terminates gangs itself.
-func resolveStalenessGracePeriod(annotations map[string]string) (*metav1.Duration, error) {
-	value, found := annotations[annotationKeyStalenessGracePeriod]
-	if !found {
-		return &metav1.Duration{Duration: stalenessGracePeriodNeverEvict}, nil
-	}
-	gracePeriod, err := kaischedulingv2alpha2.ParseStalenessGracePeriod(value)
-	if err != nil {
-		return nil, fmt.Errorf("invalid annotation %q: %w", annotationKeyStalenessGracePeriod, err)
-	}
-	return gracePeriod, nil
-}
-
-// stalenessGracePeriodOrDefault resolves the staleness grace period from annotations. An invalid value,
-// which only a PodCliqueSet admitted before the webhook check can carry, is reported as a warning event
-// on obj and replaced by the default.
-func (b *schedulerBackend) stalenessGracePeriodOrDefault(obj runtime.Object, annotations map[string]string) *metav1.Duration {
-	stalenessGracePeriod, err := resolveStalenessGracePeriod(annotations)
-	if err != nil {
-		b.recordWarning(obj, "InvalidKAIStalenessGracePeriod", err)
-		return &metav1.Duration{Duration: stalenessGracePeriodNeverEvict}
-	}
-	return stalenessGracePeriod
 }
 
 // buildPodGroupForPodGang translates a Grove PodGang into a KAI PodGroup object.
@@ -242,7 +205,6 @@ func (b *schedulerBackend) buildPodGroupForPodGang(ctx context.Context, podGang 
 		b.recordWarning(podGang, "InvalidKAIPreemptibility", err)
 		preemptibility = ""
 	}
-	stalenessGracePeriod := b.stalenessGracePeriodOrDefault(podGang, podGang.Annotations)
 
 	parentBySubGroupName := map[string]string{}
 	subGroups := make([]kaischedulingv2alpha2.SubGroup, 0, len(podGang.Spec.TopologyConstraintGroupConfigs)+len(podGang.Spec.PodGroups))
@@ -298,7 +260,7 @@ func (b *schedulerBackend) buildPodGroupForPodGang(ctx context.Context, podGang 
 			PriorityClassName:    podGang.Spec.PriorityClassName,
 			Preemptibility:       preemptibility,
 			SubGroups:            subGroups,
-			StalenessGracePeriod: stalenessGracePeriod,
+			StalenessGracePeriod: &metav1.Duration{Duration: stalenessGracePeriodNeverEvict},
 		},
 	}
 	if topologyConstraint != nil {

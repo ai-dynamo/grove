@@ -302,8 +302,10 @@ If you encounter issues not covered here:
 Currently the following schedulers support gang scheduling of `PodGang`s created by the Grove operator:
 
 - [kai-scheduler/kai-scheduler](https://github.com/kai-scheduler/kai-scheduler)
-  - Requires [v0.17.0](https://github.com/kai-scheduler/kai-scheduler/releases/tag/v0.17.0)+
+  - Topology Aware Scheduling (TAS) requires [v0.15.2](https://github.com/kai-scheduler/kai-scheduler/releases/tag/v0.15.2)+
   - Grove disables KAI stale-gang eviction on the PodGroups it creates, because Grove terminates a gang
-    itself after the PodCliqueSet's `terminationDelay`. To let KAI evict a stale gang, set the annotation
-    `kai.scheduler/staleness-grace-period` on the PodCliqueSet to a duration such as `5m`.
+    itself after the PodCliqueSet's `terminationDelay`. This requires
+    [v0.17.0](https://github.com/kai-scheduler/kai-scheduler/releases/tag/v0.17.0)+.
+  - With an older KAI version, disable stale-gang eviction for the whole cluster with
+    `--set-string scheduler.args.default-staleness-grace-period=-1s`.
   - See the [KAI Scheduler user guide](user-guide/kai-scheduler.md) for the KAI metadata Grove reads from a PodCliqueSet.

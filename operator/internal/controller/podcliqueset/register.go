@@ -22,7 +22,6 @@ import (
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	grovectrlutils "github.com/ai-dynamo/grove/operator/internal/controller/utils"
-	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 
@@ -51,7 +50,7 @@ func (r *Reconciler) RegisterWithManager(mgr manager.Manager) error {
 		WithOptions(controller.Options{
 			MaxConcurrentReconciles: *r.config.ConcurrentSyncs,
 		}).
-		For(&grovecorev1beta1.PodCliqueSet{}, builder.WithPredicates(podCliqueSetPredicate(r.podGangAnnotationKeys))).
+		For(&grovecorev1beta1.PodCliqueSet{}, builder.WithPredicates(podCliqueSetPredicate())).
 		Owns(&grovecorev1beta1.PodGangMap{}, builder.WithPredicates(deleteOnlyPredicate())).
 		Owns(&groveschedulerv1alpha1.PodGang{}, builder.WithPredicates(deleteOnlyPredicate())).
 		Watches(
@@ -71,12 +70,11 @@ func (r *Reconciler) RegisterWithManager(mgr manager.Manager) error {
 		Complete(r)
 }
 
-// podCliqueSetPredicate returns a predicate that allows spec changes, label changes, changes to the
-// podGangAnnotationKeys annotations and explicit no-op reconcile triggers. Labels and those annotations are
-// included because they are mirrored onto the PodCliqueSet's PodGangs, where a scheduler backend may act on
-// them (the Kueue backend's priority class, for example); without a reconcile an edit would only reach them
-// on the next unrelated reconcile.
-func podCliqueSetPredicate(podGangAnnotationKeys []string) predicate.Predicate {
+// podCliqueSetPredicate returns a predicate that allows spec changes, label changes and explicit no-op reconcile
+// triggers. Labels are included because they are mirrored onto the PodCliqueSet's PodGangs, where a scheduler
+// backend may act on them (the Kueue backend's priority class, for example); without a reconcile a label edit
+// would only reach them on the next unrelated reconcile.
+func podCliqueSetPredicate() predicate.Predicate {
 	return predicate.Funcs{
 		CreateFunc: func(_ event.CreateEvent) bool { return true },
 		DeleteFunc: func(_ event.DeleteEvent) bool { return true },
@@ -86,8 +84,7 @@ func podCliqueSetPredicate(podGangAnnotationKeys []string) predicate.Predicate {
 			}
 			return hasSpecChanged(updateEvent) ||
 				!maps.Equal(updateEvent.ObjectOld.GetLabels(), updateEvent.ObjectNew.GetLabels()) ||
-				hasAnnotationChanged(updateEvent.ObjectOld.GetAnnotations(), updateEvent.ObjectNew.GetAnnotations(), constants.AnnotationReconcileTrigger) ||
-				scheduler.AnnotationsChanged(updateEvent.ObjectOld.GetAnnotations(), updateEvent.ObjectNew.GetAnnotations(), podGangAnnotationKeys)
+				hasAnnotationChanged(updateEvent.ObjectOld.GetAnnotations(), updateEvent.ObjectNew.GetAnnotations(), constants.AnnotationReconcileTrigger)
 		},
 		GenericFunc: func(_ event.GenericEvent) bool { return true },
 	}

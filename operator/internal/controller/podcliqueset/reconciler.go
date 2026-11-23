@@ -48,7 +48,6 @@ type Reconciler struct {
 	operatorRegistry              component.OperatorRegistry[grovecorev1beta1.PodCliqueSet, pcssync.State, pcssync.Result]
 	pcsGenerationHashExpectations sync.Map
 	scalingProgressExpectations   *pcssync.ScalingProgressExpectations
-	podGangAnnotationKeys         []string
 }
 
 // NewReconciler creates a new reconciler for PodCliqueSet.
@@ -65,7 +64,6 @@ func NewReconciler(mgr ctrl.Manager, controllerCfg configv1beta1.PodCliqueSetCon
 		operatorRegistry:              pcscomponent.CreateOperatorRegistry(mgr, eventRecorder, topologyAwareSchedulingConfig, networkConfig, schedRegistry, scalingProgressExpectations),
 		pcsGenerationHashExpectations: sync.Map{},
 		scalingProgressExpectations:   scalingProgressExpectations,
-		podGangAnnotationKeys:         scheduler.PodGangAnnotationKeys(schedRegistry),
 	}
 }
 
