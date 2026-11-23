@@ -27,6 +27,7 @@ import (
 	kaischedulingv2alpha2 "github.com/kai-scheduler/KAI-scheduler/pkg/apis/scheduling/v2alpha2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -379,6 +380,34 @@ func TestBackend_SyncPodGangSetsOwnerReferenceAndSkipAnnotation(t *testing.T) {
 	assert.Equal(t, annotationValSkipPGR, updatedPodGang.Annotations[annotationKeySkipPGR])
 }
 
+func TestBackend_SyncPodGang_IgnoresTerminatingPodGang(t *testing.T) {
+	pcs := newPodCliqueSet(
+		"owned-pcs",
+		"team-a",
+		podCliqueTemplateWithQueue("worker-template", "team-a"),
+	)
+	podGang := testutils.NewPodGangBuilder("terminating", "default").
+		WithPodGroup("worker-template", 1).
+		WithSchedulerName(string(configv1beta1.SchedulerNameKai)).
+		Build()
+	setPodCliqueSetControllerOwner(podGang, pcs)
+	now := metav1.Now()
+	podGang.DeletionTimestamp = &now
+	podGang.Finalizers = []string{"example.com/hold"}
+
+	cl := testutils.NewTestClientBuilder().WithObjects(pcs, podGang).Build()
+	b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameKai})
+	require.NoError(t, b.Init(cl))
+
+	require.NoError(t, b.SyncPodGang(t.Context(), podGang))
+
+	err := cl.Get(t.Context(), client.ObjectKeyFromObject(podGang), &kaischedulingv2alpha2.PodGroup{})
+	assert.True(t, apierrors.IsNotFound(err))
+	storedPodGang := &groveschedulerv1alpha1.PodGang{}
+	require.NoError(t, cl.Get(t.Context(), client.ObjectKeyFromObject(podGang), storedPodGang))
+	assert.NotContains(t, storedPodGang.Annotations, annotationKeySkipPGR)
+}
+
 func TestBackend_SyncPodGang_UsesUniquePodCliqueTemplateQueue(t *testing.T) {
 	pcs := newPodCliqueSet(
 		"template-queue-pcs",
@@ -492,7 +521,8 @@ func TestBackend_ValidatePodCliqueSetQueues(t *testing.T) {
 		},
 	}
 
-	b := &schedulerBackend{}
+	cl := testutils.CreateDefaultFakeClient(nil)
+	b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameKai})
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := b.ValidatePodCliqueSet(context.Background(), tt.pcs)
@@ -680,4 +710,119 @@ func setPodCliqueSetControllerOwner(podGang *groveschedulerv1alpha1.PodGang, pcs
 		UID:        pcs.UID,
 		Controller: ptr.To(true),
 	}}
+}
+
+func legacyPodGangPod(pcs *grovecorev1beta1.PodCliqueSet, podGang *groveschedulerv1alpha1.PodGang, podCliqueName string) *corev1.Pod {
+	labels := apicommon.GetDefaultLabelsForPodCliqueSetManagedResources(pcs.Name)
+	labels[apicommon.LabelPodCliqueSetReplicaIndex] = podGang.Labels[apicommon.LabelPodCliqueSetReplicaIndex]
+	labels[apicommon.LabelPodGang] = podGang.Name
+	labels[apicommon.LabelPodClique] = podCliqueName
+	return &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
+		Name:        podGang.Name + "-pod",
+		Namespace:   pcs.Namespace,
+		Labels:      labels,
+		Annotations: map[string]string{annotationPodGroup: podGang.Name, "unrelated": "keep"},
+	}}
+}
+
+func requireSubGroup(t *testing.T, podGroup *kaischedulingv2alpha2.PodGroup, name string) *kaischedulingv2alpha2.SubGroup {
+	t.Helper()
+	subGroup := findSubGroup(podGroup, name)
+	require.NotNil(t, subGroup, "subgroup %q not found", name)
+	return subGroup
+}
+
+func findSubGroup(podGroup *kaischedulingv2alpha2.PodGroup, name string) *kaischedulingv2alpha2.SubGroup {
+	for i := range podGroup.Spec.SubGroups {
+		if podGroup.Spec.SubGroups[i].Name == name {
+			return &podGroup.Spec.SubGroups[i]
+		}
+	}
+	return nil
+}
+
+type kaiBackendInitializer interface {
+	Init(client.Client) error
+}
+
+func initTestBackend(t *testing.T, backend kaiBackendInitializer, cl client.Client) {
+	t.Helper()
+	require.NoError(t, backend.Init(cl))
+}
+
+func TestBackend_SyncPodGang_SetsPreemptibilityFromPodCliqueSet(t *testing.T) {
+	tests := []struct {
+		name        string
+		labels      map[string]string
+		annotations map[string]string
+		want        kaischedulingv2alpha2.Preemptibility
+	}{
+		{
+			name: "unset leaves KAI's priority-based default",
+			want: "",
+		},
+		{
+			name:   "label",
+			labels: map[string]string{labelKeyPreemptibility: "non-preemptible"},
+			want:   kaischedulingv2alpha2.NonPreemptible,
+		},
+		{
+			name:        "annotation is ignored, as KAI's podgrouper ignores it",
+			annotations: map[string]string{labelKeyPreemptibility: "preemptible"},
+			want:        "",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pcs := newPodCliqueSet("preemptibility-pcs", "team-a", podCliqueTemplateWithQueue("worker", ""))
+			for k, v := range tt.labels {
+				pcs.Labels[k] = v
+			}
+			pcs.Annotations = tt.annotations
+			podGang := testutils.NewPodGangBuilder("preemptibility-podgang", "default").
+				WithPodGroup("worker", 1).
+				WithSchedulerName(string(configv1beta1.SchedulerNameKai)).
+				Build()
+			setPodCliqueSetControllerOwner(podGang, pcs)
+
+			cl := testutils.NewTestClientBuilder().WithObjects(pcs, podGang).Build()
+			b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameKai})
+			require.NoError(t, b.Init(cl))
+
+			ctx := context.Background()
+			require.NoError(t, b.SyncPodGang(ctx, podGang))
+
+			podGroup := &kaischedulingv2alpha2.PodGroup{}
+			require.NoError(t, cl.Get(ctx, client.ObjectKeyFromObject(podGang), podGroup))
+			assert.Equal(t, tt.want, podGroup.Spec.Preemptibility)
+		})
+	}
+}
+
+// An invalid value is rejected at admission. A PodCliqueSet admitted before that check keeps its
+// PodGroup, without preemptibility, and gets a warning.
+func TestBackend_InvalidPreemptibility(t *testing.T) {
+	pcs := newPodCliqueSet("invalid-preemptibility-pcs", "team-a", podCliqueTemplateWithQueue("worker", ""))
+	pcs.Labels[labelKeyPreemptibility] = "sometimes"
+
+	b := &schedulerBackend{queueLabelKey: labelKeyQueueName}
+	require.ErrorContains(t, b.ValidatePodCliqueSet(context.Background(), pcs), "invalid preemptibility value: sometimes")
+
+	podGang := testutils.NewPodGangBuilder("invalid-preemptibility-podgang", "default").
+		WithPodGroup("worker", 1).
+		WithSchedulerName(string(configv1beta1.SchedulerNameKai)).
+		Build()
+	setPodCliqueSetControllerOwner(podGang, pcs)
+	cl := testutils.NewTestClientBuilder().WithObjects(pcs, podGang).Build()
+	recorder := record.NewFakeRecorder(10)
+	b = New(cl, cl.Scheme(), recorder, configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameKai}).(*schedulerBackend)
+	require.NoError(t, b.Init(cl))
+
+	ctx := context.Background()
+	require.NoError(t, b.SyncPodGang(ctx, podGang))
+	podGroup := &kaischedulingv2alpha2.PodGroup{}
+	require.NoError(t, cl.Get(ctx, client.ObjectKeyFromObject(podGang), podGroup))
+	assert.Empty(t, podGroup.Spec.Preemptibility)
+	require.Len(t, recorder.Events, 1)
+	assert.Contains(t, <-recorder.Events, "Warning InvalidKAIPreemptibility")
 }

@@ -90,6 +90,9 @@ func (b *schedulerBackend) Init(directClient client.Client) error {
 }
 
 func (b *schedulerBackend) SyncPodGang(ctx context.Context, podGang *groveschedulerv1alpha1.PodGang) error {
+	if !podGang.DeletionTimestamp.IsZero() {
+		return nil
+	}
 	podGroup := &volcanov1beta1.PodGroup{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      podGang.Name,

@@ -405,6 +405,7 @@ func TestValidateLeaderElectionConfiguration(t *testing.T) {
 		expectErrors   int
 		expectedFields []string
 		expectedTypes  []field.ErrorType
+		expectedValues []any
 	}{
 		{
 			name:         "valid: disabled - skips all checks",
@@ -434,9 +435,9 @@ func TestValidateLeaderElectionConfiguration(t *testing.T) {
 				c.RenewDeadline = metav1.Duration{}
 				return c
 			}(),
-			expectErrors:   1,
-			expectedFields: []string{"leaderElection.renewDeadline"},
-			expectedTypes:  []field.ErrorType{field.ErrorTypeInvalid},
+			expectErrors:   2,
+			expectedFields: []string{"leaderElection.renewDeadline", "leaderElection.renewDeadline"},
+			expectedTypes:  []field.ErrorType{field.ErrorTypeInvalid, field.ErrorTypeInvalid},
 		},
 		{
 			name: "invalid: retryPeriod is zero",
@@ -460,6 +461,7 @@ func TestValidateLeaderElectionConfiguration(t *testing.T) {
 			expectErrors:   1,
 			expectedFields: []string{"leaderElection.leaseDuration"},
 			expectedTypes:  []field.ErrorType{field.ErrorTypeInvalid},
+			expectedValues: []any{metav1.Duration{Duration: 10 * time.Second}},
 		},
 		{
 			name: "invalid: leaseDuration less than renewDeadline",
@@ -472,6 +474,40 @@ func TestValidateLeaderElectionConfiguration(t *testing.T) {
 			expectErrors:   1,
 			expectedFields: []string{"leaderElection.leaseDuration"},
 			expectedTypes:  []field.ErrorType{field.ErrorTypeInvalid},
+			expectedValues: []any{metav1.Duration{Duration: 5 * time.Second}},
+		},
+		{
+			name: "invalid: renewDeadline less than retryPeriod times jitter factor",
+			config: func() configv1beta1.LeaderElectionConfiguration {
+				c := validCfg
+				c.RenewDeadline = metav1.Duration{Duration: 2399 * time.Millisecond}
+				return c
+			}(),
+			expectErrors:   1,
+			expectedFields: []string{"leaderElection.renewDeadline"},
+			expectedTypes:  []field.ErrorType{field.ErrorTypeInvalid},
+			expectedValues: []any{metav1.Duration{Duration: 2399 * time.Millisecond}},
+		},
+		{
+			name: "invalid: renewDeadline equal to retryPeriod times jitter factor",
+			config: func() configv1beta1.LeaderElectionConfiguration {
+				c := validCfg
+				c.RenewDeadline = metav1.Duration{Duration: 2400 * time.Millisecond}
+				return c
+			}(),
+			expectErrors:   1,
+			expectedFields: []string{"leaderElection.renewDeadline"},
+			expectedTypes:  []field.ErrorType{field.ErrorTypeInvalid},
+			expectedValues: []any{metav1.Duration{Duration: 2400 * time.Millisecond}},
+		},
+		{
+			name: "valid: renewDeadline greater than retryPeriod times jitter factor",
+			config: func() configv1beta1.LeaderElectionConfiguration {
+				c := validCfg
+				c.RenewDeadline = metav1.Duration{Duration: 2401 * time.Millisecond}
+				return c
+			}(),
+			expectErrors: 0,
 		},
 		{
 			name: "invalid: empty resourceLock",
@@ -500,16 +536,18 @@ func TestValidateLeaderElectionConfiguration(t *testing.T) {
 			config: configv1beta1.LeaderElectionConfiguration{
 				Enabled: true,
 			},
-			expectErrors: 6,
+			expectErrors: 7,
 			expectedFields: []string{
 				"leaderElection.leaseDuration",
 				"leaderElection.renewDeadline",
 				"leaderElection.retryPeriod",
 				"leaderElection.leaseDuration",
+				"leaderElection.renewDeadline",
 				"leaderElection.resourceLock",
 				"leaderElection.resourceName",
 			},
 			expectedTypes: []field.ErrorType{
+				field.ErrorTypeInvalid,
 				field.ErrorTypeInvalid,
 				field.ErrorTypeInvalid,
 				field.ErrorTypeInvalid,
@@ -524,11 +562,16 @@ func TestValidateLeaderElectionConfiguration(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			errs := validateLeaderElectionConfiguration(test.config, fldPath)
 
-			assert.Len(t, errs, test.expectErrors, "expected %d validation errors but got %d: %v", test.expectErrors, len(errs), errs)
+			if !assert.Len(t, errs, test.expectErrors, "expected %d validation errors but got %d: %v", test.expectErrors, len(errs), errs) {
+				return
+			}
 
 			if test.expectErrors > 0 {
 				for i, expectedField := range test.expectedFields {
 					assert.Equal(t, expectedField, errs[i].Field, "error %d: expected field %s but got %s", i, expectedField, errs[i].Field)
+					if i < len(test.expectedValues) {
+						assert.Equal(t, test.expectedValues[i], errs[i].BadValue)
+					}
 					if i < len(test.expectedTypes) {
 						assert.Equal(t, test.expectedTypes[i], errs[i].Type, "error %d: expected type %s but got %s", i, test.expectedTypes[i], errs[i].Type)
 					}

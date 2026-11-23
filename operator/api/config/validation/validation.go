@@ -18,12 +18,14 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/validation/field"
+	"k8s.io/client-go/tools/leaderelection"
 	"k8s.io/utils/ptr"
 )
 
@@ -91,7 +93,11 @@ func validateLeaderElectionConfiguration(cfg configv1beta1.LeaderElectionConfigu
 	allErrs = append(allErrs, mustBeGreaterThanZeroDuration(cfg.RetryPeriod, fldPath.Child("retryPeriod"))...)
 
 	if cfg.LeaseDuration.Duration <= cfg.RenewDeadline.Duration {
-		allErrs = append(allErrs, field.Invalid(fldPath.Child("leaseDuration"), cfg.RenewDeadline, "LeaseDuration must be greater than RenewDeadline"))
+		allErrs = append(allErrs, field.Invalid(fldPath.Child("leaseDuration"), cfg.LeaseDuration, fmt.Sprintf("must be greater than renewDeadline (%s)", cfg.RenewDeadline.Duration)))
+	}
+	minimumRenewDeadline := time.Duration(leaderelection.JitterFactor * float64(cfg.RetryPeriod.Duration))
+	if cfg.RenewDeadline.Duration <= minimumRenewDeadline {
+		allErrs = append(allErrs, field.Invalid(fldPath.Child("renewDeadline"), cfg.RenewDeadline, fmt.Sprintf("must be greater than retryPeriod * %g (%s)", leaderelection.JitterFactor, minimumRenewDeadline)))
 	}
 	if len(cfg.ResourceLock) == 0 {
 		allErrs = append(allErrs, field.Required(fldPath.Child("resourceLock"), "resourceLock is required"))

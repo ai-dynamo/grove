@@ -24,6 +24,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
 )
 
@@ -127,6 +128,50 @@ func TestNewRegistry(t *testing.T) {
 		require.NotNil(t, reg.Get(string(configv1beta1.SchedulerNameKueue)))
 		assert.Equal(t, reg.GetDefault(), reg.Get(string(configv1beta1.SchedulerNameKai)))
 		assert.NotContains(t, reg.AllTopologyAware(), string(configv1beta1.SchedulerNameLPX))
+	})
+
+	t.Run("kai profile with a custom scheduler name", func(t *testing.T) {
+		cl := testutils.CreateDefaultFakeClient(nil)
+		cfg := configv1beta1.SchedulerConfiguration{
+			Profiles: []configv1beta1.SchedulerProfile{
+				{Name: configv1beta1.SchedulerNameKube},
+				{Name: configv1beta1.SchedulerNameKai, Config: &runtime.RawExtension{Raw: []byte(`{"schedulerName":"runai-scheduler"}`)}},
+			},
+			DefaultProfileName: string(configv1beta1.SchedulerNameKai),
+		}
+		reg, err := New(cl, cl, cl.Scheme(), record.NewFakeRecorder(10), cfg)
+		require.NoError(t, err)
+		assert.Equal(t, "runai-scheduler", reg.GetDefault().Name())
+		assert.Equal(t, reg.GetDefault(), reg.Get("runai-scheduler"))
+		assert.Nil(t, reg.Get(string(configv1beta1.SchedulerNameKai)))
+	})
+
+	t.Run("kai profile with an invalid config", func(t *testing.T) {
+		cl := testutils.CreateDefaultFakeClient(nil)
+		cfg := configv1beta1.SchedulerConfiguration{
+			Profiles: []configv1beta1.SchedulerProfile{
+				{Name: configv1beta1.SchedulerNameKube},
+				{Name: configv1beta1.SchedulerNameKai, Config: &runtime.RawExtension{Raw: []byte(`{"schedulerNme":"runai-scheduler"}`)}},
+			},
+			DefaultProfileName: string(configv1beta1.SchedulerNameKube),
+		}
+		reg, err := New(cl, cl, cl.Scheme(), record.NewFakeRecorder(10), cfg)
+		require.ErrorContains(t, err, "failed to initialize kai-scheduler backend")
+		assert.Nil(t, reg)
+	})
+
+	t.Run("kai scheduler name must not collide with another backend", func(t *testing.T) {
+		cl := testutils.CreateDefaultFakeClient(nil)
+		cfg := configv1beta1.SchedulerConfiguration{
+			Profiles: []configv1beta1.SchedulerProfile{
+				{Name: configv1beta1.SchedulerNameKube},
+				{Name: configv1beta1.SchedulerNameKai, Config: &runtime.RawExtension{Raw: []byte(`{"schedulerName":"default-scheduler"}`)}},
+			},
+			DefaultProfileName: string(configv1beta1.SchedulerNameKube),
+		}
+		reg, err := New(cl, cl, cl.Scheme(), record.NewFakeRecorder(10), cfg)
+		require.ErrorContains(t, err, `backend name "default-scheduler" is already used`)
+		assert.Nil(t, reg)
 	})
 
 	t.Run("volcano scheduler initialization", func(t *testing.T) {
