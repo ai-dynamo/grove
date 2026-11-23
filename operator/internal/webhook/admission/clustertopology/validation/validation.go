@@ -31,7 +31,7 @@ func validateClusterTopology(
 			ct.Spec.SchedulerTopologyBindings,
 			enabledBackends,
 			topologyAwareBackends,
-			field.NewPath("spec", "schedulerTopologyBindings"),
+			field.NewPath("spec", "schedulerTopologyReferences"),
 		)...,
 	)
 	return allErrs
