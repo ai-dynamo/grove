@@ -52,7 +52,10 @@ type schedulerBackend struct {
 	profile       configv1beta1.SchedulerProfile
 }
 
-var _ scheduler.Backend = (*schedulerBackend)(nil)
+var (
+	_ scheduler.Backend                 = (*schedulerBackend)(nil)
+	_ scheduler.PodGangAnnotationReader = (*schedulerBackend)(nil)
+)
 
 const (
 	labelKeyQueueName = "kai.scheduler/queue"
@@ -170,6 +173,11 @@ func (b *schedulerBackend) PreparePod(pod *corev1.Pod) error {
 // not change, so it is not part of the membership annotations.
 func (b *schedulerBackend) PodGangMembershipAnnotations(newPodGangName string) map[string]string {
 	return map[string]string{annotationPodGroup: newPodGangName}
+}
+
+// PodGangAnnotationKeys returns the PodGang annotations that SyncPodGang maps onto the PodGroup.
+func (b *schedulerBackend) PodGangAnnotationKeys() []string {
+	return []string{annotationKeyStalenessGracePeriod}
 }
 
 // ValidatePodCliqueSet runs KAI-specific validations on the PodCliqueSet.

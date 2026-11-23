@@ -22,6 +22,7 @@ import (
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovectrlutils "github.com/ai-dynamo/grove/operator/internal/controller/utils"
+	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
@@ -40,7 +41,7 @@ import (
 // RegisterWithManager registers the backend controller with the manager
 func (r *Reconciler) RegisterWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&groveschedulerv1alpha1.PodGang{}, builder.WithPredicates(podGangChangePredicate())).
+		For(&groveschedulerv1alpha1.PodGang{}, builder.WithPredicates(podGangChangePredicate(scheduler.PodGangAnnotationKeys(r.schedRegistry)))).
 		// A backend may hold off on a PodGang until the PodGangs it depends on are scheduled, so resync it then.
 		Watches(&groveschedulerv1alpha1.PodGang{},
 			handler.EnqueueRequestsFromMapFunc(mapPodGangToDependentPodGangs(r.Client)),
@@ -53,10 +54,11 @@ func (r *Reconciler) RegisterWithManager(mgr ctrl.Manager) error {
 }
 
 // podGangChangePredicate filters out status-only updates (like the Initialized condition) while retaining
-// changes used by scheduler backends: spec changes, the start of deletion, and label changes. Labels are
-// included because a backend may map labels that the PodCliqueSet mirrors onto its PodGangs onto its own
-// objects (the Kueue backend's priority class, for example).
-func podGangChangePredicate() predicate.Predicate {
+// changes used by scheduler backends: spec changes, the start of deletion, label changes and changes to the
+// annotationKeys annotations. Labels and those annotations are included because a backend may map metadata
+// that the PodCliqueSet mirrors onto its PodGangs onto its own objects (the Kueue backend's priority class,
+// for example).
+func podGangChangePredicate(annotationKeys []string) predicate.Predicate {
 	return predicate.Funcs{
 		CreateFunc: func(e event.CreateEvent) bool {
 			return grovectrlutils.IsManagedPodGang(e.Object)
@@ -69,7 +71,8 @@ func podGangChangePredicate() predicate.Predicate {
 				grovectrlutils.IsManagedPodGang(e.ObjectNew) &&
 				(e.ObjectOld.GetGeneration() != e.ObjectNew.GetGeneration() ||
 					(e.ObjectOld.GetDeletionTimestamp().IsZero() && !e.ObjectNew.GetDeletionTimestamp().IsZero()) ||
-					!maps.Equal(e.ObjectOld.GetLabels(), e.ObjectNew.GetLabels()))
+					!maps.Equal(e.ObjectOld.GetLabels(), e.ObjectNew.GetLabels()) ||
+					scheduler.AnnotationsChanged(e.ObjectOld.GetAnnotations(), e.ObjectNew.GetAnnotations(), annotationKeys))
 		},
 		GenericFunc: func(_ event.GenericEvent) bool { return false },
 	}

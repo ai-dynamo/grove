@@ -92,7 +92,7 @@ func TestMapClusterTopologyToPodCliqueSets(t *testing.T) {
 // enqueues on generation bumps and reconcile-trigger annotation changes, and
 // ignores unrelated annotation edits or no-op updates.
 func TestPodCliqueSetPredicateUpdate(t *testing.T) {
-	pred, ok := podCliqueSetPredicate().(predicate.Funcs)
+	pred, ok := podCliqueSetPredicate([]string{"example.com/read-by-backend"}).(predicate.Funcs)
 	require.True(t, ok, "predicate must be predicate.Funcs")
 
 	tests := []struct {
@@ -126,6 +126,32 @@ func TestPodCliqueSetPredicateUpdate(t *testing.T) {
 				"example.com/other": "new",
 			}),
 			want: false,
+		},
+		{
+			name: "backend annotation change enqueues, so it is mirrored onto the PodGangs",
+			old: podCliqueSetWithGenerationAndAnnotations(1, map[string]string{
+				"example.com/read-by-backend": "old",
+			}),
+			new: podCliqueSetWithGenerationAndAnnotations(1, map[string]string{
+				"example.com/read-by-backend": "new",
+			}),
+			want: true,
+		},
+		{
+			name: "backend annotation added enqueues",
+			old:  podCliqueSetWithGenerationAndAnnotations(1, nil),
+			new: podCliqueSetWithGenerationAndAnnotations(1, map[string]string{
+				"example.com/read-by-backend": "new",
+			}),
+			want: true,
+		},
+		{
+			name: "backend annotation removed enqueues",
+			old: podCliqueSetWithGenerationAndAnnotations(1, map[string]string{
+				"example.com/read-by-backend": "old",
+			}),
+			new:  podCliqueSetWithGenerationAndAnnotations(1, nil),
+			want: true,
 		},
 		{
 			name: "same generation and same trigger value does not enqueue",

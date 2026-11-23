@@ -22,6 +22,7 @@ import (
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
+	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
@@ -491,6 +492,14 @@ func TestBackend_ValidatePodCliqueSetRejectsInvalidStalenessGracePeriod(t *testi
 	b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameKai})
 
 	require.ErrorContains(t, b.ValidatePodCliqueSet(context.Background(), pcs), annotationKeyStalenessGracePeriod)
+}
+
+func TestBackend_PodGangAnnotationKeys(t *testing.T) {
+	cl := testutils.NewTestClientBuilder().Build()
+	b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameKai})
+
+	registry := &testutils.FakeSchedulerRegistry{Backends: map[string]scheduler.Backend{b.Name(): b}}
+	assert.Equal(t, []string{annotationKeyStalenessGracePeriod}, scheduler.PodGangAnnotationKeys(registry))
 }
 
 func TestBackend_ValidatePodCliqueSetQueues(t *testing.T) {
