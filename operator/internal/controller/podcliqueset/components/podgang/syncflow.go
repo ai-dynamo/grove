@@ -544,8 +544,7 @@ func (r _resource) reconcilePodGangStatus(ctx context.Context, ss *syncState, pg
 	originalStatus := pg.Status.DeepCopy()
 	now := metav1.Now()
 
-	minReplicasScheduled := r.arePodGangMinReplicasScheduled(ss, pgi)
-	minReplicasReady := r.arePodGangMinReplicasReady(ss, pgi)
+	minReplicasScheduled, minReplicasReady := r.arePodGangMinReplicasScheduledAndReady(ss, pgi)
 
 	if allPodsCreated {
 		setPodGangCondition(pg, groveschedulerv1alpha1.PodGangConditionTypeInitialized, metav1.ConditionTrue,
@@ -568,46 +567,34 @@ func (r _resource) reconcilePodGangStatus(ctx context.Context, ss *syncState, pg
 	return nil
 }
 
-// arePodGangMinReplicasScheduled returns true if, for every constituent PodClique, at least
-// MinReplicas pods associated to this PodGang have been scheduled. Only pods named in the
-// PodClique's associatedPodNames are counted, so a PodClique whose pods are spread across more
-// than one PodGang is evaluated per PodGang.
-func (r _resource) arePodGangMinReplicasScheduled(ss *syncState, pgi *podGangInfo) bool {
+// arePodGangMinReplicasScheduledAndReady reports whether every constituent PodClique has
+// MinReplicas associated pods scheduled and ready, respectively. Only pods associated to this
+// PodGang count. Build each PodClique's membership set once for both counts, and only when pods exist.
+func (r _resource) arePodGangMinReplicasScheduledAndReady(ss *syncState, pgi *podGangInfo) (bool, bool) {
+	allScheduled, allReady := true, true
 	for _, pclq := range pgi.pclqs {
-		pods := ss.existingPCLQPods[pclq.fqn]
-		associated := sets.New(pclq.associatedPodNames...)
-		var scheduledCount int32
-		for i := range pods {
-			if associated.Has(pods[i].Name) && k8sutils.IsPodScheduled(&pods[i]) {
-				scheduledCount++
+		var scheduledCount, readyCount int32
+		if pods := ss.existingPCLQPods[pclq.fqn]; len(pods) > 0 {
+			associated := sets.New(pclq.associatedPodNames...)
+			for i := range pods {
+				if !associated.Has(pods[i].Name) {
+					continue
+				}
+				if k8sutils.IsPodScheduled(&pods[i]) {
+					scheduledCount++
+				}
+				if k8sutils.IsPodReady(&pods[i]) {
+					readyCount++
+				}
 			}
 		}
-		if scheduledCount < pclq.minAvailable {
-			return false
+		allScheduled = allScheduled && scheduledCount >= pclq.minAvailable
+		allReady = allReady && readyCount >= pclq.minAvailable
+		if !allScheduled && !allReady {
+			return false, false
 		}
 	}
-	return true
-}
-
-// arePodGangMinReplicasReady returns true if, for every constituent PodClique, at least
-// MinReplicas pods associated to this PodGang are Ready. Only pods named in the PodClique's
-// associatedPodNames are counted, so a PodClique whose pods are spread across more than one
-// PodGang is evaluated per PodGang.
-func (r _resource) arePodGangMinReplicasReady(ss *syncState, pgi *podGangInfo) bool {
-	for _, pclq := range pgi.pclqs {
-		pods := ss.existingPCLQPods[pclq.fqn]
-		associated := sets.New(pclq.associatedPodNames...)
-		var readyCount int32
-		for i := range pods {
-			if associated.Has(pods[i].Name) && k8sutils.IsPodReady(&pods[i]) {
-				readyCount++
-			}
-		}
-		if readyCount < pclq.minAvailable {
-			return false
-		}
-	}
-	return true
+	return allScheduled, allReady
 }
 
 // setPodGangCondition sets the given condition via meta.SetStatusCondition.
