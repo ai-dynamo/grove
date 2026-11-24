@@ -15,7 +15,6 @@
 package podcliqueset
 
 import (
-	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -30,7 +29,6 @@ import (
 	ctrlutils "github.com/ai-dynamo/grove/operator/internal/controller/utils"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
-	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
@@ -49,7 +47,6 @@ func (r *Reconciler) reconcileSpec(ctx context.Context, logger logr.Logger, pcs 
 	}
 	reconcileStepFns := []ctrlcommon.ReconcileStepFn[grovecorev1beta1.PodCliqueSet]{
 		r.ensureFinalizer,
-		r.processGenerationHashChange,
 		syncResources,
 		r.updateObservedGeneration,
 	}
@@ -72,187 +69,6 @@ func (r *Reconciler) ensureFinalizer(ctx context.Context, logger logr.Logger, pc
 		}
 	}
 	return ctrlcommon.ContinueReconcile()
-}
-
-// processGenerationHashChange initializes generation hashes, migrates legacy status, and starts an update for a real specification change.
-func (r *Reconciler) processGenerationHashChange(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet) ctrlcommon.ReconcileStepResult {
-	pcsObjectKey := client.ObjectKeyFromObject(pcs)
-
-	// If the generation status is not reflected correctly yet, requeue and allow the informer cache to catch up.
-	if !r.pcsGenerationStatusExpectations.ClearIfSatisfied(pcs.ObjectMeta, pcs.Status.CurrentGenerationHash, pcs.Status.AppliedSchedulingConfigurationHash) {
-		return ctrlcommon.ReconcileAfter(constants.InformerCacheSyncRetryInterval, fmt.Sprintf("generation status is not up-to-date for PodCliqueSet: %v", pcsObjectKey))
-	}
-
-	legacyGenerationHash, schedulingConfigurationHash, generationHash := computePCSHashes(pcs)
-	if pcs.Status.CurrentGenerationHash == nil || pcs.Status.AppliedSchedulingConfigurationHash == nil {
-		return r.establishGenerationHashBaseline(ctx, logger, pcs, schedulingConfigurationHash, generationHash)
-	}
-	if generationHash == *pcs.Status.CurrentGenerationHash {
-		return ctrlcommon.ContinueReconcile()
-	}
-	if legacyGenerationHash == *pcs.Status.CurrentGenerationHash &&
-		schedulingConfigurationHash == *pcs.Status.AppliedSchedulingConfigurationHash {
-		return r.migrateLegacyGenerationHash(ctx, pcs, generationHash)
-	}
-	if err := r.initOrResetUpdate(ctx, pcs, generationHash, schedulingConfigurationHash); err != nil {
-		return ctrlcommon.ReconcileWithErrors(fmt.Sprintf("could not initialize or reset update for PodCliqueSet: %v", pcsObjectKey), err)
-	}
-	return ctrlcommon.ReconcileAfter(
-		constants.InformerCacheSyncRetryInterval,
-		fmt.Sprintf("waiting for update initialization to become visible in the informer cache for PodCliqueSet: %v", pcsObjectKey),
-	)
-}
-
-// establishGenerationHashBaseline initializes generation identities without starting an update. For a PodCliqueSet
-// created before scheduling hashing was introduced, it preserves the existing generation hash so generation-format
-// migration and update detection can happen on a later reconciliation.
-func (r *Reconciler) establishGenerationHashBaseline(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, schedulingConfigurationHash, generationHash string) ctrlcommon.ReconcileStepResult {
-	pcs.Status.AppliedSchedulingConfigurationHash = new(schedulingConfigurationHash)
-	if pcs.Status.CurrentGenerationHash != nil {
-		generationHash = *pcs.Status.CurrentGenerationHash
-		if pcs.Status.UpdateProgress != nil {
-			pcs.Status.UpdateProgress.TargetSchedulingConfigurationHash = schedulingConfigurationHash
-		}
-	}
-	if err := r.setGenerationHashAndUpdateStatus(ctx, pcs, generationHash); err != nil {
-		logger.Error(err, "failed to establish generation hash baseline", "generationHash", generationHash)
-		return ctrlcommon.ReconcileWithErrors("error establishing generation hash baseline", err)
-	}
-	return ctrlcommon.ReconcileAfter(
-		constants.InformerCacheSyncRetryInterval,
-		fmt.Sprintf("waiting for the generation status baseline to become visible in the informer cache for PodCliqueSet: %v", client.ObjectKeyFromObject(pcs)),
-	)
-}
-
-// migrateLegacyGenerationHash replaces an equivalent legacy hash with the combined hash without starting another update.
-func (r *Reconciler) migrateLegacyGenerationHash(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet, generationHash string) ctrlcommon.ReconcileStepResult {
-	if pcs.Status.UpdateProgress != nil && pcs.Status.UpdateProgress.UpdateEndedAt == nil {
-		// Preserve the legacy target while an update that started before scheduling hashing converges.
-		return ctrlcommon.ContinueReconcile()
-	}
-	if err := r.setGenerationHashAndUpdateStatus(ctx, pcs, generationHash); err != nil {
-		return ctrlcommon.ReconcileWithErrors("error migrating PodCliqueSet generation hash", err)
-	}
-	return ctrlcommon.ContinueReconcile()
-}
-
-// setGenerationHashAndUpdateStatus persists the PodCliqueSet generation status and then records its expectation.
-func (r *Reconciler) setGenerationHashAndUpdateStatus(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet, newGenerationHash string) error {
-	pcs.Status.CurrentGenerationHash = &newGenerationHash
-	if err := r.client.Status().Update(ctx, pcs); err != nil {
-		return fmt.Errorf("could not update generation status for PodCliqueSet: %v: %w", client.ObjectKeyFromObject(pcs), err)
-	}
-	r.pcsGenerationStatusExpectations.Record(pcs.ObjectMeta, newGenerationHash, pcs.Status.AppliedSchedulingConfigurationHash)
-	return nil
-}
-
-// initOrResetUpdate initializes or resets update progress for the PodCliqueSet.
-func (r *Reconciler) initOrResetUpdate(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet, newGenerationHash, targetSchedulingConfigurationHash string) error {
-	updateStartedAt := metav1.Now()
-	requiresReplicaRecreation := requiresPCSReplicaRecreation(pcs, targetSchedulingConfigurationHash)
-	updateProgress := &grovecorev1beta1.PodCliqueSetUpdateProgress{
-		RequiresReplicaRecreation:          requiresReplicaRecreation,
-		TargetSchedulingConfigurationHash:  targetSchedulingConfigurationHash,
-		PreviousPodCliqueSetGenerationHash: new(*pcs.Status.CurrentGenerationHash),
-		UpdateStartedAt:                    updateStartedAt,
-	}
-	if isUpdateOrchestratedByGrove(pcs, requiresReplicaRecreation) {
-		updateProgress.CurrentlyUpdating = prepareReplicaSelectionsForUpdate(pcs, updateStartedAt)
-	} else {
-		// Grove does not orchestrate ordinary OnDelete updates because it cannot know when every Pod has
-		// been manually deleted. Replica recreation is always orchestrated by Grove.
-		updateProgress.UpdateEndedAt = new(updateStartedAt)
-	}
-	// The Coherent strategy rolls only the components whose pod template changed. Capture that scope now,
-	// while Status.CurrentGenerationHash still holds the previous hash, and preserve it for the update.
-	if !requiresReplicaRecreation && componentutils.IsCoherentStrategy(pcs) {
-		scope, err := r.computeCoherentUpdateScope(ctx, pcs)
-		if err != nil {
-			return fmt.Errorf("could not compute coherent update scope for PodCliqueSet: %v: %w", client.ObjectKeyFromObject(pcs), err)
-		}
-		updateProgress.InScopeStandalonePodCliques = sets.List(scope.standalonePCLQs)
-		updateProgress.InScopePodCliqueScalingGroups = sets.List(scope.podCliqueScalingGroups)
-	}
-	pcs.Status.UpdateProgress = updateProgress
-	pcs.Status.UpdatedReplicas = 0
-	pcs.Status.CurrentGenerationHash = &newGenerationHash
-	if err := r.setGenerationHashAndUpdateStatus(ctx, pcs, newGenerationHash); err != nil {
-		return fmt.Errorf("could not set UpdateProgress for PodCliqueSet: %v: %w", client.ObjectKeyFromObject(pcs), err)
-	}
-	r.currentlyUpdatingExpectations.Record(pcs.ObjectMeta, updateProgress.CurrentlyUpdating)
-	return nil
-}
-
-// requiresPCSReplicaRecreation reports whether the new update must recreate PCS replicas. Once started,
-// recreation remains required across superseding updates, including a scheduling rollback to the applied hash.
-func requiresPCSReplicaRecreation(pcs *grovecorev1beta1.PodCliqueSet, targetSchedulingConfigurationHash string) bool {
-	if pcs.Status.AppliedSchedulingConfigurationHash == nil {
-		return false
-	}
-	return targetSchedulingConfigurationHash != *pcs.Status.AppliedSchedulingConfigurationHash ||
-		componentutils.IsPCSReplicaRecreationInProgress(pcs)
-}
-
-// isUpdateOrchestratedByGrove reports whether Grove drives the update to completion. Replica recreation is
-// always orchestrated; ordinary OnDelete updates are completed by manual Pod deletion.
-func isUpdateOrchestratedByGrove(pcs *grovecorev1beta1.PodCliqueSet, requiresReplicaRecreation bool) bool {
-	return requiresReplicaRecreation || componentutils.ResolveUpdateStrategyType(pcs) != grovecorev1beta1.OnDeleteStrategy
-}
-
-// prepareReplicaSelectionsForUpdate prepares existing PCS replica selections for a new update.
-// With no existing update progress, it returns no selections.
-// Ordinary selections already committed to scale-in are excluded. Active replacements restart at their target
-// index with a fresh same-index cleanup barrier and retain cleanup obligations for their previous sources.
-// Canceled replacements retain their existing mapping and cleanup progress. Returned progress does not alias
-// the existing update progress.
-func prepareReplicaSelectionsForUpdate(pcs *grovecorev1beta1.PodCliqueSet, updateStartedAt metav1.Time) []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress {
-	if pcs.Status.UpdateProgress == nil {
-		return nil
-	}
-
-	scaleInPCSReplicaIndices := sets.New[int32]()
-	if pcs.Status.ScalingProgress != nil {
-		scaleInPCSReplicaIndices.Insert(pcs.Status.ScalingProgress.ScaleInReplicaIndices...)
-	}
-
-	previouslyUpdatingPCSReplicas := pcs.Status.UpdateProgress.CurrentlyUpdating
-	currentlyUpdating := make([]grovecorev1beta1.PodCliqueSetReplicaUpdateProgress, 0, len(previouslyUpdatingPCSReplicas))
-
-	for _, progress := range previouslyUpdatingPCSReplicas {
-		if progress.UpdateEndedAt != nil {
-			continue
-		}
-		if progress.Replacement == nil &&
-			scaleInPCSReplicaIndices.Has(progress.ReplicaIndex) {
-			continue
-		}
-
-		pcsReplicaIndex := progress.ReplicaIndex
-		replacement := progress.Replacement.DeepCopy()
-
-		if replacement != nil && replacement.CanceledAt == nil {
-			if pcsReplicaIndex != replacement.TargetReplicaIndex {
-				retiredSourcePCSReplicaIndices := sets.New(replacement.RetiredSourceReplicaIndices...)
-				retiredSourcePCSReplicaIndices.Insert(pcsReplicaIndex)
-				replacement.RetiredSourceReplicaIndices = sets.List(retiredSourcePCSReplicaIndices)
-				pcsReplicaIndex = replacement.TargetReplicaIndex
-			}
-			replacement.SourceCleanupCompletedAt = nil
-		}
-
-		currentlyUpdating = append(currentlyUpdating,
-			grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{
-				ReplicaIndex:    pcsReplicaIndex,
-				Replacement:     replacement,
-				UpdateStartedAt: updateStartedAt,
-			},
-		)
-	}
-
-	slices.SortFunc(currentlyUpdating, func(a, b grovecorev1beta1.PodCliqueSetReplicaUpdateProgress) int {
-		return cmp.Compare(a.ReplicaIndex, b.ReplicaIndex)
-	})
-	return currentlyUpdating
 }
 
 // syncPodCliqueSetResources synchronizes all managed child resources. Components are

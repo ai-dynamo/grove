@@ -49,7 +49,8 @@ func CreateOperatorRegistry(mgr manager.Manager,
 	networkConfig configv1beta1.NetworkAcceleration,
 	schedRegistry scheduler.Registry,
 	scalingProgressExpectations *pcsexpectations.ScalingProgress,
-	currentlyUpdatingExpectations *pcsexpectations.CurrentlyUpdating) component.OperatorRegistry[v1beta1.PodCliqueSet, pcssync.State, pcssync.Result] {
+	currentlyUpdatingExpectations *pcsexpectations.CurrentlyUpdating,
+	generationHashExpectations *pcsexpectations.GenerationHashes) component.OperatorRegistry[v1beta1.PodCliqueSet, pcssync.State, pcssync.Result] {
 	cl := mgr.GetClient()
 	reg := component.NewOperatorRegistry[v1beta1.PodCliqueSet, pcssync.State, pcssync.Result]()
 	reg.Register(component.KindPodClique, podclique.New(cl, mgr.GetScheme(), eventRecorder), component.AsReplicaScoped())
@@ -64,7 +65,7 @@ func CreateOperatorRegistry(mgr manager.Manager,
 	reg.Register(component.KindPodGang, podgang.New(cl, mgr.GetScheme(), eventRecorder, topologyAwareSchedulingConfig, schedRegistry), component.AsReplicaScoped())
 	reg.Register(component.KindPodGangMap, podgangmap.New(cl, mgr.GetScheme(), clock.RealClock{}), component.AsReplicaScoped())
 	reg.Register(component.KindPodGangMigrator, podgangmigrator.New(cl, mgr.GetScheme(), schedRegistry))
-	reg.Register(component.KindPodCliqueSetReplica, podcliquesetreplica.New(cl, eventRecorder, scalingProgressExpectations, currentlyUpdatingExpectations))
+	reg.Register(component.KindPodCliqueSetReplica, podcliquesetreplica.New(cl, eventRecorder, scalingProgressExpectations, currentlyUpdatingExpectations, generationHashExpectations))
 	if computedomain.ShouldRegister(mgr.GetRESTMapper(), networkConfig.AutoMNNVLEnabled, ctrl.Log.WithName("computedomain")) {
 		reg.Register(component.KindComputeDomain, computedomain.New(cl, mgr.GetScheme(), eventRecorder, !networkConfig.AutoMNNVLEnabled), component.AsReplicaScoped())
 	}

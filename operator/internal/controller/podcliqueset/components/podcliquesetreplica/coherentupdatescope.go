@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package podcliqueset
+package podcliquesetreplica
 
 import (
 	"context"
@@ -36,7 +36,7 @@ type updateScope struct {
 // is already in flight, the previous scope's still-pending components are merged in so a half-rolled
 // component is finished rather than frozen. It reads the current generation hash from status, so it must
 // run before that hash is overwritten with the new one.
-func (r *Reconciler) computeCoherentUpdateScope(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet) (updateScope, error) {
+func (r *_resource) computeCoherentUpdateScope(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet) (updateScope, error) {
 	deployedHashByClique, err := r.deployedPodTemplateHashByClique(ctx, pcs)
 	if err != nil {
 		return updateScope{}, err
@@ -56,7 +56,7 @@ func (r *Reconciler) computeCoherentUpdateScope(ctx context.Context, pcs *grovec
 // deployedPodTemplateHashByClique returns the currently deployed pod template hash of each PodClique keyed
 // by clique name. It reads the desired-hash label set by the owner sync, which is what the cluster last
 // converged toward, and covers standalone and PodCliqueScalingGroup-owned PodCliques alike.
-func (r *Reconciler) deployedPodTemplateHashByClique(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet) (map[string]string, error) {
+func (r *_resource) deployedPodTemplateHashByClique(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet) (map[string]string, error) {
 	pclqs, err := componentutils.ListPCLQsMatchingLabels(ctx, r.client, pcs.Namespace, apicommon.GetDefaultLabelsForPodCliqueSetManagedResources(pcs.Name))
 	if err != nil {
 		return nil, err

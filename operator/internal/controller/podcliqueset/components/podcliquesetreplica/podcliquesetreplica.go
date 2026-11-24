@@ -21,6 +21,7 @@ import (
 	"slices"
 
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
+	"github.com/ai-dynamo/grove/operator/internal/constants"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	pcsexpectations "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/expectations"
 	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/sync"
@@ -44,20 +45,29 @@ const (
 	errCodeUpdatePCSStatus                 grovecorev1beta1.ErrorCode = "ERR_UPDATE_PCS_STATUS"
 	errCodeGetPodGangMap                   grovecorev1beta1.ErrorCode = "ERR_GET_PODGANGMAP"
 	errCodeInvalidEpoch                    grovecorev1beta1.ErrorCode = "ERR_INVALID_EPOCH"
+	errCodeComputeCoherentUpdateScope      grovecorev1beta1.ErrorCode = "ERR_COMPUTE_COHERENT_UPDATE_SCOPE"
 )
 
 type _resource struct {
 	client                        client.Client
 	eventRecorder                 record.EventRecorder
+	generationHashExpectations    *pcsexpectations.GenerationHashes
 	scalingProgressExpectations   *pcsexpectations.ScalingProgress
 	currentlyUpdatingExpectations *pcsexpectations.CurrentlyUpdating
 }
 
 // New creates a new instance of the PodCliqueSetReplica operator.
-func New(client client.Client, eventRecorder record.EventRecorder, scalingProgressExpectations *pcsexpectations.ScalingProgress, currentlyUpdatingExpectations *pcsexpectations.CurrentlyUpdating) component.Operator[grovecorev1beta1.PodCliqueSet, pcssync.State, pcssync.Result] {
+func New(
+	client client.Client,
+	eventRecorder record.EventRecorder,
+	scalingProgressExpectations *pcsexpectations.ScalingProgress,
+	currentlyUpdatingExpectations *pcsexpectations.CurrentlyUpdating,
+	generationHashExpectations *pcsexpectations.GenerationHashes,
+) component.Operator[grovecorev1beta1.PodCliqueSet, pcssync.State, pcssync.Result] {
 	return &_resource{
 		client:                        client,
 		eventRecorder:                 eventRecorder,
+		generationHashExpectations:    generationHashExpectations,
 		scalingProgressExpectations:   scalingProgressExpectations,
 		currentlyUpdatingExpectations: currentlyUpdatingExpectations,
 	}
@@ -68,8 +78,25 @@ func (r *_resource) GetExistingResourceNames(_ context.Context, _ logr.Logger, _
 	return []string{}, nil
 }
 
-// Sync orchestrates replica deletion and rolling updates for the PodCliqueSet.
+// Sync prepares generation changes and orchestrates replica deletion and updates for the PodCliqueSet.
 func (r *_resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, state *pcssync.State) (pcssync.Result, error) {
+	workingPCS := pcs.DeepCopy()
+	baselineInitialized, err := r.preparePCSGenerationChange(ctx, workingPCS, metav1.Now())
+	if err != nil {
+		return pcssync.Result{}, err
+	}
+	changed, err := r.patchPCSScalingAndUpdateProgress(ctx, pcs, workingPCS)
+	if err != nil {
+		return pcssync.Result{}, err
+	}
+	if changed {
+		message := "waiting for PCS scaling and update progress to become visible in the informer cache"
+		if baselineInitialized {
+			message = "waiting for PCS generation initialization to become visible in the informer cache"
+		}
+		return pcssync.Result{}, groveerr.NewRequeueAfter(component.OperationSync, message, constants.InformerCacheSyncRetryInterval)
+	}
+
 	pcsReplicaInfosByIndex, err := r.gatherPCSReplicaInfosByIndex(ctx, pcs)
 	if err != nil {
 		return pcssync.Result{}, err

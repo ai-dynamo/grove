@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package podcliqueset
+package podcliquesetreplica
 
 import (
 	"testing"
@@ -74,9 +74,53 @@ func TestBuildPCSSchedulingConfig(t *testing.T) {
 	reordered.Spec.Template.Cliques[0], reordered.Spec.Template.Cliques[1] = reordered.Spec.Template.Cliques[1], reordered.Spec.Template.Cliques[0]
 	reordered.Spec.Template.PodCliqueScalingGroupConfigs[0], reordered.Spec.Template.PodCliqueScalingGroupConfigs[1] = reordered.Spec.Template.PodCliqueScalingGroupConfigs[1], reordered.Spec.Template.PodCliqueScalingGroupConfigs[0]
 	assert.Equal(t, want, buildPCSSchedulingConfig(reordered))
+	assert.Equal(t, computeSchedulingConfigurationHash(want), computeSchedulingConfigurationHash(buildPCSSchedulingConfig(reordered)))
 
 	explicitDefaults := pcs.DeepCopy()
 	explicitDefaults.Spec.Template.Cliques[0].Spec.MinAvailable = ptr.To(explicitDefaults.Spec.Template.Cliques[0].Spec.Replicas)
 	explicitDefaults.Spec.Template.PodCliqueScalingGroupConfigs[1].MinAvailable = ptr.To[int32](1)
 	assert.Equal(t, want, buildPCSSchedulingConfig(explicitDefaults))
+	assert.Equal(t, computeGenerationHash(pcs), computeGenerationHash(explicitDefaults))
+}
+
+// TestComputePCSHashesStableEncoding pins the released legacy hash and the value-only new hash formats.
+func TestComputePCSHashesStableEncoding(t *testing.T) {
+	pcs := testutils.NewPodCliqueSetBuilder("hash-contract", "default", "uid").
+		WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("worker").WithReplicas(3).WithMinAvailable(2).Build()).
+		WithPodCliqueScalingGroupConfig(grovecorev1beta1.PodCliqueScalingGroupConfig{Name: "workers"}).Build()
+	legacyHash, schedulingHash, generationHash := computePCSHashes(pcs)
+	assert.Equal(t, "58fdfc6fb659d4f6c595", legacyHash)
+	assert.Equal(t, "57dcdc4d75ddcfb49bcf", schedulingHash)
+	assert.Equal(t, "56cd9fc675f8b959f78", generationHash)
+}
+
+func TestComputePCSHashesIgnoresPCSReplicaCount(t *testing.T) {
+	t.Parallel()
+	pcs := generationTestPCS()
+	legacyHash, schedulingHash, generationHash := computePCSHashes(pcs)
+	pcs.Spec.Replicas = 0
+	scaledLegacyHash, scaledSchedulingHash, scaledGenerationHash := computePCSHashes(pcs)
+	assert.Equal(t, legacyHash, scaledLegacyHash)
+	assert.Equal(t, schedulingHash, scaledSchedulingHash)
+	assert.Equal(t, generationHash, scaledGenerationHash)
+}
+
+func TestComputePCSConfigurationHashDistinguishesValueBoundaries(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		left  []string
+		right []string
+	}{
+		{name: "adjacent values", left: []string{"ab", "c"}, right: []string{"a", "bc"}},
+		{name: "empty value", left: []string{"a"}, right: []string{"", "a"}},
+		{name: "embedded separators", left: []string{"a:1", "b"}, right: []string{"a", "1:b"}},
+		{name: "hash domains", left: []string{"scheduling-v1", "value"}, right: []string{"generation-v1", "value"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.NotEqual(t, computePCSConfigurationHash(tc.left...), computePCSConfigurationHash(tc.right...))
+		})
+	}
 }

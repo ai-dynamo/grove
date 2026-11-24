@@ -57,16 +57,17 @@ func NewReconciler(mgr ctrl.Manager, controllerCfg configv1beta1.PodCliqueSetCon
 	client := mgr.GetClient()
 	scalingProgressExpectations := &pcsexpectations.ScalingProgress{}
 	currentlyUpdatingExpectations := &pcsexpectations.CurrentlyUpdating{}
-	return &Reconciler{
+	reconciler := &Reconciler{
 		config:                        controllerCfg,
 		tasConfig:                     topologyAwareSchedulingConfig,
 		client:                        client,
 		eventRecorder:                 eventRecorder,
 		reconcileStatusRecorder:       ctrlcommon.NewReconcileErrorRecorder(client),
-		operatorRegistry:              pcscomponent.CreateOperatorRegistry(mgr, eventRecorder, topologyAwareSchedulingConfig, networkConfig, schedRegistry, scalingProgressExpectations, currentlyUpdatingExpectations),
 		scalingProgressExpectations:   scalingProgressExpectations,
 		currentlyUpdatingExpectations: currentlyUpdatingExpectations,
 	}
+	reconciler.operatorRegistry = pcscomponent.CreateOperatorRegistry(mgr, eventRecorder, topologyAwareSchedulingConfig, networkConfig, schedRegistry, scalingProgressExpectations, currentlyUpdatingExpectations, &reconciler.pcsGenerationStatusExpectations)
+	return reconciler
 }
 
 // Reconcile reconciles a PodCliqueSet resource.
@@ -79,6 +80,9 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	}
 
 	if result := r.reconcileDelete(ctx, logger, pcs); ctrlcommon.ShortCircuitReconcileFlow(result) {
+		return result.Result()
+	}
+	if result := r.ensureGenerationStatusExpectationSatisfied(pcs); ctrlcommon.ShortCircuitReconcileFlow(result) {
 		return result.Result()
 	}
 	if result := r.ensureScalingProgressExpectationSatisfied(pcs); ctrlcommon.ShortCircuitReconcileFlow(result) {
@@ -98,6 +102,15 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	}
 
 	return reconcileSpecFlowResult.Result()
+}
+
+// ensureGenerationStatusExpectationSatisfied waits for the last persisted generation hashes before any spec work.
+func (r *Reconciler) ensureGenerationStatusExpectationSatisfied(pcs *grovecorev1beta1.PodCliqueSet) ctrlcommon.ReconcileStepResult {
+	if r.pcsGenerationStatusExpectations.ClearIfSatisfied(pcs.ObjectMeta, pcs.Status.CurrentGenerationHash, pcs.Status.AppliedSchedulingConfigurationHash) {
+		return ctrlcommon.ContinueReconcile()
+	}
+	return ctrlcommon.ReconcileAfter(internalconstants.InformerCacheSyncRetryInterval,
+		fmt.Sprintf("generation status is not up-to-date for PodCliqueSet: %v", ctrlclient.ObjectKeyFromObject(pcs)))
 }
 
 // ensureScalingProgressExpectationSatisfied waits until the informer cache contains the last persisted scaling progress.

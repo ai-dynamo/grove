@@ -12,10 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package podcliqueset
+package podcliquesetreplica
 
 import (
+	"fmt"
+	"hash/fnv"
 	"sort"
+	"strconv"
 
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
@@ -23,6 +26,7 @@ import (
 	"github.com/samber/lo"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/rand"
 	"k8s.io/utils/ptr"
 )
 
@@ -42,13 +46,6 @@ type pcsSchedulingConfig struct {
 	podCliqueScalingGroups []resourceSchedulingInfo
 }
 
-// pcsGenerationConfig combines workload content and scheduling configuration
-// into the PodCliqueSet generation identity.
-type pcsGenerationConfig struct {
-	podTemplateHash             string
-	schedulingConfigurationHash string
-}
-
 // computeGenerationHash calculates the combined content and scheduling hash of a PodCliqueSet.
 func computeGenerationHash(pcs *grovecorev1beta1.PodCliqueSet) string {
 	_, _, generationHash := computePCSHashes(pcs)
@@ -65,10 +62,7 @@ func computePCSHashes(pcs *grovecorev1beta1.PodCliqueSet) (
 	legacyGenerationHash = computeLegacyGenerationHash(pcs)
 	schedulingConfig := buildPCSSchedulingConfig(pcs)
 	schedulingConfigurationHash = computeSchedulingConfigurationHash(schedulingConfig)
-	generationHash = k8sutils.ComputeHash(pcsGenerationConfig{
-		podTemplateHash:             legacyGenerationHash,
-		schedulingConfigurationHash: schedulingConfigurationHash,
-	})
+	generationHash = computePCSConfigurationHash("generation-v1", legacyGenerationHash, schedulingConfigurationHash)
 	return
 }
 
@@ -122,7 +116,27 @@ func computeLegacyGenerationHash(pcs *grovecorev1beta1.PodCliqueSet) string {
 	return k8sutils.ComputeHash(podTemplateSpecs...)
 }
 
-// computeSchedulingConfigurationHash calculates a hash of the scheduling configuration.
+// computeSchedulingConfigurationHash hashes the named, sorted effective minima without Go type metadata.
 func computeSchedulingConfigurationHash(config pcsSchedulingConfig) string {
-	return k8sutils.ComputeHash(config)
+	values := []string{"scheduling-v1", "podCliques", strconv.Itoa(len(config.podCliques))}
+	for _, clique := range config.podCliques {
+		values = append(values, clique.name, strconv.FormatInt(int64(clique.minAvailable), 10))
+	}
+	values = append(values, "podCliqueScalingGroups", strconv.Itoa(len(config.podCliqueScalingGroups)))
+	for _, scalingGroup := range config.podCliqueScalingGroups {
+		values = append(values, scalingGroup.name, strconv.FormatInt(int64(scalingGroup.minAvailable), 10))
+	}
+	return computePCSConfigurationHash(values...)
+}
+
+// computePCSConfigurationHash encodes each value as its decimal byte length, a colon, and its contents.
+// Length prefixes distinguish adjacent values and empty values. Fixed domain/version values distinguish
+// scheduling from generation identities. Only values enter the hash, never Go package or type names.
+func computePCSConfigurationHash(values ...string) string {
+	hasher := fnv.New64a()
+	for _, value := range values {
+		// The hash writer never returns an error.
+		_, _ = fmt.Fprintf(hasher, "%d:%s", len(value), value)
+	}
+	return rand.SafeEncodeString(strconv.FormatUint(hasher.Sum64(), 10))
 }
