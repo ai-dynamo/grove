@@ -1,5 +1,5 @@
 # builder
-FROM --platform=$BUILDPLATFORM golang:1.26.10 AS builder
+FROM --platform=$BUILDPLATFORM golang:1.26.11 AS builder
 WORKDIR /go/src/github.com/ai-dynamo/grove
 COPY ../. .
 
