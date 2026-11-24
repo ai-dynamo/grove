@@ -1660,7 +1660,7 @@ func TestInitializeAssignedAndUnassignedPodsForPCS(t *testing.T) {
 	assert.ElementsMatch(t, []string{"unassigned-0"}, podNames(ss.unassignedPodsByPCLQ[pclqName]))
 }
 
-// TestArePodGangMinReplicasScheduled verifies arePodGangMinReplicasScheduled counts only pods that
+// TestArePodGangMinReplicasScheduled verifies the scheduled result counts only pods that
 // are associated to the PodGang (named in associatedPodNames) and scheduled, and requires every
 // constituent PodClique to meet MinReplicas.
 func TestArePodGangMinReplicasScheduled(t *testing.T) {
@@ -1706,18 +1706,28 @@ func TestArePodGangMinReplicasScheduled(t *testing.T) {
 			podGang:      &podGangInfo{fqn: "pg-1", pclqs: []pclqInfo{{fqn: "pclq-a", minAvailable: 2, associatedPodNames: []string{"a1", "a2", "a3"}}}},
 			want:         true,
 		},
+		{
+			name:    "no pods with positive MinReplicas",
+			podGang: &podGangInfo{pclqs: []pclqInfo{{fqn: "pclq-a", minAvailable: 1, associatedPodNames: []string{"a1"}}}},
+			want:    false,
+		},
+		{
+			name:    "no pods with zero MinReplicas",
+			podGang: &podGangInfo{pclqs: []pclqInfo{{fqn: "pclq-a", minAvailable: 0, associatedPodNames: []string{"a1"}}}},
+			want:    true,
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			ss := &syncState{existingPCLQPods: tc.existingPods}
 			r := &_resource{}
-			actual := r.arePodGangMinReplicasScheduled(ss, tc.podGang)
+			actual, _ := r.arePodGangMinReplicasScheduledAndReady(ss, tc.podGang)
 			assert.Equal(t, tc.want, actual)
 		})
 	}
 }
 
-// TestArePodGangMinReplicasReady verifies arePodGangMinReplicasReady counts only pods that are
+// TestArePodGangMinReplicasReady verifies the ready result counts only pods that are
 // associated to the PodGang (named in associatedPodNames) and ready, and requires every
 // constituent PodClique to meet MinReplicas. A scheduled-but-not-ready pod does not count.
 func TestArePodGangMinReplicasReady(t *testing.T) {
@@ -1757,15 +1767,47 @@ func TestArePodGangMinReplicasReady(t *testing.T) {
 			}},
 			want: false,
 		},
+		{
+			name:    "no pods with positive MinReplicas",
+			podGang: &podGangInfo{pclqs: []pclqInfo{{fqn: "pclq-a", minAvailable: 1, associatedPodNames: []string{"a1"}}}},
+			want:    false,
+		},
+		{
+			name:    "no pods with zero MinReplicas",
+			podGang: &podGangInfo{pclqs: []pclqInfo{{fqn: "pclq-a", minAvailable: 0, associatedPodNames: []string{"a1"}}}},
+			want:    true,
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			ss := &syncState{existingPCLQPods: tc.existingPods}
 			r := &_resource{}
-			actual := r.arePodGangMinReplicasReady(ss, tc.podGang)
+			_, actual := r.arePodGangMinReplicasScheduledAndReady(ss, tc.podGang)
 			assert.Equal(t, tc.want, actual)
 		})
 	}
+}
+
+// TestPodGangScheduledAndReadyIndependent verifies one condition does not mask the other.
+func TestPodGangScheduledAndReadyIndependent(t *testing.T) {
+	pgi := &podGangInfo{pclqs: []pclqInfo{
+		{fqn: "a", minAvailable: 1, associatedPodNames: []string{"a1"}},
+		{fqn: "b", minAvailable: 1, associatedPodNames: []string{"b1"}},
+	}}
+	ss := &syncState{existingPCLQPods: map[string][]v1.Pod{
+		"a": {scheduledTestPod("a1")},
+		"b": {readyTestPod("b1")},
+	}}
+	r := &_resource{}
+	scheduled, ready := r.arePodGangMinReplicasScheduledAndReady(ss, pgi)
+	assert.True(t, scheduled)
+	assert.False(t, ready)
+	// Ready is counted independently, even if the observed Scheduled condition is absent.
+	ss.existingPCLQPods["a"] = []v1.Pod{*testutils.NewPodBuilder("a1", "default").
+		WithCondition(v1.PodCondition{Type: v1.PodReady, Status: v1.ConditionTrue}).Build()}
+	scheduled, ready = r.arePodGangMinReplicasScheduledAndReady(ss, pgi)
+	assert.False(t, scheduled)
+	assert.True(t, ready)
 }
 
 // TestSetScheduledCondition verifies setScheduledCondition sets the Scheduled condition from the live
