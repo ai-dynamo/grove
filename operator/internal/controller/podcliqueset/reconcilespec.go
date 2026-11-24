@@ -77,26 +77,24 @@ func (r *Reconciler) ensureFinalizer(ctx context.Context, logger logr.Logger, pc
 // processGenerationHashChange initializes generation hashes, migrates legacy status, and starts an update for a real specification change.
 func (r *Reconciler) processGenerationHashChange(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet) ctrlcommon.ReconcileStepResult {
 	pcsObjectKey := client.ObjectKeyFromObject(pcs)
-	expectationKey := pcsGenHashesExpKey(pcs)
 
 	// If the generation status is not reflected correctly yet, requeue and allow the informer cache to catch up.
-	if !r.isGenerationStatusExpectationSatisfied(expectationKey, pcs.Status) {
+	if !r.pcsGenerationStatusExpectations.ClearIfSatisfied(pcs.ObjectMeta, pcs.Status.CurrentGenerationHash, pcs.Status.AppliedSchedulingConfigurationHash) {
 		return ctrlcommon.ReconcileAfter(constants.InformerCacheSyncRetryInterval, fmt.Sprintf("generation status is not up-to-date for PodCliqueSet: %v", pcsObjectKey))
 	}
-	r.pcsGenerationStatusExpectations.Delete(expectationKey)
 
 	legacyGenerationHash, schedulingConfigurationHash, generationHash := computePCSHashes(pcs)
 	if pcs.Status.CurrentGenerationHash == nil || pcs.Status.AppliedSchedulingConfigurationHash == nil {
-		return r.establishGenerationHashBaseline(ctx, logger, pcs, expectationKey, schedulingConfigurationHash, generationHash)
+		return r.establishGenerationHashBaseline(ctx, logger, pcs, schedulingConfigurationHash, generationHash)
 	}
 	if generationHash == *pcs.Status.CurrentGenerationHash {
 		return ctrlcommon.ContinueReconcile()
 	}
 	if legacyGenerationHash == *pcs.Status.CurrentGenerationHash &&
 		schedulingConfigurationHash == *pcs.Status.AppliedSchedulingConfigurationHash {
-		return r.migrateLegacyGenerationHash(ctx, pcs, expectationKey, generationHash)
+		return r.migrateLegacyGenerationHash(ctx, pcs, generationHash)
 	}
-	if err := r.initOrResetUpdate(ctx, pcs, expectationKey, generationHash, schedulingConfigurationHash); err != nil {
+	if err := r.initOrResetUpdate(ctx, pcs, generationHash, schedulingConfigurationHash); err != nil {
 		return ctrlcommon.ReconcileWithErrors(fmt.Sprintf("could not initialize or reset update for PodCliqueSet: %v", pcsObjectKey), err)
 	}
 	return ctrlcommon.ReconcileAfter(
@@ -108,7 +106,7 @@ func (r *Reconciler) processGenerationHashChange(ctx context.Context, logger log
 // establishGenerationHashBaseline initializes generation identities without starting an update. For a PodCliqueSet
 // created before scheduling hashing was introduced, it preserves the existing generation hash so generation-format
 // migration and update detection can happen on a later reconciliation.
-func (r *Reconciler) establishGenerationHashBaseline(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, expectationKey, schedulingConfigurationHash, generationHash string) ctrlcommon.ReconcileStepResult {
+func (r *Reconciler) establishGenerationHashBaseline(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, schedulingConfigurationHash, generationHash string) ctrlcommon.ReconcileStepResult {
 	pcs.Status.AppliedSchedulingConfigurationHash = new(schedulingConfigurationHash)
 	if pcs.Status.CurrentGenerationHash != nil {
 		generationHash = *pcs.Status.CurrentGenerationHash
@@ -116,7 +114,7 @@ func (r *Reconciler) establishGenerationHashBaseline(ctx context.Context, logger
 			pcs.Status.UpdateProgress.TargetSchedulingConfigurationHash = schedulingConfigurationHash
 		}
 	}
-	if err := r.setGenerationHashAndUpdateStatus(ctx, pcs, expectationKey, generationHash); err != nil {
+	if err := r.setGenerationHashAndUpdateStatus(ctx, pcs, generationHash); err != nil {
 		logger.Error(err, "failed to establish generation hash baseline", "generationHash", generationHash)
 		return ctrlcommon.ReconcileWithErrors("error establishing generation hash baseline", err)
 	}
@@ -127,60 +125,29 @@ func (r *Reconciler) establishGenerationHashBaseline(ctx context.Context, logger
 }
 
 // migrateLegacyGenerationHash replaces an equivalent legacy hash with the combined hash without starting another update.
-func (r *Reconciler) migrateLegacyGenerationHash(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet, expectationKey, generationHash string) ctrlcommon.ReconcileStepResult {
+func (r *Reconciler) migrateLegacyGenerationHash(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet, generationHash string) ctrlcommon.ReconcileStepResult {
 	if pcs.Status.UpdateProgress != nil && pcs.Status.UpdateProgress.UpdateEndedAt == nil {
 		// Preserve the legacy target while an update that started before scheduling hashing converges.
 		return ctrlcommon.ContinueReconcile()
 	}
-	if err := r.setGenerationHashAndUpdateStatus(ctx, pcs, expectationKey, generationHash); err != nil {
+	if err := r.setGenerationHashAndUpdateStatus(ctx, pcs, generationHash); err != nil {
 		return ctrlcommon.ReconcileWithErrors("error migrating PodCliqueSet generation hash", err)
 	}
 	return ctrlcommon.ContinueReconcile()
 }
 
-// pcsGenHashesExpKey returns the key for the in-memory generation-hashes expectation of a PCS.
-// The key scheme is <pcs-namespace>/<pcs-name>/<pcs-UID>. Suffixing a UID ensures that a stale
-// remnant expectation entry for the same <pcs-namespace>/<pcs-name> does not block reconciliation of
-// a new PCS (with a different UID).
-// See https://github.com/ai-dynamo/grove/issues/782 for context.
-func pcsGenHashesExpKey(pcs *grovecorev1beta1.PodCliqueSet) string {
-	return fmt.Sprintf("%s/%s", client.ObjectKeyFromObject(pcs), pcs.UID)
-}
-
-// generationHashesExpectation captures the generation hashes that must be visible in the informer cache before reconciliation continues.
-type generationHashesExpectation struct {
-	currentGenerationHash              string
-	appliedSchedulingConfigurationHash *string
-}
-
-// isGenerationStatusExpectationSatisfied checks if the generation status matches expectations.
-func (r *Reconciler) isGenerationStatusExpectationSatisfied(expectationKey string, status grovecorev1beta1.PodCliqueSetStatus) bool {
-	expected, ok := r.pcsGenerationStatusExpectations.Load(expectationKey)
-	if !ok {
-		return true
-	}
-	expectation := expected.(generationHashesExpectation)
-	return status.CurrentGenerationHash != nil &&
-		*status.CurrentGenerationHash == expectation.currentGenerationHash &&
-		utils.EqualOptional(status.AppliedSchedulingConfigurationHash, expectation.appliedSchedulingConfigurationHash)
-}
-
-// setGenerationHashAndUpdateStatus updates the PodCliqueSet generation status, stores the expectation, and updates the status subresource.
-func (r *Reconciler) setGenerationHashAndUpdateStatus(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet, expectationKey, newGenerationHash string) error {
+// setGenerationHashAndUpdateStatus persists the PodCliqueSet generation status and then records its expectation.
+func (r *Reconciler) setGenerationHashAndUpdateStatus(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet, newGenerationHash string) error {
 	pcs.Status.CurrentGenerationHash = &newGenerationHash
 	if err := r.client.Status().Update(ctx, pcs); err != nil {
 		return fmt.Errorf("could not update generation status for PodCliqueSet: %v: %w", client.ObjectKeyFromObject(pcs), err)
 	}
-	expectation := generationHashesExpectation{currentGenerationHash: newGenerationHash}
-	if pcs.Status.AppliedSchedulingConfigurationHash != nil {
-		expectation.appliedSchedulingConfigurationHash = new(*pcs.Status.AppliedSchedulingConfigurationHash)
-	}
-	r.pcsGenerationStatusExpectations.Store(expectationKey, expectation)
+	r.pcsGenerationStatusExpectations.Record(pcs.ObjectMeta, newGenerationHash, pcs.Status.AppliedSchedulingConfigurationHash)
 	return nil
 }
 
 // initOrResetUpdate initializes or resets update progress for the PodCliqueSet.
-func (r *Reconciler) initOrResetUpdate(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet, expectationKey, newGenerationHash, targetSchedulingConfigurationHash string) error {
+func (r *Reconciler) initOrResetUpdate(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet, newGenerationHash, targetSchedulingConfigurationHash string) error {
 	updateStartedAt := metav1.Now()
 	requiresReplicaRecreation := requiresPCSReplicaRecreation(pcs, targetSchedulingConfigurationHash)
 	updateProgress := &grovecorev1beta1.PodCliqueSetUpdateProgress{
@@ -209,7 +176,7 @@ func (r *Reconciler) initOrResetUpdate(ctx context.Context, pcs *grovecorev1beta
 	pcs.Status.UpdateProgress = updateProgress
 	pcs.Status.UpdatedReplicas = 0
 	pcs.Status.CurrentGenerationHash = &newGenerationHash
-	if err := r.setGenerationHashAndUpdateStatus(ctx, pcs, expectationKey, newGenerationHash); err != nil {
+	if err := r.setGenerationHashAndUpdateStatus(ctx, pcs, newGenerationHash); err != nil {
 		return fmt.Errorf("could not set UpdateProgress for PodCliqueSet: %v: %w", client.ObjectKeyFromObject(pcs), err)
 	}
 	r.currentlyUpdatingExpectations.Record(pcs.ObjectMeta, updateProgress.CurrentlyUpdating)

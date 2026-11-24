@@ -18,7 +18,6 @@ import (
 	"context"
 	"errors"
 	"slices"
-	"sync"
 	"testing"
 	"time"
 
@@ -1213,16 +1212,14 @@ func TestInitOrResetUpdate(t *testing.T) {
 
 			fakeClient := testutils.SetupFakeClient(pcs)
 			reconciler := &Reconciler{
-				client:                          fakeClient,
-				pcsGenerationStatusExpectations: sync.Map{},
-				currentlyUpdatingExpectations:   &pcsexpectations.CurrentlyUpdating{},
+				client:                        fakeClient,
+				currentlyUpdatingExpectations: &pcsexpectations.CurrentlyUpdating{},
 			}
 
 			newGenerationHash := "new-hash"
-			pcsObjectName := pcs.Namespace + "/" + pcs.Name
 
 			targetSchedulingConfigurationHash := "target-scheduling-hash"
-			err := reconciler.initOrResetUpdate(context.Background(), pcs, pcsObjectName, newGenerationHash, targetSchedulingConfigurationHash)
+			err := reconciler.initOrResetUpdate(context.Background(), pcs, newGenerationHash, targetSchedulingConfigurationHash)
 			require.NoError(t, err, "initOrResetUpdate should not return errors")
 
 			// Fetch the updated PCS from the fake client
@@ -1330,8 +1327,7 @@ func TestInitOrResetUpdateFailureIsolationAndRetry(t *testing.T) {
 			assert.ErrorIs(t, errors.Join(failedResult.GetErrors()...), conflict)
 			assert.Equal(t, targetGenerationHash, *pcs.Status.CurrentGenerationHash, "initialization prepares the new generation in memory before the write fails")
 			assert.False(t, apiequality.Semantic.DeepEqual(before.Status.UpdateProgress, pcs.Status.UpdateProgress))
-			_, generationExpectationPresent := reconciler.pcsGenerationStatusExpectations.Load(pcsGenHashesExpKey(pcs))
-			assert.False(t, generationExpectationPresent, "a failed status write must not record a generation expectation")
+			assert.True(t, reconciler.pcsGenerationStatusExpectations.ClearIfSatisfied(pcs.ObjectMeta, nil, nil), "a failed status write must not record a generation expectation")
 			assert.True(t, currentlyUpdatingExpectations.ClearIfSatisfied(pcs.ObjectMeta, nil), "a failed status write must not record an update-selection expectation")
 
 			require.NoError(t, reconciler.reconcileStatusRecorder.RecordErrors(t.Context(), pcs, &failedResult))
@@ -1366,8 +1362,8 @@ func TestInitOrResetUpdateFailureIsolationAndRetry(t *testing.T) {
 			assert.Equal(t, tc.wantRetiredSourcePCSReplicaIndices, updatedProgress.Replacement.RetiredSourceReplicaIndices)
 			assert.Nil(t, updatedProgress.Replacement.SourceCleanupCompletedAt)
 			assert.Nil(t, updatedProgress.UpdateEndedAt)
-			assert.False(t, reconciler.isGenerationStatusExpectationSatisfied(pcsGenHashesExpKey(pcs), before.Status))
-			assert.True(t, reconciler.isGenerationStatusExpectationSatisfied(pcsGenHashesExpKey(pcs), updatedPCS.Status))
+			assert.False(t, reconciler.pcsGenerationStatusExpectations.ClearIfSatisfied(pcs.ObjectMeta, before.Status.CurrentGenerationHash, before.Status.AppliedSchedulingConfigurationHash))
+			assert.True(t, reconciler.pcsGenerationStatusExpectations.ClearIfSatisfied(updatedPCS.ObjectMeta, updatedPCS.Status.CurrentGenerationHash, updatedPCS.Status.AppliedSchedulingConfigurationHash))
 			assert.False(t, currentlyUpdatingExpectations.ClearIfSatisfied(updatedPCS.ObjectMeta, before.Status.UpdateProgress.CurrentlyUpdating))
 			assert.True(t, currentlyUpdatingExpectations.ClearIfSatisfied(updatedPCS.ObjectMeta, updatedPCS.Status.UpdateProgress.CurrentlyUpdating))
 		})
@@ -1393,9 +1389,9 @@ func TestInitOrResetUpdatePreservesReplicaRecreationAcrossSchedulingRollback(t *
 		Build()
 	pcs.Status.AppliedSchedulingConfigurationHash = new("applied-scheduling-hash")
 	fakeClient := testutils.SetupFakeClient(pcs)
-	r := &Reconciler{client: fakeClient, pcsGenerationStatusExpectations: sync.Map{}, currentlyUpdatingExpectations: &pcsexpectations.CurrentlyUpdating{}}
+	r := &Reconciler{client: fakeClient, currentlyUpdatingExpectations: &pcsexpectations.CurrentlyUpdating{}}
 
-	err := r.initOrResetUpdate(context.Background(), pcs, pcsGenHashesExpKey(pcs), "new-hash", "applied-scheduling-hash")
+	err := r.initOrResetUpdate(context.Background(), pcs, "new-hash", "applied-scheduling-hash")
 
 	require.NoError(t, err)
 	updated := &grovecorev1beta1.PodCliqueSet{}
@@ -1956,71 +1952,6 @@ func TestPrepareReplicaSelectionsForUpdateCopyIsolation(t *testing.T) {
 	}
 }
 
-// TestPCSGenerationStatusExpectationKey verifies the generation-status expectation key includes the PCS UID so two
-// PodCliqueSets with the same namespace and name but different UIDs do not share a key.
-func TestPCSGenerationStatusExpectationKey(t *testing.T) {
-	pcs1 := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "uid-1").Build()
-	pcs2 := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "uid-2").Build()
-
-	key1 := pcsGenHashesExpKey(pcs1)
-
-	assert.Equal(t, testNamespace+"/"+testPCSName+"/uid-1", key1)
-	assert.NotEqual(t, key1, pcsGenHashesExpKey(pcs2))
-}
-
-func TestIsGenerationStatusExpectationSatisfied(t *testing.T) {
-	schedulingHash := "scheduling"
-	tests := []struct {
-		name        string
-		status      grovecorev1beta1.PodCliqueSetStatus
-		expectation generationHashesExpectation
-		want        bool
-	}{
-		{
-			name: "both hashes match",
-			status: grovecorev1beta1.PodCliqueSetStatus{
-				CurrentGenerationHash:              new("generation"),
-				AppliedSchedulingConfigurationHash: new(schedulingHash),
-			},
-			expectation: generationHashesExpectation{
-				currentGenerationHash:              "generation",
-				appliedSchedulingConfigurationHash: new(schedulingHash),
-			},
-			want: true,
-		},
-		{
-			name: "scheduling hash is stale",
-			status: grovecorev1beta1.PodCliqueSetStatus{
-				CurrentGenerationHash:              new("generation"),
-				AppliedSchedulingConfigurationHash: new("stale"),
-			},
-			expectation: generationHashesExpectation{
-				currentGenerationHash:              "generation",
-				appliedSchedulingConfigurationHash: new(schedulingHash),
-			},
-		},
-		{
-			name: "generation hash is stale",
-			status: grovecorev1beta1.PodCliqueSetStatus{
-				CurrentGenerationHash:              new("stale"),
-				AppliedSchedulingConfigurationHash: new(schedulingHash),
-			},
-			expectation: generationHashesExpectation{
-				currentGenerationHash:              "generation",
-				appliedSchedulingConfigurationHash: new(schedulingHash),
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			r := &Reconciler{pcsGenerationStatusExpectations: sync.Map{}, currentlyUpdatingExpectations: &pcsexpectations.CurrentlyUpdating{}}
-			r.pcsGenerationStatusExpectations.Store("key", tt.expectation)
-			assert.Equal(t, tt.want, r.isGenerationStatusExpectationSatisfied("key", tt.status))
-		})
-	}
-}
-
 // TestProcessGenerationHashChangeNotBlockedByStaleSameNameExpectation verifies that an expectation
 // left by a previously deployed PodCliqueSet does not block a newly created
 // PodCliqueSet with a different UID but with the same name as the previously deployed PodCliqueSet.
@@ -2030,10 +1961,10 @@ func TestProcessGenerationHashChangeNotBlockedByStaleSameNameExpectation(t *test
 		Build()
 
 	fakeClient := testutils.SetupFakeClient(newPCS)
-	r := &Reconciler{client: fakeClient, pcsGenerationStatusExpectations: sync.Map{}, currentlyUpdatingExpectations: &pcsexpectations.CurrentlyUpdating{}}
+	r := &Reconciler{client: fakeClient, currentlyUpdatingExpectations: &pcsexpectations.CurrentlyUpdating{}}
 	// A previous incarnation with a different UID left a stale expectation in the map.
 	stalePCS := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "uid-old").Build()
-	r.pcsGenerationStatusExpectations.Store(pcsGenHashesExpKey(stalePCS), generationHashesExpectation{currentGenerationHash: "stale-hash"})
+	r.pcsGenerationStatusExpectations.Record(stalePCS.ObjectMeta, "stale-hash", nil)
 
 	result := r.processGenerationHashChange(context.Background(), logr.Discard(), newPCS)
 
@@ -2121,12 +2052,8 @@ func TestSchedulingChangeAtZeroReplicasConsumesInitializationBeforeCompletion(t 
 			require.True(t, initializedPCS.Status.UpdateProgress.RequiresReplicaRecreation)
 			require.Equal(t, targetSchedulingHash, initializedPCS.Status.UpdateProgress.TargetSchedulingConfigurationHash)
 			require.Nil(t, initializedPCS.Status.UpdateProgress.UpdateEndedAt, "initialization must not reach the zero-replica completion path")
-			expectationKey := pcsGenHashesExpKey(pcs)
-			expected, exists := reconciler.pcsGenerationStatusExpectations.Load(expectationKey)
-			require.True(t, exists)
-			require.Equal(t, generationHashesExpectation{
-				currentGenerationHash: targetGenerationHash, appliedSchedulingConfigurationHash: new(appliedSchedulingHash),
-			}, expected)
+			require.False(t, reconciler.pcsGenerationStatusExpectations.ClearIfSatisfied(pcs.ObjectMeta, new(targetGenerationHash), new(targetSchedulingHash)), "initialization must still expect the applied scheduling baseline")
+			require.False(t, reconciler.pcsGenerationStatusExpectations.ClearIfSatisfied(stalePCS.ObjectMeta, stalePCS.Status.CurrentGenerationHash, stalePCS.Status.AppliedSchedulingConfigurationHash), "initialization must expect the new generation hash")
 
 			if tc.scaleOutBeforeAcknowledgment {
 				base := initializedPCS.DeepCopy()
@@ -2138,8 +2065,8 @@ func TestSchedulingChangeAtZeroReplicasConsumesInitializationBeforeCompletion(t 
 			require.Empty(t, staleResult.GetErrors())
 			require.True(t, staleResult.NeedsRequeue())
 			require.Contains(t, staleResult.GetDescription(), "generation status is not up-to-date")
-			_, exists = reconciler.pcsGenerationStatusExpectations.Load(expectationKey)
-			require.True(t, exists, "a stale cache read must not consume the initialization expectation")
+			// Error recording refreshes stalePCS from the API response, so probe with the original cached hashes.
+			require.False(t, reconciler.pcsGenerationStatusExpectations.ClearIfSatisfied(pcs.ObjectMeta, new(previousGenerationHash), new(appliedSchedulingHash)), "a stale cache read must not consume the initialization expectation")
 			var beforeAcknowledgment grovecorev1beta1.PodCliqueList
 			require.NoError(t, fakeClient.List(t.Context(), &beforeAcknowledgment))
 			require.Empty(t, beforeAcknowledgment.Items, "no child synchronization may run before initialization is acknowledged")
@@ -2148,8 +2075,7 @@ func TestSchedulingChangeAtZeroReplicasConsumesInitializationBeforeCompletion(t 
 			require.NoError(t, fakeClient.Get(t.Context(), client.ObjectKeyFromObject(pcs), acknowledgedPCS))
 			completionResult := reconciler.reconcileSpec(t.Context(), logr.Discard(), acknowledgedPCS, &pcssync.State{})
 			require.Empty(t, completionResult.GetErrors())
-			_, exists = reconciler.pcsGenerationStatusExpectations.Load(expectationKey)
-			require.False(t, exists, "the initialization expectation must be consumed before completion")
+			require.True(t, reconciler.pcsGenerationStatusExpectations.ClearIfSatisfied(pcs.ObjectMeta, nil, nil), "the initialization expectation must be consumed before completion")
 			completedPCS := &grovecorev1beta1.PodCliqueSet{}
 			require.NoError(t, fakeClient.Get(t.Context(), client.ObjectKeyFromObject(pcs), completedPCS))
 			require.Equal(t, targetSchedulingHash, *completedPCS.Status.AppliedSchedulingConfigurationHash)
@@ -2170,7 +2096,7 @@ func TestSchedulingChangeAtZeroReplicasConsumesInitializationBeforeCompletion(t 
 			require.NoError(t, fakeClient.Get(t.Context(), pclqKey, &pclq), "scale-out must materialize replica 0 without restarting the reconciler")
 			require.Equal(t, int32(2), *pclq.Spec.MinAvailable)
 			require.Equal(t, targetGenerationHash, pclq.Labels[apicommon.LabelPodCliqueSetGenerationHash])
-			require.True(t, reconciler.isGenerationStatusExpectationSatisfied(expectationKey, completedPCS.Status))
+			require.True(t, reconciler.pcsGenerationStatusExpectations.ClearIfSatisfied(completedPCS.ObjectMeta, completedPCS.Status.CurrentGenerationHash, completedPCS.Status.AppliedSchedulingConfigurationHash))
 		})
 	}
 }
@@ -2255,7 +2181,7 @@ func TestProcessGenerationHashChangeBaselinesActiveLegacyUpdate(t *testing.T) {
 	pcs.Status.UpdateProgress = &grovecorev1beta1.PodCliqueSetUpdateProgress{UpdateStartedAt: updateStartedAt}
 
 	fakeClient := testutils.SetupFakeClient(pcs)
-	reconciler := &Reconciler{client: fakeClient, pcsGenerationStatusExpectations: sync.Map{}, currentlyUpdatingExpectations: &pcsexpectations.CurrentlyUpdating{}}
+	reconciler := &Reconciler{client: fakeClient, currentlyUpdatingExpectations: &pcsexpectations.CurrentlyUpdating{}}
 	result := reconciler.processGenerationHashChange(context.Background(), logr.Discard(), pcs)
 
 	require.False(t, result.HasErrors())
@@ -2288,7 +2214,7 @@ func TestProcessGenerationHashChangeKeepsActiveMigratedLegacyUpdate(t *testing.T
 	pcs.Status.UpdateProgress = &grovecorev1beta1.PodCliqueSetUpdateProgress{TargetSchedulingConfigurationHash: schedulingHash, UpdateStartedAt: updateStartedAt}
 
 	fakeClient := testutils.SetupFakeClient(pcs)
-	reconciler := &Reconciler{client: fakeClient, pcsGenerationStatusExpectations: sync.Map{}, currentlyUpdatingExpectations: &pcsexpectations.CurrentlyUpdating{}}
+	reconciler := &Reconciler{client: fakeClient, currentlyUpdatingExpectations: &pcsexpectations.CurrentlyUpdating{}}
 	result := reconciler.processGenerationHashChange(context.Background(), logr.Discard(), pcs)
 
 	require.False(t, result.HasErrors())
@@ -2317,7 +2243,7 @@ func TestProcessGenerationHashChangeMigratesCompletedLegacyUpdate(t *testing.T) 
 	}
 
 	fakeClient := testutils.SetupFakeClient(pcs)
-	reconciler := &Reconciler{client: fakeClient, pcsGenerationStatusExpectations: sync.Map{}, currentlyUpdatingExpectations: &pcsexpectations.CurrentlyUpdating{}}
+	reconciler := &Reconciler{client: fakeClient, currentlyUpdatingExpectations: &pcsexpectations.CurrentlyUpdating{}}
 	result := reconciler.processGenerationHashChange(context.Background(), logr.Discard(), pcs)
 
 	require.False(t, result.HasErrors())
@@ -2344,7 +2270,7 @@ func TestProcessGenerationHashChangeSkipsCurrentCombinedHash(t *testing.T) {
 		WithStatusSubresource(pcs).
 		RecordErrorForObjects(testutils.ClientMethodStatusUpdate, unexpectedStatusUpdate, client.ObjectKeyFromObject(pcs)).
 		Build()
-	reconciler := &Reconciler{client: fakeClient, pcsGenerationStatusExpectations: sync.Map{}, currentlyUpdatingExpectations: &pcsexpectations.CurrentlyUpdating{}}
+	reconciler := &Reconciler{client: fakeClient, currentlyUpdatingExpectations: &pcsexpectations.CurrentlyUpdating{}}
 	result := reconciler.processGenerationHashChange(context.Background(), logr.Discard(), pcs)
 
 	require.False(t, result.HasErrors())
@@ -2361,7 +2287,7 @@ func TestProcessGenerationHashChangeMigratesIdleLegacyHashWithoutUpdate(t *testi
 	pcs.Status.AppliedSchedulingConfigurationHash = ptr.To(schedulingHash)
 
 	fakeClient := testutils.SetupFakeClient(pcs)
-	reconciler := &Reconciler{client: fakeClient, pcsGenerationStatusExpectations: sync.Map{}, currentlyUpdatingExpectations: &pcsexpectations.CurrentlyUpdating{}}
+	reconciler := &Reconciler{client: fakeClient, currentlyUpdatingExpectations: &pcsexpectations.CurrentlyUpdating{}}
 	result := reconciler.processGenerationHashChange(context.Background(), logr.Discard(), pcs)
 
 	require.False(t, result.HasErrors())
@@ -2433,7 +2359,7 @@ func TestProcessGenerationHashChangePreservesLegacyContentUpdate(t *testing.T) {
 	pcs.Spec.Template.Cliques[0].Annotations = map[string]string{"revision": "new"}
 
 	fakeClient := testutils.SetupFakeClient(pcs)
-	reconciler := &Reconciler{client: fakeClient, pcsGenerationStatusExpectations: sync.Map{}, currentlyUpdatingExpectations: &pcsexpectations.CurrentlyUpdating{}}
+	reconciler := &Reconciler{client: fakeClient, currentlyUpdatingExpectations: &pcsexpectations.CurrentlyUpdating{}}
 	stalePCS := pcs.DeepCopy()
 
 	baselineResult := reconciler.processGenerationHashChange(context.Background(), logr.Discard(), pcs)
@@ -2474,7 +2400,7 @@ func TestProcessGenerationHashChangeSnapshotsSchedulingTarget(t *testing.T) {
 	pcs.Spec.Template.Cliques[0].Spec.MinAvailable = ptr.To[int32](1)
 
 	fakeClient := testutils.SetupFakeClient(pcs)
-	reconciler := &Reconciler{client: fakeClient, pcsGenerationStatusExpectations: sync.Map{}, currentlyUpdatingExpectations: &pcsexpectations.CurrentlyUpdating{}}
+	reconciler := &Reconciler{client: fakeClient, currentlyUpdatingExpectations: &pcsexpectations.CurrentlyUpdating{}}
 	result := reconciler.processGenerationHashChange(context.Background(), logr.Discard(), pcs)
 
 	require.False(t, result.HasErrors())
@@ -2487,25 +2413,22 @@ func TestProcessGenerationHashChangeSnapshotsSchedulingTarget(t *testing.T) {
 }
 
 // TestTriggerDeletionFlowClearsGenerationStatusExpectation verifies the deletion flow removes the PCS
-// generation-status expectation from the in-memory map.
+// generation-status expectation from the tracker.
 func TestTriggerDeletionFlowClearsGenerationStatusExpectation(t *testing.T) {
 	pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "uid-del").Build()
 	pcs.Finalizers = []string{apiconstants.FinalizerPodCliqueSet}
 
 	fakeClient := testutils.SetupFakeClient(pcs)
 	r := &Reconciler{
-		client:                          fakeClient,
-		operatorRegistry:                component.NewOperatorRegistry[grovecorev1beta1.PodCliqueSet, pcssync.State, pcssync.Result](),
-		reconcileStatusRecorder:         ctrlcommon.NewReconcileErrorRecorder(fakeClient),
-		pcsGenerationStatusExpectations: sync.Map{},
-		scalingProgressExpectations:     &pcsexpectations.ScalingProgress{},
-		currentlyUpdatingExpectations:   &pcsexpectations.CurrentlyUpdating{},
+		client:                        fakeClient,
+		operatorRegistry:              component.NewOperatorRegistry[grovecorev1beta1.PodCliqueSet, pcssync.State, pcssync.Result](),
+		reconcileStatusRecorder:       ctrlcommon.NewReconcileErrorRecorder(fakeClient),
+		scalingProgressExpectations:   &pcsexpectations.ScalingProgress{},
+		currentlyUpdatingExpectations: &pcsexpectations.CurrentlyUpdating{},
 	}
-	key := pcsGenHashesExpKey(pcs)
-	r.pcsGenerationStatusExpectations.Store(key, generationHashesExpectation{currentGenerationHash: "some-hash"})
+	r.pcsGenerationStatusExpectations.Record(pcs.ObjectMeta, "some-hash", nil)
 
 	r.triggerDeletionFlow(context.Background(), logr.Discard(), pcs)
 
-	_, present := r.pcsGenerationStatusExpectations.Load(key)
-	assert.False(t, present, "generation-hash expectation should be cleared when the PCS is deleted")
+	assert.True(t, r.pcsGenerationStatusExpectations.ClearIfSatisfied(pcs.ObjectMeta, nil, nil), "generation-hash expectation should be cleared when the PCS is deleted")
 }

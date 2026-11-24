@@ -17,7 +17,6 @@ package podcliqueset
 import (
 	"context"
 	"fmt"
-	"sync"
 
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
 	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
@@ -47,7 +46,7 @@ type Reconciler struct {
 	eventRecorder                   record.EventRecorder
 	reconcileStatusRecorder         ctrlcommon.ReconcileErrorRecorder
 	operatorRegistry                component.OperatorRegistry[grovecorev1beta1.PodCliqueSet, pcssync.State, pcssync.Result]
-	pcsGenerationStatusExpectations sync.Map
+	pcsGenerationStatusExpectations pcsexpectations.GenerationHashes
 	scalingProgressExpectations     *pcsexpectations.ScalingProgress
 	currentlyUpdatingExpectations   *pcsexpectations.CurrentlyUpdating
 }
@@ -59,15 +58,14 @@ func NewReconciler(mgr ctrl.Manager, controllerCfg configv1beta1.PodCliqueSetCon
 	scalingProgressExpectations := &pcsexpectations.ScalingProgress{}
 	currentlyUpdatingExpectations := &pcsexpectations.CurrentlyUpdating{}
 	return &Reconciler{
-		config:                          controllerCfg,
-		tasConfig:                       topologyAwareSchedulingConfig,
-		client:                          client,
-		eventRecorder:                   eventRecorder,
-		reconcileStatusRecorder:         ctrlcommon.NewReconcileErrorRecorder(client),
-		operatorRegistry:                pcscomponent.CreateOperatorRegistry(mgr, eventRecorder, topologyAwareSchedulingConfig, networkConfig, schedRegistry, scalingProgressExpectations, currentlyUpdatingExpectations),
-		pcsGenerationStatusExpectations: sync.Map{},
-		scalingProgressExpectations:     scalingProgressExpectations,
-		currentlyUpdatingExpectations:   currentlyUpdatingExpectations,
+		config:                        controllerCfg,
+		tasConfig:                     topologyAwareSchedulingConfig,
+		client:                        client,
+		eventRecorder:                 eventRecorder,
+		reconcileStatusRecorder:       ctrlcommon.NewReconcileErrorRecorder(client),
+		operatorRegistry:              pcscomponent.CreateOperatorRegistry(mgr, eventRecorder, topologyAwareSchedulingConfig, networkConfig, schedRegistry, scalingProgressExpectations, currentlyUpdatingExpectations),
+		scalingProgressExpectations:   scalingProgressExpectations,
+		currentlyUpdatingExpectations: currentlyUpdatingExpectations,
 	}
 }
 
