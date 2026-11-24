@@ -253,13 +253,17 @@ func TestBackend_SyncPodGangQueueFromPodCliqueSet(t *testing.T) {
 		}
 		return pcs
 	}
-	newPodGang := func(pcs *grovecorev1beta1.PodCliqueSet, ownerUID string) *groveschedulerv1alpha1.PodGang {
+	newPodGang := func(pcs *grovecorev1beta1.PodCliqueSet, ownerUID string, mirrorAnnotations bool) *groveschedulerv1alpha1.PodGang {
+		var annotations map[string]string
+		if mirrorAnnotations {
+			annotations = pcs.Annotations
+		}
 		return &groveschedulerv1alpha1.PodGang{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:        "volcano-0",
 				Namespace:   "default",
 				UID:         "pg-uid",
-				Annotations: pcs.Annotations,
+				Annotations: annotations,
 				OwnerReferences: []metav1.OwnerReference{{
 					APIVersion: grovecorev1beta1.SchemeGroupVersion.String(),
 					Kind:       "PodCliqueSet",
@@ -275,11 +279,13 @@ func TestBackend_SyncPodGangQueueFromPodCliqueSet(t *testing.T) {
 	}
 
 	testCases := []struct {
-		description   string
-		pcsQueue      string
-		cliqueQueue   string
-		pcsExists     bool
-		ownerUID      string
+		description string
+		pcsQueue    string
+		cliqueQueue string
+		pcsExists   bool
+		ownerUID    string
+		// unmirrored leaves the PodCliqueSet metadata annotations off the PodGang.
+		unmirrored    bool
 		expectedQueue string
 	}{
 		{
@@ -290,11 +296,18 @@ func TestBackend_SyncPodGangQueueFromPodCliqueSet(t *testing.T) {
 			expectedQueue: "gpu-training",
 		},
 		{
-			description:   "queue set on the PodCliqueSet metadata is read from the PodGang",
+			description:   "queue mirrored onto the PodGang is used without reading the PodCliqueSet",
 			pcsQueue:      "gpu-training",
-			cliqueQueue:   "gpu-training",
+			pcsExists:     false,
+			ownerUID:      "pcs-uid",
+			expectedQueue: "gpu-training",
+		},
+		{
+			description:   "queue on the PodCliqueSet metadata is used when the PodGang has no annotation",
+			pcsQueue:      "gpu-training",
 			pcsExists:     true,
 			ownerUID:      "pcs-uid",
+			unmirrored:    true,
 			expectedQueue: "gpu-training",
 		},
 		{
@@ -322,7 +335,7 @@ func TestBackend_SyncPodGangQueueFromPodCliqueSet(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.description, func(t *testing.T) {
 			pcs := newPCS("pcs-uid", tc.pcsQueue, tc.cliqueQueue)
-			podGang := newPodGang(pcs, tc.ownerUID)
+			podGang := newPodGang(pcs, tc.ownerUID, !tc.unmirrored)
 			objects := []client.Object{podGang}
 			if tc.pcsExists {
 				objects = append(objects, pcs)

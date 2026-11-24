@@ -62,6 +62,12 @@ func effectiveQueueFromAnnotations(annotations map[string]string) string {
 // the PodGang directly. A queue set only on the PodClique templates is not mirrored onto the
 // PodGang, so it is resolved from the controlling PodCliqueSet the same way the validating
 // webhook resolves it. Without either, the queue defaults to "default".
+//
+// Unlike the kai backend, which returns an error when the controlling PodCliqueSet is missing or
+// cannot be read, a PodGang that is not controlled by a PodCliqueSet, whose PodCliqueSet is not
+// found, or whose PodCliqueSet has a different UID deliberately resolves to "default". This keeps
+// the existing volcano fallback and avoids retrying forever on an orphaned PodGang. Other read
+// errors are returned so the sync is retried.
 func queueForPodGang(ctx context.Context, k8sClient client.Reader, podGang *groveschedulerv1alpha1.PodGang) (string, error) {
 	if queue := strings.TrimSpace(podGang.Annotations[QueueAnnotationKey]); queue != "" {
 		return queue, nil
