@@ -93,12 +93,12 @@ func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev
 	}
 
 	pcsReplicaIndicesAwaitingResourceCleanup := existingScaleInPCSReplicaIndices(syncSnap)
-	if err := r.runSyncFlow(ctx, syncSnap); err != nil {
+	result, err := r.runSyncFlow(ctx, syncSnap)
+	if err != nil {
 		return pcssync.Result{}, err
 	}
-	return pcssync.Result{
-		CleanedUpReplicaIndices: componentutils.ComputeCleanedUpReplicaIndices(state.ScaleInReplicaIndices, pcsReplicaIndicesAwaitingResourceCleanup),
-	}, nil
+	result.CleanedUpReplicaIndices = componentutils.ComputeCleanedUpReplicaIndices(state.ScaleInReplicaIndices, pcsReplicaIndicesAwaitingResourceCleanup)
+	return result, nil
 }
 
 // existingScaleInPCSReplicaIndices returns scale-in PCS replica indices whose PodGangMap still exists.

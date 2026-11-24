@@ -17,28 +17,35 @@ package podcliqueset
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
+	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
 	ctrlcommon "github.com/ai-dynamo/grove/operator/internal/controller/common"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	pclqcomponent "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/podclique"
 	pcsreplicacomponent "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/podcliquesetreplica"
+	podgangcomponent "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/podgang"
 	pcsexpectations "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/expectations"
 	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/sync"
-	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
-	"github.com/ai-dynamo/grove/operator/internal/utils"
+	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
+	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/uuid"
@@ -46,6 +53,8 @@ import (
 	clocktesting "k8s.io/utils/clock/testing"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
 func TestCleanedUpScaleInReplicaIndices(t *testing.T) {
@@ -848,85 +857,275 @@ func TestCommitPCSCleanupStatusPatchFailure(t *testing.T) {
 	assert.True(t, scalingProgressExpectations.ClearIfSatisfied(pcs.ObjectMeta, pcs.Status.ScalingProgress))
 }
 
-func TestProcessKindGroupRunResultErrors(t *testing.T) {
-	const (
-		podTaskName     = "SyncKind-Pod"
-		serviceTaskName = "SyncKind-HeadlessService"
-	)
-	kindByTaskName := map[string]component.Kind{
-		podTaskName:     component.KindPod,
-		serviceTaskName: component.KindHeadlessService,
-	}
-	reconciliationErr := errors.New("sync failed")
-
-	tests := []struct {
-		name                     string
-		runResult                utils.RunResult
-		wantResult               bool
-		wantErrors               bool
-		wantRequeueAfter         time.Duration
-		wantErrorIs              error
-		wantContinueRequeueKinds []component.Kind
+func TestSyncKindGroupResults(t *testing.T) {
+	failure := errors.New("sync failed")
+	for _, tc := range []struct {
+		name      string
+		result    pcssync.Result
+		err       error
+		wantError bool
 	}{
-		{
-			name: "continue and requeue failure",
-			runResult: utils.RunResult{FailedTasks: []utils.FailedTask{{
-				Name: podTaskName,
-				Err:  groveerr.NewContinueReconcileAndRequeue(component.OperationSync, "continue"),
-			}}},
-			wantContinueRequeueKinds: []component.Kind{component.KindPod},
-		},
-		{
-			name: "shortest timed requeue wins",
-			runResult: utils.RunResult{FailedTasks: []utils.FailedTask{
-				{Name: podTaskName, Err: groveerr.NewRequeueAfter(component.OperationSync, "later", 5*time.Second)},
-				{Name: serviceTaskName, Err: groveerr.NewRequeueAfter(component.OperationSync, "sooner", 2*time.Second)},
-			}},
-			wantResult:       true,
-			wantRequeueAfter: 2 * time.Second,
-		},
-		{
-			name: "reconciliation error takes precedence over timed requeue",
-			runResult: utils.RunResult{FailedTasks: []utils.FailedTask{
-				{Name: podTaskName, Err: groveerr.NewRequeueAfter(component.OperationSync, "retry", time.Second)},
-				{Name: serviceTaskName, Err: reconciliationErr},
-			}},
-			wantResult:  true,
-			wantErrors:  true,
-			wantErrorIs: reconciliationErr,
-		},
-		{
-			name: "unknown task is a reconciliation error",
-			runResult: utils.RunResult{FailedTasks: []utils.FailedTask{{
-				Name: "unknown",
-				Err:  reconciliationErr,
-			}}},
-			wantResult:  true,
-			wantErrors:  true,
-			wantErrorIs: reconciliationErr,
-		},
-	}
+		{name: "successful observations", result: pcssync.Result{CleanedUpReplicaIndices: []int{0}}},
+		{name: "continuing retry retains observations", result: pcssync.Result{CleanedUpReplicaIndices: []int{0}, RequeueAfter: new(time.Second)}},
+		{name: "stopping retry retains observations", result: pcssync.Result{CleanedUpReplicaIndices: []int{0}, RequeueAfter: new(time.Second), StopAndRequeue: true}},
+		{name: "error discards accompanying observations and control", result: pcssync.Result{CleanedUpReplicaIndices: []int{0}, RequeueAfter: new(time.Second), StopAndRequeue: true}, err: failure, wantError: true},
+		{name: "stop without retry is invalid", result: pcssync.Result{StopAndRequeue: true}, wantError: true},
+		{name: "zero retry is invalid", result: pcssync.Result{RequeueAfter: new(time.Duration(0))}, wantError: true},
+		{name: "negative retry is invalid", result: pcssync.Result{RequeueAfter: new(-time.Second)}, wantError: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			reg := component.NewOperatorRegistry[grovecorev1beta1.PodCliqueSet, pcssync.State, pcssync.Result]()
+			reg.Register(component.KindPodGang, componentSyncTestOperator{sync: func(context.Context, logr.Logger, *grovecorev1beta1.PodCliqueSet, *pcssync.State) (pcssync.Result, error) {
+				return tc.result, tc.err
+			}})
+			reg.Register(component.KindPodCliqueScalingGroup, componentSyncTestOperator{sync: func(context.Context, logr.Logger, *grovecorev1beta1.PodCliqueSet, *pcssync.State) (pcssync.Result, error) {
+				return pcssync.Result{NotApplicable: true}, nil
+			}})
+			r := &Reconciler{operatorRegistry: reg}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result, continueRequeueKinds := processKindGroupRunResultErrors(logr.Discard(), tt.runResult, kindByTaskName)
+			results, err := r.syncKindGroup(t.Context(), logr.Discard(), &grovecorev1beta1.PodCliqueSet{}, &pcssync.State{}, []component.Kind{component.KindPodGang, component.KindPodCliqueScalingGroup}, 4)
 
-			assert.ElementsMatch(t, tt.wantContinueRequeueKinds, continueRequeueKinds)
-			if !tt.wantResult {
-				assert.Nil(t, result)
+			if tc.wantError {
+				require.Error(t, err)
+				if tc.err != nil {
+					assert.ErrorIs(t, err, tc.err)
+				}
+				assert.Nil(t, results)
 				return
 			}
-			require.NotNil(t, result)
-			assert.Equal(t, tt.wantErrors, result.HasErrors())
-			ctrlResult, err := result.Result()
-			assert.Equal(t, tt.wantRequeueAfter, ctrlResult.RequeueAfter)
-			if tt.wantErrorIs != nil {
-				assert.ErrorIs(t, err, tt.wantErrorIs)
+			require.NoError(t, err)
+			assert.Equal(t, []componentSyncResult{
+				{kind: component.KindPodGang, result: tc.result},
+				{kind: component.KindPodCliqueScalingGroup, result: pcssync.Result{NotApplicable: true}},
+			}, results)
+		})
+	}
+}
+
+func TestSyncPodCliqueSetResourcesRetryControl(t *testing.T) {
+	failure := errors.New("API request failed")
+	for _, tc := range []struct {
+		name        string
+		results     [3]pcssync.Result
+		middleError error
+		wantCalls   int32
+		wantDelay   time.Duration
+	}{
+		{name: "zero result continues without retry", wantCalls: 3},
+		{name: "shortest retry across groups", results: [3]pcssync.Result{{RequeueAfter: new(2 * time.Second)}, {RequeueAfter: new(5 * time.Second)}, {RequeueAfter: new(3 * time.Second)}}, wantCalls: 3, wantDelay: 2 * time.Second},
+		{name: "progress barrier prevents dependent dispatch", results: [3]pcssync.Result{{RequeueAfter: new(constants.InformerCacheSyncRetryInterval), StopAndRequeue: true}}, wantCalls: 1, wantDelay: constants.InformerCacheSyncRetryInterval},
+		{name: "later stop overrides earlier shorter continuing delay", results: [3]pcssync.Result{{RequeueAfter: new(time.Second)}, {RequeueAfter: new(5 * time.Second), StopAndRequeue: true}}, wantCalls: 2, wantDelay: 5 * time.Second},
+		{name: "failure takes precedence over a retry", results: [3]pcssync.Result{{RequeueAfter: new(time.Second)}, {RequeueAfter: new(time.Second), StopAndRequeue: true}}, middleError: failure, wantCalls: 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, uuid.NewUUID()).Build()
+			reg := component.NewOperatorRegistry[grovecorev1beta1.PodCliqueSet, pcssync.State, pcssync.Result]()
+			var calls atomic.Int32
+			for i, kind := range []component.Kind{component.KindPodCliqueSetReplica, component.KindHeadlessService, component.KindPodGang} {
+				reg.Register(kind, componentSyncTestOperator{sync: func(context.Context, logr.Logger, *grovecorev1beta1.PodCliqueSet, *pcssync.State) (pcssync.Result, error) {
+					calls.Add(1)
+					if i == 1 {
+						return tc.results[i], tc.middleError
+					}
+					return tc.results[i], nil
+				}})
+			}
+			r := &Reconciler{operatorRegistry: reg}
+
+			step := r.syncPodCliqueSetResources(t.Context(), logr.Discard(), pcs, &pcssync.State{})
+
+			result, err := step.Result()
+			if tc.middleError != nil {
+				assert.ErrorIs(t, err, tc.middleError)
 			} else {
-				assert.NoError(t, err)
+				require.NoError(t, err)
+			}
+			assert.Equal(t, tc.wantDelay, result.RequeueAfter)
+			assert.Equal(t, tc.wantCalls, calls.Load())
+		})
+	}
+}
+
+func TestSyncPodCliqueSetResourcesFirstStopUsesGroupOrder(t *testing.T) {
+	for _, failSecond := range []bool{false, true} {
+		t.Run(fmt.Sprintf("second task fails %t", failSecond), func(t *testing.T) {
+			t.Parallel()
+			secondFinished := make(chan struct{})
+			failure := errors.New("second component failed")
+			reg := component.NewOperatorRegistry[grovecorev1beta1.PodCliqueSet, pcssync.State, pcssync.Result]()
+			reg.Register(component.KindHeadlessService, componentSyncTestOperator{sync: func(ctx context.Context, _ logr.Logger, _ *grovecorev1beta1.PodCliqueSet, _ *pcssync.State) (pcssync.Result, error) {
+				select {
+				case <-secondFinished:
+					return pcssync.Result{RequeueAfter: new(5 * time.Second), StopAndRequeue: true}, nil
+				case <-ctx.Done():
+					return pcssync.Result{}, ctx.Err()
+				}
+			}})
+			reg.Register(component.KindHorizontalPodAutoscaler, componentSyncTestOperator{sync: func(context.Context, logr.Logger, *grovecorev1beta1.PodCliqueSet, *pcssync.State) (pcssync.Result, error) {
+				defer close(secondFinished)
+				if failSecond {
+					return pcssync.Result{}, failure
+				}
+				return pcssync.Result{RequeueAfter: new(time.Second), StopAndRequeue: true}, nil
+			}})
+			var laterCalls atomic.Int32
+			reg.Register(component.KindPodGang, componentSyncTestOperator{sync: func(context.Context, logr.Logger, *grovecorev1beta1.PodCliqueSet, *pcssync.State) (pcssync.Result, error) {
+				laterCalls.Add(1)
+				return pcssync.Result{}, nil
+			}})
+			r := &Reconciler{operatorRegistry: reg}
+
+			step := r.syncPodCliqueSetResources(t.Context(), logr.Discard(), &grovecorev1beta1.PodCliqueSet{}, &pcssync.State{})
+
+			result, err := step.Result()
+			assert.Zero(t, laterCalls.Load())
+			if failSecond {
+				assert.ErrorIs(t, err, failure)
+				assert.Zero(t, result.RequeueAfter)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, 5*time.Second, result.RequeueAfter, "the first stopping kind wins, not the shortest delay or first task to finish")
+		})
+	}
+}
+
+func TestSyncPodCliqueSetResourcesCleanupDuringPodGangWait(t *testing.T) {
+	for _, tc := range []struct {
+		name                                                                                                      string
+		sourcePresent, holdDeletion, missingParticipant, failList, failDelete, failPodGangPatch, failCleanupPatch bool
+	}{
+		{name: "absent source is acknowledged while replica 1 has no pods"},
+		{name: "accepted deletion requires a later absence observation", sourcePresent: true},
+		{name: "finalizer keeps deletion pending", sourcePresent: true, holdDeletion: true},
+		{name: "missing participant prevents acknowledgment", missingParticipant: true},
+		{name: "failed discovery produces no cleanup result", failList: true},
+		{name: "failed deletion produces no cleanup result", sourcePresent: true, failDelete: true},
+		{name: "real PodGang failure is not a pending result", failPodGangPatch: true},
+		{name: "cleanup write conflict takes precedence over pending pods", failCleanupPatch: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			pcs := testutils.NewPodCliqueSetBuilder("pcs", "default", "uid").WithReplicas(2).WithStandaloneClique("worker").Build()
+			pcs.Spec.Template.Cliques[0].Spec.MinAvailable = new(int32(1))
+			pcs.Spec.Template.Cliques[0].Spec.PodSpec.ServiceAccountName = "repaired"
+			pcs.Status.CurrentGenerationHash = new("target")
+			pcs.Status.UpdateProgress = &grovecorev1beta1.PodCliqueSetUpdateProgress{
+				RequiresReplicaRecreation: true,
+				CurrentlyUpdating:         []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 0, Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 0}}},
+			}
+			pclq := testutils.NewPodCliqueBuilder(pcs.Name, pcs.UID, "worker", pcs.Namespace, 1).WithMinAvailable(1).Build()
+			pclq.Spec.PodSpec.ServiceAccountName = "missing"
+			pgm := testutils.NewPodGangMapBuilder(pcs.Name, pcs.Namespace, pcs.UID, 1).WithEntries(grovecorev1beta1.PodGangEntry{
+				Epoch: "100", Role: grovecorev1beta1.PodGangEntryRoleAnchor, PodCliqueSetGenerationHash: "old", PodCliques: map[string]int32{"worker": 1},
+			}).Build()
+			objects := []client.Object{pcs, pclq, pgm}
+			if tc.sourcePresent {
+				objects = append(objects, &groveschedulerv1alpha1.PodGang{ObjectMeta: metav1.ObjectMeta{
+					Name: "old-source", Namespace: pcs.Namespace,
+					Labels:          map[string]string{apicommon.LabelManagedByKey: apicommon.LabelManagedByValue, apicommon.LabelPartOfKey: pcs.Name, apicommon.LabelComponentKey: apicommon.LabelComponentNamePodGang, apicommon.LabelPodCliqueSetReplicaIndex: "0", apicommon.LabelEpoch: "50"},
+					OwnerReferences: []metav1.OwnerReference{*metav1.NewControllerRef(pcs, grovecorev1beta1.SchemeGroupVersion.WithKind("PodCliqueSet"))},
+				}})
+			}
+			if tc.holdDeletion {
+				objects[len(objects)-1].SetFinalizers([]string{"test/hold-deletion"})
+			}
+			scheme := runtime.NewScheme()
+			require.NoError(t, grovecorev1beta1.AddToScheme(scheme))
+			require.NoError(t, groveschedulerv1alpha1.AddToScheme(scheme))
+			require.NoError(t, corev1.AddToScheme(scheme))
+			baseClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).WithStatusSubresource(pcs, &groveschedulerv1alpha1.PodGang{}).Build()
+			failure := errors.New("API unavailable")
+			cl := interceptor.NewClient(baseClient, interceptor.Funcs{
+				List: func(ctx context.Context, cl client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+					if _, isPodGangList := list.(*groveschedulerv1alpha1.PodGangList); isPodGangList && tc.failList {
+						return failure
+					}
+					return cl.List(ctx, list, opts...)
+				},
+				Delete: func(ctx context.Context, cl client.WithWatch, obj client.Object, opts ...client.DeleteOption) error {
+					if tc.failDelete {
+						return failure
+					}
+					return cl.Delete(ctx, obj, opts...)
+				},
+				SubResourcePatch: func(ctx context.Context, cl client.Client, name string, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
+					if _, isPCS := obj.(*grovecorev1beta1.PodCliqueSet); isPCS && tc.failCleanupPatch {
+						return apierrors.NewConflict(schema.GroupResource{Resource: "podcliquesets"}, pcs.Name, failure)
+					}
+					if _, isPodGang := obj.(*groveschedulerv1alpha1.PodGang); isPodGang && tc.failPodGangPatch {
+						return failure
+					}
+					return cl.SubResource(name).Patch(ctx, obj, patch, opts...)
+				},
+			})
+			schedRegistry := &testutils.FakeSchedulerRegistry{Backends: map[string]scheduler.Backend{"default-scheduler": testutils.NewFakeSchedulerBackend("default-scheduler")}, DefaultBackend: "default-scheduler"}
+			reg := component.NewOperatorRegistry[grovecorev1beta1.PodCliqueSet, pcssync.State, pcssync.Result]()
+			reg.Register(component.KindPodGang, podgangcomponent.New(cl, scheme, record.NewFakeRecorder(30), configv1beta1.TopologyAwareSchedulingConfiguration{}, schedRegistry), component.AsReplicaScoped())
+			reg.Register(component.KindPodClique, componentSyncTestOperator{sync: func(context.Context, logr.Logger, *grovecorev1beta1.PodCliqueSet, *pcssync.State) (pcssync.Result, error) {
+				return pcssync.Result{CleanedUpReplicaIndices: []int{0}}, nil
+			}}, component.AsReplicaScoped())
+			if tc.missingParticipant {
+				reg.Register(component.Kind("not-dispatched"), nil, component.AsReplicaScoped())
+			}
+			r := &Reconciler{client: cl, operatorRegistry: reg, eventRecorder: record.NewFakeRecorder(10), scalingProgressExpectations: &pcsexpectations.ScalingProgress{}, currentlyUpdatingExpectations: &pcsexpectations.CurrentlyUpdating{}}
+			state := &pcssync.State{ExpectedReplicaIndices: []int{1}, ScaleInReplicaIndices: []int{0}}
+
+			step := r.syncPodCliqueSetResources(t.Context(), logr.Discard(), pcs, state)
+
+			result, err := step.Result()
+			stored := &grovecorev1beta1.PodCliqueSet{}
+			require.NoError(t, cl.Get(t.Context(), client.ObjectKeyFromObject(pcs), stored))
+			cleanupTime := stored.Status.UpdateProgress.CurrentlyUpdating[0].Replacement.SourceCleanupCompletedAt
+			if tc.failList || tc.failDelete || tc.failPodGangPatch || tc.failCleanupPatch {
+				require.Error(t, err)
+				assert.Nil(t, cleanupTime)
+				return
+			}
+			require.NoError(t, err)
+			if tc.sourcePresent || tc.missingParticipant {
+				assert.Nil(t, cleanupTime)
+				assert.Equal(t, constants.ComponentSyncRetryInterval, result.RequeueAfter)
+			} else {
+				require.NotNil(t, cleanupTime)
+				assert.Equal(t, constants.InformerCacheSyncRetryInterval, result.RequeueAfter)
+			}
+			pendingPG := &groveschedulerv1alpha1.PodGang{}
+			pendingName := apicommon.GenerateAnchorPodGangName(apicommon.ResourceNameReplica{Name: pcs.Name, Replica: 1}, "100")
+			require.NoError(t, cl.Get(t.Context(), client.ObjectKey{Namespace: pcs.Namespace, Name: pendingName}, pendingPG))
+			assert.False(t, meta.IsStatusConditionTrue(pendingPG.Status.Conditions, string(groveschedulerv1alpha1.PodGangConditionTypeInitialized)))
+			if tc.sourcePresent {
+				step = r.syncPodCliqueSetResources(t.Context(), logr.Discard(), stored, state)
+				_, err = step.Result()
+				require.NoError(t, err)
+				require.NoError(t, cl.Get(t.Context(), client.ObjectKeyFromObject(pcs), stored))
+				if tc.holdDeletion {
+					assert.Nil(t, stored.Status.UpdateProgress.CurrentlyUpdating[0].Replacement.SourceCleanupCompletedAt)
+					source := &groveschedulerv1alpha1.PodGang{}
+					require.NoError(t, cl.Get(t.Context(), client.ObjectKey{Namespace: pcs.Namespace, Name: "old-source"}, source))
+					require.NotNil(t, source.DeletionTimestamp)
+					source.Finalizers = nil
+					require.NoError(t, cl.Update(t.Context(), source))
+					step = r.syncPodCliqueSetResources(t.Context(), logr.Discard(), stored, state)
+					_, err = step.Result()
+					require.NoError(t, err)
+					require.NoError(t, cl.Get(t.Context(), client.ObjectKeyFromObject(pcs), stored))
+				}
+				assert.NotNil(t, stored.Status.UpdateProgress.CurrentlyUpdating[0].Replacement.SourceCleanupCompletedAt)
 			}
 		})
 	}
+}
+
+type componentSyncTestOperator struct {
+	component.Operator[grovecorev1beta1.PodCliqueSet, pcssync.State, pcssync.Result]
+	sync func(context.Context, logr.Logger, *grovecorev1beta1.PodCliqueSet, *pcssync.State) (pcssync.Result, error)
+}
+
+func (o componentSyncTestOperator) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, state *pcssync.State) (pcssync.Result, error) {
+	return o.sync(ctx, logger, pcs, state)
 }
 
 // TestUpdateObservedGeneration tests the updateObservedGeneration function for PodCliqueSet
@@ -1261,8 +1460,9 @@ func initializeGenerationHashesForTest(t *testing.T, pcs *grovecorev1beta1.PodCl
 	cl := testutils.SetupFakeClient(freshPCS)
 	operator := pcsreplicacomponent.New(cl, record.NewFakeRecorder(10), &pcsexpectations.ScalingProgress{},
 		&pcsexpectations.CurrentlyUpdating{}, &pcsexpectations.GenerationHashes{}, clocktesting.NewFakeClock(time.Unix(1000, 0).UTC()))
-	_, err := operator.Sync(t.Context(), logr.Discard(), freshPCS, &pcssync.State{})
-	require.True(t, groveerr.IsRequeueAfter(err), "generation initialization must hard-requeue: %v", err)
+	result, err := operator.Sync(t.Context(), logr.Discard(), freshPCS, &pcssync.State{})
+	require.NoError(t, err)
+	assert.Equal(t, pcssync.Result{RequeueAfter: new(constants.InformerCacheSyncRetryInterval), StopAndRequeue: true}, result)
 	require.NotNil(t, freshPCS.Status.AppliedSchedulingConfigurationHash)
 	require.NotNil(t, freshPCS.Status.CurrentGenerationHash)
 	return *freshPCS.Status.AppliedSchedulingConfigurationHash, *freshPCS.Status.CurrentGenerationHash

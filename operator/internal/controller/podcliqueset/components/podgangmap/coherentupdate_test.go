@@ -445,7 +445,9 @@ func TestBuildCoherentUpdateEntries(t *testing.T) {
 		snap := newCoherentTestSnapshot(pcsNameReplica, 4, 2, nil)
 		r := _resource{client: testutils.NewTestClientBuilder().WithPodControllerUIDIndex().Build(), clk: clocktesting.NewFakeClock(metav1.Now().Time)}
 
-		entries, err := r.buildCoherentUpdateEntries(t.Context(), snap, 0, pgm)
+		entries, needsReplan, err := r.buildCoherentUpdateEntries(t.Context(), snap, 0, pgm)
+
+		require.False(t, needsReplan)
 
 		require.NoError(t, err)
 		assert.Equal(t, pgm.Spec.Entries, entries)
@@ -457,7 +459,9 @@ func TestBuildCoherentUpdateEntries(t *testing.T) {
 		// No PodGang exists at the latest current-hash epoch, so currentBatchScheduled is false.
 		r := _resource{client: testutils.NewTestClientBuilder().WithPodControllerUIDIndex().Build(), clk: clocktesting.NewFakeClock(metav1.Now().Time)}
 
-		entries, err := r.buildCoherentUpdateEntries(t.Context(), snap, 0, pgm)
+		entries, needsReplan, err := r.buildCoherentUpdateEntries(t.Context(), snap, 0, pgm)
+
+		require.False(t, needsReplan)
 
 		require.NoError(t, err)
 		assert.Equal(t, pgm.Spec.Entries, entries)
@@ -468,7 +472,9 @@ func TestBuildCoherentUpdateEntries(t *testing.T) {
 		snap := newCoherentTestSnapshot(pcsNameReplica, 4, 2, ptr.To[int32](2))
 		r := _resource{client: testutils.NewTestClientBuilder().WithPodControllerUIDIndex().WithObjects(podGangAtEpoch(apicommon.GenerateAnchorPodGangName(pcsNameReplica, "200"), true)).Build(), clk: clocktesting.NewFakeClock(metav1.Now().Time)}
 
-		entries, err := r.buildCoherentUpdateEntries(t.Context(), snap, 0, pgm)
+		entries, needsReplan, err := r.buildCoherentUpdateEntries(t.Context(), snap, 0, pgm)
+
+		require.False(t, needsReplan)
 
 		require.NoError(t, err)
 		// The tail sub-step subsumes the remaining 2 pods into the current-hash anchor and drains the old
@@ -1056,7 +1062,9 @@ func TestBuildCoherentUpdateEntriesClaimsAbsentPCSGReplicaIntoWholeAnchor(t *tes
 		map[int32]pcsgReplicaCondition{0: replicaReady}, // replica 1 omitted => absent
 		[]grovecorev1beta1.PodGangEntry{oldAnchor})
 
-	entries, err := r.buildCoherentUpdateEntries(t.Context(), snap, 0, pgm)
+	entries, needsReplan, err := r.buildCoherentUpdateEntries(t.Context(), snap, 0, pgm)
+
+	require.False(t, needsReplan)
 	require.NoError(t, err)
 
 	require.Len(t, entries, 1)

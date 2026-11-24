@@ -35,11 +35,12 @@ import (
 // remains and the sub-step gate holds, emits the next one. It returns the entry set that should exist after
 // this reconcile, which is the current set unchanged when nothing remains to emit or the gate holds. It
 // does not report update completion, which the orchestrator determines from live child status.
-func (r _resource) buildCoherentUpdateEntries(ctx context.Context, syncSnap *syncSnapshot, pcsReplicaIndex int, pgm *grovecorev1beta1.PodGangMap) ([]grovecorev1beta1.PodGangEntry, error) {
+// The boolean requests a retry without writing entries when the live inventory requires replanning.
+func (r _resource) buildCoherentUpdateEntries(ctx context.Context, syncSnap *syncSnapshot, pcsReplicaIndex int, pgm *grovecorev1beta1.PodGangMap) ([]grovecorev1beta1.PodGangEntry, bool, error) {
 	standalonePCLQByComponent := syncSnap.inScopeStandalonePCLQsByComponent(pcsReplicaIndex)
 	pcsgByComponent, err := syncSnap.inScopePCSGsByComponent(pcsReplicaIndex)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	desiredReplicas := syncSnap.computeDesiredReplicas(standalonePCLQByComponent, pcsgByComponent)
@@ -51,52 +52,56 @@ func (r _resource) buildCoherentUpdateEntries(ctx context.Context, syncSnap *syn
 	// new-not-ready counts feed the count-anchored MaxUnavailable budget.
 	pclqPodCounts, err := r.gatherStandalonePodCounts(ctx, syncSnap.pcs, pcsReplicaIndex, pgm.Spec.Entries, standalonePCLQByComponent)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	// pcsgReplicaInfos is derived from the member PodCliques of each in-scope PodCliqueScalingGroup under
 	// update. Its per-index health and roll state feed the count-anchored MaxUnavailable budget and the
 	// health-ordered drain selection.
 	pcsgReplicaInfos, err := r.gatherPCSGReplicaInfos(ctx, syncSnap.pcs, pgm.Spec.Entries, pcsgByComponent)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	planner := newSubStepPlanner(syncSnap, pcsReplicaIndex, pgm.Spec.Entries, r.clk, desiredReplicas, standalonePCLQByComponent, pcsgReplicaInfos, pclqPodCounts)
 
 	planPos, err := planner.ascertainPlanPosition()
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	syncSnap.logger.V(1).Info("Computed coherent step plan and position", "pcsReplicaIndex", pcsReplicaIndex, "plan", planner.plan.String(), "position", planPos.String())
 
 	headroom := planner.headroomByComponent()
-	ss, err := planner.next(planPos, headroom)
+	ss, needsReplan, err := planner.next(planPos, headroom)
 	if err != nil {
-		return nil, err
+		return nil, false, err
+	}
+	if needsReplan {
+		syncSnap.logger.V(1).Info("Waiting to replan a coherent update with insufficient old replica indices", "pcsReplicaIndex", pcsReplicaIndex)
+		return nil, true, nil
 	}
 	// A nil sub-step means every in-scope component is committed to the current hash, so nothing remains to
 	// emit. Reconverge any entry drained of its in-scope content to the current generation before returning.
 	if ss == nil {
 		syncSnap.logger.V(1).Info("No coherent update sub-step to emit, in-scope components committed to the current generation", "pcsReplicaIndex", pcsReplicaIndex)
-		return planner.heldEntries(), nil
+		return planner.heldEntries(), false, nil
 	}
 
 	// Hold the advance when the gate is not met, so the current sub-step keeps converging before the next
 	// one takes more Pods down.
 	canEmit, holdReason, err := r.canEmitNextSubStep(ctx, planner, planPos, ss)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if !canEmit {
 		syncSnap.logger.Info("Holding coherent update sub-step", "pcsReplicaIndex", pcsReplicaIndex, "reason", holdReason)
-		return planner.heldEntries(), nil
+		return planner.heldEntries(), false, nil
 	}
 	syncSnap.logger.V(1).Info("Emitting coherent update sub-step", "pcsReplicaIndex", pcsReplicaIndex, "subStep", ss.String())
 	applied, err := planner.applySubStep(*ss)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	syncSnap.logger.V(1).Info("Applied coherent update sub-step", "pcsReplicaIndex", pcsReplicaIndex, "entries", formatPodGangEntries(applied))
-	return applied, nil
+	return applied, false, nil
 }
 
 // heldEntries reconverges a copy of the current entries for a reconcile that emits no sub-step.

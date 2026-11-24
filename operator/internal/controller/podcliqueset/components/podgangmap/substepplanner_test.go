@@ -419,8 +419,13 @@ func TestBuildAnchorBearingSubStepRequeuesWhenPCSGShortOfMinAvailable(t *testing
 		{index: 1, state: componentutils.PCSGReplicaStateReady, atCurrentHash: true},
 		{index: 2, state: componentutils.PCSGReplicaStateReady, atCurrentHash: false},
 	}
-	_, err := planner.buildAnchorBearingSubStep()
-	require.Error(t, err)
+	ss, err := planner.buildAnchorBearingSubStep()
+	require.NoError(t, err)
+	assert.Nil(t, ss)
+	ss, needsReplan, err := planner.next(planPosition{}, nil)
+	require.NoError(t, err)
+	assert.Nil(t, ss)
+	assert.True(t, needsReplan)
 }
 
 // TestNextOldPCSGIndicesToRoll covers the health-ordered selection of a PodCliqueScalingGroup's old replica
@@ -551,26 +556,30 @@ func TestNext(t *testing.T) {
 	}
 	t.Run("an open step with tail returns a tail sub-step", func(t *testing.T) {
 		// Anchor of step 0 just committed MinAvailable, so frontend and decode still have tail.
-		ss, err := newPlanner().next(planPosition{anchorBearingStepsDone: 0, currentAnchorStepCountByComponent: map[string]int32{"frontend": 2, "prefill": 3, "decode": 3}}, nil)
+		ss, needsReplan, err := newPlanner().next(planPosition{anchorBearingStepsDone: 0, currentAnchorStepCountByComponent: map[string]int32{"frontend": 2, "prefill": 3, "decode": 3}}, nil)
+		require.False(t, needsReplan)
 		require.NoError(t, err)
 		require.NotNil(t, ss)
 		assert.False(t, ss.opensAnchor)
 		assert.NotEmpty(t, ss.tailPCSGReplicaIndices)
 	})
 	t.Run("no open step opens the next anchor-bearing step", func(t *testing.T) {
-		ss, err := newPlanner().next(planPosition{anchorBearingStepsDone: 0, currentAnchorStepCountByComponent: map[string]int32{"frontend": 0, "prefill": 0, "decode": 0}}, nil)
+		ss, needsReplan, err := newPlanner().next(planPosition{anchorBearingStepsDone: 0, currentAnchorStepCountByComponent: map[string]int32{"frontend": 0, "prefill": 0, "decode": 0}}, nil)
+		require.False(t, needsReplan)
 		require.NoError(t, err)
 		require.NotNil(t, ss)
 		assert.True(t, ss.opensAnchor)
 	})
 	t.Run("all anchor-bearing steps committed rolls leftover", func(t *testing.T) {
-		ss, err := newPlanner().next(planPosition{anchorBearingStepsDone: 3, currentHashCountByComponent: map[string]int32{"frontend": 9, "prefill": 9, "decode": 18}, leftoverCountByComponent: map[string]int32{"frontend": 0, "prefill": 0, "decode": 0}}, nil)
+		ss, needsReplan, err := newPlanner().next(planPosition{anchorBearingStepsDone: 3, currentHashCountByComponent: map[string]int32{"frontend": 9, "prefill": 9, "decode": 18}, leftoverCountByComponent: map[string]int32{"frontend": 0, "prefill": 0, "decode": 0}}, nil)
+		require.False(t, needsReplan)
 		require.NoError(t, err)
 		require.NotNil(t, ss)
 		assert.NotEmpty(t, ss.tailPCSGReplicaIndices)
 	})
 	t.Run("fully committed returns nil", func(t *testing.T) {
-		ss, err := newPlanner().next(planPosition{anchorBearingStepsDone: 3, currentHashCountByComponent: map[string]int32{"frontend": 10, "prefill": 10, "decode": 20}, leftoverCountByComponent: map[string]int32{"frontend": 1, "prefill": 1, "decode": 2}}, nil)
+		ss, needsReplan, err := newPlanner().next(planPosition{anchorBearingStepsDone: 3, currentHashCountByComponent: map[string]int32{"frontend": 10, "prefill": 10, "decode": 20}, leftoverCountByComponent: map[string]int32{"frontend": 1, "prefill": 1, "decode": 2}}, nil)
+		require.False(t, needsReplan)
 		require.NoError(t, err)
 		assert.Nil(t, ss)
 	})
@@ -642,7 +651,8 @@ func TestNextForStandaloneOnlyMVU(t *testing.T) {
 	}
 	for _, tc := range testCases {
 		t.Run(tc.description, func(t *testing.T) {
-			ss, err := newPlanner().next(tc.position, nil)
+			ss, needsReplan, err := newPlanner().next(tc.position, nil)
+			require.False(t, needsReplan)
 			require.NoError(t, err)
 			assert.Equal(t, tc.want, ss)
 		})
@@ -720,7 +730,8 @@ func TestNextForPCSGOnlyMVU(t *testing.T) {
 	}
 	for _, tc := range testCases {
 		t.Run(tc.description, func(t *testing.T) {
-			ss, err := newPlanner(tc.committed).next(tc.position, nil)
+			ss, needsReplan, err := newPlanner(tc.committed).next(tc.position, nil)
+			require.False(t, needsReplan)
 			require.NoError(t, err)
 			assert.Equal(t, tc.want, ss)
 		})

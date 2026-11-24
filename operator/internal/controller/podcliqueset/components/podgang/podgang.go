@@ -25,6 +25,7 @@ import (
 	apicommonconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
+	"github.com/ai-dynamo/grove/operator/internal/constants"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/sync"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
@@ -106,9 +107,13 @@ func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev
 	if syncResult.hasErrors() {
 		return pcssync.Result{}, syncResult.getAggregatedError()
 	}
-	return pcssync.Result{
+	result := pcssync.Result{
 		CleanedUpReplicaIndices: componentutils.ComputeCleanedUpReplicaIndices(state.ScaleInReplicaIndices, pcsReplicaIndicesAwaitingResourceCleanup),
-	}, nil
+	}
+	if syncResult.podsPending {
+		result.RequeueAfter = new(constants.ComponentSyncRetryInterval)
+	}
+	return result, nil
 }
 
 // Delete removes all PodGang resources managed by the PodCliqueSet.

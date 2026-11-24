@@ -16,6 +16,8 @@
 // and its component operators during one reconciliation.
 package sync
 
+import "time"
+
 // State contains PodCliqueSet component input derived once for the current reconciliation.
 // Replica index slices are sorted, contain no duplicates, and must not be modified by
 // component operators.
@@ -33,9 +35,15 @@ type State struct {
 	ScaleInReplicaIndices []int
 }
 
-// Result reports, per replica-scoped component, what the component observed for PCS replica cleanup after it
-// synchronized its resources.
+// Result reports component observations and controls the remaining PCS component synchronization.
+// A result is usable only when Sync returns a nil error. The zero value continues without a retry.
 type Result struct {
+	// RequeueAfter requests another reconciliation after the given positive duration.
+	// Nil means no retry is requested.
+	RequeueAfter *time.Duration
+	// StopAndRequeue prevents dispatch of subsequent component groups.
+	// It requires a non-nil RequeueAfter and does not cancel tasks already running in the current group.
+	StopAndRequeue bool
 	// NotApplicable indicates that the component manages no resources for this PodCliqueSet, because the feature
 	// it manages is not configured for this PodCliqueSet. Such a component is excluded from per-replica cleanup
 	// coverage, so it neither confirms nor blocks the release of a scale-in replica index.

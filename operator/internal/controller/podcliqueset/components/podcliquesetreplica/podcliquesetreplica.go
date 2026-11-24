@@ -92,9 +92,8 @@ func (r *_resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecore
 		if _, err := r.patchPCSScalingAndUpdateProgress(ctx, pcs, workingPCS); err != nil {
 			return pcssync.Result{}, err
 		}
-		return pcssync.Result{}, groveerr.NewRequeueAfter(component.OperationSync,
-			"waiting for PCS generation initialization to become visible in the informer cache",
-			constants.InformerCacheSyncRetryInterval)
+		logger.V(1).Info("Waiting for PCS generation initialization to become visible in the informer cache")
+		return pcssync.Result{RequeueAfter: new(constants.InformerCacheSyncRetryInterval), StopAndRequeue: true}, nil
 	}
 
 	pcsReplicaInfosByIndex, err := r.gatherPCSReplicaInfosByIndex(ctx, workingPCS)
@@ -141,9 +140,8 @@ func (r *_resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecore
 		if pcsUpdateCompleted {
 			logger.Info("Rolling update has completed")
 		}
-		return pcssync.Result{}, groveerr.NewRequeueAfter(component.OperationSync,
-			"waiting for PCS scaling and update progress to become visible in the informer cache",
-			constants.InformerCacheSyncRetryInterval)
+		logger.V(1).Info("Waiting for PCS scaling and update progress to become visible in the informer cache")
+		return pcssync.Result{RequeueAfter: new(constants.InformerCacheSyncRetryInterval), StopAndRequeue: true}, nil
 	}
 
 	// Initial provisioning records no reservations, so replacement targets must claim their indices first.
@@ -156,16 +154,12 @@ func (r *_resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecore
 	*state = computePCSReplicaState(pcs, scalingIndices, pcsReplicaIndicesAfterScaling, replacementGroups)
 
 	if delWork.shouldRequeue() {
-		return pcssync.Result{}, groveerr.NewContinueReconcileAndRequeue(
-			component.OperationSync,
-			"Requeuing to re-process PCS replicas that have breached MinAvailable but not crossed TerminationDelay",
-		)
+		logger.V(1).Info("Waiting for breached PCS replicas to cross TerminationDelay")
+		return pcssync.Result{RequeueAfter: new(constants.ComponentSyncRetryInterval)}, nil
 	}
 	if pcsUpdateInProgress {
-		return pcssync.Result{}, groveerr.NewContinueReconcileAndRequeue(
-			component.OperationSync,
-			fmt.Sprintf("rolling update of PodCliqueSet replica indices %v is in progress", activePCSReplicaUpdateIndices(pcs.Status.UpdateProgress)),
-		)
+		logger.V(1).Info("Rolling update is in progress", "replicaIndices", activePCSReplicaUpdateIndices(pcs.Status.UpdateProgress))
+		return pcssync.Result{RequeueAfter: new(constants.ComponentSyncRetryInterval)}, nil
 	}
 	return pcssync.Result{}, nil
 }

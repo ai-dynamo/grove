@@ -21,7 +21,6 @@ import (
 	"strconv"
 
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
-	"github.com/ai-dynamo/grove/operator/internal/constants"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
@@ -409,22 +408,21 @@ func (p *subStepPlanner) mostRecentAnchorEpoch() (string, error) {
 // next reasons only about what the PGM has committed, so a nil return means fully committed, not that the
 // replicas are ready. Whether the committed replicas are ready, and so whether the update is complete, is
 // the orchestrator's determination. The caller invokes next only after the most recently committed
-// sub-step is ready.
-func (p *subStepPlanner) next(planPos planPosition, headroomByComponent map[string]int32) (*subStep, error) {
-	// An open anchor-bearing step, one whose MinAvailable is committed but which has not reached its
-	// target, still has tail to commit.
+// sub-step is ready. The boolean reports that the live inventory requires replanning.
+func (p *subStepPlanner) next(planPos planPosition, headroomByComponent map[string]int32) (*subStep, bool, error) {
 	if p.openAnchorStepHasTailRemaining(planPos) {
-		return p.buildTailSubStep(planPos, headroomByComponent)
+		ss, err := p.buildTailSubStep(planPos, headroomByComponent)
+		return ss, false, err
 	}
-	// No anchor-bearing step is open, so open the next one while any remain unopened.
 	if planPos.anchorBearingStepsDone < p.plan.numAnchorBearingSteps {
-		return p.buildAnchorBearingSubStep()
+		ss, err := p.buildAnchorBearingSubStep()
+		return ss, ss == nil && err == nil, err
 	}
-	// Every anchor-bearing step is committed, so commit any remaining leftover.
 	if p.anyLeftoverRemaining(planPos.currentHashCountByComponent) {
-		return p.buildLeftoverSubStep(planPos, headroomByComponent)
+		ss, err := p.buildLeftoverSubStep(planPos, headroomByComponent)
+		return ss, false, err
 	}
-	return nil, nil
+	return nil, false, nil
 }
 
 // openAnchorStepHasTailRemaining reports whether an anchor-bearing step is open with tail still to
@@ -472,7 +470,7 @@ func (p *subStepPlanner) buildTailSubStep(planPos planPosition, headroomByCompon
 // buildAnchorBearingSubStep opens the next anchor-bearing step by committing a new anchor entry that
 // carries MinAvailable of every component, allocating each PodCliqueScalingGroup's MinAvailable worst-off
 // old replica indices and draining the old-hash equivalent. The step's tail, if any, is committed later by
-// buildTailSubStep.
+// buildTailSubStep. A nil sub-step indicates that the live inventory cannot supply the planned anchor.
 func (p *subStepPlanner) buildAnchorBearingSubStep() (*subStep, error) {
 	dependsOn, err := p.dependsOnLatestEpoch()
 	if err != nil {
@@ -491,8 +489,7 @@ func (p *subStepPlanner) buildAnchorBearingSubStep() (*subStep, error) {
 		// available to roll. If the live inventory can no longer supply it then requeue, so the next reconcile
 		// recomputes the plan rather than opening an anchor that violates the MinAvailable anchor contract.
 		if len(indices) < int(minAvailable) {
-			return nil, groveerr.NewRequeueAfter(component.OperationSync,
-				fmt.Sprintf("step plan expects an anchor-bearing step but PodCliqueScalingGroup %q has only %d of %d old replica indices available, requeuing to recompute the plan", pcsgName, len(indices), minAvailable), constants.ComponentSyncRetryInterval)
+			return nil, nil
 		}
 		anchorPCSGIndices[pcsgName] = indices
 	}

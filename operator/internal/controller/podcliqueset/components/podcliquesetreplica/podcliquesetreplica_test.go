@@ -27,6 +27,7 @@ import (
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	apiconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
+	"github.com/ai-dynamo/grove/operator/internal/constants"
 	ctrlcommon "github.com/ai-dynamo/grove/operator/internal/controller/common"
 	pcsexpectations "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/expectations"
 	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/sync"
@@ -128,14 +129,17 @@ func TestSyncPersistsScaleOutFromZeroAndPopulatesState(t *testing.T) {
 	}
 	state := &pcssync.State{}
 
-	_, err := r.Sync(context.Background(), logr.Discard(), pcs, state)
+	result, err := r.Sync(context.Background(), logr.Discard(), pcs, state)
 
-	require.True(t, groveerr.IsRequeueAfter(err), "new scaling progress must stop at the cache barrier: %v", err)
+	require.NoError(t, err)
+
+	assert.Equal(t, pcssync.Result{RequeueAfter: new(constants.InformerCacheSyncRetryInterval), StopAndRequeue: true}, result)
 	assert.Equal(t, pcssync.State{}, *state)
 	require.NoError(t, fakeClient.Get(t.Context(), client.ObjectKeyFromObject(pcs), pcs))
 	require.True(t, r.scalingProgressExpectations.ClearIfSatisfied(pcs.ObjectMeta, pcs.Status.ScalingProgress))
-	_, err = r.Sync(t.Context(), logr.Discard(), pcs, state)
+	result, err = r.Sync(t.Context(), logr.Discard(), pcs, state)
 	require.NoError(t, err)
+	assert.Equal(t, pcssync.Result{}, result)
 	assert.Equal(t, pcssync.State{
 		ExpectedReplicaIndices: []int{0, 1},
 		ScaleOutReplicaIndices: []int{0, 1},
@@ -172,9 +176,11 @@ func TestSyncGathersEachReplicaResourceTypeOnceForCoherentUpdate(t *testing.T) {
 		currentlyUpdatingExpectations: &pcsexpectations.CurrentlyUpdating{},
 	}
 
-	_, err := r.Sync(context.Background(), logr.Discard(), pcs, &pcssync.State{})
+	result, err := r.Sync(context.Background(), logr.Discard(), pcs, &pcssync.State{})
 
-	assert.True(t, groveerr.IsRequeueAfter(err), "completion must stop at the cache barrier: %v", err)
+	require.NoError(t, err)
+
+	assert.Equal(t, pcssync.Result{RequeueAfter: new(constants.InformerCacheSyncRetryInterval), StopAndRequeue: true}, result)
 	assert.Equal(t, map[string]int{
 		"PodCliqueList":             1,
 		"PodCliqueScalingGroupList": 1,
@@ -261,14 +267,7 @@ func TestSync(t *testing.T) {
 			if tc.expectError {
 				assert.Error(t, err)
 			} else {
-				// May return a requeue error which is expected
-				if err != nil {
-					if groveerr.IsContinueReconcileAndRequeue(err) || groveerr.IsRequeueAfter(err) {
-						// This is expected
-					} else {
-						t.Errorf("Unexpected error: %v", err)
-					}
-				}
+				require.NoError(t, err)
 			}
 		})
 	}
@@ -285,9 +284,11 @@ func TestSyncGenerationBaselineStopsBeforeResourceDiscovery(t *testing.T) {
 		currentlyUpdatingExpectations: &pcsexpectations.CurrentlyUpdating{}, scalingProgressExpectations: &pcsexpectations.ScalingProgress{}}
 	state := &pcssync.State{}
 
-	_, err := r.Sync(t.Context(), logr.Discard(), pcs, state)
+	result, err := r.Sync(t.Context(), logr.Discard(), pcs, state)
 
-	require.True(t, groveerr.IsRequeueAfter(err), "baseline must hard-requeue: %v", err)
+	require.NoError(t, err)
+
+	assert.Equal(t, pcssync.Result{RequeueAfter: new(constants.InformerCacheSyncRetryInterval), StopAndRequeue: true}, result)
 	assert.Empty(t, countingClient.listCounts)
 	assert.Equal(t, &pcssync.State{}, state)
 	storedPCS := &grovecorev1beta1.PodCliqueSet{}
@@ -388,8 +389,9 @@ func TestSyncGenerationFailureIsolationAndRetry(t *testing.T) {
 			require.Len(t, before.Status.LastErrors, 1)
 			assert.Equal(t, before.Status.ScalingProgress, storedPCS.Status.ScalingProgress)
 
-			_, retryErr := reconciler.Sync(t.Context(), logr.Discard(), storedPCS, &pcssync.State{})
-			require.True(t, groveerr.IsRequeueAfter(retryErr), "successful initialization must stop for cache acknowledgment: %v", retryErr)
+			retryResult, retryErr := reconciler.Sync(t.Context(), logr.Discard(), storedPCS, &pcssync.State{})
+			require.NoError(t, retryErr)
+			assert.Equal(t, pcssync.Result{RequeueAfter: new(constants.InformerCacheSyncRetryInterval), StopAndRequeue: true}, retryResult)
 			updatedPCS := &grovecorev1beta1.PodCliqueSet{}
 			require.NoError(t, fakeClient.Get(t.Context(), client.ObjectKeyFromObject(pcs), updatedPCS))
 			assert.Equal(t, targetGenerationHash, *updatedPCS.Status.CurrentGenerationHash)
@@ -458,8 +460,9 @@ func TestSyncCombinesGenerationScalingAndUpdateSelection(t *testing.T) {
 						},
 					})
 					state := &pcssync.State{ExpectedReplicaIndices: []int{99}}
-					_, err := r.Sync(t.Context(), logr.Discard(), pcs, state)
-					require.True(t, groveerr.IsRequeueAfter(err), "%v", err)
+					result, err := r.Sync(t.Context(), logr.Discard(), pcs, state)
+					require.NoError(t, err)
+					assert.Equal(t, pcssync.Result{RequeueAfter: new(constants.InformerCacheSyncRetryInterval), StopAndRequeue: true}, result)
 					assert.Equal(t, 1, patches, "generation, scaling, selection and completion share one patch")
 					assert.Equal(t, &pcssync.State{ExpectedReplicaIndices: []int{99}}, state)
 					assert.Equal(t, new(generationHash), pcs.Status.CurrentGenerationHash)
@@ -544,7 +547,7 @@ func TestSyncGangTerminationFollowsProgressBarrier(t *testing.T) {
 				},
 			})
 			state := &pcssync.State{ExpectedReplicaIndices: []int{99}}
-			_, err := r.Sync(t.Context(), logr.Discard(), pcs, state)
+			result, err := r.Sync(t.Context(), logr.Discard(), pcs, state)
 			assert.Equal(t, 1, patches)
 			assert.Zero(t, deletes.Load())
 			assert.Equal(t, &pcssync.State{ExpectedReplicaIndices: []int{99}}, state)
@@ -557,7 +560,8 @@ func TestSyncGangTerminationFollowsProgressBarrier(t *testing.T) {
 				assert.True(t, r.currentlyUpdatingExpectations.ClearIfSatisfied(pcs.ObjectMeta, nil))
 				return
 			}
-			require.True(t, groveerr.IsRequeueAfter(err), "%v", err)
+			require.NoError(t, err)
+			assert.Equal(t, pcssync.Result{RequeueAfter: new(constants.InformerCacheSyncRetryInterval), StopAndRequeue: true}, result)
 			require.NotNil(t, pcs.Status.ScalingProgress)
 			require.Len(t, pcs.Status.ScalingProgress.ScaleInReplicaIndices, 1)
 			require.NoError(t, cl.Get(t.Context(), client.ObjectKeyFromObject(pcs), pcs))
@@ -565,7 +569,7 @@ func TestSyncGangTerminationFollowsProgressBarrier(t *testing.T) {
 			require.True(t, r.scalingProgressExpectations.ClearIfSatisfied(pcs.ObjectMeta, pcs.Status.ScalingProgress))
 			require.True(t, r.currentlyUpdatingExpectations.ClearIfSatisfied(pcs.ObjectMeta, pcs.Status.UpdateProgress.CurrentlyUpdating))
 			persisted := pcs.DeepCopy()
-			_, err = r.Sync(t.Context(), logr.Discard(), pcs, state)
+			result, err = r.Sync(t.Context(), logr.Discard(), pcs, state)
 			assert.Equal(t, 1, patches, "stable progress must not be written again")
 			assert.Equal(t, persisted, pcs)
 			if failure == "execution" {
@@ -576,7 +580,8 @@ func TestSyncGangTerminationFollowsProgressBarrier(t *testing.T) {
 				assert.Equal(t, &pcssync.State{ExpectedReplicaIndices: []int{99}}, state, "failed execution must not publish state")
 				return
 			}
-			assert.True(t, groveerr.IsContinueReconcileAndRequeue(err), "%v", err)
+			require.NoError(t, err)
+			assert.Equal(t, pcssync.Result{RequeueAfter: new(constants.ComponentSyncRetryInterval)}, result)
 			assert.Equal(t, int32(1), deletes.Load())
 			assert.NotContains(t, state.ExpectedReplicaIndices, 99)
 			assert.Len(t, state.ExpectedReplicaIndices, 2)
@@ -653,8 +658,9 @@ func TestSyncBootstrapCancellationUsesCurrentReplacementSource(t *testing.T) {
 			cl := testutils.SetupFakeClient(pcs, &oldSource.standalonePCLQs[0], &readyTarget.standalonePCLQs[0])
 			r := lifecycleTestResource(cl)
 			state := &pcssync.State{}
-			_, err := r.Sync(t.Context(), logr.Discard(), pcs, state)
-			require.True(t, groveerr.IsRequeueAfter(err), "%v", err)
+			result, err := r.Sync(t.Context(), logr.Discard(), pcs, state)
+			require.NoError(t, err)
+			assert.Equal(t, pcssync.Result{RequeueAfter: new(constants.InformerCacheSyncRetryInterval), StopAndRequeue: true}, result)
 			assert.Equal(t, &pcssync.State{}, state)
 			require.Len(t, pcs.Status.UpdateProgress.CurrentlyUpdating, 1)
 			progress := pcs.Status.UpdateProgress.CurrentlyUpdating[0]
@@ -673,8 +679,9 @@ func TestSyncBootstrapCancellationUsesCurrentReplacementSource(t *testing.T) {
 			}
 			persisted := pcs.DeepCopy()
 			require.NoError(t, cl.Get(t.Context(), client.ObjectKeyFromObject(pcs), pcs))
-			_, err = r.Sync(t.Context(), logr.Discard(), pcs, state)
-			assert.True(t, groveerr.IsContinueReconcileAndRequeue(err), "%v", err)
+			result, err = r.Sync(t.Context(), logr.Discard(), pcs, state)
+			require.NoError(t, err)
+			assert.Equal(t, pcssync.Result{RequeueAfter: new(constants.ComponentSyncRetryInterval)}, result)
 			assert.Equal(t, persisted.Status, pcs.Status, "same configuration must preserve cancellation and cleanup markers")
 			assert.Empty(t, state.ExpectedReplicaIndices)
 			assert.Empty(t, state.ScaleOutReplicaIndices)
@@ -697,8 +704,9 @@ func TestSyncBootstrapAllocationFollowsReplacementReservations(t *testing.T) {
 			cl := testutils.SetupFakeClient(pcs, &info.standalonePCLQs[0])
 			r := lifecycleTestResource(cl)
 			state := &pcssync.State{}
-			_, err := r.Sync(t.Context(), logr.Discard(), pcs, state)
-			require.True(t, groveerr.IsRequeueAfter(err), "%v", err)
+			result, err := r.Sync(t.Context(), logr.Discard(), pcs, state)
+			require.NoError(t, err)
+			assert.Equal(t, pcssync.Result{RequeueAfter: new(constants.InformerCacheSyncRetryInterval), StopAndRequeue: true}, result)
 			assert.Equal(t, &pcssync.State{}, state)
 			require.Len(t, pcs.Status.UpdateProgress.CurrentlyUpdating, 1)
 			progress := pcs.Status.UpdateProgress.CurrentlyUpdating[0]
@@ -706,8 +714,9 @@ func TestSyncBootstrapAllocationFollowsReplacementReservations(t *testing.T) {
 			require.NotNil(t, progress.Replacement)
 			assert.Zero(t, progress.Replacement.TargetReplicaIndex, "replacement allocation precedes unreserved initial provisioning")
 			require.NoError(t, cl.Get(t.Context(), client.ObjectKeyFromObject(pcs), pcs))
-			_, err = r.Sync(t.Context(), logr.Discard(), pcs, state)
-			require.True(t, groveerr.IsContinueReconcileAndRequeue(err), "%v", err)
+			result, err = r.Sync(t.Context(), logr.Discard(), pcs, state)
+			require.NoError(t, err)
+			assert.Equal(t, pcssync.Result{RequeueAfter: new(constants.ComponentSyncRetryInterval)}, result)
 			assert.Equal(t, []int{source}, state.ScaleInReplicaIndices)
 			if source == 2 {
 				assert.Equal(t, []int{0, 1}, state.ExpectedReplicaIndices, "initial provisioning must allocate 1, not collide with replacement target 0")
@@ -722,8 +731,9 @@ func TestSyncBootstrapAllocationFollowsReplacementReservations(t *testing.T) {
 			pcs.Status.UpdateProgress.CurrentlyUpdating[0].Replacement.SourceCleanupCompletedAt = new(metav1.Now())
 			require.NoError(t, cl.Status().Patch(t.Context(), pcs, client.MergeFrom(before)))
 			require.NoError(t, cl.Get(t.Context(), client.ObjectKeyFromObject(pcs), pcs))
-			_, err = r.Sync(t.Context(), logr.Discard(), pcs, state)
-			require.True(t, groveerr.IsContinueReconcileAndRequeue(err), "%v", err)
+			result, err = r.Sync(t.Context(), logr.Discard(), pcs, state)
+			require.NoError(t, err)
+			assert.Equal(t, pcssync.Result{RequeueAfter: new(constants.ComponentSyncRetryInterval)}, result)
 			assert.Equal(t, []int{0}, state.ExpectedReplicaIndices)
 			assert.Equal(t, []int{0}, state.ScaleOutReplicaIndices)
 			assert.Empty(t, state.ScaleInReplicaIndices)
@@ -779,9 +789,11 @@ func TestSyncUsesClockForGenerationAndCompletion(t *testing.T) {
 	})
 	operator := New(clockAdvancingClient, record.NewFakeRecorder(10), &pcsexpectations.ScalingProgress{}, &pcsexpectations.CurrentlyUpdating{}, &pcsexpectations.GenerationHashes{}, clk)
 
-	_, err := operator.Sync(t.Context(), logr.Discard(), pcs, &pcssync.State{})
+	result, err := operator.Sync(t.Context(), logr.Discard(), pcs, &pcssync.State{})
 
-	require.True(t, groveerr.IsRequeueAfter(err), "%v", err)
+	require.NoError(t, err)
+
+	assert.Equal(t, pcssync.Result{RequeueAfter: new(constants.InformerCacheSyncRetryInterval), StopAndRequeue: true}, result)
 	require.NotNil(t, pcs.Status.UpdateProgress)
 	require.Positive(t, listCalls, "resource discovery must advance the clock between planning stages")
 	assert.True(t, wantTime.Equal(&pcs.Status.UpdateProgress.UpdateStartedAt), "generation start must use the injected clock")
@@ -790,8 +802,9 @@ func TestSyncUsesClockForGenerationAndCompletion(t *testing.T) {
 	before := pcs.DeepCopy()
 	clk.Step(time.Hour)
 	require.NoError(t, cl.Get(t.Context(), client.ObjectKeyFromObject(pcs), pcs))
-	_, err = operator.Sync(t.Context(), logr.Discard(), pcs, &pcssync.State{})
+	result, err = operator.Sync(t.Context(), logr.Discard(), pcs, &pcssync.State{})
 	require.NoError(t, err)
+	assert.Equal(t, pcssync.Result{}, result)
 	assert.Equal(t, before.Status, pcs.Status, "later clock advances must not reopen or restamp a completed update")
 	assert.Equal(t, before.ResourceVersion, pcs.ResourceVersion, "completed progress needs no additional write")
 }
@@ -809,13 +822,15 @@ func TestSyncUsesClockForGangTerminationDelay(t *testing.T) {
 	operator := New(cl, record.NewFakeRecorder(10), &pcsexpectations.ScalingProgress{}, &pcsexpectations.CurrentlyUpdating{}, &pcsexpectations.GenerationHashes{}, clk)
 	for _, elapsed := range []time.Duration{0, time.Minute - time.Second} {
 		clk.Step(elapsed)
-		_, err := operator.Sync(t.Context(), logr.Discard(), pcs, &pcssync.State{})
-		require.True(t, groveerr.IsContinueReconcileAndRequeue(err), "%v", err)
+		result, err := operator.Sync(t.Context(), logr.Discard(), pcs, &pcssync.State{})
+		require.NoError(t, err)
+		assert.Equal(t, pcssync.Result{RequeueAfter: new(constants.ComponentSyncRetryInterval)}, result)
 		require.NoError(t, cl.Get(t.Context(), client.ObjectKeyFromObject(pclq), &grovecorev1beta1.PodClique{}), "the replica must survive until its termination delay expires")
 	}
 	clk.Step(time.Second)
-	_, err := operator.Sync(t.Context(), logr.Discard(), pcs, &pcssync.State{})
+	result, err := operator.Sync(t.Context(), logr.Discard(), pcs, &pcssync.State{})
 	require.NoError(t, err)
+	assert.Equal(t, pcssync.Result{}, result)
 	assert.True(t, apierrors.IsNotFound(cl.Get(t.Context(), client.ObjectKeyFromObject(pclq), &grovecorev1beta1.PodClique{})))
 }
 

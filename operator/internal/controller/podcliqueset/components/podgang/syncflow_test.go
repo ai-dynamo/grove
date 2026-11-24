@@ -53,12 +53,7 @@ var defaultFakeSchedulerRegistry = &testutils.FakeSchedulerRegistry{
 	DefaultBackend: "default-scheduler",
 }
 
-// TestVerifyAllPodsCreated tests verifyAllPodsCreated with a minimal syncState and podGangInfo (no
-// PCS/prepareSyncFlow). It covers the constituent-PodClique existence check and the requeue-versus-
-// success gate for a single PodGang, whose pod accounting is delegated to
-// getPodsPendingCreationOrAssociation. The 1:N split of a PodClique across multiple PodGangs is
-// covered by TestGetPodsPendingCreation.
-func TestVerifyAllPodsCreated(t *testing.T) {
+func TestAreAllPodsCreated(t *testing.T) {
 	makePCLQ := func(name string) grovecorev1beta1.PodClique {
 		return grovecorev1beta1.PodClique{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"}}
 	}
@@ -95,12 +90,7 @@ func TestVerifyAllPodsCreated(t *testing.T) {
 				existingPCLQByName: componentutils.PodCliqueByName(tt.existingPCLQs),
 			}
 			r := &_resource{schedRegistry: defaultFakeSchedulerRegistry}
-			err := r.verifyAllPodsCreated(sc, tt.podGang)
-			if tt.wantRequeue {
-				assert.True(t, groveerr.IsRequeueAfter(err))
-			} else {
-				require.NoError(t, err)
-			}
+			assert.Equal(t, !tt.wantRequeue, r.areAllPodsCreated(sc, tt.podGang))
 		})
 	}
 }
@@ -188,13 +178,6 @@ func TestGetPodsPendingCreation(t *testing.T) {
 	}
 }
 
-// TestCreateOrUpdatePodGangs verifies the createOrUpdatePodGangs orchestration loop: it creates or
-// patches each expected PodGang, records the ones that did not previously exist, and marks a PodGang
-// Initialized only once all its pods are created and labeled. The per-pod readiness accounting is
-// covered by TestVerifyAllPodsCreated and TestGetPodsPendingCreation; this test focuses on the
-// loop-level effects (creation recording, requeue-error handling with continue, Initialized
-// idempotency, and early return on a create failure). The syncState is built directly so the loop is
-// exercised in isolation from prepareSyncFlow and the PodGangMap.
 func TestCreateOrUpdatePodGangs(t *testing.T) {
 	const (
 		ns          = "default"
@@ -244,7 +227,7 @@ func TestCreateOrUpdatePodGangs(t *testing.T) {
 		return pg
 	}
 	// readyPCLQState builds the syncState pieces for a single fully-populated, correctly labeled PCLQ
-	// (2 pods labeled for pgName), so verifyAllPodsCreated passes.
+	// (2 pods labeled for pgName), so areAllPodsCreated passes.
 	readyPCLQState := func(podGangName string) ([]grovecorev1beta1.PodClique, map[string][]v1.Pod) {
 		pclq := makePCLQ(pclqName, 2)
 		pods := map[string][]v1.Pod{pclqName: {makePod("worker-0", podGangName), makePod("worker-1", podGangName)}}
@@ -271,9 +254,9 @@ func TestCreateOrUpdatePodGangs(t *testing.T) {
 		return k8sutils.IsConditionTrue(pg.Status.Conditions, string(groveschedulerv1alpha1.PodGangConditionTypeInitialized))
 	}
 
-	t.Run("new PodGang, pods not ready - creates PodGang, records creation and requeue error, does not set Initialized", func(t *testing.T) {
+	t.Run("new PodGang, pods not ready - creates PodGang and requests a retry without initialization", func(t *testing.T) {
 		ctx := t.Context()
-		// PCLQ exists but has no pods yet, so verifyAllPodsCreated fails.
+		// PCLQ exists but has no pods yet, so areAllPodsCreated fails.
 		pclq := makePCLQ(pclqName, 2)
 		cl := testutils.NewTestClientBuilder().
 			WithObjects(pcs).
@@ -292,9 +275,9 @@ func TestCreateOrUpdatePodGangs(t *testing.T) {
 
 		result := r.createOrUpdatePodGangs(ctx, ss)
 
-		require.True(t, result.hasErrors())
+		assert.False(t, result.hasErrors())
 		assert.Equal(t, []string{pgName}, result.createdPodGangNames)
-		assert.True(t, groveerr.IsRequeueAfter(result.errs[0]))
+		assert.True(t, result.podsPending)
 		// PodGang object was created even though it is not ready.
 		pgAfter := &groveschedulerv1alpha1.PodGang{}
 		require.NoError(t, cl.Get(ctx, client.ObjectKey{Namespace: ns, Name: pgName}, pgAfter))
@@ -304,7 +287,7 @@ func TestCreateOrUpdatePodGangs(t *testing.T) {
 	t.Run("existing PodGang was Scheduled and Ready, pods regress - flips Scheduled and Ready to False, keeps timestamps", func(t *testing.T) {
 		ctx := t.Context()
 		// The PodGang was previously Scheduled and Ready with timestamps stamped. In this pass its pods
-		// have regressed so verifyAllPodsCreated fails, but the live Scheduled and Ready conditions must
+		// have regressed so areAllPodsCreated fails, but the live Scheduled and Ready conditions must
 		// still be reconciled to False. LastScheduled and LastReady are never cleared.
 		existingPG := makeExistingPodGang(pgName, true)
 		setScheduledCondition(existingPG, &groveschedulerv1alpha1.PodGangStatus{}, true, metav1.Now())
@@ -335,8 +318,8 @@ func TestCreateOrUpdatePodGangs(t *testing.T) {
 
 		result := r.createOrUpdatePodGangs(ctx, ss)
 
-		require.True(t, result.hasErrors(), "verifyAllPodsCreated must record a requeue error")
-		assert.True(t, groveerr.IsRequeueAfter(result.errs[0]))
+		assert.False(t, result.hasErrors())
+		assert.True(t, result.podsPending)
 		patched := &groveschedulerv1alpha1.PodGang{}
 		require.NoError(t, cl.Get(ctx, client.ObjectKey{Namespace: ns, Name: pgName}, patched))
 		assert.False(t, meta.IsStatusConditionTrue(patched.Status.Conditions, string(groveschedulerv1alpha1.PodGangConditionTypeScheduled)), "Scheduled must flip to False on regression")
@@ -458,8 +441,8 @@ func TestCreateOrUpdatePodGangs(t *testing.T) {
 
 		result := r.createOrUpdatePodGangs(ctx, ss)
 
-		// The first PodGang's verify failure records a requeue error but the loop continues to the second.
-		require.True(t, result.hasErrors())
+		assert.False(t, result.hasErrors())
+		assert.True(t, result.podsPending)
 		assert.ElementsMatch(t, []string{firstPGName, secondPGName}, result.createdPodGangNames, "both PodGangs are created despite the first not being ready")
 		// The second PodGang was created and marked Initialized; the first was created but not Initialized.
 		assert.True(t, isInitializedInCluster(t, cl, secondPGName))
@@ -2035,7 +2018,7 @@ func TestReconcilePodGangStatus(t *testing.T) {
 		assert.Equal(t, wantLastScheduled, patched.Status.LastScheduled, "LastScheduled must be unchanged")
 	})
 
-	t.Run("requeues instead of erroring on a status patch conflict", func(t *testing.T) {
+	t.Run("returns a status patch conflict as an error", func(t *testing.T) {
 		conflict := apierrors.NewConflict(
 			schema.GroupResource{Group: groveschedulerv1alpha1.SchemeGroupVersion.Group, Resource: "podgangs"},
 			pgName, errors.New("object was modified"))
@@ -2048,7 +2031,10 @@ func TestReconcilePodGangStatus(t *testing.T) {
 
 		err := r.reconcilePodGangStatus(t.Context(), readyState(), pgi, true)
 
-		assert.True(t, groveerr.IsRequeueAfter(err))
+		var groveErr *groveerr.GroveError
+		require.ErrorAs(t, err, &groveErr)
+		assert.Equal(t, errCodeUpdatePodGangStatus, groveErr.Code)
+		assert.ErrorIs(t, groveErr.Cause, conflict)
 	})
 
 	t.Run("returns error on a non-conflict status patch failure", func(t *testing.T) {

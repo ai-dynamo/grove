@@ -26,7 +26,6 @@ import (
 	pcsreplicacomponent "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/podcliquesetreplica"
 	pcsexpectations "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/expectations"
 	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/sync"
-	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
@@ -89,10 +88,11 @@ func TestProcessUpdateAfterLegacyPCSReconciliation(t *testing.T) {
 				require.NoError(t, cl.Get(t.Context(), client.ObjectKeyFromObject(pcs), freshPCS))
 				require.True(t, generationExpectations.ClearIfSatisfied(freshPCS.ObjectMeta, freshPCS.Status.CurrentGenerationHash, freshPCS.Status.AppliedSchedulingConfigurationHash))
 
-				_, err := replicaOperator.Sync(t.Context(), logr.Discard(), freshPCS, &pcssync.State{})
+				syncResult, err := replicaOperator.Sync(t.Context(), logr.Discard(), freshPCS, &pcssync.State{})
 
 				if pass == 0 || (pass == 1 && tc.progress != nil && tc.progress.UpdateEndedAt == nil) {
-					require.True(t, groveerr.IsRequeueAfter(err), "baseline or completion must stop for cache acknowledgment: %v", err)
+					require.NoError(t, err)
+					assert.Equal(t, pcssync.Result{RequeueAfter: new(constants.InformerCacheSyncRetryInterval), StopAndRequeue: true}, syncResult)
 				} else {
 					require.NoError(t, err)
 				}

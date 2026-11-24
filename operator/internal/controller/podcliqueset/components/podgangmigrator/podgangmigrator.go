@@ -22,6 +22,7 @@ import (
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	apiconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
+	"github.com/ai-dynamo/grove/operator/internal/constants"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/sync"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
@@ -99,8 +100,8 @@ func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev
 	if !allCreated {
 		// Continue the reconcile so the PodGang component creates the missing PodGangs, then requeue to
 		// re-check and lift the gate.
-		return pcssync.Result{}, groveerr.NewContinueReconcileAndRequeue(component.OperationSync,
-			fmt.Sprintf("All epoch-schemed PodGangs for PodCliqueSet %v are not yet created, holding the migration gate until they exist", client.ObjectKeyFromObject(pcs)))
+		logger.V(1).Info("Holding the migration gate until all epoch-schemed PodGangs exist")
+		return pcssync.Result{RequeueAfter: new(constants.ComponentSyncRetryInterval)}, nil
 	}
 	return pcssync.Result{}, r.clearMigrationGate(ctx, logger, pcs)
 }

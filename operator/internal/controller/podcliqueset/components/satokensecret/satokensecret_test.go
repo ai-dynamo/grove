@@ -22,6 +22,7 @@ import (
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
+	"github.com/ai-dynamo/grove/operator/internal/constants"
 	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/sync"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 
@@ -207,9 +208,11 @@ func TestSync(t *testing.T) {
 			},
 		}
 
-		_, err := operator.Sync(context.Background(), logr.Discard(), pcs, &pcssync.State{})
+		result, err := operator.Sync(context.Background(), logr.Discard(), pcs, &pcssync.State{})
 
-		assert.True(t, groveerr.IsRequeueAfter(err))
+		require.NoError(t, err)
+
+		assert.Equal(t, pcssync.Result{RequeueAfter: new(constants.ComponentSyncRetryInterval), StopAndRequeue: true}, result)
 
 		// Verify secret was created
 		secret := &corev1.Secret{}
@@ -238,9 +241,11 @@ func TestSync(t *testing.T) {
 			},
 		}
 
-		_, err := operator.Sync(context.Background(), logr.Discard(), pcs, &pcssync.State{})
+		result, err := operator.Sync(context.Background(), logr.Discard(), pcs, &pcssync.State{})
 
-		assert.True(t, groveerr.IsRequeueAfter(err))
+		require.NoError(t, err)
+
+		assert.Equal(t, pcssync.Result{RequeueAfter: new(constants.ComponentSyncRetryInterval), StopAndRequeue: true}, result)
 
 		secret := &corev1.Secret{}
 		secretName := apicommon.GenerateInitContainerSATokenSecretName(pcsName)
@@ -292,9 +297,11 @@ func TestSync(t *testing.T) {
 			},
 		}
 
-		_, err := operator.Sync(context.Background(), logr.Discard(), pcs, &pcssync.State{})
+		result, err := operator.Sync(context.Background(), logr.Discard(), pcs, &pcssync.State{})
 
-		assert.True(t, groveerr.IsRequeueAfter(err))
+		require.NoError(t, err)
+
+		assert.Equal(t, pcssync.Result{RequeueAfter: new(constants.ComponentSyncRetryInterval), StopAndRequeue: true}, result)
 
 		secret := &corev1.Secret{}
 		secretName := apicommon.GenerateInitContainerSATokenSecretName("test-pcs")
@@ -342,9 +349,11 @@ func TestSync(t *testing.T) {
 			},
 		}
 
-		_, err := operator.Sync(context.Background(), logr.Discard(), pcs, &pcssync.State{})
+		result, err := operator.Sync(context.Background(), logr.Discard(), pcs, &pcssync.State{})
 
-		assert.True(t, groveerr.IsRequeueAfter(err))
+		require.NoError(t, err)
+
+		assert.Equal(t, pcssync.Result{RequeueAfter: new(constants.ComponentSyncRetryInterval), StopAndRequeue: true}, result)
 
 		secret := &corev1.Secret{}
 		secretName := apicommon.GenerateInitContainerSATokenSecretName("test-pcs")
@@ -381,9 +390,10 @@ func TestSync(t *testing.T) {
 			},
 		}
 
-		_, err := operator.Sync(context.Background(), logr.Discard(), pcs, &pcssync.State{})
+		result, err := operator.Sync(context.Background(), logr.Discard(), pcs, &pcssync.State{})
 
 		require.Error(t, err)
+		assert.Equal(t, pcssync.Result{}, result)
 		var groveErr *groveerr.GroveError
 		require.True(t, errors.As(err, &groveErr))
 		assert.Equal(t, errCodeSecretConflict, groveErr.Code)
@@ -433,10 +443,11 @@ func TestSync(t *testing.T) {
 			},
 		}
 
-		_, err := operator.Sync(context.Background(), logr.Discard(), pcs, &pcssync.State{})
+		result, err := operator.Sync(context.Background(), logr.Discard(), pcs, &pcssync.State{})
 
 		// Should not error when secret already exists
 		require.NoError(t, err)
+		assert.Equal(t, pcssync.Result{}, result)
 	})
 
 	for _, tc := range []struct {
@@ -492,10 +503,11 @@ func TestSync(t *testing.T) {
 				Build()
 			operator := New(cl, scheme)
 
-			_, err := operator.Sync(context.Background(), logr.Discard(), pcs, &pcssync.State{})
+			result, err := operator.Sync(context.Background(), logr.Discard(), pcs, &pcssync.State{})
 
 			if tc.expectRequeue {
-				assert.True(t, groveerr.IsRequeueAfter(err))
+				require.NoError(t, err)
+				assert.Equal(t, pcssync.Result{RequeueAfter: new(constants.ComponentSyncRetryInterval), StopAndRequeue: true}, result)
 			} else {
 				require.NoError(t, err)
 			}
@@ -514,8 +526,9 @@ func TestSync(t *testing.T) {
 
 			if tc.retryAfterReferenceRemoval {
 				require.NoError(t, cl.Delete(context.Background(), referencingPod))
-				_, err := operator.Sync(context.Background(), logr.Discard(), pcs, &pcssync.State{})
+				result, err := operator.Sync(context.Background(), logr.Discard(), pcs, &pcssync.State{})
 				require.NoError(t, err)
+				assert.Equal(t, pcssync.Result{}, result)
 
 				err = cl.Get(context.Background(), client.ObjectKeyFromObject(legacySecret), &corev1.Secret{})
 				assert.True(t, apierrors.IsNotFound(err))
