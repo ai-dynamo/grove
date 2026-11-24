@@ -174,32 +174,30 @@ func (s *ExpectationsStore) SyncExpectations(controlleeKey string, existingNonTe
 	defer s.mu.Unlock()
 	exp, exists, _ := s.getExpectations(controlleeKey)
 	if !exists {
-		// After an operator restart the store is empty while terminating objects can still be in the
-		// informer. Without an entry they would count as live, so seed one from the terminating UIDs.
 		if len(existingTerminatingUIDs) == 0 {
 			return
 		}
 		exp = &ControlleeExpectations{
 			key:          controlleeKey,
 			uidsToAdd:    sets.New[types.UID](),
-			uidsToDelete: sets.New(existingTerminatingUIDs...),
+			uidsToDelete: sets.New[types.UID](),
 		}
 		if err := s.Add(exp); err != nil {
 			return
 		}
 	}
-	// Remove the UIDs from `uidsToAdd` once the informer cache has observed the
-	// created object. A Pod can be observed for the first time after another
-	// controller has already set its deletion timestamp, so both terminating and
-	// non-terminating objects satisfy the creation expectation.
-	exp.uidsToAdd.Delete(existingNonTerminatingUIDs...)
-	exp.uidsToAdd.Delete(existingTerminatingUIDs...)
-	// Remove stale entries in `uidsToDelete` if the `existingUIDS` no longer has those UIDs.
-	staleUIDs := exp.uidsToDelete.Difference(sets.New(existingNonTerminatingUIDs...))
+
+	observedUIDs := sets.New(existingNonTerminatingUIDs...)
+	observedUIDs.Insert(existingTerminatingUIDs...)
+
+	// Observing an object satisfies its creation expectation.
+	exp.uidsToAdd.Delete(observedUIDs.UnsortedList()...)
+
+	// Remove deletion expectations for objects absent from the cache.
+	staleUIDs := exp.uidsToDelete.Difference(observedUIDs)
 	exp.uidsToDelete.Delete(staleUIDs.UnsortedList()...)
-	// Re-add existing termination UIDs if they are not already present in uidsToDelete.
-	// This also restores delete expectations when the operator restarted with an
-	// empty in-memory store while terminating objects remained in the informer.
+
+	// Track every observed terminating object, including after an operator restart.
 	exp.uidsToDelete.Insert(existingTerminatingUIDs...)
 }
 
