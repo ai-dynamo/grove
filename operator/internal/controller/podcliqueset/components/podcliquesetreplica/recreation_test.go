@@ -15,23 +15,19 @@
 package podcliquesetreplica
 
 import (
-	"context"
 	"slices"
 	"testing"
 	"time"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
-	pcsexpectations "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/expectations"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // TestGroupPCSReplicaReplacements covers lifecycle grouping, source ordering, and owned conversion of
@@ -388,7 +384,7 @@ func TestDifferentIndexCleanupConfirmationReleasesSourceForNextReplacement(t *te
 	assert.Contains(t, state.ExpectedReplicaIndices, 1, "different-index target creation may overlap source cleanup")
 	assert.Contains(t, state.ScaleOutReplicaIndices, 1)
 
-	// Model post-sync participant confirmation, followed by the orchestrator recording completion.
+	// Model post-sync participant confirmation, followed by update advancement recording completion.
 	pcs.Status.UpdateProgress.CurrentlyUpdating[1].Replacement.SourceCleanupCompletedAt = &cleanupCompletedAt
 	confirmed, err := hooks.reconcileCurrentlyUpdatingReplicas(pcs.Status.UpdateProgress.CurrentlyUpdating)
 	require.NoError(t, err)
@@ -789,7 +785,7 @@ func TestRecreationProgressSeparatesScaleOutAndPendingSources(t *testing.T) {
 			assert.Equal(t, 3, selections[0].replicaIndex)
 			require.NotNil(t, selections[0].targetReplicaIndex)
 			assert.Equal(t, tc.wantTargetPCSReplicaIndex, *selections[0].targetReplicaIndex)
-			pcs.Status.UpdateProgress.CurrentlyUpdating = mergeReplicaUpdateSelections(pcs.Status.UpdateProgress.CurrentlyUpdating, selections)
+			pcs.Status.UpdateProgress.CurrentlyUpdating = mergeReplicaUpdateSelections(pcs.Status.UpdateProgress.CurrentlyUpdating, selections, metav1.Now())
 			require.Len(t, pcs.Status.UpdateProgress.CurrentlyUpdating, 3)
 			assert.Equal(t, before.Status.UpdateProgress.CurrentlyUpdating, pcs.Status.UpdateProgress.CurrentlyUpdating[:2], "completed 0 -> 0 and 2 -> 1 must remain unchanged")
 			assert.Nil(t, pcs.Status.UpdateProgress.CurrentlyUpdating[2].UpdateEndedAt, "source 3 starts unfinished even when its target is index 2")
@@ -1221,180 +1217,6 @@ func TestReconcileCurrentlyUpdatingReplicasRetiredSourceCleanup(t *testing.T) {
 	}
 }
 
-// TestOrchestrateCompletedReplacementChildLoss checks that a completed target's resource loss cannot
-// trigger reselection or delay another replacement. Missing resources on the unfinished target remain
-// provisioning work until they reappear at the current generation and completion can be recorded.
-func TestOrchestrateCompletedReplacementChildLoss(t *testing.T) {
-	t.Parallel()
-	startedAt := metav1.NewTime(time.Unix(100, 0).UTC())
-	completedAt := metav1.NewTime(time.Unix(150, 0).UTC())
-	tests := []struct {
-		name                        string
-		completedSourceReplicaIndex int32
-		completedTargetReplicaIndex int
-		allCompletedResourcesLost   bool
-	}{
-		{name: "same-index completed target loses a child"},
-		{name: "different-index completed target loses a child", completedSourceReplicaIndex: 2, completedTargetReplicaIndex: 1},
-		{name: "completed target loses every resource", allCompletedResourcesLost: true},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			var scalingProgress *grovecorev1beta1.PodCliqueSetScalingProgress
-			if tc.allCompletedResourcesLost {
-				scalingProgress = &grovecorev1beta1.PodCliqueSetScalingProgress{ScaleOutReplicaIndices: []int32{int32(tc.completedTargetReplicaIndex)}}
-			}
-			pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "default", "uid").
-				WithReplicas(2).
-				WithObservedGeneration(new(int64(1))).
-				WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("worker").WithMinAvailable(1).Build()).
-				WithScalingGroup("workers", []string{"member"}).
-				WithPodCliqueSetGenerationHash(new("current")).
-				WithAppliedSchedulingConfigurationHash(new("superseded")).
-				WithScalingProgress(scalingProgress).
-				WithUpdateProgress(&grovecorev1beta1.PodCliqueSetUpdateProgress{
-					RequiresReplicaRecreation:         true,
-					UpdateStartedAt:                   startedAt,
-					TargetSchedulingConfigurationHash: "target-scheduling",
-					CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{
-						{ReplicaIndex: tc.completedSourceReplicaIndex, UpdateStartedAt: startedAt, UpdateEndedAt: &completedAt,
-							Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: int32(tc.completedTargetReplicaIndex), SourceCleanupCompletedAt: &startedAt}},
-						{ReplicaIndex: 3, UpdateStartedAt: startedAt,
-							Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 3, SourceCleanupCompletedAt: &startedAt}},
-					},
-				}).Build()
-			fakeClient := testutils.NewTestClientBuilder().WithObjects(pcs).WithStatusSubresource(pcs).Build()
-			replicaInfos := pcsReplicaInfoByIndex{3: rollingUpdateReplicaInfo(pcs, 3, true)}
-			if !tc.allCompletedResourcesLost {
-				replicaInfos[tc.completedTargetReplicaIndex] = rollingUpdateReplicaInfo(pcs, tc.completedTargetReplicaIndex, true)
-			}
-			scalingIndices := replicaScalingIndicesFromProgress(pcs.Status.ScalingProgress)
-			before := pcs.DeepCopy()
-			hooks := newPCSReplicaRecreationStrategyHooks(pcs, replicaInfos, scalingIndices)
-			orchestrator := newRollingUpdateOrchestrator(fakeClient.Status(), &pcsexpectations.CurrentlyUpdating{}, pcs, hooks)
-
-			inProgress, err := orchestrator.orchestrate(t.Context(), pcs.DeepCopy(), nil)
-
-			require.NoError(t, err, "missing target resources must not cause a new-selection requeue that skips synchronization")
-			assert.True(t, inProgress)
-			require.Len(t, pcs.Status.UpdateProgress.CurrentlyUpdating, 2)
-			assert.Equal(t, before.Status.UpdateProgress.CurrentlyUpdating[0], pcs.Status.UpdateProgress.CurrentlyUpdating[0], "completed progress must remain unchanged after child loss")
-			assert.Nil(t, pcs.Status.UpdateProgress.CurrentlyUpdating[1].UpdateEndedAt, "the unfinished target is still missing its scaling group")
-			assert.Nil(t, pcs.Status.UpdateProgress.UpdateEndedAt)
-			expected := expectedReplicaIndicesFromScaling(replicaInfos.existingReplicaIndices(), scalingIndices)
-			state := computePCSReplicaState(pcs, scalingIndices, expected, groupPCSReplicaReplacements(pcs.Status.UpdateProgress))
-			assert.Equal(t, []int{tc.completedTargetReplicaIndex, 3}, state.ExpectedReplicaIndices, "component synchronization must be allowed to repair missing children")
-			assert.Contains(t, state.ScaleOutReplicaIndices, 3, "the unfinished target remains provisioning work")
-
-			// Model synchronization recreating the unfinished target's missing PCSG at S1. The completed
-			// target remains missing its resources, so it must not gate the update's completion.
-			pcsgName := componentutils.GetPCSGFQNsForPCSReplica(pcs, 3)[0]
-			pcsg := testutils.NewPodCliqueScalingGroupBuilder(pcsgName, pcs.Namespace, pcs.Name, 3).
-				WithMinAvailable(1).Build()
-			pcsg.Status.CurrentPodCliqueSetGenerationHash = new("current")
-			pcsg.Status.AvailableReplicas = 1
-			readyTarget := replicaInfos[3]
-			readyTarget.pcsgs = []grovecorev1beta1.PodCliqueScalingGroup{*pcsg}
-			replicaInfos[3] = readyTarget
-			hooks = newPCSReplicaRecreationStrategyHooks(pcs, replicaInfos, scalingIndices)
-			orchestrator = newRollingUpdateOrchestrator(fakeClient.Status(), &pcsexpectations.CurrentlyUpdating{}, pcs, hooks)
-
-			inProgress, err = orchestrator.orchestrate(t.Context(), pcs.DeepCopy(), nil)
-
-			require.NoError(t, err, "completed child loss must not cause repeated replacement selection")
-			assert.False(t, inProgress, "the whole update must complete once its unfinished target is ready")
-			storedPCS := &grovecorev1beta1.PodCliqueSet{}
-			require.NoError(t, fakeClient.Get(t.Context(), client.ObjectKeyFromObject(pcs), storedPCS))
-			require.NotNil(t, storedPCS.Status.UpdateProgress)
-			assert.NotNil(t, storedPCS.Status.UpdateProgress.UpdateEndedAt)
-			assert.Empty(t, storedPCS.Status.UpdateProgress.CurrentlyUpdating)
-			require.NotNil(t, storedPCS.Status.AppliedSchedulingConfigurationHash)
-			assert.Equal(t, "target-scheduling", *storedPCS.Status.AppliedSchedulingConfigurationHash)
-		})
-	}
-}
-
-// TestOrchestrateWaitsForRetiredSourceCleanup verifies that a ready target cannot end an update while retired
-// cleanup remains pending. Completion and the applied scheduling hash advance only after every retirement clears.
-func TestOrchestrateWaitsForRetiredSourceCleanup(t *testing.T) {
-	t.Parallel()
-	cleanupCompletedAt := metav1.NewTime(time.Unix(100, 0).UTC())
-	tests := []struct {
-		name                           string
-		sourcePCSReplicaIndex          int32
-		targetPCSReplicaIndex          int32
-		retiredSourcePCSReplicaIndices []int32
-	}{
-		{name: "same-index replacement waits for one retired source", sourcePCSReplicaIndex: 1, targetPCSReplicaIndex: 1, retiredSourcePCSReplicaIndices: []int32{2}},
-		{name: "same-index replacement waits for every retired source including zero", sourcePCSReplicaIndex: 1, targetPCSReplicaIndex: 1, retiredSourcePCSReplicaIndices: []int32{0, 2}},
-		{name: "different-index replacement waits for one retired source", sourcePCSReplicaIndex: 2, targetPCSReplicaIndex: 1, retiredSourcePCSReplicaIndices: []int32{3}},
-		{name: "different-index replacement waits for every retired source including zero", sourcePCSReplicaIndex: 2, targetPCSReplicaIndex: 1, retiredSourcePCSReplicaIndices: []int32{0, 3}},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			replacement := &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{
-				TargetReplicaIndex:          tc.targetPCSReplicaIndex,
-				RetiredSourceReplicaIndices: slices.Clone(tc.retiredSourcePCSReplicaIndices),
-				SourceCleanupCompletedAt:    &cleanupCompletedAt,
-			}
-			pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "default", "test-uid").
-				WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("worker").WithMinAvailable(1).Build()).
-				WithPodCliqueSetGenerationHash(new("generation")).
-				WithAppliedSchedulingConfigurationHash(new("superseded")).
-				WithUpdateProgress(&grovecorev1beta1.PodCliqueSetUpdateProgress{
-					RequiresReplicaRecreation:         true,
-					UpdateStartedAt:                   cleanupCompletedAt,
-					TargetSchedulingConfigurationHash: "target-scheduling",
-					CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{
-						ReplicaIndex: tc.sourcePCSReplicaIndex, Replacement: replacement,
-					}},
-				}).Build()
-			fakeClient := testutils.NewTestClientBuilder().WithObjects(pcs).WithStatusSubresource(pcs).Build()
-			replicaInfos := pcsReplicaInfoByIndex{int(tc.targetPCSReplicaIndex): rollingUpdateReplicaInfo(pcs, int(tc.targetPCSReplicaIndex), true)}
-			for len(pcs.Status.UpdateProgress.CurrentlyUpdating[0].Replacement.RetiredSourceReplicaIndices) > 0 {
-				before := pcs.DeepCopy()
-				hooks := newPCSReplicaRecreationStrategyHooks(pcs, replicaInfos, pcsReplicaScalingIndices{})
-				orchestrator := newRollingUpdateOrchestrator(fakeClient.Status(), &pcsexpectations.CurrentlyUpdating{}, pcs, hooks)
-
-				inProgress, err := orchestrator.orchestrate(t.Context(), pcs.DeepCopy(), nil)
-
-				require.NoError(t, err)
-				assert.True(t, inProgress)
-				require.NotNil(t, pcs.Status.UpdateProgress)
-				require.Len(t, pcs.Status.UpdateProgress.CurrentlyUpdating, 1)
-				assert.Nil(t, pcs.Status.UpdateProgress.CurrentlyUpdating[0].UpdateEndedAt)
-				assert.Nil(t, pcs.Status.UpdateProgress.UpdateEndedAt)
-				assert.Equal(t, before.Status, pcs.Status, "pending retirement must preserve update progress and the applied hash")
-				storedPCS := &grovecorev1beta1.PodCliqueSet{}
-				require.NoError(t, fakeClient.Get(t.Context(), client.ObjectKeyFromObject(pcs), storedPCS))
-				assert.True(t, apiequality.Semantic.DeepEqual(before.Status, storedPCS.Status), "pending retirement must leave persisted status unchanged")
-
-				// Model the persisted removal of one participant-confirmed retired source before the next reconcile.
-				pcs.Status.UpdateProgress.CurrentlyUpdating[0].Replacement.RetiredSourceReplicaIndices =
-					pcs.Status.UpdateProgress.CurrentlyUpdating[0].Replacement.RetiredSourceReplicaIndices[1:]
-				require.NoError(t, fakeClient.Status().Patch(t.Context(), pcs, client.MergeFrom(before)))
-				require.NoError(t, fakeClient.Get(t.Context(), client.ObjectKeyFromObject(pcs), pcs))
-			}
-			hooks := newPCSReplicaRecreationStrategyHooks(pcs, replicaInfos, pcsReplicaScalingIndices{})
-			orchestrator := newRollingUpdateOrchestrator(fakeClient.Status(), &pcsexpectations.CurrentlyUpdating{}, pcs, hooks)
-
-			inProgress, err := orchestrator.orchestrate(t.Context(), pcs.DeepCopy(), nil)
-
-			require.NoError(t, err)
-			assert.False(t, inProgress)
-			storedPCS := &grovecorev1beta1.PodCliqueSet{}
-			require.NoError(t, fakeClient.Get(t.Context(), client.ObjectKeyFromObject(pcs), storedPCS))
-			require.NotNil(t, storedPCS.Status.UpdateProgress)
-			assert.NotNil(t, storedPCS.Status.UpdateProgress.UpdateEndedAt)
-			assert.Empty(t, storedPCS.Status.UpdateProgress.CurrentlyUpdating)
-			require.NotNil(t, storedPCS.Status.AppliedSchedulingConfigurationHash)
-			assert.Equal(t, "target-scheduling", *storedPCS.Status.AppliedSchedulingConfigurationHash)
-		})
-	}
-}
-
 func TestPCSReplicaRecreationIsUpdateComplete(t *testing.T) {
 	canceledAt := metav1.Now()
 	newRecreatingPCS := func() *grovecorev1beta1.PodCliqueSet {
@@ -1461,75 +1283,6 @@ func TestPCSReplicaRecreationIsUpdateComplete(t *testing.T) {
 
 		assert.False(t, hooks.isUpdateComplete())
 	})
-}
-
-// TestOrchestrateCancelsReadyReplacementBeforeCompletion verifies that cancellation takes precedence over
-// completion when a replacement target is already ready and has no pending retired-source cleanup.
-func TestOrchestrateCancelsReadyReplacementBeforeCompletion(t *testing.T) {
-	t.Parallel()
-	cleanupCompletedAt := metav1.NewTime(time.Unix(100, 0).UTC())
-	pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "default", "test-uid").
-		WithReplicas(0).
-		WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("worker").WithMinAvailable(1).Build()).
-		WithPodCliqueSetGenerationHash(new("generation")).
-		WithAppliedSchedulingConfigurationHash(new("superseded")).
-		WithScalingProgress(&grovecorev1beta1.PodCliqueSetScalingProgress{ScaleInReplicaIndices: []int32{1}}).
-		WithUpdateProgress(&grovecorev1beta1.PodCliqueSetUpdateProgress{
-			RequiresReplicaRecreation:         true,
-			UpdateStartedAt:                   cleanupCompletedAt,
-			TargetSchedulingConfigurationHash: "target-scheduling",
-			CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{
-				ReplicaIndex: 1,
-				Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{
-					TargetReplicaIndex: 1, SourceCleanupCompletedAt: &cleanupCompletedAt,
-				},
-			}},
-		}).Build()
-	fakeClient := testutils.NewTestClientBuilder().WithObjects(pcs).WithStatusSubresource(pcs).Build()
-	replicaInfos := pcsReplicaInfoByIndex{1: rollingUpdateReplicaInfo(pcs, 1, true)}
-	hooks := newPCSReplicaRecreationStrategyHooks(pcs, replicaInfos, replicaScalingIndicesFromProgress(pcs.Status.ScalingProgress))
-	require.True(t, hooks.isReplacementComplete(pcs.Status.UpdateProgress.CurrentlyUpdating[0]), "without cancellation this replacement would complete")
-	orchestrator := newRollingUpdateOrchestrator(fakeClient.Status(), &pcsexpectations.CurrentlyUpdating{}, pcs, hooks)
-
-	inProgress, err := orchestrator.orchestrate(t.Context(), pcs.DeepCopy(), []int{1})
-
-	require.NoError(t, err)
-	assert.True(t, inProgress)
-	storedPCS := &grovecorev1beta1.PodCliqueSet{}
-	require.NoError(t, fakeClient.Get(t.Context(), client.ObjectKeyFromObject(pcs), storedPCS))
-	require.NotNil(t, storedPCS.Status.UpdateProgress)
-	require.Len(t, storedPCS.Status.UpdateProgress.CurrentlyUpdating, 1)
-	progress := storedPCS.Status.UpdateProgress.CurrentlyUpdating[0]
-	assert.Equal(t, int32(1), progress.ReplicaIndex)
-	require.NotNil(t, progress.Replacement)
-	assert.Equal(t, int32(1), progress.Replacement.TargetReplicaIndex)
-	assert.NotNil(t, progress.Replacement.CanceledAt, "the ready replacement must be canceled rather than completed")
-	assert.Nil(t, progress.UpdateEndedAt)
-	assert.Nil(t, storedPCS.Status.UpdateProgress.UpdateEndedAt)
-	require.NotNil(t, storedPCS.Status.AppliedSchedulingConfigurationHash)
-	assert.Equal(t, "superseded", *storedPCS.Status.AppliedSchedulingConfigurationHash)
-}
-
-func TestOrchestrateAdvancesAppliedHashOnReplacementCompletion(t *testing.T) {
-	pcs := rollingUpdateTestPCS()
-	pcs.Status.AppliedSchedulingConfigurationHash = new("superseded")
-	pcs.Status.UpdateProgress.RequiresReplicaRecreation = true
-	pcs.Status.UpdateProgress.TargetSchedulingConfigurationHash = "target-scheduling"
-	pcs.Status.UpdateProgress.CurrentlyUpdating = []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{
-		{ReplicaIndex: 0, Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 0, SourceCleanupCompletedAt: new(metav1.Now())}},
-	}
-	replicaInfos := pcsReplicaInfoByIndex{0: rollingUpdateReplicaInfo(pcs, 0, true)}
-	fakeClient := testutils.NewTestClientBuilder().WithObjects(pcs).WithStatusSubresource(pcs).Build()
-	hooks := newPCSReplicaRecreationStrategyHooks(pcs, replicaInfos, pcsReplicaScalingIndices{})
-	orchestrator := newRollingUpdateOrchestrator(fakeClient.Status(), &pcsexpectations.CurrentlyUpdating{}, pcs, hooks)
-
-	_, err := orchestrator.orchestrate(context.Background(), pcs.DeepCopy(), nil)
-
-	assert.NoError(t, err)
-	require.NotNil(t, pcs.Status.AppliedSchedulingConfigurationHash)
-	assert.Equal(t, "target-scheduling", *pcs.Status.AppliedSchedulingConfigurationHash)
-	require.NotNil(t, pcs.Status.UpdateProgress.UpdateEndedAt)
-	assert.Nil(t, pcs.Status.UpdateProgress.CurrentlyUpdating)
 }
 
 func replicaRecreationSelectionTestPCS() *grovecorev1beta1.PodCliqueSet {

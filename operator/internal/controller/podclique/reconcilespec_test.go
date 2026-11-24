@@ -90,8 +90,8 @@ func TestProcessUpdateAfterLegacyPCSReconciliation(t *testing.T) {
 
 				_, err := replicaOperator.Sync(t.Context(), logr.Discard(), freshPCS, &pcssync.State{})
 
-				if pass == 0 {
-					require.True(t, groveerr.IsRequeueAfter(err), "baseline must stop for cache acknowledgment: %v", err)
+				if pass == 0 || (pass == 1 && tc.progress != nil && tc.progress.UpdateEndedAt == nil) {
+					require.True(t, groveerr.IsRequeueAfter(err), "baseline or completion must stop for cache acknowledgment: %v", err)
 				} else {
 					require.NoError(t, err)
 				}

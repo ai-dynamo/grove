@@ -26,6 +26,8 @@ import (
 	apiconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
+	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
+	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
@@ -36,6 +38,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -43,9 +46,6 @@ import (
 
 // deletionWork captures the PodCliqueSet replica deletion work.
 type deletionWork struct {
-	// deletionTasks are a slice of PodCliqueSet replica deletion tasks. These are the replicas where there is at least
-	// one child resource whose MinAvailableBreached condition is set to true and TerminationDelay has expired.
-	deletionTasks []utils.Task
 	// pcsIndicesToTerminate are the PodCliqueSet replica indices for which one or more constituent standalone PCLQ or PCSG
 	// have MinAvailableBreached condition set to true for a duration greater than TerminationDelay.
 	pcsIndicesToTerminate []int
@@ -61,29 +61,32 @@ func (d deletionWork) shouldRequeue() bool {
 	return len(d.minAvailableBreachedConstituents) > 0
 }
 
-// hasPendingPCSReplicaDeletion returns true if there are replica deletion tasks ready to execute.
-func (d deletionWork) hasPendingPCSReplicaDeletion() bool {
-	return len(d.deletionTasks) > 0
+// computePCSReplicaGangTerminationCandidates excludes unfinished update selections and replacement-owned indices.
+// These exclusions apply only to gang termination, not to scaling or replacement cleanup.
+func computePCSReplicaGangTerminationCandidates(pcs *grovecorev1beta1.PodCliqueSet, pcsReplicaIndicesAfterScaling sets.Set[int]) []int {
+	pcsReplicaIndicesExcludedFromGangTermination := groupPCSReplicaReplacements(pcs.Status.UpdateProgress).reservedReplicaIndices()
+	for _, replicaIndex := range componentutils.PCSReplicaIndicesSelectedForUpdate(pcs) {
+		pcsReplicaIndicesExcludedFromGangTermination.Insert(int(replicaIndex))
+	}
+	return sortedReplicaIndices(pcsReplicaIndicesAfterScaling.Difference(pcsReplicaIndicesExcludedFromGangTermination))
 }
 
 // getPCSReplicaDeletionWork identifies PCS replicas that need termination due to MinAvailable breaches.
-func (r *_resource) getPCSReplicaDeletionWork(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, expectedPCSReplicaIndices []int) (*deletionWork, error) {
+func (r *_resource) getPCSReplicaDeletionWork(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, candidatePCSReplicaIndices []int, reconcileTime time.Time) (*deletionWork, error) {
 	var (
-		now              = time.Now()
 		pcsObjectKey     = client.ObjectKeyFromObject(pcs)
 		terminationDelay = pcs.Spec.Template.TerminationDelay.Duration
-		deletionTasks    = make([]utils.Task, 0, len(expectedPCSReplicaIndices))
 		work             = &deletionWork{
 			minAvailableBreachedConstituents: make(map[int][]string),
 		}
 	)
 
-	for _, pcsReplicaIndex := range expectedPCSReplicaIndices {
-		breachedPCSGNames, minPCSGWaitFor, err := r.getMinAvailableBreachedPCSGs(ctx, pcsObjectKey, pcsReplicaIndex, terminationDelay, now)
+	for _, pcsReplicaIndex := range candidatePCSReplicaIndices {
+		breachedPCSGNames, minPCSGWaitFor, err := r.getMinAvailableBreachedPCSGs(ctx, pcsObjectKey, pcsReplicaIndex, terminationDelay, reconcileTime)
 		if err != nil {
 			return nil, err
 		}
-		breachedPCLQNames, minPCLQWaitFor, skipPCSReplicaIndex, err := r.getMinAvailableBreachedPCLQsNotInPCSG(ctx, logger, pcs, pcsReplicaIndex, now)
+		breachedPCLQNames, minPCLQWaitFor, skipPCSReplicaIndex, err := r.getMinAvailableBreachedPCLQsNotInPCSG(ctx, logger, pcs, pcsReplicaIndex, reconcileTime)
 		if err != nil {
 			return nil, err
 		}
@@ -92,18 +95,35 @@ func (r *_resource) getPCSReplicaDeletionWork(ctx context.Context, logger logr.L
 		}
 		if (len(breachedPCSGNames) > 0 && minPCSGWaitFor <= 0) ||
 			(len(breachedPCLQNames) > 0 && minPCLQWaitFor <= 0) {
-			// terminate all PodCliques for this PCS replica index
-			reason := fmt.Sprintf("Delete all PodCliques for PodCliqueSet %v with replicaIndex :%d due to MinAvailable breached longer than TerminationDelay: %s", pcsObjectKey, pcsReplicaIndex, terminationDelay)
-			pclqGangTerminationTask := r.createPCSReplicaDeleteTask(logger, pcs, pcsReplicaIndex, reason)
-			deletionTasks = append(deletionTasks, pclqGangTerminationTask)
 			work.pcsIndicesToTerminate = append(work.pcsIndicesToTerminate, pcsReplicaIndex)
 		} else if len(breachedPCSGNames) > 0 || len(breachedPCLQNames) > 0 {
 			work.minAvailableBreachedConstituents[pcsReplicaIndex] = append(work.minAvailableBreachedConstituents[pcsReplicaIndex], breachedPCLQNames...)
 			work.minAvailableBreachedConstituents[pcsReplicaIndex] = append(work.minAvailableBreachedConstituents[pcsReplicaIndex], breachedPCSGNames...)
 		}
 	}
-	work.deletionTasks = deletionTasks
 	return work, nil
+}
+
+// executePCSReplicaGangTermination executes gang termination for the selected PCS replicas.
+//
+//   - The caller must first observe persisted lifecycle progress.
+//   - An error can occur after some deletion requests succeed.
+//   - Successful requests do not confirm observed resource absence.
+func (r *_resource) executePCSReplicaGangTermination(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, pcsReplicaIndices []int) error {
+	if len(pcsReplicaIndices) == 0 {
+		return nil
+	}
+	pcsObjectKey := client.ObjectKeyFromObject(pcs)
+	deletionTasks := make([]utils.Task, 0, len(pcsReplicaIndices))
+	for _, pcsReplicaIndex := range pcsReplicaIndices {
+		reason := fmt.Sprintf("Delete all PodCliques for PodCliqueSet %v with replicaIndex :%d due to MinAvailable breached longer than TerminationDelay: %s", pcsObjectKey, pcsReplicaIndex, pcs.Spec.Template.TerminationDelay.Duration)
+		deletionTasks = append(deletionTasks, r.createPCSReplicaDeleteTask(logger, pcs, pcsReplicaIndex, reason))
+	}
+	if runResult := utils.RunConcurrentlyAndWait(ctx, logger, deletionTasks); runResult.HasErrors() {
+		return groveerr.WrapError(runResult.GetAggregatedError(), errCodeDeletePCSReplica, component.OperationSync,
+			fmt.Sprintf("Error deleting PodCliques for PodCliqueSet: %v", pcsObjectKey))
+	}
+	return nil
 }
 
 // getMinAvailableBreachedPCSGs retrieves PCSGs that have breached MinAvailable for a PCS replica.

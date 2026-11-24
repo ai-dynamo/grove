@@ -24,7 +24,9 @@ import (
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/stretchr/testify/assert"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
 )
 
@@ -124,7 +126,7 @@ func TestComputePCSReplicaStateBeforeFirstCompletedReconcile(t *testing.T) {
 				WithAppliedSchedulingConfigurationHash(new("S0-scheduling")).
 				WithUpdateProgress(updateProgress).Build()
 			before := pcs.DeepCopy()
-			expected := expectedReplicaIndicesFromScaling(sets.New(tc.observedPCSReplicaIndices...), pcsReplicaScalingIndices{})
+			expected := computePCSReplicaIndicesAfterScaling(sets.New(tc.observedPCSReplicaIndices...), pcsReplicaScalingIndices{})
 			expectedBefore := expected.Clone()
 			replacementGroups := groupPCSReplicaReplacements(updateProgress)
 			replacementGroupsBefore := groupPCSReplicaReplacements(updateProgress)
@@ -235,11 +237,11 @@ func TestComputeInitialPCSReplicaProvisioningIndices(t *testing.T) {
 	}
 }
 
-func TestExpectedReplicaIndicesFromScaling(t *testing.T) {
+func TestComputePCSReplicaIndicesAfterScaling(t *testing.T) {
 	existing := sets.New(0, 2)
 	scalingIndices := pcsReplicaScalingIndices{scaleOut: []int{1}, scaleIn: []int{2}}
 
-	got := expectedReplicaIndicesFromScaling(existing, scalingIndices)
+	got := computePCSReplicaIndicesAfterScaling(existing, scalingIndices)
 
 	assert.Equal(t, sets.New(0, 1), got)
 	assert.Equal(t, sets.New(0, 2), existing, "input set must not be mutated")
@@ -559,7 +561,7 @@ func TestComputePCSReplicaStateRetiredSourceCleanup(t *testing.T) {
 				WithObservedGeneration(new(int64(0))).
 				WithScalingProgress(scalingProgressFromScalingIndices(tc.scalingIndices)).
 				WithUpdateProgress(progress.DeepCopy()).Build()
-			expected := expectedReplicaIndicesFromScaling(tc.observedPCSReplicaIndices, tc.scalingIndices)
+			expected := computePCSReplicaIndicesAfterScaling(tc.observedPCSReplicaIndices, tc.scalingIndices)
 			expectedBefore := expected.Clone()
 			scaleInBefore := slices.Clone(tc.scalingIndices.scaleIn)
 			scaleOutBefore := slices.Clone(tc.scalingIndices.scaleOut)
@@ -575,6 +577,160 @@ func TestComputePCSReplicaStateRetiredSourceCleanup(t *testing.T) {
 			assert.Equal(t, scaleOutBefore, tc.scalingIndices.scaleOut, "projection must not mutate scaling selections")
 			assert.Equal(t, groupsBefore, groups, "projection must not mutate grouped cleanup obligations")
 			assert.Equal(t, before, pcs, "reconcile-local cleanup must not be persisted as ordinary scaling progress")
+		})
+	}
+}
+
+func TestComputePCSReplicaState(t *testing.T) {
+	newPCS := func(replicas int32) *grovecorev1beta1.PodCliqueSet {
+		pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "default", types.UID("test-pcs-uid")).
+			WithReplicas(replicas).
+			WithStandaloneClique("worker").
+			Build()
+		observedGeneration := pcs.Generation
+		pcs.Status.ObservedGeneration = &observedGeneration
+		return pcs
+	}
+	newUnobservedPCS := func(replicas int32) *grovecorev1beta1.PodCliqueSet {
+		pcs := newPCS(replicas)
+		pcs.Status.ObservedGeneration = nil
+		return pcs
+	}
+	newReplicaInfos := func(pcs *grovecorev1beta1.PodCliqueSet, availabilityByIndex map[int]bool) pcsReplicaInfoByIndex {
+		replicaInfos := make(pcsReplicaInfoByIndex, len(availabilityByIndex))
+		for replicaIndex, isAvailable := range availabilityByIndex {
+			replicaInfos[replicaIndex] = pcsReplicaInfo{
+				index:           replicaIndex,
+				standalonePCLQs: []grovecorev1beta1.PodClique{pclqWithAvailability(pcs, replicaIndex, isAvailable)},
+			}
+		}
+		return replicaInfos
+	}
+
+	tests := []struct {
+		name                   string
+		pcs                    *grovecorev1beta1.PodCliqueSet
+		replicaInfos           pcsReplicaInfoByIndex
+		scaleOutReplicaIndices []int
+		scaleInReplicaIndices  []int
+		want                   pcssync.State
+	}{
+		{
+			name:         "initial provisioning uses contiguous indices without scale-out progress",
+			pcs:          newUnobservedPCS(3),
+			replicaInfos: pcsReplicaInfoByIndex{},
+			want: pcssync.State{
+				ExpectedReplicaIndices: []int{0, 1, 2},
+			},
+		},
+		{
+			name:         "scale-out from zero reserves indices",
+			pcs:          newPCS(3),
+			replicaInfos: pcsReplicaInfoByIndex{},
+			want: pcssync.State{
+				ExpectedReplicaIndices: []int{0, 1, 2},
+				ScaleOutReplicaIndices: []int{0, 1, 2},
+			},
+		},
+		{
+			name: "headless Service preserves standalone-only replica identity during gang termination",
+			pcs:  newPCS(3),
+			replicaInfos: pcsReplicaInfoByIndex{
+				0: {index: 0, standalonePCLQs: []grovecorev1beta1.PodClique{{}}, headlessSvcs: []corev1.Service{{}}},
+				2: {index: 2, standalonePCLQs: []grovecorev1beta1.PodClique{{}}, headlessSvcs: []corev1.Service{{}}},
+				4: {index: 4, headlessSvcs: []corev1.Service{{}}},
+			},
+			want: pcssync.State{ExpectedReplicaIndices: []int{0, 2, 4}},
+		},
+		{
+			name:         "replica indices already match desired count",
+			pcs:          newPCS(2),
+			replicaInfos: newReplicaInfos(newPCS(2), map[int]bool{0: true, 1: true}),
+			want: pcssync.State{
+				ExpectedReplicaIndices: []int{0, 1},
+			},
+		},
+		{
+			name:                   "scale-out index with expected PCLQs and PCSGs no longer needs a reservation",
+			pcs:                    newPCS(2),
+			replicaInfos:           newReplicaInfos(newPCS(2), map[int]bool{0: true, 1: false}),
+			scaleOutReplicaIndices: []int{1},
+			want: pcssync.State{
+				ExpectedReplicaIndices: []int{0, 1},
+			},
+		},
+		{
+			name:                   "scale-out index without resources remains reserved",
+			pcs:                    newPCS(2),
+			replicaInfos:           newReplicaInfos(newPCS(2), map[int]bool{0: true}),
+			scaleOutReplicaIndices: []int{1},
+			want: pcssync.State{
+				ExpectedReplicaIndices: []int{0, 1},
+				ScaleOutReplicaIndices: []int{1},
+			},
+		},
+		{
+			name:         "scale-in selects unavailable replica before available replica",
+			pcs:          newPCS(1),
+			replicaInfos: newReplicaInfos(newPCS(1), map[int]bool{0: false, 1: true}),
+			want: pcssync.State{
+				ExpectedReplicaIndices: []int{1},
+				ScaleInReplicaIndices:  []int{0},
+			},
+		},
+		{
+			name:         "scale-out fills lowest available index",
+			pcs:          newPCS(3),
+			replicaInfos: newReplicaInfos(newPCS(3), map[int]bool{0: true, 2: true}),
+			want: pcssync.State{
+				ExpectedReplicaIndices: []int{0, 1, 2},
+				ScaleOutReplicaIndices: []int{1},
+			},
+		},
+		{
+			name:                  "scale-out does not reuse an index reserved for scale-in",
+			pcs:                   newPCS(4),
+			replicaInfos:          newReplicaInfos(newPCS(4), map[int]bool{0: true, 1: false, 2: true, 4: true}),
+			scaleInReplicaIndices: []int{1},
+			want: pcssync.State{
+				ExpectedReplicaIndices: []int{0, 2, 3, 4},
+				ScaleOutReplicaIndices: []int{3},
+				ScaleInReplicaIndices:  []int{1},
+			},
+		},
+		{
+			name:         "scale-in removes every current replica when desired count is zero",
+			pcs:          newPCS(0),
+			replicaInfos: newReplicaInfos(newPCS(0), map[int]bool{0: true, 2: false}),
+			want: pcssync.State{
+				ScaleInReplicaIndices: []int{0, 2},
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			scaleOutBefore := slices.Clone(test.scaleOutReplicaIndices)
+			scaleInBefore := slices.Clone(test.scaleInReplicaIndices)
+
+			got := func() pcssync.State {
+				scalingWork := computePCSReplicaScalingWork(
+					test.pcs,
+					test.replicaInfos,
+					pcsReplicaScalingIndices{scaleOut: test.scaleOutReplicaIndices, scaleIn: test.scaleInReplicaIndices},
+					pcsReplicaReplacementGroups{},
+				)
+				scalingIndices := scalingWork.scalingIndices
+				expectedReplicaIndices := computePCSReplicaIndicesAfterScaling(test.replicaInfos.existingReplicaIndices(), scalingIndices)
+				initialPCSReplicaIndices := computeInitialPCSReplicaProvisioningIndices(test.pcs, test.replicaInfos, scalingIndices, pcsReplicaReplacementGroups{})
+				expectedReplicaIndices.Insert(initialPCSReplicaIndices...)
+				return computePCSReplicaState(test.pcs, scalingIndices, expectedReplicaIndices, pcsReplicaReplacementGroups{})
+			}()
+
+			assert.Equal(t, test.want, got)
+			assert.Equal(t, scaleOutBefore, test.scaleOutReplicaIndices)
+			assert.Equal(t, scaleInBefore, test.scaleInReplicaIndices)
+			assert.Len(t, got.ExpectedReplicaIndices, int(test.pcs.Spec.Replicas))
 		})
 	}
 }

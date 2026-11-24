@@ -31,7 +31,7 @@ import (
 
 var _ updateStrategyHooks = (*coherentStrategyHooks)(nil)
 
-// coherentStrategyHooks supplies Coherent behavior to the rolling-update orchestrator.
+// coherentStrategyHooks supplies Coherent behavior to PCS update advancement.
 type coherentStrategyHooks struct {
 	pcs                                   *grovecorev1beta1.PodCliqueSet
 	replicaInfos                          []pcsReplicaInfo

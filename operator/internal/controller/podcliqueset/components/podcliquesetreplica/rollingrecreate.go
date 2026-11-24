@@ -22,7 +22,7 @@ import (
 
 var _ updateStrategyHooks = (*rollingRecreateStrategyHooks)(nil)
 
-// rollingRecreateStrategyHooks supplies RollingRecreate behavior to the rolling-update orchestrator.
+// rollingRecreateStrategyHooks supplies RollingRecreate behavior to PCS update advancement.
 type rollingRecreateStrategyHooks struct {
 	pcs                                   *grovecorev1beta1.PodCliqueSet
 	replicaInfos                          []pcsReplicaInfo

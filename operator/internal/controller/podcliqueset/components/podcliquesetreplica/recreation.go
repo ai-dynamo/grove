@@ -77,8 +77,8 @@ func newPCSReplicaRecreationStrategyHooks(
 }
 
 // reconcileCurrentlyUpdatingReplicas reports active replacements whose source and retired-source cleanup has
-// completed and whose target PCS replica has converged to the current generation and is available. The shared orchestrator stamps
-// UpdateEndedAt on the returned source replica indices. It records no removals: a canceled replacement is
+// completed and whose target PCS replica has converged to the current generation and is available. Shared update
+// advancement stamps UpdateEndedAt on the returned source replica indices. It records no removals: a canceled replacement is
 // removed by the post-sync cleanup once its resources are gone, and a completed replacement is retained with its
 // mapping until the whole update ends.
 func (h *pcsReplicaRecreationStrategyHooks) reconcileCurrentlyUpdatingReplicas(currentlyUpdating []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress) (reconcileCurrentlyUpdatingResult, error) {

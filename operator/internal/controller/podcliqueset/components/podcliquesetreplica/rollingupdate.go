@@ -16,27 +16,20 @@ package podcliquesetreplica
 
 import (
 	"cmp"
-	"context"
+	"maps"
 	"slices"
 
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
-	"github.com/ai-dynamo/grove/operator/internal/constants"
-	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
-	pcsexpectations "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/expectations"
-	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 
-	"github.com/go-logr/logr"
-	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // reconcileCurrentlyUpdatingResult contains status changes identified while reconciling selected PCS replicas.
 type reconcileCurrentlyUpdatingResult struct {
 	// completedPCSReplicaIndices identifies PCS replica updates that completed successfully. The shared
-	// orchestrator stamps UpdateEndedAt on the corresponding CurrentlyUpdating entries.
+	// advancement stamps UpdateEndedAt on the corresponding CurrentlyUpdating entries.
 	completedPCSReplicaIndices []int
 	// pcsReplicaUpdateIndicesToRemove identifies CurrentlyUpdating entries that no longer participate
 	// in the rolling update and should be removed without stamping UpdateEndedAt. For configured strategies,
@@ -48,7 +41,7 @@ type reconcileCurrentlyUpdatingResult struct {
 type updateStrategyHooks interface {
 	// reconcileCurrentlyUpdatingReplicas updates execution-specific fields on the supplied deep-copied
 	// progress entries. It reports completed updates and entries whose work and cleanup have finished so
-	// the shared orchestrator can remove them. It does not persist status or stamp UpdateEndedAt.
+	// shared advancement can remove them. It does not persist status or stamp UpdateEndedAt.
 	reconcileCurrentlyUpdatingReplicas(currentlyUpdating []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress) (reconcileCurrentlyUpdatingResult, error)
 	// selectReplicasToUpdate returns PodCliqueSet replicas newly selected for update. A nil result indicates
 	// that there is no further update possible now. It does not imply that the update is complete.
@@ -67,35 +60,13 @@ type pcsReplicaUpdateSelection struct {
 	targetReplicaIndex *int
 }
 
-// rollingUpdateOrchestrator drives one reconciliation of a PodCliqueSet rolling update.
-type rollingUpdateOrchestrator struct {
-	statusWriter                  client.SubResourceWriter
-	currentlyUpdatingExpectations *pcsexpectations.CurrentlyUpdating
-	updateHooks                   updateStrategyHooks
-	pcs                           *grovecorev1beta1.PodCliqueSet
-}
-
-// newRollingUpdateOrchestrator creates an orchestrator using the supplied update strategy hooks.
-func newRollingUpdateOrchestrator(
-	statusWriter client.SubResourceWriter,
-	currentlyUpdatingExpectations *pcsexpectations.CurrentlyUpdating,
-	pcs *grovecorev1beta1.PodCliqueSet,
-	updateHooks updateStrategyHooks) *rollingUpdateOrchestrator {
-	return &rollingUpdateOrchestrator{
-		statusWriter:                  statusWriter,
-		currentlyUpdatingExpectations: currentlyUpdatingExpectations,
-		updateHooks:                   updateHooks,
-		pcs:                           pcs,
-	}
-}
-
 // newUpdateStrategyHooks returns the hooks for the active PCS update execution path.
 // RequiresReplicaRecreation takes precedence over the configured update strategy.
 func newUpdateStrategyHooks(
 	pcs *grovecorev1beta1.PodCliqueSet,
 	replicaInfosByIndex pcsReplicaInfoByIndex,
-	replicaInfos []pcsReplicaInfo,
-	minAvailableBreachedPCSReplicaIndices []int) updateStrategyHooks {
+	pcsReplicaIndicesAfterScaling sets.Set[int],
+	delWork *deletionWork) updateStrategyHooks {
 	if pcs.Status.UpdateProgress.RequiresReplicaRecreation {
 		return newPCSReplicaRecreationStrategyHooks(
 			pcs,
@@ -103,69 +74,41 @@ func newUpdateStrategyHooks(
 			replicaScalingIndicesFromProgress(pcs.Status.ScalingProgress),
 		)
 	}
+	replicaInfos := pcsReplicaInfosForUpdate(replicaInfosByIndex, sortedReplicaIndices(pcsReplicaIndicesAfterScaling), delWork.pcsIndicesToTerminate)
+	minAvailableBreachedPCSReplicaIndices := slices.Sorted(maps.Keys(delWork.minAvailableBreachedConstituents))
 	if componentutils.IsCoherentUpdateInProgress(pcs) {
 		return newCoherentStrategyHooks(pcs, replicaInfos, minAvailableBreachedPCSReplicaIndices)
 	}
 	return newRollingRecreateStrategyHooks(pcs, replicaInfos, minAvailableBreachedPCSReplicaIndices)
 }
 
-// orchestrate reconciles the active PodCliqueSet rolling update.
-func (o *rollingUpdateOrchestrator) orchestrate(ctx context.Context, originalPCS *grovecorev1beta1.PodCliqueSet, replacementSourcesToCancel []int) (bool, error) {
-	logger := logr.FromContextOrDiscard(ctx)
-	currentlyUpdating := o.pcs.Status.UpdateProgress.CurrentlyUpdating
-	// Cancel replacements whose target PCS scale-in reclaimed, before reconciling or selecting updates, so the
-	// rest of this reconciliation sees the canceled state. The recreation planner excludes canceled replacements
-	// from budget and re-selection, so a canceled entry simply drains through cleanup.
-	cancelReplacements(currentlyUpdating, replacementSourcesToCancel)
-	reconcileResult, err := o.updateHooks.reconcileCurrentlyUpdatingReplicas(currentlyUpdating)
+// advancePCSUpdateProgress advances the PCS update on the caller's working copy.
+//   - The strategy hooks must reference the same working copy.
+//   - Progress is not persisted and no requeue decision is made.
+//   - The caller must discard the working copy on error.
+func advancePCSUpdateProgress(pcs *grovecorev1beta1.PodCliqueSet, updateHooks updateStrategyHooks, reconcileTime metav1.Time) error {
+	currentlyUpdating := pcs.Status.UpdateProgress.CurrentlyUpdating
+	reconcileResult, err := updateHooks.reconcileCurrentlyUpdatingReplicas(currentlyUpdating)
 	if err != nil {
-		return false, err
+		return err
 	}
-	currentlyUpdating = removePCSReplicaUpdates(currentlyUpdating, reconcileResult.pcsReplicaUpdateIndicesToRemove)
-	markPCSReplicaUpdatesCompleted(currentlyUpdating, reconcileResult.completedPCSReplicaIndices)
-	o.pcs.Status.UpdateProgress.CurrentlyUpdating = currentlyUpdating
+	currentlyUpdating = removeObsoletePCSReplicaUpdateEntries(currentlyUpdating, reconcileResult.pcsReplicaUpdateIndicesToRemove)
+	markPCSReplicaUpdatesCompleted(currentlyUpdating, reconcileResult.completedPCSReplicaIndices, reconcileTime)
+	pcs.Status.UpdateProgress.CurrentlyUpdating = currentlyUpdating
 
-	updateComplete := o.updateHooks.isUpdateComplete()
-	var selectedPCSReplicas []pcsReplicaUpdateSelection
-	if updateComplete {
-		logger.Info("Rolling update has completed")
-		o.pcs.Status.UpdateProgress.UpdateEndedAt = new(metav1.Now())
-		o.pcs.Status.UpdateProgress.CurrentlyUpdating = nil
-		// Advance the applied scheduling configuration hash to the persisted target. For a configured-strategy
-		// update the target equals the applied hash, so this is a no-op; for a replica recreation it records the
-		// scheduling configuration the completed replicas now realize.
-		o.pcs.Status.AppliedSchedulingConfigurationHash = new(o.pcs.Status.UpdateProgress.TargetSchedulingConfigurationHash)
-	} else {
-		selectedPCSReplicas = o.updateHooks.selectReplicasToUpdate()
-		currentlyUpdating = mergeReplicaUpdateSelections(currentlyUpdating, selectedPCSReplicas)
-		o.pcs.Status.UpdateProgress.CurrentlyUpdating = currentlyUpdating
+	if updateHooks.isUpdateComplete() {
+		pcs.Status.UpdateProgress.UpdateEndedAt = &reconcileTime
+		pcs.Status.UpdateProgress.CurrentlyUpdating = nil
+		pcs.Status.AppliedSchedulingConfigurationHash = new(pcs.Status.UpdateProgress.TargetSchedulingConfigurationHash)
+		return nil
 	}
-
-	if !apiequality.Semantic.DeepEqual(originalPCS.Status.UpdateProgress, o.pcs.Status.UpdateProgress) {
-		if err = o.persistUpdateProgress(ctx, originalPCS); err != nil {
-			return false, err
-		}
-	}
-	if updateComplete {
-		return false, nil
-	}
-	// A newly selected replica must become visible through the informer cache before component state is derived
-	// from its persisted update progress. Short-circuit this reconcile by returning a RequeueAfter error; the
-	// next reconcile rebuilds component state from the cache-synced selection.
-	if len(selectedPCSReplicas) > 0 {
-		return true, groveerr.NewRequeueAfter(
-			component.OperationSync,
-			"waiting for the PodCliqueSet replica update selection to become visible in the informer cache",
-			constants.InformerCacheSyncRetryInterval,
-		)
-	}
-	// The update is in progress with no new selection this reconcile. The caller builds component state and then
-	// requeues to continue the update.
-	return true, nil
+	selectedPCSReplicas := updateHooks.selectReplicasToUpdate()
+	pcs.Status.UpdateProgress.CurrentlyUpdating = mergeReplicaUpdateSelections(currentlyUpdating, selectedPCSReplicas, reconcileTime)
+	return nil
 }
 
-// removePCSReplicaUpdates removes progress entries whose work and cleanup have finished.
-func removePCSReplicaUpdates(currentlyUpdating []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress, pcsReplicaIndicesToRemove []int) []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress {
+// removeObsoletePCSReplicaUpdateEntries removes entries that no longer participate without marking them successful.
+func removeObsoletePCSReplicaUpdateEntries(currentlyUpdating []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress, pcsReplicaIndicesToRemove []int) []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress {
 	if len(pcsReplicaIndicesToRemove) == 0 {
 		return currentlyUpdating
 	}
@@ -182,12 +125,11 @@ const cancelReplacementMessage = "replacement canceled because its target was se
 // cancelReplacements stamps CanceledAt and a cancellation message on the active replacements whose source
 // replica index is in sourceReplicaIndicesToCancel. An entry without a replacement, an already-canceled entry,
 // or an absent source index is left unchanged, so the operation is idempotent.
-func cancelReplacements(currentlyUpdating []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress, sourceReplicaIndicesToCancel []int) {
+func cancelReplacements(currentlyUpdating []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress, sourceReplicaIndicesToCancel []int, reconcileTime metav1.Time) {
 	if len(sourceReplicaIndicesToCancel) == 0 {
 		return
 	}
 	sourcesToCancel := sets.New(sourceReplicaIndicesToCancel...)
-	canceledAt := metav1.Now()
 	message := cancelReplacementMessage
 	for i := range currentlyUpdating {
 		replicaProgress := &currentlyUpdating[i]
@@ -195,30 +137,29 @@ func cancelReplacements(currentlyUpdating []grovecorev1beta1.PodCliqueSetReplica
 			continue
 		}
 		if sourcesToCancel.Has(int(replicaProgress.ReplicaIndex)) {
-			replicaProgress.Replacement.CanceledAt = &canceledAt
+			replicaProgress.Replacement.CanceledAt = &reconcileTime
 			replicaProgress.Replacement.CancellationMessage = &message
 		}
 	}
 }
 
 // markPCSReplicaUpdatesCompleted stamps UpdateEndedAt on completed PCS replica updates.
-func markPCSReplicaUpdatesCompleted(currentlyUpdating []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress, completedPCSReplicaIndices []int) {
+func markPCSReplicaUpdatesCompleted(currentlyUpdating []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress, completedPCSReplicaIndices []int, reconcileTime metav1.Time) {
 	if len(completedPCSReplicaIndices) == 0 {
 		return
 	}
 
 	completedIndices := sets.New(completedPCSReplicaIndices...)
-	updateEndedAt := metav1.Now()
 	for i := range currentlyUpdating {
 		replicaProgress := &currentlyUpdating[i]
 		if replicaProgress.UpdateEndedAt == nil && completedIndices.Has(int(replicaProgress.ReplicaIndex)) {
-			replicaProgress.UpdateEndedAt = &updateEndedAt
+			replicaProgress.UpdateEndedAt = &reconcileTime
 		}
 	}
 }
 
 // mergeReplicaUpdateSelections merges newly selected PCS replicas into the keyed CurrentlyUpdating list.
-func mergeReplicaUpdateSelections(currentlyUpdating []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress, selections []pcsReplicaUpdateSelection) []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress {
+func mergeReplicaUpdateSelections(currentlyUpdating []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress, selections []pcsReplicaUpdateSelection, reconcileTime metav1.Time) []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress {
 	// A completed child-resource update (rolling-recreate or coherent) keeps the same PCS replica index, so its progress no longer
 	// carries information needed by later selections. Completed replacement mappings are retained
 	// because their source and target PCS replica indices may differ.
@@ -226,7 +167,6 @@ func mergeReplicaUpdateSelections(currentlyUpdating []grovecorev1beta1.PodClique
 		return progress.UpdateEndedAt != nil && progress.Replacement == nil
 	})
 
-	updateStartedAt := metav1.Now()
 	for _, selection := range selections {
 		// Preserve progress already recorded for this replica. When a scheduling-configuration
 		// change supersedes an active update, the existing entry has no Replacement yet. Attach
@@ -247,7 +187,7 @@ func mergeReplicaUpdateSelections(currentlyUpdating []grovecorev1beta1.PodClique
 		// present only for PCS replica recreation. Child-resource updates leave Replacement nil.
 		progress := grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{
 			ReplicaIndex:    int32(selection.replicaIndex),
-			UpdateStartedAt: updateStartedAt,
+			UpdateStartedAt: reconcileTime,
 		}
 		if selection.targetReplicaIndex != nil {
 			progress.Replacement = &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{
@@ -278,26 +218,6 @@ func activePCSReplicaUpdateIndices(updateProgress *grovecorev1beta1.PodCliqueSet
 	}
 	slices.Sort(pcsReplicaIndices)
 	return pcsReplicaIndices
-}
-
-// persistUpdateProgress persists the working update progress and updates the original PCS after success.
-func (o *rollingUpdateOrchestrator) persistUpdateProgress(ctx context.Context, originalPCS *grovecorev1beta1.PodCliqueSet) error {
-	o.currentlyUpdatingExpectations.Record(o.pcs.ObjectMeta, o.pcs.Status.UpdateProgress.CurrentlyUpdating)
-
-	patch := client.MergeFromWithOptions(originalPCS, client.MergeFromWithOptimisticLock{})
-	if err := o.statusWriter.Patch(ctx, o.pcs, patch); err != nil {
-		o.currentlyUpdatingExpectations.Forget(o.pcs.ObjectMeta)
-		return groveerr.WrapError(
-			err,
-			errCodeUpdatePCSStatus,
-			component.OperationSync,
-			"could not patch update progress",
-		)
-	}
-
-	originalPCS.ResourceVersion = o.pcs.ResourceVersion
-	originalPCS.Status = *o.pcs.Status.DeepCopy()
-	return nil
 }
 
 // extractReplicaIndices returns the PCS replica indices represented by replicaInfos in the same order.

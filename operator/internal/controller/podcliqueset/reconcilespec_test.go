@@ -1047,11 +1047,10 @@ func TestGetKindSyncGroups(t *testing.T) {
 	assert.ElementsMatch(t, expectedKinds, actualKinds)
 }
 
-// TestSchedulingChangeAtZeroReplicasConsumesInitializationBeforeCompletion exercises the real replica
-// orchestrator and PodClique component. Initialization must stop before zero-replica completion can advance
-// the applied hash. Stale cache reads preserve the expectation, and scale-out is allowed whether its event
-// arrives before initialization is acknowledged or after the zero-replica update completes.
-func TestSchedulingChangeAtZeroReplicasConsumesInitializationBeforeCompletion(t *testing.T) {
+// TestSchedulingChangeAtZeroReplicasAcknowledgesCombinedProgressBeforeScaleOut exercises the real replica
+// and PodClique components. Generation and immediate completion are persisted together, so stale cache reads
+// must not consume an expectation for an intermediate applied hash or block later scale-out.
+func TestSchedulingChangeAtZeroReplicasAcknowledgesCombinedProgressBeforeScaleOut(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name                         string
@@ -1111,12 +1110,12 @@ func TestSchedulingChangeAtZeroReplicasConsumesInitializationBeforeCompletion(t 
 			initializedPCS := &grovecorev1beta1.PodCliqueSet{}
 			require.NoError(t, fakeClient.Get(t.Context(), client.ObjectKeyFromObject(pcs), initializedPCS))
 			require.Equal(t, targetGenerationHash, *initializedPCS.Status.CurrentGenerationHash)
-			require.Equal(t, appliedSchedulingHash, *initializedPCS.Status.AppliedSchedulingConfigurationHash)
+			require.Equal(t, targetSchedulingHash, *initializedPCS.Status.AppliedSchedulingConfigurationHash)
 			require.NotNil(t, initializedPCS.Status.UpdateProgress)
 			require.True(t, initializedPCS.Status.UpdateProgress.RequiresReplicaRecreation)
 			require.Equal(t, targetSchedulingHash, initializedPCS.Status.UpdateProgress.TargetSchedulingConfigurationHash)
-			require.Nil(t, initializedPCS.Status.UpdateProgress.UpdateEndedAt, "initialization must not reach the zero-replica completion path")
-			require.False(t, reconciler.pcsGenerationStatusExpectations.ClearIfSatisfied(pcs.ObjectMeta, new(targetGenerationHash), new(targetSchedulingHash)), "initialization must still expect the applied scheduling baseline")
+			require.NotNil(t, initializedPCS.Status.UpdateProgress.UpdateEndedAt, "generation and zero-replica completion must share one transaction")
+			require.False(t, reconciler.pcsGenerationStatusExpectations.ClearIfSatisfied(pcs.ObjectMeta, new(targetGenerationHash), new(appliedSchedulingHash)), "partial progress must not satisfy the combined expectation")
 			require.False(t, reconciler.pcsGenerationStatusExpectations.ClearIfSatisfied(stalePCS.ObjectMeta, stalePCS.Status.CurrentGenerationHash, stalePCS.Status.AppliedSchedulingConfigurationHash), "initialization must expect the new generation hash")
 
 			if tc.scaleOutBeforeAcknowledgment {
@@ -1139,7 +1138,7 @@ func TestSchedulingChangeAtZeroReplicasConsumesInitializationBeforeCompletion(t 
 			require.False(t, ctrlcommon.ShortCircuitReconcileFlow(reconciler.ensureGenerationStatusExpectationSatisfied(acknowledgedPCS)))
 			completionResult := reconciler.reconcileSpec(t.Context(), logr.Discard(), acknowledgedPCS, &pcssync.State{})
 			require.Empty(t, completionResult.GetErrors())
-			require.True(t, reconciler.pcsGenerationStatusExpectations.ClearIfSatisfied(pcs.ObjectMeta, nil, nil), "the initialization expectation must be consumed before completion")
+			require.True(t, reconciler.pcsGenerationStatusExpectations.ClearIfSatisfied(pcs.ObjectMeta, nil, nil), "the combined progress expectation must be consumed before child execution")
 			completedPCS := &grovecorev1beta1.PodCliqueSet{}
 			require.NoError(t, fakeClient.Get(t.Context(), client.ObjectKeyFromObject(pcs), completedPCS))
 			require.Equal(t, targetSchedulingHash, *completedPCS.Status.AppliedSchedulingConfigurationHash)
@@ -1153,6 +1152,12 @@ func TestSchedulingChangeAtZeroReplicasConsumesInitializationBeforeCompletion(t 
 				scaleResult := reconciler.reconcileSpec(t.Context(), logr.Discard(), completedPCS, &pcssync.State{})
 				require.Empty(t, scaleResult.GetErrors(), "completed scheduling update must not block subsequent scale-out")
 			}
+			// The scale-out selection also crosses its own progress/cache barrier before child creation.
+			freshPCS := &grovecorev1beta1.PodCliqueSet{}
+			require.NoError(t, fakeClient.Get(t.Context(), client.ObjectKeyFromObject(pcs), freshPCS))
+			require.False(t, ctrlcommon.ShortCircuitReconcileFlow(reconciler.ensureGenerationStatusExpectationSatisfied(freshPCS)))
+			scaleResult := reconciler.reconcileSpec(t.Context(), logr.Discard(), freshPCS, &pcssync.State{})
+			require.Empty(t, scaleResult.GetErrors())
 			var pclq grovecorev1beta1.PodClique
 			pclqKey := client.ObjectKey{Namespace: testNamespace, Name: apicommon.GeneratePodCliqueName(
 				apicommon.ResourceNameReplica{Name: testPCSName, Replica: 0}, "worker",
@@ -1203,7 +1208,7 @@ func TestScaleInBeforeFirstCompletedReconcilePreservesRetainedTarget(t *testing.
 		reconcileStatusRecorder: ctrlcommon.NewReconcileErrorRecorder(fakeClient),
 	}
 	registry.Register(component.KindPodCliqueSetReplica, pcsreplicacomponent.New(fakeClient, eventRecorder, scalingExpectations, selectionExpectations, &reconciler.pcsGenerationStatusExpectations))
-	for pass := range 3 {
+	for pass := range 4 {
 		freshPCS := &grovecorev1beta1.PodCliqueSet{}
 		require.NoError(t, fakeClient.Get(t.Context(), client.ObjectKeyFromObject(pcs), freshPCS))
 		state := &pcssync.State{}
@@ -1212,23 +1217,34 @@ func TestScaleInBeforeFirstCompletedReconcilePreservesRetainedTarget(t *testing.
 
 		require.Empty(t, result.GetErrors(), "reconciliation pass %d", pass)
 		require.True(t, result.NeedsRequeue(), "the unavailable target must keep the update active")
-		require.Equal(t, []int{1}, state.ExpectedReplicaIndices, "scale-in must not recreate bootstrap index 0 on pass %d", pass)
+		if pass == 0 {
+			require.Equal(t, &pcssync.State{}, state, "new scaling progress must stop before child execution")
+		} else {
+			require.Equal(t, []int{1}, state.ExpectedReplicaIndices, "scale-in must not recreate bootstrap index 0 on pass %d", pass)
+		}
 		storedPCS := &grovecorev1beta1.PodCliqueSet{}
 		require.NoError(t, fakeClient.Get(t.Context(), client.ObjectKeyFromObject(pcs), storedPCS))
 		require.Nil(t, storedPCS.Status.ObservedGeneration)
 		require.Nil(t, storedPCS.Status.UpdateProgress.UpdateEndedAt)
 		require.Len(t, storedPCS.Status.UpdateProgress.CurrentlyUpdating, 1)
 		require.Nil(t, storedPCS.Status.UpdateProgress.CurrentlyUpdating[0].Replacement.CanceledAt, "scale-in must retain active target 1")
-		if pass == 0 {
+		if pass == 1 {
 			require.Equal(t, []int{0}, state.ScaleInReplicaIndices)
+		}
+		if pass <= 1 {
 			require.NotNil(t, storedPCS.Status.ScalingProgress)
 			require.Equal(t, []int32{0}, storedPCS.Status.ScalingProgress.ScaleInReplicaIndices)
 		}
-		if pass > 0 {
-			require.Nil(t, storedPCS.Status.ScalingProgress, "participant-confirmed cleanup must remove the ordinary selection")
+		if pass > 1 {
+			require.Nil(t, storedPCS.Status.ScalingProgress, "participant-confirmed cleanup must remove the scaling selection")
 		}
 		var missing grovecorev1beta1.PodClique
-		require.True(t, apierrors.IsNotFound(fakeClient.Get(t.Context(), client.ObjectKeyFromObject(oldPCLQ), &missing)), "replica 0 must remain deleted")
+		lookupErr := fakeClient.Get(t.Context(), client.ObjectKeyFromObject(oldPCLQ), &missing)
+		if pass == 0 {
+			require.NoError(t, lookupErr, "replica 0 must survive the progress barrier")
+		} else {
+			require.True(t, apierrors.IsNotFound(lookupErr), "replica 0 must remain deleted")
+		}
 		var retained grovecorev1beta1.PodClique
 		require.NoError(t, fakeClient.Get(t.Context(), client.ObjectKeyFromObject(targetPCLQ), &retained))
 		require.True(t, metav1.IsControlledBy(&retained, pcs))

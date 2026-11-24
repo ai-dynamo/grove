@@ -16,44 +16,35 @@ package podcliquesetreplica
 
 import (
 	"cmp"
-	"context"
 	"slices"
 
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
-	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
-	pcsexpectations "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/expectations"
-	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 
 	"github.com/go-logr/logr"
 	"github.com/samber/lo"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// syncScalingProgress computes and persists replica-index selections.
-// It returns the pcs replica scaling indices, a boolean indicating that the scaling progress has changed.
-// An error returned if the patch of scaling progress failed.
-func (r *_resource) syncScalingProgress(
-	ctx context.Context,
-	logger logr.Logger,
+// preparePCSReplicaScaling updates owned scaling progress and cancels replacements reclaimed by scale-in.
+// Cancellation precedes update planning so targets no longer consume capacity or replacement budget.
+func preparePCSReplicaScaling(
 	pcs *grovecorev1beta1.PodCliqueSet,
-	pcsReplicaInfosByIndex pcsReplicaInfoByIndex) (pcsReplicaScalingWork, bool, error) {
+	pcsReplicaInfosByIndex pcsReplicaInfoByIndex,
+	reconcileTime metav1.Time,
+) pcsReplicaScalingIndices {
 	scalingIndices := replicaScalingIndicesFromProgress(pcs.Status.ScalingProgress)
 	replacementGroups := groupPCSReplicaReplacements(pcs.Status.UpdateProgress)
 	scalingWork := computePCSReplicaScalingWork(pcs, pcsReplicaInfosByIndex, scalingIndices, replacementGroups)
-	computedProgress := scalingProgressFromScalingIndices(scalingWork.scalingIndices)
-	scalingProgressChanged := !pcsexpectations.ScalingProgressEqual(pcs.Status.ScalingProgress, computedProgress)
-	if scalingProgressChanged {
-		if err := r.patchScalingProgress(ctx, pcs, computedProgress); err != nil {
-			return pcsReplicaScalingWork{}, false, err
-		}
-		r.recordNewScalingSelectionEvents(logger, pcs, scalingIndices, scalingWork.scalingIndices)
+	pcs.Status.ScalingProgress = scalingProgressFromScalingIndices(scalingWork.scalingIndices)
+	if len(scalingWork.replacementSourcesToCancel) > 0 {
+		cancelReplacements(pcs.Status.UpdateProgress.CurrentlyUpdating, scalingWork.replacementSourcesToCancel, reconcileTime)
 	}
-	return scalingWork, scalingProgressChanged, nil
+	return scalingWork.scalingIndices
 }
 
 // recordNewScalingSelectionEvents records newly selected scale-in indices and newly reserved scale-out indices.
@@ -107,32 +98,6 @@ func scalingProgressFromScalingIndices(scalingIndices pcsReplicaScalingIndices) 
 	return progress
 }
 
-// patchScalingProgress persists scaling progress and records the value that must be observed through the informer cache.
-func (r *_resource) patchScalingProgress(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet, progress *grovecorev1beta1.PodCliqueSetScalingProgress) error {
-	r.scalingProgressExpectations.Record(pcs.ObjectMeta, progress)
-
-	patchedPCS := pcs.DeepCopy()
-	patchedPCS.Status.ScalingProgress = progress
-	patch := client.MergeFromWithOptions(pcs, client.MergeFromWithOptimisticLock{})
-	if err := r.client.Status().Patch(ctx, patchedPCS, patch); err != nil {
-		r.scalingProgressExpectations.Forget(pcs.ObjectMeta)
-		return groveerr.WrapError(
-			err,
-			errCodeUpdatePCSStatus,
-			component.OperationSync,
-			"failed to patch PodCliqueSet scaling progress",
-		)
-	}
-
-	pcs.ResourceVersion = patchedPCS.ResourceVersion
-	if progress == nil {
-		pcs.Status.ScalingProgress = nil
-	} else {
-		pcs.Status.ScalingProgress = progress.DeepCopy()
-	}
-	return nil
-}
-
 // pcsReplicaScalingIndices contains sorted, unique replica indices committed to scale-out and scale-in.
 // The scale-out and scale-in slices must remain disjoint.
 type pcsReplicaScalingIndices struct {
@@ -161,7 +126,7 @@ func replicaScalingIndicesFromProgress(progress *grovecorev1beta1.PodCliqueSetSc
 // pcsReplicaScalingWork is the scaling decision for a reconcile. The scale-in/out indices are persisted to
 // ScalingProgress. replacementSourcesToCancel names the source replica indices of active replacements whose
 // targets scale-in selected for reclamation. Those targets are deliberately excluded from scaleIn and are
-// reclaimed by the rolling-update orchestrator through cancellation, never by scaling.
+// reclaimed through replacement cancellation, never through ScaleInReplicaIndices.
 type pcsReplicaScalingWork struct {
 	scalingIndices             pcsReplicaScalingIndices
 	replacementSourcesToCancel []int
@@ -201,7 +166,7 @@ func computePCSReplicaScalingWork(
 		for _, replicaIndex := range selectedReplicaIndices {
 			if sourceReplicaIndex, isActiveTarget := activeTargetToSource[replicaIndex]; isActiveTarget {
 				// Reclaim this unit by canceling the replacement. Scaling persists nothing for it: the
-				// orchestrator stamps CanceledAt and the canceled replacement drains through the state overlay.
+				// scaling preparation stamps CanceledAt and the canceled replacement drains through the state overlay.
 				replacementSourcesToCancel = append(replacementSourcesToCancel, sourceReplicaIndex)
 				continue
 			}

@@ -15,6 +15,7 @@
 package podcliquesetreplica
 
 import (
+	"errors"
 	"testing"
 
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
@@ -25,6 +26,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -120,4 +123,71 @@ func TestPatchPCSScalingAndUpdateProgressPublishesPersistedStatus(t *testing.T) 
 	assert.True(t, r.scalingProgressExpectations.ClearIfSatisfied(pcs.ObjectMeta, stored.Status.ScalingProgress))
 	assert.False(t, r.currentlyUpdatingExpectations.ClearIfSatisfied(pcs.ObjectMeta, nil))
 	assert.True(t, r.currentlyUpdatingExpectations.ClearIfSatisfied(pcs.ObjectMeta, stored.Status.UpdateProgress.CurrentlyUpdating))
+}
+
+func TestPatchPCSScalingAndUpdateProgressScalingOnly(t *testing.T) {
+	pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "default", types.UID("test-uid")).Build()
+	progress := &grovecorev1beta1.PodCliqueSetScalingProgress{ScaleOutReplicaIndices: []int32{1}}
+	clientBuilder := testutils.NewTestClientBuilder().
+		WithObjects(pcs).
+		WithStatusSubresource(pcs)
+	fakeClient := clientBuilder.Build()
+	expectations := &pcsexpectations.ScalingProgress{}
+	r := &_resource{client: fakeClient, scalingProgressExpectations: expectations}
+
+	workingPCS := pcs.DeepCopy()
+	workingPCS.Status.ScalingProgress = progress
+	_, err := r.patchPCSScalingAndUpdateProgress(t.Context(), pcs, workingPCS)
+
+	require.NoError(t, err)
+	assert.Equal(t, progress, pcs.Status.ScalingProgress)
+	assert.True(t, expectations.ClearIfSatisfied(pcs.ObjectMeta, progress))
+
+	persistedPCS := &grovecorev1beta1.PodCliqueSet{}
+	require.NoError(t, fakeClient.Get(t.Context(), client.ObjectKeyFromObject(pcs), persistedPCS))
+	assert.Equal(t, progress, persistedPCS.Status.ScalingProgress)
+}
+
+func TestPatchPCSScalingAndUpdateProgressClearsScaling(t *testing.T) {
+	pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "default", types.UID("test-uid")).Build()
+	pcs.Status.ScalingProgress = &grovecorev1beta1.PodCliqueSetScalingProgress{ScaleInReplicaIndices: []int32{1}}
+	fakeClient := testutils.NewTestClientBuilder().
+		WithObjects(pcs).
+		WithStatusSubresource(pcs).
+		Build()
+	expectations := &pcsexpectations.ScalingProgress{}
+	r := &_resource{client: fakeClient, scalingProgressExpectations: expectations}
+
+	workingPCS := pcs.DeepCopy()
+	workingPCS.Status.ScalingProgress = nil
+	_, err := r.patchPCSScalingAndUpdateProgress(t.Context(), pcs, workingPCS)
+
+	require.NoError(t, err)
+	assert.Nil(t, pcs.Status.ScalingProgress)
+	assert.True(t, expectations.ClearIfSatisfied(pcs.ObjectMeta, nil))
+}
+
+func TestPatchPCSScalingAndUpdateProgressFailureWithoutPriorExpectations(t *testing.T) {
+	pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "default", types.UID("test-uid")).Build()
+	conflict := apierrors.NewConflict(
+		schema.GroupResource{Group: "grove.io", Resource: "podcliquesets"},
+		pcs.Name,
+		errors.New("stale resource version"),
+	)
+	fakeClient := testutils.NewTestClientBuilder().
+		WithObjects(pcs).
+		WithStatusSubresource(pcs).
+		RecordErrorForObjects(testutils.ClientMethodStatusPatch, conflict, client.ObjectKeyFromObject(pcs)).
+		Build()
+	expectations := &pcsexpectations.ScalingProgress{}
+	r := &_resource{client: fakeClient, scalingProgressExpectations: expectations}
+	progress := &grovecorev1beta1.PodCliqueSetScalingProgress{ScaleOutReplicaIndices: []int32{1}}
+
+	workingPCS := pcs.DeepCopy()
+	workingPCS.Status.ScalingProgress = progress
+	_, err := r.patchPCSScalingAndUpdateProgress(t.Context(), pcs, workingPCS)
+
+	require.Error(t, err)
+	assert.Nil(t, pcs.Status.ScalingProgress)
+	assert.True(t, expectations.ClearIfSatisfied(pcs.ObjectMeta, nil))
 }

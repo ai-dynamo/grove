@@ -93,14 +93,13 @@ func computeInitialPCSReplicaProvisioningIndices(
 	return utils.GetAvailableIndices(reservedIndices, numReplicasToCreate)
 }
 
-// expectedReplicaIndicesFromScaling returns the expected PCS replica indices implied by the scaling decision
-// alone: observed indices plus scale-out, minus scale-in. Replacement overlay is applied later when the full
-// component state is built.
-func expectedReplicaIndicesFromScaling(existingReplicaIndices sets.Set[int], scalingIndices pcsReplicaScalingIndices) sets.Set[int] {
-	expectedReplicaIndices := existingReplicaIndices.Clone()
-	expectedReplicaIndices.Insert(scalingIndices.scaleOut...)
-	expectedReplicaIndices.Delete(scalingIndices.scaleIn...)
-	return expectedReplicaIndices
+// computePCSReplicaIndicesAfterScaling returns observed indices plus scale-out, minus scale-in.
+// Replacement ownership is applied later when component state is built.
+func computePCSReplicaIndicesAfterScaling(existingReplicaIndices sets.Set[int], scalingIndices pcsReplicaScalingIndices) sets.Set[int] {
+	pcsReplicaIndicesAfterScaling := existingReplicaIndices.Clone()
+	pcsReplicaIndicesAfterScaling.Insert(scalingIndices.scaleOut...)
+	pcsReplicaIndicesAfterScaling.Delete(scalingIndices.scaleIn...)
+	return pcsReplicaIndicesAfterScaling
 }
 
 // overlayActiveReplacement projects an active PodCliqueSet replica replacement onto the reconcile-local index sets.

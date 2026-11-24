@@ -55,12 +55,15 @@ func (infos pcsReplicaInfoByIndex) computeCommittedReplicaIndices(scalingIndices
 	committedPCSReplicaIndices.Delete(scalingIndices.scaleIn...)
 	for _, replacement := range replacementGroups.active {
 		committedPCSReplicaIndices.Delete(replacement.sourcePCSReplicaIndex)
-		committedPCSReplicaIndices.Insert(replacement.targetPCSReplicaIndex)
 		committedPCSReplicaIndices.Delete(replacement.retiredSourcePCSReplicaIndices...)
 	}
 	for _, replacement := range replacementGroups.canceled {
 		committedPCSReplicaIndices.Delete(replacement.sourcePCSReplicaIndex, replacement.targetPCSReplicaIndex)
 		committedPCSReplicaIndices.Delete(replacement.retiredSourcePCSReplicaIndices...)
+	}
+	// Active targets commit capacity even when a cleanup or source exclusion shares their index.
+	for _, replacement := range replacementGroups.active {
+		committedPCSReplicaIndices.Insert(replacement.targetPCSReplicaIndex)
 	}
 	return committedPCSReplicaIndices
 }

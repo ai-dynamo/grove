@@ -15,6 +15,7 @@
 package podcliquesetreplica
 
 import (
+	"slices"
 	"testing"
 	"time"
 
@@ -24,6 +25,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/sets"
 )
 
 // TestPCSReplicaInfoRecordedUpdateCompletion checks that recorded completion survives child loss and
@@ -188,4 +190,160 @@ func TestHasMaterializedPCSGeneration(t *testing.T) {
 			assert.False(t, info.hasConvergedToPCSGeneration(pcs, tc.hash), "materialization cannot imply completion")
 		})
 	}
+}
+
+// TestComputeCommittedReplicaIndices covers replica-count accounting for observed resources, pending scaling,
+// and replacement commitments. Active targets count, while scale-in, canceled replacements, and retired-source
+// cleanup do not.
+func TestComputeCommittedReplicaIndices(t *testing.T) {
+	tests := []struct {
+		name              string
+		replicaInfos      pcsReplicaInfoByIndex
+		scalingIndices    pcsReplicaScalingIndices
+		replacementGroups pcsReplicaReplacementGroups
+		want              sets.Set[int]
+	}{
+		{
+			name:           "scaling commitments without replacements",
+			replicaInfos:   replicaInfoByIndexForIndexTests(),
+			scalingIndices: pcsReplicaScalingIndices{scaleOut: []int{2}, scaleIn: []int{1}},
+			want:           sets.New(0, 2, 4),
+		},
+		{
+			name:         "different-index active replacement exchanges source for target",
+			replicaInfos: pcsReplicaInfoByIndex{0: {}, 1: {}, 3: {}},
+			replacementGroups: pcsReplicaReplacementGroups{active: []pcsReplicaReplacement{
+				{sourcePCSReplicaIndex: 3, targetPCSReplicaIndex: 2},
+			}},
+			want: sets.New(0, 1, 2),
+		},
+		{
+			name:         "same-index active replacement remains projected",
+			replicaInfos: pcsReplicaInfoByIndex{0: {}, 1: {}},
+			replacementGroups: pcsReplicaReplacementGroups{active: []pcsReplicaReplacement{
+				{sourcePCSReplicaIndex: 1, targetPCSReplicaIndex: 1},
+			}},
+			want: sets.New(0, 1),
+		},
+		{
+			name:         "multiple active replacements are applied as a set",
+			replicaInfos: pcsReplicaInfoByIndex{2: {}, 3: {}},
+			replacementGroups: pcsReplicaReplacementGroups{active: []pcsReplicaReplacement{
+				{sourcePCSReplicaIndex: 2, targetPCSReplicaIndex: 0},
+				{sourcePCSReplicaIndex: 3, targetPCSReplicaIndex: 1},
+			}},
+			want: sets.New(0, 1),
+		},
+		{
+			name:         "canceled replacement removes source and target",
+			replicaInfos: pcsReplicaInfoByIndex{0: {}, 1: {}, 3: {}},
+			replacementGroups: pcsReplicaReplacementGroups{canceled: []pcsReplicaReplacement{
+				{sourcePCSReplicaIndex: 3, targetPCSReplicaIndex: 2},
+			}},
+			want: sets.New(0, 1),
+		},
+		{
+			name:           "overlapping commitments are idempotent",
+			replicaInfos:   pcsReplicaInfoByIndex{0: {}, 1: {}, 3: {}},
+			scalingIndices: pcsReplicaScalingIndices{scaleOut: []int{2}, scaleIn: []int{3}},
+			replacementGroups: pcsReplicaReplacementGroups{
+				active:   []pcsReplicaReplacement{{sourcePCSReplicaIndex: 3, targetPCSReplicaIndex: 2}},
+				canceled: []pcsReplicaReplacement{{sourcePCSReplicaIndex: 4, targetPCSReplicaIndex: 1}},
+			},
+			want: sets.New(0, 2),
+		},
+		{
+			name:           "same scaling index added and removed is absent",
+			replicaInfos:   pcsReplicaInfoByIndex{},
+			scalingIndices: pcsReplicaScalingIndices{scaleOut: []int{3}, scaleIn: []int{3}},
+			want:           sets.New[int](),
+		},
+		{
+			name:         "active retired sources with observed resources do not commit capacity",
+			replicaInfos: pcsReplicaInfoByIndex{0: {}, 1: {}, 2: {}, 4: {}},
+			replacementGroups: pcsReplicaReplacementGroups{active: []pcsReplicaReplacement{{
+				sourcePCSReplicaIndex: 1, targetPCSReplicaIndex: 1, retiredSourcePCSReplicaIndices: []int{2, 4},
+			}}},
+			want: sets.New(0, 1),
+		},
+		{
+			name:           "active retired sources cannot contribute through pending scale-out",
+			replicaInfos:   pcsReplicaInfoByIndex{0: {}},
+			scalingIndices: pcsReplicaScalingIndices{scaleOut: []int{2}},
+			replacementGroups: pcsReplicaReplacementGroups{active: []pcsReplicaReplacement{{
+				sourcePCSReplicaIndex: 1, targetPCSReplicaIndex: 1, retiredSourcePCSReplicaIndices: []int{2},
+			}}},
+			want: sets.New(0, 1),
+		},
+		{
+			name:         "canceled retired sources with observed resources do not commit capacity",
+			replicaInfos: pcsReplicaInfoByIndex{0: {}, 1: {}, 2: {}, 4: {}},
+			replacementGroups: pcsReplicaReplacementGroups{canceled: []pcsReplicaReplacement{{
+				sourcePCSReplicaIndex: 1, targetPCSReplicaIndex: 1, retiredSourcePCSReplicaIndices: []int{2, 4},
+			}}},
+			want: sets.New(0),
+		},
+		{
+			name:           "canceled retired sources cannot contribute through pending scale-out",
+			replicaInfos:   pcsReplicaInfoByIndex{0: {}},
+			scalingIndices: pcsReplicaScalingIndices{scaleOut: []int{2}},
+			replacementGroups: pcsReplicaReplacementGroups{canceled: []pcsReplicaReplacement{{
+				sourcePCSReplicaIndex: 1, targetPCSReplicaIndex: 1, retiredSourcePCSReplicaIndices: []int{2},
+			}}},
+			want: sets.New(0),
+		},
+		{
+			name:         "retired index zero is excluded without removing the active target",
+			replicaInfos: pcsReplicaInfoByIndex{0: {}, 1: {}},
+			replacementGroups: pcsReplicaReplacementGroups{active: []pcsReplicaReplacement{{
+				sourcePCSReplicaIndex: 1, targetPCSReplicaIndex: 1, retiredSourcePCSReplicaIndices: []int{0},
+			}}},
+			want: sets.New(1),
+		},
+		{
+			name:         "active and canceled retirement obligations are both excluded",
+			replicaInfos: pcsReplicaInfoByIndex{0: {}, 1: {}, 2: {}, 3: {}, 4: {}, 5: {}, 6: {}},
+			replacementGroups: pcsReplicaReplacementGroups{
+				active: []pcsReplicaReplacement{{
+					sourcePCSReplicaIndex: 1, targetPCSReplicaIndex: 1, retiredSourcePCSReplicaIndices: []int{5, 2},
+				}},
+				canceled: []pcsReplicaReplacement{{
+					sourcePCSReplicaIndex: 3, targetPCSReplicaIndex: 4, retiredSourcePCSReplicaIndices: []int{6},
+				}},
+			},
+			want: sets.New(0, 1),
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			scaleOutBefore := slices.Clone(tc.scalingIndices.scaleOut)
+			scaleInBefore := slices.Clone(tc.scalingIndices.scaleIn)
+			activeBefore := slices.Clone(tc.replacementGroups.active)
+			canceledBefore := slices.Clone(tc.replacementGroups.canceled)
+			for _, replacements := range [][]pcsReplicaReplacement{activeBefore, canceledBefore} {
+				for i := range replacements {
+					replacements[i].retiredSourcePCSReplicaIndices = slices.Clone(replacements[i].retiredSourcePCSReplicaIndices)
+				}
+			}
+
+			got := tc.replicaInfos.computeCommittedReplicaIndices(tc.scalingIndices, tc.replacementGroups)
+
+			assert.Equal(t, tc.want, got)
+			assert.Equal(t, scaleOutBefore, tc.scalingIndices.scaleOut)
+			assert.Equal(t, scaleInBefore, tc.scalingIndices.scaleIn)
+			assert.Equal(t, activeBefore, tc.replacementGroups.active)
+			assert.Equal(t, canceledBefore, tc.replacementGroups.canceled)
+		})
+	}
+}
+
+func TestComputeCommittedReplicaIndicesAddsActiveTargetsAfterExclusions(t *testing.T) {
+	infos := pcsReplicaInfoByIndex{0: {index: 0}, 1: {index: 1}, 2: {index: 2}}
+	groups := pcsReplicaReplacementGroups{
+		active:   []pcsReplicaReplacement{{sourcePCSReplicaIndex: 2, targetPCSReplicaIndex: 1}},
+		canceled: []pcsReplicaReplacement{{sourcePCSReplicaIndex: 0, targetPCSReplicaIndex: 0, retiredSourcePCSReplicaIndices: []int{1}}},
+	}
+	assert.Equal(t, sets.New(1), infos.computeCommittedReplicaIndices(pcsReplicaScalingIndices{scaleIn: []int{1}}, groups))
+	assert.Equal(t, sets.New(0, 1, 2), infos.existingReplicaIndices(), "capacity calculation must not mutate observations")
 }
