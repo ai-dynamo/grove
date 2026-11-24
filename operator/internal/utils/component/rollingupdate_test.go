@@ -68,6 +68,25 @@ func TestCoherentMinAvailableByComponent(t *testing.T) {
 	assert.Equal(t, map[string]int32{"pf": 3}, pcsgMinAvailable)
 }
 
+func TestCoherentUpdateHelpersDefaultUnsetMinAvailable(t *testing.T) {
+	pcs := testutils.NewPodCliqueSetBuilder("pcs", "default", "uid").
+		WithPodCliqueTemplateSpec(&grovecorev1beta1.PodCliqueTemplateSpec{
+			Name: "fe",
+			Spec: grovecorev1beta1.PodCliqueSpec{},
+		}).
+		WithPodCliqueScalingGroupConfig(grovecorev1beta1.PodCliqueScalingGroupConfig{
+			Name:        "workers",
+			CliqueNames: []string{"worker"},
+		}).
+		Build()
+
+	assert.Equal(t, map[string]int32{"fe": DefaultMinAvailable, "workers": DefaultMinAvailable},
+		CoherentMaxUnavailableByComponent(pcs, []string{"fe", "workers"}))
+	standalonePCLQs, pcsgs := CoherentMinAvailableByComponent(pcs, []string{"fe", "workers"})
+	assert.Equal(t, map[string]int32{"fe": DefaultMinAvailable}, standalonePCLQs)
+	assert.Equal(t, map[string]int32{"workers": DefaultMinAvailable}, pcsgs)
+}
+
 func TestEffectiveMaxUnavailable(t *testing.T) {
 	testCases := []struct {
 		description    string
