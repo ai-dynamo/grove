@@ -43,6 +43,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/tools/record"
+	clocktesting "k8s.io/utils/clock/testing"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
@@ -61,13 +62,15 @@ func TestNew(t *testing.T) {
 	scalingExpectations := &pcsexpectations.ScalingProgress{}
 	currentlyUpdatingExpectations := &pcsexpectations.CurrentlyUpdating{}
 	generationExpectations := &pcsexpectations.GenerationHashes{}
-	operator := New(client, eventRecorder, scalingExpectations, currentlyUpdatingExpectations, generationExpectations)
+	clk := clocktesting.NewFakeClock(time.Unix(1000, 0).UTC())
+	operator := New(client, eventRecorder, scalingExpectations, currentlyUpdatingExpectations, generationExpectations, clk)
 
 	assert.NotNil(t, operator)
 	resource, ok := operator.(*_resource)
 	assert.True(t, ok)
 	assert.Equal(t, client, resource.client)
 	assert.Equal(t, eventRecorder, resource.eventRecorder)
+	assert.Same(t, clk, resource.clk)
 	assert.Same(t, generationExpectations, resource.generationHashExpectations)
 	assert.Same(t, scalingExpectations, resource.scalingProgressExpectations)
 	assert.Same(t, currentlyUpdatingExpectations, resource.currentlyUpdatingExpectations)
@@ -79,7 +82,7 @@ func TestGetExistingResourceNames(t *testing.T) {
 	scheme := runtime.NewScheme()
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 
-	r := &_resource{
+	r := &_resource{clk: clocktesting.NewFakeClock(time.Unix(1000, 0).UTC()),
 		client: client,
 	}
 
@@ -117,7 +120,7 @@ func TestSyncPersistsScaleOutFromZeroAndPopulatesState(t *testing.T) {
 		WithObjects(pcs).
 		WithStatusSubresource(pcs).
 		Build()
-	r := &_resource{
+	r := &_resource{clk: clocktesting.NewFakeClock(time.Unix(1000, 0).UTC()),
 		client:                        fakeClient,
 		eventRecorder:                 &record.FakeRecorder{},
 		scalingProgressExpectations:   &pcsexpectations.ScalingProgress{},
@@ -162,7 +165,7 @@ func TestSyncGathersEachReplicaResourceTypeOnceForCoherentUpdate(t *testing.T) {
 		Client:     fakeClient,
 		listCounts: make(map[string]int),
 	}
-	r := &_resource{
+	r := &_resource{clk: clocktesting.NewFakeClock(time.Unix(1000, 0).UTC()),
 		client:                        countingClient,
 		eventRecorder:                 &record.FakeRecorder{},
 		scalingProgressExpectations:   &pcsexpectations.ScalingProgress{},
@@ -245,7 +248,7 @@ func TestSync(t *testing.T) {
 				WithStatusSubresource(tc.pcs).
 				Build()
 
-			r := &_resource{
+			r := &_resource{clk: clocktesting.NewFakeClock(time.Unix(1000, 0).UTC()),
 				generationHashExpectations:    &pcsexpectations.GenerationHashes{},
 				client:                        fakeClient,
 				eventRecorder:                 &record.FakeRecorder{},
@@ -278,7 +281,7 @@ func TestSyncGenerationBaselineStopsBeforeResourceDiscovery(t *testing.T) {
 	fakeClient := testutils.SetupFakeClient(pcs)
 	countingClient := &listCountingClient{Client: fakeClient, listCounts: make(map[string]int)}
 	generationExpectations := &pcsexpectations.GenerationHashes{}
-	r := &_resource{client: countingClient, generationHashExpectations: generationExpectations,
+	r := &_resource{clk: clocktesting.NewFakeClock(time.Unix(1000, 0).UTC()), client: countingClient, generationHashExpectations: generationExpectations,
 		currentlyUpdatingExpectations: &pcsexpectations.CurrentlyUpdating{}, scalingProgressExpectations: &pcsexpectations.ScalingProgress{}}
 	state := &pcssync.State{}
 
@@ -350,7 +353,7 @@ func TestSyncGenerationFailureIsolationAndRetry(t *testing.T) {
 			fakeClient := testutils.NewTestClientBuilder().WithObjects(pcs).WithStatusSubresource(pcs).
 				RecordErrorForObjectsNTimes(testutils.ClientMethodStatusPatch, conflict, 1, client.ObjectKeyFromObject(pcs)).Build()
 			currentlyUpdatingExpectations := &pcsexpectations.CurrentlyUpdating{}
-			reconciler := &_resource{
+			reconciler := &_resource{clk: clocktesting.NewFakeClock(time.Unix(1000, 0).UTC()),
 				client:                        fakeClient,
 				currentlyUpdatingExpectations: currentlyUpdatingExpectations,
 				generationHashExpectations:    &pcsexpectations.GenerationHashes{},
@@ -756,6 +759,66 @@ func TestSyncUpdateAdvanceFailureDiscardsScaling(t *testing.T) {
 	assert.True(t, r.currentlyUpdatingExpectations.ClearIfSatisfied(pcs.ObjectMeta, nil))
 }
 
+func TestSyncUsesClockForGenerationAndCompletion(t *testing.T) {
+	t.Parallel()
+	clk := clocktesting.NewFakeClock(time.Unix(1000, 0).UTC())
+	pcs := lifecycleTestPCS()
+	pcs.Spec.Replicas = 0
+	pcs.Spec.Template.Cliques[0].Spec.MinAvailable = new(int32(2))
+	cl := testutils.SetupFakeClient(pcs)
+	wantTime := metav1.NewTime(clk.Now())
+	listCalls := 0
+	clockAdvancingClient := interceptor.NewClient(cl, interceptor.Funcs{
+		List: func(ctx context.Context, apiClient client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+			if listCalls == 0 {
+				clk.Step(time.Minute)
+			}
+			listCalls++
+			return apiClient.List(ctx, list, opts...)
+		},
+	})
+	operator := New(clockAdvancingClient, record.NewFakeRecorder(10), &pcsexpectations.ScalingProgress{}, &pcsexpectations.CurrentlyUpdating{}, &pcsexpectations.GenerationHashes{}, clk)
+
+	_, err := operator.Sync(t.Context(), logr.Discard(), pcs, &pcssync.State{})
+
+	require.True(t, groveerr.IsRequeueAfter(err), "%v", err)
+	require.NotNil(t, pcs.Status.UpdateProgress)
+	require.Positive(t, listCalls, "resource discovery must advance the clock between planning stages")
+	assert.True(t, wantTime.Equal(&pcs.Status.UpdateProgress.UpdateStartedAt), "generation start must use the injected clock")
+	require.NotNil(t, pcs.Status.UpdateProgress.UpdateEndedAt)
+	assert.True(t, wantTime.Equal(pcs.Status.UpdateProgress.UpdateEndedAt), "completion must use the same captured time")
+	before := pcs.DeepCopy()
+	clk.Step(time.Hour)
+	require.NoError(t, cl.Get(t.Context(), client.ObjectKeyFromObject(pcs), pcs))
+	_, err = operator.Sync(t.Context(), logr.Discard(), pcs, &pcssync.State{})
+	require.NoError(t, err)
+	assert.Equal(t, before.Status, pcs.Status, "later clock advances must not reopen or restamp a completed update")
+	assert.Equal(t, before.ResourceVersion, pcs.ResourceVersion, "completed progress needs no additional write")
+}
+
+func TestSyncUsesClockForGangTerminationDelay(t *testing.T) {
+	t.Parallel()
+	clk := clocktesting.NewFakeClock(time.Unix(1000, 0).UTC())
+	pcs := lifecycleTestPCS()
+	pcs.Spec.Replicas = 1
+	info := rollingUpdateReplicaInfo(pcs, 0, true)
+	pclq := &info.standalonePCLQs[0]
+	pclq.Status.LastScheduled = new(metav1.NewTime(clk.Now().Add(-time.Minute)))
+	pclq.Status.Conditions = []metav1.Condition{{Type: apiconstants.ConditionTypeMinAvailableBreached, Status: metav1.ConditionTrue, LastTransitionTime: metav1.NewTime(clk.Now())}}
+	cl := testutils.SetupFakeClient(pcs, pclq)
+	operator := New(cl, record.NewFakeRecorder(10), &pcsexpectations.ScalingProgress{}, &pcsexpectations.CurrentlyUpdating{}, &pcsexpectations.GenerationHashes{}, clk)
+	for _, elapsed := range []time.Duration{0, time.Minute - time.Second} {
+		clk.Step(elapsed)
+		_, err := operator.Sync(t.Context(), logr.Discard(), pcs, &pcssync.State{})
+		require.True(t, groveerr.IsContinueReconcileAndRequeue(err), "%v", err)
+		require.NoError(t, cl.Get(t.Context(), client.ObjectKeyFromObject(pclq), &grovecorev1beta1.PodClique{}), "the replica must survive until its termination delay expires")
+	}
+	clk.Step(time.Second)
+	_, err := operator.Sync(t.Context(), logr.Discard(), pcs, &pcssync.State{})
+	require.NoError(t, err)
+	assert.True(t, apierrors.IsNotFound(cl.Get(t.Context(), client.ObjectKeyFromObject(pclq), &grovecorev1beta1.PodClique{})))
+}
+
 func lifecycleTestPCS() *grovecorev1beta1.PodCliqueSet {
 	pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "default", "uid").
 		WithReplicas(2).WithObservedGeneration(new(int64(1))).WithTerminationDelay(time.Minute).
@@ -766,7 +829,7 @@ func lifecycleTestPCS() *grovecorev1beta1.PodCliqueSet {
 }
 
 func lifecycleTestResource(cl client.Client) *_resource {
-	return &_resource{client: cl, eventRecorder: record.NewFakeRecorder(30),
+	return &_resource{clk: clocktesting.NewFakeClock(time.Unix(1000, 0).UTC()), client: cl, eventRecorder: record.NewFakeRecorder(30),
 		generationHashExpectations:    &pcsexpectations.GenerationHashes{},
 		scalingProgressExpectations:   &pcsexpectations.ScalingProgress{},
 		currentlyUpdatingExpectations: &pcsexpectations.CurrentlyUpdating{}}

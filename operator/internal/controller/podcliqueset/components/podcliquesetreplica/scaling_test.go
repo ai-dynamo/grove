@@ -40,6 +40,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/tools/record"
+	clocktesting "k8s.io/utils/clock/testing"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -818,6 +819,129 @@ func TestGatherPCSReplicaInfosByIndexWrapsListErrors(t *testing.T) {
 	}
 }
 
+// TestPreparePCSReplicaScalingCancelsReadyReplacementBeforeCompletion verifies that cancellation takes precedence over
+// completion when a replacement target is already ready and has no pending retired-source cleanup.
+func TestPreparePCSReplicaScalingCancelsReadyReplacementBeforeCompletion(t *testing.T) {
+	t.Parallel()
+	cleanupCompletedAt := metav1.NewTime(time.Unix(100, 0).UTC())
+	pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "default", "test-uid").
+		WithReplicas(0).
+		WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("worker").WithMinAvailable(1).Build()).
+		WithPodCliqueSetGenerationHash(new("generation")).
+		WithAppliedSchedulingConfigurationHash(new("superseded")).
+		WithScalingProgress(&grovecorev1beta1.PodCliqueSetScalingProgress{ScaleInReplicaIndices: []int32{1}}).
+		WithUpdateProgress(&grovecorev1beta1.PodCliqueSetUpdateProgress{
+			RequiresReplicaRecreation:         true,
+			UpdateStartedAt:                   cleanupCompletedAt,
+			TargetSchedulingConfigurationHash: "target-scheduling",
+			CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{
+				ReplicaIndex: 1,
+				Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{
+					TargetReplicaIndex: 1, SourceCleanupCompletedAt: &cleanupCompletedAt,
+				},
+			}},
+		}).Build()
+	replicaInfos := pcsReplicaInfoByIndex{1: rollingUpdateReplicaInfo(pcs, 1, true)}
+	hooks := newPCSReplicaRecreationStrategyHooks(pcs, replicaInfos, replicaScalingIndicesFromProgress(pcs.Status.ScalingProgress))
+	require.True(t, hooks.isReplacementComplete(pcs.Status.UpdateProgress.CurrentlyUpdating[0]), "without cancellation this replacement would complete")
+
+	reconcileTime := metav1.NewTime(time.Unix(200, 0).UTC())
+	scalingIndices := preparePCSReplicaScaling(pcs, replicaInfos, reconcileTime)
+	hooks = newPCSReplicaRecreationStrategyHooks(pcs, replicaInfos, scalingIndices)
+	err := advancePCSUpdateProgress(pcs, hooks, reconcileTime)
+
+	require.NoError(t, err)
+	require.NotNil(t, pcs.Status.UpdateProgress)
+	require.Len(t, pcs.Status.UpdateProgress.CurrentlyUpdating, 1)
+	progress := pcs.Status.UpdateProgress.CurrentlyUpdating[0]
+	assert.Equal(t, int32(1), progress.ReplicaIndex)
+	require.NotNil(t, progress.Replacement)
+	assert.Equal(t, int32(1), progress.Replacement.TargetReplicaIndex)
+	assert.NotNil(t, progress.Replacement.CanceledAt, "the ready replacement must be canceled rather than completed")
+	assert.Nil(t, progress.UpdateEndedAt)
+	assert.Nil(t, pcs.Status.UpdateProgress.UpdateEndedAt)
+	require.NotNil(t, pcs.Status.AppliedSchedulingConfigurationHash)
+	assert.Equal(t, "superseded", *pcs.Status.AppliedSchedulingConfigurationHash)
+}
+
+func TestPreparePCSReplicaScaling(t *testing.T) {
+	priorTime := metav1.NewTime(time.Unix(100, 0).UTC())
+	replacementProgress := &grovecorev1beta1.PodCliqueSetUpdateProgress{
+		RequiresReplicaRecreation: true,
+		CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 2, UpdateStartedAt: priorTime,
+			Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 1, SourceCleanupCompletedAt: &priorTime, RetiredSourceReplicaIndices: []int32{4}}}},
+	}
+	canceledProgress := replacementProgress.DeepCopy()
+	canceledProgress.CurrentlyUpdating[0].Replacement.CanceledAt = &priorTime
+	canceledProgress.CurrentlyUpdating[0].Replacement.CancellationMessage = new("previous cancellation")
+	for _, tc := range []struct {
+		name                                string
+		replicas                            int32
+		isBootstrap                         bool
+		observedPCSReplicaIndices           []int
+		scalingProgress                     *grovecorev1beta1.PodCliqueSetScalingProgress
+		updateProgress                      *grovecorev1beta1.PodCliqueSetUpdateProgress
+		wantScalingIndices                  pcsReplicaScalingIndices
+		wantCanceledSourcePCSReplicaIndices []int32
+	}{
+		{name: "missing capacity reserves scale-out", replicas: 2, wantScalingIndices: pcsReplicaScalingIndices{scaleOut: []int{0, 1}}},
+		{name: "matching capacity leaves no scaling progress", replicas: 2, observedPCSReplicaIndices: []int{0, 1}},
+		{name: "absent scale-out remains reserved", replicas: 2, observedPCSReplicaIndices: []int{0}, scalingProgress: &grovecorev1beta1.PodCliqueSetScalingProgress{ScaleOutReplicaIndices: []int32{2}}, wantScalingIndices: pcsReplicaScalingIndices{scaleOut: []int{2}}},
+		{name: "materialized scale-out clears progress", replicas: 2, observedPCSReplicaIndices: []int{0, 1}, scalingProgress: &grovecorev1beta1.PodCliqueSetScalingProgress{ScaleOutReplicaIndices: []int32{1}}},
+		{name: "absent scale-in still needs cleanup confirmation", replicas: 1, observedPCSReplicaIndices: []int{0}, scalingProgress: &grovecorev1beta1.PodCliqueSetScalingProgress{ScaleInReplicaIndices: []int32{2}}, wantScalingIndices: pcsReplicaScalingIndices{scaleIn: []int{2}}},
+		{name: "excess capacity selects scale-in", replicas: 1, observedPCSReplicaIndices: []int{0, 1}, wantScalingIndices: pcsReplicaScalingIndices{scaleIn: []int{1}}},
+		{name: "bootstrap scale-to-zero removes existing capacity", isBootstrap: true, observedPCSReplicaIndices: []int{0, 1}, wantScalingIndices: pcsReplicaScalingIndices{scaleIn: []int{0, 1}}},
+		{name: "bootstrap leaves missing capacity to initial provisioning", replicas: 2, isBootstrap: true, observedPCSReplicaIndices: []int{0}},
+		{name: "scale-to-zero reclaims an absent scale-out reservation", scalingProgress: &grovecorev1beta1.PodCliqueSetScalingProgress{ScaleOutReplicaIndices: []int32{1}}, wantScalingIndices: pcsReplicaScalingIndices{scaleIn: []int{1}}},
+		{name: "replacement cancellation uses the source key", updateProgress: replacementProgress, wantCanceledSourcePCSReplicaIndices: []int32{2}},
+		{name: "bootstrap can cancel an absent replacement target", isBootstrap: true, updateProgress: replacementProgress, wantCanceledSourcePCSReplicaIndices: []int32{2}},
+		{name: "previous cancellation and cleanup markers remain unchanged", updateProgress: canceledProgress},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			clk := clocktesting.NewFakeClock(time.Unix(1000, 0).UTC())
+			observedGeneration := new(int64(1))
+			if tc.isBootstrap {
+				observedGeneration = nil
+			}
+			pcs := testutils.NewPodCliqueSetBuilder("pcs", "default", "uid").WithStandaloneClique("worker").WithReplicas(tc.replicas).
+				WithObservedGeneration(observedGeneration).WithPodCliqueSetGenerationHash(new("current")).
+				WithScalingProgress(tc.scalingProgress.DeepCopy()).WithUpdateProgress(tc.updateProgress.DeepCopy()).Build()
+			pcsReplicaInfosByIndex := pcsReplicaInfoByIndex{}
+			for _, pcsReplicaIndex := range tc.observedPCSReplicaIndices {
+				pcsReplicaInfosByIndex[pcsReplicaIndex] = rollingUpdateReplicaInfo(pcs, pcsReplicaIndex, true)
+			}
+			want := pcs.DeepCopy()
+			want.Status.ScalingProgress = scalingProgressFromScalingIndices(tc.wantScalingIndices)
+			reconcileTime := metav1.NewTime(clk.Now())
+			if len(tc.wantCanceledSourcePCSReplicaIndices) > 0 {
+				for i := range want.Status.UpdateProgress.CurrentlyUpdating {
+					entry := &want.Status.UpdateProgress.CurrentlyUpdating[i]
+					if slices.Contains(tc.wantCanceledSourcePCSReplicaIndices, entry.ReplicaIndex) {
+						entry.Replacement.CanceledAt = &reconcileTime
+						entry.Replacement.CancellationMessage = new(cancelReplacementMessage)
+					}
+				}
+			}
+
+			got := preparePCSReplicaScaling(pcs, pcsReplicaInfosByIndex, reconcileTime)
+
+			assert.Equal(t, tc.wantScalingIndices, got)
+			assert.Equal(t, want, pcs, "preparation must change only scaling progress and selected cancellation markers")
+			clk.Step(time.Hour)
+			assert.Equal(t, got, preparePCSReplicaScaling(pcs, pcsReplicaInfosByIndex, metav1.NewTime(clk.Now())))
+			assert.Equal(t, want, pcs, "unchanged observations and desired count must preserve progress")
+			if len(got.scaleOut) > 0 {
+				got.scaleOut[0] = 99
+			}
+			if len(got.scaleIn) > 0 {
+				got.scaleIn[0] = 99
+			}
+			assert.Equal(t, want, pcs, "returned indices must not alias owned scaling progress")
+		})
+	}
+}
+
 func headlessServiceForPCSReplica(t *testing.T, pcs *grovecorev1beta1.PodCliqueSet, pcsReplicaIndex int) *corev1.Service {
 	t.Helper()
 	service := &corev1.Service{
@@ -912,49 +1036,4 @@ func assertGroveErrorCode(t *testing.T, err error, wantCode grovecorev1beta1.Err
 	require.True(t, errors.As(err, &groveErr))
 	assert.Equal(t, wantCode, groveErr.Code)
 	assert.Equal(t, component.OperationSync, groveErr.Operation)
-}
-
-// TestPreparePCSReplicaScalingCancelsReadyReplacementBeforeCompletion verifies that cancellation takes precedence over
-// completion when a replacement target is already ready and has no pending retired-source cleanup.
-func TestPreparePCSReplicaScalingCancelsReadyReplacementBeforeCompletion(t *testing.T) {
-	t.Parallel()
-	cleanupCompletedAt := metav1.NewTime(time.Unix(100, 0).UTC())
-	pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "default", "test-uid").
-		WithReplicas(0).
-		WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("worker").WithMinAvailable(1).Build()).
-		WithPodCliqueSetGenerationHash(new("generation")).
-		WithAppliedSchedulingConfigurationHash(new("superseded")).
-		WithScalingProgress(&grovecorev1beta1.PodCliqueSetScalingProgress{ScaleInReplicaIndices: []int32{1}}).
-		WithUpdateProgress(&grovecorev1beta1.PodCliqueSetUpdateProgress{
-			RequiresReplicaRecreation:         true,
-			UpdateStartedAt:                   cleanupCompletedAt,
-			TargetSchedulingConfigurationHash: "target-scheduling",
-			CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{
-				ReplicaIndex: 1,
-				Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{
-					TargetReplicaIndex: 1, SourceCleanupCompletedAt: &cleanupCompletedAt,
-				},
-			}},
-		}).Build()
-	replicaInfos := pcsReplicaInfoByIndex{1: rollingUpdateReplicaInfo(pcs, 1, true)}
-	hooks := newPCSReplicaRecreationStrategyHooks(pcs, replicaInfos, replicaScalingIndicesFromProgress(pcs.Status.ScalingProgress))
-	require.True(t, hooks.isReplacementComplete(pcs.Status.UpdateProgress.CurrentlyUpdating[0]), "without cancellation this replacement would complete")
-
-	reconcileTime := metav1.NewTime(time.Unix(200, 0).UTC())
-	scalingIndices := preparePCSReplicaScaling(pcs, replicaInfos, reconcileTime)
-	hooks = newPCSReplicaRecreationStrategyHooks(pcs, replicaInfos, scalingIndices)
-	err := advancePCSUpdateProgress(pcs, hooks, reconcileTime)
-
-	require.NoError(t, err)
-	require.NotNil(t, pcs.Status.UpdateProgress)
-	require.Len(t, pcs.Status.UpdateProgress.CurrentlyUpdating, 1)
-	progress := pcs.Status.UpdateProgress.CurrentlyUpdating[0]
-	assert.Equal(t, int32(1), progress.ReplicaIndex)
-	require.NotNil(t, progress.Replacement)
-	assert.Equal(t, int32(1), progress.Replacement.TargetReplicaIndex)
-	assert.NotNil(t, progress.Replacement.CanceledAt, "the ready replacement must be canceled rather than completed")
-	assert.Nil(t, progress.UpdateEndedAt)
-	assert.Nil(t, pcs.Status.UpdateProgress.UpdateEndedAt)
-	require.NotNil(t, pcs.Status.AppliedSchedulingConfigurationHash)
-	assert.Equal(t, "superseded", *pcs.Status.AppliedSchedulingConfigurationHash)
 }

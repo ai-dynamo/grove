@@ -37,6 +37,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/client-go/tools/record"
+	clocktesting "k8s.io/utils/clock/testing"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -81,7 +82,7 @@ func TestProcessUpdateAfterLegacyPCSReconciliation(t *testing.T) {
 			cl := testutils.SetupFakeClient(pcs, pclq)
 			generationExpectations := &pcsexpectations.GenerationHashes{}
 			replicaOperator := pcsreplicacomponent.New(cl, record.NewFakeRecorder(20), &pcsexpectations.ScalingProgress{},
-				&pcsexpectations.CurrentlyUpdating{}, generationExpectations)
+				&pcsexpectations.CurrentlyUpdating{}, generationExpectations, clocktesting.NewFakeClock(time.Unix(1000, 0).UTC()))
 			pclqReconciler := &Reconciler{client: cl}
 			for pass := range 3 {
 				freshPCS := &grovecorev1beta1.PodCliqueSet{}

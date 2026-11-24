@@ -43,6 +43,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/client-go/tools/record"
+	clocktesting "k8s.io/utils/clock/testing"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -1096,7 +1097,7 @@ func TestSchedulingChangeAtZeroReplicasAcknowledgesCombinedProgressBeforeScaleOu
 				scalingProgressExpectations:   scalingExpectations,
 				reconcileStatusRecorder:       ctrlcommon.NewReconcileErrorRecorder(fakeClient),
 			}
-			registry.Register(component.KindPodCliqueSetReplica, pcsreplicacomponent.New(fakeClient, eventRecorder, scalingExpectations, selectionExpectations, &reconciler.pcsGenerationStatusExpectations))
+			registry.Register(component.KindPodCliqueSetReplica, pcsreplicacomponent.New(fakeClient, eventRecorder, scalingExpectations, selectionExpectations, &reconciler.pcsGenerationStatusExpectations, clocktesting.NewFakeClock(time.Unix(1000, 0).UTC())))
 			require.Empty(t, reconciler.ensureFinalizer(t.Context(), logr.Discard(), pcs).GetErrors())
 			stalePCS := pcs.DeepCopy()
 
@@ -1207,7 +1208,7 @@ func TestScaleInBeforeFirstCompletedReconcilePreservesRetainedTarget(t *testing.
 		currentlyUpdatingExpectations: selectionExpectations, scalingProgressExpectations: scalingExpectations,
 		reconcileStatusRecorder: ctrlcommon.NewReconcileErrorRecorder(fakeClient),
 	}
-	registry.Register(component.KindPodCliqueSetReplica, pcsreplicacomponent.New(fakeClient, eventRecorder, scalingExpectations, selectionExpectations, &reconciler.pcsGenerationStatusExpectations))
+	registry.Register(component.KindPodCliqueSetReplica, pcsreplicacomponent.New(fakeClient, eventRecorder, scalingExpectations, selectionExpectations, &reconciler.pcsGenerationStatusExpectations, clocktesting.NewFakeClock(time.Unix(1000, 0).UTC())))
 	for pass := range 4 {
 		freshPCS := &grovecorev1beta1.PodCliqueSet{}
 		require.NoError(t, fakeClient.Get(t.Context(), client.ObjectKeyFromObject(pcs), freshPCS))
@@ -1259,7 +1260,7 @@ func initializeGenerationHashesForTest(t *testing.T, pcs *grovecorev1beta1.PodCl
 	freshPCS.Status = grovecorev1beta1.PodCliqueSetStatus{}
 	cl := testutils.SetupFakeClient(freshPCS)
 	operator := pcsreplicacomponent.New(cl, record.NewFakeRecorder(10), &pcsexpectations.ScalingProgress{},
-		&pcsexpectations.CurrentlyUpdating{}, &pcsexpectations.GenerationHashes{})
+		&pcsexpectations.CurrentlyUpdating{}, &pcsexpectations.GenerationHashes{}, clocktesting.NewFakeClock(time.Unix(1000, 0).UTC()))
 	_, err := operator.Sync(t.Context(), logr.Discard(), freshPCS, &pcssync.State{})
 	require.True(t, groveerr.IsRequeueAfter(err), "generation initialization must hard-requeue: %v", err)
 	require.NotNil(t, freshPCS.Status.AppliedSchedulingConfigurationHash)

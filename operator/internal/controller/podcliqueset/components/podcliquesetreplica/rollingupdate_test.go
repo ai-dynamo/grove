@@ -29,6 +29,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
+	clocktesting "k8s.io/utils/clock/testing"
 )
 
 func TestPCSReplicaUpdateSelectionBudget(t *testing.T) {
@@ -135,7 +136,7 @@ func TestReconcileCurrentlyUpdatingPCSReplicasForConfiguredStrategy(t *testing.T
 	pcs.Status.UpdateProgress.CurrentlyUpdating = []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{
 		{ReplicaIndex: 0},
 		{ReplicaIndex: 1},
-		{ReplicaIndex: 2, UpdateEndedAt: new(metav1.Now())},
+		{ReplicaIndex: 2, UpdateEndedAt: new(metav1.NewTime(time.Unix(150, 0).UTC()))},
 		{ReplicaIndex: 3},
 	}
 	replicaInfos := []pcsReplicaInfo{
@@ -237,7 +238,7 @@ func TestCancelReplacements(t *testing.T) {
 
 	t.Run("does not re-stamp an already canceled replacement", func(t *testing.T) {
 		currentlyUpdating := newProgress()
-		canceledAt := metav1.NewTime(metav1.Now().Add(-time.Hour))
+		canceledAt := metav1.NewTime(reconcileTime.Add(-time.Hour))
 		priorMessage := "prior"
 		currentlyUpdating[0].Replacement.CanceledAt = &canceledAt
 		currentlyUpdating[0].Replacement.CancellationMessage = &priorMessage
@@ -255,56 +256,6 @@ func TestCancelReplacements(t *testing.T) {
 		assert.Nil(t, currentlyUpdating[0].Replacement.CanceledAt)
 		assert.Nil(t, currentlyUpdating[2].Replacement.CanceledAt)
 	})
-}
-
-func schedulingConfigRolloutTestPCS() *grovecorev1beta1.PodCliqueSet {
-	pcs := rollingUpdateTestPCS()
-	pcs.Status.AppliedSchedulingConfigurationHash = new("applied")
-	pcs.Status.UpdateProgress.RequiresReplicaRecreation = true
-	pcs.Status.UpdateProgress.TargetSchedulingConfigurationHash = "target"
-	pcs.Status.UpdateProgress.PreviousPodCliqueSetGenerationHash = new("superseded")
-	return pcs
-}
-
-func rollingUpdateTestPCS() *grovecorev1beta1.PodCliqueSet {
-	pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "default", types.UID("test-uid")).
-		WithStandaloneClique("worker").
-		WithPodCliqueSetGenerationHash(new("generation")).
-		Build()
-	pcs.Spec.Template.Cliques[0].Spec.MinAvailable = new(int32(1))
-	pcs.Status.UpdateProgress = &grovecorev1beta1.PodCliqueSetUpdateProgress{UpdateStartedAt: metav1.Now()}
-	return pcs
-}
-
-func rollingUpdateReplicaInfoAtGeneration(pcs *grovecorev1beta1.PodCliqueSet, replicaIndex int, generationHash string, available bool) pcsReplicaInfo {
-	info := rollingUpdateReplicaInfo(pcs, replicaIndex, false)
-	info.standalonePCLQs[0].Status.CurrentPodCliqueSetGenerationHash = new(generationHash)
-	if available {
-		info.standalonePCLQs[0].Status.ReadyReplicas = 1
-	} else {
-		info.standalonePCLQs[0].Status.ReadyReplicas = 0
-	}
-	return info
-}
-
-func rollingUpdateReplicaInfo(pcs *grovecorev1beta1.PodCliqueSet, replicaIndex int, complete bool) pcsReplicaInfo {
-	expectedPodTemplateHash := componentutils.ComputePCLQPodTemplateHash(pcs.Spec.Template.Cliques[0], pcs.Spec.Template.PriorityClassName)
-	podTemplateHash := "stale"
-	generationHash := "stale"
-	if complete {
-		podTemplateHash = expectedPodTemplateHash
-		generationHash = *pcs.Status.CurrentGenerationHash
-	}
-	pclq := testutils.NewPodCliqueBuilder(pcs.Name, pcs.UID, "worker", pcs.Namespace, int32(replicaIndex)).
-		WithMinAvailable(1).
-		WithLabels(map[string]string{apicommon.LabelPodTemplateHash: podTemplateHash}).
-		Build()
-	pclq.Status.CurrentPodTemplateHash = &podTemplateHash
-	pclq.Status.CurrentPodCliqueSetGenerationHash = &generationHash
-	pclq.Status.UpdatedReplicas = 1
-	pclq.Status.ReadyReplicas = 1
-	pclq.Status.ScheduledReplicas = 1
-	return pcsReplicaInfo{index: replicaIndex, standalonePCLQs: []grovecorev1beta1.PodClique{*pclq}}
 }
 
 // TestAdvancePCSUpdateProgressCompletedReplacementChildLoss checks that a completed target's resource loss cannot
@@ -327,6 +278,7 @@ func TestAdvancePCSUpdateProgressCompletedReplacementChildLoss(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
+			clk := clocktesting.NewFakeClock(time.Unix(1000, 0).UTC())
 			var scalingProgress *grovecorev1beta1.PodCliqueSetScalingProgress
 			if tc.allCompletedResourcesLost {
 				scalingProgress = &grovecorev1beta1.PodCliqueSetScalingProgress{ScaleOutReplicaIndices: []int32{int32(tc.completedTargetReplicaIndex)}}
@@ -358,7 +310,7 @@ func TestAdvancePCSUpdateProgressCompletedReplacementChildLoss(t *testing.T) {
 			before := pcs.DeepCopy()
 			hooks := newPCSReplicaRecreationStrategyHooks(pcs, replicaInfos, scalingIndices)
 
-			err := advancePCSUpdateProgress(pcs, hooks, metav1.Now())
+			err := advancePCSUpdateProgress(pcs, hooks, metav1.NewTime(clk.Now()))
 
 			require.NoError(t, err, "missing target resources must not cause a new-selection requeue that skips synchronization")
 			require.Len(t, pcs.Status.UpdateProgress.CurrentlyUpdating, 2)
@@ -382,7 +334,7 @@ func TestAdvancePCSUpdateProgressCompletedReplacementChildLoss(t *testing.T) {
 			replicaInfos[3] = readyTarget
 			hooks = newPCSReplicaRecreationStrategyHooks(pcs, replicaInfos, scalingIndices)
 
-			err = advancePCSUpdateProgress(pcs, hooks, metav1.Now())
+			err = advancePCSUpdateProgress(pcs, hooks, metav1.NewTime(clk.Now()))
 
 			require.NoError(t, err, "completed child loss must not cause repeated replacement selection")
 			require.NotNil(t, pcs.Status.UpdateProgress)
@@ -413,6 +365,7 @@ func TestAdvancePCSUpdateProgressWaitsForRetiredSourceCleanup(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
+			clk := clocktesting.NewFakeClock(time.Unix(1000, 0).UTC())
 			replacement := &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{
 				TargetReplicaIndex:          tc.targetPCSReplicaIndex,
 				RetiredSourceReplicaIndices: slices.Clone(tc.retiredSourcePCSReplicaIndices),
@@ -435,7 +388,7 @@ func TestAdvancePCSUpdateProgressWaitsForRetiredSourceCleanup(t *testing.T) {
 				before := pcs.DeepCopy()
 				hooks := newPCSReplicaRecreationStrategyHooks(pcs, replicaInfos, pcsReplicaScalingIndices{})
 
-				err := advancePCSUpdateProgress(pcs, hooks, metav1.Now())
+				err := advancePCSUpdateProgress(pcs, hooks, metav1.NewTime(clk.Now()))
 
 				require.NoError(t, err)
 				require.NotNil(t, pcs.Status.UpdateProgress)
@@ -450,7 +403,7 @@ func TestAdvancePCSUpdateProgressWaitsForRetiredSourceCleanup(t *testing.T) {
 			}
 			hooks := newPCSReplicaRecreationStrategyHooks(pcs, replicaInfos, pcsReplicaScalingIndices{})
 
-			err := advancePCSUpdateProgress(pcs, hooks, metav1.Now())
+			err := advancePCSUpdateProgress(pcs, hooks, metav1.NewTime(clk.Now()))
 
 			require.NoError(t, err)
 			require.NotNil(t, pcs.Status.UpdateProgress)
@@ -463,22 +416,23 @@ func TestAdvancePCSUpdateProgressWaitsForRetiredSourceCleanup(t *testing.T) {
 }
 
 func TestAdvancePCSUpdateProgressAdvancesAppliedHashOnReplacementCompletion(t *testing.T) {
+	clk := clocktesting.NewFakeClock(time.Unix(1000, 0).UTC())
 	pcs := rollingUpdateTestPCS()
 	pcs.Status.AppliedSchedulingConfigurationHash = new("superseded")
 	pcs.Status.UpdateProgress.RequiresReplicaRecreation = true
 	pcs.Status.UpdateProgress.TargetSchedulingConfigurationHash = "target-scheduling"
 	pcs.Status.UpdateProgress.CurrentlyUpdating = []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{
-		{ReplicaIndex: 0, Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 0, SourceCleanupCompletedAt: new(metav1.Now())}},
+		{ReplicaIndex: 0, Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 0, SourceCleanupCompletedAt: new(metav1.NewTime(clk.Now().Add(-time.Minute)))}},
 	}
 	replicaInfos := pcsReplicaInfoByIndex{0: rollingUpdateReplicaInfo(pcs, 0, true)}
 	hooks := newPCSReplicaRecreationStrategyHooks(pcs, replicaInfos, pcsReplicaScalingIndices{})
 
-	err := advancePCSUpdateProgress(pcs, hooks, metav1.Now())
+	err := advancePCSUpdateProgress(pcs, hooks, metav1.NewTime(clk.Now()))
 
 	assert.NoError(t, err)
 	require.NotNil(t, pcs.Status.AppliedSchedulingConfigurationHash)
 	assert.Equal(t, "target-scheduling", *pcs.Status.AppliedSchedulingConfigurationHash)
-	require.NotNil(t, pcs.Status.UpdateProgress.UpdateEndedAt)
+	require.Equal(t, new(metav1.NewTime(clk.Now())), pcs.Status.UpdateProgress.UpdateEndedAt)
 	assert.Nil(t, pcs.Status.UpdateProgress.CurrentlyUpdating)
 }
 
@@ -522,4 +476,252 @@ func TestAdvancePCSUpdateProgressRemovesObsoleteEntriesBeforeSelecting(t *testin
 	hooks = newUpdateStrategyHooks(pcs, pcsReplicaInfoByIndex{}, sets.New(2), &deletionWork{})
 	require.NoError(t, advancePCSUpdateProgress(pcs, hooks, metav1.NewTime(reconcileTime.Add(time.Minute))))
 	assert.Equal(t, before, pcs, "missing children alone must not discard a selected replica's obligation")
+}
+
+func TestNewUpdateStrategyHooksPreservesBreachPriority(t *testing.T) {
+	for _, strategy := range []grovecorev1beta1.UpdateStrategyType{grovecorev1beta1.RollingRecreateStrategy, grovecorev1beta1.CoherentStrategy} {
+		t.Run(string(strategy), func(t *testing.T) {
+			t.Parallel()
+			pcs := rollingUpdateTestPCS()
+			pcs.Spec.UpdateStrategy = &grovecorev1beta1.PodCliqueSetUpdateStrategy{Type: strategy}
+			pcs.Status.UpdateProgress.InScopeStandalonePodCliques = []string{"worker"}
+			pcsReplicaInfosByIndex := pcsReplicaInfoByIndex{}
+			for pcsReplicaIndex := range 4 {
+				pcsReplicaInfosByIndex[pcsReplicaIndex] = rollingUpdateReplicaInfo(pcs, pcsReplicaIndex, false)
+			}
+			pcsReplicaIndicesAfterScaling := sets.New(0, 1, 2)
+			gangDeletionWork := &deletionWork{pcsIndicesToTerminate: []int{1}, minAvailableBreachedConstituents: map[int][]string{2: {"worker"}, 3: {"worker"}}}
+			before := pcs.DeepCopy()
+
+			hooks := newUpdateStrategyHooks(pcs, pcsReplicaInfosByIndex, pcsReplicaIndicesAfterScaling, gangDeletionWork)
+			_, err := hooks.reconcileCurrentlyUpdatingReplicas(nil)
+			require.NoError(t, err)
+			assert.Equal(t, []pcsReplicaUpdateSelection{{replicaIndex: 2}}, hooks.selectReplicasToUpdate(), "breach priority must beat lower index 0 without selecting terminated 1 or scaled-in 3")
+			assert.Equal(t, before, pcs)
+			assert.Equal(t, sets.New(0, 1, 2), pcsReplicaIndicesAfterScaling)
+			assert.Equal(t, []int{1}, gangDeletionWork.pcsIndicesToTerminate)
+		})
+	}
+}
+
+func TestAdvancePCSUpdateProgressRetainsCompletedReplacementWhenSelectingNext(t *testing.T) {
+	t.Parallel()
+	clk := clocktesting.NewFakeClock(time.Unix(1000, 0).UTC())
+	cleanupTime := metav1.NewTime(clk.Now().Add(-time.Minute))
+	pcs := schedulingConfigRolloutTestPCS()
+	pcs.Spec.Replicas = 2
+	pcs.Status.UpdateProgress.CurrentlyUpdating = []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{
+		ReplicaIndex: 0, UpdateStartedAt: cleanupTime,
+		Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 0, SourceCleanupCompletedAt: &cleanupTime},
+	}}
+	pcsReplicaInfosByIndex := pcsReplicaInfoByIndex{0: rollingUpdateReplicaInfo(pcs, 0, true), 1: rollingUpdateReplicaInfo(pcs, 1, false)}
+	hooks := newUpdateStrategyHooks(pcs, pcsReplicaInfosByIndex, sets.New(0, 1), &deletionWork{})
+	reconcileTime := metav1.NewTime(clk.Now())
+
+	require.NoError(t, advancePCSUpdateProgress(pcs, hooks, reconcileTime))
+
+	require.Len(t, pcs.Status.UpdateProgress.CurrentlyUpdating, 2)
+	completed := pcs.Status.UpdateProgress.CurrentlyUpdating[0]
+	assert.Equal(t, int32(0), completed.ReplicaIndex)
+	assert.Equal(t, &reconcileTime, completed.UpdateEndedAt)
+	assert.Equal(t, &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 0, SourceCleanupCompletedAt: &cleanupTime}, completed.Replacement)
+	selected := pcs.Status.UpdateProgress.CurrentlyUpdating[1]
+	assert.Equal(t, int32(1), selected.ReplicaIndex)
+	assert.Equal(t, reconcileTime, selected.UpdateStartedAt)
+	assert.Equal(t, &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 1}, selected.Replacement)
+	assert.Nil(t, pcs.Status.UpdateProgress.UpdateEndedAt)
+	assert.Equal(t, new("applied"), pcs.Status.AppliedSchedulingConfigurationHash)
+	before := pcs.DeepCopy()
+	clk.Step(time.Hour)
+	hooks = newUpdateStrategyHooks(pcs, pcsReplicaInfosByIndex, sets.New(0, 1), &deletionWork{})
+	require.NoError(t, advancePCSUpdateProgress(pcs, hooks, metav1.NewTime(clk.Now())))
+	assert.Equal(t, before.Status, pcs.Status, "later planning must preserve completed and active commitment timestamps")
+}
+
+func TestMarkPCSReplicaUpdatesCompleted(t *testing.T) {
+	for _, tc := range []struct {
+		name                       string
+		completedPCSReplicaIndices []int
+	}{
+		{name: "empty completion leaves progress unchanged"},
+		{name: "unknown completion leaves progress unchanged", completedPCSReplicaIndices: []int{9}},
+		{name: "only selected completion is stamped", completedPCSReplicaIndices: []int{0}},
+		{name: "previous completion remains final", completedPCSReplicaIndices: []int{2}},
+		{name: "multiple and duplicate completions use the same time", completedPCSReplicaIndices: []int{4, 0, 4, 2}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			clk := clocktesting.NewFakeClock(time.Unix(1000, 0).UTC())
+			priorTime := metav1.NewTime(clk.Now().Add(-time.Hour))
+			progress := &grovecorev1beta1.PodCliqueSetUpdateProgress{CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{
+				{ReplicaIndex: 0, UpdateStartedAt: priorTime, Message: new("waiting")},
+				{ReplicaIndex: 2, UpdateStartedAt: priorTime, UpdateEndedAt: &priorTime},
+				{ReplicaIndex: 4, UpdateStartedAt: priorTime, Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 1, SourceCleanupCompletedAt: &priorTime}},
+			}}
+			want := progress.DeepCopy()
+			reconcileTime := metav1.NewTime(clk.Now())
+			for i := range want.CurrentlyUpdating {
+				entry := &want.CurrentlyUpdating[i]
+				if entry.UpdateEndedAt == nil && slices.Contains(tc.completedPCSReplicaIndices, int(entry.ReplicaIndex)) {
+					entry.UpdateEndedAt = &reconcileTime
+				}
+			}
+
+			markPCSReplicaUpdatesCompleted(progress.CurrentlyUpdating, tc.completedPCSReplicaIndices, reconcileTime)
+
+			assert.Equal(t, want, progress)
+			clk.Step(time.Hour)
+			markPCSReplicaUpdatesCompleted(progress.CurrentlyUpdating, tc.completedPCSReplicaIndices, metav1.NewTime(clk.Now()))
+			assert.Equal(t, want, progress, "completed timestamps must not follow later clock advances")
+		})
+	}
+}
+
+func TestRemoveObsoletePCSReplicaUpdateEntries(t *testing.T) {
+	for _, tc := range []struct {
+		name                  string
+		remove                []int
+		wantPCSReplicaIndices []int32
+	}{
+		{name: "empty removal preserves progress", wantPCSReplicaIndices: []int32{0, 2, 4}},
+		{name: "unknown index preserves progress", remove: []int{9}, wantPCSReplicaIndices: []int32{0, 2, 4}},
+		{name: "only named entries are removed", remove: []int{2, 2, 9}, wantPCSReplicaIndices: []int32{0, 4}},
+		{name: "every named entry is removed", remove: []int{4, 0, 2}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			priorTime := metav1.NewTime(time.Unix(100, 0).UTC())
+			progress := []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{
+				{ReplicaIndex: 0, UpdateStartedAt: priorTime, Message: new("waiting")},
+				{ReplicaIndex: 2, UpdateStartedAt: priorTime, UpdateEndedAt: &priorTime},
+				{ReplicaIndex: 4, UpdateStartedAt: priorTime, Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 1, SourceCleanupCompletedAt: &priorTime}},
+			}
+			want := make([]grovecorev1beta1.PodCliqueSetReplicaUpdateProgress, 0, len(tc.wantPCSReplicaIndices))
+			for _, pcsReplicaIndex := range tc.wantPCSReplicaIndices {
+				for _, entry := range progress {
+					if entry.ReplicaIndex == pcsReplicaIndex {
+						want = append(want, *entry.DeepCopy())
+					}
+				}
+			}
+			got := removeObsoletePCSReplicaUpdateEntries(progress, tc.remove)
+			assert.Equal(t, want, got, "removal must preserve all fields on retained entries")
+		})
+	}
+	assert.Nil(t, removeObsoletePCSReplicaUpdateEntries(nil, []int{0}))
+}
+
+func TestMergeReplicaUpdateSelections(t *testing.T) {
+	priorTime := metav1.NewTime(time.Unix(100, 0).UTC())
+	active := grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{ReplicaIndex: 2, UpdateStartedAt: priorTime, InFlightEpochs: []string{"100"}, Message: new("waiting")}
+	completed := grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{ReplicaIndex: 0, UpdateStartedAt: priorTime, UpdateEndedAt: &priorTime}
+	completedReplacement := *completed.DeepCopy()
+	completedReplacement.Replacement = &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 1, SourceCleanupCompletedAt: &priorTime}
+	for _, tc := range []struct {
+		name          string
+		progress      []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress
+		selections    []pcsReplicaUpdateSelection
+		retained      []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress
+		newSelections []pcsReplicaUpdateSelection
+	}{
+		{name: "empty work stays empty"},
+		{name: "new selections are sorted and deduplicated", selections: []pcsReplicaUpdateSelection{{replicaIndex: 3}, {replicaIndex: 1}, {replicaIndex: 3}}, newSelections: []pcsReplicaUpdateSelection{{replicaIndex: 1}, {replicaIndex: 3}}},
+		{name: "new replacement records its target", selections: []pcsReplicaUpdateSelection{{replicaIndex: 2, targetReplicaIndex: new(1)}}, newSelections: []pcsReplicaUpdateSelection{{replicaIndex: 2, targetReplicaIndex: new(1)}}},
+		{name: "duplicate new replacement selection stays one entry", selections: []pcsReplicaUpdateSelection{{replicaIndex: 2, targetReplicaIndex: new(1)}, {replicaIndex: 2, targetReplicaIndex: new(1)}}, newSelections: []pcsReplicaUpdateSelection{{replicaIndex: 2, targetReplicaIndex: new(1)}}},
+		{name: "existing selection retains its history", progress: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{active}, selections: []pcsReplicaUpdateSelection{{replicaIndex: 2}}, retained: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{active}},
+		{name: "completed child updates are pruned without new work", progress: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{completed, active}, retained: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{active}},
+		{name: "completed replacements retain their mapping", progress: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{active, completedReplacement}, retained: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{completedReplacement, active}},
+		{name: "completed replacement and new selection coexist", progress: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{completedReplacement}, selections: []pcsReplicaUpdateSelection{{replicaIndex: 2}}, retained: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{completedReplacement}, newSelections: []pcsReplicaUpdateSelection{{replicaIndex: 2}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			clk := clocktesting.NewFakeClock(time.Unix(1000, 0).UTC())
+			reconcileTime := metav1.NewTime(clk.Now())
+			input := (&grovecorev1beta1.PodCliqueSetUpdateProgress{CurrentlyUpdating: tc.progress}).DeepCopy()
+			want := slices.Clone(tc.retained)
+			for _, selection := range tc.newSelections {
+				entry := grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{ReplicaIndex: int32(selection.replicaIndex), UpdateStartedAt: reconcileTime}
+				if selection.targetReplicaIndex != nil {
+					entry.Replacement = &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: int32(*selection.targetReplicaIndex)}
+				}
+				want = append(want, entry)
+			}
+			selectionsBefore := slices.Clone(tc.selections)
+
+			got := mergeReplicaUpdateSelections(input.CurrentlyUpdating, tc.selections, reconcileTime)
+
+			assert.Equal(t, want, got)
+			assert.Equal(t, selectionsBefore, tc.selections, "merging must not sort or modify the selection input")
+			clk.Step(time.Hour)
+			assert.Equal(t, want, mergeReplicaUpdateSelections(got, nil, metav1.NewTime(clk.Now())), "retained progress must not be restamped")
+		})
+	}
+}
+
+func TestAdvancePCSUpdateProgressStopsOnCoherentRefreshError(t *testing.T) {
+	t.Parallel()
+	clk := clocktesting.NewFakeClock(time.Unix(1000, 0).UTC())
+	pcs := rollingUpdateTestPCS()
+	pcs.Spec.UpdateStrategy = &grovecorev1beta1.PodCliqueSetUpdateStrategy{Type: grovecorev1beta1.CoherentStrategy}
+	pcs.Status.UpdateProgress.InScopeStandalonePodCliques = []string{"worker"}
+	pcs.Status.UpdateProgress.CurrentlyUpdating = []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 0, InFlightEpochs: []string{"100"}, Message: new("waiting")}}
+	info := rollingUpdateReplicaInfo(pcs, 0, false)
+	info.pgmEntries = []grovecorev1beta1.PodGangEntry{{Epoch: "invalid", PodCliqueSetGenerationHash: *pcs.Status.CurrentGenerationHash}}
+	hooks := newUpdateStrategyHooks(pcs, pcsReplicaInfoByIndex{0: info}, sets.New(0), &deletionWork{})
+	before := pcs.DeepCopy()
+
+	err := advancePCSUpdateProgress(pcs, hooks, metav1.NewTime(clk.Now()))
+
+	assertGroveErrorCode(t, err, errCodeInvalidEpoch)
+	assert.Equal(t, before, pcs, "a refresh failure must stop before completion or selection")
+}
+
+func schedulingConfigRolloutTestPCS() *grovecorev1beta1.PodCliqueSet {
+	pcs := rollingUpdateTestPCS()
+	pcs.Status.AppliedSchedulingConfigurationHash = new("applied")
+	pcs.Status.UpdateProgress.RequiresReplicaRecreation = true
+	pcs.Status.UpdateProgress.TargetSchedulingConfigurationHash = "target"
+	pcs.Status.UpdateProgress.PreviousPodCliqueSetGenerationHash = new("superseded")
+	return pcs
+}
+
+func rollingUpdateTestPCS() *grovecorev1beta1.PodCliqueSet {
+	pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "default", types.UID("test-uid")).
+		WithStandaloneClique("worker").
+		WithPodCliqueSetGenerationHash(new("generation")).
+		Build()
+	pcs.Spec.Template.Cliques[0].Spec.MinAvailable = new(int32(1))
+	pcs.Status.UpdateProgress = &grovecorev1beta1.PodCliqueSetUpdateProgress{UpdateStartedAt: metav1.NewTime(time.Unix(100, 0).UTC())}
+	return pcs
+}
+
+func rollingUpdateReplicaInfoAtGeneration(pcs *grovecorev1beta1.PodCliqueSet, replicaIndex int, generationHash string, available bool) pcsReplicaInfo {
+	info := rollingUpdateReplicaInfo(pcs, replicaIndex, false)
+	info.standalonePCLQs[0].Status.CurrentPodCliqueSetGenerationHash = new(generationHash)
+	if available {
+		info.standalonePCLQs[0].Status.ReadyReplicas = 1
+	} else {
+		info.standalonePCLQs[0].Status.ReadyReplicas = 0
+	}
+	return info
+}
+
+func rollingUpdateReplicaInfo(pcs *grovecorev1beta1.PodCliqueSet, replicaIndex int, complete bool) pcsReplicaInfo {
+	expectedPodTemplateHash := componentutils.ComputePCLQPodTemplateHash(pcs.Spec.Template.Cliques[0], pcs.Spec.Template.PriorityClassName)
+	podTemplateHash := "stale"
+	generationHash := "stale"
+	if complete {
+		podTemplateHash = expectedPodTemplateHash
+		generationHash = *pcs.Status.CurrentGenerationHash
+	}
+	pclq := testutils.NewPodCliqueBuilder(pcs.Name, pcs.UID, "worker", pcs.Namespace, int32(replicaIndex)).
+		WithMinAvailable(1).
+		WithLabels(map[string]string{apicommon.LabelPodTemplateHash: podTemplateHash}).
+		Build()
+	pclq.Status.CurrentPodTemplateHash = &podTemplateHash
+	pclq.Status.CurrentPodCliqueSetGenerationHash = &generationHash
+	pclq.Status.UpdatedReplicas = 1
+	pclq.Status.ReadyReplicas = 1
+	pclq.Status.ScheduledReplicas = 1
+	return pcsReplicaInfo{index: replicaIndex, standalonePCLQs: []grovecorev1beta1.PodClique{*pclq}}
 }

@@ -31,6 +31,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/tools/record"
+	"k8s.io/utils/clock"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -49,6 +50,7 @@ const (
 type _resource struct {
 	client                        client.Client
 	eventRecorder                 record.EventRecorder
+	clk                           clock.Clock
 	generationHashExpectations    *pcsexpectations.GenerationHashes
 	scalingProgressExpectations   *pcsexpectations.ScalingProgress
 	currentlyUpdatingExpectations *pcsexpectations.CurrentlyUpdating
@@ -61,10 +63,12 @@ func New(
 	scalingProgressExpectations *pcsexpectations.ScalingProgress,
 	currentlyUpdatingExpectations *pcsexpectations.CurrentlyUpdating,
 	generationHashExpectations *pcsexpectations.GenerationHashes,
+	clk clock.Clock,
 ) component.Operator[grovecorev1beta1.PodCliqueSet, pcssync.State, pcssync.Result] {
 	return &_resource{
 		client:                        client,
 		eventRecorder:                 eventRecorder,
+		clk:                           clk,
 		generationHashExpectations:    generationHashExpectations,
 		scalingProgressExpectations:   scalingProgressExpectations,
 		currentlyUpdatingExpectations: currentlyUpdatingExpectations,
@@ -79,7 +83,7 @@ func (r *_resource) GetExistingResourceNames(_ context.Context, _ logr.Logger, _
 // Sync plans and persists PCS replica lifecycle progress before executing resource changes.
 func (r *_resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, state *pcssync.State) (pcssync.Result, error) {
 	workingPCS := pcs.DeepCopy()
-	reconcileTime := metav1.Now()
+	reconcileTime := metav1.NewTime(r.clk.Now())
 	baselineInitialized, err := r.preparePCSGenerationChange(ctx, workingPCS, reconcileTime)
 	if err != nil {
 		return pcssync.Result{}, err
