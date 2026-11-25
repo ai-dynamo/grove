@@ -6,14 +6,12 @@
   - [Goals](#goals)
   - [Non-Goals](#non-goals)
 - [Proposal](#proposal)
+  - [User Stories](#user-stories)
   - [Limitations/Risks &amp; Mitigations](#limitationsrisks--mitigations)
 - [Design Details](#design-details)
   - [API and Strategy Behavior](#api-and-strategy-behavior)
   - [Routing Label Contract](#routing-label-contract)
-  - [llm-d Integration Contract](#llm-d-integration-contract)
-    - [Current Routing and Handoff](#current-routing-and-handoff)
-    - [Proposed Overlay Requirements](#proposed-overlay-requirements)
-    - [Failure and Retry Behavior](#failure-and-retry-behavior)
+  - [Controller Flow](#controller-flow)
   - [Snapshot Selection and Materialization](#snapshot-selection-and-materialization)
   - [Rollout Identity and Completion](#rollout-identity-and-completion)
   - [Enabling and Disabling](#enabling-and-disabling)
@@ -41,14 +39,15 @@ The [llm-d rollout screener](https://github.com/llm-d/llm-d-router/blob/88378838
 - Make all-component replacement explicit and opt-in, including unchanged standalone cliques and scaling groups.
 - Keep identity correct across partial updates, corrective edits, resource recreation, and controller restart.
 - Preserve Coherent planning, disruption budgets, and the existing default selective behavior.
-- Define enable/disable behavior and a testable router contract.
+- Define enable/disable behavior and a Pod label contract that routers can consume without Grove-specific logic.
 
 ### Non-Goals
 
 - Inferring binary, protocol, model, or KV-cache compatibility from a revision label.
 - Guaranteeing uninterrupted service, adding surge capacity, or draining in-flight requests.
 - Relabeling unchanged Pods into multiple compatible revisions or defining revision membership sets.
-- Adding a rollback API, implementing the router, or changing `RollingRecreate` and `OnDelete` semantics.
+- Adding a rollback API, or changing `RollingRecreate` and `OnDelete` semantics.
+- Specifying router, gateway, or llm-d overlay behavior. Request pinning, admission errors, and retries belong to the router integration tracked under #947.
 - Implementing the revision-persistence work tracked by [#941](https://github.com/ai-dynamo/grove/issues/941) in this documentation PR.
 
 ## Proposal
@@ -56,6 +55,12 @@ The [llm-d rollout screener](https://github.com/llm-d/llm-d-router/blob/88378838
 An operator may opt a Coherent PodCliqueSet into all-component replacement. Every rollout in that mode includes all standalone PodCliques and all PodCliqueScalingGroups, even when only one clique's template changed. Existing MVU, anchor/tail, replica ordering, and disruption-budget rules still determine the replacement cadence; "all components" does not mean replacing every Pod simultaneously.
 
 Grove assigns a routing revision when it creates a Pod in this mode. All roles created from the same snapshot share the value, and surviving Pods keep the value they received at creation. A router selects one revision per request and offers it only when every required role has Ready, non-terminating candidates at that revision. If no revision has all required roles, it must not fall back to cross-revision pairing.
+
+### User Stories
+
+- As an operator of a disaggregated inference workload, I want a decode-only update to replace prefill as well, so that a router can find prefill and decode Pods that were created from the same PodCliqueSet configuration.
+- As an llm-d router operator, I want to configure the rollout screener with `grove.io/routing-revision` as its revision label, so that I do not have to maintain matching revision labels on every role by hand.
+- As an operator who does not need version-pinned routing, I want Coherent updates to keep replacing only changed components, so that I do not pay restart costs for unchanged roles.
 
 ### Limitations/Risks & Mitigations
 
@@ -97,37 +102,19 @@ The proposed key is `grove.io/routing-revision`.
 - Grove sets the label at Pod creation and does not advance or remove it on a surviving Pod during rollout, bootstrap, disablement, or adoption. Changing PodGang membership is not evidence of a different materialization snapshot.
 - The key is reserved: admission rejects user-supplied values in Pod label metadata propagated from a PodCliqueSet template. Unlabeled Pods are never treated as a shared "empty revision."
 
-### llm-d Integration Contract
+### Controller Flow
 
-This contract targets REST inference and the two P/D deployments below. Grove owns the Pod label and its materialization identity. The llm-d overlay owns pool isolation, the request pin, and HTTP behavior.
+The changes below apply only when the selected snapshot enables `AllComponents`. With the default scope, each step keeps its current behavior.
 
-#### Current Routing and Handoff
-
-At llm-d-router commit `8837883`, the rollout screener counts Ready Pods by revision and role from scoped Pod notifications. It excludes unlabeled Pods from the count. `IsPodReady` excludes terminating Pods even while their Ready condition is true. The screener intersects revisions with nonzero shares with revisions present among request candidates. With `sum` or `max-role`, every required role must contribute at least one Ready Pod to a revision's share. The strict header restricts that eligible set by exact equality and bypasses a new draw, overflow and cross-replica coordination. `disabled` can enforce header equality alone and provides no all-role gate. Pod notifications and endpoint discovery are asynchronous. [Pod notifications](https://github.com/llm-d/llm-d-router/blob/883788387ac6d2b315621c9fc2acadacf076300a/pkg/epp/framework/plugins/requesthandling/screener/disaggregatedsetrollout/plugin.go#L248-L283), [readiness](https://github.com/llm-d/llm-d-router/blob/883788387ac6d2b315621c9fc2acadacf076300a/pkg/epp/util/pod/pod.go#L23-L35), [screening](https://github.com/llm-d/llm-d-router/blob/883788387ac6d2b315621c9fc2acadacf076300a/pkg/epp/framework/plugins/requesthandling/screener/disaggregatedsetrollout/screener.go#L44-L112).
-
-| Deployment | Where the choice lives and how it reaches decode |
-| --- | --- |
-| One EPP with P/D profiles and a decode sidecar | The EPP screens once before scheduling and passes the same screened candidates to both role profiles. The handler defaults to selecting decode first and also supports prefill-first scheduling. Both picks happen before prefill execution. The scheduling result carries the selected endpoints in process. `PreRequest` writes the selected prefill address as `x-llm-d-prefiller-host-port` for the decode sidecar, which runs the worker calls. There is no second EPP decision between execution stages. [Scheduler](https://github.com/llm-d/llm-d-router/blob/883788387ac6d2b315621c9fc2acadacf076300a/pkg/epp/scheduling/scheduler.go#L78-L127), [profile handler](https://github.com/llm-d/llm-d-router/blob/883788387ac6d2b315621c9fc2acadacf076300a/pkg/epp/framework/plugins/scheduling/profilehandler/disagg/disagg_profile_handler.go#L344-L375), [sidecar handoff](https://github.com/llm-d/llm-d-router/blob/883788387ac6d2b315621c9fc2acadacf076300a/pkg/epp/framework/plugins/scheduling/profilehandler/disagg/disagg_profile_handler.go#L594-L616), [execution](https://github.com/llm-d/llm-d-router/blob/883788387ac6d2b315621c9fc2acadacf076300a/docs/disaggregation.md#L105-L114). |
-| Coordinator with separate prefill and decode scheduling calls | The prefill EPP stamps the chosen endpoint's label into the prefill response as `x-llm-d-disagg-revision: <token>`. After successful HTTP prefill, the coordinator captures it in the request's `RequestContext` and sends it as a request header on the decode POST, alongside `x-llm-d-epp-profile: decode`. The selected route and pool supply workload scope in the proposed overlay. Connector data, such as `kv_transfer_params`, is a separate handoff. The same wire contract applies when both phase calls target one EPP instance: these are still two scheduling calls. The default `pipeline.forward_response_headers` includes the default header. A custom `revisionHeaderName` must match on both EPPs and be in the coordinator's forwarding list. [Stamp](https://github.com/llm-d/llm-d-router/blob/883788387ac6d2b315621c9fc2acadacf076300a/pkg/epp/framework/plugins/requesthandling/screener/disaggregatedsetrollout/plugin.go#L225-L234), [prefill](https://github.com/llm-d/llm-d-router/blob/883788387ac6d2b315621c9fc2acadacf076300a/pkg/coordinator/steps/prefill.go#L102-L138), [forwarding](https://github.com/llm-d/llm-d-router/blob/883788387ac6d2b315621c9fc2acadacf076300a/pkg/coordinator/pipeline/context.go#L83-L152), [decode POST](https://github.com/llm-d/llm-d-router/blob/883788387ac6d2b315621c9fc2acadacf076300a/pkg/coordinator/steps/decode_proxy.go#L48-L79), [defaults](https://github.com/llm-d/llm-d-router/blob/883788387ac6d2b315621c9fc2acadacf076300a/pkg/coordinator/config/config.go#L121-L129). |
-
-#### Proposed Overlay Requirements
-
-1. Scope both endpoint discovery and `scope.labelSelector` to the same PCS instance, using a pool and route bound to namespace and PCS UID or an equivalent immutable instance selector. A role-specific pool may advertise only that role's candidates. Each EPP's Pod observation must still cover **both** roles of the same instance. Configure the overlay's role label, `revisionGating.revisionLabelKey: grove.io/routing-revision`, `requiredRoles: [prefill, decode]`, and `sum` or `max-role`. Equal tokens from different workload instances cannot jointly satisfy readiness.
-2. Reserve the revision header, phase header and revision decision ID for trusted internal traffic. Strip client copies at public ingress before route matching or screening and restrict stage routes to the coordinator or trusted gateway. Configure the gateway to fail closed if its EPP cannot make a decision. Strip the revision header on public egress as well. Today the coordinator skips original-request header names present in its forwarding list, and the screener reads the configured revision header directly. Generic response header capture can accept a missing value or overwrite an earlier value, and the response-strip list does not cover the rollout revision header. For the pinned route, accept exactly one nonempty token from the trusted successful prefill response. Bind it to the current request attempt and configured PCS instance, store it once, and fail closed on missing, ambiguous or conflicting data. Apply the same boundary to a custom revision header name. [Coordinator context](https://github.com/llm-d/llm-d-router/blob/883788387ac6d2b315621c9fc2acadacf076300a/pkg/coordinator/pipeline/context.go#L40-L73), [header lookup](https://github.com/llm-d/llm-d-router/blob/883788387ac6d2b315621c9fc2acadacf076300a/pkg/epp/framework/plugins/requesthandling/screener/disaggregatedsetrollout/screener.go#L163-L179), [response proxy](https://github.com/llm-d/llm-d-router/blob/883788387ac6d2b315621c9fc2acadacf076300a/pkg/coordinator/steps/decode_proxy.go#L130-L140).
-3. On a later decode pick, require the pin and revalidate the exact scoped revision against both role coverage and the decode picker's current Ready, non-terminating candidates. If the gate or role filter leaves no candidate, fail the attempt even if another revision is complete. The coordinator's separate decode pick may select another endpoint only within the pinned revision and only if the existing connector handoff can be used. For a single scheduling call, keep the selected pair in the scheduling result and check it before the gateway dispatches to the sidecar. In serial execution, after successful prefill and before any decode-side connector action or dispatch, the sidecar revalidates the selected decode Pod against a trusted observation. Require the original Pod UID and pinned revision, a Ready condition, and no termination. A Pod recreated under the same name with a different UID fails the check. If validation fails, end the attempt without repicking the pair. The source and freshness requirements for this observation remain open. If the worker disappears after a successful recheck and the connection fails, handle it as a transport failure.
-4. Qualify the sequential coordinator route with the ordinary decode proxy and qualify serial sidecar execution. Keep conditional decode, force-stream fallback, sidecar prefill retries and gateway status-code retries off for initial qualification. Parallel dispatch needs its own qualification with the pair fixed before either leg starts. A conditional decode 412 can feed a revision into a later phase. The force-stream path can issue a second decode and drops one-shot KV handoffs when necessary. A configured serial sidecar can also retry a prefill 5xx against the same target. [Conditional decode](https://github.com/llm-d/llm-d-router/blob/883788387ac6d2b315621c9fc2acadacf076300a/pkg/coordinator/steps/conditional_decode.go#L89-L109), [force-stream fallback](https://github.com/llm-d/llm-d-router/blob/883788387ac6d2b315621c9fc2acadacf076300a/pkg/coordinator/steps/decode.go#L108-L167), [sidecar prefill retries](https://github.com/llm-d/llm-d-router/blob/883788387ac6d2b315621c9fc2acadacf076300a/pkg/sidecar/proxy/connector_nixlv2.go#L345-L384).
-
-#### Failure and Retry Behavior
-
-| Failure before public response headers | Current REST path | Proposed contract |
+| Step | Current behavior | Change in this mode |
 | --- | --- | --- |
-| No complete revision at initial selection, or the pinned revision has lost a required role | An empty screener result produces `errcommon.Error{Code: ServiceUnavailable}` and `x-llm-d-request-dropped-reason: rejected-no-endpoints`. Empty role-profile candidates also produce `ServiceUnavailable`. The EPP maps it to an Envoy ext_proc `ImmediateResponse` with HTTP 503 and an API error envelope. The ordinary decode reverse proxy relays the decode leg's 503. A coordinator prefill-leg 503 arrives as `pipeline.UpstreamError` and becomes HTTP 502. [Director](https://github.com/llm-d/llm-d-router/blob/883788387ac6d2b315621c9fc2acadacf076300a/pkg/epp/requestcontrol/director.go#L362-L386), [role filter](https://github.com/llm-d/llm-d-router/blob/883788387ac6d2b315621c9fc2acadacf076300a/pkg/epp/scheduling/scheduler_profile.go#L139-L148), [EPP mapping](https://github.com/llm-d/llm-d-router/blob/883788387ac6d2b315621c9fc2acadacf076300a/pkg/common/error/error.go#L95-L149), [prefill status](https://github.com/llm-d/llm-d-router/blob/883788387ac6d2b315621c9fc2acadacf076300a/pkg/coordinator/steps/utils.go#L62-L103), [coordinator mapping](https://github.com/llm-d/llm-d-router/blob/883788387ac6d2b315621c9fc2acadacf076300a/pkg/coordinator/server/handlers.go#L290-L304). | The EPP emits `NoCompleteRevision` when initial admission finds no revision with both roles ready, or `PinnedRevisionUnavailable` when a later pinned decode pick finds that its revision has lost a required role. Carry the explicit reason through the trusted gateway and preserve it on the coordinator's prefill error path. Before public response headers are committed, map either confirmed EPP rejection to HTTP 503. A worker's ordinary 503 follows the existing upstream error path. Status alone cannot establish EPP provenance or authorize an automatic retry. |
-| Missing or invalid trusted handoff after prefill | Generic header forwarding can leave decode unpinned if no prior step supplied the configured header. [Forwarding](https://github.com/llm-d/llm-d-router/blob/883788387ac6d2b315621c9fc2acadacf076300a/pkg/coordinator/pipeline/context.go#L114-L151), [selection](https://github.com/llm-d/llm-d-router/blob/883788387ac6d2b315621c9fc2acadacf076300a/pkg/epp/framework/plugins/requesthandling/screener/disaggregatedsetrollout/screener.go#L79-L110). | Stop before decode with an internal `InvalidRevisionHandoff` and return 502. Record the cause and request ID internally. |
-| Pinned endpoint disappears after selection and the worker connection fails | The ordinary coordinator decode proxy writes 502 on a round-trip failure before upstream headers and returns `pipeline.UpstreamStreamedError` to prevent a second write. Sidecar failed peer calls can also use `errorBadGateway` (502). A gateway-generated error response already received by the decode proxy is relayed with its status. [Decode proxy](https://github.com/llm-d/llm-d-router/blob/883788387ac6d2b315621c9fc2acadacf076300a/pkg/coordinator/steps/decode_proxy.go#L124-L170), [error ownership](https://github.com/llm-d/llm-d-router/blob/883788387ac6d2b315621c9fc2acadacf076300a/pkg/coordinator/steps/decode_proxy.go#L201-L215), [sidecar](https://github.com/llm-d/llm-d-router/blob/883788387ac6d2b315621c9fc2acadacf076300a/pkg/sidecar/proxy/errors.go#L57-L86). | Keep transport failure separate from a confirmed empty candidate set. Preserve the public gateway error and cancel or release what the connector can. Do not infer from 502 that the worker never ran. |
-
-Use the existing JSON error format before commitment (OpenAI-compatible `error.type: server_error` with numeric HTTP code, or Messages `overloaded_error` for 503 and `api_error` for 502). After public headers are committed, even before the first SSE token, the status is fixed. The ordinary decode proxy aborts a failed body copy, so a streaming caller sees a truncated stream without a success terminator. An already committed ordinary JSON response may also truncate. A buffered non-streaming path can return a structured error while its public response is still uncommitted. Use an API-defined terminal stream error only if that path explicitly owns the framing. Never append a success terminator, restart a committed response or switch revisions. [Error envelopes](https://github.com/llm-d/llm-d-router/blob/883788387ac6d2b315621c9fc2acadacf076300a/pkg/common/request/errors.go#L38-L89), [proxy abort](https://github.com/llm-d/llm-d-router/blob/883788387ac6d2b315621c9fc2acadacf076300a/pkg/coordinator/steps/decode_proxy.go#L111-L123), [body copy](https://github.com/llm-d/llm-d-router/blob/883788387ac6d2b315621c9fc2acadacf076300a/pkg/coordinator/steps/decode_proxy.go#L175-L198), [response already written](https://github.com/llm-d/llm-d-router/blob/883788387ac6d2b315621c9fc2acadacf076300a/pkg/coordinator/server/handlers.go#L230-L246).
-
-Allow a bounded **whole-request** automatic retry only before public commitment and with proof that no prior model stage was dispatched. A failed initial TCP connect to the coordinator before any request bytes could reach it is one example used by llm-d's E2E gateway config. A verified initial admission rejection can start a fresh attempt with a fresh decision and no inherited pin or KV metadata. Treat ambiguous resets, timeouts, any prefill execution, and any committed response as outside that retry budget. The client may submit a new request from prefill after failure with the usual duplicate-work risk. A pinned decode rejection, including a 503 after prefill, never authorizes replay of its decode body. [Gateway retry example](https://github.com/llm-d/llm-d-router/blob/883788387ac6d2b315621c9fc2acadacf076300a/test/e2e/artifacts/environments/dev/coordinator-e2e-infra/envoy-3-epp.yaml#L170-L187), [one-shot handoffs](https://github.com/llm-d/llm-d-router/blob/883788387ac6d2b315621c9fc2acadacf076300a/pkg/coordinator/steps/decode.go#L190-L198).
+| PCS admission (`operator/internal/webhook/admission/pcs/validation`) | Validates the update strategy and template. | Accept `updateScope` only with `type: Coherent`, reject the reserved label, and enforce the scope-transition guard described in [Enabling and Disabling](#enabling-and-disabling). |
+| PCS reconciler (`computeCoherentUpdateScope`) | Puts cliques whose template hash changed into scope and carries forward pending scope. | Put every standalone PodClique and PodCliqueScalingGroup into scope, including cliques whose template hash did not change. |
+| Snapshot selection (with #941) | No persisted per-replica selection. | Persist the snapshot selected for each replica or cohort before creating child resources, as described in [Snapshot Selection and Materialization](#snapshot-selection-and-materialization). |
+| PCS child components (`podclique`, `podcliquescalinggroup`) | Write child specs from the latest PCS template. | Write child specs and the routing identity from the selected snapshot. |
+| Pod creation (`podclique/components/pod`) | Builds Pods from the parent PodClique's PodSpec. | Set `grove.io/routing-revision` at creation. Treat a Pod with a different routing identity as outdated, even when its template hash matches. |
+| Status (`mutateUpdatedReplica`, PCS `reconcilestatus.go`) | Counts updated Pods by clique template hash. | Count updated Pods by routing identity, as described in [Rollout Identity and Completion](#rollout-identity-and-completion). |
+| PodGangMap planner (`components/podgangmap`) | Orders replacement by MVU, anchor/tail, and budgets. | No change to ordering or budgets. The planner receives the larger scope. |
 
 ### Snapshot Selection and Materialization
 
@@ -188,8 +175,6 @@ Before implementation, maintainers need to agree on:
 1. The field/key names, ControllerRevision UID token encoding, and reserved-label validation surface.
 2. The durable materialization-selection interface with #941/#912, including active cohorts, history retention, and the canonical field classification that excludes scaling and budgets.
 3. The persisted converged-boundary guard for scope transitions, including stale admission observations, and `v1alpha1` write/conversion behavior.
-4. The overlay selector and trusted handoff mechanism, including how the gateway preserves authenticated EPP reason codes.
-5. The trusted source for the serial sidecar's Pod observation and the maximum acceptable observation age or other freshness guarantee.
 
 The [#947 discussion](https://github.com/ai-dynamo/grove/issues/947#issuecomment-6796887804) leaves llm-d router and Grove-overlay integration to a separate contribution after this contract is agreed. This GREP does not require changes to that router as part of the Grove controller implementation.
 
@@ -212,25 +197,11 @@ Extend `operator/e2e/tests/update/coherentupdate_test.go` and the revision-persi
 
 Exercise unschedulable and scheduled-but-unready targets, corrective edits through R1/R2/R3, and restoration of a retained revision. Verify budget invariants and visible stalls, without assuming corrective edits can always recover from insufficient capacity. Preserve omitted-scope, `RollingRecreate`, and `OnDelete` regression coverage.
 
-The router integration should exercise both picker deployments with a single PCS workload and record the PCS identity, attempt ID, and actual prefill/decode Pod revisions. Every dispatched P/D pair must match. Inject the failures at the indicated boundaries and count worker calls.
-
-| Scenario | Required result |
-| --- | --- |
-| R1 has Ready P and D. R2 has only Ready P. | Every new request uses R1 for both roles. |
-| R1 has only Ready P. R2 has only Ready D. | Reject before worker dispatch with `NoCompleteRevision`. A second PCS with the same token cannot supply the missing role. A trusted EPP rejection on the coordinator's prefill error path retains its reason and maps to HTTP 503 before public headers. |
-| Both revisions are complete and prefill uses R1. | The decode pick uses R1. A client-supplied pin or phase header cannot pick R2 or bypass the coordinator. |
-| Remove R1's last Ready D after prefill while R2 is complete. | Reject the second EPP pick with `PinnedRevisionUnavailable` or fail the serial sidecar's final Pod recheck before any decode connector action. Assert zero decode dispatches and no automatic replay. A new request can use R2 starting at prefill. |
-| A worker returns an ordinary HTTP 503. | Preserve the existing upstream error handling. The worker response carries no trusted EPP admission reason and does not qualify as evidence that prefill or decode was never dispatched. |
-| A matched endpoint is Ready and terminating, or a Pod has no revision label during bootstrap. | Exclude it from coverage and dispatch. Begin pinned traffic when a complete labeled group is available. Include disablement cutover. |
-| Drop, duplicate or change the trusted prefill pin, or recreate the PCS with the same name. | Reject an invalid or out-of-scope handoff before decode on the coordinator route. Reject a stale selected endpoint identity on the sidecar route. |
-| Lose the selected worker after scheduling, before public headers, then repeat after headers and after the first SSE token. | Check structured 503 for confirmed admission rejection and 502 for the induced proxy transport failure. After commitment, check fixed status, incomplete response and no replay. Cover ordinary JSON and SSE. |
-| Fail the initial connect before bytes are sent, then fail after prefill or with unknown worker outcome. | Only the proved pre-dispatch failure is eligible for a bounded fresh attempt. |
-
-Track controller and router E2E work under #947 with dedicated follow-up test issues before implementation.
+Track controller E2E work under #947 with dedicated follow-up test issues before implementation. Router-side tests belong to the separate router integration.
 
 ### Graduation Criteria
 
-- **Alpha:** contract and revision interface agreed; opt-in API, controller accounting, transition guards, documentation, and unit/controller tests implemented; scheduler and router failure-path E2E demonstrate no cross-revision pairing.
+- **Alpha:** contract and revision interface agreed; opt-in API, controller accounting, transition guards, documentation, and unit/controller tests implemented; scheduler E2E shows that every Pod's routing label matches the snapshot it was created from, and that no old Pod is relabeled.
 - **Beta:** canonicalization and conversion behavior stable; restart/recreation, failed-target corrections, retention, and enable/disable verified in representative deployments; operational guidance covers incomplete role sets and availability costs.
 - **GA:** at least two releases of beta feedback, stable label/API semantics, no unresolved identity or completion-accounting defects, and maintained upgrade and regression coverage.
 
