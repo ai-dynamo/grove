@@ -25,13 +25,15 @@
 
 ## Summary
 
-This increment to [GREP-393](../393-coherent-rolling-updates/README.md) proposes an opt-in mode that replaces every component during a Coherent update and gives Pods from the same materialized PodCliqueSet snapshot a shared, Grove-owned routing revision label. A router can then select prefill and decode Pods from one revision for each request, including during a decode-only update. Selective replacement remains the default. This document proposes a contract, not an implemented feature; the API names and integration with revision persistence require maintainer agreement.
+This increment to [GREP-393](../393-coherent-rolling-updates/README.md) proposes an opt-in mode that replaces every component during a Coherent update and gives Pods created from the same persisted PodCliqueSet configuration a shared, Grove-owned routing revision label. A router can then match prefill and decode Pods by revision, including during a decode-only update. Selective replacement remains the default.
 
 ## Motivation
 
 GREP-393 leaves cross-version communication to the data plane. Today, `grove.io/pod-template-hash` identifies an individual clique's template, not a shared PodCliqueSet revision. A PodCliqueSet generation label alone would not solve this: a decode-only update leaves unchanged prefill Pods at the previous generation, so a router requiring label equality across roles would find no complete revision.
 
-The [llm-d rollout screener](https://github.com/llm-d/llm-d-router/blob/883788387ac6d2b315621c9fc2acadacf076300a/pkg/epp/framework/plugins/requesthandling/screener/disaggregatedsetrollout/README.md) supports configurable revision and role label keys. A Grove-owned label would remove the need for users to maintain matching revision labels manually. Its safety depends on the controller associating the label with the configuration actually used to create each Pod, rather than with the latest desired configuration.
+A Grove-owned label would remove the need for users to maintain matching revision labels manually. For that label to be meaningful, it must identify the configuration the controller used to create the Pod.
+
+In this proposal, a **snapshot** is the persisted PodCliqueSet (PCS) configuration used to materialize a set of Pods and their dependent resources. [#941](https://github.com/ai-dynamo/grove/issues/941) tracks revision persistence. The [ControllerRevision used by #912](https://github.com/ai-dynamo/grove/blob/64fd66153854d310921012c303cdb097b52f92f9/operator/internal/utils/controllerrevision/revision.go) is a candidate to store the snapshot.
 
 ### Goals
 
@@ -39,7 +41,7 @@ The [llm-d rollout screener](https://github.com/llm-d/llm-d-router/blob/88378838
 - Make all-component replacement explicit and opt-in, including unchanged standalone cliques and scaling groups.
 - Keep identity correct across partial updates, corrective edits, resource recreation, and controller restart.
 - Preserve Coherent planning, disruption budgets, and the existing default selective behavior.
-- Define enable/disable behavior and a Pod label contract that routers can consume without Grove-specific logic.
+- Define enable/disable behavior and the creation-time Pod label contract.
 
 ### Non-Goals
 
@@ -54,18 +56,18 @@ The [llm-d rollout screener](https://github.com/llm-d/llm-d-router/blob/88378838
 
 An operator may opt a Coherent PodCliqueSet into all-component replacement. Every rollout in that mode includes all standalone PodCliques and all PodCliqueScalingGroups, even when only one clique's template changed. Existing MVU, anchor/tail, replica ordering, and disruption-budget rules still determine the replacement cadence; "all components" does not mean replacing every Pod simultaneously.
 
-Grove assigns a routing revision when it creates a Pod in this mode. All roles created from the same snapshot share the value, and surviving Pods keep the value they received at creation. A router selects one revision per request and offers it only when every required role has Ready, non-terminating candidates at that revision. If no revision has all required roles, it must not fall back to cross-revision pairing.
+Grove assigns a routing revision when it creates a Pod in this mode. All roles created from the same snapshot share the value, and surviving Pods keep the value they received at creation.
 
 ### User Stories
 
 - As an operator of a disaggregated inference workload, I want a decode-only update to replace prefill as well, so that a router can find prefill and decode Pods that were created from the same PodCliqueSet configuration.
-- As an llm-d router operator, I want to configure the rollout screener with `grove.io/routing-revision` as its revision label, so that I do not have to maintain matching revision labels on every role by hand.
+- As an llm-d operator, I want the [rollout screener](https://github.com/llm-d/llm-d-router/blob/883788387ac6d2b315621c9fc2acadacf076300a/pkg/epp/framework/plugins/requesthandling/screener/disaggregatedsetrollout/README.md) to use `grove.io/routing-revision`, so each request can stay on one revision. If the pinned revision loses its last Ready decode endpoint after prefill, the attempt should fail instead of switching revisions.
 - As an operator who does not need version-pinned routing, I want Coherent updates to keep replacing only changed components, so that I do not pay restart costs for unchanged roles.
 
 ### Limitations/Risks & Mitigations
 
 - **More disruption and restart cost:** unchanged components are replaced too. Keep the mode opt-in and retain component budgets. Capacity headroom remains the user's responsibility.
-- **No complete Ready revision:** small workloads, failed targets, or mode transitions may leave neither revision routable. Routers fail closed; neither scheduling success nor rollout completion alone is a routing-availability guarantee.
+- **No complete Ready revision:** small workloads, failed targets, or mode transitions can temporarily leave each revision missing a Ready role. Operators should account for a service interruption when choosing replica counts and disruption budgets.
 - **False identity from reconciliation races:** an active replica may still contain old child resources. Require configuration and identity from the same durable materialization selection, and wait rather than guess when they cannot be reconciled.
 - **Labels are not compatibility or integrity proofs:** mutable image tags, application state, and external configuration can change independently. Use immutable workload inputs where required; ordinary Kubernetes ownership/RBAC controls still apply.
 
@@ -104,17 +106,17 @@ The proposed key is `grove.io/routing-revision`.
 
 ### Controller Flow
 
-The changes below apply only when the selected snapshot enables `AllComponents`. With the default scope, each step keeps its current behavior.
+Creation uses the scope in the selected snapshot. Rollout planning also considers whether the PCS is enabling or disabling the scope, so disablement can finish one all-component replacement while new Pods are already unlabeled.
 
-| Step | Current behavior | Change in this mode |
+| Step | Current behavior | Proposed change |
 | --- | --- | --- |
 | PCS admission (`operator/internal/webhook/admission/pcs/validation`) | Validates the update strategy and template. | Accept `updateScope` only with `type: Coherent`, reject the reserved label, and enforce the scope-transition guard described in [Enabling and Disabling](#enabling-and-disabling). |
-| PCS reconciler (`computeCoherentUpdateScope`) | Puts cliques whose template hash changed into scope and carries forward pending scope. | Put every standalone PodClique and PodCliqueScalingGroup into scope, including cliques whose template hash did not change. |
+| PCS reconciler (`computeCoherentUpdateScope`) | Selects components whose clique template hashes changed and carries forward pending scope. | For an all-component rollout, include every standalone PodClique and PodCliqueScalingGroup, including unchanged components. |
+| PodGangMap planner (`components/podgangmap`) | Orders replacement by MVU, anchor/tail, and budgets. | Plan replacement for the expanded scope using the existing ordering and budgets. |
 | Snapshot selection (with #941) | No persisted per-replica selection. | Persist the snapshot selected for each replica or cohort before creating child resources, as described in [Snapshot Selection and Materialization](#snapshot-selection-and-materialization). |
 | PCS child components (`podclique`, `podcliquescalinggroup`) | Write child specs from the latest PCS template. | Write child specs and the routing identity from the selected snapshot. |
-| Pod creation (`podclique/components/pod`) | Builds Pods from the parent PodClique's PodSpec. | Set `grove.io/routing-revision` at creation. Treat a Pod with a different routing identity as outdated, even when its template hash matches. |
-| Status (`mutateUpdatedReplica`, PCS `reconcilestatus.go`) | Counts updated Pods by clique template hash. | Count updated Pods by routing identity, as described in [Rollout Identity and Completion](#rollout-identity-and-completion). |
-| PodGangMap planner (`components/podgangmap`) | Orders replacement by MVU, anchor/tail, and budgets. | No change to ordering or budgets. The planner receives the larger scope. |
+| Pod reconciliation (`podclique/components/pod`) | Builds Pods from the parent PodClique's PodSpec. | Replace outdated Pods in the plan even if their template hash matches. Set the routing label on a new Pod when its snapshot enables `AllComponents`. |
+| Status (`mutateUpdatedReplica`, PCS `reconcilestatus.go`) | The PodClique controller counts updated Pods by clique template hash. PCS status aggregates child convergence. | During all-component replacement, account for Pods using the selected snapshot, including an unlabeled target during disablement. See [Rollout Identity and Completion](#rollout-identity-and-completion). |
 
 ### Snapshot Selection and Materialization
 
@@ -132,7 +134,7 @@ Inactive replicas recreate resources from their bound snapshot, not the active t
 
 ### Rollout Identity and Completion
 
-The all-component scope feeds the existing planner. It must also force replacement when a component's clique template hash is unchanged. Reaching the target requires Pods materialized at the target routing identity, not just the same PodSpec hash or updated child metadata.
+The all-component scope feeds the existing planner. It must also force replacement when a component's clique template hash is unchanged. Count a Pod toward the target only when it was created from the target snapshot. During disablement, the same test applies to the unlabeled target, so label absence by itself cannot certify convergence.
 
 Updated and updated-scheduled counts, disruption accounting, child convergence, and PCS completion must consistently distinguish the target materialization identity in this mode. Old Pods with an unchanged prefill template hash cannot count as updated. Retain the existing readiness checks at their respective orchestration layers; do not equate `Scheduled` with `Ready` or a complete router role set.
 
@@ -145,6 +147,7 @@ An effective-scope change is accepted only at a converged boundary: the previous
 - **Enable on an existing PCS:** changing from omitted scope to `AllComponents` creates/selects an enabled snapshot and triggers an all-component bootstrap rollout, even with no Pod template edit. Existing unlabeled Pods remain unlabeled until replaced.
 - **Disable:** keep `type: Coherent` when removing `AllComponents`. The controller selects a default-scope snapshot and finishes one final all-component replacement. Old labeled Pods retain their tokens until deleted. New Pods are unlabeled. After convergence, subsequent updates resume selective scope and a strategy change can be requested.
 - **During either transition:** keep the transition's replacement semantics until convergence; reject further scope/strategy switches. Corrective template edits within that scope remain possible. Do not enable the new scope and simultaneously switch to an unsupported strategy.
+- **Switching update strategy after opt-in:** reject a move from `Coherent` to `RollingRecreate` or `OnDelete` while `AllComponents` is set or while its disablement rollout is in progress. Once disablement converges, apply the existing validation for the requested strategy.
 
 Before switching traffic to a route that requires the label, confirm that one labeled revision has Ready, non-terminating endpoints for every required role. Before disabling `AllComponents`, move traffic to a separate compatible pool or plan for a service interruption. During either transition, unlabeled Pods are ineligible for version-pinned routing.
 
@@ -174,7 +177,7 @@ Before implementation, maintainers need to agree on:
 
 1. The field/key names, ControllerRevision UID token encoding, and reserved-label validation surface.
 2. The durable materialization-selection interface with #941/#912, including active cohorts, history retention, and the canonical field classification that excludes scaling and budgets.
-3. The persisted converged-boundary guard for scope transitions, including stale admission observations, and `v1alpha1` write/conversion behavior.
+3. The persisted converged-boundary guard for scope transitions, including how admission detects a pending transition and what Pod identity proves convergence to the unlabeled target, and `v1alpha1` write/conversion behavior.
 
 The [#947 discussion](https://github.com/ai-dynamo/grove/issues/947#issuecomment-6796887804) leaves llm-d router and Grove-overlay integration to a separate contribution after this contract is agreed. This GREP does not require changes to that router as part of the Grove controller implementation.
 
@@ -185,7 +188,7 @@ All items below are acceptance criteria for future implementation, not tests add
 **Unit and controller tests:**
 
 - Extend `operator/internal/controller/podcliqueset/coherentupdatescope_test.go`: omitted-scope regressions, decode-only edits including every standalone clique and scaling group, pending-scope carry-forward, and components at zero replicas.
-- Test API validation/defaulting for each strategy, unknown values, reserved labels, scope-only activation, converged-boundary guards with stale status/rapid writes, and supported-version round trips that cannot silently drop the opt-in.
+- Test API validation/defaulting for each strategy, unknown values, reserved labels, scope-only activation, converged-boundary guards with stale status/rapid writes, and supported-version round trips that cannot silently drop the opt-in. Exercise strategy switches before, during, and after disablement.
 - Test snapshot canonicalization: template/materialization changes and scope toggles affect identity; scale-only edits, budget-only edits, and semantically equal defaults do not. Test retained-revision reuse and equivalent-payload recreation after GC.
 - Extend Pod construction and `standalonepclqdistribution_test.go` coverage: shared tokens across roles, old child/new target races even with equal clique hashes, missing/foreign snapshots, active/inactive replica recreation, initial deployment, scale-out, and preserved suppression of old-anchor creates.
 - Extend `reconcilestatus_test.go`, `coherentupdate_test.go`, and PodGangMap `substepplanner_test.go`: unchanged-template old Pods never count toward target completion, current-target scheduling counts are correct, and terminating/unready/in-flight replacements remain charged correctly.
