@@ -118,7 +118,7 @@ As a platform operator, I want to see which racks host my decode replicas after 
 
 As a cluster operator, I want a redacted diagnostics bundle, so that I can file a bug or let my agent analyze it offline.
 
-`grove-diagnostics` shows the files in the bundle and prompts me to inspect them locally before sharing. I can analyze the bundle offline and, if needed, ask the agent to download the matching operator source.
+`grove-diagnostics` shows the files in the bundle and prompts me to inspect them locally before sharing. I can analyze the bundle offline. To debug locally against the operator's exact code, I can download the source from the link `kubectl grove version` prints.
 
 ### Limitations/Risks & Mitigations
 
@@ -128,7 +128,7 @@ As a cluster operator, I want a redacted diagnostics bundle, so that I can file 
 - **Cluster text is untrusted.** *Mitigation:* `kubectl-grove` never acts on it; skills treat it as data, never as commands; docs recommend read-only credentials for agents.
 - **Bundles may hold sensitive data.** The skill excludes Secrets and ConfigMaps and strips environment values. Logs, events and workload arguments can still contain sensitive values. It lists the collected files from `manifest.json` and prompts for local review before sharing.
 - **Workload GPU accounting is partial.** `status` warns when it cannot count a device ([GPU Accounting](#gpu-accounting)).
-- **Version skew.** If a skill’s release differs from the CLI’s, ask the agent to install the skills from the Grove release tag matching the CLI. If the CLI and operator differ in major or minor version, the skill names the matching CLI release, continues and notes the mismatch ([version](#version)).
+- **Version skew.** Each installed skill records its release in a `GROVE_RELEASE` file ([Agent Skills](#agent-skills)). If that file is missing or its major.minor version differs from the CLI’s, the skill repeats the install instruction and continues. If the CLI and operator differ in major or minor version, the skill names the matching CLI release, continues and notes the mismatch ([version](#version)).
 
 ## Design Details
 
@@ -331,7 +331,7 @@ Prints the client and operator versions and the operator's source link. The oper
 CI uses one `PACKAGE_VERSION` for image, binary and chart, so the tag identifies the release; `-dev` and custom tags are `unknown`.
 
 - **Skew:** the same major.minor is compatible. Otherwise a stderr warning names the release to download, and the exit code stays 0. Only `version` checks.
-- **Source link:** releases, including pre-releases such as `v0.1.0-alpha.17`, link to `https://github.com/ai-dynamo/grove/archive/refs/tags/<tag>.tar.gz`; `v0.0.0-g<sha>` links to `https://github.com/ai-dynamo/grove/archive/<sha>.tar.gz`; anything else is `unknown`, never `main`. `kubectl-grove` makes no requests outside the cluster.
+- **Source link:** releases, including pre-releases such as `v0.1.0-alpha.17`, link to `https://github.com/ai-dynamo/grove/archive/refs/tags/<tag>.tar.gz`; `v0.0.0-g<sha>` links to `https://github.com/ai-dynamo/grove/archive/<sha>.tar.gz`; anything else is `unknown`, never `main`. `kubectl-grove` makes no requests outside the cluster. Users who want to debug locally can download the source from this link; neither the CLI nor the skills download it.
 
 ```text
 $ kubectl grove version
@@ -352,24 +352,29 @@ Workload totals include GPUs requested through either mechanism.
 
 ### Agent Skills
 
-Each skill includes the shared reference and identifies its release. Ask your agent to install the skills with the following instruction, including after a CLI upgrade.
+Ask your agent to install the skills with the following instruction, including after a CLI upgrade.
 
-> Run `kubectl grove version`. From the `ai-dynamo/grove` release tag matching the CLI version, install `grove-debug`, `grove-topology` and `grove-diagnostics` from `.agents/skills/`.
+> Run `kubectl grove version`. From the `ai-dynamo/grove` release tag matching the CLI version, install `grove-debug`, `grove-topology` and `grove-diagnostics` from `.agents/skills/`. Write that tag to a `GROVE_RELEASE` file in each installed skill folder.
+
+Before it starts, each skill compares its `GROVE_RELEASE` with the CLI version. If the file is missing or the major.minor versions differ, it repeats the instruction above and continues, noting the mismatch.
+
+Each skill carries a generated copy of the shared reference. Its source is `tools/kubectl-grove/skills/reference/`; `make generate` refreshes the copies, and `make check` fails if they are stale.
 
 The shared reference covers:
 
 - the commands, a JSON field glossary, Grove's hierarchy and labels, and kubectl recipes;
 - conditions to wait on: PCLQ `PodCliqueScheduled`, `MinAvailableBreached`, `UpdateInProgress`; PCSG `MinAvailableBreached`, `UpdateInProgress`, `GangTerminationInProgress`; PCS `UpdateInProgress`, `TopologyLevelsUnavailable`, `PodGangMigrationInProgress` (a PCS has no `MinAvailableBreached`); PodGang `Initialized`, `Scheduled`, `Ready`; CTB `SchedulerTopologyDrift`. `UpdateInProgress=Unknown` means the update passed its progress deadline;
-- events Grove records on a parent about a child, and CTB events, which land in namespace `default`.
+- events Grove records on a parent about a child, and CTB events, which land in namespace `default`;
+- what read-only access to one namespace cannot see (operator logs, Nodes, ClusterTopologyBindings and so `topology`), so the agent reports the gap instead of failing.
 
-It also explains rollout progress (`grove.io/pod-template-hash`, or the generation hashes of [GREP-393](../393-coherent-rolling-updates/README.md)), inherited topology constraints, observed placement, and reading the operator's logs and source.
+It also explains rollout progress (`grove.io/pod-template-hash`, or the generation hashes of [GREP-393](../393-coherent-rolling-updates/README.md)), inherited topology constraints, observed placement, and reading the operator's logs.
 
 **`grove-debug`:** stuck or unhealthy workloads.
 
-1. Preflight: CLI, CRDs, target.
+1. Preflight: `kubectl grove version` (CLI present, skills release, operator version if readable) and the target. The CLI reports a missing Grove installation or permission, so the skill reads no CRDs. With namespace-only access the operator shows as `unavailable`, as expected.
 2. `status REF --only-unhealthy`: the deepest unhealthy groups are the blockers.
 3. `events BLOCKER`.
-4. Dig in (logs, PodGangs, constraints, hashes, source); hand placement to `grove-topology`.
+4. Dig in (logs, PodGangs, constraints, hashes); hand placement to `grove-topology`.
 5. Report; if asked to wait, `kubectl wait`, rerunning `status` on timeout.
 
 **`grove-topology`** inspects binding health and workload placement.
@@ -383,7 +388,7 @@ It also explains rollout progress (`grove.io/pod-template-hash`, or the generati
 1. Scope: namespaces and, optionally, a PCS.
 2. Capture resources, operator logs, Pods, events, `kubectl grove` JSON, versions and `manifest.json`; no Secrets or ConfigMaps; a `jq` filter strips environment values.
 3. Package a timestamped local `.tgz`. Show the files listed in `manifest.json` and prompt the operator to inspect them locally before sharing, especially logs, events and workload arguments.
-4. Offline analysis can proceed directly, using the matching operator source when needed.
+4. Offline analysis can proceed directly from the bundle.
 
 ### RBAC
 
@@ -416,9 +421,17 @@ It also explains rollout progress (`grove.io/pod-template-hash`, or the generati
 
 ### Test Plan
 
-**V1 acceptance requires both runs of the stuck-rollout scenario in Story 1 to pass.** A shared setup script starts a healthy two-replica workload, triggers a rollout with an unavailable worker image, and waits for one replica to stall with an image-pull Warning while its sibling remains healthy. The fixture records the affected replica, Pod and image for verification. Both runs use a kubeconfig granting read-only access to the workload namespace. Only fixture setup and cleanup use write access.
+**V1 acceptance requires both runs of the stuck-rollout scenario in Story 1 to pass.** A shared setup script builds the fixture in Grove's real-node e2e job, since KWOK nodes cannot pull images:
 
-1. **CLI, automated in CI.** Run `kubectl grove status pcs/llm-serve -n inference -o json`. Follow the failing Pod’s parent refs to its replica and pass that replica ref to `kubectl grove events` with the same namespace and JSON output. Assert that the replica matches the fixture and that a Warning attributed to its worker Pod reports a failed pull for the expected image. Generated Pod names come from the fixture. Timestamps, retry counts and exact message wording may vary.
+- **Workload:** `llm-serve` in the shape of Story 1 (two replicas, each with `frontend` and a `decode` scaling group of `leader` and `worker`), requesting no GPUs, with `updateStrategy.type: RollingRecreate` set explicitly.
+- **Trigger:** after recording the Pods' `grove.io/pod-template-hash`, a rollout that changes only the worker image to one that can never be pulled, such as `registry.invalid/grove-fixture/worker:missing`. The `.invalid` domain never resolves, so the pull fails quickly and the same way everywhere.
+- **Ready when:** the PCS has `UpdateInProgress=True`, a worker container waits with `ErrImagePull` or `ImagePullBackOff`, and a Warning `Failed` event names the image.
+- **Expected answer:** derived with kubectl, not `kubectl grove`, from the failing Pod's `grove.io/podclique` label and that PCLQ's replica-index labels. The failing replica is the nearest replica above the Pod (`pcsg/llm-serve-<i>-decode/<j>`). The fixture also records its PCS replica, the Pod and the image.
+- **Healthy sibling:** the fixture checks that the other PCS replica is Ready and its Pods still carry the recorded hash, rather than assuming an update order.
+
+Both runs use a kubeconfig granting read-only access to the workload namespace. Only fixture setup and cleanup use write access. Under the `Coherent` strategy the blocker is a new PodGang rather than a replica, so that case is left to skill acceptance.
+
+1. **CLI, automated in CI.** Run `kubectl grove status pcs/llm-serve -n inference -o json`. Follow the failing Pod’s parent refs to the nearest replica ref and pass that replica ref to `kubectl grove events` with the same namespace and JSON output. Assert that the replica matches the fixture and that a Warning attributed to its worker Pod reports a failed pull for the expected image. Generated Pod names come from the fixture. Timestamps, retry counts and exact message wording may vary.
 2. **Debug skill, run by hand before release.** Start a fresh agent session with `grove-debug`, the CLI and the restricted kubeconfig. Keep the fixture script and expected diagnosis out of the session. Give the agent only this prompt: *“The rollout of `pcs/llm-serve` is stuck in `inference`. Find out why and draft an update for the incident thread.”* The tester compares the draft with the fixture. It must be ready to paste into the incident thread, identify the failing replica, cite the event on the affected Pod and explain how the failed image pull blocks the rollout.
 
 Use gaps exposed by these runs to decide what else v1 needs. For example, if the CLI finds the failed Pod but the engineer cannot trace it to a replica with namespace-only access, the workflow is incomplete.
@@ -431,12 +444,12 @@ Use gaps exposed by these runs to decide what else v1 needs. For example, if the
 - **End-to-end** on Grove's KWOK-based e2e cluster, with GPUs added to its nodes: broken workloads (real scheduling failures, simulated Pod failures) and a user with namespace-only RBAC.
 - **Placement:** check per-PodClique counts across domains, unlabeled Nodes and Pods awaiting placement. Include an unrelated workload and verify the command succeeds with workload-namespace access, binding reads and `get` on the assigned Nodes only.
 - **Real workers:** image pull and crash loop failures against a real kubelet, which KWOK only simulates.
-- **Skill acceptance**, scripted and run on every skill or CLI change (outside CI, as it needs model access): curated broken workloads and replica placement scenarios, graded against the known cause or observed placement. Scan bundles for a canary environment value and excluded resources. Check that the skill lists the files from the manifest and prompts for local review before sharing.
+- **Skill acceptance**, scripted and run on every skill or CLI change (outside CI, as it needs model access): curated broken workloads, including a stuck `Coherent` rollout, and replica placement scenarios, graded against the known cause or observed placement. Scan bundles for a canary environment value and excluded resources. Check that the skill lists the files from the manifest and prompts for local review before sharing.
 - **Scale:** a step in Grove's weekly Scale Test CI, on its KWOK scale cluster with GPU nodes and workloads added, records requests, latency and memory per command in the scale history.
 
 ### Graduation Criteria
 
-`kubectl-grove` is a separate, opt-in CLI and set of skills, released with Grove, so there is no feature gate and the stages do not apply.
+`kubectl-grove` is a separate, opt-in CLI and set of skills, released with Grove, so there is no feature gate and the stages do not apply. The first release ships in two PRs: the CLI, then the skills, which depend on its flags and JSON.
 
 #### Alpha
 
@@ -465,20 +478,27 @@ N/A.
 | Richer Grove status instead | Worth doing, but subtree events and workload placement need cross-object joins. |
 | An MCP server | CLI plus skills is simpler: people and CI use the CLI without agents, and skills add what agents need. An MCP server adds no benefit. |
 | A combined health and events command, or a diagnostics collector | Skills compose `status`, `events` and kubectl for these workflows. |
+| A cluster GPU capacity view (free GPUs per domain) | Domain totals cannot show whether a gang will schedule, yet operators would read them that way. |
 | One `grove` skill | Broad trigger, large context. |
 | TOON (token-saving JSON encoding) | Savings unvalidated; JSON Schema stays the contract; addable later. |
-| `apiVersion`/`kind` envelope | Implies stability alpha can't promise. |
+| `apiVersion`/`kind` envelope | Implies a stability promise the JSON doesn't make ([Backward Compatibility](#backward-compatibility)). |
 | `-o agent`, `-o wide` | More formats; JSON already has every field. |
 | Unbounded JSON, bounded tables | Formats would show different rows; limits keep agent output small. |
 | JSON by default when piped | The same command would print differently in a terminal and a script. |
 | cli-runtime printers | `JSONPrinter` requires `apiVersion`/`kind`, then just calls `MarshalIndent`; `PrintFlags` adds many formats to the contract. |
 | Own kubeconfig handling; kubectl's factory; kong | Reimplements kubectl's flags; heavy dependency; flags mapped by hand. |
 | HPA, ResourceClaim and Node events | They relate to the workload but sit outside the PCS–PCSG–PCLQ–Pod hierarchy: each adds reads and permissions, and a Node's events cover every workload on it. Grove-created claims are an [open question](#open-questions). |
+| Finding PodGangs only through Pod labels | Misses gangs whose Pods were never created, which is when their events matter most. |
 | Reusing [Topograph](https://github.com/NVIDIA/topograph) | It writes topology labels; `kubectl-grove` reads them. Its reusable code is internal and needs newer Go and Kubernetes. |
 | Exact version match | Krew has only the latest, so most users would see warnings. |
 | Operator-published build info | Needs operator changes. |
-| Source download in the CLI | No requests outside the cluster. |
+| Source download in the CLI or skills | The CLI makes no requests outside the cluster, and skills diagnose from cluster state. Users who want to debug locally download the source from the `version` link. |
 | Bundle skills in the CLI | Installing from the matching Grove release tag keeps the skills aligned with the CLI and lets the agent handle local installation. |
+| `npx skills` or an agent plugin marketplace | Third-party or tied to one agent; asking the agent to install from the release tag works with any agent. |
+| Stamp the release into the skills, or ship them as a release tarball | Stamping changes the release process, and a tarball departs from installing `.agents/skills/` at the tag. Recording the tag at install needs neither. |
+| Symlinked or hand-copied shared reference | Symlinks break when an agent copies or downloads the files; hand copies drift. |
+| Run the skill acceptance test in CI | Needs model access and is nondeterministic. |
+| Compare each command against a kubectl-only baseline | Many model runs and a baseline skill to maintain; the [v1 acceptance tests](#test-plan) show the on-call workflow works. |
 
 ## Open Questions
 
