@@ -36,7 +36,10 @@ import (
 	kueuev1beta2 "sigs.k8s.io/kueue/apis/kueue/v1beta2"
 )
 
-const rackKey = "topology.kubernetes.io/rack"
+const (
+	rackKey = "topology.kubernetes.io/rack"
+	hostKey = "kubernetes.io/hostname"
+)
 
 func pcsgPodClique(name, pcsgFQN string) *grovecorev1beta1.PodClique {
 	return &grovecorev1beta1.PodClique{ObjectMeta: metav1.ObjectMeta{
@@ -91,6 +94,10 @@ func rackPack() *groveschedulerv1alpha1.TopologyConstraint {
 	return &groveschedulerv1alpha1.TopologyConstraint{PackConstraint: &groveschedulerv1alpha1.TopologyPackConstraint{Required: ptr.To(rackKey)}}
 }
 
+func hostPack() *groveschedulerv1alpha1.TopologyConstraint {
+	return &groveschedulerv1alpha1.TopologyConstraint{PackConstraint: &groveschedulerv1alpha1.TopologyPackConstraint{Required: ptr.To(hostKey)}}
+}
+
 func podGroupsFor(names ...string) []groveschedulerv1alpha1.PodGroup {
 	groups := make([]groveschedulerv1alpha1.PodGroup, 0, len(names))
 	for _, n := range names {
@@ -136,6 +143,32 @@ func TestTopologyGroup_LeaderAndWorkersShareGroup(t *testing.T) {
 	}
 }
 
+// A member constraint equal to the group's leaves the group's placement unchanged, so the group is still emitted.
+func TestTopologyGroup_MemberConstraintEqualToGroup(t *testing.T) {
+	cliques, podGang := leaderAndWorkers(1, 2)
+	podGang.Spec.PodGroups[1].TopologyConstraint = rackPack()
+	got := syncWorkload(t, true, cliques, podGang)
+	require.Len(t, got.Spec.PodSets, 2)
+	for _, ps := range got.Spec.PodSets {
+		require.NotNil(t, ps.TopologyRequest, ps.Name)
+		assert.Equal(t, "demo-0-w-0", ptr.Deref(ps.TopologyRequest.PodSetGroupName, ""), ps.Name)
+	}
+}
+
+// With only a PodGang-wide constraint, the PodGang's PodGroups form one group named after the PodGang.
+func TestTopologyGroup_PodGangWideConstraint(t *testing.T) {
+	cliques, podGang := leaderAndWorkers(1, 2)
+	podGang.Spec.TopologyConstraintGroupConfigs = nil
+	podGang.Spec.TopologyConstraint = rackPack()
+	got := syncWorkload(t, true, cliques, podGang)
+	require.Len(t, got.Spec.PodSets, 2)
+	for _, ps := range got.Spec.PodSets {
+		require.NotNil(t, ps.TopologyRequest, ps.Name)
+		assert.Equal(t, rackKey, ptr.Deref(ps.TopologyRequest.Required, ""), ps.Name)
+		assert.Equal(t, "demo-0", ptr.Deref(ps.TopologyRequest.PodSetGroupName, ""), ps.Name)
+	}
+}
+
 // Grouping is opt-in: by default each PodSet keeps its own topology request and is placed independently.
 func TestTopologyGroup_DisabledByDefault(t *testing.T) {
 	cliques, podGang := leaderAndWorkers(1, 2)
@@ -177,6 +210,14 @@ func TestTopologyGroup_OptionDefaulting(t *testing.T) {
 // group is left ungrouped rather than placed differently from what the PodGang asks for.
 func TestTopologyGroup_SkipsGroupsKueueCannotPlace(t *testing.T) {
 	multiPodLeader, multiPodLeaderGang := leaderAndWorkers(2, 4)
+	// Kueue would place the leader by the workers' hostname request, onto the workers' host, rather than anywhere in
+	// the rack.
+	narrowWorkers, narrowWorkersGang := leaderAndWorkers(1, 2)
+	narrowWorkersGang.Spec.PodGroups[1].TopologyConstraint = hostPack()
+	// The members' requests match each other but not the group's, so grouping would still narrow the rack to a host.
+	narrowBoth, narrowBothGang := leaderAndWorkers(1, 2)
+	narrowBothGang.Spec.PodGroups[0].TopologyConstraint = hostPack()
+	narrowBothGang.Spec.PodGroups[1].TopologyConstraint = hostPack()
 	testCases := []struct {
 		description string
 		cliques     []*grovecorev1beta1.PodCliqueTemplateSpec
@@ -201,6 +242,16 @@ func TestTopologyGroup_SkipsGroupsKueueCannotPlace(t *testing.T) {
 			cliques:     multiPodLeader,
 			podGang:     multiPodLeaderGang,
 		},
+		{
+			description: "workers pack more narrowly than the group, since Kueue places the group by the workers' request",
+			cliques:     narrowWorkers,
+			podGang:     narrowWorkersGang,
+		},
+		{
+			description: "leader and workers both pack more narrowly than the group",
+			cliques:     narrowBoth,
+			podGang:     narrowBothGang,
+		},
 	}
 	for _, tc := range testCases {
 		t.Run(tc.description, func(t *testing.T) {
@@ -208,7 +259,7 @@ func TestTopologyGroup_SkipsGroupsKueueCannotPlace(t *testing.T) {
 			require.Len(t, got.Spec.PodSets, len(tc.cliques))
 			for _, ps := range got.Spec.PodSets {
 				require.NotNil(t, ps.TopologyRequest, ps.Name)
-				assert.Equal(t, rackKey, ptr.Deref(ps.TopologyRequest.Required, ""), ps.Name)
+				assert.NotEmpty(t, ptr.Deref(ps.TopologyRequest.Required, ""), ps.Name)
 				assert.Nil(t, ps.TopologyRequest.PodSetGroupName, ps.Name)
 			}
 		})
