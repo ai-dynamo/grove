@@ -921,6 +921,9 @@ func waitForOnDeleteUpdateComplete(tc *testctx.TestContext) error {
 			// A transient cache miss returns a nil object. Keep polling.
 			return false
 		}
+		if pcs.Status.ObservedGeneration == nil || *pcs.Status.ObservedGeneration != pcs.Generation {
+			return false
+		}
 		if workload.IsOnDeleteUpdateComplete(pcs) {
 			tests.Logger.Debugf("[waitForOnDeleteUpdateComplete] OnDelete update marked complete after %d polls (UpdatedReplicas=%d)",
 				pollCount, pcs.Status.UpdatedReplicas)

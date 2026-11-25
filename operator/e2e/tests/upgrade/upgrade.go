@@ -18,12 +18,14 @@ package upgrade
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/pods"
 	"github.com/ai-dynamo/grove/operator/e2e/setup"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
+
 	"github.com/stretchr/testify/require"
 )
 
@@ -168,13 +170,15 @@ func upgradeGrove(t *testing.T, tc *testctx.TestContext) {
 	rootDir, err := setup.GetOperatorRootDir()
 	require.NoError(t, err, "locate current root directory")
 
-	_, err = setup.BuildWithSkaffold(t.Context(), &setup.SkaffoldInstallConfig{
+	builtImages, err := setup.BuildWithSkaffold(t.Context(), &setup.SkaffoldInstallConfig{
 		SkaffoldYAMLPath: filepath.Join(rootDir, "skaffold.yaml"),
 		RestConfig:       tc.Client.RestConfig,
 		PushRepo:         "localhost:5001",
 		PullRepo:         "registry:5001",
 		Env: map[string]string{
-			"VERSION": "latest",
+			// Cached artifacts can retain a different version and linker metadata.
+			"SKAFFOLD_CACHE_ARTIFACTS": "false",
+			"VERSION":                  "latest",
 			"LD_FLAGS": "-X github.com/ai-dynamo/grove/operator/internal/version.gitCommit=e2e-upgrade-commit " +
 				"-X github.com/ai-dynamo/grove/operator/internal/version.gitTreeState=clean " +
 				"-X github.com/ai-dynamo/grove/operator/internal/version.buildDate=now " +
@@ -183,6 +187,12 @@ func upgradeGrove(t *testing.T, tc *testctx.TestContext) {
 		Logger: testctx.Logger,
 	})
 	require.NoError(t, err, "building new operator images")
+
+	// Use the build digests so a cached latest tag cannot select a different checkout.
+	operatorTag, ok := strings.CutPrefix(builtImages["grove-operator"], "localhost:5001/grove-operator:")
+	require.True(t, ok, "unexpected operator image: %s", builtImages["grove-operator"])
+	installerTag, ok := strings.CutPrefix(builtImages["grove-install-crds"], "localhost:5001/grove-install-crds:")
+	require.True(t, ok, "unexpected CRD installer image: %s", builtImages["grove-install-crds"])
 
 	testctx.Logger.Info("upgrading to current Grove operator")
 
@@ -202,7 +212,7 @@ func upgradeGrove(t *testing.T, tc *testctx.TestContext) {
 			"config": map[string]any{"server": map[string]any{"healthProbes": map[string]any{"enable": true}}},
 			"image": map[string]any{
 				"repository": "registry:5001/grove-operator",
-				"tag":        "latest",
+				"tag":        operatorTag,
 			},
 			"deployment": map[string]any{
 				"env": []any{
@@ -216,7 +226,7 @@ func upgradeGrove(t *testing.T, tc *testctx.TestContext) {
 				"upgradeCRDs": true,
 				"image": map[string]any{
 					"repository": "registry:5001/grove-install-crds",
-					"tag":        "latest",
+					"tag":        installerTag,
 				},
 			},
 		},

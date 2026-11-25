@@ -58,7 +58,7 @@ func WaitForReplicaMidCoherentRoll(t *testing.T, tc *testctx.TestContext, pcsRep
 	t.Fatalf("replica %d PodGangMap did not reach a multi-generation (mid coherent roll) state within %s", pcsReplicaIndex, tc.Timeout)
 }
 
-// WaitForRollingUpdateComplete waits for rolling update to complete by checking UpdatedReplicas.
+// WaitForRollingUpdateComplete waits for the current PCS generation to be observed and its rolling update to complete.
 // Uses tc.Workload.Name as the PCS name and tc.Timeout for the timeout (use a modified tc if a different timeout is needed).
 func WaitForRollingUpdateComplete(tc *testctx.TestContext, expectedReplicas int32) error {
 	pcsName := tc.Workload.Name
@@ -69,6 +69,10 @@ func WaitForRollingUpdateComplete(tc *testctx.TestContext, expectedReplicas int3
 		pollCount++
 		if pcs == nil {
 			// A transient cache miss returns a nil object. Keep polling.
+			return false
+		}
+
+		if pcs.Status.ObservedGeneration == nil || *pcs.Status.ObservedGeneration != pcs.Generation {
 			return false
 		}
 

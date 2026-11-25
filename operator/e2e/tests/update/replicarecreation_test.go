@@ -19,8 +19,10 @@ package update
 import (
 	"context"
 	"fmt"
+	"os"
 	"slices"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -36,8 +38,8 @@ import (
 	"github.com/ai-dynamo/grove/operator/e2e/waiter"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 	kubeutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
-	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 
+	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	appsv1 "k8s.io/api/apps/v1"
@@ -55,6 +57,7 @@ import (
 	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/yaml"
 )
 
 // Test_RR1_PCSGMinAvailableIncreaseRecreatesReplica verifies that increasing a PodCliqueScalingGroup
@@ -83,6 +86,7 @@ func Test_RR1_PCSGMinAvailableIncreaseRecreatesReplica(t *testing.T) {
 	defer cleanup()
 
 	tests.Logger.Info("2. Capture the pre-change PodGangMap entries and applied scheduling hash")
+	before := requireReplicaSnapshot(t, tc)
 	beforeEntries := updateutils.PodGangMapEntries(t, tc, 0)
 	beforeAnchor := updateutils.RequireSingleEntryByRole(t, beforeEntries, grovev1beta1.PodGangEntryRoleAnchor)
 	updateutils.AssertPodGangEntryPCSGIndices(t, beforeAnchor, "sg-x", []int32{0})
@@ -123,6 +127,10 @@ func Test_RR1_PCSGMinAvailableIncreaseRecreatesReplica(t *testing.T) {
 	require.NoError(t, waitForReplicaRecreationComplete(&tcLongTimeout, 1))
 
 	tests.Logger.Info("7. Assert the applied scheduling hash advanced and the PodGangMap was reshaped")
+	after := requireReplicaSnapshot(t, tc)
+	requireReplicaResourceUIDsChanged(t, before, after)
+	updateutils.AssertGenerationHashConverged(tc)
+	updateutils.AssertNoActiveChildUpdates(tc)
 	afterHash, err := pcsAppliedSchedulingHash(tc)
 	require.NoError(t, err)
 	assert.NotEqual(t, beforeHash, afterHash, "applied scheduling hash should advance after recreation")
@@ -167,6 +175,7 @@ func Test_RR2_StandalonePCLQMinAvailableIncreaseRecreatesReplica(t *testing.T) {
 	defer cleanup()
 
 	tests.Logger.Info("2. Capture the pre-change applied scheduling hash and anchor pc-a pod count")
+	before := requireReplicaSnapshot(t, tc)
 	beforeHash, err := pcsAppliedSchedulingHash(tc)
 	require.NoError(t, err)
 	require.NotEmpty(t, beforeHash)
@@ -203,6 +212,10 @@ func Test_RR2_StandalonePCLQMinAvailableIncreaseRecreatesReplica(t *testing.T) {
 	require.NoError(t, waitForReplicaRecreationComplete(&tcLongTimeout, 1))
 
 	tests.Logger.Info("7. Assert the applied scheduling hash advanced and the recreated PodClique records the new MinAvailable")
+	after := requireReplicaSnapshot(t, tc)
+	requireReplicaResourceUIDsChanged(t, before, after)
+	updateutils.AssertGenerationHashConverged(tc)
+	updateutils.AssertNoActiveChildUpdates(tc)
 	afterHash, err := pcsAppliedSchedulingHash(tc)
 	require.NoError(t, err)
 	assert.NotEqual(t, beforeHash, afterHash, "applied scheduling hash should advance after recreation")
@@ -1610,159 +1623,6 @@ func Test_RR15_SchedulingSupersessionRecreatesDifferentIndexTarget(t *testing.T)
 	assertReplicaResourceUIDsUnchanged(t, second, finalTarget)
 }
 
-// Test_RR16_LegacyUpgradePreservesUnappliedSchedulingChange verifies that scheduling edits are rejected
-// until an existing PCS's applied scheduling baseline is initialized. The upgraded operator must initialize
-// that baseline automatically from its startup watch without requiring a specification edit. Once initialized,
-// a MinAvailable change must be admitted and execute replica recreation rather than hash-only migration.
-//
-// The fixture seeds the relevant legacy generation status rather than depending on a released operator version.
-// Admission remains enabled throughout. The rejection check clears only status while the webhook is running.
-// Its specification update carries that status write's resource version, so concurrent initialization causes
-// a conflict and a retry instead of a misleading admission result. Fresh replacement readiness is blocked
-// only after initialization to keep recreation and its unapplied scheduling target observable.
-//
-// Scenario:
-//  1. Deploy workload2 under Coherent with one Ready PCS replica and 10 pods. Verify sg-x has replicas=2,
-//     MinAvailable=1, an anchor containing index 0, and a tail containing index 1.
-//  2. Clear the applied scheduling hash with the webhook running. Attempt sg-x MinAvailable 1 -> 2 and
-//     require an initialization rejection. Verify the persisted spec and replica resources remain unchanged.
-//  3. Stop the operator and seed legacy PCS and PodGangMap generation hashes with no applied scheduling
-//     baseline. Restart it without changing the spec and verify automatic initialization and hash migration
-//     preserve the original configuration, resource UIDs, and gang layout without starting an update.
-//  4. Block fresh standalone pods at index 0 and retry sg-x MinAvailable 1 -> 2. Require acceptance and
-//     active replica recreation while the applied scheduling hash still identifies the original configuration.
-//  5. Verify fresh PodClique, PodCliqueScalingGroup, and PodGangMap UIDs and an sg-x anchor containing
-//     indices 0 and 1 with no tail, while blocked readiness prevents completion.
-//  6. Release readiness and verify 10 Ready pods, generation and scheduling-hash convergence, the exact
-//     new gang layout, and stable replacement resource UIDs.
-func Test_RR16_LegacyUpgradePreservesUnappliedSchedulingChange(t *testing.T) {
-	tests.Logger.Info("1. Deploy workload2 under Coherent and verify the original sg-x gang layout")
-	tc, cleanup, _ := setupTest(t, testConfig{
-		workloadName: "workload2",
-		workloadYAML: "../../yaml/workload2.yaml",
-		workerNodes:  10,
-		expectedPods: 10,
-	})
-	t.Cleanup(cleanup)
-	require.NoError(t, updateutils.UpdatePCSUpdateStrategy(tc, grovev1beta1.CoherentStrategy))
-	updateutils.AssertGenerationHashConverged(tc)
-	before := requireReplicaSnapshot(t, tc)
-	require.Nil(t, before.PCS.Status.UpdateProgress, "the upgrade fixture must start without an active update")
-	want := expectedReplicaConfiguration{
-		StandaloneMinAvailable: 1, PCSGMinAvailable: 1, PCSGReplicas: 2,
-		PodGangMap: updateutils.ExpectedReplicaPodGangMap{
-			GenerationHash:      *before.PCS.Status.CurrentGenerationHash,
-			StandalonePodCounts: map[string]int32{"pc-a": 2},
-			PCSGName:            "sg-x", AnchorIndices: []int32{0}, TailIndices: []int32{1},
-		},
-	}
-	assertReplicaConfiguration(t, before, want)
-	legacyHash := legacyCoherentPCSGenerationHash(before.PCS)
-	require.NotEqual(t, *before.PCS.Status.CurrentGenerationHash, legacyHash)
-
-	tests.Logger.Info("2. Reject a version-locked scheduling edit before baseline initialization")
-	var admissionErr error
-	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		pcs, err := updateutils.GetPCS(tc, tc.Workload.Name)
-		if err != nil {
-			return err
-		}
-		pcs.Status.AppliedSchedulingConfigurationHash = nil
-		if err := tc.Client.Status().Update(tc.Ctx, pcs); err != nil {
-			return err
-		}
-		for i := range pcs.Spec.Template.PodCliqueScalingGroupConfigs {
-			if pcs.Spec.Template.PodCliqueScalingGroupConfigs[i].Name == "sg-x" {
-				pcs.Spec.Template.PodCliqueScalingGroupConfigs[i].MinAvailable = new(int32(2))
-				break
-			}
-		}
-		admissionErr = tc.Client.Update(tc.Ctx, pcs)
-		if apierrors.IsConflict(admissionErr) {
-			return admissionErr
-		}
-		return nil
-	})
-	require.NoError(t, err, "establish a version-locked admission request before initialization")
-	require.ErrorContains(t, admissionErr, "scheduling configuration is not initialized yet. Retry after Grove initializes it")
-	rejectedPCS, err := updateutils.GetPCS(tc, tc.Workload.Name)
-	require.NoError(t, err)
-	require.Equal(t, before.PCS.Spec, rejectedPCS.Spec, "a rejected scheduling edit must leave the stored specification unchanged")
-	require.Equal(t, before.PCS.Generation, rejectedPCS.Generation)
-	var existingPCSG grovev1beta1.PodCliqueScalingGroup
-	require.NoError(t, tc.Client.Get(tc.Ctx, client.ObjectKeyFromObject(before.PCSG), &existingPCSG))
-	require.Equal(t, before.PCSG.UID, existingPCSG.UID)
-	require.NotNil(t, existingPCSG.Spec.MinAvailable)
-	require.Equal(t, int32(1), *existingPCSG.Spec.MinAvailable)
-
-	tests.Logger.Info("3. Restart with legacy status and verify automatic baseline initialization without a spec edit")
-	operatorKey := client.ObjectKey{Namespace: setup.OperatorNamespace, Name: setup.OperatorDeploymentName}
-	var deployment appsv1.Deployment
-	require.NoError(t, tc.Client.Get(tc.Ctx, operatorKey, &deployment))
-	require.NotNil(t, deployment.Spec.Replicas)
-	operatorReplicas := *deployment.Spec.Replicas
-	require.Positive(t, operatorReplicas)
-	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.WithoutCancel(tc.Ctx), tc.Timeout)
-		defer cancel()
-		assert.NoError(t, setCoherentTestOperatorReplicas(ctx, tc, operatorReplicas))
-	})
-	require.NoError(t, setCoherentTestOperatorReplicas(tc.Ctx, tc, 0))
-	legacyPGM := before.PGM.DeepCopy()
-	for i := range legacyPGM.Spec.Entries {
-		legacyPGM.Spec.Entries[i].PodCliqueSetGenerationHash = legacyHash
-	}
-	require.NoError(t, tc.Client.Patch(tc.Ctx, legacyPGM, client.MergeFrom(before.PGM)))
-	pcs, err := updateutils.GetPCS(tc, tc.Workload.Name)
-	require.NoError(t, err)
-	originalPCS := pcs.DeepCopy()
-	pcs.Status.CurrentGenerationHash = &legacyHash
-	pcs.Status.AppliedSchedulingConfigurationHash = nil
-	require.NoError(t, tc.Client.Status().Patch(tc.Ctx, pcs, client.MergeFrom(originalPCS)))
-	require.NoError(t, setCoherentTestOperatorReplicas(tc.Ctx, tc, operatorReplicas))
-	require.NoError(t, updateutils.WaitForGenerationHashChange(tc, legacyHash))
-	initialized := requireReplicaSnapshot(t, tc)
-	require.Equal(t, *before.PCS.Status.CurrentGenerationHash, *initialized.PCS.Status.CurrentGenerationHash)
-	require.Equal(t, *before.PCS.Status.AppliedSchedulingConfigurationHash, *initialized.PCS.Status.AppliedSchedulingConfigurationHash)
-	require.Equal(t, before.PCS.Spec, initialized.PCS.Spec)
-	require.Equal(t, before.PCS.Generation, initialized.PCS.Generation)
-	require.Nil(t, initialized.PCS.Status.UpdateProgress, "baseline initialization and migration must not start an update")
-	assertReplicaResourceUIDsUnchanged(t, before, initialized)
-	assertReplicaConfiguration(t, initialized, want)
-
-	tests.Logger.Info("4. Admit sg-x MinAvailable after initialization and observe structural recreation")
-	require.NoError(t, kwok.ApplyStage(tc.Ctx, tc.Client, kwokStageReadyBlockedR0Path))
-	blockRemoved := false
-	t.Cleanup(func() {
-		if !blockRemoved {
-			assert.NoError(t, kwok.DeleteStage(tc.Ctx, tc.Client, kwokStageReadyBlockedR0Name))
-		}
-	})
-	require.NoError(t, triggerPCSGMinAvailableChange(tc, "sg-x", 2))
-	require.NoError(t, updateutils.WaitForGenerationHashChange(tc, *initialized.PCS.Status.CurrentGenerationHash))
-	observedPCS, err := updateutils.GetPCS(tc, tc.Workload.Name)
-	require.NoError(t, err)
-	target := requireSchedulingTargetChanged(t, initialized.PCS, observedPCS)
-
-	tests.Logger.Info("5. Verify structural recreation and an sg-x anchor containing both replicas with no tail")
-	want.PCSGMinAvailable = 2
-	want.PodGangMap.GenerationHash = target.GenerationHash
-	want.PodGangMap.AnchorIndices = []int32{0, 1}
-	want.PodGangMap.TailIndices = nil
-	recreated := requireRecreatedReplica(t, tc, initialized, want)
-
-	tests.Logger.Info("6. Release readiness and verify the scheduling change actually converges")
-	require.NoError(t, kwok.DeleteStage(tc.Ctx, tc.Client, kwokStageReadyBlockedR0Name))
-	blockRemoved = true
-	updateutils.DeleteNotReadyPodsOnReplica(t, tc, 0)
-	requireReplicaRecreationConverged(t, tc, expectedReplicaRecreationCompletion{
-		GenerationHash: target.GenerationHash, SchedulingHash: target.SchedulingHash,
-		Replicas: 1, Pods: 10, PCSReplicaIndices: []int{0}, Configuration: want,
-	})
-	final := requireReplicaSnapshot(t, tc)
-	assertReplicaResourceUIDsUnchanged(t, recreated, final)
-}
-
 // Test_RR17_ReplicaRecreationBeforeFirstCompletedReconcile verifies that persisted replacement work is
 // honored before the PCS has completed its first spec reconciliation. The fixture models an interruption
 // after hash initialization and child creation but before ObservedGeneration is written. It preserves the
@@ -2147,6 +2007,545 @@ func Test_RR18_CompletedReplacementLossDoesNotDelayUpdate(t *testing.T) {
 	require.Equal(t, freshPCLQ.UID, requireReplicaSnapshotForIndex(t, tc, 4).PCLQ.UID)
 }
 
+// Test_RR19_ServiceAccountRepairProgressesPastUninitializedReplica verifies that an unrelated
+// replica's failed pod creation cannot block source-cleanup acknowledgment for the selected replacement.
+// Both sources start with a nonexistent service account. One edit repairs that reference and increases
+// MinAvailable. Target 0 must create repaired pods while its readiness is held and source 1 stays invalid.
+//
+// Scenario:
+//  1. Deploy two PCS replicas referencing a nonexistent service account. Require API-server pod-creation
+//     rejections on both PodCliques, no pods, and an initialized scheduling baseline.
+//  2. Block target 0 readiness and repair the account reference while increasing worker MinAvailable
+//     from 1 to 2 in one patch. Require source-cleanup acknowledgment and fresh target resources.
+//  3. Verify repaired pods exist only on target 0 and remain NotReady. Source 1 must retain its original
+//     UID and invalid template while the replacement remains active and the scheduling target unapplied.
+//  4. Release readiness and verify both replicas converge to four Ready pods at the repaired configuration,
+//     the scheduling target becomes applied, and target 0 retains its replacement resource UIDs.
+func Test_RR19_ServiceAccountRepairProgressesPastUninitializedReplica(t *testing.T) {
+	const missingServiceAccount = "rr19-missing"
+	tc, cleanup := testctx.PrepareTest(context.Background(), t, 10, testctx.WithWorkload(&testctx.WorkloadConfig{
+		Name: "workload-recreation-standalone", YAMLPath: "../../yaml/workload-recreation-standalone.yaml",
+		Namespace: "default", ExpectedPods: 4,
+	}))
+	t.Cleanup(cleanup)
+	manifest, err := os.ReadFile(tc.Workload.YAMLPath)
+	require.NoError(t, err)
+	var pcs grovev1beta1.PodCliqueSet
+	require.NoError(t, yaml.Unmarshal(manifest, &pcs))
+	pcs.Namespace = tc.Namespace
+	pcs.Spec.Replicas = 2
+	pcs.Spec.UpdateStrategy = &grovev1beta1.PodCliqueSetUpdateStrategy{Type: grovev1beta1.RollingRecreateStrategy}
+	pcs.Spec.Template.Cliques[0].Spec.PodSpec.ServiceAccountName = missingServiceAccount
+	var serviceAccount corev1.ServiceAccount
+	require.True(t, apierrors.IsNotFound(tc.Client.Get(tc.Ctx, client.ObjectKey{Namespace: tc.Namespace, Name: missingServiceAccount}, &serviceAccount)))
+	require.NoError(t, tc.Client.Create(tc.Ctx, &pcs))
+
+	tests.Logger.Info("1. Observe real pod-creation rejection on both uninitialized replicas")
+	before := make([]grovev1beta1.PodClique, 2)
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		for pcsReplicaIndex := range 2 {
+			key := client.ObjectKey{Namespace: tc.Namespace, Name: apicommon.GeneratePodCliqueName(
+				apicommon.ResourceNameReplica{Name: pcs.Name, Replica: pcsReplicaIndex}, "worker",
+			)}
+			require.NoError(c, tc.Client.Get(tc.Ctx, key, &before[pcsReplicaIndex]))
+			pclq := before[pcsReplicaIndex]
+			assert.Nil(c, pclq.Status.LastScheduled)
+			assert.True(c, slices.ContainsFunc(pclq.Status.LastErrors, func(lastError grovev1beta1.LastError) bool {
+				return strings.Contains(lastError.Description, missingServiceAccount) &&
+					strings.Contains(lastError.Description, "forbidden") && strings.Contains(lastError.Description, "not found")
+			}), "replica %d must report the API-server service-account rejection: %+v", pcsReplicaIndex, pclq.Status.LastErrors)
+		}
+	}, tc.Timeout, tc.Interval)
+	beforePCS, err := updateutils.GetPCS(tc, tc.Workload.Name)
+	require.NoError(t, err)
+	require.NotNil(t, beforePCS.Status.CurrentGenerationHash)
+	require.NotNil(t, beforePCS.Status.AppliedSchedulingConfigurationHash)
+	require.Nil(t, beforePCS.Status.UpdateProgress)
+	initialPods, err := tc.ListPods()
+	require.NoError(t, err)
+	require.Empty(t, initialPods.Items)
+	beforePGM, err := updateutils.GetReplicaPodGangMap(tc, 0)
+	require.NoError(t, err)
+
+	tests.Logger.Info("2. Hold target readiness and atomically repair the account reference and minimum")
+	require.NoError(t, kwok.ApplyStage(tc.Ctx, tc.Client, kwokStageReadyBlockedR0Path))
+	t.Cleanup(func() { assert.NoError(t, kwok.DeleteStage(tc.Ctx, tc.Client, kwokStageReadyBlockedR0Name)) })
+	base := beforePCS.DeepCopy()
+	beforePCS.Spec.Template.Cliques[0].Spec.PodSpec.ServiceAccountName = "default"
+	beforePCS.Spec.Template.Cliques[0].Spec.MinAvailable = new(int32(2))
+	require.NoError(t, tc.Client.Patch(tc.Ctx, beforePCS, client.MergeFrom(base)))
+	cleanupPCS, err := waitForSameIndexReplacementCleanup(tc, 0)
+	require.NoError(t, err, "uninitialized source 1 must not block source 0 cleanup acknowledgment")
+	target := requireSchedulingTargetChanged(t, base, cleanupPCS)
+	freshPCLQ, err := waitForRecreatedPCLQ(tc, &before[0])
+	require.NoError(t, err)
+	freshPGM, err := waitForRecreatedPodGangMap(tc, beforePGM, target.GenerationHash, 1)
+	require.NoError(t, err)
+
+	tests.Logger.Info("3. Require repaired target pods while the unselected source still cannot create any")
+	heldPods, err := tc.WaitForPodCount(2)
+	require.NoError(t, err)
+	for _, pod := range heldPods.Items {
+		require.Equal(t, "0", pod.Labels[apicommon.LabelPodCliqueSetReplicaIndex])
+		require.Equal(t, "default", pod.Spec.ServiceAccountName)
+		require.False(t, kubeutils.IsPodReady(&pod))
+	}
+	var untouchedSource grovev1beta1.PodClique
+	require.NoError(t, tc.Client.Get(tc.Ctx, client.ObjectKeyFromObject(&before[1]), &untouchedSource))
+	require.Equal(t, before[1].UID, untouchedSource.UID)
+	require.Equal(t, before[1].Spec, untouchedSource.Spec)
+	require.Nil(t, untouchedSource.Status.LastScheduled)
+	heldPCS, err := updateutils.GetPCS(tc, tc.Workload.Name)
+	require.NoError(t, err)
+	progress := requireActiveReplicaRecreation(t, heldPCS)
+	require.Len(t, progress.CurrentlyUpdating, 1)
+	selection := requireActiveReplacement(t, progress, expectedReplicaReplacement{SourcePCSReplicaIndex: 0, TargetPCSReplicaIndex: 0})
+	require.NotNil(t, selection.Replacement.SourceCleanupCompletedAt)
+	require.Equal(t, base.Status.AppliedSchedulingConfigurationHash, heldPCS.Status.AppliedSchedulingConfigurationHash)
+	require.Equal(t, "default", freshPCLQ.Spec.PodSpec.ServiceAccountName)
+	require.Equal(t, new(int32(2)), freshPCLQ.Spec.MinAvailable)
+
+	tests.Logger.Info("4. Release readiness and require the entire repair to converge")
+	require.NoError(t, kwok.DeleteStage(tc.Ctx, tc.Client, kwokStageReadyBlockedR0Name))
+	updateutils.DeleteNotReadyPodsOnReplica(t, tc, 0)
+	require.NoError(t, waitForReplicaRecreationComplete(tc, 2))
+	require.NoError(t, tc.WaitForPods(4))
+	finishedPCS, err := updateutils.GetPCS(tc, tc.Workload.Name)
+	require.NoError(t, err)
+	assertReplicaRecreationCompleted(t, finishedPCS, expectedReplicaRecreationCompletion{
+		GenerationHash: target.GenerationHash, SchedulingHash: target.SchedulingHash, Replicas: 2,
+	})
+	for pcsReplicaIndex := range 2 {
+		var pclq grovev1beta1.PodClique
+		require.NoError(t, tc.Client.Get(tc.Ctx, client.ObjectKeyFromObject(&before[pcsReplicaIndex]), &pclq))
+		require.NotEqual(t, before[pcsReplicaIndex].UID, pclq.UID)
+		require.Equal(t, "default", pclq.Spec.PodSpec.ServiceAccountName)
+		require.Equal(t, new(int32(2)), pclq.Spec.MinAvailable)
+		if pcsReplicaIndex == 0 {
+			require.Equal(t, freshPCLQ.UID, pclq.UID)
+		}
+	}
+	finalPGM, err := updateutils.GetReplicaPodGangMap(tc, 0)
+	require.NoError(t, err)
+	require.Equal(t, freshPGM.UID, finalPGM.UID)
+	updateutils.AssertGenerationHashConverged(tc)
+	updateutils.AssertNoActiveChildUpdates(tc)
+}
+
+// Test_RR20_MinAvailableChangeAtZeroReplicasAllowsScaleOut verifies that a scheduling edit made
+// after complete scale-down can finish immediately without stranding generation expectations.
+// Subsequent scale-out must succeed in the same operator process without opening another update.
+//
+// Scenario:
+//  1. Deploy one Ready workload2 PCS replica and configure RollingRecreate, Coherent, or OnDelete.
+//     Capture the operator identity, scale to zero, and wait for all replica resources and scaling progress
+//     to disappear and the PCS generation to be observed. No update may be recorded yet.
+//  2. Increase sg-x MinAvailable from 1 to 2 while no replicas or cleanup work remain. Require completion
+//     at zero replicas with the new scheduling hash applied and no retained selections or scaling progress.
+//  3. Scale back to one and verify ten Ready pods, the new minimum and gang layout, and unchanged update
+//     start and completion timestamps. The operator pod UID and container ID must remain unchanged.
+func Test_RR20_MinAvailableChangeAtZeroReplicasAllowsScaleOut(t *testing.T) {
+	for _, strategy := range []grovev1beta1.UpdateStrategyType{grovev1beta1.RollingRecreateStrategy, grovev1beta1.CoherentStrategy, grovev1beta1.OnDeleteStrategy} {
+		t.Run(string(strategy), func(t *testing.T) {
+			tc, cleanup, _ := setupTest(t, testConfig{
+				workloadName: "workload2", workloadYAML: "../../yaml/workload2.yaml", workerNodes: 10, expectedPods: 10,
+			})
+			t.Cleanup(cleanup)
+			require.NoError(t, updateutils.UpdatePCSUpdateStrategy(tc, strategy))
+			var operatorPods corev1.PodList
+			require.NoError(t, tc.Client.List(tc.Ctx, &operatorPods, client.InNamespace(setup.OperatorNamespace), setup.OperatorPodLabels))
+			require.Len(t, operatorPods.Items, 1)
+			operatorBefore := operatorPods.Items[0].DeepCopy()
+
+			tests.Logger.Info("1. Fully scale down the initialized PCS before changing its scheduling configuration")
+			require.NoError(t, tc.ScalePCS(tc.Workload.Name, 0))
+			require.NoError(t, waitForReplicaResourcesDeleted(tc, client.MatchingLabels{apicommon.LabelPartOfKey: tc.Workload.Name}))
+			require.EventuallyWithT(t, func(c *assert.CollectT) {
+				pcs, err := updateutils.GetPCS(tc, tc.Workload.Name)
+				require.NoError(c, err)
+				assert.Equal(c, new(pcs.Generation), pcs.Status.ObservedGeneration)
+				assert.Nil(c, pcs.Status.ScalingProgress)
+				assert.Zero(c, pcs.Status.Replicas)
+			}, tc.Timeout, tc.Interval)
+			before, err := updateutils.GetPCS(tc, tc.Workload.Name)
+			require.NoError(t, err)
+			require.NotNil(t, before.Status.CurrentGenerationHash)
+			require.NotNil(t, before.Status.AppliedSchedulingConfigurationHash)
+			require.Nil(t, before.Status.UpdateProgress)
+
+			tests.Logger.Info("2. Change MinAvailable with no replicas or cleanup work remaining")
+			require.NoError(t, triggerPCSGMinAvailableChange(tc, "sg-x", 2))
+			require.NoError(t, updateutils.WaitForGenerationHashChange(tc, *before.Status.CurrentGenerationHash))
+			require.NoError(t, waitForReplicaRecreationComplete(tc, 0))
+			completed, err := updateutils.GetPCS(tc, tc.Workload.Name)
+			require.NoError(t, err)
+			require.NotNil(t, completed.Status.UpdateProgress)
+			target := recreationTarget{GenerationHash: *completed.Status.CurrentGenerationHash, SchedulingHash: completed.Status.UpdateProgress.TargetSchedulingConfigurationHash}
+			require.NotEqual(t, *before.Status.AppliedSchedulingConfigurationHash, target.SchedulingHash)
+			assertReplicaRecreationCompleted(t, completed, expectedReplicaRecreationCompletion{
+				GenerationHash: target.GenerationHash, SchedulingHash: target.SchedulingHash, Replicas: 0,
+			})
+			require.Nil(t, completed.Status.ScalingProgress)
+
+			tests.Logger.Info("3. Scale out without restarting the operator or resetting its expectations")
+			require.NoError(t, tc.ScalePCS(tc.Workload.Name, 1))
+			want := expectedReplicaConfiguration{
+				StandaloneMinAvailable: 1, PCSGMinAvailable: 2, PCSGReplicas: 2,
+				PodGangMap: updateutils.ExpectedReplicaPodGangMap{
+					GenerationHash: target.GenerationHash, StandalonePodCounts: map[string]int32{"pc-a": 2},
+					PCSGName: "sg-x", AnchorIndices: []int32{0, 1},
+				},
+			}
+			requireReplicaRecreationConverged(t, tc, expectedReplicaRecreationCompletion{
+				GenerationHash: target.GenerationHash, SchedulingHash: target.SchedulingHash,
+				Replicas: 1, Pods: 10, PCSReplicaIndices: []int{0}, Configuration: want,
+			})
+			final, err := updateutils.GetPCS(tc, tc.Workload.Name)
+			require.NoError(t, err)
+			require.Equal(t, completed.Status.UpdateProgress.UpdateStartedAt, final.Status.UpdateProgress.UpdateStartedAt)
+			require.Equal(t, completed.Status.UpdateProgress.UpdateEndedAt, final.Status.UpdateProgress.UpdateEndedAt)
+			require.Equal(t, new(final.Generation), final.Status.ObservedGeneration)
+			require.NoError(t, tc.Client.List(tc.Ctx, &operatorPods, client.InNamespace(setup.OperatorNamespace), setup.OperatorPodLabels))
+			require.Len(t, operatorPods.Items, 1)
+			require.Equal(t, operatorBefore.UID, operatorPods.Items[0].UID, "operator restart would erase the expectation under test")
+			require.Len(t, operatorBefore.Status.ContainerStatuses, 1)
+			require.Len(t, operatorPods.Items[0].Status.ContainerStatuses, 1)
+			require.Equal(t, operatorBefore.Status.ContainerStatuses[0].ContainerID, operatorPods.Items[0].Status.ContainerStatuses[0].ContainerID)
+		})
+	}
+}
+
+// Test_RR21_MinAvailableChangeAndScaleToZeroDuringTemplateUpdate verifies that a scheduling handoff
+// drops a configured-update selection made ineligible by the same request's new scale-in decision.
+// It must not retain a non-replacement selection after deleting that selection's children.
+//
+// Scenario:
+//  1. Deploy one Ready workload2 PCS replica under RollingRecreate or Coherent. Block fresh pc-a readiness
+//     and trigger a template update. Require an unfinished selection with Replacement nil and no recorded
+//     scaling progress. Under Coherent, wait for the intermediate multi-generation PodGangMap.
+//  2. Hold source deletion with a finalizer, then increase sg-x MinAvailable from 1 to 2 and scale to zero
+//     in one patch. Verify the inherited update selection is removed and replica 0 is recorded for scale-in.
+//  3. Release deletion without releasing readiness. Require all replica resources to disappear and the
+//     update to complete at zero replicas with its scheduling target applied and no scaling progress.
+//  4. Submit another template edit and require admission and completion at zero. Release readiness and
+//     scale to one. Verify ten Ready pods use the latest template, sg-x retains the new minimum, and
+//     replica-scoped resources have fresh UIDs with no unfinished child updates.
+func Test_RR21_MinAvailableChangeAndScaleToZeroDuringTemplateUpdate(t *testing.T) {
+	for _, strategy := range []grovev1beta1.UpdateStrategyType{grovev1beta1.RollingRecreateStrategy, grovev1beta1.CoherentStrategy} {
+		t.Run(string(strategy), func(t *testing.T) {
+			tc, cleanup, _ := setupTest(t, testConfig{
+				workloadName: "workload2", workloadYAML: "../../yaml/workload2.yaml", workerNodes: 10, expectedPods: 10,
+			})
+			t.Cleanup(cleanup)
+			require.NoError(t, updateutils.UpdatePCSUpdateStrategy(tc, strategy))
+			require.NoError(t, kwok.ApplyStage(tc.Ctx, tc.Client, kwokStageReadyBlockedR0Path))
+			t.Cleanup(func() { assert.NoError(t, kwok.DeleteStage(tc.Ctx, tc.Client, kwokStageReadyBlockedR0Name)) })
+
+			tests.Logger.Info("1. Hold a configured template update with a non-replacement selection")
+			require.NoError(t, updateutils.TriggerPodCliqueUpdateWithRevision(tc, "rr21-first", "pc-a"))
+			require.NoError(t, updateutils.WaitForOrdinalUpdating(tc, 0))
+			require.NoError(t, waitForNotReadyPodAtRevision(tc, "rr21-first"))
+			if strategy == grovev1beta1.CoherentStrategy {
+				updateutils.WaitForReplicaMidCoherentRoll(t, tc, 0)
+			}
+			before := requireReplicaSnapshot(t, tc)
+			require.Nil(t, before.PCS.Status.ScalingProgress, "scale-in must not already be recorded before handoff")
+			require.NotNil(t, before.PCS.Status.UpdateProgress)
+			require.False(t, before.PCS.Status.UpdateProgress.RequiresReplicaRecreation)
+			require.Nil(t, before.PCS.Status.UpdateProgress.UpdateEndedAt)
+			require.Len(t, before.PCS.Status.UpdateProgress.CurrentlyUpdating, 1)
+			require.Nil(t, before.PCS.Status.UpdateProgress.CurrentlyUpdating[0].Replacement)
+			releaseSource, err := holdReplicaSourceCleanup(tc, before.PCLQ)
+			require.NoError(t, err)
+			t.Cleanup(func() { assert.NoError(t, releaseSource()) })
+
+			tests.Logger.Info("2. Atomically change the scheduling minimum and scale one replica to zero")
+			pcs := before.PCS.DeepCopy()
+			pcs.Spec.Replicas = 0
+			pcs.Spec.Template.PodCliqueScalingGroupConfigs[0].MinAvailable = new(int32(2))
+			require.NoError(t, tc.Client.Patch(tc.Ctx, pcs, client.MergeFrom(before.PCS)))
+			require.NoError(t, updateutils.WaitForGenerationHashChange(tc, *before.PCS.Status.CurrentGenerationHash))
+			require.NoError(t, waitForReplicaSourceDeletion(tc, before.PCLQ))
+			held, err := updateutils.GetPCS(tc, tc.Workload.Name)
+			require.NoError(t, err)
+			require.NotNil(t, held.Status.UpdateProgress)
+			require.Empty(t, held.Status.UpdateProgress.CurrentlyUpdating, "scale-in must remove the inherited non-replacement selection")
+			require.NotNil(t, held.Status.ScalingProgress)
+			require.Equal(t, []int32{0}, held.Status.ScalingProgress.ScaleInReplicaIndices)
+			target := recreationTarget{GenerationHash: *held.Status.CurrentGenerationHash, SchedulingHash: held.Status.UpdateProgress.TargetSchedulingConfigurationHash}
+			require.NotEqual(t, *before.PCS.Status.AppliedSchedulingConfigurationHash, target.SchedulingHash)
+
+			tests.Logger.Info("3. Finish scale-in without making the obsolete template-update pods Ready")
+			require.NoError(t, releaseSource())
+			require.NoError(t, waitForReplicaResourcesDeleted(tc, client.MatchingLabels{apicommon.LabelPartOfKey: tc.Workload.Name}))
+			require.NoError(t, waitForReplicaRecreationComplete(tc, 0))
+			completed, err := updateutils.GetPCS(tc, tc.Workload.Name)
+			require.NoError(t, err)
+			assertReplicaRecreationCompleted(t, completed, expectedReplicaRecreationCompletion{
+				GenerationHash: target.GenerationHash, SchedulingHash: target.SchedulingHash, Replicas: 0,
+			})
+			require.Nil(t, completed.Status.ScalingProgress)
+
+			tests.Logger.Info("4. Admit another template edit and provision the latest configuration")
+			require.NoError(t, updateutils.TriggerPodCliqueUpdateWithRevision(tc, "rr21-next", "pc-a"))
+			require.NoError(t, updateutils.WaitForGenerationHashChange(tc, target.GenerationHash))
+			require.NoError(t, updateutils.WaitForRollingUpdateComplete(tc, 0))
+			require.NoError(t, kwok.DeleteStage(tc.Ctx, tc.Client, kwokStageReadyBlockedR0Name))
+			require.NoError(t, tc.ScalePCS(tc.Workload.Name, 1))
+			require.NoError(t, updateutils.WaitForRollingUpdateComplete(tc, 1))
+			require.NoError(t, tc.WaitForPods(10))
+			updateutils.AssertAffectedPodsAtRevision(tc, "pc-a", "rr21-next")
+			updateutils.AssertGenerationHashConverged(tc)
+			updateutils.AssertNoActiveChildUpdates(tc)
+			final := requireReplicaSnapshot(t, tc)
+			require.Equal(t, new(int32(2)), final.PCSG.Spec.MinAvailable)
+			requireReplicaResourceUIDsChanged(t, before, final)
+		})
+	}
+}
+
+// Test_RR22_OnDeleteMinAvailableChangeRecreatesLiveReplica verifies that a scheduling change
+// automatically replaces a live PCS replica even when its configured update strategy is OnDelete.
+//
+// Scenario:
+//  1. Deploy workload2 with one Ready replica and ten pods, then configure OnDelete. Capture the
+//     original child UIDs and scheduling baseline with sg-x MinAvailable set to one.
+//  2. Cordon the schedulable test workers and increase sg-x MinAvailable to two. Without manually
+//     deleting pods or children, require fresh standalone PodClique, PCSG, and PodGangMap UIDs.
+//  3. Verify both sg-x indices are in the anchor with no tail, source cleanup is acknowledged,
+//     and the unscheduled replacement keeps the new scheduling target unapplied.
+//  4. Uncordon the workers and require ten Ready pods, the applied target, and unchanged replacement
+//     UIDs. The PCS must retain OnDelete throughout recreation and completion.
+func Test_RR22_OnDeleteMinAvailableChangeRecreatesLiveReplica(t *testing.T) {
+	tc, cleanup, _ := setupTest(t, testConfig{
+		workloadName: "workload2", workloadYAML: "../../yaml/workload2.yaml", workerNodes: 10, expectedPods: 10,
+	})
+	t.Cleanup(cleanup)
+	require.NoError(t, updateutils.UpdatePCSUpdateStrategy(tc, grovev1beta1.OnDeleteStrategy))
+	before := requireReplicaSnapshot(t, tc)
+	require.Equal(t, grovev1beta1.OnDeleteStrategy, before.PCS.Spec.UpdateStrategy.Type)
+	require.Nil(t, before.PCS.Status.UpdateProgress)
+	require.Equal(t, new(int32(1)), before.PCSG.Spec.MinAvailable)
+
+	workers := cordonSchedulableTestWorkers(t, tc)
+	require.NoError(t, triggerPCSGMinAvailableChange(tc, "sg-x", 2))
+	cleanupPCS, err := waitForSameIndexReplacementCleanup(tc, 0)
+	require.NoError(t, err, "OnDelete must recreate the source without manual deletion")
+	target := requireSchedulingTargetChanged(t, before.PCS, cleanupPCS)
+	want := expectedReplicaConfiguration{
+		StandaloneMinAvailable: 1, PCSGMinAvailable: 2, PCSGReplicas: 2,
+		PodGangMap: updateutils.ExpectedReplicaPodGangMap{
+			GenerationHash: target.GenerationHash, StandalonePodCounts: map[string]int32{"pc-a": 2},
+			PCSGName: "sg-x", AnchorIndices: []int32{0, 1},
+		},
+	}
+	recreated := requireRecreatedReplica(t, tc, before, want)
+	require.Equal(t, grovev1beta1.OnDeleteStrategy, recreated.PCS.Spec.UpdateStrategy.Type)
+
+	tc.UncordonNodes(workers)
+	requireReplicaRecreationConverged(t, tc, expectedReplicaRecreationCompletion{
+		GenerationHash: target.GenerationHash, SchedulingHash: target.SchedulingHash,
+		Replicas: 1, Pods: 10, PCSReplicaIndices: []int{0}, Configuration: want,
+	})
+	final := requireReplicaSnapshot(t, tc)
+	assertReplicaResourceUIDsUnchanged(t, recreated, final)
+	require.Equal(t, grovev1beta1.OnDeleteStrategy, final.PCS.Spec.UpdateStrategy.Type)
+}
+
+// Test_RR23_PCSGMemberMinAvailableChangeRecreatesReplica verifies that changing a member PodClique's
+// minimum recreates the PCS replica and updates the member's actual PodGang scheduling requirement.
+//
+// Scenario:
+//  1. Deploy workload2 under RollingRecreate or Coherent with ten Ready pods. Capture the two pc-c
+//     member PodCliques, each with three replicas and MinAvailable one, and the actual PodGang minima.
+//  2. Cordon the schedulable test workers and change only pc-c MinAvailable from one to two in the PCS
+//     template. Leave the standalone and scaling-group minima unchanged.
+//  3. Require a fresh standalone PodClique, PCSG, PodGangMap, and both pc-c members. Verify the member
+//     specs and PodGang minReplicas are two while the anchor/tail membership remains unchanged.
+//     The unscheduled replacement must remain active with its scheduling target unapplied.
+//  4. Uncordon the workers and require ten Ready pods, generation convergence, the applied target,
+//     stable replacement UIDs, and the same member specs and actual scheduling minima.
+func Test_RR23_PCSGMemberMinAvailableChangeRecreatesReplica(t *testing.T) {
+	for _, strategy := range []grovev1beta1.UpdateStrategyType{grovev1beta1.RollingRecreateStrategy, grovev1beta1.CoherentStrategy} {
+		t.Run(string(strategy), func(t *testing.T) {
+			tc, cleanup, _ := setupTest(t, testConfig{
+				workloadName: "workload2", workloadYAML: "../../yaml/workload2.yaml", workerNodes: 10, expectedPods: 10,
+			})
+			t.Cleanup(cleanup)
+			require.NoError(t, updateutils.UpdatePCSUpdateStrategy(tc, strategy))
+			before := requireReplicaSnapshot(t, tc)
+			require.Nil(t, before.PCS.Status.UpdateProgress)
+			beforeMembers := make([]grovev1beta1.PodClique, 2)
+			wantMinima := map[string]int32{before.PCLQ.Name: 1}
+			for i := range beforeMembers {
+				owner := apicommon.ResourceNameReplica{Name: before.PCSG.Name, Replica: i}
+				name := apicommon.GeneratePodCliqueName(owner, "pc-c")
+				require.NoError(t, tc.Client.Get(tc.Ctx, client.ObjectKey{Namespace: tc.Namespace, Name: name}, &beforeMembers[i]))
+				require.Equal(t, new(int32(1)), beforeMembers[i].Spec.MinAvailable)
+				require.Equal(t, int32(3), beforeMembers[i].Spec.Replicas)
+				wantMinima[name] = 1
+				wantMinima[apicommon.GeneratePodCliqueName(owner, "pc-b")] = 1
+			}
+			requirePodGangMinReplicas(t, tc, wantMinima)
+
+			workers := cordonSchedulableTestWorkers(t, tc)
+			changed := before.PCS.DeepCopy()
+			memberTemplate := componentutils.FindPodCliqueTemplateSpecByName(changed, "pc-c")
+			require.NotNil(t, memberTemplate)
+			memberTemplate.Spec.MinAvailable = new(int32(2))
+			require.NoError(t, tc.Client.Patch(tc.Ctx, changed, client.MergeFrom(before.PCS)))
+			cleanupPCS, err := waitForSameIndexReplacementCleanup(tc, 0)
+			require.NoError(t, err)
+			target := requireSchedulingTargetChanged(t, before.PCS, cleanupPCS)
+			want := expectedReplicaConfiguration{
+				StandaloneMinAvailable: 1, PCSGMinAvailable: 1, PCSGReplicas: 2,
+				PodGangMap: updateutils.ExpectedReplicaPodGangMap{
+					GenerationHash: target.GenerationHash, StandalonePodCounts: map[string]int32{"pc-a": 2},
+					PCSGName: "sg-x", AnchorIndices: []int32{0}, TailIndices: []int32{1},
+				},
+			}
+			recreated := requireRecreatedReplica(t, tc, before, want)
+			recreatedMembers := make([]*grovev1beta1.PodClique, len(beforeMembers))
+			for i := range beforeMembers {
+				member, err := waitForRecreatedPCLQ(tc, &beforeMembers[i])
+				require.NoError(t, err, "member %s must be recreated", beforeMembers[i].Name)
+				require.Equal(t, new(int32(2)), member.Spec.MinAvailable)
+				require.Equal(t, int32(3), member.Spec.Replicas)
+				require.Equal(t, target.GenerationHash, member.Labels[apicommon.LabelPodCliqueSetGenerationHash])
+				recreatedMembers[i] = member
+				wantMinima[member.Name] = 2
+			}
+			requirePodGangMinReplicas(t, tc, wantMinima)
+
+			tc.UncordonNodes(workers)
+			requireReplicaRecreationConverged(t, tc, expectedReplicaRecreationCompletion{
+				GenerationHash: target.GenerationHash, SchedulingHash: target.SchedulingHash,
+				Replicas: 1, Pods: 10, PCSReplicaIndices: []int{0}, Configuration: want,
+			})
+			assertReplicaResourceUIDsUnchanged(t, recreated, requireReplicaSnapshot(t, tc))
+			for _, member := range recreatedMembers {
+				var final grovev1beta1.PodClique
+				require.NoError(t, tc.Client.Get(tc.Ctx, client.ObjectKeyFromObject(member), &final))
+				require.Equal(t, member.UID, final.UID)
+				require.Equal(t, new(int32(2)), final.Spec.MinAvailable)
+				require.Equal(t, int32(3), final.Spec.Replicas)
+			}
+			requirePodGangMinReplicas(t, tc, wantMinima)
+		})
+	}
+}
+
+// Test_RR24_MinAvailableDecreaseAfterCompletedRecreation verifies that decreasing a fully applied
+// scheduling minimum starts a new structural recreation rather than reusing a completed update.
+//
+// Scenario:
+//  1. Deploy workload2, increase sg-x MinAvailable from one to two, and wait for full completion with
+//     ten Ready pods. Verify the applied higher minimum, fresh child UIDs, and an anchor with both indices.
+//  2. Capture that completed update and cordon the schedulable test workers. Decrease sg-x MinAvailable
+//     to one without changing replica counts or pod templates.
+//  3. Require a new active replacement with fresh child UIDs. Its scheduling target must differ from the
+//     fully applied higher minimum, which remains applied while the replacement is unscheduled.
+//     The anchor must contain index zero and the restored tail must contain index one.
+//  4. Uncordon the workers and require ten Ready pods at the lower minimum, the applied target, and
+//     stable replacement UIDs. The previously completed update must not suppress the new recreation.
+func Test_RR24_MinAvailableDecreaseAfterCompletedRecreation(t *testing.T) {
+	tc, cleanup, _ := setupTest(t, testConfig{
+		workloadName: "workload2", workloadYAML: "../../yaml/workload2.yaml", workerNodes: 10, expectedPods: 10,
+	})
+	t.Cleanup(cleanup)
+	original := requireReplicaSnapshot(t, tc)
+	require.NoError(t, triggerPCSGMinAvailableChange(tc, "sg-x", 2))
+	require.NoError(t, updateutils.WaitForGenerationHashChange(tc, *original.PCS.Status.CurrentGenerationHash))
+	require.NoError(t, waitForReplicaRecreationComplete(tc, 1))
+	require.NoError(t, tc.WaitForPods(10))
+	before := requireReplicaSnapshot(t, tc)
+	requireReplicaResourceUIDsChanged(t, original, before)
+	require.NotNil(t, before.PCS.Status.UpdateProgress)
+	require.NotNil(t, before.PCS.Status.UpdateProgress.UpdateEndedAt)
+	require.Empty(t, before.PCS.Status.UpdateProgress.CurrentlyUpdating)
+	require.Nil(t, before.PCS.Status.ScalingProgress)
+	require.Equal(t, new(before.PCS.Status.UpdateProgress.TargetSchedulingConfigurationHash), before.PCS.Status.AppliedSchedulingConfigurationHash)
+	require.NotEqual(t, original.PCS.Status.AppliedSchedulingConfigurationHash, before.PCS.Status.AppliedSchedulingConfigurationHash)
+	assertReplicaConfiguration(t, before, expectedReplicaConfiguration{
+		StandaloneMinAvailable: 1, PCSGMinAvailable: 2, PCSGReplicas: 2,
+		PodGangMap: updateutils.ExpectedReplicaPodGangMap{
+			GenerationHash: *before.PCS.Status.CurrentGenerationHash, StandalonePodCounts: map[string]int32{"pc-a": 2},
+			PCSGName: "sg-x", AnchorIndices: []int32{0, 1},
+		},
+	})
+	updateutils.AssertGenerationHashConverged(tc)
+	updateutils.AssertNoActiveChildUpdates(tc)
+
+	workers := cordonSchedulableTestWorkers(t, tc)
+	require.NoError(t, triggerPCSGMinAvailableChange(tc, "sg-x", 1))
+	cleanupPCS, err := waitForSameIndexReplacementCleanup(tc, 0)
+	require.NoError(t, err, "the decrease must start a new recreation after the higher minimum was applied")
+	target := requireSchedulingTargetChanged(t, before.PCS, cleanupPCS)
+	require.False(t, cleanupPCS.Status.UpdateProgress.UpdateStartedAt.Before(before.PCS.Status.UpdateProgress.UpdateEndedAt),
+		"the new update must not predate completion of the increase")
+	require.Equal(t, *original.PCS.Status.CurrentGenerationHash, target.GenerationHash)
+	require.Equal(t, *original.PCS.Status.AppliedSchedulingConfigurationHash, target.SchedulingHash)
+	want := expectedReplicaConfiguration{
+		StandaloneMinAvailable: 1, PCSGMinAvailable: 1, PCSGReplicas: 2,
+		PodGangMap: updateutils.ExpectedReplicaPodGangMap{
+			GenerationHash: target.GenerationHash, StandalonePodCounts: map[string]int32{"pc-a": 2},
+			PCSGName: "sg-x", AnchorIndices: []int32{0}, TailIndices: []int32{1},
+		},
+	}
+	recreated := requireRecreatedReplica(t, tc, before, want)
+
+	tc.UncordonNodes(workers)
+	requireReplicaRecreationConverged(t, tc, expectedReplicaRecreationCompletion{
+		GenerationHash: target.GenerationHash, SchedulingHash: target.SchedulingHash,
+		Replicas: 1, Pods: 10, PCSReplicaIndices: []int{0}, Configuration: want,
+	})
+	assertReplicaResourceUIDsUnchanged(t, recreated, requireReplicaSnapshot(t, tc))
+}
+
+// cordonSchedulableTestWorkers prevents fresh pods from scheduling and restores only the workers it changed.
+func cordonSchedulableTestWorkers(t *testing.T, tc *testctx.TestContext) []string {
+	t.Helper()
+	var workers corev1.NodeList
+	require.NoError(t, tc.Client.List(tc.Ctx, &workers, client.MatchingLabels{setup.WorkerNodeLabelKey: setup.WorkerNodeLabelValue}))
+	var names []string
+	for _, node := range workers.Items {
+		if !node.Spec.Unschedulable {
+			names = append(names, node.Name)
+		}
+	}
+	require.NotEmpty(t, names, "at least one test worker must be schedulable before holding the replacement")
+	t.Cleanup(func() {
+		for _, name := range names {
+			assert.NoError(t, tc.UncordonNode(name))
+		}
+	})
+	tc.CordonNodes(names)
+	return names
+}
+
+// requirePodGangMinReplicas waits for replica zero's actual PodGroups to carry exactly the requested minima.
+// Each member must occur in one live PodGang so duplicate or stale groups cannot satisfy the check.
+func requirePodGangMinReplicas(t *testing.T, tc *testctx.TestContext, want map[string]int32) {
+	t.Helper()
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		var podGangs groveschedulerv1alpha1.PodGangList
+		require.NoError(c, tc.Client.List(tc.Ctx, &podGangs, client.InNamespace(tc.Namespace), client.MatchingLabels{
+			apicommon.LabelPartOfKey: tc.Workload.Name, apicommon.LabelPodCliqueSetReplicaIndex: "0",
+		}))
+		got := make(map[string]int32)
+		for _, podGang := range podGangs.Items {
+			if podGang.DeletionTimestamp != nil {
+				continue
+			}
+			for _, group := range podGang.Spec.PodGroups {
+				assert.NotContains(c, got, group.Name, "PodGroup must occur in only one live PodGang")
+				got[group.Name] = group.MinReplicas
+			}
+		}
+		assert.Equal(c, want, got, "actual PodGang scheduling minima")
+	}, tc.Timeout, tc.Interval)
+}
+
 // findPCSReplicaUpdateSelection returns the source-keyed selection without copying or mutating its progress.
 func findPCSReplicaUpdateSelection(progress *grovev1beta1.PodCliqueSetUpdateProgress, sourcePCSReplicaIndex int32) *grovev1beta1.PodCliqueSetReplicaUpdateProgress {
 	if progress == nil {
@@ -2330,11 +2729,14 @@ func waitForActivePCSReplicaRecreation(tc *testctx.TestContext) error {
 
 // waitForReplicaRecreationComplete waits until structural PCS replica recreation has finished: UpdateProgress
 // has UpdateEndedAt set, AppliedSchedulingConfigurationHash equals the target scheduling hash the update
-// converged to, and UpdatedReplicas matches expectedReplicas.
+// converged to, and UpdatedReplicas matches expectedReplicas. The current PCS generation must be observed.
 func waitForReplicaRecreationComplete(tc *testctx.TestContext, expectedReplicas int32) error {
 	fetchPCS := waiter.FetchByName(tc.Workload.Name, k8sclient.Getter[*grovev1beta1.PodCliqueSet](tc.Client, tc.Namespace))
 	predicate := waiter.Predicate[*grovev1beta1.PodCliqueSet](func(pcs *grovev1beta1.PodCliqueSet) bool {
 		if pcs == nil || pcs.Status.UpdateProgress == nil {
+			return false
+		}
+		if pcs.Status.ObservedGeneration == nil || *pcs.Status.ObservedGeneration != pcs.Generation {
 			return false
 		}
 		progress := pcs.Status.UpdateProgress

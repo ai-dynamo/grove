@@ -2162,12 +2162,9 @@ func triggerRollingUpdate(tc *testctx.TestContext, expectedReplicas int32, cliqu
 	go func() {
 		startTime := time.Now()
 
-		// Trigger synchronously first
-		for _, cliqueName := range cliqueNames {
-			if err := updateutils.TriggerPodCliqueUpdate(tc, cliqueName); err != nil {
-				errCh <- fmt.Errorf("failed to update PodClique %s spec: %w", cliqueName, err)
-				return
-			}
+		if err := updateutils.TriggerPodCliqueUpdate(tc, cliqueNames...); err != nil {
+			errCh <- fmt.Errorf("failed to update PodCliques %v: %w", cliqueNames, err)
+			return
 		}
 		tests.Logger.Debugf("[triggerRollingUpdate] Triggered update on %v, waiting for completion...", cliqueNames)
 
