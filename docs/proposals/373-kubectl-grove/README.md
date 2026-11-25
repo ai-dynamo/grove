@@ -478,7 +478,6 @@ N/A.
 | Richer Grove status instead | Worth doing, but subtree events and workload placement need cross-object joins. |
 | An MCP server | CLI plus skills is simpler: people and CI use the CLI without agents, and skills add what agents need. An MCP server adds no benefit. |
 | A combined health and events command, or a diagnostics collector | Skills compose `status`, `events` and kubectl for these workflows. |
-| A cluster GPU capacity view (free GPUs per domain) | Domain totals cannot show whether a gang will schedule, yet operators would read them that way. |
 | One `grove` skill | Broad trigger, large context. |
 | TOON (token-saving JSON encoding) | Savings unvalidated; JSON Schema stays the contract; addable later. |
 | `apiVersion`/`kind` envelope | Implies a stability promise the JSON doesn't make ([Backward Compatibility](#backward-compatibility)). |
@@ -488,17 +487,11 @@ N/A.
 | cli-runtime printers | `JSONPrinter` requires `apiVersion`/`kind`, then just calls `MarshalIndent`; `PrintFlags` adds many formats to the contract. |
 | Own kubeconfig handling; kubectl's factory; kong | Reimplements kubectl's flags; heavy dependency; flags mapped by hand. |
 | HPA, ResourceClaim and Node events | They relate to the workload but sit outside the PCS–PCSG–PCLQ–Pod hierarchy: each adds reads and permissions, and a Node's events cover every workload on it. Grove-created claims are an [open question](#open-questions). |
-| Finding PodGangs only through Pod labels | Misses gangs whose Pods were never created, which is when their events matter most. |
 | Reusing [Topograph](https://github.com/NVIDIA/topograph) | It writes topology labels; `kubectl-grove` reads them. Its reusable code is internal and needs newer Go and Kubernetes. |
 | Exact version match | Krew has only the latest, so most users would see warnings. |
 | Operator-published build info | Needs operator changes. |
 | Source download in the CLI or skills | The CLI makes no requests outside the cluster, and skills diagnose from cluster state. Users who want to debug locally download the source from the `version` link. |
 | Bundle skills in the CLI | Installing from the matching Grove release tag keeps the skills aligned with the CLI and lets the agent handle local installation. |
-| `npx skills` or an agent plugin marketplace | Third-party or tied to one agent; asking the agent to install from the release tag works with any agent. |
-| Stamp the release into the skills, or ship them as a release tarball | Stamping changes the release process, and a tarball departs from installing `.agents/skills/` at the tag. Recording the tag at install needs neither. |
-| Symlinked or hand-copied shared reference | Symlinks break when an agent copies or downloads the files; hand copies drift. |
-| Run the skill acceptance test in CI | Needs model access and is nondeterministic. |
-| Compare each command against a kubectl-only baseline | Many model runs and a baseline skill to maintain; the [v1 acceptance tests](#test-plan) show the on-call workflow works. |
 
 ## Open Questions
 
