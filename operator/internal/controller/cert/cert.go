@@ -84,7 +84,11 @@ func setupAutoCertProvisioning(ctx context.Context, mgr ctrl.Manager, cl client.
 
 	logger.Info("Auto-provisioning certificates using cert-controller",
 		"secretName", secretName, "certDir", certDir)
-	rotator := &cert.CertRotator{
+	return cert.AddRotator(mgr, newCertRotator(namespace, serviceName, certDir, secretName, authorizerEnabled, certsReadyCh))
+}
+
+func newCertRotator(namespace, serviceName, certDir, secretName string, authorizerEnabled bool, certsReadyCh chan struct{}) *cert.CertRotator {
+	return &cert.CertRotator{
 		SecretKey: types.NamespacedName{
 			Namespace: namespace,
 			Name:      secretName,
@@ -101,9 +105,10 @@ func setupAutoCertProvisioning(ctx context.Context, mgr ctrl.Manager, cl client.
 		},
 		Webhooks:               getWebhooks(authorizerEnabled),
 		EnableReadinessCheck:   true,
-		RestartOnSecretRefresh: true,
+		// IsReady already waits for the refreshed Secret to reach the mounted volume.
+		// Keep this process alive so it can start the webhook server with those certificates.
+		RestartOnSecretRefresh: false,
 	}
-	return cert.AddRotator(mgr, rotator)
 }
 
 // WaitTillWebhookCertsReady blocks on the certsReady channel. Once the cert-controller
