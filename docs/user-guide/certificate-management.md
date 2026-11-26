@@ -170,14 +170,28 @@ spec:
 
 #### Step 4: Configure Admission Webhook Annotations
 
-cert-manager's `cainjector` can automatically inject the CA bundle into admission webhook configurations. Add these annotations to your Helm values:
+cert-manager's `cainjector` can automatically inject the CA bundle into admission webhook configurations. Select manual certificate provisioning and annotate each admission webhook in your Helm values:
 
 ```yaml
+config:
+  server:
+    webhooks:
+      certProvisionMode: manual
+
 webhooks:
   podCliqueSetValidationWebhook:
     annotations:
       cert-manager.io/inject-ca-from: <namespace>/grove-webhook-cert
   podCliqueSetDefaultingWebhook:
+    annotations:
+      cert-manager.io/inject-ca-from: <namespace>/grove-webhook-cert
+  podCliqueValidationWebhook:
+    annotations:
+      cert-manager.io/inject-ca-from: <namespace>/grove-webhook-cert
+  podCliqueScalingGroupValidationWebhook:
+    annotations:
+      cert-manager.io/inject-ca-from: <namespace>/grove-webhook-cert
+  clusterTopologyValidationWebhook:
     annotations:
       cert-manager.io/inject-ca-from: <namespace>/grove-webhook-cert
   authorizerWebhook:
@@ -192,6 +206,9 @@ helm upgrade -i grove oci://ghcr.io/ai-dynamo/grove/grove-charts --version <vers
   --set config.server.webhooks.certProvisionMode=manual \
   --set webhooks.podCliqueSetValidationWebhook.annotations."cert-manager\.io/inject-ca-from"="<namespace>/grove-webhook-cert" \
   --set webhooks.podCliqueSetDefaultingWebhook.annotations."cert-manager\.io/inject-ca-from"="<namespace>/grove-webhook-cert" \
+  --set webhooks.podCliqueValidationWebhook.annotations."cert-manager\.io/inject-ca-from"="<namespace>/grove-webhook-cert" \
+  --set webhooks.podCliqueScalingGroupValidationWebhook.annotations."cert-manager\.io/inject-ca-from"="<namespace>/grove-webhook-cert" \
+  --set webhooks.clusterTopologyValidationWebhook.annotations."cert-manager\.io/inject-ca-from"="<namespace>/grove-webhook-cert" \
   --set webhooks.authorizerWebhook.annotations."cert-manager\.io/inject-ca-from"="<namespace>/grove-webhook-cert"
 ```
 
@@ -312,4 +329,7 @@ The cert-controller will generate new certificates on the next operator restart.
 | `webhooks.caBundle` | string | `""` | Base64-encoded CA certificate for admission webhook configurations |
 | `webhooks.podCliqueSetValidationWebhook.annotations` | map | `{}` | Annotations for the validation webhook (e.g., cert-manager injection) |
 | `webhooks.podCliqueSetDefaultingWebhook.annotations` | map | `{}` | Annotations for the defaulting webhook |
+| `webhooks.podCliqueValidationWebhook.annotations` | map | `{}` | Annotations for the PodClique validation webhook |
+| `webhooks.podCliqueScalingGroupValidationWebhook.annotations` | map | `{}` | Annotations for the PodCliqueScalingGroup validation webhook |
+| `webhooks.clusterTopologyValidationWebhook.annotations` | map | `{}` | Annotations for the ClusterTopologyBinding validation webhook |
 | `webhooks.authorizerWebhook.annotations` | map | `{}` | Annotations for the authorizer webhook |
