@@ -113,6 +113,9 @@ func (h *Handler) ValidateUpdate(ctx context.Context, oldObj, newObj runtime.Obj
 		errs = append(errs, field.Invalid(field.NewPath("spec"), newPCS.Spec, err.Error()))
 	}
 
+	// TODO(omerap12): consolidate all warning and error functions under validate()
+	warnings = append(warnings, v.templateReplicasChangeWarnings(oldPCS)...)
+
 	if len(errs) > 0 {
 		return warnings, errs.ToAggregate()
 	}
