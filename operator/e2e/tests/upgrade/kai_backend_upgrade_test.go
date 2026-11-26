@@ -53,6 +53,7 @@ const (
 	kaiPodGroupAnnotation       = "pod-group-name"
 	kaiSubGroupLabel            = "kai.scheduler/subgroup-name"
 	kaiSkipPodGrouperAnnotation = "kai.scheduler/skip-podgrouper"
+	kaiNonAnchorCollection      = "non-anchors"
 )
 
 var kaiUpgradeTopologyLevels = []corev1alpha1.TopologyLevel{
@@ -70,9 +71,10 @@ type kaiUpgradePodSnapshot struct {
 }
 
 type kaiUpgradeState struct {
-	pods          map[string]kaiUpgradePodSnapshot
-	monitorCancel context.CancelFunc
-	monitorResult <-chan error
+	pods            map[string]kaiUpgradePodSnapshot
+	legacyPodGroups map[string]types.UID
+	monitorCancel   context.CancelFunc
+	monitorResult   <-chan error
 }
 
 // Test_VUPG3_KAIBackendReplicaPodGroupMigration verifies both pre-epoch and epoch-based
@@ -134,8 +136,9 @@ func (s *kaiUpgradeState) prepare(t *testing.T, tc *testctx.TestContext) {
 	_, err := tc.DeployAndVerifyWorkload()
 	require.NoError(t, err, "deploy KAI upgrade workload")
 	require.NoError(t, tc.WaitForPods(6), "wait for KAI upgrade workload")
-	pods := waitForLegacyKAIPodGroups(t, tc)
+	pods, legacyPodGroups := waitForLegacyKAIPodGroups(t, tc)
 	s.pods = snapshotKAIUpgradePods(pods)
+	s.legacyPodGroups = legacyPodGroups
 	s.monitorCancel, s.monitorResult = monitorReplicaPodGroupBeforePodMigration(tc)
 }
 
@@ -144,6 +147,7 @@ func (s *kaiUpgradeState) verify(t *testing.T, tc *testctx.TestContext) {
 	pcs := waitForKAIUpgradeMigration(t, tc, s.pods)
 	s.monitorCancel()
 	require.NoError(t, <-s.monitorResult, "replica PodGroup must exist before Pod membership changes")
+	waitForLegacyKAIPodGroupsToFollowPodGangs(t, tc, s.legacyPodGroups)
 
 	revertOnePodToLegacyMembership(t, tc, s.pods)
 	restartGroveOperator(t, tc)
@@ -166,12 +170,14 @@ func (s *kaiUpgradeState) verify(t *testing.T, tc *testctx.TestContext) {
 		}
 		return nil
 	})
+	waitForLegacyKAIPodGroupsToFollowPodGangs(t, tc, s.legacyPodGroups)
 }
 
-func waitForLegacyKAIPodGroups(t *testing.T, tc *testctx.TestContext) []corev1.Pod {
+func waitForLegacyKAIPodGroups(t *testing.T, tc *testctx.TestContext) ([]corev1.Pod, map[string]types.UID) {
 	t.Helper()
 
 	var pods []corev1.Pod
+	var legacyPodGroups map[string]types.UID
 	waitForKAIUpgradeCondition(t, tc, func(ctx context.Context) error {
 		podList, err := tc.ListPods()
 		if err != nil {
@@ -206,9 +212,43 @@ func waitForLegacyKAIPodGroups(t *testing.T, tc *testctx.TestContext) []corev1.P
 			return fmt.Errorf("found %d legacy PodGroups, expected 4", len(current))
 		}
 		pods = append([]corev1.Pod(nil), podList.Items...)
+		legacyPodGroups = current
 		return nil
 	})
-	return pods
+	return pods, legacyPodGroups
+}
+
+// waitForLegacyKAIPodGroupsToFollowPodGangs verifies each per-PodGang PodGroup exists exactly as long as
+// the PodGang that owned it before the upgrade.
+func waitForLegacyKAIPodGroupsToFollowPodGangs(t *testing.T, tc *testctx.TestContext, legacyPodGroups map[string]types.UID) {
+	t.Helper()
+	require.NotEmpty(t, legacyPodGroups)
+	waitForKAIUpgradeCondition(t, tc, func(ctx context.Context) error {
+		for name, podGangUID := range legacyPodGroups {
+			key := client.ObjectKey{Namespace: tc.Namespace, Name: name}
+			podGang := &groveschedulerv1alpha1.PodGang{}
+			err := tc.Client.Get(ctx, key, podGang)
+			if client.IgnoreNotFound(err) != nil {
+				return err
+			}
+			podGangExists := err == nil && podGang.UID == podGangUID && podGang.DeletionTimestamp.IsZero()
+
+			podGroup := &kaischedulingv2alpha2.PodGroup{}
+			err = tc.Client.Get(ctx, key, podGroup)
+			if client.IgnoreNotFound(err) != nil {
+				return err
+			}
+			switch {
+			case podGangExists && err != nil:
+				return fmt.Errorf("legacy PodGroup %s is missing while its PodGang exists", name)
+			case podGangExists && !metav1.IsControlledBy(podGroup, podGang):
+				return fmt.Errorf("legacy PodGroup %s is no longer controlled by its PodGang", name)
+			case !podGangExists && err == nil:
+				return fmt.Errorf("legacy PodGroup %s outlived its PodGang", name)
+			}
+		}
+		return nil
+	})
 }
 
 func snapshotKAIUpgradePods(pods []corev1.Pod) map[string]kaiUpgradePodSnapshot {
@@ -433,7 +473,7 @@ func waitForScaledReplicaPodGroups(
 				return fmt.Errorf("replica PodGroup %s has root minSubGroup %v after scale-in, expected 1", replicaPodGroup.Name, replicaPodGroup.Spec.MinSubGroup)
 			}
 			for _, subGroup := range replicaPodGroup.Spec.SubGroups {
-				if subGroup.Name == fmt.Sprintf("non-anchors-r%d", replica) {
+				if subGroup.Name == kaiNonAnchorCollection {
 					return fmt.Errorf("replica PodGroup %s still contains non-Anchor collection after scale-in", replicaPodGroup.Name)
 				}
 			}
