@@ -5,4 +5,4 @@ processor:
     - "List$"
     - "ParseError$"
 render:
-  kubernetesVersion: 1.33
+  kubernetesVersion: 1.37
