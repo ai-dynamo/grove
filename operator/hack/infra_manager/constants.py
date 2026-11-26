@@ -173,6 +173,9 @@ HELM_KEY_SCHEDULER_PROFILES_WITH_KUEUE = (
     "config.scheduler.profiles[0].name=default-scheduler",
     "config.scheduler.profiles[1].name=kai-scheduler",
     "config.scheduler.profiles[2].name=kueue",
+    # Test_Kueue14 checks topology groups. No other Kueue scenario packs a PodCliqueScalingGroup,
+    # so turning this on leaves their Workloads unchanged.
+    "config.scheduler.profiles[2].config.enablePodSetGroupTopology=true",
 )
 
 # -- K3d cluster defaults --

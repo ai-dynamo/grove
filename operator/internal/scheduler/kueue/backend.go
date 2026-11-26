@@ -54,6 +54,7 @@ const (
 	podFinalizer                      = "kueue.x-k8s.io/managed"
 	podSetRequiredTopologyAnnotation  = "kueue.x-k8s.io/podset-required-topology"
 	podSetPreferredTopologyAnnotation = "kueue.x-k8s.io/podset-preferred-topology"
+	podSetUnconstrainedAnnotation     = "kueue.x-k8s.io/podset-unconstrained-topology"
 	roleHashAnnotation                = "kueue.x-k8s.io/role-hash"
 	isGroupWorkloadAnnotation         = "kueue.x-k8s.io/is-group-workload"
 	// priorityClassLabel on a PodCliqueSet names the Kueue WorkloadPriorityClass of its Workloads. Grove mirrors
@@ -294,8 +295,15 @@ func (b *schedulerBackend) buildPrebuiltWorkload(ctx context.Context, pcs *grove
 		}
 		if topologyRequest != nil {
 			podSet.TopologyRequest = topologyRequest.request
+		} else if cliqueTemplate.Annotations[podSetUnconstrainedAnnotation] == "true" {
+			// Kueue derives this request from the Pod annotation only for Workloads it builds itself.
+			podSet.TopologyRequest = &kueuev1beta2.PodSetTopologyRequest{Unconstrained: ptr.To(true)}
+			podSet.Template.Annotations = map[string]string{podSetUnconstrainedAnnotation: "true"}
 		}
 		podSets = append(podSets, podSet)
+	}
+	if ptr.Deref(b.config.EnablePodSetGroupTopology, false) {
+		applyTopologyGroups(ctx, podGang, podSets)
 	}
 	// Kueue checks a prebuilt Workload against its pods' PodSets sorted by name, and finishes it as OutOfSync
 	// if the Workload lists them in another order.
@@ -700,7 +708,8 @@ func (b *schedulerBackend) ValidatePodCliqueScale(_ context.Context, oldReplicas
 
 func defaultConfig() configv1beta1.KueueSchedulerConfiguration {
 	return configv1beta1.KueueSchedulerConfiguration{
-		UnderlyingSchedulerName: string(configv1beta1.SchedulerNameKube),
+		UnderlyingSchedulerName:   string(configv1beta1.SchedulerNameKube),
+		EnablePodSetGroupTopology: ptr.To(false),
 	}
 }
 
@@ -708,6 +717,9 @@ func withDefaults(cfg configv1beta1.KueueSchedulerConfiguration) configv1beta1.K
 	defaults := defaultConfig()
 	if cfg.UnderlyingSchedulerName == "" {
 		cfg.UnderlyingSchedulerName = defaults.UnderlyingSchedulerName
+	}
+	if cfg.EnablePodSetGroupTopology == nil {
+		cfg.EnablePodSetGroupTopology = defaults.EnablePodSetGroupTopology
 	}
 	return cfg
 }

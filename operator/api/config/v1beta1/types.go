@@ -133,6 +133,13 @@ type KueueSchedulerConfiguration struct {
 	// UnderlyingSchedulerName is the schedulerName used after Kueue admits the Pods.
 	// +optional
 	UnderlyingSchedulerName string `json:"underlyingSchedulerName,omitempty"`
+	// EnablePodSetGroupTopology sets podSetGroupName on the PodSets of a topology group, such as a
+	// PodCliqueScalingGroup replica with a required or preferred pack constraint, so that Kueue topology-aware
+	// scheduling places them in one topology domain. Kueue supports this only for a group of at most two PodSets,
+	// one of which has a single Pod (a leader and its workers), so other groups keep per-PodSet placement.
+	// Defaults to false: each PodSet is placed in its own domain.
+	// +optional
+	EnablePodSetGroupTopology *bool `json:"enablePodSetGroupTopology,omitempty"`
 }
 
 // KubeSchedulerConfig holds the configuration for the default scheduler.

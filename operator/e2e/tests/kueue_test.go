@@ -37,6 +37,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/e2e/waiter"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
+	"github.com/samber/lo"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsclientset "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -1674,6 +1675,105 @@ func Test_Kueue13_WorkloadPriorityPreemption(t *testing.T) {
 	}
 
 	Logger.Info("Test_Kueue13_WorkloadPriorityPreemption completed successfully!")
+}
+
+// Test_Kueue14_TopologyGroupPlacesLeaderAndWorkersTogether verifies the kueue backend's
+// enablePodSetGroupTopology option, which the e2e Kueue profile turns on. The Workload of a
+// PodCliqueScalingGroup replica packed into one rack must give a 1-Pod leader and its workers the same
+// podSetGroupName, and Kueue must admit it and place all of them in one rack. A group with a multi-Pod
+// leader must get no podSetGroupName, since Kueue TAS would place only one of its leader Pods.
+func Test_Kueue14_TopologyGroupPlacesLeaderAndWorkersTogether(t *testing.T) {
+	ctx := context.Background()
+	const (
+		queueName    = "grove-e2e-topology"
+		expectedPods = 1 + 2 + 2 + 4
+	)
+
+	tc, cleanup := testctx.PrepareTest(ctx, t, 28,
+		testctx.WithWorkload(&testctx.WorkloadConfig{
+			Name:         "kueue-tg",
+			YAMLPath:     "../yaml/kueue-topology-group.yaml",
+			Namespace:    "default",
+			ExpectedPods: expectedPods,
+		}),
+	)
+	requireKueueCRD(t, tc)
+	defer deleteKueueTopologyQueueResources(ctx, t, tc.Client, queueName)
+	defer cleanup()
+
+	topologyVerifier := topology.NewTopologyVerifier(tc.Client, Logger)
+	ensureGroveTopology(ctx, t, topologyVerifier)
+
+	Logger.Info("1. Apply the dedicated TAS-bound grove-e2e-topology queue")
+	if _, err := tc.ApplyYAMLFile("../yaml/kueue-queues-topology.yaml"); err != nil {
+		t.Fatalf("Failed to apply kueue-queues-topology.yaml: %v", err)
+	}
+
+	Logger.Info("2. Deploy kueue-tg and wait for pods to be Running")
+	allPods, err := DeployWorkloadAndGetPods(tc, expectedPods)
+	if err != nil {
+		t.Fatalf("Setup failed: %v", err)
+	}
+
+	Logger.Info("3. Verify the Workload groups the tp leader and workers, and not the tp-wide ones")
+	pgVerifier := podgang.NewVerifier(tc.Client, Logger)
+	podGangs, err := pgVerifier.List(ctx, types.NamespacedName{Namespace: tc.Namespace, Name: tc.Workload.Name})
+	if err != nil {
+		t.Fatalf("Failed to list PodGangs: %v", err)
+	}
+	if len(podGangs) != 1 {
+		t.Fatalf("Expected exactly 1 PodGang, got %d", len(podGangs))
+	}
+	wlVerifier := kueueworkload.NewVerifier(tc.Client, Logger)
+	wl, err := wlVerifier.WaitUntilVerified(ctx, podGangs[0].Namespace, podGangs[0].Name, tc.Timeout, tc.Interval, kueueworkload.Admitted)
+	if err != nil {
+		t.Fatalf("Kueue Workload not Admitted: %v", err)
+	}
+
+	pcsReplica := nameutils.ResourceNameReplica{Name: tc.Workload.Name, Replica: 0}
+	tpName := nameutils.GeneratePodCliqueScalingGroupName(pcsReplica, "tp")
+	tpWideName := nameutils.GeneratePodCliqueScalingGroupName(pcsReplica, "tp-wide")
+	podSetName := func(pcsgName, clique string) kueuev1beta2.PodSetReference {
+		return kueuev1beta2.NewPodSetReference(nameutils.GeneratePodCliqueName(nameutils.ResourceNameReplica{Name: pcsgName, Replica: 0}, clique))
+	}
+	podSets := make(map[kueuev1beta2.PodSetReference]kueuev1beta2.PodSet, len(wl.Spec.PodSets))
+	for _, ps := range wl.Spec.PodSets {
+		podSets[ps.Name] = ps
+	}
+	wantGroups := map[kueuev1beta2.PodSetReference]string{
+		podSetName(tpName, "tp-leader"):       tpName + "-0",
+		podSetName(tpName, "tp-worker"):       tpName + "-0",
+		podSetName(tpWideName, "wide-leader"): "",
+		podSetName(tpWideName, "wide-worker"): "",
+	}
+	if len(podSets) != len(wantGroups) {
+		t.Fatalf("Expected %d PodSets, got %d", len(wantGroups), len(podSets))
+	}
+	for name, wantGroup := range wantGroups {
+		ps, ok := podSets[name]
+		if !ok {
+			t.Fatalf("Workload has no PodSet %q", name)
+		}
+		if ps.TopologyRequest == nil || ptr.Deref(ps.TopologyRequest.Required, "") != setup.TopologyLabelRack {
+			t.Fatalf("Expected PodSet %q TopologyRequest.Required = %q, got %+v", name, setup.TopologyLabelRack, ps.TopologyRequest)
+		}
+		if got := ptr.Deref(ps.TopologyRequest.PodSetGroupName, ""); got != wantGroup {
+			t.Fatalf("Expected PodSet %q podSetGroupName %q, got %q", name, wantGroup, got)
+		}
+	}
+
+	Logger.Info("4. Verify the tp leader and workers were placed in one rack")
+	tpPods := lo.Filter(allPods, func(pod corev1.Pod, _ int) bool {
+		return pod.Labels[nameutils.LabelPodCliqueScalingGroup] == tpName
+	})
+	if len(tpPods) != 3 {
+		t.Fatalf("Expected 3 pods in PodCliqueScalingGroup %s, got %d", tpName, len(tpPods))
+	}
+	if err := topologyVerifier.VerifyPodsInSameTopologyDomain(tc.Ctx, tpPods, setup.TopologyLabelRack); err != nil {
+		t.Fatalf("Failed to verify the tp pods share a rack: %v", err)
+	}
+
+	Logger.Info("Test_Kueue14_TopologyGroupPlacesLeaderAndWorkersTogether completed successfully!")
 }
 
 // hasWorkloadPriority reports whether wl references the named WorkloadPriorityClass and carries priority.
