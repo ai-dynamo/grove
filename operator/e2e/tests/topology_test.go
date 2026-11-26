@@ -84,9 +84,9 @@ func DeployWorkloadAndGetPods(tc *testctx.TestContext, expectedPods int) ([]v1.P
 	return podList.Items, nil
 }
 
-// GetPodGroupOrFail retrieves a PodGroup for the specified PCS replica or fails the test.
+// GetPodGroupOrFail retrieves the replica PodGroup for the specified PCS replica or fails the test.
 func GetPodGroupOrFail(t *testing.T, tc *testctx.TestContext, podGroupVerifier *podgroup.PodGroupVerifier, pcsReplica int) *kaischedulingv2alpha2.PodGroup {
-	podGroup, err := podGroupVerifier.GetPodGroupForAnchorPodGang(
+	podGroup, err := podGroupVerifier.GetReplicaPodGroupForPCSReplica(
 		tc.Ctx, tc.Namespace, tc.Workload.Name,
 		pcsReplica, tc.Timeout, tc.Interval,
 	)
@@ -94,6 +94,46 @@ func GetPodGroupOrFail(t *testing.T, tc *testctx.TestContext, podGroupVerifier *
 		t.Fatalf("Failed to get PodGroup for replica %d: %v", pcsReplica, err)
 	}
 	return podGroup
+}
+
+// verifyPodsInSameBlock verifies that all pods are in the same block. The e2e cluster reuses block label
+// values across zones, so a block is identified by its zone and block labels together.
+func verifyPodsInSameBlock(ctx context.Context, tv *topology.TopologyVerifier, pods []v1.Pod) error {
+	for _, topologyKey := range []string{setup.TopologyLabelZone, setup.TopologyLabelBlock} {
+		if err := tv.VerifyPodsInSameTopologyDomain(ctx, pods, topologyKey); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// verifyScaledWorkersPodGroup verifies the replica PodGroup of a workload with a PCS block constraint and one
+// "workers" PCSG of host-constrained "worker" PCLQs: the first minAvailable PCSG replicas form the base
+// branch and each remaining replica forms a scaled PodGang branch.
+func verifyScaledWorkersPodGroup(t *testing.T, tc *testctx.TestContext, podGroupVerifier *podgroup.PodGroupVerifier, minAvailable, replicas int) {
+	t.Helper()
+	podGroup := GetPodGroupOrFail(t, tc, podGroupVerifier, 0)
+
+	expectedSubGroups := make([]podgroup.ExpectedSubGroup, 0, minAvailable)
+	for pcsgReplica := 0; pcsgReplica < minAvailable; pcsgReplica++ {
+		expectedSubGroups = append(expectedSubGroups, podgroup.CreateExpectedPCLQInPCSGSubGroupNoParent(
+			tc.Workload.Name, 0, "workers", pcsgReplica, "worker", 2, setup.TopologyLabelHostname))
+	}
+	scaledPCSGs := make([]podgroup.ScaledPCSGConfig, 0, replicas-minAvailable)
+	for pcsgReplica := minAvailable; pcsgReplica < replicas; pcsgReplica++ {
+		scaledPCSGs = append(scaledPCSGs, podgroup.ScaledPCSGConfig{
+			PCSGName:    "workers",
+			PCSGReplica: pcsgReplica,
+			CliqueConfigs: []podgroup.PCSGCliqueConfig{
+				{Name: "worker", PodCount: 2, Constraint: setup.TopologyLabelHostname},
+			},
+		})
+	}
+	if err := podGroupVerifier.VerifyReplicaPodGroupTopology(
+		podGroup, tc.Workload.Name, 0, setup.TopologyLabelBlock, "", expectedSubGroups, scaledPCSGs,
+	); err != nil {
+		t.Fatalf("Failed to verify replica KAI PodGroup topology: %v", err)
+	}
 }
 
 // getAnchorPodGangOrFail lists PodGangs for the workload and returns the anchor PodGang of the given
@@ -233,7 +273,7 @@ func Test_TAS2_MultipleCliquesWithDifferentConstraints(t *testing.T) {
 		podgroup.CreateExpectedStandalonePCLQSubGroup(tc.Workload.Name, 0, "worker-rack", 3, setup.TopologyLabelRack),
 		podgroup.CreateExpectedStandalonePCLQSubGroup(tc.Workload.Name, 0, "worker-block", 4, setup.TopologyLabelBlock),
 	}
-	if err := podGroupVerifier.VerifyPodGroupTopology(podGroup, "", "", expectedSubGroups); err != nil {
+	if err := podGroupVerifier.VerifyReplicaPodGroupTopology(podGroup, tc.Workload.Name, 0, "", "", expectedSubGroups, nil); err != nil {
 		t.Fatalf("Failed to verify KAI PodGroup topology: %v", err)
 	}
 
@@ -291,7 +331,7 @@ func Test_TAS3_PCSOnlyConstraint(t *testing.T) {
 		// Router (standalone)
 		podgroup.CreateExpectedStandalonePCLQSubGroup(tc.Workload.Name, 0, "router", 2, ""),
 	}
-	if err := podGroupVerifier.VerifyPodGroupTopology(podGroup, setup.TopologyLabelRack, "", expectedSubGroups); err != nil {
+	if err := podGroupVerifier.VerifyReplicaPodGroupTopology(podGroup, tc.Workload.Name, 0, setup.TopologyLabelRack, "", expectedSubGroups, nil); err != nil {
 		t.Fatalf("Failed to verify KAI PodGroup topology: %v", err)
 	}
 
@@ -347,7 +387,7 @@ func Test_TAS4_PCSGOnlyConstraint(t *testing.T) {
 		// Router (standalone, no constraint)
 		podgroup.CreateExpectedStandalonePCLQSubGroup(tc.Workload.Name, 0, "router", 2, ""),
 	}
-	if err := podGroupVerifier.VerifyPodGroupTopology(podGroup, "", "", expectedSubGroups); err != nil {
+	if err := podGroupVerifier.VerifyReplicaPodGroupTopology(podGroup, tc.Workload.Name, 0, "", "", expectedSubGroups, nil); err != nil {
 		t.Fatalf("Failed to verify KAI PodGroup topology: %v", err)
 	}
 
@@ -413,7 +453,7 @@ func Test_TAS5_HostLevelConstraint(t *testing.T) {
 	expectedSubGroups := []podgroup.ExpectedSubGroup{
 		podgroup.CreateExpectedStandalonePCLQSubGroup(tc.Workload.Name, 0, "worker", 2, setup.TopologyLabelHostname),
 	}
-	if err := podGroupVerifier.VerifyPodGroupTopology(podGroup, "", "", expectedSubGroups); err != nil {
+	if err := podGroupVerifier.VerifyReplicaPodGroupTopology(podGroup, tc.Workload.Name, 0, "", "", expectedSubGroups, nil); err != nil {
 		t.Fatalf("Failed to verify KAI PodGroup topology: %v", err)
 	}
 
@@ -467,7 +507,7 @@ func Test_TAS6_StandalonePCLQOnlyPCSZoneConstraint(t *testing.T) {
 	expectedSubGroups := []podgroup.ExpectedSubGroup{
 		podgroup.CreateExpectedStandalonePCLQSubGroup(tc.Workload.Name, 0, "worker", 4, ""),
 	}
-	if err := podGroupVerifier.VerifyPodGroupTopology(podGroup, setup.TopologyLabelZone, "", expectedSubGroups); err != nil {
+	if err := podGroupVerifier.VerifyReplicaPodGroupTopology(podGroup, tc.Workload.Name, 0, setup.TopologyLabelZone, "", expectedSubGroups, nil); err != nil {
 		t.Fatalf("Failed to verify KAI PodGroup topology: %v", err)
 	}
 
@@ -516,7 +556,7 @@ func Test_TAS7_NoTopologyConstraint(t *testing.T) {
 		podgroup.CreateExpectedStandalonePCLQSubGroup(tc.Workload.Name, 0, "workers-0-worker", 2, ""),
 		podgroup.CreateExpectedStandalonePCLQSubGroup(tc.Workload.Name, 0, "workers-1-worker", 2, ""),
 	}
-	if err = podGroupVerifier.VerifyPodGroupTopology(podGroup, "", "", expectedSubGroups); err != nil {
+	if err = podGroupVerifier.VerifyReplicaPodGroupTopology(podGroup, tc.Workload.Name, 0, "", "", expectedSubGroups, nil); err != nil {
 		t.Fatalf("Failed to verify KAI PodGroup topology: %v", err)
 	}
 
@@ -595,7 +635,7 @@ func Test_TAS8_FullHierarchyWithCascadingConstraints(t *testing.T) {
 		podgroup.CreateExpectedPCLQInPCSGSubGroup(tc.Workload.Name, 0, "inference-group", 1, "prefill", 2, setup.TopologyLabelHostname),
 		podgroup.CreateExpectedPCLQInPCSGSubGroup(tc.Workload.Name, 0, "inference-group", 1, "decode", 2, setup.TopologyLabelHostname),
 	}
-	if err := podGroupVerifier.VerifyPodGroupTopology(podGroup, setup.TopologyLabelBlock, "", expectedSubGroups); err != nil {
+	if err := podGroupVerifier.VerifyReplicaPodGroupTopology(podGroup, tc.Workload.Name, 0, setup.TopologyLabelBlock, "", expectedSubGroups, nil); err != nil {
 		t.Fatalf("Failed to verify KAI PodGroup topology: %v", err)
 	}
 
@@ -643,7 +683,7 @@ func Test_TAS9_PCSPlusPCLQConstraint(t *testing.T) {
 	expectedSubGroups := []podgroup.ExpectedSubGroup{
 		podgroup.CreateExpectedStandalonePCLQSubGroup(tc.Workload.Name, 0, "worker", 2, setup.TopologyLabelHostname),
 	}
-	if err := podGroupVerifier.VerifyPodGroupTopology(podGroup, setup.TopologyLabelBlock, "", expectedSubGroups); err != nil {
+	if err := podGroupVerifier.VerifyReplicaPodGroupTopology(podGroup, tc.Workload.Name, 0, setup.TopologyLabelBlock, "", expectedSubGroups, nil); err != nil {
 		t.Fatalf("Failed to verify KAI PodGroup topology: %v", err)
 	}
 
@@ -655,8 +695,7 @@ func Test_TAS9_PCSPlusPCLQConstraint(t *testing.T) {
 // 2. 6 pods total (2 per PCSG replica)
 // 3. Verify each PCSG replica's pods in same rack
 // 4. Verify all pods respect PCS-level rack constraint (all in same rack)
-// 5. Verify base PodGang KAI PodGroup topology constraints
-// 6. Verify scaled PodGangs' KAI PodGroups (replicas 1-2)
+// 5. Verify the replica KAI PodGroup contains the base and scaled PodGang branches
 func Test_TAS10_PCSGScalingWithTopologyConstraints(t *testing.T) {
 	ctx := context.Background()
 
@@ -695,7 +734,7 @@ func Test_TAS10_PCSGScalingWithTopologyConstraints(t *testing.T) {
 		t.Fatalf("Failed to verify all pods in same block: %v", err)
 	}
 
-	Logger.Info("5. Verify KAI PodGroup has correct SubGroups with topology constraints")
+	Logger.Info("5. Verify replica KAI PodGroup has correct base and scaled SubGroups")
 	podGroup := GetPodGroupOrFail(t, tc, podGroupVerifier, 0)
 
 	// Verify top-level TopologyConstraint (PCS level: block)
@@ -706,26 +745,22 @@ func Test_TAS10_PCSGScalingWithTopologyConstraints(t *testing.T) {
 		podgroup.CreateExpectedPCSGParentSubGroup(tc.Workload.Name, 0, "inference-group", 0, setup.TopologyLabelRack),
 		podgroup.CreateExpectedPCLQInPCSGSubGroup(tc.Workload.Name, 0, "inference-group", 0, "worker", 2, ""),
 	}
-	if err := podGroupVerifier.VerifyPodGroupTopology(podGroup, setup.TopologyLabelBlock, "", expectedSubGroups); err != nil {
-		t.Fatalf("Failed to verify KAI PodGroup topology: %v", err)
+	scaledPCSGs := make([]podgroup.ScaledPCSGConfig, 0, 2)
+	for _, pcsgReplica := range []int{1, 2} {
+		scaledPCSGs = append(scaledPCSGs, podgroup.ScaledPCSGConfig{
+			PCSGName:    "inference-group",
+			PCSGReplica: pcsgReplica,
+			CliqueConfigs: []podgroup.PCSGCliqueConfig{
+				{Name: "worker", PodCount: 2},
+			},
+			Constraint: setup.TopologyLabelRack,
+		})
 	}
-
-	Logger.Info("6. Verify scaled PodGangs' KAI PodGroups (replicas 1-2)")
-
-	// Verify PCSG replicas 1-2 (minAvailable=1, totalReplicas=3)
-	lo.ForEach([]int{1, 2}, func(pcsgReplica int, _ int) {
-		if err := podGroupVerifier.VerifyScaledPCSGReplicaTopology(tc.Ctx, tc.Namespace, tc.Workload.Name, 0,
-			podgroup.ScaledPCSGConfig{
-				PCSGName:    "inference-group",
-				PCSGReplica: pcsgReplica,
-				CliqueConfigs: []podgroup.PCSGCliqueConfig{
-					{Name: "worker", PodCount: 2, Constraint: ""},
-				},
-				Constraint: setup.TopologyLabelRack,
-			}, setup.TopologyLabelBlock); err != nil {
-			t.Fatalf("Failed to verify scaled PCSG replica %d topology: %v", pcsgReplica, err)
-		}
-	})
+	if err := podGroupVerifier.VerifyReplicaPodGroupTopology(
+		podGroup, tc.Workload.Name, 0, setup.TopologyLabelBlock, "", expectedSubGroups, scaledPCSGs,
+	); err != nil {
+		t.Fatalf("Failed to verify replica KAI PodGroup topology: %v", err)
+	}
 
 	Logger.Info("TAS10: PCSG Scaling with Topology Constraints test completed successfully!")
 }
@@ -780,25 +815,37 @@ func Test_TAS11_PCSGPlusPCLQNoParentConstraint(t *testing.T) {
 		podgroup.CreateExpectedPCLQInPCSGSubGroup(tc.Workload.Name, 0, "workers", 0, "worker", 2, setup.TopologyLabelHostname),
 		podgroup.CreateExpectedPCLQInPCSGSubGroup(tc.Workload.Name, 0, "workers", 1, "worker", 2, setup.TopologyLabelHostname),
 	}
-	if err := podGroupVerifier.VerifyPodGroupTopology(podGroup, "", "", expectedSubGroups); err != nil {
+	if err := podGroupVerifier.VerifyReplicaPodGroupTopology(podGroup, tc.Workload.Name, 0, "", "", expectedSubGroups, nil); err != nil {
 		t.Fatalf("Failed to verify KAI PodGroup topology: %v", err)
 	}
 
 	Logger.Info("TAS11: PCSG+PCLQ Constraint test completed successfully!")
 }
 
-// Test_TAS12_LargeScalingRatio tests large PCSG scaling ratio with minAvailable
-// 1. Deploy workload with replicas=10, minAvailable=3, PCSG host constraint, PCS block constraint
-// 2. 20 pods expected (only minAvailable=3 replicas × 2 pods from base PodGang + 7 scaled PodGangs × 2 pods)
-// 3. Verify each PCSG replica's pods on same host
-// 4. Verify all pods in same block (PCS constraint)
-// 5. Verify base PodGang KAI PodGroup contains minAvailable=3 replicas
-// 6. Verify 7 scaled PodGangs' KAI PodGroups (replicas 3-9)
+// Test_TAS12_LargeScalingRatio tests that the PCS block constraint covers scaled PodGangs when the replica
+// outgrows its block
+// 1. Deploy workload with replicas=10, minAvailable=3, PCLQ host constraint, PCS block constraint
+// 2. 20 pods expected (base PodGang: 3 PCSG replicas × 2 pods + 7 scaled PodGangs × 2 pods)
+// 3. Verify 16 pods run and the 4 pods of two scaled PodGangs stay unschedulable
+// 4. Verify the base PodGang runs and every pending pod belongs to a scaled PodGang
+// 5. Verify each running PCSG replica's pods on same host
+// 6. Verify all running pods in same block (PCS constraint), although other blocks have free hosts
+// 7. Verify the replica KAI PodGroup contains the required base branch and 7 optional scaled branches
 func Test_TAS12_LargeScalingRatio(t *testing.T) {
 	ctx := context.Background()
 
 	Logger.Info("1. Initialize a 28-node Grove cluster for topology testing")
-	expectedPods := 20 // Base PodGang: 3 PCSG replicas × 2 pods (6) + Scaled: 7 PCSG replicas × 2 pods (14)
+	const (
+		pcsgMinAvailable  = 3
+		pcsgTotalReplicas = 10
+		podsPerReplica    = 2
+		// A host fits one PCSG replica. The base PodGang needs 3 hosts, so it lands in the 8-host block
+		// (the 2-host block is too small), which leaves hosts for 5 of the 7 scaled PodGangs.
+		runningReplicas = 8
+	)
+	expectedPods := pcsgTotalReplicas * podsPerReplica
+	runningPodCount := runningReplicas * podsPerReplica
+	pendingPodCount := expectedPods - runningPodCount
 	tc, cleanup := testctx.PrepareTest(ctx, t, 28,
 		testctx.WithWorkload(&testctx.WorkloadConfig{
 			Name:         "tas-large-scale",
@@ -813,56 +860,65 @@ func Test_TAS12_LargeScalingRatio(t *testing.T) {
 
 	ensureGroveTopology(ctx, t, topologyVerifier)
 	Logger.Info("2. Deploy workload (TAS12: Large scaling ratio, replicas=10/minAvailable=3)")
-	allPods, err := DeployWorkloadAndGetPods(tc, expectedPods)
+	if _, err := tc.DeployAndVerifyWorkload(); err != nil {
+		t.Fatalf("Failed to deploy workload: %v", err)
+	}
+
+	Logger.Info("3. Verify 16 pods run and 4 pods stay unschedulable")
+	if err := tc.WaitForPodCountAndPhases(expectedPods, runningPodCount, pendingPodCount); err != nil {
+		t.Fatalf("Failed to wait for %d running and %d pending pods: %v", runningPodCount, pendingPodCount, err)
+	}
+	if err := tc.VerifyPodsArePendingWithUnschedulableEvents(false, pendingPodCount); err != nil {
+		t.Fatalf("Failed to verify pending pods have unschedulable events: %v", err)
+	}
+	podList, err := tc.ListPods()
 	if err != nil {
-		t.Fatalf("Setup failed: %v", err)
+		t.Fatalf("Failed to list pods: %v", err)
+	}
+	runningPods := lo.Filter(podList.Items, func(pod v1.Pod, _ int) bool { return pod.Status.Phase == v1.PodRunning })
+	pendingPods := lo.Filter(podList.Items, func(pod v1.Pod, _ int) bool { return pod.Status.Phase == v1.PodPending })
+	if len(runningPods) != runningPodCount || len(pendingPods) != pendingPodCount {
+		t.Fatalf("Expected %d running and %d pending pods, got %d and %d",
+			runningPodCount, pendingPodCount, len(runningPods), len(pendingPods))
 	}
 
-	Logger.Info("3. Verify each PCSG replica's pods on same host")
-	if err := topologyVerifier.VerifyPCSGReplicasInTopologyDomain(tc.Ctx, allPods,
-		"tas-large-scale-0-workers", 10, 2, setup.TopologyLabelHostname); err != nil {
-		t.Fatalf("Failed to verify PCSG replicas: %v", err)
-	}
-
-	Logger.Info("4. Verify all 20 pods in same block (PCS block constraint)")
-	if err := topologyVerifier.VerifyPodsInSameTopologyDomain(tc.Ctx, allPods, setup.TopologyLabelBlock); err != nil {
-		t.Fatalf("Failed to verify all pods in same block: %v", err)
-	}
-
-	Logger.Info("5. Verify base PodGang's KAI PodGroup (replicas 0-2)")
-	podGroup := GetPodGroupOrFail(t, tc, podGroupVerifier, 0)
-
-	// Verify top-level TopologyConstraint (PCS level: block)
-	// SubGroups (3 worker PCLQs with host constraint, no PCSG parent since no rack constraint)
-	expectedSubGroups := []podgroup.ExpectedSubGroup{
-		podgroup.CreateExpectedPCLQInPCSGSubGroupNoParent(tc.Workload.Name, 0, "workers", 0, "worker", 2, setup.TopologyLabelHostname),
-		podgroup.CreateExpectedPCLQInPCSGSubGroupNoParent(tc.Workload.Name, 0, "workers", 1, "worker", 2, setup.TopologyLabelHostname),
-		podgroup.CreateExpectedPCLQInPCSGSubGroupNoParent(tc.Workload.Name, 0, "workers", 2, "worker", 2, setup.TopologyLabelHostname),
-	}
-	if err := podGroupVerifier.VerifyPodGroupTopology(podGroup, setup.TopologyLabelBlock, "", expectedSubGroups); err != nil {
-		t.Fatalf("Failed to verify KAI PodGroup topology: %v", err)
-	}
-
-	Logger.Info("6. Verify scaled PodGangs' KAI PodGroups (replicas 3-9)")
-
-	// PCSG config: replicas=10, minAvailable=3
-	// The anchor PodGang contains replicas 0-2, scaled PodGangs contain replicas 3-9.
-	pcsgMinAvailable := 3
-	pcsgTotalReplicas := 10
-
-	for pcsgReplicaIndex := pcsgMinAvailable; pcsgReplicaIndex < pcsgTotalReplicas; pcsgReplicaIndex++ {
-		// Each scaled PodGang contains 1 PCSG replica with 1 PCLQ SubGroup (host constraint).
-		if err := podGroupVerifier.VerifyScaledPCSGReplicaTopology(tc.Ctx, tc.Namespace, tc.Workload.Name, 0,
-			podgroup.ScaledPCSGConfig{
-				PCSGName:    "workers",
-				PCSGReplica: pcsgReplicaIndex,
-				CliqueConfigs: []podgroup.PCSGCliqueConfig{
-					{Name: "worker", PodCount: 2, Constraint: setup.TopologyLabelHostname},
-				},
-			}, setup.TopologyLabelBlock); err != nil {
-			t.Fatalf("Failed to verify scaled PodGroup (PCSG replica %d) topology: %v", pcsgReplicaIndex, err)
+	Logger.Info("4. Verify the base PodGang runs and every pending pod belongs to a scaled PodGang")
+	for _, pod := range pendingPods {
+		replicaIndex, err := strconv.Atoi(pod.Labels[nameutils.LabelPodCliqueScalingGroupReplicaIndex])
+		if err != nil {
+			t.Fatalf("Pod %s has no valid PCSG replica index: %v", pod.Name, err)
+		}
+		if replicaIndex < pcsgMinAvailable {
+			t.Fatalf("Pod %s of base PCSG replica %d is pending", pod.Name, replicaIndex)
+		}
+		if pod.Spec.NodeName != "" {
+			t.Fatalf("Expected pending pod %s to have no node assignment, but assigned to %s", pod.Name, pod.Spec.NodeName)
 		}
 	}
+
+	Logger.Info("5. Verify each running PCSG replica's pods on same host")
+	runningByReplica := lo.GroupBy(runningPods, func(pod v1.Pod) string {
+		return pod.Labels[nameutils.LabelPodCliqueScalingGroupReplicaIndex]
+	})
+	if len(runningByReplica) != runningReplicas {
+		t.Fatalf("Expected %d running PCSG replicas, got %d", runningReplicas, len(runningByReplica))
+	}
+	for replicaIndex, replicaPods := range runningByReplica {
+		if len(replicaPods) != podsPerReplica {
+			t.Fatalf("Expected %d running pods for PCSG replica %s, got %d", podsPerReplica, replicaIndex, len(replicaPods))
+		}
+		if err := topologyVerifier.VerifyPodsInSameTopologyDomain(tc.Ctx, replicaPods, setup.TopologyLabelHostname); err != nil {
+			t.Fatalf("Failed to verify PCSG replica %s pods on same host: %v", replicaIndex, err)
+		}
+	}
+
+	Logger.Info("6. Verify all 16 running pods in same block (PCS block constraint)")
+	if err := verifyPodsInSameBlock(tc.Ctx, topologyVerifier, runningPods); err != nil {
+		t.Fatalf("Failed to verify running pods in same block: %v", err)
+	}
+
+	Logger.Info("7. Verify the replica KAI PodGroup (base replicas 0-2, scaled replicas 3-9)")
+	verifyScaledWorkersPodGroup(t, tc, podGroupVerifier, pcsgMinAvailable, pcsgTotalReplicas)
 
 	Logger.Info("TAS12: Large Scaling Ratio test completed successfully!")
 }
@@ -920,7 +976,7 @@ func Test_TAS13_InsufficientNodesForConstraint(t *testing.T) {
 	expectedSubGroups := []podgroup.ExpectedSubGroup{
 		podgroup.CreateExpectedStandalonePCLQSubGroup(tc.Workload.Name, 0, "worker", 10, ""),
 	}
-	if err := podGroupVerifier.VerifyPodGroupTopology(podGroup, setup.TopologyLabelRack, "", expectedSubGroups); err != nil {
+	if err := podGroupVerifier.VerifyReplicaPodGroupTopology(podGroup, tc.Workload.Name, 0, setup.TopologyLabelRack, "", expectedSubGroups, nil); err != nil {
 		t.Fatalf("Failed to verify KAI PodGroup topology: %v", err)
 	}
 
@@ -974,7 +1030,7 @@ func Test_TAS14_MultiReplicaWithRackConstraint(t *testing.T) {
 		expectedSubGroups := []podgroup.ExpectedSubGroup{
 			podgroup.CreateExpectedStandalonePCLQSubGroup(tc.Workload.Name, pcsReplica, "worker", 2, ""),
 		}
-		if err := podGroupVerifier.VerifyPodGroupTopology(podGroup, setup.TopologyLabelRack, "", expectedSubGroups); err != nil {
+		if err := podGroupVerifier.VerifyReplicaPodGroupTopology(podGroup, tc.Workload.Name, pcsReplica, setup.TopologyLabelRack, "", expectedSubGroups, nil); err != nil {
 			t.Fatalf("Failed to verify PodGroup-%d topology: %v", pcsReplica, err)
 		}
 	}
@@ -988,8 +1044,8 @@ func Test_TAS14_MultiReplicaWithRackConstraint(t *testing.T) {
 // 3. PCS: block constraint
 // 4. 10 pods total: decoder (2×2) + prefill (2×2) + router (2)
 // 5. Verify all in same block, each PCSG replica in same rack
-// 6. Verify base PodGang KAI PodGroup topology for complex multi-PCSG workload
-// 7. Verify scaled PodGangs' KAI PodGroups (decoder replica 1, prefill replica 1)
+// 6. Verify the replica KAI PodGroup base branch for the complex multi-PCSG workload
+// 7. Verify the same replica PodGroup contains the scaled decoder and prefill PodGang branches
 func Test_TAS15_DisaggregatedInferenceMultiplePCSGs(t *testing.T) {
 	ctx := context.Background()
 
@@ -1055,11 +1111,7 @@ func Test_TAS15_DisaggregatedInferenceMultiplePCSGs(t *testing.T) {
 		podgroup.CreateExpectedPCLQInPCSGSubGroup(tc.Workload.Name, 0, "prefill", 0, "pleader", 1, ""),
 		podgroup.CreateExpectedStandalonePCLQSubGroup(tc.Workload.Name, 0, "router", 2, ""),
 	}
-	if err := podGroupVerifier.VerifyPodGroupTopology(podGroup, setup.TopologyLabelBlock, "", expectedSubGroups); err != nil {
-		t.Fatalf("Failed to verify KAI PodGroup topology: %v", err)
-	}
-
-	Logger.Info("7. Verify scaled PodGangs' KAI PodGroups (decoder replica 1, prefill replica 1)")
+	Logger.Info("7. Verify scaled PodGang branches in the replica KAI PodGroup (decoder replica 1, prefill replica 1)")
 
 	// Define PCSG configurations (minAvailable=1, totalReplicas=2 for each)
 	pcsgConfigs := []podgroup.ScaledPCSGConfig{
@@ -1082,21 +1134,18 @@ func Test_TAS15_DisaggregatedInferenceMultiplePCSGs(t *testing.T) {
 			Constraint: setup.TopologyLabelRack,
 		},
 	}
-
-	// Verify each PCSG's scaled replica
-	lo.ForEach(pcsgConfigs, func(pcsgConfig podgroup.ScaledPCSGConfig, _ int) {
-		if err := podGroupVerifier.VerifyScaledPCSGReplicaTopology(tc.Ctx, tc.Namespace, tc.Workload.Name, 0,
-			pcsgConfig, setup.TopologyLabelBlock); err != nil {
-			t.Fatalf("Failed to verify scaled PCSG %s topology: %v", pcsgConfig.PCSGName, err)
-		}
-	})
+	if err := podGroupVerifier.VerifyReplicaPodGroupTopology(
+		podGroup, tc.Workload.Name, 0, setup.TopologyLabelBlock, "", expectedSubGroups, pcsgConfigs,
+	); err != nil {
+		t.Fatalf("Failed to verify replica KAI PodGroup topology: %v", err)
+	}
 
 	Logger.Info("TAS15: Disaggregated Inference with Multiple PCSGs test completed successfully!")
 }
 
 // Test_TAS16_MultiReplicaPCSWithThreeLevelHierarchy tests multi-replica PCS with full 3-level topology hierarchy
 // 1. Deploy workload with 2 PCS replicas, each with full 3-level hierarchy
-// 2. 20 pods (10 per PCS replica): decoder (2×2) + prefill (2×2) + router (2)
+// 2. 22 pods (11 per PCS replica): decoder (2×2) + prefill (2×2) + router (3)
 // 3. PCS: block constraint, PCSG: rack constraint, PCLQ (pworker): host constraint
 // 4. Verify block constraint at PCS level, rack at PCSG, for both PCS replicas
 // 5. Similar to TAS15 but scaled across 2 PCS replicas
@@ -1104,7 +1153,7 @@ func Test_TAS16_MultiReplicaPCSWithThreeLevelHierarchy(t *testing.T) {
 	ctx := context.Background()
 
 	Logger.Info("1. Initialize a 28-node Grove cluster for multi-replica PCS testing")
-	expectedPods := 20 // PCS replica 0: 10 pods + PCS replica 1: 10 pods
+	expectedPods := 22 // PCS replica 0: 11 pods + PCS replica 1: 11 pods
 	tc, cleanup := testctx.PrepareTest(ctx, t, 28,
 		testctx.WithWorkload(&testctx.WorkloadConfig{
 			Name:         "tas-pcs-multi-pcsg",
@@ -1128,12 +1177,12 @@ func Test_TAS16_MultiReplicaPCSWithThreeLevelHierarchy(t *testing.T) {
 	for pcsReplica := 0; pcsReplica < 2; pcsReplica++ {
 		replicaLabel := fmt.Sprintf("%d", pcsReplica)
 		replicaPods := topology.FilterPodsByLabel(allPods, nameutils.LabelPodCliqueSetReplicaIndex, replicaLabel)
-		if len(replicaPods) != 10 {
-			t.Fatalf("Expected 10 pods for PCS replica %d, got %d", pcsReplica, len(replicaPods))
+		if len(replicaPods) != 11 {
+			t.Fatalf("Expected 11 pods for PCS replica %d, got %d", pcsReplica, len(replicaPods))
 		}
 
 		Logger.Infof("3.%d. Verify PCS replica %d pods in same block (PCS block constraint)", pcsReplica+1, pcsReplica)
-		if err := topologyVerifier.VerifyPodsInSameTopologyDomain(tc.Ctx, replicaPods, setup.TopologyLabelBlock); err != nil {
+		if err := verifyPodsInSameBlock(tc.Ctx, topologyVerifier, replicaPods); err != nil {
 			t.Fatalf("Failed to verify PCS replica %d pods in same block: %v", pcsReplica, err)
 		}
 
@@ -1163,11 +1212,11 @@ func Test_TAS16_MultiReplicaPCSWithThreeLevelHierarchy(t *testing.T) {
 			t.Fatalf("Failed to verify PCSG replicas for PCS replica %d: %v", pcsReplica, err)
 		}
 
-		// Verify router pods (2 standalone)
-		Logger.Infof("4.%d. Verify router pods (2 standalone)", pcsReplica+1)
+		// Verify router pods (3 standalone)
+		Logger.Infof("4.%d. Verify router pods (3 standalone)", pcsReplica+1)
 		routerPods := topology.FilterPodsByLabel(replicaPods, nameutils.LabelPodClique, routerPCLQ)
-		if len(routerPods) != 2 {
-			t.Fatalf("Expected 2 router pods for PCS replica %d, got %d", pcsReplica, len(routerPods))
+		if len(routerPods) != 3 {
+			t.Fatalf("Expected 3 router pods for PCS replica %d, got %d", pcsReplica, len(routerPods))
 		}
 	}
 
@@ -1183,9 +1232,31 @@ func Test_TAS16_MultiReplicaPCSWithThreeLevelHierarchy(t *testing.T) {
 			podgroup.CreateExpectedPCLQInPCSGSubGroup(tc.Workload.Name, pcsReplica, "decoder", 0, "dleader", 1, ""),
 			podgroup.CreateExpectedPCLQInPCSGSubGroup(tc.Workload.Name, pcsReplica, "prefill", 0, "pworker", 1, setup.TopologyLabelHostname),
 			podgroup.CreateExpectedPCLQInPCSGSubGroup(tc.Workload.Name, pcsReplica, "prefill", 0, "pleader", 1, ""),
-			podgroup.CreateExpectedStandalonePCLQSubGroup(tc.Workload.Name, pcsReplica, "router", 2, ""),
+			podgroup.CreateExpectedStandalonePCLQSubGroup(tc.Workload.Name, pcsReplica, "router", 3, ""),
 		}
-		if err := podGroupVerifier.VerifyPodGroupTopology(podGroup, setup.TopologyLabelBlock, "", expectedSubGroups); err != nil {
+		scaledPCSGs := []podgroup.ScaledPCSGConfig{
+			{
+				PCSGName:    "decoder",
+				PCSGReplica: 1,
+				CliqueConfigs: []podgroup.PCSGCliqueConfig{
+					{Name: "dworker", PodCount: 1},
+					{Name: "dleader", PodCount: 1},
+				},
+				Constraint: setup.TopologyLabelRack,
+			},
+			{
+				PCSGName:    "prefill",
+				PCSGReplica: 1,
+				CliqueConfigs: []podgroup.PCSGCliqueConfig{
+					{Name: "pworker", PodCount: 1, Constraint: setup.TopologyLabelHostname},
+					{Name: "pleader", PodCount: 1},
+				},
+				Constraint: setup.TopologyLabelRack,
+			},
+		}
+		if err := podGroupVerifier.VerifyReplicaPodGroupTopology(
+			podGroup, tc.Workload.Name, pcsReplica, setup.TopologyLabelBlock, "", expectedSubGroups, scaledPCSGs,
+		); err != nil {
 			t.Fatalf("Failed to verify KAI PodGroup-%d topology: %v", pcsReplica, err)
 		}
 	}
@@ -1607,7 +1678,7 @@ func Test_TAS20_PCSTopologyLevelsUnavailableCondition(t *testing.T) {
 	expectedSubGroups := []podgroup.ExpectedSubGroup{
 		podgroup.CreateExpectedStandalonePCLQSubGroup(tc.Workload.Name, 0, "worker", 2, ""),
 	}
-	if err := podGroupVerifier.VerifyPodGroupTopology(podGroup, "", "", expectedSubGroups); err != nil {
+	if err := podGroupVerifier.VerifyReplicaPodGroupTopology(podGroup, tc.Workload.Name, 0, "", "", expectedSubGroups, nil); err != nil {
 		t.Fatalf("Failed to verify topology constraints were removed from new PodGroup: %v", err)
 	}
 
@@ -1966,7 +2037,7 @@ func Test_TAS23_PreferredPackConstraintPropagation(t *testing.T) {
 		t.Fatalf("Setup failed: %v", err)
 	}
 
-	Logger.Info("3. Verify base KAI PodGroup required and preferred topology constraints")
+	Logger.Info("3. Verify replica KAI PodGroup required and preferred topology constraints")
 	basePodGroup := GetPodGroupOrFail(t, tc, podGroupVerifier, 0)
 
 	workersParent := podgroup.CreateExpectedPCSGParentSubGroup(tc.Workload.Name, 0, "workers", 0, "")
@@ -1978,29 +2049,21 @@ func Test_TAS23_PreferredPackConstraintPropagation(t *testing.T) {
 		podgroup.CreateExpectedPCLQInPCSGSubGroup(tc.Workload.Name, 0, "workers", 0, "worker", 1, ""),
 		router,
 	}
-	if err := podGroupVerifier.VerifyPodGroupTopology(basePodGroup, setup.TopologyLabelBlock, setup.TopologyLabelRack, expectedBaseSubGroups); err != nil {
-		t.Fatalf("Failed to verify base KAI PodGroup topology: %v", err)
+	Logger.Info("4. Verify scaled PCSG branch preferred topology constraint in the replica PodGroup")
+	scaledPCSGs := []podgroup.ScaledPCSGConfig{
+		{
+			PCSGName:            "workers",
+			PCSGReplica:         1,
+			PreferredConstraint: setup.TopologyLabelHostname,
+			CliqueConfigs: []podgroup.PCSGCliqueConfig{
+				{Name: "worker", PodCount: 1},
+			},
+		},
 	}
-
-	Logger.Info("4. Verify scaled PCSG KAI PodGroup preferred topology constraint")
-	podGroups, err := podGroupVerifier.GetKAIPodGroupsForPCS(tc.Ctx, tc.Namespace, tc.Workload.Name)
-	if err != nil {
-		t.Fatalf("Failed to get KAI PodGroups: %v", err)
-	}
-	scaledPodGroup, err := podgroup.FindScaledPodGroup(podGroups, 0, "workers", 1)
-	if err != nil {
-		t.Fatalf("Failed to find scaled PodGroup: %v", err)
-	}
-	// The scaled PodGang carries the PCS-level constraint (required block, preferred rack) at the
-	// PodGroup top level and the workers PCSG preferred-host constraint on the PCSG-parent SubGroup.
-	scaledWorkersParent := podgroup.CreateExpectedPCSGParentSubGroup(tc.Workload.Name, 0, "workers", 1, "")
-	scaledWorkersParent.PreferredTopologyLevel = setup.TopologyLabelHostname
-	expectedScaledSubGroups := []podgroup.ExpectedSubGroup{
-		scaledWorkersParent,
-		podgroup.CreateExpectedPCLQInPCSGSubGroup(tc.Workload.Name, 0, "workers", 1, "worker", 1, ""),
-	}
-	if err := podGroupVerifier.VerifyPodGroupTopology(scaledPodGroup, setup.TopologyLabelBlock, setup.TopologyLabelRack, expectedScaledSubGroups); err != nil {
-		t.Fatalf("Failed to verify scaled KAI PodGroup topology: %v", err)
+	if err := podGroupVerifier.VerifyReplicaPodGroupTopology(
+		basePodGroup, tc.Workload.Name, 0, setup.TopologyLabelBlock, setup.TopologyLabelRack, expectedBaseSubGroups, scaledPCSGs,
+	); err != nil {
+		t.Fatalf("Failed to verify replica KAI PodGroup topology: %v", err)
 	}
 
 	Logger.Info("5. Verify TopologyLevelsUnavailable = False")
@@ -2104,16 +2167,75 @@ func Test_TAS24_ExternallyManagedTopologyNameResolution(t *testing.T) {
 	expectedSubGroups := []podgroup.ExpectedSubGroup{
 		podgroup.CreateExpectedStandalonePCLQSubGroup(tc.Workload.Name, 0, "worker", 2, setup.TopologyLabelHostname),
 	}
-	if err := podGroupVerifier.VerifyPodGroupTopology(podGroup, "", "", expectedSubGroups); err != nil {
+	if err := podGroupVerifier.VerifyReplicaPodGroupTopology(podGroup, tc.Workload.Name, 0, "", "", expectedSubGroups, nil); err != nil {
 		t.Fatalf("Failed to verify KAI PodGroup topology: %v", err)
 	}
-	if len(podGroup.Spec.SubGroups) != 1 || podGroup.Spec.SubGroups[0].TopologyConstraint == nil {
-		t.Fatalf("Expected exactly one SubGroup with a TopologyConstraint")
+	resolvedLeaves := 0
+	for _, group := range podGroup.Spec.SubGroups {
+		if group.MinMember == nil {
+			continue
+		}
+		resolvedLeaves++
+		if group.TopologyConstraint == nil || group.TopologyConstraint.Topology != kaiTopologyName {
+			t.Fatalf("Expected leaf %q to reference resolved KAI topology %q, got %+v (binding %q)", group.Name, kaiTopologyName, group.TopologyConstraint, ctBindingName)
+		}
 	}
-	if got := podGroup.Spec.SubGroups[0].TopologyConstraint.Topology; got != kaiTopologyName {
-		t.Fatalf("Expected SubGroup TopologyConstraint.Topology=%q (resolved TopologyReference), got %q (ClusterTopologyBinding's own name is %q)",
-			kaiTopologyName, got, ctBindingName)
+	if resolvedLeaves != 1 {
+		t.Fatalf("Expected exactly one leaf with a TopologyConstraint, got %d", resolvedLeaves)
 	}
 
 	Logger.Info("TAS24: Externally-Managed Topology Name Resolution test completed successfully!")
+}
+
+// Test_TAS25_ScaledPodGangsStayInRequiredBlock tests that scaled PodGangs join the block of the base PodGang
+// when the whole PCS replica fits in it
+// 1. Deploy workload with replicas=7, minAvailable=3, PCLQ host constraint, PCS block constraint
+// 2. 14 pods expected (base PodGang: 3 PCSG replicas × 2 pods + 4 scaled PodGangs × 2 pods)
+// 3. Verify each PCSG replica's pods on same host
+// 4. Verify all pods in same block (PCS constraint), although other blocks have free hosts
+// 5. Verify the replica KAI PodGroup contains the required base branch and 4 optional scaled branches
+func Test_TAS25_ScaledPodGangsStayInRequiredBlock(t *testing.T) {
+	ctx := context.Background()
+
+	Logger.Info("1. Initialize a 28-node Grove cluster for topology testing")
+	const (
+		pcsgMinAvailable  = 3
+		pcsgTotalReplicas = 7
+		podsPerReplica    = 2
+	)
+	expectedPods := pcsgTotalReplicas * podsPerReplica
+	tc, cleanup := testctx.PrepareTest(ctx, t, 28,
+		testctx.WithWorkload(&testctx.WorkloadConfig{
+			Name:         "tas-scale-in-block",
+			YAMLPath:     "../yaml/tas-scale-in-block.yaml",
+			Namespace:    "default",
+			ExpectedPods: expectedPods,
+		}),
+	)
+	defer cleanup()
+	topologyVerifier := topology.NewTopologyVerifier(tc.Client, Logger)
+	podGroupVerifier := podgroup.NewPodGroupVerifier(tc.Client, Logger)
+
+	ensureGroveTopology(ctx, t, topologyVerifier)
+	Logger.Info("2. Deploy workload (TAS25: scaled PodGangs within the block, replicas=7/minAvailable=3)")
+	allPods, err := DeployWorkloadAndGetPods(tc, expectedPods)
+	if err != nil {
+		t.Fatalf("Setup failed: %v", err)
+	}
+
+	Logger.Info("3. Verify each PCSG replica's pods on same host")
+	if err := topologyVerifier.VerifyPCSGReplicasInTopologyDomain(tc.Ctx, allPods,
+		"tas-scale-in-block-0-workers", pcsgTotalReplicas, podsPerReplica, setup.TopologyLabelHostname); err != nil {
+		t.Fatalf("Failed to verify PCSG replicas: %v", err)
+	}
+
+	Logger.Info("4. Verify all 14 pods in same block (PCS block constraint)")
+	if err := verifyPodsInSameBlock(tc.Ctx, topologyVerifier, allPods); err != nil {
+		t.Fatalf("Failed to verify all pods in same block: %v", err)
+	}
+
+	Logger.Info("5. Verify the replica KAI PodGroup (base replicas 0-2, scaled replicas 3-6)")
+	verifyScaledWorkersPodGroup(t, tc, podGroupVerifier, pcsgMinAvailable, pcsgTotalReplicas)
+
+	Logger.Info("TAS25: Scaled PodGangs stay in the required block test completed successfully!")
 }

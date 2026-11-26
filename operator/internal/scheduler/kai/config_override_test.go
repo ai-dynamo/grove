@@ -27,7 +27,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // runaiProfile is the kai-scheduler profile a distribution that bundles KAI under different names sets.
@@ -102,14 +101,16 @@ func TestBackend_NameAndPreparePod_UseConfiguredSchedulerName(t *testing.T) {
 
 	pod := testutils.NewPodBuilder("test-pod", "default").Build()
 	pod.Labels = map[string]string{
-		apicommon.LabelPodGang:   "test-podgang",
-		apicommon.LabelPodClique: "test-clique",
+		apicommon.LabelPartOfKey:                "test-pcs",
+		apicommon.LabelPodCliqueSetReplicaIndex: "0",
+		apicommon.LabelPodGang:                  "test-pcs-0-1000",
+		apicommon.LabelPodClique:                "test-pcs-0-test-clique",
 	}
 	require.NoError(t, b.PreparePod(pod))
 	assert.Equal(t, "runai-scheduler", pod.Spec.SchedulerName)
 	// The contract with KAI's podgrouper is independent of the configured names.
 	assert.Equal(t, "true", pod.Annotations["kai.scheduler/skip-podgrouper"])
-	assert.Equal(t, "test-podgang", pod.Annotations["pod-group-name"])
+	assert.Equal(t, replicaPodGroupName("test-pcs", 0), pod.Annotations["pod-group-name"])
 }
 
 func TestBackend_ValidatePodCliqueSet_ReadsConfiguredQueueKey(t *testing.T) {
@@ -132,23 +133,24 @@ func TestBackend_SyncPodGang_UsesConfiguredQueueAndPreservesNodePool(t *testing.
 		WithSchedulerName("runai-scheduler").
 		WithPodGroup("worker", 1).
 		Build()
-	setPodCliqueSetControllerOwner(podGang, pcs)
+	pgm := configureTestAnchorPodGang(pcs, podGang)
+	podGang.Labels[apicommon.LabelSchedulerName] = "runai-scheduler"
 
-	cl := testutils.NewTestClientBuilder().WithObjects(podGang, pcs).Build()
+	cl := testutils.NewTestClientBuilder().WithObjects(podGang, pgm, pcs).Build()
 	b := New(cl, cl.Scheme(), record.NewFakeRecorder(10), runaiProfile(runaiConfig))
 	require.NoError(t, b.Init(cl))
 	require.NoError(t, b.SyncPodGang(context.Background(), podGang))
 
 	created := &kaischedulingv2alpha2.PodGroup{}
-	require.NoError(t, cl.Get(context.Background(), client.ObjectKeyFromObject(podGang), created))
+	require.NoError(t, cl.Get(context.Background(), replicaPodGroupKey(pcs, 0), created))
 	assert.Equal(t, "cmp-l40s", created.Spec.Queue)
 
 	// The scheduler's runtime stamps the node pool on the PodGroup under ITS key; Grove must not drop it.
-	created.Labels = map[string]string{"runai/node-pool": "default"}
+	created.Labels["runai/node-pool"] = "default"
 	require.NoError(t, cl.Update(context.Background(), created))
 	require.NoError(t, b.SyncPodGang(context.Background(), podGang))
 
 	updated := &kaischedulingv2alpha2.PodGroup{}
-	require.NoError(t, cl.Get(context.Background(), client.ObjectKeyFromObject(podGang), updated))
+	require.NoError(t, cl.Get(context.Background(), replicaPodGroupKey(pcs, 0), updated))
 	assert.Equal(t, "default", updated.Labels["runai/node-pool"])
 }
