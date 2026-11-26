@@ -24,6 +24,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliquescalinggroup"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podgang"
+	"github.com/ai-dynamo/grove/operator/internal/scalein"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 
@@ -40,11 +41,17 @@ func RegisterControllers(mgr ctrl.Manager, config *configv1beta1.OperatorConfigu
 	if err := componentutils.RegisterPodControllerUIDIndex(context.Background(), mgr.GetFieldIndexer()); err != nil {
 		return err
 	}
-	pcsReconciler := podcliqueset.NewReconciler(mgr, config.Controllers.PodCliqueSet, config.TopologyAwareScheduling, config.Network, schedRegistry)
+	// The scale-in cost source is built once and shared by every controller that scales in, so the carrier of
+	// a pod's cost is known in exactly one place.
+	scaleInCostSource, err := scalein.NewCostSource(config.ScaleIn.CostSource)
+	if err != nil {
+		return err
+	}
+	pcsReconciler := podcliqueset.NewReconciler(mgr, config.Controllers.PodCliqueSet, config.TopologyAwareScheduling, config.Network, schedRegistry, scaleInCostSource)
 	if err := pcsReconciler.RegisterWithManager(mgr); err != nil {
 		return err
 	}
-	pclqReconciler, err := podclique.NewReconciler(mgr, config.Controllers.PodClique, schedRegistry)
+	pclqReconciler, err := podclique.NewReconciler(mgr, config.Controllers.PodClique, schedRegistry, scaleInCostSource)
 	if err != nil {
 		return err
 	}

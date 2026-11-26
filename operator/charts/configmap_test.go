@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	operatorconfig "github.com/ai-dynamo/grove/operator/api/config"
 	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 
 	"github.com/stretchr/testify/assert"
@@ -92,6 +93,39 @@ func TestSchedulerProfileConfig(t *testing.T) {
 				require.NoError(t, json.Unmarshal(profile.Config.Raw, &actualConfig))
 				assert.Equal(t, expectedConfig, actualConfig)
 			}
+		})
+	}
+}
+
+func TestScaleInConfig(t *testing.T) {
+	tests := []struct {
+		name       string
+		scaleIn    map[string]interface{}
+		wantSource configv1beta1.ScaleInCostSourceName
+	}{
+		{name: "default values read no cost", wantSource: configv1beta1.ScaleInCostSourceNone},
+		{name: "pod-deletion-cost", scaleIn: map[string]interface{}{"costSource": "pod-deletion-cost"}, wantSource: configv1beta1.ScaleInCostSourcePodDeletionCost},
+		{name: "empty cost source is omitted and defaults to none", scaleIn: map[string]interface{}{"costSource": ""}, wantSource: configv1beta1.ScaleInCostSourceNone},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			values := map[string]interface{}{}
+			if tt.scaleIn != nil {
+				values["config"] = map[string]interface{}{"scaleIn": tt.scaleIn}
+			}
+			manifests := renderChart(t, values)
+			configMapYAML, ok := manifests["grove-charts/templates/configmap-operator.yaml"]
+			require.True(t, ok)
+
+			var configMap corev1.ConfigMap
+			require.NoError(t, yaml.UnmarshalStrict([]byte(configMapYAML), &configMap))
+			configYAML, ok := configMap.Data["config.yaml"]
+			require.True(t, ok)
+
+			config, _, err := operatorconfig.DecodeOperatorConfig([]byte(configYAML))
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantSource, config.ScaleIn.CostSource)
 		})
 	}
 }

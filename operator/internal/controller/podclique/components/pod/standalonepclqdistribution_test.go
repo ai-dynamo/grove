@@ -27,6 +27,7 @@ import (
 	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/podclique/expectations"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/expect"
+	"github.com/ai-dynamo/grove/operator/internal/scalein"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/go-logr/logr"
@@ -732,6 +733,79 @@ func TestBuildPerPodGangDeletionTasks(t *testing.T) {
 	t.Run("skips a PodGang with no live pods", func(t *testing.T) {
 		tasks := r.buildPerPodGangDeletionTasks(logr.Discard(), ss, map[string]int32{"pg-a": -2}, []string{"pg-a"}, map[string]podGangPods{})
 		assert.Empty(t, tasks)
+	})
+
+	t.Run("a scale-in cost orders the pods of the PodGang being trimmed and a mark in another PodGang stays", func(t *testing.T) {
+		source, err := scalein.NewCostSource(configv1beta1.ScaleInCostSourcePodDeletionCost)
+		require.NoError(t, err)
+		r := &_resource{expectationsStore: expect.NewExpectationsStore(), costSource: source}
+		now := time.Now()
+		// The marked pod is the older one: without the cost the DeletionSorter would pick the newer pod.
+		aged := func(pod *corev1.Pod, createdAt time.Time) *corev1.Pod {
+			pod.CreationTimestamp = metav1.NewTime(createdAt)
+			return pod
+		}
+		mark := func(pod *corev1.Pod) *corev1.Pod {
+			pod.Annotations = map[string]string{corev1.PodDeletionCost: "-1000000"}
+			return pod
+		}
+		podsByPodGang := map[string]podGangPods{
+			"pg-a": {nonTerminating: []*corev1.Pod{
+				aged(nonTerminatingPodInPodGang("a-unmarked", "pg-a", ""), now),
+				mark(aged(nonTerminatingPodInPodGang("a-marked", "pg-a", ""), now.Add(-time.Hour))),
+			}},
+			"pg-b": {nonTerminating: []*corev1.Pod{
+				mark(aged(nonTerminatingPodInPodGang("b-marked", "pg-b", ""), now.Add(-time.Hour))),
+				aged(nonTerminatingPodInPodGang("b-unmarked", "pg-b", ""), now),
+			}},
+		}
+
+		tasks := r.buildPerPodGangDeletionTasks(logr.Discard(), ss, map[string]int32{"pg-a": -1, "pg-b": 0}, []string{"pg-a", "pg-b"}, podsByPodGang)
+
+		require.Len(t, tasks, 1)
+		assert.Contains(t, tasks[0].Name, "a-marked")
+	})
+
+	t.Run("during a coherent update the old-generation take-down ignores the cost and the current generation honors it", func(t *testing.T) {
+		source, err := scalein.NewCostSource(configv1beta1.ScaleInCostSourcePodDeletionCost)
+		require.NoError(t, err)
+		r := &_resource{expectationsStore: expect.NewExpectationsStore(), costSource: source}
+		pcs := pcsCoherentUpdating()
+		pcs.Status.CurrentGenerationHash = ptr.To("v2")
+		rnr := apicommon.ResourceNameReplica{Name: pcs.Name, Replica: testPCSReplicaIndex}
+		oldPodGang := apicommon.GenerateAnchorPodGangName(rnr, "50")
+		currentPodGang := apicommon.GenerateAnchorPodGangName(rnr, "200")
+		pgm := &grovecorev1beta1.PodGangMap{Spec: grovecorev1beta1.PodGangMapSpec{Entries: []grovecorev1beta1.PodGangEntry{
+			{Role: grovecorev1beta1.PodGangEntryRoleAnchor, PodCliqueSetGenerationHash: "v1", Epoch: "50", PodCliques: map[string]int32{testCliqueName: 2}},
+			{Role: grovecorev1beta1.PodGangEntryRoleAnchor, PodCliqueSetGenerationHash: "v2", Epoch: "200", PodCliques: map[string]int32{testCliqueName: 2}},
+		}}}
+		ss := &syncSnapshot{pcs: pcs, pgm: pgm, pclq: pclqWithReplicas(2), cliqueName: testCliqueName, pcsReplicaIndex: testPCSReplicaIndex}
+		now := time.Now()
+		// In both PodGangs the marked pod is the older one, so only a cost that is read picks it.
+		podInGang := func(name, podGangName string, createdAt time.Time, marked bool) *corev1.Pod {
+			pod := nonTerminatingPodInPodGang(name, podGangName, "")
+			pod.CreationTimestamp = metav1.NewTime(createdAt)
+			if marked {
+				pod.Annotations = map[string]string{corev1.PodDeletionCost: "-1000000"}
+			}
+			return pod
+		}
+		podsByPodGang := map[string]podGangPods{
+			oldPodGang: {nonTerminating: []*corev1.Pod{
+				podInGang("old-newest", oldPodGang, now, false),
+				podInGang("old-marked", oldPodGang, now.Add(-time.Hour), true),
+			}},
+			currentPodGang: {nonTerminating: []*corev1.Pod{
+				podInGang("current-newest", currentPodGang, now, false),
+				podInGang("current-marked", currentPodGang, now.Add(-time.Hour), true),
+			}},
+		}
+
+		tasks := r.buildPerPodGangDeletionTasks(logr.Discard(), ss, map[string]int32{oldPodGang: -1, currentPodGang: -1}, []string{oldPodGang, currentPodGang}, podsByPodGang)
+
+		require.Len(t, tasks, 2)
+		assert.Contains(t, tasks[0].Name, "old-newest", "the old-generation take-down keeps Grove's order")
+		assert.Contains(t, tasks[1].Name, "current-marked", "a scale-in of the current generation honors the cost")
 	})
 }
 

@@ -28,6 +28,7 @@ import (
 	ctrlutils "github.com/ai-dynamo/grove/operator/internal/controller/utils"
 	"github.com/ai-dynamo/grove/operator/internal/expect"
 	"github.com/ai-dynamo/grove/operator/internal/podgangmigrator"
+	"github.com/ai-dynamo/grove/operator/internal/scalein"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 
@@ -50,10 +51,10 @@ type Reconciler struct {
 }
 
 // NewReconciler creates a new instance of the PodClique Reconciler.
-func NewReconciler(mgr ctrl.Manager, controllerCfg configv1beta1.PodCliqueControllerConfiguration, schedRegistry scheduler.Registry) (*Reconciler, error) {
+func NewReconciler(mgr ctrl.Manager, controllerCfg configv1beta1.PodCliqueControllerConfiguration, schedRegistry scheduler.Registry, scaleInCostSource scalein.CostSource) (*Reconciler, error) {
 	eventRecorder := mgr.GetEventRecorderFor(controllerName)
 	expectationsStore := expect.NewExpectationsStore()
-	operatorRegistry, err := pclqcomponent.CreateOperatorRegistry(mgr, eventRecorder, expectationsStore, schedRegistry)
+	operatorRegistry, err := pclqcomponent.CreateOperatorRegistry(mgr, eventRecorder, expectationsStore, schedRegistry, scaleInCostSource)
 	if err != nil {
 		return nil, err
 	}

@@ -44,7 +44,7 @@ func TestNew(t *testing.T) {
 	eventRecorder := &record.FakeRecorder{}
 
 	expectations := &pcssync.ScalingProgressExpectations{}
-	operator := New(client, eventRecorder, expectations)
+	operator := New(client, eventRecorder, expectations, nil)
 
 	assert.NotNil(t, operator)
 	resource, ok := operator.(*_resource)

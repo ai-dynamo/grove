@@ -28,6 +28,7 @@ import (
 	pcscomponent "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components"
 	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/sync"
 	ctrlutils "github.com/ai-dynamo/grove/operator/internal/controller/utils"
+	"github.com/ai-dynamo/grove/operator/internal/scalein"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 
 	"github.com/go-logr/logr"
@@ -51,7 +52,7 @@ type Reconciler struct {
 }
 
 // NewReconciler creates a new reconciler for PodCliqueSet.
-func NewReconciler(mgr ctrl.Manager, controllerCfg configv1beta1.PodCliqueSetControllerConfiguration, topologyAwareSchedulingConfig configv1beta1.TopologyAwareSchedulingConfiguration, networkConfig configv1beta1.NetworkAcceleration, schedRegistry scheduler.Registry) *Reconciler {
+func NewReconciler(mgr ctrl.Manager, controllerCfg configv1beta1.PodCliqueSetControllerConfiguration, topologyAwareSchedulingConfig configv1beta1.TopologyAwareSchedulingConfiguration, networkConfig configv1beta1.NetworkAcceleration, schedRegistry scheduler.Registry, scaleInCostSource scalein.CostSource) *Reconciler {
 	eventRecorder := mgr.GetEventRecorderFor(controllerName)
 	client := mgr.GetClient()
 	scalingProgressExpectations := &pcssync.ScalingProgressExpectations{}
@@ -61,7 +62,7 @@ func NewReconciler(mgr ctrl.Manager, controllerCfg configv1beta1.PodCliqueSetCon
 		client:                        client,
 		eventRecorder:                 eventRecorder,
 		reconcileStatusRecorder:       ctrlcommon.NewReconcileErrorRecorder(client),
-		operatorRegistry:              pcscomponent.CreateOperatorRegistry(mgr, eventRecorder, topologyAwareSchedulingConfig, networkConfig, schedRegistry, scalingProgressExpectations),
+		operatorRegistry:              pcscomponent.CreateOperatorRegistry(mgr, eventRecorder, topologyAwareSchedulingConfig, networkConfig, schedRegistry, scalingProgressExpectations, scaleInCostSource),
 		pcsGenerationHashExpectations: sync.Map{},
 		scalingProgressExpectations:   scalingProgressExpectations,
 	}

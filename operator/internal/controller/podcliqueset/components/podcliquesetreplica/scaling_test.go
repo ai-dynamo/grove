@@ -22,13 +22,16 @@ import (
 	"slices"
 	"strconv"
 	"testing"
+	"time"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	apiconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
+	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/sync"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
+	"github.com/ai-dynamo/grove/operator/internal/scalein"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/go-logr/logr"
@@ -151,12 +154,44 @@ func TestRecordScalingSelectionEvents(t *testing.T) {
 			ScaleOutReplicaIndices: []int{0, 2, 4},
 			ScaleInReplicaIndices:  []int{1, 3, 5},
 		},
+		nil,
 	)
 
 	assert.Equal(t, []string{
 		"Normal PodCliqueSetReplicaIndicesReservedForScaleOut Reserved PCS replica indices [2 4] for scale-out",
 		"Normal PodCliqueSetReplicaIndicesSelectedForScaleIn Selected PCS replica indices [1 3] for scale-in",
 	}, []string{<-eventRecorder.Events, <-eventRecorder.Events})
+}
+
+func TestRecordScalingSelectionEventsCarriesScaleInCosts(t *testing.T) {
+	pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "default", types.UID("test-uid")).Build()
+
+	tests := []struct {
+		name         string
+		scaleInCosts map[int]int32
+		want         string
+	}{
+		{
+			name:         "every selected replica at cost 0 reads as before",
+			scaleInCosts: map[int]int32{1: 0, 3: 0, 7: -5},
+			want:         "Normal PodCliqueSetReplicaIndicesSelectedForScaleIn Selected PCS replica indices [1 3] for scale-in",
+		},
+		{
+			name:         "a non-zero cost on a selected replica is carried for every selected replica",
+			scaleInCosts: map[int]int32{1: -1000000},
+			want:         "Normal PodCliqueSetReplicaIndicesSelectedForScaleIn Selected PCS replica indices [1 3] for scale-in (scale-in cost: 1=-1000000,3=0)",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			eventRecorder := record.NewFakeRecorder(10)
+			r := &_resource{eventRecorder: eventRecorder}
+
+			r.recordNewScalingSelectionEvents(logr.Discard(), pcs, nil, []int{5}, pcssync.State{ScaleInReplicaIndices: []int{1, 3, 5}}, test.scaleInCosts)
+
+			assert.Equal(t, test.want, <-eventRecorder.Events)
+		})
+	}
 }
 
 func TestProjectedReplicaIndices(t *testing.T) {
@@ -311,19 +346,95 @@ func TestComputeReplicaIndices(t *testing.T) {
 			scaleOutBefore := slices.Clone(test.scaleOutReplicaIndices)
 			scaleInBefore := slices.Clone(test.scaleInReplicaIndices)
 
-			got := computeReplicaIndices(
+			got, _, err := computeReplicaIndices(
 				test.pcs,
 				test.snapshot,
 				test.scaleOutReplicaIndices,
 				test.scaleInReplicaIndices,
+				noScaleInCosts,
 			)
 
+			require.NoError(t, err)
 			assert.Equal(t, test.want, got)
 			assert.Equal(t, scaleOutBefore, test.scaleOutReplicaIndices)
 			assert.Equal(t, scaleInBefore, test.scaleInReplicaIndices)
 			assert.Len(t, got.ExpectedReplicaIndices, int(test.pcs.Spec.Replicas))
 		})
 	}
+}
+
+// noScaleInCosts is the scale-in cost lookup of a test that expects no replica to carry a cost.
+func noScaleInCosts() (map[int]int32, error) {
+	return nil, nil
+}
+
+func TestComputeReplicaIndicesReadsScaleInCostsOnlyForScaleIn(t *testing.T) {
+	newPCS := func(replicas int32) *grovecorev1beta1.PodCliqueSet {
+		pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "default", types.UID("test-pcs-uid")).
+			WithReplicas(replicas).
+			WithStandaloneClique("worker").
+			Build()
+		observedGeneration := pcs.Generation
+		pcs.Status.ObservedGeneration = &observedGeneration
+		return pcs
+	}
+	snapshot := func(pcs *grovecorev1beta1.PodCliqueSet) *replicaResourceSnapshot {
+		return &replicaResourceSnapshot{standalonePCLQsByReplicaIndex: map[int][]grovecorev1beta1.PodClique{
+			0: {pclqWithAvailability(pcs, 0, true)},
+			1: {pclqWithAvailability(pcs, 1, true)},
+			2: {pclqWithAvailability(pcs, 2, true)},
+		}}
+	}
+	countingLookup := func(costs map[int]int32, err error) (replicaScaleInCostLookup, *int) {
+		calls := 0
+		return func() (map[int]int32, error) {
+			calls++
+			return costs, err
+		}, &calls
+	}
+
+	t.Run("a reconcile without a scale-in never reads costs", func(t *testing.T) {
+		pcs := newPCS(3)
+		lookup, calls := countingLookup(map[int]int32{1: -1}, nil)
+
+		got, scaleInCosts, err := computeReplicaIndices(pcs, snapshot(pcs), nil, nil, lookup)
+
+		require.NoError(t, err)
+		assert.Zero(t, *calls)
+		assert.Nil(t, scaleInCosts)
+		assert.Equal(t, pcssync.State{ExpectedReplicaIndices: []int{0, 1, 2}}, got)
+	})
+
+	t.Run("a scale-out never reads costs", func(t *testing.T) {
+		pcs := newPCS(4)
+		lookup, calls := countingLookup(map[int]int32{1: -1}, nil)
+
+		_, _, err := computeReplicaIndices(pcs, snapshot(pcs), nil, nil, lookup)
+
+		require.NoError(t, err)
+		assert.Zero(t, *calls)
+	})
+
+	t.Run("a scale-in reads costs once and the lowest cost leaves", func(t *testing.T) {
+		pcs := newPCS(2)
+		lookup, calls := countingLookup(map[int]int32{1: -1000000}, nil)
+
+		got, scaleInCosts, err := computeReplicaIndices(pcs, snapshot(pcs), nil, nil, lookup)
+
+		require.NoError(t, err)
+		assert.Equal(t, 1, *calls)
+		assert.Equal(t, map[int]int32{1: -1000000}, scaleInCosts)
+		assert.Equal(t, pcssync.State{ExpectedReplicaIndices: []int{0, 2}, ScaleInReplicaIndices: []int{1}}, got)
+	})
+
+	t.Run("a cost read failure fails the computation", func(t *testing.T) {
+		pcs := newPCS(2)
+		lookup, _ := countingLookup(nil, errors.New("cache unavailable"))
+
+		_, _, err := computeReplicaIndices(pcs, snapshot(pcs), nil, nil, lookup)
+
+		assert.EqualError(t, err, "cache unavailable")
+	})
 }
 
 func TestSelectReplicaIndicesForScaleIn(t *testing.T) {
@@ -380,6 +491,7 @@ func TestSelectReplicaIndicesForScaleIn(t *testing.T) {
 				snapshot,
 				projectedReplicaIndices,
 				scaleOutReplicaIndices,
+				nil,
 				test.count,
 			)
 			assert.Equal(t, test.want, got)
@@ -398,29 +510,201 @@ func TestSelectReplicaIndicesForScaleIn(t *testing.T) {
 			},
 		}
 
-		got := selectReplicaIndicesForScaleIn(pcs, snapshot, sets.New(1, 4), sets.New[int](), 1)
+		got := selectReplicaIndicesForScaleIn(pcs, snapshot, sets.New(1, 4), sets.New[int](), nil, 1)
 
 		assert.Equal(t, []int{1}, got)
 	})
+
+	costTests := []struct {
+		name         string
+		scaleInCosts map[int]int32
+		count        int
+		want         []int
+	}{
+		{
+			name:         "within a group the lowest cost leaves first and equal costs fall back to descending index",
+			scaleInCosts: map[int]int32{2: -1000000, 0: 5, 3: -1, 4: -2},
+			count:        8,
+			want:         []int{5, 0, 3, 6, 4, 1, 2, 7},
+		},
+		{
+			name:         "a cost never promotes an available replica ahead of an unavailable one",
+			scaleInCosts: map[int]int32{2: -1000000, 7: -1000000},
+			count:        1,
+			want:         []int{5},
+		},
+		{
+			name:         "a positive cost keeps a replica for last within its group",
+			scaleInCosts: map[int]int32{7: 1},
+			count:        8,
+			want:         []int{5, 0, 6, 3, 4, 1, 2, 7},
+		},
+	}
+	for _, test := range costTests {
+		t.Run(test.name, func(t *testing.T) {
+			got := selectReplicaIndicesForScaleIn(pcs, snapshot, projectedReplicaIndices, scaleOutReplicaIndices, test.scaleInCosts, test.count)
+			assert.Equal(t, test.want, got)
+		})
+	}
 }
 
 func TestSortAndCoalesceReplicaIndices(t *testing.T) {
-	got := sortAndCoalesceReplicaIndices(
-		[]int{0, 7},
-		[]int{1, 6},
-		[]int{2, 5},
-		[]int{3, 4},
-	)
+	t.Run("without costs each group is in descending index order", func(t *testing.T) {
+		got := sortAndCoalesceReplicaIndices(
+			[]int{0, 7},
+			[]int{1, 6},
+			[]int{2, 5},
+			[]int{3, 4},
+			nil,
+		)
 
-	assert.Equal(t, []int{7, 0, 6, 1, 5, 2, 4, 3}, got)
+		assert.Equal(t, []int{7, 0, 6, 1, 5, 2, 4, 3}, got)
+	})
+
+	t.Run("costs order within each group and never across groups", func(t *testing.T) {
+		got := sortAndCoalesceReplicaIndices(
+			[]int{0, 7},
+			[]int{1, 6},
+			[]int{2, 5},
+			[]int{3, 4},
+			map[int]int32{0: -1, 4: -1000000, 6: 9, 2: 1},
+		)
+
+		assert.Equal(t, []int{0, 7, 1, 6, 5, 2, 4, 3}, got)
+	})
 }
 
-func TestSortReplicaIndicesDescending(t *testing.T) {
-	replicaIndices := []int{1, 4, 2, 3}
+func TestSortReplicaIndicesByCostThenDescending(t *testing.T) {
+	tests := []struct {
+		name           string
+		replicaIndices []int
+		scaleInCosts   map[int]int32
+		want           []int
+	}{
+		{
+			name:           "no costs sorts from highest to lowest index",
+			replicaIndices: []int{1, 4, 2, 3},
+			want:           []int{4, 3, 2, 1},
+		},
+		{
+			name:           "ascending cost first then descending index among equal costs",
+			replicaIndices: []int{1, 4, 2, 3},
+			scaleInCosts:   map[int]int32{2: -1, 1: -1, 4: 3},
+			want:           []int{2, 1, 3, 4},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			sortReplicaIndicesByCostThenDescending(test.replicaIndices, test.scaleInCosts)
+			assert.Equal(t, test.want, test.replicaIndices)
+		})
+	}
+}
 
-	sortReplicaIndicesDescending(replicaIndices)
+func TestReplicaScaleInCosts(t *testing.T) {
+	pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "default", types.UID("test-pcs-uid")).Build()
+	source, err := scalein.NewCostSource(configv1beta1.ScaleInCostSourcePodDeletionCost)
+	require.NoError(t, err)
+	newPod := func(name string, replicaIndex string, cost string, terminating bool) *corev1.Pod {
+		labels := apicommon.GetDefaultLabelsForPodCliqueSetManagedResources(pcs.Name)
+		if replicaIndex != "" {
+			labels[apicommon.LabelPodCliqueSetReplicaIndex] = replicaIndex
+		}
+		pod := testutils.NewPodBuilder(name, pcs.Namespace).WithLabels(labels).Build()
+		if cost != "" {
+			pod.Annotations = map[string]string{corev1.PodDeletionCost: cost}
+		}
+		if terminating {
+			pod.Finalizers = []string{"test/hold"}
+			pod.DeletionTimestamp = &metav1.Time{Time: time.Now()}
+		}
+		return pod
+	}
+	foreignPod := testutils.NewPodBuilder("foreign", pcs.Namespace).
+		WithLabels(map[string]string{apicommon.LabelPodCliqueSetReplicaIndex: "0"}).
+		Build()
+	foreignPod.Annotations = map[string]string{corev1.PodDeletionCost: "-7"}
 
-	assert.Equal(t, []int{4, 3, 2, 1}, replicaIndices)
+	r := _resource{
+		costSource: source,
+		client: newScalingTestClient(t,
+			newPod("r0-a", "0", "", false),
+			newPod("r0-b", "0", "", false),
+			newPod("r1-a", "1", "", false),
+			newPod("r1-b", "1", "-1000000", false),
+			newPod("r2-a", "2", "5", false),
+			newPod("r2-b", "2", "-3", true),
+			newPod("r3-a", "3", "4", false),
+			newPod("r3-b", "3", "9", false),
+			newPod("no-index", "", "-1", false),
+			newPod("bad-index", "x", "-1", false),
+			foreignPod,
+		),
+	}
+
+	got, err := r.replicaScaleInCosts(context.Background(), pcs)
+
+	require.NoError(t, err)
+	assert.Equal(t, map[int]int32{0: 0, 1: -1000000, 2: 5, 3: 4}, got)
+}
+
+// TestReplicaScaleInCostsWithoutSourceListsNothing pins that a source reading no cost never lists pods: the
+// client fails every pod list, and the lookup still returns no costs and no error.
+func TestReplicaScaleInCostsWithoutSourceListsNothing(t *testing.T) {
+	pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "default", types.UID("test-pcs-uid")).Build()
+	noSource, err := scalein.NewCostSource(configv1beta1.ScaleInCostSourceNone)
+	require.NoError(t, err)
+
+	for name, source := range map[string]scalein.CostSource{"none source": noSource, "nil source": nil} {
+		t.Run(name, func(t *testing.T) {
+			r := _resource{costSource: source, client: &failingListClient{Client: newScalingTestClient(t), failedObject: &corev1.PodList{}}}
+
+			got, err := r.replicaScaleInCosts(context.Background(), pcs)
+
+			require.NoError(t, err)
+			assert.Nil(t, got)
+		})
+	}
+}
+
+// TestReplicaScaleInCostsScopesTheListToTheSet pins the scope of the pod list: pods of another PodCliqueSet in
+// the same namespace, and pods of a same-named set in another namespace, carry lower costs on the same replica
+// index and must not be counted.
+func TestReplicaScaleInCostsScopesTheListToTheSet(t *testing.T) {
+	pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "default", types.UID("test-pcs-uid")).Build()
+	source, err := scalein.NewCostSource(configv1beta1.ScaleInCostSourcePodDeletionCost)
+	require.NoError(t, err)
+	newPod := func(name, namespace, pcsName, cost string) *corev1.Pod {
+		labels := apicommon.GetDefaultLabelsForPodCliqueSetManagedResources(pcsName)
+		labels[apicommon.LabelPodCliqueSetReplicaIndex] = "0"
+		pod := testutils.NewPodBuilder(name, namespace).WithLabels(labels).Build()
+		pod.Annotations = map[string]string{corev1.PodDeletionCost: cost}
+		return pod
+	}
+	r := _resource{
+		costSource: source,
+		client: newScalingTestClient(t,
+			newPod("own", pcs.Namespace, pcs.Name, "5"),
+			newPod("other-set", pcs.Namespace, "other-pcs", "-10"),
+			newPod("other-namespace", "elsewhere", pcs.Name, "-20"),
+		),
+	}
+
+	got, err := r.replicaScaleInCosts(context.Background(), pcs)
+
+	require.NoError(t, err)
+	assert.Equal(t, map[int]int32{0: 5}, got)
+}
+
+func TestReplicaScaleInCostsWrapsListErrors(t *testing.T) {
+	pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "default", types.UID("test-pcs-uid")).Build()
+	source, err := scalein.NewCostSource(configv1beta1.ScaleInCostSourcePodDeletionCost)
+	require.NoError(t, err)
+	r := _resource{costSource: source, client: &failingListClient{Client: newScalingTestClient(t), failedObject: &corev1.PodList{}}}
+
+	_, err = r.replicaScaleInCosts(context.Background(), pcs)
+
+	assertGroveErrorCode(t, err, errCodeListPods)
 }
 
 func TestFindMaterializedScaleOutReplicaIndices(t *testing.T) {

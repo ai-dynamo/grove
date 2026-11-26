@@ -20,6 +20,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/controller/podclique/components/pod"
 	pclqresourceclaim "github.com/ai-dynamo/grove/operator/internal/controller/podclique/components/resourceclaim"
 	"github.com/ai-dynamo/grove/operator/internal/expect"
+	"github.com/ai-dynamo/grove/operator/internal/scalein"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 
 	"k8s.io/client-go/tools/record"
@@ -27,10 +28,10 @@ import (
 )
 
 // CreateOperatorRegistry initializes the operator registry for the PodClique reconciler.
-func CreateOperatorRegistry(mgr manager.Manager, eventRecorder record.EventRecorder, expectationsStore *expect.ExpectationsStore, schedRegistry scheduler.Registry) (component.OperatorRegistry[v1beta1.PodClique, component.EmptyState, component.NoResult], error) {
+func CreateOperatorRegistry(mgr manager.Manager, eventRecorder record.EventRecorder, expectationsStore *expect.ExpectationsStore, schedRegistry scheduler.Registry, scaleInCostSource scalein.CostSource) (component.OperatorRegistry[v1beta1.PodClique, component.EmptyState, component.NoResult], error) {
 	reg := component.NewOperatorRegistry[v1beta1.PodClique, component.EmptyState, component.NoResult]()
 	reg.Register(component.KindResourceClaim, pclqresourceclaim.New(mgr.GetClient(), mgr.GetScheme()))
-	podOperator, err := pod.New(mgr.GetClient(), mgr.GetScheme(), eventRecorder, expectationsStore, schedRegistry)
+	podOperator, err := pod.New(mgr.GetClient(), mgr.GetScheme(), eventRecorder, expectationsStore, schedRegistry, scaleInCostSource)
 	if err != nil {
 		return nil, err
 	}
