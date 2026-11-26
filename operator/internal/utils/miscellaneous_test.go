@@ -29,7 +29,7 @@ type AnotherStringType string
 func TestIsEmptyStringType(t *testing.T) {
 	testCases := []struct {
 		description string
-		input       interface{}
+		input       any
 		expected    bool
 	}{
 		{
@@ -87,7 +87,7 @@ func TestIsEmptyStringType(t *testing.T) {
 func TestIsEmptyStringTypeWithCustomTypes(t *testing.T) {
 	testCases := []struct {
 		description string
-		input       interface{}
+		input       any
 		expected    bool
 	}{
 		{
@@ -137,8 +137,8 @@ func TestIsEmptyStringTypeWithCustomTypes(t *testing.T) {
 func TestOnlyOneIsNil(t *testing.T) {
 	testCases := []struct {
 		description string
-		objA        interface{}
-		objB        interface{}
+		objA        any
+		objB        any
 		expected    bool
 	}{
 		{

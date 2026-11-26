@@ -7,6 +7,7 @@ linters:
     - importas
     - loggercheck
     - misspell
+    - modernize
     - nilerr
     - revive
     - unconvert
@@ -19,6 +20,18 @@ linters:
       no-printf-like: true
     misspell:
       mode: restricted # only check comments
+    modernize:
+      disable:
+        # omitzero would rewrite `omitempty` to `omitzero` on JSON tags, which
+        # changes wire semantics (omitzero omits on the zero value, omitempty
+        # on the empty value) and is not a safe mechanical modernization for
+        # CRD API types.
+        - omitzero
+        # newexpr would rewrite `ptr.To(x)` to `new(x)`. Keep `ptr.To`: it is
+        # the idiom across the Kubernetes ecosystem, `ptr.Deref` stays in use
+        # regardless so k8s.io/utils/ptr does not go away, and `new(expr)`
+        # mixes both styles in lines like `new(ptr.Deref(x, 0))`.
+        - newexpr
     revive:
       rules:
         - name: duplicated-imports

@@ -225,7 +225,7 @@ func TestSync(t *testing.T) {
 		require.NoError(t, err)
 
 		// Verify services were created
-		for i := 0; i < 2; i++ {
+		for i := range 2 {
 			svc := &corev1.Service{}
 			serviceName := fmt.Sprintf("test-pcs-%d", i)
 			err = cl.Get(context.Background(), client.ObjectKey{Name: serviceName, Namespace: "default"}, svc)

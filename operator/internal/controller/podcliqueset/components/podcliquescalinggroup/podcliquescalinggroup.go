@@ -17,6 +17,7 @@ package podcliquescalinggroup
 import (
 	"context"
 	"fmt"
+	"maps"
 	"slices"
 	"strconv"
 
@@ -309,9 +310,7 @@ func getAnnotations(pcsgConfig grovecorev1beta1.PodCliqueScalingGroupConfig) map
 		return nil
 	}
 	annotations := make(map[string]string, len(pcsgConfig.Annotations))
-	for k, v := range pcsgConfig.Annotations {
-		annotations[k] = v
-	}
+	maps.Copy(annotations, pcsgConfig.Annotations)
 	return annotations
 }
 

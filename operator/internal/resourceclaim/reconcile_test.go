@@ -17,6 +17,7 @@ package resourceclaim
 import (
 	"context"
 	"fmt"
+	"maps"
 	"testing"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
@@ -500,9 +501,7 @@ func TestCleanupStalePerReplicaRCs(t *testing.T) {
 
 	rcWithIndex := func(name, ns string, replicaIndex int) *resourcev1.ResourceClaim {
 		l := make(map[string]string, len(baseLabels)+1)
-		for k, v := range baseLabels {
-			l[k] = v
-		}
+		maps.Copy(l, baseLabels)
 		l[apicommon.LabelPodCliqueSetReplicaIndex] = fmt.Sprintf("%d", replicaIndex)
 		return &resourcev1.ResourceClaim{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns, Labels: l}}
 	}
