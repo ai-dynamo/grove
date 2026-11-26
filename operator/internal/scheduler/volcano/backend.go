@@ -93,6 +93,12 @@ func (b *schedulerBackend) SyncPodGang(ctx context.Context, podGang *groveschedu
 	if !podGang.DeletionTimestamp.IsZero() {
 		return nil
 	}
+
+	queue, err := queueForPodGang(ctx, b.client, podGang)
+	if err != nil {
+		return fmt.Errorf("failed to sync Volcano PodGroup for PodGang %s/%s: %w", podGang.Namespace, podGang.Name, err)
+	}
+
 	podGroup := &volcanov1beta1.PodGroup{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      podGang.Name,
@@ -100,7 +106,7 @@ func (b *schedulerBackend) SyncPodGang(ctx context.Context, podGang *groveschedu
 		},
 	}
 
-	_, err := k8sutils.CreateOrPatchSpec(ctx, b.client, podGroup, func() error {
+	_, err = k8sutils.CreateOrPatchSpec(ctx, b.client, podGroup, func() error {
 		if podGroup.Labels == nil {
 			podGroup.Labels = map[string]string{}
 		}
@@ -116,7 +122,7 @@ func (b *schedulerBackend) SyncPodGang(ctx context.Context, podGang *groveschedu
 			podGroup.Spec.MinMember = minMemberForPodGang(podGang)
 			podGroup.Spec.SubGroupPolicy = subGroupPoliciesForPodGang(podGang)
 		}
-		podGroup.Spec.Queue = effectiveQueueFromAnnotations(podGang.Annotations)
+		podGroup.Spec.Queue = queue
 		podGroup.Spec.PriorityClassName = podGang.Spec.PriorityClassName
 		return nil
 	})

@@ -17,6 +17,7 @@ package scheduler
 import (
 	"testing"
 
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
@@ -31,6 +32,7 @@ import (
 func NewVolcanoScheme(t *testing.T) *runtime.Scheme {
 	t.Helper()
 	scheme := runtime.NewScheme()
+	require.NoError(t, grovecorev1beta1.AddToScheme(scheme))
 	require.NoError(t, groveschedulerv1alpha1.AddToScheme(scheme))
 	require.NoError(t, volcanov1beta1.AddToScheme(scheme))
 	require.NoError(t, apiextensionsv1.AddToScheme(scheme))
