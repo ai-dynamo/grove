@@ -127,16 +127,126 @@ func updateInProgress(pcs *grovecorev1beta1.PodCliqueSet) bool {
 	return pcs.Status.UpdateProgress != nil && pcs.Status.UpdateProgress.UpdateEndedAt == nil
 }
 
-// IsCoherentUpdateInProgress returns true when the PodCliqueSet uses the Coherent update strategy
-// and an update has started but has not yet ended.
-func IsCoherentUpdateInProgress(pcs *grovecorev1beta1.PodCliqueSet) bool {
-	return IsCoherentStrategy(pcs) && updateInProgress(pcs)
+// IsPCSReplicaRecreationInProgress returns true when an active update must recreate each selected PCS
+// replica's workload and scheduling resources. Replica recreation takes precedence over the configured
+// update strategy.
+func IsPCSReplicaRecreationInProgress(pcs *grovecorev1beta1.PodCliqueSet) bool {
+	return updateInProgress(pcs) && pcs.Status.UpdateProgress.RequiresReplicaRecreation
 }
 
-// IsRollingRecreateUpdateInProgress returns true when a rolling update is in progress under the
-// RollingRecreate strategy, the default strategy that is neither Coherent nor OnDelete.
+// ComputePCSReplicaCleanupIndices returns a new set containing ordinary scale-in
+// indices and unfinished replica-recreation cleanup indices. It does not modify
+// either input.
+//
+// A same-index replacement stops being cleanup-only after its source cleanup
+// barrier. Canceled replacements and retired sources take precedence over that
+// transition.
+func ComputePCSReplicaCleanupIndices(
+	pcs *grovecorev1beta1.PodCliqueSet,
+	scaleInReplicaIndices []int,
+) sets.Set[int] {
+	cleanupIndices := sets.New(scaleInReplicaIndices...)
+	if !IsPCSReplicaRecreationInProgress(pcs) {
+		return cleanupIndices
+	}
+
+	// Process active replacements first. A same-index replacement whose source
+	// cleanup is complete removes its index from the cleanup set so its target
+	// can be created. Add canceled and retired cleanup in the second pass so
+	// those obligations take precedence and cannot be cleared by an active
+	// replacement, regardless of the order of CurrentlyUpdating entries.
+	for _, replicaProgress := range pcs.Status.UpdateProgress.CurrentlyUpdating {
+		replacement := replicaProgress.Replacement
+		if replicaProgress.UpdateEndedAt != nil || replacement == nil || replacement.CanceledAt != nil {
+			continue
+		}
+
+		source := int(replicaProgress.ReplicaIndex)
+		target := int(replacement.TargetReplicaIndex)
+		if source == target && replacement.SourceCleanupCompletedAt != nil {
+			cleanupIndices.Delete(source)
+			continue
+		}
+		cleanupIndices.Insert(source)
+	}
+
+	// Apply canceled and retired cleanup last to preserve that precedence.
+	for _, replicaProgress := range pcs.Status.UpdateProgress.CurrentlyUpdating {
+		replacement := replicaProgress.Replacement
+		if replicaProgress.UpdateEndedAt != nil || replacement == nil {
+			continue
+		}
+
+		if replacement.CanceledAt != nil {
+			cleanupIndices.Insert(
+				int(replicaProgress.ReplicaIndex),
+				int(replacement.TargetReplicaIndex),
+			)
+		}
+		for _, retiredSource := range replacement.RetiredSourceReplicaIndices {
+			cleanupIndices.Insert(int(retiredSource))
+		}
+	}
+
+	return cleanupIndices
+}
+
+// ShouldPreservePCSReplicaRevision reports whether an existing resource must retain its running
+// template during the active PCS update. Callers handle fresh creation independently.
+func ShouldPreservePCSReplicaRevision(pcs *grovecorev1beta1.PodCliqueSet, pcsReplicaIndex int) bool {
+	isUnselectedDuringCoherentUpdate := IsCoherentUpdateInProgress(pcs) &&
+		!IsPCSReplicaUnderCoherentUpdate(pcs, pcsReplicaIndex)
+	isUnselectedDuringReplicaRecreation := IsPCSReplicaRecreationInProgress(pcs) &&
+		!IsPCSReplicaActiveReplacementTarget(pcs, pcsReplicaIndex)
+	return isUnselectedDuringCoherentUpdate || isUnselectedDuringReplicaRecreation
+}
+
+// IsPCSReplicaInReplacement reports whether the given PCS replica index participates as the source or
+// target of an active or canceled PCS replica replacement. Gang termination is disarmed for such a replica
+// because the replacement already deletes and recreates it.
+func IsPCSReplicaInReplacement(pcs *grovecorev1beta1.PodCliqueSet, pcsReplicaIndex int) bool {
+	if !IsPCSReplicaRecreationInProgress(pcs) {
+		return false
+	}
+	for _, replicaProgress := range pcs.Status.UpdateProgress.CurrentlyUpdating {
+		if replicaProgress.UpdateEndedAt != nil || replicaProgress.Replacement == nil {
+			continue
+		}
+		if int(replicaProgress.ReplicaIndex) == pcsReplicaIndex ||
+			int(replicaProgress.Replacement.TargetReplicaIndex) == pcsReplicaIndex {
+			return true
+		}
+	}
+	return false
+}
+
+// IsPCSReplicaActiveReplacementTarget reports whether the given PCS replica index is the target of an active
+// (not canceled and not ended) PCS replica replacement. The target is the replica being recreated, so it adopts
+// the new template, while every other replica preserves its running revision until it is itself recreated.
+func IsPCSReplicaActiveReplacementTarget(pcs *grovecorev1beta1.PodCliqueSet, pcsReplicaIndex int) bool {
+	if !IsPCSReplicaRecreationInProgress(pcs) {
+		return false
+	}
+	for _, replicaProgress := range pcs.Status.UpdateProgress.CurrentlyUpdating {
+		replacement := replicaProgress.Replacement
+		if replacement == nil || int(replacement.TargetReplicaIndex) != pcsReplicaIndex {
+			continue
+		}
+		return replacement.CanceledAt == nil && replicaProgress.UpdateEndedAt == nil
+	}
+	return false
+}
+
+// IsCoherentUpdateInProgress returns true when an active update is executing Coherent semantics. A PCS
+// replica recreation rollout does not execute the configured Coherent strategy.
+func IsCoherentUpdateInProgress(pcs *grovecorev1beta1.PodCliqueSet) bool {
+	return IsCoherentStrategy(pcs) && updateInProgress(pcs) && !IsPCSReplicaRecreationInProgress(pcs)
+}
+
+// IsRollingRecreateUpdateInProgress returns true when an active update is executing RollingRecreate
+// semantics. A PCS replica recreation rollout does not execute the configured RollingRecreate strategy.
 func IsRollingRecreateUpdateInProgress(pcs *grovecorev1beta1.PodCliqueSet) bool {
-	return IsRollingUpdateInProgress(pcs) && !IsCoherentStrategy(pcs)
+	return IsRollingUpdateInProgress(pcs) && !IsCoherentStrategy(pcs) && !IsPCSReplicaRecreationInProgress(pcs)
 }
 
 // IsCoherentStrategy returns true when the PodCliqueSet uses the Coherent update strategy (the
@@ -149,18 +259,46 @@ func IsCoherentStrategy(pcs *grovecorev1beta1.PodCliqueSet) bool {
 	return ResolveUpdateStrategyType(pcs) == grovecorev1beta1.CoherentStrategy
 }
 
-// IsPCSReplicaUnderCoherentUpdate reports whether the given PodCliqueSet replica is the one the
-// orchestrator has selected for a coherent update and has not yet closed out.
-func IsPCSReplicaUnderCoherentUpdate(pcs *grovecorev1beta1.PodCliqueSet, pcsReplicaIndex int) bool {
-	if !IsCoherentUpdateInProgress(pcs) {
-		return false
+// PCSReplicaIndicesSelectedForUpdate returns the unique PCS replica indices selected for the active
+// update, sorted in ascending order.
+func PCSReplicaIndicesSelectedForUpdate(pcs *grovecorev1beta1.PodCliqueSet) []int32 {
+	if pcs == nil || pcs.Status.UpdateProgress == nil || pcs.Status.UpdateProgress.UpdateEndedAt != nil {
+		return nil
 	}
+
+	replicaIndices := sets.New[int32]()
 	for _, replicaProgress := range pcs.Status.UpdateProgress.CurrentlyUpdating {
-		if int(replicaProgress.ReplicaIndex) == pcsReplicaIndex && replicaProgress.UpdateEndedAt == nil {
+		if replicaProgress.UpdateEndedAt == nil {
+			replicaIndices.Insert(replicaProgress.ReplicaIndex)
+		}
+	}
+	if replicaIndices.Len() == 0 {
+		return nil
+	}
+	return sets.List(replicaIndices)
+}
+
+// IsPCSReplicaSelectedForUpdate reports whether the given PCS replica is selected for the active update.
+func IsPCSReplicaSelectedForUpdate(pcs *grovecorev1beta1.PodCliqueSet, pcsReplicaIndex int) bool {
+	return slices.Contains(PCSReplicaIndicesSelectedForUpdate(pcs), int32(pcsReplicaIndex))
+}
+
+// HasNewPCSReplicaIndicesSelectedForUpdate reports whether newPCS selects one or more PCS replica
+// indices for update that oldPCS did not select.
+func HasNewPCSReplicaIndicesSelectedForUpdate(oldPCS, newPCS *grovecorev1beta1.PodCliqueSet) bool {
+	oldReplicaIndices := sets.New(PCSReplicaIndicesSelectedForUpdate(oldPCS)...)
+	for _, replicaIndex := range PCSReplicaIndicesSelectedForUpdate(newPCS) {
+		if !oldReplicaIndices.Has(replicaIndex) {
 			return true
 		}
 	}
 	return false
+}
+
+// IsPCSReplicaUnderCoherentUpdate reports whether the given PodCliqueSet replica is selected for an
+// active coherent update.
+func IsPCSReplicaUnderCoherentUpdate(pcs *grovecorev1beta1.PodCliqueSet, pcsReplicaIndex int) bool {
+	return IsCoherentUpdateInProgress(pcs) && IsPCSReplicaSelectedForUpdate(pcs, pcsReplicaIndex)
 }
 
 // GetExpectedPCLQNamesGroupByOwner returns the expected unqualified PodClique names which are either owned by PodCliqueSet or PodCliqueScalingGroup.
@@ -286,6 +424,21 @@ func GetStandalonePCLQReplicasFromPCSTemplateSpec(pcs *grovecorev1beta1.PodCliqu
 		}
 	}
 	return result
+}
+
+// ComputeCleanedUpReplicaIndices returns the scale-in replica indices that are not in the awaiting set, that is
+// the indices for which a component observes none of its managed resources. A component reports the result for
+// the scale-in indices it assessed during the current reconciliation.
+func ComputeCleanedUpReplicaIndices(scaleInReplicaIndices, awaitingReplicaIndices []int) []int {
+	awaiting := sets.New(awaitingReplicaIndices...)
+	cleanedUp := make([]int, 0, len(scaleInReplicaIndices))
+	for _, replicaIndex := range scaleInReplicaIndices {
+		if !awaiting.Has(replicaIndex) {
+			cleanedUp = append(cleanedUp, replicaIndex)
+		}
+	}
+	slices.Sort(cleanedUp)
+	return cleanedUp
 }
 
 // GetPCSGMinAvailableFromPCSTemplateSpec returns the MinAvailable replica count per PodCliqueScalingGroup from the PCS template spec.

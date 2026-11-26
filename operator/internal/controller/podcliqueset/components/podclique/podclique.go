@@ -25,7 +25,7 @@ import (
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
-	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/sync"
+	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/sync"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
@@ -110,7 +110,7 @@ func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev
 	}
 
 	return pcssync.Result{
-		ScaleInReplicaIndicesAwaitingResourceCleanup: replicaIndicesAwaitingResourceCleanup,
+		CleanedUpReplicaIndices: componentutils.ComputeCleanedUpReplicaIndices(state.ScaleInReplicaIndices, replicaIndicesAwaitingResourceCleanup),
 	}, nil
 }
 
@@ -288,12 +288,25 @@ func (r _resource) buildResource(logger logr.Logger, pcs *grovecorev1beta1.PodCl
 	// During a coherent update only the replica under update adopts the new template. Every other replica
 	// keeps its running revision so a pod recreated on it (crash, eviction, or scale-out) does not come up
 	// on the new revision alongside the old, which would break version coherence within that replica.
-	preserveRevision := pclqExists &&
-		componentutils.IsCoherentUpdateInProgress(pcs) &&
-		!componentutils.IsPCSReplicaUnderCoherentUpdate(pcs, pcsReplica)
+	//
+	// During a PCS replica recreation only the replica being recreated (the active replacement target) adopts
+	// the new template. Every other replica preserves its running revision so a scheduling-configuration change
+	// such as MinAvailable does not propagate in place to replicas that have not yet been recreated, which would
+	// let them converge without the structural recreation that the change requires.
+	preserveRevision := pclqExists && componentutils.ShouldPreservePCSReplicaRevision(pcs, pcsReplica)
+	resourceGenerationHash := pclq.Labels[apicommon.LabelPodCliqueSetGenerationHash]
+	if preserveRevision {
+		// Migrate an existing resource using only its previously reconciled generation.
+		if resourceGenerationHash == "" && pclq.Status.CurrentPodCliqueSetGenerationHash != nil {
+			resourceGenerationHash = *pclq.Status.CurrentPodCliqueSetGenerationHash
+		}
+	} else {
+		resourceGenerationHash = *pcs.Status.CurrentGenerationHash
+	}
 	if err := r.setPodCliqueObjectMeta(pcs, pcsReplica, pclqTemplate, preserveRevision, pclq); err != nil {
 		return err
 	}
+	componentutils.SetMaterializedPCSGenerationHash(&pclq.ObjectMeta, resourceGenerationHash)
 	return setPodCliqueSpec(logger, pcs, pcsReplica, pclqTemplate, pclqExists, preserveRevision, pclq)
 }
 

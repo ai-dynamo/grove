@@ -20,9 +20,8 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 )
 
-// DefaultRollingRecreateMaxUnavailable is the MaxUnavailable applied to a component under the
-// RollingRecreate strategy when none is configured. It is shared by the defaulting webhook and by
-// EffectiveMaxUnavailable so both agree on the value.
+// DefaultRollingRecreateMaxUnavailable is the runtime MaxUnavailable default for a component
+// under the RollingRecreate strategy when no value is configured.
 const DefaultRollingRecreateMaxUnavailable int32 = 1
 
 // CoherentMaxUnavailableByComponent returns, keyed by in-scope component name, the effective
@@ -46,16 +45,13 @@ func CoherentMaxUnavailableByComponent(pcs *grovecorev1beta1.PodCliqueSet, inSco
 	return maxUnavailableByComponent
 }
 
-// EffectiveMaxUnavailable returns the MaxUnavailable to use for a component under the given update
-// strategy, tolerating a nil rollingUpdate or a nil MaxUnavailable by applying the strategy's
-// default: MinAvailable for Coherent, since the MVU sub-step takes down MinAvailable at once, and 1
-// for RollingRecreate. This mirrors the defaulting webhook so an in-flight object that predates the
-// RollingUpdate fields resolves to the same value the webhook would have written.
+// EffectiveMaxUnavailable returns the effective MaxUnavailable for a component under the given
+// update strategy. A non-nil MaxUnavailable takes precedence, including defaults stored by older
+// webhooks. If rollingUpdate or MaxUnavailable is nil, it returns minAvailable for Coherent and
+// DefaultRollingRecreateMaxUnavailable otherwise.
 //
-// NOTE: the nil-tolerance exists only for PodCliqueSets created before the RollingUpdate fields
-// existed, which reconcile without re-admission and carry a nil MaxUnavailable. Once every
-// PodCliqueSet has been re-admitted and carries a MaxUnavailable populated by the defaulting webhook,
-// this can be simplified to reading the field directly.
+// The defaulting webhook preserves nil for omitted MaxUnavailable values so the Coherent default
+// follows changes to MinAvailable.
 func EffectiveMaxUnavailable(rollingUpdate *grovecorev1beta1.RollingUpdateConfiguration, updateStrategy grovecorev1beta1.UpdateStrategyType, minAvailable int32) int {
 	if rollingUpdate != nil && rollingUpdate.MaxUnavailable != nil {
 		return int(*rollingUpdate.MaxUnavailable)

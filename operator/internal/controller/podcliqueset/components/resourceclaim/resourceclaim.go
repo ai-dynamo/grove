@@ -24,10 +24,11 @@ import (
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
-	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/sync"
+	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/sync"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/resourceclaim"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
+	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
 	"github.com/go-logr/logr"
@@ -78,7 +79,7 @@ func (r _resource) GetExistingResourceNames(ctx context.Context, logger logr.Log
 // Sync creates or patches PCS-level ResourceClaims and deletes claims for excess replica indices.
 func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, state *pcssync.State) (pcssync.Result, error) {
 	if len(pcs.Spec.Template.ResourceSharing) == 0 {
-		return pcssync.Result{}, nil
+		return pcssync.Result{NotApplicable: true}, nil
 	}
 
 	resourceClaimsByPCSReplicaIndex, err := r.getResourceClaimsByPCSReplicaIndex(ctx, pcs)
@@ -94,7 +95,7 @@ func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev
 	}
 
 	return pcssync.Result{
-		ScaleInReplicaIndicesAwaitingResourceCleanup: replicaIndicesAwaitingResourceCleanup,
+		CleanedUpReplicaIndices: componentutils.ComputeCleanedUpReplicaIndices(state.ScaleInReplicaIndices, replicaIndicesAwaitingResourceCleanup),
 	}, nil
 }
 

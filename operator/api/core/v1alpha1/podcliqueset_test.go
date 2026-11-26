@@ -17,10 +17,46 @@ limitations under the License.
 package v1alpha1
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
+
+func TestPodCliqueSetUpdateProgressSchedulingHashJSON(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name               string
+		progressJSON       string
+		wantSchedulingHash string
+	}{
+		{
+			name:         "legacy update progress omits scheduling hash",
+			progressJSON: `{"updateStartedAt":"2026-01-01T00:00:00Z"}`,
+		},
+		{
+			name:               "current update progress preserves scheduling hash",
+			progressJSON:       `{"updateStartedAt":"2026-01-01T00:00:00Z","targetSchedulingConfigurationHash":"scheduling-target"}`,
+			wantSchedulingHash: "scheduling-target",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			var progress PodCliqueSetUpdateProgress
+			require.NoError(t, json.Unmarshal([]byte(tc.progressJSON), &progress))
+			assert.Equal(t, tc.wantSchedulingHash, progress.TargetSchedulingConfigurationHash)
+
+			data, err := json.Marshal(progress)
+			require.NoError(t, err)
+			assert.JSONEq(t, tc.progressJSON, string(data))
+		})
+	}
+}
 
 func TestTopologyConstraintPackDomainHelpers(t *testing.T) {
 	tests := []struct {

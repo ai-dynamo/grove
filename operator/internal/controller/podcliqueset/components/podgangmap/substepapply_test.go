@@ -34,7 +34,7 @@ func TestApplySubStep(t *testing.T) {
 		{
 			// Current state is one old-hash v1 anchor holding MinAvailable of each component, frontend 2 and
 			// decode [0,1,2]. The sub-step opens the v2 anchor, draining that MinAvailable from v1 and creating a
-			// v2 anchor with MinAvailable frontend from the mvuTemplate and the decode MinAvailable indices. v1
+			// v2 anchor with the planned frontend count and the decode MinAvailable indices. v1
 			// then drains to empty and is removed, leaving only the new v2 anchor at AnchorIndex 0.
 			description: "an anchor sub-step creates the new anchor and removes the drained old anchor",
 			entries: []grovecorev1beta1.PodGangEntry{
@@ -42,14 +42,46 @@ func TestApplySubStep(t *testing.T) {
 			},
 			mvu: &mvuTemplate{standalonePCLQs: map[string]int32{"frontend": 2}, pcsgs: map[string]int32{"decode": 3}},
 			ss: subStep{
-				epoch:                     "200",
-				opensAnchor:               true,
-				anchorPCSGReplicaIndices:  map[string][]int32{"decode": {0, 1, 2}},
-				drainStandalonePCLQCounts: map[string]int32{"frontend": 2},
-				drainPCSGReplicaIndices:   map[string][]int32{"decode": {0, 1, 2}},
+				epoch:                      "200",
+				opensAnchor:                true,
+				anchorPCSGReplicaIndices:   map[string][]int32{"decode": {0, 1, 2}},
+				standalonePCLQCountsToRoll: map[string]int32{"frontend": 2},
+				pcsgReplicaIndicesToRoll:   map[string][]int32{"decode": {0, 1, 2}},
 			},
 			want: []grovecorev1beta1.PodGangEntry{
 				{Epoch: "200", PodCliqueSetGenerationHash: "v2", Role: grovecorev1beta1.PodGangEntryRoleAnchor, PodCliques: map[string]int32{"frontend": 2}, PCSGReplicaIndices: map[string][]int32{"decode": {0, 1, 2}}},
+			},
+		},
+		{
+			description: "an anchor sub-step omits a zero-replica standalone even when the MVU includes it",
+			entries: []grovecorev1beta1.PodGangEntry{
+				{Epoch: "50", PodCliqueSetGenerationHash: "v1", Role: grovecorev1beta1.PodGangEntryRoleAnchor, PCSGReplicaIndices: map[string][]int32{"inference": {0}}},
+			},
+			mvu: &mvuTemplate{standalonePCLQs: map[string]int32{"frontend": 1}, pcsgs: map[string]int32{"inference": 1}},
+			ss: subStep{
+				epoch: "200", opensAnchor: true,
+				anchorPCSGReplicaIndices:   map[string][]int32{"inference": {0}},
+				standalonePCLQCountsToRoll: map[string]int32{},
+				pcsgReplicaIndicesToRoll:   map[string][]int32{"inference": {0}},
+			},
+			want: []grovecorev1beta1.PodGangEntry{
+				{Epoch: "200", PodCliqueSetGenerationHash: "v2", Role: grovecorev1beta1.PodGangEntryRoleAnchor, PodCliques: map[string]int32{}, PCSGReplicaIndices: map[string][]int32{"inference": {0}}},
+			},
+		},
+		{
+			description: "an anchor sub-step places only selected standalone counts from a mixed MVU",
+			entries: []grovecorev1beta1.PodGangEntry{
+				{Epoch: "50", PodCliqueSetGenerationHash: "v1", Role: grovecorev1beta1.PodGangEntryRoleAnchor, PodCliques: map[string]int32{"router": 2}, PCSGReplicaIndices: map[string][]int32{"inference": {0}}},
+			},
+			mvu: &mvuTemplate{standalonePCLQs: map[string]int32{"frontend": 1, "router": 2}, pcsgs: map[string]int32{"inference": 1}},
+			ss: subStep{
+				epoch: "200", opensAnchor: true,
+				anchorPCSGReplicaIndices:   map[string][]int32{"inference": {0}},
+				standalonePCLQCountsToRoll: map[string]int32{"router": 2},
+				pcsgReplicaIndicesToRoll:   map[string][]int32{"inference": {0}},
+			},
+			want: []grovecorev1beta1.PodGangEntry{
+				{Epoch: "200", PodCliqueSetGenerationHash: "v2", Role: grovecorev1beta1.PodGangEntryRoleAnchor, PodCliques: map[string]int32{"router": 2}, PCSGReplicaIndices: map[string][]int32{"inference": {0}}},
 			},
 		},
 		{
@@ -68,9 +100,9 @@ func TestApplySubStep(t *testing.T) {
 				dependsOn:                   []string{"200"},
 				subsumeAnchorEpoch:          "200",
 				subsumeStandalonePCLQCounts: map[string]int32{"frontend": 3},
-				drainStandalonePCLQCounts:   map[string]int32{"frontend": 3},
+				standalonePCLQCountsToRoll:  map[string]int32{"frontend": 3},
 				tailPCSGReplicaIndices:      map[string][]int32{"decode": {3, 4, 5}},
-				drainPCSGReplicaIndices:     map[string][]int32{"decode": {3, 4, 5}},
+				pcsgReplicaIndicesToRoll:    map[string][]int32{"decode": {3, 4, 5}},
 			},
 			want: []grovecorev1beta1.PodGangEntry{
 				{Epoch: "200", PodCliqueSetGenerationHash: "v2", Role: grovecorev1beta1.PodGangEntryRoleAnchor, PodCliques: map[string]int32{"frontend": 5}, PCSGReplicaIndices: map[string][]int32{"decode": {0, 1, 2}}},
@@ -93,7 +125,7 @@ func TestApplySubStep(t *testing.T) {
 				dependsOn:                   []string{"200"},
 				subsumeAnchorEpoch:          "200",
 				subsumeStandalonePCLQCounts: map[string]int32{"frontend": 3},
-				drainStandalonePCLQCounts:   map[string]int32{"frontend": 3},
+				standalonePCLQCountsToRoll:  map[string]int32{"frontend": 3},
 			},
 			want: []grovecorev1beta1.PodGangEntry{
 				{Epoch: "50", PodCliqueSetGenerationHash: "v1", Role: grovecorev1beta1.PodGangEntryRoleAnchor, PodCliques: map[string]int32{"frontend": 2}},
@@ -117,7 +149,7 @@ func TestApplySubStep(t *testing.T) {
 				dependsOn:                   []string{"200"},
 				subsumeAnchorEpoch:          "200",
 				subsumeStandalonePCLQCounts: map[string]int32{"frontend": 3},
-				drainStandalonePCLQCounts:   map[string]int32{"frontend": 3},
+				standalonePCLQCountsToRoll:  map[string]int32{"frontend": 3},
 			},
 			want: []grovecorev1beta1.PodGangEntry{
 				{Epoch: "50", PodCliqueSetGenerationHash: "v1", Role: grovecorev1beta1.PodGangEntryRoleAnchor, PodCliques: map[string]int32{"frontend": 2}},
@@ -137,11 +169,11 @@ func TestApplySubStep(t *testing.T) {
 			},
 			mvu: &mvuTemplate{standalonePCLQs: map[string]int32{"frontend": 1}, pcsgs: map[string]int32{"inference": 1}},
 			ss: subStep{
-				epoch:                     "200",
-				opensAnchor:               true,
-				anchorPCSGReplicaIndices:  map[string][]int32{"inference": {0}},
-				drainStandalonePCLQCounts: map[string]int32{"frontend": 1},
-				drainPCSGReplicaIndices:   map[string][]int32{"inference": {0}},
+				epoch:                      "200",
+				opensAnchor:                true,
+				anchorPCSGReplicaIndices:   map[string][]int32{"inference": {0}},
+				standalonePCLQCountsToRoll: map[string]int32{"frontend": 1},
+				pcsgReplicaIndicesToRoll:   map[string][]int32{"inference": {0}},
 			},
 			want: []grovecorev1beta1.PodGangEntry{
 				{Epoch: "50", PodCliqueSetGenerationHash: "v1", Role: grovecorev1beta1.PodGangEntryRoleAnchor, PodCliques: map[string]int32{"frontend": 1}},

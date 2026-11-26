@@ -27,6 +27,8 @@ const (
 	OperatorNamespaceFile = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
 	// ComponentSyncRetryInterval is a retry interval with which a reconcile request will be requeued.
 	ComponentSyncRetryInterval = 5 * time.Second
+	// InformerCacheSyncRetryInterval is the interval used while waiting for a persisted write to become visible through the informer cache.
+	InformerCacheSyncRetryInterval = 500 * time.Millisecond
 	// PodCliqueStatusResyncInterval is how often a PodClique is re-reconciled after a successful
 	// status reconcile even without a watch event. A status field left stale by a lost update is
 	// recomputed from a fresh cache and corrected within this interval.

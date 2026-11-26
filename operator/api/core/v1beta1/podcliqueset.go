@@ -102,6 +102,14 @@ type PodCliqueSetStatus struct {
 	// Only if this value is not nil and the newly computed hash value is different from the persisted CurrentGenerationHash value
 	// then an update needs to be triggered.
 	CurrentGenerationHash *string `json:"currentGenerationHash,omitempty"`
+	// AppliedSchedulingConfigurationHash identifies the scheduling configuration
+	// fully realized by all expected PodCliqueSet replicas. The scheduling
+	// configuration currently comprises the effective MinAvailable values of all
+	// PodClique templates and PodCliqueScalingGroup configs.
+	// A nil value identifies an object created before scheduling-configuration
+	// hashing was introduced.
+	// +optional
+	AppliedSchedulingConfigurationHash *string `json:"appliedSchedulingConfigurationHash,omitempty"`
 	// UpdateProgress represents the progress of an update.
 	UpdateProgress *PodCliqueSetUpdateProgress `json:"updateProgress,omitempty"`
 	// ScalingProgress records replica indices selected for scale-out or scale-in.
@@ -140,15 +148,33 @@ type PodCliqueSetUpdateStrategy struct {
 
 // PodCliqueSetUpdateProgress captures the progress of an update of the PodCliqueSet.
 type PodCliqueSetUpdateProgress struct {
+	// RequiresReplicaRecreation indicates that this update must replace PodCliqueSet replicas instead of only executing
+	// spec.updateStrategy. Grove sets this field when scheduling configuration changes and preserves it across superseding
+	// updates until replica recreation completes.
+	// +optional
+	RequiresReplicaRecreation bool `json:"requiresReplicaRecreation,omitempty"`
+	// TargetSchedulingConfigurationHash identifies the scheduling configuration that this update must converge to.
+	// On successful completion, it is copied to PodCliqueSetStatus.AppliedSchedulingConfigurationHash.
+	// Older operators may omit this field during upgrades and downgrades.
+	// +optional
+	TargetSchedulingConfigurationHash string `json:"targetSchedulingConfigurationHash,omitempty"`
+	// PreviousPodCliqueSetGenerationHash identifies the PodCliqueSet generation that was the update target immediately
+	// before the current update was initialized. It distinguishes replicas that had converged to the previous target from
+	// replicas that had not.
+	// +optional
+	PreviousPodCliqueSetGenerationHash *string `json:"previousPodCliqueSetGenerationHash,omitempty"`
 	// UpdateStartedAt is the time at which the update started for the PodCliqueSet.
 	UpdateStartedAt metav1.Time `json:"updateStartedAt,omitempty"`
-	// UpdateEndedAt is the time at which Grove does not have any work pending to manifest the update according to the
-	// configured update strategy.
-	//  - For rolling update strategies where Grove handles the orchestration, while the update is still in progress
-	//    it will be nil, and will be set once the update finishes where all child resources are updated by Grove with
-	//    the latest specification.
-	//  - For the OnDelete strategy, it is set to the same time as UpdateStartedAt, which implies that there is no work
-	// 	  pending on Grove.
+	// UpdateEndedAt is the time at which Grove does not have any work pending to manifest the update.
+	// For ordinary template-only updates, completion follows the configured update strategy:
+	//  - For rolling update strategies where Grove handles the orchestration, it remains nil while the update
+	//    is in progress and is set once Grove has updated all required child resources with the latest specification.
+	//  - For the OnDelete strategy, it is set to the same time as UpdateStartedAt because Grove does not
+	//    orchestrate replacement of existing Pods for an ordinary template-only update.
+	//
+	// A scheduling-configuration change requires structural replica recreation regardless of the configured
+	// strategy, including OnDelete. For such an update, this field remains nil until all required replacements
+	// complete and Grove advances AppliedSchedulingConfigurationHash to TargetSchedulingConfigurationHash.
 	// +optional
 	UpdateEndedAt *metav1.Time `json:"updateEndedAt,omitempty"`
 	// UpdatedPodCliquesCount is the number of PodCliques that have been updated to the desired PodCliqueSet
@@ -172,9 +198,13 @@ type PodCliqueSetUpdateProgress struct {
 	// +kubebuilder:default=0
 	TotalPodCliqueScalingGroupsCount int32 `json:"totalPodCliqueScalingGroupsCount,omitempty"`
 	// CurrentlyUpdating captures the progress of the PodCliqueSet replicas that are currently being updated.
-	// This field is only set for rolling update strategies where Grove handles the orchestration. It is not set for the
-	// OnDelete update strategy.
+	// For ordinary template-only updates, this field is populated only for rolling update strategies where
+	// Grove handles the orchestration. It is not set for ordinary template-only updates under OnDelete.
+	//
+	// Structural replica recreation populates this field regardless of the configured strategy, including OnDelete.
 	// +optional
+	// +listType=map
+	// +listMapKey=replicaIndex
 	CurrentlyUpdating []PodCliqueSetReplicaUpdateProgress `json:"currentlyUpdating,omitempty"`
 	// InScopeStandalonePodCliques captures the names of standalone PodCliques whose pod template
 	// changed and are therefore in scope for the current coherent update. It names what changed,
@@ -198,8 +228,12 @@ type PodCliqueSetUpdateProgress struct {
 
 // PodCliqueSetReplicaUpdateProgress captures the progress of an update for a specific PodCliqueSet replica.
 type PodCliqueSetReplicaUpdateProgress struct {
-	// ReplicaIndex is the replica index of the PodCliqueSet that is being updated.
+	// ReplicaIndex is the replica being updated. During replica recreation, it is the source replica being replaced.
 	ReplicaIndex int32 `json:"replicaIndex"`
+	// Replacement captures structural replacement progress for the source replica identified by ReplicaIndex.
+	// It is populated only during PodCliqueSet replica recreation.
+	// +optional
+	Replacement *PodCliqueSetReplicaReplacementProgress `json:"replacement,omitempty"`
 	// UpdateStartedAt is the time at which the update started for this PodCliqueSet replica index.
 	UpdateStartedAt metav1.Time `json:"updateStartedAt,omitempty"`
 	// UpdateEndedAt is the time at which the update ended for this PodCliqueSet replica index.
@@ -207,21 +241,66 @@ type PodCliqueSetReplicaUpdateProgress struct {
 	// running the latest specification.
 	// +optional
 	UpdateEndedAt *metav1.Time `json:"updateEndedAt,omitempty"`
-	// InFlightEpochs are the grove.io/epochs of the PodGangs currently being rolled
-	// (in flight) for this replica's coherent update. The orchestrator waits for the
-	// PodGangs at these epochs to become ready before advancing to the next iteration.
-	// Today a single epoch is in flight at a time; the field is a list so that a future
-	// iteration supporting concurrent in-flight batches needs no API change. It is cleared
-	// once the coherent update for this replica completes.
+	// InFlightEpochs are the grove.io/epochs of the PodGangs currently being rolled (in flight) for this replica's
+	// coherent update. The orchestrator waits for the PodGangs at these epochs to become ready before advancing to the
+	// next iteration. Today a single epoch is in flight at a time; the field is a list so that a future iteration
+	// supporting concurrent in-flight batches needs no API change.
+	// It is cleared once the coherent update for this replica completes.
 	// +optional
 	InFlightEpochs []string `json:"inFlightEpochs,omitempty"`
-	// Message describes the current reason the orchestrator has not advanced
-	// the coherent update this reconcile. Populated whenever any advance
-	// precondition is not met: PodGangs at the current InFlightEpochs not yet
-	// reporting LastReady, subsumed pods still coming up, or an availability
-	// budget preventing further takedown. Cleared once all preconditions hold.
+	// Message describes the current reason the orchestrator has not advanced the coherent update this reconcile. Populated
+	// whenever any advance precondition is not met: PodGangs at the current InFlightEpochs not yet reporting LastReady,
+	// subsumed pods still coming up, or an availability budget preventing further takedown.
+	// Cleared once all preconditions hold.
 	// +optional
 	Message *string `json:"message,omitempty"`
+}
+
+// PodCliqueSetReplicaReplacementProgress captures structural replacement progress for the source replica identified by
+// PodCliqueSetReplicaUpdateProgress.ReplicaIndex.
+type PodCliqueSetReplicaReplacementProgress struct {
+	// TargetReplicaIndex is the PodCliqueSet replica index created from the latest PodCliqueSet template.
+	TargetReplicaIndex int32 `json:"targetReplicaIndex"`
+
+	// SourceCleanupCompletedAt is the time when every applicable replica-scoped component confirmed
+	// cleanup of the source replica identified by PodCliqueSetReplicaUpdateProgress.ReplicaIndex.
+	// Grove persists this confirmation across reconciliations and operator restarts.
+	//
+	// A same-index replacement requires this confirmation before creating target resources, so source
+	// cleanup cannot delete newly created resources at the shared index. A different-index replacement
+	// allows target creation while source cleanup is pending. Both replacement forms require confirmed
+	// source cleanup before completion can be recorded.
+	//
+	// This confirmation belongs to the source cleanup of this replacement attempt. Reusing the source
+	// index as another replacement's target does not invalidate it.
+	// +optional
+	SourceCleanupCompletedAt *metav1.Time `json:"sourceCleanupCompletedAt,omitempty"`
+
+	// RetiredSourceReplicaIndices contains the indices of previous sources whose cleanup remains pending after a
+	// superseding update restarts a replacement at its target index. For example, if a replacement from replica
+	// index 2 to replica index 1 is superseded, the new replacement recreates replica index 1 in place and records
+	// replica index 2 here until its remaining resources have been removed. A retired source no longer contributes
+	// to the desired PCS replica identity set, but its index remains reserved so scaling or another replacement
+	// cannot reuse it during cleanup. Retired-source cleanup may proceed concurrently with target recreation.
+	//
+	// Grove persists these cleanup obligations across operator restarts, further superseding updates, and
+	// cancellation. An index is removed only after every applicable replica-scoped component confirms that its
+	// resources have been cleaned up. Absence from a single resource snapshot is not sufficient. The replacement
+	// cannot complete, or have its canceled progress removed, while this list is non-empty. These obligations are
+	// specific to this replacement and do not include unrelated PCS scale-in work. A nil or empty list means no
+	// retired-source cleanup remains pending.
+	// +optional
+	// +listType=set
+	RetiredSourceReplicaIndices []int32 `json:"retiredSourceReplicaIndices,omitempty"`
+
+	// CanceledAt is the time when the replacement stopped contributing its target to the projected PodCliqueSet
+	// identity set.
+	// +optional
+	CanceledAt *metav1.Time `json:"canceledAt,omitempty"`
+
+	// CancellationMessage explains why the replacement was canceled.
+	// +optional
+	CancellationMessage *string `json:"cancellationMessage,omitempty"`
 }
 
 // RollingUpdateConfiguration carries per-component knobs for a rolling update. It attaches to each

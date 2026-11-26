@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package podcliqueset
+package podcliquesetreplica
 
 import (
 	"context"
@@ -149,7 +149,7 @@ func TestComputeCoherentUpdateScope(t *testing.T) {
 	t.Run("fresh update scopes only the components whose pod template changed", func(t *testing.T) {
 		pcs := pcsBuilder().Build()
 		// frontend's deployed label is stale (changed), router's matches the new hash (unchanged).
-		r := &Reconciler{client: testutils.SetupFakeClient(pcs,
+		r := &_resource{client: testutils.SetupFakeClient(pcs,
 			pclqWithHash("frontend", "stale-hash"),
 			pclqWithHash("router", hashOf(pcs, "router")))}
 
@@ -173,7 +173,7 @@ func TestComputeCoherentUpdateScope(t *testing.T) {
 				grovecorev1beta1.PodGangEntry{PodCliqueSetGenerationHash: "v0", PodCliques: map[string]int32{"frontend": 1}},
 				grovecorev1beta1.PodGangEntry{PodCliqueSetGenerationHash: "v1", PodCliques: map[string]int32{"frontend": 2, "router": 1}},
 			).Build()
-		r := &Reconciler{client: testutils.SetupFakeClient(pcs, pgm,
+		r := &_resource{client: testutils.SetupFakeClient(pcs, pgm,
 			pclqWithHash("frontend", hashOf(pcs, "frontend")), // unchanged by this edit, carried via pending
 			pclqWithHash("router", "stale-hash"))}             // changed by this edit
 

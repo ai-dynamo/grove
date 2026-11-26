@@ -394,6 +394,13 @@ func mutateSelector(pcs *grovecorev1beta1.PodCliqueSet, pcsg *grovecorev1beta1.P
 
 // mutateCurrentPodCliqueSetGenerationHash updates the current generation hash when all PodCliques are updated and no rolling update is in progress
 func mutateCurrentPodCliqueSetGenerationHash(logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, pcsg *grovecorev1beta1.PodCliqueScalingGroup, existingPCLQs []grovecorev1beta1.PodClique) {
+	// Member convergence cannot advance a group whose own scheduling template is still frozen.
+	if componentutils.IsPCSReplicaRecreationInProgress(pcs) {
+		if pcs.Status.CurrentGenerationHash == nil ||
+			pcsg.Labels[apicommon.LabelPodCliqueSetGenerationHash] != *pcs.Status.CurrentGenerationHash {
+			return
+		}
+	}
 	pclqFQNsPendingUpdate := componentutils.GetPCLQsInPCSGPendingUpdate(pcs, pcsg, existingPCLQs)
 	if len(pclqFQNsPendingUpdate) > 0 {
 		logger.V(1).Info("Found PodCliques associated to PodCliqueScalingGroup pending update", "pclqFQNsPendingUpdate", pclqFQNsPendingUpdate)

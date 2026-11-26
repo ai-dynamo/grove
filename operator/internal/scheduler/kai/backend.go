@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"maps"
 	"reflect"
-	"slices"
 	"sort"
 	"time"
 
@@ -212,15 +211,15 @@ func (b *schedulerBackend) syncPodCliqueSetReplica(ctx context.Context, pcs *gro
 		return fmt.Errorf("unsupported KAI replica PodGroup source scheduler %q", sourceScheduler)
 	}
 	var err error
-	if isScaleInReplica(pcs, replica) {
-		err = b.deleteScaledInReplicaPodGroup(ctx, pcs, replica, sourceScheduler)
+	if isReplicaBeingRemoved(pcs, replica) {
+		err = b.deleteReplicaPodGroup(ctx, pcs, replica, sourceScheduler)
 	} else {
 		materialized, loadErr := b.loadCurrentPodGangs(ctx, pcs, replica, podGang)
 		if loadErr != nil {
 			return loadErr
 		}
 		if len(materialized) == 0 {
-			err = b.deleteScaledInReplicaPodGroup(ctx, pcs, replica, sourceScheduler)
+			err = b.deleteReplicaPodGroup(ctx, pcs, replica, sourceScheduler)
 		} else {
 			err = b.reconcileReplicaPodGroup(ctx, pcs, replica, materialized, sourceScheduler)
 		}
@@ -231,11 +230,18 @@ func (b *schedulerBackend) syncPodCliqueSetReplica(ctx context.Context, pcs *gro
 	return err
 }
 
-// isScaleInReplica reports whether the PodCliqueSet has selected the replica index for removal. Replica
-// indices can be sparse, so the index cannot be compared against spec.replicas.
-func isScaleInReplica(pcs *grovecorev1beta1.PodCliqueSet, replica int) bool {
-	progress := pcs.Status.ScalingProgress
-	return progress != nil && slices.Contains(progress.ScaleInReplicaIndices, int32(replica))
+// isReplicaBeingRemoved checks the shared cleanup projection using persisted PCS status.
+// Replica indices can be sparse, so spec.replicas cannot identify removals.
+func isReplicaBeingRemoved(pcs *grovecorev1beta1.PodCliqueSet, replica int) bool {
+	var scaleInReplicaIndices []int
+	if progress := pcs.Status.ScalingProgress; progress != nil {
+		scaleInReplicaIndices = make([]int, len(progress.ScaleInReplicaIndices))
+		for i, index := range progress.ScaleInReplicaIndices {
+			scaleInReplicaIndices[i] = int(index)
+		}
+	}
+	cleanupReplicaIndices := componentutils.ComputePCSReplicaCleanupIndices(pcs, scaleInReplicaIndices)
+	return cleanupReplicaIndices.Has(replica)
 }
 
 func (b *schedulerBackend) loadCurrentPodGangs(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet, replica int, podGang *groveschedulerv1alpha1.PodGang) ([]componentutils.MaterializedPodGang, error) {

@@ -22,6 +22,7 @@ import (
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	apiconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
+	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/go-logr/logr"
 	"github.com/samber/lo"
@@ -31,6 +32,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -150,10 +152,11 @@ func TestGetPCSReplicaDeletionWork(t *testing.T) {
 	r := &_resource{client: cl}
 	expectedPCSReplicaIndices := []int{0, 2, 4}
 
-	work, err := r.getPCSReplicaDeletionWork(context.Background(), logr.Discard(), pcs, expectedPCSReplicaIndices)
+	work, err := r.getPCSReplicaDeletionWork(context.Background(), logr.Discard(), pcs, expectedPCSReplicaIndices, time.Now())
 
 	require.NoError(t, err)
-	assert.Empty(t, work.deletionTasks)
+	assert.Empty(t, work.pcsIndicesToTerminate)
+	assert.Empty(t, work.minAvailableBreachedConstituents)
 	assert.Equal(t, []int{0, 2, 4}, expectedPCSReplicaIndices)
 }
 
@@ -248,4 +251,47 @@ func TestCreatePCSReplicaDeleteTaskDeletesPodGangMap(t *testing.T) {
 	// The replica's PodGangMap is deleted so the next reconcile bootstraps a fresh one.
 	err := cl.Get(context.Background(), client.ObjectKey{Name: pgmName, Namespace: "default"}, &grovecorev1beta1.PodGangMap{})
 	assert.True(t, apierrors.IsNotFound(err), "expected PodGangMap to be deleted, got %v", err)
+}
+
+func TestComputePCSReplicaGangTerminationCandidates(t *testing.T) {
+	t.Parallel()
+	endedAt := metav1.NewTime(time.Unix(100, 0).UTC())
+	pcs := rollingUpdateTestPCS()
+	pcs.Status.UpdateProgress.RequiresReplicaRecreation = true
+	pcs.Status.UpdateProgress.CurrentlyUpdating = []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{
+		{ReplicaIndex: 2, Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 1, RetiredSourceReplicaIndices: []int32{3}}},
+		{ReplicaIndex: 4},
+		{ReplicaIndex: 5, Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 6, CanceledAt: &endedAt, RetiredSourceReplicaIndices: []int32{7}}},
+		{ReplicaIndex: 8, UpdateEndedAt: &endedAt},
+		{ReplicaIndex: 9, UpdateEndedAt: &endedAt, Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 9}},
+	}
+	indices := sets.New(9, 8, 7, 6, 5, 4, 3, 2, 1, 0)
+	beforeIndices := indices.Clone()
+	before := pcs.DeepCopy()
+	assert.Equal(t, []int{0, 8, 9}, computePCSReplicaGangTerminationCandidates(pcs, indices))
+	assert.Equal(t, beforeIndices, indices, "candidate filtering must not alter the resource-existence view")
+	assert.Equal(t, before, pcs)
+	pcs.Status.UpdateProgress.UpdateEndedAt = &endedAt
+	assert.Equal(t, sets.List(indices), computePCSReplicaGangTerminationCandidates(pcs, indices), "completed progress cannot exclude later gang termination")
+}
+
+func TestGetPCSReplicaDeletionWorkUsesReconcileTimeWithoutExecuting(t *testing.T) {
+	t.Parallel()
+	pcs := lifecycleTestPCS()
+	info := rollingUpdateReplicaInfo(pcs, 0, true)
+	breachedAt := time.Unix(100, 0).UTC()
+	info.standalonePCLQs[0].Status.LastScheduled = new(metav1.NewTime(breachedAt.Add(-time.Minute)))
+	info.standalonePCLQs[0].Status.Conditions = []metav1.Condition{{Type: apiconstants.ConditionTypeMinAvailableBreached, Status: metav1.ConditionTrue, LastTransitionTime: metav1.NewTime(breachedAt)}}
+	cl := testutils.SetupFakeClient(&info.standalonePCLQs[0])
+	r := &_resource{client: cl}
+	work, err := r.getPCSReplicaDeletionWork(t.Context(), logr.Discard(), pcs, []int{0}, breachedAt.Add(time.Minute-time.Second))
+	require.NoError(t, err)
+	assert.Empty(t, work.pcsIndicesToTerminate)
+	assert.True(t, work.shouldRequeue())
+	work, err = r.getPCSReplicaDeletionWork(t.Context(), logr.Discard(), pcs, []int{0}, breachedAt.Add(time.Minute))
+	require.NoError(t, err)
+	assert.Equal(t, []int{0}, work.pcsIndicesToTerminate)
+	assert.False(t, work.shouldRequeue())
+	require.NoError(t, cl.Get(t.Context(), client.ObjectKeyFromObject(&info.standalonePCLQs[0]), &grovecorev1beta1.PodClique{}), "assessment must leave the resource present")
+	require.NoError(t, (&_resource{}).executePCSReplicaGangTermination(t.Context(), logr.Discard(), pcs, nil), "empty execution needs no client")
 }

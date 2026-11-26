@@ -41,6 +41,56 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
+func TestMutateCurrentGenerationRequiresGroupMaterialization(t *testing.T) {
+	cases := []struct {
+		name           string
+		marker         string
+		missingPCSHash bool
+		missingMember  bool
+		staleMember    bool
+		inFlight       bool
+		wantAdvance    bool
+	}{
+		{name: "fresh S1 group converges with S1 members", marker: "S1", wantAdvance: true},
+		{name: "S0 group cannot converge from S1 members", marker: "S0"},
+		{name: "unknown group cannot converge from S1 members"},
+		{name: "S1 group waits for missing member", marker: "S1", missingMember: true},
+		{name: "S1 group waits for stale member", marker: "S1", staleMember: true},
+		{name: "S1 group waits for active group update", marker: "S1", inFlight: true},
+		{name: "uninitialized PCS generation waits", marker: "S1", missingPCSHash: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			pcs := testutils.NewPodCliqueSetBuilder("pcs", "default", "uid").WithPodCliqueSetGenerationHash(new("S1")).WithScalingGroup("sg", []string{"worker"}).WithUpdateProgress(&grovecorev1beta1.PodCliqueSetUpdateProgress{RequiresReplicaRecreation: true}).Build()
+			pcsg := testutils.NewPodCliqueScalingGroupBuilder("pcs-0-sg", "default", pcs.Name, 0).WithReplicas(1).WithCliqueNames([]string{"worker"}).Build()
+			pcsg.Labels[apicommon.LabelPodCliqueSetGenerationHash] = tc.marker
+			pcsg.Status.CurrentPodCliqueSetGenerationHash = new("S0")
+			pclq := markPCSGPCLQConverged(t, pcs, pcsg, testutils.NewPCSGPodCliqueBuilder("pcs-0-sg-0-worker", "default", pcs.Name, pcsg.Name, 0, 0).Build(), "S1")
+			members := []grovecorev1beta1.PodClique{*pclq}
+			if tc.missingMember {
+				members = nil
+			}
+			if tc.staleMember {
+				members[0].Status.CurrentPodCliqueSetGenerationHash = new("S0")
+			}
+			if tc.inFlight {
+				pcsg.Status.UpdateProgress = &grovecorev1beta1.PodCliqueScalingGroupUpdateProgress{}
+			}
+			if tc.missingPCSHash {
+				pcs.Status.CurrentGenerationHash = nil
+			}
+			before := pcsg.DeepCopy()
+			mutateCurrentPodCliqueSetGenerationHash(logr.Discard(), pcs, pcsg, members)
+			if tc.wantAdvance {
+				assert.Equal(t, new("S1"), pcsg.Status.CurrentPodCliqueSetGenerationHash)
+			} else {
+				assert.Equal(t, before.Status, pcsg.Status)
+			}
+		})
+	}
+}
+
 func TestComputeReplicaStatus(t *testing.T) {
 	tests := []struct {
 		name              string

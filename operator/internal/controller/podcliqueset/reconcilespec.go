@@ -16,27 +16,24 @@ package podcliqueset
 
 import (
 	"context"
-	"errors"
 	"fmt"
+	"slices"
+	"time"
 
 	apiconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
 	ctrlcommon "github.com/ai-dynamo/grove/operator/internal/controller/common"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
-	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/sync"
+	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/sync"
 	ctrlutils "github.com/ai-dynamo/grove/operator/internal/controller/utils"
-	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
-	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
-	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
 	"github.com/go-logr/logr"
-	"github.com/samber/lo"
 	corev1 "k8s.io/api/core/v1"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
-	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
@@ -49,7 +46,6 @@ func (r *Reconciler) reconcileSpec(ctx context.Context, logger logr.Logger, pcs 
 	}
 	reconcileStepFns := []ctrlcommon.ReconcileStepFn[grovecorev1beta1.PodCliqueSet]{
 		r.ensureFinalizer,
-		r.processGenerationHashChange,
 		syncResources,
 		r.updateObservedGeneration,
 	}
@@ -74,169 +70,224 @@ func (r *Reconciler) ensureFinalizer(ctx context.Context, logger logr.Logger, pc
 	return ctrlcommon.ContinueReconcile()
 }
 
-// processGenerationHashChange computes the generation hash given a PodCliqueSet resource and if the generation has
-// changed from the previously persisted pcs.status.generationHash then it resets the pcs.status.updateProgress
-func (r *Reconciler) processGenerationHashChange(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet) ctrlcommon.ReconcileStepResult {
-	pcsObjectKey := client.ObjectKeyFromObject(pcs)
-	pcsGenHashKey := pcsGenerationHashKey(pcs)
-
-	// if the generationHash is not reflected correctly yet, requeue. Allow the informer cache to catch-up.
-	if !r.isGenerationHashExpectationSatisfied(pcsGenHashKey, pcs.Status.CurrentGenerationHash) {
-		return ctrlcommon.ReconcileAfter(constants.ComponentSyncRetryInterval, fmt.Sprintf("CurrentGenerationHash is not up-to-date for PodCliqueSet: %v", pcsObjectKey))
-	}
-	r.pcsGenerationHashExpectations.Delete(pcsGenHashKey)
-
-	newGenerationHash := computeGenerationHash(pcs)
-	if pcs.Status.CurrentGenerationHash == nil {
-		// update the generation hash and continue reconciliation. No rolling update is required.
-		if err := r.setGenerationHashAndUpdateStatus(ctx, pcs, pcsGenHashKey, newGenerationHash); err != nil {
-			logger.Error(err, "failed to set generation hash on PCS", "newGenerationHash", newGenerationHash)
-			return ctrlcommon.ReconcileWithErrors("error updating generation hash", err)
-		}
-		return ctrlcommon.ContinueReconcile()
-	}
-
-	if newGenerationHash != *pcs.Status.CurrentGenerationHash {
-		// trigger rolling update by setting or overriding pcs.Status.UpdateProgress.
-		if err := r.initUpdateProgress(ctx, pcs, pcsGenHashKey, newGenerationHash); err != nil {
-			return ctrlcommon.ReconcileWithErrors(fmt.Sprintf("could not triggering rolling update for PCS: %v", pcsObjectKey), err)
-		}
-	}
-
-	return ctrlcommon.ContinueReconcile()
-}
-
-// pcsGenerationHashKey returns the key for the in-memory generation-hash expectation of a PCS.
-// The key scheme is <pcs-namespace>/<pcs-name>/<pcs-UID>. Suffixing a UID ensures that a stale
-// remnant expectation entry for the same <pcs-namespace>/<pcs-name> does not block reconciliation of
-// a new PCS (with a different UID).
-// See https://github.com/ai-dynamo/grove/issues/782 for context.
-func pcsGenerationHashKey(pcs *grovecorev1beta1.PodCliqueSet) string {
-	return fmt.Sprintf("%s/%s", client.ObjectKeyFromObject(pcs), pcs.UID)
-}
-
-// isGenerationHashExpectationSatisfied checks if the current generation hash matches expectations.
-func (r *Reconciler) isGenerationHashExpectationSatisfied(pcsGenHashKey string, pcsGenerationHash *string) bool {
-	expectedGenerationHash, ok := r.pcsGenerationHashExpectations.Load(pcsGenHashKey)
-	return !ok || (pcsGenerationHash != nil && expectedGenerationHash.(string) == *pcsGenerationHash)
-}
-
-// computeGenerationHash calculates a hash of the PodCliqueSet pod template specifications.
-func computeGenerationHash(pcs *grovecorev1beta1.PodCliqueSet) string {
-	podTemplateSpecs := lo.Map(pcs.Spec.Template.Cliques, func(pclqTemplateSpec *grovecorev1beta1.PodCliqueTemplateSpec, _ int) *corev1.PodTemplateSpec {
-		podTemplateSpec := &corev1.PodTemplateSpec{
-			ObjectMeta: metav1.ObjectMeta{
-				Labels:      pclqTemplateSpec.Labels,
-				Annotations: pclqTemplateSpec.Annotations,
-			},
-			Spec: pclqTemplateSpec.Spec.PodSpec,
-		}
-		podTemplateSpec.Spec.PriorityClassName = pcs.Spec.Template.PriorityClassName
-		return podTemplateSpec
-	})
-	return k8sutils.ComputeHash(podTemplateSpecs...)
-}
-
-// setGenerationHashAndUpdateStatus updates the PodCliqueSet status with the new generation hash, stores the expectation, and updates the status subresource.
-func (r *Reconciler) setGenerationHashAndUpdateStatus(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet, pcsGenHashKey, newGenerationHash string) error {
-	pcs.Status.CurrentGenerationHash = &newGenerationHash
-	if err := r.client.Status().Update(ctx, pcs); err != nil {
-		return fmt.Errorf("could not update CurrentGenerationHash for PodCliqueSet: %v: %w", client.ObjectKeyFromObject(pcs), err)
-	}
-	r.pcsGenerationHashExpectations.Store(pcsGenHashKey, newGenerationHash)
-	return nil
-}
-
-// initUpdateProgress initializes a new rolling update by resetting progress tracking.
-func (r *Reconciler) initUpdateProgress(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet, pcsGenHashKey, newGenerationHash string) error {
-	updateProgress := &grovecorev1beta1.PodCliqueSetUpdateProgress{
-		UpdateStartedAt: metav1.Now(),
-	}
-	// OnDelete strategy sets UpdateEndedAt too, since we do not know when all the pods will manually be deleted, and gang termination is disabled when an update is in progress
-	if pcs.Spec.UpdateStrategy != nil && pcs.Spec.UpdateStrategy.Type == grovecorev1beta1.OnDeleteStrategy {
-		updateProgress.UpdateEndedAt = ptr.To(metav1.Now())
-	}
-	// The Coherent strategy rolls only the components whose pod template changed. Capture that scope now,
-	// while Status.CurrentGenerationHash still holds the previous hash, and preserve it for the update.
-	if componentutils.IsCoherentStrategy(pcs) {
-		scope, err := r.computeCoherentUpdateScope(ctx, pcs)
-		if err != nil {
-			return fmt.Errorf("could not compute coherent update scope for PodCliqueSet: %v: %w", client.ObjectKeyFromObject(pcs), err)
-		}
-		updateProgress.InScopeStandalonePodCliques = sets.List(scope.standalonePCLQs)
-		updateProgress.InScopePodCliqueScalingGroups = sets.List(scope.podCliqueScalingGroups)
-	}
-	pcs.Status.UpdateProgress = updateProgress
-	pcs.Status.UpdatedReplicas = 0
-	pcs.Status.CurrentGenerationHash = &newGenerationHash
-	if err := r.setGenerationHashAndUpdateStatus(ctx, pcs, pcsGenHashKey, newGenerationHash); err != nil {
-		return fmt.Errorf("could not set UpdateProgress for PodCliqueSet: %v: %w", client.ObjectKeyFromObject(pcs), err)
-	}
-	return nil
-}
-
 // syncPodCliqueSetResources synchronizes all managed child resources. Components are
 // sync'd in dependency-ordered groups; within each group sync runs concurrently.
 func (r *Reconciler) syncPodCliqueSetResources(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, state *pcssync.State) ctrlcommon.ReconcileStepResult {
 	syncResults := make(map[component.Kind]pcssync.Result)
-	continueReconcileAndRequeueKinds := make([]component.Kind, 0)
+	var requeueAfter *time.Duration
 	for groupIdx, group := range getKindSyncGroups() {
-		result, groupResults, requeuedKinds := r.syncKindGroup(ctx, logger, pcs, state, group, groupIdx)
-		for _, groupResult := range groupResults {
-			syncResults[groupResult.kind] = groupResult.result
+		componentSyncResults, err := r.syncKindGroup(ctx, logger, pcs, state, group, groupIdx)
+		if err != nil {
+			return ctrlcommon.ReconcileWithErrors("error syncing managed resources", err)
 		}
-		continueReconcileAndRequeueKinds = append(continueReconcileAndRequeueKinds, requeuedKinds...)
-		if result != nil {
-			return *result
+		for _, componentResult := range componentSyncResults {
+			syncResult := componentResult.result
+			if syncResult.StopAndRequeue {
+				return ctrlcommon.ReconcileAfter(*syncResult.RequeueAfter, "waiting for PCS component synchronization")
+			}
+			syncResults[componentResult.kind] = syncResult
+			if delay := syncResult.RequeueAfter; delay != nil {
+				if requeueAfter == nil || *delay < *requeueAfter {
+					requeueAfter = delay
+				}
+			}
 		}
-	}
-	if len(continueReconcileAndRequeueKinds) > 0 {
-		return ctrlcommon.ReconcileAfter(constants.ComponentSyncRetryInterval, fmt.Sprintf("requeueing sync due to components(s) %v after %s", continueReconcileAndRequeueKinds, constants.ComponentSyncRetryInterval))
 	}
 
-	scalingProgressChanged, err := r.removeCompletedScaleInPCSReplicaIndices(ctx, logger, pcs, syncResults)
+	// Post-sync cleanup runs before honoring a soft component requeue, because an in-progress PCS replica
+	// recreation depends on it to confirm source cleanup and retire drained replacements.
+	// Reaching here means no group hard-stopped, so every registered replica-scoped participant was dispatched
+	// and its result (if any) is recorded. The PodCliqueSetReplica orchestrator is not a replica-scoped
+	// participant, so its in-progress requeue does not gate this cleanup.
+	cleanedUpReplicaIndices := r.cleanedUpScaleInReplicaIndices(syncResults)
+	originalPCS := pcs.DeepCopy()
+	completedScaleInReplicaIndices := removeCompletedScaleInPCSReplicaIndices(logger, pcs, cleanedUpReplicaIndices)
+	recordReplacementCleanupWork(logger, pcs, cleanedUpReplicaIndices)
+
+	cleanupStatusChanged, err := r.commitPCSCleanupStatus(ctx, logger, pcs, originalPCS, completedScaleInReplicaIndices)
 	if err != nil {
-		return ctrlcommon.ReconcileWithErrors("error updating PodCliqueSet scale-in progress", err)
+		return ctrlcommon.ReconcileWithErrors("error persisting PodCliqueSet cleanup status", err)
 	}
-	if scalingProgressChanged {
-		return ctrlcommon.ReconcileAfter(scalingProgressCacheSyncRetryInterval, fmt.Sprintf("waiting for updated scale-in progress to become visible in the informer cache for PodCliqueSet: %v", client.ObjectKeyFromObject(pcs)))
+	if cleanupStatusChanged {
+		return ctrlcommon.ReconcileAfter(constants.InformerCacheSyncRetryInterval, fmt.Sprintf("waiting for updated cleanup progress to become visible in the informer cache for PodCliqueSet: %v", client.ObjectKeyFromObject(pcs)))
+	}
+	if requeueAfter != nil {
+		return ctrlcommon.ReconcileAfter(*requeueAfter, "waiting for PCS component synchronization")
 	}
 	return ctrlcommon.ContinueReconcile()
 }
 
-// removeCompletedScaleInPCSReplicaIndices removes replica indices whose resources have been cleaned up from scaling progress.
-func (r *Reconciler) removeCompletedScaleInPCSReplicaIndices(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, syncResults map[component.Kind]pcssync.Result) (bool, error) {
+// cleanedUpScaleInReplicaIndices returns the scale-in replica indices that every applicable replica-scoped
+// participant confirmed cleaned up this reconcile. It returns an empty set when any registered replica-scoped
+// participant produced no Result this reconcile, for example because it failed or was not dispatched, because
+// coverage is then incomplete and no index may be released. A participant that reported NotApplicable manages no
+// resources for this PodCliqueSet and is excluded from coverage, so it neither confirms nor blocks a release.
+func (r *Reconciler) cleanedUpScaleInReplicaIndices(syncResults map[component.Kind]pcssync.Result) sets.Set[int32] {
+	participants := r.operatorRegistry.ReplicaScopedKinds()
+	// Coverage gate. Every registered replica-scoped participant must have produced a Result this reconcile.
+	for kind := range participants {
+		if _, reported := syncResults[kind]; !reported {
+			return sets.New[int32]()
+		}
+	}
+
+	applicableParticipantCount := 0
+	doneCountByReplicaIndex := make(map[int32]int)
+	for kind, result := range syncResults {
+		if !participants.Has(kind) || result.NotApplicable {
+			continue
+		}
+		applicableParticipantCount++
+		for _, replicaIndex := range result.CleanedUpReplicaIndices {
+			doneCountByReplicaIndex[int32(replicaIndex)]++
+		}
+	}
+
+	cleanedUp := sets.New[int32]()
+	for replicaIndex, doneCount := range doneCountByReplicaIndex {
+		if doneCount == applicableParticipantCount {
+			cleanedUp.Insert(replicaIndex)
+		}
+	}
+	return cleanedUp
+}
+
+// removeCompletedScaleInPCSReplicaIndices removes replica indices whose resources have been cleaned up from the
+// in-memory scaling progress and returns the completed indices in ascending order. It does not persist status or
+// emit events. The caller persists the mutated PodCliqueSet once for all post-sync cleanup.
+func removeCompletedScaleInPCSReplicaIndices(logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, cleanedUpReplicaIndices sets.Set[int32]) []int32 {
 	if pcs.Status.ScalingProgress == nil || len(pcs.Status.ScalingProgress.ScaleInReplicaIndices) == 0 {
-		return false, nil
+		return nil
 	}
 
 	currentScaleInPCSReplicaIndices := sets.New(pcs.Status.ScalingProgress.ScaleInReplicaIndices...)
-	awaitingResourceCleanup := scaleInPCSReplicaIndicesAwaitingResourceCleanup(syncResults)
-	completedPCSReplicaIndices := currentScaleInPCSReplicaIndices.Difference(awaitingResourceCleanup)
+	completedPCSReplicaIndices := currentScaleInPCSReplicaIndices.Intersection(cleanedUpReplicaIndices)
 	if completedPCSReplicaIndices.Len() == 0 {
-		return false, nil
+		return nil
 	}
 
 	updatedProgress := pcs.Status.ScalingProgress.DeepCopy()
-	updatedScaleInPCSReplicaIndices := currentScaleInPCSReplicaIndices.Difference(completedPCSReplicaIndices)
-	updatedProgress.ScaleInReplicaIndices = sets.List(updatedScaleInPCSReplicaIndices)
+	updatedProgress.ScaleInReplicaIndices = sets.List(currentScaleInPCSReplicaIndices.Difference(completedPCSReplicaIndices))
 	if len(updatedProgress.ScaleOutReplicaIndices) == 0 && len(updatedProgress.ScaleInReplicaIndices) == 0 {
 		updatedProgress = nil
 	}
+	pcs.Status.ScalingProgress = updatedProgress
 
-	r.scalingProgressExpectations.Record(pcs.ObjectMeta, updatedProgress)
-	updatedPCS := pcs.DeepCopy()
-	updatedPCS.Status.ScalingProgress = updatedProgress
-	patch := client.MergeFromWithOptions(pcs, client.MergeFromWithOptimisticLock{})
-	if err := r.client.Status().Patch(ctx, updatedPCS, patch); err != nil {
-		r.scalingProgressExpectations.Forget(pcs.ObjectMeta)
-		return false, fmt.Errorf("failed to update scale-in progress for PodCliqueSet %v: %w", client.ObjectKeyFromObject(pcs), err)
+	completed := sets.List(completedPCSReplicaIndices)
+	logger.Info("Removed completed scale-in replica indices from scaling progress", "completedPCSReplicaIndices", completed)
+	return completed
+}
+
+// recordReplacementCleanupWork advances in-memory replacement cleanup from participant-confirmed indices.
+// It clears confirmed retired sources, records source cleanup, and removes canceled entries only
+// after all their cleanup obligations are satisfied. It never stamps UpdateEndedAt or persists status.
+// The caller persists all post-sync cleanup mutations together.
+func recordReplacementCleanupWork(
+	logger logr.Logger,
+	pcs *grovecorev1beta1.PodCliqueSet,
+	cleanedUpReplicaIndices sets.Set[int32]) {
+	if pcs.Status.UpdateProgress == nil || len(pcs.Status.UpdateProgress.CurrentlyUpdating) == 0 {
+		return
 	}
 
-	pcs.ResourceVersion = updatedPCS.ResourceVersion
-	pcs.Status.ScalingProgress = updatedProgress
-	for _, pcsReplicaIndex := range sets.List(completedPCSReplicaIndices) {
-		logger.Info("PCS replica completed scale-in", "pcsReplicaIndex", pcsReplicaIndex)
+	var removedCanceledReplicaIndices []int32
+	currentlyUpdating := pcs.Status.UpdateProgress.CurrentlyUpdating
+	for i := range currentlyUpdating {
+		replicaProgress := &currentlyUpdating[i]
+		if replicaProgress.Replacement == nil || replicaProgress.UpdateEndedAt != nil {
+			continue
+		}
+
+		canceledCleanupComplete := recordPCSReplicaReplacementCleanup(logger, replicaProgress, cleanedUpReplicaIndices)
+		if canceledCleanupComplete {
+			removedCanceledReplicaIndices = append(removedCanceledReplicaIndices, replicaProgress.ReplicaIndex)
+		}
+	}
+
+	if len(removedCanceledReplicaIndices) > 0 {
+		removedCanceledReplicaIndexSet := sets.New(removedCanceledReplicaIndices...)
+		pcs.Status.UpdateProgress.CurrentlyUpdating = slices.DeleteFunc(currentlyUpdating, func(replicaProgress grovecorev1beta1.PodCliqueSetReplicaUpdateProgress) bool {
+			return replicaProgress.Replacement != nil && replicaProgress.Replacement.CanceledAt != nil && removedCanceledReplicaIndexSet.Has(replicaProgress.ReplicaIndex)
+		})
+	}
+
+	if len(removedCanceledReplicaIndices) > 0 {
+		logger.Info("Removed canceled replacements after resource cleanup", "sourcePCSReplicaIndices", removedCanceledReplicaIndices)
+	}
+}
+
+// recordPCSReplicaReplacementCleanup updates one unfinished replacement from participant-confirmed cleanup.
+// It returns whether the canceled entry can be removed. The caller excludes completed entries and entries
+// without replacement progress. Recording a new source-cleanup confirmation is logged immediately.
+func recordPCSReplicaReplacementCleanup(
+	logger logr.Logger,
+	replicaProgress *grovecorev1beta1.PodCliqueSetReplicaUpdateProgress,
+	cleanedUpReplicaIndices sets.Set[int32]) (canceledCleanupComplete bool) {
+	replacement := replicaProgress.Replacement
+	replacement.RetiredSourceReplicaIndices = slices.DeleteFunc(
+		replacement.RetiredSourceReplicaIndices,
+		func(pcsReplicaIndex int32) bool {
+			return cleanedUpReplicaIndices.Has(pcsReplicaIndex)
+		},
+	)
+
+	sourcePCSReplicaIndex := replicaProgress.ReplicaIndex
+	if replacement.CanceledAt != nil {
+		// Cancellation may follow source cleanup and partial target creation. Preserve any existing
+		// barrier, but do not record a new creation barrier while draining canceled resources.
+		canceledCleanupComplete = len(replacement.RetiredSourceReplicaIndices) == 0 &&
+			cleanedUpReplicaIndices.Has(sourcePCSReplicaIndex) &&
+			cleanedUpReplicaIndices.Has(replacement.TargetReplicaIndex)
+		return canceledCleanupComplete
+	}
+
+	// Record source cleanup only after participant confirmation, and preserve an existing timestamp.
+	// Repeated confirmation while the target is still converging must not cause another status write.
+	if replacement.SourceCleanupCompletedAt != nil ||
+		!cleanedUpReplicaIndices.Has(sourcePCSReplicaIndex) {
+		return false
+	}
+
+	cleanupCompletedAt := metav1.Now()
+	replacement.SourceCleanupCompletedAt = &cleanupCompletedAt
+	logger.Info("Recorded replacement source cleanup completion", "sourcePCSReplicaIndex", sourcePCSReplicaIndex)
+	return false
+}
+
+// commitPCSCleanupStatus persists post-sync cleanup mutations in a single optimistic-lock status patch.
+// Actual differences from originalPCS determine which expectations are recorded. completedScaleInReplicaIndices
+// is used only for scale-in completion events. Expectations are forgotten if the patch fails.
+// It returns whether anything was persisted.
+func (r *Reconciler) commitPCSCleanupStatus(
+	ctx context.Context,
+	logger logr.Logger,
+	pcs, originalPCS *grovecorev1beta1.PodCliqueSet,
+	completedScaleInReplicaIndices []int32) (bool, error) {
+	scalingProgressChanged := !apiequality.Semantic.DeepEqual(originalPCS.Status.ScalingProgress, pcs.Status.ScalingProgress)
+	updateProgressChanged := !apiequality.Semantic.DeepEqual(originalPCS.Status.UpdateProgress, pcs.Status.UpdateProgress)
+	if !scalingProgressChanged && !updateProgressChanged {
+		return false, nil
+	}
+
+	if scalingProgressChanged {
+		r.scalingProgressExpectations.Record(pcs.ObjectMeta, pcs.Status.ScalingProgress)
+	}
+	if updateProgressChanged {
+		r.currentlyUpdatingExpectations.Record(pcs.ObjectMeta, pcs.Status.UpdateProgress.CurrentlyUpdating)
+	}
+
+	patch := client.MergeFromWithOptions(originalPCS, client.MergeFromWithOptimisticLock{})
+	if err := r.client.Status().Patch(ctx, pcs, patch); err != nil {
+		if scalingProgressChanged {
+			r.scalingProgressExpectations.Forget(pcs.ObjectMeta)
+		}
+		if updateProgressChanged {
+			r.currentlyUpdatingExpectations.Forget(pcs.ObjectMeta)
+		}
+		return false, fmt.Errorf("failed to persist cleanup status for PodCliqueSet %v: %w", client.ObjectKeyFromObject(pcs), err)
+	}
+
+	for _, pcsReplicaIndex := range completedScaleInReplicaIndices {
 		r.eventRecorder.Eventf(
 			pcs,
 			corev1.EventTypeNormal,
@@ -245,18 +296,8 @@ func (r *Reconciler) removeCompletedScaleInPCSReplicaIndices(ctx context.Context
 			pcsReplicaIndex,
 		)
 	}
+	logger.Info("Persisted PodCliqueSet post-sync cleanup status")
 	return true, nil
-}
-
-// scaleInPCSReplicaIndicesAwaitingResourceCleanup returns all scale-in replica indices still reported by components.
-func scaleInPCSReplicaIndicesAwaitingResourceCleanup(syncResults map[component.Kind]pcssync.Result) sets.Set[int32] {
-	awaitingResourceCleanup := sets.New[int32]()
-	for _, syncResult := range syncResults {
-		for _, pcsReplicaIndex := range syncResult.ScaleInReplicaIndicesAwaitingResourceCleanup {
-			awaitingResourceCleanup.Insert(int32(pcsReplicaIndex))
-		}
-	}
-	return awaitingResourceCleanup
 }
 
 // componentSyncResult associates a component kind with the result returned
@@ -266,92 +307,47 @@ type componentSyncResult struct {
 	result pcssync.Result
 }
 
-// syncKindGroup runs the Sync operation for each kind in the group concurrently.
-// It returns a non-nil ReconcileStepResult when reconciliation must stop, the
-// results returned by operators that ran, and the kinds that requested the
-// component sweep to continue before reconciliation is requeued.
-func (r *Reconciler) syncKindGroup(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, state *pcssync.State, group []component.Kind, groupIndex int) (*ctrlcommon.ReconcileStepResult, []componentSyncResult, []component.Kind) {
+// syncKindGroup executes registered components concurrently and waits for every task.
+// Results follow the supplied group order, independent of task completion order.
+// Any failure discards the group's results and is returned to the caller.
+func (r *Reconciler) syncKindGroup(ctx context.Context, logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, state *pcssync.State, group []component.Kind, groupIndex int) ([]componentSyncResult, error) {
 	tasks := make([]utils.Task, 0, len(group))
-	// Each task sends at most one result. Buffering by the group size lets tasks
-	// finish without waiting for collection, which starts after the group completes.
-	resultCh := make(chan componentSyncResult, len(group))
-	kindByTaskName := make(map[string]component.Kind, len(group))
+	componentSyncResults := make([]componentSyncResult, 0, len(group))
 	for _, kind := range group {
 		operator, err := r.operatorRegistry.GetOperator(kind)
 		if err != nil {
 			logger.V(1).Info("Skipping unregistered operator", "kind", kind)
 			continue
 		}
-		taskName := fmt.Sprintf("SyncKind-%s", kind)
-		kindByTaskName[taskName] = kind
+		resultIndex := len(componentSyncResults)
+		componentSyncResults = append(componentSyncResults, componentSyncResult{kind: kind})
 		tasks = append(tasks, utils.Task{
-			Name: taskName,
+			Name: fmt.Sprintf("SyncKind-%s", kind),
 			Fn: func(ctx context.Context) error {
 				logger.V(1).Info("Syncing PodCliqueSet resource", "kind", kind, "group", groupIndex)
 				result, err := operator.Sync(ctx, logger, pcs, state)
 				if err != nil {
 					return err
 				}
-				resultCh <- componentSyncResult{
-					kind:   kind,
-					result: result,
+				if result.StopAndRequeue && result.RequeueAfter == nil {
+					return fmt.Errorf("component %s requested StopAndRequeue without RequeueAfter", kind)
 				}
+				if result.RequeueAfter != nil && *result.RequeueAfter <= 0 {
+					return fmt.Errorf("component %s requested a non-positive RequeueAfter", kind)
+				}
+				// Each task owns one slot, and the result slice is not resized during execution.
+				componentSyncResults[resultIndex].result = result
 				return nil
 			},
 		})
 	}
 	if len(tasks) == 0 {
-		return nil, nil, nil
+		return nil, nil
 	}
-
-	runResult := utils.RunConcurrentlyAndWait(ctx, logger, tasks)
-	close(resultCh)
-	successfulResults := make([]componentSyncResult, 0, len(tasks))
-	for taskResult := range resultCh {
-		successfulResults = append(successfulResults, taskResult)
+	if runResult := utils.RunConcurrentlyAndWait(ctx, logger, tasks); runResult.HasErrors() {
+		return nil, runResult.GetAggregatedError()
 	}
-	if runResult.HasErrors() {
-		result, requeuedKinds := processKindGroupRunResultErrors(logger, runResult, kindByTaskName)
-		return result, successfulResults, requeuedKinds
-	}
-	return nil, successfulResults, nil
-}
-
-// processKindGroupRunResultErrors processes component task failures and determines whether
-// reconciliation should stop, requeue after a delay, or continue with the next group.
-func processKindGroupRunResultErrors(logger logr.Logger, runResult utils.RunResult, kindByTaskName map[string]component.Kind) (*ctrlcommon.ReconcileStepResult, []component.Kind) {
-	continueReconcileAndRequeueKinds := make([]component.Kind, 0)
-	reconciliationErrors := make([]error, 0)
-	requeueErrors := make([]error, 0)
-	for _, failedTask := range runResult.FailedTasks {
-		kind, ok := kindByTaskName[failedTask.Name]
-		if !ok {
-			reconciliationErrors = append(reconciliationErrors,
-				fmt.Errorf("failed task %q has no component kind: %w", failedTask.Name, failedTask.Err))
-			continue
-		}
-		if groveerr.IsContinueReconcileAndRequeue(failedTask.Err) {
-			continueReconcileAndRequeueKinds = append(continueReconcileAndRequeueKinds, kind)
-			logger.V(1).Info("Component requested post-sync requeue", "kind", kind, "message", failedTask.Err.Error())
-			continue
-		}
-		if groveerr.IsRequeueAfter(failedTask.Err) {
-			requeueErrors = append(requeueErrors, failedTask.Err)
-			continue
-		}
-		logger.Error(failedTask.Err, "Failed to sync PodCliqueSet resource", "kind", kind)
-		reconciliationErrors = append(reconciliationErrors, fmt.Errorf("failed to sync %s: %w", kind, failedTask.Err))
-	}
-
-	if len(reconciliationErrors) > 0 {
-		result := ctrlcommon.ReconcileWithErrors("error syncing managed resources", reconciliationErrors...)
-		return &result, continueReconcileAndRequeueKinds
-	}
-	if requeueAfter, shouldRequeue := groveerr.GetLowestRequeueAfter(requeueErrors); shouldRequeue {
-		result := ctrlcommon.ReconcileAfter(requeueAfter, errors.Join(requeueErrors...).Error())
-		return &result, continueReconcileAndRequeueKinds
-	}
-	return nil, continueReconcileAndRequeueKinds
+	return componentSyncResults, nil
 }
 
 // updateObservedGeneration updates the status to reflect the current observed generation.

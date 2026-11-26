@@ -17,9 +17,15 @@ package podclique
 import (
 	"context"
 	"testing"
+	"time"
 
+	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
+	"github.com/ai-dynamo/grove/operator/internal/constants"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
+	pcsreplicacomponent "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/podcliquesetreplica"
+	pcsexpectations "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/expectations"
+	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/sync"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
@@ -29,9 +35,87 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/uuid"
+	"k8s.io/client-go/tools/record"
+	clocktesting "k8s.io/utils/clock/testing"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
+
+// TestProcessUpdateAfterLegacyPCSReconciliation exercises the real PCS replica component and PCLQ
+// update processing. Initializing scheduling metadata or finishing a legacy update must not cause a
+// later format-only identity change that starts another child update.
+func TestProcessUpdateAfterLegacyPCSReconciliation(t *testing.T) {
+	t.Parallel()
+	// This is the released workload hash for the worker template below, pinned in the replica hash tests.
+	const legacyHash = "58fdfc6fb659d4f6c595"
+	startedAt := metav1.NewTime(time.Unix(100, 0).UTC())
+	tests := []struct {
+		name     string
+		progress *grovecorev1beta1.PodCliqueSetUpdateProgress
+	}{
+		{name: "idle legacy PCS"},
+		{name: "completed legacy update", progress: &grovecorev1beta1.PodCliqueSetUpdateProgress{UpdateStartedAt: startedAt, UpdateEndedAt: &startedAt}},
+		{name: "active legacy update finishes without later conversion", progress: &grovecorev1beta1.PodCliqueSetUpdateProgress{
+			UpdateStartedAt:   startedAt,
+			CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 0, UpdateStartedAt: startedAt}},
+		}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "uid").
+				WithReplicas(1).WithObservedGeneration(new(int64(1))).WithTerminationDelay(time.Minute).
+				WithPodCliqueTemplateSpec(testutils.NewPodCliqueTemplateSpecBuilder("worker").WithReplicas(3).WithMinAvailable(2).Build()).
+				WithUpdateStrategy(&grovecorev1beta1.PodCliqueSetUpdateStrategy{Type: grovecorev1beta1.RollingRecreateStrategy}).
+				WithPodCliqueSetGenerationHash(new(legacyHash)).WithUpdateProgress(tc.progress.DeepCopy()).Build()
+			podTemplateHash := componentutils.ComputePCLQPodTemplateHash(pcs.Spec.Template.Cliques[0], pcs.Spec.Template.PriorityClassName)
+			pclq := testutils.NewPodCliqueBuilder(pcs.Name, pcs.UID, "worker", pcs.Namespace, 0).
+				WithReplicas(3).WithMinAvailable(2).
+				WithLabels(map[string]string{apicommon.LabelPodTemplateHash: podTemplateHash, apicommon.LabelPodCliqueSetGenerationHash: legacyHash}).
+				WithOptions(func(pclq *grovecorev1beta1.PodClique) {
+					pclq.Status.CurrentPodCliqueSetGenerationHash = new(legacyHash)
+					pclq.Status.CurrentPodTemplateHash = new(podTemplateHash)
+					pclq.Status.UpdatedReplicas = 3
+					pclq.Status.ReadyReplicas = 3
+				}).Build()
+			cl := testutils.SetupFakeClient(pcs, pclq)
+			generationExpectations := &pcsexpectations.GenerationHashes{}
+			replicaOperator := pcsreplicacomponent.New(cl, record.NewFakeRecorder(20), &pcsexpectations.ScalingProgress{},
+				&pcsexpectations.CurrentlyUpdating{}, generationExpectations, clocktesting.NewFakeClock(time.Unix(1000, 0).UTC()))
+			pclqReconciler := &Reconciler{client: cl}
+			for pass := range 3 {
+				freshPCS := &grovecorev1beta1.PodCliqueSet{}
+				require.NoError(t, cl.Get(t.Context(), client.ObjectKeyFromObject(pcs), freshPCS))
+				require.True(t, generationExpectations.ClearIfSatisfied(freshPCS.ObjectMeta, freshPCS.Status.CurrentGenerationHash, freshPCS.Status.AppliedSchedulingConfigurationHash))
+
+				syncResult, err := replicaOperator.Sync(t.Context(), logr.Discard(), freshPCS, &pcssync.State{})
+
+				if pass == 0 || (pass == 1 && tc.progress != nil && tc.progress.UpdateEndedAt == nil) {
+					require.NoError(t, err)
+					assert.Equal(t, pcssync.Result{RequeueAfter: new(constants.InformerCacheSyncRetryInterval), StopAndRequeue: true}, syncResult)
+				} else {
+					require.NoError(t, err)
+				}
+				assert.Equal(t, new(legacyHash), freshPCS.Status.CurrentGenerationHash, "pass %d must preserve legacy identity", pass)
+				if pass > 0 && tc.progress != nil {
+					require.NotNil(t, freshPCS.Status.UpdateProgress.UpdateEndedAt)
+					assert.True(t, startedAt.Equal(&freshPCS.Status.UpdateProgress.UpdateStartedAt), "the original start time must be preserved")
+				}
+				freshPCLQ := &grovecorev1beta1.PodClique{}
+				require.NoError(t, cl.Get(t.Context(), client.ObjectKeyFromObject(pclq), freshPCLQ))
+
+				result := pclqReconciler.processUpdate(t.Context(), logr.Discard(), freshPCLQ)
+
+				require.Empty(t, result.GetErrors())
+				assert.False(t, result.NeedsRequeue(), "unchanged legacy identity must not initialize a child update")
+				storedPCLQ := &grovecorev1beta1.PodClique{}
+				require.NoError(t, cl.Get(t.Context(), client.ObjectKeyFromObject(pclq), storedPCLQ))
+				assert.Nil(t, storedPCLQ.Status.UpdateProgress)
+				assert.Equal(t, new(legacyHash), storedPCLQ.Status.CurrentPodCliqueSetGenerationHash)
+			}
+		})
+	}
+}
 
 // TestShouldCheckPendingUpdatesForPCLQ verifies that standalone PCLQs can
 // evaluate their own update state when the owning PCS has a current generation,
@@ -59,6 +143,14 @@ func TestShouldCheckPendingUpdatesForPCLQ(t *testing.T) {
 				CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 0}},
 			},
 			pclqPCSReplicaIndex: 0,
+			expected:            true,
+		},
+		{
+			name: "standalone_matching_second_active_pcs_replica",
+			pcsUpdateProgress: &grovecorev1beta1.PodCliqueSetUpdateProgress{
+				CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 0}, {ReplicaIndex: 1}},
+			},
+			pclqPCSReplicaIndex: 1,
 			expected:            true,
 		},
 		{
@@ -286,7 +378,7 @@ func TestProcessUpdateInitializesProgressWithoutActivePCSUpdate(t *testing.T) {
 
 	ctrlResult, err := result.Result()
 	require.NoError(t, err)
-	assert.Equal(t, updateProgressCacheSyncRetryInterval, ctrlResult.RequeueAfter)
+	assert.Equal(t, constants.InformerCacheSyncRetryInterval, ctrlResult.RequeueAfter)
 	updatedPCLQ := &grovecorev1beta1.PodClique{}
 	require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKeyFromObject(pclq), updatedPCLQ))
 	require.NotNil(t, updatedPCLQ.Status.UpdateProgress)
@@ -343,7 +435,7 @@ func TestProcessUpdateResetsPCLQProgressToSelectedPCSGeneration(t *testing.T) {
 	require.False(t, result.HasErrors())
 	ctrlResult, err := result.Result()
 	require.NoError(t, err)
-	assert.Equal(t, updateProgressCacheSyncRetryInterval, ctrlResult.RequeueAfter)
+	assert.Equal(t, constants.InformerCacheSyncRetryInterval, ctrlResult.RequeueAfter)
 	updatedPCLQ := &grovecorev1beta1.PodClique{}
 	require.NoError(t, fakeClient.Get(t.Context(), client.ObjectKeyFromObject(pclq), updatedPCLQ))
 	require.NotNil(t, updatedPCLQ.Status.UpdateProgress)

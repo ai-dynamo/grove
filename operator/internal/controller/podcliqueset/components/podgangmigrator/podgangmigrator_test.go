@@ -24,7 +24,8 @@ import (
 	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	groveclientscheme "github.com/ai-dynamo/grove/operator/internal/client"
-	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/sync"
+	"github.com/ai-dynamo/grove/operator/internal/constants"
+	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/sync"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler/kai"
@@ -225,8 +226,9 @@ func TestSyncHoldsGateUntilEpochPodGangsExist(t *testing.T) {
 	operator := New(cl, groveclientscheme.Scheme, newFakeRegistry()).(*_resource)
 
 	pcs := getPCS(t, cl)
-	_, err := operator.Sync(context.Background(), logr.Discard(), pcs, &pcssync.State{ExpectedReplicaIndices: lo.Range(int(pcs.Spec.Replicas))})
-	assert.True(t, groveerr.IsContinueReconcileAndRequeue(err))
+	result, err := operator.Sync(context.Background(), logr.Discard(), pcs, &pcssync.State{ExpectedReplicaIndices: lo.Range(int(pcs.Spec.Replicas))})
+	require.NoError(t, err)
+	assert.Equal(t, pcssync.Result{RequeueAfter: new(constants.ComponentSyncRetryInterval)}, result)
 
 	// The relabeling still happened, but the gate is held until the epoch PodGangs exist.
 	assertReplicaMigrated(t, cl, 0, epochs)

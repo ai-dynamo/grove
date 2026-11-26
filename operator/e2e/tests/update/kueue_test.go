@@ -24,6 +24,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/e2e/grove/podgang"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
 	"github.com/ai-dynamo/grove/operator/e2e/tests"
+	updateutils "github.com/ai-dynamo/grove/operator/e2e/tests/update/utils"
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 
 	"github.com/stretchr/testify/assert"
@@ -98,7 +99,7 @@ func Test_KueueUpdate2_CoherentReplacesWorkload(t *testing.T) {
 
 	tests.Logger.Info("2. Update frontend, prefill, and decode together and wait for the update to complete")
 	updateAllKueueComponents(t, tc)
-	assertPodGangMapSingleGeneration(t, tc)
+	updateutils.AssertPodGangMapSingleGeneration(t, tc)
 
 	tests.Logger.Info("3. Verify every Pod moved to a new PodGang")
 	newPodGang := waitForSinglePodGang(t, tc)
@@ -119,14 +120,14 @@ func Test_KueueUpdate2_CoherentReplacesWorkload(t *testing.T) {
 // update completes and every Pod is ready.
 func updateAllKueueComponents(t *testing.T, tc *testctx.TestContext) {
 	t.Helper()
-	if err := triggerPodCliqueUpdate(tc, "frontend", "prefill", "decode"); err != nil {
+	if err := updateutils.TriggerPodCliqueUpdate(tc, "frontend", "prefill", "decode"); err != nil {
 		t.Fatalf("Failed to trigger the update: %v", err)
 	}
-	if err := waitForRollingUpdateComplete(tc, 1); err != nil {
+	if err := updateutils.WaitForRollingUpdateComplete(tc, 1); err != nil {
 		t.Fatalf("Update did not complete: %v", err)
 	}
-	assertUpdateInProgressCleared(tc)
-	assertGenerationHashConverged(tc)
+	updateutils.AssertUpdateInProgressCleared(tc)
+	updateutils.AssertGenerationHashConverged(tc)
 	if err := tc.WaitForPods(kueueUpdateExpectedPods); err != nil {
 		t.Fatalf("Pods did not become ready after the update: %v", err)
 	}
@@ -154,10 +155,10 @@ func waitForGangWorkload(t *testing.T, tc *testctx.TestContext, wlVerifier *kueu
 	if err != nil {
 		t.Fatalf("Kueue Workload %s never reached PodsReady=True: %v", podGangName, err)
 	}
-	wantPodSets := []string{standaloneCliqueFQN(tc, "frontend")}
+	wantPodSets := []string{updateutils.StandaloneCliqueFQN(tc, "frontend")}
 	for _, sg := range []struct{ pcsgName, cliqueName string }{{"sg-prefill", "prefill"}, {"sg-decode", "decode"}} {
 		for replica := range 2 {
-			wantPodSets = append(wantPodSets, common.GeneratePodCliqueName(common.ResourceNameReplica{Name: pcsgFQN(tc, sg.pcsgName), Replica: replica}, sg.cliqueName))
+			wantPodSets = append(wantPodSets, common.GeneratePodCliqueName(common.ResourceNameReplica{Name: updateutils.PCSGFQN(tc, sg.pcsgName), Replica: replica}, sg.cliqueName))
 		}
 	}
 	var gotPodSets []string
@@ -177,7 +178,7 @@ func assertPodsUpdatedInWorkload(t *testing.T, tc *testctx.TestContext, workload
 		require.NoError(c, err)
 		assert.Len(c, pods.Items, kueueUpdateExpectedPods)
 		for _, pod := range pods.Items {
-			assert.NoError(c, verifyPodHasUpdatedSpec(tc, pod.Name))
+			assert.NoError(c, updateutils.VerifyPodHasUpdatedSpec(tc, pod.Name))
 			assert.Equalf(c, workloadName, pod.Labels[prebuiltWorkloadNameLabel], "Pod %s Workload", pod.Name)
 		}
 	}, tc.Timeout, tc.Interval)

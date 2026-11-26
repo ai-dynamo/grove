@@ -20,18 +20,27 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/kwok"
+	"github.com/ai-dynamo/grove/operator/e2e/setup"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
 	"github.com/ai-dynamo/grove/operator/e2e/tests"
+	updateutils "github.com/ai-dynamo/grove/operator/e2e/tests/update/utils"
+	kubeutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -61,17 +70,18 @@ func Test_CU1_CoherentBootstrapLayout(t *testing.T) {
 	defer cleanup()
 
 	tests.Logger.Info("2. Verify the initial PodGangMap anchor, tail, and scale-out entries")
-	assertReplicaPodGangMap(t, getPodGangMapEntries(t, tc, 0), expectedReplicaPodGangMap{
-		standalonePodCounts: map[string]int32{"frontend": 2},
-		pcsgName:            "inference",
-		anchorIndices:       []int32{0},
-		tailIndices:         []int32{1},
+	updateutils.AssertReplicaPodGangMap(t, updateutils.PodGangMapEntries(t, tc, 0), updateutils.ExpectedReplicaPodGangMap{
+		StandalonePodCounts: map[string]int32{"frontend": 2},
+		PCSGName:            "inference",
+		AnchorIndices:       []int32{0},
+		TailIndices:         []int32{1},
 	})
 }
 
 // Test_CU2_CoherentUpdateStandaloneClique verifies that a coherent update of only the standalone frontend
-// PodClique completes, clears UpdateInProgress, converges every component to the latest generation hash,
-// and leaves all pods Ready.
+// PodClique completes, clears UpdateInProgress, and advances the empty ScaleOut with its surviving
+// out-of-scope anchor without changing its epoch or dependency. A later inference scale-out must reuse
+// that entry, and all pods must become Ready.
 func Test_CU2_CoherentUpdateStandaloneClique(t *testing.T) {
 	tests.Logger.Info("1. Deploy workload-coherent and verify 6 pods")
 	tc, cleanup, _ := setupTest(t, testConfig{
@@ -82,23 +92,58 @@ func Test_CU2_CoherentUpdateStandaloneClique(t *testing.T) {
 	})
 	defer cleanup()
 
+	beforePGM, err := updateutils.GetReplicaPodGangMap(tc, 0)
+	require.NoError(t, err)
+	beforeScaleOut := updateutils.RequireSingleEntryByRole(t, beforePGM.Spec.Entries, grovev1beta1.PodGangEntryRoleScaleOut)
+	beforeAnchor := updateutils.RequireSingleEntryByRole(t, beforePGM.Spec.Entries, grovev1beta1.PodGangEntryRoleAnchor)
+	require.Empty(t, beforeScaleOut.PodCliques)
+	require.Empty(t, beforeScaleOut.PCSGReplicaIndices)
+	require.Equal(t, []string{beforeAnchor.Epoch}, beforeScaleOut.DependsOn)
+	require.Equal(t, beforeAnchor.PodCliqueSetGenerationHash, beforeScaleOut.PodCliqueSetGenerationHash)
+
 	tests.Logger.Info("2. Trigger a coherent update of the frontend PodClique")
-	if err := triggerPodCliqueUpdate(tc, "frontend"); err != nil {
+	if err := updateutils.TriggerPodCliqueUpdate(tc, "frontend"); err != nil {
 		t.Fatalf("failed to trigger update of frontend: %v", err)
 	}
 
 	tests.Logger.Info("3. Wait for the coherent update to complete")
-	if err := waitForRollingUpdateComplete(tc, 1); err != nil {
+	if err := updateutils.WaitForRollingUpdateComplete(tc, 1); err != nil {
 		t.Fatalf("coherent update did not complete: %v", err)
 	}
 
 	tests.Logger.Info("4. Verify completion, convergence, and readiness")
-	assertUpdateInProgressCleared(tc)
-	assertGenerationHashConverged(tc)
-	assertPodGangMapSingleGeneration(t, tc)
+	updateutils.AssertUpdateInProgressCleared(tc)
+	updateutils.AssertGenerationHashConverged(tc)
+	updateutils.AssertPodGangMapSingleGeneration(t, tc)
 	if err := tc.WaitForPods(coherentExpectedPods); err != nil {
 		t.Fatalf("pods did not become Ready after the coherent update: %v", err)
 	}
+	afterPGM, err := updateutils.GetReplicaPodGangMap(tc, 0)
+	require.NoError(t, err)
+	wantScaleOut := beforeScaleOut
+	wantScaleOut.PodCliqueSetGenerationHash = updateutils.PCSGenerationHash(t, tc)
+	require.NotEqual(t, beforeScaleOut.PodCliqueSetGenerationHash, wantScaleOut.PodCliqueSetGenerationHash)
+	require.Equal(t, wantScaleOut, updateutils.RequireSingleEntryByRole(t, afterPGM.Spec.Entries, grovev1beta1.PodGangEntryRoleScaleOut),
+		"the empty ScaleOut must advance with its original anchor without changing identity")
+
+	tests.Logger.Info("5. Scale inference to three replicas and verify the preserved ScaleOut is reused")
+	tc.ScalePCSGAcrossAllReplicasAndWait(coherentWorkloadName, "inference", 1, 3, coherentExpectedPods+2, 0)
+	wantScaleOut.PCSGReplicaIndices = map[string][]int32{"inference": {2}}
+	require.EventuallyWithT(t, func(collect *assert.CollectT) {
+		pgm, err := updateutils.GetReplicaPodGangMap(tc, 0)
+		if !assert.NoError(collect, err) {
+			return
+		}
+		scaleOuts := make([]grovev1beta1.PodGangEntry, 0, 1)
+		for _, entry := range pgm.Spec.Entries {
+			if entry.Role == grovev1beta1.PodGangEntryRoleScaleOut {
+				scaleOuts = append(scaleOuts, entry)
+			}
+		}
+		if assert.Len(collect, scaleOuts, 1) {
+			assert.Equal(collect, wantScaleOut, scaleOuts[0], "scale-out must reuse the original epoch and dependency")
+		}
+	}, tc.Timeout, tc.Interval)
 }
 
 // Test_CU3_CoherentUpdatePCSGMemberClique verifies that a coherent update of only the inference
@@ -115,24 +160,24 @@ func Test_CU3_CoherentUpdatePCSGMemberClique(t *testing.T) {
 	defer cleanup()
 
 	tests.Logger.Info("2. Trigger a coherent update of the inference PCSG via its prefill member")
-	if err := triggerPodCliqueUpdate(tc, "prefill"); err != nil {
+	if err := updateutils.TriggerPodCliqueUpdate(tc, "prefill"); err != nil {
 		t.Fatalf("failed to trigger update of prefill: %v", err)
 	}
 
 	tests.Logger.Info("3. Wait for the coherent update to complete")
-	if err := waitForRollingUpdateComplete(tc, 1); err != nil {
+	if err := updateutils.WaitForRollingUpdateComplete(tc, 1); err != nil {
 		t.Fatalf("coherent update did not complete: %v", err)
 	}
 
 	tests.Logger.Info("4. Verify completion, convergence, and readiness")
-	assertUpdateInProgressCleared(tc)
-	assertGenerationHashConverged(tc)
+	updateutils.AssertUpdateInProgressCleared(tc)
+	updateutils.AssertGenerationHashConverged(tc)
 	if err := tc.WaitForPods(coherentExpectedPods); err != nil {
 		t.Fatalf("pods did not become Ready after the coherent update: %v", err)
 	}
 
 	tests.Logger.Info("5. Verify the frontend anchor, out of the update scope, reconverged to a single generation")
-	assertPodGangMapSingleGeneration(t, tc)
+	updateutils.AssertPodGangMapSingleGeneration(t, tc)
 
 	tests.Logger.Info("6. Scale the frontend standalone clique from 2 to 3 and verify the new pod is created")
 	tc.ScalePodCliqueAndWait(coherentWorkloadName+"-0-frontend", 3, coherentExpectedPods+1, 0)
@@ -155,21 +200,21 @@ func Test_CU4_CoherentUpdateStandaloneAndPCSGAnchorOnly(t *testing.T) {
 
 	tests.Logger.Info("2. Trigger a coherent update of both frontend and the inference PCSG")
 	for _, cliqueName := range []string{"frontend", "prefill"} {
-		if err := triggerPodCliqueUpdate(tc, cliqueName); err != nil {
+		if err := updateutils.TriggerPodCliqueUpdate(tc, cliqueName); err != nil {
 			t.Fatalf("failed to trigger update of %s: %v", cliqueName, err)
 		}
 	}
 
 	tests.Logger.Info("3. Wait for the coherent update to complete")
-	if err := waitForRollingUpdateComplete(tc, 1); err != nil {
+	if err := updateutils.WaitForRollingUpdateComplete(tc, 1); err != nil {
 		t.Fatalf("coherent update did not complete: %v", err)
 	}
-	assertUpdateInProgressCleared(tc)
-	assertGenerationHashConverged(tc)
+	updateutils.AssertUpdateInProgressCleared(tc)
+	updateutils.AssertGenerationHashConverged(tc)
 
 	tests.Logger.Info("4. Verify the converged PodGangMap holds two Minimum Viable Unit anchors and no leftover tail")
-	newHash := getPCSGenerationHash(t, tc)
-	entries := getPodGangMapEntries(t, tc, 0)
+	newHash := updateutils.PCSGenerationHash(t, tc)
+	entries := updateutils.PodGangMapEntries(t, tc, 0)
 	assertCoherentAnchorCompositions(t, entries, newHash, "inference", []coherentAnchor{
 		{standalone: map[string]int32{"frontend": 1}, pcsgIndices: []int32{0}},
 		{standalone: map[string]int32{"frontend": 1}, pcsgIndices: []int32{1}},
@@ -197,21 +242,21 @@ func Test_CU5_CoherentUpdateStandaloneAndPCSGWithLeftover(t *testing.T) {
 
 	tests.Logger.Info("3. Trigger a coherent update of both frontend and the inference PCSG")
 	for _, cliqueName := range []string{"frontend", "prefill"} {
-		if err := triggerPodCliqueUpdate(tc, cliqueName); err != nil {
+		if err := updateutils.TriggerPodCliqueUpdate(tc, cliqueName); err != nil {
 			t.Fatalf("failed to trigger update of %s: %v", cliqueName, err)
 		}
 	}
 
 	tests.Logger.Info("4. Wait for the coherent update to complete")
-	if err := waitForRollingUpdateComplete(tc, 1); err != nil {
+	if err := updateutils.WaitForRollingUpdateComplete(tc, 1); err != nil {
 		t.Fatalf("coherent update did not complete: %v", err)
 	}
-	assertUpdateInProgressCleared(tc)
-	assertGenerationHashConverged(tc)
+	updateutils.AssertUpdateInProgressCleared(tc)
+	updateutils.AssertGenerationHashConverged(tc)
 
 	tests.Logger.Info("5. Verify two anchors plus a leftover tail carrying inference index 2")
-	newHash := getPCSGenerationHash(t, tc)
-	entries := getPodGangMapEntries(t, tc, 0)
+	newHash := updateutils.PCSGenerationHash(t, tc)
+	entries := updateutils.PodGangMapEntries(t, tc, 0)
 	assertCoherentAnchorCompositions(t, entries, newHash, "inference", []coherentAnchor{
 		{standalone: map[string]int32{"frontend": 1}, pcsgIndices: []int32{0}},
 		{standalone: map[string]int32{"frontend": 1}, pcsgIndices: []int32{1}},
@@ -251,10 +296,10 @@ func Test_CU6_CoherentUpdateBlocksScaling(t *testing.T) {
 	}()
 
 	tests.Logger.Info("4. Trigger a coherent update and wait until replica 0 is updating")
-	if err := triggerPodCliqueUpdate(tc, "frontend"); err != nil {
+	if err := updateutils.TriggerPodCliqueUpdate(tc, "frontend"); err != nil {
 		t.Fatalf("failed to trigger update of frontend: %v", err)
 	}
-	if err := waitForOrdinalUpdating(tc, 0); err != nil {
+	if err := updateutils.WaitForOrdinalUpdating(tc, 0); err != nil {
 		t.Fatalf("replica 0 did not start updating: %v", err)
 	}
 
@@ -264,7 +309,7 @@ func Test_CU6_CoherentUpdateBlocksScaling(t *testing.T) {
 		if assert.Errorf(t, pclqScaleErr, "a direct PodClique replica change on replica %d must be rejected while a coherent update is in progress", replicaIndex) {
 			assert.Contains(t, pclqScaleErr.Error(), "coherent update is in progress")
 		}
-		pcsgScaleErr := tc.ScalePCSG(pcsgFQNForReplica(tc, "inference", replicaIndex), 3)
+		pcsgScaleErr := tc.ScalePCSG(updateutils.PCSGFQNForReplica(tc, "inference", replicaIndex), 3)
 		if assert.Errorf(t, pcsgScaleErr, "a PodCliqueScalingGroup scale change on replica %d must be rejected while a coherent update is in progress", replicaIndex) {
 			assert.Contains(t, pcsgScaleErr.Error(), "coherent update is in progress")
 		}
@@ -274,7 +319,7 @@ func Test_CU6_CoherentUpdateBlocksScaling(t *testing.T) {
 	if err := kwok.DeleteStage(tc.Ctx, tc.Client, kwokStageReadyDelayedName); err != nil {
 		t.Fatalf("failed to delete readiness-delay KWOK stage: %v", err)
 	}
-	if err := waitForRollingUpdateComplete(tc, 2); err != nil {
+	if err := updateutils.WaitForRollingUpdateComplete(tc, 2); err != nil {
 		t.Fatalf("coherent update did not complete: %v", err)
 	}
 
@@ -282,7 +327,7 @@ func Test_CU6_CoherentUpdateBlocksScaling(t *testing.T) {
 	if err := tc.ScalePodClique(fmt.Sprintf("%s-0-frontend", coherentWorkloadName), 3); err != nil {
 		t.Fatalf("scaling the PodClique must be allowed after the coherent update completes: %v", err)
 	}
-	if err := tc.ScalePCSG(pcsgFQNForReplica(tc, "inference", 0), 3); err != nil {
+	if err := tc.ScalePCSG(updateutils.PCSGFQNForReplica(tc, "inference", 0), 3); err != nil {
 		t.Fatalf("scaling the PodCliqueScalingGroup must be allowed after the coherent update completes: %v", err)
 	}
 }
@@ -313,15 +358,17 @@ func Test_CU7_CoherentBackToBackUpdates(t *testing.T) {
 	}()
 
 	tests.Logger.Info("3. Trigger the first coherent update of the frontend PodClique and wait until the replica is updating")
-	if err := triggerPodCliqueUpdate(tc, "frontend"); err != nil {
+	if err := updateutils.TriggerPodCliqueUpdate(tc, "frontend"); err != nil {
 		t.Fatalf("failed to trigger update of frontend: %v", err)
 	}
-	if err := waitForOrdinalUpdating(tc, 0); err != nil {
+	if err := updateutils.WaitForOrdinalUpdating(tc, 0); err != nil {
 		t.Fatalf("replica 0 did not start updating: %v", err)
 	}
 
+	updateutils.WaitForReplicaMidCoherentRoll(t, tc, 0)
+
 	tests.Logger.Info("4. Trigger the second coherent update of the inference PCSG while the first is still in flight")
-	if err := triggerPodCliqueUpdate(tc, "prefill"); err != nil {
+	if err := updateutils.TriggerPodCliqueUpdate(tc, "prefill"); err != nil {
 		t.Fatalf("failed to trigger update of prefill: %v", err)
 	}
 
@@ -331,17 +378,17 @@ func Test_CU7_CoherentBackToBackUpdates(t *testing.T) {
 	}
 
 	tests.Logger.Info("6. Wait for the coherent update to complete and verify convergence and readiness")
-	if err := waitForRollingUpdateComplete(tc, 1); err != nil {
+	if err := updateutils.WaitForRollingUpdateComplete(tc, 1); err != nil {
 		t.Fatalf("coherent update did not complete: %v", err)
 	}
-	assertUpdateInProgressCleared(tc)
-	assertGenerationHashConverged(tc)
+	updateutils.AssertUpdateInProgressCleared(tc)
+	updateutils.AssertGenerationHashConverged(tc)
 	if err := tc.WaitForPods(coherentExpectedPods); err != nil {
 		t.Fatalf("pods did not become Ready after the coherent updates: %v", err)
 	}
 
 	tests.Logger.Info("7. Verify the PodGangMap converged to a single generation with no stale intermediate entries")
-	assertPodGangMapSingleGeneration(t, tc)
+	updateutils.AssertPodGangMapSingleGeneration(t, tc)
 }
 
 // Test_CU8_CoherentUpdateResumesAfterOperatorRestart verifies that when the Grove operator crashes mid
@@ -368,15 +415,15 @@ func Test_CU8_CoherentUpdateResumesAfterOperatorRestart(t *testing.T) {
 	}()
 
 	tests.Logger.Info("3. Trigger a coherent update of the frontend PodClique and wait until the replica is updating")
-	if err := triggerPodCliqueUpdate(tc, "frontend"); err != nil {
+	if err := updateutils.TriggerPodCliqueUpdate(tc, "frontend"); err != nil {
 		t.Fatalf("failed to trigger update of frontend: %v", err)
 	}
-	if err := waitForOrdinalUpdating(tc, 0); err != nil {
+	if err := updateutils.WaitForOrdinalUpdating(tc, 0); err != nil {
 		t.Fatalf("replica 0 did not start updating: %v", err)
 	}
 
 	tests.Logger.Info("4. Crash the operator mid-update by deleting its pod and wait for a fresh replica")
-	if err := restartOperator(tc); err != nil {
+	if err := updateutils.RestartOperator(tc); err != nil {
 		t.Fatalf("operator did not come back after restart: %v", err)
 	}
 
@@ -386,12 +433,12 @@ func Test_CU8_CoherentUpdateResumesAfterOperatorRestart(t *testing.T) {
 	}
 
 	tests.Logger.Info("6. Wait for the resumed update to complete and verify convergence and readiness")
-	if err := waitForRollingUpdateComplete(tc, 1); err != nil {
+	if err := updateutils.WaitForRollingUpdateComplete(tc, 1); err != nil {
 		t.Fatalf("coherent update did not complete after the operator restart: %v", err)
 	}
-	assertUpdateInProgressCleared(tc)
-	assertGenerationHashConverged(tc)
-	assertPodGangMapSingleGeneration(t, tc)
+	updateutils.AssertUpdateInProgressCleared(tc)
+	updateutils.AssertGenerationHashConverged(tc)
+	updateutils.AssertPodGangMapSingleGeneration(t, tc)
 	if err := tc.WaitForPods(coherentExpectedPods); err != nil {
 		t.Fatalf("pods did not become Ready after the resumed coherent update: %v", err)
 	}
@@ -434,11 +481,11 @@ func Test_CU9_CoherentUpdateNeverExceedsMaxUnavailable(t *testing.T) {
 	tests.Logger.Info("3. Roll the frontend clique while sampling not-ready frontend pods")
 	tcLong := *tc
 	tcLong.Timeout = 2 * time.Minute
-	maxUnavailable, err := maxUnavailablePods(&tcLong, notReadyPodForClique("frontend"), func() error {
-		if err := triggerPodCliqueUpdate(&tcLong, "frontend"); err != nil {
+	maxUnavailable, err := updateutils.MaxUnavailablePods(&tcLong, updateutils.NotReadyPodForClique("frontend"), func() error {
+		if err := updateutils.TriggerPodCliqueUpdate(&tcLong, "frontend"); err != nil {
 			return err
 		}
-		return waitForRollingUpdateComplete(&tcLong, 1)
+		return updateutils.WaitForRollingUpdateComplete(&tcLong, 1)
 	})
 	if err != nil {
 		t.Fatalf("coherent update of frontend did not complete: %v", err)
@@ -446,7 +493,7 @@ func Test_CU9_CoherentUpdateNeverExceedsMaxUnavailable(t *testing.T) {
 
 	tests.Logger.Info("4. Verify MaxUnavailable=1 was never exceeded")
 	assert.LessOrEqualf(t, maxUnavailable, 1, "a coherent update must never leave more than MaxUnavailable=1 frontend pods unavailable at once, observed %d", maxUnavailable)
-	assertUpdateInProgressCleared(tc)
+	updateutils.AssertUpdateInProgressCleared(tc)
 }
 
 // Test_CU10_CoherentUpdatePipelinesUnderDelayedReadiness verifies that when MaxUnavailable (2) exceeds
@@ -476,11 +523,11 @@ func Test_CU10_CoherentUpdatePipelinesUnderDelayedReadiness(t *testing.T) {
 	tests.Logger.Info("3. Roll the frontend clique while sampling not-ready frontend pods")
 	tcLong := *tc
 	tcLong.Timeout = 3 * time.Minute
-	maxUnavailable, err := maxUnavailablePods(&tcLong, notReadyPodForClique("frontend"), func() error {
-		if err := triggerPodCliqueUpdate(&tcLong, "frontend"); err != nil {
+	maxUnavailable, err := updateutils.MaxUnavailablePods(&tcLong, updateutils.NotReadyPodForClique("frontend"), func() error {
+		if err := updateutils.TriggerPodCliqueUpdate(&tcLong, "frontend"); err != nil {
 			return err
 		}
-		return waitForRollingUpdateComplete(&tcLong, 1)
+		return updateutils.WaitForRollingUpdateComplete(&tcLong, 1)
 	})
 	if err != nil {
 		t.Fatalf("coherent update of frontend did not complete: %v", err)
@@ -489,7 +536,7 @@ func Test_CU10_CoherentUpdatePipelinesUnderDelayedReadiness(t *testing.T) {
 	tests.Logger.Info("4. Verify the roll pipelined to MaxUnavailable=2 and never exceeded it")
 	assert.LessOrEqualf(t, maxUnavailable, 2, "MaxUnavailable=2 must never be exceeded, observed %d", maxUnavailable)
 	assert.Equalf(t, 2, maxUnavailable, "with MaxUnavailable=2 greater than MinAvailable=1 the roll should keep 2 frontend pods in flight, observed %d", maxUnavailable)
-	assertUpdateInProgressCleared(tc)
+	updateutils.AssertUpdateInProgressCleared(tc)
 }
 
 // Test_CU11_GangTerminationDuringCoherentUpdateRebuildsPodGangMap verifies that when a PCS replica that is
@@ -522,10 +569,10 @@ func Test_CU11_GangTerminationDuringCoherentUpdateRebuildsPodGangMap(t *testing.
 	}()
 
 	tests.Logger.Info("3. Trigger a coherent update of the frontend PodClique, then wait until replica 0 is updating")
-	if err := triggerPodCliqueUpdate(tc, "frontend"); err != nil {
+	if err := updateutils.TriggerPodCliqueUpdate(tc, "frontend"); err != nil {
 		t.Fatalf("failed to trigger update of frontend: %v", err)
 	}
-	if err := waitForOrdinalUpdating(tc, 0); err != nil {
+	if err := updateutils.WaitForOrdinalUpdating(tc, 0); err != nil {
 		t.Fatalf("replica 0 did not start updating: %v", err)
 	}
 
@@ -543,7 +590,7 @@ func Test_CU11_GangTerminationDuringCoherentUpdateRebuildsPodGangMap(t *testing.
 	gangTerminateReplicaAndWaitForPodGangMapRebuild(t, tc, "frontend", 1)
 
 	tests.Logger.Info("5. Confirm replica 0 was still under update when replica 1 was gang terminated")
-	pcs, err := getPCS(tc, tc.Workload.Name)
+	pcs, err := updateutils.GetPCS(tc, tc.Workload.Name)
 	if err != nil {
 		t.Fatalf("failed to read PodCliqueSet: %v", err)
 	}
@@ -564,12 +611,12 @@ func Test_CU11_GangTerminationDuringCoherentUpdateRebuildsPodGangMap(t *testing.
 	// not re-evaluate a pod already sitting in the removed stage's delay), and replica 1's rebuilt frontend
 	// pods crash-looped. Delete both replicas' pods so fresh ones come up Ready under the default stage and
 	// the coherent update converges.
-	deleteNotReadyPodsOnReplica(t, tc, 0)
-	deleteNotReadyPodsOnReplica(t, tc, 1)
-	if err := waitForRollingUpdateComplete(tc, 2); err != nil {
+	updateutils.DeleteNotReadyPodsOnReplica(t, tc, 0)
+	updateutils.DeleteNotReadyPodsOnReplica(t, tc, 1)
+	if err := updateutils.WaitForRollingUpdateComplete(tc, 2); err != nil {
 		t.Fatalf("coherent update did not complete: %v", err)
 	}
-	assertUpdateInProgressCleared(tc)
+	updateutils.AssertUpdateInProgressCleared(tc)
 
 	tests.Logger.Info("7. Verify all 12 pods are Ready")
 	if err := tc.WaitForPods(coherentGTExpectedPods); err != nil {
@@ -596,22 +643,22 @@ func Test_CU12_CoherentUpdateWithPodCliqueScalingGroupScaledToZero(t *testing.T)
 
 	tests.Logger.Info("3. Trigger a coherent update of frontend and the inference PCSG")
 	for _, cliqueName := range []string{"frontend", "prefill"} {
-		if err := triggerPodCliqueUpdate(tc, cliqueName); err != nil {
+		if err := updateutils.TriggerPodCliqueUpdate(tc, cliqueName); err != nil {
 			t.Fatalf("failed to trigger update of %s: %v", cliqueName, err)
 		}
 	}
 
 	tests.Logger.Info("4. Wait for the coherent update to complete and converge")
-	if err := waitForRollingUpdateComplete(tc, 1); err != nil {
+	if err := updateutils.WaitForRollingUpdateComplete(tc, 1); err != nil {
 		t.Fatalf("coherent update did not complete: %v", err)
 	}
-	assertUpdateInProgressCleared(tc)
-	assertGenerationHashConverged(tc)
-	assertPodGangMapSingleGeneration(t, tc)
+	updateutils.AssertUpdateInProgressCleared(tc)
+	updateutils.AssertGenerationHashConverged(tc)
+	updateutils.AssertPodGangMapSingleGeneration(t, tc)
 
 	tests.Logger.Info("5. Scale the inference PCSG back to 2 and verify new-revision pods launch")
 	tc.ScalePCSGAcrossAllReplicasAndWait(coherentWorkloadName, "inference", 1, 2, coherentExpectedPods, 0)
-	assertGenerationHashConverged(tc)
+	updateutils.AssertGenerationHashConverged(tc)
 	if err := tc.WaitForPods(coherentExpectedPods); err != nil {
 		t.Fatalf("pods did not become Ready after scaling the inference PCSG back up: %v", err)
 	}
@@ -620,7 +667,8 @@ func Test_CU12_CoherentUpdateWithPodCliqueScalingGroupScaledToZero(t *testing.T)
 // Test_CU13_CoherentUpdateWithStandaloneScaledToZero verifies that a coherent update completes when an
 // in-scope standalone PodClique is scaled to zero before the update. The standalone PodClique has no pods
 // to roll, yet its resource still advances to the new revision, so a later scale-out launches new-revision
-// pods. The active inference PCSG rolls normally.
+// pods. No new anchor commits frontend pods while its live desired replicas are zero, even though the
+// PCS template still has positive Replicas and MinAvailable. The active inference PCSG rolls normally.
 func Test_CU13_CoherentUpdateWithStandaloneScaledToZero(t *testing.T) {
 	tests.Logger.Info("1. Deploy workload-coherent and verify 6 pods")
 	tc, cleanup, _ := setupTest(t, testConfig{
@@ -636,22 +684,34 @@ func Test_CU13_CoherentUpdateWithStandaloneScaledToZero(t *testing.T) {
 
 	tests.Logger.Info("3. Trigger a coherent update of frontend and the inference PCSG")
 	for _, cliqueName := range []string{"frontend", "prefill"} {
-		if err := triggerPodCliqueUpdate(tc, cliqueName); err != nil {
+		if err := updateutils.TriggerPodCliqueUpdate(tc, cliqueName); err != nil {
 			t.Fatalf("failed to trigger update of %s: %v", cliqueName, err)
 		}
 	}
 
 	tests.Logger.Info("4. Wait for the coherent update to complete and converge")
-	if err := waitForRollingUpdateComplete(tc, 1); err != nil {
+	if err := updateutils.WaitForRollingUpdateComplete(tc, 1); err != nil {
 		t.Fatalf("coherent update did not complete: %v", err)
 	}
-	assertUpdateInProgressCleared(tc)
-	assertGenerationHashConverged(tc)
-	assertPodGangMapSingleGeneration(t, tc)
+	updateutils.AssertUpdateInProgressCleared(tc)
+	updateutils.AssertGenerationHashConverged(tc)
+	updateutils.AssertPodGangMapSingleGeneration(t, tc)
+
+	pgm, err := updateutils.GetReplicaPodGangMap(tc, 0)
+	require.NoError(t, err)
+	for _, entry := range pgm.Spec.Entries {
+		require.NotContains(t, entry.PodCliques, "frontend", "epoch %s must not commit zero-replica frontend pods", entry.Epoch)
+	}
+	var frontend grovev1beta1.PodClique
+	require.NoError(t, tc.Client.Get(tc.Ctx, types.NamespacedName{
+		Namespace: tc.Namespace, Name: coherentWorkloadName + "-0-frontend",
+	}, &frontend))
+	require.Equal(t, int32(0), frontend.Spec.Replicas, "frontend must remain scaled to zero until explicitly scaled back up")
+	require.NoError(t, tc.WaitForPods(4))
 
 	tests.Logger.Info("5. Scale the frontend back to 2 and verify new-revision pods launch")
 	tc.ScalePodCliqueAndWait(coherentWorkloadName+"-0-frontend", 2, coherentExpectedPods, 0)
-	assertGenerationHashConverged(tc)
+	updateutils.AssertGenerationHashConverged(tc)
 	if err := tc.WaitForPods(coherentExpectedPods); err != nil {
 		t.Fatalf("pods did not become Ready after scaling the frontend back up: %v", err)
 	}
@@ -677,31 +737,26 @@ func Test_CU14_CoherentUpdateWithAllComponentsScaledToZero(t *testing.T) {
 
 	tests.Logger.Info("3. Trigger a coherent update of frontend and the inference PCSG")
 	for _, cliqueName := range []string{"frontend", "prefill"} {
-		if err := triggerPodCliqueUpdate(tc, cliqueName); err != nil {
+		if err := updateutils.TriggerPodCliqueUpdate(tc, cliqueName); err != nil {
 			t.Fatalf("failed to trigger update of %s: %v", cliqueName, err)
 		}
 	}
 
 	tests.Logger.Info("4. Wait for the coherent update to complete and verify the PodGangMap has no entries")
-	if err := waitForRollingUpdateComplete(tc, 1); err != nil {
+	if err := updateutils.WaitForRollingUpdateComplete(tc, 1); err != nil {
 		t.Fatalf("coherent update did not complete: %v", err)
 	}
-	assertUpdateInProgressCleared(tc)
-	assertGenerationHashConverged(tc)
-	assert.Empty(t, getPodGangMapEntries(t, tc, 0), "an all-zero replica must leave the PodGangMap with no entries")
+	updateutils.AssertUpdateInProgressCleared(tc)
+	updateutils.AssertGenerationHashConverged(tc)
+	assert.Empty(t, updateutils.PodGangMapEntries(t, tc, 0), "an all-zero replica must leave the PodGangMap with no entries")
 
 	tests.Logger.Info("5. Scale the frontend and the inference PCSG back up and verify new-revision pods launch")
 	tc.ScalePodCliqueAndWait(coherentWorkloadName+"-0-frontend", 2, 2, 0)
 	tc.ScalePCSGAcrossAllReplicasAndWait(coherentWorkloadName, "inference", 1, 2, coherentExpectedPods, 0)
-	assertGenerationHashConverged(tc)
+	updateutils.AssertGenerationHashConverged(tc)
 	if err := tc.WaitForPods(coherentExpectedPods); err != nil {
 		t.Fatalf("pods did not become Ready after scaling both components back up: %v", err)
 	}
-}
-
-type coherentAnchor struct {
-	standalone  map[string]int32
-	pcsgIndices []int32
 }
 
 // Test_CU15_CoherentUpdateRecoversFromOldVersionPodLoss verifies that losing an old-version pod during a
@@ -732,20 +787,20 @@ func Test_CU15_CoherentUpdateRecoversFromOldVersionPodLoss(t *testing.T) {
 	}()
 
 	tests.Logger.Info("3. Trigger a coherent update of the frontend PodClique and wait until it is mid-roll")
-	if err := triggerPodCliqueUpdate(tc, "frontend"); err != nil {
+	if err := updateutils.TriggerPodCliqueUpdate(tc, "frontend"); err != nil {
 		t.Fatalf("failed to trigger update of frontend: %v", err)
 	}
-	if err := waitForOrdinalUpdating(tc, 0); err != nil {
+	if err := updateutils.WaitForOrdinalUpdating(tc, 0); err != nil {
 		t.Fatalf("replica 0 did not start updating: %v", err)
 	}
-	waitForReplicaMidCoherentRoll(t, tc, 0)
+	updateutils.WaitForReplicaMidCoherentRoll(t, tc, 0)
 
 	tests.Logger.Info("4. With the new-revision pod held not-Ready (headroom 0), delete a ready old-revision frontend pod")
 	oldPod, err := firstReadyPodForCliqueOnReplica(tc, "frontend", 0)
 	if err != nil {
 		t.Fatalf("no ready old-revision frontend pod to delete: %v", err)
 	}
-	if err := deletePodAndWaitForTermination(tc, oldPod); err != nil {
+	if err := updateutils.DeletePodAndWaitForTermination(tc, oldPod); err != nil {
 		t.Fatalf("failed to delete old-revision frontend pod %s: %v", oldPod, err)
 	}
 
@@ -756,13 +811,13 @@ func Test_CU15_CoherentUpdateRecoversFromOldVersionPodLoss(t *testing.T) {
 	if err := kwok.DeleteStage(tc.Ctx, tc.Client, kwokStageReadyBlockedR0Name); err != nil {
 		t.Fatalf("failed to delete replica-0 readiness-block KWOK stage: %v", err)
 	}
-	deleteNotReadyPodsOnReplica(t, tc, 0)
-	if err := waitForRollingUpdateComplete(tc, 1); err != nil {
+	updateutils.DeleteNotReadyPodsOnReplica(t, tc, 0)
+	if err := updateutils.WaitForRollingUpdateComplete(tc, 1); err != nil {
 		t.Fatalf("coherent update did not complete after the old-revision pod loss: %v", err)
 	}
-	assertUpdateInProgressCleared(tc)
-	assertPodGangMapSingleGeneration(t, tc)
-	assertGenerationHashConverged(tc)
+	updateutils.AssertUpdateInProgressCleared(tc)
+	updateutils.AssertPodGangMapSingleGeneration(t, tc)
+	updateutils.AssertGenerationHashConverged(tc)
 	assertEachPodGangSingleRevision(t, tc, "frontend", 0)
 }
 
@@ -792,20 +847,20 @@ func Test_CU16_CoherentUpdateSelfHealsCurrentVersionPodLoss(t *testing.T) {
 	}()
 
 	tests.Logger.Info("3. Trigger a coherent update of the frontend PodClique and wait until it is mid-roll")
-	if err := triggerPodCliqueUpdate(tc, "frontend"); err != nil {
+	if err := updateutils.TriggerPodCliqueUpdate(tc, "frontend"); err != nil {
 		t.Fatalf("failed to trigger update of frontend: %v", err)
 	}
-	if err := waitForOrdinalUpdating(tc, 0); err != nil {
+	if err := updateutils.WaitForOrdinalUpdating(tc, 0); err != nil {
 		t.Fatalf("replica 0 did not start updating: %v", err)
 	}
-	waitForReplicaMidCoherentRoll(t, tc, 0)
+	updateutils.WaitForReplicaMidCoherentRoll(t, tc, 0)
 
 	tests.Logger.Info("4. Delete the not-Ready new-revision frontend pod on the current-version anchor")
 	newPod, err := firstNotReadyPodForCliqueOnReplica(tc, "frontend", 0)
 	if err != nil {
 		t.Fatalf("no not-ready new-revision frontend pod to delete: %v", err)
 	}
-	if err := deletePodAndWaitForTermination(tc, newPod); err != nil {
+	if err := updateutils.DeletePodAndWaitForTermination(tc, newPod); err != nil {
 		t.Fatalf("failed to delete new-revision frontend pod %s: %v", newPod, err)
 	}
 
@@ -816,63 +871,14 @@ func Test_CU16_CoherentUpdateSelfHealsCurrentVersionPodLoss(t *testing.T) {
 	if err := kwok.DeleteStage(tc.Ctx, tc.Client, kwokStageReadyBlockedR0Name); err != nil {
 		t.Fatalf("failed to delete replica-0 readiness-block KWOK stage: %v", err)
 	}
-	deleteNotReadyPodsOnReplica(t, tc, 0)
-	if err := waitForRollingUpdateComplete(tc, 1); err != nil {
+	updateutils.DeleteNotReadyPodsOnReplica(t, tc, 0)
+	if err := updateutils.WaitForRollingUpdateComplete(tc, 1); err != nil {
 		t.Fatalf("coherent update did not complete after the current-revision pod loss: %v", err)
 	}
-	assertUpdateInProgressCleared(tc)
-	assertPodGangMapSingleGeneration(t, tc)
-	assertGenerationHashConverged(tc)
+	updateutils.AssertUpdateInProgressCleared(tc)
+	updateutils.AssertPodGangMapSingleGeneration(t, tc)
+	updateutils.AssertGenerationHashConverged(tc)
 	assertEachPodGangSingleRevision(t, tc, "frontend", 0)
-}
-
-// assertCoherentAnchorCompositions fails unless the new-hash anchor entries match want as a multiset, and
-// every new-hash anchor carries newHash. It compares each anchor's standalone pod counts and its indices
-// for pcsgName, ignoring other entries so steady-state scaffolding does not affect the match.
-func assertCoherentAnchorCompositions(t *testing.T, entries []grovev1beta1.PodGangEntry, newHash, pcsgName string, want []coherentAnchor) {
-	t.Helper()
-	gotKeys := make([]string, 0, len(want))
-	for _, entry := range entries {
-		if entry.Role != grovev1beta1.PodGangEntryRoleAnchor || entry.PodCliqueSetGenerationHash != newHash {
-			continue
-		}
-		gotKeys = append(gotKeys, anchorCompositionKey(entry.PodCliques, entry.PCSGReplicaIndices[pcsgName]))
-	}
-	wantKeys := make([]string, 0, len(want))
-	for _, anchor := range want {
-		wantKeys = append(wantKeys, anchorCompositionKey(anchor.standalone, anchor.pcsgIndices))
-	}
-	assert.ElementsMatch(t, wantKeys, gotKeys, "coherent anchor compositions did not match")
-}
-
-// newHashTailPCSGIndices returns the indices for pcsgName carried by the single new-hash tail entry, or nil
-// when no new-hash tail entry exists. It fails when more than one new-hash tail entry is present.
-func newHashTailPCSGIndices(entries []grovev1beta1.PodGangEntry, newHash, pcsgName string) []int32 {
-	var indices []int32
-	for _, entry := range entries {
-		if entry.Role == grovev1beta1.PodGangEntryRoleTail && entry.PodCliqueSetGenerationHash == newHash {
-			indices = entry.PCSGReplicaIndices[pcsgName]
-		}
-	}
-	return indices
-}
-
-// anchorCompositionKey builds a stable multiset key from an entry's standalone pod counts and one PCSG's
-// replica indices, so anchors are compared by composition rather than by epoch or anchor index.
-func anchorCompositionKey(standalone map[string]int32, pcsgIndices []int32) string {
-	standaloneNames := make([]string, 0, len(standalone))
-	for name := range standalone {
-		standaloneNames = append(standaloneNames, name)
-	}
-	sort.Strings(standaloneNames)
-	var b strings.Builder
-	for _, name := range standaloneNames {
-		fmt.Fprintf(&b, "%s=%d;", name, standalone[name])
-	}
-	sorted := append([]int32(nil), pcsgIndices...)
-	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
-	fmt.Fprintf(&b, "pcsg=%v", sorted)
-	return b.String()
 }
 
 // Test_CU17_CoherentCorrectiveUpdateRecoversUnavailableReplicas verifies that a Coherent update makes
@@ -988,7 +994,7 @@ func Test_CU17_CoherentCorrectiveUpdateRecoversUnavailableReplicas(t *testing.T)
 			// Let the first generation fully reconcile before correcting, so the correction is a coherent
 			// update rather than part of initial pod creation. Confirm the workload is unavailable.
 			require.EventuallyWithT(t, func(c *assert.CollectT) {
-				pcs, err := getPCS(tc, tc.Workload.Name)
+				pcs, err := updateutils.GetPCS(tc, tc.Workload.Name)
 				require.NoError(c, err)
 				require.NotNil(c, pcs.Status.ObservedGeneration)
 				assert.Equal(c, pcs.Generation, *pcs.Status.ObservedGeneration)
@@ -1004,7 +1010,7 @@ func Test_CU17_CoherentCorrectiveUpdateRecoversUnavailableReplicas(t *testing.T)
 			tests.Logger.Info("3. Verify Grove replaces the unavailable pods and completes the corrective update")
 			// The corrective update must proceed even though MaxUnavailable is already breached; otherwise the
 			// unavailable pods are never replaced and this wait times out.
-			require.NoError(t, waitForRollingUpdateComplete(tc, 1),
+			require.NoError(t, updateutils.WaitForRollingUpdateComplete(tc, 1),
 				"corrective coherent update must replace the unavailable pods and complete")
 			require.NoError(t, tc.WaitForPods(tt.expectedPods))
 
@@ -1014,9 +1020,9 @@ func Test_CU17_CoherentCorrectiveUpdateRecoversUnavailableReplicas(t *testing.T)
 			for _, p := range pods.Items {
 				assert.False(t, oldUIDs[p.UID], "every unavailable pod must be replaced")
 			}
-			assertUpdateInProgressCleared(tc)
-			assertGenerationHashConverged(tc)
-			assertPodGangMapSingleGeneration(t, tc)
+			updateutils.AssertUpdateInProgressCleared(tc)
+			updateutils.AssertGenerationHashConverged(tc)
+			updateutils.AssertPodGangMapSingleGeneration(t, tc)
 		})
 	}
 }
@@ -1061,47 +1067,263 @@ func Test_CU18_MaxUnavailableAboveTemplateReplicas(t *testing.T) {
 	tc.ScalePCSGAcrossAllReplicasAndWait(workloadName, "sg-x", 1, 4, 5, 0)
 
 	tests.Logger.Info("4. Trigger a Coherent rollout of sg-x and verify the budget is honoured against the live count of 4")
-	prevHash := getPCSGenerationHash(t, &tcLong)
-	peakOut, err := maxUnavailablePods(&tcLong, notReadyPodForPCSG(&tcLong, "sg-x"), func() error {
-		if err := triggerPodCliqueUpdate(&tcLong, "pc-b"); err != nil {
+	prevHash := updateutils.PCSGenerationHash(t, &tcLong)
+	peakOut, err := updateutils.MaxUnavailablePods(&tcLong, updateutils.NotReadyPodForPCSG(&tcLong, "sg-x"), func() error {
+		if err := updateutils.TriggerPodCliqueUpdate(&tcLong, "pc-b"); err != nil {
 			return err
 		}
-		if err := waitForGenerationHashChange(&tcLong, prevHash); err != nil {
+		if err := updateutils.WaitForGenerationHashChange(&tcLong, prevHash); err != nil {
 			return err
 		}
-		return waitForRollingUpdateComplete(&tcLong, 1)
+		return updateutils.WaitForRollingUpdateComplete(&tcLong, 1)
 	})
 	if err != nil {
 		t.Fatalf("coherent update of sg-x at 4 replicas did not complete: %v", err)
 	}
 	assert.LessOrEqualf(t, peakOut, 2, "expected at most maxUnavailable=2 sg-x replicas unavailable at once with 4 live replicas under Coherent, observed %d", peakOut)
-	assertUpdateInProgressCleared(tc)
+	updateutils.AssertUpdateInProgressCleared(tc)
 
 	tests.Logger.Info("5. Scale sg-x back in from 4 to 1 live replica (front 1 + sg-x 1 = 2 pods)")
 	tc.ScalePCSGAcrossAllReplicasAndWait(workloadName, "sg-x", 1, 1, 2, 0)
 
 	tests.Logger.Info("6. Trigger a Coherent rollout again: the stored budget of 2 must not disrupt more than the single remaining replica")
-	prevHash = getPCSGenerationHash(t, &tcLong)
-	peakIn, err := maxUnavailablePods(&tcLong, notReadyPodForPCSG(&tcLong, "sg-x"), func() error {
-		if err := triggerPodCliqueUpdate(&tcLong, "pc-b"); err != nil {
+	prevHash = updateutils.PCSGenerationHash(t, &tcLong)
+	peakIn, err := updateutils.MaxUnavailablePods(&tcLong, updateutils.NotReadyPodForPCSG(&tcLong, "sg-x"), func() error {
+		if err := updateutils.TriggerPodCliqueUpdate(&tcLong, "pc-b"); err != nil {
 			return err
 		}
-		if err := waitForGenerationHashChange(&tcLong, prevHash); err != nil {
+		if err := updateutils.WaitForGenerationHashChange(&tcLong, prevHash); err != nil {
 			return err
 		}
-		return waitForRollingUpdateComplete(&tcLong, 1)
+		return updateutils.WaitForRollingUpdateComplete(&tcLong, 1)
 	})
 	if err != nil {
 		t.Fatalf("coherent update of sg-x at 1 replica did not complete: %v", err)
 	}
 	assert.LessOrEqualf(t, peakIn, 1, "expected the Coherent rollout to disrupt at most the 1 remaining sg-x replica despite the stored budget of 2, observed %d", peakIn)
-	assertUpdateInProgressCleared(tc)
+	updateutils.AssertUpdateInProgressCleared(tc)
+}
+
+type coherentAnchor struct {
+	standalone  map[string]int32
+	pcsgIndices []int32
+}
+
+// assertCoherentAnchorCompositions fails unless the new-hash anchor entries match want as a multiset, and
+// every new-hash anchor carries newHash. It compares each anchor's standalone pod counts and its indices
+// for pcsgName, ignoring other entries so steady-state scaffolding does not affect the match.
+func assertCoherentAnchorCompositions(t *testing.T, entries []grovev1beta1.PodGangEntry, newHash, pcsgName string, want []coherentAnchor) {
+	t.Helper()
+	gotKeys := make([]string, 0, len(want))
+	for _, entry := range entries {
+		if entry.Role != grovev1beta1.PodGangEntryRoleAnchor || entry.PodCliqueSetGenerationHash != newHash {
+			continue
+		}
+		gotKeys = append(gotKeys, anchorCompositionKey(entry.PodCliques, entry.PCSGReplicaIndices[pcsgName]))
+	}
+	wantKeys := make([]string, 0, len(want))
+	for _, anchor := range want {
+		wantKeys = append(wantKeys, anchorCompositionKey(anchor.standalone, anchor.pcsgIndices))
+	}
+	assert.ElementsMatch(t, wantKeys, gotKeys, "coherent anchor compositions did not match")
+}
+
+// anchorCompositionKey builds a stable multiset key from an entry's standalone pod counts and one PCSG's
+// replica indices, so anchors are compared by composition rather than by epoch or anchor index.
+func anchorCompositionKey(standalone map[string]int32, pcsgIndices []int32) string {
+	standaloneNames := make([]string, 0, len(standalone))
+	for name := range standalone {
+		standaloneNames = append(standaloneNames, name)
+	}
+	sort.Strings(standaloneNames)
+	var b strings.Builder
+	for _, name := range standaloneNames {
+		fmt.Fprintf(&b, "%s=%d;", name, standalone[name])
+	}
+	sorted := append([]int32(nil), pcsgIndices...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
+	fmt.Fprintf(&b, "pcsg=%v", sorted)
+	return b.String()
+}
+
+// newHashTailPCSGIndices returns the indices for pcsgName carried by the single new-hash tail entry, or nil
+// when no new-hash tail entry exists. It fails when more than one new-hash tail entry is present.
+func newHashTailPCSGIndices(entries []grovev1beta1.PodGangEntry, newHash, pcsgName string) []int32 {
+	var indices []int32
+	for _, entry := range entries {
+		if entry.Role == grovev1beta1.PodGangEntryRoleTail && entry.PodCliqueSetGenerationHash == newHash {
+			indices = entry.PCSGReplicaIndices[pcsgName]
+		}
+	}
+	return indices
+}
+
+// gangTerminateReplicaAndWaitForPodGangMapRebuild breaches MinAvailable on the given PodClique of the
+// given PCS replica and waits until the replica's PodGangMap is deleted and rebuilt. It deletes every live
+// pod of that PodClique on the replica, dropping it below MinAvailable. With a crash-loop stage active for
+// the replica the recreated pods stay not-ready past terminationDelay, so the component stays below MinAvailable long enough for the PCS-level gang termination to fire once (its
+// re-fire guard prevents churn) and rebuild the replica. It polls until the replica's PodGangMap carries a
+// new UID, which is how gang termination resets a fully torn-down replica.
+//
+// Gang termination is suppressed while a replica is itself under coherent update (its MinAvailableBreached
+// goes Unknown). The caller keeps another replica's update parked in flight so the orchestrator never
+// advances to this replica, and the poll fails fast if it ever does, rather than waiting out the deadline.
+func gangTerminateReplicaAndWaitForPodGangMapRebuild(t *testing.T, tc *testctx.TestContext, cliqueName string, pcsReplicaIndex int) {
+	t.Helper()
+	pgmBefore, err := updateutils.GetReplicaPodGangMap(tc, pcsReplicaIndex)
+	if err != nil {
+		t.Fatalf("failed to read PodGangMap for replica %d: %v", pcsReplicaIndex, err)
+	}
+	oldUID := pgmBefore.UID
+
+	victims, err := livePodsForCliqueOnReplica(tc, cliqueName, pcsReplicaIndex)
+	if err != nil {
+		t.Fatalf("failed to list %s pods on replica %d: %v", cliqueName, pcsReplicaIndex, err)
+	}
+	if len(victims) == 0 {
+		t.Fatalf("no %s pods found on replica %d to breach MinAvailable", cliqueName, pcsReplicaIndex)
+	}
+	for i := range victims {
+		if err := tc.Client.Delete(tc.Ctx, &victims[i]); err != nil && !apierrors.IsNotFound(err) {
+			t.Fatalf("failed to delete pod %s to breach MinAvailable: %v", victims[i].Name, err)
+		}
+	}
+
+	pollErr := wait.PollUntilContextTimeout(tc.Ctx, 2*time.Second, 90*time.Second, true, func(context.Context) (bool, error) {
+		// Gang termination is suppressed while a replica is itself under coherent update: its
+		// MinAvailableBreached goes Unknown ("Update is in progress"). If the orchestrator has advanced to
+		// the replica being gang terminated, the rebuild can never happen, so fail fast with a clear message
+		// instead of polling to the deadline. The readiness-hold on the rolling replica keeps the
+		// orchestrator parked there, so in a healthy run this guard never trips.
+		pcs, err := updateutils.GetPCS(tc, tc.Workload.Name)
+		if err != nil {
+			return false, err
+		}
+		if up := pcs.Status.UpdateProgress; up != nil && len(up.CurrentlyUpdating) > 0 &&
+			int(up.CurrentlyUpdating[0].ReplicaIndex) == pcsReplicaIndex {
+			return false, fmt.Errorf("orchestrator advanced to replica %d under gang termination; its MinAvailableBreached is suppressed while it updates, so the PodGangMap cannot be rebuilt", pcsReplicaIndex)
+		}
+		pgm, err := updateutils.GetReplicaPodGangMap(tc, pcsReplicaIndex)
+		if err != nil {
+			if apierrors.IsNotFound(err) {
+				return false, nil // briefly absent between delete and recreate
+			}
+			return false, err
+		}
+		return pgm.UID != oldUID, nil
+	})
+	if pollErr != nil {
+		t.Fatalf("PodGangMap for replica %d was not rebuilt after gang termination: %v", pcsReplicaIndex, pollErr)
+	}
+}
+
+// livePodsForCliqueOnReplica returns the live pods of the given clique that belong to the given PCS
+// replica index.
+func livePodsForCliqueOnReplica(tc *testctx.TestContext, cliqueName string, pcsReplicaIndex int) ([]corev1.Pod, error) {
+	podList, err := tc.ListPods()
+	if err != nil {
+		return nil, err
+	}
+	wantReplica := strconv.Itoa(pcsReplicaIndex)
+	var matched []corev1.Pod
+	for i := range podList.Items {
+		pod := podList.Items[i]
+		pclq, ok := pod.Labels[apicommon.LabelPodClique]
+		if !ok || !strings.HasSuffix(pclq, "-"+cliqueName) {
+			continue
+		}
+		if pod.Labels[apicommon.LabelPodCliqueSetReplicaIndex] != wantReplica {
+			continue
+		}
+		if pod.DeletionTimestamp != nil {
+			continue
+		}
+		matched = append(matched, pod)
+	}
+	return matched, nil
+}
+
+// firstReadyPodForCliqueOnReplica returns the name of a Ready pod of the clique on the replica. During a
+// coherent roll parked by blocked readiness, the Ready pods are the old-revision pods on the old anchor.
+func firstReadyPodForCliqueOnReplica(tc *testctx.TestContext, cliqueName string, pcsReplicaIndex int) (string, error) {
+	livePods, err := livePodsForCliqueOnReplica(tc, cliqueName, pcsReplicaIndex)
+	if err != nil {
+		return "", err
+	}
+	for i := range livePods {
+		if kubeutils.IsPodReady(&livePods[i]) {
+			return livePods[i].Name, nil
+		}
+	}
+	return "", fmt.Errorf("no Ready %s pod found on replica %d", cliqueName, pcsReplicaIndex)
+}
+
+const (
+	// kwokStageCrashloopR1Path is the KWOK stage fixture path.
+	kwokStageCrashloopR1Path = "../../yaml/kwok/pod-crashloop-r1-standalone.yaml"
+	// kwokStageCrashloopR1Name is the KWOK stage name.
+	kwokStageCrashloopR1Name = "pod-crashloop-r1-standalone"
+)
+
+// assertEachPodGangSingleRevision fails the test if any PodGang carries pods of more than one pod template
+// hash for the given clique on the given replica. A coherent update must never place a new-revision pod on
+// an old-version PodGang, so every PodGang holds a single revision.
+//
+//nolint:unparam // Keep the clique selection explicit at the assertion call site.
+func assertEachPodGangSingleRevision(t *testing.T, tc *testctx.TestContext, cliqueName string, pcsReplicaIndex int) {
+	t.Helper()
+	livePods, err := livePodsForCliqueOnReplica(tc, cliqueName, pcsReplicaIndex)
+	if err != nil {
+		t.Fatalf("failed to list %s pods on replica %d: %v", cliqueName, pcsReplicaIndex, err)
+	}
+	revisionByPodGang := make(map[string]string)
+	for i := range livePods {
+		podGang := livePods[i].Labels[apicommon.LabelPodGang]
+		if podGang == "" {
+			continue
+		}
+		revision := livePods[i].Labels[apicommon.LabelPodTemplateHash]
+		if existing, ok := revisionByPodGang[podGang]; ok {
+			assert.Equalf(t, existing, revision, "PodGang %s carries pods of two revisions (%s and %s), coherence broken", podGang, existing, revision)
+			continue
+		}
+		revisionByPodGang[podGang] = revision
+	}
+}
+
+// firstNotReadyPodForCliqueOnReplica returns the name of a not-Ready pod of the clique on the replica.
+// During a coherent roll parked by blocked readiness, the not-Ready pod is the new-revision pod the current
+// sub-step created on the current-version anchor.
+func firstNotReadyPodForCliqueOnReplica(tc *testctx.TestContext, cliqueName string, pcsReplicaIndex int) (string, error) {
+	livePods, err := livePodsForCliqueOnReplica(tc, cliqueName, pcsReplicaIndex)
+	if err != nil {
+		return "", err
+	}
+	for i := range livePods {
+		if !kubeutils.IsPodReady(&livePods[i]) {
+			return livePods[i].Name, nil
+		}
+	}
+	return "", fmt.Errorf("no not-Ready %s pod found on replica %d", cliqueName, pcsReplicaIndex)
+}
+
+// assertPCSGUnavailable returns an assertion that the named PodCliqueScalingGroup reports the expected
+// replica count and zero available replicas.
+func assertPCSGUnavailable(pcsgConfigName string, expectedReplicas int32) func(c *assert.CollectT, tc *testctx.TestContext) {
+	return func(c *assert.CollectT, tc *testctx.TestContext) {
+		var pcsg grovev1beta1.PodCliqueScalingGroup
+		require.NoError(c, tc.Client.Get(tc.Ctx, types.NamespacedName{
+			Namespace: tc.Namespace, Name: updateutils.PCSGFQN(tc, pcsgConfigName),
+		}, &pcsg))
+		assert.EqualValues(c, expectedReplicas, pcsg.Status.Replicas)
+		assert.Zero(c, pcsg.Status.AvailableReplicas)
+	}
 }
 
 // removeUnschedulableSelector removes the impossible node selector from the first clique of the workload's
 // PCS template, letting its Pending pods schedule and bumping the generation hash to trigger the update.
 func removeUnschedulableSelector(t *testing.T, tc *testctx.TestContext) {
-	pcs, err := getPCS(tc, tc.Workload.Name)
+	pcs, err := updateutils.GetPCS(tc, tc.Workload.Name)
 	require.NoError(t, err)
 	original := pcs.DeepCopy()
 	delete(pcs.Spec.Template.Cliques[0].Spec.PodSpec.NodeSelector, "e2e.grove.io/unschedulable")
@@ -1115,18 +1337,36 @@ func removeUnschedulableSelector(t *testing.T, tc *testctx.TestContext) {
 // recover, which is exactly what the corrective drain must do.
 func recoverFromCrashloopAndTriggerUpdate(t *testing.T, tc *testctx.TestContext) {
 	require.NoError(t, kwok.DeleteStage(tc.Ctx, tc.Client, kwokStageCrashloopName))
-	require.NoError(t, triggerPodCliqueUpdate(tc, "worker"))
+	require.NoError(t, updateutils.TriggerPodCliqueUpdate(tc, "worker"))
 }
 
-// assertPCSGUnavailable returns an assertion that the named PodCliqueScalingGroup reports the expected
-// replica count and zero available replicas.
-func assertPCSGUnavailable(pcsgConfigName string, expectedReplicas int32) func(c *assert.CollectT, tc *testctx.TestContext) {
-	return func(c *assert.CollectT, tc *testctx.TestContext) {
-		var pcsg grovev1beta1.PodCliqueScalingGroup
-		require.NoError(c, tc.Client.Get(tc.Ctx, types.NamespacedName{
-			Namespace: tc.Namespace, Name: pcsgFQN(tc, pcsgConfigName),
-		}, &pcsg))
-		assert.EqualValues(c, expectedReplicas, pcsg.Status.Replicas)
-		assert.Zero(c, pcsg.Status.AvailableReplicas)
+// setCoherentTestOperatorReplicas stops or resumes the operator for an interrupted-reconcile fixture.
+// Stopping waits for all operator pods to disappear, so no reconciliation can race the status patches.
+func setCoherentTestOperatorReplicas(ctx context.Context, tc *testctx.TestContext, replicas int32) error {
+	deployment := &appsv1.Deployment{}
+	deploymentKey := client.ObjectKey{Namespace: setup.OperatorNamespace, Name: setup.OperatorDeploymentName}
+	if err := tc.Client.Get(ctx, deploymentKey, deployment); err != nil {
+		return fmt.Errorf("get Grove operator deployment: %w", err)
 	}
+	original := deployment.DeepCopy()
+	deployment.Spec.Replicas = &replicas
+	if err := tc.Client.Patch(ctx, deployment, client.MergeFrom(original)); err != nil {
+		return fmt.Errorf("scale Grove operator to %d replicas: %w", replicas, err)
+	}
+	if err := wait.PollUntilContextTimeout(ctx, tc.Interval, tc.Timeout, true, func(ctx context.Context) (bool, error) {
+		if replicas == 0 {
+			var pods corev1.PodList
+			if err := tc.Client.List(ctx, &pods, client.InNamespace(setup.OperatorNamespace), setup.OperatorPodLabels); err != nil {
+				return false, err
+			}
+			return len(pods.Items) == 0, nil
+		}
+		if err := tc.Client.Get(ctx, deploymentKey, deployment); err != nil {
+			return false, err
+		}
+		return deployment.Status.ObservedGeneration >= deployment.Generation && deployment.Status.ReadyReplicas == replicas, nil
+	}); err != nil {
+		return fmt.Errorf("wait for Grove operator at %d replicas: %w", replicas, err)
+	}
+	return nil
 }

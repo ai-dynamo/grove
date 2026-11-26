@@ -499,6 +499,219 @@ func TestBackend_SyncPodGang_KeepsReplicaPodGroupForRetainedSparseReplica(t *tes
 	require.NoError(t, cl.Get(context.Background(), client.ObjectKeyFromObject(replicaPodGroup), &kaischedulingv2alpha2.PodGroup{}))
 }
 
+func TestBackend_SyncPodGang_ReplicaRecreationCleanupWithoutPodGangMap(t *testing.T) {
+	at := metav1.NewTime(time.Unix(100, 0).UTC())
+	tests := []struct {
+		name        string
+		replica     int
+		replacement *grovecorev1beta1.PodCliqueSetReplicaReplacementProgress
+		wantCleanup bool
+	}{
+		{
+			name: "same-index source",
+			replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{
+				TargetReplicaIndex: 0,
+			},
+			wantCleanup: true,
+		},
+		{
+			name: "same-index target after barrier",
+			replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{
+				TargetReplicaIndex:       0,
+				SourceCleanupCompletedAt: &at,
+			},
+		},
+		{
+			name: "different-index source",
+			replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{
+				TargetReplicaIndex: 1,
+			},
+			wantCleanup: true,
+		},
+		{
+			name: "different-index target", replica: 1,
+			replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{
+				TargetReplicaIndex: 1,
+			},
+		},
+		{
+			name: "retired source", replica: 3,
+			replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{
+				TargetReplicaIndex:          1,
+				RetiredSourceReplicaIndices: []int32{3},
+			},
+			wantCleanup: true,
+		},
+		{
+			name: "canceled source",
+			replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{
+				TargetReplicaIndex: 1,
+				CanceledAt:         &at,
+			},
+			wantCleanup: true,
+		},
+		{
+			name: "canceled target", replica: 1,
+			replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{
+				TargetReplicaIndex: 1,
+				CanceledAt:         &at,
+			},
+			wantCleanup: true,
+		},
+		{
+			name: "unrelated replica", replica: 4,
+			replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{
+				TargetReplicaIndex: 1,
+			},
+		},
+		{name: "selection without replacement"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := t.Context()
+			pcs := newPodCliqueSet("recreating-pcs", "team-a")
+			pcs.Status.UpdateProgress = &grovecorev1beta1.PodCliqueSetUpdateProgress{
+				RequiresReplicaRecreation: true,
+				CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{
+					ReplicaIndex: 0,
+					Replacement:  tc.replacement.DeepCopy(),
+				}},
+			}
+			podGang := terminatingPodGang(pcs)
+			podGang.Labels[apicommon.LabelPodCliqueSetReplicaIndex] = strconv.Itoa(tc.replica)
+			podGroup := ownedReplicaPodGroup(pcs, tc.replica)
+
+			// No PGM exists. Only explicit cleanup intent may bypass its lookup.
+			cl := testutils.NewTestClientBuilder().WithObjects(pcs, podGang).Build()
+			b := New(cl, cl.Scheme(), record.NewFakeRecorder(10),
+				configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameKai})
+			initTestBackend(t, b, cl)
+			require.NoError(t, cl.Create(ctx, podGroup))
+
+			err := b.SyncPodGang(ctx, podGang)
+			if !tc.wantCleanup {
+				require.ErrorContains(t, err, "get PodGangMap")
+				require.NoError(t, cl.Get(ctx, client.ObjectKeyFromObject(podGroup),
+					&kaischedulingv2alpha2.PodGroup{}))
+				current := &groveschedulerv1alpha1.PodGang{}
+				require.NoError(t, cl.Get(ctx, client.ObjectKeyFromObject(podGang), current))
+				assert.Contains(t, current.Finalizers, podGangFinalizer)
+				return
+			}
+
+			require.NoError(t, err)
+			assert.True(t, apierrors.IsNotFound(
+				cl.Get(ctx, client.ObjectKeyFromObject(podGroup), &kaischedulingv2alpha2.PodGroup{}),
+			))
+			assertPodGangFinalizerRemoved(t, cl, podGang)
+		})
+	}
+}
+
+func TestBackend_SyncPodGang_RecreationCleanupWaitsForActivePods(t *testing.T) {
+	ctx := t.Context()
+	pcs := newPodCliqueSet("recreating-pcs", "team-a")
+	pcs.Status.UpdateProgress = &grovecorev1beta1.PodCliqueSetUpdateProgress{
+		RequiresReplicaRecreation: true,
+		CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{
+			ReplicaIndex: 0,
+			Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{
+				TargetReplicaIndex: 0,
+			},
+		}},
+	}
+	podGang := terminatingPodGang(pcs)
+	podGang.Labels[apicommon.LabelPodCliqueSetReplicaIndex] = "0"
+	podGroup := ownedReplicaPodGroup(pcs, 0)
+	pod := legacyPodGangPod(pcs, podGang, "worker")
+
+	cl := testutils.NewTestClientBuilder().WithObjects(pcs, podGang, pod).Build()
+	b := New(cl, cl.Scheme(), record.NewFakeRecorder(10),
+		configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameKai})
+	initTestBackend(t, b, cl)
+	require.NoError(t, cl.Create(ctx, podGroup))
+
+	require.ErrorContains(t, b.SyncPodGang(ctx, podGang), "waiting for 1 Pods")
+	require.NoError(t, cl.Get(ctx, client.ObjectKeyFromObject(podGroup),
+		&kaischedulingv2alpha2.PodGroup{}))
+	current := &groveschedulerv1alpha1.PodGang{}
+	require.NoError(t, cl.Get(ctx, client.ObjectKeyFromObject(podGang), current))
+	assert.Contains(t, current.Finalizers, podGangFinalizer)
+
+	require.NoError(t, cl.Delete(ctx, pod))
+	require.NoError(t, b.SyncPodGang(ctx, podGang))
+	assert.True(t, apierrors.IsNotFound(
+		cl.Get(ctx, client.ObjectKeyFromObject(podGroup), &kaischedulingv2alpha2.PodGroup{}),
+	))
+	assertPodGangFinalizerRemoved(t, cl, podGang)
+}
+
+func TestBackend_SyncPodGang_RecreationCleanupPreservesDeletionGuards(t *testing.T) {
+	deleteErr := apierrors.NewInternalError(errors.New("delete unavailable"))
+	tests := []struct {
+		name       string
+		foreignUID types.UID
+		deleteErr  *apierrors.StatusError
+		wantError  string
+	}{
+		{
+			name: "foreign owner", foreignUID: "another-pcs",
+			wantError: "refusing to delete KAI PodGroup",
+		},
+		{
+			name: "delete failure", deleteErr: deleteErr,
+			wantError: "delete unavailable",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := t.Context()
+			pcs := newPodCliqueSet("recreating-pcs", "team-a")
+			pcs.Status.UpdateProgress = &grovecorev1beta1.PodCliqueSetUpdateProgress{
+				RequiresReplicaRecreation: true,
+				CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{
+					ReplicaIndex: 0,
+					Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{
+						TargetReplicaIndex: 0,
+					},
+				}},
+			}
+			podGang := terminatingPodGang(pcs)
+			podGang.Labels[apicommon.LabelPodCliqueSetReplicaIndex] = "0"
+			podGroup := ownedReplicaPodGroup(pcs, 0)
+			if tc.foreignUID != "" {
+				podGroup.OwnerReferences[0].UID = tc.foreignUID
+			}
+
+			cl := testutils.NewTestClientBuilder().
+				WithObjects(pcs, podGang).
+				RecordErrorForObjects(
+					testutils.ClientMethodDelete,
+					tc.deleteErr,
+					client.ObjectKeyFromObject(podGroup),
+				).
+				Build()
+			b := New(cl, cl.Scheme(), record.NewFakeRecorder(10),
+				configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameKai})
+			initTestBackend(t, b, cl)
+			require.NoError(t, cl.Create(ctx, podGroup))
+
+			err := b.SyncPodGang(ctx, podGang)
+			require.ErrorContains(t, err, tc.wantError)
+			if tc.deleteErr != nil {
+				assert.ErrorIs(t, err, tc.deleteErr)
+			}
+			require.NoError(t, cl.Get(ctx, client.ObjectKeyFromObject(podGroup),
+				&kaischedulingv2alpha2.PodGroup{}))
+			current := &groveschedulerv1alpha1.PodGang{}
+			require.NoError(t, cl.Get(ctx, client.ObjectKeyFromObject(podGang), current))
+			assert.Contains(t, current.Finalizers, podGangFinalizer)
+		})
+	}
+}
+
 func TestBackend_SyncPodGang_ReleasesFinalizerWhenPodCliqueSetIsDeletingOrMissing(t *testing.T) {
 	tests := []struct {
 		name       string

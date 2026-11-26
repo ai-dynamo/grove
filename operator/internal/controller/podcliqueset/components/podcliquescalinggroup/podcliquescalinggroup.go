@@ -25,7 +25,7 @@ import (
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
-	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/sync"
+	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/sync"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
@@ -103,7 +103,7 @@ func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev
 	}
 
 	return pcssync.Result{
-		ScaleInReplicaIndicesAwaitingResourceCleanup: replicaIndicesAwaitingResourceCleanup,
+		CleanedUpReplicaIndices: componentutils.ComputeCleanedUpReplicaIndices(state.ScaleInReplicaIndices, replicaIndicesAwaitingResourceCleanup),
 	}, nil
 }
 
@@ -258,9 +258,20 @@ func (r _resource) buildResource(pcsg *grovecorev1beta1.PodCliqueScalingGroup, p
 	if !pcsgExists {
 		pcsg.Spec.Replicas = *pcsgConfig.Replicas
 	}
-	pcsg.Spec.MinAvailable = pcsgConfig.MinAvailable
-	pcsg.Spec.CliqueNames = pcsgConfig.CliqueNames
+	preserveRevision := pcsgExists && componentutils.ShouldPreservePCSReplicaRevision(pcs, pcsReplica)
+	resourceGenerationHash := pcsg.Labels[apicommon.LabelPodCliqueSetGenerationHash]
+	if preserveRevision {
+		// Migrate an existing resource using only its previously reconciled generation.
+		if resourceGenerationHash == "" && pcsg.Status.CurrentPodCliqueSetGenerationHash != nil {
+			resourceGenerationHash = *pcsg.Status.CurrentPodCliqueSetGenerationHash
+		}
+	} else {
+		resourceGenerationHash = *pcs.Status.CurrentGenerationHash
+		pcsg.Spec.MinAvailable = pcsgConfig.MinAvailable
+		pcsg.Spec.CliqueNames = pcsgConfig.CliqueNames
+	}
 	pcsg.Labels = getLabels(pcs, pcsReplica, client.ObjectKeyFromObject(pcsg))
+	componentutils.SetMaterializedPCSGenerationHash(&pcsg.ObjectMeta, resourceGenerationHash)
 	pcsg.Annotations = getAnnotations(pcsgConfig)
 	pcsg.Annotations = propagateMNNVLAnnotations(pcsg.Annotations, pcs.Annotations)
 	// A PCS pod-template change does not necessarily change the PCSG spec, so it would not trigger

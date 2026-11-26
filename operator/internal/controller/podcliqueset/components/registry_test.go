@@ -20,7 +20,7 @@ import (
 	groveconfigv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
-	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/sync"
+	pcsexpectations "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/expectations"
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
 	"github.com/ai-dynamo/grove/operator/test/utils"
 
@@ -57,7 +57,7 @@ func TestCreateOperatorRegistry(t *testing.T) {
 
 		registry := CreateOperatorRegistry(mgr, eventRecorder, groveconfigv1beta1.TopologyAwareSchedulingConfiguration{}, groveconfigv1beta1.NetworkAcceleration{
 			AutoMNNVLEnabled: false,
-		}, schedRegistry, &pcssync.ScalingProgressExpectations{})
+		}, schedRegistry, &pcsexpectations.ScalingProgress{}, &pcsexpectations.CurrentlyUpdating{}, &pcsexpectations.GenerationHashes{})
 
 		require.NotNil(t, registry)
 
@@ -97,7 +97,7 @@ func TestCreateOperatorRegistry(t *testing.T) {
 
 		registry := CreateOperatorRegistry(mgr, eventRecorder, groveconfigv1beta1.TopologyAwareSchedulingConfiguration{}, groveconfigv1beta1.NetworkAcceleration{
 			AutoMNNVLEnabled: true,
-		}, schedRegistry, &pcssync.ScalingProgressExpectations{})
+		}, schedRegistry, &pcsexpectations.ScalingProgress{}, &pcsexpectations.CurrentlyUpdating{}, &pcsexpectations.GenerationHashes{})
 
 		require.NotNil(t, registry)
 
@@ -137,7 +137,7 @@ func TestCreateOperatorRegistry(t *testing.T) {
 
 		registry := CreateOperatorRegistry(mgr, eventRecorder, groveconfigv1beta1.TopologyAwareSchedulingConfiguration{}, groveconfigv1beta1.NetworkAcceleration{
 			AutoMNNVLEnabled: false,
-		}, schedRegistry, &pcssync.ScalingProgressExpectations{})
+		}, schedRegistry, &pcsexpectations.ScalingProgress{}, &pcsexpectations.CurrentlyUpdating{}, &pcsexpectations.GenerationHashes{})
 
 		// Verify PodClique operator
 		pclqOp, err := registry.GetOperator(component.KindPodClique)

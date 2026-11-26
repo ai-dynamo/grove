@@ -140,6 +140,12 @@ func (b *PodCliqueSetBuilder) WithPodCliqueSetGenerationHash(pcsGenerationHash *
 	return b
 }
 
+// WithAppliedSchedulingConfigurationHash sets the applied scheduling configuration hash in the PodCliqueSet status.
+func (b *PodCliqueSetBuilder) WithAppliedSchedulingConfigurationHash(schedulingConfigurationHash *string) *PodCliqueSetBuilder {
+	b.pcs.Status.AppliedSchedulingConfigurationHash = schedulingConfigurationHash
+	return b
+}
+
 // WithUpdateStrategy sets the UpdateStrategy for the PodCliqueSet.
 func (b *PodCliqueSetBuilder) WithUpdateStrategy(strategy *grovecorev1beta1.PodCliqueSetUpdateStrategy) *PodCliqueSetBuilder {
 	b.pcs.Spec.UpdateStrategy = strategy
@@ -149,6 +155,24 @@ func (b *PodCliqueSetBuilder) WithUpdateStrategy(strategy *grovecorev1beta1.PodC
 // WithUpdateProgress sets the UpdateProgress in the PodCliqueSet status.
 func (b *PodCliqueSetBuilder) WithUpdateProgress(progress *grovecorev1beta1.PodCliqueSetUpdateProgress) *PodCliqueSetBuilder {
 	b.pcs.Status.UpdateProgress = progress
+	return b
+}
+
+// WithScalingProgress sets the ScalingProgress in the PodCliqueSet status.
+func (b *PodCliqueSetBuilder) WithScalingProgress(progress *grovecorev1beta1.PodCliqueSetScalingProgress) *PodCliqueSetBuilder {
+	b.pcs.Status.ScalingProgress = progress
+	return b
+}
+
+// WithGeneration sets the metadata generation of the PodCliqueSet.
+func (b *PodCliqueSetBuilder) WithGeneration(generation int64) *PodCliqueSetBuilder {
+	b.pcs.Generation = generation
+	return b
+}
+
+// WithObservedGeneration sets the ObservedGeneration in the PodCliqueSet status.
+func (b *PodCliqueSetBuilder) WithObservedGeneration(observedGeneration *int64) *PodCliqueSetBuilder {
+	b.pcs.Status.ObservedGeneration = observedGeneration
 	return b
 }
 
@@ -167,6 +191,12 @@ func (b *PodCliqueSetBuilder) WithAnnotations(annotations map[string]string) *Po
 // WithLabels sets the labels for the PodCliqueSet.
 func (b *PodCliqueSetBuilder) WithLabels(labels map[string]string) *PodCliqueSetBuilder {
 	b.pcs.Labels = labels
+	return b
+}
+
+// WithLastErrors sets the last reconciliation errors in the PodCliqueSet status.
+func (b *PodCliqueSetBuilder) WithLastErrors(lastErrors ...grovecorev1beta1.LastError) *PodCliqueSetBuilder {
+	b.pcs.Status.LastErrors = lastErrors
 	return b
 }
 

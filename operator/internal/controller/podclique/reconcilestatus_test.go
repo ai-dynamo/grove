@@ -42,6 +42,67 @@ import (
 )
 
 // TestMutateUpdatedReplica tests the mutateUpdatedReplica function across different PodClique states
+func TestMutateCurrentHashesDuringReplicaRecreation(t *testing.T) {
+	cases := []struct {
+		name           string
+		marker         string
+		initialHash    *string
+		active         bool
+		missingPCSHash bool
+		staleTemplate  bool
+		unfinishedPods bool
+		inFlight       bool
+		wantAdvance    bool
+	}{
+		{name: "fresh S1 scale-out can bootstrap", marker: "current-generation-hash", wantAdvance: true},
+		{name: "active S1 replacement can bootstrap", marker: "current-generation-hash", active: true, wantAdvance: true},
+		{name: "frozen S0 cannot stamp S1 despite matching pod template", marker: "S0", initialHash: new("S0")},
+		{name: "S0 with failed first status write cannot stamp S1", marker: "S0"},
+		{name: "missing marker with recorded status is not proof of S1", initialHash: new("S0")},
+		{name: "missing marker and status remains unknown"},
+		{name: "active target must still carry S1 marker", marker: "S0", active: true},
+		{name: "superseded marker cannot stamp current generation", marker: "older", initialHash: new("older")},
+		{name: "missing PCS generation waits", marker: "current-generation-hash", missingPCSHash: true},
+		{name: "S1 marker does not bypass template match", marker: "current-generation-hash", staleTemplate: true},
+		{name: "S1 marker does not bypass pod completion", marker: "current-generation-hash", unfinishedPods: true},
+		{name: "S1 marker does not bypass in-flight update", marker: "current-generation-hash", inFlight: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			pcs, pclq, expectedTemplate := newPodCliqueHashConvergenceFixture(t)
+			pcs.Status.UpdateProgress = &grovecorev1beta1.PodCliqueSetUpdateProgress{RequiresReplicaRecreation: true}
+			if tc.active {
+				pcs.Status.UpdateProgress.CurrentlyUpdating = []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{ReplicaIndex: 0, Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 0}}}
+			}
+			if tc.missingPCSHash {
+				pcs.Status.CurrentGenerationHash = nil
+			}
+			pclq.Labels[apicommon.LabelPodCliqueSetGenerationHash] = tc.marker
+			pclq.Status.CurrentPodCliqueSetGenerationHash = tc.initialHash
+			pclq.Status.Replicas = 2
+			pclq.Status.UpdatedReplicas = 2
+			if tc.staleTemplate {
+				pclq.Labels[apicommon.LabelPodTemplateHash] = "stale"
+			}
+			if tc.unfinishedPods {
+				pclq.Status.UpdatedReplicas = 1
+			}
+			if tc.inFlight {
+				pclq.Status.UpdateProgress = &grovecorev1beta1.PodCliqueUpdateProgress{UpdateStartedAt: metav1.Now()}
+			}
+			before := pclq.DeepCopy()
+			require.NoError(t, mutateCurrentHashes(logr.Discard(), pcs, pclq))
+			if tc.wantAdvance {
+				assert.Equal(t, pcs.Status.CurrentGenerationHash, pclq.Status.CurrentPodCliqueSetGenerationHash)
+				assert.Equal(t, ptr.To(expectedTemplate), pclq.Status.CurrentPodTemplateHash)
+			} else {
+				assert.Equal(t, before.Status, pclq.Status)
+			}
+		})
+	}
+}
+
 func TestMutateUpdatedReplica(t *testing.T) {
 	tests := []struct {
 		name                    string
@@ -578,12 +639,102 @@ func TestComputeMinAvailableBreachedConditionPartialScheduleRegression(t *testin
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			condition := computeMinAvailableBreachedCondition(tt.pclq,
+			condition := computeMinAvailableBreachedCondition(logr.Discard(), &grovecorev1beta1.PodCliqueSet{}, tt.pclq,
 				tt.numPodsHavingAtleastOneContainerWithNonZeroExitCode,
 				tt.numPodsStartedButNotReady)
 			assert.Equal(t, constants.ConditionTypeMinAvailableBreached, condition.Type)
 			assert.Equal(t, tt.wantStatus, condition.Status, "MinAvailableBreached status mismatch")
 			assert.Equal(t, tt.wantReason, condition.Reason, "MinAvailableBreached reason mismatch")
+		})
+	}
+}
+
+// TestComputeMinAvailableBreachedConditionDisarmedForReplacement verifies that the condition is held at
+// Unknown when the owning PCS replica participates in a PCS replica replacement, so gang termination is
+// not acted upon while replacement drains the replica.
+func TestComputeMinAvailableBreachedConditionDisarmedForReplacement(t *testing.T) {
+	breachedPCLQ := func(pcsReplicaIndex string) *grovecorev1beta1.PodClique {
+		return &grovecorev1beta1.PodClique{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "pcs-worker",
+				Labels: map[string]string{apicommon.LabelPodCliqueSetReplicaIndex: pcsReplicaIndex},
+			},
+			Spec: grovecorev1beta1.PodCliqueSpec{
+				Replicas:     3,
+				MinAvailable: ptr.To(int32(3)),
+			},
+			Status: grovecorev1beta1.PodCliqueStatus{
+				ObservedGeneration: ptr.To(int64(1)),
+				Replicas:           3,
+				ScheduledReplicas:  0,
+			},
+		}
+	}
+	recreationPCS := func() *grovecorev1beta1.PodCliqueSet {
+		return &grovecorev1beta1.PodCliqueSet{
+			Status: grovecorev1beta1.PodCliqueSetStatus{
+				UpdateProgress: &grovecorev1beta1.PodCliqueSetUpdateProgress{
+					RequiresReplicaRecreation: true,
+					CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{
+						ReplicaIndex: 2,
+						Replacement:  &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{TargetReplicaIndex: 1},
+					}},
+				},
+			},
+		}
+	}
+
+	t.Run("source replica index is disarmed", func(t *testing.T) {
+		condition := computeMinAvailableBreachedCondition(logr.Discard(), recreationPCS(), breachedPCLQ("2"), 0, 0)
+		assert.Equal(t, metav1.ConditionUnknown, condition.Status)
+		assert.Equal(t, constants.ConditionReasonUpdateInProgress, condition.Reason)
+	})
+
+	t.Run("target replica index is disarmed", func(t *testing.T) {
+		condition := computeMinAvailableBreachedCondition(logr.Discard(), recreationPCS(), breachedPCLQ("1"), 0, 0)
+		assert.Equal(t, metav1.ConditionUnknown, condition.Status)
+	})
+
+	t.Run("unrelated replica index still breaches", func(t *testing.T) {
+		condition := computeMinAvailableBreachedCondition(logr.Discard(), recreationPCS(), breachedPCLQ("0"), 0, 0)
+		assert.Equal(t, metav1.ConditionTrue, condition.Status)
+		assert.Equal(t, constants.ConditionReasonScheduledReplicasBelowMinAvailable, condition.Reason)
+	})
+
+	testCases := []struct {
+		name   string
+		labels map[string]string
+	}{
+		{
+			name: "missing replica index is disarmed only during recreation",
+		},
+		{
+			name:   "empty replica index is disarmed only during recreation",
+			labels: map[string]string{apicommon.LabelPodCliqueSetReplicaIndex: ""},
+		},
+		{
+			name:   "malformed replica index is disarmed only during recreation",
+			labels: map[string]string{apicommon.LabelPodCliqueSetReplicaIndex: "not-an-index"},
+		},
+		{
+			name:   "overflowing replica index is disarmed only during recreation",
+			labels: map[string]string{apicommon.LabelPodCliqueSetReplicaIndex: "999999999999999999999999999999999999"},
+		},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			pclq := breachedPCLQ("0")
+			pclq.Labels = tc.labels
+
+			condition := computeMinAvailableBreachedCondition(logr.Discard(), recreationPCS(), pclq, 0, 0)
+			assert.Equal(t, constants.ConditionTypeMinAvailableBreached, condition.Type)
+			assert.Equal(t, metav1.ConditionUnknown, condition.Status, "unknown replica identity must disarm termination during recreation")
+			assert.Equal(t, constants.ConditionReasonUpdateInProgress, condition.Reason)
+
+			condition = computeMinAvailableBreachedCondition(logr.Discard(), &grovecorev1beta1.PodCliqueSet{}, pclq, 0, 0)
+			assert.Equal(t, metav1.ConditionTrue, condition.Status, "ordinary breach handling must remain enabled outside recreation")
+			assert.Equal(t, constants.ConditionReasonScheduledReplicasBelowMinAvailable, condition.Reason)
 		})
 	}
 }

@@ -30,18 +30,27 @@ import (
 	"fmt"
 	"os"
 	"testing"
+	"time"
 
+	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	apiconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
 	corev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
 	grovev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/e2e/grove/podgangmap"
+	"github.com/ai-dynamo/grove/operator/e2e/k8s/kwok"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/pods"
+	"github.com/ai-dynamo/grove/operator/e2e/setup"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
+	updateutils "github.com/ai-dynamo/grove/operator/e2e/tests/update/utils"
+
+	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	"github.com/google/go-github/v86/github"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -208,6 +217,536 @@ func Test_VUPG2_RecoverPodGangMapAfterScaleBelowMinAvailable(t *testing.T) {
 		preUpgrade:  deployWorkloadOnFromVersion,
 		postUpgrade: verifyPodGangMapRecoversAfterScaleBelowMinAvailable,
 	})
+}
+
+// Test_VUPG3_LegacyGenerationRetentionPreservesStandaloneScaling checks that upgrading Grove does not
+// start a workload update. The workload must keep its existing generation hash, update history,
+// and pods, and must still scale and detect when too few pods are scheduled.
+//
+// The test covers Coherent and RollingRecreate, both with no previous workload update and with a completed one.
+//
+// Scenario:
+//  1. Install v0.2.1-beta1 and create a Ready workload. In the completed-update cases,
+//     finish the workload update before upgrading Grove.
+//  2. Upgrade Grove without editing the workload. Check that scheduling metadata is initialized
+//     without changing its generation hash or update history, starting an update, or replacing pods.
+//  3. Scale the standalone frontend from two to three pods. Verify the extra pod becomes Ready
+//     without replacing the original pods.
+//  4. Cordon the workers and delete the frontend pods. Verify MinAvailableBreached=True
+//     while their replacements cannot schedule.
+//  5. Uncordon the workers and verify recovery with the same generation hash and update history.
+func Test_VUPG3_LegacyGenerationRetentionPreservesStandaloneScaling(t *testing.T) {
+	for _, strategy := range []grovev1beta1.UpdateStrategyType{grovev1beta1.CoherentStrategy, grovev1beta1.RollingRecreateStrategy} {
+		for _, history := range []string{"idle", "completed"} {
+			t.Run(string(strategy)+"/"+history, func(t *testing.T) {
+				var beforePCS *grovev1beta1.PodCliqueSet
+				var beforeFrontend grovev1beta1.PodClique
+				var beforePGM *grovev1beta1.PodGangMap
+				var beforePods *corev1.PodList
+				runUpgradeTest(t, upgradeTest{
+					fromVersion:     "v0.2.1-beta1",
+					nodeWorkerCount: 10,
+					prepareOpts: []testctx.TestOption{testctx.WithWorkload(&testctx.WorkloadConfig{
+						Name: "workload-coherent", YAMLPath: "../../yaml/workload-coherent.yaml",
+						Namespace: "default", ExpectedPods: 6,
+					})},
+					preUpgrade: func(t *testing.T, tc *testctx.TestContext) {
+						_, err := tc.DeployAndVerifyWorkload()
+						require.NoError(t, err)
+						require.NoError(t, updateutils.UpdatePCSUpdateStrategy(tc, strategy))
+						require.NoError(t, tc.WaitForPods(6), "initial workload must be Ready")
+						if history == "completed" {
+							require.NoError(t, updateutils.TriggerPodCliqueUpdateWithRevision(tc, "before-upgrade", "frontend", "prefill", "decode"))
+							require.NoError(t, updateutils.WaitForRollingUpdateComplete(tc, 1))
+							require.NoError(t, tc.WaitForPods(6))
+						}
+						beforePCS, err = updateutils.GetPCS(tc, tc.Workload.Name)
+						require.NoError(t, err)
+						require.NotNil(t, beforePCS.Status.CurrentGenerationHash)
+						require.Nil(t, beforePCS.Status.AppliedSchedulingConfigurationHash, "the released operator must produce a legacy baseline")
+						if history == "idle" {
+							require.Nil(t, beforePCS.Status.UpdateProgress)
+						}
+						require.NotNil(t, beforePCS.Spec.Template.TerminationDelay)
+						require.Greater(t, beforePCS.Spec.Template.TerminationDelay.Duration, tc.Timeout, "breach observation must precede gang termination")
+						frontendKey := client.ObjectKey{Namespace: tc.Namespace, Name: updateutils.StandaloneCliqueFQN(tc, "frontend")}
+						require.NoError(t, tc.Client.Get(tc.Ctx, frontendKey, &beforeFrontend))
+						if history == "completed" {
+							require.NotNil(t, beforeFrontend.Status.UpdateProgress)
+							require.NotNil(t, beforeFrontend.Status.UpdateProgress.UpdateEndedAt)
+						}
+						beforePGM, err = updateutils.GetReplicaPodGangMap(tc, 0)
+						require.NoError(t, err)
+						beforePods, err = tc.ListPods()
+						require.NoError(t, err)
+						require.Len(t, beforePods.Items, 6)
+						updateutils.AssertGenerationHashConverged(tc)
+						updateutils.AssertNoActiveChildUpdates(tc)
+					},
+					postUpgrade: func(t *testing.T, tc *testctx.TestContext) {
+						t.Log("verify baseline initialization without a new generation or update")
+						initialized := waitForSchedulingBaseline(t, tc)
+						assertLegacyPCSUnchanged(t, beforePCS, initialized)
+						var frontend grovev1beta1.PodClique
+						frontendKey := client.ObjectKeyFromObject(&beforeFrontend)
+						require.NoError(t, tc.Client.Get(tc.Ctx, frontendKey, &frontend))
+						require.Equal(t, beforeFrontend.UID, frontend.UID)
+						require.Equal(t, beforeFrontend.Status.UpdateProgress, frontend.Status.UpdateProgress)
+						verifyPodUIDsUnchanged(t, tc, beforePods)
+						updateutils.AssertGenerationHashConverged(tc)
+						updateutils.AssertNoActiveChildUpdates(tc)
+
+						t.Log("scale the existing frontend PodClique from two to three pods")
+						beforeCount, beforeEpochs := standaloneAnchorInventory(beforePGM.Spec.Entries, "frontend")
+						require.Equal(t, int32(2), beforeCount)
+						require.NoError(t, tc.ScalePodClique(frontend.Name, 3))
+						require.NoError(t, tc.WaitForPods(7))
+						pgm, err := updateutils.GetReplicaPodGangMap(tc, 0)
+						require.NoError(t, err)
+						count, epochs := standaloneAnchorInventory(pgm.Spec.Entries, "frontend")
+						require.Equal(t, int32(3), count)
+						require.ElementsMatch(t, beforeEpochs, epochs)
+						require.Equal(t, beforePGM.UID, pgm.UID)
+						verifyPodUIDsUnchanged(t, tc, beforePods)
+						updateutils.AssertPodGangMapSingleGeneration(t, tc)
+						current, err := updateutils.GetPCS(tc, tc.Workload.Name)
+						require.NoError(t, err)
+						assertLegacyPCSUnchanged(t, beforePCS, current)
+
+						t.Log("prevent frontend scheduling and require a MinAvailable breach")
+						var workers corev1.NodeList
+						require.NoError(t, tc.Client.List(tc.Ctx, &workers, client.MatchingLabels{setup.WorkerNodeLabelKey: setup.WorkerNodeLabelValue}))
+						var schedulable []string
+						for _, node := range workers.Items {
+							if !node.Spec.Unschedulable {
+								schedulable = append(schedulable, node.Name)
+							}
+						}
+						require.NotEmpty(t, schedulable)
+						defer tc.UncordonNodes(schedulable)
+						tc.CordonNodes(schedulable)
+						var frontendPods corev1.PodList
+						require.NoError(t, tc.Client.List(tc.Ctx, &frontendPods, client.InNamespace(tc.Namespace),
+							client.MatchingLabels{apicommon.LabelPodClique: frontend.Name}))
+						require.Len(t, frontendPods.Items, 3)
+						for i := range frontendPods.Items {
+							require.NoError(t, tc.Client.Delete(tc.Ctx, &frontendPods.Items[i]))
+						}
+						require.EventuallyWithT(t, func(c *assert.CollectT) {
+							require.NoError(c, tc.Client.Get(tc.Ctx, frontendKey, &frontend))
+							condition := meta.FindStatusCondition(frontend.Status.Conditions, apiconstants.ConditionTypeMinAvailableBreached)
+							require.NotNil(c, condition)
+							assert.Equal(c, metav1.ConditionTrue, condition.Status)
+							assert.Equal(c, apiconstants.ConditionReasonScheduledReplicasBelowMinAvailable, condition.Reason)
+							assert.Zero(c, frontend.Status.ScheduledReplicas)
+						}, tc.Timeout, tc.Interval)
+						if beforeFrontend.Status.UpdateProgress == nil {
+							require.Nil(t, frontend.Status.UpdateProgress)
+						} else {
+							require.NotNil(t, frontend.Status.UpdateProgress)
+							require.Equal(t, beforeFrontend.Status.UpdateProgress.UpdateStartedAt, frontend.Status.UpdateProgress.UpdateStartedAt)
+							require.Equal(t, beforeFrontend.Status.UpdateProgress.UpdateEndedAt, frontend.Status.UpdateProgress.UpdateEndedAt)
+						}
+						tc.UncordonNodes(schedulable)
+						require.NoError(t, tc.WaitForPods(7))
+						current, err = updateutils.GetPCS(tc, tc.Workload.Name)
+						require.NoError(t, err)
+						assertLegacyPCSUnchanged(t, beforePCS, current)
+						updateutils.AssertGenerationHashConverged(tc)
+						updateutils.AssertNoActiveChildUpdates(tc)
+					},
+				})
+			})
+		}
+	}
+}
+
+// Test_VUPG4_MinAvailableChangeAfterLegacyUpgrade verifies that a scheduling change after a real
+// operator upgrade recreates a legacy PCS replica rather than merely changing generation metadata.
+//
+// Scenario:
+//  1. Install v0.2.1-beta1 and deploy workload2 under Coherent with one Ready replica and ten pods.
+//     Set sg-x maxUnavailable to two so a later MinAvailable of two is valid. Capture the legacy PCS,
+//     standalone PodClique, PCSG, and PodGangMap without rewriting their generation metadata.
+//  2. Upgrade to the current checkout. Require scheduling-baseline initialization without changing
+//     the PCS specification, generation identity, update history, or replica resource UIDs.
+//  3. Block fresh replica-zero pod readiness and increase sg-x MinAvailable from one to two.
+//     Require active replica recreation with a new target and the original scheduling hash still applied.
+//  4. Require fresh PodClique, PCSG, and PodGangMap UIDs, with both sg-x indices in the anchor and no tail.
+//  5. Release readiness and require ten Ready pods, an observed and completed update, child generation
+//     convergence, and stable replacement UIDs with the target scheduling hash now applied.
+func Test_VUPG4_MinAvailableChangeAfterLegacyUpgrade(t *testing.T) {
+	var beforePCS *grovev1beta1.PodCliqueSet
+	var beforePCLQ grovev1beta1.PodClique
+	var beforePCSG grovev1beta1.PodCliqueScalingGroup
+	var beforePGM *grovev1beta1.PodGangMap
+	runUpgradeTest(t, upgradeTest{
+		fromVersion:     "v0.2.1-beta1",
+		nodeWorkerCount: 10,
+		prepareOpts: []testctx.TestOption{testctx.WithWorkload(&testctx.WorkloadConfig{
+			Name: "workload2", YAMLPath: "../../yaml/workload2.yaml", Namespace: "default", ExpectedPods: 10,
+		})},
+		preUpgrade: func(t *testing.T, tc *testctx.TestContext) {
+			_, err := tc.DeployAndVerifyWorkload()
+			require.NoError(t, err)
+			require.NoError(t, updateutils.UpdatePCSUpdateStrategy(tc, grovev1beta1.CoherentStrategy))
+			require.NoError(t, tc.WaitForPods(10), "initial workload must be Ready")
+			beforePCS, err = updateutils.GetPCS(tc, tc.Workload.Name)
+			require.NoError(t, err)
+			original := beforePCS.DeepCopy()
+			require.Len(t, beforePCS.Spec.Template.PodCliqueScalingGroupConfigs, 1)
+			group := &beforePCS.Spec.Template.PodCliqueScalingGroupConfigs[0]
+			require.Equal(t, "sg-x", group.Name)
+			require.NotNil(t, group.RollingUpdate)
+			group.RollingUpdate.MaxUnavailable = new(int32(2))
+			require.NoError(t, tc.Client.Patch(tc.Ctx, beforePCS, client.MergeFrom(original)))
+			require.NotNil(t, beforePCS.Status.CurrentGenerationHash)
+			require.Nil(t, beforePCS.Status.AppliedSchedulingConfigurationHash)
+			require.Nil(t, beforePCS.Status.UpdateProgress)
+			require.NoError(t, tc.Client.Get(tc.Ctx, client.ObjectKey{Namespace: tc.Namespace, Name: updateutils.StandaloneCliqueFQN(tc, "pc-a")}, &beforePCLQ))
+			require.NoError(t, tc.Client.Get(tc.Ctx, client.ObjectKey{Namespace: tc.Namespace, Name: updateutils.PCSGFQN(tc, "sg-x")}, &beforePCSG))
+			beforePGM, err = updateutils.GetReplicaPodGangMap(tc, 0)
+			require.NoError(t, err)
+			updateutils.AssertReplicaPodGangMap(t, beforePGM.Spec.Entries, updateutils.ExpectedReplicaPodGangMap{
+				GenerationHash: *beforePCS.Status.CurrentGenerationHash, StandalonePodCounts: map[string]int32{"pc-a": 2},
+				PCSGName: "sg-x", AnchorIndices: []int32{0}, TailIndices: []int32{1},
+			})
+		},
+		postUpgrade: func(t *testing.T, tc *testctx.TestContext) {
+			initialized := waitForSchedulingBaseline(t, tc)
+			assertLegacyPCSUnchanged(t, beforePCS, initialized)
+			var pclq grovev1beta1.PodClique
+			var pcsg grovev1beta1.PodCliqueScalingGroup
+			require.NoError(t, tc.Client.Get(tc.Ctx, client.ObjectKeyFromObject(&beforePCLQ), &pclq))
+			require.NoError(t, tc.Client.Get(tc.Ctx, client.ObjectKeyFromObject(&beforePCSG), &pcsg))
+			pgm, err := updateutils.GetReplicaPodGangMap(tc, 0)
+			require.NoError(t, err)
+			require.Equal(t, beforePCLQ.UID, pclq.UID)
+			require.Equal(t, beforePCSG.UID, pcsg.UID)
+			require.Equal(t, beforePGM.UID, pgm.UID)
+			updateutils.AssertGenerationHashConverged(tc)
+			updateutils.AssertNoActiveChildUpdates(tc)
+
+			t.Log("hold replacement readiness and increase sg-x MinAvailable")
+			const stageName = "pod-ready-blocked-r0-standalone"
+			require.NoError(t, kwok.ApplyStage(tc.Ctx, tc.Client, "../../yaml/kwok/pod-ready-blocked-r0-standalone.yaml"))
+			defer func() { assert.NoError(t, kwok.DeleteStage(tc.Ctx, tc.Client, stageName)) }()
+			changed := initialized.DeepCopy()
+			require.Len(t, changed.Spec.Template.PodCliqueScalingGroupConfigs, 1)
+			require.Equal(t, "sg-x", changed.Spec.Template.PodCliqueScalingGroupConfigs[0].Name)
+			changed.Spec.Template.PodCliqueScalingGroupConfigs[0].MinAvailable = new(int32(2))
+			require.NoError(t, tc.Client.Patch(tc.Ctx, changed, client.MergeFrom(initialized)))
+			require.NoError(t, updateutils.WaitForGenerationHashChange(tc, *initialized.Status.CurrentGenerationHash))
+			target, err := updateutils.GetPCS(tc, tc.Workload.Name)
+			require.NoError(t, err)
+			require.NotNil(t, target.Status.UpdateProgress)
+			require.True(t, target.Status.UpdateProgress.RequiresReplicaRecreation)
+			require.Nil(t, target.Status.UpdateProgress.UpdateEndedAt)
+			require.NotEmpty(t, target.Status.UpdateProgress.TargetSchedulingConfigurationHash)
+			require.NotEqual(t, *initialized.Status.AppliedSchedulingConfigurationHash, target.Status.UpdateProgress.TargetSchedulingConfigurationHash)
+			require.Equal(t, initialized.Status.AppliedSchedulingConfigurationHash, target.Status.AppliedSchedulingConfigurationHash)
+
+			require.EventuallyWithT(t, func(c *assert.CollectT) {
+				require.NoError(c, tc.Client.Get(tc.Ctx, client.ObjectKeyFromObject(&beforePCLQ), &pclq))
+				require.NoError(c, tc.Client.Get(tc.Ctx, client.ObjectKeyFromObject(&beforePCSG), &pcsg))
+				pgm, err = updateutils.GetReplicaPodGangMap(tc, 0)
+				require.NoError(c, err)
+				assert.NotEqual(c, beforePCLQ.UID, pclq.UID)
+				assert.NotEqual(c, beforePCSG.UID, pcsg.UID)
+				assert.NotEqual(c, beforePGM.UID, pgm.UID)
+				require.NotNil(c, pcsg.Spec.MinAvailable)
+				assert.Equal(c, int32(2), *pcsg.Spec.MinAvailable)
+				assert.Equal(c, int32(2), pcsg.Spec.Replicas)
+				assert.Equal(c, *target.Status.CurrentGenerationHash, pclq.Labels[apicommon.LabelPodCliqueSetGenerationHash])
+			}, tc.Timeout, tc.Interval)
+			wantPodGangMap := updateutils.ExpectedReplicaPodGangMap{
+				GenerationHash: *target.Status.CurrentGenerationHash, StandalonePodCounts: map[string]int32{"pc-a": 2},
+				PCSGName: "sg-x", AnchorIndices: []int32{0, 1},
+			}
+			updateutils.AssertReplicaPodGangMap(t, pgm.Spec.Entries, wantPodGangMap)
+			pclqUID, pcsgUID, pgmUID := pclq.UID, pcsg.UID, pgm.UID
+			blocked, err := updateutils.GetPCS(tc, tc.Workload.Name)
+			require.NoError(t, err)
+			require.NotNil(t, blocked.Status.UpdateProgress)
+			require.Nil(t, blocked.Status.UpdateProgress.UpdateEndedAt)
+			require.Equal(t, initialized.Status.AppliedSchedulingConfigurationHash, blocked.Status.AppliedSchedulingConfigurationHash)
+
+			t.Log("release readiness and require completion at the new scheduling target")
+			require.NoError(t, kwok.DeleteStage(tc.Ctx, tc.Client, stageName))
+			updateutils.DeleteNotReadyPodsOnReplica(t, tc, 0)
+			require.NoError(t, tc.WaitForPods(10))
+			require.NoError(t, updateutils.WaitForRollingUpdateComplete(tc, 1))
+			completed, err := updateutils.GetPCS(tc, tc.Workload.Name)
+			require.NoError(t, err)
+			require.Equal(t, target.Status.CurrentGenerationHash, completed.Status.CurrentGenerationHash)
+			require.Equal(t, new(target.Status.UpdateProgress.TargetSchedulingConfigurationHash), completed.Status.AppliedSchedulingConfigurationHash)
+			require.Equal(t, int32(1), completed.Status.AvailableReplicas)
+			require.NoError(t, tc.Client.Get(tc.Ctx, client.ObjectKeyFromObject(&beforePCLQ), &pclq))
+			require.NoError(t, tc.Client.Get(tc.Ctx, client.ObjectKeyFromObject(&beforePCSG), &pcsg))
+			pgm, err = updateutils.GetReplicaPodGangMap(tc, 0)
+			require.NoError(t, err)
+			require.Equal(t, pclqUID, pclq.UID)
+			require.Equal(t, pcsgUID, pcsg.UID)
+			require.Equal(t, pgmUID, pgm.UID)
+			require.Equal(t, beforePCLQ.Spec.MinAvailable, pclq.Spec.MinAvailable)
+			require.Equal(t, new(int32(2)), pcsg.Spec.MinAvailable)
+			require.Equal(t, int32(2), pcsg.Spec.Replicas)
+			updateutils.AssertReplicaPodGangMap(t, pgm.Spec.Entries, wantPodGangMap)
+			updateutils.AssertGenerationHashConverged(tc)
+			updateutils.AssertNoActiveChildUpdates(tc)
+		},
+	})
+}
+
+// Test_VUPG5_UpgradeDuringLegacyUpdatePreservesGeneration checks that a new operator finishes an
+// update started by the old operator without changing its legacy target hash or restarting the update.
+// The hash must also remain unchanged after completion and a later reconciliation.
+//
+// Scenario:
+//  1. Install v0.2.1-beta1 and create a Ready workload under Coherent or RollingRecreate.
+//     Give the frontend update enough time to remain unfinished during the operator upgrade.
+//  2. Cordon the test workers and update the frontend template. Wait for new-revision pods to
+//     remain unscheduled and for an active frontend update. Under Coherent, also require mixed
+//     generations in the PodGangMap. Capture the legacy target hash and update progress.
+//  3. Upgrade Grove without editing the workload. Wait for scheduling metadata to initialize and
+//     for a new PCS label to reach the PodGangs, proving the new operator has reconciled the workload.
+//     Verify the target hash, update start times, selected replica, and existing pods are preserved.
+//  4. Uncordon the workers. Require completion at the same legacy target hash, with six Ready pods
+//     and both frontend pods using the requested template. No child update may remain unfinished.
+//  5. Change another label value and wait for its propagation. Verify the legacy hash, completed
+//     update timestamps, and pods remain unchanged after this later reconciliation.
+func Test_VUPG5_UpgradeDuringLegacyUpdatePreservesGeneration(t *testing.T) {
+	const revision = "before-operator-upgrade"
+	for _, strategy := range []grovev1beta1.UpdateStrategyType{grovev1beta1.CoherentStrategy, grovev1beta1.RollingRecreateStrategy} {
+		t.Run(string(strategy), func(t *testing.T) {
+			var beforePCS *grovev1beta1.PodCliqueSet
+			var beforeFrontend *grovev1beta1.PodClique
+			var beforePGM *grovev1beta1.PodGangMap
+			var beforePods *corev1.PodList
+			var workers []string
+			runUpgradeTest(t, upgradeTest{
+				fromVersion:     "v0.2.1-beta1",
+				nodeWorkerCount: 10,
+				prepareOpts: []testctx.TestOption{
+					testctx.WithWorkload(&testctx.WorkloadConfig{
+						Name: "workload-coherent", YAMLPath: "../../yaml/workload-coherent.yaml",
+						Namespace: "default", ExpectedPods: 6,
+					}),
+					testctx.WithTimeout(defaultPollTimeout),
+				},
+				preUpgrade: func(t *testing.T, tc *testctx.TestContext) {
+					_, err := tc.DeployAndVerifyWorkload()
+					require.NoError(t, err)
+					require.NoError(t, updateutils.UpdatePCSUpdateStrategy(tc, strategy))
+					require.NoError(t, tc.WaitForPods(6), "initial workload must be Ready")
+					pcs, err := updateutils.GetPCS(tc, tc.Workload.Name)
+					require.NoError(t, err)
+					original := pcs.DeepCopy()
+					require.Equal(t, "frontend", pcs.Spec.Template.Cliques[0].Name)
+					require.NotNil(t, pcs.Spec.Template.Cliques[0].RollingUpdate)
+					pcs.Spec.Template.Cliques[0].RollingUpdate.ProgressDeadline = &metav1.Duration{Duration: 30 * time.Minute}
+					require.NoError(t, tc.Client.Patch(tc.Ctx, pcs, client.MergeFrom(original)))
+					initialHash := updateutils.PCSGenerationHash(t, tc)
+
+					var nodes corev1.NodeList
+					require.NoError(t, tc.Client.List(tc.Ctx, &nodes, client.MatchingLabels{setup.WorkerNodeLabelKey: setup.WorkerNodeLabelValue}))
+					for _, node := range nodes.Items {
+						if !node.Spec.Unschedulable {
+							workers = append(workers, node.Name)
+						}
+					}
+					require.NotEmpty(t, workers)
+					t.Cleanup(func() {
+						ctx, cancel := context.WithTimeout(context.WithoutCancel(tc.Ctx), tc.Timeout)
+						defer cancel()
+						cleanupTC := *tc
+						cleanupTC.Ctx = ctx
+						for _, name := range workers {
+							assert.NoError(t, cleanupTC.UncordonNode(name))
+						}
+					})
+					tc.CordonNodes(workers)
+					require.NoError(t, updateutils.TriggerPodCliqueUpdateWithRevision(tc, revision, "frontend"))
+					require.NoError(t, updateutils.WaitForOrdinalUpdating(tc, 0))
+					if strategy == grovev1beta1.CoherentStrategy {
+						updateutils.WaitForReplicaMidCoherentRoll(t, tc, 0)
+					}
+					frontendKey := client.ObjectKey{Namespace: tc.Namespace, Name: updateutils.StandaloneCliqueFQN(tc, "frontend")}
+					require.EventuallyWithT(t, func(c *assert.CollectT) {
+						var frontend grovev1beta1.PodClique
+						require.NoError(c, tc.Client.Get(tc.Ctx, frontendKey, &frontend))
+						require.NotNil(c, frontend.Status.UpdateProgress)
+						require.Nil(c, frontend.Status.UpdateProgress.UpdateEndedAt)
+						require.Zero(c, frontend.Status.UpdateProgress.UpdatedScheduledReplicas)
+						var frontendPods corev1.PodList
+						require.NoError(c, tc.Client.List(tc.Ctx, &frontendPods, client.InNamespace(tc.Namespace),
+							client.MatchingLabels{apicommon.LabelPodClique: frontend.Name}))
+						require.Len(c, frontendPods.Items, 2)
+						updatedPods := 0
+						for _, pod := range frontendPods.Items {
+							require.Nil(c, pod.DeletionTimestamp)
+							require.Len(c, pod.Spec.Containers, 1)
+							for _, env := range pod.Spec.Containers[0].Env {
+								if env.Name == "UPDATE_TRIGGER" && env.Value == revision {
+									assert.Empty(c, pod.Spec.NodeName, "the replacement must remain unscheduled")
+									updatedPods++
+								}
+							}
+						}
+						require.Positive(c, updatedPods, "the old operator must have created unscheduled replacement pods")
+						beforeFrontend = frontend.DeepCopy()
+					}, tc.Timeout, tc.Interval)
+					beforePCS, err = updateutils.GetPCS(tc, tc.Workload.Name)
+					require.NoError(t, err)
+					require.NotNil(t, beforePCS.Status.CurrentGenerationHash)
+					require.NotEqual(t, initialHash, *beforePCS.Status.CurrentGenerationHash)
+					require.Nil(t, beforePCS.Status.AppliedSchedulingConfigurationHash)
+					require.NotNil(t, beforePCS.Status.UpdateProgress)
+					require.Nil(t, beforePCS.Status.UpdateProgress.UpdateEndedAt)
+					require.Empty(t, beforePCS.Status.UpdateProgress.TargetSchedulingConfigurationHash)
+					require.Len(t, beforePCS.Status.UpdateProgress.CurrentlyUpdating, 1)
+					require.Equal(t, int32(0), beforePCS.Status.UpdateProgress.CurrentlyUpdating[0].ReplicaIndex)
+					require.Nil(t, beforePCS.Status.UpdateProgress.CurrentlyUpdating[0].UpdateEndedAt)
+					require.Nil(t, beforePCS.Status.UpdateProgress.CurrentlyUpdating[0].Replacement)
+					require.Equal(t, *beforePCS.Status.CurrentGenerationHash, beforeFrontend.Status.UpdateProgress.PodCliqueSetGenerationHash)
+					if strategy == grovev1beta1.CoherentStrategy {
+						require.NotEmpty(t, beforePCS.Status.UpdateProgress.CurrentlyUpdating[0].InFlightEpochs)
+					}
+					beforePGM, err = updateutils.GetReplicaPodGangMap(tc, 0)
+					require.NoError(t, err)
+					beforePods, err = tc.ListPods()
+					require.NoError(t, err)
+					require.Len(t, beforePods.Items, 6)
+				},
+				postUpgrade: func(t *testing.T, tc *testctx.TestContext) {
+					// An unfinished update need not have observed its spec generation yet.
+					require.EventuallyWithT(t, func(c *assert.CollectT) {
+						pcs, err := updateutils.GetPCS(tc, tc.Workload.Name)
+						require.NoError(c, err)
+						require.NotNil(c, pcs.Status.AppliedSchedulingConfigurationHash)
+						require.NotNil(c, pcs.Status.UpdateProgress)
+						assert.Equal(c, *pcs.Status.AppliedSchedulingConfigurationHash, pcs.Status.UpdateProgress.TargetSchedulingConfigurationHash)
+					}, tc.Timeout, tc.Interval)
+					requirePCSLabelPropagation(t, tc, "while-held")
+					resumed, err := updateutils.GetPCS(tc, tc.Workload.Name)
+					require.NoError(t, err)
+					assertLegacyUpdateIdentity(t, beforePCS, resumed)
+					require.Nil(t, resumed.Status.UpdateProgress.UpdateEndedAt)
+					require.Equal(t, beforePCS.Status.UpdateProgress.CurrentlyUpdating, resumed.Status.UpdateProgress.CurrentlyUpdating)
+					require.Equal(t, beforePCS.Status.UpdateProgress.InScopeStandalonePodCliques, resumed.Status.UpdateProgress.InScopeStandalonePodCliques)
+					require.Equal(t, beforePCS.Status.UpdateProgress.InScopePodCliqueScalingGroups, resumed.Status.UpdateProgress.InScopePodCliqueScalingGroups)
+					var frontend grovev1beta1.PodClique
+					require.NoError(t, tc.Client.Get(tc.Ctx, client.ObjectKeyFromObject(beforeFrontend), &frontend))
+					require.Equal(t, beforeFrontend.UID, frontend.UID)
+					require.NotNil(t, frontend.Status.UpdateProgress)
+					require.Nil(t, frontend.Status.UpdateProgress.UpdateEndedAt)
+					require.Equal(t, beforeFrontend.Status.UpdateProgress.UpdateStartedAt, frontend.Status.UpdateProgress.UpdateStartedAt)
+					require.Equal(t, *beforePCS.Status.CurrentGenerationHash, frontend.Status.UpdateProgress.PodCliqueSetGenerationHash)
+					pgm, err := updateutils.GetReplicaPodGangMap(tc, 0)
+					require.NoError(t, err)
+					require.Equal(t, beforePGM.UID, pgm.UID)
+					verifyPodUIDsUnchanged(t, tc, beforePods)
+
+					tc.UncordonNodes(workers)
+					require.NoError(t, updateutils.WaitForRollingUpdateComplete(tc, 1))
+					require.NoError(t, tc.WaitForPods(6))
+					completed, err := updateutils.GetPCS(tc, tc.Workload.Name)
+					require.NoError(t, err)
+					assertLegacyUpdateIdentity(t, beforePCS, completed)
+					require.Equal(t, resumed.Status.AppliedSchedulingConfigurationHash, completed.Status.AppliedSchedulingConfigurationHash)
+					updateutils.AssertAffectedPodsAtRevision(tc, "frontend", revision)
+					updateutils.AssertGenerationHashConverged(tc)
+					updateutils.AssertNoActiveChildUpdates(tc)
+					updateutils.AssertPodGangMapSingleGeneration(t, tc)
+					completedPods, err := tc.ListPods()
+					require.NoError(t, err)
+
+					requirePCSLabelPropagation(t, tc, "after-completion")
+					stable, err := updateutils.GetPCS(tc, tc.Workload.Name)
+					require.NoError(t, err)
+					assertLegacyUpdateIdentity(t, beforePCS, stable)
+					require.Equal(t, completed.Status.UpdateProgress.UpdateEndedAt, stable.Status.UpdateProgress.UpdateEndedAt)
+					require.Equal(t, completed.Status.AppliedSchedulingConfigurationHash, stable.Status.AppliedSchedulingConfigurationHash)
+					verifyPodUIDsUnchanged(t, tc, completedPods)
+					updateutils.AssertGenerationHashConverged(tc)
+					updateutils.AssertNoActiveChildUpdates(tc)
+					updateutils.AssertPodGangMapSingleGeneration(t, tc)
+				},
+			})
+		})
+	}
+}
+
+// assertLegacyUpdateIdentity checks the unchanged workload and the update identity created by the old operator.
+// Scheduling metadata and completion progress may change, but the legacy target and start time must not.
+func assertLegacyUpdateIdentity(t *testing.T, before, after *grovev1beta1.PodCliqueSet) {
+	t.Helper()
+	require.Equal(t, before.UID, after.UID)
+	require.Equal(t, before.Generation, after.Generation)
+	require.Equal(t, before.Spec, after.Spec)
+	require.Equal(t, before.Status.CurrentGenerationHash, after.Status.CurrentGenerationHash)
+	require.NotNil(t, after.Status.UpdateProgress)
+	require.Equal(t, before.Status.UpdateProgress.UpdateStartedAt, after.Status.UpdateProgress.UpdateStartedAt)
+	require.Equal(t, before.Status.UpdateProgress.PreviousPodCliqueSetGenerationHash, after.Status.UpdateProgress.PreviousPodCliqueSetGenerationHash)
+	require.False(t, after.Status.UpdateProgress.RequiresReplicaRecreation)
+}
+
+// requirePCSLabelPropagation applies a label and waits until every PodGang carries it.
+// PodGang synchronization follows replica update planning, so this proves the new operator has reconciled the PCS.
+func requirePCSLabelPropagation(t *testing.T, tc *testctx.TestContext, value string) {
+	t.Helper()
+	const key = "e2e.grove.io/upgrade-check"
+	pcs, err := updateutils.GetPCS(tc, tc.Workload.Name)
+	require.NoError(t, err)
+	patch := []byte(fmt.Sprintf(`{"metadata":{"labels":{%q:%q}}}`, key, value))
+	require.NoError(t, tc.Client.Patch(tc.Ctx, pcs, client.RawPatch(types.MergePatchType, patch)))
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		var podGangs groveschedulerv1alpha1.PodGangList
+		require.NoError(c, tc.Client.List(tc.Ctx, &podGangs, client.InNamespace(tc.Namespace),
+			client.MatchingLabels{apicommon.LabelPartOfKey: tc.Workload.Name}))
+		require.NotEmpty(c, podGangs.Items)
+		for _, podGang := range podGangs.Items {
+			assert.Equal(c, value, podGang.Labels[key], "PodGang %s must observe the new PCS label", podGang.Name)
+		}
+	}, tc.Timeout, tc.Interval)
+}
+
+// waitForSchedulingBaseline waits for the upgraded operator to initialize and observe the PCS.
+func waitForSchedulingBaseline(t *testing.T, tc *testctx.TestContext) *grovev1beta1.PodCliqueSet {
+	t.Helper()
+	var pcs *grovev1beta1.PodCliqueSet
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		var err error
+		pcs, err = updateutils.GetPCS(tc, tc.Workload.Name)
+		require.NoError(c, err)
+		require.NotNil(c, pcs.Status.AppliedSchedulingConfigurationHash)
+		require.NotNil(c, pcs.Status.ObservedGeneration)
+		assert.Equal(c, pcs.Generation, *pcs.Status.ObservedGeneration)
+	}, tc.Timeout, tc.Interval)
+	return pcs
+}
+
+// assertLegacyPCSUnchanged checks that baseline initialization and child scaling do not rewrite the PCS.
+func assertLegacyPCSUnchanged(t *testing.T, before, after *grovev1beta1.PodCliqueSet) {
+	t.Helper()
+	assert.Equal(t, before.UID, after.UID)
+	assert.Equal(t, before.Generation, after.Generation)
+	assert.Equal(t, before.Spec, after.Spec)
+	assert.Equal(t, before.Status.CurrentGenerationHash, after.Status.CurrentGenerationHash)
+	assert.Equal(t, before.Status.UpdateProgress, after.Status.UpdateProgress)
+}
+
+// standaloneAnchorInventory returns the committed pod count and anchor epochs for a standalone clique.
+func standaloneAnchorInventory(entries []grovev1beta1.PodGangEntry, cliqueName string) (int32, []string) {
+	var podCount int32
+	var epochs []string
+	for _, entry := range entries {
+		if entry.Role == grovev1beta1.PodGangEntryRoleAnchor && entry.PodCliques[cliqueName] > 0 {
+			podCount += entry.PodCliques[cliqueName]
+			epochs = append(epochs, entry.Epoch)
+		}
+	}
+	return podCount, epochs
 }
 
 // deployWorkloadOnFromVersion deploys the configured workload on the fromVersion operator.

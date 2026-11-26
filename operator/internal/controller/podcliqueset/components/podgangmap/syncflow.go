@@ -22,8 +22,9 @@ import (
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
+	"github.com/ai-dynamo/grove/operator/internal/constants"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
-	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/sync"
+	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/sync"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
@@ -192,19 +193,21 @@ func computeMVUTemplate(pcs *grovecorev1beta1.PodCliqueSet) *mvuTemplate {
 //     the same way as a missing PodGangMap so the replica recovers instead of staying empty.
 //  3. A PodGangMap with entries. reconcileEntries re-authors them, advancing an under-update replica
 //     to the current generation hash first.
-func (r _resource) runSyncFlow(ctx context.Context, syncSnap *syncSnapshot) error {
+func (r _resource) runSyncFlow(ctx context.Context, syncSnap *syncSnapshot) (pcssync.Result, error) {
+	result := pcssync.Result{}
 	for _, pcsReplicaIndex := range syncSnap.expectedPCSReplicaIndices {
 		pgm := syncSnap.existingPGMsByPCSReplicaIndex[pcsReplicaIndex]
 
 		var (
-			entries []grovecorev1beta1.PodGangEntry
-			err     error
+			entries     []grovecorev1beta1.PodGangEntry
+			err         error
+			needsReplan bool
 		)
 		// A coherent update advances an existing PodGangMap one sub-step per reconcile, and only for the
 		// replica the orchestrator has selected. Every other replica, and any replica whose PodGangMap is
 		// missing or empty, is authored through reconcileEntries so it stays frozen or bootstraps.
 		if componentutils.IsPCSReplicaUnderCoherentUpdate(syncSnap.pcs, pcsReplicaIndex) && pgm != nil && len(pgm.Spec.Entries) > 0 {
-			entries, err = r.buildCoherentUpdateEntries(ctx, syncSnap, pcsReplicaIndex, pgm)
+			entries, needsReplan, err = r.buildCoherentUpdateEntries(ctx, syncSnap, pcsReplicaIndex, pgm)
 		} else {
 			entries, err = reconcileEntries(r.clk,
 				syncSnap.pcs, pcsReplicaIndex,
@@ -214,15 +217,24 @@ func (r _resource) runSyncFlow(ctx context.Context, syncSnap *syncSnapshot) erro
 				syncSnap.existingPCSGsByPCSReplicaIndex[pcsReplicaIndex])
 		}
 		if err != nil {
-			return err
+			return pcssync.Result{}, err
+		}
+
+		if needsReplan {
+			result.RequeueAfter = new(constants.ComponentSyncRetryInterval)
+			result.StopAndRequeue = true
+			continue
 		}
 
 		pgmName := apicommon.GeneratePodGangMapName(apicommon.ResourceNameReplica{Name: syncSnap.pcs.Name, Replica: pcsReplicaIndex})
 		if err = r.createOrPatchPodGangMap(ctx, syncSnap.pcs, pgmName, pcsReplicaIndex, entries); err != nil {
-			return err
+			return pcssync.Result{}, err
 		}
 	}
-	return r.deleteOrphanedPodGangMaps(ctx, syncSnap)
+	if err := r.deleteOrphanedPodGangMaps(ctx, syncSnap); err != nil {
+		return pcssync.Result{}, err
+	}
+	return result, nil
 }
 
 // createOrPatchPodGangMap creates or patches the named PodGangMap with the given entries.

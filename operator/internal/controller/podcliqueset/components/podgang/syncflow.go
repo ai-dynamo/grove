@@ -26,7 +26,7 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/clustertopology"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
-	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/sync"
+	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/sync"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
@@ -508,18 +508,16 @@ func (r _resource) createOrUpdatePodGangs(ctx context.Context, ss *syncState) sy
 			result.recordPodGangCreation(expectedPG.fqn)
 		}
 
-		// verifyAllPodsCreated reports whether every constituent pod has been created and associated.
-		// Its result gates only the Initialized latch. The Scheduled and Ready conditions are live and
-		// are reconciled on every pass regardless, so a regression is reflected instead of frozen.
-		allPodsCreatedErr := r.verifyAllPodsCreated(ss, expectedPG)
-		if allPodsCreatedErr != nil {
+		// Missing pods hold initialization but do not block other PodGangs or cleanup observations.
+		allPodsCreated := r.areAllPodsCreated(ss, expectedPG)
+		if !allPodsCreated {
 			ss.logger.V(1).Info("Not all pods are created or associated to the PodGang yet", "PodGangName", expectedPG.fqn)
-			result.recordError(allPodsCreatedErr)
+			result.podsPending = true
 		}
 
 		// Reconcile the PodGang Scheduled and Ready conditions and their timestamps from live pod
 		// observation. Initialized is set to True only once all pods are created, and is never reset.
-		if err := r.reconcilePodGangStatus(ctx, ss, expectedPG, allPodsCreatedErr == nil); err != nil {
+		if err := r.reconcilePodGangStatus(ctx, ss, expectedPG, allPodsCreated); err != nil {
 			ss.logger.Error(err, "failed to reconcile PodGang status", "PodGangName", expectedPG.fqn)
 			result.recordError(err)
 			continue
@@ -534,7 +532,7 @@ func (r _resource) createOrUpdatePodGangs(ctx context.Context, ss *syncState) sy
 //     LastReady on each fresh transition to True.
 //   - Initialized is a one-way latch set to True when allPodsCreated is true and never reset.
 //   - The patch is optimistically locked so a write from a stale cache is rejected as a conflict
-//     and signals a requeue.
+//     and returns the conflict to the caller.
 //   - At most one status patch is emitted per call, and it is skipped when the status is unchanged.
 func (r _resource) reconcilePodGangStatus(ctx context.Context, ss *syncState, pgi *podGangInfo, allPodsCreated bool) error {
 	pg, err := componentutils.GetPodGang(ctx, r.client, pgi.fqn, ss.pcs.Namespace)
@@ -559,10 +557,6 @@ func (r _resource) reconcilePodGangStatus(ctx context.Context, ss *syncState, pg
 		return nil
 	}
 	if err = r.client.Status().Patch(ctx, pg, patch); err != nil {
-		if apierrors.IsConflict(err) {
-			return groveerr.NewRequeueAfter(component.OperationSync,
-				fmt.Sprintf("conflict patching PodGang %s status from a stale cache, re-queueing", pgi.fqn), constants.ComponentSyncRetryInterval)
-		}
 		return groveerr.WrapError(err, errCodeUpdatePodGangStatus, component.OperationSync,
 			fmt.Sprintf("failed to patch status for PodGang %s", pgi.fqn))
 	}
@@ -690,29 +684,9 @@ func (r _resource) patchPodGangInitializedStatus(ctx context.Context, ss *syncSt
 	return nil
 }
 
-// verifyAllPodsCreated checks if all required pods exist before updating PodGang
-func (r _resource) verifyAllPodsCreated(ss *syncState, pgi *podGangInfo) error {
-	pclqs := ss.getPodCliques(pgi)
-	if len(pclqs) != len(pgi.pclqs) {
-		// Not all constituent PCLQs exist yet
-		ss.logger.V(1).Info("Not all constituent PCLQs exist yet", "podGang", pgi.fqn, "expected", len(pgi.pclqs), "actual", len(pclqs))
-		return groveerr.NewRequeueAfter(
-			component.OperationSync,
-			fmt.Sprintf("Waiting for all pods to be created for PodGang %s", pgi.fqn),
-			constants.ComponentSyncRetryInterval,
-		)
-	}
-	// check the health of each podclique
-	numPendingPods := r.getPodsPendingCreationOrAssociation(ss, pgi)
-	if numPendingPods > 0 {
-		ss.logger.V(1).Info("skipping creation of PodGang as all desired replicas have not yet been created or assigned", "podGang", pgi.fqn, "numPendingPodsToCreateOrAssociate", numPendingPods)
-		return groveerr.NewRequeueAfter(
-			component.OperationSync,
-			fmt.Sprintf("Waiting for all pods to be created or assigned for PodGang %s", pgi.fqn),
-			constants.ComponentSyncRetryInterval,
-		)
-	}
-	return nil
+// areAllPodsCreated checks whether every constituent PodClique exists and its pods are associated.
+func (r _resource) areAllPodsCreated(ss *syncState, pgi *podGangInfo) bool {
+	return len(ss.getPodCliques(pgi)) == len(pgi.pclqs) && r.getPodsPendingCreationOrAssociation(ss, pgi) == 0
 }
 
 // getPodsForPodCliquesPendingCreation counts expected pods from non-existent PodCliques.
@@ -885,6 +859,7 @@ func podGangInfoNameSet(podGangs []*podGangInfo) sets.Set[string] {
 
 // syncFlowResult captures the result of a sync flow run.
 type syncFlowResult struct {
+	podsPending bool
 	// createdPodGangNames are the names of the PodGangs that got created during the sync flow run.
 	createdPodGangNames []string
 	// errs are the list of errors during the sync flow run.

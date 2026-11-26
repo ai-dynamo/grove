@@ -22,7 +22,7 @@ import (
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
-	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/sync"
+	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/sync"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
@@ -101,7 +101,8 @@ func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev
 			)
 		}
 		if !hasServiceAccountToken(existingSecret) {
-			return pcssync.Result{}, newWaitingForTokenError(objKey)
+			logger.V(1).Info("Waiting for service account token", "secret", objKey)
+			return pcssync.Result{RequeueAfter: new(constants.ComponentSyncRetryInterval), StopAndRequeue: true}, nil
 		}
 		if err = r.cleanupLegacySecret(ctx, logger, pcs); err != nil {
 			return pcssync.Result{}, err
@@ -122,7 +123,7 @@ func (r _resource) Sync(ctx context.Context, logger logr.Logger, pcs *grovecorev
 		)
 	}
 	logger.Info("Created Secret", "objectKey", objKey)
-	return pcssync.Result{}, newWaitingForTokenError(objKey)
+	return pcssync.Result{RequeueAfter: new(constants.ComponentSyncRetryInterval), StopAndRequeue: true}, nil
 }
 
 // Delete removes the service account token secret.
@@ -176,14 +177,6 @@ func getLabels(pcsName, secretName string) map[string]string {
 
 func hasServiceAccountToken(secret *corev1.Secret) bool {
 	return len(secret.Data[corev1.ServiceAccountTokenKey]) > 0
-}
-
-func newWaitingForTokenError(objKey client.ObjectKey) error {
-	return groveerr.NewRequeueAfter(
-		component.OperationSync,
-		fmt.Sprintf("Secret %v is waiting for service account token", objKey),
-		constants.ComponentSyncRetryInterval,
-	)
 }
 
 func (r _resource) getSecret(ctx context.Context, objKey client.ObjectKey) (*corev1.Secret, error) {

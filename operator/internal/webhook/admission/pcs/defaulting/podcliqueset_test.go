@@ -24,7 +24,6 @@ import (
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/utils/ptr"
 )
 
@@ -52,9 +51,6 @@ func TestDefaultPodCliqueSet(t *testing.T) {
 							MaxReplicas: 3,
 						},
 						MinAvailable: ptr.To[int32](1),
-					},
-					RollingUpdate: &grovecorev1beta1.RollingUpdateConfiguration{
-						MaxUnavailable: ptr.To[int32](1),
 					},
 				}},
 				PodCliqueScalingGroupConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{},
@@ -249,6 +245,20 @@ func TestDefaultPodCliqueTemplateSpecs(t *testing.T) {
 			},
 		},
 		{
+			name: "rolling update configuration is preserved without defaulting maxUnavailable",
+			input: []*grovecorev1beta1.PodCliqueTemplateSpec{{
+				Name:          "clique1",
+				Spec:          grovecorev1beta1.PodCliqueSpec{Replicas: 1},
+				RollingUpdate: &grovecorev1beta1.RollingUpdateConfiguration{ProgressDeadline: &metav1.Duration{Duration: time.Minute}},
+			}},
+			verify: func(t *testing.T, result []*grovecorev1beta1.PodCliqueTemplateSpec) {
+				require.Len(t, result, 1)
+				require.NotNil(t, result[0].RollingUpdate)
+				assert.Nil(t, result[0].RollingUpdate.MaxUnavailable)
+				assert.Equal(t, time.Minute, result[0].RollingUpdate.ProgressDeadline.Duration)
+			},
+		},
+		{
 			name: "pod spec defaults are applied",
 			input: []*grovecorev1beta1.PodCliqueTemplateSpec{
 				{
@@ -271,7 +281,7 @@ func TestDefaultPodCliqueTemplateSpecs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := defaultPodCliqueTemplateSpecs(tt.input, grovecorev1beta1.RollingRecreateStrategy, sets.New[string]())
+			result := defaultPodCliqueTemplateSpecs(tt.input)
 			tt.verify(t, result)
 		})
 	}
@@ -364,6 +374,19 @@ func TestDefaultPodCliqueScalingGroupConfigs(t *testing.T) {
 			},
 		},
 		{
+			name: "rolling update configuration is preserved without defaulting maxUnavailable",
+			input: []grovecorev1beta1.PodCliqueScalingGroupConfig{{
+				Name: "sg1", CliqueNames: []string{"clique1"}, Replicas: ptr.To(int32(3)),
+				RollingUpdate: &grovecorev1beta1.RollingUpdateConfiguration{ProgressDeadline: &metav1.Duration{Duration: time.Minute}},
+			}},
+			verify: func(t *testing.T, result []grovecorev1beta1.PodCliqueScalingGroupConfig) {
+				require.Len(t, result, 1)
+				require.NotNil(t, result[0].RollingUpdate)
+				assert.Nil(t, result[0].RollingUpdate.MaxUnavailable)
+				assert.Equal(t, time.Minute, result[0].RollingUpdate.ProgressDeadline.Duration)
+			},
+		},
+		{
 			name:  "empty input returns empty output",
 			input: []grovecorev1beta1.PodCliqueScalingGroupConfig{},
 			verify: func(t *testing.T, result []grovecorev1beta1.PodCliqueScalingGroupConfig) {
@@ -413,7 +436,7 @@ func TestDefaultPodCliqueScalingGroupConfigs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := defaultPodCliqueScalingGroupConfigs(tt.input, grovecorev1beta1.RollingRecreateStrategy)
+			result := defaultPodCliqueScalingGroupConfigs(tt.input)
 			tt.verify(t, result)
 		})
 	}
@@ -503,160 +526,6 @@ func TestDefaultUpdateStrategy(t *testing.T) {
 			defaultUpdateStrategy(&pcs.Spec)
 			require.NotNil(t, pcs.Spec.UpdateStrategy)
 			assert.Equal(t, tc.wantStrategy, pcs.Spec.UpdateStrategy.Type)
-		})
-	}
-}
-
-func TestDefaultRollingUpdateConfiguration(t *testing.T) {
-	testCases := []struct {
-		description        string
-		existing           *grovecorev1beta1.RollingUpdateConfiguration
-		updateStrategy     grovecorev1beta1.UpdateStrategyType
-		minAvailable       int32
-		wantNil            bool
-		wantMaxUnavailable int32
-	}{
-		{
-			description:        "rollingRecreate defaults MaxUnavailable to 1",
-			existing:           nil,
-			updateStrategy:     grovecorev1beta1.RollingRecreateStrategy,
-			wantMaxUnavailable: 1,
-		},
-		{
-			description:    "onDelete leaves a nil configuration nil",
-			existing:       nil,
-			updateStrategy: grovecorev1beta1.OnDeleteStrategy,
-			wantNil:        true,
-		},
-		{
-			description:        "onDelete leaves an existing configuration untouched for the validating webhook to reject",
-			existing:           &grovecorev1beta1.RollingUpdateConfiguration{MaxUnavailable: ptr.To[int32](7)},
-			updateStrategy:     grovecorev1beta1.OnDeleteStrategy,
-			wantMaxUnavailable: 7,
-		},
-		{
-			description:        "existing MaxUnavailable is preserved",
-			existing:           &grovecorev1beta1.RollingUpdateConfiguration{MaxUnavailable: ptr.To[int32](7)},
-			updateStrategy:     grovecorev1beta1.RollingRecreateStrategy,
-			wantMaxUnavailable: 7,
-		},
-		{
-			description:        "existing configuration with nil MaxUnavailable is populated",
-			existing:           &grovecorev1beta1.RollingUpdateConfiguration{},
-			updateStrategy:     grovecorev1beta1.RollingRecreateStrategy,
-			wantMaxUnavailable: 1,
-		},
-		{
-			description:        "coherent defaults MaxUnavailable to minAvailable",
-			existing:           nil,
-			updateStrategy:     grovecorev1beta1.CoherentStrategy,
-			minAvailable:       3,
-			wantMaxUnavailable: 3,
-		},
-		{
-			description:        "coherent preserves an existing MaxUnavailable",
-			existing:           &grovecorev1beta1.RollingUpdateConfiguration{MaxUnavailable: ptr.To[int32](5)},
-			updateStrategy:     grovecorev1beta1.CoherentStrategy,
-			minAvailable:       3,
-			wantMaxUnavailable: 5,
-		},
-	}
-	for _, tc := range testCases {
-		t.Run(tc.description, func(t *testing.T) {
-			result := defaultRollingUpdateConfiguration(tc.existing, tc.updateStrategy, tc.minAvailable)
-			if tc.wantNil {
-				assert.Nil(t, result)
-				return
-			}
-			require.NotNil(t, result)
-			require.NotNil(t, result.MaxUnavailable)
-			assert.Equal(t, tc.wantMaxUnavailable, *result.MaxUnavailable)
-		})
-	}
-}
-
-func TestDefaultRollingUpdateForTemplateSpecsPerStrategy(t *testing.T) {
-	testCases := []struct {
-		description          string
-		updateStrategy       grovecorev1beta1.UpdateStrategyType
-		pcsgOwnedCliqueNames sets.Set[string]
-		input                *grovecorev1beta1.PodCliqueTemplateSpec
-		wantRollingUpdateNil bool
-		wantMaxUnavailable   int32
-	}{
-		{
-			description:        "rollingRecreate defaults standalone MaxUnavailable to 1",
-			updateStrategy:     grovecorev1beta1.RollingRecreateStrategy,
-			input:              &grovecorev1beta1.PodCliqueTemplateSpec{Name: "standalone", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 5, MinAvailable: ptr.To[int32](3)}},
-			wantMaxUnavailable: 1,
-		},
-		{
-			description:          "onDelete leaves standalone RollingUpdate nil",
-			updateStrategy:       grovecorev1beta1.OnDeleteStrategy,
-			input:                &grovecorev1beta1.PodCliqueTemplateSpec{Name: "standalone", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 5, MinAvailable: ptr.To[int32](3)}},
-			wantRollingUpdateNil: true,
-		},
-		{
-			description:        "onDelete leaves an existing standalone RollingUpdate untouched for the validating webhook to reject",
-			updateStrategy:     grovecorev1beta1.OnDeleteStrategy,
-			input:              &grovecorev1beta1.PodCliqueTemplateSpec{Name: "standalone", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 5, MinAvailable: ptr.To[int32](3)}, RollingUpdate: &grovecorev1beta1.RollingUpdateConfiguration{MaxUnavailable: ptr.To[int32](2)}},
-			wantMaxUnavailable: 2,
-		},
-		{
-			description:          "PCSG-owned clique is skipped",
-			updateStrategy:       grovecorev1beta1.RollingRecreateStrategy,
-			pcsgOwnedCliqueNames: sets.New("member"),
-			input:                &grovecorev1beta1.PodCliqueTemplateSpec{Name: "member", Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 5, MinAvailable: ptr.To[int32](3)}},
-			wantRollingUpdateNil: true,
-		},
-	}
-	for _, tc := range testCases {
-		t.Run(tc.description, func(t *testing.T) {
-			result := defaultPodCliqueTemplateSpecs([]*grovecorev1beta1.PodCliqueTemplateSpec{tc.input}, tc.updateStrategy, tc.pcsgOwnedCliqueNames)
-			require.Len(t, result, 1)
-			if tc.wantRollingUpdateNil {
-				assert.Nil(t, result[0].RollingUpdate)
-				return
-			}
-			require.NotNil(t, result[0].RollingUpdate)
-			require.NotNil(t, result[0].RollingUpdate.MaxUnavailable)
-			assert.Equal(t, tc.wantMaxUnavailable, *result[0].RollingUpdate.MaxUnavailable)
-		})
-	}
-}
-
-func TestDefaultRollingUpdateForScalingGroupConfigsPerStrategy(t *testing.T) {
-	testCases := []struct {
-		description          string
-		updateStrategy       grovecorev1beta1.UpdateStrategyType
-		input                grovecorev1beta1.PodCliqueScalingGroupConfig
-		wantRollingUpdateNil bool
-		wantMaxUnavailable   int32
-	}{
-		{
-			description:        "rollingRecreate defaults MaxUnavailable to 1",
-			updateStrategy:     grovecorev1beta1.RollingRecreateStrategy,
-			input:              grovecorev1beta1.PodCliqueScalingGroupConfig{Name: "sg", CliqueNames: []string{"c"}, Replicas: ptr.To[int32](4), MinAvailable: ptr.To[int32](2)},
-			wantMaxUnavailable: 1,
-		},
-		{
-			description:          "onDelete leaves RollingUpdate nil",
-			updateStrategy:       grovecorev1beta1.OnDeleteStrategy,
-			input:                grovecorev1beta1.PodCliqueScalingGroupConfig{Name: "sg", CliqueNames: []string{"c"}, Replicas: ptr.To[int32](4), MinAvailable: ptr.To[int32](2)},
-			wantRollingUpdateNil: true,
-		},
-	}
-	for _, tc := range testCases {
-		t.Run(tc.description, func(t *testing.T) {
-			result := defaultPodCliqueScalingGroupConfigs([]grovecorev1beta1.PodCliqueScalingGroupConfig{tc.input}, tc.updateStrategy)
-			require.Len(t, result, 1)
-			if tc.wantRollingUpdateNil {
-				assert.Nil(t, result[0].RollingUpdate)
-				return
-			}
-			require.NotNil(t, result[0].RollingUpdate)
-			require.NotNil(t, result[0].RollingUpdate.MaxUnavailable)
-			assert.Equal(t, tc.wantMaxUnavailable, *result[0].RollingUpdate.MaxUnavailable)
 		})
 	}
 }
