@@ -241,7 +241,9 @@ func (c *ParentPodCliqueDependencies) refreshReadyPodsOfPodClique(pod *corev1.Po
 		return // Pod doesn't belong to any tracked parent PodClique
 	}
 
-	if deletionEvent {
+	// A Pod with a deletionTimestamp is going away even if its Ready condition is still true during the
+	// grace period; the operator already leaves such Pods out of PodClique.Status.ReadyReplicas, so do the same here.
+	if deletionEvent || pod.DeletionTimestamp != nil {
 		c.currentPCLQReadyPods[podCliqueName].Delete(pod.Name)
 		return
 	}

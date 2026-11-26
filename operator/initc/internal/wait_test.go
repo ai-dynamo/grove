@@ -298,6 +298,56 @@ func TestRefreshReadyPodsOfPodClique(t *testing.T) {
 				"podclique-a": sets.New[string](),
 			},
 		},
+		{
+			// A terminating Pod that still reports Ready should not be counted
+			name: "add_terminating_ready_pod",
+			initialReadyPods: map[string]sets.Set[string]{
+				"podclique-a": sets.New[string](),
+			},
+			pod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:              "podclique-a-pod-1",
+					DeletionTimestamp: &metav1.Time{},
+				},
+				Status: corev1.PodStatus{
+					Conditions: []corev1.PodCondition{
+						{
+							Type:   corev1.PodReady,
+							Status: corev1.ConditionTrue,
+						},
+					},
+				},
+			},
+			deletionEvent: false,
+			expectedReadyPods: map[string]sets.Set[string]{
+				"podclique-a": sets.New[string](),
+			},
+		},
+		{
+			// A tracked ready Pod that starts terminating should be removed
+			name: "ready_pod_starts_terminating",
+			initialReadyPods: map[string]sets.Set[string]{
+				"podclique-a": sets.New("podclique-a-pod-1", "podclique-a-pod-2"),
+			},
+			pod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:              "podclique-a-pod-1",
+					DeletionTimestamp: &metav1.Time{},
+				},
+				Status: corev1.PodStatus{
+					Conditions: []corev1.PodCondition{
+						{
+							Type:   corev1.PodReady,
+							Status: corev1.ConditionTrue,
+						},
+					},
+				},
+			},
+			deletionEvent: false,
+			expectedReadyPods: map[string]sets.Set[string]{
+				"podclique-a": sets.New("podclique-a-pod-2"),
+			},
+		},
 	}
 
 	for _, tt := range tests {
