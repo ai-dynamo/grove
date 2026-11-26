@@ -89,26 +89,54 @@ func TestSyncPCSGPodIndexLabels(t *testing.T) {
 	assert.Equal(t, types.UID("unchanged-uid"), updatedPod.UID)
 }
 
-// TestIsPodInPodReferences verifies isPodInPodReferences reports whether a pod appears in the
-// PodGroup for a given PodClique FQN.
-func TestIsPodInPodReferences(t *testing.T) {
-	podGang := testutils.NewPodGangBuilder(podGangNameForEpoch(testAnchor0Epoch), testNamespace).
-		WithPodGroupPods(testCliqueName, "pod-a", "pod-b").
-		Build()
+// TestPodNamesInClique verifies podNamesInClique reports the set of pod names recorded in the
+// PodGroup for a given PodClique FQN, and nil when the PodClique is not part of the PodGang.
+func TestPodNamesInClique(t *testing.T) {
 	tests := []struct {
 		name     string
-		pclqFQN  string
-		podName  string
-		expected bool
+		groups   []groveschedulerv1alpha1.PodGroup
+		expected map[string]struct{}
 	}{
-		{"pod present in the PodGroup", testCliqueName, "pod-a", true},
-		{"pod absent from the PodGroup", testCliqueName, "pod-x", false},
-		{"PodClique not part of the PodGang", "other", "pod-a", false},
+		{
+			name: "duplicate PodReferences",
+			groups: []groveschedulerv1alpha1.PodGroup{{Name: testCliqueName, PodReferences: []groveschedulerv1alpha1.NamespacedName{
+				{Name: "pod-a"}, {Name: "pod-a"}, {Name: "pod-b"},
+			}}},
+			expected: map[string]struct{}{"pod-a": {}, "pod-b": {}},
+		},
+		{
+			name: "duplicate PodGroup names",
+			groups: []groveschedulerv1alpha1.PodGroup{
+				{Name: testCliqueName, PodReferences: []groveschedulerv1alpha1.NamespacedName{{Name: "pod-a"}}},
+				{Name: testCliqueName, PodReferences: []groveschedulerv1alpha1.NamespacedName{{Name: "pod-b"}}},
+			},
+			expected: map[string]struct{}{"pod-a": {}, "pod-b": {}},
+		},
+		{
+			name:     "empty reference list",
+			groups:   []groveschedulerv1alpha1.PodGroup{{Name: testCliqueName}},
+			expected: map[string]struct{}{},
+		},
+		{
+			name: "name recorded only under another clique",
+			groups: []groveschedulerv1alpha1.PodGroup{
+				{Name: testCliqueName, PodReferences: []groveschedulerv1alpha1.NamespacedName{{Name: "pod-a"}}},
+				{Name: "other", PodReferences: []groveschedulerv1alpha1.NamespacedName{{Name: "pod-b"}}},
+			},
+			expected: map[string]struct{}{"pod-a": {}},
+		},
+		{
+			name: "no matching PodGroup",
+			groups: []groveschedulerv1alpha1.PodGroup{
+				{Name: "other", PodReferences: []groveschedulerv1alpha1.NamespacedName{{Name: "pod-a"}}},
+			},
+			expected: nil,
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			actual := isPodInPodReferences(podGang, tc.pclqFQN, tc.podName)
-			assert.Equal(t, tc.expected, actual)
+			podGang := &groveschedulerv1alpha1.PodGang{Spec: groveschedulerv1alpha1.PodGangSpec{PodGroups: tc.groups}}
+			assert.Equal(t, tc.expected, podNamesInClique(podGang, testCliqueName))
 		})
 	}
 }
@@ -141,7 +169,14 @@ func TestCanRemoveSchedulingGate(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			actual := canRemoveSchedulingGate(logr.Discard(), pod, testCliqueName, tc.podGangByName, tc.dependencySatisfiedByEpoch)
+			podNamesByGangName := make(map[string]map[string]struct{}, len(tc.podGangByName))
+			for podGangName, podGang := range tc.podGangByName {
+				if podGang == nil {
+					continue
+				}
+				podNamesByGangName[podGangName] = podNamesInClique(podGang, testCliqueName)
+			}
+			actual := canRemoveSchedulingGate(logr.Discard(), pod, tc.podGangByName, podNamesByGangName, tc.dependencySatisfiedByEpoch)
 			assert.Equal(t, tc.expected, actual)
 		})
 	}
