@@ -153,11 +153,11 @@ func (b *schedulerBackend) PodGangMembershipAnnotations(newPodGangName string) m
 	}
 }
 
-func (b *schedulerBackend) ValidatePodCliqueSet(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet, _ ...scheduler.ValidateOption) error {
+func (b *schedulerBackend) ValidatePodCliqueSet(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet, opts ...scheduler.ValidateOption) error {
 	if err := validateTopologyConstraints(pcs); err != nil {
 		return err
 	}
-	return validateQueueAnnotations(ctx, b.client, pcs)
+	return validateQueueAnnotations(ctx, b.client, pcs, scheduler.NewValidateOptions(opts...).OldPCS)
 }
 
 func validateTopologyConstraints(pcs *grovecorev1beta1.PodCliqueSet) error {

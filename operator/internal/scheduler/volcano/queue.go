@@ -76,16 +76,40 @@ func validateQueueName(queue string) []string {
 	return validation.IsDNS1123Subdomain(queue)
 }
 
-func validateQueueAnnotations(ctx context.Context, k8sClient client.Reader, pcs *grovecorev1beta1.PodCliqueSet) error {
+// validateQueueAnnotations validates the Volcano queue annotations of the PodCliqueSet and, when the workload
+// is new or moves to another queue, that the resolved queue exists and is Open. oldPCS is nil on create.
+//
+// On update, PodGroups the workload already has stay in their queue, so the queue's state only matters when
+// the resolved queue changes. Checking it on every update would reject scaling down, editing or removing the
+// finalizer of a PodCliqueSet whose queue an admin has closed or deleted, leaving it stuck in Terminating.
+func validateQueueAnnotations(ctx context.Context, k8sClient client.Reader, pcs, oldPCS *grovecorev1beta1.PodCliqueSet) error {
+	queue, err := resolvePodCliqueSetQueue(pcs)
+	if err != nil {
+		return err
+	}
+	if oldPCS != nil {
+		if !pcs.DeletionTimestamp.IsZero() {
+			return nil
+		}
+		if oldQueue, err := resolvePodCliqueSetQueue(oldPCS); err == nil && oldQueue == queue {
+			return nil
+		}
+	}
+	return validateQueueExistsAndIsOpen(ctx, k8sClient, queue)
+}
+
+// resolvePodCliqueSetQueue validates the queue annotations of the PodCliqueSet and its PodClique templates and
+// returns the queue they resolve to.
+func resolvePodCliqueSetQueue(pcs *grovecorev1beta1.PodCliqueSet) (string, error) {
 	var errs []error
 	pcsQueue := strings.TrimSpace(pcs.Annotations[QueueAnnotationKey])
 	if pcsQueue != "" {
 		if msgs := validateQueueName(pcsQueue); len(msgs) > 0 {
-			return fmt.Errorf("metadata.annotations[%s]: %s", QueueAnnotationKey, strings.Join(msgs, "; "))
+			return "", fmt.Errorf("metadata.annotations[%s]: %s", QueueAnnotationKey, strings.Join(msgs, "; "))
 		}
 	}
 	if len(pcs.Spec.Template.Cliques) == 0 {
-		return validateQueueExistsAndIsOpen(ctx, k8sClient, effectiveQueueFromAnnotations(pcs.Annotations))
+		return effectiveQueueFromAnnotations(pcs.Annotations), nil
 	}
 
 	var resolvedQueue string
@@ -112,9 +136,9 @@ func validateQueueAnnotations(ctx context.Context, k8sClient client.Reader, pcs 
 	}
 
 	if len(errs) > 0 {
-		return utilerrors.NewAggregate(errs)
+		return "", utilerrors.NewAggregate(errs)
 	}
-	return validateQueueExistsAndIsOpen(ctx, k8sClient, resolvedQueue)
+	return resolvedQueue, nil
 }
 
 // validateQueueExistsAndIsOpen verifies that the resolved Volcano queue exists
