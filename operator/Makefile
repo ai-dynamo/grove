@@ -138,14 +138,14 @@ run-e2e-verbose: $(GOTESTSUM)
 	@echo "> Running e2e tests (verbose)..."
 	@cd e2e && $(GOTESTSUM) --format short-verbose -- -count=1 -tags=e2e $(E2E_GO_TEST_FLAGS) ./tests/... -timeout 45m $(if $(TEST_PATTERN),-run '$(TEST_PATTERN)')
 
-# Run the standalone upgrade test from the latest published GitHub release to
-# the operator built from the current checkout. The test owns its k3d cluster.
+# Run upgrade tests with KAI installed and Grove managed by the test harness.
+# Each test installs its source release, then upgrades to the current checkout.
 .PHONY: run-upgrade-e2e
 run-upgrade-e2e: export GROVE_E2E_DIAG_DIR = $(DIAG_DIR)
 run-upgrade-e2e: export GROVE_E2E_DIAG_MODE = $(DIAG_MODE)
 run-upgrade-e2e: $(GOTESTSUM)
 	@echo "> Running e2e upgrade tests (verbose)..."
-	@$(MAKE) e2e-cluster-up E2E_CREATE_FLAGS="$(E2E_CREATE_FLAGS) --set grove.enabled=false --set scheduler.kai.enabled=false"
+	@$(MAKE) e2e-cluster-up E2E_CREATE_FLAGS="$(E2E_CREATE_FLAGS) --set grove.enabled=false"
 	$(GOTESTSUM) --format short-verbose -- -count=1 -tags=e2e,e2eupgrade ./e2e/tests/upgrade/ -timeout 45m $(if $(TEST_PATTERN),-run '$(TEST_PATTERN)') || \
 		(echo "Tests failed, cleaning up cluster..."; $(MAKE) e2e-cluster-down; exit 1)
 	@echo "> Tests passed, cleaning up cluster..."

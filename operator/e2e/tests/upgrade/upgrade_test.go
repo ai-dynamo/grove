@@ -254,6 +254,7 @@ func Test_VUPG3_LegacyGenerationRetentionPreservesStandaloneScaling(t *testing.T
 						_, err := tc.DeployAndVerifyWorkload()
 						require.NoError(t, err)
 						require.NoError(t, updateutils.UpdatePCSUpdateStrategy(tc, strategy))
+						require.NoError(t, tc.WaitForPods(6), "initial workload must be Ready")
 						if history == "completed" {
 							require.NoError(t, updateutils.TriggerPodCliqueUpdateWithRevision(tc, "before-upgrade", "frontend", "prefill", "decode"))
 							require.NoError(t, updateutils.WaitForRollingUpdateComplete(tc, 1))
@@ -389,6 +390,7 @@ func Test_VUPG4_MinAvailableChangeAfterLegacyUpgrade(t *testing.T) {
 			_, err := tc.DeployAndVerifyWorkload()
 			require.NoError(t, err)
 			require.NoError(t, updateutils.UpdatePCSUpdateStrategy(tc, grovev1beta1.CoherentStrategy))
+			require.NoError(t, tc.WaitForPods(10), "initial workload must be Ready")
 			beforePCS, err = updateutils.GetPCS(tc, tc.Workload.Name)
 			require.NoError(t, err)
 			original := beforePCS.DeepCopy()
@@ -536,6 +538,7 @@ func Test_VUPG5_UpgradeDuringLegacyUpdatePreservesGeneration(t *testing.T) {
 					_, err := tc.DeployAndVerifyWorkload()
 					require.NoError(t, err)
 					require.NoError(t, updateutils.UpdatePCSUpdateStrategy(tc, strategy))
+					require.NoError(t, tc.WaitForPods(6), "initial workload must be Ready")
 					pcs, err := updateutils.GetPCS(tc, tc.Workload.Name)
 					require.NoError(t, err)
 					original := pcs.DeepCopy()
