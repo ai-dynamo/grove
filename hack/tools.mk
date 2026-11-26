@@ -32,7 +32,7 @@ UV                := $(or $(shell command -v uv 2>/dev/null),$(TOOLS_BIN_DIR)/uv
 # default tool versions
 # -------------------------------------------------------------------------
 CONTROLLER_GEN_VERSION    ?= $(call version_gomod,sigs.k8s.io/controller-tools)
-KIND_VERSION              ?= v0.30.0
+KIND_VERSION              ?= v0.33.0
 GOLANGCI_LINT_VERSION     ?= v2.6.1
 GOIMPORTS_REVISER_VERSION ?= v3.10.0
 YQ_VERSION                ?= v4.48.1
