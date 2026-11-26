@@ -16,7 +16,9 @@ package component
 
 import (
 	"context"
+	"slices"
 	"testing"
+	"time"
 
 	"github.com/ai-dynamo/grove/operator/api/common"
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
@@ -30,6 +32,114 @@ import (
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
+
+func TestComputePCSReplicaCleanupIndices(t *testing.T) {
+	at := metav1.NewTime(time.Unix(100, 0).UTC())
+
+	newProgress := func(source, target int32) *grovecorev1beta1.PodCliqueSetUpdateProgress {
+		return &grovecorev1beta1.PodCliqueSetUpdateProgress{
+			RequiresReplicaRecreation: true,
+			CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{{
+				ReplicaIndex: source,
+				Replacement: &grovecorev1beta1.PodCliqueSetReplicaReplacementProgress{
+					TargetReplicaIndex: target,
+				},
+			}},
+		}
+	}
+
+	sameIndex := newProgress(1, 1)
+	sameIndexReady := sameIndex.DeepCopy()
+	sameIndexReady.CurrentlyUpdating[0].Replacement.SourceCleanupCompletedAt = &at
+
+	differentIndex := newProgress(2, 1)
+	differentIndexCleaned := differentIndex.DeepCopy()
+	differentIndexCleaned.CurrentlyUpdating[0].Replacement.SourceCleanupCompletedAt = &at
+
+	canceled := differentIndex.DeepCopy()
+	canceled.CurrentlyUpdating[0].Replacement.CanceledAt = &at
+
+	canceledSameIndex := sameIndexReady.DeepCopy()
+	canceledSameIndex.CurrentlyUpdating[0].Replacement.CanceledAt = &at
+
+	retired := sameIndexReady.DeepCopy()
+	retired.CurrentlyUpdating[0].Replacement.RetiredSourceReplicaIndices = []int32{3, 4}
+
+	ordinaryUpdate := differentIndex.DeepCopy()
+	ordinaryUpdate.RequiresReplicaRecreation = false
+
+	ordinarySelection := differentIndex.DeepCopy()
+	ordinarySelection.CurrentlyUpdating[0].Replacement = nil
+
+	completedUpdate := canceled.DeepCopy()
+	completedUpdate.UpdateEndedAt = &at
+
+	completedEntry := retired.DeepCopy()
+	completedEntry.CurrentlyUpdating[0].UpdateEndedAt = &at
+
+	canceledOverlap := sameIndexReady.DeepCopy()
+	canceledOverlap.CurrentlyUpdating = append(
+		canceledOverlap.CurrentlyUpdating,
+		canceled.CurrentlyUpdating[0],
+	)
+	canceledOverlapReversed := canceledOverlap.DeepCopy()
+	slices.Reverse(canceledOverlapReversed.CurrentlyUpdating)
+
+	retiredOverlap := sameIndexReady.DeepCopy()
+	retiring := newProgress(2, 0)
+	retiring.CurrentlyUpdating[0].Replacement.RetiredSourceReplicaIndices = []int32{1}
+	retiredOverlap.CurrentlyUpdating = append(
+		retiredOverlap.CurrentlyUpdating,
+		retiring.CurrentlyUpdating[0],
+	)
+	retiredOverlapReversed := retiredOverlap.DeepCopy()
+	slices.Reverse(retiredOverlapReversed.CurrentlyUpdating)
+
+	tests := []struct {
+		name     string
+		scaleIn  []int
+		progress *grovecorev1beta1.PodCliqueSetUpdateProgress
+		want     []int
+	}{
+		{name: "no cleanup"},
+		{name: "ordinary sparse scale-in", scaleIn: []int{7, 2, 7}, want: []int{2, 7}},
+		{name: "ordinary update adds no cleanup", scaleIn: []int{7}, progress: ordinaryUpdate, want: []int{7}},
+		{name: "selection without replacement adds no cleanup", progress: ordinarySelection},
+		{name: "completed update adds no cleanup", scaleIn: []int{7}, progress: completedUpdate, want: []int{7}},
+		{name: "completed entry adds no cleanup", progress: completedEntry},
+		{name: "same-index source cleanup", progress: sameIndex, want: []int{1}},
+		{name: "same-index target after barrier", progress: sameIndexReady},
+		{name: "same-index barrier overrides stale scale-in", scaleIn: []int{1, 7}, progress: sameIndexReady, want: []int{7}},
+		{name: "different-index source only", progress: differentIndex, want: []int{2}},
+		{name: "different-index source remains cleanup-only after barrier", progress: differentIndexCleaned, want: []int{2}},
+		{name: "canceled source and target", progress: canceled, want: []int{1, 2}},
+		{name: "canceled same-index target after barrier", progress: canceledSameIndex, want: []int{1}},
+		{name: "retired sources and unrelated scale-in", scaleIn: []int{7}, progress: retired, want: []int{3, 4, 7}},
+		{name: "canceled cleanup wins", progress: canceledOverlap, want: []int{1, 2}},
+		{name: "canceled cleanup wins in reverse order", progress: canceledOverlapReversed, want: []int{1, 2}},
+		{name: "retired cleanup wins", progress: retiredOverlap, want: []int{1, 2}},
+		{name: "retired cleanup wins in reverse order", progress: retiredOverlapReversed, want: []int{1, 2}},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			scaleIn := slices.Clone(tc.scaleIn)
+			progress := tc.progress.DeepCopy()
+			scaleInBefore := slices.Clone(scaleIn)
+			progressBefore := progress.DeepCopy()
+			pcs := &grovecorev1beta1.PodCliqueSet{
+				Status: grovecorev1beta1.PodCliqueSetStatus{UpdateProgress: progress},
+			}
+
+			got := ComputePCSReplicaCleanupIndices(pcs, scaleIn)
+
+			assert.Equal(t, sets.New(tc.want...), got)
+			got.Insert(99)
+			assert.Equal(t, scaleInBefore, scaleIn, "cleanup calculation must not modify scaling selections")
+			assert.Equal(t, progressBefore, pcs.Status.UpdateProgress, "cleanup calculation must not modify update progress")
+		})
+	}
+}
 
 func TestShouldPreservePCSReplicaRevision(t *testing.T) {
 	cases := []struct {

@@ -20,42 +20,50 @@ import (
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/sync"
 	"github.com/ai-dynamo/grove/operator/internal/utils"
+	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 
 	"k8s.io/apimachinery/pkg/util/sets"
 )
 
-// computePCSReplicaState builds the component-facing state by overlaying scaling indices and persisted replacement
-// progress onto the expected replica identities. The caller supplies the identities retained by scaling and any
-// additional initial provisioning identities. State construction does not change that allocation decision.
-// Retired sources are cleanup-only indices. They remain in scale-in even when absent, and are excluded from
-// expected and scale-out indices.
+// computePCSReplicaState builds the component-facing state by overlaying scaling
+// and replacement work onto the identities retained by the caller.
 func computePCSReplicaState(
 	pcs *grovecorev1beta1.PodCliqueSet,
 	scalingIndices pcsReplicaScalingIndices,
 	expectedReplicaIndices sets.Set[int],
-	replacementGroups pcsReplicaReplacementGroups) pcssync.State {
+	replacementGroups pcsReplicaReplacementGroups,
+) pcssync.State {
 	expectedReplicaIndices = expectedReplicaIndices.Clone()
 	scaleOutReplicaIndices := sets.New(scalingIndices.scaleOut...)
-	scaleInReplicaIndices := sets.New(scalingIndices.scaleIn...)
+	scaleInReplicaIndices := componentutils.ComputePCSReplicaCleanupIndices(
+		pcs,
+		scalingIndices.scaleIn,
+	)
 
 	for _, replacement := range replacementGroups.active {
-		overlayActiveReplacement(pcs, replacement, expectedReplicaIndices, scaleInReplicaIndices, scaleOutReplicaIndices)
+		overlayActiveReplacement(
+			replacement,
+			expectedReplicaIndices,
+			scaleInReplicaIndices,
+			scaleOutReplicaIndices,
+		)
 	}
 	for _, replacement := range replacementGroups.canceled {
-		overlayCanceledReplacement(replacement, expectedReplicaIndices, scaleInReplicaIndices, scaleOutReplicaIndices)
+		overlayCanceledReplacement(
+			replacement,
+			expectedReplicaIndices,
+			scaleOutReplicaIndices,
+		)
 	}
 
-	// Retired-source cleanup takes precedence over creation work so these indices cannot be recreated
-	// through an existing scaling or replacement selection.
+	// Retired sources must not be retained or recreated through another selection.
 	for _, replacement := range replacementGroups.active {
 		expectedReplicaIndices.Delete(replacement.retiredSourcePCSReplicaIndices...)
 		scaleOutReplicaIndices.Delete(replacement.retiredSourcePCSReplicaIndices...)
-		scaleInReplicaIndices.Insert(replacement.retiredSourcePCSReplicaIndices...)
 	}
 	for _, replacement := range replacementGroups.canceled {
 		expectedReplicaIndices.Delete(replacement.retiredSourcePCSReplicaIndices...)
 		scaleOutReplicaIndices.Delete(replacement.retiredSourcePCSReplicaIndices...)
-		scaleInReplicaIndices.Insert(replacement.retiredSourcePCSReplicaIndices...)
 	}
 
 	return pcssync.State{
@@ -102,65 +110,45 @@ func computePCSReplicaIndicesAfterScaling(existingReplicaIndices sets.Set[int], 
 	return pcsReplicaIndicesAfterScaling
 }
 
-// overlayActiveReplacement projects an active PodCliqueSet replica replacement onto the reconcile-local index sets.
+// overlayActiveReplacement projects target creation using the shared cleanup set.
+// It does not change the cleanup classification.
 func overlayActiveReplacement(
-	pcs *grovecorev1beta1.PodCliqueSet,
 	replacement pcsReplicaReplacement,
-	expectedReplicaIndices, scaleInReplicaIndices, scaleOutReplicaIndices sets.Set[int]) {
+	expectedReplicaIndices, cleanupReplicaIndices, scaleOutReplicaIndices sets.Set[int],
+) {
 	source := replacement.sourcePCSReplicaIndex
 	target := replacement.targetPCSReplicaIndex
 
 	if source != target {
-		scaleInReplicaIndices.Insert(source)
 		scaleOutReplicaIndices.Insert(target)
 		expectedReplicaIndices.Delete(source)
 		expectedReplicaIndices.Insert(target)
 		return
 	}
 
-	// Same index replacement is staged. Delete at the shared index first, then create once the source cleanup
-	// has completed. The two reconcile-local sets never contain the shared index together.
-	if isReplacementSourceCleanupCompleted(pcs, source) {
-		scaleInReplicaIndices.Delete(source)
-		scaleOutReplicaIndices.Insert(source)
-		expectedReplicaIndices.Insert(source)
+	// A shared source/target index can be created only after it stops being
+	// cleanup-only.
+	if cleanupReplicaIndices.Has(source) {
+		scaleOutReplicaIndices.Delete(source)
+		expectedReplicaIndices.Delete(source)
 		return
 	}
-	scaleOutReplicaIndices.Delete(source)
-	scaleInReplicaIndices.Insert(source)
-	expectedReplicaIndices.Delete(source)
+
+	scaleOutReplicaIndices.Insert(source)
+	expectedReplicaIndices.Insert(source)
 }
 
-// overlayCanceledReplacement projects a canceled PodCliqueSet replica replacement awaiting cleanup onto the
-// reconcile-local index sets. A replacement is canceled when PCS scale-in selects its active target. Neither
-// the source nor the target is a desired identity anymore, so both leave the expected and scale-out sets.
-// Both indices remain in scale-in until every replica-scoped participant confirms cleanup, even when no
-// resources are observed there. Omitting an absent index would prevent post-sync cleanup from retiring the entry.
+// overlayCanceledReplacement removes canceled source and target identities from
+// retained and creation work. The shared cleanup calculation handles their deletion.
 func overlayCanceledReplacement(
 	replacement pcsReplicaReplacement,
-	expectedReplicaIndices, scaleInReplicaIndices, scaleOutReplicaIndices sets.Set[int]) {
+	expectedReplicaIndices, scaleOutReplicaIndices sets.Set[int],
+) {
 	source := replacement.sourcePCSReplicaIndex
 	target := replacement.targetPCSReplicaIndex
 
 	expectedReplicaIndices.Delete(source, target)
 	scaleOutReplicaIndices.Delete(source, target)
-
-	scaleInReplicaIndices.Insert(source, target)
-}
-
-// isReplacementSourceCleanupCompleted reports whether the same-index replacement keyed by the source replica index
-// has recorded its source cleanup barrier.
-func isReplacementSourceCleanupCompleted(pcs *grovecorev1beta1.PodCliqueSet, sourcePCSReplicaIndex int) bool {
-	if pcs.Status.UpdateProgress == nil {
-		return false
-	}
-	for _, replicaProgress := range pcs.Status.UpdateProgress.CurrentlyUpdating {
-		if int(replicaProgress.ReplicaIndex) != sourcePCSReplicaIndex {
-			continue
-		}
-		return replicaProgress.Replacement != nil && replicaProgress.Replacement.SourceCleanupCompletedAt != nil
-	}
-	return false
 }
 
 // sortedReplicaIndices returns replica indices in ascending order.

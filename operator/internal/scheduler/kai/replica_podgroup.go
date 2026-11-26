@@ -130,7 +130,7 @@ func (b *schedulerBackend) reconcileReplicaPodGroup(
 			return err
 		}
 		if len(projected) == 0 {
-			return b.deleteScaledInReplicaPodGroup(ctx, pcs, replica, sourceScheduler)
+			return b.deleteReplicaPodGroup(ctx, pcs, replica, sourceScheduler)
 		}
 		materialized = projected
 	}
@@ -630,7 +630,7 @@ func (b *schedulerBackend) listActivePodsForReplica(ctx context.Context, pcs *gr
 	return result, nil
 }
 
-func (b *schedulerBackend) deleteScaledInReplicaPodGroup(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet, replica int, sourceScheduler string) error {
+func (b *schedulerBackend) deleteReplicaPodGroup(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet, replica int, sourceScheduler string) error {
 	pods, err := b.listActivePodsForReplica(ctx, pcs, replica, sourceScheduler)
 	if err != nil {
 		return err

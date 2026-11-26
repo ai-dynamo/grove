@@ -134,6 +134,63 @@ func IsPCSReplicaRecreationInProgress(pcs *grovecorev1beta1.PodCliqueSet) bool {
 	return updateInProgress(pcs) && pcs.Status.UpdateProgress.RequiresReplicaRecreation
 }
 
+// ComputePCSReplicaCleanupIndices returns a new set containing ordinary scale-in
+// indices and unfinished replica-recreation cleanup indices. It does not modify
+// either input.
+//
+// A same-index replacement stops being cleanup-only after its source cleanup
+// barrier. Canceled replacements and retired sources take precedence over that
+// transition.
+func ComputePCSReplicaCleanupIndices(
+	pcs *grovecorev1beta1.PodCliqueSet,
+	scaleInReplicaIndices []int,
+) sets.Set[int] {
+	cleanupIndices := sets.New(scaleInReplicaIndices...)
+	if !IsPCSReplicaRecreationInProgress(pcs) {
+		return cleanupIndices
+	}
+
+	// Process active replacements first. A same-index replacement whose source
+	// cleanup is complete removes its index from the cleanup set so its target
+	// can be created. Add canceled and retired cleanup in the second pass so
+	// those obligations take precedence and cannot be cleared by an active
+	// replacement, regardless of the order of CurrentlyUpdating entries.
+	for _, replicaProgress := range pcs.Status.UpdateProgress.CurrentlyUpdating {
+		replacement := replicaProgress.Replacement
+		if replicaProgress.UpdateEndedAt != nil || replacement == nil || replacement.CanceledAt != nil {
+			continue
+		}
+
+		source := int(replicaProgress.ReplicaIndex)
+		target := int(replacement.TargetReplicaIndex)
+		if source == target && replacement.SourceCleanupCompletedAt != nil {
+			cleanupIndices.Delete(source)
+			continue
+		}
+		cleanupIndices.Insert(source)
+	}
+
+	// Apply canceled and retired cleanup last to preserve that precedence.
+	for _, replicaProgress := range pcs.Status.UpdateProgress.CurrentlyUpdating {
+		replacement := replicaProgress.Replacement
+		if replicaProgress.UpdateEndedAt != nil || replacement == nil {
+			continue
+		}
+
+		if replacement.CanceledAt != nil {
+			cleanupIndices.Insert(
+				int(replicaProgress.ReplicaIndex),
+				int(replacement.TargetReplicaIndex),
+			)
+		}
+		for _, retiredSource := range replacement.RetiredSourceReplicaIndices {
+			cleanupIndices.Insert(int(retiredSource))
+		}
+	}
+
+	return cleanupIndices
+}
+
 // ShouldPreservePCSReplicaRevision reports whether an existing resource must retain its running
 // template during the active PCS update. Callers handle fresh creation independently.
 func ShouldPreservePCSReplicaRevision(pcs *grovecorev1beta1.PodCliqueSet, pcsReplicaIndex int) bool {
