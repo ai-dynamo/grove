@@ -68,6 +68,26 @@ func TestCoherentMinAvailableByComponent(t *testing.T) {
 	assert.Equal(t, map[string]int32{"pf": 3}, pcsgMinAvailable)
 }
 
+func TestCoherentUpdateHelpersDefaultUnsetMinAvailable(t *testing.T) {
+	pcs := testutils.NewPodCliqueSetBuilder("pcs", "default", "uid").
+		WithPodCliqueTemplateSpec(&grovecorev1beta1.PodCliqueTemplateSpec{
+			Name: "fe",
+			Spec: grovecorev1beta1.PodCliqueSpec{Replicas: 3},
+		}).
+		WithPodCliqueScalingGroupConfig(grovecorev1beta1.PodCliqueScalingGroupConfig{
+			Name:        "workers",
+			CliqueNames: []string{"worker"},
+		}).
+		Build()
+
+	// A standalone clique falls back to its Replicas, as the webhooks do; a PCSG falls back to 1.
+	assert.Equal(t, map[string]int32{"fe": 3, "workers": DefaultMinAvailable},
+		CoherentMaxUnavailableByComponent(pcs, []string{"fe", "workers"}))
+	standalonePCLQs, pcsgs := CoherentMinAvailableByComponent(pcs, []string{"fe", "workers"})
+	assert.Equal(t, map[string]int32{"fe": 3}, standalonePCLQs)
+	assert.Equal(t, map[string]int32{"workers": DefaultMinAvailable}, pcsgs)
+}
+
 func TestEffectiveMaxUnavailable(t *testing.T) {
 	testCases := []struct {
 		description    string
