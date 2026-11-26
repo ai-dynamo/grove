@@ -18,6 +18,7 @@ import (
 	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 
 	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/utils/ptr"
 )
 
 // DefaultRollingRecreateMaxUnavailable is the MaxUnavailable applied to a component under the
@@ -25,9 +26,10 @@ import (
 // EffectiveMaxUnavailable so both agree on the value.
 const DefaultRollingRecreateMaxUnavailable int32 = 1
 
-// DefaultMinAvailable is the API default for a PodClique or
-// PodCliqueScalingGroup Config's MinAvailable. Coherent-update helpers must
-// tolerate stored objects that predate defaulting webhook admission.
+// DefaultMinAvailable is the API default for a PodCliqueScalingGroup Config's MinAvailable only.
+// A standalone PodClique with no MinAvailable falls back to its Spec.Replicas instead, as the
+// defaulting and validating webhooks do. Coherent-update helpers must tolerate stored objects that
+// predate defaulting webhook admission.
 const DefaultMinAvailable int32 = 1
 
 // CoherentMaxUnavailableByComponent returns, keyed by in-scope component name, the effective
@@ -40,12 +42,12 @@ func CoherentMaxUnavailableByComponent(pcs *grovecorev1beta1.PodCliqueSet, inSco
 	maxUnavailableByComponent := make(map[string]int32, len(inScopeComponentNames))
 	for _, cliqueTemplate := range pcs.Spec.Template.Cliques {
 		if inScopeComponents.Has(cliqueTemplate.Name) && IsStandalonePCLQTemplate(pcs, cliqueTemplate.Name) {
-			maxUnavailableByComponent[cliqueTemplate.Name] = int32(EffectiveMaxUnavailable(cliqueTemplate.RollingUpdate, grovecorev1beta1.CoherentStrategy, minAvailableOrDefault(cliqueTemplate.Spec.MinAvailable)))
+			maxUnavailableByComponent[cliqueTemplate.Name] = int32(EffectiveMaxUnavailable(cliqueTemplate.RollingUpdate, grovecorev1beta1.CoherentStrategy, ptr.Deref(cliqueTemplate.Spec.MinAvailable, cliqueTemplate.Spec.Replicas)))
 		}
 	}
 	for _, pcsgConfig := range pcs.Spec.Template.PodCliqueScalingGroupConfigs {
 		if inScopeComponents.Has(pcsgConfig.Name) {
-			maxUnavailableByComponent[pcsgConfig.Name] = int32(EffectiveMaxUnavailable(pcsgConfig.RollingUpdate, grovecorev1beta1.CoherentStrategy, minAvailableOrDefault(pcsgConfig.MinAvailable)))
+			maxUnavailableByComponent[pcsgConfig.Name] = int32(EffectiveMaxUnavailable(pcsgConfig.RollingUpdate, grovecorev1beta1.CoherentStrategy, ptr.Deref(pcsgConfig.MinAvailable, DefaultMinAvailable)))
 		}
 	}
 	return maxUnavailableByComponent
@@ -82,22 +84,15 @@ func CoherentMinAvailableByComponent(pcs *grovecorev1beta1.PodCliqueSet, inScope
 	pcsgMinAvailable = make(map[string]int32)
 	for _, cliqueTemplate := range pcs.Spec.Template.Cliques {
 		if inScopeComponents.Has(cliqueTemplate.Name) && IsStandalonePCLQTemplate(pcs, cliqueTemplate.Name) {
-			standalonePCLQMinAvailable[cliqueTemplate.Name] = minAvailableOrDefault(cliqueTemplate.Spec.MinAvailable)
+			standalonePCLQMinAvailable[cliqueTemplate.Name] = ptr.Deref(cliqueTemplate.Spec.MinAvailable, cliqueTemplate.Spec.Replicas)
 		}
 	}
 	for _, pcsgConfig := range pcs.Spec.Template.PodCliqueScalingGroupConfigs {
 		if inScopeComponents.Has(pcsgConfig.Name) {
-			pcsgMinAvailable[pcsgConfig.Name] = minAvailableOrDefault(pcsgConfig.MinAvailable)
+			pcsgMinAvailable[pcsgConfig.Name] = ptr.Deref(pcsgConfig.MinAvailable, DefaultMinAvailable)
 		}
 	}
 	return
-}
-
-func minAvailableOrDefault(minAvailable *int32) int32 {
-	if minAvailable == nil {
-		return DefaultMinAvailable
-	}
-	return *minAvailable
 }
 
 // ComputeAllowedBudget returns the number of units (Pods for a standalone PodClique, complete logical
