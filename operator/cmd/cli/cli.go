@@ -19,7 +19,8 @@ import (
 	"os"
 
 	apicommonconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
-	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
+	operatorconfig "github.com/ai-dynamo/grove/operator/api/config"
+	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 	operatorvalidation "github.com/ai-dynamo/grove/operator/api/config/validation"
 
 	"github.com/spf13/pflag"
@@ -44,8 +45,16 @@ const (
 	// ExitErrMNNVLPrerequisites indicates that the application exited because MNNVL prerequisites are not met.
 	ExitErrMNNVLPrerequisites
 	// ExitErrSetPodGangMigrationGate indicates that the application exited due to an error setting the
-	// PodGang migration gate condition on legacy PodCliqueSets before the manager started.
+	// PodGang migration gate condition on legacy PodCliqueSets before the controllers started.
 	ExitErrSetPodGangMigrationGate
+	// ExitErrInitializeCRDInstaller indicates that the CRD installer could not initialize its API client.
+	ExitErrInitializeCRDInstaller
+	// ExitErrLoadCRDInstallerConfig indicates that the CRD installer could not load its runtime configuration.
+	ExitErrLoadCRDInstallerConfig
+	// ExitErrUpgradeCRDs indicates that the CRD installer could not upgrade the CRDs.
+	ExitErrUpgradeCRDs
+	// ExitErrConfigureCRDConversion indicates that the CRD installer could not configure CRD conversion.
+	ExitErrConfigureCRDConversion
 )
 
 var (
@@ -78,27 +87,28 @@ func ParseLaunchOptions(cliArgs []string) (*LaunchOptions, error) {
 }
 
 // LoadAndValidateOperatorConfig loads and validates the operator configuration from the specified path in the launch options.
-func (o *LaunchOptions) LoadAndValidateOperatorConfig() (*configv1alpha1.OperatorConfiguration, error) {
-	operatorConfig, err := o.loadOperatorConfig()
+// The returned warnings name a deprecated configuration version used by the file.
+func (o *LaunchOptions) LoadAndValidateOperatorConfig() (*configv1beta1.OperatorConfiguration, []string, error) {
+	operatorConfig, warnings, err := o.loadOperatorConfig()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if errs := operatorvalidation.ValidateOperatorConfiguration(operatorConfig); len(errs) > 0 {
-		return nil, fmt.Errorf("%w: %w", errInvalidOperatorConfig, errs.ToAggregate())
+		return nil, nil, fmt.Errorf("%w: %w", errInvalidOperatorConfig, errs.ToAggregate())
 	}
-	return operatorConfig, nil
+	return operatorConfig, warnings, nil
 }
 
-func (o *LaunchOptions) loadOperatorConfig() (*configv1alpha1.OperatorConfiguration, error) {
+func (o *LaunchOptions) loadOperatorConfig() (*configv1beta1.OperatorConfiguration, []string, error) {
 	operatorConfigBytes, err := os.ReadFile(o.ConfigFile)
 	if err != nil {
-		return nil, fmt.Errorf("%w: error reading file: %w", errLoadOperatorConfig, err)
+		return nil, nil, fmt.Errorf("%w: error reading file: %w", errLoadOperatorConfig, err)
 	}
-	cfg, err := configv1alpha1.DecodeOperatorConfig(operatorConfigBytes)
+	cfg, warnings, err := operatorconfig.DecodeOperatorConfig(operatorConfigBytes)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", errLoadOperatorConfig, err)
+		return nil, nil, fmt.Errorf("%w: %w", errLoadOperatorConfig, err)
 	}
-	return cfg, nil
+	return cfg, warnings, nil
 }
 
 func (o *LaunchOptions) mapFlags(fs *pflag.FlagSet) {

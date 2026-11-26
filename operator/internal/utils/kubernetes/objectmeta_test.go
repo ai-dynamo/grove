@@ -19,7 +19,7 @@ import (
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -76,8 +76,8 @@ func TestFilterMapOwnedResourceNames(t *testing.T) {
 	}
 	// newPodClique builds a typed candidate object. FilterMapOwnedResourceNames is used across the
 	// codebase with concrete typed objects (PodClique, PodGang, ...)
-	newPodClique := func(name string, ownerRef metav1.OwnerReference) grovecorev1alpha1.PodClique {
-		return grovecorev1alpha1.PodClique{
+	newPodClique := func(name string, ownerRef metav1.OwnerReference) grovecorev1beta1.PodClique {
+		return grovecorev1beta1.PodClique{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:            name,
 				Namespace:       testNamespace,
@@ -96,13 +96,13 @@ func TestFilterMapOwnedResourceNames(t *testing.T) {
 	testCases := []struct {
 		description           string
 		ownerObjMeta          metav1.ObjectMeta
-		candidateResources    []grovecorev1alpha1.PodClique
+		candidateResources    []grovecorev1beta1.PodClique
 		expectedResourceNames []string
 	}{
 		{
 			description:  "no resources owned by the owner object",
 			ownerObjMeta: testOwnerObjMeta,
-			candidateResources: []grovecorev1alpha1.PodClique{
+			candidateResources: []grovecorev1beta1.PodClique{
 				newPodClique("resource1", controllerRef("other-pcs", uuid.NewUUID())),
 			},
 			expectedResourceNames: []string{},
@@ -110,7 +110,7 @@ func TestFilterMapOwnedResourceNames(t *testing.T) {
 		{
 			description:  "mixed ownership - some resources owned, some not",
 			ownerObjMeta: testOwnerObjMeta,
-			candidateResources: []grovecorev1alpha1.PodClique{
+			candidateResources: []grovecorev1beta1.PodClique{
 				newPodClique("owned-resource", controllerRef(testPCSName, testOwnerObjMeta.UID)),
 				newPodClique("unowned-resource", controllerRef("other-pcs", uuid.NewUUID())),
 			},
@@ -119,7 +119,7 @@ func TestFilterMapOwnedResourceNames(t *testing.T) {
 		{
 			description:  "owner reference matches but is not the controller",
 			ownerObjMeta: testOwnerObjMeta,
-			candidateResources: []grovecorev1alpha1.PodClique{
+			candidateResources: []grovecorev1beta1.PodClique{
 				newPodClique("non-controller-owned", nonControllerRef(testPCSName, testOwnerObjMeta.UID)),
 			},
 			expectedResourceNames: []string{},
@@ -127,7 +127,7 @@ func TestFilterMapOwnedResourceNames(t *testing.T) {
 		{
 			description:           "no candidate resources",
 			ownerObjMeta:          testOwnerObjMeta,
-			candidateResources:    []grovecorev1alpha1.PodClique{},
+			candidateResources:    []grovecorev1beta1.PodClique{},
 			expectedResourceNames: []string{},
 		},
 	}

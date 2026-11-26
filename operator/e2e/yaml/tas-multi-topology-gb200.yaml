@@ -3,7 +3,7 @@
 # The gb200-topology maps domain "block" to "example.com/nvl-block",
 # which only exists on nodes relabeled as GB200 by the test.
 ---
-apiVersion: grove.io/v1alpha1
+apiVersion: grove.io/v1beta1
 kind: PodCliqueSet
 metadata:
   name: tas-gb200-workload

@@ -3,7 +3,7 @@
 # min=2) of cliques pc-b (replicas=1, min=1) and pc-c (replicas=3, min=3).
 # 10 pods total; terminationDelay 10s. Containers run sleep infinity (busybox).
 ---
-apiVersion: grove.io/v1alpha1
+apiVersion: grove.io/v1beta1
 kind: PodCliqueSet
 metadata:
   name: workload1-gt

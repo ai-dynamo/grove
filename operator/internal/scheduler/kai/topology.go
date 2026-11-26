@@ -19,7 +19,7 @@ import (
 	"fmt"
 	"reflect"
 
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 
 	kaitopologyv1alpha1 "github.com/kai-scheduler/KAI-scheduler/pkg/apis/kai/v1alpha1"
@@ -46,12 +46,12 @@ func (b *schedulerBackend) TopologyGVR() schema.GroupVersionResource {
 
 // TopologyResourceName returns the name of the KAI Topology resource for the given ClusterTopologyBinding.
 // KAI topology resources are always named after their ClusterTopologyBinding.
-func (b *schedulerBackend) TopologyResourceName(ct *grovecorev1alpha1.ClusterTopologyBinding) string {
+func (b *schedulerBackend) TopologyResourceName(ct *grovecorev1beta1.ClusterTopologyBinding) string {
 	return ct.Name
 }
 
 // SyncTopology creates or updates the KAI Topology resource for the given ClusterTopologyBinding.
-func (b *schedulerBackend) SyncTopology(ctx context.Context, k8sClient client.Client, ct *grovecorev1alpha1.ClusterTopologyBinding) error {
+func (b *schedulerBackend) SyncTopology(ctx context.Context, k8sClient client.Client, ct *grovecorev1beta1.ClusterTopologyBinding) error {
 	if k8sClient == nil {
 		k8sClient = b.client
 	}
@@ -94,12 +94,12 @@ func (b *schedulerBackend) SyncTopology(ctx context.Context, k8sClient client.Cl
 }
 
 // OnTopologyDelete is a no-op for KAI; the OwnerReference cascade handles deletion.
-func (b *schedulerBackend) OnTopologyDelete(_ context.Context, _ client.Client, _ *grovecorev1alpha1.ClusterTopologyBinding) error {
+func (b *schedulerBackend) OnTopologyDelete(_ context.Context, _ client.Client, _ *grovecorev1beta1.ClusterTopologyBinding) error {
 	return nil
 }
 
-func buildKAITopology(name string, clusterTopology *grovecorev1alpha1.ClusterTopologyBinding, scheme *runtime.Scheme) (*kaitopologyv1alpha1.Topology, error) {
-	kaiTopologyLevels := lo.Map(clusterTopology.Spec.Levels, func(clusterTopologyLevel grovecorev1alpha1.TopologyLevel, _ int) kaitopologyv1alpha1.TopologyLevel {
+func buildKAITopology(name string, clusterTopology *grovecorev1beta1.ClusterTopologyBinding, scheme *runtime.Scheme) (*kaitopologyv1alpha1.Topology, error) {
+	kaiTopologyLevels := lo.Map(clusterTopology.Spec.Levels, func(clusterTopologyLevel grovecorev1beta1.TopologyLevel, _ int) kaitopologyv1alpha1.TopologyLevel {
 		return kaitopologyv1alpha1.TopologyLevel{
 			NodeLabel: clusterTopologyLevel.Key,
 		}
@@ -124,8 +124,8 @@ func isKAITopologyChanged(oldTopology, newTopology *kaitopologyv1alpha1.Topology
 
 // desiredKAITopologyLevels converts ClusterTopologyBinding levels to KAI topology levels.
 // Used for drift comparison without constructing a full KAI Topology object with owner references.
-func desiredKAITopologyLevels(ct *grovecorev1alpha1.ClusterTopologyBinding) []kaitopologyv1alpha1.TopologyLevel {
-	return lo.Map(ct.Spec.Levels, func(level grovecorev1alpha1.TopologyLevel, _ int) kaitopologyv1alpha1.TopologyLevel {
+func desiredKAITopologyLevels(ct *grovecorev1beta1.ClusterTopologyBinding) []kaitopologyv1alpha1.TopologyLevel {
+	return lo.Map(ct.Spec.Levels, func(level grovecorev1beta1.TopologyLevel, _ int) kaitopologyv1alpha1.TopologyLevel {
 		return kaitopologyv1alpha1.TopologyLevel{
 			NodeLabel: level.Key,
 		}
@@ -133,7 +133,7 @@ func desiredKAITopologyLevels(ct *grovecorev1alpha1.ClusterTopologyBinding) []ka
 }
 
 // CheckTopologyDrift compares the named KAI Topology resource against the ClusterTopologyBinding levels.
-func (b *schedulerBackend) CheckTopologyDrift(ctx context.Context, ct *grovecorev1alpha1.ClusterTopologyBinding, ref grovecorev1alpha1.SchedulerTopologyBinding) (bool, string, int64, error) {
+func (b *schedulerBackend) CheckTopologyDrift(ctx context.Context, ct *grovecorev1beta1.ClusterTopologyBinding, ref grovecorev1beta1.SchedulerTopologyBinding) (bool, string, int64, error) {
 	existingTopology := &kaitopologyv1alpha1.Topology{}
 	if err := b.client.Get(ctx, client.ObjectKey{Name: ref.TopologyReference}, existingTopology); err != nil {
 		if apierrors.IsNotFound(err) {

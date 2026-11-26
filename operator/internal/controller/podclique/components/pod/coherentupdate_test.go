@@ -18,7 +18,7 @@ import (
 	"context"
 	"testing"
 
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/go-logr/logr"
@@ -44,24 +44,24 @@ func TestMarkCoherentUpdateEndIfConverged(t *testing.T) {
 			const generation = "generation-1"
 			pclq := testutils.NewPodCliqueBuilder(testPCSName, "uid", testCliqueName, testNamespace, 0).
 				WithReplicas(tc.specReplicas).
-				WithOptions(func(p *grovecorev1alpha1.PodClique) {
+				WithOptions(func(p *grovecorev1beta1.PodClique) {
 					p.Status.Replicas = tc.statusReplicas
 					p.Status.UpdatedReplicas = tc.updatedReplicas
-					p.Status.UpdateProgress = &grovecorev1alpha1.PodCliqueUpdateProgress{
+					p.Status.UpdateProgress = &grovecorev1beta1.PodCliqueUpdateProgress{
 						PodCliqueSetGenerationHash: generation,
 						PodTemplateHash:            testNewHash,
 					}
 				}).Build()
 			cl := testutils.NewTestClientBuilder().
 				WithObjects(pclq).
-				WithStatusSubresource(&grovecorev1alpha1.PodClique{}).
+				WithStatusSubresource(&grovecorev1beta1.PodClique{}).
 				Build()
 			r := _resource{client: cl}
 			ss := &syncSnapshot{pclq: pclq}
 
 			require.NoError(t, r.markCoherentUpdateEndIfConverged(context.Background(), logr.Discard(), ss))
 
-			persistedPCLQ := &grovecorev1alpha1.PodClique{}
+			persistedPCLQ := &grovecorev1beta1.PodClique{}
 			require.NoError(t, cl.Get(t.Context(), client.ObjectKeyFromObject(pclq), persistedPCLQ))
 			require.NotNil(t, persistedPCLQ.Status.UpdateProgress)
 			if tc.wantUpdateEnded {

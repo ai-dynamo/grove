@@ -20,7 +20,7 @@ import (
 	"os"
 	"path/filepath"
 
-	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
+	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	ctvalidation "github.com/ai-dynamo/grove/operator/internal/webhook/admission/clustertopology/validation"
@@ -29,14 +29,19 @@ import (
 	"github.com/ai-dynamo/grove/operator/internal/webhook/admission/pcs/defaulting"
 	pcsvalidation "github.com/ai-dynamo/grove/operator/internal/webhook/admission/pcs/validation"
 	pcsgvalidation "github.com/ai-dynamo/grove/operator/internal/webhook/admission/pcsg/validation"
+	"github.com/ai-dynamo/grove/operator/internal/webhook/conversion"
 
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 )
 
 // Register registers the webhooks with the controller manager.
-func Register(mgr manager.Manager, operatorCfg *configv1alpha1.OperatorConfiguration, schedRegistry scheduler.Registry) error {
+func Register(mgr manager.Manager, operatorCfg *configv1beta1.OperatorConfiguration, schedRegistry scheduler.Registry) error {
 	if operatorCfg == nil {
 		return fmt.Errorf("operator configuration must not be nil")
+	}
+	slog.Info("Registering webhook with manager", "handler", conversion.Name)
+	if err := conversion.Register(mgr); err != nil {
+		return fmt.Errorf("failed adding %s webhook handler: %v", conversion.Name, err)
 	}
 	defaultingWebhook := defaulting.NewHandler(mgr)
 	slog.Info("Registering webhook with manager", "handler", defaulting.Name)

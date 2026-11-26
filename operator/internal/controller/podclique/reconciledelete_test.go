@@ -19,7 +19,7 @@ import (
 	"testing"
 
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podclique/expectations"
 	"github.com/ai-dynamo/grove/operator/internal/expect"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
@@ -41,7 +41,7 @@ import (
 func TestTriggerDeletionFlow(t *testing.T) {
 	tests := []struct {
 		name              string
-		pclq              *grovecorev1alpha1.PodClique
+		pclq              *grovecorev1beta1.PodClique
 		expectFinalizer   bool
 		expectRequeue     bool
 		expectErrors      bool
@@ -49,7 +49,7 @@ func TestTriggerDeletionFlow(t *testing.T) {
 	}{
 		{
 			name: "removes_finalizer_and_completes",
-			pclq: &grovecorev1alpha1.PodClique{
+			pclq: &grovecorev1beta1.PodClique{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:       "test-pclq",
 					Namespace:  "default",
@@ -63,7 +63,7 @@ func TestTriggerDeletionFlow(t *testing.T) {
 		},
 		{
 			name: "no_finalizer_is_a_noop",
-			pclq: &grovecorev1alpha1.PodClique{
+			pclq: &grovecorev1beta1.PodClique{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-pclq",
 					Namespace: "default",
@@ -78,7 +78,7 @@ func TestTriggerDeletionFlow(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			scheme := runtime.NewScheme()
-			require.NoError(t, grovecorev1alpha1.AddToScheme(scheme))
+			require.NoError(t, grovecorev1beta1.AddToScheme(scheme))
 			require.NoError(t, corev1.AddToScheme(scheme))
 
 			fakeClient := fake.NewClientBuilder().
@@ -109,7 +109,7 @@ func TestTriggerDeletionFlow(t *testing.T) {
 				assert.False(t, exists, "expectations entry should have been cleared")
 			}
 
-			fetched := &grovecorev1alpha1.PodClique{}
+			fetched := &grovecorev1beta1.PodClique{}
 			err := fakeClient.Get(context.Background(), types.NamespacedName{Name: tc.pclq.Name, Namespace: tc.pclq.Namespace}, fetched)
 			require.NoError(t, err)
 			if tc.expectFinalizer {
@@ -124,7 +124,7 @@ func TestTriggerDeletionFlow(t *testing.T) {
 // TestTriggerDeletionFlowRemovesSchedulerPodFinalizers verifies the deletion flow hands every Pod of the
 // PodClique to a backend that removes its own Pod finalizers, before the PodClique finalizer is removed.
 func TestTriggerDeletionFlowRemovesSchedulerPodFinalizers(t *testing.T) {
-	pclq := &grovecorev1alpha1.PodClique{
+	pclq := &grovecorev1beta1.PodClique{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:       "test-pclq",
 			Namespace:  "default",
@@ -137,7 +137,7 @@ func TestTriggerDeletionFlowRemovesSchedulerPodFinalizers(t *testing.T) {
 		return &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
 			Name:            name,
 			Namespace:       "default",
-			OwnerReferences: []metav1.OwnerReference{*metav1.NewControllerRef(pclq, grovecorev1alpha1.SchemeGroupVersion.WithKind("PodClique"))},
+			OwnerReferences: []metav1.OwnerReference{*metav1.NewControllerRef(pclq, grovecorev1beta1.SchemeGroupVersion.WithKind("PodClique"))},
 		}}
 	}
 	fakeClient := testutils.NewTestClientBuilder().
@@ -160,7 +160,7 @@ func TestTriggerDeletionFlowRemovesSchedulerPodFinalizers(t *testing.T) {
 
 	assert.False(t, result.HasErrors())
 	assert.ElementsMatch(t, []string{"test-pclq-a", "test-pclq-b"}, finalizer.RemovedFrom)
-	fetched := &grovecorev1alpha1.PodClique{}
+	fetched := &grovecorev1beta1.PodClique{}
 	require.NoError(t, fakeClient.Get(context.Background(), types.NamespacedName{Name: pclq.Name, Namespace: pclq.Namespace}, fetched))
 	assert.NotContains(t, fetched.Finalizers, constants.FinalizerPodClique)
 }

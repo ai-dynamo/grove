@@ -25,7 +25,7 @@ import (
 	"time"
 
 	nameutils "github.com/ai-dynamo/grove/operator/api/common"
-	corev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	corev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/e2e/grove/kueueworkload"
 	"github.com/ai-dynamo/grove/operator/e2e/grove/podgang"
 	"github.com/ai-dynamo/grove/operator/e2e/grove/topology"
@@ -42,6 +42,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/utils/ptr"
@@ -54,6 +55,10 @@ const (
 	// target Kueue LocalQueue. Mirrors (but is not imported from, since it is unexported there)
 	// queueNameLabel in internal/scheduler/kueue/backend.go.
 	queueNameLabel = "kueue.x-k8s.io/queue-name"
+
+	// priorityClassLabel is the PodCliqueSet label that names the Kueue WorkloadPriorityClass of its
+	// Workloads. Mirrors priorityClassLabel in internal/scheduler/kueue/backend.go.
+	priorityClassLabel = "kueue.x-k8s.io/priority-class"
 
 	// kueueAdmissionSchedulingGate is the scheduling gate Kueue's pod-group reconciler adds to every
 	// pod it manages, removed only once the owning Workload is admitted. Verified against
@@ -174,7 +179,7 @@ func nonAnchorPodGangs(podGangs []groveschedulerv1alpha1.PodGang) []groveschedul
 	var result []groveschedulerv1alpha1.PodGang
 	for _, pg := range podGangs {
 		role := pg.Labels[nameutils.LabelPodGangRole]
-		if role == string(corev1alpha1.PodGangEntryRoleTail) || role == string(corev1alpha1.PodGangEntryRoleScaleOut) {
+		if role == string(corev1beta1.PodGangEntryRoleTail) || role == string(corev1beta1.PodGangEntryRoleScaleOut) {
 			result = append(result, pg)
 		}
 	}
@@ -185,7 +190,7 @@ func nonAnchorPodGangs(podGangs []groveschedulerv1alpha1.PodGang) []groveschedul
 // so the PodCliqueSet admission webhook resolves the kueue scheduler backend for it
 // (validatePodCliqueSetWithBackend in internal/webhook/admission/pcs/validation/handler.go reads
 // Spec.Template.Cliques[0].Spec.PodSpec.SchedulerName).
-func kueueSchedulerClique(name string, replicas, minAvailable int32) *corev1alpha1.PodCliqueTemplateSpec {
+func kueueSchedulerClique(name string, replicas, minAvailable int32) *corev1beta1.PodCliqueTemplateSpec {
 	return testutils.NewPodCliqueTemplateSpecBuilder(name).
 		WithRoleName(name + "-role").
 		WithReplicas(replicas).
@@ -644,7 +649,7 @@ func Test_Kueue6_ValidatePodCliqueSetAndScaleRejection(t *testing.T) {
 	defer cleanup()
 	requireKueueCRD(t, tc)
 
-	newPCS := func(name string) *corev1alpha1.PodCliqueSet {
+	newPCS := func(name string) *corev1beta1.PodCliqueSet {
 		pcs := testutils.NewPodCliqueSetBuilder(name, "default", uuid.NewUUID()).
 			WithReplicas(1).
 			Build()
@@ -654,8 +659,8 @@ func Test_Kueue6_ValidatePodCliqueSetAndScaleRejection(t *testing.T) {
 
 	t.Run("PCSG-member PodClique minAvailable < replicas is rejected", func(t *testing.T) {
 		pcs := newPCS("kueue-t6-member-min")
-		pcs.Spec.Template.Cliques = []*corev1alpha1.PodCliqueTemplateSpec{kueueSchedulerClique("worker", 2, 1)}
-		pcs.Spec.Template.PodCliqueScalingGroupConfigs = []corev1alpha1.PodCliqueScalingGroupConfig{
+		pcs.Spec.Template.Cliques = []*corev1beta1.PodCliqueTemplateSpec{kueueSchedulerClique("worker", 2, 1)}
+		pcs.Spec.Template.PodCliqueScalingGroupConfigs = []corev1beta1.PodCliqueScalingGroupConfig{
 			{
 				Name:         "sg",
 				CliqueNames:  []string{"worker"},
@@ -675,7 +680,7 @@ func Test_Kueue6_ValidatePodCliqueSetAndScaleRejection(t *testing.T) {
 
 	t.Run("more than one partial-gang standalone PodClique is rejected", func(t *testing.T) {
 		pcs := newPCS("kueue-t6-two-partial")
-		pcs.Spec.Template.Cliques = []*corev1alpha1.PodCliqueTemplateSpec{
+		pcs.Spec.Template.Cliques = []*corev1beta1.PodCliqueTemplateSpec{
 			kueueSchedulerClique("worker-a", 4, 2),
 			kueueSchedulerClique("worker-b", 4, 2),
 		}
@@ -698,7 +703,7 @@ func Test_Kueue6_ValidatePodCliqueSetAndScaleRejection(t *testing.T) {
 			WithScaleConfig(ptr.To(int32(1)), 4).
 			Build()
 		pcs := newPCS("kueue-t6-autoscale")
-		pcs.Spec.Template.Cliques = []*corev1alpha1.PodCliqueTemplateSpec{clique}
+		pcs.Spec.Template.Cliques = []*corev1beta1.PodCliqueTemplateSpec{clique}
 		err := tc.Client.Create(ctx, pcs)
 		if err == nil {
 			t.Fatalf("Expected autoScalingConfig on a PodClique to be rejected, but create succeeded")
@@ -712,18 +717,18 @@ func Test_Kueue6_ValidatePodCliqueSetAndScaleRejection(t *testing.T) {
 	t.Run("PCSG resolving both a required and a preferred topology domain is rejected", func(t *testing.T) {
 		ensureGroveTopology(ctx, t, topology.NewTopologyVerifier(tc.Client, Logger))
 		pcs := newPCS("kueue-t6-pcsg-topology")
-		pcs.Spec.Template.Cliques = []*corev1alpha1.PodCliqueTemplateSpec{kueueSchedulerClique("worker", 2, 2)}
-		pcs.Spec.Template.PodCliqueScalingGroupConfigs = []corev1alpha1.PodCliqueScalingGroupConfig{
+		pcs.Spec.Template.Cliques = []*corev1beta1.PodCliqueTemplateSpec{kueueSchedulerClique("worker", 2, 2)}
+		pcs.Spec.Template.PodCliqueScalingGroupConfigs = []corev1beta1.PodCliqueScalingGroupConfig{
 			{
 				Name:         "sg",
 				CliqueNames:  []string{"worker"},
 				Replicas:     ptr.To(int32(1)),
 				MinAvailable: ptr.To(int32(1)),
-				TopologyConstraint: &corev1alpha1.TopologyConstraint{
+				TopologyConstraint: &corev1beta1.TopologyConstraint{
 					TopologyName: "grove-topology",
-					Pack: &corev1alpha1.TopologyPackConstraint{
-						RequiredDomain:  corev1alpha1.TopologyDomainBlock,
-						PreferredDomain: corev1alpha1.TopologyDomainRack,
+					Pack: &corev1beta1.TopologyPackConstraint{
+						RequiredDomain:  corev1beta1.TopologyDomainBlock,
+						PreferredDomain: corev1beta1.TopologyDomainRack,
 					},
 				},
 			},
@@ -755,7 +760,7 @@ func Test_Kueue6_ValidatePodCliqueSetAndScaleRejection(t *testing.T) {
 
 	t.Run("valid partial-gang standalone PodClique is accepted", func(t *testing.T) {
 		pcs := newPCS("kueue-t6-valid")
-		pcs.Spec.Template.Cliques = []*corev1alpha1.PodCliqueTemplateSpec{kueueSchedulerClique("worker", 4, 2)}
+		pcs.Spec.Template.Cliques = []*corev1beta1.PodCliqueTemplateSpec{kueueSchedulerClique("worker", 4, 2)}
 		// Dry run: the webhook still runs, but no Workload or pods are created.
 		if err := tc.Client.Create(ctx, pcs, client.DryRunAll); err != nil {
 			t.Fatalf("Expected valid partial-gang PodCliqueSet create to succeed, got: %v", err)
@@ -783,7 +788,7 @@ func Test_Kueue6_ValidatePodCliqueSetAndScaleRejection(t *testing.T) {
 	t.Run("PodCliqueSet without the queue label is rejected", func(t *testing.T) {
 		pcs := newPCS("kueue-t6-no-queue")
 		pcs.Labels = nil
-		pcs.Spec.Template.Cliques = []*corev1alpha1.PodCliqueTemplateSpec{kueueSchedulerClique("worker", 1, 1)}
+		pcs.Spec.Template.Cliques = []*corev1beta1.PodCliqueTemplateSpec{kueueSchedulerClique("worker", 1, 1)}
 		err := tc.Client.Create(ctx, pcs)
 		if err == nil {
 			t.Fatalf("Expected a PodCliqueSet without label %q to be rejected, but create succeeded", queueNameLabel)
@@ -796,7 +801,7 @@ func Test_Kueue6_ValidatePodCliqueSetAndScaleRejection(t *testing.T) {
 
 	t.Run("changing the queue label is rejected", func(t *testing.T) {
 		pcs := newPCS("kueue-t6-queue-change")
-		pcs.Spec.Template.Cliques = []*corev1alpha1.PodCliqueTemplateSpec{kueueSchedulerClique("worker", 1, 1)}
+		pcs.Spec.Template.Cliques = []*corev1beta1.PodCliqueTemplateSpec{kueueSchedulerClique("worker", 1, 1)}
 		if err := tc.Client.Create(ctx, pcs); err != nil {
 			t.Fatalf("Failed to create PodCliqueSet %s: %v", pcs.Name, err)
 		}
@@ -938,7 +943,7 @@ func Test_Kueue7_QueuedWorkloadAdmitsWhenQuotaFrees(t *testing.T) {
 	}
 
 	Logger.Info("7. Delete the filler PodCliqueSet to free its quota (the trigger for this scenario)")
-	fillerPCS := &corev1alpha1.PodCliqueSet{ObjectMeta: metav1.ObjectMeta{Namespace: tc.Namespace, Name: fillerName}}
+	fillerPCS := &corev1beta1.PodCliqueSet{ObjectMeta: metav1.ObjectMeta{Namespace: tc.Namespace, Name: fillerName}}
 	if err := client.IgnoreNotFound(tc.Client.Delete(ctx, fillerPCS)); err != nil {
 		t.Fatalf("Failed to delete filler PodCliqueSet: %v", err)
 	}
@@ -1287,7 +1292,7 @@ func Test_Kueue11_ScalingGroupTailWaitsForAnchor(t *testing.T) {
 	}
 	var anchor groveschedulerv1alpha1.PodGang
 	for _, pg := range podGangs {
-		if pg.Labels[nameutils.LabelPodGangRole] == string(corev1alpha1.PodGangEntryRoleAnchor) {
+		if pg.Labels[nameutils.LabelPodGangRole] == string(corev1beta1.PodGangEntryRoleAnchor) {
 			anchor = pg
 		}
 	}
@@ -1315,7 +1320,7 @@ func Test_Kueue11_ScalingGroupTailWaitsForAnchor(t *testing.T) {
 	}
 
 	Logger.Info("4. Delete the blocker to free its quota")
-	blocker := &corev1alpha1.PodCliqueSet{ObjectMeta: metav1.ObjectMeta{Namespace: tc.Namespace, Name: blockerName}}
+	blocker := &corev1beta1.PodCliqueSet{ObjectMeta: metav1.ObjectMeta{Namespace: tc.Namespace, Name: blockerName}}
 	if err := client.IgnoreNotFound(tc.Client.Delete(ctx, blocker)); err != nil {
 		t.Fatalf("Failed to delete the blocker: %v", err)
 	}
@@ -1499,4 +1504,214 @@ func crashLoopPod(ctx context.Context, cl client.Client, pod *corev1.Pod) error 
 		status.State = corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff", Message: "simulated crash loop"}}
 	}
 	return cl.Status().Patch(ctx, crashed, client.MergeFrom(pod))
+}
+
+// Test_Kueue13_WorkloadPriorityPreemption verifies that the kueue.x-k8s.io/priority-class label on a
+// PodCliqueSet sets the priority of its Kueue Workload, and that Kueue preempts by it:
+//  1. a PodCliqueSet labeled grove-e2e-low gets a Workload that references that WorkloadPriorityClass
+//     and carries its value;
+//  2. changing the label to grove-e2e-mid moves the same, still-admitted Workload to the new class in
+//     place, without evicting or restarting its pods;
+//  3. removing the label is accepted, and the admitted Workload keeps its class, since Kueue does not
+//     let a Workload that has reserved quota lose its priority class;
+//  4. a grove-e2e-high PodCliqueSet that needs the same, fully used quota preempts the lower-priority
+//     one and is admitted.
+func Test_Kueue13_WorkloadPriorityPreemption(t *testing.T) {
+	ctx := context.Background()
+	const (
+		queueName   = "grove-e2e-priority"
+		lowName     = "kueue-workload-priority-low"
+		lowClass    = "grove-e2e-low"
+		midClass    = "grove-e2e-mid"
+		highClass   = "grove-e2e-high"
+		lowPriority = int32(100)
+		midPriority = int32(500)
+	)
+	expectedPods := 2
+
+	tc, cleanup := testctx.PrepareTest(ctx, t, 4,
+		testctx.WithWorkload(&testctx.WorkloadConfig{
+			Name:         "kueue-workload-priority-high",
+			YAMLPath:     "../yaml/kueue-workload-priority-high.yaml",
+			Namespace:    "default",
+			ExpectedPods: expectedPods,
+		}),
+	)
+	requireKueueCRD(t, tc)
+	defer func() {
+		deleteKueueQueueResources(ctx, t, tc.Client, queueName)
+		for _, name := range []string{lowClass, midClass, highClass} {
+			wpc := &kueuev1beta2.WorkloadPriorityClass{ObjectMeta: metav1.ObjectMeta{Name: name}}
+			if err := client.IgnoreNotFound(tc.Client.Delete(ctx, wpc)); err != nil {
+				t.Errorf("Failed to delete WorkloadPriorityClass %s: %v", name, err)
+			}
+		}
+	}()
+	defer cleanup()
+
+	Logger.Info("1. Apply the grove-e2e-priority queue (preemption within the ClusterQueue) and its WorkloadPriorityClasses")
+	if _, err := tc.ApplyYAMLFile("../yaml/kueue-queues-priority.yaml"); err != nil {
+		t.Fatalf("Failed to apply kueue-queues-priority.yaml: %v", err)
+	}
+
+	pm := pods.NewPodManager(tc.Client, Logger)
+	lowSelector := fmt.Sprintf("%s=%s", nameutils.LabelPartOfKey, lowName)
+	pgVerifier := podgang.NewVerifier(tc.Client, Logger)
+	wlVerifier := kueueworkload.NewVerifier(tc.Client, Logger)
+
+	Logger.Info("2. Deploy the grove-e2e-low workload; it is admitted with the class's priority (consumes the entire quota)")
+	if _, err := tc.ApplyYAMLFile("../yaml/kueue-workload-priority-low.yaml"); err != nil {
+		t.Fatalf("Failed to apply low-priority workload: %v", err)
+	}
+	if err := pm.WaitForCountAndPhases(ctx, tc.Namespace, lowSelector, expectedPods, expectedPods, 0, tc.Timeout, tc.Interval); err != nil {
+		t.Fatalf("Failed to wait for low-priority pods to be Running: %v", err)
+	}
+	lowPodGangs, err := pgVerifier.List(ctx, types.NamespacedName{Namespace: tc.Namespace, Name: lowName})
+	if err != nil {
+		t.Fatalf("Failed to list low-priority PodGangs: %v", err)
+	}
+	if len(lowPodGangs) != 1 {
+		t.Fatalf("Expected exactly 1 low-priority PodGang, got %d", len(lowPodGangs))
+	}
+	lowPodGang := lowPodGangs[0]
+	lowWL, err := wlVerifier.WaitUntilVerified(ctx, lowPodGang.Namespace, lowPodGang.Name, tc.Timeout, tc.Interval, kueueworkload.Admitted)
+	if err != nil {
+		t.Fatalf("Low-priority Kueue Workload not Admitted: %v", err)
+	}
+	if !hasWorkloadPriority(lowWL, lowClass, lowPriority) {
+		t.Fatalf("Expected low-priority Workload to reference WorkloadPriorityClass %q with priority %d, got priorityClassRef=%+v priority=%v",
+			lowClass, lowPriority, lowWL.Spec.PriorityClassRef, ptr.Deref(lowWL.Spec.Priority, 0))
+	}
+
+	Logger.Info("3. Change the label to grove-e2e-mid; the same admitted Workload moves to the new class in place")
+	lowPodUIDs := podUIDs(t, ctx, tc.Client, tc.Namespace, lowSelector)
+	lowPCS := &corev1beta1.PodCliqueSet{}
+	if err := tc.Client.Get(ctx, types.NamespacedName{Namespace: tc.Namespace, Name: lowName}, lowPCS); err != nil {
+		t.Fatalf("Failed to get low-priority PodCliqueSet: %v", err)
+	}
+	patch := client.MergeFrom(lowPCS.DeepCopy())
+	lowPCS.Labels[priorityClassLabel] = midClass
+	if err := tc.Client.Patch(ctx, lowPCS, patch); err != nil {
+		t.Fatalf("Failed to change the priority-class label: %v", err)
+	}
+	movedWL, err := wlVerifier.WaitUntilVerified(ctx, lowPodGang.Namespace, lowPodGang.Name, tc.Timeout, tc.Interval, func(wl *kueuev1beta2.Workload) bool {
+		return hasWorkloadPriority(wl, midClass, midPriority)
+	})
+	if err != nil {
+		t.Fatalf("Workload did not move to WorkloadPriorityClass %q: %v", midClass, err)
+	}
+	if movedWL.UID != lowWL.UID {
+		t.Fatalf("Expected the Workload to be updated in place, but it was recreated (UID %s -> %s)", lowWL.UID, movedWL.UID)
+	}
+	if !kueueworkload.Admitted(movedWL) {
+		t.Fatalf("Expected the reprioritized Workload to stay Admitted")
+	}
+	if got := podUIDs(t, ctx, tc.Client, tc.Namespace, lowSelector); !slices.Equal(got, lowPodUIDs) {
+		t.Fatalf("Expected the low-priority pods to keep running unchanged, pod UIDs %v -> %v", lowPodUIDs, got)
+	}
+
+	Logger.Info("4. Removing the label is accepted; the admitted Workload keeps its class")
+	if err := tc.Client.Get(ctx, types.NamespacedName{Namespace: tc.Namespace, Name: lowName}, lowPCS); err != nil {
+		t.Fatalf("Failed to get low-priority PodCliqueSet: %v", err)
+	}
+	patch = client.MergeFrom(lowPCS.DeepCopy())
+	delete(lowPCS.Labels, priorityClassLabel)
+	if err := tc.Client.Patch(ctx, lowPCS, patch); err != nil {
+		t.Fatalf("Failed to remove the priority-class label: %v", err)
+	}
+	// Wait until the removal has reached the PodGang, so the backend has had the chance to act on it.
+	if _, err := waiter.New[*groveschedulerv1alpha1.PodGang]().
+		WithTimeout(tc.Timeout).
+		WithInterval(tc.Interval).
+		WaitFor(ctx, func(ctx context.Context) (*groveschedulerv1alpha1.PodGang, error) {
+			pg := &groveschedulerv1alpha1.PodGang{}
+			return pg, tc.Client.Get(ctx, client.ObjectKeyFromObject(&lowPodGang), pg)
+		}, func(pg *groveschedulerv1alpha1.PodGang) bool {
+			_, labeled := pg.Labels[priorityClassLabel]
+			return !labeled
+		}); err != nil {
+		t.Fatalf("PodGang did not lose the priority-class label: %v", err)
+	}
+	time.Sleep(10 * time.Second)
+	keptWL, err := wlVerifier.Get(ctx, lowPodGang.Namespace, lowPodGang.Name)
+	if err != nil {
+		t.Fatalf("Failed to get low-priority Kueue Workload: %v", err)
+	}
+	if keptWL.UID != lowWL.UID || !kueueworkload.Admitted(keptWL) || !hasWorkloadPriority(keptWL, midClass, midPriority) {
+		t.Fatalf("Expected the admitted Workload to stay unchanged on WorkloadPriorityClass %q, got UID %s (was %s), admitted=%v, priorityClassRef=%+v",
+			midClass, keptWL.UID, lowWL.UID, kueueworkload.Admitted(keptWL), keptWL.Spec.PriorityClassRef)
+	}
+
+	Logger.Info("5. Deploy the grove-e2e-high workload; it preempts the lower-priority one and is admitted")
+	if _, err := tc.DeployAndVerifyWorkload(); err != nil {
+		t.Fatalf("Failed to deploy high-priority workload: %v", err)
+	}
+	highPodGangs, err := pgVerifier.List(ctx, types.NamespacedName{Namespace: tc.Namespace, Name: tc.Workload.Name})
+	if err != nil {
+		t.Fatalf("Failed to list high-priority PodGangs: %v", err)
+	}
+	if len(highPodGangs) != 1 {
+		t.Fatalf("Expected exactly 1 high-priority PodGang, got %d", len(highPodGangs))
+	}
+	highWL, err := wlVerifier.WaitUntilVerified(ctx, highPodGangs[0].Namespace, highPodGangs[0].Name, tc.Timeout, tc.Interval, kueueworkload.Admitted)
+	if err != nil {
+		t.Fatalf("High-priority Kueue Workload not Admitted: %v", err)
+	}
+	if !hasWorkloadPriority(highWL, highClass, 1000) {
+		t.Fatalf("Expected high-priority Workload to reference WorkloadPriorityClass %q, got priorityClassRef=%+v", highClass, highWL.Spec.PriorityClassRef)
+	}
+	preemptedWL, err := wlVerifier.WaitUntilVerified(ctx, lowPodGang.Namespace, lowPodGang.Name, tc.Timeout, tc.Interval, func(wl *kueuev1beta2.Workload) bool {
+		return preemptionCount(wl) > 0 && !kueueworkload.Admitted(wl)
+	})
+	if err != nil {
+		t.Fatalf("Lower-priority Workload was not preempted: %v", err)
+	}
+	if preemptedWL.UID != lowWL.UID {
+		t.Fatalf("Expected the preempted Workload to be the original one, but it was recreated (UID %s -> %s)", lowWL.UID, preemptedWL.UID)
+	}
+	if err := tc.WaitForPods(expectedPods); err != nil {
+		t.Fatalf("Failed to wait for high-priority pods to become Running: %v", err)
+	}
+
+	Logger.Info("Test_Kueue13_WorkloadPriorityPreemption completed successfully!")
+}
+
+// hasWorkloadPriority reports whether wl references the named WorkloadPriorityClass and carries priority.
+func hasWorkloadPriority(wl *kueuev1beta2.Workload, className string, priority int32) bool {
+	return wl != nil && wl.Spec.PriorityClassRef != nil &&
+		*wl.Spec.PriorityClassRef == *kueuev1beta2.NewWorkloadPriorityClassRef(className) &&
+		ptr.Deref(wl.Spec.Priority, 0) == priority
+}
+
+// preemptionCount returns how many times Kueue evicted wl by preemption, whatever the preemption's cause.
+func preemptionCount(wl *kueuev1beta2.Workload) int32 {
+	if wl == nil || wl.Status.SchedulingStats == nil {
+		return 0
+	}
+	var count int32
+	for _, eviction := range wl.Status.SchedulingStats.Evictions {
+		if eviction.Reason == kueuev1beta2.WorkloadEvictedByPreemption {
+			count += eviction.Count
+		}
+	}
+	return count
+}
+
+// podUIDs returns the sorted UIDs of the pods in namespace matching labelSelector.
+func podUIDs(t *testing.T, ctx context.Context, cl client.Client, namespace, labelSelector string) []types.UID {
+	t.Helper()
+	selector, err := labels.Parse(labelSelector)
+	if err != nil {
+		t.Fatalf("Failed to parse label selector %q: %v", labelSelector, err)
+	}
+	var podList corev1.PodList
+	if err := cl.List(ctx, &podList, client.InNamespace(namespace), client.MatchingLabelsSelector{Selector: selector}); err != nil {
+		t.Fatalf("Failed to list pods for %q: %v", labelSelector, err)
+	}
+	uids := make([]types.UID, 0, len(podList.Items))
+	for i := range podList.Items {
+		uids = append(uids, podList.Items[i].UID)
+	}
+	slices.Sort(uids)
+	return uids
 }

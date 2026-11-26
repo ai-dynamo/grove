@@ -24,7 +24,7 @@ webhooks:
         path: /webhooks/authorizer-webhook
         port: {{ required ".Values.config.server.webhooks.port" .Values.config.server.webhooks.port }}
     failurePolicy: Fail
-    matchPolicy: Exact
+    matchPolicy: Equivalent
     name: authorizer.webhooks.grove.io
     namespaceSelector: { }
     sideEffects: None
@@ -78,7 +78,7 @@ webhooks:
       - apiGroups:
           - "grove.io"
         apiVersions:
-          - "v1alpha1"
+          - "v1beta1"
         operations:
           - CREATE
           - UPDATE

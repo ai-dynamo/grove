@@ -3,7 +3,7 @@
 # PodClique's pods are Running but not Ready (CrashLoopBackOff). MinAvailable equals the replica count, so the
 # PodGang needs every pod to be admitted and the whole component is unavailable, consuming its budget. The
 # corrective update then replaces both pods together with fresh Ready ones.
-apiVersion: grove.io/v1alpha1
+apiVersion: grove.io/v1beta1
 kind: PodCliqueSet
 metadata:
   name: wl-coh-crashloop-standalone

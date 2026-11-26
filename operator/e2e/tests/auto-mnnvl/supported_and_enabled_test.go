@@ -22,7 +22,7 @@ import (
 	"testing"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/e2e/grove/gvk"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
@@ -80,7 +80,7 @@ func testNoAnnotationNoMNNVL(t *testing.T, tc *testctx.TestContext) {
 	require.NoError(t, err, "Failed to apply YAML")
 	defer deletePCS(tc, pcsName)
 
-	var createdPCS grovecorev1alpha1.PodCliqueSet
+	var createdPCS grovecorev1beta1.PodCliqueSet
 	err = tc.Client.Get(tc.Ctx, types.NamespacedName{Namespace: tc.Namespace, Name: pcsName}, &createdPCS)
 	require.NoError(t, err, "Failed to get created PCS")
 
@@ -108,7 +108,7 @@ func testScaleOutAndIn(t *testing.T, tc *testctx.TestContext) {
 	require.NoError(t, err, "Failed to apply YAML")
 	defer deletePCS(tc, pcsName)
 
-	var createdPCS grovecorev1alpha1.PodCliqueSet
+	var createdPCS grovecorev1beta1.PodCliqueSet
 	err = tc.Client.Get(tc.Ctx, types.NamespacedName{Namespace: tc.Namespace, Name: pcsName}, &createdPCS)
 	require.NoError(t, err, "Failed to get created PCS")
 
@@ -213,7 +213,7 @@ func testAnnotationImmutability(t *testing.T, tc *testctx.TestContext) {
 	// validating webhook gets a chance to reject the mutation.
 	const maxRetries = 5
 	for attempt := 0; attempt < maxRetries; attempt++ {
-		var pcs grovecorev1alpha1.PodCliqueSet
+		var pcs grovecorev1beta1.PodCliqueSet
 		err = tc.Client.Get(tc.Ctx, types.NamespacedName{Namespace: tc.Namespace, Name: pcsName}, &pcs)
 		require.NoError(t, err, "Failed to get PCS")
 
@@ -265,7 +265,7 @@ func testMNNVLEndToEnd(t *testing.T, tc *testctx.TestContext) {
 	require.NoError(t, err, "Failed to apply YAML")
 	defer deletePCS(tc, pcsName)
 
-	var createdPCS grovecorev1alpha1.PodCliqueSet
+	var createdPCS grovecorev1beta1.PodCliqueSet
 	err = tc.Client.Get(tc.Ctx, types.NamespacedName{Namespace: tc.Namespace, Name: pcsName}, &createdPCS)
 	require.NoError(t, err)
 

@@ -20,8 +20,8 @@ import (
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
-	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler/kai"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 	schedulertest "github.com/ai-dynamo/grove/operator/test/utils/scheduler"
@@ -31,7 +31,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -39,7 +41,7 @@ import (
 
 func TestBackendPreparePod(t *testing.T) {
 	t.Run("without secondary backend", func(t *testing.T) {
-		backend := New(nil, configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameLPX}, nil)
+		backend := New(nil, configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameLPX}, nil)
 
 		pod := testutils.NewPodWithBuilderWithDefaultSpec("test-pod", "default").
 			WithSchedulerName("lpx-scheduler").
@@ -50,8 +52,8 @@ func TestBackendPreparePod(t *testing.T) {
 	})
 
 	t.Run("with secondary backend", func(t *testing.T) {
-		kaiBackend := kai.New(nil, nil, nil, configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKai})
-		backend := New(nil, configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameLPX}, kaiBackend)
+		kaiBackend := kai.New(nil, nil, nil, configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameKai})
+		backend := New(nil, configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameLPX}, kaiBackend)
 
 		pod := testutils.NewPodWithBuilderWithDefaultSpec("test-pod", "default").
 			WithSchedulerName("default-scheduler").
@@ -61,7 +63,7 @@ func TestBackendPreparePod(t *testing.T) {
 		}
 
 		require.NoError(t, backend.PreparePod(pod))
-		assert.Equal(t, string(configv1alpha1.SchedulerNameLPX), pod.Spec.SchedulerName)
+		assert.Equal(t, string(configv1beta1.SchedulerNameLPX), pod.Spec.SchedulerName)
 
 		pod = testutils.NewPodWithBuilderWithDefaultSpec("test-pod", "default").
 			WithSchedulerName("lpx-scheduler").
@@ -72,7 +74,7 @@ func TestBackendPreparePod(t *testing.T) {
 			Build()
 
 		require.NoError(t, backend.PreparePod(pod))
-		assert.Equal(t, string(configv1alpha1.SchedulerNameKai), pod.Spec.SchedulerName)
+		assert.Equal(t, string(configv1beta1.SchedulerNameKai), pod.Spec.SchedulerName)
 	})
 }
 
@@ -95,8 +97,8 @@ func TestBackendSyncPodGangLPXOnly(t *testing.T) {
 
 	cl := testutils.NewTestClientBuilder().WithScheme(scheme).WithObjects(pcs, lpxPodClique, podGang).Build()
 
-	kaiBackend := kai.New(cl, scheme, nil, configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKai})
-	backend := New(cl, configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameLPX}, kaiBackend)
+	kaiBackend := kai.New(cl, scheme, nil, configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameKai})
+	backend := New(cl, configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameLPX}, kaiBackend)
 	require.NoError(t, backend.Init(cl))
 
 	require.NoError(t, backend.SyncPodGang(t.Context(), podGang))
@@ -132,8 +134,8 @@ func TestBackendSyncPodGangMixedWorkload(t *testing.T) {
 
 	cl := testutils.NewTestClientBuilder().WithScheme(scheme).WithObjects(pcs, lpxPodClique, kaiPodClique, podGang).Build()
 
-	kaiBackend := kai.New(cl, scheme, nil, configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKai})
-	backend := New(cl, configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameLPX}, kaiBackend)
+	kaiBackend := kai.New(cl, scheme, nil, configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameKai})
+	backend := New(cl, configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameLPX}, kaiBackend)
 	require.NoError(t, backend.Init(cl))
 
 	require.NoError(t, backend.SyncPodGang(t.Context(), podGang))
@@ -151,39 +153,68 @@ func TestBackendSyncPodGangMixedWorkload(t *testing.T) {
 	assert.Equal(t, "true", storedPodGang.Annotations["kai.scheduler/skip-podgrouper"])
 }
 
+func TestBackendSyncPodGangIgnoresTerminatingPodGang(t *testing.T) {
+	pcs := testutils.NewPodCliqueSetBuilder("terminating-workload", "default", types.UID("pcs-uid")).
+		WithLabels(map[string]string{"kai.scheduler/queue": "default"}).
+		Build()
+
+	podGang := testutils.NewPodGangBuilder("terminating-workload-0", pcs.Namespace).
+		WithPodGroups([]groveschedulerv1alpha1.PodGroup{{Name: "deleted-worker", MinReplicas: 1}}).
+		WithOwnerReference(constants.KindPodCliqueSet, pcs.Name, pcs.UID).
+		Build()
+	now := metav1.Now()
+	podGang.DeletionTimestamp = &now
+	podGang.Finalizers = []string{"example.com/hold"}
+
+	scheme := schedulertest.NewKAIScheme(t)
+	require.NoError(t, corev1.AddToScheme(scheme))
+	require.NoError(t, groveschedulerv1alpha1.AddToScheme(scheme))
+
+	cl := testutils.NewTestClientBuilder().WithScheme(scheme).WithObjects(pcs, podGang).Build()
+
+	kaiBackend := kai.New(cl, scheme, nil, configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameKai})
+	backend := New(cl, configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameLPX}, kaiBackend)
+	require.NoError(t, backend.Init(cl))
+
+	require.NoError(t, backend.SyncPodGang(t.Context(), podGang))
+
+	err := cl.Get(t.Context(), client.ObjectKeyFromObject(podGang), &kaischedulingv2alpha2.PodGroup{})
+	assert.True(t, apierrors.IsNotFound(err))
+}
+
 func TestBackendValidatePodCliqueSet(t *testing.T) {
 	tests := []struct {
 		name      string
-		mutatePCS func(*grovecorev1alpha1.PodCliqueSet)
+		mutatePCS func(*grovecorev1beta1.PodCliqueSet)
 		wantError bool
 		errorType error
 	}{
 		{
 			name:      "no Grove topology constraints",
-			mutatePCS: func(_ *grovecorev1alpha1.PodCliqueSet) {},
+			mutatePCS: func(_ *grovecorev1beta1.PodCliqueSet) {},
 		},
 		{
 			name: "PodCliqueSet topology constraint",
-			mutatePCS: func(pcs *grovecorev1alpha1.PodCliqueSet) {
-				pcs.Spec.Template.TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{}
+			mutatePCS: func(pcs *grovecorev1beta1.PodCliqueSet) {
+				pcs.Spec.Template.TopologyConstraint = &grovecorev1beta1.TopologyConstraint{}
 			},
 			wantError: true,
 			errorType: errTopologyConstraintsUnsupported,
 		},
 		{
 			name: "PodClique topology constraint",
-			mutatePCS: func(pcs *grovecorev1alpha1.PodCliqueSet) {
-				pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1alpha1.TopologyConstraint{}
+			mutatePCS: func(pcs *grovecorev1beta1.PodCliqueSet) {
+				pcs.Spec.Template.Cliques[0].TopologyConstraint = &grovecorev1beta1.TopologyConstraint{}
 			},
 			wantError: true,
 			errorType: errTopologyConstraintsUnsupported,
 		},
 		{
 			name: "PodCliqueScalingGroup topology constraint",
-			mutatePCS: func(pcs *grovecorev1alpha1.PodCliqueSet) {
-				pcs.Spec.Template.PodCliqueScalingGroupConfigs = []grovecorev1alpha1.PodCliqueScalingGroupConfig{{
+			mutatePCS: func(pcs *grovecorev1beta1.PodCliqueSet) {
+				pcs.Spec.Template.PodCliqueScalingGroupConfigs = []grovecorev1beta1.PodCliqueScalingGroupConfig{{
 					Name:               "workers",
-					TopologyConstraint: &grovecorev1alpha1.TopologyConstraint{},
+					TopologyConstraint: &grovecorev1beta1.TopologyConstraint{},
 				}}
 			},
 			wantError: true,
@@ -191,22 +222,22 @@ func TestBackendValidatePodCliqueSet(t *testing.T) {
 		},
 		{
 			name: "Fallback validation for non-LPX pods",
-			mutatePCS: func(pcs *grovecorev1alpha1.PodCliqueSet) {
+			mutatePCS: func(pcs *grovecorev1beta1.PodCliqueSet) {
 				pcs.Labels = map[string]string{"kai.scheduler/queue": "default"}
 				pcs.Spec.Template.Cliques[0].Spec.PodSpec.Containers[0] = corev1.Container{}
 			},
 		},
 		{
 			name: "Fallback validation for non-LPX pods without a queue name",
-			mutatePCS: func(pcs *grovecorev1alpha1.PodCliqueSet) {
+			mutatePCS: func(pcs *grovecorev1beta1.PodCliqueSet) {
 				pcs.Spec.Template.Cliques[0].Spec.PodSpec.Containers[0] = corev1.Container{}
 			},
 			wantError: true,
 		},
 	}
 
-	kaiBackend := kai.New(nil, nil, nil, configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameKai})
-	backend := New(nil, configv1alpha1.SchedulerProfile{Name: configv1alpha1.SchedulerNameLPX}, kaiBackend)
+	kaiBackend := kai.New(nil, nil, nil, configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameKai})
+	backend := New(nil, configv1beta1.SchedulerProfile{Name: configv1beta1.SchedulerNameLPX}, kaiBackend)
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

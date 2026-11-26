@@ -21,14 +21,16 @@ import (
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	apiconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	groveclientscheme "github.com/ai-dynamo/grove/operator/internal/client"
+	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/sync"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	"github.com/go-logr/logr"
+	"github.com/samber/lo"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
@@ -64,9 +66,10 @@ func TestSyncMigratesSingleReplica(t *testing.T) {
 	objs := append([]client.Object{gatedPCS(1)}, legacyReplicaObjects(0, epochs)...)
 	objs = append(objs, epochPodGangsForReplica(0, epochs)...)
 	cl := newMigratorClient(objs...)
-	operator := New(cl, groveclientscheme.Scheme, newFakeRegistry())
+	operator := New(cl, groveclientscheme.Scheme, newFakeRegistry()).(*_resource)
 
-	err := operator.Sync(context.Background(), logr.Discard(), getPCS(t, cl))
+	pcs := getPCS(t, cl)
+	_, err := operator.Sync(context.Background(), logr.Discard(), pcs, &pcssync.State{ExpectedReplicaIndices: lo.Range(int(pcs.Spec.Replicas))})
 	require.NoError(t, err)
 
 	assertReplicaMigrated(t, cl, 0, epochs)
@@ -86,15 +89,42 @@ func TestSyncMigratesMultipleReplicas(t *testing.T) {
 		objs = append(objs, epochPodGangsForReplica(replicaIndex, epochs)...)
 	}
 	cl := newMigratorClient(objs...)
-	operator := New(cl, groveclientscheme.Scheme, newFakeRegistry())
+	operator := New(cl, groveclientscheme.Scheme, newFakeRegistry()).(*_resource)
 
-	err := operator.Sync(context.Background(), logr.Discard(), getPCS(t, cl))
+	pcs := getPCS(t, cl)
+	_, err := operator.Sync(context.Background(), logr.Discard(), pcs, &pcssync.State{ExpectedReplicaIndices: lo.Range(int(pcs.Spec.Replicas))})
 	require.NoError(t, err)
 
 	for replicaIndex, epochs := range epochsByReplica {
 		assertReplicaMigrated(t, cl, replicaIndex, epochs)
 	}
 	assertGateCleared(t, cl)
+}
+
+func TestSyncMigratesSparsePCSReplicaIndices(t *testing.T) {
+	epochsByPCSReplicaIndex := map[int]replicaEpochs{
+		0: {anchor: "1000", tail: "1001"},
+		2: {anchor: "2000", tail: "2001"},
+		4: {anchor: "4000", tail: "4001"},
+	}
+	objs := []client.Object{gatedPCS(3)}
+	for pcsReplicaIndex, epochs := range epochsByPCSReplicaIndex {
+		objs = append(objs, legacyReplicaObjects(pcsReplicaIndex, epochs)...)
+		objs = append(objs, epochPodGangsForReplica(pcsReplicaIndex, epochs)...)
+	}
+	cl := newMigratorClient(objs...)
+	operator := New(cl, groveclientscheme.Scheme, newFakeRegistry()).(*_resource)
+	pcs := getPCS(t, cl)
+	state := &pcssync.State{ExpectedReplicaIndices: []int{0, 2, 4}}
+
+	_, err := operator.Sync(context.Background(), logr.Discard(), pcs, state)
+
+	require.NoError(t, err)
+	for pcsReplicaIndex, epochs := range epochsByPCSReplicaIndex {
+		assertReplicaMigrated(t, cl, pcsReplicaIndex, epochs)
+	}
+	assertGateCleared(t, cl)
+	assert.Equal(t, []int{0, 2, 4}, state.ExpectedReplicaIndices)
 }
 
 func TestSyncMigratesScaleOutReplica(t *testing.T) {
@@ -122,9 +152,10 @@ func TestSyncMigratesScaleOutReplica(t *testing.T) {
 	)
 
 	cl := newMigratorClient(objs...)
-	operator := New(cl, groveclientscheme.Scheme, newFakeRegistry())
+	operator := New(cl, groveclientscheme.Scheme, newFakeRegistry()).(*_resource)
 
-	err := operator.Sync(context.Background(), logr.Discard(), getPCS(t, cl))
+	pcs := getPCS(t, cl)
+	_, err := operator.Sync(context.Background(), logr.Discard(), pcs, &pcssync.State{ExpectedReplicaIndices: lo.Range(int(pcs.Spec.Replicas))})
 	require.NoError(t, err)
 
 	rnr := apicommon.ResourceNameReplica{Name: testPCSName, Replica: 0}
@@ -149,11 +180,11 @@ func TestSyncMigratesScaleOutReplica(t *testing.T) {
 func TestSyncIsNoOpWhenNotGated(t *testing.T) {
 	epochs := replicaEpochs{anchor: "1000", tail: "1001"}
 	cl := newMigratorClient(legacyReplicaObjects(0, epochs)...)
-	operator := New(cl, groveclientscheme.Scheme, newFakeRegistry())
+	operator := New(cl, groveclientscheme.Scheme, newFakeRegistry()).(*_resource)
 
 	// PodCliqueSet without the migration gate condition, so Sync must not act.
 	pcs := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "uid").WithReplicas(1).Build()
-	err := operator.Sync(context.Background(), logr.Discard(), pcs)
+	_, err := operator.Sync(context.Background(), logr.Discard(), pcs, &pcssync.State{})
 	require.NoError(t, err)
 
 	// The standalone PodClique keeps its legacy PodGang name.
@@ -166,9 +197,10 @@ func TestSyncPreservesForeignLabelsAndSpec(t *testing.T) {
 	objs := append([]client.Object{gatedPCS(1)}, legacyReplicaObjects(0, epochs)...)
 	objs = append(objs, epochPodGangsForReplica(0, epochs)...)
 	cl := newMigratorClient(objs...)
-	operator := New(cl, groveclientscheme.Scheme, newFakeRegistry())
+	operator := New(cl, groveclientscheme.Scheme, newFakeRegistry()).(*_resource)
 
-	err := operator.Sync(context.Background(), logr.Discard(), getPCS(t, cl))
+	pcs := getPCS(t, cl)
+	_, err := operator.Sync(context.Background(), logr.Discard(), pcs, &pcssync.State{ExpectedReplicaIndices: lo.Range(int(pcs.Spec.Replicas))})
 	require.NoError(t, err)
 
 	pclq := getPCLQ(t, cl, standaloneCliqueName(0))
@@ -188,10 +220,11 @@ func TestSyncHoldsGateUntilEpochPodGangsExist(t *testing.T) {
 	epochs := replicaEpochs{anchor: "1000", tail: "1001"}
 	// The legacy objects and PodGangMap are present, but the epoch PodGangs are not created yet.
 	cl := newMigratorClient(append([]client.Object{gatedPCS(1)}, legacyReplicaObjects(0, epochs)...)...)
-	operator := New(cl, groveclientscheme.Scheme, newFakeRegistry())
+	operator := New(cl, groveclientscheme.Scheme, newFakeRegistry()).(*_resource)
 
-	err := operator.Sync(context.Background(), logr.Discard(), getPCS(t, cl))
-	testutils.AssertGroveError(t, &groveerr.GroveError{Code: groveerr.ErrCodeContinueReconcileAndRequeue, Operation: "Sync"}, err)
+	pcs := getPCS(t, cl)
+	_, err := operator.Sync(context.Background(), logr.Discard(), pcs, &pcssync.State{ExpectedReplicaIndices: lo.Range(int(pcs.Spec.Replicas))})
+	assert.True(t, groveerr.IsContinueReconcileAndRequeue(err))
 
 	// The relabeling still happened, but the gate is held until the epoch PodGangs exist.
 	assertReplicaMigrated(t, cl, 0, epochs)
@@ -203,7 +236,7 @@ func TestMigratePodGangLabelsMissingLabelsReturnsError(t *testing.T) {
 	// reached through Sync, since the replica list selector would not match it, so the guard is
 	// exercised directly.
 	r := New(newMigratorClient(), groveclientscheme.Scheme, newFakeRegistry()).(*_resource)
-	pclq := &grovecorev1alpha1.PodClique{ObjectMeta: metav1.ObjectMeta{Name: "no-labels", Namespace: testNamespace}}
+	pclq := &grovecorev1beta1.PodClique{ObjectMeta: metav1.ObjectMeta{Name: "no-labels", Namespace: testNamespace}}
 
 	err := r.migratePodGangLabels(context.Background(), pclq, "target")
 	testutils.AssertGroveError(t, &groveerr.GroveError{Code: errCodeMissingLabels, Operation: "Sync"}, err)
@@ -254,13 +287,13 @@ func TestMigratePodSkipsMembershipWhenBackendHasNoAnnotations(t *testing.T) {
 }
 
 func TestDeleteIsNoOp(t *testing.T) {
-	operator := New(newMigratorClient(), groveclientscheme.Scheme, newFakeRegistry())
+	operator := New(newMigratorClient(), groveclientscheme.Scheme, newFakeRegistry()).(*_resource)
 	err := operator.Delete(context.Background(), logr.Discard(), metav1.ObjectMeta{Name: testPCSName, Namespace: testNamespace})
 	assert.NoError(t, err)
 }
 
 func TestGetExistingResourceNamesReturnsNil(t *testing.T) {
-	operator := New(newMigratorClient(), groveclientscheme.Scheme, newFakeRegistry())
+	operator := New(newMigratorClient(), groveclientscheme.Scheme, newFakeRegistry()).(*_resource)
 	names, err := operator.GetExistingResourceNames(context.Background(), logr.Discard(), metav1.ObjectMeta{Name: testPCSName, Namespace: testNamespace})
 	require.NoError(t, err)
 	assert.Nil(t, names)
@@ -330,7 +363,7 @@ func legacyScaledPodGangName(pcsReplicaIndex int) string {
 
 // gatedPCS returns the test PodCliqueSet with the given replica count, carrying the migration gate
 // condition, the arg the migrator acts on.
-func gatedPCS(replicas int32) *grovecorev1alpha1.PodCliqueSet {
+func gatedPCS(replicas int32) *grovecorev1beta1.PodCliqueSet {
 	return testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "uid").
 		WithReplicas(replicas).
 		WithStatusConditions(metav1.Condition{
@@ -383,7 +416,7 @@ func legacyReplicaObjects(pcsReplicaIndex int, epochs replicaEpochs) []client.Ob
 
 // replicaPGM is the PodGangMap of one replica: an anchor entry holding PCSG replicas 0 and 1, and a
 // tail entry holding PCSG replica 2.
-func replicaPGM(pcsReplicaIndex int, epochs replicaEpochs) *grovecorev1alpha1.PodGangMap {
+func replicaPGM(pcsReplicaIndex int, epochs replicaEpochs) *grovecorev1beta1.PodGangMap {
 	return testutils.NewPodGangMapBuilder(testPCSName, testNamespace, types.UID("uid"), pcsReplicaIndex).WithEntries(
 		testutils.NewAnchorEntry(testGenHash, epochs.anchor, testPCSGName, 0, 1),
 		testutils.NewTailEntry(testGenHash, epochs.tail, testPCSGName, 2),
@@ -448,20 +481,20 @@ func legacyPodGangLabels(podGangName, basePodGangName string) map[string]string 
 func newMigratorClient(objs ...client.Object) client.Client {
 	return testutils.NewTestClientBuilder().
 		WithObjects(objs...).
-		WithStatusSubresource(&grovecorev1alpha1.PodCliqueSet{}).
+		WithStatusSubresource(&grovecorev1beta1.PodCliqueSet{}).
 		Build()
 }
 
-func getPCLQ(t *testing.T, cl client.Client, name string) *grovecorev1alpha1.PodClique {
+func getPCLQ(t *testing.T, cl client.Client, name string) *grovecorev1beta1.PodClique {
 	t.Helper()
-	pclq := &grovecorev1alpha1.PodClique{}
+	pclq := &grovecorev1beta1.PodClique{}
 	require.NoError(t, cl.Get(context.Background(), client.ObjectKey{Namespace: testNamespace, Name: name}, pclq))
 	return pclq
 }
 
-func getPCS(t *testing.T, cl client.Client) *grovecorev1alpha1.PodCliqueSet {
+func getPCS(t *testing.T, cl client.Client) *grovecorev1beta1.PodCliqueSet {
 	t.Helper()
-	pcs := &grovecorev1alpha1.PodCliqueSet{}
+	pcs := &grovecorev1beta1.PodCliqueSet{}
 	require.NoError(t, cl.Get(context.Background(), client.ObjectKey{Namespace: testNamespace, Name: testPCSName}, pcs))
 	return pcs
 }
@@ -522,7 +555,7 @@ func (fakeBackend) SyncPodGang(_ context.Context, _ *groveschedulerv1alpha1.PodG
 
 func (fakeBackend) PreparePod(_ *corev1.Pod) error { return nil }
 
-func (fakeBackend) ValidatePodCliqueSet(_ context.Context, _ *grovecorev1alpha1.PodCliqueSet, _ ...scheduler.ValidateOption) error {
+func (fakeBackend) ValidatePodCliqueSet(_ context.Context, _ *grovecorev1beta1.PodCliqueSet, _ ...scheduler.ValidateOption) error {
 	return nil
 }
 

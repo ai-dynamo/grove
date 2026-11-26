@@ -17,7 +17,7 @@ package scheduler
 import (
 	"context"
 
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
@@ -51,20 +51,20 @@ type Backend interface {
 	// ValidatePodCliqueSet runs scheduler-specific validations on the PodCliqueSet (e.g. TAS required but not supported).
 	// The PodCliqueSet webhook calls it on both create and update. On update, opts carry extra inputs such as the
 	// old PodCliqueSet (see WithOldPodCliqueSet).
-	ValidatePodCliqueSet(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, opts ...ValidateOption) error
+	ValidatePodCliqueSet(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet, opts ...ValidateOption) error
 }
 
 // ValidateOptions holds the optional inputs of Backend.ValidatePodCliqueSet.
 type ValidateOptions struct {
 	// OldPCS is the PodCliqueSet before the change. It is set on update only.
-	OldPCS *grovecorev1alpha1.PodCliqueSet
+	OldPCS *grovecorev1beta1.PodCliqueSet
 }
 
 // ValidateOption sets an optional input of Backend.ValidatePodCliqueSet.
 type ValidateOption func(*ValidateOptions)
 
 // WithOldPodCliqueSet passes the PodCliqueSet before an update to Backend.ValidatePodCliqueSet.
-func WithOldPodCliqueSet(oldPCS *grovecorev1alpha1.PodCliqueSet) ValidateOption {
+func WithOldPodCliqueSet(oldPCS *grovecorev1beta1.PodCliqueSet) ValidateOption {
 	return func(o *ValidateOptions) { o.OldPCS = oldPCS }
 }
 
@@ -114,19 +114,19 @@ type TopologyAwareBackend interface {
 	// TopologyResourceName returns the name of the backend-specific topology resource
 	// that corresponds to the given ClusterTopologyBinding. Called for auto-managed backends
 	// to populate SchedulerTopologyStatus.TopologyReference.
-	TopologyResourceName(ct *grovecorev1alpha1.ClusterTopologyBinding) string
+	TopologyResourceName(ct *grovecorev1beta1.ClusterTopologyBinding) string
 
 	// SyncTopology creates or updates the scheduler-specific topology resource
 	// for the given ClusterTopologyBinding. Called for backends not listed in
 	// the ClusterTopologyBinding's schedulerTopologyReferences (auto-managed path).
 	// k8sClient may be a non-cached client for use before the manager cache
 	// is started. If nil, the backend falls back to its own client.
-	SyncTopology(ctx context.Context, k8sClient client.Client, ct *grovecorev1alpha1.ClusterTopologyBinding) error
+	SyncTopology(ctx context.Context, k8sClient client.Client, ct *grovecorev1beta1.ClusterTopologyBinding) error
 
 	// OnTopologyDelete removes the scheduler-specific topology resource for
 	// the given ClusterTopologyBinding. Called on CT deletion (auto-managed path only).
 	// k8sClient may be nil; if so, the backend falls back to its own client.
-	OnTopologyDelete(ctx context.Context, k8sClient client.Client, ct *grovecorev1alpha1.ClusterTopologyBinding) error
+	OnTopologyDelete(ctx context.Context, k8sClient client.Client, ct *grovecorev1beta1.ClusterTopologyBinding) error
 
 	// CheckTopologyDrift compares the scheduler-specific topology resource named by
 	// ref.TopologyReference against the ClusterTopologyBinding's levels.
@@ -134,8 +134,8 @@ type TopologyAwareBackend interface {
 	// Called for backends listed in schedulerTopologyReferences (externally-managed path).
 	CheckTopologyDrift(
 		ctx context.Context,
-		ct *grovecorev1alpha1.ClusterTopologyBinding,
-		ref grovecorev1alpha1.SchedulerTopologyBinding,
+		ct *grovecorev1beta1.ClusterTopologyBinding,
+		ref grovecorev1beta1.SchedulerTopologyBinding,
 	) (bool, string, int64, error)
 }
 

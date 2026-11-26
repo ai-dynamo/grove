@@ -23,7 +23,7 @@ import (
 	"time"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 
@@ -40,9 +40,9 @@ import (
 
 // Constants for error codes.
 const (
-	errCodeClientCreation               grovecorev1alpha1.ErrorCode = "ERR_CLIENT_CREATION"
-	errCodeLabelSelectorCreationForPods grovecorev1alpha1.ErrorCode = "ERR_LABEL_SELECTOR_CREATION_FOR_PODS"
-	errCodeRegisterEventHandler         grovecorev1alpha1.ErrorCode = "ERR_REGISTER_EVENT_HANDLER"
+	errCodeClientCreation               grovecorev1beta1.ErrorCode = "ERR_CLIENT_CREATION"
+	errCodeLabelSelectorCreationForPods grovecorev1beta1.ErrorCode = "ERR_LABEL_SELECTOR_CREATION_FOR_PODS"
+	errCodeRegisterEventHandler         grovecorev1beta1.ErrorCode = "ERR_REGISTER_EVENT_HANDLER"
 )
 
 const (

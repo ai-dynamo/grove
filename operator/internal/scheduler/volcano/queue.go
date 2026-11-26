@@ -20,7 +20,7 @@ import (
 	"fmt"
 	"strings"
 
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
@@ -76,7 +76,7 @@ func validateQueueName(queue string) []string {
 	return validation.IsDNS1123Subdomain(queue)
 }
 
-func validateQueueAnnotations(ctx context.Context, k8sClient client.Reader, pcs *grovecorev1alpha1.PodCliqueSet) error {
+func validateQueueAnnotations(ctx context.Context, k8sClient client.Reader, pcs *grovecorev1beta1.PodCliqueSet) error {
 	var errs []error
 	pcsQueue := strings.TrimSpace(pcs.Annotations[QueueAnnotationKey])
 	if pcsQueue != "" {

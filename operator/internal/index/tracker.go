@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/ai-dynamo/grove/operator/internal/utils"
 	k8sutils "github.com/ai-dynamo/grove/operator/internal/utils/kubernetes"
 
 	"github.com/go-logr/logr"
@@ -27,17 +28,14 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 )
 
-// GetAvailableIndices returns the `requiredIndicesCount` available indices for pods.
-// Extracts indices from active pod hostnames and returns the available indices,
-// Extracts indices from hostnames of active pods and returns the available indices,
-// filling holes from lowest to highest (starting from 0).
-// Active pods are those that are not terminating, not permanently failed (RestartPolicy=Never), and not succeeded.
-func GetAvailableIndices(logger logr.Logger, existingPods []*corev1.Pod, requiredIndicesCount int) ([]int, error) {
+// GetAvailablePodIndices returns the required number of available indices for Pods.
+// It treats active Pod hostname indices as occupied and fills the lowest available indices first.
+func GetAvailablePodIndices(logger logr.Logger, existingPods []*corev1.Pod, requiredIndicesCount int) ([]int, error) {
 	usedIndices, err := extractUsedIndices(logger, existingPods)
 	if err != nil {
 		return nil, err
 	}
-	return findAvailableIndices(&usedIndices, requiredIndicesCount), nil
+	return utils.GetAvailableIndices(usedIndices, requiredIndicesCount), nil
 }
 
 // extractUsedIndices extracts and validates indices from existing pods.
@@ -64,20 +62,6 @@ func extractUsedIndices(logger logr.Logger, existingPods []*corev1.Pod) (sets.Se
 	}
 
 	return usedIndices, nil
-}
-
-// findAvailableIndices finds the next count available indices starting from 0.
-func findAvailableIndices(usedIndices *sets.Set[int], requiredIndicesCount int) []int {
-	availableIndices := make([]int, 0, requiredIndicesCount)
-	currentIndex := 0
-	for requiredIndicesCount > 0 {
-		if !usedIndices.Has(currentIndex) {
-			availableIndices = append(availableIndices, currentIndex)
-			requiredIndicesCount--
-		}
-		currentIndex++
-	}
-	return availableIndices
 }
 
 // extractIndexFromHostname extracts the numeric index from a pod hostname.

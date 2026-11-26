@@ -26,8 +26,8 @@ import (
 	"strings"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
-	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 
@@ -56,6 +56,9 @@ const (
 	podSetPreferredTopologyAnnotation = "kueue.x-k8s.io/podset-preferred-topology"
 	roleHashAnnotation                = "kueue.x-k8s.io/role-hash"
 	isGroupWorkloadAnnotation         = "kueue.x-k8s.io/is-group-workload"
+	// priorityClassLabel on a PodCliqueSet names the Kueue WorkloadPriorityClass of its Workloads. Grove mirrors
+	// PodCliqueSet labels onto its PodGangs, so the backend reads it from the PodGang.
+	priorityClassLabel = "kueue.x-k8s.io/priority-class"
 	// maxWorkloadPodSets is the maxItems of a Workload's spec.podSets in Kueue v0.20.1, the version this backend
 	// supports (v0.17 caps it at 8).
 	maxWorkloadPodSets = 18
@@ -72,8 +75,8 @@ type schedulerBackend struct {
 	scheme        *runtime.Scheme
 	name          string
 	eventRecorder record.EventRecorder
-	profile       configv1alpha1.SchedulerProfile
-	config        configv1alpha1.KueueSchedulerConfiguration
+	profile       configv1beta1.SchedulerProfile
+	config        configv1beta1.KueueSchedulerConfiguration
 }
 
 var (
@@ -84,7 +87,7 @@ var (
 
 // New creates a new Kueue backend instance. profile is the scheduler profile for kueue; schedulerBackend
 // uses profile.Name and may unmarshal profile.Config into KueueSchedulerConfiguration.
-func New(cl client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder, profile configv1alpha1.SchedulerProfile) scheduler.Backend {
+func New(cl client.Client, scheme *runtime.Scheme, eventRecorder record.EventRecorder, profile configv1beta1.SchedulerProfile) scheduler.Backend {
 	return &schedulerBackend{
 		client:        cl,
 		scheme:        scheme,
@@ -125,6 +128,9 @@ func (b *schedulerBackend) Init(directClient client.Client) error {
 // them together. Each replica above minAvailable has its own PodGang and Workload, created once the anchor is
 // scheduled.
 func (b *schedulerBackend) SyncPodGang(ctx context.Context, podGang *groveschedulerv1alpha1.PodGang) error {
+	if !podGang.DeletionTimestamp.IsZero() {
+		return nil
+	}
 	pcsName := podGang.Labels[apicommon.LabelPartOfKey]
 	if pcsName == "" {
 		return fmt.Errorf("PodGang %s/%s must set label %q", podGang.Namespace, podGang.Name, apicommon.LabelPartOfKey)
@@ -135,7 +141,9 @@ func (b *schedulerBackend) SyncPodGang(ctx context.Context, podGang *groveschedu
 // ensureWorkload ensures a usable prebuilt Kueue Workload exists for podGang, creating it if absent once the
 // PodGangs that podGang depends on are scheduled. An existing Workload that is no longer usable (Finished, or
 // deactivated by Kueue) is deleted and rebuilt from scratch instead of repaired in place, since Kueue Workload
-// podSets are immutable once admitted.
+// podSets are immutable once admitted. A usable Workload only has its priority class kept in step with the PodGang.
+// A Workload of the same name that podGang does not own belongs to an earlier PodGang of that name and is left to
+// garbage collection (see workloadOwnedByPodGang).
 // Grove has no watch on Workloads, so PreparePod also calls this for every Pod it prepares. It returns an
 // error, so the caller requeues, while the old Workload is still being deleted.
 //
@@ -147,11 +155,15 @@ func (b *schedulerBackend) ensureWorkload(ctx context.Context, podGang *grovesch
 	err := reader.Get(ctx, client.ObjectKey{Namespace: podGang.Namespace, Name: podGang.Name}, existing)
 	switch {
 	case err == nil:
+		usable, err := workloadUsableBy(existing, podGang)
+		if err != nil {
+			return err
+		}
+		if usable {
+			return b.syncWorkloadPriorityClass(ctx, existing, podGang)
+		}
 		if existing.DeletionTimestamp != nil {
 			return fmt.Errorf("prebuilt kueue Workload %s/%s is still being deleted", podGang.Namespace, podGang.Name)
-		}
-		if !workloadNeedsReplacement(existing) {
-			return nil
 		}
 		// The preconditions keep a stale read from deleting a replacement that another caller already created.
 		preconditions := client.Preconditions{UID: &existing.UID, ResourceVersion: &existing.ResourceVersion}
@@ -174,7 +186,7 @@ func (b *schedulerBackend) ensureWorkload(ctx context.Context, podGang *grovesch
 		return nil
 	}
 
-	pcs := &grovecorev1alpha1.PodCliqueSet{}
+	pcs := &grovecorev1beta1.PodCliqueSet{}
 	if err := b.client.Get(ctx, client.ObjectKey{Namespace: podGang.Namespace, Name: pcsName}, pcs); err != nil {
 		return fmt.Errorf("failed to get PodCliqueSet %s/%s for PodGang %s: %w", podGang.Namespace, pcsName, podGang.Name, err)
 	}
@@ -191,7 +203,11 @@ func (b *schedulerBackend) ensureWorkload(ctx context.Context, podGang *grovesch
 		if err := b.directReader.Get(ctx, client.ObjectKeyFromObject(workload), current); err != nil {
 			return fmt.Errorf("failed to get prebuilt kueue Workload %s/%s: %w", podGang.Namespace, podGang.Name, err)
 		}
-		if current.DeletionTimestamp != nil || workloadNeedsReplacement(current) {
+		usable, err := workloadUsableBy(current, podGang)
+		if err != nil {
+			return err
+		}
+		if !usable {
 			return fmt.Errorf("prebuilt kueue Workload %s/%s is still being replaced", podGang.Namespace, podGang.Name)
 		}
 		log.FromContext(ctx).V(4).Info("Prebuilt Kueue Workload already recreated by a concurrent caller", "workload", client.ObjectKeyFromObject(workload))
@@ -199,6 +215,26 @@ func (b *schedulerBackend) ensureWorkload(ctx context.Context, podGang *grovesch
 	}
 	log.FromContext(ctx).Info("Created prebuilt Kueue Workload", "workload", client.ObjectKeyFromObject(workload))
 	return nil
+}
+
+// workloadOwnedByPodGang reports whether wl was created for this incarnation of podGang. A scaled-in PodGang can be
+// recreated under the same name while its Workload is still alive: Kueue adds the admitted Pods as owners, so
+// garbage collection removes only the deleted PodGang's owner reference and keeps the Workload until those Pods are
+// gone. Matching on the UID keeps the recreated PodGang from adopting that Workload and its admission.
+func workloadOwnedByPodGang(wl *kueuev1beta2.Workload, podGang *groveschedulerv1alpha1.PodGang) bool {
+	return slices.ContainsFunc(wl.OwnerReferences, func(ref metav1.OwnerReference) bool { return ref.UID == podGang.UID })
+}
+
+// workloadUsableBy reports whether wl, the Workload found under podGang's name, can serve podGang as it is. It is false
+// while wl is being deleted or needs replacement (see workloadNeedsReplacement). It returns an error, so the caller
+// requeues, while wl belongs to an earlier PodGang of the same name: Grove neither uses nor deletes that Workload, and
+// leaves it to garbage collection, which removes it once the Pods it admitted are gone. Ownership is checked first so
+// that such a Workload is never deleted as stale.
+func workloadUsableBy(wl *kueuev1beta2.Workload, podGang *groveschedulerv1alpha1.PodGang) (bool, error) {
+	if !workloadOwnedByPodGang(wl, podGang) {
+		return false, fmt.Errorf("prebuilt kueue Workload %s/%s is not owned by PodGang UID %s; waiting for the Workload of an earlier PodGang of the same name to be garbage collected", podGang.Namespace, podGang.Name, podGang.UID)
+	}
+	return wl.DeletionTimestamp == nil && !workloadNeedsReplacement(wl), nil
 }
 
 // workloadNeedsReplacement reports whether wl is permanently unusable and must be deleted and rebuilt.
@@ -214,7 +250,7 @@ func workloadNeedsReplacement(wl *kueuev1beta2.Workload) bool {
 // podSet. The podSet name is the PodGroup FQN so scaling-group replicas of the same clique stay unique. count
 // is the clique replicas; minCount is the PodGroup minReplicas for standalone cliques and is forced to count
 // for scaling-group cliques.
-func (b *schedulerBackend) buildPrebuiltWorkload(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, podGang *groveschedulerv1alpha1.PodGang) (*kueuev1beta2.Workload, error) {
+func (b *schedulerBackend) buildPrebuiltWorkload(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet, podGang *groveschedulerv1alpha1.PodGang) (*kueuev1beta2.Workload, error) {
 	queueName, err := queueNameForPodCliqueSet(pcs)
 	if err != nil {
 		return nil, err
@@ -277,6 +313,14 @@ func (b *schedulerBackend) buildPrebuiltWorkload(ctx context.Context, pcs *grove
 			PodSets:   podSets,
 		},
 	}
+	if name := podGang.Labels[priorityClassLabel]; name != "" {
+		priority, err := b.workloadPriorityClassValue(ctx, name)
+		if err != nil {
+			return nil, err
+		}
+		workload.Spec.PriorityClassRef = kueuev1beta2.NewWorkloadPriorityClassRef(name)
+		workload.Spec.Priority = &priority
+	}
 	// Own the Workload by the PodGang so Kubernetes garbage collection removes it once the PodGang and all
 	// member Pods (which Kueue adds as owners on admission) are gone.
 	if err := controllerutil.SetOwnerReference(podGang, workload, b.scheme); err != nil {
@@ -285,9 +329,65 @@ func (b *schedulerBackend) buildPrebuiltWorkload(ctx context.Context, pcs *grove
 	return workload, nil
 }
 
+// syncWorkloadPriorityClass points an existing Workload at the WorkloadPriorityClass that its PodGang's
+// priorityClassLabel names, so that changing the label on the PodCliqueSet reprioritizes its Workloads in place.
+// Kueue allows a Workload to switch WorkloadPriorityClass even while it holds quota, so nothing is evicted.
+// Kueue keeps spec.priority in step with the class's value from then on, so only a change of class is acted on.
+func (b *schedulerBackend) syncWorkloadPriorityClass(ctx context.Context, wl *kueuev1beta2.Workload, podGang *groveschedulerv1alpha1.PodGang) error {
+	desired := podGang.Labels[priorityClassLabel]
+	var current string
+	if ref := wl.Spec.PriorityClassRef; ref != nil {
+		if ref.Group != kueuev1beta2.WorkloadPriorityClassGroup || ref.Kind != kueuev1beta2.WorkloadPriorityClassKind {
+			// Grove only ever sets a WorkloadPriorityClass; leave any other priority source alone.
+			return nil
+		}
+		current = ref.Name
+	}
+	if desired == current {
+		return nil
+	}
+	// Kueue rejects adding or removing a priorityClassRef once a Workload has reserved quota. Adding or removing the
+	// label is still allowed, since tools that generate PodCliqueSets often derive it from a priority setting and set
+	// it only when that is non-zero; such a Workload keeps its priority, and Workloads built later follow the label.
+	if (desired == "" || current == "") && apimeta.IsStatusConditionTrue(wl.Status.Conditions, kueuev1beta2.WorkloadQuotaReserved) {
+		log.FromContext(ctx).V(1).Info("Leaving the priority class of a Workload that has reserved quota unchanged, since Kueue does not allow adding or removing it",
+			"workload", client.ObjectKeyFromObject(wl), "current", current, "desired", desired)
+		return nil
+	}
+	patch := client.MergeFrom(wl.DeepCopy())
+	if desired == "" {
+		wl.Spec.PriorityClassRef = nil
+		wl.Spec.Priority = nil
+	} else {
+		priority, err := b.workloadPriorityClassValue(ctx, desired)
+		if err != nil {
+			return err
+		}
+		wl.Spec.PriorityClassRef = kueuev1beta2.NewWorkloadPriorityClassRef(desired)
+		wl.Spec.Priority = &priority
+	}
+	if err := b.client.Patch(ctx, wl, patch); err != nil {
+		return fmt.Errorf("failed to update the priority class of prebuilt kueue Workload %s/%s: %w", wl.Namespace, wl.Name, err)
+	}
+	log.FromContext(ctx).Info("Updated the priority class of prebuilt Kueue Workload", "workload", client.ObjectKeyFromObject(wl), "from", current, "to", desired)
+	return nil
+}
+
+// workloadPriorityClassValue returns the value of the named WorkloadPriorityClass. Kueue only resolves a class to
+// spec.priority for Workloads it builds itself, and requires spec.priority whenever spec.priorityClassRef is set,
+// so Grove resolves it for its prebuilt Workloads. A missing class is an error rather than a fallback to the
+// default priority, so a Workload is never admitted at a priority other than the one asked for.
+func (b *schedulerBackend) workloadPriorityClassValue(ctx context.Context, name string) (int32, error) {
+	wpc := &kueuev1beta2.WorkloadPriorityClass{}
+	if err := b.client.Get(ctx, client.ObjectKey{Name: name}, wpc); err != nil {
+		return 0, fmt.Errorf("failed to get WorkloadPriorityClass %q: %w", name, err)
+	}
+	return wpc.Value, nil
+}
+
 // queueNameForPodCliqueSet returns the Kueue local queue name for the given PodCliqueSet, derived from
 // its queueNameLabel label.
-func queueNameForPodCliqueSet(pcs *grovecorev1alpha1.PodCliqueSet) (string, error) {
+func queueNameForPodCliqueSet(pcs *grovecorev1beta1.PodCliqueSet) (string, error) {
 	queueName := pcs.Labels[queueNameLabel]
 	if queueName == "" {
 		return "", fmt.Errorf("PodCliqueSet %s/%s must set label %q for Kueue queue selection", pcs.Namespace, pcs.Name, queueNameLabel)
@@ -296,7 +396,7 @@ func queueNameForPodCliqueSet(pcs *grovecorev1alpha1.PodCliqueSet) (string, erro
 }
 
 // isCliqueInScalingGroup reports whether the named clique is a member of any PodCliqueScalingGroup.
-func isCliqueInScalingGroup(pcs *grovecorev1alpha1.PodCliqueSet, cliqueName string) bool {
+func isCliqueInScalingGroup(pcs *grovecorev1beta1.PodCliqueSet, cliqueName string) bool {
 	for _, config := range pcs.Spec.Template.PodCliqueScalingGroupConfigs {
 		for _, name := range config.CliqueNames {
 			if name == cliqueName {
@@ -309,7 +409,7 @@ func isCliqueInScalingGroup(pcs *grovecorev1alpha1.PodCliqueSet, cliqueName stri
 
 // basePodGangPodGroupCount returns how many PodGroups pcs's base PodGang has: one per standalone clique, plus one per
 // clique for each of a scaling group's minAvailable replicas (see buildBootstrapAnchorEntry).
-func basePodGangPodGroupCount(pcs *grovecorev1alpha1.PodCliqueSet) int {
+func basePodGangPodGroupCount(pcs *grovecorev1beta1.PodCliqueSet) int {
 	count := 0
 	for _, cliqueTemplate := range pcs.Spec.Template.Cliques {
 		if cliqueTemplate != nil && !isCliqueInScalingGroup(pcs, cliqueTemplate.Name) {
@@ -322,8 +422,8 @@ func basePodGangPodGroupCount(pcs *grovecorev1alpha1.PodCliqueSet) int {
 	return count
 }
 
-func (b *schedulerBackend) resolveCliqueTemplate(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, podCliqueName string) (*grovecorev1alpha1.PodCliqueTemplateSpec, error) {
-	pclq := &grovecorev1alpha1.PodClique{}
+func (b *schedulerBackend) resolveCliqueTemplate(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet, podCliqueName string) (*grovecorev1beta1.PodCliqueTemplateSpec, error) {
+	pclq := &grovecorev1beta1.PodClique{}
 	if err := b.client.Get(ctx, client.ObjectKey{Namespace: pcs.Namespace, Name: podCliqueName}, pclq); err != nil {
 		return nil, fmt.Errorf("failed to get PodClique %s/%s: %w", pcs.Namespace, podCliqueName, err)
 	}
@@ -351,7 +451,7 @@ func (b *schedulerBackend) PreparePod(pod *corev1.Pod) error {
 	if podGangName == "" {
 		return fmt.Errorf("kueue backend requires pod label %q", apicommon.LabelPodGang)
 	}
-	pcs := &grovecorev1alpha1.PodCliqueSet{}
+	pcs := &grovecorev1beta1.PodCliqueSet{}
 	if err := b.client.Get(context.Background(), client.ObjectKey{Namespace: pod.Namespace, Name: pcsName}, pcs); err != nil {
 		return fmt.Errorf("failed to get PodCliqueSet %s/%s when preparing Pod: %w", pod.Namespace, pcsName, err)
 	}
@@ -436,7 +536,7 @@ func (b *schedulerBackend) topologyRequestForPodGroup(podGang *groveschedulerv1a
 	return &resolvedTopologyRequest{request: request, annotations: annotations}
 }
 
-func (b *schedulerBackend) podGangTotalPodCount(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, podGang *groveschedulerv1alpha1.PodGang) (int, error) {
+func (b *schedulerBackend) podGangTotalPodCount(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet, podGang *groveschedulerv1alpha1.PodGang) (int, error) {
 	total := 0
 	for _, podGroup := range podGang.Spec.PodGroups {
 		cliqueTemplate, err := b.resolveCliqueTemplate(ctx, pcs, podGroup.Name)
@@ -454,7 +554,7 @@ func (b *schedulerBackend) podGangTotalPodCount(ctx context.Context, pcs *grovec
 // Workload to set minCount, so at most one standalone PodClique may declare partial-gang
 // (minAvailable < replicas) semantics. The PodCliques that belong to a PodCliqueScalingGroup are
 // always all-or-nothing and must not declare minAvailable < replicas.
-func (b *schedulerBackend) ValidatePodCliqueSet(_ context.Context, pcs *grovecorev1alpha1.PodCliqueSet, opts ...scheduler.ValidateOption) error {
+func (b *schedulerBackend) ValidatePodCliqueSet(_ context.Context, pcs *grovecorev1beta1.PodCliqueSet, opts ...scheduler.ValidateOption) error {
 	queueName, err := queueNameForPodCliqueSet(pcs)
 	if err != nil {
 		return err
@@ -544,7 +644,7 @@ func (b *schedulerBackend) ValidatePodCliqueSet(_ context.Context, pcs *grovecor
 
 // podGangTopologyPreview lays out pcs's topology constraints the way the PodCliqueSet controller lays them out on a
 // PodGang, with clique names for PodGroup names and topology domains for node label keys.
-func podGangTopologyPreview(pcs *grovecorev1alpha1.PodCliqueSet) *groveschedulerv1alpha1.PodGang {
+func podGangTopologyPreview(pcs *grovecorev1beta1.PodCliqueSet) *groveschedulerv1alpha1.PodGang {
 	preview := &groveschedulerv1alpha1.PodGang{}
 	preview.Spec.TopologyConstraint = packConstraintForDomains(pcs.Spec.Template.TopologyConstraint)
 	for _, cliqueTemplate := range pcs.Spec.Template.Cliques {
@@ -570,7 +670,7 @@ func podGangTopologyPreview(pcs *grovecorev1alpha1.PodCliqueSet) *grovescheduler
 
 // packConstraintForDomains returns constraint's required and preferred domains as a PodGang topology constraint,
 // or nil if it sets neither.
-func packConstraintForDomains(constraint *grovecorev1alpha1.TopologyConstraint) *groveschedulerv1alpha1.TopologyConstraint {
+func packConstraintForDomains(constraint *grovecorev1beta1.TopologyConstraint) *groveschedulerv1alpha1.TopologyConstraint {
 	required, preferred := string(constraint.RequiredDomain()), string(constraint.PreferredDomain())
 	if required == "" && preferred == "" {
 		return nil
@@ -598,13 +698,13 @@ func (b *schedulerBackend) ValidatePodCliqueScale(_ context.Context, oldReplicas
 	return fmt.Errorf("kueue backend does not support scaling a PodClique (%d -> %d) because its Kueue Workload podSets are fixed when the PodGang is created and are never updated; scale the PodCliqueScalingGroup that owns it instead", oldReplicas, newReplicas)
 }
 
-func defaultConfig() configv1alpha1.KueueSchedulerConfiguration {
-	return configv1alpha1.KueueSchedulerConfiguration{
-		UnderlyingSchedulerName: string(configv1alpha1.SchedulerNameKube),
+func defaultConfig() configv1beta1.KueueSchedulerConfiguration {
+	return configv1beta1.KueueSchedulerConfiguration{
+		UnderlyingSchedulerName: string(configv1beta1.SchedulerNameKube),
 	}
 }
 
-func withDefaults(cfg configv1alpha1.KueueSchedulerConfiguration) configv1alpha1.KueueSchedulerConfiguration {
+func withDefaults(cfg configv1beta1.KueueSchedulerConfiguration) configv1beta1.KueueSchedulerConfiguration {
 	defaults := defaultConfig()
 	if cfg.UnderlyingSchedulerName == "" {
 		cfg.UnderlyingSchedulerName = defaults.UnderlyingSchedulerName

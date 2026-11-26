@@ -17,7 +17,7 @@ package authorization
 import (
 	"testing"
 
-	groveconfigv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
+	groveconfigv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/go-logr/logr"
@@ -40,7 +40,7 @@ func TestRegisterWithManager(t *testing.T) {
 	})
 	mgr.WebhookServer = server
 
-	handler := NewHandler(mgr, groveconfigv1alpha1.AuthorizerConfig{
+	handler := NewHandler(mgr, groveconfigv1beta1.AuthorizerConfig{
 		Enabled: true,
 	}, "system:serviceaccount:default:test-sa")
 	err := handler.RegisterWithManager(mgr)

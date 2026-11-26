@@ -24,7 +24,7 @@ import (
 	"testing"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	e2egvk "github.com/ai-dynamo/grove/operator/e2e/grove/gvk"
 	"github.com/ai-dynamo/grove/operator/e2e/grove/workload"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
@@ -101,7 +101,7 @@ func Test_CD1_CascadeDeletePodCliqueSet(t *testing.T) {
 func countCascadeResources(ctx context.Context, tc *testctx.TestContext, workloadName string) (map[string]int, error) {
 	counts := map[string]int{}
 
-	var pcs grovecorev1alpha1.PodCliqueSet
+	var pcs grovecorev1beta1.PodCliqueSet
 	counts["PodCliqueSets"] = 1
 	if err := tc.Client.Get(ctx, types.NamespacedName{Name: workloadName, Namespace: tc.Namespace}, &pcs); err != nil {
 		if !apierrors.IsNotFound(err) {

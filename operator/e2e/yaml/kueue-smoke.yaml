@@ -2,7 +2,7 @@
 # full-gang (minAvailable == replicas), admitted through the "grove-e2e" LocalQueue in
 # kueue-queues.yaml. Not part of the automated e2e suite -- apply/delete by hand.
 ---
-apiVersion: grove.io/v1alpha1
+apiVersion: grove.io/v1beta1
 kind: PodCliqueSet
 metadata:
   name: kueue-smoke

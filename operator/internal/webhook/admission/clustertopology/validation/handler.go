@@ -18,7 +18,7 @@ import (
 	"context"
 	"fmt"
 
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
 
 	"github.com/go-logr/logr"
@@ -60,8 +60,8 @@ func (h *Handler) ValidateCreate(ctx context.Context, obj runtime.Object) (admis
 	if err != nil {
 		return nil, err
 	}
-	allErrs := validateClusterTopology(ct, h.enabledBackends, h.topologyAwareBackends)
-	return nil, allErrs.ToAggregate()
+	warnings, allErrs := validateClusterTopology(ct, h.enabledBackends, h.topologyAwareBackends)
+	return warnings, allErrs.ToAggregate()
 }
 
 // ValidateUpdate validates a ClusterTopologyBinding update request.
@@ -74,8 +74,8 @@ func (h *Handler) ValidateUpdate(ctx context.Context, _, newObj runtime.Object) 
 	if err != nil {
 		return nil, err
 	}
-	allErrs := validateClusterTopology(ct, h.enabledBackends, h.topologyAwareBackends)
-	return nil, allErrs.ToAggregate()
+	warnings, allErrs := validateClusterTopology(ct, h.enabledBackends, h.topologyAwareBackends)
+	return warnings, allErrs.ToAggregate()
 }
 
 // ValidateDelete validates a ClusterTopologyBinding delete request.
@@ -84,8 +84,8 @@ func (h *Handler) ValidateDelete(_ context.Context, _ runtime.Object) (admission
 }
 
 // castToClusterTopology attempts to cast a runtime.Object to a ClusterTopologyBinding.
-func castToClusterTopology(obj runtime.Object) (*grovecorev1alpha1.ClusterTopologyBinding, error) {
-	ct, ok := obj.(*grovecorev1alpha1.ClusterTopologyBinding)
+func castToClusterTopology(obj runtime.Object) (*grovecorev1beta1.ClusterTopologyBinding, error) {
+	ct, ok := obj.(*grovecorev1beta1.ClusterTopologyBinding)
 	if !ok {
 		return nil, fmt.Errorf("expected a ClusterTopologyBinding object but got %T", obj)
 	}

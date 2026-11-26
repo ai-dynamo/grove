@@ -20,15 +20,15 @@ import (
 	"slices"
 	"strconv"
 
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 )
 
 // newPodGangEntry constructs a fresh PodGangEntry setting epoch, PodCliqueSet generation hash and
 // dependsOn. The caller sets Role after this returns. An entry carries no name or labels. The PodGang
 // materializer derives the name and stamps the epoch and role labels.
-func newPodGangEntry(epoch, pcsGenerationHash string, dependsOn []string) grovecorev1alpha1.PodGangEntry {
-	return grovecorev1alpha1.PodGangEntry{
+func newPodGangEntry(epoch, pcsGenerationHash string, dependsOn []string) grovecorev1beta1.PodGangEntry {
+	return grovecorev1beta1.PodGangEntry{
 		Epoch:                      epoch,
 		PodCliqueSetGenerationHash: pcsGenerationHash,
 		DependsOn:                  dependsOn,
@@ -37,7 +37,7 @@ func newPodGangEntry(epoch, pcsGenerationHash string, dependsOn []string) grovec
 
 // entryEpochNanos parses the entry epoch as unix nanos. It returns an error when the epoch is not
 // numeric, a contract violation since Grove is the sole writer of epochs.
-func entryEpochNanos(entry grovecorev1alpha1.PodGangEntry) (int64, error) {
+func entryEpochNanos(entry grovecorev1beta1.PodGangEntry) (int64, error) {
 	epochNanos, err := strconv.ParseInt(entry.Epoch, 10, 64)
 	if err != nil {
 		return 0, fmt.Errorf("PodGangMap %s entry has a non-numeric epoch %q: %w", entry.Role, entry.Epoch, err)
@@ -48,9 +48,9 @@ func entryEpochNanos(entry grovecorev1alpha1.PodGangEntry) (int64, error) {
 // sortEntriesByEpoch sorts entries in place by epoch ascending. Epoch is a unix-nano string compared
 // numerically, so ordering is correct regardless of digit width. It returns an error if any entry
 // has a non-numeric epoch, a contract violation since Grove is the sole writer of epochs.
-func sortEntriesByEpoch(entries []grovecorev1alpha1.PodGangEntry) error {
+func sortEntriesByEpoch(entries []grovecorev1beta1.PodGangEntry) error {
 	type entryWithEpoch struct {
-		entry grovecorev1alpha1.PodGangEntry
+		entry grovecorev1beta1.PodGangEntry
 		epoch int64
 	}
 	paired := make([]entryWithEpoch, len(entries))
@@ -72,7 +72,7 @@ func sortEntriesByEpoch(entries []grovecorev1alpha1.PodGangEntry) error {
 
 // isPodGangEntryEmpty reports whether an entry carries no standalone PodClique pods and no
 // PodCliqueScalingGroup replica indices.
-func isPodGangEntryEmpty(entry grovecorev1alpha1.PodGangEntry) bool {
+func isPodGangEntryEmpty(entry grovecorev1beta1.PodGangEntry) bool {
 	for _, count := range entry.PodCliques {
 		if count > 0 {
 			return false
@@ -88,7 +88,7 @@ func isPodGangEntryEmpty(entry grovecorev1alpha1.PodGangEntry) bool {
 
 // advanceEntriesGenerationHash sets every entry's PodCliqueSetGenerationHash to
 // pcsCurrentGenerationHash.
-func advanceEntriesGenerationHash(entries []grovecorev1alpha1.PodGangEntry, pcsCurrentGenerationHash string) {
+func advanceEntriesGenerationHash(entries []grovecorev1beta1.PodGangEntry, pcsCurrentGenerationHash string) {
 	for i := range entries {
 		entries[i].PodCliqueSetGenerationHash = pcsCurrentGenerationHash
 	}
@@ -102,7 +102,7 @@ func advanceEntriesGenerationHash(entries []grovecorev1alpha1.PodGangEntry, pcsC
 // Coherent update is skipped. A coherent update creates new-generation entries and drains old-generation
 // entries, so a PodGangMap deliberately holds entries for more than one generation hash at once.
 // Advancing all entries to the current hash would erase that distinction.
-func shouldAdvanceEntriesGenerationHash(pcs *grovecorev1alpha1.PodCliqueSet, entries []grovecorev1alpha1.PodGangEntry) bool {
+func shouldAdvanceEntriesGenerationHash(pcs *grovecorev1beta1.PodCliqueSet, entries []grovecorev1beta1.PodGangEntry) bool {
 	if componentutils.IsCoherentStrategy(pcs) {
 		return false
 	}
@@ -117,8 +117,8 @@ func shouldAdvanceEntriesGenerationHash(pcs *grovecorev1alpha1.PodCliqueSet, ent
 
 // clonePodGangEntries returns a deep copy of the entries so the caller can mutate without aliasing
 // the source (typically the snapshot's PodGangMap spec).
-func clonePodGangEntries(entries []grovecorev1alpha1.PodGangEntry) []grovecorev1alpha1.PodGangEntry {
-	cloned := make([]grovecorev1alpha1.PodGangEntry, len(entries))
+func clonePodGangEntries(entries []grovecorev1beta1.PodGangEntry) []grovecorev1beta1.PodGangEntry {
+	cloned := make([]grovecorev1beta1.PodGangEntry, len(entries))
 	for i := range entries {
 		entries[i].DeepCopyInto(&cloned[i])
 	}

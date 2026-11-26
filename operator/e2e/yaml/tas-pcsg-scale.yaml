@@ -1,7 +1,7 @@
 # Workload 9: SP-3 - PCSG Scaling with Topology Constraints and MinAvailable
 # Test scenario: 3 PCSG replicas with rack constraint demonstrating scaling coordination
 ---
-apiVersion: grove.io/v1alpha1
+apiVersion: grove.io/v1beta1
 kind: PodCliqueSet
 metadata:
   name: tas-pcsg-scale

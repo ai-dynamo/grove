@@ -1,7 +1,7 @@
 # Workload: Preferred Topology Pack Constraints
 # Test scenario: PCS required+preferred, PCSG preferred-only, standalone PCLQ preferred-only
 ---
-apiVersion: grove.io/v1alpha1
+apiVersion: grove.io/v1beta1
 kind: PodCliqueSet
 metadata:
   name: tas-preferred-pack

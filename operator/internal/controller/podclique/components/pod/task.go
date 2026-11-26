@@ -19,7 +19,7 @@ import (
 	"fmt"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/constants"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/controller/podclique/expectations"
@@ -34,7 +34,7 @@ import (
 )
 
 // createPodCreationTask creates a utils.Task which will create a Pod, capture the create-expectation and also emit a success/failed event post creation.
-func (r _resource) createPodCreationTask(logger logr.Logger, pcs *grovecorev1alpha1.PodCliqueSet, pclq *grovecorev1alpha1.PodClique, podGangName, pclqExpectationsKey string, taskIndex, podHostNameIndex int, pgm *grovecorev1alpha1.PodGangMap) utils.Task {
+func (r _resource) createPodCreationTask(logger logr.Logger, pcs *grovecorev1beta1.PodCliqueSet, pclq *grovecorev1beta1.PodClique, podGangName, pclqExpectationsKey string, taskIndex, podHostNameIndex int, pgm *grovecorev1beta1.PodGangMap) utils.Task {
 	pclqObjKey := client.ObjectKeyFromObject(pclq)
 	return utils.Task{
 		Name: fmt.Sprintf("CreatePod-%s-%d", pclq.Name, taskIndex),
@@ -69,7 +69,7 @@ func (r _resource) createPodCreationTask(logger logr.Logger, pcs *grovecorev1alp
 
 // createPodDeletionTask creates a utils.Task which will delete a Pod, capture the delete-expectation and also emit a success/failed event post deletion.
 // The delete expectation is recorded under the pod's PodGang-scoped key, read from its grove.io/podgang label.
-func (r _resource) createPodDeletionTask(logger logr.Logger, pclq *grovecorev1alpha1.PodClique, podToDelete *corev1.Pod) utils.Task {
+func (r _resource) createPodDeletionTask(logger logr.Logger, pclq *grovecorev1beta1.PodClique, podToDelete *corev1.Pod) utils.Task {
 	podObjKey := client.ObjectKeyFromObject(podToDelete)
 	pclqObjKey := client.ObjectKeyFromObject(pclq)
 	return utils.Task{
@@ -105,7 +105,7 @@ func (r _resource) createPodDeletionTask(logger logr.Logger, pclq *grovecorev1al
 }
 
 // createPodDeletionTasks creates multiple deletion tasks for a batch of pods
-func (r _resource) createPodDeletionTasks(logger logr.Logger, pclq *grovecorev1alpha1.PodClique, podsToDelete []*corev1.Pod) []utils.Task {
+func (r _resource) createPodDeletionTasks(logger logr.Logger, pclq *grovecorev1beta1.PodClique, podsToDelete []*corev1.Pod) []utils.Task {
 	deletionTasks := make([]utils.Task, 0, len(podsToDelete))
 	for _, podToDelete := range podsToDelete {
 		deletionTasks = append(deletionTasks, r.createPodDeletionTask(logger, pclq, podToDelete))

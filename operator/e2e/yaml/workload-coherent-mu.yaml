@@ -4,7 +4,7 @@
 # With maxUnavailable 2 greater than minAvailable 1, a coherent update keeps up to MaxUnavailable pods in
 # flight at once rather than serializing on readiness.
 ---
-apiVersion: grove.io/v1alpha1
+apiVersion: grove.io/v1beta1
 kind: PodCliqueSet
 metadata:
   name: workload-coherent-mu

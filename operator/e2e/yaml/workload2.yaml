@@ -1,7 +1,7 @@
 # Workload 2: Flexible Startup
 # Containers run sleep infinity (busybox, minimal footprint).
 ---
-apiVersion: grove.io/v1alpha1
+apiVersion: grove.io/v1beta1
 kind: PodCliqueSet
 metadata:
   name: workload2

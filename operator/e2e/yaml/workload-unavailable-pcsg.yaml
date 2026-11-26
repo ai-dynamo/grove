@@ -1,6 +1,6 @@
 # Minimal corrective-update regression: one unavailable PCSG replica consumes maxUnavailable=1.
 # The test removes only the impossible selector from the PCS template; the old pod stays Pending.
-apiVersion: grove.io/v1alpha1
+apiVersion: grove.io/v1beta1
 kind: PodCliqueSet
 metadata:
   name: workload-unavailable-pcsg

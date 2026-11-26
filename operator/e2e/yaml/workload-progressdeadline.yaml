@@ -2,7 +2,7 @@
 # pc-a and PCSG sg-x roll one unit at a time and surface UpdateInProgress=Unknown when a rollout
 # makes no progress within the 30s ProgressDeadline.
 ---
-apiVersion: grove.io/v1alpha1
+apiVersion: grove.io/v1beta1
 kind: PodCliqueSet
 metadata:
   name: workload-progressdeadline

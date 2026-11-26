@@ -17,7 +17,7 @@ package mnnvl
 import (
 	"fmt"
 
-	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
+	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/discovery"
@@ -28,7 +28,7 @@ var logger = ctrl.Log.WithName("mnnvl")
 
 // Preflight checks if MNNVL prerequisites are met when the feature is enabled.
 // If MNNVL is enabled, it verifies that the ComputeDomain CRD is installed in the cluster.
-func Preflight(operatorCfg *configv1alpha1.OperatorConfiguration) error {
+func Preflight(operatorCfg *configv1beta1.OperatorConfiguration) error {
 	if !operatorCfg.Network.AutoMNNVLEnabled {
 		return nil
 	}

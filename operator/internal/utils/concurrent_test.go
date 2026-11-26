@@ -16,14 +16,15 @@ package utils
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"testing"
 	"time"
 
 	"github.com/go-logr/logr"
+	"github.com/samber/lo"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/util/rand"
 )
 
@@ -41,7 +42,7 @@ type testTaskConfig struct {
 	taskType   taskType
 }
 
-func TestRunConcurrently(t *testing.T) {
+func TestRunConcurrentlyAndWait(t *testing.T) {
 	testCases := []struct {
 		description             string
 		taskConfigs             []testTaskConfig
@@ -81,9 +82,12 @@ func TestRunConcurrently(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.description, func(t *testing.T) {
-			actualRunResult := RunConcurrently(context.Background(), logr.Discard(), createTasks(tc.taskConfigs))
+			actualRunResult := RunConcurrentlyAndWait(context.Background(), logr.Discard(), createTasks(tc.taskConfigs))
 			assert.Equal(t, tc.expectedSuccessfulTasks, actualRunResult.SuccessfulTasks)
-			assert.Equal(t, tc.expectedFailedTasks, actualRunResult.FailedTasks)
+			failedTaskNames := lo.Map(actualRunResult.FailedTasks, func(failedTask FailedTask, _ int) string {
+				return failedTask.Name
+			})
+			assert.Equal(t, tc.expectedFailedTasks, failedTaskNames)
 		})
 	}
 }
@@ -206,26 +210,23 @@ func generateRandomDelay() time.Duration {
 	return time.Duration(5+rand.Intn(15)) * time.Millisecond
 }
 
-// TestRunResult_GetAggregatedError tests combining multiple errors into a single error.
+// TestRunResult_GetAggregatedError tests combining multiple task errors into a single error.
 func TestRunResult_GetAggregatedError(t *testing.T) {
-	// No errors returns nil
-	result := RunResult{Errors: []error{}}
-	assert.Nil(t, result.GetAggregatedError())
+	result := RunResult{}
+	assert.NoError(t, result.GetAggregatedError())
 
-	// Single error returns that error
 	err1 := fmt.Errorf("task failed")
-	result = RunResult{Errors: []error{err1}}
+	result = RunResult{FailedTasks: []FailedTask{{Name: "task1", Err: err1}}}
 	aggregatedErr := result.GetAggregatedError()
-	assert.NotNil(t, aggregatedErr)
-	assert.True(t, errors.Is(aggregatedErr, err1))
+	require.Error(t, aggregatedErr)
+	assert.ErrorIs(t, aggregatedErr, err1)
 
-	// Multiple errors returns joined error
 	err2 := fmt.Errorf("another failure")
-	result = RunResult{Errors: []error{err1, err2}}
+	result = RunResult{FailedTasks: []FailedTask{{Name: "task1", Err: err1}, {Name: "task2", Err: err2}}}
 	aggregatedErr = result.GetAggregatedError()
-	assert.NotNil(t, aggregatedErr)
-	assert.True(t, errors.Is(aggregatedErr, err1))
-	assert.True(t, errors.Is(aggregatedErr, err2))
+	require.Error(t, aggregatedErr)
+	assert.ErrorIs(t, aggregatedErr, err1)
+	assert.ErrorIs(t, aggregatedErr, err2)
 }
 
 // TestRunResult_GetSummary tests generating a summary string of task execution results.
@@ -240,7 +241,7 @@ func TestRunResult_GetSummary(t *testing.T) {
 	// Result with successful tasks
 	result = RunResult{
 		SuccessfulTasks: []string{"task1", "task2"},
-		FailedTasks:     []string{"task3"},
+		FailedTasks:     []FailedTask{{Name: "task3", Err: fmt.Errorf("task failed")}},
 		SkippedTasks:    []string{"task4", "task5"},
 	}
 	summary = result.GetSummary()

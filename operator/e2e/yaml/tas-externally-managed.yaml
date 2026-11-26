@@ -2,7 +2,7 @@
 # externally-managed ClusterTopologyBinding (its KAI Topology resource is named
 # differently from the ClusterTopologyBinding itself).
 ---
-apiVersion: grove.io/v1alpha1
+apiVersion: grove.io/v1beta1
 kind: PodCliqueSet
 metadata:
   name: tas-externally-managed

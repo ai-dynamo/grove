@@ -20,7 +20,7 @@ import (
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	ctrlcommon "github.com/ai-dynamo/grove/operator/internal/controller/common"
 	"github.com/ai-dynamo/grove/operator/internal/controller/podclique/expectations"
 	ctrlutils "github.com/ai-dynamo/grove/operator/internal/controller/utils"
@@ -38,9 +38,9 @@ import (
 // garbage collector. The controller still clears its in-memory expectations, and
 // removes any scheduler finalizers from the Pods since nothing reconciles them
 // once the PodClique is gone.
-func (r *Reconciler) triggerDeletionFlow(ctx context.Context, logger logr.Logger, pclq *grovecorev1alpha1.PodClique) ctrlcommon.ReconcileStepResult {
+func (r *Reconciler) triggerDeletionFlow(ctx context.Context, logger logr.Logger, pclq *grovecorev1beta1.PodClique) ctrlcommon.ReconcileStepResult {
 	dLog := logger.WithValues("operation", "delete")
-	deleteStepFns := []ctrlcommon.ReconcileStepFn[grovecorev1alpha1.PodClique]{
+	deleteStepFns := []ctrlcommon.ReconcileStepFn[grovecorev1beta1.PodClique]{
 		r.clearPodCliqueExpectations,
 		r.removeSchedulerPodFinalizers,
 		r.removeFinalizer,
@@ -56,7 +56,7 @@ func (r *Reconciler) triggerDeletionFlow(ctx context.Context, logger logr.Logger
 
 // clearPodCliqueExpectations drops the in-memory expectations entries for this
 // PodClique so the store does not retain stale UIDs after the object is gone.
-func (r *Reconciler) clearPodCliqueExpectations(_ context.Context, logger logr.Logger, pclq *grovecorev1alpha1.PodClique) ctrlcommon.ReconcileStepResult {
+func (r *Reconciler) clearPodCliqueExpectations(_ context.Context, logger logr.Logger, pclq *grovecorev1beta1.PodClique) ctrlcommon.ReconcileStepResult {
 	if err := expectations.ClearPodCliqueExpectations(logger, r.expectationsStore, pclq.ObjectMeta); err != nil {
 		return ctrlcommon.ReconcileWithErrors("error clearing expectations", err)
 	}
@@ -65,7 +65,7 @@ func (r *Reconciler) clearPodCliqueExpectations(_ context.Context, logger logr.L
 
 // removeSchedulerPodFinalizers removes the scheduler's own finalizers from every Pod of the PodClique, for
 // schedulers that never remove them themselves (see scheduler.Finalizer).
-func (r *Reconciler) removeSchedulerPodFinalizers(ctx context.Context, _ logr.Logger, pclq *grovecorev1alpha1.PodClique) ctrlcommon.ReconcileStepResult {
+func (r *Reconciler) removeSchedulerPodFinalizers(ctx context.Context, _ logr.Logger, pclq *grovecorev1beta1.PodClique) ctrlcommon.ReconcileStepResult {
 	finalizer, ok := r.schedRegistry.GetOrDefault(pclq.Spec.PodSpec.SchedulerName).(scheduler.Finalizer)
 	if !ok {
 		return ctrlcommon.ContinueReconcile()
@@ -83,7 +83,7 @@ func (r *Reconciler) removeSchedulerPodFinalizers(ctx context.Context, _ logr.Lo
 }
 
 // removeFinalizer removes the PodClique finalizer to allow Kubernetes to complete the deletion
-func (r *Reconciler) removeFinalizer(ctx context.Context, logger logr.Logger, pclq *grovecorev1alpha1.PodClique) ctrlcommon.ReconcileStepResult {
+func (r *Reconciler) removeFinalizer(ctx context.Context, logger logr.Logger, pclq *grovecorev1beta1.PodClique) ctrlcommon.ReconcileStepResult {
 	if !controllerutil.ContainsFinalizer(pclq, constants.FinalizerPodClique) {
 		logger.Info("Finalizer not found", "PodClique", pclq)
 		return ctrlcommon.DoNotRequeue()

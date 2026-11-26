@@ -22,6 +22,7 @@ import (
 // +genclient
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 // +kubebuilder:object:root=true
+// +kubebuilder:deprecatedversion:warning="grove.io/v1alpha1 is deprecated; use grove.io/v1beta1"
 // +kubebuilder:subresource:status
 // +kubebuilder:subresource:scale:specpath=.spec.replicas,statuspath=.status.replicas,selectorpath=.status.hpaPodSelector
 // +kubebuilder:resource:shortName={pcs}
@@ -108,6 +109,28 @@ type PodCliqueSetStatus struct {
 	CurrentGenerationHash *string `json:"currentGenerationHash,omitempty"`
 	// UpdateProgress represents the progress of an update.
 	UpdateProgress *PodCliqueSetUpdateProgress `json:"updateProgress,omitempty"`
+	// ScalingProgress records replica indices selected for scale-out or scale-in.
+	// Availability-aware scale-in can remove replicas out of index order, so active replica indices may no longer
+	// form the contiguous range [0, spec.replicas). Persisting selections ensures all components reconcile the same
+	// sparse set of replica identities while scaling is in progress. It is nil when no scaling operation is in progress.
+	// +optional
+	ScalingProgress *PodCliqueSetScalingProgress `json:"scalingProgress,omitempty"`
+}
+
+// PodCliqueSetScalingProgress records replica-index selections while their managed child resources converge to the desired scaling state.
+type PodCliqueSetScalingProgress struct {
+	// ScaleOutReplicaIndices are replica indices selected for provisioning.
+	// An index is added when allocated for scale-out and removed after all expected standalone PodCliques and
+	// PodCliqueScalingGroups for it exist. Recording the index reserves it while provisioning is incomplete.
+	// +optional
+	// +listType=set
+	ScaleOutReplicaIndices []int32 `json:"scaleOutReplicaIndices,omitempty"`
+	// ScaleInReplicaIndices are replica indices selected for removal.
+	// Availability-aware selection may add indices in any order rather than removing only the highest indices.
+	// An index is removed after no managed child resources remain for it, preventing premature reuse during deletion.
+	// +optional
+	// +listType=set
+	ScaleInReplicaIndices []int32 `json:"scaleInReplicaIndices,omitempty"`
 }
 
 // PodCliqueSetUpdateStrategy defines the update strategy for a PodCliqueSet.

@@ -23,7 +23,7 @@ import (
 	"time"
 
 	"github.com/ai-dynamo/grove/operator/api/common"
-	corev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	corev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/e2e/log"
 	"github.com/ai-dynamo/grove/operator/e2e/waiter"
 	kaitopologyv1alpha1 "github.com/kai-scheduler/KAI-scheduler/pkg/apis/kai/v1alpha1"
@@ -53,8 +53,8 @@ func NewTopologyVerifier(cl client.Client, logger *log.Logger) *TopologyVerifier
 }
 
 // VerifyClusterTopologyLevels verifies that a ClusterTopologyBinding CR exists with the expected topology levels.
-func (tv *TopologyVerifier) VerifyClusterTopologyLevels(ctx context.Context, name string, expectedLevels []corev1alpha1.TopologyLevel) error {
-	var clusterTopology corev1alpha1.ClusterTopologyBinding
+func (tv *TopologyVerifier) VerifyClusterTopologyLevels(ctx context.Context, name string, expectedLevels []corev1beta1.TopologyLevel) error {
+	var clusterTopology corev1beta1.ClusterTopologyBinding
 	if err := tv.cl.Get(ctx, types.NamespacedName{Name: name}, &clusterTopology); err != nil {
 		return fmt.Errorf("failed to get ClusterTopologyBinding %s: %w", name, err)
 	}
@@ -216,11 +216,11 @@ func (tv *TopologyVerifier) VerifyMultiTypePCSGReplicas(ctx context.Context, all
 }
 
 // CreateClusterTopology creates a ClusterTopologyBinding CR with the given name and levels.
-func (tv *TopologyVerifier) CreateClusterTopology(ctx context.Context, name string, levels []corev1alpha1.TopologyLevel) error {
-	ct := &corev1alpha1.ClusterTopologyBinding{
-		TypeMeta:   metav1.TypeMeta{APIVersion: "grove.io/v1alpha1", Kind: "ClusterTopologyBinding"},
+func (tv *TopologyVerifier) CreateClusterTopology(ctx context.Context, name string, levels []corev1beta1.TopologyLevel) error {
+	ct := &corev1beta1.ClusterTopologyBinding{
+		TypeMeta:   metav1.TypeMeta{APIVersion: corev1beta1.SchemeGroupVersion.String(), Kind: "ClusterTopologyBinding"},
 		ObjectMeta: metav1.ObjectMeta{Name: name},
-		Spec:       corev1alpha1.ClusterTopologyBindingSpec{Levels: levels},
+		Spec:       corev1beta1.ClusterTopologyBindingSpec{Levels: levels},
 	}
 	if err := tv.cl.Create(ctx, ct); err != nil {
 		return fmt.Errorf("failed to create ClusterTopologyBinding %s: %w", name, err)
@@ -232,11 +232,11 @@ func (tv *TopologyVerifier) CreateClusterTopology(ctx context.Context, name stri
 // EnsureClusterTopology creates a ClusterTopologyBinding if it does not already exist.
 // If it already exists it is left unchanged. This is safe to call from multiple
 // tests that share the same cluster-scoped ClusterTopologyBinding.
-func (tv *TopologyVerifier) EnsureClusterTopology(ctx context.Context, name string, levels []corev1alpha1.TopologyLevel) error {
-	ct := &corev1alpha1.ClusterTopologyBinding{
-		TypeMeta:   metav1.TypeMeta{APIVersion: "grove.io/v1alpha1", Kind: "ClusterTopologyBinding"},
+func (tv *TopologyVerifier) EnsureClusterTopology(ctx context.Context, name string, levels []corev1beta1.TopologyLevel) error {
+	ct := &corev1beta1.ClusterTopologyBinding{
+		TypeMeta:   metav1.TypeMeta{APIVersion: corev1beta1.SchemeGroupVersion.String(), Kind: "ClusterTopologyBinding"},
 		ObjectMeta: metav1.ObjectMeta{Name: name},
-		Spec:       corev1alpha1.ClusterTopologyBindingSpec{Levels: levels},
+		Spec:       corev1beta1.ClusterTopologyBindingSpec{Levels: levels},
 	}
 	if err := tv.cl.Create(ctx, ct); err != nil {
 		if apierrors.IsAlreadyExists(err) {
@@ -250,11 +250,11 @@ func (tv *TopologyVerifier) EnsureClusterTopology(ctx context.Context, name stri
 }
 
 // CreateClusterTopologyWithSchedulerReferences creates a ClusterTopologyBinding CR with levels and schedulerTopologyReferences.
-func (tv *TopologyVerifier) CreateClusterTopologyWithSchedulerReferences(ctx context.Context, name string, levels []corev1alpha1.TopologyLevel, refs []corev1alpha1.SchedulerTopologyBinding) error {
-	ct := &corev1alpha1.ClusterTopologyBinding{
-		TypeMeta:   metav1.TypeMeta{APIVersion: "grove.io/v1alpha1", Kind: "ClusterTopologyBinding"},
+func (tv *TopologyVerifier) CreateClusterTopologyWithSchedulerReferences(ctx context.Context, name string, levels []corev1beta1.TopologyLevel, refs []corev1beta1.SchedulerTopologyBinding) error {
+	ct := &corev1beta1.ClusterTopologyBinding{
+		TypeMeta:   metav1.TypeMeta{APIVersion: corev1beta1.SchemeGroupVersion.String(), Kind: "ClusterTopologyBinding"},
 		ObjectMeta: metav1.ObjectMeta{Name: name},
-		Spec: corev1alpha1.ClusterTopologyBindingSpec{
+		Spec: corev1beta1.ClusterTopologyBindingSpec{
 			Levels:                    levels,
 			SchedulerTopologyBindings: refs,
 		},
@@ -267,9 +267,9 @@ func (tv *TopologyVerifier) CreateClusterTopologyWithSchedulerReferences(ctx con
 }
 
 // UpdateClusterTopologyLevels fetches an existing ClusterTopologyBinding and updates its levels.
-func (tv *TopologyVerifier) UpdateClusterTopologyLevels(ctx context.Context, name string, levels []corev1alpha1.TopologyLevel) error {
+func (tv *TopologyVerifier) UpdateClusterTopologyLevels(ctx context.Context, name string, levels []corev1beta1.TopologyLevel) error {
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		var ct corev1alpha1.ClusterTopologyBinding
+		var ct corev1beta1.ClusterTopologyBinding
 		if err := tv.cl.Get(ctx, types.NamespacedName{Name: name}, &ct); err != nil {
 			return fmt.Errorf("failed to get ClusterTopologyBinding %s for update: %w", name, err)
 		}
@@ -284,7 +284,7 @@ func (tv *TopologyVerifier) UpdateClusterTopologyLevels(ctx context.Context, nam
 
 // DeleteClusterTopology deletes a ClusterTopologyBinding CR by name.
 func (tv *TopologyVerifier) DeleteClusterTopology(ctx context.Context, name string) error {
-	ct := &corev1alpha1.ClusterTopologyBinding{}
+	ct := &corev1beta1.ClusterTopologyBinding{}
 	ct.Name = name
 	if err := tv.cl.Delete(ctx, ct); err != nil {
 		return fmt.Errorf("failed to delete ClusterTopologyBinding %s: %w", name, err)
@@ -331,20 +331,20 @@ func (tv *TopologyVerifier) WaitForKAITopology(ctx context.Context, name string,
 
 // WaitForClusterTopologyCondition polls until the ClusterTopologyBinding has a condition matching the expected type, status, and reason.
 func (tv *TopologyVerifier) WaitForClusterTopologyCondition(ctx context.Context, name, conditionType, expectedStatus, expectedReason string, timeout, interval time.Duration) error {
-	fetchFn := waiter.FetchFunc[*corev1alpha1.ClusterTopologyBinding](func(ctx context.Context) (*corev1alpha1.ClusterTopologyBinding, error) {
-		var ct corev1alpha1.ClusterTopologyBinding
+	fetchFn := waiter.FetchFunc[*corev1beta1.ClusterTopologyBinding](func(ctx context.Context) (*corev1beta1.ClusterTopologyBinding, error) {
+		var ct corev1beta1.ClusterTopologyBinding
 		err := tv.cl.Get(ctx, types.NamespacedName{Name: name}, &ct)
 		if apierrors.IsNotFound(err) {
 			return nil, nil
 		}
 		return &ct, err
 	})
-	return waiter.New[*corev1alpha1.ClusterTopologyBinding]().
+	return waiter.New[*corev1beta1.ClusterTopologyBinding]().
 		WithTimeout(timeout).
 		WithInterval(interval).
 		WithLogger(tv.logger).
 		WithRetryOnError().
-		WaitUntil(ctx, fetchFn, func(ct *corev1alpha1.ClusterTopologyBinding) bool {
+		WaitUntil(ctx, fetchFn, func(ct *corev1beta1.ClusterTopologyBinding) bool {
 			if ct == nil {
 				return false
 			}
@@ -359,20 +359,20 @@ func (tv *TopologyVerifier) WaitForClusterTopologyCondition(ctx context.Context,
 
 // WaitForPCSCondition polls until the PodCliqueSet has a condition matching the expected type, status, and reason.
 func (tv *TopologyVerifier) WaitForPCSCondition(ctx context.Context, namespace, name, conditionType, expectedStatus, expectedReason string, timeout, interval time.Duration) error {
-	fetchFn := waiter.FetchFunc[*corev1alpha1.PodCliqueSet](func(ctx context.Context) (*corev1alpha1.PodCliqueSet, error) {
-		var pcs corev1alpha1.PodCliqueSet
+	fetchFn := waiter.FetchFunc[*corev1beta1.PodCliqueSet](func(ctx context.Context) (*corev1beta1.PodCliqueSet, error) {
+		var pcs corev1beta1.PodCliqueSet
 		err := tv.cl.Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, &pcs)
 		if apierrors.IsNotFound(err) {
 			return nil, nil
 		}
 		return &pcs, err
 	})
-	return waiter.New[*corev1alpha1.PodCliqueSet]().
+	return waiter.New[*corev1beta1.PodCliqueSet]().
 		WithTimeout(timeout).
 		WithInterval(interval).
 		WithLogger(tv.logger).
 		WithRetryOnError().
-		WaitUntil(ctx, fetchFn, func(pcs *corev1alpha1.PodCliqueSet) bool {
+		WaitUntil(ctx, fetchFn, func(pcs *corev1beta1.PodCliqueSet) bool {
 			if pcs == nil {
 				return false
 			}
@@ -387,8 +387,8 @@ func (tv *TopologyVerifier) WaitForPCSCondition(ctx context.Context, namespace, 
 
 // VerifyClusterTopologySchedulerStatuses checks that the ClusterTopologyBinding has the expected number of
 // SchedulerTopologyStatuses and returns them.
-func (tv *TopologyVerifier) VerifyClusterTopologySchedulerStatuses(ctx context.Context, name string, expectedCount int) ([]corev1alpha1.SchedulerTopologyStatus, error) {
-	var clusterTopology corev1alpha1.ClusterTopologyBinding
+func (tv *TopologyVerifier) VerifyClusterTopologySchedulerStatuses(ctx context.Context, name string, expectedCount int) ([]corev1beta1.SchedulerTopologyStatus, error) {
+	var clusterTopology corev1beta1.ClusterTopologyBinding
 	if err := tv.cl.Get(ctx, types.NamespacedName{Name: name}, &clusterTopology); err != nil {
 		return nil, fmt.Errorf("failed to get ClusterTopologyBinding %s: %w", name, err)
 	}

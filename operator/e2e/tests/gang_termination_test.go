@@ -23,8 +23,9 @@ import (
 	"time"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/e2e/testctx"
+	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -39,6 +40,11 @@ const terminationDelayInWorkloadYAML = 10 * time.Second
 // gangTerminationGrace is how long we wait past terminationDelay before
 // asserting outcomes. Adds slack for reconcile + apiserver latency.
 const gangTerminationGrace = 15 * time.Second
+
+// initialStartupWindow is how long after its creation a PodCliqueScalingGroup breach still counts as
+// initial startup, which Grove does not gang-terminate. A test that expects gang termination must
+// break the workload only after this window.
+const initialStartupWindow = componentutils.InitialScheduleGrace + 2*time.Second
 
 // totalWL1Pods: pc-a(2) + sg-x[2]*(pc-b(1)+pc-c(3)) = 2 + 2*4 = 10
 // totalWL2Pods: same shape (counts are identical, only minAvailable differs)
@@ -84,6 +90,8 @@ func runFullReplicasScenario(t *testing.T, workloadName, yamlFile, targetCliqueF
 	if err := tc.WaitForReadyPods(totalWLPods); err != nil {
 		t.Fatalf("Failed to wait for pods to be ready: %v", err)
 	}
+
+	time.Sleep(initialStartupWindow)
 
 	Logger.Infof("3. Snapshot pod UIDs, cordon a node hosting a ready pod from %s, then delete that pod", targetCliqueFQN)
 	pods, err := tc.ListPods()
@@ -236,13 +244,15 @@ func Test_GT4_GangTerminationMinReplicasPCSGOwned(t *testing.T) {
 	// withheld; UID survival of pc-a is the primary no-PCS-level-termination signal.
 	verifyNoGangTermination(t, tc, pcAUIDsBeforeStep5, totalWLPods-5)
 
-	Logger.Info("6. Kill the remaining 2 ready pods from sg-x-1-pc-c — test plan expects all PCS pods terminated")
+	Logger.Info("6. Kill every ready pod from sg-x-1-pc-c — test plan expects all PCS pods terminated")
 	pods, err = tc.ListPods()
 	if err != nil {
 		t.Fatalf("Failed to list pods: %v", err)
 	}
 	finalOriginalUIDs := capturePodUIDs(pods)
-	_, cordonedD := cordonAndKillPodsFromClique(ctx, t, tc, pcsg1Target, 2)
+	// The replacement for the pod killed in step 5 can be scheduled by now: step 4 freed the node of
+	// PCSG-0's pc-b pod without cordoning it. Kill it too, so that no pc-c pod stays scheduled.
+	cordonedD := cordonAndKillPods(ctx, t, tc, findScheduledPodsFromPodClique(pods, pcsg1Target))
 	time.Sleep(terminationDelayInWorkloadYAML + gangTerminationGrace)
 	verifyAllPodsRecreated(t, tc, finalOriginalUIDs, totalWLPods)
 
@@ -405,7 +415,7 @@ func findReadyScaledPCCPod(ctx context.Context, tc *testctx.TestContext, pods *c
 	for i := range pods.Items {
 		p := &pods.Items[i]
 		role, ok := roleByPodGangName[p.Labels[apicommon.LabelPodGang]]
-		if !ok || role == string(grovecorev1alpha1.PodGangEntryRoleAnchor) {
+		if !ok || role == string(grovecorev1beta1.PodGangEntryRoleAnchor) {
 			continue
 		}
 		clique := p.Labels[apicommon.LabelPodClique]
@@ -437,6 +447,22 @@ func findReadyPodsFromPodClique(pods *corev1.PodList, cliqueFQN string, n int) [
 		if len(out) >= n {
 			break
 		}
+	}
+	return out
+}
+
+// findScheduledPodsFromPodClique returns every pod from cliqueFQN that is assigned to a node and is not terminating.
+func findScheduledPodsFromPodClique(pods *corev1.PodList, cliqueFQN string) []*corev1.Pod {
+	var out []*corev1.Pod
+	for i := range pods.Items {
+		p := &pods.Items[i]
+		if p.Labels[apicommon.LabelPodClique] != cliqueFQN {
+			continue
+		}
+		if p.Spec.NodeName == "" || p.DeletionTimestamp != nil {
+			continue
+		}
+		out = append(out, p)
 	}
 	return out
 }
@@ -501,18 +527,10 @@ func cordonAndKillPodsFromClique(ctx context.Context, t *testing.T, tc *testctx.
 	}
 
 	killedUIDs := make(map[types.UID]struct{}, n)
-	cordonedNodes := make([]string, 0, n)
 	for _, p := range targets {
-		if err := tc.CordonNode(p.Spec.NodeName); err != nil {
-			t.Fatalf("Failed to cordon node %s: %v", p.Spec.NodeName, err)
-		}
-		cordonedNodes = append(cordonedNodes, p.Spec.NodeName)
-		if err := tc.Client.Delete(ctx, p); err != nil {
-			t.Fatalf("Failed to delete pod %s: %v", p.Name, err)
-		}
 		killedUIDs[p.UID] = struct{}{}
-		Logger.Debugf("cordoned node %s and deleted pod %s (clique=%s)", p.Spec.NodeName, p.Name, cliqueFQN)
 	}
+	cordonedNodes := cordonAndKillPods(ctx, t, tc, targets)
 
 	survivors := make(map[types.UID]struct{}, len(pods.Items)-n)
 	for _, p := range pods.Items {
@@ -522,6 +540,23 @@ func cordonAndKillPodsFromClique(ctx context.Context, t *testing.T, tc *testctx.
 		survivors[p.UID] = struct{}{}
 	}
 	return survivors, cordonedNodes
+}
+
+// cordonAndKillPods cordons the node of each target pod and deletes the pod. Returns the cordoned node names.
+func cordonAndKillPods(ctx context.Context, t *testing.T, tc *testctx.TestContext, targets []*corev1.Pod) []string {
+	t.Helper()
+	cordonedNodes := make([]string, 0, len(targets))
+	for _, p := range targets {
+		if err := tc.CordonNode(p.Spec.NodeName); err != nil {
+			t.Fatalf("Failed to cordon node %s: %v", p.Spec.NodeName, err)
+		}
+		cordonedNodes = append(cordonedNodes, p.Spec.NodeName)
+		if err := tc.Client.Delete(ctx, p); err != nil {
+			t.Fatalf("Failed to delete pod %s: %v", p.Name, err)
+		}
+		Logger.Debugf("cordoned node %s and deleted pod %s", p.Spec.NodeName, p.Name)
+	}
+	return cordonedNodes
 }
 
 // dumpPodsByClique writes one log line per pod with clique/phase/ready info,

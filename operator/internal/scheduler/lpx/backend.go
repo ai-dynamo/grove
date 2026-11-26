@@ -20,9 +20,10 @@ import (
 	"fmt"
 	"slices"
 
-	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
+	"github.com/ai-dynamo/grove/operator/internal/scheduler/lpx/selection"
 
 	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
@@ -43,11 +44,11 @@ var (
 
 	_ scheduler.Backend = (*schedulerBackend)(nil)
 
-	resourcesLPX = []corev1.ResourceName{"lpu.nvidia.com/lpu", "nvidia.com/lpu"}
+	resourcesLPX = selection.Resources
 )
 
 // New creates an LPX scheduler backend.
-func New(cl client.Client, profile configv1alpha1.SchedulerProfile, secondaryBackend scheduler.Backend) scheduler.Backend {
+func New(cl client.Client, profile configv1beta1.SchedulerProfile, secondaryBackend scheduler.Backend) scheduler.Backend {
 	return &schedulerBackend{
 		client:           cl,
 		name:             string(profile.Name),
@@ -74,6 +75,9 @@ func (b *schedulerBackend) Init(directClient client.Client) error {
 func (b *schedulerBackend) SyncPodGang(ctx context.Context, podGang *groveschedulerv1alpha1.PodGang) error {
 	if podGang == nil {
 		return fmt.Errorf("podGang is nil")
+	}
+	if !podGang.DeletionTimestamp.IsZero() {
+		return nil
 	}
 
 	if b.secondaryBackend == nil {
@@ -106,7 +110,7 @@ func (b *schedulerBackend) PreparePod(pod *corev1.Pod) error {
 }
 
 // ValidatePodCliqueSet runs LPX-specific validations on the PodCliqueSet as well as any fallback backend validations, if necessary.
-func (b *schedulerBackend) ValidatePodCliqueSet(ctx context.Context, pcs *grovecorev1alpha1.PodCliqueSet, opts ...scheduler.ValidateOption) error {
+func (b *schedulerBackend) ValidatePodCliqueSet(ctx context.Context, pcs *grovecorev1beta1.PodCliqueSet, opts ...scheduler.ValidateOption) error {
 	if pcs.Spec.Template.TopologyConstraint != nil {
 		return errTopologyConstraintsUnsupported
 	}
@@ -124,7 +128,7 @@ func (b *schedulerBackend) ValidatePodCliqueSet(ctx context.Context, pcs *grovec
 	}
 
 	if b.secondaryBackend != nil {
-		if slices.ContainsFunc(pcs.Spec.Template.Cliques, func(clique *grovecorev1alpha1.PodCliqueTemplateSpec) bool { return !usesLPX(clique.Spec.PodSpec) }) {
+		if slices.ContainsFunc(pcs.Spec.Template.Cliques, func(clique *grovecorev1beta1.PodCliqueTemplateSpec) bool { return !usesLPX(clique.Spec.PodSpec) }) {
 			return b.secondaryBackend.ValidatePodCliqueSet(ctx, pcs, opts...)
 		}
 	}
@@ -135,32 +139,10 @@ func (b *schedulerBackend) ValidatePodCliqueSet(ctx context.Context, pcs *grovec
 // fallbackPodGang constructs a new PodGang object without any LPX pod groups.
 // It is then passed to the SyncPodGang function of the fallback backend.
 func (b *schedulerBackend) fallbackPodGang(ctx context.Context, podGang *groveschedulerv1alpha1.PodGang) (*groveschedulerv1alpha1.PodGang, error) {
-	fallback := podGang.DeepCopy()
-	fallback.Spec.PodGroups = make([]groveschedulerv1alpha1.PodGroup, 0, len(podGang.Spec.PodGroups))
-
-	for _, group := range podGang.Spec.PodGroups {
-		var pclq grovecorev1alpha1.PodClique
-
-		if err := b.client.Get(ctx, client.ObjectKey{Namespace: podGang.Namespace, Name: group.Name}, &pclq); err != nil {
-			return nil, fmt.Errorf("get PodClique %s for PodGang %s/%s: %w", group.Name, podGang.Namespace, podGang.Name, err)
-		}
-
-		if !usesLPX(pclq.Spec.PodSpec) {
-			fallback.Spec.PodGroups = append(fallback.Spec.PodGroups, group)
-		}
-	}
-
-	return fallback, nil
+	return selection.ProjectPodGang(ctx, b.client, podGang)
 }
 
-// usesLPX determines whether a given pod spec is requesting LPX support by
-// checking the resource requests and limits for lpu.nvidia.com/lpu or nvidia.com/lpu.
+// usesLPX applies the same routing policy used for group projection.
 func usesLPX(podSpec corev1.PodSpec) bool {
-	return slices.ContainsFunc(podSpec.Containers, func(container corev1.Container) bool {
-		return slices.ContainsFunc(resourcesLPX, func(r corev1.ResourceName) bool {
-			_, requests := container.Resources.Requests[r]
-			_, limits := container.Resources.Limits[r]
-			return requests || limits
-		})
-	})
+	return selection.UsesLPX(podSpec)
 }

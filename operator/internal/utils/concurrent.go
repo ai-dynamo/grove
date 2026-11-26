@@ -33,35 +33,46 @@ type Task struct {
 	Fn func(ctx context.Context) error
 }
 
+// FailedTask records a task that returned an error.
+type FailedTask struct {
+	// Name is the name of the failed task.
+	Name string
+	// Err is the error returned by the task.
+	Err error
+}
+
 // RunResult holds the results of running tasks concurrently.
 type RunResult struct {
-	// SuccessfulTasks are the names of tasks that executed successfully.
+	// SuccessfulTasks contains the names of tasks that completed successfully.
 	SuccessfulTasks []string
-	// FailedTasks are the names of tasks that failed during execution.
-	FailedTasks []string
-	// SkippedTasks are the names of tasks that were skipped.
+	// FailedTasks contains task failures, including each task name and returned error.
+	FailedTasks []FailedTask
+	// SkippedTasks contains the names of tasks that were not executed.
 	SkippedTasks []string
-	// Errors contains all errors encountered during task execution.
-	Errors []error
 }
 
 // HasErrors returns true if any tasks encountered errors.
 func (r *RunResult) HasErrors() bool {
-	return len(r.Errors) > 0
+	return len(r.FailedTasks) > 0
 }
 
 // GetAggregatedError returns all task errors joined into a single error.
 func (r *RunResult) GetAggregatedError() error {
-	if !r.HasErrors() {
-		return nil
+	errs := make([]error, 0, len(r.FailedTasks))
+	for _, failedTask := range r.FailedTasks {
+		errs = append(errs, failedTask.Err)
 	}
-	return errors.Join(r.Errors...)
+	return errors.Join(errs...)
 }
 
 // GetSummary returns a summary of successful, failed, and skipped tasks.
 func (r *RunResult) GetSummary() string {
+	failedTaskNames := make([]string, 0, len(r.FailedTasks))
+	for _, failedTask := range r.FailedTasks {
+		failedTaskNames = append(failedTaskNames, failedTask.Name)
+	}
 	return fmt.Sprintf("RunResult{SuccessfulTasks: %v, FailedTasks: %v, SkippedTasks: %v}",
-		r.SuccessfulTasks, r.FailedTasks, r.SkippedTasks)
+		r.SuccessfulTasks, failedTaskNames, r.SkippedTasks)
 }
 
 // RunConcurrentlyWithSlowStart executes tasks in exponentially growing batches starting at initialBatchSize.
@@ -74,7 +85,7 @@ func RunConcurrentlyWithSlowStart(ctx context.Context, logger logr.Logger, initi
 	for batchSize := min(remaining, initialBatchSize); batchSize > 0; batchSize = min(2*batchSize, remaining) {
 		logger.V(4).Info("Triggering batch of taskConfigs with slow start", "batchSize", batchSize, "remainingTasks", remaining)
 		runEndIndex := nextRunStartIndex + batchSize
-		batchRunResult := RunConcurrently(ctx, logger, tasks[nextRunStartIndex:runEndIndex])
+		batchRunResult := RunConcurrentlyAndWait(ctx, logger, tasks[nextRunStartIndex:runEndIndex])
 		updateWithBatchRunResult(&aggregatedRunResult, batchRunResult)
 		if batchRunResult.HasErrors() {
 			logger.V(4).Info("Batch of taskConfigs failed, halting further execution", "batchSize", batchSize, "remainingTasks", remaining)
@@ -87,8 +98,9 @@ func RunConcurrentlyWithSlowStart(ctx context.Context, logger logr.Logger, initi
 	return aggregatedRunResult
 }
 
-// RunConcurrently executes a slice of Tasks concurrently.
-func RunConcurrently(ctx context.Context, logger logr.Logger, tasks []Task) RunResult {
+// RunConcurrentlyAndWait executes tasks concurrently and waits for every started task to return.
+// The context is passed to each task. Cancellation may cause context-aware tasks to return early.
+func RunConcurrentlyAndWait(ctx context.Context, logger logr.Logger, tasks []Task) RunResult {
 	return RunConcurrentlyWithBounds(ctx, logger, tasks, len(tasks))
 }
 
@@ -106,17 +118,15 @@ func RunConcurrentlyWithBounds(ctx context.Context, logger logr.Logger, tasks []
 func createRunResult(allTasks []Task, tasksInError []lo.Tuple2[string, error]) RunResult {
 	result := RunResult{
 		SuccessfulTasks: make([]string, 0, len(allTasks)),
-		FailedTasks:     make([]string, 0, len(tasksInError)),
+		FailedTasks:     make([]FailedTask, 0, len(tasksInError)),
 		SkippedTasks:    make([]string, 0, len(allTasks)-len(tasksInError)),
-		Errors:          make([]error, 0, len(tasksInError)),
 	}
 	for _, task := range allTasks {
 		foundErrTask, ok := lo.Find(tasksInError, func(errTask lo.Tuple2[string, error]) bool {
 			return errTask.A == task.Name
 		})
 		if ok {
-			result.FailedTasks = append(result.FailedTasks, foundErrTask.A)
-			result.Errors = append(result.Errors, foundErrTask.B)
+			result.FailedTasks = append(result.FailedTasks, FailedTask{Name: foundErrTask.A, Err: foundErrTask.B})
 		} else {
 			result.SuccessfulTasks = append(result.SuccessfulTasks, task.Name)
 		}
@@ -128,7 +138,6 @@ func createRunResult(allTasks []Task, tasksInError []lo.Tuple2[string, error]) R
 func updateWithBatchRunResult(aggregatedRunResult *RunResult, batchRunResult RunResult) {
 	aggregatedRunResult.SuccessfulTasks = append(aggregatedRunResult.SuccessfulTasks, batchRunResult.SuccessfulTasks...)
 	aggregatedRunResult.FailedTasks = append(aggregatedRunResult.FailedTasks, batchRunResult.FailedTasks...)
-	aggregatedRunResult.Errors = append(aggregatedRunResult.Errors, batchRunResult.Errors...)
 }
 
 // computeAndUpdateSkippedTasks identifies tasks that were neither successful nor failed and marks them as skipped.
@@ -137,7 +146,10 @@ func computeAndUpdateSkippedTasks(result *RunResult, allTasks []Task) {
 		return task.Name
 	})
 	skippedTaskNames := lo.Filter(allTaskNames, func(taskName string, _ int) bool {
-		return !lo.Contains(result.SuccessfulTasks, taskName) && !lo.Contains(result.FailedTasks, taskName)
+		_, failed := lo.Find(result.FailedTasks, func(failedTask FailedTask) bool {
+			return failedTask.Name == taskName
+		})
+		return !lo.Contains(result.SuccessfulTasks, taskName) && !failed
 	})
 	result.SkippedTasks = append(result.SkippedTasks, skippedTaskNames...)
 }

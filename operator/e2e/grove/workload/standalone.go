@@ -22,7 +22,7 @@ import (
 	"fmt"
 	"time"
 
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/k8sclient"
 	"github.com/ai-dynamo/grove/operator/e2e/waiter"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -32,7 +32,7 @@ import (
 
 // IsOnDeleteUpdateComplete returns true if the update of the PodCliqueSet has ended.
 // It should be used for PodCliqueSets with UpdateStrategy set to OnDelete.
-func IsOnDeleteUpdateComplete(pcs *grovecorev1alpha1.PodCliqueSet) bool {
+func IsOnDeleteUpdateComplete(pcs *grovecorev1beta1.PodCliqueSet) bool {
 	return pcs.Status.UpdateProgress != nil && pcs.Status.UpdateProgress.UpdateEndedAt != nil
 }
 
@@ -48,28 +48,28 @@ func ScalePodCliqueSetWithClient(ctx context.Context, cl client.Client, namespac
 		return fmt.Errorf("failed to marshal scale patch: %w", err)
 	}
 
-	pcs := &grovecorev1alpha1.PodCliqueSet{
+	pcs := &grovecorev1beta1.PodCliqueSet{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
 	}
 	return cl.Patch(ctx, pcs, client.RawPatch(types.MergePatchType, patchBytes))
 }
 
 // WaitForPodCliqueScalingGroup polls until a PodCliqueScalingGroup exists and returns it.
-func WaitForPodCliqueScalingGroup(ctx context.Context, k8sClient *k8sclient.Client, namespace, name string, timeout, interval time.Duration) (*grovecorev1alpha1.PodCliqueScalingGroup, error) {
-	w := waiter.New[*grovecorev1alpha1.PodCliqueScalingGroup]().WithTimeout(timeout).WithInterval(interval)
-	return waiter.WaitForResource(ctx, w, name, k8sclient.Getter[*grovecorev1alpha1.PodCliqueScalingGroup](k8sClient, namespace))
+func WaitForPodCliqueScalingGroup(ctx context.Context, k8sClient *k8sclient.Client, namespace, name string, timeout, interval time.Duration) (*grovecorev1beta1.PodCliqueScalingGroup, error) {
+	w := waiter.New[*grovecorev1beta1.PodCliqueScalingGroup]().WithTimeout(timeout).WithInterval(interval)
+	return waiter.WaitForResource(ctx, w, name, k8sclient.Getter[*grovecorev1beta1.PodCliqueScalingGroup](k8sClient, namespace))
 }
 
 // WaitForPodCliqueStandalone polls until a PodClique exists and returns it.
-func WaitForPodCliqueStandalone(ctx context.Context, k8sClient *k8sclient.Client, namespace, name string, timeout, interval time.Duration) (*grovecorev1alpha1.PodClique, error) {
-	w := waiter.New[*grovecorev1alpha1.PodClique]().WithTimeout(timeout).WithInterval(interval)
-	return waiter.WaitForResource(ctx, w, name, k8sclient.Getter[*grovecorev1alpha1.PodClique](k8sClient, namespace))
+func WaitForPodCliqueStandalone(ctx context.Context, k8sClient *k8sclient.Client, namespace, name string, timeout, interval time.Duration) (*grovecorev1beta1.PodClique, error) {
+	w := waiter.New[*grovecorev1beta1.PodClique]().WithTimeout(timeout).WithInterval(interval)
+	return waiter.WaitForResource(ctx, w, name, k8sclient.Getter[*grovecorev1beta1.PodClique](k8sClient, namespace))
 }
 
 // WaitForPodCliqueSetDeletion polls until a PodCliqueSet no longer exists.
 func WaitForPodCliqueSetDeletion(ctx context.Context, k8sClient *k8sclient.Client, namespace, name string, timeout, interval time.Duration) error {
-	w := waiter.New[*grovecorev1alpha1.PodCliqueSet]().
+	w := waiter.New[*grovecorev1beta1.PodCliqueSet]().
 		WithTimeout(timeout).
 		WithInterval(interval)
-	return waiter.WaitForResourceDeletion(ctx, w, name, k8sclient.Getter[*grovecorev1alpha1.PodCliqueSet](k8sClient, namespace))
+	return waiter.WaitForResourceDeletion(ctx, w, name, k8sclient.Getter[*grovecorev1beta1.PodCliqueSet](k8sClient, namespace))
 }

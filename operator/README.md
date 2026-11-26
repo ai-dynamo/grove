@@ -43,7 +43,7 @@ Grove implements a sophisticated **two-tier gang scheduling** system based on th
 
 #### Scenario 1: Database Cluster
 ```yaml
-apiVersion: grove.io/v1alpha1
+apiVersion: grove.io/v1beta1
 kind: PodCliqueSet
 spec:
   template:
@@ -61,7 +61,7 @@ spec:
 
 #### Scenario 2: Machine Learning Training
 ```yaml
-apiVersion: grove.io/v1alpha1  
+apiVersion: grove.io/v1beta1  
 kind: PodCliqueSet
 spec:
   template:

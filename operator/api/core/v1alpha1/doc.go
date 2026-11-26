@@ -13,6 +13,7 @@
 // limitations under the License.
 
 // +k8s:deepcopy-gen=package
+// +k8s:conversion-gen=github.com/ai-dynamo/grove/operator/api/core/v1beta1
 // +kubebuilder:object:generate=true
 // +groupName=grove.io
 

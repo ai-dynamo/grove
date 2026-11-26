@@ -2,7 +2,7 @@
 # become Ready. The test applies the KWOK pod-crashloop stage before deploying, so this PodCliqueScalingGroup's
 # only replica is Running but not Ready (CrashLoopBackOff), consuming the whole maxUnavailable=1 budget. The
 # corrective update then replaces it with a fresh Ready pod.
-apiVersion: grove.io/v1alpha1
+apiVersion: grove.io/v1beta1
 kind: PodCliqueSet
 metadata:
   name: wl-coh-crashloop-pcsg

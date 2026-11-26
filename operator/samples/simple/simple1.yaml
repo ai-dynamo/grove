@@ -5,7 +5,7 @@
 #    the `PodCliqueScalingGroup` that represents this grouping of PodCliques.
 # 3. PodCliques that are neither auto-scaled individually nor do they belong to a PodCliqueScalingGroup. `pcd` is configured without auto-scaling.
 ---
-apiVersion: grove.io/v1alpha1
+apiVersion: grove.io/v1beta1
 kind: PodCliqueSet
 metadata:
   name: simple1

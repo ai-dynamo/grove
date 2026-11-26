@@ -20,7 +20,7 @@ import (
 	"strconv"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	pcsgexpectations "github.com/ai-dynamo/grove/operator/internal/controller/podcliquescalinggroup/expectations"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
@@ -95,8 +95,7 @@ func selectReplicasToUpdate(sc *syncSnapshot, uw *updateWork) ([]int, error) {
 	effectiveMaxUnavailable := componentutils.EffectiveMaxUnavailable(rollingUpdateConfigForPCSG(sc), componentutils.ResolveUpdateStrategyType(sc.pcs), lo.FromPtrOr(sc.pcsg.Spec.MinAvailable, 1))
 	disruptionBudget := computeDisruptionBudget(uw.existingReplicas, int(sc.pcsg.Spec.Replicas), effectiveMaxUnavailable, uw.newNotReadyReplicas)
 	if disruptionBudget <= 0 {
-		return nil, groveerr.New(
-			groveerr.ErrCodeContinueReconcileAndRequeue,
+		return nil, groveerr.NewContinueReconcileAndRequeue(
 			component.OperationSync,
 			fmt.Sprintf("rolling update of PodCliqueScalingGroup %v has no disruption headroom this reconcile (availability minimum or in-flight replacements), re-queuing", client.ObjectKeyFromObject(sc.pcsg)),
 		)
@@ -107,8 +106,7 @@ func selectReplicasToUpdate(sc *syncSnapshot, uw *updateWork) ([]int, error) {
 	replicaIndicesToUpdate := componentutils.OrderPCSGReplicaIndicesForDisruption(uw.oldReplicaDisruptionInfos)
 	if len(replicaIndicesToUpdate) == 0 {
 		// Every old-configuration replica is an in-flight replacement. Requeue and wait for them to become Ready.
-		return nil, groveerr.New(
-			groveerr.ErrCodeContinueReconcileAndRequeue,
+		return nil, groveerr.NewContinueReconcileAndRequeue(
 			component.OperationSync,
 			fmt.Sprintf("rolling update of PodCliqueScalingGroup %v waiting for in-flight replacement replicas to become Ready, requeuing", client.ObjectKeyFromObject(sc.pcsg)),
 		)
@@ -131,8 +129,7 @@ func (r _resource) deleteSelectedReplicasForUpdate(ctx context.Context, logger l
 	if err := r.triggerDeletionOfPodCliques(ctx, logger, client.ObjectKeyFromObject(sc.pcsg), deleteTasks); err != nil {
 		return err
 	}
-	return groveerr.New(
-		groveerr.ErrCodeContinueReconcileAndRequeue,
+	return groveerr.NewContinueReconcileAndRequeue(
 		component.OperationSync,
 		fmt.Sprintf("deleted %d replica(s) for rolling update of PodCliqueScalingGroup %v, requeuing", len(replicaIndicesToUpdate), client.ObjectKeyFromObject(sc.pcsg)),
 	)
@@ -140,7 +137,7 @@ func (r _resource) deleteSelectedReplicasForUpdate(ctx context.Context, logger l
 
 // rollingUpdateConfigForPCSG returns the RollingUpdate configuration for the PodCliqueScalingGroup
 // from its PodCliqueSet config, or nil when the config or the field is absent.
-func rollingUpdateConfigForPCSG(sc *syncSnapshot) *grovecorev1alpha1.RollingUpdateConfiguration {
+func rollingUpdateConfigForPCSG(sc *syncSnapshot) *grovecorev1beta1.RollingUpdateConfiguration {
 	if sc.pcsgConfig == nil {
 		return nil
 	}
@@ -161,7 +158,7 @@ func computeDisruptionBudget(existing, desired, effectiveMaxUnavailable, newNotR
 // first requeues when the PCSG update target differs from the current PCS generation. That guard ensures the
 // completion checks were evaluated against the same generation recorded here; it must remain in place for every
 // strategy that calls markUpdateEnd.
-func (r _resource) markUpdateEnd(ctx context.Context, logger logr.Logger, pcsg *grovecorev1alpha1.PodCliqueScalingGroup) error {
+func (r _resource) markUpdateEnd(ctx context.Context, logger logr.Logger, pcsg *grovecorev1beta1.PodCliqueScalingGroup) error {
 	patch := client.MergeFrom(pcsg.DeepCopy())
 
 	pcsg.Status.UpdateProgress.UpdateEndedAt = ptr.To(metav1.Now())
@@ -176,8 +173,7 @@ func (r _resource) markUpdateEnd(ctx context.Context, logger logr.Logger, pcsg *
 		)
 	}
 	logger.Info("Marked the end of rolling update of PodCliqueScalingGroup")
-	return groveerr.New(
-		groveerr.ErrCodeContinueReconcileAndRequeue,
+	return groveerr.NewContinueReconcileAndRequeue(
 		component.OperationSync,
 		fmt.Sprintf("rolling update of PodCliqueScalingGroup %v has ended, requeuing for status convergence", client.ObjectKeyFromObject(pcsg)),
 	)
@@ -234,7 +230,7 @@ func (r _resource) computePendingUpdateWork(ss *syncSnapshot) (*updateWork, erro
 // immediately while its status hashes lag, so a status-based check would misclassify it as old and
 // re-disrupt it. It returns ErrMissingPodTemplateHashLabel when a member is missing the label, since a
 // managed PodClique must always carry it and its absence is a malformed state, not an old replica.
-func isReplicaLabeledWithExpectedHash(sc *syncSnapshot, members []grovecorev1alpha1.PodClique) (bool, error) {
+func isReplicaLabeledWithExpectedHash(sc *syncSnapshot, members []grovecorev1beta1.PodClique) (bool, error) {
 	for _, pclq := range members {
 		podTemplateHash, ok := pclq.Labels[apicommon.LabelPodTemplateHash]
 		if !ok {
@@ -250,11 +246,11 @@ func isReplicaLabeledWithExpectedHash(sc *syncSnapshot, members []grovecorev1alp
 // isReplicaUpdated reports whether an already labeled replica has confirmed its rollout: every expected
 // member exists and its status reports the expected pod template and PodCliqueSet generation with at
 // least MinAvailable updated Pods. Call only for replicas isReplicaLabeledWithExpectedHash accepts.
-func isReplicaUpdated(sc *syncSnapshot, replicaIndex int, members []grovecorev1alpha1.PodClique) bool {
+func isReplicaUpdated(sc *syncSnapshot, replicaIndex int, members []grovecorev1beta1.PodClique) bool {
 	if len(sc.expectedPCLQFQNsPerPCSGReplica[replicaIndex]) != len(members) {
 		return false
 	}
-	return lo.EveryBy(members, func(pclq grovecorev1alpha1.PodClique) bool {
+	return lo.EveryBy(members, func(pclq grovecorev1beta1.PodClique) bool {
 		expectedPodTemplateHash := sc.expectedPCLQPodTemplateHashMap[pclq.Name]
 		return expectedPodTemplateHash != "" &&
 			pclq.Status.CurrentPodTemplateHash != nil && *pclq.Status.CurrentPodTemplateHash == expectedPodTemplateHash &&
@@ -269,7 +265,7 @@ func isReplicaUpdated(sc *syncSnapshot, replicaIndex int, members []grovecorev1a
 // rollout is confirmed (status hashes and MinAvailable updated Pods), and the replica is Ready. It
 // backs the coherent-update convergence check, which must not end an update while any replica is on a
 // superseded revision or not yet Ready.
-func isReplicaUpdatedAndReady(sc *syncSnapshot, replicaIndex int, members []grovecorev1alpha1.PodClique) bool {
+func isReplicaUpdatedAndReady(sc *syncSnapshot, replicaIndex int, members []grovecorev1beta1.PodClique) bool {
 	labeled, err := isReplicaLabeledWithExpectedHash(sc, members)
 	if err != nil || !labeled {
 		return false
@@ -278,8 +274,8 @@ func isReplicaUpdatedAndReady(sc *syncSnapshot, replicaIndex int, members []grov
 }
 
 // allPodCliquesTerminating reports whether every member PodClique of a replica is terminating.
-func allPodCliquesTerminating(pcsgReplicaPCLQs []grovecorev1alpha1.PodClique) bool {
-	return lo.EveryBy(pcsgReplicaPCLQs, func(pclq grovecorev1alpha1.PodClique) bool {
+func allPodCliquesTerminating(pcsgReplicaPCLQs []grovecorev1beta1.PodClique) bool {
+	return lo.EveryBy(pcsgReplicaPCLQs, func(pclq grovecorev1beta1.PodClique) bool {
 		return k8sutils.IsResourceTerminating(pclq.ObjectMeta)
 	})
 }

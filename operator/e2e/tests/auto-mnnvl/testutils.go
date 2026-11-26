@@ -30,7 +30,7 @@ import (
 	"time"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/e2e/grove/gvk"
 	"github.com/ai-dynamo/grove/operator/e2e/grove/workload"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/k8sclient"
@@ -251,7 +251,7 @@ func applyMNNVLYAML(tc *testctx.TestContext, yamlFile, pcsName string) error {
 
 // deletePCS deletes a PCS by name
 func deletePCS(tc *testctx.TestContext, name string) {
-	pcs := &grovecorev1alpha1.PodCliqueSet{
+	pcs := &grovecorev1beta1.PodCliqueSet{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: tc.Namespace},
 	}
 	_ = tc.Client.Delete(tc.Ctx, pcs)
@@ -283,11 +283,11 @@ func waitForComputeDomainCount(tc *testctx.TestContext, pcsName string, expected
 }
 
 // waitForPCSG waits for a PCSG to exist and returns it
-func waitForPCSG(tc *testctx.TestContext, pcsgName string) (*grovecorev1alpha1.PodCliqueScalingGroup, error) {
+func waitForPCSG(tc *testctx.TestContext, pcsgName string) (*grovecorev1beta1.PodCliqueScalingGroup, error) {
 	return workload.WaitForPodCliqueScalingGroup(tc.Ctx, tc.Client, tc.Namespace, pcsgName, defaultPollTimeout, defaultPollInterval)
 }
 
 // waitForPCLQ waits for a PCLQ to exist and returns it
-func waitForPCLQ(tc *testctx.TestContext, pclqName string) (*grovecorev1alpha1.PodClique, error) {
+func waitForPCLQ(tc *testctx.TestContext, pclqName string) (*grovecorev1beta1.PodClique, error) {
 	return workload.WaitForPodCliqueStandalone(tc.Ctx, tc.Client, tc.Namespace, pclqName, defaultPollTimeout, defaultPollInterval)
 }

@@ -16,12 +16,15 @@ package component
 
 import (
 	"context"
+	"strconv"
 	"testing"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	"github.com/ai-dynamo/grove/operator/api/common/constants"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
+	groveschedulerv1alpha1 "github.com/ai-dynamo/grove/scheduler/api/core/v1alpha1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -81,13 +84,13 @@ func TestPodGangMapByPCSReplicaIndex(t *testing.T) {
 
 	tests := []struct {
 		name        string
-		pgms        []grovecorev1alpha1.PodGangMap
+		pgms        []grovecorev1beta1.PodGangMap
 		expectErr   bool
 		expectedIdx []int
 	}{
 		{
 			name: "groups by replica index",
-			pgms: []grovecorev1alpha1.PodGangMap{
+			pgms: []grovecorev1beta1.PodGangMap{
 				*testutils.NewPodGangMapBuilder(pcsName, namespace, pcsUID, 0).Build(),
 				*testutils.NewPodGangMapBuilder(pcsName, namespace, pcsUID, 2).Build(),
 			},
@@ -95,12 +98,12 @@ func TestPodGangMapByPCSReplicaIndex(t *testing.T) {
 		},
 		{
 			name:      "missing replica-index label is an error",
-			pgms:      []grovecorev1alpha1.PodGangMap{pgmWithoutReplicaIndexLabel(pcsName, namespace)},
+			pgms:      []grovecorev1beta1.PodGangMap{pgmWithoutReplicaIndexLabel(pcsName, namespace)},
 			expectErr: true,
 		},
 		{
 			name:      "non-integer replica-index label is an error",
-			pgms:      []grovecorev1alpha1.PodGangMap{pgmWithReplicaIndexLabel(pcsName, namespace, "abc")},
+			pgms:      []grovecorev1beta1.PodGangMap{pgmWithReplicaIndexLabel(pcsName, namespace, "abc")},
 			expectErr: true,
 		},
 	}
@@ -130,11 +133,11 @@ func TestDependsOnForEpoch(t *testing.T) {
 	pgm := testutils.NewPodGangMapBuilder(pcsName, namespace, "uid", 0).WithEntries(
 		testutils.NewAnchorEntry(genHash, anchorEpoch, pcsgName, 0),
 		testutils.NewPodGangEntryBuilder(genHash, tailEpoch).
-			WithRole(grovecorev1alpha1.PodGangEntryRoleTail).
+			WithRole(grovecorev1beta1.PodGangEntryRoleTail).
 			WithPCSGReplicaIndices(map[string][]int32{pcsgName: {1, 2}}).
 			WithDependsOn(anchorEpoch).Build(),
 		testutils.NewPodGangEntryBuilder(genHash, scaleOutEpoch).
-			WithRole(grovecorev1alpha1.PodGangEntryRoleScaleOut).
+			WithRole(grovecorev1beta1.PodGangEntryRoleScaleOut).
 			WithDependsOn(anchorEpoch).Build(),
 	).Build()
 
@@ -172,11 +175,11 @@ func TestBaseAnchorPodGangEpoch(t *testing.T) {
 	t.Run("returns the lowest-epoch anchor entry epoch", func(t *testing.T) {
 		pgm := testutils.NewPodGangMapBuilder(pcsName, namespace, "uid", 0).WithEntries(
 			testutils.NewPodGangEntryBuilder(genHash, "2000").
-				WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).Build(),
+				WithRole(grovecorev1beta1.PodGangEntryRoleAnchor).Build(),
 			testutils.NewPodGangEntryBuilder(genHash, anchorEpoch).
-				WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).Build(),
+				WithRole(grovecorev1beta1.PodGangEntryRoleAnchor).Build(),
 			testutils.NewPodGangEntryBuilder(genHash, "1002").
-				WithRole(grovecorev1alpha1.PodGangEntryRoleScaleOut).Build(),
+				WithRole(grovecorev1beta1.PodGangEntryRoleScaleOut).Build(),
 		).Build()
 		actual, err := BaseAnchorPodGangEpoch(pgm)
 		require.NoError(t, err)
@@ -186,7 +189,7 @@ func TestBaseAnchorPodGangEpoch(t *testing.T) {
 	t.Run("errors when no anchor entry exists", func(t *testing.T) {
 		pgm := testutils.NewPodGangMapBuilder(pcsName, namespace, "uid", 0).WithEntries(
 			testutils.NewPodGangEntryBuilder(genHash, "1002").
-				WithRole(grovecorev1alpha1.PodGangEntryRoleScaleOut).Build(),
+				WithRole(grovecorev1beta1.PodGangEntryRoleScaleOut).Build(),
 		).Build()
 		_, err := BaseAnchorPodGangEpoch(pgm)
 		require.Error(t, err)
@@ -197,11 +200,11 @@ func TestBaseAnchorPodGangEpoch(t *testing.T) {
 // selected, optionally filtered by generation hash, that non-anchor entries are ignored, and that a
 // non-numeric epoch surfaces an error.
 func TestBaseAnchorEpoch(t *testing.T) {
-	entries := []grovecorev1alpha1.PodGangEntry{
-		{Epoch: "300", PodCliqueSetGenerationHash: "v2", Role: grovecorev1alpha1.PodGangEntryRoleAnchor},
-		{Epoch: "100", PodCliqueSetGenerationHash: "v1", Role: grovecorev1alpha1.PodGangEntryRoleAnchor},
-		{Epoch: "200", PodCliqueSetGenerationHash: "v2", Role: grovecorev1alpha1.PodGangEntryRoleAnchor},
-		{Epoch: "150", PodCliqueSetGenerationHash: "v2", Role: grovecorev1alpha1.PodGangEntryRoleTail},
+	entries := []grovecorev1beta1.PodGangEntry{
+		{Epoch: "300", PodCliqueSetGenerationHash: "v2", Role: grovecorev1beta1.PodGangEntryRoleAnchor},
+		{Epoch: "100", PodCliqueSetGenerationHash: "v1", Role: grovecorev1beta1.PodGangEntryRoleAnchor},
+		{Epoch: "200", PodCliqueSetGenerationHash: "v2", Role: grovecorev1beta1.PodGangEntryRoleAnchor},
+		{Epoch: "150", PodCliqueSetGenerationHash: "v2", Role: grovecorev1beta1.PodGangEntryRoleTail},
 	}
 
 	t.Run("returns the lowest-epoch anchor across all generations when the hash filter is nil", func(t *testing.T) {
@@ -226,7 +229,7 @@ func TestBaseAnchorEpoch(t *testing.T) {
 	})
 
 	t.Run("errors on a non-numeric anchor epoch", func(t *testing.T) {
-		bad := []grovecorev1alpha1.PodGangEntry{{Epoch: "abc", Role: grovecorev1alpha1.PodGangEntryRoleAnchor}}
+		bad := []grovecorev1beta1.PodGangEntry{{Epoch: "abc", Role: grovecorev1beta1.PodGangEntryRoleAnchor}}
 		_, _, err := BaseAnchorEpoch(bad, nil)
 		require.Error(t, err)
 	})
@@ -279,10 +282,10 @@ func TestPodGangNameForPCSGReplica(t *testing.T) {
 // TestIndexPodGangEntriesByEpoch verifies the entries are indexed by their epoch.
 func TestIndexPodGangEntriesByEpoch(t *testing.T) {
 	t.Run("indexes each entry under its epoch", func(t *testing.T) {
-		anchor := testutils.NewPodGangEntryBuilder("hash", "1000").WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).Build()
-		tail := testutils.NewPodGangEntryBuilder("hash", "1001").WithRole(grovecorev1alpha1.PodGangEntryRoleTail).WithDependsOn("1000").Build()
+		anchor := testutils.NewPodGangEntryBuilder("hash", "1000").WithRole(grovecorev1beta1.PodGangEntryRoleAnchor).Build()
+		tail := testutils.NewPodGangEntryBuilder("hash", "1001").WithRole(grovecorev1beta1.PodGangEntryRoleTail).WithDependsOn("1000").Build()
 
-		actual := IndexPodGangEntriesByEpoch([]grovecorev1alpha1.PodGangEntry{anchor, tail})
+		actual := IndexPodGangEntriesByEpoch([]grovecorev1beta1.PodGangEntry{anchor, tail})
 
 		require.Len(t, actual, 2)
 		assert.Equal(t, anchor, actual["1000"])
@@ -299,7 +302,7 @@ func TestLatestEpochForGenerationHash(t *testing.T) {
 		hashA = "hash-a"
 		hashB = "hash-b"
 	)
-	entries := []grovecorev1alpha1.PodGangEntry{
+	entries := []grovecorev1beta1.PodGangEntry{
 		testutils.NewPodGangEntryBuilder(hashA, "1000").Build(),
 		testutils.NewPodGangEntryBuilder(hashA, "3000").Build(),
 		testutils.NewPodGangEntryBuilder(hashB, "2000").Build(),
@@ -323,7 +326,7 @@ func TestLatestEpochForGenerationHash(t *testing.T) {
 		assert.Nil(t, latestEpoch)
 	})
 	t.Run("errors on a non-numeric epoch for the queried hash", func(t *testing.T) {
-		badEntries := []grovecorev1alpha1.PodGangEntry{testutils.NewPodGangEntryBuilder(hashA, "not-a-number").Build()}
+		badEntries := []grovecorev1beta1.PodGangEntry{testutils.NewPodGangEntryBuilder(hashA, "not-a-number").Build()}
 		_, err := LatestEpochForGenerationHash(badEntries, hashA)
 		require.Error(t, err)
 	})
@@ -336,7 +339,7 @@ func TestLatestEntryForGenerationHash(t *testing.T) {
 		hashA = "hash-a"
 		hashB = "hash-b"
 	)
-	entries := []grovecorev1alpha1.PodGangEntry{
+	entries := []grovecorev1beta1.PodGangEntry{
 		testutils.NewPodGangEntryBuilder(hashA, "1000").Build(),
 		testutils.NewPodGangEntryBuilder(hashA, "3000").Build(),
 		testutils.NewPodGangEntryBuilder(hashB, "2000").Build(),
@@ -360,7 +363,7 @@ func TestLatestEntryForGenerationHash(t *testing.T) {
 		assert.Nil(t, latest)
 	})
 	t.Run("errors on a non-numeric epoch for the queried hash", func(t *testing.T) {
-		badEntries := []grovecorev1alpha1.PodGangEntry{testutils.NewPodGangEntryBuilder(hashA, "not-a-number").Build()}
+		badEntries := []grovecorev1beta1.PodGangEntry{testutils.NewPodGangEntryBuilder(hashA, "not-a-number").Build()}
 		_, err := LatestEntryForGenerationHash(badEntries, hashA)
 		require.Error(t, err)
 	})
@@ -372,14 +375,14 @@ func TestPodGangMapAtSingleGeneration(t *testing.T) {
 		hashB = "hash-b"
 	)
 	t.Run("true when every entry carries the queried generation hash", func(t *testing.T) {
-		entries := []grovecorev1alpha1.PodGangEntry{
+		entries := []grovecorev1beta1.PodGangEntry{
 			testutils.NewPodGangEntryBuilder(hashA, "1000").Build(),
 			testutils.NewPodGangEntryBuilder(hashA, "2000").Build(),
 		}
 		assert.True(t, IsPodGangMapAtSingleGeneration(entries, hashA))
 	})
 	t.Run("false when any entry carries an older generation hash", func(t *testing.T) {
-		entries := []grovecorev1alpha1.PodGangEntry{
+		entries := []grovecorev1beta1.PodGangEntry{
 			testutils.NewPodGangEntryBuilder(hashB, "1000").Build(),
 			testutils.NewPodGangEntryBuilder(hashA, "2000").Build(),
 		}
@@ -393,11 +396,11 @@ func TestPodGangMapAtSingleGeneration(t *testing.T) {
 // TestEpochByAnchorPodGangName verifies the anchor PodGang name to epoch map excludes non-anchor entries.
 func TestEpochByAnchorPodGangName(t *testing.T) {
 	rnr := apicommon.ResourceNameReplica{Name: "pcs", Replica: 0}
-	entries := []grovecorev1alpha1.PodGangEntry{
-		{Role: grovecorev1alpha1.PodGangEntryRoleAnchor, Epoch: "100"},
-		{Role: grovecorev1alpha1.PodGangEntryRoleAnchor, Epoch: "200"},
-		{Role: grovecorev1alpha1.PodGangEntryRoleTail, Epoch: "300"},
-		{Role: grovecorev1alpha1.PodGangEntryRoleScaleOut, Epoch: "400"},
+	entries := []grovecorev1beta1.PodGangEntry{
+		{Role: grovecorev1beta1.PodGangEntryRoleAnchor, Epoch: "100"},
+		{Role: grovecorev1beta1.PodGangEntryRoleAnchor, Epoch: "200"},
+		{Role: grovecorev1beta1.PodGangEntryRoleTail, Epoch: "300"},
+		{Role: grovecorev1beta1.PodGangEntryRoleScaleOut, Epoch: "400"},
 	}
 	got := EpochByAnchorPodGangName(entries, rnr)
 	want := map[string]string{
@@ -413,11 +416,11 @@ func TestEpochByAnchorPodGangName(t *testing.T) {
 func TestExpectedPodGangNamesForEntry(t *testing.T) {
 	rnr := apicommon.ResourceNameReplica{Name: "pcs", Replica: 0}
 	t.Run("anchor entry yields a single anchor PodGang", func(t *testing.T) {
-		entry := grovecorev1alpha1.PodGangEntry{Role: grovecorev1alpha1.PodGangEntryRoleAnchor, Epoch: "200", PodCliques: map[string]int32{"frontend": 2}, PCSGReplicaIndices: map[string][]int32{"inference": {0}}}
+		entry := grovecorev1beta1.PodGangEntry{Role: grovecorev1beta1.PodGangEntryRoleAnchor, Epoch: "200", PodCliques: map[string]int32{"frontend": 2}, PCSGReplicaIndices: map[string][]int32{"inference": {0}}}
 		assert.Equal(t, []string{apicommon.GenerateAnchorPodGangName(rnr, "200")}, ExpectedPodGangNamesForEntry(rnr, entry))
 	})
 	t.Run("tail entry yields one PodGang per PCSG replica index", func(t *testing.T) {
-		entry := grovecorev1alpha1.PodGangEntry{Role: grovecorev1alpha1.PodGangEntryRoleTail, Epoch: "200", PCSGReplicaIndices: map[string][]int32{"inference": {1, 2}}}
+		entry := grovecorev1beta1.PodGangEntry{Role: grovecorev1beta1.PodGangEntryRoleTail, Epoch: "200", PCSGReplicaIndices: map[string][]int32{"inference": {1, 2}}}
 		assert.ElementsMatch(t, []string{
 			apicommon.GenerateNonAnchorPodGangName(rnr, "200", "inference", 1),
 			apicommon.GenerateNonAnchorPodGangName(rnr, "200", "inference", 2),
@@ -426,16 +429,16 @@ func TestExpectedPodGangNamesForEntry(t *testing.T) {
 }
 
 func TestStartupDependencyTargetsInEntry(t *testing.T) {
-	pcs := &grovecorev1alpha1.PodCliqueSet{
+	pcs := &grovecorev1beta1.PodCliqueSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "ml"},
-		Spec: grovecorev1alpha1.PodCliqueSetSpec{
-			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
-				Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
-					{Name: "frontend", Spec: grovecorev1alpha1.PodCliqueSpec{MinAvailable: ptr.To(int32(2))}},
-					{Name: "pf", Spec: grovecorev1alpha1.PodCliqueSpec{MinAvailable: ptr.To(int32(1))}},
-					{Name: "dc", Spec: grovecorev1alpha1.PodCliqueSpec{MinAvailable: ptr.To(int32(1))}},
+		Spec: grovecorev1beta1.PodCliqueSetSpec{
+			Template: grovecorev1beta1.PodCliqueSetTemplateSpec{
+				Cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
+					{Name: "frontend", Spec: grovecorev1beta1.PodCliqueSpec{MinAvailable: ptr.To(int32(2))}},
+					{Name: "pf", Spec: grovecorev1beta1.PodCliqueSpec{MinAvailable: ptr.To(int32(1))}},
+					{Name: "dc", Spec: grovecorev1beta1.PodCliqueSpec{MinAvailable: ptr.To(int32(1))}},
 				},
-				PodCliqueScalingGroupConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+				PodCliqueScalingGroupConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 					{Name: "prefill", CliqueNames: []string{"pf"}},
 					{Name: "decode", CliqueNames: []string{"dc"}},
 				},
@@ -445,12 +448,12 @@ func TestStartupDependencyTargetsInEntry(t *testing.T) {
 	rnr := apicommon.ResourceNameReplica{Name: "ml", Replica: 0}
 	anchorGang := apicommon.GenerateAnchorPodGangName(rnr, "100")
 	scaleOutGang3 := apicommon.GenerateNonAnchorPodGangName(rnr, "100", "prefill", 3)
-	anchorEntry := func(pcsgIndices map[string][]int32, standalone map[string]int32) *grovecorev1alpha1.PodGangEntry {
-		return &grovecorev1alpha1.PodGangEntry{Epoch: "100", Role: grovecorev1alpha1.PodGangEntryRoleAnchor, PCSGReplicaIndices: pcsgIndices, PodCliques: standalone}
+	anchorEntry := func(pcsgIndices map[string][]int32, standalone map[string]int32) *grovecorev1beta1.PodGangEntry {
+		return &grovecorev1beta1.PodGangEntry{Epoch: "100", Role: grovecorev1beta1.PodGangEntryRoleAnchor, PCSGReplicaIndices: pcsgIndices, PodCliques: standalone}
 	}
 	tests := []struct {
 		description   string
-		entry         *grovecorev1alpha1.PodGangEntry
+		entry         *grovecorev1beta1.PodGangEntry
 		podGangName   string
 		parentCliques []string
 		want          []StartupDependencyTarget
@@ -504,7 +507,7 @@ func TestStartupDependencyTargetsInEntry(t *testing.T) {
 		},
 		{
 			description:   "a scale-out pod waits only on the parent replica in its own gang",
-			entry:         &grovecorev1alpha1.PodGangEntry{Epoch: "100", Role: grovecorev1alpha1.PodGangEntryRoleScaleOut, PCSGReplicaIndices: map[string][]int32{"prefill": {1, 2, 3}}},
+			entry:         &grovecorev1beta1.PodGangEntry{Epoch: "100", Role: grovecorev1beta1.PodGangEntryRoleScaleOut, PCSGReplicaIndices: map[string][]int32{"prefill": {1, 2, 3}}},
 			podGangName:   scaleOutGang3,
 			parentCliques: []string{"pf"},
 			want:          []StartupDependencyTarget{{PodCliqueFQN: "ml-0-prefill-3-pf", MinReady: 1}},
@@ -518,39 +521,39 @@ func TestStartupDependencyTargetsInEntry(t *testing.T) {
 }
 
 func TestStartupDependencyCliqueNames(t *testing.T) {
-	inOrderPCS := &grovecorev1alpha1.PodCliqueSet{
+	inOrderPCS := &grovecorev1beta1.PodCliqueSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "ml"},
-		Spec: grovecorev1alpha1.PodCliqueSetSpec{
-			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
-				StartupType: ptr.To(grovecorev1alpha1.CliqueStartupTypeInOrder),
-				Cliques:     []*grovecorev1alpha1.PodCliqueTemplateSpec{{Name: "a"}, {Name: "b"}, {Name: "c"}},
+		Spec: grovecorev1beta1.PodCliqueSetSpec{
+			Template: grovecorev1beta1.PodCliqueSetTemplateSpec{
+				StartupType: ptr.To(grovecorev1beta1.CliqueStartupTypeInOrder),
+				Cliques:     []*grovecorev1beta1.PodCliqueTemplateSpec{{Name: "a"}, {Name: "b"}, {Name: "c"}},
 			},
 		},
 	}
-	explicitPCS := &grovecorev1alpha1.PodCliqueSet{
+	explicitPCS := &grovecorev1beta1.PodCliqueSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "ml"},
-		Spec: grovecorev1alpha1.PodCliqueSetSpec{
-			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
-				StartupType: ptr.To(grovecorev1alpha1.CliqueStartupTypeExplicit),
-				Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{
+		Spec: grovecorev1beta1.PodCliqueSetSpec{
+			Template: grovecorev1beta1.PodCliqueSetTemplateSpec{
+				StartupType: ptr.To(grovecorev1beta1.CliqueStartupTypeExplicit),
+				Cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{
 					{Name: "a"},
-					{Name: "b", Spec: grovecorev1alpha1.PodCliqueSpec{StartsAfter: []string{"a"}}},
-					{Name: "c", Spec: grovecorev1alpha1.PodCliqueSpec{StartsAfter: []string{"a", "b"}}},
+					{Name: "b", Spec: grovecorev1beta1.PodCliqueSpec{StartsAfter: []string{"a"}}},
+					{Name: "c", Spec: grovecorev1beta1.PodCliqueSpec{StartsAfter: []string{"a", "b"}}},
 				},
 			},
 		},
 	}
-	noStartupTypePCS := &grovecorev1alpha1.PodCliqueSet{
+	noStartupTypePCS := &grovecorev1beta1.PodCliqueSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "ml"},
-		Spec: grovecorev1alpha1.PodCliqueSetSpec{
-			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
-				Cliques: []*grovecorev1alpha1.PodCliqueTemplateSpec{{Name: "a"}},
+		Spec: grovecorev1beta1.PodCliqueSetSpec{
+			Template: grovecorev1beta1.PodCliqueSetTemplateSpec{
+				Cliques: []*grovecorev1beta1.PodCliqueTemplateSpec{{Name: "a"}},
 			},
 		},
 	}
 	tests := []struct {
 		description string
-		pcs         *grovecorev1alpha1.PodCliqueSet
+		pcs         *grovecorev1beta1.PodCliqueSet
 		cliqueName  string
 		want        []string
 		wantErr     bool
@@ -575,7 +578,7 @@ func TestStartupDependencyCliqueNames(t *testing.T) {
 	}
 }
 
-func pgmNames(pgms []grovecorev1alpha1.PodGangMap) []string {
+func pgmNames(pgms []grovecorev1beta1.PodGangMap) []string {
 	names := make([]string, 0, len(pgms))
 	for i := range pgms {
 		names = append(names, pgms[i].Name)
@@ -583,7 +586,7 @@ func pgmNames(pgms []grovecorev1alpha1.PodGangMap) []string {
 	return names
 }
 
-func indicesOf(byIndex map[int]*grovecorev1alpha1.PodGangMap) []int {
+func indicesOf(byIndex map[int]*grovecorev1beta1.PodGangMap) []int {
 	idx := make([]int, 0, len(byIndex))
 	for i := range byIndex {
 		idx = append(idx, i)
@@ -591,8 +594,8 @@ func indicesOf(byIndex map[int]*grovecorev1alpha1.PodGangMap) []int {
 	return idx
 }
 
-func pgmWithoutReplicaIndexLabel(pcsName, namespace string) grovecorev1alpha1.PodGangMap {
-	return grovecorev1alpha1.PodGangMap{
+func pgmWithoutReplicaIndexLabel(pcsName, namespace string) grovecorev1beta1.PodGangMap {
+	return grovecorev1beta1.PodGangMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      pcsName + "-0",
 			Namespace: namespace,
@@ -601,12 +604,211 @@ func pgmWithoutReplicaIndexLabel(pcsName, namespace string) grovecorev1alpha1.Po
 	}
 }
 
-func pgmWithReplicaIndexLabel(pcsName, namespace, value string) grovecorev1alpha1.PodGangMap {
-	return grovecorev1alpha1.PodGangMap{
+func pgmWithReplicaIndexLabel(pcsName, namespace, value string) grovecorev1beta1.PodGangMap {
+	return grovecorev1beta1.PodGangMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      pcsName + "-x",
 			Namespace: namespace,
 			Labels:    map[string]string{apicommon.LabelPodCliqueSetReplicaIndex: value},
 		},
 	}
+}
+
+func TestExpectedPodGangNamesForEntry_Deterministic(t *testing.T) {
+	pcsRnr := apicommon.ResourceNameReplica{Name: "pcs", Replica: 2}
+
+	anchor := testutils.NewPodGangEntryBuilder("hash", "1000").
+		WithRole(grovecorev1beta1.PodGangEntryRoleAnchor).
+		Build()
+	assert.Equal(t,
+		[]string{apicommon.GenerateAnchorPodGangName(pcsRnr, anchor.Epoch)},
+		ExpectedPodGangNamesForEntry(pcsRnr, anchor),
+	)
+
+	tail := testutils.NewPodGangEntryBuilder("hash", "1001").
+		WithRole(grovecorev1beta1.PodGangEntryRoleTail).
+		WithPCSGReplicaIndices(map[string][]int32{
+			"zeta":  {3, 1},
+			"alpha": {2, 0},
+		}).
+		Build()
+	assert.Equal(t, []string{
+		apicommon.GenerateNonAnchorPodGangName(pcsRnr, tail.Epoch, "alpha", 0),
+		apicommon.GenerateNonAnchorPodGangName(pcsRnr, tail.Epoch, "alpha", 2),
+		apicommon.GenerateNonAnchorPodGangName(pcsRnr, tail.Epoch, "zeta", 1),
+		apicommon.GenerateNonAnchorPodGangName(pcsRnr, tail.Epoch, "zeta", 3),
+	}, ExpectedPodGangNamesForEntry(pcsRnr, tail))
+}
+
+func TestLoadMaterializedPodGangs(t *testing.T) {
+	const (
+		pcsName       = "pcs"
+		namespace     = "default"
+		pcsUID        = types.UID("pcs-uid")
+		replicaIndex  = 1
+		schedulerName = "kai-scheduler"
+	)
+	entries := []grovecorev1beta1.PodGangEntry{
+		testutils.NewAnchorEntry("hash-1", "1000", "workers", 0),
+		testutils.NewTailEntry("hash-1", "1001", "workers", 1, 2),
+		testutils.NewAnchorEntry("hash-2", "1002", "workers", 3),
+		testutils.NewScaleOutEntry("hash-2", "1003", "workers", 4),
+	}
+	pcs := testutils.NewPodCliqueSetBuilder(pcsName, namespace, pcsUID).WithReplicas(2).Build()
+	pgm := testutils.NewPodGangMapBuilder(pcsName, namespace, pcsUID, replicaIndex).WithEntries(entries...).Build()
+	podGangs := newMaterializedPodGangs(pcs, pgm, schedulerName)
+
+	t.Run("loads complete multiple-epoch set", func(t *testing.T) {
+		cl := newPodGangMapTestClient(pcs, pgm, podGangs...)
+
+		actual, err := LoadMaterializedPodGangs(context.Background(), cl, pcs, pgm, schedulerName)
+		require.NoError(t, err)
+		require.Len(t, actual, 5)
+		assert.Equal(t, []grovecorev1beta1.PodGangEntryRole{
+			grovecorev1beta1.PodGangEntryRoleAnchor,
+			grovecorev1beta1.PodGangEntryRoleTail,
+			grovecorev1beta1.PodGangEntryRoleTail,
+			grovecorev1beta1.PodGangEntryRoleAnchor,
+			grovecorev1beta1.PodGangEntryRoleScaleOut,
+		}, materializedRoles(actual))
+	})
+
+	t.Run("rejects incomplete set", func(t *testing.T) {
+		cl := newPodGangMapTestClient(pcs, pgm, podGangs[:len(podGangs)-1]...)
+
+		_, err := LoadMaterializedPodGangs(context.Background(), cl, pcs, pgm, schedulerName)
+		assert.True(t, apierrors.IsNotFound(err))
+	})
+
+	t.Run("rejects stale owner", func(t *testing.T) {
+		stale := deepCopyPodGangs(podGangs)
+		stale[1].OwnerReferences[0].UID = "stale-pcs-uid"
+		cl := newPodGangMapTestClient(pcs, pgm, stale...)
+
+		_, err := LoadMaterializedPodGangs(context.Background(), cl, pcs, pgm, schedulerName)
+		require.ErrorContains(t, err, "is not controlled")
+	})
+
+	labelTests := []struct {
+		name  string
+		label string
+		value string
+	}{
+		{name: "replica", label: apicommon.LabelPodCliqueSetReplicaIndex, value: "0"},
+		{name: "epoch", label: apicommon.LabelEpoch, value: "old-epoch"},
+		{name: "role", label: apicommon.LabelPodGangRole, value: string(grovecorev1beta1.PodGangEntryRoleScaleOut)},
+		{name: "generation", label: apicommon.LabelPodCliqueSetGenerationHash, value: "old-hash"},
+		{name: "scheduler", label: apicommon.LabelSchedulerName, value: "other-scheduler"},
+	}
+	for _, tt := range labelTests {
+		t.Run("rejects mismatched "+tt.name, func(t *testing.T) {
+			invalid := deepCopyPodGangs(podGangs)
+			invalid[0].Labels[tt.label] = tt.value
+			cl := newPodGangMapTestClient(pcs, pgm, invalid...)
+
+			_, err := LoadMaterializedPodGangs(context.Background(), cl, pcs, pgm, schedulerName)
+			require.ErrorContains(t, err, tt.label)
+		})
+	}
+}
+
+func newMaterializedPodGangs(pcs *grovecorev1beta1.PodCliqueSet, pgm *grovecorev1beta1.PodGangMap, schedulerName string) []*groveschedulerv1alpha1.PodGang {
+	pcsRnr := apicommon.ResourceNameReplica{Name: pcs.Name, Replica: int(pgm.Spec.PodCliqueSetReplicaIndex)}
+	podGangs := make([]*groveschedulerv1alpha1.PodGang, 0)
+	for _, entry := range pgm.Spec.Entries {
+		for _, name := range ExpectedPodGangNamesForEntry(pcsRnr, entry) {
+			podGangs = append(podGangs, newMaterializedPodGang(pcs, pcsRnr.Replica, entry, schedulerName, name))
+		}
+	}
+	return podGangs
+}
+
+func newMaterializedPodGang(pcs *grovecorev1beta1.PodCliqueSet, replicaIndex int, entry grovecorev1beta1.PodGangEntry, schedulerName, name string) *groveschedulerv1alpha1.PodGang {
+	return &groveschedulerv1alpha1.PodGang{ObjectMeta: metav1.ObjectMeta{
+		Name:      name,
+		Namespace: pcs.Namespace,
+		Labels: map[string]string{
+			apicommon.LabelPodCliqueSetReplicaIndex:   strconv.Itoa(replicaIndex),
+			apicommon.LabelEpoch:                      entry.Epoch,
+			apicommon.LabelPodGangRole:                string(entry.Role),
+			apicommon.LabelPodCliqueSetGenerationHash: entry.PodCliqueSetGenerationHash,
+			apicommon.LabelSchedulerName:              schedulerName,
+		},
+		OwnerReferences: []metav1.OwnerReference{{
+			APIVersion: grovecorev1beta1.SchemeGroupVersion.String(),
+			Kind:       "PodCliqueSet",
+			Name:       pcs.Name,
+			UID:        pcs.UID,
+			Controller: ptr.To(true),
+		}},
+	}}
+}
+
+func newPodGangMapTestClient(pcs *grovecorev1beta1.PodCliqueSet, pgm *grovecorev1beta1.PodGangMap, podGangs ...*groveschedulerv1alpha1.PodGang) client.Client {
+	objects := []client.Object{pcs, pgm}
+	for _, podGang := range podGangs {
+		objects = append(objects, podGang)
+	}
+	return testutils.CreateDefaultFakeClient(objects)
+}
+
+func deepCopyPodGangs(podGangs []*groveschedulerv1alpha1.PodGang) []*groveschedulerv1alpha1.PodGang {
+	result := make([]*groveschedulerv1alpha1.PodGang, 0, len(podGangs))
+	for _, podGang := range podGangs {
+		result = append(result, podGang.DeepCopy())
+	}
+	return result
+}
+
+func materializedRoles(podGangs []MaterializedPodGang) []grovecorev1beta1.PodGangEntryRole {
+	roles := make([]grovecorev1beta1.PodGangEntryRole, 0, len(podGangs))
+	for _, podGang := range podGangs {
+		roles = append(roles, podGang.Entry.Role)
+	}
+	return roles
+}
+
+func TestGetOwningPodCliqueSetForPodGang_AcceptsAnyServedGroveVersion(t *testing.T) {
+	pcs := testutils.NewPodCliqueSetBuilder("pcs", "default", types.UID("pcs-uid")).Build()
+	for _, version := range []string{"v1alpha1", "v1beta1"} {
+		t.Run(version, func(t *testing.T) {
+			podGang := &groveschedulerv1alpha1.PodGang{ObjectMeta: metav1.ObjectMeta{
+				Name:      "pcs-0",
+				Namespace: pcs.Namespace,
+				OwnerReferences: []metav1.OwnerReference{{
+					APIVersion: grovecorev1beta1.SchemeGroupVersion.Group + "/" + version,
+					Kind:       "PodCliqueSet",
+					Name:       pcs.Name,
+					UID:        pcs.UID,
+					Controller: ptr.To(true),
+				}},
+			}}
+			cl := testutils.CreateDefaultFakeClient([]client.Object{pcs, podGang})
+
+			owner, err := GetOwningPodCliqueSetForPodGang(context.Background(), cl, podGang)
+			require.NoError(t, err)
+			assert.Equal(t, pcs.UID, owner.UID)
+		})
+	}
+}
+
+func TestGetOwningPodCliqueSetForPodGang_ReplacedOwnerIsNotFound(t *testing.T) {
+	pcs := testutils.NewPodCliqueSetBuilder("pcs", "default", types.UID("new-pcs-uid")).Build()
+	podGang := &groveschedulerv1alpha1.PodGang{ObjectMeta: metav1.ObjectMeta{
+		Name:      "pcs-0",
+		Namespace: pcs.Namespace,
+		OwnerReferences: []metav1.OwnerReference{{
+			APIVersion: grovecorev1beta1.SchemeGroupVersion.String(),
+			Kind:       constants.KindPodCliqueSet,
+			Name:       pcs.Name,
+			UID:        types.UID("old-pcs-uid"),
+			Controller: ptr.To(true),
+		}},
+	}}
+	cl := testutils.CreateDefaultFakeClient([]client.Object{pcs, podGang})
+
+	_, err := GetOwningPodCliqueSetForPodGang(context.Background(), cl, podGang)
+	require.Error(t, err)
+	assert.True(t, apierrors.IsNotFound(err))
+	assert.ErrorContains(t, err, "does not match PodCliqueSet UID")
 }

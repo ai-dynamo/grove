@@ -20,14 +20,14 @@ import (
 	"os/signal"
 	"syscall"
 
-	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
+	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 	"github.com/ai-dynamo/grove/operator/initc/cmd/opts"
 	"github.com/ai-dynamo/grove/operator/initc/internal"
 	"github.com/ai-dynamo/grove/operator/internal/logger"
 )
 
 var (
-	log = logger.MustNewLogger(false, configv1alpha1.InfoLevel, configv1alpha1.LogFormatJSON).WithName("grove-initc")
+	log = logger.MustNewLogger(false, configv1beta1.InfoLevel, configv1beta1.LogFormatJSON).WithName("grove-initc")
 )
 
 func main() {

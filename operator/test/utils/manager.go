@@ -20,15 +20,17 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
+	"sigs.k8s.io/controller-runtime/pkg/webhook/conversion"
 )
 
 // FakeManager is a fake controller-runtime manager
 type FakeManager struct {
 	manager.Manager
-	Client        client.Client
-	Scheme        *runtime.Scheme
-	Logger        logr.Logger
-	WebhookServer webhook.Server
+	Client            client.Client
+	Scheme            *runtime.Scheme
+	Logger            logr.Logger
+	WebhookServer     webhook.Server
+	ConverterRegistry conversion.Registry
 }
 
 // GetClient returns the client registered with the fake manager
@@ -49,4 +51,12 @@ func (f FakeManager) GetScheme() *runtime.Scheme {
 // GetWebhookServer returns the webhook server registered with the fake manager
 func (f *FakeManager) GetWebhookServer() webhook.Server {
 	return f.WebhookServer
+}
+
+// GetConverterRegistry returns the converter registry of the fake manager, creating it on first use.
+func (f *FakeManager) GetConverterRegistry() conversion.Registry {
+	if f.ConverterRegistry == nil {
+		f.ConverterRegistry = conversion.NewRegistry()
+	}
+	return f.ConverterRegistry
 }

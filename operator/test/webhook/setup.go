@@ -18,7 +18,7 @@ package webhook
 import (
 	"fmt"
 
-	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
+	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 	schedulerregistry "github.com/ai-dynamo/grove/operator/internal/scheduler/registry"
 	internalwebhook "github.com/ai-dynamo/grove/operator/internal/webhook"
 
@@ -29,7 +29,7 @@ import (
 // Setup registers Grove's production admission webhooks with mgr.
 // operatorCfg must be defaulted and validated like the production operator
 // configuration before calling Setup.
-func Setup(mgr ctrl.Manager, operatorCfg *configv1alpha1.OperatorConfiguration) error {
+func Setup(mgr ctrl.Manager, operatorCfg *configv1beta1.OperatorConfiguration) error {
 	directClient, err := client.New(mgr.GetConfig(), client.Options{Scheme: mgr.GetScheme()})
 	if err != nil {
 		return fmt.Errorf("failed to create direct client: %w", err)

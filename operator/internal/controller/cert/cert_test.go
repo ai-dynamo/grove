@@ -16,11 +16,10 @@ package cert
 
 import (
 	"context"
-	"os"
 	"testing"
 	"time"
 
-	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
+	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 
 	"github.com/go-logr/logr"
 	cert "github.com/open-policy-agent/cert-controller/pkg/rotator"
@@ -39,82 +38,39 @@ func TestGetWebhooks(t *testing.T) {
 	t.Run("authorizer disabled", func(t *testing.T) {
 		webhooks := getWebhooks(false)
 
-		// Expect 5 webhooks: podcliqueset-defaulting, podcliqueset-validating, clustertopology-validating,
-		// podclique-validating, podcliquescalinggroup-validating.
-		require.Len(t, webhooks, 5)
-		assert.Equal(t, cert.Mutating, webhooks[0].Type)   // podcliqueset-defaulting-webhook
-		assert.Equal(t, cert.Validating, webhooks[1].Type) // podcliqueset-validating-webhook
-		assert.Equal(t, cert.Validating, webhooks[2].Type) // clustertopology-validating-webhook
-		assert.Equal(t, cert.Validating, webhooks[3].Type) // podclique-validating-webhook
-		assert.Equal(t, cert.Validating, webhooks[4].Type) // podcliquescalinggroup-validating-webhook
-	})
-
-	// Test with authorizer enabled
-	t.Run("authorizer enabled", func(t *testing.T) {
-		webhooks := getWebhooks(true)
-
-		// Expect 6 webhooks: the 5 base webhooks plus the authorizer-webhook
+		// Expect 5 admission webhooks: podcliqueset-defaulting, podcliqueset-validating, clustertopology-validating,
+		// podclique-validating, podcliquescalinggroup-validating, plus the converted PodCliqueSet CRD.
 		require.Len(t, webhooks, 6)
 		assert.Equal(t, cert.Mutating, webhooks[0].Type)   // podcliqueset-defaulting-webhook
 		assert.Equal(t, cert.Validating, webhooks[1].Type) // podcliqueset-validating-webhook
 		assert.Equal(t, cert.Validating, webhooks[2].Type) // clustertopology-validating-webhook
 		assert.Equal(t, cert.Validating, webhooks[3].Type) // podclique-validating-webhook
 		assert.Equal(t, cert.Validating, webhooks[4].Type) // podcliquescalinggroup-validating-webhook
+		assertConversionCRDs(t, webhooks[5:])
+	})
+
+	// Test with authorizer enabled
+	t.Run("authorizer enabled", func(t *testing.T) {
+		webhooks := getWebhooks(true)
+
+		// Expect 7 webhooks: the 5 base webhooks, the authorizer-webhook and the converted PodCliqueSet CRD
+		require.Len(t, webhooks, 7)
+		assert.Equal(t, cert.Mutating, webhooks[0].Type)   // podcliqueset-defaulting-webhook
+		assert.Equal(t, cert.Validating, webhooks[1].Type) // podcliqueset-validating-webhook
+		assert.Equal(t, cert.Validating, webhooks[2].Type) // clustertopology-validating-webhook
+		assert.Equal(t, cert.Validating, webhooks[3].Type) // podclique-validating-webhook
+		assert.Equal(t, cert.Validating, webhooks[4].Type) // podcliquescalinggroup-validating-webhook
 		assert.Equal(t, cert.Validating, webhooks[5].Type) // authorizer-webhook
+		assertConversionCRDs(t, webhooks[6:])
 	})
 }
 
-// TestGetOperatorNamespace tests reading the operator namespace from a file.
-// Note: This function uses a hardcoded file path, so we test with the actual constant.
-// In practice, the file should exist in the operator's pod environment.
-func TestGetOperatorNamespace(t *testing.T) {
-	// Test with non-existent file (expected in test environment)
-	t.Run("file does not exist in test environment", func(t *testing.T) {
-		// Since constants.OperatorNamespaceFile is a constant pointing to
-		// /var/run/secrets/kubernetes.io/serviceaccount/namespace,
-		// which won't exist in a test environment, we expect an error
-		_, err := getOperatorNamespace()
-
-		// This is expected to fail in test environment
-		if err != nil {
-			assert.Error(t, err)
-		}
-	})
-}
-
-// TestGetOperatorNamespaceFromFile tests the namespace file reading logic with various inputs.
-func TestGetOperatorNamespaceFromFile(t *testing.T) {
-	t.Run("file does not exist", func(t *testing.T) {
-		_, err := getOperatorNamespaceFromFile("/nonexistent/path/to/namespace")
-		require.Error(t, err)
-	})
-
-	t.Run("file contains valid namespace", func(t *testing.T) {
-		// Create a temp file with a valid namespace
-		tmpFile, err := os.CreateTemp("", "namespace-test")
-		require.NoError(t, err)
-		defer os.Remove(tmpFile.Name())
-
-		_, err = tmpFile.WriteString("test-namespace")
-		require.NoError(t, err)
-		tmpFile.Close()
-
-		namespace, err := getOperatorNamespaceFromFile(tmpFile.Name())
-		require.NoError(t, err)
-		assert.Equal(t, "test-namespace", namespace)
-	})
-
-	t.Run("file is empty", func(t *testing.T) {
-		// Create an empty temp file
-		tmpFile, err := os.CreateTemp("", "namespace-test")
-		require.NoError(t, err)
-		defer os.Remove(tmpFile.Name())
-		tmpFile.Close()
-
-		_, err = getOperatorNamespaceFromFile(tmpFile.Name())
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "operator namespace is empty")
-	})
+// assertConversionCRDs asserts that webhooks injects the CA into the spec.conversion of each converted CRD.
+func assertConversionCRDs(t *testing.T, webhooks []cert.WebhookInfo) {
+	t.Helper()
+	assert.Equal(t, []cert.WebhookInfo{
+		{Type: cert.CRDConversion, Name: "podcliquesets.grove.io"},
+	}, webhooks)
 }
 
 // TestWaitTillWebhookCertsReady tests waiting for webhook certificates to be ready.
@@ -181,7 +137,7 @@ func TestManageWebhookCerts(t *testing.T) {
 
 		// Call ManageWebhookCerts with manual mode
 		// Note: mgr and cl are nil because manual mode doesn't use them
-		err := ManageWebhookCerts(context.Background(), nil, nil, "/tmp/certs", "test-secret", false, configv1alpha1.CertProvisionModeManual, certsReady)
+		err := ManageWebhookCerts(context.Background(), nil, nil, "/tmp/certs", "test-secret", false, configv1beta1.CertProvisionModeManual, certsReady)
 
 		// Should return no error
 		require.NoError(t, err)
@@ -199,7 +155,7 @@ func TestManageWebhookCerts(t *testing.T) {
 	t.Run("manual mode with authorizer enabled", func(t *testing.T) {
 		certsReady := make(chan struct{})
 
-		err := ManageWebhookCerts(context.Background(), nil, nil, "/tmp/certs", "test-secret", true, configv1alpha1.CertProvisionModeManual, certsReady)
+		err := ManageWebhookCerts(context.Background(), nil, nil, "/tmp/certs", "test-secret", true, configv1beta1.CertProvisionModeManual, certsReady)
 
 		require.NoError(t, err)
 
@@ -218,7 +174,7 @@ func TestManageWebhookCerts(t *testing.T) {
 
 		// Call ManageWebhookCerts with auto mode
 		// This should fail because the namespace file doesn't exist in the test environment
-		err := ManageWebhookCerts(context.Background(), nil, nil, "/tmp/certs", "test-secret", false, configv1alpha1.CertProvisionModeAuto, certsReady)
+		err := ManageWebhookCerts(context.Background(), nil, nil, "/tmp/certs", "test-secret", false, configv1beta1.CertProvisionModeAuto, certsReady)
 
 		// Should return an error because namespace file doesn't exist
 		require.Error(t, err)
@@ -238,7 +194,7 @@ func TestManageWebhookCerts(t *testing.T) {
 		certsReady := make(chan struct{})
 
 		// Even though namespace file doesn't exist, manual mode should succeed
-		err := ManageWebhookCerts(context.Background(), nil, nil, "/tmp/certs", "test-secret", false, configv1alpha1.CertProvisionModeManual, certsReady)
+		err := ManageWebhookCerts(context.Background(), nil, nil, "/tmp/certs", "test-secret", false, configv1beta1.CertProvisionModeManual, certsReady)
 
 		// Should succeed without needing namespace
 		require.NoError(t, err)
@@ -249,7 +205,7 @@ func TestManageWebhookCerts(t *testing.T) {
 	t.Run("unknown mode returns explicit error", func(t *testing.T) {
 		certsReady := make(chan struct{})
 
-		err := ManageWebhookCerts(context.Background(), nil, nil, "/tmp/certs", "test-secret", false, configv1alpha1.CertProvisionMode("unknown"), certsReady)
+		err := ManageWebhookCerts(context.Background(), nil, nil, "/tmp/certs", "test-secret", false, configv1beta1.CertProvisionMode("unknown"), certsReady)
 
 		// Should return an explicit error about unsupported mode
 		require.Error(t, err)
@@ -269,7 +225,7 @@ func TestManageWebhookCerts(t *testing.T) {
 	t.Run("empty mode returns explicit error", func(t *testing.T) {
 		certsReady := make(chan struct{})
 
-		err := ManageWebhookCerts(context.Background(), nil, nil, "/tmp/certs", "test-secret", false, configv1alpha1.CertProvisionMode(""), certsReady)
+		err := ManageWebhookCerts(context.Background(), nil, nil, "/tmp/certs", "test-secret", false, configv1beta1.CertProvisionMode(""), certsReady)
 
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "unsupported cert provision mode")

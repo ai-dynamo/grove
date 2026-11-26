@@ -17,7 +17,7 @@ package components
 import (
 	"testing"
 
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	"github.com/ai-dynamo/grove/operator/internal/expect"
 	"github.com/ai-dynamo/grove/operator/test/utils"
@@ -35,7 +35,7 @@ import (
 // TestCreateOperatorRegistry tests creating the operator registry for PodClique reconciler.
 func TestCreateOperatorRegistry(t *testing.T) {
 	scheme := runtime.NewScheme()
-	_ = grovecorev1alpha1.AddToScheme(scheme)
+	_ = grovecorev1beta1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
 
 	t.Run("creates registry with resourceclaim and pod operators", func(t *testing.T) {

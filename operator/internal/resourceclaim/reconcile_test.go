@@ -20,7 +20,7 @@ import (
 	"testing"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -36,17 +36,17 @@ import (
 
 func TestRCName(t *testing.T) {
 	t.Run("AllReplicas scope", func(t *testing.T) {
-		base := &grovecorev1alpha1.ResourceSharingSpec{
+		base := &grovecorev1beta1.ResourceSharingSpec{
 			Name:  "gpu-mps",
-			Scope: grovecorev1alpha1.ResourceSharingScopeAllReplicas,
+			Scope: grovecorev1beta1.ResourceSharingScopeAllReplicas,
 		}
 		assert.Equal(t, "owner-all-gpu-mps", RCName("owner", base, nil))
 	})
 
 	t.Run("PerReplica scope", func(t *testing.T) {
-		base := &grovecorev1alpha1.ResourceSharingSpec{
+		base := &grovecorev1beta1.ResourceSharingSpec{
 			Name:  "gpu-mps",
-			Scope: grovecorev1alpha1.ResourceSharingScopePerReplica,
+			Scope: grovecorev1beta1.ResourceSharingScopePerReplica,
 		}
 		idx := 3
 		assert.Equal(t, "owner-3-gpu-mps", RCName("owner", base, &idx))
@@ -66,26 +66,26 @@ func TestResourceClaimLabels(t *testing.T) {
 
 func TestFilterMatches(t *testing.T) {
 	t.Run("ResourceSharingSpec always matches", func(t *testing.T) {
-		base := &grovecorev1alpha1.ResourceSharingSpec{}
+		base := &grovecorev1beta1.ResourceSharingSpec{}
 		assert.True(t, base.FilterMatches())
 		assert.True(t, base.FilterMatches("anything"))
 	})
 
 	t.Run("PCS no matchNames always matches", func(t *testing.T) {
-		ref := &grovecorev1alpha1.PCSResourceSharingSpec{
-			Filter: &grovecorev1alpha1.PCSResourceSharingFilter{ChildCliqueNames: []string{"a"}},
+		ref := &grovecorev1beta1.PCSResourceSharingSpec{
+			Filter: &grovecorev1beta1.PCSResourceSharingFilter{ChildCliqueNames: []string{"a"}},
 		}
 		assert.True(t, ref.FilterMatches())
 	})
 
 	t.Run("PCS nil filter (broadcast) always matches", func(t *testing.T) {
-		ref := &grovecorev1alpha1.PCSResourceSharingSpec{}
+		ref := &grovecorev1beta1.PCSResourceSharingSpec{}
 		assert.True(t, ref.FilterMatches("any-name"))
 	})
 
 	t.Run("PCS filter with cliqueNames match", func(t *testing.T) {
-		ref := &grovecorev1alpha1.PCSResourceSharingSpec{
-			Filter: &grovecorev1alpha1.PCSResourceSharingFilter{ChildCliqueNames: []string{"worker", "router"}},
+		ref := &grovecorev1beta1.PCSResourceSharingSpec{
+			Filter: &grovecorev1beta1.PCSResourceSharingFilter{ChildCliqueNames: []string{"worker", "router"}},
 		}
 		assert.True(t, ref.FilterMatches("worker"))
 		assert.True(t, ref.FilterMatches("router"))
@@ -93,16 +93,16 @@ func TestFilterMatches(t *testing.T) {
 	})
 
 	t.Run("PCS filter with groupNames match", func(t *testing.T) {
-		ref := &grovecorev1alpha1.PCSResourceSharingSpec{
-			Filter: &grovecorev1alpha1.PCSResourceSharingFilter{ChildScalingGroupNames: []string{"sga", "sgb"}},
+		ref := &grovecorev1beta1.PCSResourceSharingSpec{
+			Filter: &grovecorev1beta1.PCSResourceSharingFilter{ChildScalingGroupNames: []string{"sga", "sgb"}},
 		}
 		assert.True(t, ref.FilterMatches("sga"))
 		assert.False(t, ref.FilterMatches("sgc"))
 	})
 
 	t.Run("PCS filter with mixed match", func(t *testing.T) {
-		ref := &grovecorev1alpha1.PCSResourceSharingSpec{
-			Filter: &grovecorev1alpha1.PCSResourceSharingFilter{
+		ref := &grovecorev1beta1.PCSResourceSharingSpec{
+			Filter: &grovecorev1beta1.PCSResourceSharingFilter{
 				ChildCliqueNames:       []string{"worker"},
 				ChildScalingGroupNames: []string{"sga"},
 			},
@@ -113,15 +113,15 @@ func TestFilterMatches(t *testing.T) {
 	})
 
 	t.Run("PCSG filter with cliqueNames match", func(t *testing.T) {
-		ref := &grovecorev1alpha1.PCSGResourceSharingSpec{
-			Filter: &grovecorev1alpha1.PCSGResourceSharingFilter{ChildCliqueNames: []string{"worker"}},
+		ref := &grovecorev1beta1.PCSGResourceSharingSpec{
+			Filter: &grovecorev1beta1.PCSGResourceSharingFilter{ChildCliqueNames: []string{"worker"}},
 		}
 		assert.True(t, ref.FilterMatches("worker"))
 		assert.False(t, ref.FilterMatches("router"))
 	})
 
 	t.Run("PCSG nil filter (broadcast) always matches", func(t *testing.T) {
-		ref := &grovecorev1alpha1.PCSGResourceSharingSpec{}
+		ref := &grovecorev1beta1.PCSGResourceSharingSpec{}
 		assert.True(t, ref.FilterMatches("any-name"))
 	})
 }
@@ -133,9 +133,9 @@ func TestInjectResourceClaimRefs(t *testing.T) {
 		podSpec := &corev1.PodSpec{
 			Containers: []corev1.Container{{Name: "main"}},
 		}
-		resourceSharers := ResourceSharersFromPCLQ([]grovecorev1alpha1.ResourceSharingSpec{
-			{Name: "gpu-mps", Scope: grovecorev1alpha1.ResourceSharingScopeAllReplicas},
-			{Name: "per-rep", Scope: grovecorev1alpha1.ResourceSharingScopePerReplica},
+		resourceSharers := ResourceSharersFromPCLQ([]grovecorev1beta1.ResourceSharingSpec{
+			{Name: "gpu-mps", Scope: grovecorev1beta1.ResourceSharingScopeAllReplicas},
+			{Name: "per-rep", Scope: grovecorev1beta1.ResourceSharingScopePerReplica},
 		})
 		InjectResourceClaimRefs(podSpec, "pcs", resourceSharers, nil)
 
@@ -148,9 +148,9 @@ func TestInjectResourceClaimRefs(t *testing.T) {
 		podSpec := &corev1.PodSpec{
 			Containers: []corev1.Container{{Name: "main"}},
 		}
-		resourceSharers := ResourceSharersFromPCLQ([]grovecorev1alpha1.ResourceSharingSpec{
-			{Name: "gpu-mps", Scope: grovecorev1alpha1.ResourceSharingScopeAllReplicas},
-			{Name: "per-rep", Scope: grovecorev1alpha1.ResourceSharingScopePerReplica},
+		resourceSharers := ResourceSharersFromPCLQ([]grovecorev1beta1.ResourceSharingSpec{
+			{Name: "gpu-mps", Scope: grovecorev1beta1.ResourceSharingScopeAllReplicas},
+			{Name: "per-rep", Scope: grovecorev1beta1.ResourceSharingScopePerReplica},
 		})
 		idx := 2
 		InjectResourceClaimRefs(podSpec, "pcs", resourceSharers, &idx)
@@ -163,10 +163,10 @@ func TestInjectResourceClaimRefs(t *testing.T) {
 		podSpec := &corev1.PodSpec{
 			Containers: []corev1.Container{{Name: "main"}},
 		}
-		resourceSharers := ResourceSharersFromPCS([]grovecorev1alpha1.PCSResourceSharingSpec{
+		resourceSharers := ResourceSharersFromPCS([]grovecorev1beta1.PCSResourceSharingSpec{
 			{
-				ResourceSharingSpec: grovecorev1alpha1.ResourceSharingSpec{Name: "gpu-mps", Scope: grovecorev1alpha1.ResourceSharingScopeAllReplicas},
-				Filter:              &grovecorev1alpha1.PCSResourceSharingFilter{ChildCliqueNames: []string{"worker"}},
+				ResourceSharingSpec: grovecorev1beta1.ResourceSharingSpec{Name: "gpu-mps", Scope: grovecorev1beta1.ResourceSharingScopeAllReplicas},
+				Filter:              &grovecorev1beta1.PCSResourceSharingFilter{ChildCliqueNames: []string{"worker"}},
 			},
 		})
 		InjectResourceClaimRefs(podSpec, "pcs", resourceSharers, nil, "worker")
@@ -177,10 +177,10 @@ func TestInjectResourceClaimRefs(t *testing.T) {
 		podSpec := &corev1.PodSpec{
 			Containers: []corev1.Container{{Name: "main"}},
 		}
-		resourceSharers := ResourceSharersFromPCS([]grovecorev1alpha1.PCSResourceSharingSpec{
+		resourceSharers := ResourceSharersFromPCS([]grovecorev1beta1.PCSResourceSharingSpec{
 			{
-				ResourceSharingSpec: grovecorev1alpha1.ResourceSharingSpec{Name: "gpu-mps", Scope: grovecorev1alpha1.ResourceSharingScopeAllReplicas},
-				Filter:              &grovecorev1alpha1.PCSResourceSharingFilter{ChildCliqueNames: []string{"worker"}},
+				ResourceSharingSpec: grovecorev1beta1.ResourceSharingSpec{Name: "gpu-mps", Scope: grovecorev1beta1.ResourceSharingScopeAllReplicas},
+				Filter:              &grovecorev1beta1.PCSResourceSharingFilter{ChildCliqueNames: []string{"worker"}},
 			},
 		})
 		InjectResourceClaimRefs(podSpec, "pcs", resourceSharers, nil, "coordinator")
@@ -192,8 +192,8 @@ func TestInjectResourceClaimRefs(t *testing.T) {
 			Containers:     []corev1.Container{{Name: "main"}, {Name: "sidecar"}},
 			InitContainers: []corev1.Container{{Name: "init"}},
 		}
-		resourceSharers := ResourceSharersFromPCLQ([]grovecorev1alpha1.ResourceSharingSpec{
-			{Name: "gpu-mps", Scope: grovecorev1alpha1.ResourceSharingScopeAllReplicas},
+		resourceSharers := ResourceSharersFromPCLQ([]grovecorev1beta1.ResourceSharingSpec{
+			{Name: "gpu-mps", Scope: grovecorev1beta1.ResourceSharingScopeAllReplicas},
 		})
 		InjectResourceClaimRefs(podSpec, "pcs", resourceSharers, nil)
 
@@ -206,11 +206,11 @@ func TestInjectResourceClaimRefs(t *testing.T) {
 // --- FindPCSGConfig ---
 
 func TestFindPCSGConfig(t *testing.T) {
-	pcs := &grovecorev1alpha1.PodCliqueSet{
+	pcs := &grovecorev1beta1.PodCliqueSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "my-pcs"},
-		Spec: grovecorev1alpha1.PodCliqueSetSpec{
-			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
-				PodCliqueScalingGroupConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+		Spec: grovecorev1beta1.PodCliqueSetSpec{
+			Template: grovecorev1beta1.PodCliqueSetTemplateSpec{
+				PodCliqueScalingGroupConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 					{Name: "sga"},
 					{Name: "sgb"},
 				},
@@ -219,7 +219,7 @@ func TestFindPCSGConfig(t *testing.T) {
 	}
 
 	t.Run("match found", func(t *testing.T) {
-		pcsg := &grovecorev1alpha1.PodCliqueScalingGroup{
+		pcsg := &grovecorev1beta1.PodCliqueScalingGroup{
 			ObjectMeta: metav1.ObjectMeta{Name: "my-pcs-0-sga"},
 		}
 		cfg := FindPCSGConfig(pcs, pcsg, 0)
@@ -228,7 +228,7 @@ func TestFindPCSGConfig(t *testing.T) {
 	})
 
 	t.Run("different replica index", func(t *testing.T) {
-		pcsg := &grovecorev1alpha1.PodCliqueScalingGroup{
+		pcsg := &grovecorev1beta1.PodCliqueScalingGroup{
 			ObjectMeta: metav1.ObjectMeta{Name: "my-pcs-1-sgb"},
 		}
 		cfg := FindPCSGConfig(pcs, pcsg, 1)
@@ -237,7 +237,7 @@ func TestFindPCSGConfig(t *testing.T) {
 	})
 
 	t.Run("no match", func(t *testing.T) {
-		pcsg := &grovecorev1alpha1.PodCliqueScalingGroup{
+		pcsg := &grovecorev1beta1.PodCliqueScalingGroup{
 			ObjectMeta: metav1.ObjectMeta{Name: "my-pcs-0-nonexistent"},
 		}
 		cfg := FindPCSGConfig(pcs, pcsg, 0)
@@ -245,7 +245,7 @@ func TestFindPCSGConfig(t *testing.T) {
 	})
 
 	t.Run("wrong replica index", func(t *testing.T) {
-		pcsg := &grovecorev1alpha1.PodCliqueScalingGroup{
+		pcsg := &grovecorev1beta1.PodCliqueScalingGroup{
 			ObjectMeta: metav1.ObjectMeta{Name: "my-pcs-0-sga"},
 		}
 		cfg := FindPCSGConfig(pcs, pcsg, 1)
@@ -256,11 +256,11 @@ func TestFindPCSGConfig(t *testing.T) {
 // --- FindPCSGConfigByName ---
 
 func TestFindPCSGConfigByName(t *testing.T) {
-	pcs := &grovecorev1alpha1.PodCliqueSet{
+	pcs := &grovecorev1beta1.PodCliqueSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "my-pcs"},
-		Spec: grovecorev1alpha1.PodCliqueSetSpec{
-			Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
-				PodCliqueScalingGroupConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+		Spec: grovecorev1beta1.PodCliqueSetSpec{
+			Template: grovecorev1beta1.PodCliqueSetTemplateSpec{
+				PodCliqueScalingGroupConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 					{Name: "sga"},
 					{Name: "sgb"},
 				},
@@ -280,7 +280,7 @@ func TestFindPCSGConfigByName(t *testing.T) {
 	})
 
 	t.Run("consistent with FindPCSGConfig", func(t *testing.T) {
-		pcsg := &grovecorev1alpha1.PodCliqueScalingGroup{
+		pcsg := &grovecorev1beta1.PodCliqueScalingGroup{
 			ObjectMeta: metav1.ObjectMeta{Name: "my-pcs-1-sgb"},
 		}
 		byObj := FindPCSGConfig(pcs, pcsg, 1)
@@ -298,7 +298,7 @@ func TestEnsureResourceClaim(t *testing.T) {
 
 	t.Run("creates RC with correct spec, labels, and owner", func(t *testing.T) {
 		cl := fake.NewClientBuilder().WithScheme(scheme).Build()
-		owner := &grovecorev1alpha1.PodCliqueSet{
+		owner := &grovecorev1beta1.PodCliqueSet{
 			ObjectMeta: metav1.ObjectMeta{Name: "my-pcs", Namespace: "default", UID: "pcs-uid"},
 		}
 		spec := &resourcev1.ResourceClaimTemplateSpec{
@@ -334,7 +334,7 @@ func TestEnsureResourceClaim(t *testing.T) {
 			},
 		}
 		cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(existingRC).Build()
-		owner := &grovecorev1alpha1.PodCliqueSet{
+		owner := &grovecorev1beta1.PodCliqueSet{
 			ObjectMeta: metav1.ObjectMeta{Name: "my-pcs", Namespace: "default", UID: "pcs-uid"},
 		}
 		spec := &resourcev1.ResourceClaimTemplateSpec{
@@ -364,7 +364,7 @@ func TestEnsureResourceClaim(t *testing.T) {
 func TestEnsureResourceClaims(t *testing.T) {
 	scheme := newTestScheme()
 
-	templates := []grovecorev1alpha1.ResourceClaimTemplateConfig{
+	templates := []grovecorev1beta1.ResourceClaimTemplateConfig{
 		{
 			Name: "gpu-mps",
 			TemplateSpec: resourcev1.ResourceClaimTemplateSpec{
@@ -387,16 +387,16 @@ func TestEnsureResourceClaims(t *testing.T) {
 		},
 	}
 
-	owner := &grovecorev1alpha1.PodCliqueSet{
+	owner := &grovecorev1beta1.PodCliqueSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "my-pcs", Namespace: "default", UID: "pcs-uid"},
 	}
 	labels := ResourceClaimLabels("my-pcs")
 
 	t.Run("creates AllReplicas RCs only when replicaIndex is nil", func(t *testing.T) {
 		cl := fake.NewClientBuilder().WithScheme(scheme).Build()
-		resourceSharers := ResourceSharersFromPCLQ([]grovecorev1alpha1.ResourceSharingSpec{
-			{Name: "gpu-mps", Scope: grovecorev1alpha1.ResourceSharingScopeAllReplicas},
-			{Name: "shared-mem", Scope: grovecorev1alpha1.ResourceSharingScopePerReplica},
+		resourceSharers := ResourceSharersFromPCLQ([]grovecorev1beta1.ResourceSharingSpec{
+			{Name: "gpu-mps", Scope: grovecorev1beta1.ResourceSharingScopeAllReplicas},
+			{Name: "shared-mem", Scope: grovecorev1beta1.ResourceSharingScopePerReplica},
 		})
 
 		err := EnsureResourceClaims(context.Background(), cl, "my-pcs", "default", resourceSharers, templates, labels, owner, scheme, nil)
@@ -412,9 +412,9 @@ func TestEnsureResourceClaims(t *testing.T) {
 
 	t.Run("creates PerReplica RCs only when replicaIndex is set", func(t *testing.T) {
 		cl := fake.NewClientBuilder().WithScheme(scheme).Build()
-		resourceSharers := ResourceSharersFromPCLQ([]grovecorev1alpha1.ResourceSharingSpec{
-			{Name: "gpu-mps", Scope: grovecorev1alpha1.ResourceSharingScopeAllReplicas},
-			{Name: "shared-mem", Scope: grovecorev1alpha1.ResourceSharingScopePerReplica},
+		resourceSharers := ResourceSharersFromPCLQ([]grovecorev1beta1.ResourceSharingSpec{
+			{Name: "gpu-mps", Scope: grovecorev1beta1.ResourceSharingScopeAllReplicas},
+			{Name: "shared-mem", Scope: grovecorev1beta1.ResourceSharingScopePerReplica},
 		})
 
 		idx := 1
@@ -447,9 +447,9 @@ func TestDeletePerReplicaRCs(t *testing.T) {
 		}
 		cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(rc0, rc1, rcAll).Build()
 
-		resourceSharers := ResourceSharersFromPCLQ([]grovecorev1alpha1.ResourceSharingSpec{
-			{Name: "gpu-mps", Scope: grovecorev1alpha1.ResourceSharingScopePerReplica},
-			{Name: "gpu-mps", Scope: grovecorev1alpha1.ResourceSharingScopeAllReplicas},
+		resourceSharers := ResourceSharersFromPCLQ([]grovecorev1beta1.ResourceSharingSpec{
+			{Name: "gpu-mps", Scope: grovecorev1beta1.ResourceSharingScopePerReplica},
+			{Name: "gpu-mps", Scope: grovecorev1beta1.ResourceSharingScopeAllReplicas},
 		})
 
 		err := DeletePerReplicaRCs(context.Background(), cl, "owner", "default", resourceSharers, 1)
@@ -463,8 +463,8 @@ func TestDeletePerReplicaRCs(t *testing.T) {
 
 	t.Run("tolerates already-deleted RCs", func(t *testing.T) {
 		cl := fake.NewClientBuilder().WithScheme(scheme).Build()
-		resourceSharers := ResourceSharersFromPCLQ([]grovecorev1alpha1.ResourceSharingSpec{
-			{Name: "gpu-mps", Scope: grovecorev1alpha1.ResourceSharingScopePerReplica},
+		resourceSharers := ResourceSharersFromPCLQ([]grovecorev1beta1.ResourceSharingSpec{
+			{Name: "gpu-mps", Scope: grovecorev1beta1.ResourceSharingScopePerReplica},
 		})
 		err := DeletePerReplicaRCs(context.Background(), cl, "owner", "default", resourceSharers, 0)
 		require.NoError(t, err)

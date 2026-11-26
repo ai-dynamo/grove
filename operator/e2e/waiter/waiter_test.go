@@ -23,14 +23,14 @@ import (
 	"testing"
 	"time"
 
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-var testPCS = &grovecorev1alpha1.PodCliqueSet{}
+var testPCS = &grovecorev1beta1.PodCliqueSet{}
 
-type pcsWaiter = Waiter[*grovecorev1alpha1.PodCliqueSet]
+type pcsWaiter = Waiter[*grovecorev1beta1.PodCliqueSet]
 
 func TestWaitFor(t *testing.T) {
 	fetchErr := errors.New("connection refused")
@@ -39,26 +39,26 @@ func TestWaitFor(t *testing.T) {
 		name            string
 		waiter          *pcsWaiter
 		ctx             func() context.Context
-		fetchFn         FetchFunc[*grovecorev1alpha1.PodCliqueSet]
-		wantResult      *grovecorev1alpha1.PodCliqueSet
+		fetchFn         FetchFunc[*grovecorev1beta1.PodCliqueSet]
+		wantResult      *grovecorev1beta1.PodCliqueSet
 		wantErr         bool
 		wantErrIs       error
 		wantErrContains string
 	}{
 		{
 			name:   "immediate success",
-			waiter: New[*grovecorev1alpha1.PodCliqueSet]().WithTimeout(100 * time.Millisecond).WithInterval(10 * time.Millisecond),
-			fetchFn: func(_ context.Context) (*grovecorev1alpha1.PodCliqueSet, error) {
+			waiter: New[*grovecorev1beta1.PodCliqueSet]().WithTimeout(100 * time.Millisecond).WithInterval(10 * time.Millisecond),
+			fetchFn: func(_ context.Context) (*grovecorev1beta1.PodCliqueSet, error) {
 				return testPCS, nil
 			},
 			wantResult: testPCS,
 		},
 		{
 			name:   "success after retries",
-			waiter: New[*grovecorev1alpha1.PodCliqueSet]().WithTimeout(200 * time.Millisecond).WithInterval(10 * time.Millisecond).WithRetryOnError(),
-			fetchFn: func() FetchFunc[*grovecorev1alpha1.PodCliqueSet] {
+			waiter: New[*grovecorev1beta1.PodCliqueSet]().WithTimeout(200 * time.Millisecond).WithInterval(10 * time.Millisecond).WithRetryOnError(),
+			fetchFn: func() FetchFunc[*grovecorev1beta1.PodCliqueSet] {
 				var count atomic.Int32
-				return func(_ context.Context) (*grovecorev1alpha1.PodCliqueSet, error) {
+				return func(_ context.Context) (*grovecorev1beta1.PodCliqueSet, error) {
 					if count.Add(1) < 3 {
 						return nil, errors.New("not found")
 					}
@@ -69,8 +69,8 @@ func TestWaitFor(t *testing.T) {
 		},
 		{
 			name:   "timeout",
-			waiter: New[*grovecorev1alpha1.PodCliqueSet]().WithTimeout(50 * time.Millisecond).WithInterval(10 * time.Millisecond),
-			fetchFn: func(_ context.Context) (*grovecorev1alpha1.PodCliqueSet, error) {
+			waiter: New[*grovecorev1beta1.PodCliqueSet]().WithTimeout(50 * time.Millisecond).WithInterval(10 * time.Millisecond),
+			fetchFn: func(_ context.Context) (*grovecorev1beta1.PodCliqueSet, error) {
 				return nil, nil
 			},
 			wantErr:         true,
@@ -78,8 +78,8 @@ func TestWaitFor(t *testing.T) {
 		},
 		{
 			name:   "fetch error fails immediately by default",
-			waiter: New[*grovecorev1alpha1.PodCliqueSet]().WithTimeout(100 * time.Millisecond).WithInterval(10 * time.Millisecond),
-			fetchFn: func(_ context.Context) (*grovecorev1alpha1.PodCliqueSet, error) {
+			waiter: New[*grovecorev1beta1.PodCliqueSet]().WithTimeout(100 * time.Millisecond).WithInterval(10 * time.Millisecond),
+			fetchFn: func(_ context.Context) (*grovecorev1beta1.PodCliqueSet, error) {
 				return nil, fetchErr
 			},
 			wantErr:   true,
@@ -87,10 +87,10 @@ func TestWaitFor(t *testing.T) {
 		},
 		{
 			name:   "fetch errors retried with WithRetryOnError",
-			waiter: New[*grovecorev1alpha1.PodCliqueSet]().WithTimeout(200 * time.Millisecond).WithInterval(10 * time.Millisecond).WithRetryOnError(),
-			fetchFn: func() FetchFunc[*grovecorev1alpha1.PodCliqueSet] {
+			waiter: New[*grovecorev1beta1.PodCliqueSet]().WithTimeout(200 * time.Millisecond).WithInterval(10 * time.Millisecond).WithRetryOnError(),
+			fetchFn: func() FetchFunc[*grovecorev1beta1.PodCliqueSet] {
 				var count atomic.Int32
-				return func(_ context.Context) (*grovecorev1alpha1.PodCliqueSet, error) {
+				return func(_ context.Context) (*grovecorev1beta1.PodCliqueSet, error) {
 					if count.Add(1) < 3 {
 						return nil, errors.New("not ready")
 					}
@@ -101,13 +101,13 @@ func TestWaitFor(t *testing.T) {
 		},
 		{
 			name:   "context cancellation",
-			waiter: New[*grovecorev1alpha1.PodCliqueSet]().WithTimeout(100 * time.Millisecond).WithInterval(10 * time.Millisecond),
+			waiter: New[*grovecorev1beta1.PodCliqueSet]().WithTimeout(100 * time.Millisecond).WithInterval(10 * time.Millisecond),
 			ctx: func() context.Context {
 				ctx, cancel := context.WithCancel(context.Background())
 				cancel()
 				return ctx
 			},
-			fetchFn: func(_ context.Context) (*grovecorev1alpha1.PodCliqueSet, error) {
+			fetchFn: func(_ context.Context) (*grovecorev1beta1.PodCliqueSet, error) {
 				return nil, nil
 			},
 			wantErr: true,
@@ -121,7 +121,7 @@ func TestWaitFor(t *testing.T) {
 				ctx = tt.ctx()
 			}
 
-			result, err := tt.waiter.WaitFor(ctx, tt.fetchFn, IsNotZero[*grovecorev1alpha1.PodCliqueSet])
+			result, err := tt.waiter.WaitFor(ctx, tt.fetchFn, IsNotZero[*grovecorev1beta1.PodCliqueSet])
 
 			if tt.wantErr {
 				require.Error(t, err)
@@ -141,34 +141,34 @@ func TestWaitFor(t *testing.T) {
 }
 
 func TestWaitUntil_ImmediateSuccess(t *testing.T) {
-	w := New[*grovecorev1alpha1.PodCliqueSet]().WithTimeout(100 * time.Millisecond).WithInterval(10 * time.Millisecond)
+	w := New[*grovecorev1beta1.PodCliqueSet]().WithTimeout(100 * time.Millisecond).WithInterval(10 * time.Millisecond)
 	err := w.WaitUntil(context.Background(),
-		func(_ context.Context) (*grovecorev1alpha1.PodCliqueSet, error) { return testPCS, nil },
-		IsNotZero[*grovecorev1alpha1.PodCliqueSet],
+		func(_ context.Context) (*grovecorev1beta1.PodCliqueSet, error) { return testPCS, nil },
+		IsNotZero[*grovecorev1beta1.PodCliqueSet],
 	)
 	require.NoError(t, err)
 }
 
 func TestWaitUntil_SuccessAfterRetries(t *testing.T) {
 	var count atomic.Int32
-	w := New[*grovecorev1alpha1.PodCliqueSet]().WithTimeout(200 * time.Millisecond).WithInterval(10 * time.Millisecond).WithRetryOnError()
+	w := New[*grovecorev1beta1.PodCliqueSet]().WithTimeout(200 * time.Millisecond).WithInterval(10 * time.Millisecond).WithRetryOnError()
 	err := w.WaitUntil(context.Background(),
-		func(_ context.Context) (*grovecorev1alpha1.PodCliqueSet, error) {
+		func(_ context.Context) (*grovecorev1beta1.PodCliqueSet, error) {
 			if count.Add(1) < 3 {
 				return nil, errors.New("not found")
 			}
 			return testPCS, nil
 		},
-		IsNotZero[*grovecorev1alpha1.PodCliqueSet],
+		IsNotZero[*grovecorev1beta1.PodCliqueSet],
 	)
 	require.NoError(t, err)
 }
 
 func TestWaitUntil_Timeout(t *testing.T) {
-	w := New[*grovecorev1alpha1.PodCliqueSet]().WithTimeout(50 * time.Millisecond).WithInterval(10 * time.Millisecond)
+	w := New[*grovecorev1beta1.PodCliqueSet]().WithTimeout(50 * time.Millisecond).WithInterval(10 * time.Millisecond)
 	err := w.WaitUntil(context.Background(),
-		func(_ context.Context) (*grovecorev1alpha1.PodCliqueSet, error) { return nil, nil },
-		IsNotZero[*grovecorev1alpha1.PodCliqueSet],
+		func(_ context.Context) (*grovecorev1beta1.PodCliqueSet, error) { return nil, nil },
+		IsNotZero[*grovecorev1beta1.PodCliqueSet],
 	)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "timeout")
@@ -176,10 +176,10 @@ func TestWaitUntil_Timeout(t *testing.T) {
 
 func TestWaitUntil_FetchError_Default(t *testing.T) {
 	fetchErr := errors.New("broken")
-	w := New[*grovecorev1alpha1.PodCliqueSet]().WithTimeout(100 * time.Millisecond).WithInterval(10 * time.Millisecond)
+	w := New[*grovecorev1beta1.PodCliqueSet]().WithTimeout(100 * time.Millisecond).WithInterval(10 * time.Millisecond)
 	err := w.WaitUntil(context.Background(),
-		func(_ context.Context) (*grovecorev1alpha1.PodCliqueSet, error) { return nil, fetchErr },
-		IsNotZero[*grovecorev1alpha1.PodCliqueSet],
+		func(_ context.Context) (*grovecorev1beta1.PodCliqueSet, error) { return nil, fetchErr },
+		IsNotZero[*grovecorev1beta1.PodCliqueSet],
 	)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, fetchErr)
@@ -187,24 +187,24 @@ func TestWaitUntil_FetchError_Default(t *testing.T) {
 
 func TestWaitUntil_FetchError_RetryOnError(t *testing.T) {
 	var count atomic.Int32
-	w := New[*grovecorev1alpha1.PodCliqueSet]().
+	w := New[*grovecorev1beta1.PodCliqueSet]().
 		WithTimeout(200 * time.Millisecond).
 		WithInterval(10 * time.Millisecond).
 		WithRetryOnError()
 	err := w.WaitUntil(context.Background(),
-		func(_ context.Context) (*grovecorev1alpha1.PodCliqueSet, error) {
+		func(_ context.Context) (*grovecorev1beta1.PodCliqueSet, error) {
 			if count.Add(1) < 3 {
 				return nil, errors.New("not ready")
 			}
 			return testPCS, nil
 		},
-		IsNotZero[*grovecorev1alpha1.PodCliqueSet],
+		IsNotZero[*grovecorev1beta1.PodCliqueSet],
 	)
 	require.NoError(t, err)
 }
 
 func TestDefaults(t *testing.T) {
-	w := New[*grovecorev1alpha1.PodCliqueSet]()
+	w := New[*grovecorev1beta1.PodCliqueSet]()
 	assert.Equal(t, DefaultTimeout, w.timeout)
 	assert.Equal(t, DefaultInterval, w.interval)
 	assert.Nil(t, w.logger)

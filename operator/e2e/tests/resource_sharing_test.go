@@ -25,7 +25,7 @@ import (
 	"testing"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/e2e/grove/workload"
 	k8sutils "github.com/ai-dynamo/grove/operator/e2e/k8s"
 	"github.com/ai-dynamo/grove/operator/e2e/k8s/pods"
@@ -42,7 +42,6 @@ const (
 	rsYAMLPath     = "../yaml/workload-resource-sharing.yaml"
 	rsNamespace    = "default"
 )
-
 
 // --- RC name inventories ---
 //
@@ -727,7 +726,7 @@ func verifyMultiPodPerReplicaRefs(t *testing.T, allPods []v1.Pod, pclqLabel stri
 
 func verifyImmutabilityRejection(t *testing.T, tc *testctx.TestContext) {
 	t.Helper()
-	var pcs grovecorev1alpha1.PodCliqueSet
+	var pcs grovecorev1beta1.PodCliqueSet
 	if err := tc.Client.Get(tc.Ctx, types.NamespacedName{Namespace: tc.Namespace, Name: rsWorkloadName}, &pcs); err != nil {
 		t.Fatalf("Failed to get PCS for immutability test: %v", err)
 	}

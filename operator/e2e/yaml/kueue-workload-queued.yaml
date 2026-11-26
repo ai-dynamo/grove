@@ -4,7 +4,7 @@
 # filler already fully consumes, so it stays un-admitted (pods gated, Workload not
 # Admitted) until the filler PodCliqueSet is deleted mid-test and its quota frees up.
 ---
-apiVersion: grove.io/v1alpha1
+apiVersion: grove.io/v1beta1
 kind: PodCliqueSet
 metadata:
   name: kueue-workload-queued

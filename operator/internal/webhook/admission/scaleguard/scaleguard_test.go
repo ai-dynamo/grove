@@ -20,7 +20,7 @@ import (
 	"testing"
 	"time"
 
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/go-logr/logr"
@@ -51,7 +51,7 @@ func TestHandle(t *testing.T) {
 	resources := []guardResource{
 		{
 			kind:     "PodClique",
-			newEmpty: func() client.Object { return &grovecorev1alpha1.PodClique{} },
+			newEmpty: func() client.Object { return &grovecorev1beta1.PodClique{} },
 			newTarget: func(pcsReplicaIndex int, minAvailable int32) client.Object {
 				b := testutils.NewPodCliqueBuilder(testPCSName, "uid", "frontend", testNamespace, int32(pcsReplicaIndex))
 				if minAvailable > 0 {
@@ -62,7 +62,7 @@ func TestHandle(t *testing.T) {
 		},
 		{
 			kind:     "PodCliqueScalingGroup",
-			newEmpty: func() client.Object { return &grovecorev1alpha1.PodCliqueScalingGroup{} },
+			newEmpty: func() client.Object { return &grovecorev1beta1.PodCliqueScalingGroup{} },
 			newTarget: func(pcsReplicaIndex int, minAvailable int32) client.Object {
 				b := testutils.NewPodCliqueScalingGroupBuilder("decode", testNamespace, testPCSName, pcsReplicaIndex)
 				if minAvailable > 0 {
@@ -204,22 +204,22 @@ func TestMinAvailableOf(t *testing.T) {
 	}{
 		{
 			description: "reads minAvailable from a PodClique",
-			target:      &grovecorev1alpha1.PodClique{Spec: grovecorev1alpha1.PodCliqueSpec{MinAvailable: ptr.To[int32](3)}},
+			target:      &grovecorev1beta1.PodClique{Spec: grovecorev1beta1.PodCliqueSpec{MinAvailable: ptr.To[int32](3)}},
 			want:        ptr.To[int32](3),
 		},
 		{
 			description: "reads minAvailable from a PodCliqueScalingGroup",
-			target:      &grovecorev1alpha1.PodCliqueScalingGroup{Spec: grovecorev1alpha1.PodCliqueScalingGroupSpec{MinAvailable: ptr.To[int32](2)}},
+			target:      &grovecorev1beta1.PodCliqueScalingGroup{Spec: grovecorev1beta1.PodCliqueScalingGroupSpec{MinAvailable: ptr.To[int32](2)}},
 			want:        ptr.To[int32](2),
 		},
 		{
 			description: "returns nil when minAvailable is unset",
-			target:      &grovecorev1alpha1.PodClique{},
+			target:      &grovecorev1beta1.PodClique{},
 			want:        nil,
 		},
 		{
 			description: "returns nil for an unexpected type",
-			target:      &grovecorev1alpha1.PodCliqueSet{},
+			target:      &grovecorev1beta1.PodCliqueSet{},
 			want:        nil,
 		},
 	}
@@ -249,15 +249,15 @@ func replicasJSON(replicas int32) []byte {
 // coherentPCS builds a Coherent-strategy PodCliqueSet. When updatingReplicaIndices is non-nil an update is
 // in flight with those replica indices in CurrentlyUpdating, UpdateEndedAt unset. A nil argument means no
 // update is in progress.
-func coherentPCS(updatingReplicaIndices []int32) *grovecorev1alpha1.PodCliqueSet {
+func coherentPCS(updatingReplicaIndices []int32) *grovecorev1beta1.PodCliqueSet {
 	builder := testutils.NewPodCliqueSetBuilder(testPCSName, testNamespace, "uid").
-		WithUpdateStrategy(&grovecorev1alpha1.PodCliqueSetUpdateStrategy{Type: grovecorev1alpha1.CoherentStrategy})
+		WithUpdateStrategy(&grovecorev1beta1.PodCliqueSetUpdateStrategy{Type: grovecorev1beta1.CoherentStrategy})
 	if updatingReplicaIndices != nil {
-		currentlyUpdating := make([]grovecorev1alpha1.PodCliqueSetReplicaUpdateProgress, 0, len(updatingReplicaIndices))
+		currentlyUpdating := make([]grovecorev1beta1.PodCliqueSetReplicaUpdateProgress, 0, len(updatingReplicaIndices))
 		for _, replicaIndex := range updatingReplicaIndices {
-			currentlyUpdating = append(currentlyUpdating, grovecorev1alpha1.PodCliqueSetReplicaUpdateProgress{ReplicaIndex: replicaIndex})
+			currentlyUpdating = append(currentlyUpdating, grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{ReplicaIndex: replicaIndex})
 		}
-		builder = builder.WithUpdateProgress(&grovecorev1alpha1.PodCliqueSetUpdateProgress{
+		builder = builder.WithUpdateProgress(&grovecorev1beta1.PodCliqueSetUpdateProgress{
 			UpdateStartedAt:   metav1.NewTime(time.Now()),
 			CurrentlyUpdating: currentlyUpdating,
 		})

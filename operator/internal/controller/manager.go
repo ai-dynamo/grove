@@ -15,6 +15,7 @@
 package controller
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -23,7 +24,7 @@ import (
 	"time"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
-	configv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
+	configv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 	groveclientscheme "github.com/ai-dynamo/grove/operator/internal/client"
 	"github.com/ai-dynamo/grove/operator/internal/controller/cert"
 	"github.com/ai-dynamo/grove/operator/internal/scheduler"
@@ -34,6 +35,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/rest"
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -46,24 +48,33 @@ import (
 )
 
 var (
-	waitTillWebhookCertsReady  = cert.WaitTillWebhookCertsReady
-	registerControllersWithMgr = RegisterControllers
-	registerWebhooksWithMgr    = webhook.Register
+	waitTillWebhookCertsReady    = cert.WaitTillWebhookCertsReady
+	registerWebhooksWithMgr      = webhook.Register
+	waitTillWebhookServerStarted = WaitForLocalWebhookServer
 )
 
 // CreateManager creates the manager.
-func CreateManager(operatorCfg *configv1alpha1.OperatorConfiguration) (ctrl.Manager, error) {
+func CreateManager(operatorCfg *configv1beta1.OperatorConfiguration) (ctrl.Manager, error) {
 	return ctrl.NewManager(getRestConfig(operatorCfg), createManagerOptions(operatorCfg))
 }
 
-// RegisterControllersAndWebhooks adds all the controllers and webhooks to the controller-manager using the passed in Config.
-func RegisterControllersAndWebhooks(mgr ctrl.Manager, logger logr.Logger, operatorCfg *configv1alpha1.OperatorConfiguration, certsReady chan struct{}, schedRegistry scheduler.Registry) error {
+// StartWebhooksAfterCertificateInjection waits for cert-controller to populate the serving certificate files before
+// adding the webhook server to a running manager. It then waits until that server accepts TLS connections.
+func StartWebhooksAfterCertificateInjection(ctx context.Context, mgr ctrl.Manager, logger logr.Logger, operatorCfg *configv1beta1.OperatorConfiguration, certsReady chan struct{}, schedRegistry scheduler.Registry) error {
 	waitTillWebhookCertsReady(logger, certsReady)
-	if err := registerControllersWithMgr(mgr, operatorCfg, schedRegistry); err != nil {
-		return err
-	}
 	if err := registerWebhooksWithMgr(mgr, operatorCfg, schedRegistry); err != nil {
 		return err
+	}
+	return waitTillWebhookServerStarted(ctx, mgr)
+}
+
+// WaitForLocalWebhookServer blocks until the manager's local webhook server accepts TLS connections.
+func WaitForLocalWebhookServer(ctx context.Context, mgr ctrl.Manager) error {
+	started := mgr.GetWebhookServer().StartedChecker()
+	if err := wait.PollUntilContextCancel(ctx, 200*time.Millisecond, true, func(context.Context) (bool, error) {
+		return started(&http.Request{}) == nil, nil
+	}); err != nil {
+		return fmt.Errorf("webhook server did not start: %w", err)
 	}
 	return nil
 }
@@ -87,7 +98,7 @@ func SetupHealthAndReadinessEndpoints(mgr ctrl.Manager, webhookCertsReadyCh chan
 }
 
 // createManagerOptions constructs controller-runtime Manager options from operator configuration.
-func createManagerOptions(operatorCfg *configv1alpha1.OperatorConfiguration) ctrl.Options {
+func createManagerOptions(operatorCfg *configv1beta1.OperatorConfiguration) ctrl.Options {
 	opts := ctrl.Options{
 		Scheme:                  groveclientscheme.Scheme,
 		GracefulShutdownTimeout: ptr.To(5 * time.Second),
@@ -145,7 +156,7 @@ func cacheOptions() cache.Options {
 }
 
 // getRestConfig creates a Kubernetes REST config with customized client connection settings.
-func getRestConfig(operatorCfg *configv1alpha1.OperatorConfiguration) *rest.Config {
+func getRestConfig(operatorCfg *configv1beta1.OperatorConfiguration) *rest.Config {
 	restCfg := ctrl.GetConfigOrDie()
 	if operatorCfg != nil {
 		restCfg.Burst = operatorCfg.ClientConnection.Burst

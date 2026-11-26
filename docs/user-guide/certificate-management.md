@@ -16,7 +16,7 @@ Grove supports two certificate management modes:
 By default, Grove's built-in cert-controller automatically:
 - Generates self-signed CA and server certificates
 - Stores them in a Kubernetes Secret
-- Injects the CA bundle into webhook configurations
+- Injects the CA bundle into admission and conversion webhook configurations
 - Rotates certificates before expiry
 
 This mode requires no additional configuration. Simply deploy Grove:
@@ -29,7 +29,7 @@ helm upgrade -i grove oci://ghcr.io/ai-dynamo/grove/grove-charts --version <vers
 
 1. On startup, the cert-controller checks if the webhook certificate Secret exists
 2. If missing or expired, it generates new certificates
-3. The CA bundle is automatically injected into `ValidatingWebhookConfiguration` and `MutatingWebhookConfiguration` resources
+3. The CA bundle is automatically injected into `ValidatingWebhookConfiguration`, `MutatingWebhookConfiguration`, and PodCliqueSet CRD conversion configuration
 4. Certificates are stored in the Secret specified by `config.server.webhooks.secretName` (default: `grove-webhook-server-cert`)
 
 ## External Certificate Management
@@ -71,6 +71,10 @@ webhooks:
   caBundle: "<base64-encoded-ca-certificate>"
 ```
 
+The CA bundle above configures the admission webhooks. The CRD installer reads `ca.crt` from the certificate Secret and configures the PodCliqueSet conversion webhook before the operator starts.
+
+> **Note:** If no external controller manages the conversion webhook CA bundle, restart the operator Pod after rotating `ca.crt`. The CRD installer refreshes the bundle when the Pod starts. When you use cert-manager, configure `cainjector` as described below so that rotation does not require a restart.
+
 ### Using cert-manager
 
 [cert-manager](https://cert-manager.io/) is a popular choice for managing certificates in Kubernetes. Here's how to configure Grove with cert-manager.
@@ -88,6 +92,7 @@ Wait for cert-manager to be ready:
 ```bash
 kubectl wait --for=condition=Available deployment/cert-manager -n cert-manager --timeout=120s
 kubectl wait --for=condition=Available deployment/cert-manager-webhook -n cert-manager --timeout=120s
+kubectl wait --for=condition=Available deployment/cert-manager-cainjector -n cert-manager --timeout=120s
 ```
 
 #### Step 2: Create a Certificate Issuer
@@ -163,9 +168,9 @@ spec:
     kind: Issuer
 ```
 
-#### Step 4: Configure Webhook Annotations
+#### Step 4: Configure Admission Webhook Annotations
 
-cert-manager can automatically inject the CA bundle into webhook configurations. Add these annotations to your Helm values:
+cert-manager's `cainjector` can automatically inject the CA bundle into admission webhook configurations. Add these annotations to your Helm values:
 
 ```yaml
 webhooks:
@@ -195,6 +200,18 @@ Or create a `values.yaml` file with the configuration shown above and deploy:
 ```bash
 helm upgrade -i grove oci://ghcr.io/ai-dynamo/grove/grove-charts --version <version> -f values.yaml
 ```
+
+#### Step 6: Configure Conversion Webhook CA Injection
+
+Annotate the PodCliqueSet CRD so that cert-manager's `cainjector` maintains the CA bundle in its conversion webhook configuration. The annotation value references the `Certificate`, not its generated Secret:
+
+```bash
+kubectl annotate crd podcliquesets.grove.io \
+  cert-manager.io/inject-ca-from=<namespace>/grove-webhook-cert \
+  --overwrite
+```
+
+The CRD must already exist, so run this command after installing Grove. The CRD installer supplies the initial CA bundle when the operator starts, and cert-manager updates it when the certificate rotates.
 
 ### Manual Certificate Management
 
@@ -292,7 +309,7 @@ The cert-controller will generate new certificates on the next operator restart.
 |------------|------|---------|-------------|
 | `config.server.webhooks.certProvisionMode` | string | `auto` | Certificate provisioning mode: `auto` (cert-controller generates certs) or `manual` (external certs) |
 | `config.server.webhooks.secretName` | string | `grove-webhook-server-cert` | Name of the Secret containing certificates |
-| `webhooks.caBundle` | string | `""` | Base64-encoded CA certificate for webhook configurations |
+| `webhooks.caBundle` | string | `""` | Base64-encoded CA certificate for admission webhook configurations |
 | `webhooks.podCliqueSetValidationWebhook.annotations` | map | `{}` | Annotations for the validation webhook (e.g., cert-manager injection) |
 | `webhooks.podCliqueSetDefaultingWebhook.annotations` | map | `{}` | Annotations for the defaulting webhook |
 | `webhooks.authorizerWebhook.annotations` | map | `{}` | Annotations for the authorizer webhook |

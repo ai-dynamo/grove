@@ -34,6 +34,12 @@ const (
 	PodCliqueStatusResyncInterval = 3 * time.Minute
 	// EnvVarServiceAccountName is the name of the environment variable that stores the serviceAccountName of the operator pod.
 	EnvVarServiceAccountName = "GROVE_OPERATOR_SERVICE_ACCOUNT_NAME"
+	// EnvVarServiceName is the name of the environment variable that stores the name of the Service in front of the
+	// operator's webhook server.
+	EnvVarServiceName = "GROVE_OPERATOR_SERVICE_NAME"
+	// DefaultServiceName is the name of the Service in front of the operator's webhook server when EnvVarServiceName
+	// is not set.
+	DefaultServiceName = "grove-operator"
 )
 
 // constants used for pod lifecycle events
@@ -103,6 +109,12 @@ const (
 	ReasonPodCliqueSetReplicaDeleteSuccessful = "PodCliqueSetReplicaDeleteSuccessful"
 	// ReasonPodCliqueSetReplicaDeleteFailed is an event reason which represents that the deletion of a PodCliqueSet replica failed.
 	ReasonPodCliqueSetReplicaDeleteFailed = "PodCliqueSetReplicaDeleteFailed"
+	// ReasonPodCliqueSetReplicaIndicesSelectedForScaleIn indicates that PodCliqueSet replica indices were selected for scale-in.
+	ReasonPodCliqueSetReplicaIndicesSelectedForScaleIn = "PodCliqueSetReplicaIndicesSelectedForScaleIn"
+	// ReasonPodCliqueSetReplicaIndicesReservedForScaleOut indicates that PodCliqueSet replica indices were reserved for scale-out.
+	ReasonPodCliqueSetReplicaIndicesReservedForScaleOut = "PodCliqueSetReplicaIndicesReservedForScaleOut"
+	// ReasonPodCliqueSetReplicaScaleInCompleted indicates that resource cleanup completed for one scaled-in PodCliqueSet replica.
+	ReasonPodCliqueSetReplicaScaleInCompleted = "PodCliqueSetReplicaScaleInCompleted"
 )
 
 // constants for ClusterTopologyBinding lifecycle events

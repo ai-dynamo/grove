@@ -19,7 +19,7 @@ import (
 	"strconv"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 
 	"github.com/samber/lo"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -29,14 +29,14 @@ import (
 
 // PodGangEntryBuilder provides a fluent interface for building test PodGangEntry values.
 type PodGangEntryBuilder struct {
-	entry grovecorev1alpha1.PodGangEntry
+	entry grovecorev1beta1.PodGangEntry
 }
 
 // NewPodGangEntryBuilder creates a PodGangEntryBuilder for an entry with the given generation hash
 // and epoch. Epoch is the entry's identity.
 func NewPodGangEntryBuilder(pcsGenerationHash, epoch string) *PodGangEntryBuilder {
 	return &PodGangEntryBuilder{
-		entry: grovecorev1alpha1.PodGangEntry{
+		entry: grovecorev1beta1.PodGangEntry{
 			Epoch:                      epoch,
 			PodCliqueSetGenerationHash: pcsGenerationHash,
 		},
@@ -44,7 +44,7 @@ func NewPodGangEntryBuilder(pcsGenerationHash, epoch string) *PodGangEntryBuilde
 }
 
 // WithRole sets the Role on the entry.
-func (b *PodGangEntryBuilder) WithRole(role grovecorev1alpha1.PodGangEntryRole) *PodGangEntryBuilder {
+func (b *PodGangEntryBuilder) WithRole(role grovecorev1beta1.PodGangEntryRole) *PodGangEntryBuilder {
 	b.entry.Role = role
 	return b
 }
@@ -68,38 +68,38 @@ func (b *PodGangEntryBuilder) WithDependsOn(epochs ...string) *PodGangEntryBuild
 }
 
 // Build returns the constructed PodGangEntry.
-func (b *PodGangEntryBuilder) Build() grovecorev1alpha1.PodGangEntry {
+func (b *PodGangEntryBuilder) Build() grovecorev1beta1.PodGangEntry {
 	return b.entry
 }
 
 // NewAnchorEntry builds an Anchor PodGangEntry carrying a single PodCliqueScalingGroup's replica
 // indices. Use the builder directly when an entry also needs DependsOn or standalone PodCliques.
-func NewAnchorEntry(pcsGenerationHash, epoch string, pcsgName string, pcsgReplicaIndices ...int32) grovecorev1alpha1.PodGangEntry {
+func NewAnchorEntry(pcsGenerationHash, epoch string, pcsgName string, pcsgReplicaIndices ...int32) grovecorev1beta1.PodGangEntry {
 	return NewPodGangEntryBuilder(pcsGenerationHash, epoch).
-		WithRole(grovecorev1alpha1.PodGangEntryRoleAnchor).
+		WithRole(grovecorev1beta1.PodGangEntryRoleAnchor).
 		WithPCSGReplicaIndices(map[string][]int32{pcsgName: pcsgReplicaIndices}).
 		Build()
 }
 
 // NewTailEntry builds a Tail PodGangEntry carrying a single PodCliqueScalingGroup's replica indices.
-func NewTailEntry(pcsGenerationHash, epoch, pcsgName string, pcsgReplicaIndices ...int32) grovecorev1alpha1.PodGangEntry {
+func NewTailEntry(pcsGenerationHash, epoch, pcsgName string, pcsgReplicaIndices ...int32) grovecorev1beta1.PodGangEntry {
 	return NewPodGangEntryBuilder(pcsGenerationHash, epoch).
-		WithRole(grovecorev1alpha1.PodGangEntryRoleTail).
+		WithRole(grovecorev1beta1.PodGangEntryRoleTail).
 		WithPCSGReplicaIndices(map[string][]int32{pcsgName: pcsgReplicaIndices}).
 		Build()
 }
 
 // NewScaleOutEntry builds a ScaleOut PodGangEntry carrying a single PodCliqueScalingGroup's replica indices.
-func NewScaleOutEntry(pcsGenerationHash, epoch, pcsgName string, pcsgReplicaIndices ...int32) grovecorev1alpha1.PodGangEntry {
+func NewScaleOutEntry(pcsGenerationHash, epoch, pcsgName string, pcsgReplicaIndices ...int32) grovecorev1beta1.PodGangEntry {
 	return NewPodGangEntryBuilder(pcsGenerationHash, epoch).
-		WithRole(grovecorev1alpha1.PodGangEntryRoleScaleOut).
+		WithRole(grovecorev1beta1.PodGangEntryRoleScaleOut).
 		WithPCSGReplicaIndices(map[string][]int32{pcsgName: pcsgReplicaIndices}).
 		Build()
 }
 
 // PodGangMapBuilder provides a fluent interface for building test PodGangMap objects.
 type PodGangMapBuilder struct {
-	pgm *grovecorev1alpha1.PodGangMap
+	pgm *grovecorev1beta1.PodGangMap
 }
 
 // NewPodGangMapBuilder creates a builder for the PodGangMap of a PodCliqueSet replica. The map is
@@ -115,14 +115,14 @@ func NewPodGangMapBuilder(pcsName, namespace string, pcsUID types.UID, replicaIn
 		},
 	)
 	return &PodGangMapBuilder{
-		pgm: &grovecorev1alpha1.PodGangMap{
+		pgm: &grovecorev1beta1.PodGangMap{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      apicommon.GeneratePodGangMapName(apicommon.ResourceNameReplica{Name: pcsName, Replica: replicaIndex}),
 				Namespace: namespace,
 				Labels:    labels,
 				OwnerReferences: []metav1.OwnerReference{
 					{
-						APIVersion:         grovecorev1alpha1.SchemeGroupVersion.String(),
+						APIVersion:         grovecorev1beta1.SchemeGroupVersion.String(),
 						Kind:               "PodCliqueSet",
 						Name:               pcsName,
 						UID:                pcsUID,
@@ -131,25 +131,25 @@ func NewPodGangMapBuilder(pcsName, namespace string, pcsUID types.UID, replicaIn
 					},
 				},
 			},
-			Spec: grovecorev1alpha1.PodGangMapSpec{PodCliqueSetReplicaIndex: int32(replicaIndex)},
+			Spec: grovecorev1beta1.PodGangMapSpec{PodCliqueSetReplicaIndex: int32(replicaIndex)},
 		},
 	}
 }
 
 // WithEntries sets the Spec.Entries on the PodGangMap.
-func (b *PodGangMapBuilder) WithEntries(entries ...grovecorev1alpha1.PodGangEntry) *PodGangMapBuilder {
+func (b *PodGangMapBuilder) WithEntries(entries ...grovecorev1beta1.PodGangEntry) *PodGangMapBuilder {
 	b.pgm.Spec.Entries = entries
 	return b
 }
 
 // Build returns the constructed PodGangMap.
-func (b *PodGangMapBuilder) Build() *grovecorev1alpha1.PodGangMap {
+func (b *PodGangMapBuilder) Build() *grovecorev1beta1.PodGangMap {
 	return b.pgm
 }
 
 // RolesOf returns the role of each entry in order.
-func RolesOf(entries []grovecorev1alpha1.PodGangEntry) []grovecorev1alpha1.PodGangEntryRole {
-	roles := make([]grovecorev1alpha1.PodGangEntryRole, 0, len(entries))
+func RolesOf(entries []grovecorev1beta1.PodGangEntry) []grovecorev1beta1.PodGangEntryRole {
+	roles := make([]grovecorev1beta1.PodGangEntryRole, 0, len(entries))
 	for i := range entries {
 		roles = append(roles, entries[i].Role)
 	}
@@ -157,11 +157,11 @@ func RolesOf(entries []grovecorev1alpha1.PodGangEntry) []grovecorev1alpha1.PodGa
 }
 
 // EntryByRole returns the first entry with the given role, or a zero entry when none matches.
-func EntryByRole(entries []grovecorev1alpha1.PodGangEntry, role grovecorev1alpha1.PodGangEntryRole) grovecorev1alpha1.PodGangEntry {
+func EntryByRole(entries []grovecorev1beta1.PodGangEntry, role grovecorev1beta1.PodGangEntryRole) grovecorev1beta1.PodGangEntry {
 	for i := range entries {
 		if entries[i].Role == role {
 			return entries[i]
 		}
 	}
-	return grovecorev1alpha1.PodGangEntry{}
+	return grovecorev1beta1.PodGangEntry{}
 }

@@ -20,7 +20,7 @@ import (
 	"strconv"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	groveerr "github.com/ai-dynamo/grove/operator/internal/errors"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
@@ -53,8 +53,7 @@ func (r _resource) reconcileReplicasToCommittedPodGangs(ctx context.Context, log
 		return err
 	}
 	logger.Info("Recreating PodCliqueScalingGroup replicas onto their committed PodGang", "pcsg", client.ObjectKeyFromObject(ss.pcsg), "replicaIndices", indicesToRecreate)
-	return groveerr.New(
-		groveerr.ErrCodeContinueReconcileAndRequeue,
+	return groveerr.NewContinueReconcileAndRequeue(
 		component.OperationSync,
 		fmt.Sprintf("recreating %d replica(s) of PodCliqueScalingGroup %v onto their committed PodGang, requeuing", len(indicesToRecreate), client.ObjectKeyFromObject(ss.pcsg)),
 	)
@@ -95,16 +94,16 @@ func replicaIndicesToRecreate(ss *syncSnapshot) ([]string, error) {
 
 // allMembersOnPodGang reports whether every member PodClique carries podGangName on its grove.io/podgang
 // label. Every member of one PodCliqueScalingGroup replica shares a single PodGang.
-func allMembersOnPodGang(members []grovecorev1alpha1.PodClique, podGangName string) bool {
-	return lo.EveryBy(members, func(pclq grovecorev1alpha1.PodClique) bool {
+func allMembersOnPodGang(members []grovecorev1beta1.PodClique, podGangName string) bool {
+	return lo.EveryBy(members, func(pclq grovecorev1beta1.PodClique) bool {
 		return pclq.Labels[apicommon.LabelPodGang] == podGangName
 	})
 }
 
 // anyMemberTerminating reports whether any member PodClique of a PodCliqueScalingGroup replica has a
 // deletion timestamp, so the replica is draining from a prior recreation.
-func anyMemberTerminating(members []grovecorev1alpha1.PodClique) bool {
-	return lo.SomeBy(members, func(pclq grovecorev1alpha1.PodClique) bool {
+func anyMemberTerminating(members []grovecorev1beta1.PodClique) bool {
+	return lo.SomeBy(members, func(pclq grovecorev1beta1.PodClique) bool {
 		return k8sutils.IsResourceTerminating(pclq.ObjectMeta)
 	})
 }
@@ -122,8 +121,7 @@ func (r _resource) markCoherentUpdateEndIfConverged(ctx context.Context, logger 
 			// The update has not converged. A replica is still draining, pending recreation, or not yet
 			// Ready. Requeue so the roll is re-driven until every replica settles on its committed PodGang
 			// at the current revision, rather than returning without rescheduling.
-			return groveerr.New(
-				groveerr.ErrCodeContinueReconcileAndRequeue,
+			return groveerr.NewContinueReconcileAndRequeue(
 				component.OperationSync,
 				fmt.Sprintf("coherent update of PodCliqueScalingGroup %v has not converged, requeuing", client.ObjectKeyFromObject(ss.pcsg)),
 			)

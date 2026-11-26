@@ -3,7 +3,7 @@
 # The h100-topology maps domain "block" to "kubernetes.io/rack".
 # GB200 nodes have kubernetes.io/rack removed, so this workload only schedules on H100 nodes.
 ---
-apiVersion: grove.io/v1alpha1
+apiVersion: grove.io/v1beta1
 kind: PodCliqueSet
 metadata:
   name: tas-h100-workload

@@ -1,7 +1,7 @@
 # Workload: ZL1 - Zone-Level Topology Constraint
 # Test scenario: PCS with zone constraint (widest domain), PCLQ without constraint
 ---
-apiVersion: grove.io/v1alpha1
+apiVersion: grove.io/v1beta1
 kind: PodCliqueSet
 metadata:
   name: tas-standalone-pclq

@@ -2,7 +2,7 @@
 # while maxUnavailable=1, so the number of unavailable replicas exceeds the budget. The old readiness-delta
 # budget deadlocked here. The corrective update removes the selector and the count-anchored budget replaces
 # the replicas one per reconcile cycle until all three are available, rather than blocking forever.
-apiVersion: grove.io/v1alpha1
+apiVersion: grove.io/v1beta1
 kind: PodCliqueSet
 metadata:
   name: wl-coh-unavail-pcsg-multi

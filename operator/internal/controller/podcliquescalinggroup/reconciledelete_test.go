@@ -19,7 +19,7 @@ import (
 	"testing"
 
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	pcsgexpectations "github.com/ai-dynamo/grove/operator/internal/controller/podcliquescalinggroup/expectations"
 	"github.com/ai-dynamo/grove/operator/internal/expect"
 
@@ -39,12 +39,12 @@ import (
 func TestTriggerDeletionFlow(t *testing.T) {
 	tests := []struct {
 		name            string
-		pcsg            *grovecorev1alpha1.PodCliqueScalingGroup
+		pcsg            *grovecorev1beta1.PodCliqueScalingGroup
 		seedExpectation bool
 	}{
 		{
 			name: "clears_expectations_and_removes_finalizer",
-			pcsg: &grovecorev1alpha1.PodCliqueScalingGroup{
+			pcsg: &grovecorev1beta1.PodCliqueScalingGroup{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:       "test-pcsg",
 					Namespace:  "default",
@@ -55,7 +55,7 @@ func TestTriggerDeletionFlow(t *testing.T) {
 		},
 		{
 			name: "no_finalizer_is_a_noop",
-			pcsg: &grovecorev1alpha1.PodCliqueScalingGroup{
+			pcsg: &grovecorev1beta1.PodCliqueScalingGroup{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-pcsg",
 					Namespace: "default",
@@ -68,7 +68,7 @@ func TestTriggerDeletionFlow(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			scheme := runtime.NewScheme()
-			require.NoError(t, grovecorev1alpha1.AddToScheme(scheme))
+			require.NoError(t, grovecorev1beta1.AddToScheme(scheme))
 
 			fakeClient := fake.NewClientBuilder().
 				WithScheme(scheme).
@@ -95,7 +95,7 @@ func TestTriggerDeletionFlow(t *testing.T) {
 			require.NoError(t, err)
 			assert.False(t, exists, "expectations entry should have been cleared, no leak")
 
-			fetched := &grovecorev1alpha1.PodCliqueScalingGroup{}
+			fetched := &grovecorev1beta1.PodCliqueScalingGroup{}
 			require.NoError(t, fakeClient.Get(context.Background(), types.NamespacedName{Name: tc.pcsg.Name, Namespace: tc.pcsg.Namespace}, fetched))
 			assert.NotContains(t, fetched.Finalizers, constants.FinalizerPodCliqueScalingGroup)
 		})

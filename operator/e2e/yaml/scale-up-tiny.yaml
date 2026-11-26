@@ -3,7 +3,7 @@
 # Used to validate cluster + test plumbing end-to-end without paying the cost
 # of the real 500/1000-pod scenarios.
 ---
-apiVersion: grove.io/v1alpha1
+apiVersion: grove.io/v1beta1
 kind: PodCliqueSet
 metadata:
   name: scale-up-tiny

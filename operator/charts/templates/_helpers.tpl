@@ -1,6 +1,6 @@
 {{- define "operator.config.data" -}}
 config.yaml: |
-  apiVersion: operator.config.grove.io/v1alpha1
+  apiVersion: operator.config.grove.io/v1beta1
   kind: OperatorConfiguration
   runtimeClientConnection:
     qps: {{ .Values.config.runtimeClientConnection.qps }}

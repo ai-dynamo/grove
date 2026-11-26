@@ -165,3 +165,19 @@ func ExtractPodCliqueNameFromStandalonePCLQFQN(pclqFQN string, pcsNameReplica Re
 	prefix := fmt.Sprintf("%s-%d-", pcsNameReplica.Name, pcsNameReplica.Replica)
 	return pclqFQN[len(prefix):]
 }
+
+// ExtractEpochFromPodGangName extracts the epoch from the name of an anchor or non-anchor PodGang
+// of the given PodCliqueSet replica. It is the inverse of GenerateAnchorPodGangName and
+// GenerateNonAnchorPodGangName. For example, "simple1-0-1700000000-sga-1" with
+// pcsNameReplica="simple1-0" returns "1700000000".
+func ExtractEpochFromPodGangName(podGangName string, pcsNameReplica ResourceNameReplica) (string, error) {
+	prefix := fmt.Sprintf("%s-%d-", pcsNameReplica.Name, pcsNameReplica.Replica)
+	if !strings.HasPrefix(podGangName, prefix) {
+		return "", fmt.Errorf("PodGang name %q does not have expected prefix %q", podGangName, prefix)
+	}
+	epoch, _, _ := strings.Cut(podGangName[len(prefix):], "-")
+	if epoch == "" || strings.Trim(epoch, "0123456789") != "" {
+		return "", fmt.Errorf("PodGang name %q does not have a numeric epoch after prefix %q", podGangName, prefix)
+	}
+	return epoch, nil
+}

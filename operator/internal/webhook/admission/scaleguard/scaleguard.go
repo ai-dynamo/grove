@@ -20,7 +20,7 @@ import (
 	"fmt"
 	"net/http"
 
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	componentutils "github.com/ai-dynamo/grove/operator/internal/utils/component"
 
 	"github.com/go-logr/logr"
@@ -132,9 +132,9 @@ func denyReplicasBelowMinAvailable(target client.Object, newReplicas int32) admi
 // for a full update and for a scale subresource request.
 func minAvailableOf(target client.Object) *int32 {
 	switch resource := target.(type) {
-	case *grovecorev1alpha1.PodClique:
+	case *grovecorev1beta1.PodClique:
 		return resource.Spec.MinAvailable
-	case *grovecorev1alpha1.PodCliqueScalingGroup:
+	case *grovecorev1beta1.PodCliqueScalingGroup:
 		return resource.Spec.MinAvailable
 	default:
 		return nil

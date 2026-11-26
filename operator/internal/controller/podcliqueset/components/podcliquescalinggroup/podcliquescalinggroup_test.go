@@ -19,17 +19,20 @@ import (
 	"testing"
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	apicommonconstants "github.com/ai-dynamo/grove/operator/api/common/constants"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
+	pcssync "github.com/ai-dynamo/grove/operator/internal/controller/podcliqueset/components/sync"
 	"github.com/ai-dynamo/grove/operator/internal/mnnvl"
+	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/go-logr/logr"
+	"github.com/samber/lo"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
-	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
@@ -38,7 +41,7 @@ import (
 func TestNew(t *testing.T) {
 	// Tests creating a new operator instance
 	scheme := runtime.NewScheme()
-	require.NoError(t, grovecorev1alpha1.AddToScheme(scheme))
+	require.NoError(t, grovecorev1beta1.AddToScheme(scheme))
 
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 	eventRecorder := &record.FakeRecorder{}
@@ -46,8 +49,7 @@ func TestNew(t *testing.T) {
 	operator := New(client, scheme, eventRecorder)
 
 	assert.NotNil(t, operator)
-	resource, ok := operator.(*_resource)
-	assert.True(t, ok)
+	resource := operator.(*_resource)
 	assert.Equal(t, client, resource.client)
 	assert.Equal(t, scheme, resource.scheme)
 	assert.Equal(t, eventRecorder, resource.eventRecorder)
@@ -75,7 +77,7 @@ func TestGetExistingResourceNames(t *testing.T) {
 				UID:       "pcs-uid",
 			},
 			existingObjs: []runtime.Object{
-				&grovecorev1alpha1.PodCliqueScalingGroup{
+				&grovecorev1beta1.PodCliqueScalingGroup{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "test-pcs-0-pcsg1",
 						Namespace: "default",
@@ -94,7 +96,7 @@ func TestGetExistingResourceNames(t *testing.T) {
 						},
 					},
 				},
-				&grovecorev1alpha1.PodCliqueScalingGroup{
+				&grovecorev1beta1.PodCliqueScalingGroup{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "test-pcs-0-pcsg2",
 						Namespace: "default",
@@ -137,7 +139,7 @@ func TestGetExistingResourceNames(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			scheme := runtime.NewScheme()
-			require.NoError(t, grovecorev1alpha1.AddToScheme(scheme))
+			require.NoError(t, grovecorev1beta1.AddToScheme(scheme))
 
 			fakeClient := fake.NewClientBuilder().
 				WithScheme(scheme).
@@ -165,7 +167,7 @@ func TestSync(t *testing.T) {
 	tests := []struct {
 		name string
 		// pcs is the PodCliqueSet to sync
-		pcs *grovecorev1alpha1.PodCliqueSet
+		pcs *grovecorev1beta1.PodCliqueSet
 		// existingObjs are the existing objects in the cluster
 		existingObjs []runtime.Object
 		// expectError indicates if an error is expected
@@ -176,20 +178,20 @@ func TestSync(t *testing.T) {
 		{
 			// Tests creating new PodCliqueScalingGroups
 			name: "create_new_pcsgs",
-			pcs: &grovecorev1alpha1.PodCliqueSet{
+			pcs: &grovecorev1beta1.PodCliqueSet{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-pcs",
 					Namespace: "default",
 					UID:       "pcs-uid",
 				},
-				Spec: grovecorev1alpha1.PodCliqueSetSpec{
+				Spec: grovecorev1beta1.PodCliqueSetSpec{
 					Replicas: 2,
-					Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
-						PodCliqueScalingGroupConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+					Template: grovecorev1beta1.PodCliqueSetTemplateSpec{
+						PodCliqueScalingGroupConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 							{
 								Name:         "pcsg1",
-								MinAvailable: ptr.To(int32(1)),
-								Replicas:     ptr.To(int32(2)),
+								MinAvailable: new(int32(1)),
+								Replicas:     new(int32(2)),
 								CliqueNames:  []string{"clique1"},
 							},
 						},
@@ -200,7 +202,7 @@ func TestSync(t *testing.T) {
 			expectError:  false,
 			validate: func(t *testing.T, c client.Client) {
 				// Verify PodCliqueScalingGroups were created
-				pcsgList := &grovecorev1alpha1.PodCliqueScalingGroupList{}
+				pcsgList := &grovecorev1beta1.PodCliqueScalingGroupList{}
 				err := c.List(context.Background(), pcsgList, client.InNamespace("default"))
 				assert.NoError(t, err)
 				assert.Equal(t, 2, len(pcsgList.Items))
@@ -209,20 +211,20 @@ func TestSync(t *testing.T) {
 		{
 			// Tests deleting orphaned PodCliqueScalingGroups
 			name: "delete_orphaned_pcsgs",
-			pcs: &grovecorev1alpha1.PodCliqueSet{
+			pcs: &grovecorev1beta1.PodCliqueSet{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-pcs",
 					Namespace: "default",
 					UID:       "pcs-uid",
 				},
-				Spec: grovecorev1alpha1.PodCliqueSetSpec{
+				Spec: grovecorev1beta1.PodCliqueSetSpec{
 					Replicas: 1,
-					Template: grovecorev1alpha1.PodCliqueSetTemplateSpec{
-						PodCliqueScalingGroupConfigs: []grovecorev1alpha1.PodCliqueScalingGroupConfig{
+					Template: grovecorev1beta1.PodCliqueSetTemplateSpec{
+						PodCliqueScalingGroupConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
 							{
 								Name:         "pcsg1",
-								MinAvailable: ptr.To(int32(1)),
-								Replicas:     ptr.To(int32(1)),
+								MinAvailable: new(int32(1)),
+								Replicas:     new(int32(1)),
 								CliqueNames:  []string{"clique1"},
 							},
 						},
@@ -230,7 +232,7 @@ func TestSync(t *testing.T) {
 				},
 			},
 			existingObjs: []runtime.Object{
-				&grovecorev1alpha1.PodCliqueScalingGroup{
+				&grovecorev1beta1.PodCliqueScalingGroup{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "test-pcs-0-pcsg2", // This should be deleted
 						Namespace: "default",
@@ -253,7 +255,7 @@ func TestSync(t *testing.T) {
 			validate: func(t *testing.T, c client.Client) {
 				// With fake client, the GetExistingResourceNames returns empty
 				// so orphaned resources won't be detected and deleted
-				pcsg := &grovecorev1alpha1.PodCliqueScalingGroup{}
+				pcsg := &grovecorev1beta1.PodCliqueScalingGroup{}
 				err := c.Get(context.Background(), client.ObjectKey{
 					Name:      "test-pcs-0-pcsg2",
 					Namespace: "default",
@@ -270,7 +272,7 @@ func TestSync(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			scheme := runtime.NewScheme()
-			require.NoError(t, grovecorev1alpha1.AddToScheme(scheme))
+			require.NoError(t, grovecorev1beta1.AddToScheme(scheme))
 			require.NoError(t, corev1.AddToScheme(scheme))
 
 			fakeClient := fake.NewClientBuilder().
@@ -284,7 +286,8 @@ func TestSync(t *testing.T) {
 				eventRecorder: &record.FakeRecorder{},
 			}
 
-			err := r.Sync(ctx, logger, tc.pcs)
+			state := &pcssync.State{ExpectedReplicaIndices: lo.Range(int(tc.pcs.Spec.Replicas))}
+			_, err := r.Sync(ctx, logger, tc.pcs, state)
 
 			if tc.expectError {
 				assert.Error(t, err)
@@ -297,6 +300,93 @@ func TestSync(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestBuildResourceSetsGenerationHashAnnotationForOnDelete(t *testing.T) {
+	const generationHash = "generation-hash"
+	pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "default", "pcs-uid").
+		WithUpdateStrategy(&grovecorev1beta1.PodCliqueSetUpdateStrategy{Type: grovecorev1beta1.OnDeleteStrategy}).
+		WithPodCliqueSetGenerationHash(new(generationHash)).
+		Build()
+	pcsg := &grovecorev1beta1.PodCliqueScalingGroup{ObjectMeta: metav1.ObjectMeta{Name: "test-pcs-3-workers", Namespace: pcs.Namespace}}
+	pcsgConfig := grovecorev1beta1.PodCliqueScalingGroupConfig{
+		Name: "workers", Replicas: new(int32(1)), MinAvailable: new(int32(1)), CliqueNames: []string{"worker"},
+	}
+	scheme := runtime.NewScheme()
+	require.NoError(t, grovecorev1beta1.AddToScheme(scheme))
+	r := &_resource{scheme: scheme}
+
+	err := r.buildResource(pcsg, pcs, 3, pcsgConfig, false)
+
+	require.NoError(t, err)
+	assert.Equal(t, generationHash, pcsg.Annotations[apicommonconstants.AnnotationOnDeletePodCliqueSetGenerationHash])
+}
+
+func TestBuildResourceOmitsGenerationHashAnnotationForAutomaticUpdate(t *testing.T) {
+	const generationHash = "generation-hash"
+	pcs := testutils.NewPodCliqueSetBuilder("test-pcs", "default", "pcs-uid").
+		WithUpdateStrategy(&grovecorev1beta1.PodCliqueSetUpdateStrategy{Type: grovecorev1beta1.RollingRecreateStrategy}).
+		WithPodCliqueSetGenerationHash(new(generationHash)).
+		Build()
+	pcsg := &grovecorev1beta1.PodCliqueScalingGroup{ObjectMeta: metav1.ObjectMeta{Name: "test-pcs-3-workers", Namespace: pcs.Namespace}}
+	pcsgConfig := grovecorev1beta1.PodCliqueScalingGroupConfig{
+		Name: "workers", Replicas: new(int32(1)), MinAvailable: new(int32(1)), CliqueNames: []string{"worker"},
+	}
+	scheme := runtime.NewScheme()
+	require.NoError(t, grovecorev1beta1.AddToScheme(scheme))
+	r := &_resource{scheme: scheme}
+
+	err := r.buildResource(pcsg, pcs, 3, pcsgConfig, false)
+
+	require.NoError(t, err)
+	assert.NotContains(t, pcsg.Annotations, apicommonconstants.AnnotationOnDeletePodCliqueSetGenerationHash)
+}
+
+func TestSyncUsesSparseReplicaIndices(t *testing.T) {
+	pcs := &grovecorev1beta1.PodCliqueSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-pcs", Namespace: "default", UID: "pcs-uid"},
+		Spec: grovecorev1beta1.PodCliqueSetSpec{
+			Replicas: 3,
+			Template: grovecorev1beta1.PodCliqueSetTemplateSpec{
+				PodCliqueScalingGroupConfigs: []grovecorev1beta1.PodCliqueScalingGroupConfig{
+					{Name: "workers", Replicas: new(int32(1)), MinAvailable: new(int32(1)), CliqueNames: []string{"worker"}},
+				},
+			},
+		},
+	}
+	existingPCSGs := []client.Object{
+		testutils.NewPodCliqueScalingGroupBuilder("test-pcs-0-workers", "default", pcs.Name, 0).WithOwnerReference("PodCliqueSet", pcs.Name, pcs.UID).WithOptions(func(pcsg *grovecorev1beta1.PodCliqueScalingGroup) {
+			pcsg.OwnerReferences[0].APIVersion = grovecorev1beta1.SchemeGroupVersion.String()
+		}).Build(),
+		testutils.NewPodCliqueScalingGroupBuilder("test-pcs-1-workers", "default", pcs.Name, 1).WithOwnerReference("PodCliqueSet", pcs.Name, pcs.UID).WithOptions(func(pcsg *grovecorev1beta1.PodCliqueScalingGroup) {
+			pcsg.OwnerReferences[0].APIVersion = grovecorev1beta1.SchemeGroupVersion.String()
+		}).Build(),
+		testutils.NewPodCliqueScalingGroupBuilder("test-pcs-4-workers", "default", pcs.Name, 4).WithOwnerReference("PodCliqueSet", pcs.Name, pcs.UID).WithOptions(func(pcsg *grovecorev1beta1.PodCliqueScalingGroup) {
+			pcsg.OwnerReferences[0].APIVersion = grovecorev1beta1.SchemeGroupVersion.String()
+		}).Build(),
+		testutils.NewPodCliqueScalingGroupBuilder("test-pcs-2-obsolete", "default", pcs.Name, 2).WithOwnerReference("PodCliqueSet", pcs.Name, pcs.UID).WithOptions(func(pcsg *grovecorev1beta1.PodCliqueScalingGroup) {
+			pcsg.OwnerReferences[0].APIVersion = grovecorev1beta1.SchemeGroupVersion.String()
+		}).Build(),
+	}
+	scheme := runtime.NewScheme()
+	require.NoError(t, grovecorev1beta1.AddToScheme(scheme))
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(existingPCSGs...).Build()
+	r := &_resource{client: fakeClient, scheme: scheme, eventRecorder: &record.FakeRecorder{}}
+	state := &pcssync.State{ExpectedReplicaIndices: []int{0, 2, 4}, ScaleInReplicaIndices: []int{1}}
+
+	result, err := r.Sync(context.Background(), logr.Discard(), pcs, state)
+
+	require.NoError(t, err)
+	assert.Equal(t, []int{1}, result.ScaleInReplicaIndicesAwaitingResourceCleanup)
+	pcsgList := &grovecorev1beta1.PodCliqueScalingGroupList{}
+	require.NoError(t, fakeClient.List(context.Background(), pcsgList, client.InNamespace(pcs.Namespace)))
+	pcsgNames := make([]string, 0, len(pcsgList.Items))
+	for _, pcsg := range pcsgList.Items {
+		pcsgNames = append(pcsgNames, pcsg.Name)
+	}
+	assert.ElementsMatch(t, []string{"test-pcs-0-workers", "test-pcs-2-workers", "test-pcs-4-workers"}, pcsgNames)
+	assert.Equal(t, []int{0, 2, 4}, state.ExpectedReplicaIndices)
+	assert.Equal(t, []int{1}, state.ScaleInReplicaIndices)
 }
 
 // TestDelete tests the Delete function
@@ -321,7 +411,7 @@ func TestDelete(t *testing.T) {
 				UID:       "pcs-uid",
 			},
 			existingObjs: []runtime.Object{
-				&grovecorev1alpha1.PodCliqueScalingGroup{
+				&grovecorev1beta1.PodCliqueScalingGroup{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "test-pcs-0-pcsg1",
 						Namespace: "default",
@@ -343,7 +433,7 @@ func TestDelete(t *testing.T) {
 			expectError: false,
 			validate: func(t *testing.T, c client.Client) {
 				// Verify PCSG was deleted
-				pcsg := &grovecorev1alpha1.PodCliqueScalingGroup{}
+				pcsg := &grovecorev1beta1.PodCliqueScalingGroup{}
 				err := c.Get(context.Background(), client.ObjectKey{
 					Name:      "test-pcs-0-pcsg1",
 					Namespace: "default",
@@ -359,7 +449,7 @@ func TestDelete(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			scheme := runtime.NewScheme()
-			require.NoError(t, grovecorev1alpha1.AddToScheme(scheme))
+			require.NoError(t, grovecorev1beta1.AddToScheme(scheme))
 
 			fakeClient := fake.NewClientBuilder().
 				WithScheme(scheme).
@@ -426,31 +516,31 @@ func TestBuildResource(t *testing.T) {
 	tests := []struct {
 		name string
 		// pcs is the PodCliqueSet
-		pcs *grovecorev1alpha1.PodCliqueSet
+		pcs *grovecorev1beta1.PodCliqueSet
 		// pcsgCfg is the PCSG configuration
-		pcsgCfg *grovecorev1alpha1.PodCliqueScalingGroupConfig
+		pcsgCfg *grovecorev1beta1.PodCliqueScalingGroupConfig
 		// pcsReplica is the PCS replica index
 		pcsReplica int
 		// validate performs validation on the built resource
-		validate func(*testing.T, *grovecorev1alpha1.PodCliqueScalingGroup)
+		validate func(*testing.T, *grovecorev1beta1.PodCliqueScalingGroup)
 	}{
 		{
 			name: "basic_pcsg",
-			pcs: &grovecorev1alpha1.PodCliqueSet{
+			pcs: &grovecorev1beta1.PodCliqueSet{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-pcs",
 					Namespace: "default",
 					UID:       "pcs-uid",
 				},
 			},
-			pcsgCfg: &grovecorev1alpha1.PodCliqueScalingGroupConfig{
+			pcsgCfg: &grovecorev1beta1.PodCliqueScalingGroupConfig{
 				Name:         "pcsg1",
-				MinAvailable: ptr.To(int32(2)),
-				Replicas:     ptr.To(int32(3)),
+				MinAvailable: new(int32(2)),
+				Replicas:     new(int32(3)),
 				CliqueNames:  []string{"clique1", "clique2"},
 			},
 			pcsReplica: 0,
-			validate: func(t *testing.T, pcsg *grovecorev1alpha1.PodCliqueScalingGroup) {
+			validate: func(t *testing.T, pcsg *grovecorev1beta1.PodCliqueScalingGroup) {
 				assert.Equal(t, "test-pcs-0-pcsg1", pcsg.Name)
 				assert.Equal(t, "default", pcsg.Namespace)
 				assert.Equal(t, int32(2), *pcsg.Spec.MinAvailable)
@@ -462,17 +552,17 @@ func TestBuildResource(t *testing.T) {
 		},
 		{
 			name: "config annotations are copied to PCSG",
-			pcs: &grovecorev1alpha1.PodCliqueSet{
+			pcs: &grovecorev1beta1.PodCliqueSet{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-pcs",
 					Namespace: "default",
 					UID:       "pcs-uid",
 				},
 			},
-			pcsgCfg: &grovecorev1alpha1.PodCliqueScalingGroupConfig{
+			pcsgCfg: &grovecorev1beta1.PodCliqueScalingGroupConfig{
 				Name:         "pcsg1",
-				MinAvailable: ptr.To(int32(1)),
-				Replicas:     ptr.To(int32(1)),
+				MinAvailable: new(int32(1)),
+				Replicas:     new(int32(1)),
 				CliqueNames:  []string{"clique1"},
 				Annotations: map[string]string{
 					"example.com/team":    "platform",
@@ -480,7 +570,7 @@ func TestBuildResource(t *testing.T) {
 				},
 			},
 			pcsReplica: 0,
-			validate: func(t *testing.T, pcsg *grovecorev1alpha1.PodCliqueScalingGroup) {
+			validate: func(t *testing.T, pcsg *grovecorev1beta1.PodCliqueScalingGroup) {
 				require.NotNil(t, pcsg.Annotations)
 				assert.Equal(t, "platform", pcsg.Annotations["example.com/team"])
 				assert.Equal(t, "v2", pcsg.Annotations["example.com/version"])
@@ -489,21 +579,21 @@ func TestBuildResource(t *testing.T) {
 		},
 		{
 			name: "no config annotations results in nil PCSG annotations",
-			pcs: &grovecorev1alpha1.PodCliqueSet{
+			pcs: &grovecorev1beta1.PodCliqueSet{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-pcs",
 					Namespace: "default",
 					UID:       "pcs-uid",
 				},
 			},
-			pcsgCfg: &grovecorev1alpha1.PodCliqueScalingGroupConfig{
+			pcsgCfg: &grovecorev1beta1.PodCliqueScalingGroupConfig{
 				Name:         "pcsg1",
-				MinAvailable: ptr.To(int32(1)),
-				Replicas:     ptr.To(int32(1)),
+				MinAvailable: new(int32(1)),
+				Replicas:     new(int32(1)),
 				CliqueNames:  []string{"clique1"},
 			},
 			pcsReplica: 0,
-			validate: func(t *testing.T, pcsg *grovecorev1alpha1.PodCliqueScalingGroup) {
+			validate: func(t *testing.T, pcsg *grovecorev1beta1.PodCliqueScalingGroup) {
 				assert.Nil(t, pcsg.Annotations)
 			},
 		},
@@ -512,13 +602,13 @@ func TestBuildResource(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			scheme := runtime.NewScheme()
-			require.NoError(t, grovecorev1alpha1.AddToScheme(scheme))
+			require.NoError(t, grovecorev1beta1.AddToScheme(scheme))
 
 			r := &_resource{
 				scheme: scheme,
 			}
 
-			pcsg := &grovecorev1alpha1.PodCliqueScalingGroup{
+			pcsg := &grovecorev1beta1.PodCliqueScalingGroup{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: apicommon.GeneratePodCliqueScalingGroupName(
 						apicommon.ResourceNameReplica{Name: tc.pcs.Name, Replica: tc.pcsReplica},
@@ -541,10 +631,10 @@ func TestBuildResource(t *testing.T) {
 // TestBuildResource_MNNVLAnnotationPropagation tests that the MNNVL annotation is properly propagated from PCS to PCSG.
 func TestBuildResource_MNNVLAnnotationPropagation(t *testing.T) {
 	tests := []struct {
-		description         string
-		pcsAnnotations      map[string]string
-		pcsgConfigAnnotions map[string]string
-		expectedAnnotations map[string]string // nil means no MNNVL annotations expected
+		description           string
+		pcsAnnotations        map[string]string
+		pcsgConfigAnnotations map[string]string
+		expectedAnnotations   map[string]string // nil means no MNNVL annotations expected
 	}{
 		{
 			description: "PCS mnnvl-group set, no config annotations — PCS propagates",
@@ -579,7 +669,7 @@ func TestBuildResource_MNNVLAnnotationPropagation(t *testing.T) {
 			pcsAnnotations: map[string]string{
 				mnnvl.AnnotationMNNVLGroup: "default",
 			},
-			pcsgConfigAnnotions: map[string]string{
+			pcsgConfigAnnotations: map[string]string{
 				mnnvl.AnnotationMNNVLGroup: "training",
 			},
 			expectedAnnotations: map[string]string{
@@ -589,7 +679,7 @@ func TestBuildResource_MNNVLAnnotationPropagation(t *testing.T) {
 		{
 			description:    "PCSG config has mnnvl-group, PCS has none — config value used",
 			pcsAnnotations: nil,
-			pcsgConfigAnnotions: map[string]string{
+			pcsgConfigAnnotations: map[string]string{
 				mnnvl.AnnotationMNNVLGroup: "workers",
 			},
 			expectedAnnotations: map[string]string{
@@ -601,7 +691,7 @@ func TestBuildResource_MNNVLAnnotationPropagation(t *testing.T) {
 			pcsAnnotations: map[string]string{
 				mnnvl.AnnotationMNNVLGroup: "default",
 			},
-			pcsgConfigAnnotions: map[string]string{
+			pcsgConfigAnnotations: map[string]string{
 				mnnvl.AnnotationMNNVLGroup: mnnvl.AnnotationMNNVLGroupOptOut,
 			},
 			expectedAnnotations: map[string]string{
@@ -613,9 +703,9 @@ func TestBuildResource_MNNVLAnnotationPropagation(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.description, func(t *testing.T) {
 			scheme := runtime.NewScheme()
-			require.NoError(t, grovecorev1alpha1.AddToScheme(scheme))
+			require.NoError(t, grovecorev1beta1.AddToScheme(scheme))
 
-			pcs := &grovecorev1alpha1.PodCliqueSet{
+			pcs := &grovecorev1beta1.PodCliqueSet{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:        "test-pcs",
 					Namespace:   "default",
@@ -624,19 +714,19 @@ func TestBuildResource_MNNVLAnnotationPropagation(t *testing.T) {
 				},
 			}
 
-			pcsgCfg := grovecorev1alpha1.PodCliqueScalingGroupConfig{
+			pcsgCfg := grovecorev1beta1.PodCliqueScalingGroupConfig{
 				Name:         "pcsg1",
-				MinAvailable: ptr.To(int32(1)),
-				Replicas:     ptr.To(int32(2)),
+				MinAvailable: new(int32(1)),
+				Replicas:     new(int32(2)),
 				CliqueNames:  []string{"clique1"},
-				Annotations:  tc.pcsgConfigAnnotions,
+				Annotations:  tc.pcsgConfigAnnotations,
 			}
 
 			r := &_resource{
 				scheme: scheme,
 			}
 
-			pcsg := &grovecorev1alpha1.PodCliqueScalingGroup{
+			pcsg := &grovecorev1beta1.PodCliqueScalingGroup{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      apicommon.GeneratePodCliqueScalingGroupName(apicommon.ResourceNameReplica{Name: pcs.Name, Replica: 0}, pcsgCfg.Name),
 					Namespace: pcs.Namespace,

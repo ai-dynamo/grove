@@ -18,7 +18,7 @@ import (
 	"context"
 	"testing"
 
-	grovecorev1alpha1 "github.com/ai-dynamo/grove/operator/api/core/v1alpha1"
+	grovecorev1beta1 "github.com/ai-dynamo/grove/operator/api/core/v1beta1"
 	"github.com/ai-dynamo/grove/operator/internal/controller/common/component"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
@@ -43,13 +43,13 @@ const (
 func TestUpdateObservedGeneration(t *testing.T) {
 	tests := []struct {
 		name               string
-		setupPCSG          func() *grovecorev1alpha1.PodCliqueScalingGroup
+		setupPCSG          func() *grovecorev1beta1.PodCliqueScalingGroup
 		expectPatchSkipped bool
 		expectedGeneration int64
 	}{
 		{
 			name: "patch_skipped_when_observed_equals_generation",
-			setupPCSG: func() *grovecorev1alpha1.PodCliqueScalingGroup {
+			setupPCSG: func() *grovecorev1beta1.PodCliqueScalingGroup {
 				pcsg := testutils.NewPodCliqueScalingGroupBuilder(testPCSGName, testNamespacePCSG, testPCSNamePCSG, 0).
 					WithReplicas(1).
 					Build()
@@ -62,7 +62,7 @@ func TestUpdateObservedGeneration(t *testing.T) {
 		},
 		{
 			name: "patch_made_when_observed_is_nil",
-			setupPCSG: func() *grovecorev1alpha1.PodCliqueScalingGroup {
+			setupPCSG: func() *grovecorev1beta1.PodCliqueScalingGroup {
 				pcsg := testutils.NewPodCliqueScalingGroupBuilder(testPCSGName, testNamespacePCSG, testPCSNamePCSG, 0).
 					WithReplicas(1).
 					Build()
@@ -75,7 +75,7 @@ func TestUpdateObservedGeneration(t *testing.T) {
 		},
 		{
 			name: "patch_made_when_observed_differs_from_generation",
-			setupPCSG: func() *grovecorev1alpha1.PodCliqueScalingGroup {
+			setupPCSG: func() *grovecorev1beta1.PodCliqueScalingGroup {
 				pcsg := testutils.NewPodCliqueScalingGroupBuilder(testPCSGName, testNamespacePCSG, testPCSNamePCSG, 0).
 					WithReplicas(1).
 					Build()
@@ -105,7 +105,7 @@ func TestUpdateObservedGeneration(t *testing.T) {
 			assert.NoError(t, err)
 
 			// Fetch the updated object from the fake client
-			updatedPCSG := &grovecorev1alpha1.PodCliqueScalingGroup{}
+			updatedPCSG := &grovecorev1beta1.PodCliqueScalingGroup{}
 			err = fakeClient.Get(context.Background(), client.ObjectKeyFromObject(pcsg), updatedPCSG)
 			require.NoError(t, err)
 
@@ -139,19 +139,19 @@ func TestGetOrderedKindsForSyncPCSG(t *testing.T) {
 func TestShouldResetOrTriggerUpdatePCSG(t *testing.T) {
 	tests := []struct {
 		name     string
-		pcs      *grovecorev1alpha1.PodCliqueSet
-		pcsg     *grovecorev1alpha1.PodCliqueScalingGroup
+		pcs      *grovecorev1beta1.PodCliqueSet
+		pcsg     *grovecorev1beta1.PodCliqueScalingGroup
 		expected bool
 	}{
 		{
 			name: "should_not_trigger_update_until_pcs_current_generation_hash_exists",
-			pcs: &grovecorev1alpha1.PodCliqueSet{
-				Status: grovecorev1alpha1.PodCliqueSetStatus{
+			pcs: &grovecorev1beta1.PodCliqueSet{
+				Status: grovecorev1beta1.PodCliqueSetStatus{
 					CurrentGenerationHash: nil,
 				},
 			},
-			pcsg: &grovecorev1alpha1.PodCliqueScalingGroup{
-				Status: grovecorev1alpha1.PodCliqueScalingGroupStatus{
+			pcsg: &grovecorev1beta1.PodCliqueScalingGroup{
+				Status: grovecorev1beta1.PodCliqueScalingGroupStatus{
 					UpdateProgress: nil,
 				},
 			},
@@ -159,13 +159,13 @@ func TestShouldResetOrTriggerUpdatePCSG(t *testing.T) {
 		},
 		{
 			name: "should_trigger_update_when_no_update_progress",
-			pcs: &grovecorev1alpha1.PodCliqueSet{
-				Status: grovecorev1alpha1.PodCliqueSetStatus{
+			pcs: &grovecorev1beta1.PodCliqueSet{
+				Status: grovecorev1beta1.PodCliqueSetStatus{
 					CurrentGenerationHash: ptr.To("new-hash"),
 				},
 			},
-			pcsg: &grovecorev1alpha1.PodCliqueScalingGroup{
-				Status: grovecorev1alpha1.PodCliqueScalingGroupStatus{
+			pcsg: &grovecorev1beta1.PodCliqueScalingGroup{
+				Status: grovecorev1beta1.PodCliqueScalingGroupStatus{
 					UpdateProgress: nil,
 				},
 			},
@@ -173,14 +173,14 @@ func TestShouldResetOrTriggerUpdatePCSG(t *testing.T) {
 		},
 		{
 			name: "should_not_trigger_update_when_hash_matches",
-			pcs: &grovecorev1alpha1.PodCliqueSet{
-				Status: grovecorev1alpha1.PodCliqueSetStatus{
+			pcs: &grovecorev1beta1.PodCliqueSet{
+				Status: grovecorev1beta1.PodCliqueSetStatus{
 					CurrentGenerationHash: ptr.To("current-hash"),
 				},
 			},
-			pcsg: &grovecorev1alpha1.PodCliqueScalingGroup{
-				Status: grovecorev1alpha1.PodCliqueScalingGroupStatus{
-					UpdateProgress: &grovecorev1alpha1.PodCliqueScalingGroupUpdateProgress{
+			pcsg: &grovecorev1beta1.PodCliqueScalingGroup{
+				Status: grovecorev1beta1.PodCliqueScalingGroupStatus{
+					UpdateProgress: &grovecorev1beta1.PodCliqueScalingGroupUpdateProgress{
 						PodCliqueSetGenerationHash: "current-hash",
 					},
 				},
@@ -189,14 +189,14 @@ func TestShouldResetOrTriggerUpdatePCSG(t *testing.T) {
 		},
 		{
 			name: "should_trigger_update_when_hash_differs",
-			pcs: &grovecorev1alpha1.PodCliqueSet{
-				Status: grovecorev1alpha1.PodCliqueSetStatus{
+			pcs: &grovecorev1beta1.PodCliqueSet{
+				Status: grovecorev1beta1.PodCliqueSetStatus{
 					CurrentGenerationHash: ptr.To("new-hash"),
 				},
 			},
-			pcsg: &grovecorev1alpha1.PodCliqueScalingGroup{
-				Status: grovecorev1alpha1.PodCliqueScalingGroupStatus{
-					UpdateProgress: &grovecorev1alpha1.PodCliqueScalingGroupUpdateProgress{
+			pcsg: &grovecorev1beta1.PodCliqueScalingGroup{
+				Status: grovecorev1beta1.PodCliqueScalingGroupStatus{
+					UpdateProgress: &grovecorev1beta1.PodCliqueScalingGroupUpdateProgress{
 						PodCliqueSetGenerationHash: "old-hash",
 					},
 				},
@@ -227,11 +227,11 @@ func TestProcessUpdateResetsStaleProgressForSelectedPCSReplica(t *testing.T) {
 	pcs := testutils.NewPodCliqueSetBuilder(testPCSNamePCSG, testNamespacePCSG, pcsUID).
 		WithReplicas(1).
 		WithScalingGroup(testPCSGName, []string{"worker"}).
-		WithUpdateStrategy(&grovecorev1alpha1.PodCliqueSetUpdateStrategy{Type: grovecorev1alpha1.RollingRecreateStrategy}).
+		WithUpdateStrategy(&grovecorev1beta1.PodCliqueSetUpdateStrategy{Type: grovecorev1beta1.RollingRecreateStrategy}).
 		WithPodCliqueSetGenerationHash(ptr.To(currentGeneration)).
-		WithUpdateProgress(&grovecorev1alpha1.PodCliqueSetUpdateProgress{
+		WithUpdateProgress(&grovecorev1beta1.PodCliqueSetUpdateProgress{
 			UpdateStartedAt: metav1.Now(),
-			CurrentlyUpdating: []grovecorev1alpha1.PodCliqueSetReplicaUpdateProgress{
+			CurrentlyUpdating: []grovecorev1beta1.PodCliqueSetReplicaUpdateProgress{
 				{
 					ReplicaIndex:    0,
 					UpdateStartedAt: metav1.Now(),
@@ -245,7 +245,7 @@ func TestProcessUpdateResetsStaleProgressForSelectedPCSReplica(t *testing.T) {
 		WithOwnerReference("PodCliqueSet", testPCSNamePCSG, pcsUID).
 		Build()
 	pcsg.Status.CurrentPodCliqueSetGenerationHash = ptr.To(currentGeneration)
-	pcsg.Status.UpdateProgress = &grovecorev1alpha1.PodCliqueScalingGroupUpdateProgress{
+	pcsg.Status.UpdateProgress = &grovecorev1beta1.PodCliqueScalingGroupUpdateProgress{
 		UpdateStartedAt:            metav1.Now(),
 		PodCliqueSetGenerationHash: supersededGeneration,
 	}
@@ -257,7 +257,7 @@ func TestProcessUpdateResetsStaleProgressForSelectedPCSReplica(t *testing.T) {
 	result := reconciler.processUpdate(t.Context(), logr.Discard(), pcsg)
 
 	require.False(t, result.HasErrors())
-	updatedPCSG := &grovecorev1alpha1.PodCliqueScalingGroup{}
+	updatedPCSG := &grovecorev1beta1.PodCliqueScalingGroup{}
 	require.NoError(t, fakeClient.Get(t.Context(), client.ObjectKeyFromObject(pcsg), updatedPCSG))
 	require.NotNil(t, updatedPCSG.Status.UpdateProgress)
 	assert.Equal(t, currentGeneration, updatedPCSG.Status.UpdateProgress.PodCliqueSetGenerationHash)
@@ -269,23 +269,23 @@ func TestProcessUpdateResetsStaleProgressForSelectedPCSReplica(t *testing.T) {
 func TestInitOrResetUpdate(t *testing.T) {
 	tests := []struct {
 		name                   string
-		setupPCS               func(pcsUID types.UID) *grovecorev1alpha1.PodCliqueSet
-		setupPCSG              func(pcsUID types.UID) *grovecorev1alpha1.PodCliqueScalingGroup
+		setupPCS               func(pcsUID types.UID) *grovecorev1beta1.PodCliqueSet
+		setupPCSG              func(pcsUID types.UID) *grovecorev1beta1.PodCliqueScalingGroup
 		expectUpdateEndedAtSet bool
 	}{
 		{
 			name: "rolling_recreate_strategy_does_not_set_update_ended_at",
-			setupPCS: func(pcsUID types.UID) *grovecorev1alpha1.PodCliqueSet {
+			setupPCS: func(pcsUID types.UID) *grovecorev1beta1.PodCliqueSet {
 				return testutils.NewPodCliqueSetBuilder(testPCSNamePCSG, testNamespacePCSG, pcsUID).
 					WithReplicas(2).
 					WithScalingGroup(testPCSGName, []string{"worker", "router"}).
-					WithUpdateStrategy(&grovecorev1alpha1.PodCliqueSetUpdateStrategy{
-						Type: grovecorev1alpha1.RollingRecreateStrategy,
+					WithUpdateStrategy(&grovecorev1beta1.PodCliqueSetUpdateStrategy{
+						Type: grovecorev1beta1.RollingRecreateStrategy,
 					}).
 					WithPodCliqueSetGenerationHash(ptr.To("current-hash")).
 					Build()
 			},
-			setupPCSG: func(pcsUID types.UID) *grovecorev1alpha1.PodCliqueScalingGroup {
+			setupPCSG: func(pcsUID types.UID) *grovecorev1beta1.PodCliqueScalingGroup {
 				pcsg := testutils.NewPodCliqueScalingGroupBuilder(testPCSGName, testNamespacePCSG, testPCSNamePCSG, 0).
 					WithReplicas(2).
 					WithOwnerReference("PodCliqueSet", testPCSNamePCSG, pcsUID).
@@ -297,14 +297,14 @@ func TestInitOrResetUpdate(t *testing.T) {
 		},
 		{
 			name: "nil_update_strategy_does_not_set_update_ended_at",
-			setupPCS: func(pcsUID types.UID) *grovecorev1alpha1.PodCliqueSet {
+			setupPCS: func(pcsUID types.UID) *grovecorev1beta1.PodCliqueSet {
 				return testutils.NewPodCliqueSetBuilder(testPCSNamePCSG, testNamespacePCSG, pcsUID).
 					WithReplicas(2).
 					WithScalingGroup(testPCSGName, []string{"worker", "router"}).
 					WithPodCliqueSetGenerationHash(ptr.To("current-hash")).
 					Build()
 			},
-			setupPCSG: func(pcsUID types.UID) *grovecorev1alpha1.PodCliqueScalingGroup {
+			setupPCSG: func(pcsUID types.UID) *grovecorev1beta1.PodCliqueScalingGroup {
 				pcsg := testutils.NewPodCliqueScalingGroupBuilder(testPCSGName, testNamespacePCSG, testPCSNamePCSG, 0).
 					WithReplicas(2).
 					WithOwnerReference("PodCliqueSet", testPCSNamePCSG, pcsUID).
@@ -316,17 +316,17 @@ func TestInitOrResetUpdate(t *testing.T) {
 		},
 		{
 			name: "on_delete_strategy_sets_update_ended_at_immediately",
-			setupPCS: func(pcsUID types.UID) *grovecorev1alpha1.PodCliqueSet {
+			setupPCS: func(pcsUID types.UID) *grovecorev1beta1.PodCliqueSet {
 				return testutils.NewPodCliqueSetBuilder(testPCSNamePCSG, testNamespacePCSG, pcsUID).
 					WithReplicas(2).
 					WithScalingGroup(testPCSGName, []string{"worker", "router"}).
-					WithUpdateStrategy(&grovecorev1alpha1.PodCliqueSetUpdateStrategy{
-						Type: grovecorev1alpha1.OnDeleteStrategy,
+					WithUpdateStrategy(&grovecorev1beta1.PodCliqueSetUpdateStrategy{
+						Type: grovecorev1beta1.OnDeleteStrategy,
 					}).
 					WithPodCliqueSetGenerationHash(ptr.To("current-hash")).
 					Build()
 			},
-			setupPCSG: func(pcsUID types.UID) *grovecorev1alpha1.PodCliqueScalingGroup {
+			setupPCSG: func(pcsUID types.UID) *grovecorev1beta1.PodCliqueScalingGroup {
 				pcsg := testutils.NewPodCliqueScalingGroupBuilder(testPCSGName, testNamespacePCSG, testPCSNamePCSG, 0).
 					WithReplicas(2).
 					WithOwnerReference("PodCliqueSet", testPCSNamePCSG, pcsUID).
@@ -338,17 +338,17 @@ func TestInitOrResetUpdate(t *testing.T) {
 		},
 		{
 			name: "existing_rollingrecreate_in_progress_is_reset_when_hash_changes",
-			setupPCS: func(pcsUID types.UID) *grovecorev1alpha1.PodCliqueSet {
+			setupPCS: func(pcsUID types.UID) *grovecorev1beta1.PodCliqueSet {
 				return testutils.NewPodCliqueSetBuilder(testPCSNamePCSG, testNamespacePCSG, pcsUID).
 					WithReplicas(3).
 					WithScalingGroup(testPCSGName, []string{"worker", "router"}).
-					WithUpdateStrategy(&grovecorev1alpha1.PodCliqueSetUpdateStrategy{
-						Type: grovecorev1alpha1.RollingRecreateStrategy,
+					WithUpdateStrategy(&grovecorev1beta1.PodCliqueSetUpdateStrategy{
+						Type: grovecorev1beta1.RollingRecreateStrategy,
 					}).
 					WithPodCliqueSetGenerationHash(ptr.To("new-hash")).
 					Build()
 			},
-			setupPCSG: func(pcsUID types.UID) *grovecorev1alpha1.PodCliqueScalingGroup {
+			setupPCSG: func(pcsUID types.UID) *grovecorev1beta1.PodCliqueScalingGroup {
 				updateStartedAt := metav1.Now()
 
 				pcsg := testutils.NewPodCliqueScalingGroupBuilder(testPCSGName, testNamespacePCSG, testPCSNamePCSG, 0).
@@ -356,7 +356,7 @@ func TestInitOrResetUpdate(t *testing.T) {
 					WithOwnerReference("PodCliqueSet", testPCSNamePCSG, pcsUID).
 					Build()
 				// Simulate an existing update in progress
-				pcsg.Status.UpdateProgress = &grovecorev1alpha1.PodCliqueScalingGroupUpdateProgress{
+				pcsg.Status.UpdateProgress = &grovecorev1beta1.PodCliqueScalingGroupUpdateProgress{
 					UpdateStartedAt:            updateStartedAt,
 					PodCliqueSetGenerationHash: "old-hash",
 				}
@@ -367,17 +367,17 @@ func TestInitOrResetUpdate(t *testing.T) {
 		},
 		{
 			name: "existing_on_delete_update_is_reset_when_hash_changes",
-			setupPCS: func(pcsUID types.UID) *grovecorev1alpha1.PodCliqueSet {
+			setupPCS: func(pcsUID types.UID) *grovecorev1beta1.PodCliqueSet {
 				return testutils.NewPodCliqueSetBuilder(testPCSNamePCSG, testNamespacePCSG, pcsUID).
 					WithReplicas(3).
 					WithScalingGroup(testPCSGName, []string{"worker", "router"}).
-					WithUpdateStrategy(&grovecorev1alpha1.PodCliqueSetUpdateStrategy{
-						Type: grovecorev1alpha1.OnDeleteStrategy,
+					WithUpdateStrategy(&grovecorev1beta1.PodCliqueSetUpdateStrategy{
+						Type: grovecorev1beta1.OnDeleteStrategy,
 					}).
 					WithPodCliqueSetGenerationHash(ptr.To("new-hash")).
 					Build()
 			},
-			setupPCSG: func(pcsUID types.UID) *grovecorev1alpha1.PodCliqueScalingGroup {
+			setupPCSG: func(pcsUID types.UID) *grovecorev1beta1.PodCliqueScalingGroup {
 				updateStartedAt := metav1.Now()
 				updateEndedAt := metav1.Now()
 
@@ -386,7 +386,7 @@ func TestInitOrResetUpdate(t *testing.T) {
 					WithOwnerReference("PodCliqueSet", testPCSNamePCSG, pcsUID).
 					Build()
 				// Simulate an existing update that was completed
-				pcsg.Status.UpdateProgress = &grovecorev1alpha1.PodCliqueScalingGroupUpdateProgress{
+				pcsg.Status.UpdateProgress = &grovecorev1beta1.PodCliqueScalingGroupUpdateProgress{
 					UpdateStartedAt:            updateStartedAt,
 					UpdateEndedAt:              ptr.To(updateEndedAt),
 					PodCliqueSetGenerationHash: "old-hash",
@@ -411,7 +411,7 @@ func TestInitOrResetUpdate(t *testing.T) {
 			require.NoError(t, err, "initOrResetUpdate should not return errors")
 
 			// Fetch the updated PCSG from the fake client
-			updatedPCSG := &grovecorev1alpha1.PodCliqueScalingGroup{}
+			updatedPCSG := &grovecorev1beta1.PodCliqueScalingGroup{}
 			err = fakeClient.Get(context.Background(), client.ObjectKeyFromObject(pcsg), updatedPCSG)
 			require.NoError(t, err)
 

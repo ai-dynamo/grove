@@ -4,7 +4,7 @@
 # admitted until this PodCliqueSet is deleted. Long-running nginx container (matching
 # kueue-smoke.yaml) so it doesn't exit and release quota on its own.
 ---
-apiVersion: grove.io/v1alpha1
+apiVersion: grove.io/v1beta1
 kind: PodCliqueSet
 metadata:
   name: kueue-workload-filler

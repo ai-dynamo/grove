@@ -23,7 +23,7 @@ import (
 
 	apicommon "github.com/ai-dynamo/grove/operator/api/common"
 	"github.com/ai-dynamo/grove/operator/api/common/constants"
-	groveconfigv1alpha1 "github.com/ai-dynamo/grove/operator/api/config/v1alpha1"
+	groveconfigv1beta1 "github.com/ai-dynamo/grove/operator/api/config/v1beta1"
 	testutils "github.com/ai-dynamo/grove/operator/test/utils"
 
 	"github.com/go-logr/logr"
@@ -263,7 +263,7 @@ func TestHandle(t *testing.T) {
 			cl := clBuilder.Build()
 			mgr := createFakeManager(cl)
 
-			handler := NewHandler(mgr, groveconfigv1alpha1.AuthorizerConfig{
+			handler := NewHandler(mgr, groveconfigv1beta1.AuthorizerConfig{
 				Enabled:                       true,
 				ExemptServiceAccountUserNames: exemptServiceAccountUserNames,
 			}, reconcilerServiceAccountUserName)
@@ -335,7 +335,7 @@ func TestHandleCreateOrUpdate(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			cl := testutils.NewTestClientBuilder().Build()
 			mgr := createFakeManager(cl)
-			handler := NewHandler(mgr, groveconfigv1alpha1.AuthorizerConfig{
+			handler := NewHandler(mgr, groveconfigv1beta1.AuthorizerConfig{
 				Enabled:                       true,
 				ExemptServiceAccountUserNames: exemptServiceAccountUserNames,
 			}, reconcilerServiceAccountUserName)
@@ -415,7 +415,7 @@ func TestHandleDelete(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			cl := testutils.NewTestClientBuilder().Build()
 			mgr := createFakeManager(cl)
-			handler := NewHandler(mgr, groveconfigv1alpha1.AuthorizerConfig{
+			handler := NewHandler(mgr, groveconfigv1beta1.AuthorizerConfig{
 				Enabled:                       true,
 				ExemptServiceAccountUserNames: exemptServiceAccountUserNames,
 			}, reconcilerServiceAccountUserName)
@@ -483,7 +483,7 @@ func TestGetParentPCSPartialObjectMetadata(t *testing.T) {
 			pcsObjectMetadata: &metav1.PartialObjectMetadata{
 				TypeMeta: metav1.TypeMeta{
 					Kind:       "PodCliqueSet",
-					APIVersion: "grove.io/v1alpha1",
+					APIVersion: "grove.io/v1beta1",
 				},
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-pcs",
@@ -505,7 +505,7 @@ func TestGetParentPCSPartialObjectMetadata(t *testing.T) {
 			pcsObjectMetadata: &metav1.PartialObjectMetadata{
 				TypeMeta: metav1.TypeMeta{
 					Kind:       "PodCliqueSet",
-					APIVersion: "grove.io/v1alpha1",
+					APIVersion: "grove.io/v1beta1",
 				},
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-pcs",
@@ -529,7 +529,7 @@ func TestGetParentPCSPartialObjectMetadata(t *testing.T) {
 			cl := clBuilder.Build()
 
 			mgr := createFakeManager(cl)
-			handler := NewHandler(mgr, groveconfigv1alpha1.AuthorizerConfig{
+			handler := NewHandler(mgr, groveconfigv1beta1.AuthorizerConfig{
 				Enabled: true,
 			}, reconcilerServiceAccountUserName)
 
