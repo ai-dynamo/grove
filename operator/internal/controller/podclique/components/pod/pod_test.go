@@ -130,6 +130,68 @@ func TestBuildResourceWithLPXBackend(t *testing.T) {
 	assert.Equal(t, "podclique", pclq.Annotations["example.com/source"])
 }
 
+func TestBuildResourcePreservesSchedulingGates(t *testing.T) {
+	const (
+		namespace  = "default"
+		pcsName    = "model"
+		cliqueName = "worker"
+	)
+	foreignGates := []corev1.PodSchedulingGate{{Name: "example.com/first"}, {Name: "example.com/second"}}
+	groveGate := corev1.PodSchedulingGate{Name: podGangSchedulingGate}
+	tests := []struct {
+		name          string
+		templateGates []corev1.PodSchedulingGate
+		wantGates     []corev1.PodSchedulingGate
+	}{
+		{
+			name:      "adds Grove gate to an ungated template",
+			wantGates: []corev1.PodSchedulingGate{groveGate},
+		},
+		{
+			name:          "preserves every template gate",
+			templateGates: foreignGates,
+			wantGates:     []corev1.PodSchedulingGate{foreignGates[0], foreignGates[1], groveGate},
+		},
+		{
+			name:          "does not duplicate an existing Grove gate",
+			templateGates: []corev1.PodSchedulingGate{foreignGates[0], groveGate, foreignGates[1]},
+			wantGates:     []corev1.PodSchedulingGate{foreignGates[0], groveGate, foreignGates[1]},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			uid := types.UID("test-uid")
+			pcs := testutils.NewPodCliqueSetBuilder(pcsName, namespace, uid).
+				WithCliqueStartupType(ptr.To(grovecorev1beta1.CliqueStartupTypeInOrder)).
+				WithStandaloneClique(cliqueName).
+				Build()
+			pclq := testutils.NewPodCliqueBuilder(pcsName, uid, cliqueName, namespace, 0).Build()
+			pclq.Spec.PodSpec = corev1.PodSpec{
+				Containers:      []corev1.Container{{Name: "main", Image: "busybox"}},
+				SchedulingGates: tt.templateGates,
+			}
+			template := pclq.Spec.PodSpec.DeepCopy()
+			scheme := runtime.NewScheme()
+			require.NoError(t, grovecorev1beta1.AddToScheme(scheme))
+			resource := &_resource{
+				scheme: scheme,
+				schedRegistry: &testutils.FakeSchedulerRegistry{
+					Backends: map[string]scheduler.Backend{
+						string(configv1beta1.SchedulerNameKai): testutils.NewFakeSchedulerBackend(string(configv1beta1.SchedulerNameKai)),
+					},
+					DefaultBackend: string(configv1beta1.SchedulerNameKai),
+				},
+			}
+			pod := &corev1.Pod{}
+
+			require.NoError(t, resource.buildResource(pcs, pclq, pcsName+"-0", pod, 0, nil))
+
+			assert.Equal(t, tt.wantGates, pod.Spec.SchedulingGates)
+			assert.Equal(t, template, &pclq.Spec.PodSpec, "creating a Pod must not mutate its template")
+		})
+	}
+}
+
 // TestGetSelectorLabelsForPods_PCSGOwnedPodClique tests that getSelectorLabelsForPods
 // returns the correct selector labels for PCSG-owned PodCliques.
 func TestGetSelectorLabelsForPods_PCSGOwnedPodClique(t *testing.T) {
