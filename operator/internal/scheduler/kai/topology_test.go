@@ -152,6 +152,36 @@ func TestSyncTopologyWithUnknownOwner(t *testing.T) {
 	assert.Error(t, err)
 }
 
+// TestSyncTopologyRecreatesAfterFailedRecreate verifies that when the create step of a recreate
+// fails after the delete succeeded, the next SyncTopology call creates the missing KAI Topology.
+func TestSyncTopologyRecreatesAfterFailedRecreate(t *testing.T) {
+	ctx := context.Background()
+	ct := createTestClusterTopology(topologyName, defaultTopologyLevels())
+	existingKAITopology := createTestKAITopology([]kaitopologyv1alpha1.TopologyLevel{
+		{NodeLabel: "kubernetes.io/hostname"},
+	}, ct)
+	injectedErr := apierrors.NewInternalError(assert.AnError)
+
+	cl := testutils.NewTestClientBuilder().
+		WithScheme(schedulertest.NewKAIScheme(t)).
+		WithObjects(ct, existingKAITopology).
+		RecordErrorForObjectsNTimes(testutils.ClientMethodCreate, injectedErr, 1, client.ObjectKey{Name: topologyName}).
+		Build()
+	b := newTASBackend(t, cl)
+
+	err := b.SyncTopology(ctx, cl, ct)
+	require.ErrorIs(t, err, injectedErr)
+	err = cl.Get(ctx, client.ObjectKey{Name: topologyName}, &kaitopologyv1alpha1.Topology{})
+	require.True(t, apierrors.IsNotFound(err), "the KAI Topology should be missing after the failed recreate")
+
+	require.NoError(t, b.SyncTopology(ctx, cl, ct))
+
+	kaiTopology := &kaitopologyv1alpha1.Topology{}
+	require.NoError(t, cl.Get(ctx, client.ObjectKey{Name: topologyName}, kaiTopology))
+	assert.Len(t, kaiTopology.Spec.Levels, 2)
+	assert.True(t, metav1.IsControlledBy(kaiTopology, ct))
+}
+
 // -- Error-path SyncTopology tests (table-driven) --
 
 func TestSyncTopologyErrors(t *testing.T) {
