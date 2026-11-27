@@ -33,14 +33,14 @@ UV                := $(or $(shell command -v uv 2>/dev/null),$(TOOLS_BIN_DIR)/uv
 # -------------------------------------------------------------------------
 CONTROLLER_GEN_VERSION    ?= $(call version_gomod,sigs.k8s.io/controller-tools)
 KIND_VERSION              ?= v0.30.0
-GOLANGCI_LINT_VERSION     ?= v2.6.1
-GOIMPORTS_REVISER_VERSION ?= v3.10.0
-YQ_VERSION                ?= v4.48.1
+GOLANGCI_LINT_VERSION     ?= v2.15.0
+GOIMPORTS_REVISER_VERSION ?= v3.13.2
+YQ_VERSION                ?= v4.54.1
 GO_ADD_LICENSE_VERSION    ?= v1.2.0
 SKAFFOLD_VERSION          ?= v2.25.0
-CRD_REF_DOCS_VERSION      ?= v0.2.0
-MDTOC_VERSION             ?= latest
-GOTESTSUM_VERSION         ?= latest
+CRD_REF_DOCS_VERSION      ?= v0.3.0
+MDTOC_VERSION             ?= v1.4.0
+GOTESTSUM_VERSION         ?= v1.13.0
 
 export PATH := $(abspath $(TOOLS_BIN_DIR)):$(PATH)
 
@@ -91,7 +91,7 @@ $(CRD_REF_DOCS):
 	GOBIN=$(abspath $(TOOLS_BIN_DIR)) go install github.com/elastic/crd-ref-docs@$(CRD_REF_DOCS_VERSION)
 
 $(MDTOC):
-	GOBIN=$(abspath $(TOOLS_BIN_DIR)) go install sigs.k8s.io/mdtoc@latest
+	GOBIN=$(abspath $(TOOLS_BIN_DIR)) go install sigs.k8s.io/mdtoc@$(MDTOC_VERSION)
 
 $(GOTESTSUM):
 	GOBIN=$(abspath $(TOOLS_BIN_DIR)) go install gotest.tools/gotestsum@$(GOTESTSUM_VERSION)
