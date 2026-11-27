@@ -105,7 +105,7 @@ The proposed Pod label key is `grove.io/routing-revision`.
 | --- | --- | --- |
 | PCS API | Carries the update strategy. | Express the optional all-component replacement scope for Coherent updates. Label creation needs no opt-in or scope-transition validation. |
 | PCS reconciler (`computeCoherentUpdateScope`) | Selects components whose clique templates changed and carries forward pending scope. | For an all-component rollout, include every standalone PodClique and PodCliqueScalingGroup, including unchanged components. |
-| PodGangMap planner | Orders replacement by MVU, anchor/tail, and budgets. | Apply the existing planner to the expanded scope. |
+| PodGangMap planner | Orders replacement by MVU, anchor/tail, and budgets. Counts entries at the target hash as committed. | Apply those ordering and budget rules to the expanded scope. Credit a required replacement when this rollout emits its step, including when a hash recurs. |
 | PCS child components and Pod builder | Pod construction uses the parent PodClique's PodSpec. The PodGangMap entry tracks the generation that the planner expects. | Carry the hash together with the selected configuration and stamp it on the new Pod under every policy. |
 | Status (`mutateUpdatedReplica`) | Counts updated Pods by clique template hash. | During all-component replacement, account for unchanged cliques whose Pods still need replacement. See [Rollout Identity and Completion](#rollout-identity-and-completion). |
 
@@ -121,7 +121,9 @@ Existing suppression of Pod creation on draining old-generation anchors still ap
 
 With `AllComponents`, an unchanged prefill template can still require new Pods because the decode template changed. For an R1-to-R2 rollout, a prefill Pod created with R1 cannot count toward an R2 replacement. The controller must account for the planned replacements in updated and updated-scheduled counts, child convergence, and PCS completion. It continues to apply existing scheduling, readiness, and disruption-budget rules.
 
-If a corrective edit restores earlier hash inputs, a surviving Pod and a newly created replacement can have the same hash. Where the plan requires an actual replacement, the controller must use rollout progress to establish completion. Tests should check Pod UIDs as well as hashes.
+Suppose a corrective edit restores R1 while an original R1 entry survives an incomplete R2 rollout. Today [`countReplicasAtCurrentHash`](https://github.com/ai-dynamo/grove/blob/15411d9ccb37cfbae9e7cded612762e1ad41777c/operator/internal/controller/podcliqueset/components/podgangmap/substepplanner.go#L289-L364) credits that entry toward the new R1 plan before it emits a replacement. If those counts meet the target, the planner can return no next step.
+
+For an all-component rollout, the planner must distinguish entries carried over from earlier rollouts from replacement work committed by the current rollout. It must use that distinction when recovering its position, selecting entries to drain, and emitting the next step. Later reconciles and status accounting must recognize the same committed work after a restart. How Grove persists that progress is an implementation decision. Both the surviving and replacement Pods still expose the same R1 template hash.
 
 A scale-only edit keeps the hash and does not force replacement. Direct scaling of PodClique and PodCliqueScalingGroup children remains blocked during a Coherent update, as specified by [GREP-393](../393-coherent-rolling-updates/README.md#handling-scale-outs-and-scale-ins-during-update). When existing rules allow scale-out, new Pods use the hash selected for their replica or cohort.
 
@@ -160,7 +162,7 @@ These are acceptance criteria for the future implementation.
 - Cover a decode-only update under both Coherent scopes, including standalone cliques, scaling groups, zero replicas, and pending work. Under selective replacement, an unchanged prefill Pod retains its UID and R1 label even if its PodGangMap entry advances to R2. Under all-component replacement, prefill gets a new UID and the same R2 hash as decode.
 - Remove `AllComponents` on a converged PCS. Verify no Pod UID or label changes from that edit, a subsequent decode-only update remains selective, and newly created Pods still carry the right hash. Check that a change to scope, replica count, or disruption budget alone keeps the hash. Exercise served-version round trips and the scope-only enable and active-rollout cases once their behavior is agreed.
 - Exercise stale children and old/new cohorts, missing or foreign snapshots, controller restarts, active and inactive replica recreation, and the existing suppression of old-anchor creates. Verify the PodSpec as well as its label. Test R1/R2/R3 corrections and a return to identical R1 inputs, including recreation of a revision record.
-- Check updated and scheduled counts against the replacement plan, including old Pods with an unchanged clique template, equal-hash rollbacks, terminating Pods, and scheduled-but-unready targets.
+- Interrupt an R2 rollout with an original R1 entry still present, then retarget to R1. Assert that the planner emits the required replacement step, resumes it after restart without scheduling it twice, and eventually observes a new Pod UID with the same R1 label. Check updated and scheduled counts against the plan for unchanged cliques, terminating Pods, and scheduled-but-unready targets.
 
 **Integration and scheduler E2E**
 
